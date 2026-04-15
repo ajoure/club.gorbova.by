@@ -1,113 +1,95 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
 &nbsp;
 
-1. **Отчет не считать закрывающим патч**
+1. **По createStage root cause найден верно**
   &nbsp;
-  - По отчету видно, что часть изменений внесли, но по факту 4 дефекта не закрыты:
+  - order_index >= 0 действительно ломает текущую negative safe-zone.
+  - Это нужно чинить через **positive safe-zone**.
+  &nbsp;
+2. **Но safe-zone лучше делать не фиксированным 999/1000, а гарантированно свободным диапазоном**
+  &nbsp;
+  - Не надо хардкодить 999, 1000 + i.
+  - Безопаснее:
     &nbsp;
-    - создание стадии все еще падает;
-    - клик по карточке в Gorbova Club нестабилен;
-    - selection mode UX недоделан;
-    - визуальные артефакты по колонкам/карточкам остались.
+    - взять текущий max(order_index) по pipeline;
+    - временный диапазон сделать как maxOrder + 100 + i;
+    - новую стадию вставлять в этот же safe-range;
+    - потом один раз нормализовать в 0..N.
     &nbsp;
-  - Поэтому текущий отчет считать **частично выполненным**, не финальным proof.
+  - Так патч не зависит от текущих данных и не упрется в случайный занятый индекс.
   &nbsp;
-2. **createStage() чинить не только временной safe-zone, но и полной нормализацией порядка**
+3. **Нормализацию порядка нужно делать для всей pipeline целиком**
   &nbsp;
-  - Согласен с твоим выводом: одной отрицательной зоны недостаточно.
-  - После insert обязательно делать **финальную каноническую перенумерацию всех стадий pipeline**:
+  - Не только closed stages.
+  - Канонический порядок после любого create:
     &nbsp;
-    - сначала все open;
-    - затем closed_won;
-    - затем closed_lost;
-    - индексы подряд без дырок и дублей.
+    - все open,
+    - потом closed_won,
+    - потом closed_lost.
     &nbsp;
-  - Это должно быть единым helper, который используется после create и при необходимости после delete/reorder.
+  - И индексы должны быть подряд, без дырок и дублей.
   &nbsp;
-3. **Добавить machine-check по order_index после создания стадии**
+4. **По второй проблеме в плане есть важная неточность**
   &nbsp;
-  - В DoD добавить не только UI-проверку, но и факт:
+  - setNodeRef **не нужно** переносить с wrapper на handle.
+  - Для dnd-kit это как раз риск сломать drag-preview/transform, потому что draggable node и transform должны относиться к одному реальному draggable element.
+  - Правильнее:
     &nbsp;
-    - нет дублей по order_index внутри pipeline;
-    - нет значений из временной safe-zone после завершения операции;
-    - closed_won и closed_lost реально стоят последними.
+    - setNodeRef оставить на wrapper карточки;
+    - listeners/attributes держать только на handle;
+    - убрать перекрытие handle поверх content;
+    - проверить z-index, pointer-events, ширину handle и паддинги content.
     &nbsp;
+  - То есть root issue не в самом setNodeRef, а в геометрии и hit-area.
   &nbsp;
-4. **Selection mode: верхнюю плашку убрать полностью**
+5. **Handle надо сделать не overlay-полосой, а компактной самостоятельной зоной**
   &nbsp;
-  - Да, текущая верхняя полоса — лишняя и портит layout.
-  - Не оставлять даже “узкую версию”.
-  - Выход из режима:
+  - Сейчас absolute left-0 top-0 bottom-0 w-5 слишком агрессивен.
+  - Надо заменить на отдельный небольшой handle внутри карточки:
     &nbsp;
-    - через Escape;
-    - через floating bulk bar;
-    - через компактный control прямо в header стадии.
+    - слева сверху или в углу,
+    - без перекрытия content,
+    - без растягивания на всю высоту карточки.
     &nbsp;
-  - Верх доски должен оставаться чистым.
+  - Тогда click по content гарантированно не конфликтует с drag.
   &nbsp;
-5. **Checkbox в header показывать всегда, не только когда есть сделки**
+6. **В план добавить проверку реального hit-test**
   &nbsp;
-  - Лучше показывать во всех стадиях для консистентности.
-  - Для пустой стадии:
+  - Перед execute проверить:
     &nbsp;
-    - checkbox disabled;
-    - визуально в том же месте, чтобы layout header не прыгал.
+    - какой элемент реально получает pointerdown;
+    - не перекрывает ли handle текстовую область;
+    - нет ли поверх карточки move-button/checkbox/container layer;
+    - не ломает ли click selection mode.
     &nbsp;
-  - Это лучше, чем скрывать его.
+  - Это обязательный dry-run пункт.
   &nbsp;
-6. **Логика входа в selection mode**
+7. **backdrop-blur-md действительно можно убрать**
   &nbsp;
-  - Подтверждаю:
+  - Как visual fix и для снижения артефактов — это логично.
+  - Но это не основной root cause click-bug, а только дополнительная очистка визуала.
+  &nbsp;
+8. **Патч реально можно держать узким — только 2 файла**
+  &nbsp;
+  - pipelineService.ts
+  - KanbanDealCard.tsx
+  - Это хороший scope.
+  &nbsp;
+9. **Уточнить execute по createStage**
+  &nbsp;
+  - Последовательность должна быть такой:
     &nbsp;
-    - первый клик по checkbox стадии при bulkMode=false только включает режим;
-    - ничего не выделяет;
-    - второй клик по этому же checkbox уже делает select all только в этой стадии.
+    1. прочитать все стадии pipeline;
+    2. вычислить safeBase = max(order_index) + 100;
+    3. увести **все** стадии в safeBase + i;
+    4. вставить новую стадию тоже в safe-range;
+    5. перечитать стадии;
+    6. один раз финально перенумеровать в каноническом порядке.
     &nbsp;
-  - Дополнительно:
-    &nbsp;
-    - после входа в режим карточки по одному должны сразу выделяться обычным кликом по checkbox карточки;
-    - не должно быть промежуточного “режим включен, но выбрать еще нельзя”.
-    &nbsp;
+  - Не вставлять новую стадию сразу в рабочий индекс.
   &nbsp;
-7. **Открытие карточки в Gorbova Club**
-  &nbsp;
-  - Здесь нужно зафиксировать в плане, что исправление делается **через разделение зон**:
-    &nbsp;
-    - отдельная маленькая drag handle зона;
-    - отдельная безопасная зона обычного клика по карточке.
-    &nbsp;
-  - Не полагаться на “distance: 5” как решение.
-  - Drag listeners не должны висеть на всей карточке.
-  &nbsp;
-8. **В DoD для карточки добавить явный runtime-scenario**
-  &nbsp;
-  - Проверить в самой длинной колонке:
-    &nbsp;
-    - обычный click открывает карточку;
-    - drag стартует только из handle-зоны;
-    - случайный click при попытке прокрутки/наведения не запускает drag;
-    - после этого drag-and-drop по-прежнему работает.
-    &nbsp;
-  &nbsp;
-9. **Визуальные артефакты по цветам**
-  &nbsp;
-  - Согласен: не переписывать палитру, а убрать источник артефактов.
-  - В плане нужно явно зафиксировать:
-    &nbsp;
-    - никаких изменений размеров/бордеров/отступов на hover;
-    - никаких дополнительных blur/overlay-слоев, меняющих компоновку;
-    - tinted background и карточка должны быть геометрически стабильны.
-    &nbsp;
-  - Проверять отдельно:
-    &nbsp;
-    - hover по колонке;
-    - hover по карточке;
-    - selected state;
-    - drag state.
-    &nbsp;
-  &nbsp;
-10. **KanbanDealCard привести к стабильной геометрии**
+10. **Уточнить execute по карточке**
 
 &nbsp;
 
@@ -115,11 +97,14 @@
 
 &nbsp;
 
-- В плане добавить:
+- Последовательность:
   &nbsp;
-  - border-left всегда фиксированной толщины;
-  - hover не должен менять высоту, ширину, shadow spread так, чтобы появлялись полосы;
-  - selected state не должен сдвигать текст или бейджи.
+  1. wrapper остается draggable node;
+  2. handle становится компактной inline-зоной;
+  3. listeners/attributes только на handle;
+  4. content-zone получает чистый onClick;
+  5. handle не absolute на всю высоту карточки;
+  6. move-button и checkbox остаются с stopPropagation.
   &nbsp;
 
 &nbsp;
@@ -128,7 +113,7 @@
 
 &nbsp;
 
-11. **Старую кнопку “Назначить все” не оставлять как есть без проверки**
+11. **DoD надо усилить**
 
 &nbsp;
 
@@ -136,36 +121,18 @@
 
 &nbsp;
 
-- Пока не удалять, но в плане отметить:
+- Не просто “клик открывает карточку”, а:
   &nbsp;
-  - проверить, не конфликтует ли она с новым selection flow;
-  - если конфликтует UX-логически, вынести в follow-up patch или убрать.
+  - в Основная / Без стадии;
+  - в Gorbova Club / Успешно;
+  - в ЗАКРОЙ ГОД / Успешно;
+  - в длинной колонке со скроллом.
   &nbsp;
-- Иначе получится две параллельные массовые логики.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-12. **Отчет нужно поправить формулировками**
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- В отчете нельзя писать, что фикс закрыт, если:
+- И отдельно:
   &nbsp;
-  - стадия не создается;
-  - карточка не открывается;
-  - UX режима выделения не доведен.
-  &nbsp;
-- Корректная формулировка:
-  &nbsp;
-  - “часть изменений внесена, но patch не закрыт; нужен follow-up fix по 4 проблемным зонам”.
+  - drag стартует только из handle;
+  - клик по content никогда не стартует drag;
+  - создание 2 стадий подряд проходит без check и без unique.
   &nbsp;
 
 &nbsp;
@@ -174,7 +141,7 @@
 
 &nbsp;
 
-13. **Итоговая структура execute**
+12. **Итог**
 
 &nbsp;
 
@@ -182,160 +149,98 @@
 
 &nbsp;
 
-- Сначала:
+- План правильный по направлению.
+- Нужно только поправить 2 вещи:
   &nbsp;
-  - createStage + нормализация порядка;
-  - затем click/drag split;
-  - затем selection mode UX;
-  - затем визуальная зачистка артефактов.
-  &nbsp;
-- После этого уже единый runtime-proof по всем 4 пунктам.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-14. **Итоговый DoD усилить**
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- Добавить обязательные proof-сценарии:
-  &nbsp;
-  - создание 2 стадий подряд без ошибки;
-  - открытие карточки в Gorbova Club;
-  - вход в selection mode первым кликом без массового выделения;
-  - partial selection по нескольким стадиям;
-  - отсутствие визуальных полос/мерцания на hover и drag.
+  - safe-zone делать динамической positive, а не 999/1000;
+  - setNodeRef не переносить на handle, а оставить на wrapper и уменьшить/развести hit-area handle.
   &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-Итог: план в правильную сторону, но закрывать его надо только как **follow-up fix patch**, а не как подтверждение, что прошлый патч уже успешен.
+Итоговая формулировка: **план принимается, но с этими правками**.
 
 &nbsp;
 
-План:
+План: Fix createStage + click-to-open (узкий patch)
 
-1. Проблема
+## Диагностика — root cause найден
 
-Не закрыты 4 дефекта в kanban CRM:
+### 1. createStage — CHECK constraint
 
-- в Gorbova Club клик по карточке не открывает сделку;
-- создание новой стадии всё ещё падает с `uq_crm_pipeline_stages_order`;
-- selection mode реализован неудобно и визуально ломает layout;
-- tinted-цвета карточек/колонок дают артефакты и «полосы» при движении мыши.
+```
+CHECK ((order_index >= 0))
+UNIQUE (pipeline_id, order_index)
+```
 
-2. Диагностика
+Текущий код использует `-(i + 1000)` для safe-zone → **нарушает CHECK `order_index >= 0**`. Это точная причина ошибки `crm_pipeline_stages_order_index_check`.
 
-- `docs/ENGINEERING_RULES.md` прочитан, работаю в порядке Diagnose → Plan → Dry run → Execute → Verify.  
-- В `DealsKanbanBoard.tsx` верхняя плашка `Выйти из выделения` всё ещё рендерится и сдвигает доску.  
-- В `KanbanColumnHeader.tsx` header-checkbox показывается только когда `totalInStage > 0`, поэтому визуально он есть лишь в стадиях с данными.  
-- Логика первого клика для входа в selection mode уже есть, но UX недоделан: нет компактного выхода из режима в самой колонке, а верхняя плашка занимает место.  
-- В `KanbanDealCard.tsx` drag listeners навешаны на всю кликабельную область карточки. Это вероятный root cause, почему в длинной колонке Gorbova Club drag перехватывает обычный click.  
-- `createStage()` в `pipelineService.ts` уже двигает closed-стадии во временную зону, но вставляет новую стадию по `openStages.length`. Это небезопасно, если `order_index` у open-стадий уже не нормализован после прошлых операций/удалений. Нужна не только временная зона, а обязательная финальная нормализация всего порядка.  
-- В `KanbanColumn.tsx` и `KanbanDealCard.tsx` одновременно используются tinted backgrounds, blur и hover/transitions. Текущий визуальный слой всё ещё даёт compositing-артефакты.
+### 2. Карточка — click vs drag
 
-3. Предлагаемое решение
+Drag handle: `absolute left-0 top-0 bottom-0 w-5` с `{...attributes} {...listeners}` висит поверх карточки. Content div: `pl-5`. Структура верная, но проблема в том, что `useDraggable` привязан к `setNodeRef` на **внешнем wrapper div**, а не на handle. Это значит **весь wrapper** — draggable node для dnd-kit, и pointer events на всей карточке обрабатываются dnd-kit sensor, даже если listeners на handle. Нужно `setNodeRef` оставить на wrapper (это обязательно для dnd-kit), но `listeners` и `attributes` вынести только на handle — что уже сделано. Однако `PointerSensor` с `activationConstraint: { distance: 5 }` может всё равно перехватывать pointer на wrapper. Решение: использовать `**useDraggable` disabled** для тяжёлых колонок не нужно — нужно просто убедиться, что `onPointerDown` не перехватывается wrapper'ом. Текущий handle уже имеет `listeners`, но wrapper ref всё равно даёт dnd-kit контроль. Нужно использовать отдельный ref для handle.
 
-- Починить createStage через канонический helper нормализации порядка стадий:
-  - перечитать стадии;
-  - временно увести все стадии текущей воронки в safe-zone;
-  - вставить новую open-стадию;
-  - один раз финально перенумеровать: все `open` подряд, затем `closed_won`, затем `closed_lost`, без дырок и дублей.
-- Selection mode довести до нормального UX:
-  - убрать верхнюю широкую кнопку/плашку полностью;
-  - оставить вход через checkbox в header стадии;
-  - checkbox в header показывать всегда, а не только в заполненных стадиях;
-  - первый клик при `bulkMode=false` только включает режим;
-  - второй и последующие клики работают как select-all/deselect-all для конкретной стадии;
-  - добавить компактный выход из режима прямо в header стадии и сохранить Escape + нижний floating bar.
-- Исправить открытие карточек:
-  - отделить click-to-open от drag;
-  - убрать drag listeners со всей поверхности карточки;
-  - перенести drag на компактную handle-зону, чтобы обычный клик гарантированно открывал сделку.
-- Убрать цветовые артефакты:
-  - стабилизировать геометрию карточек;
-  - упростить tinted/hover-слои там, где они создают полосы;
-  - не менять размеры/толщины/прозрачные бордеры на hover;
-  - сохранить читаемость текста и бейджей.
+## Изменяемые файлы (только 2)
 
-4. Изменяемые компоненты
+### `src/services/pipelineService.ts`
 
-- `src/services/pipelineService.ts` — безопасное создание стадии + финальная нормализация порядка.  
-- `src/hooks/usePipelineStages.ts` — при необходимости только invalidate/сообщения без смены архитектуры.  
-- `src/components/admin/deals/DealsKanbanBoard.tsx` — убрать верхнюю плашку выхода из selection mode, оставить чистый layout.  
-- `src/components/admin/deals/KanbanColumnHeader.tsx` — всегда видимый checkbox, первый клик = enter mode, компактный exit control в header.  
-- `src/components/admin/deals/KanbanColumn.tsx` — прокинуть новый selection-flow и выровнять визуальный слой стадии.  
-- `src/components/admin/deals/KanbanDealCard.tsx` — разделить click и drag, убрать источник hover-артефактов.  
-- при необходимости `src/lib/stagePalette.ts` — только точечная корректировка tinted-утилит без смены палитры.
+**normalizeStageOrder**: заменить negative safe-zone на positive (1000 + i):
 
-5. Что не будет изменено
+```typescript
+// Phase 1: move all to positive safe-zone (1000+)
+for (let i = 0; i < ordered.length; i++) {
+  await supabase.from("crm_pipeline_stages")
+    .update({ order_index: 1000 + i })
+    .eq("id", ordered[i].id);
+}
+// Phase 2: assign 0..N
+for (let i = 0; i < ordered.length; i++) {
+  await supabase.from("crm_pipeline_stages")
+    .update({ order_index: i })
+    .eq("id", ordered[i].id);
+}
+```
 
-- Bulk delete / bulk move / export логика.  
-- List-view, если баги не общие.  
-- SQL/schema БД, если не обнаружится новый blocker.  
-- Цветовая палитра как концепция — только устранение артефактов применения.
+**createStage**: insert с `order_index: 999` (вместо -1), затем normalizeStageOrder.
 
-6. Dry-run
+### `src/components/admin/deals/KanbanDealCard.tsx`
 
-Перед выполнением:
+Убрать `backdrop-blur-md` с карточки (источник визуальных артефактов).
 
-- проверить текущий фактический порядок `order_index` у стадий проблемной воронки и смоделировать финальную последовательность;
-- локально проследить selection flow для сценария:
-  - первый клик по header-checkbox;
-  - ручное частичное выделение;
-  - select-all по одной стадии;
-  - compact exit;
-- проверить, какие элементы карточки сейчас перехватывают pointer/click и где safest split для drag handle;
-- сравнить текущие стили колонки и карточки, чтобы убрать именно источник артефактов, а не переписать всю раскраску.
+Для drag: использовать отдельный ref на handle вместо `setNodeRef` на wrapper:
 
-7. Execute
+```typescript
+const { attributes, listeners, setNodeRef: setDragRef, transform } = useDraggable({...});
 
-- Внести helper нормализации порядка стадий и перевести `createStage()` на него.  
-- Удалить верхний selection strip.  
-- Доделать header-checkbox flow и компактный exit в header.  
-- Отвязать open-card click от drag listeners через отдельную handle-зону.  
-- Подчистить tinted/hover-слои карточек и стадий, чтобы убрать полосы/мерцание.
+// wrapper: НЕ setNodeRef
+<div style={...} className={...}>
+  {/* handle: setDragRef + listeners */}
+  <div ref={setDragRef} {...attributes} {...listeners} className="drag-handle...">
+    <GripVertical />
+  </div>
+  {/* content: onClick */}
+  <div onClick={handleCardClick} className="p-3 cursor-pointer">
+    ...
+  </div>
+</div>
+```
 
-8. STOP-guards
+Это полностью разделит drag и click зоны: dnd-kit будет отслеживать только handle element.
 
-Остановиться, если:
+## Что НЕ меняется
 
-- выяснится, что duplicate key идёт не из `order_index`, а из другого constraint;
-- для открытия карточки нужен backend/RLS fix, а не UI-click fix;
-- визуальный фикс начинает ломать контраст текста, badges или drag-and-drop;
-- появится новый shared баг в list-view, который требует отдельного patch scope.
+- Selection mode
+- Цвета/палитра
+- KanbanColumn, KanbanColumnHeader
+- Bulk операции
+- SQL/schema
 
-9. DoD
+## DoD
 
-Патч считать закрытым только если подтверждено:
-
-- новая стадия создаётся 2 раза подряд без `uq_crm_pipeline_stages_order`;
-- после создания порядок корректный: все open сначала, `Успешно` и `Отказ` в конце;
-- воронка не сдвигается из-за большой верхней кнопки выхода из выделения;
-- checkbox в header есть во всех стадиях как единая точка входа в selection mode;
-- первый клик по checkbox только включает selection mode;
-- второй клик по этому же checkbox делает select-all только в этой стадии;
-- partial selection по нескольким стадиям работает без сценария “сначала выбрать всё”;
-- выход из selection mode доступен компактно из самой стадии + Escape + нижний floating bar;
-- в Gorbova Club карточка открывается обычным кликом стабильно;
-- drag-and-drop не сломан;
-- цветовые полосы/артефакты при движении мыши исчезли или сведены к нулю визуально.
-
-10. Риски и зависимости
-
-- Наиболее вероятный скрытый риск — не-нормализованные `order_index` после прошлых delete/reorder операций.  
-- Для клика по карточке может потребоваться чуть более явный drag handle, чем сейчас, чтобы гарантированно убрать конфликт.  
-- Runtime-proof потребуется уже в execute-режиме: UI-проверка в Gorbova Club + создание 2 стадий подряд + визуальная проверка hover.
-
-11. Требуется дополнительная информация
-
-Дополнительных данных от вас не нужно. После approval следующий шаг — локально применить patch и дать proof именно по 4 зонам: `createStage`, selection mode, click-to-open в Gorbova Club, визуальные цветовые артефакты.
+1. createStage 2 раза подряд без ошибок (ни check, ни unique)
+2. После refresh порядок: open → closed_won → closed_lost
+3. Click открывает карточку в Основная, Gorbova Club, ЗАКРОЙ ГОД
+4. Drag стартует только из handle (GripVertical)
+5. Selection mode не сломан
+6. Нет визуальных артефактов (backdrop-blur убран)
