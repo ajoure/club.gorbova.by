@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback, useRef } from "react";
+import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import {
   DndContext,
   closestCenter,
@@ -13,20 +13,18 @@ import { useDealsBoard, type BoardDeal } from "@/hooks/useDealsBoard";
 import { usePipelineStages } from "@/hooks/usePipelineStages";
 import { KanbanColumn } from "./KanbanColumn";
 import { KanbanSummaryStrip } from "./KanbanSummaryStrip";
+import { KanbanBulkActionsBar } from "./KanbanBulkActionsBar";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePermissions } from "@/hooks/usePermissions";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import {
-  Popover,
-  PopoverContent,
-} from "@/components/ui/popover";
 import type { CrmPipelineStage } from "@/services/pipelineService";
 
 interface Props {
   pipelineId: string;
+  pipelineName?: string;
   isDefaultPipeline?: boolean;
   search?: string;
   productId?: string | null;
@@ -43,7 +41,7 @@ const formatCurrency = (v: number, currency?: string | null) =>
     maximumFractionDigits: 0,
   }).format(v);
 
-export function DealsKanbanBoard({ pipelineId, isDefaultPipeline, search, productId, tariffIds, dateFrom, dateTo, onOpenDeal }: Props) {
+export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, search, productId, tariffIds, dateFrom, dateTo, onOpenDeal }: Props) {
   const { canWrite, isSuperAdmin } = usePermissions();
   const canEdit = canWrite("deals") || isSuperAdmin();
 
@@ -56,25 +54,77 @@ export function DealsKanbanBoard({ pipelineId, isDefaultPipeline, search, produc
   const [showNewStage, setShowNewStage] = useState(false);
   const [newStageName, setNewStageName] = useState("");
 
-  // Shared move menu state (one for entire board)
+  // Bulk selection state
+  const [selectedDealIds, setSelectedDealIds] = useState<Set<string>>(new Set());
+  const bulkMode = selectedDealIds.size > 0;
+
+  // Clear selection when pipeline/filters change
+  useEffect(() => {
+    setSelectedDealIds(new Set());
+  }, [pipelineId, search, productId, dateFrom, dateTo]);
+
+  const toggleSelect = useCallback((dealId: string) => {
+    setSelectedDealIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(dealId)) {
+        next.delete(dealId);
+      } else {
+        next.add(dealId);
+      }
+      return next;
+    });
+  }, []);
+
+  const selectAllInStage = useCallback((stageId: string) => {
+    const grouped = groupByStage(stages);
+    const stageDeals = grouped[stageId] || [];
+    setSelectedDealIds((prev) => {
+      const next = new Set(prev);
+      stageDeals.forEach((d) => next.add(d.id));
+      return next;
+    });
+  }, [stages, groupByStage]);
+
+  const deselectAllInStage = useCallback((stageId: string) => {
+    const grouped = groupByStage(stages);
+    const stageDeals = grouped[stageId] || [];
+    setSelectedDealIds((prev) => {
+      const next = new Set(prev);
+      stageDeals.forEach((d) => next.delete(d.id));
+      return next;
+    });
+  }, [stages, groupByStage]);
+
+  const selectAll = useCallback(() => {
+    setSelectedDealIds(new Set(deals.map((d) => d.id)));
+  }, [deals]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedDealIds(new Set());
+  }, []);
+
+  // Shared move menu state
   const [moveTarget, setMoveTarget] = useState<{ dealId: string; anchorEl: HTMLElement } | null>(null);
   const moveAnchorRef = useRef<HTMLDivElement>(null);
 
+  // Disable drag sensors in bulk mode
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   );
+  const emptySensors = useSensors();
 
   const grouped = useMemo(() => groupByStage(stages), [deals, stages]);
 
   const handleDragStart = useCallback((e: DragStartEvent) => {
+    if (bulkMode) return;
     const deal = deals.find((d) => d.id === e.active.id);
     setActiveDeal(deal || null);
-    // Close move menu if open during drag
     setMoveTarget(null);
-  }, [deals]);
+  }, [deals, bulkMode]);
 
   const handleDragEnd = useCallback((e: DragEndEvent) => {
     setActiveDeal(null);
+    if (bulkMode) return;
     const { active, over } = e;
     if (!over || !canEdit) return;
 
@@ -88,7 +138,7 @@ export function DealsKanbanBoard({ pipelineId, isDefaultPipeline, search, produc
       newStageId: targetStageId,
       oldStageId: deal.pipeline_stage_id,
     });
-  }, [deals, canEdit, moveDeal]);
+  }, [deals, canEdit, moveDeal, bulkMode]);
 
   const handleCreateStage = async () => {
     if (!newStageName.trim()) return;
@@ -97,12 +147,10 @@ export function DealsKanbanBoard({ pipelineId, isDefaultPipeline, search, produc
     setShowNewStage(false);
   };
 
-  // Shared move click handler — stable callback for memo
   const handleMoveClick = useCallback((dealId: string, anchorEl: HTMLElement) => {
     setMoveTarget({ dealId, anchorEl });
   }, []);
 
-  // Handle move deal from shared menu
   const handleMoveToStage = useCallback((targetStageId: string) => {
     if (!moveTarget || !canEdit) return;
     const deal = deals.find(d => d.id === moveTarget.dealId);
@@ -115,12 +163,12 @@ export function DealsKanbanBoard({ pipelineId, isDefaultPipeline, search, produc
     setMoveTarget(null);
   }, [moveTarget, deals, canEdit, moveDeal]);
 
-  // Stable onOpenDeal callback
   const handleOpenDeal = useCallback((id: string) => {
+    if (bulkMode) return; // Don't open deals in bulk mode
     onOpenDeal(id);
-  }, [onOpenDeal]);
+  }, [onOpenDeal, bulkMode]);
 
-  // Summary totals — includes __unassigned
+  // Summary totals
   const summaryTotals = useMemo(() => {
     const unassigned = grouped.__unassigned || [];
     const unassignedTotals = getStageTotals(unassigned);
@@ -151,7 +199,6 @@ export function DealsKanbanBoard({ pipelineId, isDefaultPipeline, search, produc
     };
   }, [stages, grouped, deals, getStageTotals]);
 
-  // Available stages for move menu (exclude current deal's stage)
   const moveMenuStages = useMemo(() => {
     if (!moveTarget) return [];
     const deal = deals.find(d => d.id === moveTarget.dealId);
@@ -172,7 +219,6 @@ export function DealsKanbanBoard({ pipelineId, isDefaultPipeline, search, produc
     );
   }
 
-  // Position for shared popover anchor
   const anchorRect = moveTarget?.anchorEl?.getBoundingClientRect();
 
   return (
@@ -181,7 +227,7 @@ export function DealsKanbanBoard({ pipelineId, isDefaultPipeline, search, produc
         <KanbanSummaryStrip {...summaryTotals} />
 
         <DndContext
-          sensors={sensors}
+          sensors={bulkMode ? emptySensors : sensors}
           collisionDetection={closestCenter}
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
@@ -197,11 +243,16 @@ export function DealsKanbanBoard({ pipelineId, isDefaultPipeline, search, produc
                 deals={grouped.__unassigned || []}
                 totals={getStageTotals(grouped.__unassigned || [])}
                 onOpenDeal={handleOpenDeal}
-                onMoveClick={canEdit ? handleMoveClick : undefined}
-                showMoveButton={canEdit && stages.length > 0}
+                onMoveClick={canEdit && !bulkMode ? handleMoveClick : undefined}
+                showMoveButton={canEdit && stages.length > 0 && !bulkMode}
                 availableStages={stages}
                 canEdit={canEdit}
                 pipelineId={pipelineId}
+                bulkMode={bulkMode}
+                selectedDealIds={selectedDealIds}
+                onToggleSelect={toggleSelect}
+                onSelectAllInStage={selectAllInStage}
+                onDeselectAllInStage={deselectAllInStage}
               />
             )}
 
@@ -215,8 +266,8 @@ export function DealsKanbanBoard({ pipelineId, isDefaultPipeline, search, produc
                 deals={grouped[stage.id] || []}
                 totals={getStageTotals(grouped[stage.id] || [])}
                 onOpenDeal={handleOpenDeal}
-                onMoveClick={canEdit ? handleMoveClick : undefined}
-                showMoveButton={canEdit && stages.length > 1}
+                onMoveClick={canEdit && !bulkMode ? handleMoveClick : undefined}
+                showMoveButton={canEdit && stages.length > 1 && !bulkMode}
                 availableStages={stages.filter((s) => s.id !== stage.id)}
                 canEdit={canEdit}
                 onRename={canEdit ? (name) => renameStage({ id: stage.id, name }) : undefined}
@@ -225,6 +276,11 @@ export function DealsKanbanBoard({ pipelineId, isDefaultPipeline, search, produc
                     ? (targetId) => deleteStage({ stageId: stage.id, targetStageId: targetId })
                     : undefined
                 }
+                bulkMode={bulkMode}
+                selectedDealIds={selectedDealIds}
+                onToggleSelect={toggleSelect}
+                onSelectAllInStage={selectAllInStage}
+                onDeselectAllInStage={deselectAllInStage}
               />
             ))}
 
@@ -266,7 +322,7 @@ export function DealsKanbanBoard({ pipelineId, isDefaultPipeline, search, produc
             )}
           </div>
 
-          {/* Lightweight DragOverlay — no hooks, no portals, no heavy card */}
+          {/* DragOverlay */}
           <DragOverlay>
             {activeDeal ? (
               <div className="p-3 rounded-xl border border-border/40 bg-card shadow-xl opacity-90 rotate-1 w-[260px] pointer-events-none">
@@ -284,7 +340,7 @@ export function DealsKanbanBoard({ pipelineId, isDefaultPipeline, search, produc
           </DragOverlay>
         </DndContext>
 
-        {/* Shared move menu — one for entire board */}
+        {/* Shared move menu */}
         {moveTarget && anchorRect && (
           <div
             ref={moveAnchorRef}
@@ -322,7 +378,6 @@ export function DealsKanbanBoard({ pipelineId, isDefaultPipeline, search, produc
             </div>
           </div>
         )}
-        {/* Backdrop to close shared move menu on outside click */}
         {moveTarget && (
           <div
             className="fixed inset-0 z-40"
@@ -332,6 +387,18 @@ export function DealsKanbanBoard({ pipelineId, isDefaultPipeline, search, produc
             }}
           />
         )}
+
+        {/* Bulk actions floating bar */}
+        <KanbanBulkActionsBar
+          selectedIds={selectedDealIds}
+          allDeals={deals}
+          stages={stages}
+          pipelineId={pipelineId}
+          pipelineName={pipelineName}
+          totalBoardDeals={deals.length}
+          onClearSelection={clearSelection}
+          onSelectAll={selectAll}
+        />
       </div>
     </TooltipProvider>
   );
