@@ -173,6 +173,15 @@ export const formContentSchema = z.object({
     required: z.boolean().default(false),
     mapping: z.string().default("none"),
   })).default([]),
+  // Auth & CRM settings — persisted in block content, NOT runtime state
+  auth_mode: z.boolean().default(false),
+  telegram_link: z.boolean().default(false),
+  product_binding_enabled: z.boolean().default(false),
+  product_id: z.string().default(""),
+  tariff_id: z.string().default(""),
+  deal_creation_enabled: z.boolean().default(false),
+  pipeline_id: z.string().default(""),
+  pipeline_stage_id: z.string().default(""),
 });
 
 // ─── New Site Builder Block Schemas ───
