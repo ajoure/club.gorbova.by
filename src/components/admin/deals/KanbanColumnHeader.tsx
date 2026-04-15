@@ -76,6 +76,7 @@ export function KanbanColumnHeader({
   bulkMode,
   onEnterSelectionMode,
   onExitSelectionMode,
+  dragHandleProps,
 }: Props) {
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(name);
