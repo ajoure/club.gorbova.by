@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { ClipboardList, FileText, GraduationCap, Layers, Download, LayoutList } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FormsAllTabContent } from "@/components/admin/forms/FormsAllTabContent";
-import { PreregistrationsTabContent } from "@/components/admin/payments/PreregistrationsTabContent";
+import { FormsPreorderTabContent } from "@/components/admin/forms/FormsPreorderTabContent";
 import { FormsSiteTabContent } from "@/components/admin/forms/FormsSiteTabContent";
 import { FormsTrainingTabContent } from "@/components/admin/forms/FormsTrainingTabContent";
 import { FormsByProductTabContent } from "@/components/admin/forms/FormsByProductTabContent";
@@ -58,7 +58,7 @@ export default function AdminFormsHub() {
         <div className="flex-1 min-h-0 overflow-auto px-3 md:px-4 pb-4">
           {activeTab === "all" && <FormsAllTabContent />}
           {activeTab === "site" && <FormsSiteTabContent />}
-          {activeTab === "preorders" && <PreregistrationsTabContent />}
+          {activeTab === "preorders" && <FormsPreorderTabContent />}
           {activeTab === "training" && <FormsTrainingTabContent />}
           {activeTab === "by-product" && <FormsByProductTabContent />}
           {activeTab === "export" && <FormsExportTabContent />}
