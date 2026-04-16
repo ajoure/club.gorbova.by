@@ -18,7 +18,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
-import { useUserRole } from "@/hooks/useUserRole";
+import { useAuth } from "@/contexts/AuthContext";
 import { buildDeleteSummary, useFormsBulkDelete } from "@/hooks/useFormsBulkDelete";
 import type { FormsHubRow } from "@/hooks/useFormsHubData";
 
@@ -30,7 +30,8 @@ interface Props {
 }
 
 export function FormsBulkActionsBar({ selectedRows, totalCount, onClearSelection, onSelectAll }: Props) {
-  const { isAdmin } = useUserRole();
+  const { role } = useAuth();
+  const isAdmin = role === "admin" || role === "superadmin";
   const [confirmOpen, setConfirmOpen] = useState(false);
   const deleteMutation = useFormsBulkDelete();
 
@@ -45,12 +46,6 @@ export function FormsBulkActionsBar({ selectedRows, totalCount, onClearSelection
       },
     });
   };
-
-  const handleBulkDelete = isAdmin && deletableCount > 0 + summary.training_skipped.length > 0
-    ? () => setConfirmOpen(true)
-    : isAdmin
-      ? () => setConfirmOpen(true)
-      : undefined;
 
   return (
     <>
@@ -72,15 +67,15 @@ export function FormsBulkActionsBar({ selectedRows, totalCount, onClearSelection
                 <div className="text-sm">Будет выполнено:</div>
                 <ul className="text-sm space-y-1.5 pl-4">
                   <li className="flex items-center gap-2">
-                    <span className="inline-block w-2 h-2 rounded-full bg-blue-500" />
+                    <span className="inline-block w-2 h-2 rounded-full bg-primary" />
                     Анкеты сайта: <strong>{summary.site_form.length}</strong> → удалить
                   </li>
                   <li className="flex items-center gap-2">
-                    <span className="inline-block w-2 h-2 rounded-full bg-amber-500" />
+                    <span className="inline-block w-2 h-2 rounded-full bg-secondary" />
                     Предзаписи: <strong>{summary.preorder.length}</strong> → удалить
                   </li>
                   <li className="flex items-center gap-2">
-                    <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
+                    <span className="inline-block w-2 h-2 rounded-full bg-muted-foreground" />
                     Обучение: <strong>{summary.training_skipped.length}</strong> → пропустить (нельзя удалять прогресс ученика)
                   </li>
                 </ul>
