@@ -242,6 +242,16 @@ export const embedSiteContentSchema = z.object({
   height: z.number().default(400),
 });
 
+// ─── Site Questionnaire (Phase 2) ───
+// Тонкий wrapper над training engine. lessonId — UUID urok'а в служебном module
+// '__site_questionnaires__'. Editor предоставляет ТОЛЬКО selector/wrapper —
+// сам редактор вопросов = canonical lesson_blocks editor (admin/training).
+export const siteQuestionnaireContentSchema = z.object({
+  lessonId: z.string().default(""),
+  title: z.string().default(""),
+  subtitle: z.string().default(""),
+});
+
 // ─── Block Content Schemas Map ───
 
 export const blockContentSchemas = {
