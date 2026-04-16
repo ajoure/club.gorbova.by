@@ -19,7 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { User, FileText, Upload, MessageSquare, ChevronDown } from "lucide-react";
+import { FileText, Upload, MessageSquare, ChevronDown } from "lucide-react";
 import { FeedbackDrawer } from "@/components/training-feedback/FeedbackDrawer";
 import { getFileTypeIcon } from "@/components/admin/lesson-editor/blocks/fileTypeIcons";
 import { format } from "date-fns";
