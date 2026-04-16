@@ -43,6 +43,7 @@ import { QuoteBlock } from "@/components/admin/lesson-editor/blocks/QuoteBlock";
 import { BlockSettingsEditor } from "./blocks/BlockSettingsEditor";
 import { useState } from "react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { useSitePageAnchors, type AnchorsRegistry } from "@/hooks/useSitePageAnchors";
 
 const BLOCK_TYPES: { type: BlockType; label: string; icon: React.ReactNode }[] = [
   { type: "hero", label: "Hero секция", icon: <Layout className="h-4 w-4" /> },
@@ -105,7 +106,7 @@ function getDefaultContent(type: BlockType): Record<string, unknown> {
   }
 }
 
-function BlockEditorComponent({ block, onChange }: { block: SiteBlock; onChange: (content: Record<string, unknown>) => void }) {
+function BlockEditorComponent({ block, onChange, registry }: { block: SiteBlock; onChange: (content: Record<string, unknown>) => void; registry: AnchorsRegistry }) {
   switch (block.type) {
     case "hero": return <HeroBlockEditor content={block.content} onChange={onChange} />;
     case "text": return <TextBlockEditor content={block.content} onChange={onChange} />;
@@ -116,7 +117,7 @@ function BlockEditorComponent({ block, onChange }: { block: SiteBlock; onChange:
     case "faq": return <FaqBlockEditor content={block.content} onChange={onChange} />;
     case "divider": return <DividerBlockEditor content={block.content} onChange={onChange} />;
     case "video": return <VideoBlockEditor content={block.content} onChange={onChange} />;
-    case "button": return <ButtonBlockEditor content={block.content} onChange={onChange} />;
+    case "button": return <ButtonBlockEditor content={block.content} onChange={onChange} registry={registry} currentBlockId={block.id} />;
     case "columns": return <ColumnsBlockEditor content={block.content} onChange={onChange} />;
     case "timer": return <TimerBlockEditor content={block.content} onChange={onChange} />;
     case "html": return <HtmlBlockEditor content={block.content} onChange={onChange} />;
@@ -137,8 +138,9 @@ function BlockEditorComponent({ block, onChange }: { block: SiteBlock; onChange:
   }
 }
 
-function SortableBlock({ block, onUpdate, onUpdateSettings, onDelete }: {
+function SortableBlock({ block, registry, onUpdate, onUpdateSettings, onDelete }: {
   block: SiteBlock;
+  registry: AnchorsRegistry;
   onUpdate: (content: Record<string, unknown>) => void;
   onUpdateSettings: (settings: BlockSettings) => void;
   onDelete: () => void;
@@ -154,6 +156,7 @@ function SortableBlock({ block, onUpdate, onUpdateSettings, onDelete }: {
 
   const blockType = BLOCK_TYPES.find((b) => b.type === block.type);
   const parsedSettings = blockSettingsSchema.parse(block.settings) as BlockSettings;
+  const otherAnchorIds = registry.anchors.filter((a) => a.blockId !== block.id).map((a) => a.anchorId);
 
   return (
     <div ref={setNodeRef} style={style}>
@@ -165,6 +168,9 @@ function SortableBlock({ block, onUpdate, onUpdateSettings, onDelete }: {
           <div className="flex items-center gap-1.5 text-sm font-medium flex-1">
             {blockType?.icon}
             <span>{blockType?.label || block.type}</span>
+            {parsedSettings.anchorId && (
+              <span className="ml-1 text-[10px] font-mono text-muted-foreground">#{parsedSettings.anchorId}</span>
+            )}
           </div>
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setShowSettings(!showSettings)}>
             <Settings2 className="h-3.5 w-3.5" />
@@ -174,9 +180,9 @@ function SortableBlock({ block, onUpdate, onUpdateSettings, onDelete }: {
           </Button>
         </div>
         <CardContent className="p-4">
-          <BlockEditorComponent block={block} onChange={onUpdate} />
+          <BlockEditorComponent block={block} onChange={onUpdate} registry={registry} />
           {showSettings && (
-            <BlockSettingsEditor settings={parsedSettings} onChange={onUpdateSettings} />
+            <BlockSettingsEditor settings={parsedSettings} onChange={onUpdateSettings} otherAnchorIds={otherAnchorIds} />
           )}
         </CardContent>
       </Card>
@@ -233,6 +239,8 @@ export function SiteBlockEditor({ blocks, onChange }: SiteBlockEditorProps) {
     onChange(newBlocks);
   }, [blocks, onChange]);
 
+  const registry = useSitePageAnchors(blocks);
+
   return (
     <div className="max-w-3xl mx-auto">
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -241,6 +249,7 @@ export function SiteBlockEditor({ blocks, onChange }: SiteBlockEditorProps) {
             <SortableBlock
               key={block.id}
               block={block}
+              registry={registry}
               onUpdate={(content) => updateBlock(block.id, content)}
               onUpdateSettings={(settings) => updateBlockSettings(block.id, settings)}
               onDelete={() => deleteBlock(block.id)}

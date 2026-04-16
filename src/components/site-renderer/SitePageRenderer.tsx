@@ -1,8 +1,10 @@
+import { useEffect } from "react";
 import { sanitizeHtml } from "@/lib/sanitization";
 import type { SiteBlock } from "@/services/sitePages/types";
 import type { PublicProduct, PublicTariff } from "@/hooks/usePublicProduct";
 
 // Block renderers
+import { SiteVisibilityProvider } from "./SiteVisibilityContext";
 import { BlockWrapper } from "./blocks/BlockWrapper";
 import { VideoSection } from "./blocks/VideoSection";
 import { ButtonSection } from "./blocks/ButtonSection";
@@ -215,7 +217,7 @@ export function SitePageRenderer({ blocks, themeSettings, pricingData, pageId, i
       case "faq": return <FaqSection content={block.content} />;
       case "divider": return <DividerSection content={block.content} />;
       case "video": return <VideoSection content={block.content} />;
-      case "button": return <ButtonSection content={block.content} />;
+      case "button": return <ButtonSection content={block.content} blockId={block.id} />;
       case "columns": return <ColumnsSection content={block.content} />;
       case "timer": return <TimerSection content={block.content} />;
       case "html": return <HtmlSection content={block.content} />;
@@ -240,13 +242,32 @@ export function SitePageRenderer({ blocks, themeSettings, pricingData, pageId, i
     }
   };
 
+  // Smooth scroll к #anchor при загрузке/смене hash (canonical scroll runtime).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const scrollToHash = () => {
+      const hash = window.location.hash.slice(1);
+      if (!hash) return;
+      const el = document.getElementById(hash);
+      if (el) requestAnimationFrame(() => el.scrollIntoView({ behavior: "smooth", block: "start" }));
+    };
+    const t = setTimeout(scrollToHash, 100);
+    window.addEventListener("hashchange", scrollToHash);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("hashchange", scrollToHash);
+    };
+  }, [blocks]);
+
   return (
-    <div style={style}>
-      {blocks.map((block) => (
-        <BlockWrapper key={block.id} settings={block.settings}>
-          {renderBlock(block)}
-        </BlockWrapper>
-      ))}
-    </div>
+    <SiteVisibilityProvider blocks={blocks}>
+      <div style={style}>
+        {blocks.map((block) => (
+          <BlockWrapper key={block.id} blockId={block.id} settings={block.settings}>
+            {renderBlock(block)}
+          </BlockWrapper>
+        ))}
+      </div>
+    </SiteVisibilityProvider>
   );
 }

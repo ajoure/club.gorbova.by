@@ -12,6 +12,11 @@ export const blockSettingsSchema = z.object({
   maxWidth: z.enum(["sm", "md", "lg", "xl", "full"]).default("lg"),
   hideOnMobile: z.boolean().default(false),
   hideOnDesktop: z.boolean().default(false),
+  // ─── Site Builder Sprint v2 ───
+  // anchorId: slug (a-z, 0-9, '-'), unique per page (валидируется в SitePageService.save)
+  anchorId: z.string().default(""),
+  // initialVisibility: первичное состояние блока на странице. runtime show/toggle меняют его.
+  initialVisibility: z.enum(["visible", "hidden"]).default("visible"),
 }).default({});
 
 export type BlockSettings = z.infer<typeof blockSettingsSchema>;
@@ -82,12 +87,24 @@ export const videoContentSchema = z.object({
   aspectRatio: z.enum(["16:9", "4:3", "1:1"]).default("16:9"),
 });
 
+// Canonical button action types. Target ключ — ТОЛЬКО stable block.id (UUID) или anchorId.
+// Запрещены: title/name/index/order. Backward-compat: тип 'link' (default) использует поле link.
+export const BUTTON_ACTION_TYPES = ["link", "scroll_to_anchor", "show_block", "toggle_block", "open_form"] as const;
+export type ButtonActionType = typeof BUTTON_ACTION_TYPES[number];
+
+export const buttonActionSchema = z.object({
+  type: z.enum(BUTTON_ACTION_TYPES).default("link"),
+  // target — anchorId (для scroll_to_anchor) или block.id (для show/toggle/open_form)
+  target: z.string().default(""),
+}).default({ type: "link", target: "" });
+
 export const buttonContentSchema = z.object({
   text: z.string().default(""),
   link: z.string().default(""),
   variant: z.enum(["primary", "secondary", "outline"]).default("primary"),
   size: z.enum(["sm", "md", "lg"]).default("md"),
   alignment: z.enum(["left", "center", "right"]).default("center"),
+  action: buttonActionSchema.optional(),
 });
 
 export const columnsContentSchema = z.object({

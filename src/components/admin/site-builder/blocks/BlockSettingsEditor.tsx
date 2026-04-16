@@ -3,18 +3,59 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { BlockSettings } from "@/services/sitePages/types";
+import { isValidAnchorSlug } from "@/hooks/useSitePageAnchors";
 
 interface BlockSettingsEditorProps {
   settings: BlockSettings;
   onChange: (settings: BlockSettings) => void;
+  /** anchorIds других блоков (без текущего) — для проверки дубликата inline */
+  otherAnchorIds?: string[];
 }
 
-export function BlockSettingsEditor({ settings, onChange }: BlockSettingsEditorProps) {
+export function BlockSettingsEditor({ settings, onChange, otherAnchorIds = [] }: BlockSettingsEditorProps) {
   const update = (patch: Partial<BlockSettings>) => onChange({ ...settings, ...patch });
+
+  const anchor = settings.anchorId || "";
+  const anchorInvalid = anchor !== "" && !isValidAnchorSlug(anchor);
+  const anchorDuplicate = anchor !== "" && otherAnchorIds.includes(anchor);
 
   return (
     <div className="space-y-4 border-t pt-4 mt-4">
       <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Настройки блока</p>
+
+      {/* ─── Anchor (Site Builder Sprint v2) ─── */}
+      <div>
+        <Label className="text-xs">Якорь (anchor ID)</Label>
+        <Input
+          value={anchor}
+          onChange={(e) => update({ anchorId: e.target.value.toLowerCase().replace(/\s+/g, "-") })}
+          placeholder="например: tariffs, faq, about"
+        />
+        <p className="text-[11px] text-muted-foreground mt-1">
+          Латиница, цифры, дефис. Уникален в пределах страницы. Используется для прокрутки и в URL #anchor.
+        </p>
+        {anchorInvalid && (
+          <p className="text-[11px] text-destructive mt-1">Допустимы только a-z, 0-9, '-'. 1–48 символов.</p>
+        )}
+        {anchorDuplicate && (
+          <p className="text-[11px] text-destructive mt-1">Этот якорь уже используется в другом блоке.</p>
+        )}
+      </div>
+
+      {/* ─── Initial visibility ─── */}
+      <div>
+        <Label className="text-xs">Начальная видимость</Label>
+        <Select
+          value={settings.initialVisibility || "visible"}
+          onValueChange={(v) => update({ initialVisibility: v as BlockSettings["initialVisibility"] })}
+        >
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="visible">Виден изначально</SelectItem>
+            <SelectItem value="hidden">Скрыт (показать через действие кнопки)</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div>

@@ -2,13 +2,20 @@
  * BlockWrapper — applies universal block settings as styles/classes.
  * COMPATIBILITY INVARIANT: empty settings ({}) → zero padding, no bg, maxWidth "lg",
  * visibility flags false → identical visual output to unwrapped blocks.
+ *
+ * Site Builder Sprint v2:
+ * - id={anchorId} для smooth scroll
+ * - data-block-id={blockId} для runtime querySelector (show/toggle/open_form)
+ * - hidden если runtime visibility = false
  */
 import { blockSettingsSchema } from "@/services/sitePages/types";
 import type { BlockSettings } from "@/services/sitePages/types";
 import { cn } from "@/lib/utils";
+import { useSiteVisibility } from "../SiteVisibilityContext";
 
 interface BlockWrapperProps {
   settings: Record<string, unknown>;
+  blockId?: string;
   children: React.ReactNode;
 }
 
@@ -20,8 +27,15 @@ const MAX_WIDTH_MAP: Record<string, string> = {
   full: "max-w-full",
 };
 
-export function BlockWrapper({ settings: rawSettings, children }: BlockWrapperProps) {
+export function BlockWrapper({ settings: rawSettings, blockId, children }: BlockWrapperProps) {
   const settings = blockSettingsSchema.parse(rawSettings) as BlockSettings;
+  const visibility = useSiteVisibility();
+
+  // Runtime visibility — учитываем initial + actions из контекста
+  const runtimeVisible = blockId ? visibility.isVisible(blockId) : true;
+  if (!runtimeVisible) {
+    return null;
+  }
 
   const outerStyle: React.CSSProperties = {};
   if (settings.paddingTop) outerStyle.paddingTop = `${settings.paddingTop}px`;
@@ -39,7 +53,9 @@ export function BlockWrapper({ settings: rawSettings, children }: BlockWrapperPr
     settings.hideOnDesktop && "md:hidden",
   );
 
-  // If all defaults — render children directly without wrapper overhead
+  const anchorId = settings.anchorId || undefined;
+
+  // If all defaults AND нет anchor/blockId → render children directly без обёртки.
   const isDefault =
     !settings.paddingTop &&
     !settings.paddingBottom &&
@@ -49,14 +65,21 @@ export function BlockWrapper({ settings: rawSettings, children }: BlockWrapperPr
     !settings.fullWidth &&
     settings.maxWidth === "lg" &&
     !settings.hideOnMobile &&
-    !settings.hideOnDesktop;
+    !settings.hideOnDesktop &&
+    !anchorId &&
+    !blockId;
 
   if (isDefault) {
     return <>{children}</>;
   }
 
   return (
-    <div style={outerStyle} className={visibilityClass}>
+    <div
+      id={anchorId}
+      data-block-id={blockId}
+      style={outerStyle}
+      className={cn(visibilityClass, "scroll-mt-16")}
+    >
       {children}
     </div>
   );
