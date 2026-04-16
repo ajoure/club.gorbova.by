@@ -140,6 +140,7 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
           max_score: row.max_score,
           summary: { is_correct: row.is_correct, attempts: row.attempts, score: row.score, max_score: row.max_score },
           payload: (row.response || {}) as Record<string, unknown>,
+          _lesson_id: row.lesson_id,
         };
       });
     },
@@ -189,6 +190,7 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
           max_score: null,
           summary: {},
           payload: {},
+          _lesson_id: row.lesson_id,
         };
       });
     },
