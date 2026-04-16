@@ -210,6 +210,10 @@ async function fetchPreorders(
     status: p.status || "new",
     has_deal: false,
     has_account: !!p.user_id,
+    module_id: null,
+    module_title: null,
+    lesson_id: null,
+    lesson_title: null,
     raw: p,
   }));
 
