@@ -347,23 +347,29 @@ function AuthFormSection({
     return () => document.removeEventListener("visibilitychange", handler);
   }, [formStep, refetchTelegramStatus]);
 
-  // ─── Auto-advance from telegram_prompt when status becomes active ───
-  // In preview, do NOT auto-advance — let user see the telegram step
+  // ─── Auto-advance from telegram_prompt when linked/active ───
+  // Preview: advance when telegramUiStatus === "linked" (simulated)
+  // Live: advance only when real telegramStatus?.status === "active" (server-confirmed)
   useEffect(() => {
-    if (isPreview) return;
     if (formStep !== "telegram_prompt") return;
-    if (telegramStatus?.status === "active") {
-      setTelegramUiStatus("linked");
-      const t = setTimeout(() => {
-        if (customFields.length > 0) {
-          setFormStep("extra_fields");
-        } else {
-          setFormStep("ready");
-        }
-      }, 1500);
-      return () => clearTimeout(t);
-    }
-  }, [isPreview, formStep, telegramStatus?.status, customFields.length]);
+
+    const shouldAdvance = isPreview
+      ? telegramUiStatus === "linked"
+      : telegramStatus?.status === "active";
+
+    if (!shouldAdvance) return;
+
+    if (!isPreview) setTelegramUiStatus("linked");
+
+    const t = setTimeout(() => {
+      if (customFields.length > 0) {
+        setFormStep("extra_fields");
+      } else {
+        setFormStep("ready");
+      }
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [isPreview, formStep, telegramUiStatus, telegramStatus?.status, customFields.length]);
 
   // ─── Handlers ───
 
@@ -471,10 +477,11 @@ function AuthFormSection({
   };
 
   const handleStartTelegram = async () => {
-    // In preview, just simulate the pending state
+    // In preview, simulate full flow: pending → linked after 1s (UI-only, no real API calls)
     if (isPreview) {
       setTelegramUiStatus("pending");
       setTelegramDeepLink("https://t.me/preview_bot?start=demo");
+      setTimeout(() => setTelegramUiStatus("linked"), 1000);
       return;
     }
     setTelegramUiStatus("starting");
@@ -498,14 +505,7 @@ function AuthFormSection({
     }
   };
 
-  const handleSkipTelegram = () => {
-    setTelegramUiStatus("skipped");
-    if (customFields.length > 0) {
-      setFormStep("extra_fields");
-    } else {
-      setFormStep("ready");
-    }
-  };
+  // handleSkipTelegram removed — Telegram linking is mandatory when telegram_link=true
 
   const handleExtraFieldsSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -828,16 +828,39 @@ function AuthFormSection({
 
   if (formStep === "telegram_prompt") {
     return wrapSection("Привязка Telegram",
-      <div className="space-y-4 text-center">
-        <div className="text-4xl">🤖</div>
-        <h4 className="text-lg font-semibold text-foreground">Привязка Telegram</h4>
-        <p className="text-sm text-muted-foreground">
-          Привяжите Telegram для получения доступов и уведомлений.
+      <div className="space-y-5 text-center">
+        {/* Friendly bot illustration — inline SVG, no external assets */}
+        <div className="flex justify-center">
+          <svg width="80" height="80" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg" className="drop-shadow-sm">
+            {/* Antenna */}
+            <line x1="40" y1="8" x2="40" y2="18" stroke="hsl(var(--primary))" strokeWidth="2.5" strokeLinecap="round" />
+            <circle cx="40" cy="6" r="3.5" fill="hsl(var(--primary))" opacity="0.8" />
+            {/* Head */}
+            <rect x="14" y="18" width="52" height="40" rx="14" fill="hsl(var(--primary))" opacity="0.12" stroke="hsl(var(--primary))" strokeWidth="2" />
+            {/* Eyes */}
+            <circle cx="30" cy="36" r="5" fill="hsl(var(--primary))" opacity="0.7" />
+            <circle cx="50" cy="36" r="5" fill="hsl(var(--primary))" opacity="0.7" />
+            <circle cx="31.5" cy="34.5" r="1.8" fill="white" />
+            <circle cx="51.5" cy="34.5" r="1.8" fill="white" />
+            {/* Smile */}
+            <path d="M30 46 Q40 54 50 46" stroke="hsl(var(--primary))" strokeWidth="2.5" strokeLinecap="round" fill="none" opacity="0.6" />
+            {/* Ears */}
+            <rect x="6" y="28" width="6" height="16" rx="3" fill="hsl(var(--primary))" opacity="0.25" />
+            <rect x="68" y="28" width="6" height="16" rx="3" fill="hsl(var(--primary))" opacity="0.25" />
+            {/* Body hint */}
+            <rect x="26" y="60" width="28" height="12" rx="6" fill="hsl(var(--primary))" opacity="0.08" stroke="hsl(var(--primary))" strokeWidth="1.5" />
+          </svg>
+        </div>
+
+        <h4 className="text-lg font-semibold text-foreground">Привяжите Telegram-бота</h4>
+        <p className="text-sm text-muted-foreground leading-relaxed">
+          Все доступы к продуктам и материалам выдаются только через Telegram.<br />
+          Чтобы получить доступ, обязательно привяжите нашего бота.
         </p>
 
         {telegramUiStatus === "linked" && (
-          <div className="p-3 rounded-lg bg-primary/10 border border-primary/20 text-primary text-sm">
-            ✓ Telegram успешно привязан!
+          <div className="p-3 rounded-lg bg-primary/10 border border-primary/20 text-primary text-sm font-medium">
+            ✓ Telegram успешно привязан! Переходим дальше…
           </div>
         )}
 
@@ -853,7 +876,7 @@ function AuthFormSection({
             onClick={handleStartTelegram}
             className="w-full rounded-md bg-primary px-8 py-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
           >
-            Привязать Telegram
+            Привязать Telegram-бота
           </button>
         )}
 
@@ -885,14 +908,6 @@ function AuthFormSection({
             )}
           </div>
         )}
-
-        <button
-          type="button"
-          onClick={handleSkipTelegram}
-          className="w-full text-sm text-muted-foreground hover:text-foreground transition-colors"
-        >
-          Пропустить
-        </button>
       </div>
     );
   }
