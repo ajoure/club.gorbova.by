@@ -5,12 +5,15 @@ import { FormsHubFiltersPanel } from "./FormsHubFilters";
 import { FormsHubTable } from "./FormsHubTable";
 import { FormsHubPaginator } from "./FormsHubPaginator";
 import { FormsDetailOpener } from "./FormsDetailOpener";
+import { FormsTableToolbar } from "./FormsTableToolbar";
+import { FormsBulkActionsBar } from "./FormsBulkActionsBar";
 
 export function FormsSiteTabContent() {
   const [filters, setFilters] = useState<FormsHubFilters>({ ...DEFAULT_FILTERS, source_type: "site_form" });
   const [pagination, setPagination] = useState<FormsHubPagination>(DEFAULT_PAGINATION);
   const { data, isLoading } = useFormsHubData(filters, "site_form", pagination);
   const [selectedRow, setSelectedRow] = useState<FormsHubRow | null>(null);
+  const [selectedRows, setSelectedRows] = useState<FormsHubRow[]>([]);
 
   const prevFiltersRef = useRef(filters);
   useEffect(() => {
@@ -20,18 +23,23 @@ export function FormsSiteTabContent() {
     }
   }, [filters]);
 
+  const handleOpenDetail = useCallback((row: FormsHubRow) => setSelectedRow(row), []);
+  const handleSelectionChange = useCallback((rows: FormsHubRow[]) => setSelectedRows(rows), []);
+
   return (
     <div className="space-y-4">
       <Card>
-        <CardContent className="pt-4">
+        <CardContent className="pt-4 space-y-3">
           <FormsHubFiltersPanel filters={filters} onChange={setFilters} hideSourceType />
+          <FormsTableToolbar />
         </CardContent>
       </Card>
 
       <FormsHubTable
         rows={data?.rows || []}
         isLoading={isLoading}
-        onOpenDetail={useCallback((row: FormsHubRow) => setSelectedRow(row), [])}
+        onOpenDetail={handleOpenDetail}
+        onSelectionChange={handleSelectionChange}
       />
 
       <FormsHubPaginator
@@ -39,6 +47,12 @@ export function FormsSiteTabContent() {
         pageSize={pagination.pageSize}
         totalCount={data?.totalCount || 0}
         onPageChange={(page) => setPagination(p => ({ ...p, page }))}
+      />
+
+      <FormsBulkActionsBar
+        selectedRows={selectedRows}
+        totalCount={data?.totalCount || 0}
+        onClearSelection={() => setSelectedRows([])}
       />
 
       <FormsDetailOpener row={selectedRow} onClose={() => setSelectedRow(null)} />
