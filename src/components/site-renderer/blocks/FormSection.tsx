@@ -590,6 +590,11 @@ function AuthFormSection({
   const wrapSection = (stepLabel: string | null, children: React.ReactNode) => (
     <section className="py-12 px-6">
       <div className="max-w-xl mx-auto space-y-6">
+        {isPreview && (
+          <div className="text-xs text-center text-amber-600 bg-amber-50 border border-amber-200 rounded-md px-3 py-1.5">
+            Предпросмотр формы — действия не выполняются
+          </div>
+        )}
         {title && <h3 className="text-2xl font-bold text-foreground text-center">{title}</h3>}
         {subtitle && <p className="text-muted-foreground text-center">{subtitle}</p>}
         {stepLabel && (
