@@ -3555,6 +3555,15 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               <ContactLoyaltyTab contact={contact} />
             </TabsContent>
 
+            {/* Artifacts Tab — Анкеты и обучение */}
+            <TabsContent value="artifacts" className="m-0">
+              <ContactArtifactsTab
+                profileId={contact.id}
+                userId={contact.user_id}
+                enabled={activeTab === "artifacts"}
+              />
+            </TabsContent>
+
             {/* Duplicates Tab */}
             {contact.duplicate_flag && (
               <TabsContent value="duplicates" className="m-0 space-y-4">
