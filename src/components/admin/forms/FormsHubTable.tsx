@@ -283,7 +283,12 @@ export function FormsHubTable({
   };
 
   const tableContent = (
-    <Table>
+    <Table style={{ tableLayout: "fixed", width: "max-content", minWidth: "100%" }}>
+      <colgroup>
+        {visibleColumns.map((col) => (
+          <col key={col.key} style={{ width: `${col.width}px` }} />
+        ))}
+      </colgroup>
       <TableHeader>
         <TableRow>
           <SortableContext

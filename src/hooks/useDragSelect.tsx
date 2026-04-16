@@ -115,7 +115,11 @@ export function useDragSelect<T>({ items, getItemId, onSelectionChange }: DragSe
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     // Don't start drag on interactive elements
     const target = e.target as HTMLElement;
-    if (target.closest("button, input, [role=checkbox], a, [data-radix-collection-item]")) {
+    if (
+      target.closest(
+        "button, input, [role=checkbox], a, [data-radix-collection-item], [data-resize-handle], [data-drag-handle], thead, th"
+      )
+    ) {
       return;
     }
 
