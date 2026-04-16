@@ -3,13 +3,18 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Plus, Trash2, Lock, Shield, Layers, Handshake } from "lucide-react";
+import { Plus, Trash2, Lock, Shield, Layers, Handshake, Code2, Copy } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useParams } from "react-router-dom";
+import { useState } from "react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { toast } from "sonner";
 
 interface FormBlockEditorProps {
   content: Record<string, unknown>;
   onChange: (content: Record<string, unknown>) => void;
+  blockId?: string;
 }
 
 const MAPPING_OPTIONS = [
@@ -31,7 +36,12 @@ const SYSTEM_AUTH_FIELDS = [
   { label: "Пароль", type: "password", key: "password" },
 ];
 
-export function FormBlockEditor({ content, onChange }: FormBlockEditorProps) {
+export function FormBlockEditor({ content, onChange, blockId }: FormBlockEditorProps) {
+  const { id: pageId } = useParams<{ id: string }>();
+  const [embedOpen, setEmbedOpen] = useState(false);
+  const embedSnippet = pageId && blockId
+    ? `<div data-gorbova-form data-page-id="${pageId}" data-block-id="${blockId}"></div>\n<script src="${window.location.origin}/embed/form.js" async></script>`
+    : "";
   const authMode = (content.auth_mode as boolean) ?? false;
   const telegramLink = (content.telegram_link as boolean) ?? false;
   const productBindingEnabled = (content.product_binding_enabled as boolean) ?? false;
