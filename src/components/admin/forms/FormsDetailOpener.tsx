@@ -17,7 +17,9 @@ interface Props {
 export function FormsDetailOpener({ row, onClose }: Props) {
   if (!row) return null;
 
-  if (row.source_type === "training") {
+  // PATCH E: site_questionnaire использует тот же existing training bridge
+  // (StudentProgressModal). Никаких новых viewers.
+  if (row.source_type === "training" || row.source_type === "site_questionnaire") {
     return <TrainingDetailBridge row={row} onClose={onClose} />;
   }
 

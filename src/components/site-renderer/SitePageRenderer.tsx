@@ -20,6 +20,7 @@ import { SpacerSection } from "./blocks/SpacerSection";
 import { FormSection } from "./blocks/FormSection";
 import { AudioSection } from "./blocks/AudioSection";
 import { EmbedSection } from "./blocks/EmbedSection";
+import { SiteQuestionnaireBlock } from "./blocks/SiteQuestionnaireBlock";
 import { AccordionBlock } from "@/components/admin/lesson-editor/blocks/AccordionBlock";
 import { TabsBlock } from "@/components/admin/lesson-editor/blocks/TabsBlock";
 import { CalloutBlock } from "@/components/admin/lesson-editor/blocks/CalloutBlock";
@@ -238,6 +239,7 @@ export function SitePageRenderer({ blocks, themeSettings, pricingData, pageId, i
       case "quote": return <section className="py-6 px-6"><div className="max-w-3xl mx-auto"><QuoteBlock content={block.content as any} onChange={() => {}} isEditing={false} /></div></section>;
       case "audio": return <AudioSection content={block.content} />;
       case "embed": return <EmbedSection content={block.content} />;
+      case "site_questionnaire": return <SiteQuestionnaireBlock content={block.content} />;
       default: return null;
     }
   };

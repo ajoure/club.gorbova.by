@@ -14,6 +14,7 @@ const SOURCE_LABELS: Record<FormsSourceType, string> = {
   site_form: "Анкета сайта",
   preorder: "Предзапись",
   training: "Обучение",
+  site_questionnaire: "Анкета сайта (опрос)",
 };
 
 const exportColumns: ExportColumn<FormsHubRow>[] = [

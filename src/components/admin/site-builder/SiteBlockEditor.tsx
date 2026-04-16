@@ -8,7 +8,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import {
   GripVertical, Plus, Trash2, Type, Image, Layout, AlignLeft, MessageSquare, HelpCircle, Minus, Megaphone,
   Video, MousePointerClick, Columns, Timer, Code, GalleryHorizontal, Quote, CreditCard, Share2, Grip, Space, FileText,
-  Settings2, ChevronsUpDown, LayoutList, Info, Music, Globe,
+  Settings2, ChevronsUpDown, LayoutList, Info, Music, Globe, ClipboardList,
 } from "lucide-react";
 import type { SiteBlock, BlockType } from "@/services/sitePages/types";
 import { blockSettingsSchema, type BlockSettings } from "@/services/sitePages/types";
@@ -36,6 +36,7 @@ import { SpacerBlockEditor } from "./blocks/SpacerBlockEditor";
 import { FormBlockEditor } from "./blocks/FormBlockEditor";
 import { SiteAudioBlockEditor } from "./blocks/SiteAudioBlockEditor";
 import { SiteEmbedBlockEditor } from "./blocks/SiteEmbedBlockEditor";
+import { QuestionnaireBlockEditor } from "./blocks/QuestionnaireBlockEditor";
 import { AccordionBlock } from "@/components/admin/lesson-editor/blocks/AccordionBlock";
 import { TabsBlock } from "@/components/admin/lesson-editor/blocks/TabsBlock";
 import { CalloutBlock } from "@/components/admin/lesson-editor/blocks/CalloutBlock";
@@ -72,6 +73,7 @@ const BLOCK_TYPES: { type: BlockType; label: string; icon: React.ReactNode }[] =
   { type: "quote", label: "Цитата", icon: <Quote className="h-4 w-4" /> },
   { type: "audio", label: "Аудио", icon: <Music className="h-4 w-4" /> },
   { type: "embed", label: "Встраивание", icon: <Globe className="h-4 w-4" /> },
+  { type: "site_questionnaire" as any, label: "Анкета (опрос)", icon: <ClipboardList className="h-4 w-4" /> },
 ];
 
 function getDefaultContent(type: BlockType): Record<string, unknown> {
@@ -102,6 +104,7 @@ function getDefaultContent(type: BlockType): Record<string, unknown> {
     case "quote": return { text: "", author: "", source: "" };
     case "audio": return { url: "", title: "" };
     case "embed": return { url: "", height: 400 };
+    case "site_questionnaire" as any: return { lessonId: "", title: "", subtitle: "" };
     default: return {};
   }
 }
@@ -134,6 +137,7 @@ function BlockEditorComponent({ block, onChange, registry }: { block: SiteBlock;
     case "quote": return <QuoteBlock content={block.content as any} onChange={(c) => onChange(c as any)} isEditing />;
     case "audio": return <SiteAudioBlockEditor content={block.content} onChange={onChange} />;
     case "embed": return <SiteEmbedBlockEditor content={block.content} onChange={onChange} />;
+    case "site_questionnaire": return <QuestionnaireBlockEditor content={block.content} onChange={onChange} />;
     default: return <p className="text-sm text-muted-foreground">Неизвестный тип блока: {block.type}</p>;
   }
 }
