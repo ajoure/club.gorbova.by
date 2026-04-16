@@ -291,6 +291,10 @@ async function fetchTraining(
       status: r.completed_at ? "completed" : "in_progress",
       has_deal: false,
       has_account: !!r.user_id,
+      module_id: module?.id || null,
+      module_title: module?.title || null,
+      lesson_id: lesson?.id || null,
+      lesson_title: lesson?.title || null,
       raw: { ...r, lesson, module, product, profile },
     };
   });
