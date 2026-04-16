@@ -24,6 +24,7 @@ const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Auth = lazy(() => import("./pages/Auth"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const SitePageBySlug = lazy(() => import("./pages/SitePageBySlug"));
+const EmbedFormPage = lazy(() => import("./pages/embed/EmbedFormPage"));
 
 // Lazy-loaded pages - code splitting for bundle optimization
 const Accountant = lazy(() => import("./pages/Accountant"));
@@ -317,6 +318,9 @@ const App = () => {
               <Route path="/admin/amocrm" element={<Navigate to="/admin/integrations/crm" replace />} />
               <Route path="/admin/duplicates" element={<Navigate to="/admin/contacts/duplicates" replace />} />
               
+              {/* Public embed routes (без AdminLayout, без auth) */}
+              <Route path="/embed/form/:pageId/:blockId" element={<LazyRoute><EmbedFormPage /></LazyRoute>} />
+
               {/* Public slug resolution layer — explicit static routes always take priority */}
               <Route path="/:slug" element={<LazyRoute><SitePageBySlug /></LazyRoute>} />
               <Route path="*" element={<LazyRoute><NotFound /></LazyRoute>} />

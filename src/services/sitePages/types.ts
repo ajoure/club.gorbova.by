@@ -281,6 +281,7 @@ export const blockContentSchemas = {
   quote: quoteSiteContentSchema,
   audio: audioSiteContentSchema,
   embed: embedSiteContentSchema,
+  site_questionnaire: siteQuestionnaireContentSchema,
 } as const;
 
 export type BlockType = keyof typeof blockContentSchemas;
