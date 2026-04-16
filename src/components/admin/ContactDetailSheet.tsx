@@ -3561,6 +3561,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 profileId={contact.id}
                 userId={contact.user_id}
                 enabled={activeTab === "artifacts"}
+                contactName={contact.full_name || undefined}
               />
             </TabsContent>
 
