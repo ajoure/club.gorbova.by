@@ -128,7 +128,7 @@ export function FormsByProductTabContent() {
           </div>
 
           {productGroups.map((pg) => {
-            const pKey = pg.product_id || pg.title;
+            const pKey = pg.product_id || "no-product";
             const pOpen = openKeys.has(pKey);
             const trainingCount = totalTraining(pg);
 
