@@ -1,316 +1,176 @@
-# да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
 &nbsp;
 
-1. Не делать новый домен как просто набор вкладок без единого source contract. Сначала зафиксировать канонический read-model для раздела /admin/forms:
-  &nbsp;
-  - site_form_submissions
-  - course_preregistrations / текущая сущность предзаписей
-  - training progress (lesson_progress_state, user_lesson_progress, lesson_progress)
-  - единый нормализованный row contract для списка
-    Иначе вкладка «Все» превратится в хаотичную смесь разных таблиц.
-  &nbsp;
-2. Не копировать useContactArtifacts в глобальный hub почти дословно. Это хук уровня карточки контакта, а не общего домена.
-  Нужен отдельный read-only query layer для /admin/forms, который:
-  &nbsp;
-  - работает глобально, без привязки к одному контакту
-  - умеет фильтры, пагинацию, группировку
-  - возвращает единый тип записи для таблицы и продукта/источника
-    Переиспользовать логику только точечно, без второго source of truth.
-  &nbsp;
-3. Вкладку Все делать не как eager merge всего на клиенте, а как серверно-управляемый список/представление данных. Иначе при росте данных раздел быстро станет тяжелым.
-  Минимум нужно:
-  &nbsp;
-  - серверные фильтры
-  - серверная пагинация
-  - детерминированная сортировка по created_at desc, source_type, id
-  - явный limit/offset или cursor
-    Без этого раздел будет пригоден только для маленького объема данных.
-  &nbsp;
-4. PreregistrationsTabContent не тащить внутрь как “black box as-is”, если он живет логикой старого домена платежей.
-  Нужно сначала проверить:
-  &nbsp;
-  - не завязан ли он на payments-specific counters, labels, empty states, actions
-  - не использует ли он route assumptions /admin/payments/preorders
-  - нет ли там локальной фильтрации и локального query-state, конфликтующего с новым hub
-    Если завязан — выделить из него table/view слой и переиспользовать, а не просто вставить целиком.
-  &nbsp;
-5. Добавить явное правило по деталям:
-  &nbsp;
-  - training → только existing StudentProgressModal
-  - site form → только existing SiteFormDetailDialog
-  - preregistration → только existing detail sheet/dialog
-    И запретить создание новых detail renderers для этих трех типов.
-  &nbsp;
-6. В AdminPaymentsHub не просто убрать tab “Предзаписи”, а проверить:
-  &nbsp;
-  - counters/summary cards не используют эти записи
-  - query params ?tab=preorders не ломают экран
-  - ссылки из меню, breadcrumbs, внутренних кнопок не ведут в старый раздел
-    Нужен backward compatibility patch:
-  - route redirect
-  - legacy tab param redirect
-  - исправление внутренних ссылок.
-  &nbsp;
-7. В маршрутизации лучше делать один канонический маршрут /admin/forms с query/tab state, а не размножать 6 отдельных почти одинаковых страниц, если различие только во вкладке.
-  Предпочтительно:
-  &nbsp;
-  - /admin/forms?tab=all
-  - /admin/forms?tab=site
-  - /admin/forms?tab=preorders
-  - /admin/forms?tab=training
-  - /admin/forms?tab=by-product
-  - /admin/forms?tab=export
-    Это упростит breadcrumbs, active state, redirects и reuse фильтров.
-    Отдельные nested routes нужны только если реально есть разные page-level loaders/layout.
-  &nbsp;
-8. Раздел «По продуктам» не должен быть отдельной второй реализацией списка.
-  Это должен быть альтернативный режим представления того же read-model:
-  &nbsp;
-  - list mode
-  - grouped-by-product mode
-    Иначе будет дублирование логики фильтров, сортировки, действий и деталей.
-  &nbsp;
-9. Для фильтров надо зафиксировать минимальный обязательный набор и не перегружать первый релиз:
-  P1:
-  &nbsp;
-  - продукт
-  - тип источника
-  - период
-  - поиск по клиенту/email/телефону
-  - есть/нет сделки
-  - есть/нет аккаунта
-    P2:
-  - страница/урок
-  - статус
-  - сложные комбинированные фильтры
-    Иначе UI перегрузится.
-  &nbsp;
-10. В строке записи обязательно показать канонические поля:
+1. TrainingDetailBridge нужно не просто починить точечно, а убрать дублирование загрузчика. Сейчас у нас уже есть канонический загрузчик training detail в карточке контакта. Для hub-а нужен тот же shared helper / тот же контракт, а не вторая почти такая же реализация. Иначе снова получим расхождение.  
+Правка: вынести единый loadTrainingDetailContext(userId, lessonId) в shared helper и использовать его и в ContactArtifactsTab, и в FormsDetailOpener.
+2. По has_account правка должна быть шире, чем просто !!meta.user_id. Это исправит только часть записей. Канонически:  
+
+  - если есть meta.user_id → true
+  - иначе, если есть profile_id, нужно батчем дорезолвить profiles.user_id
+  - has_account = Boolean(meta.user_id || profile.user_id)
+3.   
+Иначе старые/legacy записи снова будут показаны неверно.
+4. В FormsDetailOpener использовать только:  
+
+  - таблицу lesson_blocks
+  - поле content
+5.   
+Любые training_lesson_blocks, config, as any убрать полностью. Никаких обходов типов.
+6. Fallback при отсутствии lesson_progress_state нужен, но не “молча показать что-то”. Правильно так:  
+
+  - если есть lesson_blocks и/или user_lesson_progress → синтезировать минимальный LessonProgressRecord и открыть existing StudentProgressModal
+  - если нет ни state, ни blocks, ни responses → показать явный error state в модалке/диалоге, а не тихо закрывать окно
+7. &nbsp;
+8. Нужно добавить proof, что hub training details теперь реально открываются на живых кейсах:  
+
+  - quiz / survey
+  - diagnostic_table
+  - case без lesson_progress_state, но с user_lesson_progress
+9.   
+И отдельно показать, что это визуально тот же existing StudentProgressModal, без второго viewer.
+10. Для useFormsHubData зафиксировать не только комментарий, но и явный technical note в отчёте:  
+
+  - текущая версия = MVP
+  - client-side merge
+  - limit(500) на источник
+  - серверная пагинация / total counts / server filtering идут отдельным следующим PATCH  
+  Без этого нельзя выдавать раздел как финально завершённый аналитический домен.
+11. &nbsp;
+12. Redirect-часть не трогать, она уже подтверждена. В этом PATCH не распыляться на маршруты, только:  
+
+  - fix training detail bridge
+  - fix canonical has_account
+  - fix shared loader / fallback
+  - дать proof
+13. &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-&nbsp;
+Копируемый блок для [lovable.dev](http://lovable.dev):
 
-- клиент
-- источник (site_form / preorder / training)
-- продукт
-- сущность-источник (страница / урок / анкета)
-- дата
-- статус
-- аккаунт
-- контакт
-- сделка
-  Но действия делать только безопасные:
-- открыть детали
-- открыть контакт
-- открыть сделку
-  Без write-actions в этом спринте.
+Дополни текущий PATCH следующими правками:
 
 &nbsp;
 
-&nbsp;
+1. Не делать второй отдельный загрузчик training details. Вынести единый shared helper `loadTrainingDetailContext(userId, lessonId)` и использовать его и в `ContactArtifactsTab`, и в `FormsDetailOpener`. Никаких параллельных реализаций.
 
 &nbsp;
 
-11. Раздел Экспорт не делать отдельной “страницей ради страницы”, если он просто экспортирует текущую выборку. Лучше:
+2. В `FormsDetailOpener` использовать только канонический source:
+
+- таблица `lesson_blocks`
+
+- поле `content`
+
+Полностью убрать `training_lesson_blocks`, `config`, `as any`.
 
 &nbsp;
 
-&nbsp;
+3. Исправить `has_account` в `useFormsHubData` канонически:
+
+- `true`, если есть `meta.user_id`
+
+- иначе батчем дорезолвить `profiles.user_id` по `profile_id`
+
+- итог: `has_account = Boolean(meta.user_id || resolvedProfile.user_id)`
+
+Нельзя определять аккаунт по одному `profile_id`.
 
 &nbsp;
 
-- кнопка export в общем toolbar
-- либо компактная вкладка только с настройками формата и scope
-  Но export должен работать от текущих фильтров текущего набора, а не от отдельного параллельного запроса.
+4. Fallback для training detail:
+
+- если `lesson_progress_state` нет, но есть `lesson_blocks` и/или `user_lesson_progress`, синтезировать минимальный `LessonProgressRecord` и всё равно открыть existing `StudentProgressModal`
+
+- если нет ни state, ни blocks, ни responses, показывать явный error state, а не молча закрывать окно
 
 &nbsp;
 
-&nbsp;
+5. Нужен proof на реальных кейсах:
+
+- training detail из hub открывается через existing `StudentProgressModal`
+
+- quiz/survey
+
+- diagnostic_table
+
+- fallback без `lesson_progress_state`
+
+- `has_account` корректно работает на auth-linked и profile-only записях
 
 &nbsp;
 
-12. Нужен явный scope-guard по БД:
+6. В отчёте явно пометить текущий раздел как MVP:
+
+- client-side merge
+
+- `limit(500)` по источникам
+
+- серверная пагинация / total counts / server filtering идут отдельным следующим PATCH
 
 &nbsp;
 
-&nbsp;
+7. Redirects не менять — они уже подтверждены. Этот PATCH только на корректность данных и единый source of truth.
 
 &nbsp;
 
-- не создавать новые таблицы только ради hub
-- не делать новые training renderers
-- не переносить данные из источников в новый storage
-- новый раздел — только read-domain поверх existing sources
-  Исключение допустимо только если для серверной пагинации/фильтрации понадобится RPC/view, но без нового source of truth.
+# План: добивающий PATCH для раздела «Анкеты и данные»
 
-&nbsp;
+## Диагностика
 
-&nbsp;
+### Баг 1: Неправильная таблица в TrainingDetailBridge
 
-&nbsp;
+`FormsDetailOpener.tsx` строка 60 использует `training_lesson_blocks` (несуществующая таблица, cast `as any` скрывает ошибку). Каноническая таблица — `lesson_blocks`. В `ContactArtifactsTab.tsx` (строка 65) уже правильно используется `lesson_blocks`. Это означает, что training details из hub-а сейчас **не работают** — блоки не загружаются.
 
-13. Добавить обязательный discovery перед execute:
+### Баг 2: Неправильное определение `has_account`
 
-&nbsp;
+Для site_form строка 81: `has_account: !!f.profile_id`. Но `profile_id` — это наличие профиля, а не аккаунта. Корректно: использовать `meta.user_id` (уже извлекается в строке 74).
 
-&nbsp;
+### Баг 3: Поля блоков не совпадают с контрактом
 
-&nbsp;
-
-- где именно живут предзаписи и как называется canonical table/source
-- какие existing detail components уже есть и можно открыть без дублирования
-- какие поля доступны для глобальной фильтрации во всех трех источниках
-- какие индексы уже есть для дат, profile/contact, product_id, page_id, lesson_id
-  Без этого легко построить красивый, но медленный hub.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-14. Добавить DoD по миграции домена:
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- пункт меню «Анкеты и данные» появился
-- вкладка “Предзаписи” удалена из “Платежей”
-- все legacy ссылки и redirects работают
-- ни один existing detail flow не продублирован
-- training details открываются только через StudentProgressModal
-- site form details открываются только через existing form dialog
-- глобальные фильтры реально влияют на данные, а не только на клиентский массив
-- список выдерживает реальные данные без зависаний
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-15. По названию раздела я бы оставил именно Анкеты и данные, как вы предложили, а не Формы. Это шире и лучше соответствует будущему домену: анкеты, предзаписи, формы сайта, обучение, ответы, история клиента.
-
-&nbsp;
-
-&nbsp;
-
-Итог: идея правильная и направление хорошее.
-
-Но план надо поправить в сторону единого read-model, серверной фильтрации/пагинации и жесткого переиспользования existing detail-компонентов без дублирования логики.
-
-&nbsp;
-
-План: новый раздел «Анкеты и данные» в левом меню
-
-## Суть
-
-Вынести «Предзаписи» из раздела «Платежи» в новый отдельный домен «Анкеты и данные». Объединить в нём все клиентские анкеты, формы сайта, предзаписи и training progress. Это read-domain поверх existing sources of truth — без новых таблиц и систем хранения.
+`FormsDetailOpener.tsx` запрашивает `config` и маппит его в `content` (строка 89), а `ContactArtifactsTab.tsx` запрашивает `content` напрямую. Каноническая колонка в `lesson_blocks` — `content`.
 
 ## Шаги
 
-### 1. Создать новую страницу `AdminFormsHub`
+### 1. Исправить TrainingDetailBridge — таблица и поля
 
-**Файл:** `src/pages/admin/AdminFormsHub.tsx`
+В `FormsDetailOpener.tsx`:
 
-- Аналогично `AdminPaymentsHub.tsx` — AdminLayout + вкладки pill-tabs
-- Вкладки: Все / Анкеты сайта / Предзаписи / Обучение / По продуктам / Экспорт
-- Роут: `/admin/forms` (base), `/admin/forms/site`, `/admin/forms/preorders`, `/admin/forms/training`, `/admin/forms/by-product`, `/admin/forms/export`
+- Заменить `training_lesson_blocks as any` → `lesson_blocks`
+- Заменить `.select("id, block_type, config, sort_order")` → `.select("id, block_type, content")`
+- Убрать маппинг `content: b.config` → `content: b.content`
+- Привести в полное соответствие с `ContactArtifactsTab.tsx` `loadTrainingDetail`
 
-### 2. Добавить маршруты в `App.tsx`
+### 2. Исправить `has_account` для site_form
 
-- Добавить роуты `/admin/forms`, `/admin/forms/*`
-- Redirect `/admin/payments/preorders` → `/admin/forms/preorders` (backward compat)
-- Redirect `/admin/preregistrations` → `/admin/forms/preorders`
+В `useFormsHubData.ts` строка 81:
 
-### 3. Убрать «Предзаписи» из `AdminPaymentsHub`
+- Заменить `has_account: !!f.profile_id` → `has_account: !!meta.user_id`
 
-- Удалить tab `preorders` из массива `tabs` в `AdminPaymentsHub.tsx`
-- Убрать import `PreregistrationsTabContent`
+### 3. Добавить fallback если нет lesson_progress_state
 
-### 4. Добавить пункт в левое меню
+Сейчас при `!state` (строка 72) bridge молча закрывается. Вместо этого — создать минимальный `record` (как в `ContactArtifactsTab.tsx` строки 95-107) и всё равно показать модалку с блоками/ответами.
 
-**Файл:** `src/hooks/useAdminMenuSettings.tsx`
+### 4. Пометить реализацию как MVP
 
-- Добавить `{ id: "forms", label: "Анкеты и данные", path: "/admin/forms", icon: "ClipboardList", order: 4 }` в группу CRM
-- Добавить `ClipboardList` в `MENU_ICONS` (уже есть)
-
-### 5. Создать контент вкладок
-
-**Вкладка «Все»** — unified list из site_form_submissions + course_preregistrations + training progress (reuse `useContactArtifacts` logic, но без привязки к конкретному контакту — глобальный запрос).
-
-**Вкладка «Анкеты сайта»** — фильтр `source_type = site_form` из site_form_submissions.
-
-**Вкладка «Предзаписи»** — reuse `PreregistrationsTabContent` as-is.
-
-**Вкладка «Обучение»** — training progress из lesson_progress_state/user_lesson_progress.
-
-**Вкладка «По продуктам»** — группировка по product_id с collapsible секциями (reuse pattern из ContactArtifactsTab).
-
-**Вкладка «Экспорт»** — CSV/Excel экспорт текущей выборки (reuse `exportToExcel` / `exportToCSV` из `exportTableData.ts`).
-
-### 6. Единые фильтры
-
-Панель фильтров для всех вкладок (кроме «Экспорт»):
-
-- Продукт (select из products_v2)
-- Тип данных (site_form / preorder / training)
-- Период (date range)
-- Контакт (поиск)
-- Страница/урок
-- Статус
-- Есть/нет сделки
-- Есть/нет аккаунта
-
-### 7. Строка записи
-
-Каждая запись показывает: клиент, продукт, источник, тип, дата, страница/урок/анкета, статус, наличие сделки, наличие аккаунта, действия (Открыть / Контакт / Сделка).
-
-### 8. Детали по клику
-
-- Training item → `StudentProgressModal` (existing)
-- Site form / preorder → existing form detail dialog / `PreregistrationDetailSheet`
-
-### 9. Обновить breadcrumbs и route titles
-
-- `AdminLayout` `routeToTitle`: добавить `/admin/forms` → «Анкеты и данные»
-- `DashboardBreadcrumbs`: добавить `/admin/forms` → «Анкеты и данные»
-
-## Scope guard
-
-- Training details = только existing `StudentProgressModal`
-- Site form details = только existing form dialog
-- Preregistrations = reuse existing `PreregistrationsTabContent`
-- Никаких новых training renderers / normalizers
-- Никаких новых таблиц БД — read-domain поверх existing tables
+Добавить комментарий в `useFormsHubData.ts` — `// MVP: client-side merge, limit(500). TODO: server pagination`
 
 ## Файлы
 
 
-| Файл                                             | Действие                             |
-| ------------------------------------------------ | ------------------------------------ |
-| `src/pages/admin/AdminFormsHub.tsx`              | Создать — hub с вкладками            |
-| `src/App.tsx`                                    | Добавить роуты, redirect legacy      |
-| `src/pages/admin/AdminPaymentsHub.tsx`           | Убрать tab «Предзаписи»              |
-| `src/hooks/useAdminMenuSettings.tsx`             | Добавить пункт «Анкеты и данные»     |
-| `src/components/layout/AdminLayout.tsx`          | Добавить title/help для /admin/forms |
-| `src/components/layout/DashboardBreadcrumbs.tsx` | Добавить breadcrumb                  |
+| Файл                                               | Изменения                        |
+| -------------------------------------------------- | -------------------------------- |
+| `src/components/admin/forms/FormsDetailOpener.tsx` | Fix table name, fields, fallback |
+| `src/hooks/useFormsHubData.ts`                     | Fix has_account, add MVP comment |
 
 
 ## DoD
 
-1. Пункт «Анкеты и данные» появился в левом меню
-2. Предзаписи убраны из «Платежей»
-3. `/admin/payments/preorders` → redirect на `/admin/forms/preorders`
-4. Вкладки Все / Анкеты сайта / Предзаписи / Обучение / По продуктам / Экспорт работают
-5. Training → existing StudentProgressModal
-6. Site form → existing form dialog
-7. Preregistrations → reuse existing PreregistrationsTabContent
-8. Никаких новых training renderers
+1. Training details открываются из hub через `lesson_blocks` (каноническая таблица)
+2. `has_account` определяется через `user_id`, не через `profile_id`
+3. Fallback при отсутствии `lesson_progress_state` — модалка всё равно открывается
+4. Контракт данных совпадает с `ContactArtifactsTab.tsx` `loadTrainingDetail`
+5. Redirects уже работают (проверено: `/admin/payments/preorders` и `/admin/preregistrations`)
