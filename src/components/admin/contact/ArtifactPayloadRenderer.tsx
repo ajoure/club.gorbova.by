@@ -23,9 +23,13 @@ function isFlatObject(v: unknown): v is Record<string, unknown> {
 
 /** Pretty-print a label from a snake_case / camelCase key */
 export function prettifyKey(key: string): string {
+  // If already contains spaces or Cyrillic — return as-is with capitalize
+  if (/[а-яА-ЯёЁ\s]/.test(key)) {
+    return key.charAt(0).toUpperCase() + key.slice(1);
+  }
   return key
     .replace(/_/g, " ")
-    .replace(/([a-zа-яё])([A-ZА-ЯЁ])/g, "$1 $2")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
     .replace(/^./, s => s.toUpperCase())
     .trim();
 }
@@ -66,10 +70,10 @@ function KeyValueGrid({ data }: { data: Record<string, unknown> }) {
   const entries = Object.entries(data).filter(([, v]) => v !== undefined);
   if (entries.length === 0) return <span className="text-muted-foreground italic text-xs">—</span>;
   return (
-    <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
+    <div className="space-y-2">
       {entries.map(([k, v]) => (
-        <div key={k} className="contents">
-          <span className="text-xs text-muted-foreground whitespace-nowrap">{prettifyKey(k)}</span>
+        <div key={k} className="flex items-baseline gap-3">
+          <span className="text-xs text-muted-foreground whitespace-nowrap min-w-[80px]">{prettifyKey(k)}</span>
           <ScalarValue value={v} />
         </div>
       ))}
@@ -81,17 +85,16 @@ function KeyValueGrid({ data }: { data: Record<string, unknown> }) {
 
 function ObjectTable({ rows }: { rows: Record<string, unknown>[] }) {
   const allKeys = Array.from(new Set(rows.flatMap(r => Object.keys(r))));
-  // Filter out keys that are all null/undefined
   const cols = allKeys.filter(k => rows.some(r => r[k] !== null && r[k] !== undefined));
 
   return (
-    <div className="rounded-lg border overflow-hidden">
+    <div className="rounded-lg border bg-card overflow-hidden">
       <div className="overflow-x-auto">
         <Table>
           <TableHeader>
-            <TableRow className="bg-muted/40">
+            <TableRow className="bg-muted/30">
               {cols.map(c => (
-                <TableHead key={c} className="text-xs font-medium whitespace-nowrap h-9 px-3">
+                <TableHead key={c} className="text-[11px] font-semibold whitespace-nowrap h-9 px-3">
                   {prettifyKey(c)}
                 </TableHead>
               ))}
@@ -99,9 +102,9 @@ function ObjectTable({ rows }: { rows: Record<string, unknown>[] }) {
           </TableHeader>
           <TableBody>
             {rows.map((row, ri) => (
-              <TableRow key={ri}>
+              <TableRow key={ri} className="hover:bg-muted/20">
                 {cols.map(c => (
-                  <TableCell key={c} className="text-xs py-2 px-3">
+                  <TableCell key={c} className="text-sm py-2 px-3 whitespace-nowrap">
                     <ScalarValue value={row[c]} />
                   </TableCell>
                 ))}
@@ -124,7 +127,7 @@ function JsonBlock({ data }: { data: unknown }) {
     text = String(data);
   }
   return (
-    <div className="rounded-lg border bg-muted/30 overflow-hidden">
+    <div className="rounded-lg border bg-muted/20 overflow-hidden">
       <pre className="text-xs font-mono p-3 overflow-x-auto overflow-y-auto max-h-64 whitespace-pre-wrap break-words text-foreground">
         {text}
       </pre>
@@ -143,39 +146,17 @@ export function PayloadValue({ value, className }: { value: unknown; className?:
 }
 
 function PayloadValueInner({ value }: { value: unknown }) {
-  // null / undefined / empty string
-  if (value === null || value === undefined || value === "") {
-    return <ScalarValue value={value} />;
-  }
-  // boolean
-  if (typeof value === "boolean") {
-    return <ScalarValue value={value} />;
-  }
-  // scalar
-  if (isScalar(value)) {
-    return <ScalarValue value={value} />;
-  }
-  // array of scalars → chips
-  if (isArrayOfScalars(value)) {
-    return <ChipList items={value} />;
-  }
-  // array of objects → table
-  if (isArrayOfObjects(value)) {
-    return <ObjectTable rows={value} />;
-  }
-  // empty array
-  if (Array.isArray(value) && value.length === 0) {
-    return <span className="text-muted-foreground italic text-xs">Пусто</span>;
-  }
-  // flat object → key/value grid
-  if (isFlatObject(value)) {
-    return <KeyValueGrid data={value} />;
-  }
-  // complex object / nested → JSON fallback
+  if (value === null || value === undefined || value === "") return <ScalarValue value={value} />;
+  if (typeof value === "boolean") return <ScalarValue value={value} />;
+  if (isScalar(value)) return <ScalarValue value={value} />;
+  if (isArrayOfScalars(value)) return <ChipList items={value} />;
+  if (isArrayOfObjects(value)) return <ObjectTable rows={value} />;
+  if (Array.isArray(value) && value.length === 0) return <span className="text-muted-foreground italic text-xs">Пусто</span>;
+  if (isFlatObject(value)) return <KeyValueGrid data={value} />;
   return <JsonBlock data={value} />;
 }
 
-// ── Section renderers for the detail modal ───────────────────────────
+// ── Section renderers ────────────────────────────────────────────────
 
 interface PayloadSectionProps {
   title: string;
@@ -190,16 +171,12 @@ export function PayloadSection({ title, data, variant = "full" }: PayloadSection
   const isSummary = variant === "summary";
 
   return (
-    <div className={cn(
-      "rounded-xl border",
-      isSummary ? "bg-muted/20" : "bg-card"
-    )}>
-      <div className="px-4 pt-3 pb-2">
+    <div className={cn("rounded-xl border shadow-sm", isSummary ? "bg-muted/15" : "bg-card")}>
+      <div className="px-4 pt-3 pb-2 border-b border-border/50">
         <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">{title}</p>
       </div>
-      <div className={cn("px-4 pb-4", isSummary ? "space-y-2" : "space-y-3")}>
+      <div className={cn("px-4 py-3", isSummary ? "space-y-2" : "space-y-4")}>
         {isSummary ? (
-          // Summary: compact key-value rows
           entries.map(([key, value]) => (
             <div key={key} className="flex items-baseline justify-between gap-4">
               <span className="text-xs text-muted-foreground shrink-0">{prettifyKey(key)}</span>
@@ -209,10 +186,9 @@ export function PayloadSection({ title, data, variant = "full" }: PayloadSection
             </div>
           ))
         ) : (
-          // Full: typed rendering per field
           entries.map(([key, value]) => (
-            <div key={key} className="space-y-1">
-              <p className="text-[11px] font-medium text-muted-foreground">{prettifyKey(key)}</p>
+            <div key={key} className="space-y-1.5">
+              <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">{prettifyKey(key)}</p>
               <PayloadValue value={value} />
             </div>
           ))
@@ -224,19 +200,13 @@ export function PayloadSection({ title, data, variant = "full" }: PayloadSection
 
 // ── Training summary metrics ─────────────────────────────────────────
 
-interface TrainingMetric {
-  label: string;
-  value: string | number | null;
-  accent?: boolean;
-}
-
 export function TrainingMetrics({ score, maxScore, isCorrect, attempts }: {
   score: number | null;
   maxScore: number | null;
   isCorrect: unknown;
   attempts: unknown;
 }) {
-  const metrics: TrainingMetric[] = [];
+  const metrics: { label: string; value: string | number | null; accent?: boolean }[] = [];
 
   if (score !== null && maxScore !== null) {
     metrics.push({ label: "Баллы", value: `${score} / ${maxScore}`, accent: true });
@@ -257,12 +227,9 @@ export function TrainingMetrics({ score, maxScore, isCorrect, attempts }: {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
       {metrics.map(m => (
-        <div key={m.label} className="rounded-xl border bg-muted/20 px-4 py-3 text-center">
+        <div key={m.label} className="rounded-xl border bg-card shadow-sm px-4 py-3 text-center">
           <p className="text-[11px] text-muted-foreground uppercase tracking-wider mb-1">{m.label}</p>
-          <p className={cn(
-            "text-lg font-semibold",
-            m.accent ? "text-primary" : "text-foreground"
-          )}>
+          <p className={cn("text-lg font-semibold", m.accent ? "text-primary" : "text-foreground")}>
             {m.value ?? "—"}
           </p>
         </div>
@@ -275,7 +242,7 @@ export function TrainingMetrics({ score, maxScore, isCorrect, attempts }: {
 
 export function EmptyPayloadState() {
   return (
-    <div className="rounded-xl border bg-card px-6 py-10 text-center">
+    <div className="rounded-xl border bg-card shadow-sm px-6 py-10 text-center">
       <p className="text-sm text-muted-foreground">Нет подробных данных</p>
     </div>
   );

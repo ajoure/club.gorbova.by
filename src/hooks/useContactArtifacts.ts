@@ -24,7 +24,7 @@ export interface ContactArtifact {
 }
 
 export function useContactArtifacts(profileId: string | null | undefined, userId: string | null | undefined, enabled: boolean = false) {
-  // Site form submissions (by profile_id)
+  // Site form submissions (by profile_id) — now with product join
   const formsQuery = useQuery({
     queryKey: ["contact-artifacts-forms", profileId],
     enabled: enabled && !!profileId,
@@ -40,16 +40,50 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
         return [];
       }
 
+      // Collect unique product_ids from metadata to resolve names
+      const productIds = new Set<string>();
+      (data || []).forEach((row: any) => {
+        const pid = (row.metadata as any)?.product_id;
+        if (pid) productIds.add(pid);
+      });
+
+      // Batch-fetch product names
+      let productMap: Record<string, string> = {};
+      if (productIds.size > 0) {
+        const { data: products } = await supabase
+          .from("products_v2")
+          .select("id, name")
+          .in("id", Array.from(productIds));
+        if (products) {
+          products.forEach((p: any) => { productMap[p.id] = p.name; });
+        }
+      }
+
       return (data || []).map((row: any) => {
         const meta = row.metadata as Record<string, any> || {};
         const pageTitle = row.site_pages?.title || row.site_pages?.slug || null;
-        const title = pageTitle ? `Анкета: ${pageTitle}` : "Анкета сайта";
         const formData = (row.form_data || {}) as Record<string, unknown>;
+        const hasFormData = Object.keys(formData).length > 0;
 
-        // Build summary from form_data top-level keys
+        // Resolve product from metadata.product_id
+        const productId = meta.product_id || null;
+        const productTitle = productId ? (productMap[productId] || null) : null;
+
+        // Title: include product if available
+        let title = pageTitle ? `Анкета: ${pageTitle}` : "Анкета сайта";
+        if (productTitle) {
+          title = `Анкета: ${productTitle}`;
+        }
+
+        // Build summary from first 4 form_data keys
         const summaryKeys = Object.keys(formData).slice(0, 4);
         const summary: Record<string, unknown> = {};
         summaryKeys.forEach(k => { summary[k] = formData[k]; });
+
+        // If form_data is empty, extract useful metadata fields for display
+        const payload: Record<string, unknown> = hasFormData
+          ? formData
+          : buildMetadataPayload(meta);
 
         return {
           id: row.id,
@@ -57,16 +91,16 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
           source_id: row.id,
           title,
           subtitle: row.source || null,
-          product_id: meta.product_id || null,
-          product_title: meta.product_title || null,
+          product_id: productId,
+          product_title: productTitle,
           training_title: null,
           lesson_title: null,
           submitted_at: row.created_at,
           status: row.status === 'processed' ? 'completed' as const : 'new' as const,
           score: null,
           max_score: null,
-          summary,
-          payload: formData,
+          summary: hasFormData ? summary : {},
+          payload,
         };
       });
     },
@@ -92,7 +126,6 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
         .order("created_at", { ascending: false });
 
       if (error) {
-        // Fallback without joins if relation fails
         console.error("[useContactArtifacts] lesson answers join error, trying fallback:", error);
         const { data: fallback } = await supabase
           .from("user_lesson_progress")
@@ -115,7 +148,7 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
           score: row.score,
           max_score: row.max_score,
           summary: { is_correct: row.is_correct, attempts: row.attempts },
-          payload: (row.response || {}) as Record<string, unknown>,
+          payload: normalizeTrainingResponse(row.response),
           _lesson_id: row.lesson_id,
         }));
       }
@@ -140,7 +173,7 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
           score: row.score,
           max_score: row.max_score,
           summary: { is_correct: row.is_correct, attempts: row.attempts, score: row.score, max_score: row.max_score },
-          payload: (row.response || {}) as Record<string, unknown>,
+          payload: normalizeTrainingResponse(row.response),
           _lesson_id: row.lesson_id,
         };
       });
@@ -233,16 +266,14 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
         score: null,
         max_score: null,
         summary: {},
-        payload: (row.homework_response || {}) as Record<string, unknown>,
+        payload: normalizeTrainingResponse(row.homework_response),
       }));
     },
   });
 
   // Aggregate and deduplicate
-  // Collect lesson_ids that have answers for dedup
   const answeredLessonIds = new Set<string>();
   const rawAnswers = lessonAnswersQuery.data as any[] || [];
-  // lesson_id is preserved from the query even though it's not in ContactArtifact type
   rawAnswers.forEach((a: any) => {
     if (a._lesson_id) answeredLessonIds.add(a._lesson_id);
   });
@@ -253,7 +284,6 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
     const completions = lessonCompletionsQuery.data || [];
     const homework = questHomeworkQuery.data || [];
 
-    // Dedup: if lesson has answers, don't show bare completion
     const dedupedCompletions = completions.filter(c => {
       if (!c._lesson_id) return true;
       return !answeredLessonIds.has(c._lesson_id);
@@ -261,7 +291,6 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
 
     const all = [...forms, ...answers, ...dedupedCompletions, ...homework];
 
-    // Sort: primary by date DESC, secondary by source_type, id
     all.sort((a, b) => {
       const dateA = new Date(a.submitted_at || 0).getTime();
       const dateB = new Date(b.submitted_at || 0).getTime();
@@ -284,4 +313,70 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
       (questHomeworkQuery.data || []).length,
     totalCount: allArtifacts.length,
   };
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────
+
+/** Translate common training response keys to Russian and flatten "answers" */
+function normalizeTrainingResponse(response: unknown): Record<string, unknown> {
+  if (!response || typeof response !== 'object') return {};
+  const raw = response as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(raw)) {
+    const ruKey = TRAINING_KEY_MAP[key.toLowerCase()] || key;
+
+    // Flatten "answers" object into a readable table
+    if (key.toLowerCase() === 'answers' && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      const answersObj = value as Record<string, unknown>;
+      const rows = Object.entries(answersObj).map(([qKey, qVal]) => ({
+        "Вопрос": qKey.toUpperCase(),
+        "Ответ": String(qVal),
+      }));
+      result[ruKey] = rows;
+    } else {
+      result[ruKey] = value;
+    }
+  }
+
+  return result;
+}
+
+const TRAINING_KEY_MAP: Record<string, string> = {
+  answers: "Ответы",
+  iscompleted: "Завершён",
+  is_completed: "Завершён",
+  dominantcategories: "Доминантные категории",
+  dominant_categories: "Доминантные категории",
+  score: "Баллы",
+  max_score: "Макс. баллы",
+  attempts: "Попытки",
+  is_correct: "Верно",
+  response: "Ответ",
+  result: "Результат",
+  selected: "Выбрано",
+  text: "Текст",
+  comment: "Комментарий",
+  feedback: "Обратная связь",
+};
+
+/** Build a display payload from metadata when form_data is empty */
+function buildMetadataPayload(meta: Record<string, any>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  // Only show user-relevant fields, skip internal IDs
+  const skipKeys = new Set(['user_id', 'pipeline_id', 'pipeline_stage_id', 'deal_creation_enabled']);
+  for (const [key, value] of Object.entries(meta)) {
+    if (skipKeys.has(key)) continue;
+    if (key === 'product_id' || key === 'tariff_id') continue; // shown in header
+    if (key === 'auth_mode') {
+      result['Авторизованная отправка'] = value;
+      continue;
+    }
+    if (key === 'redirect_url') {
+      result['Ссылка после отправки'] = value;
+      continue;
+    }
+    result[key] = value;
+  }
+  return result;
 }
