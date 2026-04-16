@@ -2,9 +2,6 @@ import {
   deepEqual
 } from "./chunk-FX47Z3IB.js";
 import {
-  require_shim
-} from "./chunk-PU3CAANW.js";
-import {
   CommandManager,
   Editor,
   Extendable,
@@ -125,6 +122,9 @@ import {
   wrappingInputRule
 } from "./chunk-7Q4SBMD3.js";
 import "./chunk-YLIL3JKF.js";
+import {
+  require_shim
+} from "./chunk-PU3CAANW.js";
 import {
   require_jsx_runtime
 } from "./chunk-NZAIND7N.js";

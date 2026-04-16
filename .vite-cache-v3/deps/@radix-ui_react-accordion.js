@@ -4,20 +4,20 @@ import {
   Root,
   Trigger,
   createCollapsibleScope
-} from "./chunk-4H5JUIML.js";
-import {
-  createCollection
-} from "./chunk-AJS24WE3.js";
+} from "./chunk-6CN3NI7G.js";
 import {
   useDirection
 } from "./chunk-TPBLUEFY.js";
 import {
+  createCollection
+} from "./chunk-AJS24WE3.js";
+import {
   useId
 } from "./chunk-N3XXQJTN.js";
+import "./chunk-Q3C5N2ZR.js";
 import {
   useControllableState
 } from "./chunk-M6RB35O7.js";
-import "./chunk-Q3C5N2ZR.js";
 import {
   composeEventHandlers
 } from "./chunk-ZMAP7OQT.js";
