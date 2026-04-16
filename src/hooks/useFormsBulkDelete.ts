@@ -48,7 +48,12 @@ export function useFormsBulkDelete() {
           .delete({ count: "exact" })
           .in("id", summary.site_form);
         if (error) errors.push(`site_forms: ${error.message}`);
-        else deletedSite = count ?? summary.site_form.length;
+        else {
+          deletedSite = count ?? 0;
+          if (deletedSite === 0 && summary.site_form.length > 0) {
+            errors.push(`site_forms: нет прав на удаление (RLS блокирует)`);
+          }
+        }
       }
 
       if (summary.preorder.length > 0) {
@@ -57,11 +62,38 @@ export function useFormsBulkDelete() {
           .delete({ count: "exact" })
           .in("id", summary.preorder);
         if (error) errors.push(`preorders: ${error.message}`);
-        else deletedPre = count ?? summary.preorder.length;
+        else {
+          deletedPre = count ?? 0;
+          if (deletedPre === 0 && summary.preorder.length > 0) {
+            errors.push(`preorders: нет прав на удаление (RLS блокирует)`);
+          }
+        }
       }
 
       if (errors.length > 0) {
         throw new Error(errors.join("; "));
+      }
+
+      // Audit log (best-effort; do not fail mutation on log error)
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        await supabase.from("audit_logs").insert({
+          action: "bulk_delete_forms",
+          actor_type: "user",
+          actor_user_id: user?.id ?? null,
+          meta: {
+            site: deletedSite,
+            preorder: deletedPre,
+            skipped_training: summary.training_skipped.length,
+            requested: {
+              site_form: summary.site_form.length,
+              preorder: summary.preorder.length,
+              training: summary.training_skipped.length,
+            },
+          },
+        });
+      } catch (e) {
+        console.warn("[useFormsBulkDelete] audit log failed", e);
       }
 
       return { deletedSite, deletedPre, skippedTraining: summary.training_skipped.length };
@@ -77,9 +109,10 @@ export function useFormsBulkDelete() {
           : undefined,
       });
 
-      // Invalidate all relevant forms-hub queries (all/site/preorder/by-product/export)
+      // Invalidate all relevant forms-hub queries
       qc.invalidateQueries({ queryKey: ["forms-hub-data"] });
       qc.invalidateQueries({ queryKey: ["forms-hub-products"] });
+      qc.invalidateQueries({ queryKey: ["forms-hub-export-counts"] });
       qc.invalidateQueries({ queryKey: ["admin-preregistrations"] });
       qc.invalidateQueries({ queryKey: ["preregistration-stats"] });
     },
