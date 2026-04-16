@@ -30,6 +30,11 @@ export interface FormsHubRow {
   status: string;
   has_deal: boolean;
   has_account: boolean;
+  // Training-only: used for level-2/3 grouping in By-Product tab
+  module_id: string | null;
+  module_title: string | null;
+  lesson_id: string | null;
+  lesson_title: string | null;
   raw: any;
 }
 
