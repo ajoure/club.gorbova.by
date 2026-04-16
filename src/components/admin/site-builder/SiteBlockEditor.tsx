@@ -239,6 +239,8 @@ export function SiteBlockEditor({ blocks, onChange }: SiteBlockEditorProps) {
     onChange(newBlocks);
   }, [blocks, onChange]);
 
+  const registry = useSitePageAnchors(blocks);
+
   return (
     <div className="max-w-3xl mx-auto">
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
