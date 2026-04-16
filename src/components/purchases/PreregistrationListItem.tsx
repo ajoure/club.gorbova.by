@@ -1,7 +1,7 @@
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { Badge } from "@/components/ui/badge";
-import { CalendarDays, Package } from "lucide-react";
+import { CalendarDays, Layers } from "lucide-react";
 import { getProductName } from "@/lib/product-names";
 
 interface CoursePreregistration {
@@ -35,7 +35,7 @@ export function PreregistrationListItem({ preregistration }: PreregistrationList
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3 min-w-0">
           <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-            <Package className="h-5 w-5 text-primary" />
+            <Layers className="h-5 w-5 text-indigo-500" />
           </div>
           <div className="min-w-0">
             <h4 className="font-medium text-foreground truncate">{productName}</h4>

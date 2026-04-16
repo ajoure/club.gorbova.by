@@ -14,7 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Package, ChevronDown, Info } from "lucide-react";
+import { Layers, ChevronDown, Info } from "lucide-react";
 
 interface Tariff {
   id: string;
@@ -160,7 +160,7 @@ export function ProductTariffAccessSelector({
                       type="button"
                       className="flex items-center gap-2 min-h-[44px] flex-1 text-left hover:bg-muted/30 -m-2.5 sm:-m-3 p-2.5 sm:p-3 rounded-lg transition-colors"
                     >
-                      <Package className="h-4 w-4 text-muted-foreground shrink-0" />
+                      <Layers className="h-4 w-4 text-indigo-500 shrink-0" />
                       <span className="text-sm font-medium truncate flex-1">
                         {product.name}
                       </span>

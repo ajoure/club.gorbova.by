@@ -11,7 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CreditCard, RefreshCw, Loader2, ArrowDownLeft, ArrowUpRight, ExternalLink, Package } from "lucide-react";
+import { CreditCard, RefreshCw, Loader2, ArrowDownLeft, ArrowUpRight, ExternalLink, Layers } from "lucide-react";
 
 interface ContactPaymentsTabProps {
   contactId: string;
@@ -416,7 +416,7 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
                     {payment.productName && (
                       <Badge variant="outline" className="text-xs gap-1 max-w-[200px] truncate">
                         <ProductCategoryBadge category={(payment as any).category} />
-                        <Package className="w-3 h-3 shrink-0" />
+                        <Layers className="w-3 h-3 shrink-0 text-indigo-500" />
                         <span className="truncate">{payment.productName}</span>
                       </Badge>
                     )}

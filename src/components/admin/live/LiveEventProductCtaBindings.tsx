@@ -11,7 +11,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Plus, Trash2, Loader2, ShoppingCart, ExternalLink, FileText, Eye, Package } from "lucide-react";
+import { Plus, Trash2, Loader2, ShoppingCart, ExternalLink, FileText, Eye, Layers } from "lucide-react";
 import { toast } from "sonner";
 import { DomainEventService } from "@/lib/domain-events";
 
@@ -197,7 +197,7 @@ export function LiveEventProductCtaBindings({ liveEventId }: { liveEventId: stri
           {bindings.map((b: any) => (
             <Card key={b.id} className={`${b.is_active ? "" : "opacity-50"}`}>
               <CardContent className="p-3 flex items-center gap-3">
-                <Package className="h-4 w-4 text-muted-foreground shrink-0" />
+                <Layers className="h-4 w-4 text-indigo-500 shrink-0" />
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-medium truncate">{b.title_override || b.product_id?.slice(0, 8)}</p>
                   <div className="flex gap-1 mt-0.5 flex-wrap">
