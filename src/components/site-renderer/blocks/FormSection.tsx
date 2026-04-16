@@ -348,11 +348,12 @@ function AuthFormSection({
   }, [formStep, refetchTelegramStatus]);
 
   // ─── Auto-advance from telegram_prompt when status becomes active ───
+  // In preview, do NOT auto-advance — let user see the telegram step
   useEffect(() => {
+    if (isPreview) return;
     if (formStep !== "telegram_prompt") return;
     if (telegramStatus?.status === "active") {
       setTelegramUiStatus("linked");
-      // Auto-advance after brief feedback
       const t = setTimeout(() => {
         if (customFields.length > 0) {
           setFormStep("extra_fields");
@@ -362,7 +363,7 @@ function AuthFormSection({
       }, 1500);
       return () => clearTimeout(t);
     }
-  }, [formStep, telegramStatus?.status, customFields.length]);
+  }, [isPreview, formStep, telegramStatus?.status, customFields.length]);
 
   // ─── Handlers ───
 
