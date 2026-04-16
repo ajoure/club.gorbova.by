@@ -116,6 +116,7 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
           max_score: row.max_score,
           summary: { is_correct: row.is_correct, attempts: row.attempts },
           payload: (row.response || {}) as Record<string, unknown>,
+          _lesson_id: row.lesson_id,
         }));
       }
 
