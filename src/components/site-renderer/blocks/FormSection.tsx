@@ -272,8 +272,8 @@ function AuthFormSection({
   const startTelegramLink = useStartTelegramLink();
   const { data: telegramStatus, refetch: refetchTelegramStatus } = useTelegramLinkStatus();
 
-  // State machine
-  const [formStep, setFormStep] = useState<AuthFormStep>("check_session");
+  // State machine — in preview, always start at email_check to show the real form UX
+  const [formStep, setFormStep] = useState<AuthFormStep>(isPreview ? "email_check" : "check_session");
 
   // System auth fields
   const [email, setEmail] = useState("");
@@ -308,7 +308,9 @@ function AuthFormSection({
   }, [telegramLinkEnabled, telegramStatus?.status, customFields.length]);
 
   // ─── Session check on mount — HARD RULE: never auto-submit, only UI branching ───
+  // In preview mode, skip session check entirely — always show email_check step
   useEffect(() => {
+    if (isPreview) return; // preview always stays at email_check initially
     if (formStep !== "check_session") return;
 
     if (session && user) {
@@ -316,7 +318,7 @@ function AuthFormSection({
     } else {
       setFormStep("email_check");
     }
-  }, [formStep, session, user, getNextStepAfterAuth]);
+  }, [isPreview, formStep, session, user, getNextStepAfterAuth]);
 
   // ─── Listen for session changes (email confirmation resume) ───
   useEffect(() => {
