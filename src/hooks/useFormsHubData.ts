@@ -168,17 +168,17 @@ async function fetchSiteForms(
 let _productCodeMapPromise: Promise<Record<string, { id: string; name: string }>> | null = null;
 async function getProductCodeMap(): Promise<Record<string, { id: string; name: string }>> {
   if (!_productCodeMapPromise) {
-    _productCodeMapPromise = supabase
-      .from("products_v2")
-      .select("id, code, name")
-      .not("code", "is", null)
-      .then(({ data }) => {
-        const map: Record<string, { id: string; name: string }> = {};
-        for (const p of data || []) {
-          if (p.code) map[p.code] = { id: p.id, name: p.name };
-        }
-        return map;
-      });
+    _productCodeMapPromise = (async () => {
+      const { data } = await supabase
+        .from("products_v2")
+        .select("id, code, name")
+        .not("code", "is", null);
+      const map: Record<string, { id: string; name: string }> = {};
+      for (const p of data || []) {
+        if (p.code) map[p.code] = { id: p.id, name: p.name };
+      }
+      return map;
+    })();
   }
   return _productCodeMapPromise;
 }
