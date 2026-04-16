@@ -19,6 +19,12 @@ export interface ContactArtifact {
   max_score: number | null;
   summary: Record<string, unknown>;
   payload: Record<string, unknown>;
+  /** Lesson ID for training artifacts */
+  lesson_id?: string;
+  /** Module ID for training artifacts */
+  module_id?: string;
+  /** User ID (auth) for training artifacts */
+  user_id?: string;
   /** @internal used for dedup between lesson_answer and lesson_completion */
   _lesson_id?: string;
 }
@@ -148,7 +154,9 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
           score: row.score,
           max_score: row.max_score,
           summary: { is_correct: row.is_correct, attempts: row.attempts },
-          payload: normalizeTrainingResponse(row.response),
+          payload: {},
+          lesson_id: row.lesson_id,
+          user_id: userId!,
           _lesson_id: row.lesson_id,
         }));
       }
@@ -173,7 +181,10 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
           score: row.score,
           max_score: row.max_score,
           summary: { is_correct: row.is_correct, attempts: row.attempts, score: row.score, max_score: row.max_score },
-          payload: normalizeTrainingResponse(row.response),
+          payload: {},
+          lesson_id: row.lesson_id,
+          module_id: module?.id || null,
+          user_id: userId!,
           _lesson_id: row.lesson_id,
         };
       });
@@ -224,6 +235,9 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
           max_score: null,
           summary: {},
           payload: {},
+          lesson_id: row.lesson_id,
+          module_id: module?.id || null,
+          user_id: userId!,
           _lesson_id: row.lesson_id,
         };
       });
@@ -266,7 +280,8 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
         score: null,
         max_score: null,
         summary: {},
-        payload: normalizeTrainingResponse(row.homework_response),
+        payload: typeof row.homework_response === 'object' ? row.homework_response : {},
+        user_id: userId!,
       }));
     },
   });
@@ -317,57 +332,13 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-/** Translate common training response keys to Russian and flatten "answers" */
-function normalizeTrainingResponse(response: unknown): Record<string, unknown> {
-  if (!response || typeof response !== 'object') return {};
-  const raw = response as Record<string, unknown>;
-  const result: Record<string, unknown> = {};
-
-  for (const [key, value] of Object.entries(raw)) {
-    const ruKey = TRAINING_KEY_MAP[key.toLowerCase()] || key;
-
-    // Flatten "answers" object into a readable table
-    if (key.toLowerCase() === 'answers' && typeof value === 'object' && value !== null && !Array.isArray(value)) {
-      const answersObj = value as Record<string, unknown>;
-      const rows = Object.entries(answersObj).map(([qKey, qVal]) => ({
-        "Вопрос": qKey.toUpperCase(),
-        "Ответ": String(qVal),
-      }));
-      result[ruKey] = rows;
-    } else {
-      result[ruKey] = value;
-    }
-  }
-
-  return result;
-}
-
-const TRAINING_KEY_MAP: Record<string, string> = {
-  answers: "Ответы",
-  iscompleted: "Завершён",
-  is_completed: "Завершён",
-  dominantcategories: "Доминантные категории",
-  dominant_categories: "Доминантные категории",
-  score: "Баллы",
-  max_score: "Макс. баллы",
-  attempts: "Попытки",
-  is_correct: "Верно",
-  response: "Ответ",
-  result: "Результат",
-  selected: "Выбрано",
-  text: "Текст",
-  comment: "Комментарий",
-  feedback: "Обратная связь",
-};
-
 /** Build a display payload from metadata when form_data is empty */
 function buildMetadataPayload(meta: Record<string, any>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
-  // Only show user-relevant fields, skip internal IDs
   const skipKeys = new Set(['user_id', 'pipeline_id', 'pipeline_stage_id', 'deal_creation_enabled']);
   for (const [key, value] of Object.entries(meta)) {
     if (skipKeys.has(key)) continue;
-    if (key === 'product_id' || key === 'tariff_id') continue; // shown in header
+    if (key === 'product_id' || key === 'tariff_id') continue;
     if (key === 'auth_mode') {
       result['Авторизованная отправка'] = value;
       continue;
