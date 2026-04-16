@@ -100,6 +100,7 @@ const AdminSystemAudit = lazy(() => import("./pages/admin/AdminSystemAudit"));
 const AdminSystemHealth = lazy(() => import("./pages/admin/AdminSystemHealth"));
 const AdminConsents = lazy(() => import("./pages/admin/AdminConsents"));
 const AdminPreregistrations = lazy(() => import("./pages/admin/AdminPreregistrations"));
+const AdminFormsHub = lazy(() => import("./pages/admin/AdminFormsHub"));
 // AdminInbox removed - redirects to /admin/communication
 const AdminExecutors = lazy(() => import("./pages/admin/AdminExecutors"));
 const AdminDocumentTemplates = lazy(() => import("./pages/admin/AdminDocumentTemplates"));

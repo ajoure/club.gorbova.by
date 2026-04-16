@@ -1,12 +1,11 @@
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { useLocation, useNavigate } from "react-router-dom";
-import { CreditCard, ClipboardList, BarChart3, RefreshCw, FileSpreadsheet, Repeat } from "lucide-react";
+import { CreditCard, BarChart3, RefreshCw, FileSpreadsheet, Repeat } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAutoRenewalAlerts } from "@/hooks/useAutoRenewalAlerts";
 
 // Tab content components
 import { PaymentsTabContent } from "@/components/admin/payments/PaymentsTabContent";
-import { PreregistrationsTabContent } from "@/components/admin/payments/PreregistrationsTabContent";
 import { DiagnosticsTabContent } from "@/components/admin/payments/DiagnosticsTabContent";
 import { AutoRenewalsTabContent } from "@/components/admin/payments/AutoRenewalsTabContent";
 import { BepaidStatementTabContent } from "@/components/admin/payments/BepaidStatementTabContent";
@@ -16,7 +15,6 @@ const tabs = [
   { id: "transactions", label: "Платежи", icon: CreditCard, path: "/admin/payments" },
   { id: "auto-renewals", label: "Автопродления", icon: RefreshCw, path: "/admin/payments/auto-renewals" },
   { id: "bepaid-subs", label: "Подписки BePaid", icon: Repeat, path: "/admin/payments/bepaid-subscriptions" },
-  { id: "preorders", label: "Предзаписи", icon: ClipboardList, path: "/admin/payments/preorders" },
   { id: "diagnostics", label: "Диагностика", icon: BarChart3, path: "/admin/payments/diagnostics" },
   { id: "statement", label: "Выписка BePaid", icon: FileSpreadsheet, path: "/admin/payments/statement" },
 ];
@@ -80,7 +78,6 @@ export default function AdminPaymentsHub() {
           {activeTab === "transactions" && <PaymentsTabContent />}
           {activeTab === "auto-renewals" && <AutoRenewalsTabContent />}
           {activeTab === "bepaid-subs" && <BepaidSubscriptionsTabContent />}
-          {activeTab === "preorders" && <PreregistrationsTabContent />}
           {activeTab === "diagnostics" && <DiagnosticsTabContent />}
           {activeTab === "statement" && <BepaidStatementTabContent />}
         </div>
