@@ -284,15 +284,17 @@ const App = () => {
               {/* Payments Hub routes */}
               <Route path="/admin/payments" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
               {/* Route removed: /admin/payments/installments - tab deleted */}
-              <Route path="/admin/payments/preorders" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/payments/preorders" element={<Navigate to="/admin/forms?tab=preorders" replace />} />
               <Route path="/admin/payments/diagnostics" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/payments/auto-renewals" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/payments/statement" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/payments/bepaid-subscriptions" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/bepaid-subscriptions" element={<Navigate to="/admin/payments/bepaid-subscriptions" replace />} />
+              {/* Forms Hub */}
+              <Route path="/admin/forms" element={<ProtectedRoute><LazyRoute><AdminFormsHub /></LazyRoute></ProtectedRoute>} />
               {/* Legacy redirects */}
               <Route path="/admin/installments" element={<Navigate to="/admin/payments" replace />} />
-              <Route path="/admin/preregistrations" element={<Navigate to="/admin/payments/preorders" replace />} />
+              <Route path="/admin/preregistrations" element={<Navigate to="/admin/forms?tab=preorders" replace />} />
               <Route path="/admin/bepaid-archive-import" element={<ProtectedRoute><LazyRoute><AdminBepaidArchiveImport /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/support" element={<ProtectedRoute><LazyRoute><AdminSupport /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/news" element={<ProtectedRoute><LazyRoute><AdminNews /></LazyRoute></ProtectedRoute>} />
