@@ -74,6 +74,10 @@ interface RequestBody {
   deal_creation_enabled?: boolean;
   pipeline_id?: string;
   pipeline_stage_id?: string;
+  // Embed support (add-only, optional)
+  embed_origin?: string;
+  embed_block_id?: string;
+  embed_mode?: string;
 }
 
 // ─── Main ───
@@ -197,6 +201,10 @@ Deno.serve(async (req) => {
       if (pipeline_id) submissionMeta.pipeline_id = pipeline_id;
       if (pipeline_stage_id) submissionMeta.pipeline_stage_id = pipeline_stage_id;
     }
+    // Embed metadata (add-only)
+    if (body.embed_origin) submissionMeta.embed_origin = body.embed_origin;
+    if (body.embed_block_id) submissionMeta.embed_block_id = body.embed_block_id;
+    if (body.embed_mode) submissionMeta.embed_mode = body.embed_mode;
 
     const { data: submission, error: subError } = await admin
       .from("site_form_submissions")

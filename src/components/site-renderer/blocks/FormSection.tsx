@@ -159,6 +159,15 @@ function LegacyFormSection({ content, pageId, isPreview }: FormSectionProps) {
         if (stageId) payload.pipeline_stage_id = stageId;
       }
 
+      // Embed metadata (если форма отрисована через EmbedFormPage)
+      const embedOrigin = (content.__embed_origin as string) || "";
+      const embedBlockId = (content.__embed_block_id as string) || "";
+      if (embedOrigin) payload.embed_origin = embedOrigin;
+      if (embedBlockId) {
+        payload.embed_block_id = embedBlockId;
+        payload.embed_mode = "iframe";
+      }
+
       const { error: fnError } = await supabase.functions.invoke(
         "site-form-submit",
         { body: payload }
