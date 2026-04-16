@@ -1,5 +1,6 @@
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Search } from "lucide-react";
 import { type FormsHubFilters, type FormsSourceType, useFormsHubProducts } from "@/hooks/useFormsHubData";
 
@@ -52,19 +53,17 @@ export function FormsHubFiltersPanel({ filters, onChange, hideSourceType }: Prop
         </SelectContent>
       </Select>
 
-      <Input
-        type="date"
+      <DatePicker
         value={filters.period_from}
-        onChange={(e) => update({ period_from: e.target.value })}
+        onChange={(v) => update({ period_from: v })}
         placeholder="С"
-        className="w-full md:w-36"
+        className="w-full md:w-40"
       />
-      <Input
-        type="date"
+      <DatePicker
         value={filters.period_to}
-        onChange={(e) => update({ period_to: e.target.value })}
+        onChange={(v) => update({ period_to: v })}
         placeholder="По"
-        className="w-full md:w-36"
+        className="w-full md:w-40"
       />
 
       <Select value={filters.has_deal} onValueChange={(v) => update({ has_deal: v as "all" | "yes" | "no" })}>

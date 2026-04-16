@@ -1,11 +1,11 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { Card, CardContent } from "@/components/ui/card";
+import { ColumnSettings } from "@/components/admin/ColumnSettings";
+import { useFormsColumns } from "@/hooks/useFormsColumns";
 import { useFormsHubData, DEFAULT_FILTERS, DEFAULT_PAGINATION, type FormsHubFilters, type FormsHubRow, type FormsHubPagination } from "@/hooks/useFormsHubData";
 import { FormsHubFiltersPanel } from "./FormsHubFilters";
 import { FormsHubTable } from "./FormsHubTable";
 import { FormsHubPaginator } from "./FormsHubPaginator";
 import { FormsDetailOpener } from "./FormsDetailOpener";
-import { FormsTableToolbar } from "./FormsTableToolbar";
 import { FormsBulkActionsBar } from "./FormsBulkActionsBar";
 
 export function FormsSiteTabContent() {
@@ -14,6 +14,7 @@ export function FormsSiteTabContent() {
   const { data, isLoading } = useFormsHubData(filters, "site_form", pagination);
   const [selectedRow, setSelectedRow] = useState<FormsHubRow | null>(null);
   const [selectedRows, setSelectedRows] = useState<FormsHubRow[]>([]);
+  const { columns, setColumns } = useFormsColumns();
 
   const prevFiltersRef = useRef(filters);
   useEffect(() => {
@@ -27,13 +28,19 @@ export function FormsSiteTabContent() {
   const handleSelectionChange = useCallback((rows: FormsHubRow[]) => setSelectedRows(rows), []);
 
   return (
-    <div className="space-y-4">
-      <Card>
-        <CardContent className="pt-4 space-y-3">
+    <div className="space-y-3">
+      <div className="flex items-start gap-2">
+        <div className="flex-1">
           <FormsHubFiltersPanel filters={filters} onChange={setFilters} hideSourceType />
-          <FormsTableToolbar />
-        </CardContent>
-      </Card>
+        </div>
+        <ColumnSettings columns={columns} onChange={setColumns} />
+      </div>
+
+      <div className="flex items-center gap-4 text-sm text-muted-foreground">
+        <span>Показано: <strong className="text-foreground">{data?.rows.length ?? 0}</strong></span>
+        <span>•</span>
+        <span>Всего: <strong className="text-foreground">{data?.totalCount ?? '...'}</strong></span>
+      </div>
 
       <FormsHubTable
         rows={data?.rows || []}

@@ -61,12 +61,8 @@ export function FormsExportTabContent() {
   };
 
   return (
-    <div className="space-y-4">
-      <Card>
-        <CardContent className="pt-4">
-          <FormsHubFiltersPanel filters={filters} onChange={setFilters} />
-        </CardContent>
-      </Card>
+    <div className="space-y-3">
+      <FormsHubFiltersPanel filters={filters} onChange={setFilters} />
 
       <Card>
         <CardHeader>

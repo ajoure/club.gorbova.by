@@ -1,13 +1,14 @@
 import { useState, useMemo, useCallback } from "react";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ChevronRight, ChevronDown, Layers, FileText, ClipboardList, GraduationCap, BookOpen } from "lucide-react";
+import { ColumnSettings } from "@/components/admin/ColumnSettings";
+import { useFormsColumns } from "@/hooks/useFormsColumns";
 import { useFormsHubData, DEFAULT_FILTERS, type FormsHubFilters, type FormsHubRow } from "@/hooks/useFormsHubData";
 import { FormsHubFiltersPanel } from "./FormsHubFilters";
 import { FormsHubTable } from "./FormsHubTable";
 import { FormsDetailOpener } from "./FormsDetailOpener";
-import { FormsTableToolbar } from "./FormsTableToolbar";
 import { FormsBulkActionsBar } from "./FormsBulkActionsBar";
 
 /**
@@ -97,14 +98,16 @@ export function FormsByProductTabContent() {
   const handleOpenDetail = useCallback((row: FormsHubRow) => setSelectedRow(row), []);
   const handleSelectionChange = useCallback((r: FormsHubRow[]) => setSelectedRows(r), []);
 
+  const { columns, setColumns } = useFormsColumns();
+
   return (
-    <div className="space-y-4">
-      <Card>
-        <CardContent className="pt-4 space-y-3">
+    <div className="space-y-3">
+      <div className="flex items-start gap-2">
+        <div className="flex-1">
           <FormsHubFiltersPanel filters={filters} onChange={setFilters} />
-          <FormsTableToolbar />
-        </CardContent>
-      </Card>
+        </div>
+        <ColumnSettings columns={columns} onChange={setColumns} />
+      </div>
 
       {isLoading ? (
         <div className="text-sm text-muted-foreground py-8 text-center">Загрузка...</div>
