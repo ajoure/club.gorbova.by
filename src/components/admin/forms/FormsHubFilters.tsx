@@ -52,6 +52,21 @@ export function FormsHubFiltersPanel({ filters, onChange, hideSourceType }: Prop
         </SelectContent>
       </Select>
 
+      <Input
+        type="date"
+        value={filters.period_from}
+        onChange={(e) => update({ period_from: e.target.value })}
+        placeholder="С"
+        className="w-full md:w-36"
+      />
+      <Input
+        type="date"
+        value={filters.period_to}
+        onChange={(e) => update({ period_to: e.target.value })}
+        placeholder="По"
+        className="w-full md:w-36"
+      />
+
       <Select value={filters.has_deal} onValueChange={(v) => update({ has_deal: v as "all" | "yes" | "no" })}>
         <SelectTrigger className="w-full md:w-36">
           <SelectValue placeholder="Сделка" />

@@ -29,10 +29,16 @@ const exportColumns: ExportColumn<FormsHubRow>[] = [
   { header: "Аккаунт", getValue: (r) => r.has_account ? "Да" : "Нет" },
 ];
 
+/**
+ * Export tab — uses exportMode to fetch ALL server-filtered records without pagination.
+ */
 export function FormsExportTabContent() {
   const [filters, setFilters] = useState<FormsHubFilters>(DEFAULT_FILTERS);
   const [exportFormat, setExportFormat] = useState<"xlsx" | "csv">("xlsx");
-  const { data: rows, isLoading } = useFormsHubData(filters);
+  const { data, isLoading } = useFormsHubData(filters, undefined, { page: 1, pageSize: 50 }, { exportMode: true });
+
+  const rows = data?.rows;
+  const totalCount = data?.totalCount ?? 0;
 
   const handleExport = async () => {
     if (!rows || rows.length === 0) {
@@ -87,7 +93,7 @@ export function FormsExportTabContent() {
 
             <Button onClick={handleExport} disabled={isLoading || !rows?.length}>
               <Download className="h-4 w-4 mr-2" />
-              Экспортировать {rows?.length ? `(${rows.length})` : ""}
+              Экспортировать {totalCount ? `(${totalCount})` : ""}
             </Button>
           </div>
           <p className="text-xs text-muted-foreground mt-3">

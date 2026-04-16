@@ -8,16 +8,23 @@ import { FormsHubFiltersPanel } from "./FormsHubFilters";
 import { FormsHubTable } from "./FormsHubTable";
 import { FormsDetailOpener } from "./FormsDetailOpener";
 
+/**
+ * "By Product" tab — aggregated grouped mode.
+ * Fetches all server-filtered rows (no pagination) and groups client-side.
+ * Not a pure server-side grouping — acceptable at current volumes (~100 records).
+ */
 export function FormsByProductTabContent() {
   const [filters, setFilters] = useState<FormsHubFilters>(DEFAULT_FILTERS);
-  const { data: rows, isLoading } = useFormsHubData(filters);
+  const { data, isLoading } = useFormsHubData(filters, undefined, { page: 1, pageSize: 50 }, { exportMode: true });
   const [selectedRow, setSelectedRow] = useState<FormsHubRow | null>(null);
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+
+  const rows = data?.rows;
 
   const groups = useMemo(() => {
     if (!rows) return [];
     const map = new Map<string, { title: string; product_id: string | null; rows: FormsHubRow[] }>();
-    
+
     for (const row of rows) {
       const key = row.product_id || row.product_title || "no-product";
       if (!map.has(key)) {
@@ -53,6 +60,9 @@ export function FormsByProductTabContent() {
         <div className="text-sm text-muted-foreground py-8 text-center">Нет записей</div>
       ) : (
         <div className="space-y-3">
+          <div className="text-xs text-muted-foreground text-right">
+            {data?.totalCount ?? 0} записей · {groups.length} продуктов
+          </div>
           {groups.map((group) => {
             const key = group.product_id || group.title;
             const isOpen = openGroups.has(key);
