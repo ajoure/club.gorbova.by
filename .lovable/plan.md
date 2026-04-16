@@ -2,262 +2,137 @@
 
 &nbsp;
 
-1. **Не тянуть StudentProgressModal как есть, если он жёстко привязан к другому экрану или side-effects.**
-  Сначала проверь, можно ли его безопасно переиспользовать напрямую.
-  Если он чистый и принимает только props — окей.
-  Если внутри есть завязки на роут, локальную страницу, mutation/telemetry, специфичный layout-контекст — вынести общий presentation-layer, а не копировать логику.
-2. **Нужно явно разделить lesson и quest-ветки.**
-  В текущем плане training-ветка охватывает lesson_answer, lesson_completion, quest_homework, но StudentProgressModal по описанию заточен под lesson_progress_state/lesson_blocks.
-  Для quest_homework надо отдельно зафиксировать:
+1. Глобальную замену Package → Layers оставить в этом же патче и выполнить сразу по всем перечисленным product-контекстам. Document package-контексты и прочие не-product смыслы не трогать.
+2. Для useAdminMenuSettings.tsx отдельно проверить, что там действительно используется именно lucide icon mapping/JSX, а не строковый ключ с другой системой иконок. Если там не прямой импорт Package, заменить корректно по месту без костылей.
+3. src/archive/pages/AdminProducts.tsx можно менять только если страница реально участвует в сборке или доступна из интерфейса. Если это мёртвый архивный файл и он не влияет на runtime/UI, достаточно отметить его отдельно в отчёте как “archived / non-runtime”. Основной proof нужен по живым экранам.
+4. В StudentProgressModal props studentName?: string и productTitle?: string делать строго add-only, без ломки текущих вызовов. Старые места открытия модалки должны продолжить работать без доработки.
+5. В шапке StudentProgressModal приоритет показа имени зафиксировать так:
   &nbsp;
-  - либо остаётся в текущем generic viewer как fallback;
-  - либо есть отдельный существующий viewer, который тоже надо переиспользовать;
-  - но нельзя насильно открывать StudentProgressModal, если для quest он не является каноническим экраном.
+  - studentName
+  - profile.full_name
+  - [profile.email](http://profile.email)
+  - "Неизвестный ученик"
+    Не возвращать больше "Без имени".
   &nbsp;
-3. **Не убирать training payload из useContactArtifacts.ts полностью, пока не доказано, что он больше нигде не нужен.**
-  Лучше так:
+6. В ContactArtifactsTab пробрасывать contactName из ContactDetailSheet, а productTitle — не из “group.label по ситуации”, а из канонического product group header / artifact product context, чтобы не было рассинхрона между списком и модалкой.
+7. Визуальное улучшение секций по продуктам поддерживаю, но без перегруза:
   &nbsp;
-  - список артефактов остаётся лёгким;
-  - для training details payload в списке может быть минимальным;
-  - полный контекст грузится по клику;
-    Но не делать резкий delete до проверки всех зависимостей.
+  - белая карточка,
+  - цветной левый бордер,
+  - мягкая тень,
+  - цветная product icon,
+  - аккуратные badges.
+    Не делать слишком много ярких цветов и градиентов одновременно.
   &nbsp;
-4. **module_id в ContactArtifact — добавить обязательно, но также желательно сохранить lesson_id и user_id как явные поля в типе, а не надеяться на косвенный доступ.**
-  Раз detail-viewer будет открываться по этим данным, они должны быть частью контракта артефакта явно и типобезопасно.
-5. **Нужен явный lazy-query contract для training details.**
-  По клику на training item:
+8. Training logic больше не трогать:
   &nbsp;
-  - грузим lesson_progress_state,
-  - грузим lesson_blocks,
-  - грузим user_lesson_progress,
-  - показываем loading state внутри modal/open flow,
-  - если чего-то нет — показываем fallback/error state, а не ломаемся.
-    Это надо прописать, чтобы не было “по клику тишина”.
+  - training item → только existing StudentProgressModal
+  - site form item → только existing SiteFormDetailDialog
+  - никаких новых training renderers / normalizers / resolver chains.
   &nbsp;
-6. **Нужен fallback для кейса, когда lesson_progress_state отсутствует, а training artifact есть.**
-  Такое возможно.
-  Например:
+9. В финальном отчёте отдельно показать:
   &nbsp;
-  - есть user_lesson_progress,
-  - но нет полноценного lesson_progress_state.
-    Нужно зафиксировать поведение:
-  - либо открывать доступный existing viewer только при полном контексте,
-  - либо fallback на компактный read-only details block,
-  - но не пустой экран и не crash.
+  - какой canonical icon выбран (Layers);
+  - список реально изменённых runtime-файлов;
+  - 2–3 живых UI-скрина из разных разделов, где старая product icon заменена;
+  - StudentProgressModal с именем, продуктом, уроком, статусом;
+  - карточку контакта со сгруппированной вкладкой и корректным открытием training/site form.
   &nbsp;
-7. **Для lesson_completion без block responses надо явно описать сценарий.**
-  Если по записи есть только completion, но нет интерактивных ответов:
-  &nbsp;
-  - либо открываем StudentProgressModal, если он умеет работать с пустым blockResponses,
-  - либо показываем, что у урока нет подробных интерактивных данных.
-    Это должен быть осознанный кейс в плане.
-  &nbsp;
-8. **Очистку нужно сформулировать мягче: не “удалить сразу”, а “вывести из training detail path”.**
-  Сначала переключить training details на existing viewer, потом проверить, что:
-  &nbsp;
-  - старые функции/мапперы больше нигде не используются,
-  - только после этого удалить мёртвый код.
-    Иначе можно сломать промежуточные ветки.
-  &nbsp;
-9. **ArtifactDetailModal лучше явно переименовать по смыслу, если он останется только для site forms.**
-  Иначе название будет путать.
-  Например, логика:
-  &nbsp;
-  - SiteFormDetailDialog
-  - training → existing StudentProgressModal
-    Это не обязательно, но желательно, если rename не заденет много мест.
-  &nbsp;
-10. **Нужно отдельно проверить совместимость визуального слоя.**
-  Если StudentProgressModal открывается поверх карточки контакта, надо убедиться:
 
 &nbsp;
 
-&nbsp;
+План: визуальное обновление вкладки «Анкеты и обучение», StudentProgressModal и глобальная замена product icon
 
-&nbsp;
+## 1. Глобальная замена product icon
 
-- overlay/portal не конфликтует с already open contact sheet,
-- z-index корректный,
-- scroll locking корректный,
-- backdrop не ломает UX.
-  Это важно, потому что модалка будет открываться уже из модалки/side sheet.
+**Canonical icon:** `Layers` (из lucide-react) — современная, нейтральная, хорошо масштабируется.
+**Canonical color:** `text-indigo-500` (основной), `text-indigo-400` (muted варианты).
 
-&nbsp;
+### Файлы для замены (Package → Layers, где используется как иконка продукта):
 
-&nbsp;
 
-&nbsp;
+| #   | Файл                                                             | Контекст                 |
+| --- | ---------------------------------------------------------------- | ------------------------ |
+| 1   | `src/components/admin/contact/ContactArtifactsTab.tsx`           | Product group header     |
+| 2   | `src/components/admin/ContactPaymentsTab.tsx`                    | Payment product icon     |
+| 3   | `src/components/admin/payments/BulkCreateDealsDialog.tsx`        | Deal creation            |
+| 4   | `src/components/admin/payments/LinkDealDialog.tsx`               | Deal linking             |
+| 5   | `src/components/admin/payments/LinkSubscriptionDealDialog.tsx`   | Subscription deal        |
+| 6   | `src/components/admin/AdminChargeDialog.tsx`                     | Charge dialog            |
+| 7   | `src/components/admin/AdminPaymentLinkDialog.tsx`                | Payment link             |
+| 8   | `src/components/admin/trainings/ProductTariffAccessSelector.tsx` | Tariff selector          |
+| 9   | `src/components/admin/live/LiveEventProductCtaBindings.tsx`      | CTA bindings             |
+| 10  | `src/components/telegram/TelegramClubsTab.tsx`                   | Club settings            |
+| 11  | `src/components/purchases/PreregistrationListItem.tsx`           | Preregistration          |
+| 12  | `src/components/admin/site-builder/blocks/FormBlockEditor.tsx`   | Form block               |
+| 13  | `src/pages/admin/ProductClubMappings.tsx`                        | Club mappings            |
+| 14  | `src/hooks/useAdminMenuSettings.tsx`                             | Sidebar menu icon string |
+| 15  | `src/archive/pages/AdminProducts.tsx`                            | Archived page            |
 
-11. **В DoD добавь proof именно на проблемных кейсах:**
 
-&nbsp;
+**НЕ трогаем** (Package = «пакет документов», семантически корректно):
 
-&nbsp;
+- `AiDocumentsGenerateView.tsx`
+- `AiDocumentPackagesManager.tsx`
+- `AiDocumentsHistoryView.tsx`
+- `ContactInstallments.tsx` (пакет рассрочки — другой смысл)
 
-&nbsp;
+## 2. StudentProgressModal — шапка с контекстом
 
-- Тест: В какой роли вы находитесь сейчас → открывается existing viewer, без q1/1a;
-- Шаг 2: Анализ и формирование портфеля клиентов → открывается та же таблица, что и в progress screen;
-- site_form → по-прежнему открывается form-dialog, а не training viewer.
+**Add-only изменения** (не ломают существующие вызовы):
 
-&nbsp;
+- Добавить optional props: `studentName?: string`, `productTitle?: string`
+- В шапке показывать:
+  - **Имя** = `studentName || profile?.full_name || profile?.email || "Неизвестный ученик"`
+  - **Продукт** = badge с `productTitle` (если передан)
+  - **Урок** = `lessonTitle` (если передан)
+  - **Статус** = badge «Завершён» / «В процессе»
+- Убрать generic «Без имени» — всегда показывать лучший доступный идентификатор
+- Заменить `User` icon на аватар-placeholder с инициалами (цветной круг)
+- Карточки блоков — добавить мягкий цветной левый бордер по типу блока
 
-&nbsp;
+## 3. ContactArtifactsTab — визуальное улучшение
 
-&nbsp;
+### Product group sections:
 
-12. **Добавь негативный DoD:**
+- Заменить `bg-muted/60` на белую карточку с `border-l-4 border-indigo-300 shadow-sm`
+- Product icon `Layers` в `bg-indigo-50 text-indigo-500` кружке
+- Badges количеств — мягкие цветные фоны (`bg-emerald-50 text-emerald-600`, `bg-blue-50 text-blue-600`)
 
-&nbsp;
+### Artifact rows:
 
-&nbsp;
+- Иконки типов в цветных кружках (`bg-blue-50`, `bg-emerald-50`, `bg-amber-50`)
+- Hover — `hover:bg-accent/40` с мягким transition
 
-&nbsp;
+### Передать contactName:
 
-- список вкладки не ломается, если detail loading не удался;
-- site forms не затронуты;
-- фильтры/счётчики/dedup не меняются;
-- второй кастомный training viewer больше не используется.
+- `ContactDetailSheet.tsx` → передать `contactName={contact.full_name}` в `ContactArtifactsTab`
+- `ContactArtifactsTab` → пробросить в `StudentProgressModal` как `studentName`
+- Также пробросить `productTitle` из `group.label`
 
-&nbsp;
+## 4. Scope guard
 
-&nbsp;
+- **Training details** = только reuse `StudentProgressModal`, никаких новых renderers
+- **Site forms** = отдельный `SiteFormDetailDialog`
+- Никаких новых training renderers, normalizers, resolver chains
 
-&nbsp;
+## Файлы для изменения
 
-13. **Главный scope guard нужно записать прямо:**
 
-&nbsp;
+| Файл                       | Что меняется                                                  |
+| -------------------------- | ------------------------------------------------------------- |
+| ~15 файлов с Package       | Import `Layers` вместо `Package`, применить `text-indigo-500` |
+| `StudentProgressModal.tsx` | +studentName/productTitle props, улучшенная шапка             |
+| `ContactArtifactsTab.tsx`  | +contactName prop, визуал секций/строк, передача имени        |
+| `ContactDetailSheet.tsx`   | Передать contactName в ContactArtifactsTab                    |
 
-&nbsp;
-
-&nbsp;
-
-- training details = reuse existing progress UI;
-- site forms = separate local dialog;
-- никаких новых training renderers, normalizers, resolver chains поверх уже существующего source of truth.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-14. **Финальный proof должен показать source-trace:**
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- какой training artifact кликнули,
-- какой lesson_id/user_id/module_id,
-- какой existing component opened,
-- что UI совпадает с экраном прогресса по смысловым данным, а не только “примерно похоже”.
-
-&nbsp;
-
-&nbsp;
-
-План: переиспользование StudentProgressModal для training details в карточке контакта
-
-## Проблема
-
-Сейчас по клику на training-артефакт во вкладке «Анкеты и обучение» открывается кастомный `ArtifactDetailModal` с примитивным рендером raw payload. Это даёт «кракозябры» (q1, 1a) вместо человекочитаемых вопросов/ответов. При этом в системе уже существует полноценный `StudentProgressModal`, который корректно отображает все типы блоков: quiz, survey, diagnostic_table, sequential_form, файлы и т.д.
-
-## Принцип
-
-- **Training details** → открывать существующий `StudentProgressModal`, без нового renderer
-- **Site forms** → оставить отдельный Dialog с `PayloadSection` (это действительно новая сущность)
-- Удалить из training-ветки `ArtifactDetailModal` использование `TrainingMetrics` и `PayloadSection` для training
-- Удалить `normalizeTrainingResponse` и `TRAINING_KEY_MAP` из `useContactArtifacts.ts` — они больше не нужны для training
-
-## Что нужно для открытия StudentProgressModal
-
-Компонент принимает:
-
-```text
-record: LessonProgressRecord   ← из lesson_progress_state (id, user_id, lesson_id, state_json, completed_at, created_at, updated_at)
-lessonBlocks: LessonBlock[]     ← из lesson_blocks (id, block_type, content) по lesson_id
-blockResponses: Record<string>  ← из user_lesson_progress сгруппированные по block_id
-lessonId: string
-lessonTitle: string
-moduleId: string
-```
-
-Из `ContactArtifact` уже есть: `lesson_id`, `user_id`. Остальное нужно дозагрузить по клику.
-
-## Шаги реализации
-
-### 1. ContactArtifactsTab — разделить обработку клика
-
-- Клик на `site_form` → открывает существующий `ArtifactDetailModal` (только для форм)
-- Клик на `lesson_answer` / `lesson_completion` / `quest_homework` → запускает загрузку данных для `StudentProgressModal`
-
-### 2. Добавить хук или inline-загрузку для training detail
-
-По клику на training-артефакт, дозагрузить:
-
-1. `lesson_progress_state` по `(user_id, lesson_id)` → получить `state_json` и record
-2. `lesson_blocks` по `lesson_id` → получить блоки с `block_type` и `content`
-3. `user_lesson_progress` по `(user_id, lesson_id)` → сгруппировать по `block_id` для `blockResponses`
-
-Это 3 параллельных запроса, выполняемые только по клику (не при загрузке вкладки).
-
-### 3. Открыть StudentProgressModal с правильными props
-
-```text
-<StudentProgressModal
-  record={loadedRecord}
-  lessonBlocks={loadedBlocks}
-  open={!!selectedTraining}
-  onClose={() => setSelectedTraining(null)}
-  blockResponses={groupedResponses}
-  lessonId={artifact.lesson_id}
-  lessonTitle={artifact.lesson_title}
-  moduleId={artifact.module_id}
-/>
-```
-
-### 4. Очистка
-
-Удалить / вывести из использования:
-
-- `normalizeTrainingResponse()` в `useContactArtifacts.ts`
-- `TRAINING_KEY_MAP` в `useContactArtifacts.ts`
-- Использование `TrainingMetrics` и `PayloadSection` для training-артефактов в `ArtifactDetailModal`
-- В `ArtifactDetailModal` оставить только ветку `site_form`
-
-`ArtifactPayloadRenderer.tsx` — оставить как есть, он используется для site forms.
-
-### 5. Расширить ContactArtifact type
-
-Добавить `module_id?: string` в `ContactArtifact`, заполнять из join chain `training_lessons → training_modules`.
-
-## Файлы, которые будут изменены
-
-
-| Файл                                                       | Действие                                                                                                                                     |
-| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/components/admin/contact/ContactArtifactsTab.tsx`     | Разделить клик: forms → ArtifactDetailModal, training → StudentProgressModal. Добавить lazy-загрузку training context.                       |
-| `src/hooks/useContactArtifacts.ts`                         | Убрать `normalizeTrainingResponse`, `TRAINING_KEY_MAP`. Добавить `module_id` в артефакт. Упростить `payload` для training (больше не нужен). |
-| `src/components/admin/contact/ArtifactPayloadRenderer.tsx` | Без изменений — используется для site forms                                                                                                  |
-
-
-## Что НЕ будет изменено
-
-- `StudentProgressModal.tsx` — переиспользуется as-is
-- `blockProgressResolver.ts` — переиспользуется as-is
-- Фильтры, dedup, lazy loading вкладки
-- RLS, миграции, edge functions
-- Карточка контакта вне вкладки «Анкеты»
 
 ## DoD
 
-1. Клик на training item в карточке контакта открывает `StudentProgressModal`
-2. Данные выглядят идентично существующему экрану прогресса ученика
-3. Нет второго параллельного training viewer
-4. `normalizeTrainingResponse` и `TRAINING_KEY_MAP` удалены
-5. Клик на site_form по-прежнему открывает форменный Dialog с читаемым payload
-6. Фильтры и список артефактов работают без регрессий
+1. `Package` как product icon заменён на `Layers` во всех 15 файлах
+2. Document-package файлы НЕ затронуты
+3. В `StudentProgressModal` показывается имя, продукт, урок, статус — нет «Без имени»
+4. Секции по продуктам — белые карточки с цветным бордером, тень, цветные иконки
+5. Training item → existing `StudentProgressModal`
+6. Site form item → existing `SiteFormDetailDialog`
+7. Никаких новых training renderers не создано
