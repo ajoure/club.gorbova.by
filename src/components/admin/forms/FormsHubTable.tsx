@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useEffect, useMemo, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -19,10 +19,8 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
-  DragEndEvent,
 } from "@dnd-kit/core";
 import {
-  arrayMove,
   SortableContext,
   horizontalListSortingStrategy,
 } from "@dnd-kit/sortable";
@@ -30,10 +28,10 @@ import {
   SortableResizableTableHead,
   ResizableTableHead,
 } from "@/components/admin/table/SortableResizableTableHead";
-import { ColumnSettings, type ColumnConfig } from "@/components/admin/ColumnSettings";
+import type { ColumnConfig } from "@/components/admin/ColumnSettings";
 import { useDragSelect } from "@/hooks/useDragSelect";
 import { SelectionBox } from "@/components/admin/SelectionBox";
-import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
+import { useFormsColumns } from "@/hooks/useFormsColumns";
 import type { FormsHubRow } from "@/hooks/useFormsHubData";
 
 const SOURCE_CONFIG = {
@@ -68,77 +66,33 @@ const STATUS_CONFIG: Record<
   cancelled: { label: "Отменён", variant: "destructive" },
 };
 
-// Default columns config — canonical for /admin/forms
-export const FORMS_DEFAULT_COLUMNS: ColumnConfig[] = [
-  { key: "checkbox", label: "", visible: true, width: 40, order: 0 },
-  { key: "client", label: "Клиент", visible: true, width: 200, order: 1 },
-  { key: "email", label: "Email", visible: true, width: 220, order: 2 },
-  { key: "phone", label: "Телефон", visible: true, width: 140, order: 3 },
-  { key: "type", label: "Тип", visible: true, width: 110, order: 4 },
-  { key: "product", label: "Продукт", visible: true, width: 200, order: 5 },
-  { key: "source", label: "Источник", visible: true, width: 180, order: 6 },
-  { key: "status", label: "Статус", visible: true, width: 110, order: 7 },
-  { key: "created_at", label: "Дата", visible: true, width: 110, order: 8 },
-  { key: "has_deal", label: "Сделка", visible: true, width: 70, order: 9 },
-  { key: "has_account", label: "Аккаунт", visible: true, width: 70, order: 10 },
-];
-
-const STORAGE_KEY = "admin_forms_columns_v1";
-
-function loadColumns(): ColumnConfig[] {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (!saved) return FORMS_DEFAULT_COLUMNS;
-    const parsed = JSON.parse(saved);
-    return FORMS_DEFAULT_COLUMNS.map((dc) => {
-      const savedCol = parsed.find((p: ColumnConfig) => p.key === dc.key);
-      return savedCol ? { ...dc, ...savedCol } : dc;
-    });
-  } catch {
-    return FORMS_DEFAULT_COLUMNS;
-  }
-}
+// Re-export for backwards compat
+export { FORMS_DEFAULT_COLUMNS } from "@/hooks/useFormsColumns";
 
 interface Props {
   rows: FormsHubRow[];
   isLoading: boolean;
   onOpenDetail: (row: FormsHubRow) => void;
-  /** "full" — toolbar + drag/resize/ColumnSettings/select. "embedded" — rows-only (used in By-Product groups). */
+  /** "full" — toolbar (кнопка settings снаружи) + multi-select bar.
+   *  "embedded" — без bulk-bar, но с тем же DnD/resize headers. */
   variant?: "full" | "embedded";
+  /** Optional: bubble up selection so parent can render FormsBulkActionsBar */
+  onSelectionChange?: (selectedRows: FormsHubRow[]) => void;
+  /** Reset selection signal from parent (tab switch / filter change) */
+  selectionResetKey?: string;
 }
 
-export function FormsHubTable({ rows, isLoading, onOpenDetail, variant = "full" }: Props) {
-  const [columns, setColumns] = useState<ColumnConfig[]>(() =>
-    variant === "full" ? loadColumns() : FORMS_DEFAULT_COLUMNS
-  );
-
-  // Persist columns only in full mode
-  useEffect(() => {
-    if (variant !== "full") return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(columns));
-  }, [columns, variant]);
+export function FormsHubTable({
+  rows,
+  isLoading,
+  onOpenDetail,
+  variant = "full",
+  onSelectionChange,
+  selectionResetKey,
+}: Props) {
+  const { sortedColumns, visibleColumns, handleColumnResize, handleDragEnd } = useFormsColumns();
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-
-  const handleColumnResize = useCallback((key: string, width: number) => {
-    setColumns((cols) => cols.map((c) => (c.key === key ? { ...c, width } : c)));
-  }, []);
-
-  const handleDragEnd = useCallback((event: DragEndEvent) => {
-    const { active, over } = event;
-    if (over && active.id !== over.id) {
-      setColumns((cols) => {
-        const oldIndex = cols.findIndex((c) => c.key === active.id);
-        const newIndex = cols.findIndex((c) => c.key === over.id);
-        return arrayMove(cols, oldIndex, newIndex).map((c, i) => ({ ...c, order: i }));
-      });
-    }
-  }, []);
-
-  const sortedColumns = useMemo(
-    () => [...columns].sort((a, b) => a.order - b.order),
-    [columns]
-  );
 
   // Selection (mixed-source row identity: source_type:id)
   const getRowKey = useCallback((r: FormsHubRow) => `${r.source_type}:${r.id}`, []);
@@ -158,12 +112,18 @@ export function FormsHubTable({ rows, isLoading, onOpenDetail, variant = "full" 
     getItemId: getRowKey,
   });
 
-  // Reset selection when row dataset changes (tab switch / filter / pagination)
-  // Detect via stable rowset signature
+  // Reset selection on dataset change OR explicit parent signal
   const rowsetSig = useMemo(() => rows.map(getRowKey).join("|"), [rows, getRowKey]);
   useEffect(() => {
     clearSelection();
-  }, [rowsetSig, clearSelection]);
+  }, [rowsetSig, selectionResetKey, clearSelection]);
+
+  // Bubble up selection
+  useEffect(() => {
+    if (!onSelectionChange) return;
+    const selected = rows.filter((r) => selectedIds.has(getRowKey(r)));
+    onSelectionChange(selected);
+  }, [selectedIds, rows, getRowKey, onSelectionChange]);
 
   const allSelected = rows.length > 0 && selectedCount === rows.length;
   const someSelected = selectedCount > 0 && selectedCount < rows.length;
@@ -298,23 +258,12 @@ export function FormsHubTable({ rows, isLoading, onOpenDetail, variant = "full" 
     if (col.key === "checkbox") {
       return (
         <ResizableTableHead key={col.key} column={col} onResize={handleColumnResize}>
-          {variant === "full" ? (
-            <Checkbox
-              checked={allSelected ? true : someSelected ? "indeterminate" : false}
-              onCheckedChange={(v) => (v ? selectAll() : clearSelection())}
-              aria-label="Выбрать все"
-            />
-          ) : null}
+          <Checkbox
+            checked={allSelected ? true : someSelected ? "indeterminate" : false}
+            onCheckedChange={(v) => (v ? selectAll() : clearSelection())}
+            aria-label="Выбрать все"
+          />
         </ResizableTableHead>
-      );
-    }
-
-    if (variant === "embedded") {
-      // Embedded mode: no drag/resize headers — plain TableHead
-      return (
-        <TableHead key={col.key} style={{ width: col.width }}>
-          {col.label}
-        </TableHead>
       );
     }
 
@@ -330,22 +279,16 @@ export function FormsHubTable({ rows, isLoading, onOpenDetail, variant = "full" 
     );
   };
 
-  const visibleColumns = sortedColumns.filter((c) => c.visible);
-
   const tableContent = (
     <Table>
       <TableHeader>
         <TableRow className="bg-muted/30">
-          {variant === "full" ? (
-            <SortableContext
-              items={visibleColumns.map((c) => c.key)}
-              strategy={horizontalListSortingStrategy}
-            >
-              {visibleColumns.map(renderHead)}
-            </SortableContext>
-          ) : (
-            visibleColumns.map(renderHead)
-          )}
+          <SortableContext
+            items={visibleColumns.map((c) => c.key)}
+            strategy={horizontalListSortingStrategy}
+          >
+            {visibleColumns.map(renderHead)}
+          </SortableContext>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -368,39 +311,25 @@ export function FormsHubTable({ rows, isLoading, onOpenDetail, variant = "full" 
     </Table>
   );
 
-  if (variant === "embedded") {
-    return <div className="rounded-lg border overflow-hidden">{tableContent}</div>;
-  }
-
-  return (
-    <>
-      <div className="flex items-center justify-end mb-2">
-        <ColumnSettings columns={columns} onChange={setColumns} />
-      </div>
-      <div
-        ref={containerRef}
-        onMouseDown={handleMouseDown}
-        className="rounded-lg border overflow-hidden relative"
-      >
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          {tableContent}
-        </DndContext>
-        {isDragging && selectionBox && (
-          <SelectionBox
-            startX={selectionBox.startX}
-            startY={selectionBox.startY}
-            endX={selectionBox.endX}
-            endY={selectionBox.endY}
-          />
-        )}
-      </div>
-      <BulkActionsBar
-        selectedCount={selectedCount}
-        onClearSelection={clearSelection}
-        onSelectAll={selectAll}
-        totalCount={rows.length}
-        entityName="записей"
-      />
-    </>
+  const wrapped = (
+    <div
+      ref={containerRef}
+      onMouseDown={handleMouseDown}
+      className="rounded-lg border overflow-hidden relative"
+    >
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        {tableContent}
+      </DndContext>
+      {isDragging && selectionBox && (
+        <SelectionBox
+          startX={selectionBox.startX}
+          startY={selectionBox.startY}
+          endX={selectionBox.endX}
+          endY={selectionBox.endY}
+        />
+      )}
+    </div>
   );
+
+  return wrapped;
 }

@@ -30,6 +30,11 @@ export interface FormsHubRow {
   status: string;
   has_deal: boolean;
   has_account: boolean;
+  // Training-only: used for level-2/3 grouping in By-Product tab
+  module_id: string | null;
+  module_title: string | null;
+  lesson_id: string | null;
+  lesson_title: string | null;
   raw: any;
 }
 
@@ -146,6 +151,10 @@ async function fetchSiteForms(
       status: f.status || "new",
       has_deal: !!f.order_id,
       has_account: !!resolvedUserId,
+      module_id: null,
+      module_title: null,
+      lesson_id: null,
+      lesson_title: null,
       raw: f,
     });
   }
@@ -201,6 +210,10 @@ async function fetchPreorders(
     status: p.status || "new",
     has_deal: false,
     has_account: !!p.user_id,
+    module_id: null,
+    module_title: null,
+    lesson_id: null,
+    lesson_title: null,
     raw: p,
   }));
 
@@ -278,6 +291,10 @@ async function fetchTraining(
       status: r.completed_at ? "completed" : "in_progress",
       has_deal: false,
       has_account: !!r.user_id,
+      module_id: module?.id || null,
+      module_title: module?.title || null,
+      lesson_id: lesson?.id || null,
+      lesson_title: lesson?.title || null,
       raw: { ...r, lesson, module, product, profile },
     };
   });
