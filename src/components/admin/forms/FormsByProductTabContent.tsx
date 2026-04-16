@@ -86,6 +86,7 @@ export function FormsByProductTabContent() {
                         rows={group.rows}
                         isLoading={false}
                         onOpenDetail={handleOpenDetail}
+                        variant="embedded"
                       />
                     </div>
                   </CollapsibleContent>
