@@ -18,7 +18,7 @@ export const FORMS_DEFAULT_COLUMNS: ColumnConfig[] = [
   { key: "type", label: "Тип", visible: true, width: 110, order: 4 },
   { key: "product", label: "Продукт", visible: true, width: 200, order: 5 },
   { key: "source", label: "Источник", visible: true, width: 180, order: 6 },
-  { key: "status", label: "Статус", visible: true, width: 110, order: 7 },
+  { key: "status", label: "Статус", visible: true, width: 130, order: 7 },
   { key: "created_at", label: "Дата", visible: true, width: 110, order: 8 },
   { key: "has_deal", label: "Сделка", visible: true, width: 70, order: 9 },
   { key: "has_account", label: "Аккаунт", visible: true, width: 70, order: 10 },

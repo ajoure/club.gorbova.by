@@ -216,7 +216,7 @@ export function FormsHubTable({
       case "status":
         return (
           <TableCell key={col.key} style={{ width: col.width }}>
-            <Badge variant={status.variant} className="text-[11px]">
+            <Badge variant={status.variant} className="text-[11px] whitespace-nowrap">
               {status.label}
             </Badge>
           </TableCell>
@@ -282,7 +282,7 @@ export function FormsHubTable({
   const tableContent = (
     <Table>
       <TableHeader>
-        <TableRow className="bg-muted/30">
+        <TableRow>
           <SortableContext
             items={visibleColumns.map((c) => c.key)}
             strategy={horizontalListSortingStrategy}
@@ -299,8 +299,9 @@ export function FormsHubTable({
             <TableRow
               key={rowKey}
               ref={(el) => registerItemRef(rowKey, el as HTMLElement | null)}
+              data-selectable-item
               data-state={isSelected ? "selected" : undefined}
-              className="cursor-pointer hover:bg-accent/40 transition-colors"
+              className={`cursor-pointer hover:bg-muted/50 ${isSelected ? "bg-primary/10" : ""}`}
               onClick={() => onOpenDetail(row)}
             >
               {visibleColumns.map((col) => renderCell(col, row))}
@@ -311,11 +312,11 @@ export function FormsHubTable({
     </Table>
   );
 
-  const wrapped = (
+  const inner = (
     <div
       ref={containerRef}
       onMouseDown={handleMouseDown}
-      className="rounded-lg border overflow-hidden relative"
+      className="overflow-x-auto select-none relative"
     >
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         {tableContent}
@@ -331,5 +332,8 @@ export function FormsHubTable({
     </div>
   );
 
-  return wrapped;
+  // embedded mode → no GlassCard wrapper (parent provides container)
+  if (variant === "embedded") return inner;
+
+  return <GlassCard className="p-0 overflow-hidden">{inner}</GlassCard>;
 }
