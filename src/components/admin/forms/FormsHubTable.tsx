@@ -53,18 +53,20 @@ const SOURCE_CONFIG = {
   },
 } as const;
 
+// Canonical status chip classes (matches /admin/contacts pattern):
+// бледный фон + насыщенный текст + рамка той же палитры.
 const STATUS_CONFIG: Record<
   string,
-  { label: string; variant: "default" | "secondary" | "outline" | "destructive" }
+  { label: string; className: string }
 > = {
-  completed: { label: "Завершён", variant: "default" },
-  processed: { label: "Обработано", variant: "default" },
-  in_progress: { label: "В процессе", variant: "secondary" },
-  new: { label: "Новый", variant: "outline" },
-  confirmed: { label: "Подтверждён", variant: "default" },
-  contacted: { label: "Связались", variant: "outline" },
-  paid: { label: "Оплачено", variant: "default" },
-  cancelled: { label: "Отменён", variant: "destructive" },
+  completed:   { label: "Завершён",     className: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  processed:   { label: "Обработано",   className: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  in_progress: { label: "В процессе",   className: "bg-amber-50 text-amber-700 border-amber-200" },
+  new:         { label: "Новый",        className: "bg-blue-50 text-blue-700 border-blue-200" },
+  confirmed:   { label: "Подтверждён",  className: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  contacted:   { label: "Связались",    className: "bg-sky-50 text-sky-700 border-sky-200" },
+  paid:        { label: "Оплачено",     className: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  cancelled:   { label: "Отменён",      className: "bg-rose-50 text-rose-700 border-rose-200" },
 };
 
 // Re-export for backwards compat
@@ -217,7 +219,7 @@ export function FormsHubTable({
       case "status":
         return (
           <TableCell key={col.key} style={{ width: col.width }}>
-            <Badge variant={status.variant} className="text-[11px] whitespace-nowrap">
+            <Badge variant="outline" className={`text-[11px] whitespace-nowrap ${status.className}`}>
               {status.label}
             </Badge>
           </TableCell>
