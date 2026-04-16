@@ -2,175 +2,256 @@
 
 &nbsp;
 
-1. TrainingDetailBridge нужно не просто починить точечно, а убрать дублирование загрузчика. Сейчас у нас уже есть канонический загрузчик training detail в карточке контакта. Для hub-а нужен тот же shared helper / тот же контракт, а не вторая почти такая же реализация. Иначе снова получим расхождение.  
-Правка: вынести единый loadTrainingDetailContext(userId, lessonId) в shared helper и использовать его и в ContactArtifactsTab, и в FormsDetailOpener.
-2. По has_account правка должна быть шире, чем просто !!meta.user_id. Это исправит только часть записей. Канонически:  
+1. Не обещать “полностью серверный режим” для вкладки Все в текущем PATCH.  
+Для site / preorders / training — да, делаем серверные фильтры, count и пагинацию.  
+Для Все у вас всё равно остаётся cross-source merge из 3 разных источников, значит:  
 
-  - если есть meta.user_id → true
-  - иначе, если есть profile_id, нужно батчем дорезолвить profiles.user_id
-  - has_account = Boolean(meta.user_id || profile.user_id)
-3.   
-Иначе старые/legacy записи снова будут показаны неверно.
-4. В FormsDetailOpener использовать только:  
+  - либо это явно помечается как aggregated MVP mode;
+  - либо не называем это полноценной server-side pagination для mixed tab.  
+  Иначе в отчёте будет архитектурное расхождение.
+2. &nbsp;
+3. То же самое для вкладки По продуктам.  
+Если она строится поверх aggregate-результата из нескольких источников, это не чисто серверная группировка.  
+Оставить можно, но в плане явно написать:  
 
-  - таблицу lesson_blocks
-  - поле content
-5.   
-Любые training_lesson_blocks, config, as any убрать полностью. Никаких обходов типов.
-6. Fallback при отсутствии lesson_progress_state нужен, но не “молча показать что-то”. Правильно так:  
+  - single-source tabs → server paginated/filterable
+  - Все и По продуктам → aggregated mode поверх уже серверно отфильтрованных source-tabs данных
+4. &nbsp;
+5. Поиск для site_form_submissions нужно описать аккуратнее.  
+Сейчас в формах клиентские поля часто лежат в form_data/metadata, а не в нормализованных колонках.  
+Нельзя в плане писать поиск по name/email/phone как будто это везде одинаковые поля.  
+Нужна source-specific логика:  
 
-  - если есть lesson_blocks и/или user_lesson_progress → синтезировать минимальный LessonProgressRecord и открыть existing StudentProgressModal
-  - если нет ни state, ни blocks, ни responses → показать явный error state в модалке/диалоге, а не тихо закрывать окно
-7. &nbsp;
-8. Нужно добавить proof, что hub training details теперь реально открываются на живых кейсах:  
+  - preorders → прямой server search по колонкам
+  - training → search через profile/email/full_name
+  - site_forms → только по тем полям, которые реально доступны/индексируемы (metadata, profile, resolved profile/email, и т.д.)  
+  Если часть поиска по site forms пока не получается серверно — так и зафиксировать, не притворяться, что он уже универсальный.
+6. &nbsp;
+7. Фильтр product_id для site forms через metadata->>product_id — проверить синтаксис PostgREST заранее.  
+Если точный JSON-path filter работает нестабильно/неудобно, не городить хрупкую магию.  
+Тогда:  
 
-  - quiz / survey
-  - diagnostic_table
-  - case без lesson_progress_state, но с user_lesson_progress
-9.   
-И отдельно показать, что это визуально тот же existing StudentProgressModal, без второго viewer.
-10. Для useFormsHubData зафиксировать не только комментарий, но и явный technical note в отчёте:  
+  - для single-source site_form tab допускается ограниченный server-side filter;
+  - либо отдельный fallback до следующего PATCH.  
+  Это надо вынести в dry-run, чтобы не сломать запросы.
+8. &nbsp;
+9. page и pageSize лучше не класть в общий filters object как обычные бизнес-фильтры без правил reset.  
+Нужна явная логика:  
 
-  - текущая версия = MVP
-  - client-side merge
-  - limit(500) на источник
-  - серверная пагинация / total counts / server filtering идут отдельным следующим PATCH  
-  Без этого нельзя выдавать раздел как финально завершённый аналитический домен.
-11. &nbsp;
-12. Redirect-часть не трогать, она уже подтверждена. В этом PATCH не распыляться на маршруты, только:  
+  - изменение search/product/period/source/reset filters → сбрасывает page=1
+  - переключение вкладки → сбрасывает page=1
+  - изменение sort → сбрасывает page=1  
+  Иначе пользователь быстро попадёт на пустые страницы.
+10. &nbsp;
+11. Сортировку не надо обещать одинаково для всех вкладок.  
+Для single-source tabs допустима серверная сортировка.  
+Для Все:  
 
-  - fix training detail bridge
-  - fix canonical has_account
-  - fix shared loader / fallback
-  - дать proof
-13. &nbsp;
+  - базовая каноническая сортировка created_at desc, id
+  - если хотите client/status sorting, это либо post-merge sort, либо откладываем.  
+  Не раздувать scope.
+12. &nbsp;
+13. FormsByProductTabContent не должен тянуть “все записи без ограничений” незаметно.  
+При текущих объёмах это терпимо, но в плане нужно прямо отметить:  
+
+  - grouped tab пока работает как aggregated grouped mode;
+  - если dataset вырастет, следующим шагом нужен отдельный grouped backend path / counts.  
+  Иначе будет ложное ощущение, что проблема уже решена архитектурно.
+14. &nbsp;
+15. Экспорт лучше делать не через pageSize: 99999, а через явный режим exportMode.  
+Это правильнее и чище:  
+
+  - export использует те же filters
+  - но отключает UI pagination
+  - и делает отдельную выборку под export scope  
+  Не привязывать export к магическому огромному лимиту без явного режима.
+16. &nbsp;
+17. Период-фильтры — да, добавить в UI, но не забыть timezone-consistency.  
+Для period_to использовать конец дня детерминированно и одинаково по всем источникам.  
+Иначе разные записи в разных таблицах начнут выпадать на границе суток.
+18. В FormsHubTable основной row click оставить единым действием “open detail”.  
+Отдельные action-buttons оставить только для:  
+
+  - открыть контакт
+  - открыть сделку  
+  И не дублировать кнопку “открыть detail” внутри строки, если именно она создаёт ощущение нестабильного клика.
+19. &nbsp;
+20. Добавить в DoD отдельный пункт про source-specific correctness:  
+
+  - site_form
+  - preorder
+  - training  
+  должны каждый отдельно пройти проверку:
+  - filters
+  - counts
+  - sorting
+  - details
+  - export
+21. &nbsp;
+22. Добавить явную пометку в плане:  
+этот PATCH — стабилизация и подготовка к росту, а не финальный unified backend layer.  
+Это важно, чтобы потом не оказалось, что “серверный режим” был обещан шире, чем реально реализован.
+
+&nbsp;
+
+&nbsp;
+
+Итог: план хороший и рабочий, но его нужно чуть уточнить, чтобы:
+
+&nbsp;
+
+- не переобещать server-side там, где остаётся cross-source aggregate,
+- не сделать хрупкий поиск/фильтр по JSON,
+- не сломать pagination UX.
 
 &nbsp;
 
 &nbsp;
 
-Копируемый блок для [lovable.dev](http://lovable.dev):
+Копируемая формулировка для [lovable.dev](http://lovable.dev):
 
-Дополни текущий PATCH следующими правками:
-
-&nbsp;
-
-1. Не делать второй отдельный загрузчик training details. Вынести единый shared helper `loadTrainingDetailContext(userId, lessonId)` и использовать его и в `ContactArtifactsTab`, и в `FormsDetailOpener`. Никаких параллельных реализаций.
+Дополни план PATCH 1 следующими правками:
 
 &nbsp;
 
-2. В `FormsDetailOpener` использовать только канонический source:
+1. Не называть вкладку `Все` полностью server-side paginated в текущем PATCH. Для mixed cross-source tab это aggregated mode поверх 3 источников. Полноценный unified backend layer сейчас не строим.
 
-- таблица `lesson_blocks`
+2. То же правило применить к вкладке `По продуктам`: это grouped aggregated mode, а не чистая серверная группировка.
 
-- поле `content`
+3. Поиск делать source-specific, без ложного обещания универсального поиска по одинаковым полям:
 
-Полностью убрать `training_lesson_blocks`, `config`, `as any`.
+   - preorders: прямой search по колонкам
 
-&nbsp;
+   - training: через profile/full_name/email
 
-3. Исправить `has_account` в `useFormsHubData` канонически:
+   - site_forms: только по реально доступным/канонически резолвимым полям
 
-- `true`, если есть `meta.user_id`
+4. Для `site_form` product filter через `metadata->>product_id` сначала проверить точный рабочий PostgREST/Supabase syntax в dry-run.
 
-- иначе батчем дорезолвить `profiles.user_id` по `profile_id`
+5. `page` и `pageSize` должны сбрасываться на `page=1` при смене фильтров, sort и tab.
 
-- итог: `has_account = Boolean(meta.user_id || resolvedProfile.user_id)`
+6. Серверную сортировку обещать только для single-source tabs. Для `Все` оставить базовую каноническую сортировку `created_at desc, id`.
 
-Нельзя определять аккаунт по одному `profile_id`.
+7. Экспорт делать через явный `exportMode`, а не через магический `pageSize: 99999`.
 
-&nbsp;
+8. Период-фильтры реализовать детерминированно с единым end-of-day handling.
 
-4. Fallback для training detail:
+9. В строке таблицы единый row-click = open detail; отдельные action buttons только для contact/deal navigation.
 
-- если `lesson_progress_state` нет, но есть `lesson_blocks` и/или `user_lesson_progress`, синтезировать минимальный `LessonProgressRecord` и всё равно открыть existing `StudentProgressModal`
+10. В DoD отдельно подтвердить корректность по каждому source:
 
-- если нет ни state, ни blocks, ни responses, показывать явный error state, а не молча закрывать окно
+   - site_form
 
-&nbsp;
+   - preorder
 
-5. Нужен proof на реальных кейсах:
-
-- training detail из hub открывается через existing `StudentProgressModal`
-
-- quiz/survey
-
-- diagnostic_table
-
-- fallback без `lesson_progress_state`
-
-- `has_account` корректно работает на auth-linked и profile-only записях
+   - training
 
 &nbsp;
 
-6. В отчёте явно пометить текущий раздел как MVP:
+# План: PATCH 1 — стабилизация `/admin/forms`
 
-- client-side merge
+## Контекст
 
-- `limit(500)` по источникам
-
-- серверная пагинация / total counts / server filtering идут отдельным следующим PATCH
-
-&nbsp;
-
-7. Redirects не менять — они уже подтверждены. Этот PATCH только на корректность данных и единый source of truth.
-
-&nbsp;
-
-# План: добивающий PATCH для раздела «Анкеты и данные»
-
-## Диагностика
-
-### Баг 1: Неправильная таблица в TrainingDetailBridge
-
-`FormsDetailOpener.tsx` строка 60 использует `training_lesson_blocks` (несуществующая таблица, cast `as any` скрывает ошибку). Каноническая таблица — `lesson_blocks`. В `ContactArtifactsTab.tsx` (строка 65) уже правильно используется `lesson_blocks`. Это означает, что training details из hub-а сейчас **не работают** — блоки не загружаются.
-
-### Баг 2: Неправильное определение `has_account`
-
-Для site_form строка 81: `has_account: !!f.profile_id`. Но `profile_id` — это наличие профиля, а не аккаунта. Корректно: использовать `meta.user_id` (уже извлекается в строке 74).
-
-### Баг 3: Поля блоков не совпадают с контрактом
-
-`FormsDetailOpener.tsx` запрашивает `config` и маппит его в `content` (строка 89), а `ContactArtifactsTab.tsx` запрашивает `content` напрямую. Каноническая колонка в `lesson_blocks` — `content`.
+Текущие объёмы данных: 15 site_forms + 29 preorders + 63 training = 107 записей. При таких объёмах создавать RPC/VIEW — overengineering. Правильная стратегия: **перевести фильтрацию на серверные `.eq()/.gte()/.ilike()` в Supabase SDK**, убрать client-side merge как единственный режим, добавить пагинацию и total counts через `{ count: 'exact' }`. Это даёт серверную фильтрацию без новых таблиц/RPC.
 
 ## Шаги
 
-### 1. Исправить TrainingDetailBridge — таблица и поля
+### 1. Рефакторинг `useFormsHubData` — серверные фильтры и пагинация
 
-В `FormsDetailOpener.tsx`:
+Переписать хук с новой сигнатурой:
 
-- Заменить `training_lesson_blocks as any` → `lesson_blocks`
-- Заменить `.select("id, block_type, config, sort_order")` → `.select("id, block_type, content")`
-- Убрать маппинг `content: b.config` → `content: b.content`
-- Привести в полное соответствие с `ContactArtifactsTab.tsx` `loadTrainingDetail`
+```
+interface FormsHubResult {
+  rows: FormsHubRow[];
+  totalCount: number;
+  page: number;
+  pageSize: number;
+}
+```
 
-### 2. Исправить `has_account` для site_form
+**Серверные фильтры** (применяются в `.select()` до `.limit()`):
 
-В `useFormsHubData.ts` строка 81:
+- `period_from` → `.gte("created_at", period_from)`
+- `period_to` → `.lte("created_at", period_to + "T23:59:59")`
+- `search` → `.or('name.ilike.%q%,email.ilike.%q%,phone.ilike.%q%')` (адаптировано под каждый источник)
+- `product_id` → для site_forms через `metadata->>product_id`, для training через join
+- `has_deal` → для site_forms `.not("order_id", "is", null)` / `.is("order_id", null)`
 
-- Заменить `has_account: !!f.profile_id` → `has_account: !!meta.user_id`
+**Пагинация**: `.range(offset, offset + pageSize - 1)` + `{ count: 'exact' }` в select
 
-### 3. Добавить fallback если нет lesson_progress_state
+**Детерминированная сортировка**: `.order("created_at", { ascending: false })` как primary, `.order("id")` как tiebreaker
 
-Сейчас при `!state` (строка 72) bridge молча закрывается. Вместо этого — создать минимальный `record` (как в `ContactArtifactsTab.tsx` строки 95-107) и всё равно показать модалку с блоками/ответами.
+**Для "all" tab**: три параллельных запроса с одинаковыми фильтрами → merge + sort на клиенте только для cross-source tab. Для single-source tabs — чисто серверный результат.
 
-### 4. Пометить реализацию как MVP
+### 2. Добавить `page` и `pageSize` в `FormsHubFilters`
 
-Добавить комментарий в `useFormsHubData.ts` — `// MVP: client-side merge, limit(500). TODO: server pagination`
+```
+page: number;       // default 1
+pageSize: number;   // default 50
+```
+
+### 3. Добавить пагинатор в `FormsHubTable`
+
+Под таблицей: `< Prev | Page X of Y | Next >` + total count. Reuse pattern из CRM deals list если есть, иначе простой компонент.
+
+### 4. Добавить period-фильтры в `FormsHubFiltersPanel`
+
+Два input type="date" для `period_from` и `period_to`. Уже есть в `FormsHubFilters`, но UI-элементы не отрисованы.
+
+### 5. Добавить сортировку в таблицу
+
+Использовать existing `SortPill` компонент. Сортируемые колонки: Дата, Клиент, Статус. Сортировка передаётся в хук и применяется серверно через `.order()`.
+
+### 6. Вкладка «По продуктам» — привести к общему data layer
+
+Сейчас `FormsByProductTabContent` вызывает `useFormsHubData(filters)` без пагинации и потом группирует на клиенте. Это корректно для текущих объёмов. Оставить как есть, но:
+
+- убрать `limit(500)` → использовать новый серверно-фильтрованный результат
+- total count показывать в header каждой группы
+
+### 7. Вкладка «Экспорт» — от серверной выборки
+
+Сейчас `FormsExportTabContent` использует тот же `useFormsHubData`. Экспорт должен:
+
+- запрашивать ВСЕ записи (без pageSize limit) через отдельный вызов с `pageSize: 99999`
+- или вызывать тот же хук но без пагинации (специальный флаг `exportMode: true`)
+
+### 8. UX-полировка кликов
+
+В `FormsHubTable` строка кликабельна целиком (`onClick` на `<TableRow>`). Проблема «иногда не попадает» может быть из-за двойного handler (row click + button click с stopPropagation). Убрать отдельную кнопку ExternalLink или сделать её только для "открыть в новом контексте" (контакт/сделка), а row click = open detail.
 
 ## Файлы
 
 
-| Файл                                               | Изменения                        |
-| -------------------------------------------------- | -------------------------------- |
-| `src/components/admin/forms/FormsDetailOpener.tsx` | Fix table name, fields, fallback |
-| `src/hooks/useFormsHubData.ts`                     | Fix has_account, add MVP comment |
+| Файл                                                      | Действие                                                                    |
+| --------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `src/hooks/useFormsHubData.ts`                            | Рефакторинг: серверные фильтры, пагинация, total counts, deterministic sort |
+| `src/components/admin/forms/FormsHubFilters.tsx`          | Добавить period inputs, sort pills                                          |
+| `src/components/admin/forms/FormsHubTable.tsx`            | Добавить пагинатор, sort state                                              |
+| `src/components/admin/forms/FormsAllTabContent.tsx`       | Пробросить page/sort state                                                  |
+| `src/components/admin/forms/FormsSiteTabContent.tsx`      | Пробросить page/sort state                                                  |
+| `src/components/admin/forms/FormsTrainingTabContent.tsx`  | Пробросить page/sort state                                                  |
+| `src/components/admin/forms/FormsByProductTabContent.tsx` | Убрать limit(500), показать counts                                          |
+| `src/components/admin/forms/FormsExportTabContent.tsx`    | Export от серверной выборки, exportMode flag                                |
 
+
+## Scope guard
+
+- Новых таблиц НЕ создавать
+- Новых RPC/View НЕ создавать (при 107 записях — overhead)
+- Training details = только existing `StudentProgressModal`
+- Site form details = только existing form dialog
+- Preregistration details = только existing detail sheet
+- Redirects не трогать
 
 ## DoD
 
-1. Training details открываются из hub через `lesson_blocks` (каноническая таблица)
-2. `has_account` определяется через `user_id`, не через `profile_id`
-3. Fallback при отсутствии `lesson_progress_state` — модалка всё равно открывается
-4. Контракт данных совпадает с `ContactArtifactsTab.tsx` `loadTrainingDetail`
-5. Redirects уже работают (проверено: `/admin/payments/preorders` и `/admin/preregistrations`)
+1. Фильтры period, search, product, has_deal, has_account применяются серверно через Supabase SDK `.eq()/.gte()/.ilike()`
+2. Пагинация работает с total count
+3. Детерминированная сортировка `created_at desc, id`
+4. Вкладка «По продуктам» показывает группы с counts
+5. Вкладка «Экспорт» экспортирует серверную выборку
+6. Period-фильтры (от/до) отображаются в UI
+7. Details открываются стабильно
+8. `limit(500)` убран, заменён на пагинацию
+9. Accepted MVP-поведение не сломано
