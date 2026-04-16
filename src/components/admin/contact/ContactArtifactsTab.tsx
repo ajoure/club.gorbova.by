@@ -5,12 +5,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  Drawer,
-  DrawerContent,
-  DrawerHeader,
-  DrawerTitle,
-  DrawerDescription,
-} from "@/components/ui/drawer";
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { FileText, BookOpen, CheckCircle, Clock, ClipboardList, GraduationCap, ScrollText, ChevronRight } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -156,37 +156,40 @@ export function ContactArtifactsTab({ profileId, userId, enabled }: ContactArtif
         })}
       </div>
 
-      {/* Detail Drawer */}
-      <Drawer open={!!selectedArtifact} onOpenChange={(open) => { if (!open) setSelectedArtifact(null); }}>
-        <DrawerContent className="max-h-[85vh]">
+      {/* Detail Modal */}
+      <Dialog open={!!selectedArtifact} onOpenChange={(open) => { if (!open) setSelectedArtifact(null); }}>
+        <DialogContent className="sm:max-w-2xl lg:max-w-3xl max-h-[85vh] flex flex-col p-0 gap-0">
           {selectedArtifact && (
             <>
-              <DrawerHeader>
-                <DrawerTitle className="text-base">{selectedArtifact.title}</DrawerTitle>
-                <DrawerDescription className="flex items-center gap-2 flex-wrap">
-                  <Badge variant="outline" className="text-xs">
-                    {SOURCE_TYPE_CONFIG[selectedArtifact.source_type].label}
-                  </Badge>
-                  {selectedArtifact.product_title && (
-                    <Badge variant="secondary" className="text-xs">{selectedArtifact.product_title}</Badge>
-                  )}
-                  {selectedArtifact.submitted_at && (
-                    <span className="text-xs">
-                      {format(new Date(selectedArtifact.submitted_at), "dd MMMM yyyy, HH:mm", { locale: ru })}
-                    </span>
-                  )}
-                </DrawerDescription>
-              </DrawerHeader>
-              <div className="px-4 pb-6 overflow-y-auto">
+              <DialogHeader className="px-6 pt-6 pb-4 border-b flex-shrink-0">
+                <DialogTitle className="text-base font-semibold">{selectedArtifact.title}</DialogTitle>
+                <DialogDescription asChild>
+                  <div className="flex items-center gap-2 flex-wrap pt-1">
+                    <Badge variant="outline" className="text-xs">
+                      {SOURCE_TYPE_CONFIG[selectedArtifact.source_type].label}
+                    </Badge>
+                    {selectedArtifact.product_title && (
+                      <Badge variant="secondary" className="text-xs">{selectedArtifact.product_title}</Badge>
+                    )}
+                    {selectedArtifact.submitted_at && (
+                      <span className="text-xs text-muted-foreground">
+                        {format(new Date(selectedArtifact.submitted_at), "dd MMMM yyyy, HH:mm", { locale: ru })}
+                      </span>
+                    )}
+                  </div>
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
                 {/* Summary */}
                 {Object.keys(selectedArtifact.summary).length > 0 && (
-                  <div className="mb-4 p-3 rounded-lg bg-muted/50">
-                    <p className="text-xs font-medium text-muted-foreground mb-2">Сводка</p>
-                    <div className="space-y-1">
+                  <div className="rounded-lg border bg-muted/30 p-4">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Сводка</p>
+                    <div className="space-y-2">
                       {Object.entries(selectedArtifact.summary).map(([key, value]) => (
-                        <div key={key} className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">{formatFieldLabel(key)}</span>
-                          <span className="font-medium">{formatFieldValue(value)}</span>
+                        <div key={key} className="flex justify-between items-baseline gap-4 text-sm">
+                          <span className="text-muted-foreground shrink-0">{formatFieldLabel(key)}</span>
+                          <span className="font-medium text-right">{formatFieldValue(value)}</span>
                         </div>
                       ))}
                     </div>
@@ -195,25 +198,36 @@ export function ContactArtifactsTab({ profileId, userId, enabled }: ContactArtif
 
                 {/* Full payload */}
                 {Object.keys(selectedArtifact.payload).length > 0 ? (
-                  <div className="space-y-2">
-                    <p className="text-xs font-medium text-muted-foreground">Все данные</p>
-                    <div className="space-y-1.5">
-                      {Object.entries(selectedArtifact.payload).map(([key, value]) => (
-                        <div key={key} className="p-2 rounded bg-muted/30">
-                          <p className="text-xs text-muted-foreground mb-0.5">{formatFieldLabel(key)}</p>
-                          <p className="text-sm break-words">{formatFieldValue(value)}</p>
-                        </div>
-                      ))}
+                  <div>
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Все данные</p>
+                    <div className="rounded-lg border divide-y">
+                      {Object.entries(selectedArtifact.payload).map(([key, value]) => {
+                        const isComplex = typeof value === 'object' && value !== null;
+                        return (
+                          <div key={key} className="px-4 py-3">
+                            <p className="text-xs text-muted-foreground mb-1">{formatFieldLabel(key)}</p>
+                            {isComplex ? (
+                              <div className="overflow-x-auto">
+                                <pre className="text-xs font-mono bg-muted/40 rounded-md p-3 whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
+                                  {JSON.stringify(value, null, 2)}
+                                </pre>
+                              </div>
+                            ) : (
+                              <p className="text-sm break-words">{formatFieldValue(value)}</p>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 ) : (
-                  <p className="text-sm text-muted-foreground text-center py-4">Нет подробных данных</p>
+                  <p className="text-sm text-muted-foreground text-center py-6">Нет подробных данных</p>
                 )}
               </div>
             </>
           )}
-        </DrawerContent>
-      </Drawer>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
