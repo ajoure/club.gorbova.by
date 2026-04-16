@@ -22,6 +22,7 @@ const routeToTitle: Record<string, string> = {
   '/admin/orders': 'Заказы',
   '/admin/orders-v2': 'Заказы',
   '/admin/payments': 'Платежи',
+  '/admin/forms': 'Анкеты и данные',
   '/admin/products': 'Продукты',
   '/admin/products-v2': 'Продукты',
   '/admin/payments/auto-renewals': 'Автопродления',

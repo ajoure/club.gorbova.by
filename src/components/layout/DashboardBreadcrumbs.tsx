@@ -60,6 +60,7 @@ const routeLabels: Record<string, string> = {
   "/admin/consents": "Согласия",
   "/admin/entitlements": "Подписки",
   "/admin/preregistrations": "Предзаписи",
+  "/admin/forms": "Анкеты и данные",
   "/admin/support": "Поддержка",
   "/admin/news": "Новости",
   

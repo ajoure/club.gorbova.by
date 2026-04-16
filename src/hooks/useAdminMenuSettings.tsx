@@ -106,6 +106,7 @@ export const DEFAULT_MENU: MenuSettings = [
       { id: "deals", label: "Сделки", path: "/admin/deals", icon: "Handshake", order: 1, permission: "entitlements.view" },
       { id: "contacts", label: "Контакты", path: "/admin/contacts", icon: "Users", order: 2, permission: "users.view", badge: "duplicates" },
       { id: "payments", label: "Платежи", path: "/admin/payments", icon: "CreditCard", order: 3, permission: "entitlements.view" },
+      { id: "forms-hub", label: "Анкеты и данные", path: "/admin/forms", icon: "ClipboardList", order: 4, permission: "users.view" },
     ],
   },
   {
@@ -134,7 +135,7 @@ export const DEFAULT_MENU: MenuSettings = [
 // IDs consolidated into Payments Hub - auto-removed from saved settings
 const DEPRECATED_ITEM_IDS = new Set([
   "installments",           // → /admin/payments/installments
-  "preregistrations",       // → /admin/payments/preorders
+  "preregistrations",       // → /admin/forms?tab=preorders
   "payment-diagnostics",    // → /admin/payments/diagnostics
   "telegram-diagnostics",   // Scope creep - removed, consolidated into AutoRenewals
   "kb-import",              // Duplicate - available via Import button in /admin/training-modules
