@@ -272,8 +272,8 @@ function AuthFormSection({
   const startTelegramLink = useStartTelegramLink();
   const { data: telegramStatus, refetch: refetchTelegramStatus } = useTelegramLinkStatus();
 
-  // State machine
-  const [formStep, setFormStep] = useState<AuthFormStep>("check_session");
+  // State machine — in preview, always start at email_check to show the real form UX
+  const [formStep, setFormStep] = useState<AuthFormStep>(isPreview ? "email_check" : "check_session");
 
   // System auth fields
   const [email, setEmail] = useState("");
@@ -297,7 +297,8 @@ function AuthFormSection({
 
   // ─── Determine next step after auth ───
   const getNextStepAfterAuth = useCallback((): AuthFormStep => {
-    if (telegramLinkEnabled && telegramStatus?.status !== "active") {
+    // In preview, always show telegram step if enabled (regardless of actual status)
+    if (telegramLinkEnabled && (isPreview || telegramStatus?.status !== "active")) {
       return "telegram_prompt";
     }
     if (customFields.length > 0) {
@@ -305,10 +306,12 @@ function AuthFormSection({
     }
     // No extra fields → show ready button (never auto-submit)
     return "ready";
-  }, [telegramLinkEnabled, telegramStatus?.status, customFields.length]);
+  }, [telegramLinkEnabled, telegramStatus?.status, customFields.length, isPreview]);
 
   // ─── Session check on mount — HARD RULE: never auto-submit, only UI branching ───
+  // In preview mode, skip session check entirely — always show email_check step
   useEffect(() => {
+    if (isPreview) return; // preview always stays at email_check initially
     if (formStep !== "check_session") return;
 
     if (session && user) {
@@ -316,7 +319,7 @@ function AuthFormSection({
     } else {
       setFormStep("email_check");
     }
-  }, [formStep, session, user, getNextStepAfterAuth]);
+  }, [isPreview, formStep, session, user, getNextStepAfterAuth]);
 
   // ─── Listen for session changes (email confirmation resume) ───
   useEffect(() => {
@@ -345,11 +348,12 @@ function AuthFormSection({
   }, [formStep, refetchTelegramStatus]);
 
   // ─── Auto-advance from telegram_prompt when status becomes active ───
+  // In preview, do NOT auto-advance — let user see the telegram step
   useEffect(() => {
+    if (isPreview) return;
     if (formStep !== "telegram_prompt") return;
     if (telegramStatus?.status === "active") {
       setTelegramUiStatus("linked");
-      // Auto-advance after brief feedback
       const t = setTimeout(() => {
         if (customFields.length > 0) {
           setFormStep("extra_fields");
@@ -359,7 +363,7 @@ function AuthFormSection({
       }, 1500);
       return () => clearTimeout(t);
     }
-  }, [formStep, telegramStatus?.status, customFields.length]);
+  }, [isPreview, formStep, telegramStatus?.status, customFields.length]);
 
   // ─── Handlers ───
 
@@ -370,6 +374,12 @@ function AuthFormSection({
     const validation = emailSchema.safeParse(email);
     if (!validation.success) {
       setError(validation.error.errors[0].message);
+      return;
+    }
+
+    // In preview mode, simulate step transition without real API calls
+    if (isPreview) {
+      setFormStep("signup");
       return;
     }
 
@@ -386,6 +396,12 @@ function AuthFormSection({
     const passValidation = passwordSchema.safeParse(password);
     if (!passValidation.success) {
       setError(passValidation.error.errors[0].message);
+      return;
+    }
+
+    // In preview mode, simulate the flow
+    if (isPreview) {
+      setFormStep(getNextStepAfterAuth());
       return;
     }
 
@@ -431,6 +447,12 @@ function AuthFormSection({
       return;
     }
 
+    // In preview mode, simulate the flow
+    if (isPreview) {
+      setFormStep(getNextStepAfterAuth());
+      return;
+    }
+
     const result = await inlineAuth.signup(email, password, {
       firstName: firstName.trim(),
       lastName: lastName.trim(),
@@ -449,6 +471,12 @@ function AuthFormSection({
   };
 
   const handleStartTelegram = async () => {
+    // In preview, just simulate the pending state
+    if (isPreview) {
+      setTelegramUiStatus("pending");
+      setTelegramDeepLink("https://t.me/preview_bot?start=demo");
+      return;
+    }
     setTelegramUiStatus("starting");
     try {
       const result = await startTelegramLink.mutateAsync();
@@ -588,6 +616,11 @@ function AuthFormSection({
   const wrapSection = (stepLabel: string | null, children: React.ReactNode) => (
     <section className="py-12 px-6">
       <div className="max-w-xl mx-auto space-y-6">
+        {isPreview && (
+          <div className="text-xs text-center text-amber-600 bg-amber-50 border border-amber-200 rounded-md px-3 py-1.5">
+            Предпросмотр формы — действия не выполняются
+          </div>
+        )}
         {title && <h3 className="text-2xl font-bold text-foreground text-center">{title}</h3>}
         {subtitle && <p className="text-muted-foreground text-center">{subtitle}</p>}
         {stepLabel && (
