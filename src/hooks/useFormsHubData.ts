@@ -13,7 +13,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { getProductName } from "@/lib/product-names";
 
-export type FormsSourceType = "site_form" | "preorder" | "training";
+export type FormsSourceType = "site_form" | "preorder" | "training" | "site_questionnaire";
 
 export interface FormsHubRow {
   id: string;
@@ -259,7 +259,7 @@ async function fetchTraining(
     .select(`
       id, user_id, lesson_id, completed_at, created_at,
       training_lessons!inner(id, title, module_id,
-        training_modules!inner(id, title, product_id,
+        training_modules!inner(id, title, slug, product_id,
           products_v2(id, name)
         )
       )
@@ -305,18 +305,22 @@ async function fetchTraining(
     const module = lesson?.training_modules;
     const product = module?.products_v2;
     const profile = r.user_id ? profileMap[r.user_id] : null;
+    // Site questionnaire — служебный module __site_questionnaires__
+    const isSiteQuestionnaire = module?.slug === "__site_questionnaires__";
 
     return {
       id: r.id,
-      source_type: "training" as const,
+      // PATCH E: site-questionnaire → отдельный source_type, чтобы /admin/forms показывал отдельной строкой,
+      // но detail open идёт через тот же existing training bridge (StudentProgressModal).
+      source_type: (isSiteQuestionnaire ? "site_questionnaire" : "training") as FormsSourceType,
       client_name: profile?.full_name || profile?.email || "—",
       client_email: profile?.email || null,
       client_phone: null,
       profile_id: null,
       user_id: r.user_id,
-      product_id: product?.id || module?.product_id || null,
-      product_title: product?.name || module?.title || "",
-      source_entity: lesson?.title || "Урок",
+      product_id: isSiteQuestionnaire ? null : (product?.id || module?.product_id || null),
+      product_title: isSiteQuestionnaire ? "Анкета сайта" : (product?.name || module?.title || ""),
+      source_entity: lesson?.title || (isSiteQuestionnaire ? "Анкета" : "Урок"),
       created_at: r.completed_at || r.created_at,
       status: r.completed_at ? "completed" : "in_progress",
       has_deal: false,
