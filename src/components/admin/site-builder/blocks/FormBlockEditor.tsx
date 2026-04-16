@@ -115,8 +115,95 @@ export function FormBlockEditor({ content, onChange, blockId }: FormBlockEditorP
     onChange({ ...content, fields: updated });
   };
 
+  const popupSnippet = pageId && blockId
+    ? `<button data-gorbova-form data-mode="popup" data-page-id="${pageId}" data-block-id="${blockId}">Открыть форму</button>\n<script src="${window.location.origin}/embed/form.js" async></script>`
+    : "";
+
+  const handleCopy = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`${label} скопирован`);
+    } catch {
+      toast.error("Не удалось скопировать");
+    }
+  };
+
   return (
     <div className="space-y-3">
+      {/* Embed code action */}
+      {pageId && blockId && (
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs gap-1.5"
+            onClick={() => setEmbedOpen(true)}
+          >
+            <Code2 className="h-3 w-3" />
+            Получить embed-код
+          </Button>
+        </div>
+      )}
+
+      <Dialog open={embedOpen} onOpenChange={setEmbedOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Embed-код формы</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-xs text-muted-foreground">
+              Вставьте этот код на любую внешнюю страницу. Форма откроется через canonical submit path
+              (<code className="text-[10px]">site-form-submit</code>) и заявки попадут в «Анкеты» и карточку контакта.
+            </p>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold">Inline (форма прямо на странице)</Label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs gap-1.5"
+                  onClick={() => handleCopy(embedSnippet, "Inline-код")}
+                >
+                  <Copy className="h-3 w-3" />
+                  Копировать
+                </Button>
+              </div>
+              <pre className="text-[11px] bg-muted/40 border border-border rounded-md p-3 overflow-x-auto whitespace-pre-wrap break-all">
+                {embedSnippet}
+              </pre>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold">Popup (форма открывается по клику)</Label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs gap-1.5"
+                  onClick={() => handleCopy(popupSnippet, "Popup-код")}
+                >
+                  <Copy className="h-3 w-3" />
+                  Копировать
+                </Button>
+              </div>
+              <pre className="text-[11px] bg-muted/40 border border-border rounded-md p-3 overflow-x-auto whitespace-pre-wrap break-all">
+                {popupSnippet}
+              </pre>
+            </div>
+
+            <div className="text-[10px] text-muted-foreground space-y-1">
+              <p>• page_id и block_id — стабильные идентификаторы. Не редактируйте вручную.</p>
+              <p>• Чтобы embed работал, страница должна быть опубликована.</p>
+              <p>• Заявки помечаются <code>embed_origin</code> и <code>embed_block_id</code> в metadata.</p>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Basic form settings */}
       <div>
         <Label className="text-xs">Заголовок</Label>
