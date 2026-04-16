@@ -19,6 +19,8 @@ export interface ContactArtifact {
   max_score: number | null;
   summary: Record<string, unknown>;
   payload: Record<string, unknown>;
+  /** @internal used for dedup between lesson_answer and lesson_completion */
+  _lesson_id?: string;
 }
 
 export function useContactArtifacts(profileId: string | null | undefined, userId: string | null | undefined, enabled: boolean = false) {
