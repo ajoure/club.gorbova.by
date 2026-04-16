@@ -151,6 +151,10 @@ async function fetchSiteForms(
       status: f.status || "new",
       has_deal: !!f.order_id,
       has_account: !!resolvedUserId,
+      module_id: null,
+      module_title: null,
+      lesson_id: null,
+      lesson_title: null,
       raw: f,
     });
   }
