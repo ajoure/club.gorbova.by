@@ -157,9 +157,9 @@ function ArtifactDetailModal({ artifact, onClose }: { artifact: ContactArtifact 
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="sm:max-w-2xl lg:max-w-3xl max-h-[85vh] flex flex-col p-0 gap-0">
+      <DialogContent className="sm:max-w-3xl lg:max-w-5xl max-h-[90vh] flex flex-col p-0 gap-0">
         {/* ── Header ── */}
-        <DialogHeader className="px-5 pt-5 pb-4 border-b flex-shrink-0 space-y-2">
+        <DialogHeader className="px-6 pt-5 pb-4 border-b flex-shrink-0 space-y-2">
           <div className="flex items-start gap-3">
             <div className={`mt-0.5 ${config.color}`}>
               <config.icon className="w-5 h-5" />
@@ -191,8 +191,8 @@ function ArtifactDetailModal({ artifact, onClose }: { artifact: ContactArtifact 
         </DialogHeader>
 
         {/* ── Scrollable body ── */}
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 bg-muted/10">
-          {/* Training metrics (score, attempts, etc.) */}
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5 bg-muted/5">
+          {/* Training metrics */}
           {isTraining && (
             <TrainingMetrics
               score={artifact.score}
@@ -202,7 +202,7 @@ function ArtifactDetailModal({ artifact, onClose }: { artifact: ContactArtifact 
             />
           )}
 
-          {/* Summary section */}
+          {/* Summary section (forms only) */}
           {hasSummary && !isTraining && (
             <PayloadSection title="Основная информация" data={artifact.summary} variant="summary" />
           )}
