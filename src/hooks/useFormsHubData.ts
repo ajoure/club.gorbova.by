@@ -100,7 +100,7 @@ export function useFormsHubData(filters: FormsHubFilters, sourceTypeOverride?: F
             client_email: formData.email || meta.email || null,
             client_phone: formData.phone || meta.phone || null,
             profile_id: f.profile_id,
-            user_id: metaUserId,
+            user_id: resolvedUserId,
             product_id: meta.product_id || null,
             product_title: meta.product_title || "",
             source_entity: pageTitle,
