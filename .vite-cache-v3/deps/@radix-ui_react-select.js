@@ -1,5 +1,11 @@
 "use client";
 import {
+  clamp
+} from "./chunk-TCQMTAGU.js";
+import {
+  VISUALLY_HIDDEN_STYLES
+} from "./chunk-QI7RZRNT.js";
+import {
   Anchor,
   Arrow,
   Content,
@@ -7,17 +13,11 @@ import {
   createPopperScope
 } from "./chunk-GQTRRZZ3.js";
 import {
-  VISUALLY_HIDDEN_STYLES
-} from "./chunk-QI7RZRNT.js";
-import {
-  clamp
-} from "./chunk-TCQMTAGU.js";
+  useDirection
+} from "./chunk-TPBLUEFY.js";
 import {
   createCollection
 } from "./chunk-AJS24WE3.js";
-import {
-  useDirection
-} from "./chunk-TPBLUEFY.js";
 import {
   usePrevious
 } from "./chunk-V5T4XLSE.js";
@@ -34,11 +34,11 @@ import {
   Portal
 } from "./chunk-YN3ANH63.js";
 import {
-  useCallbackRef
-} from "./chunk-AJAXRXMX.js";
-import {
   useId
 } from "./chunk-N3XXQJTN.js";
+import {
+  useCallbackRef
+} from "./chunk-AJAXRXMX.js";
 import {
   useControllableState
 } from "./chunk-M6RB35O7.js";

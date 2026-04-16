@@ -19,6 +19,8 @@ export interface ContactArtifact {
   max_score: number | null;
   summary: Record<string, unknown>;
   payload: Record<string, unknown>;
+  /** @internal used for dedup between lesson_answer and lesson_completion */
+  _lesson_id?: string;
 }
 
 export function useContactArtifacts(profileId: string | null | undefined, userId: string | null | undefined, enabled: boolean = false) {
@@ -114,6 +116,7 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
           max_score: row.max_score,
           summary: { is_correct: row.is_correct, attempts: row.attempts },
           payload: (row.response || {}) as Record<string, unknown>,
+          _lesson_id: row.lesson_id,
         }));
       }
 
@@ -138,6 +141,7 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
           max_score: row.max_score,
           summary: { is_correct: row.is_correct, attempts: row.attempts, score: row.score, max_score: row.max_score },
           payload: (row.response || {}) as Record<string, unknown>,
+          _lesson_id: row.lesson_id,
         };
       });
     },
@@ -187,6 +191,7 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
           max_score: null,
           summary: {},
           payload: {},
+          _lesson_id: row.lesson_id,
         };
       });
     },
@@ -234,6 +239,14 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
   });
 
   // Aggregate and deduplicate
+  // Collect lesson_ids that have answers for dedup
+  const answeredLessonIds = new Set<string>();
+  const rawAnswers = lessonAnswersQuery.data as any[] || [];
+  // lesson_id is preserved from the query even though it's not in ContactArtifact type
+  rawAnswers.forEach((a: any) => {
+    if (a._lesson_id) answeredLessonIds.add(a._lesson_id);
+  });
+
   const allArtifacts: ContactArtifact[] = (() => {
     const forms = formsQuery.data || [];
     const answers = lessonAnswersQuery.data || [];
@@ -241,23 +254,9 @@ export function useContactArtifacts(profileId: string | null | undefined, userId
     const homework = questHomeworkQuery.data || [];
 
     // Dedup: if lesson has answers, don't show bare completion
-    const answeredLessonIds = new Set(answers.map(a => {
-      // Extract lesson_id — it's stored in source but we need to match
-      // We match by lesson_title as a proxy since lesson_id isn't directly in artifact
-      return a.lesson_title;
-    }).filter(Boolean));
-
-    // Actually better: collect lesson_ids from raw data
-    const answeredLessonIdSet = new Set<string>();
-    (lessonAnswersQuery.data || []).forEach((a: any) => {
-      // We need lesson_id but it's not in the artifact type directly
-      // Let's use a different approach: check by lesson_title match
-    });
-
-    // Simpler dedup: filter completions whose lesson_title already has an answer
     const dedupedCompletions = completions.filter(c => {
-      if (!c.lesson_title) return true;
-      return !answers.some(a => a.lesson_title === c.lesson_title);
+      if (!c._lesson_id) return true;
+      return !answeredLessonIds.has(c._lesson_id);
     });
 
     const all = [...forms, ...answers, ...dedupedCompletions, ...homework];
