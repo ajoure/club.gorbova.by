@@ -375,6 +375,12 @@ function AuthFormSection({
       return;
     }
 
+    // In preview mode, simulate step transition without real API calls
+    if (isPreview) {
+      setFormStep("signup");
+      return;
+    }
+
     const result = await inlineAuth.checkEmail(email);
     if (result) {
       setFormStep(result.exists ? "login" : "signup");
