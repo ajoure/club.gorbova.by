@@ -1,10 +1,10 @@
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { ClipboardList, FileText, GraduationCap, ExternalLink, User, Handshake } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { ClipboardList, FileText, GraduationCap, User, Handshake } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import type { FormsHubRow } from "@/hooks/useFormsHubData";
@@ -66,7 +66,6 @@ export function FormsHubTable({ rows, isLoading, onOpenDetail, onOpenContact }: 
             <TableHead className="w-[100px]">Статус</TableHead>
             <TableHead className="w-[60px] text-center">Сделка</TableHead>
             <TableHead className="w-[60px] text-center">Аккаунт</TableHead>
-            <TableHead className="w-[80px]" />
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -122,16 +121,6 @@ export function FormsHubTable({ rows, isLoading, onOpenDetail, onOpenContact }: 
                   ) : (
                     <span className="text-muted-foreground/30">—</span>
                   )}
-                </TableCell>
-                <TableCell>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7"
-                    onClick={(e) => { e.stopPropagation(); onOpenDetail(row); }}
-                  >
-                    <ExternalLink className="h-3.5 w-3.5" />
-                  </Button>
                 </TableCell>
               </TableRow>
             );
