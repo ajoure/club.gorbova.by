@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { ClipboardList, FileText, GraduationCap, Loader2 } from "lucide-react";
+import { FileText, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { StudentProgressModal } from "@/components/admin/trainings/StudentProgressModal";
 import { PreregistrationDetailSheet } from "@/components/admin/PreregistrationDetailSheet";
@@ -26,7 +26,6 @@ export function FormsDetailOpener({ row, onClose }: Props) {
     return <PreregistrationDetailBridge row={row} onClose={onClose} />;
   }
 
-  // site_form — inline dialog
   return <SiteFormDetailDialog row={row} onClose={onClose} />;
 }
 
@@ -58,7 +57,7 @@ function TrainingDetailBridge({ row, onClose }: { row: FormsHubRow; onClose: () 
           .eq("lesson_id", lessonId)
           .maybeSingle(),
         supabase
-          .from("training_lesson_blocks")
+          .from("training_lesson_blocks" as any)
           .select("id, block_type, config, sort_order")
           .eq("lesson_id", lessonId)
           .order("sort_order", { ascending: true }),
@@ -83,15 +82,14 @@ function TrainingDetailBridge({ row, onClose }: { row: FormsHubRow; onClose: () 
         profiles: row.raw.profile || null,
       };
 
-      const lessonBlocks: LessonBlock[] = (blocksRes.data || []).map((b: any) => ({
+      const lessonBlocks: LessonBlock[] = ((blocksRes.data as any[]) || []).map((b: any) => ({
         id: b.id,
         block_type: b.block_type,
-        config: b.config,
-        sort_order: b.sort_order,
+        content: b.config,
       }));
 
       const blockResponses: Record<string, any> = {};
-      for (const p of progressRes.data || []) {
+      for (const p of (progressRes.data || [])) {
         blockResponses[p.block_id] = p.response;
       }
 
@@ -117,6 +115,7 @@ function TrainingDetailBridge({ row, onClose }: { row: FormsHubRow; onClose: () 
 
   return (
     <StudentProgressModal
+      open={true}
       record={data.record}
       lessonBlocks={data.lessonBlocks}
       blockResponses={data.blockResponses}
@@ -150,18 +149,14 @@ function SiteFormDetailDialog({ row, onClose }: { row: FormsHubRow; onClose: () 
       <DialogContent className="sm:max-w-2xl max-h-[80vh] flex flex-col p-0 gap-0">
         <DialogHeader className="px-6 pt-5 pb-4 border-b space-y-2">
           <div className="flex items-start gap-3">
-            <div className="text-blue-500">
-              <FileText className="w-5 h-5" />
-            </div>
+            <FileText className="w-5 h-5 text-primary mt-0.5" />
             <div className="flex-1 min-w-0">
               <DialogTitle className="text-base font-semibold">{row.client_name}</DialogTitle>
               <DialogDescription asChild>
                 <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                  <Badge variant="outline" className="text-[11px] bg-blue-50 text-blue-700">Анкета сайта</Badge>
+                  <Badge variant="outline" className="text-[11px]">Анкета сайта</Badge>
                   {row.product_title && <Badge variant="secondary" className="text-[11px]">{row.product_title}</Badge>}
-                  <span className="text-xs text-muted-foreground">
-                    {row.source_entity}
-                  </span>
+                  <span className="text-xs text-muted-foreground">{row.source_entity}</span>
                 </div>
               </DialogDescription>
             </div>
