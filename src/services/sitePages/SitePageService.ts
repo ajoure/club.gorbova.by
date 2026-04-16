@@ -5,11 +5,58 @@ import { siteBlockSchema, type SitePage, type CreateSitePageData, type UpdateSit
 
 const SOURCE = "site-builder";
 
+const ANCHOR_RX = /^[a-z0-9][a-z0-9-]{0,47}$/;
+const BUTTON_ACTION_TYPES = new Set(["link", "scroll_to_anchor", "show_block", "toggle_block", "open_form"]);
+
 function validateBlocks(blocks: SiteBlock[]): void {
+  // 1. per-block schema
   for (const block of blocks) {
     const result = siteBlockSchema.safeParse(block);
     if (!result.success) {
       throw new Error(`Invalid block ${block.id || "unknown"}: ${result.error.message}`);
+    }
+  }
+
+  // 2. anchors: уникальность + slug-формат на странице
+  const anchorMap = new Map<string, string>(); // anchorId -> blockId
+  for (const block of blocks) {
+    const settings = (block.settings || {}) as { anchorId?: string };
+    const a = (settings.anchorId || "").trim();
+    if (!a) continue;
+    if (!ANCHOR_RX.test(a)) {
+      throw new Error(`Invalid anchor "${a}" в блоке ${block.id}: допустимы [a-z0-9-], 1–48 символов, начало с буквы/цифры`);
+    }
+    if (anchorMap.has(a)) {
+      throw new Error(`Duplicate anchor "${a}" на странице (блоки ${anchorMap.get(a)} и ${block.id})`);
+    }
+    anchorMap.set(a, block.id);
+  }
+
+  // 3. button actions: target должен ссылаться на существующий блок/anchor, не на самого себя
+  const blockIds = new Set(blocks.map((b) => b.id));
+  for (const block of blocks) {
+    if (block.type !== "button") continue;
+    const action = (block.content as { action?: { type?: string; target?: string } }).action;
+    if (!action || !action.type || action.type === "link") continue;
+    if (!BUTTON_ACTION_TYPES.has(action.type)) {
+      throw new Error(`Unknown button action "${action.type}" в блоке ${block.id}`);
+    }
+    const target = (action.target || "").trim();
+    if (!target) {
+      throw new Error(`Action "${action.type}" в блоке ${block.id} требует target`);
+    }
+    if (target === block.id) {
+      throw new Error(`Self-target запрещён: блок ${block.id} ссылается сам на себя`);
+    }
+    if (action.type === "scroll_to_anchor") {
+      if (!anchorMap.has(target)) {
+        throw new Error(`Anchor "${target}" не найден на странице (блок-источник ${block.id})`);
+      }
+    } else {
+      // show_block / toggle_block / open_form → target = block.id
+      if (!blockIds.has(target)) {
+        throw new Error(`Target block "${target}" не найден на странице (блок-источник ${block.id})`);
+      }
     }
   }
 }
