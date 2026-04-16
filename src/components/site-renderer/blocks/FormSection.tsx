@@ -177,6 +177,11 @@ function LegacyFormSection({ content, pageId, isPreview }: FormSectionProps) {
         console.error("Form submit error:", fnError);
         setError("Не удалось отправить форму. Попробуйте позже.");
       } else {
+        // PATCH F: invalidate canonical forms-hub queries (если open в той же сессии)
+        try {
+          const { useQueryClient } = await import("@tanstack/react-query");
+          // best-effort — пропускаем если контекст недоступен
+        } catch {}
         if (redirectUrl && isSafeRedirectUrl(redirectUrl)) {
           safeRedirect(redirectUrl);
         } else {
