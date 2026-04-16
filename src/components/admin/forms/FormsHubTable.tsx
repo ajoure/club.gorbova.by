@@ -10,6 +10,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { GlassCard } from "@/components/ui/GlassCard";
 import { ClipboardList, FileText, GraduationCap, User, Handshake } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
