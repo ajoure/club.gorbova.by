@@ -1,168 +1,312 @@
-# да, согласен, с учетом правок:
+# дополни план следующей информацией:
 
 &nbsp;
 
-1. В PATCH A зафиксируй, что discovery должен искать **сначала shared/canonical runtime-source**, а не только docs и ui primitives. Приоритет:
+1. **Жёсткий reuse-guard для embed form**
+  Сначала в discovery докажи, можно ли переиспользовать **существующий публичный submit path site forms**.
+  supabase/functions/embed-form-submit/index.ts создавать **только если** existing path нельзя безопасно использовать для внешнего popup/embed.
+  В отчёте обязателен блок:
+  existing submit path -> можно reuse / нельзя reuse -> почему.
+2. **Явная политика guest/auth для questionnaire**
+  Сейчас в плане не зафиксировано самое важное: questionnaire на сайте проходит
   &nbsp;
-  - existing shared component
-  - approved runtime pattern
-  - только если ничего нет — add-only extract в shared
+  - только авторизованный пользователь, или
+  - гость тоже может пройти.
+    Это нужно определить до execution, потому что от этого зависит canonical storage path и contact resolve.
+    В discovery добавить отдельный раздел:
+    guest mode policy / auth-required policy / contact-resolve chain / dedup rules.
   &nbsp;
-2. В артефакте discovery по каждому паттерну дай не только found / not found, но и итоговое решение:
+3. **Явная политика повторного прохождения**
+  Для questionnaire нельзя оставлять это “по факту посмотрим”.
+  В плане нужно заранее зафиксировать для site-questionnaire:
   &nbsp;
-  - canonical source
-  - reuse as-is / extract to shared
-  - какие файлы будут переведены
-  - какие локальные самодельные элементы будут удалены
+  - new session every submit, либо
+  - update latest response, либо
+  - policy per questionnaire.
+    И отдельно указать, как это отображается в:
+  - карточке контакта
+  - /admin/forms
+  - detail viewer.
   &nbsp;
-3. Для таблицы отдельно добавь проверку, что parity должна быть не только визуальная, но и **поведенческая**:
+4. **Не создавать новый editor для questionnaire без discovery-proof**
+  QuestionnaireBlockEditor.tsx допустим **только как тонкий selector/wrapper** над existing training/questionnaire editor schema.
+  Запретить создание второго самостоятельного конструктора вопросов для сайта.
+  В плане явно допиши:
+  если existing lesson_blocks editor можно reuse -> нового редактора вопросов не делаем.
+5. **Source-of-truth для site-questionnaire должен быть один**
+  В плане сейчас есть две ветки решения. Это нормально для discovery, но нужен guard:
   &nbsp;
-  - drag column
-  - resize column
-  - select row
-  - select all
-  - row click
-  - persistence в localStorage
-    Это должно быть частью DoD PATCH A.
+  - либо reuse user_lesson_progress через canonical/virtual lesson path,
+  - либо blocker report.
+    Не допускать параллельного хранения “часть в site_form_submissions, часть в отдельной questionnaire table”.
+    Один questionnaire response path на весь проект.
   &nbsp;
-4. Для календаря зафиксируй жёстко: если canonical date picker уже найден в проекте, использовать **ровно его контракт**, без новой локальной реализации на shadcn “по мотивам”.
-5. В PATCH A добавь отдельный пункт cleanup:
+6. **E2E proof должен включать полный путь по данным, не только UI**
+  Для каждого из трёх потоков:
   &nbsp;
-  - удалить все временные/самодельные wrappers, styles и toolbar-слои, которые появились в /admin/forms и не совпадают с canonical source
-  - в финальном отчёте показать список удалённых самодельных компонентов/стилей
+  - site_form
+  - embed_form
+  - site_questionnaire
+    показать chain:
+    submit -> DB row -> contact resolve -> /admin/forms -> contact card -> detail viewer.
+    Не просто скрины, а ещё конкретные DB proof по связанным id.
   &nbsp;
-6. В PATCH B для policy лучше сразу проверить точное имя роли в has_role_v2 по текущим canonical enum/данным проекта и не хардкодить предположение. Если в системе стандарт — super_admin, использовать его; если есть историческая совместимость, показать proof.
-7. В PATCH B добавь dry-run proof до execute:
+7. **Для anchors/button actions добавь canonical runtime mapping**
+  В discovery нужно отдельно показать:
+  какой текущий runtime уже исполняет button click,
+  где хранится block identity,
+  какой canonical block id использовать как target.
+  Нужно прямо запретить любые временные target-ключи по title/name/index. Только стабильный block id / anchor id.
+8. **В regression добавить обязательную проверку конструктора сайтов end-to-end**
+  Помимо submit flows, нужно отдельно проверить:
   &nbsp;
-  - сколько site_form будет удалено
-  - сколько preorder будет удалено
-  - сколько training будет пропущено
-    Сначала dry-run summary, потом execute, потом DB/UI proof.
+  - сохранение страницы после добавления anchors/actions/questionnaire
+  - повторное открытие editor
+  - preview
+  - publish/live
+  - что после publish всё ещё работает, а не только preview.
   &nbsp;
-8. В DoD PATCH B добавь отдельно:
-  &nbsp;
-  - удаление реально работает **из bulk bar во всех relevant tabs**, а не только в одной вкладке
-  - после удаления counts обновились в Все, Анкеты сайта, Предзаписи, По продуктам, Экспорт
-  &nbsp;
-9. Не менять PATCH 1 data-layer и PATCH 2 detail-viewer reuse — только literal-reuse canonical UI и точечный bulk-delete fix, без расширения scope.
+9. **Не трогать уже закрытый домен “Анкеты и данные” кроме invalidate/wiring**
+  Явно допиши в guards:
+  никакой переделки /admin/forms, ContactArtifactsTab, viewers, exports, filters, table engine — только подключение новых источников и invalidate, если действительно нужно.
+10. **Финальный DoD по спринту**
+  Добавь в конец плана короткий итоговый DoD:
 
 &nbsp;
 
 &nbsp;
 
-В целом план правильный и уже намного лучше сформулирован. Можно запускать именно в таком порядке: сначала Discovery + PATCH A, потом только PATCH B.
+&nbsp;
+
+- anchors работают
+- button actions работают
+- visibility engine работает
+- embed form сохраняет в canonical path
+- site questionnaire использует existing engine, без второго движка
+- все новые записи видны в /admin/forms и в карточке контакта
+- полный E2E proof приложен
+- regression по existing site forms и training не сломан
 
 &nbsp;
 
-План: PATCH 4 — discovery canonical UI + parity `/admin/forms` + bulk delete fix
+&nbsp;
 
-## Этап 0 — Discovery canonical UI source of truth (обязателен до PATCH A)
+После этих правок план уже можно отдавать в работу.
 
-Цель: не утверждать «контакты — эталон», а доказать через системное сканирование, какой компонент/паттерн уже принят как канонический. Артефакт discovery — отдельная таблица source-of-truth, прикладывается до начала реализации.
+&nbsp;
 
-### Скоуп discovery
+План: Конструктор сайтов — anchors, button actions, embed forms, унифицированный questionnaire engine (v2)
 
-1. **Shared UI kit / registry** — проверить наличие глобальных директорий и реестров:
-  - `src/components/ui/*` (shadcn primitives)
-  - `src/components/admin/table/*` (уже есть `SortableResizableTableHead`)
-  - `src/components/admin/*` (общие admin-компоненты: `BulkActionsBar`, `ColumnSettings`, `GlassFilterPanel`)
-  - `src/components/shared/*` если существует
-  - `docs/ENGINEERING_RULES.md` и `mem://ui/*` — есть ли явный документированный стандарт
-2. **Поиск всех runtime-использований** для каждого паттерна:
-  - Таблица с DnD/resize/select: grep по `SortableResizableTableHead`, `useDragSelect`, `useColumnsState`
-  - Календарь: grep по `<Calendar`, `react-day-picker`, `<DatePicker`, `type="date"`
-  - Filters bar: grep по `GlassFilterPanel`, pill-style кнопкам, `ContactFiltersBar`
-  - Status chips: grep по `getStatusBadge`, `Badge` с `bg-{color}-500/20`
-3. **Ранжирование кандидатов** по критериям:
-  - Уже вынесен в `shared` layer? → высший приоритет
-  - Используется на ≥2 страницах? → runtime-эталон
-  - Только на 1 странице? → кандидат на extract
-  - Имеет конфликтующие версии? → блокер, требует консолидации до reuse
+## 0. Discovery (обязателен до execution)
 
-### Артефакт discovery (обязателен)
+### 0.1 Canonical UI source of truth
 
-Таблица source-of-truth, прикладывается до PATCH A:
+- canonical таблица: `FormsHubTable` + `SortableResizableTableHead`
+- canonical date picker: `src/components/ui/date-picker.tsx`
+- canonical detail viewers: `StudentProgressModal`, `PreregistrationDetailSheet`, site_form detail dialog
+- canonical button/block editor: `ButtonSection.tsx`, `ButtonBlockEditor.tsx`, `BlockSettingsEditor.tsx`
+
+### 0.2 Canonical data sources
+
+- existing **public submit path** для site forms — найти и зафиксировать (edge function/RPC/direct insert + RLS)
+- existing questionnaire engine: `lesson_blocks` + `user_lesson_progress`
+- contact resolve chain (как сейчас работает для site_form / preorder)
+- dedup rules
+
+### 0.3 Mapping (артефакт перед PATCH A)
 
 
-| Паттерн           | Канонический источник                                           | Тип (shared / runtime / нет) | Где уже используется | Решение для `/admin/forms`   |
-| ----------------- | --------------------------------------------------------------- | ---------------------------- | -------------------- | ---------------------------- |
-| Table shell       | TBD                                                             | TBD                          | TBD                  | reuse / extract / new        |
-| Header DnD/resize | `src/components/admin/table/SortableResizableTableHead.tsx`     | shared                       | contacts, forms      | literal reuse (уже на месте) |
-| Multi-select hook | `src/hooks/useDragSelect.ts` (если найден)                      | TBD                          | TBD                  | TBD                          |
-| BulkActionsBar    | `src/components/admin/BulkActionsBar.tsx`                       | shared                       | TBD                  | reuse                        |
-| ColumnSettings    | `src/components/admin/ColumnSettings.tsx`                       | shared                       | TBD                  | reuse                        |
-| Date picker       | TBD (есть ли уже approved pattern с shadcn `Popover+Calendar`?) | TBD                          | TBD                  | TBD                          |
-| Filters bar       | TBD (`GlassFilterPanel` vs `ContactFiltersBar` pill-style)      | TBD                          | TBD                  | TBD                          |
-| Status chip       | TBD                                                             | TBD                          | TBD                  | TBD                          |
+| Новый функционал   | Reuse из                                                   | Расширение add-only    |
+| ------------------ | ---------------------------------------------------------- | ---------------------- |
+| anchor_id блока    | `BlockSettings`                                            | `+ anchorId?: string`  |
+| button actions     | `ButtonSection`                                            | `content.action` union |
+| visibility         | новый context                                              | —                      |
+| embed form         | **existing public submit path** (см. discovery 0.4)        | popup/iframe wrapper   |
+| site questionnaire | training engine (`lesson_blocks` + `user_lesson_progress`) | source-маркер          |
 
 
-### Правила выбора source-of-truth
+### 0.4 Reuse-guard для embed form (НОВОЕ, обязателен)
 
-1. Если найден **shared канонический компонент** → literal reuse без изменений.
-2. Если shared нет, но есть **runtime-эталон, используемый на ≥2 страницах** → объявить его source-of-truth, оформить add-only extract в `src/components/shared/` или `src/components/admin/*`, перевести `/admin/forms` на него. Существующие страницы переключить через импорт без поведенческих правок.
-3. Если runtime-эталон есть только на 1 странице → подтвердить, что он соответствует другим UI-конвенциям проекта (consistency check), и только тогда брать как source-of-truth.
-4. Если канонического нет вообще → создать новый shared компонент с обоснованием и пометкой «новый стандарт».
+До любых правок:
 
-### Stop-gate
-
-PATCH A не начинается, пока артефакт discovery не приложен и каждая строка таблицы source-of-truth не заполнена явным решением.
-
----
-
-## PATCH A — literal reuse canonical UI в `/admin/forms`
-
-Содержание зависит от результата discovery. Базовый каркас:
-
-1. **Table shell**: `FormsHubTable.tsx` посадить на canonical обёртку из source-of-truth (вероятно `GlassCard` + canonical Table primitives). Удалить самодельные `rounded-lg border` + `bg-muted/30`.
-2. **Date picker**: native `<Input type="date">` в `FormsHubFilters.tsx` заменить на canonical date-picker pattern из discovery. Если такого pattern нет в проекте — создать shared `<DateRangePicker>` на shadcn `Popover+Calendar` и пометить как новый стандарт.
-3. **Filters bar**: привести к layout из source-of-truth (pill-style либо glass-panel — по результату discovery).
-4. **Status chips**: применить canonical badge classes + `whitespace-nowrap`, расширить колонку `status` до 130px.
-5. **ColumnSettings**: разместить в actions zone справа от фильтров (архитектурно отдельный компонент, не внутри `FormsHubFilters`).
-6. **Удалить самодельный UI**: `FormsTableToolbar.tsx`, лишние `Card>CardContent` обёртки в tab-content файлах.
-
-### DoD PATCH A
-
-- Артефакт discovery приложен и обоснован.
-- `/admin/forms` использует canonical/shared pattern, а не локальную вариацию.
-- Mapping таблица: «эталонный компонент → где использовался → куда переиспользован → что удалено из самоделки».
-- Visual proof: скриншоты `/admin/forms` ↔ source-of-truth страница (одинаковый фон, hover, selected, status chips).
-- DnD/resize колонок одинаково работает на всех вкладках (`Все`, `Анкеты сайта`, `Предзаписи`, `Обучение`, `По продуктам`).
-- Календарь — canonical date picker (не native).
-- Status «В процессе» в одну строку.
-- Zero regression: страницы, с которых берётся эталон, поведенчески не изменились.
-
----
-
-## PATCH B — bulk delete fix (после approve PATCH A)
-
-Причина уже найдена: на `site_form_submissions` отсутствует DELETE RLS policy.
-
-1. **Миграция**:
-  ```sql
-   CREATE POLICY "Admins can delete submissions"
-   ON public.site_form_submissions
-   FOR DELETE TO authenticated
-   USING (has_role_v2(auth.uid(), 'admin') OR has_role_v2(auth.uid(), 'super_admin'));
+1. Найти existing public submit endpoint для site forms (edge function или direct insert через anon RLS).
+2. В отчёте discovery — обязательный блок:
   ```
-2. `**useFormsBulkDelete.ts**`: после `.delete()` явная проверка `count`. Если `summary.site_form.length > 0 && deletedSite === 0` → понятная ошибка «Нет прав на удаление». Лог в `audit_logs` (`action: 'bulk_delete_forms'`, `meta: { site, preorder, skipped_training }`).
-3. `**FormsBulkActionsBar.tsx**`: показ inline-summary «Доступно: N • Пропущено (обучение): K» + confirm dialog с разбивкой по типам.
-4. **Invalidate**: `forms-hub-data`, `forms-hub-products`, `admin-preregistrations`, `preregistration-stats`, `forms-hub-export-counts`.
+   existing submit path: <путь>
+   можно reuse для external embed: ДА / НЕТ
+   причина: <CORS / RLS / contact resolve / dedup>
+  ```
+3. **Только если reuse невозможен** — создавать `supabase/functions/embed-form-submit/index.ts` как тонкий прокси к canonical contact-resolve, без дублирования бизнес-логики.
 
-### DoD PATCH B
+### 0.5 Guest/auth policy для questionnaire (НОВОЕ, обязателен)
 
-- Mixed selection (site + preorder + training): confirm-dialog корректно показывает «N / M / K skip».
-- DB proof: `SELECT count(*)` до/после показывает реальное удаление в `site_form_submissions` и `course_preregistrations`.
-- Training-record после операции остаётся в БД и в UI.
-- UI обновляется без reload, counts уменьшаются на всех вкладках.
-- Selection сбрасывается, `BulkActionsBar` исчезает.
-- Запись в `audit_logs` создана.
+Зафиксировать ДО execution отдельным разделом discovery:
+
+- **режим**: только авторизованный / гость+авторизованный / выбирается per-questionnaire
+- **canonical storage path** при guest mode (если разрешён): через какой механизм пишется `user_lesson_progress` без `auth.uid()`?
+- **contact resolve chain**: email/phone из ответов → существующий contact resolve (тот же, что у site_form)
+- **dedup rules**: что считается дубликатом submit
+
+Решение принимается в discovery. Если guest mode требует второго storage — это **blocker report**, не execution.
+
+### 0.6 Политика повторного прохождения (НОВОЕ, обязателен)
+
+Зафиксировать ДО execution:
+
+- **default**: `new session every submit` / `update latest response` / `policy per questionnaire` (поле в block content)
+- как отображается:
+  - в карточке контакта (одна запись vs история)
+  - в `/admin/forms` (одна строка vs N строк)
+  - в detail viewer (последняя vs выбор сессии)
+
+Без этого решения PATCH E не стартует.
+
+### 0.7 Canonical runtime mapping для anchors/button actions (НОВОЕ, обязателен)
+
+В discovery показать:
+
+- какой runtime сейчас исполняет click на site button (`ButtonSection.tsx` → `<a href>`)
+- где хранится block identity (`SiteBlock.id` — UUID)
+- canonical target ключ: **только stable `block.id` (UUID) и `anchorId` (slug, validated unique per page)**
+- **запрещено**: target по title/name/index/order
+
+### 0.8 Source-of-truth guard для site-questionnaire (НОВОЕ)
+
+Только один из вариантов:
+
+- **A**: reuse `user_lesson_progress` через canonical lesson путь (с маркером source='site' или virtual lesson внутри служебного module)
+- **B**: blocker report
+
+**Запрещено**: параллельное хранение части ответов в `site_form_submissions`, части — в отдельной questionnaire table. Один response path на весь проект.
 
 ---
 
-## Scope guard
+## PATCH A — Anchors
 
-- НЕ трогать `useFormsHubData.ts` (PATCH 1: server filters/pagination/exportMode/redirects).
-- НЕ трогать detail viewers (`StudentProgressModal`, `PreregistrationDetailSheet`, form dialog).
-- НЕ создавать новые table/filter/calendar engines без обоснования через discovery.
-- Zero regression на страницах-источниках эталона.
-- PATCH B запускается только после визуального approve PATCH A.
+**Файлы:** `services/sitePages/types.ts`, `BlockSettingsEditor.tsx`, `SitePageService.ts` (валидация уникальности), `useSitePageAnchors.ts` (новый, реестр), `SitePageRenderer.tsx` (рендер `id=` + smooth scroll).
+
+**DoD:** anchor задаётся, дубликаты блокируются на save, scroll работает на preview/live, broken reference невозможен (select только из реестра).
+
+---
+
+## PATCH B — Button actions
+
+**Файлы:** `services/sitePages/types.ts` (action union), `ButtonBlockEditor.tsx` (target picker из реального реестра — **только block.id / anchorId**), `ButtonSection.tsx` (runtime executor).
+
+**Validation:** target обязателен для action≠link; self-target запрещён; target должен существовать; backward-compat для старых link-кнопок.
+
+**DoD:** все 5 action types работают, invalid target не сохраняется, link не сломан.
+
+---
+
+## PATCH C — Visibility engine
+
+**Файлы:** `BlockSettings.initialVisibility`, `BlockSettingsEditor.tsx`, `SiteVisibilityContext.tsx` (новый), `SitePageRenderer.tsx` (provider + skip render/`hidden`).
+
+**DoD:** hidden block не виден на first render, show/toggle работает, reload восстанавливает initial state.
+
+---
+
+## PATCH D — Embeddable form
+
+**Гейт**: PATCH D стартует только после прохождения reuse-guard 0.4.
+
+**Если reuse possible**: добавить только popup/iframe wrapper + статический `public/embed/form.js` + админ-кнопка «Получить embed code». Никаких новых edge functions.
+
+**Если reuse impossible**: тонкий `supabase/functions/embed-form-submit/index.ts` как прокси к canonical contact-resolve. Никакой бизнес-логики дубликатов.
+
+**Запись только в `site_form_submissions**` (canonical). Никаких новых таблиц.
+
+**DoD:** embed на внешней странице → submit → запись в `site_form_submissions` → видна в `/admin/forms` → detail через canonical viewer.
+
+---
+
+## PATCH E — Site questionnaire (reuse training engine)
+
+**Гейты**: 0.5 (guest/auth) + 0.6 (повторное прохождение) + 0.8 (single source-of-truth) — ДО execution.
+
+**Файлы:**
+
+- `SiteQuestionnaireBlock.tsx` — тонкий wrapper, резолвит lesson_id → рендерит **существующий** questionnaire renderer 1:1
+- `QuestionnaireBlockEditor.tsx` — **только тонкий selector/wrapper**: выбор существующего questionnaire из библиотеки ИЛИ открытие existing `lesson_blocks` editor. **Запрещено** создавать второй конструктор вопросов.
+
+**Если existing `lesson_blocks` editor можно reuse → нового редактора вопросов НЕ делаем.** Только селектор + ссылка на canonical editor.
+
+**Storage**: только `user_lesson_progress` (через canonical/virtual lesson path).
+
+**Видимость в `/admin/forms**`: расширить `useFormsHubData.ts` add-only, чтобы включать `user_lesson_progress` с source='site'. Никаких изменений UI/viewers.
+
+**DoD:** block добавляется → preview step flow → submit → `user_lesson_progress` → видно в карточке контакта (ContactArtifactsTab) и в `/admin/forms` → detail через `StudentProgressModal`.
+
+---
+
+## PATCH F — Unified contact path E2E
+
+Никаких новых сущностей. Только верификация invalidate queries для трёх потоков (site_form / embed_form / site_questionnaire). Минимальное wiring, не более.
+
+---
+
+## QA runbook (E2E с DB proof)
+
+Для каждого потока (**site_form / embed_form / site_questionnaire**) приложить полную цепочку:
+
+```
+submit → DB row (id) → contact resolve (contact_id) → /admin/forms (строка) → contact card (запись) → detail viewer (открылся)
+```
+
+С конкретными UUID, не только скринами.
+
+### A. Anchors (5 кейсов): 2 scroll-кнопки, duplicate save, broken reference, edit/save/reload page.
+
+### B. Button actions (5): show/toggle/open_form/link/invalid self-target.
+
+### C. Visibility (3): initial hidden, show/toggle, reload.
+
+### D. Embed form: вставка snippet → submit → DB chain proof.
+
+### E. Site questionnaire: добавление block → step flow → required → submit → DB chain proof → повторное прохождение (зафиксированная политика 0.6).
+
+### F. Regression site-builder end-to-end (НОВОЕ, обязателен)
+
+Помимо submit flows:
+
+- сохранение страницы после добавления anchors/actions/questionnaire → reopen editor → данные на месте
+- preview корректен
+- **publish → live URL → всё работает на published, не только в preview**
+
+### G. Regression existing
+
+- existing site forms submit
+- existing training progress
+- `/admin/forms` filters/export/details
+- contact card «Анкеты» tab
+- `/admin/contacts`, `/admin/payments`
+
+---
+
+## Архитектурные guards
+
+- **НЕ трогать `/admin/forms` UI, ContactArtifactsTab, viewers, exports, filters, table engine, date picker, drag/resize/select** — только подключение новых источников данных и invalidate, если действительно нужно.
+- НЕ создавать второй questionnaire engine.
+- НЕ создавать второй form submit flow.
+- НЕ создавать новый редактор вопросов (только selector/wrapper).
+- НЕ дублировать viewers.
+- Target в button actions — **только stable id/anchorId**, никаких title/index/name.
+
+---
+
+## Финальный DoD спринта
+
+- anchors работают (preview + published)
+- button actions работают (все 5 типов)
+- visibility engine работает (initial + runtime)
+- embed form сохраняет в canonical `site_form_submissions`
+- site questionnaire использует existing training engine, без второго движка/storage/editor
+- все новые записи видны в `/admin/forms` и в карточке контакта
+- полный E2E DB-chain proof приложен для трёх потоков
+- regression по existing site forms, training, `/admin/forms`, contacts — не сломан
+- site-builder regression: save → reopen → preview → publish → live — работает
+
+## Порядок
+
+Discovery (0.1–0.8) → артефакт mapping + guest/auth + repeat policy + reuse-guard verdict → PATCH A → B → C → D → E → F → QA → отчёт.
