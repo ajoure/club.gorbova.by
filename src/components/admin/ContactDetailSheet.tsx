@@ -131,6 +131,7 @@ import { AdminPaymentLinkDialog } from "./AdminPaymentLinkDialog";
 import { AvatarZoomDialog } from "./AvatarZoomDialog";
 import { LoyaltyPulse } from "./LoyaltyPulse";
 import { ContactLoyaltyTab } from "./ContactLoyaltyTab";
+import { ContactArtifactsTab } from "./contact/ContactArtifactsTab";
 import { ContactPaymentsTab } from "./ContactPaymentsTab";
 import { LinkedCardItem } from "./cards/LinkedCardItem";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -1623,6 +1624,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               <TabsTrigger value="loyalty" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 <Sparkles className="w-3 h-3 mr-1" />
                 Лояльность
+              </TabsTrigger>
+              <TabsTrigger value="artifacts" className="text-xs sm:text-sm px-2.5 sm:px-3">
+                <BookOpen className="w-3 h-3 mr-1" />
+                Анкеты
               </TabsTrigger>
               {contact.duplicate_flag && contact.duplicate_flag !== 'none' && (
                 <TabsTrigger value="duplicates" className="text-xs sm:text-sm px-2.5 sm:px-3">Дубли</TabsTrigger>
@@ -3548,6 +3553,15 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             {/* Loyalty Tab */}
             <TabsContent value="loyalty" className="m-0">
               <ContactLoyaltyTab contact={contact} />
+            </TabsContent>
+
+            {/* Artifacts Tab — Анкеты и обучение */}
+            <TabsContent value="artifacts" className="m-0">
+              <ContactArtifactsTab
+                profileId={contact.id}
+                userId={contact.user_id}
+                enabled={activeTab === "artifacts"}
+              />
             </TabsContent>
 
             {/* Duplicates Tab */}
