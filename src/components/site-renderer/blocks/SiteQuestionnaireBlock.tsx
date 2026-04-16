@@ -52,7 +52,7 @@ export function SiteQuestionnaireBlock({ content }: Props) {
     return () => { cancelled = true; };
   }, [lessonId]);
 
-  const { blocks, isLoading } = useLessonBlocks(lessonId);
+  const { blocks, loading: isLoading } = useLessonBlocks(lessonId);
 
   if (!lessonId || lessonValid === false) {
     return (
