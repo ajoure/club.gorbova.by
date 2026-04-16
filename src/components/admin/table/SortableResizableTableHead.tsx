@@ -71,6 +71,7 @@ export function SortableResizableTableHead({
         <div
           {...attributes}
           {...listeners}
+          data-drag-handle
           className="cursor-grab active:cursor-grabbing p-0.5 hover:bg-muted rounded opacity-50 hover:opacity-100"
           onClick={(e) => e.stopPropagation()}
         >
@@ -79,8 +80,11 @@ export function SortableResizableTableHead({
         <div className="flex-1">{children}</div>
       </div>
       <div
-        className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-primary/50 active:bg-primary transition-colors"
+        data-resize-handle
+        className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-primary/50 active:bg-primary transition-colors z-10"
         onMouseDown={handleMouseDown}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
       />
     </TableHead>
   );
