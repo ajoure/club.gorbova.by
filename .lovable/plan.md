@@ -2,75 +2,73 @@
 
 &nbsp;
 
-1. Вкладку лучше делать как **Phase 1: read-only aggregation без новых таблиц**, а не как окончательное архитектурное решение “навсегда”.
-  По discovery это действительно самый быстрый и безопасный путь. Но в плане нужно явно написать:
+1. **Не тянуть StudentProgressModal как есть, если он жёстко привязан к другому экрану или side-effects.**
+  Сначала проверь, можно ли его безопасно переиспользовать напрямую.
+  Если он чистый и принимает только props — окей.
+  Если внутри есть завязки на роут, локальную страницу, mutation/telemetry, специфичный layout-контекст — вынести общий presentation-layer, а не копировать логику.
+2. **Нужно явно разделить lesson и quest-ветки.**
+  В текущем плане training-ветка охватывает lesson_answer, lesson_completion, quest_homework, но StudentProgressModal по описанию заточен под lesson_progress_state/lesson_blocks.
+  Для quest_homework надо отдельно зафиксировать:
   &nbsp;
-  - сейчас делаем **read-only unified view на клиенте**;
-  - если позже объём данных вырастет, отдельный projection/read-model можно вынести в follow-up.
+  - либо остаётся в текущем generic viewer как fallback;
+  - либо есть отдельный существующий viewer, который тоже надо переиспользовать;
+  - но нельзя насильно открывать StudentProgressModal, если для quest он не является каноническим экраном.
   &nbsp;
-2. Нужно чётко зафиксировать **гранулярность артефакта**.
-  Сейчас это не до конца определено. Для user_lesson_progress важно решить:
+3. **Не убирать training payload из useContactArtifacts.ts полностью, пока не доказано, что он больше нигде не нужен.**
+  Лучше так:
   &nbsp;
-  - одна запись = один ответ по lesson_block
-  - или одна запись = один агрегированный lesson attempt
-    Иначе можно либо потерять ответы, либо задублировать уроки.
-    Для Phase 1 рекомендую:
-  - site_form_submission = 1 артефакт
-  - user_lesson_progress = 1 артефакт на запись ответа
-  - lesson_progress показывать только если по уроку нет ни одного user_lesson_progress
-  - lesson_progress_state в список не выводить как отдельный артефакт, а использовать только как технический источник/обогащение при необходимости
+  - список артефактов остаётся лёгким;
+  - для training details payload в списке может быть минимальным;
+  - полный контекст грузится по клику;
+    Но не делать резкий delete до проверки всех зависимостей.
   &nbsp;
-3. Нужно явно зафиксировать **dedup policy** между user_lesson_progress и lesson_progress.
-  Сейчас ты это описал общо. Нужен точный rule:
+4. **module_id в ContactArtifact — добавить обязательно, но также желательно сохранить lesson_id и user_id как явные поля в типе, а не надеяться на косвенный доступ.**
+  Раз detail-viewer будет открываться по этим данным, они должны быть частью контракта артефакта явно и типобезопасно.
+5. **Нужен явный lazy-query contract для training details.**
+  По клику на training item:
   &nbsp;
-  - если по lesson_id есть хотя бы один содержательный user_lesson_progress, то отдельный lesson_progress в списке не показываем;
-  - если lesson_progress есть, а ответов нет — показываем как “прохождение урока” без payload.
+  - грузим lesson_progress_state,
+  - грузим lesson_blocks,
+  - грузим user_lesson_progress,
+  - показываем loading state внутри modal/open flow,
+  - если чего-то нет — показываем fallback/error state, а не ломаемся.
+    Это надо прописать, чтобы не было “по клику тишина”.
   &nbsp;
-4. lesson_progress_state сейчас лучше вынести в **deferred list**.
-  По discovery это техническое состояние, а не самостоятельный пользовательский артефакт.
-  Не надо пытаться сразу красиво визуализировать state_json, если это не блокирует основной scope.
-5. support_tickets с category='training_feedback' тоже лучше вынести в **deferred list / after-sprint follow-up**.
-  Это полезный источник, но он уже граничит с коммуникациями, а не с основной задачей “анкеты и обучение”.
-  Основной scope лучше закрыть сначала на:
-  &nbsp;
-  - site_form_submissions
-  - user_lesson_progress
-  - lesson_progress
-  - quest_user_progress
-  &nbsp;
-6. Для site_form_submissions нужно явно описать, откуда берётся **человекочитаемый title/subtitle**.
-  Недостаточно “Анкета + page title из metadata”, потому что page title может не лежать в metadata.
-  Добавь точный источник:
-  &nbsp;
-  - брать page_id из submission;
-  - при возможности подтягивать site_pages.title/slug;
-  - fallback: “Анкета сайта”.
-  &nbsp;
-7. Для training data нужно явно описать цепочку join’ов и fallback-логику названий.
+6. **Нужен fallback для кейса, когда lesson_progress_state отсутствует, а training artifact есть.**
+  Такое возможно.
   Например:
   &nbsp;
-  - user_lesson_progress.lesson_block_id -> lesson_blocks -> training_lessons -> training_modules -> products_v2
-  - если какой-то join не найден, запись всё равно не теряем, а показываем fallback title вроде “Ответ по уроку”.
+  - есть user_lesson_progress,
+  - но нет полноценного lesson_progress_state.
+    Нужно зафиксировать поведение:
+  - либо открывать доступный existing viewer только при полном контексте,
+  - либо fallback на компактный read-only details block,
+  - но не пустой экран и не crash.
   &nbsp;
-8. Нужно явно определить **source_type enum** для Phase 1 и не расширять его лишним.
-  Рекомендую зафиксировать минимальный набор:
+7. **Для lesson_completion без block responses надо явно описать сценарий.**
+  Если по записи есть только completion, но нет интерактивных ответов:
   &nbsp;
-  - site_form
-  - lesson_answer
-  - lesson_completion
-  - quest_homework
-    Всё остальное — потом. Не надо сразу добавлять слишком общий список из 10 типов, которых ещё нет в UI.
+  - либо открываем StudentProgressModal, если он умеет работать с пустым blockResponses,
+  - либо показываем, что у урока нет подробных интерактивных данных.
+    Это должен быть осознанный кейс в плане.
   &nbsp;
-9. payload и summary нужно разделить в UI-слое явно.
-  В ContactArtifact лучше сделать:
+8. **Очистку нужно сформулировать мягче: не “удалить сразу”, а “вывести из training detail path”.**
+  Сначала переключить training details на existing viewer, потом проверить, что:
   &nbsp;
-  - summary — компактные поля для списка
-  - payload — полный сырой JSON для деталей
-    Это уже у тебя есть по смыслу, но лучше закрепить как обязательный контракт, чтобы список не пытался рендерить полный payload.
+  - старые функции/мапперы больше нигде не используются,
+  - только после этого удалить мёртвый код.
+    Иначе можно сломать промежуточные ветки.
   &nbsp;
-10. Для UI лучше использовать **drawer/modal деталей**, а не inline expansion внутри длинного списка.
-  В карточке контакта и так большой ContactDetailSheet на 3850 строк; inline раскрытия быстро сделают вкладку громоздкой.
-  Рекомендую:
+9. **ArtifactDetailModal лучше явно переименовать по смыслу, если он останется только для site forms.**
+  Иначе название будет путать.
+  Например, логика:
+  &nbsp;
+  - SiteFormDetailDialog
+  - training → existing StudentProgressModal
+    Это не обязательно, но желательно, если rename не заденет много мест.
+  &nbsp;
+10. **Нужно отдельно проверить совместимость визуального слоя.**
+  Если StudentProgressModal открывается поверх карточки контакта, надо убедиться:
 
 &nbsp;
 
@@ -78,9 +76,11 @@
 
 &nbsp;
 
-- список карточек/строк
-- кнопка Открыть
-- справа drawer или modal с полными деталями payload
+- overlay/portal не конфликтует с already open contact sheet,
+- z-index корректный,
+- scroll locking корректный,
+- backdrop не ломает UX.
+  Это важно, потому что модалка будет открываться уже из модалки/side sheet.
 
 &nbsp;
 
@@ -88,8 +88,7 @@
 
 &nbsp;
 
-11. Нужно сделать вкладку **лениво загружаемой**, а не тянуть все запросы всегда.
-  Поскольку ContactDetailSheet уже очень большой, добавь правило:
+11. **В DoD добавь proof именно на проблемных кейсах:**
 
 &nbsp;
 
@@ -97,8 +96,9 @@
 
 &nbsp;
 
-- загрузка артефактов начинается только при открытии вкладки artifacts
-- без лишней нагрузки на открытие карточки контакта
+- Тест: В какой роли вы находитесь сейчас → открывается existing viewer, без q1/1a;
+- Шаг 2: Анализ и формирование портфеля клиентов → открывается та же таблица, что и в progress screen;
+- site_form → по-прежнему открывается form-dialog, а не training viewer.
 
 &nbsp;
 
@@ -106,7 +106,7 @@
 
 &nbsp;
 
-12. В useContactArtifacts(profileId, userId) нужно явно предусмотреть **branch matrix**:
+12. **Добавь негативный DoD:**
 
 &nbsp;
 
@@ -114,11 +114,10 @@
 
 &nbsp;
 
-- есть profileId, но нет userId
-- есть userId, но нет profileId
-- есть оба
-- нет ничего
-  И не падать в этих кейсах. Это важно для старых/неполных контактов.
+- список вкладки не ломается, если detail loading не удался;
+- site forms не затронуты;
+- фильтры/счётчики/dedup не меняются;
+- второй кастомный training viewer больше не используется.
 
 &nbsp;
 
@@ -126,9 +125,7 @@
 
 &nbsp;
 
-13. Нужна явная сортировка и secondary ordering.
-  Просто “отсортированный по дате массив” недостаточно.
-  Добавь:
+13. **Главный scope guard нужно записать прямо:**
 
 &nbsp;
 
@@ -136,9 +133,9 @@
 
 &nbsp;
 
-- primary: submitted_at / created_at DESC
-- secondary: source_type, id
-  чтобы порядок был детерминированным.
+- training details = reuse existing progress UI;
+- site forms = separate local dialog;
+- никаких новых training renderers, normalizers, resolver chains поверх уже существующего source of truth.
 
 &nbsp;
 
@@ -146,8 +143,7 @@
 
 &nbsp;
 
-14. Нужен явный contract для фильтров вкладки.
-  Минимально:
+14. **Финальный proof должен показать source-trace:**
 
 &nbsp;
 
@@ -155,226 +151,113 @@
 
 &nbsp;
 
-- Все
-- Анкеты
-- Обучение
-  Но внутри “Обучение” не смешивать всё без структуры. Добавь в plan:
-- badge/type label на каждой записи
-- product badge
-- lesson/module label если есть
-- status badge
+- какой training artifact кликнули,
+- какой lesson_id/user_id/module_id,
+- какой existing component opened,
+- что UI совпадает с экраном прогресса по смысловым данным, а не только “примерно похоже”.
 
 &nbsp;
 
 &nbsp;
 
-&nbsp;
+План: переиспользование StudentProgressModal для training details в карточке контакта
 
-15. Нужно отдельно описать пустые/битые payload-сценарии.
-  Например:
+## Проблема
 
-&nbsp;
+Сейчас по клику на training-артефакт во вкладке «Анкеты и обучение» открывается кастомный `ArtifactDetailModal` с примитивным рендером raw payload. Это даёт «кракозябры» (q1, 1a) вместо человекочитаемых вопросов/ответов. При этом в системе уже существует полноценный `StudentProgressModal`, который корректно отображает все типы блоков: quiz, survey, diagnostic_table, sequential_form, файлы и т.д.
 
-&nbsp;
+## Принцип
 
-&nbsp;
+- **Training details** → открывать существующий `StudentProgressModal`, без нового renderer
+- **Site forms** → оставить отдельный Dialog с `PayloadSection` (это действительно новая сущность)
+- Удалить из training-ветки `ArtifactDetailModal` использование `TrainingMetrics` и `PayloadSection` для training
+- Удалить `normalizeTrainingResponse` и `TRAINING_KEY_MAP` из `useContactArtifacts.ts` — они больше не нужны для training
 
-- form_data = {}
-- response = null
-- homework_response = null
-- названия урока/продукта не найдены
-  Такие записи не должны ломать вкладку; нужен fallback render.
+## Что нужно для открытия StudentProgressModal
 
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-16. В DoD не хватает machine-checkable пунктов.
-  Добавь:
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- для контакта с profile_id отображаются site_form_submissions
-- для контакта с user_id отображаются training records
-- смешанный контакт с profile_id + user_id показывает оба типа записей
-- записи открываются без ошибок
-- существующие вкладки карточки контакта не ломаются
-- вкладка не загружается до её открытия
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-17. Поскольку ContactDetailSheet уже очень большой, в плане нужно прямо закрепить **вынос новой вкладки в отдельный компонент** и минимум изменений в родительском файле.
-  То есть:
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- новый ContactArtifactsTab.tsx
-- новый useContactArtifacts.ts
-- в ContactDetailSheet.tsx только wiring/import/tab trigger/tab content
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-18. Добавь **deferred list** сразу, чтобы не раздувать текущий спринт:
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- support_tickets/training_feedback
-- lesson_progress_state как отдельная визуализация
-- глобальный unified projection/table, если позже понадобится
-- расширенные фильтры/поиск/экспорт
-  Это не блокирует основной scope и должно уйти в follow-up, а не в текущую реализацию.
-
-&nbsp;
-
-&nbsp;
-
-План: Вкладка «Анкеты и обучение» в карточке контакта
-
-## Discovery — найденные источники данных
-
-### Таблицы с пользовательскими артефактами
-
-
-| Таблица                                          | Привязка                | Payload                           | Записей | Что хранит                               |
-| ------------------------------------------------ | ----------------------- | --------------------------------- | ------- | ---------------------------------------- |
-| `site_form_submissions`                          | `profile_id`            | `form_data`, `metadata`           | 15      | Анкеты с сайта, предзаписи               |
-| `user_lesson_progress`                           | `user_id`               | `response`, `score`, `is_correct` | 64      | Ответы по блокам уроков (тесты, задания) |
-| `lesson_progress`                                | `user_id`               | —                                 | 124     | Факт прохождения урока (completion)      |
-| `lesson_progress_state`                          | `user_id`               | `state_json`                      | 63      | Состояние прохождения урока              |
-| `quest_user_progress`                            | `user_id`               | `homework_response`               | 0       | Домашние задания квестов                 |
-| `support_tickets` (category=`training_feedback`) | `profile_id`, `user_id` | описание                          | —       | Обратная связь по урокам                 |
-
-
-### Связи для обогащения
-
-- `training_lessons` → `training_modules` (module_id) → `products_v2` (product_id) — цепочка урок → модуль → продукт
-- `quest_lessons` → квесты (quest_id)
-- `lesson_blocks` — для названий блоков в user_lesson_progress
-
-### Contact объект
-
-- `contact.id` = `profiles.id` — для `site_form_submissions.profile_id`
-- `contact.user_id` = `auth.users.id` — для всех `*_progress.user_id`
-
-### Существующая UI-структура
-
-- `ContactDetailSheet.tsx` — 3850 строк, 11 вкладок
-- Паттерн: каждая вкладка — `TabsContent` внутри общего scroll-контейнера
-- Есть импорты выделенных компонентов-вкладок (ContactPaymentsTab, ContactLoyaltyTab и т.д.)
-
-## Архитектурное решение
-
-### Почему НЕ создаём новую таблицу / read-model
-
-1. Данных мало (суммарно ~250 записей) — объединение на клиенте тривиально
-2. Источники уже содержат все нужные payload — дублировать в projection не нужно
-3. Данные нужны read-only для одного контакта — нагрузки нет
-4. Add-only подход — без миграций, без новых сущностей
-
-### Подход: клиентская projection через React Query
-
-Один хук `useContactArtifacts(profileId, userId)` делает параллельные запросы в существующие таблицы и собирает unified список артефактов с единой типизацией:
+Компонент принимает:
 
 ```text
-type ContactArtifact = {
-  id: string
-  source_type: 'site_form' | 'lesson_answer' | 'lesson_completion' | 'homework'
-  source_id: string
-  title: string
-  subtitle: string | null
-  product_id: string | null
-  product_title: string | null
-  training_title: string | null
-  lesson_title: string | null
-  submitted_at: string
-  status: 'completed' | 'in_progress' | 'new'
-  score: number | null
-  max_score: number | null
-  payload: Record<string, unknown>  // полный payload для деталей
-}
+record: LessonProgressRecord   ← из lesson_progress_state (id, user_id, lesson_id, state_json, completed_at, created_at, updated_at)
+lessonBlocks: LessonBlock[]     ← из lesson_blocks (id, block_type, content) по lesson_id
+blockResponses: Record<string>  ← из user_lesson_progress сгруппированные по block_id
+lessonId: string
+lessonTitle: string
+moduleId: string
 ```
 
-### Источники → артефакты
+Из `ContactArtifact` уже есть: `lesson_id`, `user_id`. Остальное нужно дозагрузить по клику.
 
-1. **site_form_submissions** (по `profile_id`) → `source_type: 'site_form'`
-  - title = "Анкета" + page title из metadata
-  - payload = form_data
-  - product из metadata.product_id
-2. **user_lesson_progress** (по `user_id`) → `source_type: 'lesson_answer'`
-  - title = lesson_title (JOIN training_lessons)
-  - subtitle = module_title (JOIN training_modules)
-  - product_id из training_modules
-  - payload = response
-  - score/max_score из записи
-3. **lesson_progress** (по `user_id`) → `source_type: 'lesson_completion'`
-  - title = lesson_title
-  - status = completed
-  - Дедуплицируется с user_lesson_progress (если есть и то и то по одному lesson_id — показываем только lesson_answer)
-4. **quest_user_progress** (по `user_id`) → `source_type: 'homework'`
-  - payload = homework_response
+## Шаги реализации
 
-## Что будет создано
+### 1. ContactArtifactsTab — разделить обработку клика
 
-### 1. Хук `src/hooks/useContactArtifacts.ts`
+- Клик на `site_form` → открывает существующий `ArtifactDetailModal` (только для форм)
+- Клик на `lesson_answer` / `lesson_completion` / `quest_homework` → запускает загрузку данных для `StudentProgressModal`
 
-- Принимает `profileId` и `userId`
-- 3-4 параллельных React Query запроса
-- Собирает единый отсортированный по дате массив `ContactArtifact[]`
-- Кэширование через React Query
+### 2. Добавить хук или inline-загрузку для training detail
 
-### 2. Компонент `src/components/admin/contact/ContactArtifactsTab.tsx`
+По клику на training-артефакт, дозагрузить:
 
-- Вкладка «Анкеты и обучение»
-- Фильтры: Все / Анкеты / Обучение
-- Список артефактов в виде карточек:
-  - иконка типа, title, subtitle
-  - продукт, дата, статус/score
-  - кнопка «Детали»
-- Раскрывающийся блок деталей: полный payload (form_data, response и т.д.)
+1. `lesson_progress_state` по `(user_id, lesson_id)` → получить `state_json` и record
+2. `lesson_blocks` по `lesson_id` → получить блоки с `block_type` и `content`
+3. `user_lesson_progress` по `(user_id, lesson_id)` → сгруппировать по `block_id` для `blockResponses`
 
-### 3. Интеграция в `ContactDetailSheet.tsx`
+Это 3 параллельных запроса, выполняемые только по клику (не при загрузке вкладки).
 
-- Новый `TabsTrigger value="artifacts"` — «Анкеты и обучение» (с иконкой BookOpen + FileText)
-- Новый `TabsContent value="artifacts"` — рендерит `ContactArtifactsTab`
-- Бейдж с количеством записей
+### 3. Открыть StudentProgressModal с правильными props
 
-## Что НЕ меняется
+```text
+<StudentProgressModal
+  record={loadedRecord}
+  lessonBlocks={loadedBlocks}
+  open={!!selectedTraining}
+  onClose={() => setSelectedTraining(null)}
+  blockResponses={groupedResponses}
+  lessonId={artifact.lesson_id}
+  lessonTitle={artifact.lesson_title}
+  moduleId={artifact.module_id}
+/>
+```
 
-- Никаких миграций / новых таблиц
-- Никаких edge functions
-- Существующие вкладки не трогаются
-- RLS не меняется — все запросы идут от admin через существующие политики
-- Профиль/контакт не модифицируется
+### 4. Очистка
+
+Удалить / вывести из использования:
+
+- `normalizeTrainingResponse()` в `useContactArtifacts.ts`
+- `TRAINING_KEY_MAP` в `useContactArtifacts.ts`
+- Использование `TrainingMetrics` и `PayloadSection` для training-артефактов в `ArtifactDetailModal`
+- В `ArtifactDetailModal` оставить только ветку `site_form`
+
+`ArtifactPayloadRenderer.tsx` — оставить как есть, он используется для site forms.
+
+### 5. Расширить ContactArtifact type
+
+Добавить `module_id?: string` в `ContactArtifact`, заполнять из join chain `training_lessons → training_modules`.
+
+## Файлы, которые будут изменены
+
+
+| Файл                                                       | Действие                                                                                                                                     |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/components/admin/contact/ContactArtifactsTab.tsx`     | Разделить клик: forms → ArtifactDetailModal, training → StudentProgressModal. Добавить lazy-загрузку training context.                       |
+| `src/hooks/useContactArtifacts.ts`                         | Убрать `normalizeTrainingResponse`, `TRAINING_KEY_MAP`. Добавить `module_id` в артефакт. Упростить `payload` для training (больше не нужен). |
+| `src/components/admin/contact/ArtifactPayloadRenderer.tsx` | Без изменений — используется для site forms                                                                                                  |
+
+
+## Что НЕ будет изменено
+
+- `StudentProgressModal.tsx` — переиспользуется as-is
+- `blockProgressResolver.ts` — переиспользуется as-is
+- Фильтры, dedup, lazy loading вкладки
+- RLS, миграции, edge functions
+- Карточка контакта вне вкладки «Анкеты»
 
 ## DoD
 
-- Вкладка видна в карточке контакта
-- Анкеты с сайта отображаются с полными полями form_data
-- Ответы по урокам отображаются с score и lesson/module/product привязкой
-- Прохождения уроков без ответов тоже видны
-- Фильтр Все/Анкеты/Обучение работает
-- Детали раскрываются и показывают полный payload
-- Пустое состояние для контактов без артефактов
-- Не ломает существующие вкладки
+1. Клик на training item в карточке контакта открывает `StudentProgressModal`
+2. Данные выглядят идентично существующему экрану прогресса ученика
+3. Нет второго параллельного training viewer
+4. `normalizeTrainingResponse` и `TRAINING_KEY_MAP` удалены
+5. Клик на site_form по-прежнему открывает форменный Dialog с читаемым payload
+6. Фильтры и список артефактов работают без регрессий
