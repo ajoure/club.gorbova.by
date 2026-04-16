@@ -2,73 +2,101 @@
 
 &nbsp;
 
-1. **Не подключать PreregistrationsTabContent к новому table parity-патчу.**
-  Для нового домена /admin/forms canonical list-view уже должен быть только через FormsHubTable + useFormsHubData.
-  Старый PreregistrationsTabContent не трогать, не тянуть в новый UI как второй источник табличной логики.
-2. **ColumnSettings не в FormsHubFilters.tsx, а на уровне tab-content/header, как в контактах.**
-  Фильтры должны остаться фильтрами.
-  Настройки колонок должны жить в том же UX-месте, что и в /admin/contacts, без смешивания двух разных control-zones.
-3. **useColumnsState вводить только если он реально 1:1 повторяет текущий persistence contract контактов.**
-  Если есть риск сломать /admin/contacts, то в этом PATCH допустимо:
+1. **Не трогать старый PreregistrationsTabContent, если вкладка Предзаписи уже живёт внутри нового /admin/forms.**
+  Для нового домена должен быть **один canonical list layer** — через FormsHubTable + useFormsHubData.
+  Старую legacy-таблицу из платежей не нужно «реанимировать» или встраивать обратно. Нужен только reuse summary/status chips сверху, если они реально полезны.
+2. **Все не является single-source вкладкой.**
+  В DoD и в тексте плана исправить формулировку: единый дизайн должен быть у:
   &nbsp;
-  - вынести только header components,
-  - а columns state/persistence оставить как есть в contacts,
-  - для forms использовать тот же формат state и тот же storage contract, но без рефактора contacts глубже необходимого.
+  - Все — aggregated tab
+  - Анкеты сайта
+  - Предзаписи
+  - Обучение
+    Это важно, чтобы подрядчик не начал ломать aggregated mode под вид single-source.
   &nbsp;
-4. **FormsHubTable должен поддерживать 2 режима явно и без дублирования логики:**
+3. **В По продуктам не надо делать полный grid DnD/resize для каждой вложенной таблицы независимо.**
+  Нужно использовать **общий columns state** и общий visual standard, иначе получится хаос и рассинхрон колонок между группами.
+  Правильный вариант:
   &nbsp;
-  - full — с drag/resize/ColumnSettings/select
-  - embedded — без toolbar/column controls, но на том же row/cell standard
-    Нельзя делать вторую упрощённую таблицу рядом.
+  - один storage key для forms-columns
+  - embedded tables читают тот же порядок/ширины
+  - toolbar скрыт
+  - но header/width/order применяются одинаково ко всем embedded tables
   &nbsp;
-5. **В embedded-режиме для вкладки По продуктам не делать drag/resize внутри каждой группы.**
-  Там нужен reuse visual row-standard, но без повторения полного column-management UI в каждой секции.
-6. **Selection state должен быть локален только для текущей таблицы/вкладки и сбрасываться предсказуемо при смене tab/data-source.**
-  Нельзя допустить, чтобы выделение из “Все” протекало в “Обучение” или “Анкеты сайта”.
-7. **Нужен отдельный guard для mixed-source строк.**
-  Составной row key использовать строго в формате:
+4. **Двухуровневую группировку уточнить.**
+  Для training не просто module -> lesson, а:
   &nbsp;
-  - ${source_type}:${id}
-    и этот же ключ использовать для selection, drag-select, checkbox state и row identity.
+  - product
+  - внутри продукта секции по source: Анкеты сайта / Предзаписи / Обучение
+  - внутри Обучение: module -> lesson
+    Иначе смешаются site/preorder/training в одном дереве.
   &nbsp;
-8. **Не трогать sorting/data-layer PATCH 1 в этом PATCH.**
-  UI parity-патч не должен менять:
+5. **Для строк training в grouped mode bulk-select допустим, bulk-delete — нет.**
+  Это надо явно зафиксировать в UX:
   &nbsp;
-  - useFormsHubData
-  - серверные фильтры
-  - пагинацию
-  - exportMode
-  - detail routing
-    Только подключение нового table shell поверх уже принятого data layer.
+  - training rows можно выделять
+  - при mixed selection кнопка удаления либо disabled, либо удаляет только допустимые site_form + preorder после явного предупреждения
+    Нельзя делать скрытую частичную операцию без понятного текста.
   &nbsp;
-9. **Zero-regression для /admin/contacts сделать обязательным блоком DoD, а не просто пожеланием.**
-  Отдельно подтвердить:
+6. **Удаление должно быть только для тестовых/служебных записей, если это реально требование бизнеса.**
+  Сейчас в плане написано просто “удаление выделенных”. Это слишком широко.
+  Нужно зафиксировать:
   &nbsp;
-  - drag columns,
-  - resize,
-  - show/hide,
-  - selection,
-  - localStorage restore
-    именно на /admin/contacts после extract.
+  - либо delete доступен только admin/super_admin
+  - либо delete доступен только для site_form и preorder
+  - либо delete доступен только для записей, помеченных как тестовые
+    Иначе можно случайно снести реальные заявки.
   &nbsp;
-10. **В proof обязательно показать parity не только визуально, но и по interaction-наборам.**
-  Для /admin/forms нужны пруфы:
+7. **Перед bulk-delete нужен dry-run summary в confirm dialog.**
+  Не просто “Будет удалено N записей”, а:
   &nbsp;
-  - drag column
-  - resize column
-  - hide/show column
-  - select all
-  - multi-select
-  - row click → detail
-    отдельно на Все и минимум ещё на одном single-source tab.
+  - сколько site_form
+  - сколько preorder
+  - сколько training пропущено / не может быть удалено
+    Это соответствует текущему принципу dry-run→execute.
   &nbsp;
-11. **BulkActionsBar — только оболочка, без новых действий.**
-  В этом PATCH не добавлять никаких bulk-delete, bulk-export, bulk-link и т.д.
-12. **Если extract shared headers из AdminContacts.tsx требует изменения большого количества кода, дробить на 2 безопасных подпатча:**
+8. **Нужен query invalidation по всем relevant tabs, а не один общий refetch вслепую.**
+  После delete нужно явно инвалидировать queries forms-hub для:
   &nbsp;
-  - PATCH 2A: extract shared header primitives + zero-regression contacts
-  - PATCH 2B: forms parity wiring
-    Это лучше, чем рискованный “большой взрыв”.
+  - all
+  - site
+  - preorder
+  - by-product
+  - export
+    Чтобы не получить stale counts/rows.
+  &nbsp;
+9. **FormsHubFilters не должен знать про ColumnSettings как про бизнес-логику.**
+  Лучше держать layout так:
+  &nbsp;
+  - filters bar
+  - справа actions zone (ColumnSettings, при необходимости export button и т.п.)
+    То есть визуально в одной строке можно, но архитектурно не смешивать компонент фильтров и компонент управления колонками.
+  &nbsp;
+10. **Нужен явный zero-regression guard для PATCH 2 перед PATCH 3.**
+  Этот PATCH строится поверх PATCH 2 parity-table. Сначала должен быть подтверждён стабильный shared table layer:
+  &nbsp;
+  - contacts не сломаны
+  - forms single tabs работают
+  - row click/detail стабилен
+    И только потом bulk-delete и grouped embedded enhancements.
+  &nbsp;
+11. **В По продуктам counts должны считаться на каждом уровне дерева.**
+  Не только product count, но и:
+  &nbsp;
+  - source section count
+  - module count
+  - lesson count
+    Иначе дерево теряет смысл и неудобно читать.
+  &nbsp;
+12. **Не делать отдельный FormsBulkActionsBar, если существующий BulkActionsBar можно расширить add-only.**
+  Сначала проверить reuse existing bar. Новый bar создавать только если текущий компонент реально не подходит по контракту. Не плодить второй action-shell без необходимости.
+13. **DoD нужно дополнить доказательством mixed-source сценария.**
+  Обязательно отдельно проверить:
+  &nbsp;
+  - выделены site_form + preorder + training
+  - delete correctly explains what will be deleted and what will be skipped
+  - training не удаляется
+  - selection корректно очищается/обновляется после операции
   &nbsp;
 
 &nbsp;
@@ -80,157 +108,163 @@
 ```
 Дополни план следующими правками:
 
-1. Не подключать `PreregistrationsTabContent` к новому table parity-патчу. В новом `/admin/forms` canonical list-view должен быть только через `FormsHubTable` + `useFormsHubData`. Старый prereg component не использовать как второй list-engine.
-2. `ColumnSettings` размещать не внутри `FormsHubFilters.tsx`, а в том же UX-паттерне/зоне, что и в `/admin/contacts`.
-3. `useColumnsState` вводить только если он 1:1 сохраняет текущий persistence contract contacts. Если есть риск регрессии, в этом PATCH допустимо ограничиться extract shared header primitives без глубокого рефактора contacts state.
-4. `FormsHubTable` должен иметь 2 режима:
-   - `full` — drag/resize/ColumnSettings/select
-   - `embedded` — тот же row/cell standard без toolbar/column controls
-   Никакой второй параллельной таблицы.
-5. Для вкладки `По продуктам` в `embedded`-режиме не включать drag/resize внутри каждой группы. Нужен reuse row-standard, но без полного column-management UI в каждой секции.
-6. Selection state должен быть локален текущей таблице/вкладке и не протекать между `Все`, `Анкеты сайта`, `Предзаписи`, `Обучение`.
-7. Row identity везде строго `${source_type}:${id}` — один и тот же ключ для selection / drag-select / row identity.
-8. PATCH 2 не должен менять PATCH 1 data-layer: `useFormsHubData`, server filters, pagination, exportMode, redirects, detail routing — не трогать.
-9. Zero-regression `/admin/contacts` сделать обязательным DoD-блоком с proof:
-   - drag columns
-   - resize
-   - show/hide
-   - selection
-   - localStorage restore
-10. В финальном proof для `/admin/forms` показать не только визуальную parity, но и interaction parity:
-   - drag column
-   - resize column
-   - hide/show column
-   - select all
-   - multi-select
-   - row click -> detail
-   минимум на `Все` и ещё на одном single-source tab.
-11. `BulkActionsBar` в этом PATCH только count + clear. Никаких новых bulk-операций.
-12. Если extract shared headers из `AdminContacts.tsx` получается слишком рискованным/большим, разделить на:
-   - PATCH 2A: extract shared header primitives + proof zero-regression contacts
-   - PATCH 2B: wiring этих primitives в `/admin/forms`
+1. Не реанимировать и не встраивать legacy-таблицу `PreregistrationsTabContent` обратно как второй table-engine. В новом `/admin/forms` canonical list-view должен оставаться только через `FormsHubTable` + `useFormsHubData`. Reuse допустим только для summary/status chips сверху.
+2. Исправить формулировку: вкладка `Все` — aggregated tab, а не single-source. Не ломать aggregated mode.
+3. Для `По продуктам` использовать общий columns state и общий storage key. Embedded tables должны читать те же порядок/ширины колонок, но без отдельного toolbar в каждой группе.
+4. Уточнить структуру grouped mode:
+   - product
+   - внутри продукта source-sections: `Анкеты сайта` / `Предзаписи` / `Обучение`
+   - внутри `Обучение`: `module -> lesson`
+5. Training rows можно выделять, но bulk-delete для training запрещён. Для mixed selection UX должен явно показывать, что training будет пропущен / не может быть удалён.
+6. Bulk-delete нельзя описывать как просто “удаление выделенных”. Зафиксировать scope:
+   - только admin/super_admin
+   - только `site_form` и `preorder`
+   - training никогда не удалять
+   - при необходимости ограничить delete тестовыми/служебными записями, если это бизнес-требование
+7. Перед execute bulk-delete показать dry-run summary в confirm dialog:
+   - сколько `site_form`
+   - сколько `preorder`
+   - сколько `training` будет пропущено
+8. После delete инвалидировать все relevant forms queries, чтобы не было stale counts/rows во вкладках `Все`, `Анкеты сайта`, `Предзаписи`, `По продуктам`, `Экспорт`.
+9. `ColumnSettings` визуально можно держать справа в одной строке с фильтрами, но архитектурно не вшивать бизнес-логику управления колонками внутрь `FormsHubFilters`.
+10. PATCH 3 выполнять только поверх подтверждённого zero-regression PATCH 2 shared table layer. Не смешивать фиксы PATCH 2 и bulk/grouping PATCH 3 в один рискованный комбайн.
+11. В grouped mode показывать counts на каждом уровне дерева:
+   - product
+   - source section
+   - module
+   - lesson
+12. Не создавать отдельный `FormsBulkActionsBar`, если существующий `BulkActionsBar` можно расширить add-only. Новый компонент только если reuse реально невозможен.
+13. В финальный proof добавить mixed-source сценарий:
+   - выделение `site_form + preorder + training`
+   - delete summary корректно показывает удаляемые и пропускаемые записи
+   - training не удаляется
+   - selection и список корректно обновляются после операции
 ```
 
-План в целом сильный. Эти правки нужны, чтобы не получить второй параллельный табличный слой и не сломать контакты.
+План хороший. Эти правки нужны, чтобы не получить второй параллельный table-engine, не сломать aggregated mode и не сделать опасное bulk-delete.
 
 &nbsp;
 
-План: PATCH 2 — UI Parity `/admin/forms` ↔ `/admin/contacts`
+План: PATCH 3 — единый дизайн таблицы и bulk-actions для `/admin/forms`
+
+## Что просит пользователь
+
+1. **Единый дизайн таблицы во всех вкладках** `/admin/forms` — переиспользовать стандарт из `/admin/contacts`. Сейчас каждая вкладка выглядит по-разному.
+2. **Дизайн "По продуктам" нравится** — оставить, но добавить туда DnD/resize колонок.
+3. **Bulk-actions работают** — сейчас можно выделить, но нельзя ничего сделать. Минимум: **удаление выделенных тестовых записей**.
+4. **Двухуровневая группировка в "По продуктам"**: Продукт → Модуль/Урок. Сейчас "Бухгалтерия как бизнес" появляется дважды (два разных урока), должна быть одна группа `Бухгалтерия как бизнес` с раскрывающимися подгруппами по модулям/урокам.
 
 ## Диагностика
 
-**Текущее состояние:**
+**Текущее состояние (по скринам и коду):**
 
-- `/admin/contacts` использует Table из `@/components/ui/table` с локально определёнными `SortableResizableTableHead` (drag+resize via `@dnd-kit`) + `ColumnSettings` (show/hide/reorder) + `useDragSelect` (multi-select+drag-select+select all) + localStorage persistence порядка/ширин.
-- `/admin/forms` сейчас использует упрощённый `FormsHubTable.tsx` без drag/resize/select/colsettings, с фиксированными `<TableHead className="w-[180px]">`.
-- **Ключевой блокер:** `SortableResizableTableHead` и `ResizableTableHead` определены **локально внутри** `AdminContacts.tsx` (строки 199-290), не вынесены в shared. Это нужно extract в shared layer (add-only, без переписывания контактов).
-
-**Группировка By-Product уже соответствует** approved pattern из `ContactArtifactsTab` (`border-l-4 border-l-indigo-300` + `Layers` icon + `Collapsible`). Менять не надо.
+- Вкладка "Все" уже использует `FormsHubTable` с canonical pattern (PATCH 2 выполнен) — но в `FormsHubFilters` фильтры визуально оторваны от таблицы, ColumnSettings висит отдельной кнопкой справа.
+- Вкладка "Предзаписи" использует **legacy** `PreregistrationsTabContent` с собственной таблицей (статус-фильтры цветные, колонки `Карта/Попытки/Last Attempt/TG/Email`) — НЕ canonical.
+- Вкладка "По продуктам" группирует только по `product_id` плоско — для training рядов не учитываются `module_id`/`lesson_id`.
+- `BulkActionsBar` уже подключён, но показывает только count + clear — без действий.
+- В `useFormsHubData` для training-рядов уже подгружаются `module_title`/`lesson_title` (через `lesson_progress_state` join) — нужно только использовать их для группировки.
 
 ## Шаги
 
-### 1. Extract shared table primitives (add-only)
+### 1. Унификация всех вкладок на FormsHubTable
 
-Создать `src/components/admin/table/SortableResizableTableHead.tsx`:
+`PreregistrationsTabContent` не переписывать его внутреннюю логику данных, но **визуально привести к canonical**: использовать `FormsHubTable` для табличной части. Статус-чипсы (Все/Ожидают/Нет карты/Ошибка/Оплаченные) и summary-карточки сверху оставить — это полезный UX. Только **сама таблица** заменяется на `FormsHubTable` с теми же колонками, что в "Все".
 
-- Перенести логику из `AdminContacts.tsx` (строки 199-290) в shared компонент
-- Экспортировать `SortableResizableTableHead`, `ResizableTableHead` 
-- В `AdminContacts.tsx` заменить локальные определения на импорт (zero behavior change)
+Альтернатива (чище): `PreregistrationsTabContent` → проксировать в `FormsHubTable` с `source_type: 'preorder'` фильтром, summary-карточки рендерить сверху отдельным компонентом.
 
-Создать `src/hooks/useColumnsState.ts`:
+**Решение:** оставить summary-карточки и статус-чипсы как layer над `FormsHubTable`. Внутренняя legacy-таблица удаляется.
 
-- Reusable hook для localStorage persistence колонок
-- Сигнатура: `useColumnsState(storageKey: string, defaults: ColumnConfig[])`
-- Возвращает: `{ columns, setColumns, handleResize, handleDragEnd, sortedColumns }`
-- В `AdminContacts.tsx` опционально мигрировать на этот хук в этом же PATCH (минимально, без рисков)
+### 2. Двухуровневая группировка в "По продуктам"
 
-### 2. Переписать `FormsHubTable.tsx` на canonical table pattern
+Переписать `FormsByProductTabContent`:
 
-Использовать тот же набор импортов, что в `AdminContacts.tsx`:
+- Группировка level 1: по `product_id` (как сейчас)
+- Группировка level 2 **внутри training-рядов**: по `module_id` → `lesson_id`
+- Site_form/preorder ряды внутри продукта остаются плоско в отдельной подсекции "Анкеты сайта" / "Предзаписи" (или все вместе, без подгрупп — site/preorder обычно не имеют lesson)
 
-- `Table/TableHeader/TableBody/TableRow/TableCell/TableHead` из `@/components/ui/table`
-- `DndContext`, `SortableContext`, `horizontalListSortingStrategy` из `@dnd-kit`
-- Новые shared `SortableResizableTableHead` / `ResizableTableHead`
-- `ColumnSettings` из `@/components/admin/ColumnSettings`
-- `useDragSelect` + `SelectionBox` + `BulkActionsBar`
-- `useColumnsState` с ключом `admin_forms_columns_v1`
-
-**Колонки (DEFAULT_COLUMNS для forms):**
+Структура:
 
 ```
-checkbox      | 40
-client        | 200  (Имя)
-email         | 220
-phone         | 140
-type          | 100  (Тип: Анкета / Предзапись / Обучение)
-product       | 200  (Продукт)
-source        | 180  (Источник: source_entity)
-status        | 110
-created_at    | 110  (Дата)
-has_deal      | 60   (Сделка)
-has_account   | 60   (Аккаунт)
+▼ Бухгалтерия как бизнес (92)
+  ├─ ▼ Анкеты сайта (15)
+  │    [embedded FormsHubTable]
+  ├─ ▼ Предзаписи (29)
+  │    [embedded FormsHubTable]
+  └─ ▼ Обучение (48)
+       ├─ ▼ Модуль 1: Введение (12)
+       │    ├─ ▼ Урок 1: Анализ портфеля (8)
+       │    │    [embedded FormsHubTable]
+       │    └─ ▼ Урок 2: Диагностика (4)
+       └─ ▼ Модуль 2: Работа с клиентами (36)
 ```
 
-### 3. Multi-select + select all
+Визуальный стиль — тот же `border-l-4 border-l-indigo-300` + `Layers`/`BookOpen`/`FileText` иконки + `Collapsible` + counts в badge.
 
-Подключить `useDragSelect` с `getItemId: row => \`${row.source_type}-${row.id}`. Чекбоксы в первой колонке + master-чекбокс в header.` BulkActionsBar`пока показывает только`count` + clear (никаких bulk-операций в этом PATCH — scope guard).
+### 3. DnD/resize колонок в embedded-режиме (вкладка "По продуктам")
 
-### 4. Row click → detail (стабильно)
+Сейчас `embedded` вариант скрывает toolbar и DnD. Изменить контракт:
 
-В `<TableRow onClick={() => onOpenDetail(row)} className="cursor-pointer">`. Чекбокс-cell с `onClick={e => e.stopPropagation()}`. Никакой отдельной кнопки `ExternalLink`.
+- `variant="full"` — toolbar (ColumnSettings) + DnD + resize
+- `variant="embedded"` — БЕЗ toolbar, но **с** DnD + resize (как просит пользователь)
+- Колонки одного embedded-стола в группе синхронизированы через тот же `localStorage` ключ `admin_forms_columns_v1`, чтобы порядок и ширины применялись ко всем секциям одновременно.
 
-### 5. FormsByProductTabContent — оставить группировку
+### 4. Bulk-actions: удаление выделенных
 
-Единственное изменение: внутри `<CollapsibleContent>` вызывать обновлённый `FormsHubTable` с `compact` режимом (без header drag/resize, без ColumnSettings — только rows в стиле основной таблицы). Добавить пропс `variant: "full" | "embedded"` в `FormsHubTable`.
+Расширить `BulkActionsBar` (или создать `FormsBulkActionsBar`):
 
-### 6. Wiring в Tab Contents
+- Показ: "Выделено: N" + кнопки `[🗑 Удалить]` `[✕ Снять выделение]`
+- Клик "Удалить" → `AlertDialog` с подтверждением + текстом "Будет удалено N записей"
+- При подтверждении — групповой delete по таблицам:
+  - `site_form_submissions` для `source_type === 'site_form'`
+  - `course_preregistrations` для `source_type === 'preorder'`
+  - **Training**: НЕ удалять `lesson_progress_state` напрямую (это пользовательский прогресс) — для training показать toast "Записи обучения удалить нельзя, скройте через фильтр"
+- После успеха: `toast` + `queryClient.invalidateQueries(['forms-hub'])` + `clearSelection()`
+- RLS: операция требует admin/super_admin — guard на клиенте через `useUserRole`, на сервере — RLS `delete` policy на этих таблицах (проверить, что они уже есть).
 
-`FormsAllTabContent`, `FormsSiteTabContent`, `FormsTrainingTabContent`, `PreregistrationsTabContent` — все используют тот же обновлённый `FormsHubTable` с одинаковыми DEFAULT_COLUMNS. ColumnSettings рендерится рядом с фильтрами (как в контактах).
+### 5. UX-полировка фильтров
 
-### 7. Detail viewers — НЕ трогать
+Объединить filters bar и ColumnSettings в одну строку, как в `/admin/contacts`:
 
-`FormsDetailOpener.tsx` уже маршрутизирует:
+```
+[🔍 Поиск] [Тип ▾] [Продукт ▾] [Период от] [Период до] [Сделка ▾] [Аккаунт ▾]    [⚙ Колонки]
+```
 
-- training → `StudentProgressModal` (через `loadTrainingDetailContext`)
-- preorder → existing `PreregistrationDetailSheet`
-- site_form → existing form detail dialog
+ColumnSettings справа, как на скрине contacts ("Колонки" в правом верхнем углу).
 
-Не менять.
+### 6. Источники названий module/lesson
+
+`useFormsHubData` уже джойнит `lesson_progress_state.module_id, lesson_id` + `training_modules(title)` + `training_lessons(title)` (проверить — если не джойнит, добавить). Эти поля попадают в `FormsHubRow.module_title` / `lesson_title` и используются для level-2 группировки.
 
 ## Файлы
 
 
-| Файл                                                           | Действие                                              |
-| -------------------------------------------------------------- | ----------------------------------------------------- |
-| `src/components/admin/table/SortableResizableTableHead.tsx`    | NEW: extract из AdminContacts                         |
-| `src/hooks/useColumnsState.ts`                                 | NEW: reusable localStorage hook                       |
-| `src/pages/admin/AdminContacts.tsx`                            | Минимальная замена локальных def на импорты из shared |
-| `src/components/admin/forms/FormsHubTable.tsx`                 | Полный rewrite на canonical pattern                   |
-| `src/components/admin/forms/FormsHubFilters.tsx`               | Добавить ColumnSettings рядом с фильтрами             |
-| `src/components/admin/forms/FormsAllTabContent.tsx`            | Wiring columns state                                  |
-| `src/components/admin/forms/FormsSiteTabContent.tsx`           | Wiring columns state                                  |
-| `src/components/admin/forms/FormsTrainingTabContent.tsx`       | Wiring columns state                                  |
-| `src/components/admin/forms/FormsByProductTabContent.tsx`      | Передавать `variant="embedded"`                       |
-| `src/components/admin/payments/PreregistrationsTabContent.tsx` | Wiring columns state (если использует тот же стиль)   |
+| Файл                                                                                                            | Действие                                                                                                                                    |
+| --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/components/admin/forms/FormsHubTable.tsx`                                                                  | `embedded` теперь поддерживает DnD+resize; toolbar по-прежнему скрыт                                                                        |
+| `src/components/admin/forms/FormsBulkActionsBar.tsx`                                                            | NEW: bar с кнопкой Удалить + confirm dialog                                                                                                 |
+| `src/components/admin/forms/FormsByProductTabContent.tsx`                                                       | Двухуровневая группировка product → module → lesson                                                                                         |
+| `src/components/admin/forms/FormsHubFilters.tsx`                                                                | Перенести ColumnSettings в правый край, выровнять как в contacts                                                                            |
+| `src/components/admin/payments/PreregistrationsTabContent.tsx`                                                  | Внутреннюю таблицу заменить на `FormsHubTable`, оставить summary + статус-чипсы как layer                                                   |
+| `src/hooks/useFormsHubData.ts`                                                                                  | Убедиться, что `module_id/title` и `lesson_id/title` есть в training-рядах (без изменения серверной логики PATCH 1, только проверка select) |
+| `src/components/admin/forms/FormsAllTabContent.tsx` / `FormsSiteTabContent.tsx` / `FormsTrainingTabContent.tsx` | Подключить `FormsBulkActionsBar`                                                                                                            |
 
 
 ## Scope guard
 
-- НЕ создавать новый table engine — только extract существующего
-- НЕ переписывать `/admin/contacts` поведение (только заменить локальные определения на импорты)
-- НЕ трогать data-layer PATCH 1: `useFormsHubData`, серверные фильтры, пагинация, `exportMode`, redirects
-- НЕ дублировать detail viewers
-- BulkActionsBar пока без bulk-операций (отдельный PATCH)
+- НЕ менять `useFormsHubData` серверные фильтры/пагинацию/exportMode (PATCH 1)
+- НЕ менять detail viewers (`StudentProgressModal`, `PreregistrationDetailSheet`, form dialog)
+- НЕ создавать второй table engine — всё через `FormsHubTable`
+- НЕ удалять `lesson_progress_state` через bulk-delete (только site_form + preorder)
+- Zero-regression `/admin/contacts`
 
 ## DoD
 
-1. Shared `SortableResizableTableHead` существует и используется и в contacts, и в forms
-2. `/admin/forms` поддерживает: drag&drop колонок, resize колонок, show/hide колонок, multi-select чекбоксами, select all
-3. Порядок и ширины колонок сохраняются в localStorage (`admin_forms_columns_v1`)
-4. Row click стабильно открывает detail (без двойных handlers)
-5. Detail viewers не изменены: training=StudentProgressModal, preorder=existing sheet, site_form=existing dialog
-6. Вкладки `Все / Анкеты сайта / Предзаписи / Обучение` визуально соответствуют `/admin/contacts`
-7. Вкладка `По продуктам` сохраняет grouped/collapsible паттерн (`border-l-4 border-l-indigo-300` + `Layers`)
-8. По каждому source проверка прохождения: site_form, preorder, training (filters/sorting/details/export)
-9. PATCH 1 не сломан: filters/pagination/export/redirects работают как раньше
-10. `/admin/contacts` ведёт себя идентично (zero regression от extract'а)
+1. Все 4 single-source вкладки (`Все`, `Анкеты сайта`, `Предзаписи`, `Обучение`) визуально идентичны — единый `FormsHubTable`
+2. "Предзаписи" сохраняют summary-карточки и статус-чипсы сверху, но таблица — canonical
+3. "По продуктам" имеет двухуровневую группировку: продукт → (анкеты | предзаписи | обучение → модуль → урок)
+4. В embedded-таблицах внутри групп работает DnD и resize колонок
+5. Bulk-удаление работает для site_form и preorder с подтверждением; для training — toast "недоступно"
+6. После удаления список обновляется, выделение сбрасывается
+7. ColumnSettings размещён в правом верхнем углу (как в contacts)
+8. PATCH 1+2 не сломаны: filters/pagination/export/redirects/detail viewers работают
+9. `/admin/contacts` без регрессий
