@@ -439,6 +439,12 @@ function AuthFormSection({
       return;
     }
 
+    // In preview mode, simulate the flow
+    if (isPreview) {
+      setFormStep(getNextStepAfterAuth());
+      return;
+    }
+
     const result = await inlineAuth.signup(email, password, {
       firstName: firstName.trim(),
       lastName: lastName.trim(),
