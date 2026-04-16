@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useContactArtifacts, type ContactArtifact, type ArtifactSourceType } from "@/hooks/useContactArtifacts";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -11,14 +11,16 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { BookOpen, CheckCircle, ClipboardList, GraduationCap, ScrollText, ChevronRight } from "lucide-react";
+import { BookOpen, CheckCircle, ClipboardList, GraduationCap, ScrollText, ChevronRight, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import {
   PayloadSection,
-  TrainingMetrics,
   EmptyPayloadState,
 } from "./ArtifactPayloadRenderer";
+import { supabase } from "@/integrations/supabase/client";
+import { StudentProgressModal } from "@/components/admin/trainings/StudentProgressModal";
+import type { LessonProgressRecord, LessonBlock } from "@/components/admin/trainings/StudentProgressModal";
 
 interface ContactArtifactsTabProps {
   profileId: string | null | undefined;
@@ -41,10 +43,137 @@ const STATUS_CONFIG: Record<string, { label: string; variant: "default" | "secon
   new: { label: "Новый", variant: "outline" },
 };
 
+// ── Training detail lazy loader ──────────────────────────────────────
+
+interface TrainingDetailData {
+  record: LessonProgressRecord;
+  lessonBlocks: LessonBlock[];
+  blockResponses: Record<string, any>;
+}
+
+async function loadTrainingDetail(userId: string, lessonId: string): Promise<TrainingDetailData | null> {
+  // 3 parallel queries
+  const [stateRes, blocksRes, progressRes] = await Promise.all([
+    supabase
+      .from("lesson_progress_state")
+      .select("id, user_id, lesson_id, state_json, completed_at, created_at, updated_at")
+      .eq("user_id", userId)
+      .eq("lesson_id", lessonId)
+      .maybeSingle(),
+    supabase
+      .from("lesson_blocks")
+      .select("id, block_type, content")
+      .eq("lesson_id", lessonId)
+      .order("sort_order", { ascending: true }),
+    supabase
+      .from("user_lesson_progress")
+      .select("block_id, response")
+      .eq("user_id", userId)
+      .eq("lesson_id", lessonId),
+  ]);
+
+  const lessonBlocks = (blocksRes.data || []) as LessonBlock[];
+  
+  // Build blockResponses map
+  const blockResponses: Record<string, any> = {};
+  (progressRes.data || []).forEach((row: any) => {
+    if (row.block_id && row.response) {
+      blockResponses[row.block_id] = row.response;
+    }
+  });
+
+  // Build record — use lesson_progress_state if exists, otherwise synthesize minimal
+  const stateRow = stateRes.data;
+  const record: LessonProgressRecord = stateRow
+    ? {
+        id: stateRow.id,
+        user_id: stateRow.user_id,
+        lesson_id: stateRow.lesson_id,
+        state_json: stateRow.state_json || {},
+        completed_at: stateRow.completed_at,
+        created_at: stateRow.created_at,
+        updated_at: stateRow.updated_at,
+      }
+    : {
+        // Fallback: no lesson_progress_state but we have block responses
+        id: '',
+        user_id: userId,
+        lesson_id: lessonId,
+        state_json: {},
+        completed_at: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+  return { record, lessonBlocks, blockResponses };
+}
+
+// ── Main component ───────────────────────────────────────────────────
+
 export function ContactArtifactsTab({ profileId, userId, enabled }: ContactArtifactsTabProps) {
   const { artifacts, isLoading, formCount, trainingCount } = useContactArtifacts(profileId, userId, enabled);
   const [filter, setFilter] = useState<FilterType>('all');
-  const [selectedArtifact, setSelectedArtifact] = useState<ContactArtifact | null>(null);
+  
+  // Site form detail
+  const [selectedForm, setSelectedForm] = useState<ContactArtifact | null>(null);
+  
+  // Training detail via StudentProgressModal
+  const [trainingDetail, setTrainingDetail] = useState<TrainingDetailData | null>(null);
+  const [trainingMeta, setTrainingMeta] = useState<{ lessonTitle: string; moduleId: string; lessonId: string } | null>(null);
+  const [trainingLoading, setTrainingLoading] = useState(false);
+  const [trainingError, setTrainingError] = useState<string | null>(null);
+
+  const handleArtifactClick = useCallback(async (artifact: ContactArtifact) => {
+    // Site forms → form detail dialog
+    if (artifact.source_type === 'site_form') {
+      setSelectedForm(artifact);
+      return;
+    }
+
+    // Quest homework → fallback to form dialog (quest has its own data model)
+    if (artifact.source_type === 'quest_homework') {
+      setSelectedForm(artifact);
+      return;
+    }
+
+    // Training (lesson_answer / lesson_completion) → StudentProgressModal
+    const artUserId = artifact.user_id;
+    const artLessonId = artifact.lesson_id || artifact._lesson_id;
+    if (!artUserId || !artLessonId) {
+      // Missing IDs — fallback to generic view
+      setSelectedForm(artifact);
+      return;
+    }
+
+    setTrainingLoading(true);
+    setTrainingError(null);
+    setTrainingMeta({
+      lessonTitle: artifact.lesson_title || artifact.title,
+      moduleId: artifact.module_id || '',
+      lessonId: artLessonId,
+    });
+
+    try {
+      const detail = await loadTrainingDetail(artUserId, artLessonId);
+      if (!detail) {
+        setTrainingError("Не удалось загрузить данные урока");
+        return;
+      }
+      setTrainingDetail(detail);
+    } catch (err) {
+      console.error("[ContactArtifactsTab] training detail load error:", err);
+      setTrainingError("Ошибка загрузки данных урока");
+    } finally {
+      setTrainingLoading(false);
+    }
+  }, []);
+
+  const closeTraining = useCallback(() => {
+    setTrainingDetail(null);
+    setTrainingMeta(null);
+    setTrainingError(null);
+    setTrainingLoading(false);
+  }, []);
 
   const filtered = artifacts.filter(a => {
     if (filter === 'forms') return a.source_type === 'site_form';
@@ -102,7 +231,7 @@ export function ContactArtifactsTab({ profileId, userId, enabled }: ContactArtif
             <Card
               key={`${artifact.source_type}-${artifact.id}`}
               className="cursor-pointer hover:bg-accent/50 transition-colors"
-              onClick={() => setSelectedArtifact(artifact)}
+              onClick={() => handleArtifactClick(artifact)}
             >
               <CardContent className="p-3 flex items-center gap-3">
                 <div className={`flex-shrink-0 ${config.color}`}>
@@ -138,27 +267,64 @@ export function ContactArtifactsTab({ profileId, userId, enabled }: ContactArtif
         })}
       </div>
 
-      {/* Detail Modal */}
-      <ArtifactDetailModal artifact={selectedArtifact} onClose={() => setSelectedArtifact(null)} />
+      {/* Site Form Detail Dialog */}
+      <SiteFormDetailDialog artifact={selectedForm} onClose={() => setSelectedForm(null)} />
+
+      {/* Training Detail — reuse StudentProgressModal */}
+      {trainingDetail && trainingMeta && (
+        <StudentProgressModal
+          record={trainingDetail.record}
+          lessonBlocks={trainingDetail.lessonBlocks}
+          open={true}
+          onClose={closeTraining}
+          blockResponses={trainingDetail.blockResponses}
+          lessonId={trainingMeta.lessonId}
+          lessonTitle={trainingMeta.lessonTitle}
+          moduleId={trainingMeta.moduleId}
+        />
+      )}
+
+      {/* Training loading overlay */}
+      {trainingLoading && (
+        <Dialog open onOpenChange={() => closeTraining()}>
+          <DialogContent className="sm:max-w-md">
+            <div className="flex flex-col items-center gap-3 py-8">
+              <Loader2 className="w-8 h-8 animate-spin text-primary" />
+              <p className="text-sm text-muted-foreground">Загрузка данных урока…</p>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Training error state */}
+      {trainingError && !trainingLoading && !trainingDetail && (
+        <Dialog open onOpenChange={() => closeTraining()}>
+          <DialogContent className="sm:max-w-md">
+            <div className="flex flex-col items-center gap-3 py-8">
+              <p className="text-sm text-destructive">{trainingError}</p>
+              <Button variant="outline" size="sm" onClick={closeTraining}>Закрыть</Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }
 
-// ── Detail Modal ─────────────────────────────────────────────────────
+// ── Site Form Detail Dialog (forms only) ─────────────────────────────
 
-function ArtifactDetailModal({ artifact, onClose }: { artifact: ContactArtifact | null; onClose: () => void }) {
+function SiteFormDetailDialog({ artifact, onClose }: { artifact: ContactArtifact | null; onClose: () => void }) {
   if (!artifact) return null;
 
   const config = SOURCE_TYPE_CONFIG[artifact.source_type];
   const statusConfig = STATUS_CONFIG[artifact.status] || STATUS_CONFIG.new;
-  const isTraining = artifact.source_type !== 'site_form';
   const hasPayload = Object.keys(artifact.payload).length > 0;
   const hasSummary = Object.keys(artifact.summary).length > 0;
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="sm:max-w-3xl lg:max-w-5xl max-h-[90vh] flex flex-col p-0 gap-0">
-        {/* ── Header ── */}
+        {/* Header */}
         <DialogHeader className="px-6 pt-5 pb-4 border-b flex-shrink-0 space-y-2">
           <div className="flex items-start gap-3">
             <div className={`mt-0.5 ${config.color}`}>
@@ -183,33 +349,19 @@ function ArtifactDetailModal({ artifact, onClose }: { artifact: ContactArtifact 
             {artifact.submitted_at && (
               <span>{format(new Date(artifact.submitted_at), "dd MMMM yyyy, HH:mm", { locale: ru })}</span>
             )}
-            {artifact.training_title && <span>Модуль: {artifact.training_title}</span>}
-            {artifact.lesson_title && artifact.lesson_title !== artifact.title && (
-              <span>Урок: {artifact.lesson_title}</span>
-            )}
           </div>
         </DialogHeader>
 
-        {/* ── Scrollable body ── */}
+        {/* Scrollable body */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5 bg-muted/5">
-          {/* Training metrics */}
-          {isTraining && (
-            <TrainingMetrics
-              score={artifact.score}
-              maxScore={artifact.max_score}
-              isCorrect={artifact.summary?.is_correct}
-              attempts={artifact.summary?.attempts}
-            />
-          )}
-
-          {/* Summary section (forms only) */}
-          {hasSummary && !isTraining && (
+          {/* Summary section */}
+          {hasSummary && (
             <PayloadSection title="Основная информация" data={artifact.summary} variant="summary" />
           )}
 
           {/* Main payload */}
           {hasPayload ? (
-            <PayloadSection title={isTraining ? "Ответы" : "Данные формы"} data={artifact.payload} variant="full" />
+            <PayloadSection title="Данные формы" data={artifact.payload} variant="full" />
           ) : (
             <EmptyPayloadState />
           )}
