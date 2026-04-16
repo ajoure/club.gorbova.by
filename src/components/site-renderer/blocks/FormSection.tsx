@@ -297,7 +297,8 @@ function AuthFormSection({
 
   // ─── Determine next step after auth ───
   const getNextStepAfterAuth = useCallback((): AuthFormStep => {
-    if (telegramLinkEnabled && telegramStatus?.status !== "active") {
+    // In preview, always show telegram step if enabled (regardless of actual status)
+    if (telegramLinkEnabled && (isPreview || telegramStatus?.status !== "active")) {
       return "telegram_prompt";
     }
     if (customFields.length > 0) {
@@ -305,7 +306,7 @@ function AuthFormSection({
     }
     // No extra fields → show ready button (never auto-submit)
     return "ready";
-  }, [telegramLinkEnabled, telegramStatus?.status, customFields.length]);
+  }, [telegramLinkEnabled, telegramStatus?.status, customFields.length, isPreview]);
 
   // ─── Session check on mount — HARD RULE: never auto-submit, only UI branching ───
   // In preview mode, skip session check entirely — always show email_check step
