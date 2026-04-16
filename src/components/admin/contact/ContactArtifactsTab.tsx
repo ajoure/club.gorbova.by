@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useContactArtifacts, type ContactArtifact, type ArtifactSourceType } from "@/hooks/useContactArtifacts";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +11,8 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { BookOpen, CheckCircle, ClipboardList, GraduationCap, ScrollText, ChevronRight, Loader2 } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { BookOpen, CheckCircle, ClipboardList, GraduationCap, ScrollText, ChevronRight, ChevronDown, Loader2, Package } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import {
@@ -52,7 +53,6 @@ interface TrainingDetailData {
 }
 
 async function loadTrainingDetail(userId: string, lessonId: string): Promise<TrainingDetailData | null> {
-  // 3 parallel queries
   const [stateRes, blocksRes, progressRes] = await Promise.all([
     supabase
       .from("lesson_progress_state")
@@ -73,8 +73,6 @@ async function loadTrainingDetail(userId: string, lessonId: string): Promise<Tra
   ]);
 
   const lessonBlocks = (blocksRes.data || []) as LessonBlock[];
-  
-  // Build blockResponses map
   const blockResponses: Record<string, any> = {};
   (progressRes.data || []).forEach((row: any) => {
     if (row.block_id && row.response) {
@@ -82,7 +80,6 @@ async function loadTrainingDetail(userId: string, lessonId: string): Promise<Tra
     }
   });
 
-  // Build record — use lesson_progress_state if exists, otherwise synthesize minimal
   const stateRow = stateRes.data;
   const record: LessonProgressRecord = stateRow
     ? {
@@ -95,7 +92,6 @@ async function loadTrainingDetail(userId: string, lessonId: string): Promise<Tra
         updated_at: stateRow.updated_at,
       }
     : {
-        // Fallback: no lesson_progress_state but we have block responses
         id: '',
         user_id: userId,
         lesson_id: lessonId,
@@ -108,29 +104,87 @@ async function loadTrainingDetail(userId: string, lessonId: string): Promise<Tra
   return { record, lessonBlocks, blockResponses };
 }
 
+// ── Grouping logic ───────────────────────────────────────────────────
+
+interface ProductGroup {
+  key: string;
+  label: string;
+  productId: string | null;
+  items: ContactArtifact[];
+  formCount: number;
+  trainingCount: number;
+}
+
+function groupByProduct(artifacts: ContactArtifact[]): ProductGroup[] {
+  const map = new Map<string, ContactArtifact[]>();
+  const labelMap = new Map<string, string>();
+  const pidMap = new Map<string, string | null>();
+
+  for (const a of artifacts) {
+    const key = a.product_id || a.training_title || '__ungrouped__';
+    const label = a.product_title || a.training_title || 'Без продукта';
+    if (!map.has(key)) {
+      map.set(key, []);
+      labelMap.set(key, label);
+      pidMap.set(key, a.product_id || null);
+    }
+    map.get(key)!.push(a);
+  }
+
+  const groups: ProductGroup[] = [];
+  for (const [key, items] of map) {
+    groups.push({
+      key,
+      label: labelMap.get(key) || key,
+      productId: pidMap.get(key) || null,
+      items,
+      formCount: items.filter(i => i.source_type === 'site_form').length,
+      trainingCount: items.filter(i => i.source_type !== 'site_form').length,
+    });
+  }
+
+  // Sort: groups with most recent activity first
+  groups.sort((a, b) => {
+    const latestA = new Date(a.items[0]?.submitted_at || 0).getTime();
+    const latestB = new Date(b.items[0]?.submitted_at || 0).getTime();
+    return latestB - latestA;
+  });
+
+  return groups;
+}
+
 // ── Main component ───────────────────────────────────────────────────
 
 export function ContactArtifactsTab({ profileId, userId, enabled }: ContactArtifactsTabProps) {
   const { artifacts, isLoading, formCount, trainingCount } = useContactArtifacts(profileId, userId, enabled);
   const [filter, setFilter] = useState<FilterType>('all');
-  
+
   // Site form detail
   const [selectedForm, setSelectedForm] = useState<ContactArtifact | null>(null);
-  
+
   // Training detail via StudentProgressModal
   const [trainingDetail, setTrainingDetail] = useState<TrainingDetailData | null>(null);
   const [trainingMeta, setTrainingMeta] = useState<{ lessonTitle: string; moduleId: string; lessonId: string } | null>(null);
   const [trainingLoading, setTrainingLoading] = useState(false);
   const [trainingError, setTrainingError] = useState<string | null>(null);
 
+  // Collapsible state — track which groups are collapsed (all open by default)
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+
+  const toggleGroup = useCallback((key: string) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
   const handleArtifactClick = useCallback(async (artifact: ContactArtifact) => {
-    // Site forms → form detail dialog
     if (artifact.source_type === 'site_form') {
       setSelectedForm(artifact);
       return;
     }
-
-    // Quest homework → fallback to form dialog (quest has its own data model)
     if (artifact.source_type === 'quest_homework') {
       setSelectedForm(artifact);
       return;
@@ -140,7 +194,6 @@ export function ContactArtifactsTab({ profileId, userId, enabled }: ContactArtif
     const artUserId = artifact.user_id;
     const artLessonId = artifact.lesson_id || artifact._lesson_id;
     if (!artUserId || !artLessonId) {
-      // Missing IDs — fallback to generic view
       setSelectedForm(artifact);
       return;
     }
@@ -175,17 +228,18 @@ export function ContactArtifactsTab({ profileId, userId, enabled }: ContactArtif
     setTrainingLoading(false);
   }, []);
 
-  const filtered = artifacts.filter(a => {
+  const filtered = useMemo(() => artifacts.filter(a => {
     if (filter === 'forms') return a.source_type === 'site_form';
     if (filter === 'training') return a.source_type !== 'site_form';
     return true;
-  });
+  }), [artifacts, filter]);
+
+  const groups = useMemo(() => groupByProduct(filtered), [filtered]);
 
   if (isLoading) {
     return (
       <div className="space-y-3">
         <Skeleton className="h-8 w-64" />
-        <Skeleton className="h-20 w-full" />
         <Skeleton className="h-20 w-full" />
         <Skeleton className="h-20 w-full" />
       </div>
@@ -220,51 +274,17 @@ export function ContactArtifactsTab({ profileId, userId, enabled }: ContactArtif
         </Button>
       </div>
 
-      {/* Artifact list */}
+      {/* Grouped artifact list */}
       <div className="space-y-2">
-        {filtered.map(artifact => {
-          const config = SOURCE_TYPE_CONFIG[artifact.source_type];
-          const statusConfig = STATUS_CONFIG[artifact.status] || STATUS_CONFIG.new;
-          const Icon = config.icon;
-
-          return (
-            <Card
-              key={`${artifact.source_type}-${artifact.id}`}
-              className="cursor-pointer hover:bg-accent/50 transition-colors"
-              onClick={() => handleArtifactClick(artifact)}
-            >
-              <CardContent className="p-3 flex items-center gap-3">
-                <div className={`flex-shrink-0 ${config.color}`}>
-                  <Icon className="w-5 h-5" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm font-medium truncate">{artifact.title}</span>
-                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 flex-shrink-0">{config.label}</Badge>
-                  </div>
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5 flex-wrap">
-                    {artifact.subtitle && <span className="truncate">{artifact.subtitle}</span>}
-                    {artifact.product_title && (
-                      <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4">{artifact.product_title}</Badge>
-                    )}
-                    {artifact.score !== null && artifact.max_score !== null && (
-                      <span>{artifact.score}/{artifact.max_score}</span>
-                    )}
-                  </div>
-                </div>
-                <div className="flex-shrink-0 flex items-center gap-2">
-                  <div className="text-right">
-                    <Badge variant={statusConfig.variant} className="text-[10px] px-1.5 py-0 h-4">{statusConfig.label}</Badge>
-                    <div className="text-[10px] text-muted-foreground mt-0.5">
-                      {artifact.submitted_at ? format(new Date(artifact.submitted_at), "dd.MM.yy HH:mm", { locale: ru }) : "—"}
-                    </div>
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-muted-foreground" />
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
+        {groups.map(group => (
+          <ProductGroupSection
+            key={group.key}
+            group={group}
+            isOpen={!collapsedGroups.has(group.key)}
+            onToggle={() => toggleGroup(group.key)}
+            onItemClick={handleArtifactClick}
+          />
+        ))}
       </div>
 
       {/* Site Form Detail Dialog */}
@@ -311,6 +331,94 @@ export function ContactArtifactsTab({ profileId, userId, enabled }: ContactArtif
   );
 }
 
+// ── Product Group Section ────────────────────────────────────────────
+
+function ProductGroupSection({
+  group,
+  isOpen,
+  onToggle,
+  onItemClick,
+}: {
+  group: ProductGroup;
+  isOpen: boolean;
+  onToggle: () => void;
+  onItemClick: (a: ContactArtifact) => void;
+}) {
+  return (
+    <Collapsible open={isOpen} onOpenChange={onToggle}>
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-md bg-muted/60 hover:bg-muted transition-colors text-left group"
+        >
+          <Package className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+          <span className="text-sm font-medium truncate flex-1">{group.label}</span>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {group.trainingCount > 0 && (
+              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4">
+                <GraduationCap className="w-2.5 h-2.5 mr-0.5" />
+                {group.trainingCount}
+              </Badge>
+            )}
+            {group.formCount > 0 && (
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">
+                <ClipboardList className="w-2.5 h-2.5 mr-0.5" />
+                {group.formCount}
+              </Badge>
+            )}
+          </div>
+          <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${isOpen ? '' : '-rotate-90'}`} />
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="space-y-1 mt-1 pl-2">
+          {group.items.map(artifact => (
+            <ArtifactRow key={`${artifact.source_type}-${artifact.id}`} artifact={artifact} onClick={() => onItemClick(artifact)} />
+          ))}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+// ── Single artifact row ──────────────────────────────────────────────
+
+function ArtifactRow({ artifact, onClick }: { artifact: ContactArtifact; onClick: () => void }) {
+  const config = SOURCE_TYPE_CONFIG[artifact.source_type];
+  const statusConfig = STATUS_CONFIG[artifact.status] || STATUS_CONFIG.new;
+  const Icon = config.icon;
+
+  return (
+    <div
+      className="flex items-center gap-2.5 px-2.5 py-2 rounded-md cursor-pointer hover:bg-accent/50 transition-colors"
+      onClick={onClick}
+    >
+      <div className={`flex-shrink-0 ${config.color}`}>
+        <Icon className="w-4 h-4" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5">
+          <span className="text-sm truncate">{artifact.lesson_title || artifact.title}</span>
+          <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5 flex-shrink-0">{config.label}</Badge>
+        </div>
+        {artifact.subtitle && (
+          <div className="text-[11px] text-muted-foreground truncate mt-0.5">{artifact.subtitle}</div>
+        )}
+      </div>
+      <div className="flex items-center gap-1.5 flex-shrink-0">
+        {artifact.score !== null && artifact.max_score !== null && (
+          <span className="text-[11px] text-muted-foreground">{artifact.score}/{artifact.max_score}</span>
+        )}
+        <Badge variant={statusConfig.variant} className="text-[9px] px-1 py-0 h-3.5">{statusConfig.label}</Badge>
+        <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+          {artifact.submitted_at ? format(new Date(artifact.submitted_at), "dd.MM.yy", { locale: ru }) : "—"}
+        </span>
+        <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
+      </div>
+    </div>
+  );
+}
+
 // ── Site Form Detail Dialog (forms only) ─────────────────────────────
 
 function SiteFormDetailDialog({ artifact, onClose }: { artifact: ContactArtifact | null; onClose: () => void }) {
@@ -324,7 +432,6 @@ function SiteFormDetailDialog({ artifact, onClose }: { artifact: ContactArtifact
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="sm:max-w-3xl lg:max-w-5xl max-h-[90vh] flex flex-col p-0 gap-0">
-        {/* Header */}
         <DialogHeader className="px-6 pt-5 pb-4 border-b flex-shrink-0 space-y-2">
           <div className="flex items-start gap-3">
             <div className={`mt-0.5 ${config.color}`}>
@@ -343,8 +450,6 @@ function SiteFormDetailDialog({ artifact, onClose }: { artifact: ContactArtifact
               </DialogDescription>
             </div>
           </div>
-
-          {/* Meta row */}
           <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap pl-8">
             {artifact.submitted_at && (
               <span>{format(new Date(artifact.submitted_at), "dd MMMM yyyy, HH:mm", { locale: ru })}</span>
@@ -352,14 +457,10 @@ function SiteFormDetailDialog({ artifact, onClose }: { artifact: ContactArtifact
           </div>
         </DialogHeader>
 
-        {/* Scrollable body */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5 bg-muted/5">
-          {/* Summary section */}
           {hasSummary && (
             <PayloadSection title="Основная информация" data={artifact.summary} variant="summary" />
           )}
-
-          {/* Main payload */}
           {hasPayload ? (
             <PayloadSection title="Данные формы" data={artifact.payload} variant="full" />
           ) : (
