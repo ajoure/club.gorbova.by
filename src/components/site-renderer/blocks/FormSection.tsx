@@ -397,6 +397,12 @@ function AuthFormSection({
       return;
     }
 
+    // In preview mode, simulate the flow
+    if (isPreview) {
+      setFormStep(getNextStepAfterAuth());
+      return;
+    }
+
     const result = await inlineAuth.login(email, password);
     if (result) {
       const { data: profile } = await supabase
