@@ -65,6 +65,7 @@ export const MENU_ICONS: Record<string, LucideIcon> = {
   Plug,
   Handshake,
   Layers,
+  Package: Layers, // backward compat: DB may store "Package"
   Wrench,
   CalendarClock,
   ClipboardCheck,
