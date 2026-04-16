@@ -11,7 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, Package, Copy, Link, ExternalLink } from "lucide-react";
+import { Plus, Pencil, Trash2, Layers, Copy, Link, ExternalLink } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { HelpIcon, HelpLabel } from "@/components/help/HelpComponents";
 
@@ -299,7 +299,7 @@ export default function AdminProducts() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Package className="h-5 w-5" />
+            <Layers className="h-5 w-5 text-indigo-500" />
             Список продуктов
           </CardTitle>
           <CardDescription>

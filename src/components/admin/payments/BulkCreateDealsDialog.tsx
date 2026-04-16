@@ -17,7 +17,7 @@ import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Package, Loader2, AlertTriangle, CheckCircle, XCircle, History, User } from "lucide-react";
+import { Layers, Loader2, AlertTriangle, CheckCircle, XCircle, History, User } from "lucide-react";
 import { format, addDays, differenceInDays } from "date-fns";
 import { UnifiedPayment } from "@/hooks/useUnifiedPayments";
 import { formatContactName } from "@/lib/nameUtils";
@@ -459,7 +459,7 @@ export function BulkCreateDealsDialog({
       <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Package className="h-5 w-5" />
+            <Layers className="h-5 w-5 text-indigo-500" />
             Создать сделки из платежей
           </DialogTitle>
           <DialogDescription>
@@ -633,7 +633,7 @@ export function BulkCreateDealsDialog({
                 </>
               ) : (
                 <>
-                  <Package className="h-4 w-4 mr-2" />
+                  <Layers className="h-4 w-4 mr-2" />
                   Создать {eligiblePayments.length} сделок
                 </>
               )}

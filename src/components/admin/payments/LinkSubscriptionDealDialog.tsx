@@ -9,7 +9,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Package, Check, Search, Loader2 } from "lucide-react";
+import { Layers, Check, Search, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 
@@ -293,7 +293,7 @@ export function LinkSubscriptionDealDialog({
       <DialogContent className="sm:max-w-[550px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Package className="h-5 w-5" />
+            <Layers className="h-5 w-5 text-indigo-500" />
             Привязать сделку к подписке
           </DialogTitle>
         </DialogHeader>

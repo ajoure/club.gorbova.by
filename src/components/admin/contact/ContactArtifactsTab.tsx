@@ -12,7 +12,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { BookOpen, CheckCircle, ClipboardList, GraduationCap, ScrollText, ChevronRight, ChevronDown, Loader2, Package } from "lucide-react";
+import { BookOpen, CheckCircle, ClipboardList, GraduationCap, ScrollText, ChevronRight, ChevronDown, Loader2, Layers } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import {
@@ -27,6 +27,7 @@ interface ContactArtifactsTabProps {
   profileId: string | null | undefined;
   userId: string | null | undefined;
   enabled: boolean;
+  contactName?: string;
 }
 
 type FilterType = 'all' | 'forms' | 'training';
@@ -155,7 +156,7 @@ function groupByProduct(artifacts: ContactArtifact[]): ProductGroup[] {
 
 // ── Main component ───────────────────────────────────────────────────
 
-export function ContactArtifactsTab({ profileId, userId, enabled }: ContactArtifactsTabProps) {
+export function ContactArtifactsTab({ profileId, userId, enabled, contactName }: ContactArtifactsTabProps) {
   const { artifacts, isLoading, formCount, trainingCount } = useContactArtifacts(profileId, userId, enabled);
   const [filter, setFilter] = useState<FilterType>('all');
 
@@ -283,6 +284,7 @@ export function ContactArtifactsTab({ profileId, userId, enabled }: ContactArtif
             isOpen={!collapsedGroups.has(group.key)}
             onToggle={() => toggleGroup(group.key)}
             onItemClick={handleArtifactClick}
+            contactName={contactName}
           />
         ))}
       </div>
@@ -301,6 +303,8 @@ export function ContactArtifactsTab({ profileId, userId, enabled }: ContactArtif
           lessonId={trainingMeta.lessonId}
           lessonTitle={trainingMeta.lessonTitle}
           moduleId={trainingMeta.moduleId}
+          studentName={contactName}
+          productTitle={groups.find(g => g.items.some(i => i.lesson_id === trainingMeta.lessonId || i._lesson_id === trainingMeta.lessonId))?.label}
         />
       )}
 
@@ -338,45 +342,51 @@ function ProductGroupSection({
   isOpen,
   onToggle,
   onItemClick,
+  contactName,
 }: {
   group: ProductGroup;
   isOpen: boolean;
   onToggle: () => void;
   onItemClick: (a: ContactArtifact) => void;
+  contactName?: string;
 }) {
   return (
     <Collapsible open={isOpen} onOpenChange={onToggle}>
-      <CollapsibleTrigger asChild>
-        <button
-          type="button"
-          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-md bg-muted/60 hover:bg-muted transition-colors text-left group"
-        >
-          <Package className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-          <span className="text-sm font-medium truncate flex-1">{group.label}</span>
-          <div className="flex items-center gap-1.5 flex-shrink-0">
-            {group.trainingCount > 0 && (
-              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4">
-                <GraduationCap className="w-2.5 h-2.5 mr-0.5" />
-                {group.trainingCount}
-              </Badge>
-            )}
-            {group.formCount > 0 && (
-              <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">
-                <ClipboardList className="w-2.5 h-2.5 mr-0.5" />
-                {group.formCount}
-              </Badge>
-            )}
+      <div className="bg-card border border-border/60 border-l-4 border-l-indigo-300 rounded-lg shadow-sm overflow-hidden">
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-accent/30 transition-colors text-left group"
+          >
+            <div className="w-7 h-7 rounded-md bg-indigo-50 flex items-center justify-center shrink-0">
+              <Layers className="w-3.5 h-3.5 text-indigo-500" />
+            </div>
+            <span className="text-sm font-medium truncate flex-1">{group.label}</span>
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              {group.trainingCount > 0 && (
+                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 bg-emerald-50 text-emerald-600 border-emerald-200">
+                  <GraduationCap className="w-2.5 h-2.5 mr-0.5" />
+                  {group.trainingCount}
+                </Badge>
+              )}
+              {group.formCount > 0 && (
+                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 bg-blue-50 text-blue-600 border-blue-200">
+                  <ClipboardList className="w-2.5 h-2.5 mr-0.5" />
+                  {group.formCount}
+                </Badge>
+              )}
+            </div>
+            <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${isOpen ? '' : '-rotate-90'}`} />
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="space-y-0.5 px-2 pb-2">
+            {group.items.map(artifact => (
+              <ArtifactRow key={`${artifact.source_type}-${artifact.id}`} artifact={artifact} onClick={() => onItemClick(artifact)} />
+            ))}
           </div>
-          <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${isOpen ? '' : '-rotate-90'}`} />
-        </button>
-      </CollapsibleTrigger>
-      <CollapsibleContent>
-        <div className="space-y-1 mt-1 pl-2">
-          {group.items.map(artifact => (
-            <ArtifactRow key={`${artifact.source_type}-${artifact.id}`} artifact={artifact} onClick={() => onItemClick(artifact)} />
-          ))}
-        </div>
-      </CollapsibleContent>
+        </CollapsibleContent>
+      </div>
     </Collapsible>
   );
 }
@@ -388,13 +398,20 @@ function ArtifactRow({ artifact, onClick }: { artifact: ContactArtifact; onClick
   const statusConfig = STATUS_CONFIG[artifact.status] || STATUS_CONFIG.new;
   const Icon = config.icon;
 
+  const iconBgMap: Record<ArtifactSourceType, string> = {
+    site_form: "bg-blue-50",
+    lesson_answer: "bg-emerald-50",
+    lesson_completion: "bg-green-50",
+    quest_homework: "bg-amber-50",
+  };
+
   return (
     <div
-      className="flex items-center gap-2.5 px-2.5 py-2 rounded-md cursor-pointer hover:bg-accent/50 transition-colors"
+      className="flex items-center gap-2.5 px-2.5 py-2 rounded-md cursor-pointer hover:bg-accent/40 transition-colors"
       onClick={onClick}
     >
-      <div className={`flex-shrink-0 ${config.color}`}>
-        <Icon className="w-4 h-4" />
+      <div className={`w-7 h-7 rounded-full ${iconBgMap[artifact.source_type]} flex items-center justify-center shrink-0`}>
+        <Icon className={`w-3.5 h-3.5 ${config.color}`} />
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">

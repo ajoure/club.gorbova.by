@@ -19,7 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { User, FileText, Upload, MessageSquare, ChevronDown } from "lucide-react";
+import { FileText, Upload, MessageSquare, ChevronDown } from "lucide-react";
 import { FeedbackDrawer } from "@/components/training-feedback/FeedbackDrawer";
 import { getFileTypeIcon } from "@/components/admin/lesson-editor/blocks/fileTypeIcons";
 import { format } from "date-fns";
@@ -90,6 +90,8 @@ interface StudentProgressModalProps {
   lessonId?: string;
   lessonTitle?: string;
   moduleId?: string;
+  studentName?: string;
+  productTitle?: string;
 }
 
 function getSequentialFormSteps(blocks: LessonBlock[]): FormStep[] {
@@ -444,6 +446,8 @@ export function StudentProgressModal({
   lessonId,
   lessonTitle,
   moduleId,
+  studentName,
+  productTitle,
 }: StudentProgressModalProps) {
   const [feedbackTarget, setFeedbackTarget] = useState<{ blockId?: string; blockTitle?: string } | null>(null);
   if (!record) return null;
@@ -474,26 +478,50 @@ export function StudentProgressModal({
     return null;
   };
 
+  // Resolve display name: priority chain
+  const displayName = studentName || profile?.full_name || profile?.email || "Неизвестный ученик";
+  const initials = displayName
+    .split(" ")
+    .slice(0, 2)
+    .map(w => w[0]?.toUpperCase() || "")
+    .join("");
+
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <User className="h-5 w-5" />
-            Прогресс ученика
-          </DialogTitle>
+          <DialogTitle className="text-lg font-semibold">Прогресс ученика</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-6">
-          {/* Student Info */}
-          <Card>
+          {/* Student Info — enhanced header */}
+          <Card className="border-l-4 border-l-indigo-400">
             <CardContent className="pt-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-semibold text-lg">{profile?.full_name || "Без имени"}</p>
-                  <p className="text-muted-foreground">{profile?.email}</p>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-sm font-semibold shrink-0">
+                    {initials}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-semibold text-base truncate">{displayName}</p>
+                    {profile?.email && displayName !== profile.email && (
+                      <p className="text-sm text-muted-foreground truncate">{profile.email}</p>
+                    )}
+                    <div className="flex items-center gap-2 flex-wrap mt-1">
+                      {productTitle && (
+                        <Badge variant="secondary" className="text-[11px] bg-indigo-50 text-indigo-700 border-indigo-200">
+                          {productTitle}
+                        </Badge>
+                      )}
+                      {lessonTitle && (
+                        <Badge variant="outline" className="text-[11px]">
+                          {lessonTitle}
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                <Badge variant={record.completed_at ? "default" : "secondary"}>
+                <Badge variant={record.completed_at ? "default" : "secondary"} className="shrink-0">
                   {record.completed_at ? "Завершён" : "В процессе"}
                 </Badge>
               </div>

@@ -9,7 +9,7 @@ import {
   FileText,
   Plug,
   Handshake,
-  Package,
+  Layers,
   Wrench,
   CalendarClock,
   ClipboardCheck,
@@ -64,7 +64,8 @@ export const MENU_ICONS: Record<string, LucideIcon> = {
   FileText,
   Plug,
   Handshake,
-  Package,
+  Layers,
+  Package: Layers, // backward compat: DB may store "Package"
   Wrench,
   CalendarClock,
   ClipboardCheck,

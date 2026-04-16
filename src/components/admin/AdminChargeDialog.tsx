@@ -24,7 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { CreditCard, AlertTriangle, Loader2, Package, Tag } from "lucide-react";
+import { CreditCard, AlertTriangle, Loader2, Layers, Tag } from "lucide-react";
 import { useProductsV2, useTariffs } from "@/hooks/useProductsV2";
 
 interface PaymentMethod {
@@ -212,7 +212,7 @@ export function AdminChargeDialog({
           {/* Product selection */}
           <div className="space-y-2">
             <Label className="flex items-center gap-2">
-              <Package className="h-4 w-4" />
+              <Layers className="h-4 w-4 text-indigo-500" />
               Продукт
             </Label>
             {productsLoading ? (

@@ -3,7 +3,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Plus, Trash2, Lock, Shield, Package, Handshake } from "lucide-react";
+import { Plus, Trash2, Lock, Shield, Layers, Handshake } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -180,7 +180,7 @@ export function FormBlockEditor({ content, onChange }: FormBlockEditorProps) {
       <div className="border rounded-lg p-3 space-y-2 bg-muted/30">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Package className="h-4 w-4 text-primary" />
+            <Layers className="h-4 w-4 text-indigo-500" />
             <Label className="text-xs font-semibold">Привязка к продукту</Label>
           </div>
           <Switch

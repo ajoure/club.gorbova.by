@@ -35,7 +35,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Link2, Copy, ExternalLink, Loader2, Package, Tag, CheckCircle, Send, AlertTriangle } from "lucide-react";
+import { Link2, Copy, ExternalLink, Loader2, Layers, Tag, CheckCircle, Send, AlertTriangle } from "lucide-react";
 import { useProductsV2, useTariffs } from "@/hooks/useProductsV2";
 import { copyToClipboard } from "@/utils/clipboardUtils";
 import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
@@ -392,7 +392,7 @@ export function AdminPaymentLinkDialog({
               {/* Product selection */}
               <div className="space-y-2">
                 <Label className="flex items-center gap-2">
-                  <Package className="h-4 w-4" />
+                  <Layers className="h-4 w-4 text-indigo-500" />
                   Продукт
                 </Label>
                 {productsLoading ? (

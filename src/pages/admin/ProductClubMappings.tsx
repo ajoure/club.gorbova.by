@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { Plus, Trash2, Link2, ArrowLeft, Package } from 'lucide-react';
+import { Plus, Trash2, Link2, ArrowLeft, Layers } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -292,7 +292,7 @@ export default function ProductClubMappings() {
               <div className="text-center py-8 text-muted-foreground">Загрузка...</div>
             ) : mappings.length === 0 ? (
               <div className="text-center py-12">
-                <Package className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
+                <Layers className="h-12 w-12 mx-auto text-indigo-300 mb-4" />
                 <h3 className="text-lg font-medium mb-1">Нет привязок</h3>
                 <p className="text-muted-foreground mb-4">
                   Добавьте связь между продуктами и клубами для автоматической выдачи доступа

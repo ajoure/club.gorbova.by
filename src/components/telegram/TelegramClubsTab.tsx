@@ -35,7 +35,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { Plus, Settings, Users, CheckCircle, XCircle, Loader2, MessageSquare, Megaphone, AlertTriangle, HelpCircle, Info, Link2, Package, BarChart3 } from 'lucide-react';
+import { Plus, Settings, Users, CheckCircle, XCircle, Loader2, MessageSquare, Megaphone, AlertTriangle, HelpCircle, Info, Link2, Layers, BarChart3 } from 'lucide-react';
 import { 
   useTelegramClubs, 
   useTelegramBots,
@@ -160,7 +160,7 @@ export function TelegramClubsTab() {
               size="sm"
               onClick={() => navigate('/admin/integrations/telegram/product-mappings')}
             >
-              <Package className="h-4 w-4 mr-2" />
+              <Layers className="h-4 w-4 mr-2 text-indigo-500" />
               <span className="hidden sm:inline">Автодоступ</span>
             </Button>
             <Button 
