@@ -470,6 +470,12 @@ function AuthFormSection({
   };
 
   const handleStartTelegram = async () => {
+    // In preview, just simulate the pending state
+    if (isPreview) {
+      setTelegramUiStatus("pending");
+      setTelegramDeepLink("https://t.me/preview_bot?start=demo");
+      return;
+    }
     setTelegramUiStatus("starting");
     try {
       const result = await startTelegramLink.mutateAsync();
