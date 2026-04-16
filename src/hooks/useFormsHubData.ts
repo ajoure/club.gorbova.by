@@ -162,6 +162,27 @@ async function fetchSiteForms(
   return { rows, count: count ?? rows.length };
 }
 
+// Cache: product_code → { id, name } resolved from products_v2.
+// Used to give preorders a canonical product_id so By-Product grouping
+// merges site_form + preorder + training under one header per product.
+let _productCodeMapPromise: Promise<Record<string, { id: string; name: string }>> | null = null;
+async function getProductCodeMap(): Promise<Record<string, { id: string; name: string }>> {
+  if (!_productCodeMapPromise) {
+    _productCodeMapPromise = (async () => {
+      const { data } = await supabase
+        .from("products_v2")
+        .select("id, code, name")
+        .not("code", "is", null);
+      const map: Record<string, { id: string; name: string }> = {};
+      for (const p of data || []) {
+        if (p.code) map[p.code] = { id: p.id, name: p.name };
+      }
+      return map;
+    })();
+  }
+  return _productCodeMapPromise;
+}
+
 async function fetchPreorders(
   filters: FormsHubFilters,
   pagination?: FormsHubPagination
@@ -193,29 +214,38 @@ async function fetchPreorders(
     query = query.range(offset, offset + pagination.pageSize - 1);
   }
 
-  const { data: preorders, count } = await query;
+  const [{ data: preorders, count }, productMap] = await Promise.all([
+    query,
+    getProductCodeMap(),
+  ]);
 
-  const rows: FormsHubRow[] = (preorders || []).map((p) => ({
-    id: p.id,
-    source_type: "preorder" as const,
-    client_name: p.name || "—",
-    client_email: p.email,
-    client_phone: p.phone,
-    profile_id: null,
-    user_id: p.user_id,
-    product_id: null,
-    product_title: getProductName(p.product_code),
-    source_entity: p.tariff_name || p.product_code,
-    created_at: p.created_at,
-    status: p.status || "new",
-    has_deal: false,
-    has_account: !!p.user_id,
-    module_id: null,
-    module_title: null,
-    lesson_id: null,
-    lesson_title: null,
-    raw: p,
-  }));
+  const rows: FormsHubRow[] = (preorders || []).map((p) => {
+    const resolved = p.product_code ? productMap[p.product_code] : null;
+    return {
+      id: p.id,
+      source_type: "preorder" as const,
+      client_name: p.name || "—",
+      client_email: p.email,
+      client_phone: p.phone,
+      profile_id: null,
+      user_id: p.user_id,
+      // PATCH 4.1: resolve canonical product_id via product_code lookup so
+      // grouping in By-Product tab merges with site_form/training under
+      // a single product header.
+      product_id: resolved?.id || null,
+      product_title: resolved?.name || getProductName(p.product_code),
+      source_entity: p.tariff_name || p.product_code,
+      created_at: p.created_at,
+      status: p.status || "new",
+      has_deal: false,
+      has_account: !!p.user_id,
+      module_id: null,
+      module_title: null,
+      lesson_id: null,
+      lesson_title: null,
+      raw: p,
+    };
+  });
 
   return { rows, count: count ?? rows.length };
 }
