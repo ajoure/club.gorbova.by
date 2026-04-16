@@ -44,13 +44,16 @@ export function FormsByProductTabContent() {
     if (!rows) return [];
     const map = new Map<string, ProductGroup>();
 
+    // PATCH 4.1: единый ключ группировки = product_id (UUID).
+    // Записи без resolvable product_id попадают в одну группу "no-product".
+    // Это устраняет дубль "одного продукта двумя верхними группами".
     for (const row of rows) {
-      const pKey = row.product_id || row.product_title || "no-product";
+      const pKey = row.product_id || "no-product";
       let pg = map.get(pKey);
       if (!pg) {
         pg = {
           product_id: row.product_id,
-          title: row.product_title || "Без продукта",
+          title: row.product_id ? (row.product_title || "Без названия") : "Без привязки к продукту",
           site_form: [],
           preorder: [],
           training_modules: new Map(),
@@ -79,7 +82,12 @@ export function FormsByProductTabContent() {
       }
     }
 
-    return Array.from(map.values()).sort((a, b) => b.total - a.total);
+    // "Без привязки" всегда в конце
+    return Array.from(map.values()).sort((a, b) => {
+      if (!a.product_id && b.product_id) return 1;
+      if (a.product_id && !b.product_id) return -1;
+      return b.total - a.total;
+    });
   }, [rows]);
 
   const totalTraining = (pg: ProductGroup) =>
