@@ -19,9 +19,8 @@ import {
   PayloadSection,
   EmptyPayloadState,
 } from "./ArtifactPayloadRenderer";
-import { supabase } from "@/integrations/supabase/client";
 import { StudentProgressModal } from "@/components/admin/trainings/StudentProgressModal";
-import type { LessonProgressRecord, LessonBlock } from "@/components/admin/trainings/StudentProgressModal";
+import { loadTrainingDetailContext, type TrainingDetailData } from "@/lib/training-detail-loader";
 
 interface ContactArtifactsTabProps {
   profileId: string | null | undefined;
@@ -45,65 +44,7 @@ const STATUS_CONFIG: Record<string, { label: string; variant: "default" | "secon
   new: { label: "Новый", variant: "outline" },
 };
 
-// ── Training detail lazy loader ──────────────────────────────────────
-
-interface TrainingDetailData {
-  record: LessonProgressRecord;
-  lessonBlocks: LessonBlock[];
-  blockResponses: Record<string, any>;
-}
-
-async function loadTrainingDetail(userId: string, lessonId: string): Promise<TrainingDetailData | null> {
-  const [stateRes, blocksRes, progressRes] = await Promise.all([
-    supabase
-      .from("lesson_progress_state")
-      .select("id, user_id, lesson_id, state_json, completed_at, created_at, updated_at")
-      .eq("user_id", userId)
-      .eq("lesson_id", lessonId)
-      .maybeSingle(),
-    supabase
-      .from("lesson_blocks")
-      .select("id, block_type, content")
-      .eq("lesson_id", lessonId)
-      .order("sort_order", { ascending: true }),
-    supabase
-      .from("user_lesson_progress")
-      .select("block_id, response")
-      .eq("user_id", userId)
-      .eq("lesson_id", lessonId),
-  ]);
-
-  const lessonBlocks = (blocksRes.data || []) as LessonBlock[];
-  const blockResponses: Record<string, any> = {};
-  (progressRes.data || []).forEach((row: any) => {
-    if (row.block_id && row.response) {
-      blockResponses[row.block_id] = row.response;
-    }
-  });
-
-  const stateRow = stateRes.data;
-  const record: LessonProgressRecord = stateRow
-    ? {
-        id: stateRow.id,
-        user_id: stateRow.user_id,
-        lesson_id: stateRow.lesson_id,
-        state_json: stateRow.state_json || {},
-        completed_at: stateRow.completed_at,
-        created_at: stateRow.created_at,
-        updated_at: stateRow.updated_at,
-      }
-    : {
-        id: '',
-        user_id: userId,
-        lesson_id: lessonId,
-        state_json: {},
-        completed_at: null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-
-  return { record, lessonBlocks, blockResponses };
-}
+// Training detail loader is now in src/lib/training-detail-loader.ts (shared)
 
 // ── Grouping logic ───────────────────────────────────────────────────
 
@@ -208,7 +149,7 @@ export function ContactArtifactsTab({ profileId, userId, enabled, contactName }:
     });
 
     try {
-      const detail = await loadTrainingDetail(artUserId, artLessonId);
+      const detail = await loadTrainingDetailContext(artUserId, artLessonId);
       if (!detail) {
         setTrainingError("Не удалось загрузить данные урока");
         return;

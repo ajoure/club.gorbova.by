@@ -3,12 +3,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { FileText, Loader2 } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { FileText, Loader2, AlertCircle } from "lucide-react";
 import { StudentProgressModal } from "@/components/admin/trainings/StudentProgressModal";
 import { PreregistrationDetailSheet } from "@/components/admin/PreregistrationDetailSheet";
+import { loadTrainingDetailContext, type TrainingDetailData } from "@/lib/training-detail-loader";
 import type { FormsHubRow } from "@/hooks/useFormsHubData";
-import type { LessonProgressRecord, LessonBlock } from "@/components/admin/trainings/StudentProgressModal";
 
 interface Props {
   row: FormsHubRow | null;
@@ -33,14 +32,12 @@ export function FormsDetailOpener({ row, onClose }: Props) {
 
 function TrainingDetailBridge({ row, onClose }: { row: FormsHubRow; onClose: () => void }) {
   const [loading, setLoading] = useState(true);
-  const [data, setData] = useState<{
-    record: LessonProgressRecord;
-    lessonBlocks: LessonBlock[];
-    blockResponses: Record<string, any>;
-  } | null>(null);
+  const [data, setData] = useState<TrainingDetailData | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!row.raw?.lesson_id || !row.user_id) {
+      setError("Нет данных урока или пользователя");
       setLoading(false);
       return;
     }
@@ -49,51 +46,20 @@ function TrainingDetailBridge({ row, onClose }: { row: FormsHubRow; onClose: () 
     const userId = row.user_id;
 
     (async () => {
-      const [stateRes, blocksRes, progressRes] = await Promise.all([
-        supabase
-          .from("lesson_progress_state")
-          .select("id, user_id, lesson_id, state_json, completed_at, created_at, updated_at")
-          .eq("user_id", userId)
-          .eq("lesson_id", lessonId)
-          .maybeSingle(),
-        supabase
-          .from("training_lesson_blocks" as any)
-          .select("id, block_type, config, sort_order")
-          .eq("lesson_id", lessonId)
-          .order("sort_order", { ascending: true }),
-        supabase
-          .from("user_lesson_progress")
-          .select("block_id, response")
-          .eq("user_id", userId)
-          .eq("lesson_id", lessonId),
-      ]);
-
-      const state = stateRes.data;
-      if (!state) { setLoading(false); return; }
-
-      const record: LessonProgressRecord = {
-        id: state.id,
-        user_id: state.user_id,
-        lesson_id: state.lesson_id,
-        state_json: state.state_json as any,
-        completed_at: state.completed_at,
-        created_at: state.created_at,
-        updated_at: state.updated_at,
-        profiles: row.raw.profile || null,
-      };
-
-      const lessonBlocks: LessonBlock[] = ((blocksRes.data as any[]) || []).map((b: any) => ({
-        id: b.id,
-        block_type: b.block_type,
-        content: b.config,
-      }));
-
-      const blockResponses: Record<string, any> = {};
-      for (const p of (progressRes.data || [])) {
-        blockResponses[p.block_id] = p.response;
+      try {
+        const detail = await loadTrainingDetailContext(userId, lessonId);
+        if (!detail) {
+          setError("Не удалось загрузить данные урока");
+        } else {
+          // Attach profile info if available from hub row
+          if (row.raw?.profile) {
+            detail.record.profiles = row.raw.profile;
+          }
+          setData(detail);
+        }
+      } catch (e) {
+        setError("Ошибка загрузки данных");
       }
-
-      setData({ record, lessonBlocks, blockResponses });
       setLoading(false);
     })();
   }, [row]);
@@ -103,6 +69,17 @@ function TrainingDetailBridge({ row, onClose }: { row: FormsHubRow; onClose: () 
       <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
         <DialogContent className="sm:max-w-md flex items-center justify-center py-12">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  if (error) {
+    return (
+      <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+        <DialogContent className="sm:max-w-md flex flex-col items-center justify-center py-12 gap-3">
+          <AlertCircle className="h-8 w-8 text-destructive" />
+          <p className="text-sm text-muted-foreground">{error}</p>
         </DialogContent>
       </Dialog>
     );

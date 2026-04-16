@@ -1,3 +1,7 @@
+/**
+ * MVP: client-side merge, limit(500) per source.
+ * TODO: server-side pagination, total counts, server filtering — separate follow-up PATCH.
+ */
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { getProductName } from "@/lib/product-names";
@@ -59,10 +63,35 @@ export function useFormsHubData(filters: FormsHubFilters, sourceTypeOverride?: F
           .order("created_at", { ascending: false })
           .limit(500);
 
+        // Collect profile_ids that need account resolution
+        const profileIdsToResolve: string[] = [];
+        for (const f of forms || []) {
+          const meta = (f.metadata || {}) as any;
+          if (!meta.user_id && f.profile_id) {
+            profileIdsToResolve.push(f.profile_id);
+          }
+        }
+
+        // Batch-resolve profiles.user_id for records without meta.user_id
+        let profileUserIdMap: Record<string, string | null> = {};
+        if (profileIdsToResolve.length > 0) {
+          const { data: profiles } = await supabase
+            .from("profiles")
+            .select("id, user_id")
+            .in("id", [...new Set(profileIdsToResolve)]);
+          if (profiles) {
+            for (const p of profiles) {
+              profileUserIdMap[p.id] = p.user_id;
+            }
+          }
+        }
+
         for (const f of forms || []) {
           const meta = (f.metadata || {}) as any;
           const formData = (f.form_data || {}) as any;
           const pageTitle = (f as any).site_pages?.title || "Без страницы";
+          const metaUserId = meta.user_id || null;
+          const resolvedUserId = metaUserId || (f.profile_id ? profileUserIdMap[f.profile_id] : null);
 
           rows.push({
             id: f.id,
@@ -71,14 +100,14 @@ export function useFormsHubData(filters: FormsHubFilters, sourceTypeOverride?: F
             client_email: formData.email || meta.email || null,
             client_phone: formData.phone || meta.phone || null,
             profile_id: f.profile_id,
-            user_id: meta.user_id || null,
+            user_id: metaUserId,
             product_id: meta.product_id || null,
             product_title: meta.product_title || "",
             source_entity: pageTitle,
             created_at: f.created_at,
             status: f.status || "new",
             has_deal: !!f.order_id,
-            has_account: !!f.profile_id,
+            has_account: !!resolvedUserId,
             raw: f,
           });
         }
