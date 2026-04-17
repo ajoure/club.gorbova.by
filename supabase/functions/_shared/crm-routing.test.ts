@@ -26,9 +26,13 @@ const ORDER_ID = "77777777-7777-7777-7777-777777777777";
 
 interface MockState {
   offer?: any;
+  /** Per-id offer lookup, used by fallback after candidate selection. */
+  offersById?: Record<string, any>;
   pipeline?: any;
   stages?: any[];
   order?: any;
+  /** Candidate offers returned by tariff_offers list-query in fallback resolver. */
+  tariffOfferCandidates?: any[];
   updates: Array<{ table: string; values: any; eqs: Array<[string, any]> }>;
   audits: Array<{ action: string; meta: any }>;
 }
@@ -36,20 +40,26 @@ interface MockState {
 function makeSupabase(state: MockState): any {
   const builder = (table: string) => {
     let _select = "*";
-    let _eqs: Array<[string, any]> = [];
-    let _ins: Array<[string, any[]]> = [];
+    const _eqs: Array<[string, any]> = [];
+    const _ins: Array<[string, any[]]> = [];
     const api: any = {
       select(sel: string) { _select = sel; return api; },
       eq(col: string, val: any) { _eqs.push([col, val]); return api; },
       in(col: string, vals: any[]) { _ins.push([col, vals]); return api; },
       maybeSingle: async () => {
-        if (table === "tariff_offers") return { data: state.offer ?? null, error: null };
+        if (table === "tariff_offers") {
+          // Lookup by id (used inside resolveOfferRouting after fallback picks one)
+          const idEq = _eqs.find(([c]) => c === "id");
+          if (idEq && state.offersById && state.offersById[idEq[1]]) {
+            return { data: state.offersById[idEq[1]], error: null };
+          }
+          return { data: state.offer ?? null, error: null };
+        }
         if (table === "crm_pipelines") return { data: state.pipeline ?? null, error: null };
         if (table === "orders_v2") return { data: state.order ?? null, error: null };
         return { data: null, error: null };
       },
       then: undefined as any,
-      // For .in() chains used as awaitable: stages query
       async [Symbol.asyncIterator]() {},
       update(values: any) {
         const upd = { table, values, eqs: [] as Array<[string, any]> };
@@ -69,12 +79,16 @@ function makeSupabase(state: MockState): any {
         return Promise.resolve({ error: null });
       },
     };
-    // For stages .in() returning array — emulate awaitable
+    // Awaitable list-query support (no maybeSingle):
+    //  - crm_pipeline_stages with .in('id', [...])
+    //  - tariff_offers with .eq('tariff_id',...).eq('is_active',true).eq('offer_type','pay_now')
     (api as any).then = (resolve: any) => {
       if (table === "crm_pipeline_stages" && _ins.length > 0) {
         const ids = _ins[0][1];
         const filtered = (state.stages ?? []).filter((s) => ids.includes(s.id));
         resolve({ data: filtered, error: null });
+      } else if (table === "tariff_offers") {
+        resolve({ data: state.tariffOfferCandidates ?? [], error: null });
       } else {
         resolve({ data: null, error: null });
       }
