@@ -9,7 +9,7 @@ import { SitePreview } from "@/components/admin/site-builder/SitePreview";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowLeft, Save, Globe, GlobeIcon, Loader2, Eye } from "lucide-react";
+import { ArrowLeft, Save, Globe, GlobeIcon, Loader2, Eye, BookOpen } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import type { SiteBlock, UpdateSitePageData } from "@/services/sitePages/types";
@@ -104,6 +104,15 @@ export default function AdminSiteEditor() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => window.open("/docs#site-builder", "_blank", "noopener,noreferrer")}
+              title="Открыть полное руководство по Конструктору сайтов"
+            >
+              <BookOpen className="h-4 w-4 mr-2" />
+              Справка
+            </Button>
             <Button variant="outline" onClick={handleSave} disabled={saving}>
               {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
               Сохранить

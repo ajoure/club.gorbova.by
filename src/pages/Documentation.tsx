@@ -39,6 +39,8 @@ import {
   FolderOpen,
 } from "lucide-react";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useState, useEffect, useCallback } from "react";
+import { resolveDocsTarget } from "@/lib/docsNavigation";
 
 const sections = [
   {
@@ -1121,6 +1123,36 @@ export default function Documentation() {
   const { hasAdminAccess, loading: permissionsLoading } = usePermissions();
   const showAdminDocs = hasAdminAccess();
 
+  const [activeTab, setActiveTab] = useState<"user" | "admin">("user");
+  const [openAccordion, setOpenAccordion] = useState<Record<string, string | undefined>>({});
+
+  // Deep-link: читаем hash и переключаем вкладку + раскрываем нужный AccordionItem.
+  // Двойной rAF: ждём смены вкладки → ждём рендера accordion → скроллим (чтобы избежать race).
+  const applyHash = useCallback(() => {
+    const target = resolveDocsTarget(window.location.hash);
+    if (!target) return;
+    if (target.tab === "admin" && !showAdminDocs) return;
+
+    setActiveTab(target.tab);
+
+    const sectionId = target.hash;
+    const accordionValue = target.accordionValue ?? `${sectionId}-0`;
+    setOpenAccordion((prev) => ({ ...prev, [sectionId]: accordionValue }));
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const el = document.getElementById(`docs-section-${sectionId}`);
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    });
+  }, [showAdminDocs]);
+
+  useEffect(() => {
+    applyHash();
+    window.addEventListener("hashchange", applyHash);
+    return () => window.removeEventListener("hashchange", applyHash);
+  }, [applyHash]);
+
   return (
     <DashboardLayout>
       <div className="max-w-5xl mx-auto space-y-6">
@@ -1133,7 +1165,38 @@ export default function Documentation() {
           </p>
         </div>
 
-        <Tabs defaultValue="user" className="w-full">
+        {/* ────── Видимый shortcut в раздел «Конструктор сайтов» ────── */}
+        {showAdminDocs && (
+          <GlassCard>
+            <div className="flex items-start gap-4 flex-wrap">
+              <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                <LayoutGrid className="h-6 w-6 text-primary" />
+              </div>
+              <div className="flex-1 min-w-[240px]">
+                <h2 className="text-lg font-semibold mb-1">Конструктор сайтов — полный manual</h2>
+                <p className="text-sm text-muted-foreground">
+                  15 подразделов: быстрый старт, все блоки, формы, анкеты, тарифы, embed, домены, публикация и решение проблем.
+                </p>
+              </div>
+              <a
+                href="/docs#site-builder"
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (window.location.hash === "#site-builder") {
+                    applyHash();
+                  } else {
+                    window.location.hash = "site-builder";
+                  }
+                }}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-primary text-primary-foreground hover:opacity-90 transition-opacity text-sm font-medium"
+              >
+                Открыть раздел
+              </a>
+            </div>
+          </GlassCard>
+        )}
+
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "user" | "admin")} className="w-full">
           {showAdminDocs ? (
             <TabsList className="grid w-full grid-cols-2 max-w-md">
               <TabsTrigger value="user" className="flex items-center gap-2">
@@ -1151,13 +1214,19 @@ export default function Documentation() {
             <div className="grid gap-6">
               {sections.map((section) => (
                 <GlassCard key={section.id}>
-                  <div className="flex items-center gap-3 mb-4">
+                  <div id={`docs-section-${section.id}`} className="flex items-center gap-3 mb-4 scroll-mt-20">
                     <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
                       <section.icon className="h-5 w-5 text-primary" />
                     </div>
                     <h2 className="text-xl font-semibold">{section.title}</h2>
                   </div>
-                  <Accordion type="single" collapsible className="w-full">
+                  <Accordion
+                    type="single"
+                    collapsible
+                    className="w-full"
+                    value={openAccordion[section.id]}
+                    onValueChange={(v) => setOpenAccordion((prev) => ({ ...prev, [section.id]: v }))}
+                  >
                     {section.content.map((item, index) => (
                       <AccordionItem key={index} value={`${section.id}-${index}`}>
                         <AccordionTrigger className="text-left">
@@ -1181,13 +1250,19 @@ export default function Documentation() {
               <div className="grid gap-6">
                 {adminSections.map((section) => (
                   <GlassCard key={section.id}>
-                    <div className="flex items-center gap-3 mb-4">
+                    <div id={`docs-section-${section.id}`} className="flex items-center gap-3 mb-4 scroll-mt-20">
                       <div className="w-10 h-10 rounded-lg bg-destructive/10 flex items-center justify-center">
                         <section.icon className="h-5 w-5 text-destructive" />
                       </div>
                       <h2 className="text-xl font-semibold">{section.title}</h2>
                     </div>
-                    <Accordion type="single" collapsible className="w-full">
+                    <Accordion
+                      type="single"
+                      collapsible
+                      className="w-full"
+                      value={openAccordion[section.id]}
+                      onValueChange={(v) => setOpenAccordion((prev) => ({ ...prev, [section.id]: v }))}
+                    >
                       {section.content.map((item, index) => (
                         <AccordionItem key={index} value={`${section.id}-${index}`}>
                           <AccordionTrigger className="text-left">
