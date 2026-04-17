@@ -2,7 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolveUserIds, getOrderUserId } from '../_shared/user-resolver.ts';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
-import { resolveOfferRouting } from '../_shared/crm-routing.ts';
+import { resolveOfferRoutingWithFallback, buildNegativeSnapshot, auditNegativeSnapshot } from '../_shared/crm-routing.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -505,18 +505,25 @@ Deno.serve(async (req) => {
 
           const orderNumber = `ORD-TEST-${Date.now().toString(36).toUpperCase()}`;
 
-          // CRM routing — Layer A: snapshot + pending-stage для admin test payment
-          const testRouting = await resolveOfferRouting(supabase, offerId);
+          // CRM routing — Layer A (B.0 invariant): always materialize crm_routing_snapshot
+          const testRouting = await resolveOfferRoutingWithFallback(supabase, { offer_id: offerId, tariff_id: tariffId });
+          const testCrmSnapshot = testRouting.ok && testRouting.snapshot
+            ? testRouting.snapshot
+            : buildNegativeSnapshot({
+                reason: testRouting.reason || 'unknown',
+                offer_id: offerId ?? null,
+                tariff_id: tariffId,
+                resolved_via: testRouting.resolved_via ?? 'none',
+                candidates_count: testRouting.candidates_count ?? 0,
+              });
           const testMeta: Record<string, unknown> = {
             source: 'admin_test',
             legacy_order_id: order.id,
             tariff_code: tariffCode || null,
             offer_id: offerId || null,
             test_payment: true,
+            crm_routing_snapshot: testCrmSnapshot,
           };
-          if (testRouting.ok && testRouting.snapshot) {
-            testMeta.crm_routing_snapshot = testRouting.snapshot;
-          }
 
           const { data: orderV2, error: orderV2Error } = await supabase
             .from('orders_v2')
@@ -547,6 +554,17 @@ Deno.serve(async (req) => {
           } else if (orderV2?.id) {
             returnedOrderId = orderV2.id;
             v2Created = true;
+            // B.0: audit negative snapshot post-INSERT
+            if (!testRouting.ok) {
+              await auditNegativeSnapshot(supabase, {
+                order_id: orderV2.id,
+                offer_id: offerId ?? null,
+                tariff_id: tariffId,
+                reason: testRouting.reason || 'unknown',
+                resolved_via: testRouting.resolved_via ?? 'none',
+                candidates_count: testRouting.candidates_count ?? 0,
+              });
+            }
           }
         } catch (e) {
           console.error('Failed to create orders_v2 for test payment:', e);
