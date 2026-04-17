@@ -1,300 +1,197 @@
-# да, согласен, с учетом правок:
+да, согласен, с учетом правок:
+
+1. Документацию делать не как набор разрозненных дописок, а как **один канонический раздел “Конструктор сайтов”**. Если в платформе уже есть раздел документации — расширять его. Если нет — создать **один** новый раздел в том же стиле платформы. Не плодить лишние сущности и параллельные help-системы.
+2. Формулировку про “15 страниц” лучше смягчить: это должна быть **полная структура покрытия**, но реализация может быть:  
+
+  - либо одной большой страницей с якорями и оглавлением,
+  - либо разделом с подразделами,
+  - но обязательно в едином каноническом формате.  
+  Главное — полнота и удобство, а не искусственно сделать ровно 15 роутов.
+3. В Discovery добавить обязательный итоговый артефакт:  
+**таблица “функция → где находится в UI → для чего нужна → куда сохраняет данные → где потом смотреть результат”**.  
+Это должно стать основой и для встроенной справки, и для пользовательской документации, и для тест-чеклиста.
+4. В helpTexts и встроенной справке покрыть **весь Site Builder**, а не только новые фичи:
+  - все типы блоков,
+  - все настройки блока,
+  - настройки страницы,
+  - preview / publish / draft,
+  - порядок / дублирование / удаление / скрытие,
+  - формы,
+  - embed,
+  - анкеты,
+  - anchors,
+  - button actions,
+  - pricing / product binding,
+  - куда попадают данные.
+5. Добавить отдельное обязательное правило:  
+**все пользовательские тексты, help-тексты, подписи, кнопки, описания, ошибки, документация и встроенные подсказки — только на русском языке**.  
+В финальном proof отдельно показать, что английских пользовательских строк в разделе Site Builder не осталось.
+6. Встроенная справка должна быть не декоративной, а практической. Для каждого важного поля нужен ответ на 4 вопроса:
+  - что это,
+  - когда использовать,
+  - что будет после сохранения,
+  - где потом увидеть результат.
+7. В разделе документации обязательно добавить две отдельные страницы/секции:
+  - **“Как пользоваться с нуля”** — путь для нового сотрудника;
+  - **“Как тестировать и что проверять”** — чек-лист для сотрудника/тестировщика.
+8. В “Как пользоваться с нуля” обязательно показать минимум 4 полных сценария:
+  - создать обычную страницу с текстом и кнопкой;
+  - создать страницу с обычной формой;
+  - получить embed-код и встроить форму;
+  - создать страницу с анкетой и проверить, куда ушли ответы.
+9. В “Куда попадают данные” обязательно разделить по типам:
+  - обычная форма,
+  - embed-форма,
+  - анкета/опрос,
+  - обучение/прогресс,  
+  и для каждого показать:
+  - где запись появляется в /admin/forms,
+  - как она выглядит в карточке контакта,
+  - какой detail viewer открывается.
+10. В E2E proof добавить отдельный критерий:  
+**новый сотрудник без чтения кода должен суметь пройти по документации путь “создать → опубликовать → отправить → найти результат”**.  
+Это и будет фактическим доказательством, что manual сделан правильно.
+11. В финальном отчете потребовать не только список измененных файлов, но и:
+  - карту функций Site Builder,
+  - список всех добавленных help-key,
+  - список экранов, где появилась встроенная справка,
+  - структуру документации,
+  - список русифицированных экранов,
+  - короткую инструкцию “с чего начать сотруднику”.
+12. Жестко зафиксировать guard:  
+не делать документацию “для разработчика”. Нужен **пользовательский manual простым русским языком**, чтобы человек без знаний архитектуры понял, как этим пользоваться.
 
 &nbsp;
 
-1. **PATCH D не делать через formId, если у вас нет отдельной канонической сущности form_id.**
-  Сейчас в плане одновременно фигурируют:
-  &nbsp;
-  - data-form-id
-  - page_id
-  - route /embed/form/:formId
-  &nbsp;
-  Это риск новой псевдо-сущности.
-  Нужно зафиксировать один канонический ключ:
-  &nbsp;
-  - либо block_id формы на странице
-  - либо page_id + block_id
-  &nbsp;
-  Для этого везде заменить:
-  &nbsp;
-  - formId → blockId
-  - route лучше сделать вида /embed/form/:pageId/:blockId
-  - snippet должен передавать именно stable id блока, а не выдуманный formId
-  &nbsp;
-2. **В PATCH D сначала зафиксировать reuse submit path как обязательный, а не “verify”.**
-  Здесь уже достаточно оснований не оставлять свободу выбора.
-  Нужно прямо записать:
-  &nbsp;
-  - site-form-submit — канонический submit path
-  - новый submit endpoint запрещён, если discovery не покажет критический blocker
-  - допустимо только add-only расширение metadata (embed_origin, embed_mode, embed_block_id)
-  &nbsp;
-3. **В EmbedFormPage нельзя делать “минимальную форму”, если уже есть canonical renderer формы.**
-  Иначе снова получится второй UI.
-  Надо записать:
-  &nbsp;
-  - EmbedFormPage рендерит тот же form block renderer, что и обычная site page
-  - без отдельной вёрстки полей
-  - без второго runtime path
-  &nbsp;
-4. **Для PATCH E нужно жёстко запретить создание собственного editor questionnaire.**
-  Сейчас фраза “кнопка создать новый → открывает existing lesson_blocks editor” правильная, но её надо усилить:
-  &nbsp;
-  - не создавать новый визуальный конструктор вопросов
-  - не копировать schema blocks
-  - только open existing editor / existing lesson flow
-  &nbsp;
-5. **Virtual lesson/module — допустимо, но только если это действительно reuse existing engine 1:1.**
-  Добавить явный guard:
-  &nbsp;
-  - нельзя делать отдельные site_questionnaire_response tables
-  - нельзя делать отдельный site_questionnaire_player
-  - нельзя делать отдельный detail viewer
-  - StudentProgressModal остаётся canonical viewer
-  &nbsp;
-6. **В PATCH E нужно заранее зафиксировать, как questionnaire попадёт в /admin/forms.**
-  Сейчас написано “добавить source site_questionnaire”, но нужно уточнить:
-  &nbsp;
-  - это отдельный source_type в forms hub
-  - в карточке контакта он должен отображаться в существующей вкладке “Анкеты и обучение”
-  - если используется тот же training path, то detail открывается через existing training bridge без специальных новых компонентов
-  &nbsp;
-7. **Нужен отдельный STOP-guard по миграции служебного module.**
-  Добавить:
-  &nbsp;
-  - если в проекте уже существует скрытый системный module для site/questionnaire задач, новый не создавать
-  - сначала discovery по training_modules.slug='__site_questionnaires__'
-  - миграция только если такого module ещё нет
-  &nbsp;
-8. **В PATCH F добавить invalidate/query-proof точнее.**
-  Не ['forms-hub'], а реальные query keys проекта:
-  &nbsp;
-  - forms-hub-data
-  - forms-hub-products
-  - contact-artifacts-* для карточки контакта, если submit идёт внутри активной сессии
-    Иначе подрядчик может написать несуществующий invalidate.
-  &nbsp;
-9. **В QA runbook для Embed добавить proof contact resolve.**
-  После submit нужно проверять не только site_form_submissions, но и:
-  &nbsp;
-  - найден/создан ли корректный profile/contact
-  - появилась ли запись у нужного контакта
-  - не создался ли дубль контакта
-  &nbsp;
-10. **В QA runbook для Site questionnaire добавить proof конкретной политики repeat.**
-  Сейчас policy выбрана хорошая: new session every submit.
-  Но надо прямо требовать:
+Главная правка: план правильный по направлению, но результатом должна быть **не документация к отдельным новым функциям, а полный русскоязычный manual по всему разделу “Конструктор сайтов” с встроенной справкой, документацией и тест-чеклистом**.
 
 &nbsp;
 
-&nbsp;
+# План: Полный пользовательский manual «Конструктор сайтов» + сквозная справка + русификация
 
-&nbsp;
+## Цель
 
-- два submit подряд одним user
-- две разные записи в user_lesson_progress
-- обе видны в истории контакта
-- обе видны в /admin/forms
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-11. **Нужен явный regression-блок по уже сделанным PATCH A/B/C.**
-  Добавить в runbook:
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- anchor scroll после внедрения embed/questionnaire не сломан
-- button actions show_block / toggle_block / open_form не сломаны
-- hidden blocks по-прежнему корректно работают
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-12. **Финальный критерий закрытия спринта нужно усилить.**
-  Спринт считать закрытым только если есть:
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- UI proof
-- DB proof
-- proof contact resolve
-- proof /admin/forms
-- proof contact card
-- regression proof по anchors/actions/visibility
-
-&nbsp;
-
-&nbsp;
-
-В остальном логика плана правильная. Основа хорошая: reuse existing engine, без второго storage path, без второго viewer, без второго submit flow.
-
-&nbsp;
-
-План: Site Builder Sprint — Phase 2 (PATCH D + PATCH E + PATCH F + E2E QA)
-
-## Статус
-
-- ✅ PATCH A (anchors), B (button actions), C (visibility) — выполнены
-- ❌ PATCH D, E, F + E2E QA — в работе
+Не дописки к Phase 2, а полноценный пользовательский manual по всему разделу Site Builder: сквозная встроенная справка, единый раздел документации, полная русификация, путь «с нуля» для нового сотрудника.
 
 ## Discovery (обязательно ДО execution)
 
-### D.0 Reuse-guard для embed form
+### D.1 Аудит всего Site Builder (карта функций)
 
-1. Прочитать `supabase/functions/site-form-submit/index.ts` — CORS, auth, contact resolve, dedup
-2. Зафиксировать вердикт:
-  ```
-   existing path: /functions/v1/site-form-submit
-   reuse для external embed: ДА / НЕТ
-   причина: <CORS=*/RLS/contact resolve/dedup>
-  ```
-3. Новый endpoint создавать **только если** reuse невозможен (по предыдущему discovery — CORS=`*`, reuse возможен)
+Просканировать и зафиксировать в виде таблицы:
 
-### E.0 Questionnaire engine discovery
+1. **Все типы блоков** — `src/components/admin/site-builder/blocks/*Editor.tsx` и `src/components/site-renderer/blocks/*` (hero, text, image, video, audio, gallery, logos, social, html, tabs, accordion, quote, callout, form, pricing, cta, button, questionnaire, …)
+2. **Настройки блока** — `BlockSettingsEditor.tsx` (anchor, visibility, padding, bg, color, maxWidth, fullWidth, hideOnMobile/Desktop)
+3. **Настройки страницы** — meta, slug, домен, theme settings, SEO
+4. **Жизненный цикл страницы** — draft / preview / publish, версии, отмена
+5. **Операции с блоками** — добавление, порядок (drag-n-drop), дублирование, удаление, скрытие
+6. **Якоря и действия кнопок** — anchor_id, scroll_to_anchor, show_block, toggle_block, open_form
+7. **Видимость** — initialVisibility, hideOnMobile/Desktop
+8. **Формы** — обычная форма, embed (inline/popup), путь данных
+9. **Анкеты** — reuse training engine, overwrite policy
+10. **Pricing / Product binding / CTA** — связка product↔page, режимы pricing
+11. **Куда попадают данные** — `/admin/forms`, карточка контакта (вкладка «Анкеты и обучение»), CRM-сделки, detail viewers
 
-1. Прочитать `lesson_blocks` структуру и questionnaire renderer (`LessonPlayer`, blocks с `block_type='questionnaire'/'diagnostic_table'`)
-2. Прочитать `user_lesson_progress` — поля, RLS, как пишется response
-3. Прочитать `loadTrainingDetailContext` (используется в `FormsDetailOpener` → `StudentProgressModal`)
-4. Решение:
-  - **A**: reuse через canonical lesson path (виртуальный lesson внутри служебного module `__site_questionnaires__`)
-  - **B**: blocker report
-5. **Запрещено**: второй editor вопросов, второй renderer, второй storage
+**Артефакт discovery:** `docs/site-builder/_audit-map.md` (внутренний, для контекста плана) — карта «функция → файл → пользовательский сценарий → куда сохраняется».
 
-### E.0.1 Политики (фиксируем ДО execution)
+### D.2 Канонические паттерны (используем 1:1)
 
-- **guest/auth**: `auth-required` (default) — questionnaire требует логин. Guest mode не открываем в этом спринте (избегаем второго storage path).
-- **contact resolve**: `auth.uid()` → `profiles.id` (canonical, тот же путь, что training)
-- **repeat policy**: `new session every submit` (default) — каждое прохождение = новая запись `user_lesson_progress` с новым `id`. Отображение:
-  - в карточке контакта: история (все сессии)
-  - в `/admin/forms`: одна строка per session
-  - в detail viewer: открывается конкретная выбранная сессия
+- Справка: `HelpIcon` / `HelpLabel` / `HelpTooltip` из `src/components/help/HelpComponents.tsx` + словарь `src/constants/helpTexts.ts` + тумблер `HelpModeContext`.
+- Документация: найти существующий раздел документации платформы (поиск `Documentation`, `KnowledgeBase`, `Help`, `Docs` в `src/pages/admin/` и роутах). Если найден — расширяем. Если нет — создаём один новый раздел `/admin/docs/site-builder` в едином стиле платформы (без новой help-системы).
 
----
+## PATCH 1 — Полный словарь helpTexts по всему Site Builder
 
-## PATCH D — Embeddable form
+**Файл:** `src/constants/helpTexts.ts` (add-only)
 
-**Файлы:**
+Добавить ключи по группам:
 
-- `supabase/functions/site-form-submit/index.ts` — verify CORS=`*`, добавить опциональный `embed_origin` в metadata (add-only)
-- `public/embed/form.js` (новый, статический) — popup loader, читает `data-form-id` / `data-page-id`, открывает iframe с минимальной формой, postMessage для submit
-- `src/pages/embed/EmbedFormPage.tsx` (новый) — публичная страница `/embed/form/:formId`, рендерит canonical form block, на submit вызывает existing `site-form-submit`
-- `src/components/admin/site-builder/blocks/FormBlockEditor.tsx` — добавить кнопку «Получить embed-код» с modal (snippet)
-- `src/App.tsx` — добавить route `/embed/form/:formId` (без AdminLayout)
+- `site_builder.page.*` — slug, draft/publish, preview, theme, SEO
+- `site_builder.block.<type>.*` — по одному ключу на каждый тип блока (что делает, когда использовать, обязательные поля, типичные ошибки)
+- `site_builder.block.settings.*` — anchor_id, initial_visibility, padding, background, max_width, full_width, hide_on_mobile/desktop
+- `site_builder.actions.*` — scroll_to_anchor, show_block, toggle_block, open_form, target selection
+- `site_builder.form.*` — обычная форма, embed inline, embed popup, snippet, куда сохраняются данные
+- `site_builder.questionnaire.*` — что это, reuse engine, overwrite policy, где смотреть результаты
+- `site_builder.pricing.*` — product-driven vs manual, product binding, CTA
+- `site_builder.results.*` — `/admin/forms`, карточка контакта, detail viewer
 
-**DoD:** snippet на внешней странице → submit → DB row in `site_form_submissions` → видна в `/admin/forms` → detail через canonical viewer.
+Каждый ключ: `{ short, full, link? }`. Полный текст — простым русским языком, без жаргона. `link` ведёт на соответствующий раздел внутренней документации.
 
----
+## PATCH 2 — Полная русификация Site Builder
 
-## PATCH E — Site questionnaire (reuse training engine)
+Сканирование и замена всех английских пользовательских строк (label, placeholder, toast, validation, modal title, button) во всех редакторах блоков, рендерерах, диалогах embed, EmbedFormPage, public/embed/form.js (комментарии для пользователя), `useFormsHubData.ts` (лейблы источников), `FormsExportTabContent`, `FormsDetailOpener`, общих настройках страницы и блока.
 
-**Гейты**: D.0 + E.0 + E.0.1 пройдены.
+Внутренние комментарии и логи разработчика — не трогаем.
 
-**Канонический путь хранения:** `user_lesson_progress` с virtual lesson внутри служебного module `__site_questionnaires__` (создаётся миграцией один раз).
+## PATCH 3 — Сквозная встроенная справка во всём Site Builder
 
-**Миграция:**
+`HelpIcon` / `HelpLabel` встроить:
 
-- Создать служебный `training_modules` row с `slug='__site_questionnaires__'`, `is_hidden=true`
-- Каждый site-questionnaire = `training_lessons` row внутри этого module
-- `lesson_blocks` для site-questionnaire помечаются `metadata.source='site'` + `metadata.site_block_id=<UUID>`
-- Расширить `useFormsHubData.ts` add-only: добавить source `site_questionnaire` (читает `user_lesson_progress` где lesson принадлежит служебному module)
+- В заголовок каждого редактора блока (`*BlockEditor.tsx`) — ключ `site_builder.block.<type>`
+- У каждого нетривиального поля настроек блока (`BlockSettingsEditor.tsx`) — anchor, visibility, padding, bg, max-width, mobile/desktop hide
+- У панели действий кнопок (`ButtonBlockEditor`) — action type + target
+- У embed-диалога (`FormBlockEditor`) — inline/popup, как вставить
+- У селектора анкеты (`QuestionnaireBlockEditor`) — выбор/создание, политика overwrite
+- У pricing-блока — product binding, режимы
+- В общих настройках страницы — slug, publish, preview, theme
 
-**Файлы:**
+Все справки активируются через существующий тумблер «Режим подсказок» (`HelpModeContext`).
 
-- `src/components/site-renderer/blocks/SiteQuestionnaireBlock.tsx` (новый, тонкий wrapper) — резолвит `lesson_id` из block content, рендерит существующий questionnaire renderer 1:1
-- `src/components/admin/site-builder/blocks/QuestionnaireBlockEditor.tsx` (новый, тонкий selector) — выбор существующего questionnaire ИЛИ кнопка «Создать новый» → открывает existing `lesson_blocks` editor для нового virtual lesson. **БЕЗ собственного editor вопросов.**
-- `src/services/sitePages/types.ts` — добавить block type `site_questionnaire` с content `{ lessonId: string }`
-- `src/components/site-renderer/SitePageRenderer.tsx` — wire новый block type
-- `src/components/admin/site-builder/SiteBlockEditor.tsx` — добавить block type в палитру
-- `src/hooks/useFormsHubData.ts` — расширить fetchTrainingResponses чтобы включить site source
+## PATCH 4 — Единый раздел документации «Конструктор сайтов»
 
-**DoD:** block добавляется → step flow → submit → `user_lesson_progress` → видно в карточке контакта (ContactArtifactsTab) и в `/admin/forms` → detail через `StudentProgressModal`.
+Расширяем существующий раздел документации (или создаём один canonical раздел, если его нет).
 
----
+**Структура (страницы внутри раздела):**
 
-## PATCH F — Unified contact/data path
+1. **Быстрый старт** — что такое Конструктор сайтов, для кого, общий путь
+2. **Как пользоваться с нуля** — пошаговый путь нового сотрудника (создать страницу → добавить блоки → форма → publish → проверить заявку)
+3. **Работа со страницей** — slug, домен, draft/preview/publish, отмена, theme, SEO
+4. **Все типы блоков** — отдельная страница на каждый блок (что делает, скриншот, обязательные поля, пример, типичные ошибки)
+5. **Настройки блока** — anchor, visibility, padding, bg, mobile/desktop
+6. **Якоря и действия кнопок** — как создать anchor, как привязать кнопку, 4 типа действий, выбор цели
+7. **Формы и заявки** — обычная форма, как создать, куда попадают данные
+8. **Embed-формы** — inline vs popup, как получить snippet, как вставить
+9. **Анкеты / опросы** — что это, reuse training engine, overwrite policy, как создать, куда попадают
+10. **Pricing и продающие блоки** — product binding, режимы, CTA, диагностика связки
+11. **Публикация и проверка** — preview vs published, чек-лист перед publish
+12. **Куда попадают данные** — `/admin/forms`, карточка контакта, CRM, detail viewers
+13. **Типовые сценарии** — лендинг продукта, страница с формой заявки, страница с анкетой, мультиблочная посадочная
+14. **FAQ и типичные ошибки** — anchor не скроллит, форма не сохраняет, embed не отображается, анкета не видна, дубль контакта
+15. **Чек-лист тестирования для сотрудника** — пошаговый QA-runbook на русском (что делать, какие скриншоты приложить, какие записи проверить)
 
-**Только wiring/invalidate, без переделки UI:**
+Все тексты — простым русским языком, для нетехнического сотрудника. Каждая страница содержит: «Что это», «Когда использовать», «Как сделать (шаги)», «Как проверить результат», «Типичные ошибки».
 
-- После site_form submit → `queryClient.invalidateQueries(['forms-hub'])`
-- После embed submit → idem (через webhook/realtime, если уже есть, иначе just rely on next fetch)
-- После site_questionnaire submit → idem
-- Verify: `useFormsHubData` корректно показывает все 3 source-типа
+Связываем с встроенной справкой: `helpText.link` ведёт на нужную страницу документации, кнопка «Подробнее →» в popover открывает её.
 
-**DoD:** все 3 потока видны в `/admin/forms` и в карточке контакта без ручного reload.
+## PATCH 5 — E2E proof на странице «тест»
 
----
+Под моим аккаунтом, страница «тест» как playground:
 
-## QA runbook
+1. **Аудит-карта** — приложить таблицу всех функций Site Builder (артефакт D.1)
+2. **Справка** — включить «Режим подсказок», пройти по всем редакторам блоков, скриншоты open popover у каждого ключевого поля
+3. **Документация** — скриншоты всех страниц нового раздела
+4. **Путь с нуля** — создать новую страницу с нуля по инструкции «Быстрый старт» → форма → анкета → publish → submit → проверка в `/admin/forms` и карточке контакта (скриншоты каждого шага)
+5. **Русификация proof** — grep английских пользовательских строк в Site Builder = пусто
+6. **Regression** — старые страницы открываются, anchors/actions/visibility (PATCH A/B/C) работают, формы и анкеты сохраняют данные
 
-### D. Embed form
+## Жёсткие гарды
 
-1. Создать форму в site builder, опубликовать страницу
-2. Скопировать embed snippet
-3. Вставить в тестовый HTML файл локально, открыть в браузере
-4. Submit → DB proof: `SELECT id, page_id, form_data, created_at FROM site_form_submissions ORDER BY created_at DESC LIMIT 1` → UUID
-5. Открыть `/admin/forms` → найти строку → screenshot
-6. Открыть detail → screenshot
+- НЕ создавать новый help-компонент — только `HelpIcon` / `HelpLabel` / `HelpTooltip`
+- НЕ создавать вторую систему документации — расширяем существующую (или единая новая, если нет)
+- НЕ переводить технические комментарии и логи
+- НЕ трогать backend-логику Phase 2 (D/E/F)
+- Документация — для пользователя, не для разработчика; без жаргона
 
-### E. Site questionnaire
+## DoD
 
-1. Добавить questionnaire block в site page → выбрать/создать questionnaire
-2. Опубликовать страницу
-3. Залогиниться тестовым user → пройти step flow → screenshot каждого шага
-4. Required validation → screenshot
-5. Submit → DB proof: `SELECT id, lesson_id, user_id, response, created_at FROM user_lesson_progress WHERE lesson_id IN (SELECT id FROM training_lessons WHERE module_id IN (SELECT id FROM training_modules WHERE slug='__site_questionnaires__')) ORDER BY created_at DESC LIMIT 1`
-6. Карточка контакта → ContactArtifactsTab → запись видна → screenshot
-7. `/admin/forms` → строка видна → screenshot
-8. Detail viewer (`StudentProgressModal`) → открывается → screenshot
-9. Повторное прохождение → новая `user_lesson_progress` row (`new session every submit` policy verified) → DB proof
-
-### F. Regression
-
-- existing site forms submit (старый flow) → работает
-- existing training progress → не сломан
-- `/admin/forms` filters/export → работают
-- contact card artifacts tab → работает
-- `/admin/contacts`, `/admin/payments` → не сломаны
-
-### Site-builder E2E
-
-- save страницы с anchors/actions/questionnaire → reopen editor → данные на месте
-- preview корректен
-- publish → live URL → всё работает
-
----
-
-## Архитектурные guards
-
-- НЕ трогать `/admin/forms` UI, `ContactArtifactsTab`, viewers, exports, filters, table engine
-- НЕ создавать второй questionnaire engine / editor / storage / renderer
-- НЕ создавать новые формы submit endpoint без reuse-guard fail
-- Target в button actions — только stable id/anchorId
-
-## Финальный DoD
-
-- embed form работает через canonical `site-form-submit`
-- site questionnaire работает через existing training engine
-- все записи попадают в `/admin/forms`
-- все записи видны в карточке контакта
-- detail viewers existing, без дублей
-- полный E2E DB-chain proof для D и E
-- regression checklist пройден
+- Карта всех функций Site Builder зафиксирована (аудит-артефакт)
+- `helpTexts.ts` дополнен полным словарём по всему Site Builder
+- `HelpIcon` встроен у всех ключевых полей всех редакторов блоков и настроек
+- Существующая система документации платформы расширена единым разделом «Конструктор сайтов» со всеми 15 страницами
+- Чек-лист тестирования для сотрудников опубликован внутри документации
+- Все пользовательские строки Site Builder на русском (proof: grep пуст)
+- Новый сотрудник может пройти путь «с нуля» по документации без чтения кода (proof: E2E прохождение под моим аккаунтом)
+- Скриншоты: справка (popover), документация (все страницы), путь с нуля, `/admin/forms`, карточка контакта
+- Финальный отчёт содержит: карту функций, список добавленных help-key, список экранов со справкой, список разделов документации, скриншоты «до/после», короткую инструкцию «с чего начать»
 
 ## Порядок
 
-Discovery (D.0 + E.0 + E.0.1) → миграция (служебный module) → PATCH D → PATCH E → PATCH F → QA → отчёт.
+Discovery (D.1 аудит-карта + D.2 поиск раздела документации) → PATCH 1 (словарь) → PATCH 2 (русификация) → PATCH 3 (сквозная справка) → PATCH 4 (раздел документации, 15 страниц) → PATCH 5 (E2E proof) → отчёт.
