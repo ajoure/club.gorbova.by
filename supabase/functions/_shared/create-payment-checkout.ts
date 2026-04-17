@@ -342,11 +342,24 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     // Meta MERGE (not overwrite) after checkout token. CRITICAL: spread oneTimeMetaWithRouting
     // (which already contains crm_routing_snapshot) — NOT plain orderMeta — otherwise the snapshot
     // written on insert is silently overwritten and immutability proof breaks.
+    //
+    // STEP A (active_checkout_token guard): пишем active_checkout_token + append в
+    // checkout_tokens_history[]. Это база для будущего reuse (шаг B) и для webhook stale-token guard.
+    const newCheckoutToken = checkoutResult.checkout.token;
+    const tokenHistoryEntry = {
+      token: newCheckoutToken,
+      issued_at: new Date().toISOString(),
+      payment_flow: paymentFlow,
+      amount: amountByn,
+      reason: 'initial_checkout',
+    };
     const { error: metaMergeErr } = await supabase.from('orders_v2').update({
       meta: {
         ...oneTimeMetaWithRouting,
-        bepaid_checkout_token: checkoutResult.checkout.token,
+        bepaid_checkout_token: newCheckoutToken,
+        active_checkout_token: newCheckoutToken,
         checkout_created_at: new Date().toISOString(),
+        checkout_tokens_history: [tokenHistoryEntry],
       },
     }).eq('id', order.id);
     if (metaMergeErr) console.error('[payment_checkout] order meta merge failed', { order_id: order.id, payment_type: 'one_time', error: metaMergeErr });
