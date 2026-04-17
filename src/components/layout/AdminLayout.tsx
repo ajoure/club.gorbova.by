@@ -42,6 +42,16 @@ const routeToTitle: Record<string, string> = {
   '/admin/docs': 'Документация системы',
 };
 
+/**
+ * Маршруты, для которых штатный «вопросик» в шапке должен вести
+ * не в общий /help, а сразу в нужный раздел /docs#<hash>.
+ *
+ * Используется prefix-match: ключ — префикс pathname.
+ */
+const routeToDocsHash: Record<string, string> = {
+  '/admin/sites': 'site-builder',
+};
+
 // Map admin routes to help section anchors
 const routeToHelpAnchor: Record<string, string> = {
   '/admin/users': 'admin-impersonate',
@@ -95,20 +105,25 @@ export function AdminLayout({ children, fullHeight }: AdminLayoutProps) {
     return null;
   }, [location.pathname]);
 
-  // Get the help anchor for the current route
-  const helpAnchor = useMemo(() => {
+  // Контекстная цель «вопросика» в шапке.
+  // Для разделов из routeToDocsHash ведём сразу в /docs#<hash> (новая вкладка),
+  // для остальных — в /help#<anchor> как раньше.
+  const helpTarget = useMemo(() => {
     const path = location.pathname;
-    // Check for exact match first
-    if (routeToHelpAnchor[path]) {
-      return routeToHelpAnchor[path];
-    }
-    // Check for prefix match (for nested routes)
-    for (const [route, anchor] of Object.entries(routeToHelpAnchor)) {
-      if (path.startsWith(route)) {
-        return anchor;
+    for (const [route, hash] of Object.entries(routeToDocsHash)) {
+      if (path === route || path.startsWith(route + "/") || path.startsWith(route)) {
+        return { kind: "docs" as const, href: `/docs#${hash}`, label: "Открыть руководство по разделу" };
       }
     }
-    return 'admin';
+    if (routeToHelpAnchor[path]) {
+      return { kind: "help" as const, href: `/help#${routeToHelpAnchor[path]}`, label: "Помощь по текущему разделу" };
+    }
+    for (const [route, anchor] of Object.entries(routeToHelpAnchor)) {
+      if (path.startsWith(route)) {
+        return { kind: "help" as const, href: `/help#${anchor}`, label: "Помощь по текущему разделу" };
+      }
+    }
+    return { kind: "help" as const, href: "/help#admin", label: "Помощь по текущему разделу" };
   }, [location.pathname]);
 
   if (loading) {
@@ -146,20 +161,31 @@ export function AdminLayout({ children, fullHeight }: AdminLayoutProps) {
             </div>
             <div className="flex items-center gap-1">
               <PushNotificationToggle />
-              {/* Contextual help link */}
+              {/* Контекстный «вопросик»: для /admin/sites ведёт сразу в /docs#site-builder */}
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <Link 
-                      to={`/help#${helpAnchor}`}
-                      className="text-muted-foreground hover:text-foreground transition-colors p-1"
-                    >
-                      <HelpCircle className="h-4 w-4" />
-                    </Link>
+                    {helpTarget.kind === "docs" ? (
+                      <a
+                        href={helpTarget.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-muted-foreground hover:text-foreground transition-colors p-1"
+                        aria-label={helpTarget.label}
+                      >
+                        <HelpCircle className="h-4 w-4" />
+                      </a>
+                    ) : (
+                      <Link
+                        to={helpTarget.href}
+                        className="text-muted-foreground hover:text-foreground transition-colors p-1"
+                        aria-label={helpTarget.label}
+                      >
+                        <HelpCircle className="h-4 w-4" />
+                      </Link>
+                    )}
                   </TooltipTrigger>
-                  <TooltipContent>
-                    Помощь по текущему разделу
-                  </TooltipContent>
+                  <TooltipContent>{helpTarget.label}</TooltipContent>
                 </Tooltip>
               </TooltipProvider>
             </div>
