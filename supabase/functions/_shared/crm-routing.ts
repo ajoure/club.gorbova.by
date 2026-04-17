@@ -109,10 +109,9 @@ export async function resolveOfferRouting(
   if (sPending.pipeline_id !== pipeline_id || sSuccess.pipeline_id !== pipeline_id || sFailed.pipeline_id !== pipeline_id) {
     return { ok: false, reason: 'stage_pipeline_mismatch' };
   }
-  // Semantic stage_type contract
-  if (sPending.stage_type !== 'open') return { ok: false, reason: 'stage_on_pending_not_open' };
-  if (sSuccess.stage_type !== 'closed_won') return { ok: false, reason: 'stage_on_success_not_closed_won' };
-  if (sFailed.stage_type !== 'closed_lost') return { ok: false, reason: 'stage_on_failed_not_closed_lost' };
+  // v2: snyat хардкод stage_type — менеджер выбирает любые стадии для маппинга
+  // success/failed/pending. Контракт остаётся только структурный: 3 разных стадии
+  // одной воронки.
 
   const snapshot: CrmRoutingSnapshot = {
     enabled: true,

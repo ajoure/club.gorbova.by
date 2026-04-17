@@ -1,5 +1,7 @@
+import { useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchPipelines, createPipeline, renamePipeline, deletePipeline, reorderPipelines } from "@/services/pipelineService";
+import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
 const QUERY_KEY = ["crm-pipelines"];
@@ -12,6 +14,21 @@ export function usePipelines() {
     queryFn: fetchPipelines,
     staleTime: 60_000,
   });
+
+  // Realtime: любое изменение в crm_pipelines → инвалидация
+  useEffect(() => {
+    const channel = supabase
+      .channel("crm-pipelines-rt")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "crm_pipelines" },
+        () => qc.invalidateQueries({ queryKey: QUERY_KEY }),
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [qc]);
 
   const createMutation = useMutation({
     mutationFn: (name: string) => createPipeline(name),

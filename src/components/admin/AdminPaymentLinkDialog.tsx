@@ -35,8 +35,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Link2, Copy, ExternalLink, Loader2, Layers, Tag, CheckCircle, Send, AlertTriangle } from "lucide-react";
+import { Link2, Copy, ExternalLink, Loader2, Layers, Tag, CheckCircle, Send, AlertTriangle, MousePointerClick } from "lucide-react";
 import { useProductsV2, useTariffs } from "@/hooks/useProductsV2";
+import { useTariffOffers } from "@/hooks/useTariffOffers";
 import { copyToClipboard } from "@/utils/clipboardUtils";
 import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
 
@@ -61,6 +62,7 @@ export function AdminPaymentLinkDialog({
   const queryClient = useQueryClient();
   const [selectedProductId, setSelectedProductId] = useState<string>("");
   const [selectedTariffId, setSelectedTariffId] = useState<string>("");
+  const [selectedOfferId, setSelectedOfferId] = useState<string>("");
   const [customAmount, setCustomAmount] = useState<string>("");
   const [description, setDescription] = useState("");
   const [paymentType, setPaymentType] = useState<"one_time" | "subscription">("one_time");
@@ -75,7 +77,25 @@ export function AdminPaymentLinkDialog({
   // Fetch tariffs for selected product
   const { data: tariffs, isLoading: tariffsLoading } = useTariffs(selectedProductId);
 
-  // Fetch tariff prices
+  // Fetch offers (кнопки оплаты) для выбранного тарифа
+  const { data: allOffers, isLoading: offersLoading } = useTariffOffers(selectedTariffId || undefined);
+
+  // Только активные кнопки + фильтр по типу оплаты (radio).
+  // pay_now → one_time / subscription по payment_method;
+  // trial исключаем (это не «оплатить сейчас»).
+  const filteredOffers = (allOffers || []).filter((o) => {
+    if (!o.is_active) return false;
+    if (o.offer_type !== "pay_now") return false;
+    if (paymentType === "subscription") {
+      // Подписка bePaid — кнопка с recurring config или явным subscription-методом.
+      // В системе offer.meta.recurring.is_recurring=true означает подписку.
+      return !!o.meta?.recurring?.is_recurring;
+    }
+    // Разовая — всё остальное (full_payment без recurring).
+    return !o.meta?.recurring?.is_recurring;
+  });
+
+  // Fetch tariff prices (legacy fallback если в тарифе нет offer)
   const { data: tariffPrices } = useQuery({
     queryKey: ["tariff_prices_for_link", selectedTariffId],
     queryFn: async () => {
@@ -146,6 +166,7 @@ export function AdminPaymentLinkDialog({
           user_id: userId,
           product_id: selectedProductId,
           tariff_id: selectedTariffId,
+          offer_id: selectedOfferId || undefined,
           amount: Math.round(amount * 100),
           payment_type: paymentType,
           description: description || `${selectedProduct?.name} — ${selectedTariff?.name}`,
@@ -172,23 +193,42 @@ export function AdminPaymentLinkDialog({
   // Reset tariff when product changes
   useEffect(() => {
     setSelectedTariffId("");
+    setSelectedOfferId("");
     setCustomAmount("");
     setGeneratedUrl(null);
   }, [selectedProductId]);
 
-  // Auto-fill amount from tariff price
+  // Авто-выбор основной кнопки нужного типа при смене тарифа/типа оплаты.
+  // Список offers уже отфильтрован по paymentType — берём primary, иначе первую.
   useEffect(() => {
-    if (tariffPrices?.price) {
+    if (!selectedTariffId || filteredOffers.length === 0) {
+      setSelectedOfferId("");
+      return;
+    }
+    // Если уже выбран offer и он есть в отфильтрованном списке — оставляем.
+    if (selectedOfferId && filteredOffers.some((o) => o.id === selectedOfferId)) return;
+    const primary = filteredOffers.find((o) => o.is_primary) || filteredOffers[0];
+    setSelectedOfferId(primary.id);
+    // Подставляем сумму из выбранной кнопки (BYN, конвертация из копеек).
+    setCustomAmount(String(Number(primary.amount) / 100));
+    setGeneratedUrl(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTariffId, paymentType, filteredOffers.length]);
+
+  // Fallback на tariff price только если offers нет вообще
+  useEffect(() => {
+    if (filteredOffers.length === 0 && tariffPrices?.price && !customAmount) {
       setCustomAmount(String(tariffPrices.price));
     }
-    setGeneratedUrl(null);
-  }, [tariffPrices]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tariffPrices, filteredOffers.length]);
 
   // Reset form on close
   useEffect(() => {
     if (!open) {
       setSelectedProductId("");
       setSelectedTariffId("");
+      setSelectedOfferId("");
       setCustomAmount("");
       setDescription("");
       setPaymentType("one_time");
@@ -217,6 +257,7 @@ export function AdminPaymentLinkDialog({
           user_id: userId,
           product_id: selectedProductId,
           tariff_id: selectedTariffId,
+          offer_id: selectedOfferId || undefined,
           amount: Math.round(amount * 100),
           payment_type: paymentType,
           description: description || `${selectedProduct?.name} — ${selectedTariff?.name}`,
@@ -304,6 +345,7 @@ export function AdminPaymentLinkDialog({
     createLinkMutation.isPending ||
     !selectedProductId ||
     !selectedTariffId ||
+    !selectedOfferId ||
     amount <= 0 ||
     !!conflictData;
 
@@ -441,7 +483,42 @@ export function AdminPaymentLinkDialog({
                 </div>
               )}
 
-              {/* Amount */}
+              {/* Кнопка оплаты (offer) — фильтруется по типу оплаты */}
+              {selectedTariffId && (
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-2">
+                    <MousePointerClick className="h-4 w-4 text-primary" />
+                    Кнопка оплаты
+                  </Label>
+                  {offersLoading ? (
+                    <Skeleton className="h-10 w-full" />
+                  ) : filteredOffers.length > 0 ? (
+                    <>
+                      <Select value={selectedOfferId} onValueChange={setSelectedOfferId}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Выберите кнопку…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {filteredOffers.map((o) => (
+                            <SelectItem key={o.id} value={o.id}>
+                              {o.button_label} — {Number(o.amount) / 100} BYN{o.is_primary ? " · основная" : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        Сделка попадёт в воронку CRM согласно настройкам этой кнопки. Сумму ниже можно скорректировать — привязка к кнопке сохранится.
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-xs text-destructive">
+                      В тарифе нет {paymentType === "subscription" ? "подписочной" : "разовой"} кнопки оплаты. Создайте её в настройках тарифа или переключите тип.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Amount (можно переопределить) */}
               {selectedTariffId && (
                 <div className="space-y-2">
                   <Label htmlFor="link-amount">Сумма (BYN)</Label>
@@ -455,7 +532,7 @@ export function AdminPaymentLinkDialog({
                     onChange={(e) => setCustomAmount(e.target.value)}
                     required
                   />
-                  {tariffPrices?.price && (
+                  {tariffPrices?.price && filteredOffers.length === 0 && (
                     <p className="text-xs text-muted-foreground">
                       Цена тарифа: {tariffPrices.price} BYN
                     </p>
@@ -463,36 +540,8 @@ export function AdminPaymentLinkDialog({
                 </div>
               )}
 
-              {/* Payment type */}
-              {selectedTariffId && amount > 0 && (
-                <div className="space-y-2">
-                  <Label>Тип оплаты</Label>
-                  <RadioGroup
-                    value={paymentType}
-                    onValueChange={(v) => setPaymentType(v as "one_time" | "subscription")}
-                    className="space-y-2"
-                  >
-                    <Label htmlFor="pt-one-time" className="flex items-center space-x-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/30">
-                      <RadioGroupItem value="one_time" id="pt-one-time" />
-                      <div>
-                        <p className="font-medium">Разовая оплата</p>
-                        <p className="text-xs text-muted-foreground">
-                          Одноразовое списание. Клиент может привязать карту.
-                        </p>
-                      </div>
-                    </Label>
-                    <Label htmlFor="pt-subscription" className="flex items-center space-x-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/30">
-                      <RadioGroupItem value="subscription" id="pt-subscription" />
-                      <div>
-                        <p className="font-medium">Подписка bePaid</p>
-                        <p className="text-xs text-muted-foreground">
-                          Ежемесячное автосписание. Управляется через bePaid.
-                        </p>
-                      </div>
-                    </Label>
-                  </RadioGroup>
-                </div>
-              )}
+              {/* (Тип оплаты перенесён выше — он фильтрует список кнопок) */}
+
 
               {/* PATCH E: Conflict warning from server response */}
               {conflictData && (
