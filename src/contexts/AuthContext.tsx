@@ -69,9 +69,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let isMounted = true;
 
+    // Detect stored auth token synchronously — affects loading-state policy
+    const hasStoredToken = (() => {
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith("sb-") && key.endsWith("-auth-token")) {
+            return true;
+          }
+        }
+      } catch { /* ignore */ }
+      return false;
+    })();
+
     // 1. Subscribe to auth state changes
     // RULE: No await, no DB calls, no RPC, no heavy side-effects inside listener.
-    // Listener does ONLY synchronous state updates.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (_event, currentSession) => {
         if (!isMounted) return;
@@ -82,7 +94,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         setSession(currentSession);
         setUser(currentSession?.user ?? null);
-        setLoading(false);
+        // Only flip loading off when we know what's going on:
+        // - if a stored token exists, wait for getSession() (handled below)
+        //   UNLESS this event already gave us a session
+        if (!hasStoredToken || currentSession) {
+          setLoading(false);
+        }
       }
     );
 
@@ -100,14 +117,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (isMounted) setLoading(false);
       });
 
-    // Safety timeout — prevent infinite loading if auth init hangs
+    // Safety timeout — prevent infinite loading if auth init hangs.
+    // Longer when a stored token exists (slow preview/HMR session restore).
     const safetyTimeout = setTimeout(() => {
       if (!isMounted) return;
       if (import.meta.env.DEV) {
-        console.warn("[AuthContext] Safety timeout — forcing loading=false after 5s");
+        console.warn("[AuthContext] Safety timeout — forcing loading=false");
       }
       setLoading(false);
-    }, 5000);
+    }, hasStoredToken ? 8000 : 5000);
 
     return () => {
       isMounted = false;
