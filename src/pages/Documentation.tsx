@@ -39,6 +39,8 @@ import {
   FolderOpen,
 } from "lucide-react";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useState, useEffect, useCallback } from "react";
+import { resolveDocsTarget } from "@/lib/docsNavigation";
 
 const sections = [
   {
