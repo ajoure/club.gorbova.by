@@ -367,7 +367,8 @@ export function AdminPaymentLinkDialog({
         throw new Error("Выберите продукт и тариф");
       }
       if (!effectiveOffer) {
-        throw new Error(resolved.ok ? "Не выбрана кнопка оплаты" : resolved.message);
+        const errMsg = !resolved.ok ? resolved.message : "Не выбрана кнопка оплаты";
+        throw new Error(errMsg);
       }
       if (amount <= 0) {
         throw new Error("Введите корректную сумму");
@@ -663,7 +664,7 @@ export function AdminPaymentLinkDialog({
 
                   {offersLoading ? (
                     <Skeleton className="h-10 w-full" />
-                  ) : !resolved.ok ? (
+                  ) : resolved.ok === false ? (
                     <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
                       <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                       <p>{resolved.message}</p>
