@@ -77,12 +77,14 @@ export function HelpIcon({
             </p>
           )}
           {helpText.link && (
-            <Link 
-              to={helpText.link}
+            <a
+              href={helpText.link}
+              target="_blank"
+              rel="noopener noreferrer"
               className="inline-block text-xs text-primary hover:underline"
             >
-              Подробнее →
-            </Link>
+              Подробнее в документации →
+            </a>
           )}
         </div>
       </PopoverContent>
