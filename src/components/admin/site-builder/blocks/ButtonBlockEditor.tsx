@@ -121,13 +121,13 @@ export function ButtonBlockEditor({ content, onChange, registry, currentBlockId 
 
       <div className="grid grid-cols-3 gap-2">
         <div>
-          <Label className="text-xs">Вариант</Label>
+          <Label className="text-xs">Стиль</Label>
           <Select value={(content.variant as string) || "primary"} onValueChange={(v) => onChange({ ...content, variant: v })}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="primary">Primary</SelectItem>
-              <SelectItem value="secondary">Secondary</SelectItem>
-              <SelectItem value="outline">Outline</SelectItem>
+              <SelectItem value="primary">Основная</SelectItem>
+              <SelectItem value="secondary">Дополнительная</SelectItem>
+              <SelectItem value="outline">Контурная</SelectItem>
             </SelectContent>
           </Select>
         </div>
