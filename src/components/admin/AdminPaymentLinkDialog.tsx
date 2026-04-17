@@ -482,7 +482,42 @@ export function AdminPaymentLinkDialog({
                 </div>
               )}
 
-              {/* Amount */}
+              {/* Кнопка оплаты (offer) — фильтруется по типу оплаты */}
+              {selectedTariffId && (
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-2">
+                    <MousePointerClick className="h-4 w-4 text-primary" />
+                    Кнопка оплаты
+                  </Label>
+                  {offersLoading ? (
+                    <Skeleton className="h-10 w-full" />
+                  ) : filteredOffers.length > 0 ? (
+                    <>
+                      <Select value={selectedOfferId} onValueChange={setSelectedOfferId}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Выберите кнопку…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {filteredOffers.map((o) => (
+                            <SelectItem key={o.id} value={o.id}>
+                              {o.button_label} — {Number(o.amount) / 100} BYN{o.is_primary ? " · основная" : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        Сделка попадёт в воронку CRM согласно настройкам этой кнопки. Сумму ниже можно скорректировать — привязка к кнопке сохранится.
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-xs text-destructive">
+                      В тарифе нет {paymentType === "subscription" ? "подписочной" : "разовой"} кнопки оплаты. Создайте её в настройках тарифа или переключите тип.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Amount (можно переопределить) */}
               {selectedTariffId && (
                 <div className="space-y-2">
                   <Label htmlFor="link-amount">Сумма (BYN)</Label>
@@ -496,7 +531,7 @@ export function AdminPaymentLinkDialog({
                     onChange={(e) => setCustomAmount(e.target.value)}
                     required
                   />
-                  {tariffPrices?.price && (
+                  {tariffPrices?.price && filteredOffers.length === 0 && (
                     <p className="text-xs text-muted-foreground">
                       Цена тарифа: {tariffPrices.price} BYN
                     </p>
