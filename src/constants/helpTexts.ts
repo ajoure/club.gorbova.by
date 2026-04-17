@@ -339,18 +339,22 @@ export const helpTexts: Record<string, HelpText> = {
   "site_builder.block.settings.padding": {
     short: "Отступы блока",
     full: "Внутренние отступы сверху и снизу в пикселях. Влияют на «воздух» вокруг блока на странице.",
+    link: "/docs#site-builder",
   },
   "site_builder.block.settings.background": {
     short: "Цвет и фон блока",
     full: "Цвет фона задаётся в формате #ffffff или hsl(...). Фоновое изображение — публичный URL картинки. Цвет текста влияет на текст внутри блока (если у элементов нет своих цветов).",
+    link: "/docs#site-builder",
   },
   "site_builder.block.settings.max_width": {
     short: "Максимальная ширина",
     full: "Ограничивает ширину контента блока: sm — узкая, md — средняя, lg — широкая, xl — очень широкая, full — на всю ширину экрана. Помогает сохранять читабельность на больших мониторах.",
+    link: "/docs#site-builder",
   },
   "site_builder.block.settings.responsive": {
     short: "Видимость на устройствах",
     full: "«Скрыть на мобильных» / «Скрыть на десктопе» — блок не отображается на выбранных устройствах. Удобно для разных версий одного и того же контента (например, разные баннеры для мобильных и десктопа).",
+    link: "/docs#site-builder",
   },
 
   // ─── Типы блоков: краткое описание каждого ───
@@ -362,34 +366,42 @@ export const helpTexts: Record<string, HelpText> = {
   "site_builder.block.text": {
     short: "Текст",
     full: "Форматированный текстовый блок. Поддерживает абзацы, списки, ссылки, выделение жирным/курсивом.",
+    link: "/docs#site-builder",
   },
   "site_builder.block.heading": {
     short: "Заголовок",
     full: "Отдельный заголовок уровня H1–H6. Помогает структурировать страницу и улучшает SEO.",
+    link: "/docs#site-builder",
   },
   "site_builder.block.image": {
     short: "Изображение",
     full: "Одна картинка с настройками ширины и опциональной ссылкой по клику. Не забудьте заполнить «alt» — это важно для SEO и доступности.",
+    link: "/docs#site-builder",
   },
   "site_builder.block.features": {
     short: "Преимущества",
     full: "Сетка карточек: иконка, заголовок, описание. Подходит для списка преимуществ продукта или возможностей сервиса.",
+    link: "/docs#site-builder",
   },
   "site_builder.block.cta": {
     short: "Призыв к действию (CTA)",
     full: "Большой акцентный блок с заголовком и кнопкой. Используется для напоминания посетителю сделать целевое действие.",
+    link: "/docs#site-builder",
   },
   "site_builder.block.faq": {
     short: "FAQ — вопрос-ответ",
     full: "Сворачиваемые вопросы. Кликом раскрывается ответ. Хорошо подходит для типовых вопросов клиентов.",
+    link: "/docs#site-builder",
   },
   "site_builder.block.divider": {
     short: "Разделитель",
     full: "Горизонтальная линия или отступ для визуального разделения секций.",
+    link: "/docs#site-builder",
   },
   "site_builder.block.video": {
     short: "Видео",
     full: "Встраивает видео по ссылке: YouTube, Vimeo, Kinescope. Провайдер определяется автоматически.",
+    link: "/docs#site-builder",
   },
   "site_builder.block.button": {
     short: "Кнопка",
@@ -399,22 +411,27 @@ export const helpTexts: Record<string, HelpText> = {
   "site_builder.block.columns": {
     short: "Колонки",
     full: "От 2 до 4 колонок с произвольным контентом. Помогает выкладывать информацию параллельно.",
+    link: "/docs#site-builder",
   },
   "site_builder.block.timer": {
     short: "Таймер обратного отсчёта",
     full: "Таймер до указанной даты. После истечения показывает заданное сообщение. Подходит для акций и распродаж.",
+    link: "/docs#site-builder",
   },
   "site_builder.block.html": {
     short: "Произвольный HTML",
     full: "Вставка любого HTML-кода. Используйте, если нужного блока нет среди стандартных. Будьте аккуратны: невалидный код может сломать вёрстку страницы.",
+    link: "/docs#site-builder",
   },
   "site_builder.block.gallery": {
     short: "Галерея",
     full: "Сетка из нескольких картинок. По клику картинка увеличивается в lightbox.",
+    link: "/docs#site-builder",
   },
   "site_builder.block.testimonials": {
     short: "Отзывы",
     full: "Карточки с отзывами клиентов: текст, имя автора, фото, должность.",
+    link: "/docs#site-builder",
   },
   "site_builder.block.pricing": {
     short: "Тарифы",
@@ -424,14 +441,17 @@ export const helpTexts: Record<string, HelpText> = {
   "site_builder.block.social": {
     short: "Соцсети",
     full: "Иконки социальных сетей со ссылками на ваши аккаунты.",
+    link: "/docs#site-builder",
   },
   "site_builder.block.logos": {
     short: "Логотипы",
     full: "Лента логотипов партнёров или клиентов. Поддерживает чёрно-белый режим.",
+    link: "/docs#site-builder",
   },
   "site_builder.block.spacer": {
     short: "Отступ",
     full: "Прозрачный пустой блок заданной высоты. Используется для увеличения «воздуха» между блоками.",
+    link: "/docs#site-builder",
   },
   "site_builder.block.form": {
     short: "Форма",
@@ -441,26 +461,32 @@ export const helpTexts: Record<string, HelpText> = {
   "site_builder.block.accordion": {
     short: "Аккордеон",
     full: "Сворачиваемые секции. Похоже на FAQ, но с произвольным содержимым внутри.",
+    link: "/docs#site-builder",
   },
   "site_builder.block.tabs": {
     short: "Вкладки",
     full: "Несколько вкладок с разным контентом, переключаемых по клику.",
+    link: "/docs#site-builder",
   },
   "site_builder.block.callout": {
     short: "Выноска",
     full: "Цветной блок с иконкой: Информация, Успех, Внимание, Важно. Привлекает внимание к ключевой мысли.",
+    link: "/docs#site-builder",
   },
   "site_builder.block.quote": {
     short: "Цитата",
     full: "Оформленная цитата с указанием автора и источника.",
+    link: "/docs#site-builder",
   },
   "site_builder.block.audio": {
     short: "Аудио",
     full: "Аудио-плеер для MP3/WAV по прямой ссылке.",
+    link: "/docs#site-builder",
   },
   "site_builder.block.embed": {
     short: "Встраивание (iframe)",
     full: "Встраивание любого внешнего сервиса по URL: Google Docs, формы, виджеты.",
+    link: "/docs#site-builder",
   },
   "site_builder.block.site_questionnaire": {
     short: "Анкета (опрос)",
@@ -484,10 +510,12 @@ export const helpTexts: Record<string, HelpText> = {
   "site_builder.form.title": {
     short: "Заголовок формы",
     full: "Текст над полями формы. Виден посетителю.",
+    link: "/docs#site-builder",
   },
   "site_builder.form.redirect": {
     short: "Перенаправление после отправки",
     full: "URL, на который попадёт посетитель после успешной отправки. Если оставить пустым — покажется встроенное сообщение «Спасибо».",
+    link: "/docs#site-builder",
   },
   "site_builder.form.auth_mode": {
     short: "Режим авторизации",
@@ -497,6 +525,7 @@ export const helpTexts: Record<string, HelpText> = {
   "site_builder.form.product_binding": {
     short: "Привязка к продукту",
     full: "Информация о выбранном продукте и тарифе сохранится в заявке. Помогает понимать, какой именно продукт интересен клиенту.",
+    link: "/docs#site-builder",
   },
   "site_builder.form.deal_creation": {
     short: "Создавать сделку",
@@ -506,6 +535,7 @@ export const helpTexts: Record<string, HelpText> = {
   "site_builder.form.fields": {
     short: "Поля формы",
     full: "Дополнительные поля, которые увидит посетитель (имя, телефон, комментарий и т.д.). Для каждого поля можно указать «привязку» — это связывает значение из формы с полем профиля контакта (например, поле формы «Ваш email» → email профиля).",
+    link: "/docs#site-builder",
   },
   "site_builder.form.embed_code": {
     short: "Получить embed-код",
@@ -532,6 +562,7 @@ export const helpTexts: Record<string, HelpText> = {
   "site_builder.questionnaire.lesson": {
     short: "Выбор анкеты",
     full: "Выберите существующую анкету из списка или нажмите «Создать новую» — откроется канонический редактор вопросов в новой вкладке. Все анкеты сайта хранятся в служебном разделе обучения и не показываются ученикам как обычные уроки.",
+    link: "/docs#site-builder",
   },
   "site_builder.questionnaire.policy": {
     short: "Политика повторного прохождения",
