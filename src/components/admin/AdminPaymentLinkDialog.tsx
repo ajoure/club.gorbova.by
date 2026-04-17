@@ -367,7 +367,10 @@ export function AdminPaymentLinkDialog({
         throw new Error("Выберите продукт и тариф");
       }
       if (!effectiveOffer) {
-        const errMsg = !resolved.ok ? resolved.message : "Не выбрана кнопка оплаты";
+        let errMsg = "Не выбрана кнопка оплаты";
+        if (!resolved.ok) {
+          errMsg = (resolved as ResolveBlocked).message;
+        }
         throw new Error(errMsg);
       }
       if (amount <= 0) {
