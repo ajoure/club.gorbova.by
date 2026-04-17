@@ -154,7 +154,7 @@ export function SiteSettingsPanel({
         <CardHeader><CardTitle className="text-base">SEO</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Label>Meta Title</Label>
+            <Label>SEO-заголовок (Meta Title)</Label>
             <Input
               value={(seoSettings.title as string) || ""}
               onChange={(e) => onSeoChange({ ...seoSettings, title: e.target.value })}
@@ -162,7 +162,7 @@ export function SiteSettingsPanel({
             />
           </div>
           <div className="space-y-2">
-            <Label>Meta Description</Label>
+            <Label>SEO-описание (Meta Description)</Label>
             <Textarea
               value={(seoSettings.description as string) || ""}
               onChange={(e) => onSeoChange({ ...seoSettings, description: e.target.value })}
@@ -171,7 +171,7 @@ export function SiteSettingsPanel({
             />
           </div>
           <div className="space-y-2">
-            <Label>OG Image URL</Label>
+            <Label>Картинка для соцсетей (OG Image URL)</Label>
             <Input
               value={(seoSettings.og_image as string) || ""}
               onChange={(e) => onSeoChange({ ...seoSettings, og_image: e.target.value })}
