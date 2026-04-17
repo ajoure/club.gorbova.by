@@ -3089,6 +3089,85 @@ Deno.serve(async (req) => {
         });
       }
 
+      // ====================================================================
+      // STEP A: STALE-TOKEN GUARD (one-time link_order)
+      // Контекст: после внедрения reuse (Шаг B) по одному order_id может быть
+      // несколько checkout-попыток (T1, T2…). Каждая попытка создаёт свой
+      // transaction_uid на стороне bePaid. Актуальной считается ТОЛЬКО
+      // последняя — meta.active_checkout_token.
+      //
+      // Алгоритм:
+      //   1. Если в order.meta.checkout_tokens_history НЕТ массива → legacy/чистый
+      //      сценарий (нет reuse) → guard SKIP, обычная обработка.
+      //   2. Иначе ищем transactionUid в history[].observed_uids[]:
+      //      - если найден под токеном == active_checkout_token → актуальный, пропускаем;
+      //      - если найден под другим (старым) токеном → STALE → audit + return 200;
+      //      - если впервые встречается → привязываем к active_checkout_token (append).
+      // ====================================================================
+      try {
+        const linkMeta = (linkOrderV2.meta || {}) as Record<string, any>;
+        const activeToken: string | null = linkMeta.active_checkout_token || null;
+        const tokensHistory: any[] = Array.isArray(linkMeta.checkout_tokens_history) ? linkMeta.checkout_tokens_history : [];
+
+        if (activeToken && tokensHistory.length > 0 && transactionUid) {
+          let foundUnderToken: string | null = null;
+          for (const entry of tokensHistory) {
+            const observed: string[] = Array.isArray(entry?.observed_uids) ? entry.observed_uids : [];
+            if (observed.includes(transactionUid)) {
+              foundUnderToken = entry.token || null;
+              break;
+            }
+          }
+
+          if (foundUnderToken && foundUnderToken !== activeToken) {
+            // STALE: callback от устаревшего checkout-token'а
+            console.warn('[WEBHOOK-LINK] STALE TOKEN: ignoring callback', { order_id: parsedOrderId, transactionUid, foundUnderToken, activeToken });
+            await supabase.from('audit_logs').insert({
+              actor_type: 'system',
+              actor_label: 'bepaid-webhook',
+              action: 'webhook_stale_token_ignored',
+              created_at: new Date().toISOString(),
+              meta: {
+                order_id: parsedOrderId,
+                transaction_uid: transactionUid,
+                stale_token: foundUnderToken,
+                active_token: activeToken,
+                bepaid_status: transactionStatus,
+                tracking_id: rawTrackingId,
+              },
+            });
+            await recordWebhookEvent(supabase, {
+              provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
+              tracking_id: rawTrackingId, parsed_kind: effectiveKind, parsed_order_id: parsedOrderId,
+              outcome: 'stale_token_ignored', http_status: 200,
+              processing_ms: Date.now() - startTime,
+            });
+            return new Response(JSON.stringify({ ok: true, status: 'stale_token_ignored' }), {
+              status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          if (!foundUnderToken) {
+            // Впервые видим этот uid → привязываем к active_checkout_token
+            const updatedHistory = tokensHistory.map((entry: any) => {
+              if (entry?.token === activeToken) {
+                const obs: string[] = Array.isArray(entry.observed_uids) ? entry.observed_uids : [];
+                return { ...entry, observed_uids: [...obs, transactionUid] };
+              }
+              return entry;
+            });
+            await supabase.from('orders_v2').update({
+              meta: { ...linkMeta, checkout_tokens_history: updatedHistory },
+            }).eq('id', linkOrderV2.id);
+            (linkOrderV2 as any).meta = { ...linkMeta, checkout_tokens_history: updatedHistory };
+          }
+        }
+      } catch (guardErr) {
+        console.error('[WEBHOOK-LINK] Stale-token guard error (non-fatal):', guardErr);
+      }
+      // END STEP A guard
+      // ====================================================================
+
       // Handle non-successful statuses
       if (!isLinkSuccessful) {
         console.log('[WEBHOOK-LINK] Non-successful status:', transactionStatus);
