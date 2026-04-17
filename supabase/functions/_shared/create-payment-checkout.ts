@@ -10,6 +10,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from './bepaid-credentials.ts';
 import { buildPurchaseSnapshot } from './build-purchase-snapshot.ts';
+import { resolveOfferRouting } from './crm-routing.ts';
 
 export interface CreateCheckoutParams {
   supabase: ReturnType<typeof createClient>;
@@ -218,6 +219,12 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     const plannedEndOneTime = new Date(nowOneTime);
     plannedEndOneTime.setDate(plannedEndOneTime.getDate() + accessDaysOneTime);
 
+    // CRM routing — Layer A: offer-driven первичная оплата
+    const oneTimeRouting = await resolveOfferRouting(supabase, offer_id);
+    const oneTimeMetaWithRouting = oneTimeRouting.ok && oneTimeRouting.snapshot
+      ? { ...orderMeta, crm_routing_snapshot: oneTimeRouting.snapshot }
+      : orderMeta;
+
     const { data: order, error: orderError } = await supabase
       .from('orders_v2')
       .insert({
@@ -234,7 +241,9 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         status: 'pending',
         customer_email: customerEmail,
         deal_date: new Date().toISOString(),
-        meta: orderMeta,
+        meta: oneTimeMetaWithRouting,
+        pipeline_id: oneTimeRouting.ok && oneTimeRouting.snapshot ? oneTimeRouting.snapshot.pipeline_id : null,
+        pipeline_stage_id: oneTimeRouting.ok && oneTimeRouting.snapshot ? oneTimeRouting.snapshot.stage_on_pending : null,
         purchase_snapshot: buildPurchaseSnapshot({
           product_id,
           product_public_id: product.public_id,
@@ -579,6 +588,12 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     const plannedEndSub = new Date(nowSub);
     plannedEndSub.setDate(plannedEndSub.getDate() + accessDaysSub);
 
+    // CRM routing — Layer A: offer-driven первичная оплата (subscription init)
+    const subRouting = await resolveOfferRouting(supabase, offer_id);
+    const subMetaWithRouting = subRouting.ok && subRouting.snapshot
+      ? { ...subOrderMeta, crm_routing_snapshot: subRouting.snapshot }
+      : subOrderMeta;
+
     const { data: order, error: orderError } = await supabase
       .from('orders_v2')
       .insert({
@@ -595,7 +610,9 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         status: 'pending',
         customer_email: customerEmail,
         deal_date: new Date().toISOString(),
-        meta: subOrderMeta,
+        meta: subMetaWithRouting,
+        pipeline_id: subRouting.ok && subRouting.snapshot ? subRouting.snapshot.pipeline_id : null,
+        pipeline_stage_id: subRouting.ok && subRouting.snapshot ? subRouting.snapshot.stage_on_pending : null,
         purchase_snapshot: buildPurchaseSnapshot({
           product_id,
           product_public_id: product.public_id,
