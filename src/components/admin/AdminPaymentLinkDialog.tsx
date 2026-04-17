@@ -35,8 +35,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Link2, Copy, ExternalLink, Loader2, Layers, Tag, CheckCircle, Send, AlertTriangle } from "lucide-react";
+import { Link2, Copy, ExternalLink, Loader2, Layers, Tag, CheckCircle, Send, AlertTriangle, MousePointerClick } from "lucide-react";
 import { useProductsV2, useTariffs } from "@/hooks/useProductsV2";
+import { useTariffOffers } from "@/hooks/useTariffOffers";
 import { copyToClipboard } from "@/utils/clipboardUtils";
 import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
 
