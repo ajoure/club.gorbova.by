@@ -36,6 +36,15 @@ export interface RecurringConfig {
   notify_grace_events?: boolean;                  // Send grace_started/24h/48h/expired notifications
 }
 
+// CRM routing — связка кнопки оплаты с воронкой/стадиями (Layer A: первичная оплата)
+export interface CrmRoutingConfig {
+  enabled: boolean;
+  pipeline_id: string;
+  stage_on_pending: string;
+  stage_on_success: string;
+  stage_on_failed: string;
+}
+
 export interface OfferMetaConfig {
   welcome_message?: {
     enabled: boolean;
@@ -55,6 +64,8 @@ export interface OfferMetaConfig {
   preregistration?: PreregistrationConfig;
   // Recurring/subscription settings (auto-renewal config)
   recurring?: RecurringConfig;
+  // CRM routing — связь с воронкой продаж (Layer A: только offer-driven первичная оплата)
+  crm_routing?: CrmRoutingConfig;
 }
 
 export interface TariffOffer {
