@@ -2,6 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolveUserIds, getOrderUserId } from '../_shared/user-resolver.ts';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
+import { resolveOfferRouting } from '../_shared/crm-routing.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -503,6 +504,20 @@ Deno.serve(async (req) => {
           }
 
           const orderNumber = `ORD-TEST-${Date.now().toString(36).toUpperCase()}`;
+
+          // CRM routing — Layer A: snapshot + pending-stage для admin test payment
+          const testRouting = await resolveOfferRouting(supabase, offerId);
+          const testMeta: Record<string, unknown> = {
+            source: 'admin_test',
+            legacy_order_id: order.id,
+            tariff_code: tariffCode || null,
+            offer_id: offerId || null,
+            test_payment: true,
+          };
+          if (testRouting.ok && testRouting.snapshot) {
+            testMeta.crm_routing_snapshot = testRouting.snapshot;
+          }
+
           const { data: orderV2, error: orderV2Error } = await supabase
             .from('orders_v2')
             .insert({
@@ -520,13 +535,9 @@ Deno.serve(async (req) => {
               status: 'pending',
               customer_email: emailLower,
               deal_date: new Date().toISOString(),
-              meta: {
-                source: 'admin_test',
-                legacy_order_id: order.id,
-                tariff_code: tariffCode || null,
-                offer_id: offerId || null,
-                test_payment: true,
-              },
+              meta: testMeta,
+              pipeline_id: testRouting.ok && testRouting.snapshot ? testRouting.snapshot.pipeline_id : null,
+              pipeline_stage_id: testRouting.ok && testRouting.snapshot ? testRouting.snapshot.stage_on_pending : null,
             })
             .select('id')
             .single();
