@@ -192,23 +192,42 @@ export function AdminPaymentLinkDialog({
   // Reset tariff when product changes
   useEffect(() => {
     setSelectedTariffId("");
+    setSelectedOfferId("");
     setCustomAmount("");
     setGeneratedUrl(null);
   }, [selectedProductId]);
 
-  // Auto-fill amount from tariff price
+  // Авто-выбор основной кнопки нужного типа при смене тарифа/типа оплаты.
+  // Список offers уже отфильтрован по paymentType — берём primary, иначе первую.
   useEffect(() => {
-    if (tariffPrices?.price) {
+    if (!selectedTariffId || filteredOffers.length === 0) {
+      setSelectedOfferId("");
+      return;
+    }
+    // Если уже выбран offer и он есть в отфильтрованном списке — оставляем.
+    if (selectedOfferId && filteredOffers.some((o) => o.id === selectedOfferId)) return;
+    const primary = filteredOffers.find((o) => o.is_primary) || filteredOffers[0];
+    setSelectedOfferId(primary.id);
+    // Подставляем сумму из выбранной кнопки (BYN, конвертация из копеек).
+    setCustomAmount(String(Number(primary.amount) / 100));
+    setGeneratedUrl(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTariffId, paymentType, filteredOffers.length]);
+
+  // Fallback на tariff price только если offers нет вообще
+  useEffect(() => {
+    if (filteredOffers.length === 0 && tariffPrices?.price && !customAmount) {
       setCustomAmount(String(tariffPrices.price));
     }
-    setGeneratedUrl(null);
-  }, [tariffPrices]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tariffPrices, filteredOffers.length]);
 
   // Reset form on close
   useEffect(() => {
     if (!open) {
       setSelectedProductId("");
       setSelectedTariffId("");
+      setSelectedOfferId("");
       setCustomAmount("");
       setDescription("");
       setPaymentType("one_time");
