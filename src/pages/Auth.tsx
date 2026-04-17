@@ -77,7 +77,13 @@ export default function Auth() {
   const [searchParams] = useSearchParams();
   const { user, session, signIn, signUp, loading } = useAuth();
   const [mode, setMode] = useState<AuthMode>("login");
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(() => {
+    try {
+      return localStorage.getItem("last_login_email") || "";
+    } catch {
+      return "";
+    }
+  });
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [firstName, setFirstName] = useState("");
@@ -313,6 +319,10 @@ export default function Auth() {
             });
           }
         } else {
+          // Persist last successful login email for prefill
+          try {
+            localStorage.setItem("last_login_email", email.toLowerCase().trim());
+          } catch { /* ignore */ }
           toast({
             title: "Добро пожаловать!",
             description: "Вы успешно вошли в систему",

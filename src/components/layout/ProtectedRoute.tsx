@@ -29,16 +29,28 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   const location = useLocation();
   const [settled, setSettled] = useState(false);
 
-  // Grace period: after auth reports "no user", wait 300ms before redirecting.
-  // This gives getSession time to restore after HMR/preview reload.
+  // Grace period: after auth reports "no user", wait before redirecting.
+  // If a Supabase auth token exists in localStorage, give it 1500ms to restore
+  // (covers slow HMR/preview reloads). Otherwise redirect immediately.
   useEffect(() => {
     if (loading || user) {
-      // Auth still loading or user present — reset settled
       setSettled(false);
       return;
     }
-    // loading=false && !user → start grace timer
-    const timer = setTimeout(() => setSettled(true), 300);
+    // Check for stored auth token — if present, session restoration is in flight
+    const hasStoredToken = (() => {
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith("sb-") && key.endsWith("-auth-token")) {
+            return true;
+          }
+        }
+      } catch { /* ignore */ }
+      return false;
+    })();
+    const graceMs = hasStoredToken ? 1500 : 0;
+    const timer = setTimeout(() => setSettled(true), graceMs);
     return () => clearTimeout(timer);
   }, [loading, user]);
 
