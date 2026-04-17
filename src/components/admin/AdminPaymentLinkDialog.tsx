@@ -345,6 +345,7 @@ export function AdminPaymentLinkDialog({
     createLinkMutation.isPending ||
     !selectedProductId ||
     !selectedTariffId ||
+    !selectedOfferId ||
     amount <= 0 ||
     !!conflictData;
 
@@ -539,36 +540,8 @@ export function AdminPaymentLinkDialog({
                 </div>
               )}
 
-              {/* Payment type */}
-              {selectedTariffId && amount > 0 && (
-                <div className="space-y-2">
-                  <Label>Тип оплаты</Label>
-                  <RadioGroup
-                    value={paymentType}
-                    onValueChange={(v) => setPaymentType(v as "one_time" | "subscription")}
-                    className="space-y-2"
-                  >
-                    <Label htmlFor="pt-one-time" className="flex items-center space-x-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/30">
-                      <RadioGroupItem value="one_time" id="pt-one-time" />
-                      <div>
-                        <p className="font-medium">Разовая оплата</p>
-                        <p className="text-xs text-muted-foreground">
-                          Одноразовое списание. Клиент может привязать карту.
-                        </p>
-                      </div>
-                    </Label>
-                    <Label htmlFor="pt-subscription" className="flex items-center space-x-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/30">
-                      <RadioGroupItem value="subscription" id="pt-subscription" />
-                      <div>
-                        <p className="font-medium">Подписка bePaid</p>
-                        <p className="text-xs text-muted-foreground">
-                          Ежемесячное автосписание. Управляется через bePaid.
-                        </p>
-                      </div>
-                    </Label>
-                  </RadioGroup>
-                </div>
-              )}
+              {/* (Тип оплаты перенесён выше — он фильтрует список кнопок) */}
+
 
               {/* PATCH E: Conflict warning from server response */}
               {conflictData && (
