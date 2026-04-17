@@ -77,7 +77,25 @@ export function AdminPaymentLinkDialog({
   // Fetch tariffs for selected product
   const { data: tariffs, isLoading: tariffsLoading } = useTariffs(selectedProductId);
 
-  // Fetch tariff prices
+  // Fetch offers (кнопки оплаты) для выбранного тарифа
+  const { data: allOffers, isLoading: offersLoading } = useTariffOffers(selectedTariffId || undefined);
+
+  // Только активные кнопки + фильтр по типу оплаты (radio).
+  // pay_now → one_time / subscription по payment_method;
+  // trial исключаем (это не «оплатить сейчас»).
+  const filteredOffers = (allOffers || []).filter((o) => {
+    if (!o.is_active) return false;
+    if (o.offer_type !== "pay_now") return false;
+    if (paymentType === "subscription") {
+      // Подписка bePaid — кнопка с recurring config или явным subscription-методом.
+      // В системе offer.meta.recurring.is_recurring=true означает подписку.
+      return !!o.meta?.recurring?.is_recurring;
+    }
+    // Разовая — всё остальное (full_payment без recurring).
+    return !o.meta?.recurring?.is_recurring;
+  });
+
+  // Fetch tariff prices (legacy fallback если в тарифе нет offer)
   const { data: tariffPrices } = useQuery({
     queryKey: ["tariff_prices_for_link", selectedTariffId],
     queryFn: async () => {
