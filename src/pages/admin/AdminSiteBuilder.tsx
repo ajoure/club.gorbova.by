@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, FileText, Globe, Loader2, Trash2, FolderPlus, Folder, FolderOpen, ChevronRight, MoreVertical, Copy, FolderInput, Tag, X } from "lucide-react";
+import { Plus, FileText, Globe, Loader2, Trash2, FolderPlus, Folder, FolderOpen, ChevronRight, MoreVertical, Copy, FolderInput, Tag, X, BookOpen } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
@@ -216,6 +216,15 @@ export default function AdminSiteBuilder() {
             <p className="text-muted-foreground">Создавайте и управляйте лендингами</p>
           </div>
           <div className="flex items-center gap-2">
+            {/* Видимый entry point в справку */}
+            <Button
+              variant="outline"
+              onClick={() => window.open("/docs#site-builder", "_blank", "noopener,noreferrer")}
+              title="Открыть полное руководство по Конструктору сайтов в новой вкладке"
+            >
+              <BookOpen className="h-4 w-4 mr-2" />
+              Справка по конструктору
+            </Button>
             {/* Create Folder */}
             <Dialog open={folderOpen} onOpenChange={setFolderOpen}>
               <DialogTrigger asChild>
