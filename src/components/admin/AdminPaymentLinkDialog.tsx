@@ -483,6 +483,34 @@ export function AdminPaymentLinkDialog({
                 </div>
               )}
 
+              {/* Тип оплаты (radio) — фильтрует список кнопок ниже */}
+              {selectedTariffId && (
+                <div className="space-y-2">
+                  <Label>Тип оплаты</Label>
+                  <RadioGroup
+                    value={paymentType}
+                    onValueChange={(v) => setPaymentType(v as "one_time" | "subscription")}
+                    className="flex gap-4"
+                  >
+                    <div className="flex items-center space-x-2">
+                      <RadioGroupItem value="one_time" id="pt-one-time" />
+                      <Label htmlFor="pt-one-time" className="font-normal cursor-pointer">
+                        Разовая
+                      </Label>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <RadioGroupItem value="subscription" id="pt-subscription" />
+                      <Label htmlFor="pt-subscription" className="font-normal cursor-pointer">
+                        Подписка
+                      </Label>
+                    </div>
+                  </RadioGroup>
+                  <p className="text-xs text-muted-foreground">
+                    Фильтрует доступные кнопки оплаты ниже.
+                  </p>
+                </div>
+              )}
+
               {/* Кнопка оплаты (offer) — фильтруется по типу оплаты */}
               {selectedTariffId && (
                 <div className="space-y-2">
