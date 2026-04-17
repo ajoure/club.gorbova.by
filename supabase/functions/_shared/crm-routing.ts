@@ -40,6 +40,25 @@ export interface ResolvedRouting {
   ok: boolean;
   reason?: string;
   snapshot?: CrmRoutingSnapshot;
+  /** How resolution happened — for audit/snapshot transparency. */
+  resolved_via?: 'offer_id' | 'tariff_fallback';
+  /** Number of routing-enabled candidates considered during fallback. */
+  candidates_count?: number;
+}
+
+/**
+ * Negative (structured) snapshot, written to orders_v2.meta.crm_routing_snapshot
+ * when routing cannot be applied. B.0 invariant: snapshot is ALWAYS present in
+ * meta after order materialize — positive (CrmRoutingSnapshot) or negative.
+ */
+export interface NegativeRoutingSnapshot {
+  enabled: false;
+  reason: string;
+  resolved_at: string;
+  offer_id: string | null;
+  tariff_id: string | null;
+  resolved_via: 'offer_id' | 'tariff_fallback' | 'none';
+  candidates_count: number;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
