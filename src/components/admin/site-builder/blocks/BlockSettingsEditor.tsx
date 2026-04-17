@@ -4,6 +4,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { BlockSettings } from "@/services/sitePages/types";
 import { isValidAnchorSlug } from "@/hooks/useSitePageAnchors";
+import { HelpIcon } from "@/components/help/HelpComponents";
 
 interface BlockSettingsEditorProps {
   settings: BlockSettings;

@@ -10,6 +10,7 @@ import { useParams } from "react-router-dom";
 import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { HelpIcon } from "@/components/help/HelpComponents";
 
 interface FormBlockEditorProps {
   content: Record<string, unknown>;

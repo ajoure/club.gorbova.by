@@ -3,6 +3,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { ButtonActionType } from "@/services/sitePages/types";
 import type { AnchorsRegistry } from "@/hooks/useSitePageAnchors";
+import { HelpIcon } from "@/components/help/HelpComponents";
 
 interface ButtonBlockEditorProps {
   content: Record<string, unknown>;

@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ExternalLink, Plus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { HelpIcon } from "@/components/help/HelpComponents";
 
 interface Props {
   content: Record<string, unknown>;
