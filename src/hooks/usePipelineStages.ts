@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   fetchStages,
@@ -8,6 +9,7 @@ import {
   updateStageColor,
   type CrmPipelineStage,
 } from "@/services/pipelineService";
+import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
 export function usePipelineStages(pipelineId: string | null) {
@@ -22,6 +24,28 @@ export function usePipelineStages(pipelineId: string | null) {
   });
 
   const invalidate = () => qc.invalidateQueries({ queryKey });
+
+  // Realtime: изменения стадий выбранной воронки → invalidate
+  useEffect(() => {
+    if (!pipelineId) return;
+    const channel = supabase
+      .channel(`crm-pipeline-stages-rt-${pipelineId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "crm_pipeline_stages",
+          filter: `pipeline_id=eq.${pipelineId}`,
+        },
+        () => qc.invalidateQueries({ queryKey }),
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pipelineId, qc]);
 
   const createMut = useMutation({
     mutationFn: ({ name, color }: { name: string; color?: string }) =>
