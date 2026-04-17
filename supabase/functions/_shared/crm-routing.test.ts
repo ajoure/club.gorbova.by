@@ -156,7 +156,9 @@ Deno.test("resolveOfferRouting: duplicate stage ids", async () => {
   assertEquals(r.reason, "duplicate_stage_ids");
 });
 
-Deno.test("resolveOfferRouting: success stage wrong type", async () => {
+Deno.test("resolveOfferRouting v2: любой stage_type допустим (open для success)", async () => {
+  // v2: семантика stage_type больше не валидируется helper-ом — менеджер сам
+  // решает, какая стадия означает «успех». Резолв должен пройти.
   const stages = defaultStages().map((s) =>
     s.id === STAGE_SUCCESS ? { ...s, stage_type: "open" } : s
   );
@@ -167,8 +169,8 @@ Deno.test("resolveOfferRouting: success stage wrong type", async () => {
     updates: [], audits: [],
   });
   const r = await resolveOfferRouting(sb, OFFER_ID);
-  assertEquals(r.ok, false);
-  assertEquals(r.reason, "stage_on_success_not_closed_won");
+  assert(r.ok);
+  assertEquals(r.snapshot?.stage_types.success, "open");
 });
 
 Deno.test("resolveOfferRouting: happy path → snapshot", async () => {
