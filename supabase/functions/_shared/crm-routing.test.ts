@@ -296,3 +296,87 @@ Deno.test("applyCrmStageOnTerminal: idempotent — already at target", async () 
   assertEquals(state.audits[0].action, "crm_stage_applied_success");
   assertEquals(state.audits[0].meta.result, "idempotent_already_at_target");
 });
+
+// ---------- B.0: resolveOfferRoutingWithFallback ----------
+
+const TARIFF_ID = "88888888-8888-8888-8888-888888888888";
+const OFFER_ID_2 = "99999999-9999-9999-9999-999999999990";
+
+Deno.test("B.0 fallback: exact positive по offer_id", async () => {
+  const sb = makeSupabase({
+    offer: { id: OFFER_ID, button_label: "PRO", meta: { crm_routing: validRouting() }, updated_at: "2025-04-01T00:00:00Z", tariff_id: TARIFF_ID },
+    pipeline: { id: PIPELINE_ID, name: "Sales" },
+    stages: defaultStages(),
+    updates: [], audits: [],
+  });
+  const r = await resolveOfferRoutingWithFallback(sb, { offer_id: OFFER_ID, tariff_id: TARIFF_ID });
+  assert(r.ok);
+  assertEquals(r.resolved_via, "offer_id");
+  assertEquals(r.candidates_count, 1);
+  assertEquals(r.snapshot?.pipeline_id, PIPELINE_ID);
+});
+
+Deno.test("B.0 fallback: positive по tariff_id с ровно одним кандидатом", async () => {
+  const sb = makeSupabase({
+    offersById: {
+      [OFFER_ID]: { id: OFFER_ID, button_label: "PRO", meta: { crm_routing: validRouting() }, updated_at: "2025-04-01T00:00:00Z", tariff_id: TARIFF_ID },
+    },
+    pipeline: { id: PIPELINE_ID, name: "Sales" },
+    stages: defaultStages(),
+    tariffOfferCandidates: [
+      { id: OFFER_ID, meta: { crm_routing: { enabled: true } } },
+    ],
+    updates: [], audits: [],
+  });
+  const r = await resolveOfferRoutingWithFallback(sb, { offer_id: null, tariff_id: TARIFF_ID });
+  assert(r.ok);
+  assertEquals(r.resolved_via, "tariff_fallback");
+  assertEquals(r.candidates_count, 1);
+  assertEquals(r.snapshot?.pipeline_id, PIPELINE_ID);
+});
+
+Deno.test("B.0 fallback: negative no_offer_for_tariff (0 routing-enabled кандидатов)", async () => {
+  const sb = makeSupabase({
+    tariffOfferCandidates: [
+      // active pay_now offer без routing
+      { id: OFFER_ID, meta: { crm_routing: { enabled: false } } },
+    ],
+    updates: [], audits: [],
+  });
+  const r = await resolveOfferRoutingWithFallback(sb, { offer_id: null, tariff_id: TARIFF_ID });
+  assertEquals(r.ok, false);
+  assertEquals(r.reason, "no_offer_for_tariff");
+  assertEquals(r.resolved_via, "tariff_fallback");
+  assertEquals(r.candidates_count, 0);
+});
+
+Deno.test("B.0 fallback: negative ambiguous_offers_for_tariff (>1 кандидатов)", async () => {
+  const sb = makeSupabase({
+    tariffOfferCandidates: [
+      { id: OFFER_ID, meta: { crm_routing: { enabled: true } } },
+      { id: OFFER_ID_2, meta: { crm_routing: { enabled: true } } },
+    ],
+    updates: [], audits: [],
+  });
+  const r = await resolveOfferRoutingWithFallback(sb, { offer_id: null, tariff_id: TARIFF_ID });
+  assertEquals(r.ok, false);
+  assertEquals(r.reason, "ambiguous_offers_for_tariff");
+  assertEquals(r.resolved_via, "tariff_fallback");
+  assertEquals(r.candidates_count, 2);
+});
+
+Deno.test("B.0 buildNegativeSnapshot: structural fields", () => {
+  const ns = buildNegativeSnapshot({
+    reason: "no_offer_for_tariff",
+    offer_id: null,
+    tariff_id: TARIFF_ID,
+    resolved_via: "tariff_fallback",
+    candidates_count: 0,
+  });
+  assertEquals(ns.enabled, false);
+  assertEquals(ns.reason, "no_offer_for_tariff");
+  assertEquals(ns.tariff_id, TARIFF_ID);
+  assertEquals(ns.resolved_via, "tariff_fallback");
+  assertEquals(ns.candidates_count, 0);
+  assert(typeof ns.resolved_at === "string" && ns.resolved_at.length > 0);
+});
