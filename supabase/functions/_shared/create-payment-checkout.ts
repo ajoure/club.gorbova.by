@@ -280,6 +280,18 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       return { success: false, error: 'Failed to create order' };
     }
 
+    // B.0: audit negative snapshot post-INSERT (non-blocking)
+    if (!oneTimeRouting.ok) {
+      await auditNegativeSnapshot(supabase, {
+        order_id: order.id,
+        offer_id: offer_id ?? null,
+        tariff_id,
+        reason: oneTimeRouting.reason || 'unknown',
+        resolved_via: oneTimeRouting.resolved_via ?? 'none',
+        candidates_count: oneTimeRouting.candidates_count ?? 0,
+      });
+    }
+
     const trackingId = `link:order:${order.id}`;
     const returnUrl = `${effectiveOrigin}/purchases?order=${order.id}&status=success`;
 
