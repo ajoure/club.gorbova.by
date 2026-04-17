@@ -10,7 +10,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from './bepaid-credentials.ts';
 import { buildPurchaseSnapshot } from './build-purchase-snapshot.ts';
-import { resolveOfferRouting } from './crm-routing.ts';
+import { resolveOfferRoutingWithFallback, buildNegativeSnapshot, auditNegativeSnapshot } from './crm-routing.ts';
 
 export interface CreateCheckoutParams {
   supabase: ReturnType<typeof createClient>;
@@ -219,11 +219,20 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     const plannedEndOneTime = new Date(nowOneTime);
     plannedEndOneTime.setDate(plannedEndOneTime.getDate() + accessDaysOneTime);
 
-    // CRM routing — Layer A: offer-driven первичная оплата
-    const oneTimeRouting = await resolveOfferRouting(supabase, offer_id);
-    const oneTimeMetaWithRouting = oneTimeRouting.ok && oneTimeRouting.snapshot
-      ? { ...orderMeta, crm_routing_snapshot: oneTimeRouting.snapshot }
-      : orderMeta;
+    // CRM routing — Layer A (B.0 invariant): always materialize crm_routing_snapshot
+    // (positive or structural-negative). Snapshot is written once at INSERT and never
+    // overwritten downstream — see B.0 contract.
+    const oneTimeRouting = await resolveOfferRoutingWithFallback(supabase, { offer_id, tariff_id });
+    const oneTimeCrmSnapshot = oneTimeRouting.ok && oneTimeRouting.snapshot
+      ? oneTimeRouting.snapshot
+      : buildNegativeSnapshot({
+          reason: oneTimeRouting.reason || 'unknown',
+          offer_id: offer_id ?? null,
+          tariff_id,
+          resolved_via: oneTimeRouting.resolved_via ?? 'none',
+          candidates_count: oneTimeRouting.candidates_count ?? 0,
+        });
+    const oneTimeMetaWithRouting = { ...orderMeta, crm_routing_snapshot: oneTimeCrmSnapshot };
 
     const { data: order, error: orderError } = await supabase
       .from('orders_v2')
