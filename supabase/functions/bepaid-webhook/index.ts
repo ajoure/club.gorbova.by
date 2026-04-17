@@ -3,6 +3,7 @@ import { Resend } from 'npm:resend@2.0.0';
 import { endOfDayAppTz } from '../_shared/timezone.ts';
 import { buildAdminNotifyMessage, maskEmail } from '../_shared/admin-notify-message.ts';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
+import { applyCrmStageOnTerminal } from '../_shared/crm-routing.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -3158,6 +3159,9 @@ Deno.serve(async (req) => {
         if ((transactionStatus === 'failed' || transactionStatus === 'expired') &&
             !['paid', 'refunded', 'canceled'].includes(linkOrderV2.status)) {
           await supabase.from('orders_v2').update({ status: 'failed', updated_at: new Date().toISOString() }).eq('id', linkOrderV2.id);
+          // CRM routing — Layer A: применить closed_lost
+          try { await applyCrmStageOnTerminal(supabase, linkOrderV2.id, 'failed', 'webhook_link_failed'); }
+          catch (e) { console.error('[WEBHOOK-LINK] crm-routing apply failed:', e); }
         }
 
         // === RECORD FAILED PAYMENT in payments_v2 ===
@@ -3375,6 +3379,9 @@ Deno.serve(async (req) => {
         updated_at: new Date().toISOString(),
       }).eq('id', linkOrderV2.id);
       console.log('[WEBHOOK-LINK] Order updated to paid:', linkOrderV2.id);
+      // CRM routing — Layer A: применить closed_won (если есть snapshot и не было manual override)
+      try { await applyCrmStageOnTerminal(supabase, linkOrderV2.id, 'success', 'webhook_link_paid'); }
+      catch (e) { console.error('[WEBHOOK-LINK] crm-routing apply failed:', e); }
 
       // 6. Upsert card_profile_links (stamp) with conflict guard
       const linkCardStamp = transaction?.credit_card?.stamp || null;
@@ -4639,6 +4646,9 @@ Deno.serve(async (req) => {
           .from('orders_v2')
           .update({ status: 'failed' })
           .eq('id', paymentV2.order_id);
+        // CRM routing — Layer A: применить closed_lost для первичной оплаты
+        try { await applyCrmStageOnTerminal(supabase, paymentV2.order_id, 'failed', 'webhook_first_payment_failed'); }
+        catch (e) { console.error('[WEBHOOK] crm-routing apply failed:', e); }
 
         // Send Telegram notification about failed first payment
         try {
