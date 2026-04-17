@@ -338,10 +338,13 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
 
     const redirectUrl = checkoutResult.checkout.redirect_url;
 
-    // PATCH RENEWAL+PAYMENTS.1 C3: Meta MERGE (not overwrite) after checkout token
+    // PATCH RENEWAL+PAYMENTS.1 C3 + CRM-ROUTING fix:
+    // Meta MERGE (not overwrite) after checkout token. CRITICAL: spread oneTimeMetaWithRouting
+    // (which already contains crm_routing_snapshot) — NOT plain orderMeta — otherwise the snapshot
+    // written on insert is silently overwritten and immutability proof breaks.
     const { error: metaMergeErr } = await supabase.from('orders_v2').update({
       meta: {
-        ...orderMeta,
+        ...oneTimeMetaWithRouting,
         bepaid_checkout_token: checkoutResult.checkout.token,
         checkout_created_at: new Date().toISOString(),
       },
