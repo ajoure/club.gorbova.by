@@ -40,6 +40,25 @@ export interface ResolvedRouting {
   ok: boolean;
   reason?: string;
   snapshot?: CrmRoutingSnapshot;
+  /** How resolution happened — for audit/snapshot transparency. */
+  resolved_via?: 'offer_id' | 'tariff_fallback';
+  /** Number of routing-enabled candidates considered during fallback. */
+  candidates_count?: number;
+}
+
+/**
+ * Negative (structured) snapshot, written to orders_v2.meta.crm_routing_snapshot
+ * when routing cannot be applied. B.0 invariant: snapshot is ALWAYS present in
+ * meta after order materialize — positive (CrmRoutingSnapshot) or negative.
+ */
+export interface NegativeRoutingSnapshot {
+  enabled: false;
+  reason: string;
+  resolved_at: string;
+  offer_id: string | null;
+  tariff_id: string | null;
+  resolved_via: 'offer_id' | 'tariff_fallback' | 'none';
+  candidates_count: number;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -272,4 +291,110 @@ async function audit(
   } catch (e) {
     console.error('[crm-routing] audit insert failed:', e);
   }
+}
+
+// ============================================================================
+// B.0 — Snapshot invariant helpers (Combined: offer_id-first + tariff fallback)
+// ============================================================================
+
+/**
+ * Resolve routing with fallback: if offer_id is provided → strict resolveOfferRouting.
+ * Otherwise → search tariff_offers by tariff_id with strict filter:
+ *   is_active = true AND offer_type = 'pay_now' AND meta->crm_routing->>'enabled' = 'true'
+ *
+ * Outcomes:
+ *  - exactly 1 candidate → resolve via that offer_id, returns positive snapshot.
+ *  - 0 candidates → { ok:false, reason:'no_offer_for_tariff', resolved_via:'tariff_fallback', candidates_count:0 }
+ *  - >1 candidates → { ok:false, reason:'ambiguous_offers_for_tariff', resolved_via:'tariff_fallback', candidates_count:N }
+ *
+ * NOTE: writes nothing to DB; pure resolver. Snapshot persistence is the caller's job
+ * via buildNegativeSnapshot() + INSERT into orders_v2.
+ */
+export async function resolveOfferRoutingWithFallback(
+  supabase: SupabaseClient,
+  args: { offer_id?: string | null; tariff_id?: string | null },
+): Promise<ResolvedRouting> {
+  const { offer_id, tariff_id } = args;
+
+  if (offer_id && isUuid(offer_id)) {
+    const r = await resolveOfferRouting(supabase, offer_id);
+    return { ...r, resolved_via: 'offer_id', candidates_count: r.ok ? 1 : 0 };
+  }
+
+  if (!tariff_id || !isUuid(tariff_id)) {
+    return { ok: false, reason: 'no_offer_id', resolved_via: 'tariff_fallback', candidates_count: 0 };
+  }
+
+  // Strict candidate filter — see method doc
+  const { data: candidates, error } = await supabase
+    .from('tariff_offers')
+    .select('id, meta')
+    .eq('tariff_id', tariff_id)
+    .eq('is_active', true)
+    .eq('offer_type', 'pay_now');
+
+  if (error) {
+    return { ok: false, reason: 'tariff_lookup_error', resolved_via: 'tariff_fallback', candidates_count: 0 };
+  }
+
+  const enabledCandidates = (candidates ?? []).filter((c: any) => {
+    const m = (c.meta && typeof c.meta === 'object') ? c.meta as any : {};
+    return m.crm_routing && m.crm_routing.enabled === true;
+  });
+
+  if (enabledCandidates.length === 0) {
+    return { ok: false, reason: 'no_offer_for_tariff', resolved_via: 'tariff_fallback', candidates_count: 0 };
+  }
+  if (enabledCandidates.length > 1) {
+    return { ok: false, reason: 'ambiguous_offers_for_tariff', resolved_via: 'tariff_fallback', candidates_count: enabledCandidates.length };
+  }
+
+  const r = await resolveOfferRouting(supabase, enabledCandidates[0].id as string);
+  return { ...r, resolved_via: 'tariff_fallback', candidates_count: 1 };
+}
+
+/**
+ * Build a structural negative snapshot. Always present in orders_v2.meta when
+ * routing was not resolved positively. Provides full debug context for B.1.
+ */
+export function buildNegativeSnapshot(args: {
+  reason: string;
+  offer_id?: string | null;
+  tariff_id?: string | null;
+  resolved_via?: 'offer_id' | 'tariff_fallback' | 'none';
+  candidates_count?: number;
+}): NegativeRoutingSnapshot {
+  return {
+    enabled: false,
+    reason: args.reason,
+    resolved_at: new Date().toISOString(),
+    offer_id: args.offer_id ?? null,
+    tariff_id: args.tariff_id ?? null,
+    resolved_via: args.resolved_via ?? 'none',
+    candidates_count: args.candidates_count ?? 0,
+  };
+}
+
+/**
+ * Audit a negative snapshot post-INSERT. Non-blocking; failures are logged.
+ */
+export async function auditNegativeSnapshot(
+  supabase: SupabaseClient,
+  args: {
+    order_id: string;
+    offer_id: string | null;
+    tariff_id: string | null;
+    reason: string;
+    resolved_via: 'offer_id' | 'tariff_fallback' | 'none';
+    candidates_count: number;
+  },
+): Promise<void> {
+  await audit(supabase, 'crm_routing_snapshot_negative', {
+    order_id: args.order_id,
+    offer_id: args.offer_id,
+    tariff_id: args.tariff_id,
+    reason: args.reason,
+    resolved_via: args.resolved_via,
+    candidates_count: args.candidates_count,
+  });
 }
