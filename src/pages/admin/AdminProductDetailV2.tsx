@@ -42,6 +42,7 @@ import { useTableSort } from "@/hooks/useTableSort";
 import { useDragSelect } from "@/hooks/useDragSelect";
 import { type TariffMetaConfig } from "@/components/admin/product/TariffWelcomeMessageEditor";
 import { OfferWelcomeMessageEditor } from "@/components/admin/product/OfferWelcomeMessageEditor";
+import { OfferCrmRoutingSection, validateCrmRoutingForSave } from "@/components/admin/OfferCrmRoutingSection";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -521,6 +522,12 @@ export default function AdminProductDetailV2() {
   const handleSaveOffer = async () => {
     if (!offerForm.tariff_id || !offerForm.button_label) {
       toast.error("Заполните обязательные поля");
+      return;
+    }
+    // CRM routing semantic validation (UI mirrors server)
+    const crmError = validateCrmRoutingForSave(offerForm.meta?.crm_routing);
+    if (crmError) {
+      toast.error(crmError);
       return;
     }
     const isInstallment = offerForm.payment_method === "internal_installment";
@@ -2293,6 +2300,15 @@ export default function AdminProductDetailV2() {
                   offerId={offerDialog.editing?.id || null}
                   meta={offerForm.meta}
                   onMetaChange={(newMeta) => setOfferForm({ ...offerForm, meta: newMeta })}
+                />
+
+                {/* CRM Routing Section — Layer A: offer-driven первичная оплата */}
+                <OfferCrmRoutingSection
+                  value={offerForm.meta?.crm_routing}
+                  onChange={(next) => setOfferForm({
+                    ...offerForm,
+                    meta: { ...offerForm.meta, crm_routing: next },
+                  })}
                 />
               </CollapsibleContent>
             </Collapsible>
