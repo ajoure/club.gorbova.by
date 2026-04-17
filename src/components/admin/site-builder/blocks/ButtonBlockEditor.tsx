@@ -3,6 +3,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { ButtonActionType } from "@/services/sitePages/types";
 import type { AnchorsRegistry } from "@/hooks/useSitePageAnchors";
+import { HelpIcon } from "@/components/help/HelpComponents";
 
 interface ButtonBlockEditorProps {
   content: Record<string, unknown>;
@@ -66,9 +67,12 @@ export function ButtonBlockEditor({ content, onChange, registry, currentBlockId 
         <Input value={(content.text as string) || ""} onChange={(e) => onChange({ ...content, text: e.target.value })} />
       </div>
 
-      {/* ─── Action selector (canonical, stable IDs only) ─── */}
+      {/* ─── Action selector ─── */}
       <div>
-        <Label className="text-xs">Действие при клике</Label>
+        <div className="flex items-center gap-1.5">
+          <Label className="text-xs">Действие при клике</Label>
+          <HelpIcon helpKey="site_builder.actions.type" />
+        </div>
         <Select value={actionType} onValueChange={(v) => updateAction({ type: v as ButtonActionType })}>
           <SelectTrigger><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -92,7 +96,10 @@ export function ButtonBlockEditor({ content, onChange, registry, currentBlockId 
 
       {actionType !== "link" && (
         <div>
-          <Label className="text-xs">Цель действия</Label>
+          <div className="flex items-center gap-1.5">
+            <Label className="text-xs">Цель действия</Label>
+            <HelpIcon helpKey="site_builder.actions.target" />
+          </div>
           {targetOptions.length === 0 ? (
             <p className="text-[11px] text-muted-foreground border rounded-md p-2">
               {actionType === "scroll_to_anchor"
@@ -121,13 +128,13 @@ export function ButtonBlockEditor({ content, onChange, registry, currentBlockId 
 
       <div className="grid grid-cols-3 gap-2">
         <div>
-          <Label className="text-xs">Вариант</Label>
+          <Label className="text-xs">Стиль</Label>
           <Select value={(content.variant as string) || "primary"} onValueChange={(v) => onChange({ ...content, variant: v })}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="primary">Primary</SelectItem>
-              <SelectItem value="secondary">Secondary</SelectItem>
-              <SelectItem value="outline">Outline</SelectItem>
+              <SelectItem value="primary">Основная</SelectItem>
+              <SelectItem value="secondary">Дополнительная</SelectItem>
+              <SelectItem value="outline">Контурная</SelectItem>
             </SelectContent>
           </Select>
         </div>

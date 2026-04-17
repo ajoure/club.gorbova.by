@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ExternalLink, Plus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { HelpIcon } from "@/components/help/HelpComponents";
 
 interface Props {
   content: Record<string, unknown>;
@@ -125,7 +126,10 @@ export function QuestionnaireBlockEditor({ content, onChange }: Props) {
       </div>
 
       <div>
-        <Label className="text-xs">Анкета</Label>
+        <div className="flex items-center gap-1.5">
+          <Label className="text-xs">Анкета</Label>
+          <HelpIcon helpKey="site_builder.questionnaire.lesson" />
+        </div>
         <Select
           value={lessonId || "__none__"}
           onValueChange={(v) => onChange({ ...content, lessonId: v === "__none__" ? "" : v })}

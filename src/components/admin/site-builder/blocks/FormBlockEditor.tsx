@@ -10,6 +10,7 @@ import { useParams } from "react-router-dom";
 import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { HelpIcon } from "@/components/help/HelpComponents";
 
 interface FormBlockEditorProps {
   content: Record<string, unknown>;
@@ -132,7 +133,8 @@ export function FormBlockEditor({ content, onChange, blockId }: FormBlockEditorP
     <div className="space-y-3">
       {/* Embed code action */}
       {pageId && blockId && (
-        <div className="flex justify-end">
+        <div className="flex justify-end items-center gap-1.5">
+          <HelpIcon helpKey="site_builder.form.embed_code" />
           <Button
             type="button"
             variant="outline"
@@ -153,19 +155,19 @@ export function FormBlockEditor({ content, onChange, blockId }: FormBlockEditorP
           </DialogHeader>
           <div className="space-y-4">
             <p className="text-xs text-muted-foreground">
-              Вставьте этот код на любую внешнюю страницу. Форма откроется через canonical submit path
-              (<code className="text-[10px]">site-form-submit</code>) и заявки попадут в «Анкеты» и карточку контакта.
+              Вставьте этот код на любую внешнюю страницу. Заявки попадут в раздел
+              «Анкеты и заявки» и в карточку контакта тем же путём, что и обычная форма на сайте.
             </p>
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <Label className="text-xs font-semibold">Inline (форма прямо на странице)</Label>
+                <Label className="text-xs font-semibold">Inline — форма прямо на странице</Label>
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
                   className="h-7 text-xs gap-1.5"
-                  onClick={() => handleCopy(embedSnippet, "Inline-код")}
+                  onClick={() => handleCopy(embedSnippet, "Код вставки")}
                 >
                   <Copy className="h-3 w-3" />
                   Копировать
@@ -178,13 +180,13 @@ export function FormBlockEditor({ content, onChange, blockId }: FormBlockEditorP
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <Label className="text-xs font-semibold">Popup (форма открывается по клику)</Label>
+                <Label className="text-xs font-semibold">Popup — форма открывается по клику</Label>
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
                   className="h-7 text-xs gap-1.5"
-                  onClick={() => handleCopy(popupSnippet, "Popup-код")}
+                  onClick={() => handleCopy(popupSnippet, "Код вставки")}
                 >
                   <Copy className="h-3 w-3" />
                   Копировать
@@ -196,9 +198,9 @@ export function FormBlockEditor({ content, onChange, blockId }: FormBlockEditorP
             </div>
 
             <div className="text-[10px] text-muted-foreground space-y-1">
-              <p>• page_id и block_id — стабильные идентификаторы. Не редактируйте вручную.</p>
+              <p>• Идентификаторы страницы и блока в коде стабильные — не редактируйте их вручную.</p>
               <p>• Чтобы embed работал, страница должна быть опубликована.</p>
-              <p>• Заявки помечаются <code>embed_origin</code> и <code>embed_block_id</code> в metadata.</p>
+              <p>• В заявке сохранится отметка, что она пришла через embed (видно в деталях ответа).</p>
             </div>
           </div>
         </DialogContent>
