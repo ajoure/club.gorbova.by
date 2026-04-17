@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -25,9 +25,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -35,11 +33,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Link2, Copy, ExternalLink, Loader2, Layers, Tag, CheckCircle, Send, AlertTriangle, MousePointerClick } from "lucide-react";
+import {
+  Link2, Copy, ExternalLink, Loader2, Layers, Tag, CheckCircle, Send,
+  AlertTriangle, MousePointerClick, CreditCard, RefreshCw, Info
+} from "lucide-react";
 import { useProductsV2, useTariffs } from "@/hooks/useProductsV2";
-import { useTariffOffers } from "@/hooks/useTariffOffers";
+import { useTariffOffers, type TariffOffer } from "@/hooks/useTariffOffers";
 import { copyToClipboard } from "@/utils/clipboardUtils";
 import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
+import { cn } from "@/lib/utils";
 
 interface AdminPaymentLinkDialogProps {
   open: boolean;
@@ -48,6 +50,100 @@ interface AdminPaymentLinkDialogProps {
   userName?: string;
   userEmail?: string;
   telegramUserId?: number | null;
+}
+
+type PaymentType = "one_time" | "subscription";
+
+type ResolveSource = "exact" | "primary" | "single";
+
+interface ResolvedOffer {
+  ok: true;
+  offer: TariffOffer;
+  source: ResolveSource;
+  effectiveType: PaymentType;
+  mismatchedType: boolean;
+}
+
+interface ResolveBlocked {
+  ok: false;
+  reason: "no_active_offers" | "ambiguous_no_primary";
+  message: string;
+}
+
+type ResolveResult = ResolvedOffer | ResolveBlocked;
+
+/**
+ * Канонический резолвер offer для admin payment link.
+ * Приоритет (строгий, без эвристик):
+ *   1. exact — active pay_now с совпадающим типом (по recurring.is_recurring)
+ *   2. primary — is_primary=true среди active pay_now (любого типа)
+ *   3. single — единственный active pay_now
+ *   4. STOP — несколько active без primary, либо нет ни одного active
+ */
+function resolveCanonicalOffer(
+  allOffers: TariffOffer[] | undefined,
+  desiredType: PaymentType
+): ResolveResult {
+  const active = (allOffers || []).filter(
+    (o) => o.is_active && o.offer_type === "pay_now"
+  );
+
+  if (active.length === 0) {
+    return {
+      ok: false,
+      reason: "no_active_offers",
+      message:
+        "У этого тарифа нет активных кнопок оплаты. Добавьте кнопку в настройках тарифа.",
+    };
+  }
+
+  const isOfferSubscription = (o: TariffOffer) =>
+    !!o.meta?.recurring?.is_recurring;
+  const offerType = (o: TariffOffer): PaymentType =>
+    isOfferSubscription(o) ? "subscription" : "one_time";
+
+  // 1. exact match
+  const exact = active.find((o) => offerType(o) === desiredType);
+  if (exact) {
+    return {
+      ok: true,
+      offer: exact,
+      source: "exact",
+      effectiveType: desiredType,
+      mismatchedType: false,
+    };
+  }
+
+  // 2. primary fallback (другого типа)
+  const primary = active.find((o) => o.is_primary);
+  if (primary) {
+    return {
+      ok: true,
+      offer: primary,
+      source: "primary",
+      effectiveType: offerType(primary),
+      mismatchedType: true,
+    };
+  }
+
+  // 3. single active
+  if (active.length === 1) {
+    return {
+      ok: true,
+      offer: active[0],
+      source: "single",
+      effectiveType: offerType(active[0]),
+      mismatchedType: true,
+    };
+  }
+
+  // 4. STOP — несколько без primary
+  return {
+    ok: false,
+    reason: "ambiguous_no_primary",
+    message:
+      "В тарифе несколько активных кнопок без основной. Назначьте основную кнопку в настройках тарифа.",
+  };
 }
 
 export function AdminPaymentLinkDialog({
@@ -62,40 +158,60 @@ export function AdminPaymentLinkDialog({
   const queryClient = useQueryClient();
   const [selectedProductId, setSelectedProductId] = useState<string>("");
   const [selectedTariffId, setSelectedTariffId] = useState<string>("");
+  // selectedOfferId — пользовательский override; если пуст, используется resolver.offer.id
   const [selectedOfferId, setSelectedOfferId] = useState<string>("");
   const [customAmount, setCustomAmount] = useState<string>("");
   const [description, setDescription] = useState("");
-  const [paymentType, setPaymentType] = useState<"one_time" | "subscription">("one_time");
+  const [paymentType, setPaymentType] = useState<PaymentType>("one_time");
   const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [conflictData, setConflictData] = useState<any>(null);
-  const [replaceStep, setReplaceStep] = useState<'idle' | 'cancelling' | 'creating' | 'error'>('idle');
+  const [replaceStep, setReplaceStep] = useState<
+    "idle" | "cancelling" | "creating" | "error"
+  >("idle");
 
-  // Fetch products
   const { data: products, isLoading: productsLoading } = useProductsV2();
-  
-  // Fetch tariffs for selected product
   const { data: tariffs, isLoading: tariffsLoading } = useTariffs(selectedProductId);
+  const { data: allOffers, isLoading: offersLoading } = useTariffOffers(
+    selectedTariffId || undefined
+  );
 
-  // Fetch offers (кнопки оплаты) для выбранного тарифа
-  const { data: allOffers, isLoading: offersLoading } = useTariffOffers(selectedTariffId || undefined);
+  // Резолвер: работает на ВСЕХ offers (без предварительной фильтрации по типу).
+  const resolved = useMemo(
+    () => resolveCanonicalOffer(allOffers, paymentType),
+    [allOffers, paymentType]
+  );
 
-  // Только активные кнопки + фильтр по типу оплаты (radio).
-  // pay_now → one_time / subscription по payment_method;
-  // trial исключаем (это не «оплатить сейчас»).
-  const filteredOffers = (allOffers || []).filter((o) => {
-    if (!o.is_active) return false;
-    if (o.offer_type !== "pay_now") return false;
-    if (paymentType === "subscription") {
-      // Подписка bePaid — кнопка с recurring config или явным subscription-методом.
-      // В системе offer.meta.recurring.is_recurring=true означает подписку.
-      return !!o.meta?.recurring?.is_recurring;
+  // Effective offer: пользовательский override (если выбран и валиден) > resolver
+  const effectiveOffer: TariffOffer | null = useMemo(() => {
+    if (!resolved.ok) return null;
+    if (selectedOfferId) {
+      const userPick = (allOffers || []).find(
+        (o) => o.id === selectedOfferId && o.is_active && o.offer_type === "pay_now"
+      );
+      if (userPick) return userPick;
     }
-    // Разовая — всё остальное (full_payment без recurring).
-    return !o.meta?.recurring?.is_recurring;
-  });
+    return resolved.offer;
+  }, [resolved, selectedOfferId, allOffers]);
 
-  // Fetch tariff prices (legacy fallback если в тарифе нет offer)
+  // Effective payment type: всегда от effective offer (источник истины)
+  const effectivePaymentType: PaymentType = useMemo(() => {
+    if (!effectiveOffer) return paymentType;
+    return effectiveOffer.meta?.recurring?.is_recurring
+      ? "subscription"
+      : "one_time";
+  }, [effectiveOffer, paymentType]);
+
+  const effectiveMismatch =
+    !!effectiveOffer && effectivePaymentType !== paymentType;
+
+  // Список всех active pay_now offers (для select override) — без фильтрации по типу
+  const activeOffers = useMemo(
+    () => (allOffers || []).filter((o) => o.is_active && o.offer_type === "pay_now"),
+    [allOffers]
+  );
+
+  // Tariff price fallback (если у тарифа нет ни одного offer)
   const { data: tariffPrices } = useQuery({
     queryKey: ["tariff_prices_for_link", selectedTariffId],
     queryFn: async () => {
@@ -113,66 +229,67 @@ export function AdminPaymentLinkDialog({
     enabled: !!selectedTariffId,
   });
 
-  // === PATCH E: No more client-side duplicate check — server handles it via structured conflict response ===
-
-  // Replace subscription mutation (cancel old + create new)
+  // === Replace subscription mutation (PATCH E) ===
   const replaceSubscriptionMutation = useMutation({
     mutationFn: async (conflictInfo: any) => {
       const subV2Id = conflictInfo.subscription_v2_id;
 
-      // Step 1: Cancel old subscription at provider
-      setReplaceStep('cancelling');
-      const { data: cancelData, error: cancelError } = await supabase.functions.invoke('bepaid-cancel-subscriptions', {
-        body: { subscription_v2_id: subV2Id, source: 'admin_replace' }
-      });
-      if (cancelError) throw new Error('Ошибка отмены у провайдера: ' + cancelError.message);
+      setReplaceStep("cancelling");
+      const { data: cancelData, error: cancelError } =
+        await supabase.functions.invoke("bepaid-cancel-subscriptions", {
+          body: { subscription_v2_id: subV2Id, source: "admin_replace" },
+        });
+      if (cancelError)
+        throw new Error("Ошибка отмены у провайдера: " + cancelError.message);
       if (cancelData?.failed?.length > 0) {
-        throw new Error('Провайдер не смог отменить подписку: ' + (cancelData.failed[0]?.error || 'неизвестная ошибка'));
+        throw new Error(
+          "Провайдер не смог отменить подписку: " +
+            (cancelData.failed[0]?.error || "неизвестная ошибка")
+        );
       }
 
-      // Step 2: Mark old subscription as superseded
       const { error: updateErr } = await supabase
-        .from('subscriptions_v2')
-        .update({ status: 'superseded', auto_renew: false })
-        .eq('id', subV2Id);
+        .from("subscriptions_v2")
+        .update({ status: "superseded", auto_renew: false })
+        .eq("id", subV2Id);
       if (updateErr) {
-        console.error('[PATCH E] Failed to mark old sub as superseded:', updateErr);
-        // Don't block — provider cancel already succeeded
+        console.error("[PATCH E] Failed to mark old sub as superseded:", updateErr);
       }
 
-      // Step 3: Audit — stage 1: replace_started (after cancel, before new checkout)
       const { data: { user: currentUser } } = await supabase.auth.getUser();
-      const { error: auditErr } = await supabase.from('audit_logs').insert({
-        actor_type: 'user',
+      const { error: auditErr } = await supabase.from("audit_logs").insert({
+        actor_type: "user",
         actor_user_id: currentUser?.id || null,
         target_user_id: userId,
-        action: 'subscription.replace_started',
+        action: "subscription.replace_started",
         meta: {
           old_subscription_v2_id: subV2Id,
           product_id: conflictInfo.product_id,
           tariff_id: conflictInfo.tariff_id,
           old_bepaid_subscription_id: conflictInfo.bepaid_subscription_id,
           cancel_result: cancelData,
-          actor_type: 'admin',
+          actor_type: "admin",
         },
       });
-      if (auditErr) console.error('[PATCH E] replace_started audit insert failed:', auditErr);
-      // Note: subscription.replaced (stage 2) is written server-side in create-payment-checkout.ts after new order is created
+      if (auditErr) console.error("[PATCH E] replace_started audit insert failed:", auditErr);
 
-      // Step 4: Create new checkout with replacement_of_subscription_v2_id
-      setReplaceStep('creating');
-      const { data, error } = await supabase.functions.invoke("admin-create-payment-link", {
-        body: {
-          user_id: userId,
-          product_id: selectedProductId,
-          tariff_id: selectedTariffId,
-          offer_id: selectedOfferId || undefined,
-          amount: Math.round(amount * 100),
-          payment_type: paymentType,
-          description: description || `${selectedProduct?.name} — ${selectedTariff?.name}`,
-          replacement_of_subscription_v2_id: subV2Id,
-        },
-      });
+      setReplaceStep("creating");
+      const { data, error } = await supabase.functions.invoke(
+        "admin-create-payment-link",
+        {
+          body: {
+            user_id: userId,
+            product_id: selectedProductId,
+            tariff_id: selectedTariffId,
+            offer_id: effectiveOffer?.id,
+            amount: Math.round(amount * 100),
+            payment_type: effectivePaymentType,
+            description:
+              description || `${selectedProduct?.name} — ${selectedTariff?.name}`,
+            replacement_of_subscription_v2_id: subV2Id,
+          },
+        }
+      );
       if (error) throw error;
       if (!data.success) throw new Error(data.error || "Ошибка создания ссылки");
       return data;
@@ -180,17 +297,19 @@ export function AdminPaymentLinkDialog({
     onSuccess: (data) => {
       setGeneratedUrl(data.redirect_url);
       setConflictData(null);
-      setReplaceStep('idle');
+      setReplaceStep("idle");
       toast.success("Старая подписка отменена, новая ссылка создана");
-      queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions', userId] });
+      queryClient.invalidateQueries({
+        queryKey: ["contact-provider-subscriptions", userId],
+      });
     },
     onError: (error: Error) => {
-      setReplaceStep('error');
-      toast.error('Ошибка замены подписки: ' + error.message);
+      setReplaceStep("error");
+      toast.error("Ошибка замены подписки: " + error.message);
     },
   });
 
-  // Reset tariff when product changes
+  // Reset на смене продукта
   useEffect(() => {
     setSelectedTariffId("");
     setSelectedOfferId("");
@@ -198,32 +317,31 @@ export function AdminPaymentLinkDialog({
     setGeneratedUrl(null);
   }, [selectedProductId]);
 
-  // Авто-выбор основной кнопки нужного типа при смене тарифа/типа оплаты.
-  // Список offers уже отфильтрован по paymentType — берём primary, иначе первую.
+  // Reset offer override на смене тарифа
   useEffect(() => {
-    if (!selectedTariffId || filteredOffers.length === 0) {
-      setSelectedOfferId("");
-      return;
-    }
-    // Если уже выбран offer и он есть в отфильтрованном списке — оставляем.
-    if (selectedOfferId && filteredOffers.some((o) => o.id === selectedOfferId)) return;
-    const primary = filteredOffers.find((o) => o.is_primary) || filteredOffers[0];
-    setSelectedOfferId(primary.id);
-    // Подставляем сумму из выбранной кнопки (BYN, конвертация из копеек).
-    setCustomAmount(String(Number(primary.amount) / 100));
+    setSelectedOfferId("");
+    setCustomAmount("");
     setGeneratedUrl(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTariffId, paymentType, filteredOffers.length]);
+  }, [selectedTariffId]);
 
-  // Fallback на tariff price только если offers нет вообще
+  // Автоподстановка суммы при смене effective offer.
+  // ВАЖНО: offer.amount хранится в BYN — НЕ делить на 100.
   useEffect(() => {
-    if (filteredOffers.length === 0 && tariffPrices?.price && !customAmount) {
+    if (effectiveOffer) {
+      setCustomAmount(String(Number(effectiveOffer.amount)));
+      setGeneratedUrl(null);
+    } else if (
+      !resolved.ok &&
+      tariffPrices?.price &&
+      !customAmount
+    ) {
+      // Только если резолвер заблокирован и есть legacy price
       setCustomAmount(String(tariffPrices.price));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tariffPrices, filteredOffers.length]);
+  }, [effectiveOffer?.id]);
 
-  // Reset form on close
+  // Reset при закрытии диалога
   useEffect(() => {
     if (!open) {
       setSelectedProductId("");
@@ -235,12 +353,12 @@ export function AdminPaymentLinkDialog({
       setGeneratedUrl(null);
       setShowCancelConfirm(false);
       setConflictData(null);
-      setReplaceStep('idle');
+      setReplaceStep("idle");
     }
   }, [open]);
 
-  const selectedProduct = products?.find(p => p.id === selectedProductId);
-  const selectedTariff = tariffs?.find(t => t.id === selectedTariffId);
+  const selectedProduct = products?.find((p) => p.id === selectedProductId);
+  const selectedTariff = tariffs?.find((t) => t.id === selectedTariffId);
   const amount = parseFloat(customAmount) || 0;
 
   const createLinkMutation = useMutation({
@@ -248,27 +366,38 @@ export function AdminPaymentLinkDialog({
       if (!selectedProductId || !selectedTariffId) {
         throw new Error("Выберите продукт и тариф");
       }
+      if (!effectiveOffer) {
+        let errMsg = "Не выбрана кнопка оплаты";
+        if (!resolved.ok) {
+          errMsg = (resolved as ResolveBlocked).message;
+        }
+        throw new Error(errMsg);
+      }
       if (amount <= 0) {
         throw new Error("Введите корректную сумму");
       }
 
-      const { data, error } = await supabase.functions.invoke("admin-create-payment-link", {
-        body: {
-          user_id: userId,
-          product_id: selectedProductId,
-          tariff_id: selectedTariffId,
-          offer_id: selectedOfferId || undefined,
-          amount: Math.round(amount * 100),
-          payment_type: paymentType,
-          description: description || `${selectedProduct?.name} — ${selectedTariff?.name}`,
-        },
-      });
+      const { data, error } = await supabase.functions.invoke(
+        "admin-create-payment-link",
+        {
+          body: {
+            user_id: userId,
+            product_id: selectedProductId,
+            tariff_id: selectedTariffId,
+            // СОГЛАСОВАННЫЙ КОНТРАКТ: offer_id и payment_type оба от effective offer
+            offer_id: effectiveOffer.id,
+            amount: Math.round(amount * 100),
+            payment_type: effectivePaymentType,
+            description:
+              description || `${selectedProduct?.name} — ${selectedTariff?.name}`,
+          },
+        }
+      );
 
       if (error) throw error;
-      // PATCH E: handle structured conflict response
-      if (!data.success && data.error === 'existing_subscription_conflict' && data.conflict) {
+      if (!data.success && data.error === "existing_subscription_conflict" && data.conflict) {
         setConflictData(data.conflict);
-        return null; // don't treat as error — show conflict UI
+        return null;
       }
       if (!data.success) throw new Error(data.error || "Ошибка создания ссылки");
       return data;
@@ -289,8 +418,10 @@ export function AdminPaymentLinkDialog({
       if (!generatedUrl || !selectedProduct || !selectedTariff) {
         throw new Error("Нет данных для отправки");
       }
-
-      const typeLabel = paymentType === "subscription" ? "Подписка (ежемесячно)" : "Разовая оплата";
+      const typeLabel =
+        effectivePaymentType === "subscription"
+          ? "Подписка (ежемесячно)"
+          : "Разовая оплата";
       const telegramMessage = `💳 *Оплата подписки*
 
 📦 Продукт: ${selectedProduct.name}
@@ -298,16 +429,21 @@ export function AdminPaymentLinkDialog({
 💰 Стоимость: ${amount} BYN
 📅 Тип: ${typeLabel}`;
 
-      const { data, error } = await supabase.functions.invoke("telegram-send-notification", {
-        body: {
-          user_id: userId,
-          message_type: "custom",
-          custom_message: telegramMessage,
-          reply_markup: {
-            inline_keyboard: [[{ text: "💳 Ссылка на оплату", url: generatedUrl }]]
+      const { data, error } = await supabase.functions.invoke(
+        "telegram-send-notification",
+        {
+          body: {
+            user_id: userId,
+            message_type: "custom",
+            custom_message: telegramMessage,
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: "💳 Ссылка на оплату", url: generatedUrl }],
+              ],
+            },
           },
-        },
-      });
+        }
+      );
 
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || "Ошибка отправки");
@@ -327,25 +463,21 @@ export function AdminPaymentLinkDialog({
   };
 
   const handleReplaceSubscription = () => {
-    if (conflictData) {
-      setShowCancelConfirm(true);
-    }
+    if (conflictData) setShowCancelConfirm(true);
   };
 
   const confirmReplace = () => {
     setShowCancelConfirm(false);
-    if (conflictData) {
-      replaceSubscriptionMutation.mutate(conflictData);
-    }
+    if (conflictData) replaceSubscriptionMutation.mutate(conflictData);
   };
 
-  const activeProducts = products?.filter(p => p.is_active) || [];
+  const activeProducts = products?.filter((p) => p.is_active) || [];
 
   const isCreateDisabled =
     createLinkMutation.isPending ||
     !selectedProductId ||
     !selectedTariffId ||
-    !selectedOfferId ||
+    !effectiveOffer ||
     amount <= 0 ||
     !!conflictData;
 
@@ -364,7 +496,6 @@ export function AdminPaymentLinkDialog({
           </DialogHeader>
 
           {generatedUrl ? (
-            // Show generated URL
             <div className="space-y-4">
               <div className="p-4 rounded-lg bg-primary/5 border border-primary/20">
                 <div className="flex items-center gap-2 mb-3">
@@ -373,7 +504,7 @@ export function AdminPaymentLinkDialog({
                 </div>
                 <p className="text-sm text-muted-foreground mb-2">
                   {selectedProduct?.name} — {selectedTariff?.name} · {amount} BYN
-                  {paymentType === "subscription" ? " (подписка)" : " (разовая)"}
+                  {effectivePaymentType === "subscription" ? " (подписка)" : " (разовая)"}
                 </p>
                 <Input
                   readOnly
@@ -393,7 +524,7 @@ export function AdminPaymentLinkDialog({
                 </Button>
                 <Button
                   className="flex-1 gap-2"
-                  onClick={() => window.open(generatedUrl, '_blank')}
+                  onClick={() => window.open(generatedUrl, "_blank")}
                 >
                   <ExternalLink className="h-4 w-4" />
                   Открыть
@@ -423,16 +554,15 @@ export function AdminPaymentLinkDialog({
               </Button>
             </div>
           ) : (
-            // Show form
             <form onSubmit={handleSubmit} className="space-y-4">
               {/* User info */}
-              <div className="p-3 rounded-lg bg-muted/50">
+              <div className="p-3 rounded-lg bg-muted/50 border">
                 <p className="font-medium">{userName || "—"}</p>
                 <p className="text-sm text-muted-foreground">{userEmail}</p>
               </div>
 
-              {/* Product selection */}
-              <div className="space-y-2">
+              {/* Product */}
+              <div className="rounded-lg border bg-card p-4 space-y-2">
                 <Label className="flex items-center gap-2">
                   <Layers className="h-4 w-4 text-indigo-500" />
                   Продукт
@@ -455,11 +585,11 @@ export function AdminPaymentLinkDialog({
                 )}
               </div>
 
-              {/* Tariff selection */}
+              {/* Tariff */}
               {selectedProductId && (
-                <div className="space-y-2">
+                <div className="rounded-lg border bg-card p-4 space-y-2">
                   <Label className="flex items-center gap-2">
-                    <Tag className="h-4 w-4" />
+                    <Tag className="h-4 w-4 text-indigo-500" />
                     Тариф
                   </Label>
                   {tariffsLoading ? (
@@ -470,7 +600,7 @@ export function AdminPaymentLinkDialog({
                         <SelectValue placeholder="Выберите тариф" />
                       </SelectTrigger>
                       <SelectContent>
-                        {tariffs.filter(t => t.is_active).map((tariff) => (
+                        {tariffs.filter((t) => t.is_active).map((tariff) => (
                           <SelectItem key={tariff.id} value={tariff.id}>
                             {tariff.name}
                           </SelectItem>
@@ -483,72 +613,125 @@ export function AdminPaymentLinkDialog({
                 </div>
               )}
 
-              {/* Тип оплаты (radio) — фильтрует список кнопок ниже */}
+              {/* Тип оплаты — крупные сегменты */}
               {selectedTariffId && (
-                <div className="space-y-2">
+                <div className="rounded-lg border bg-card p-4 space-y-3">
                   <Label>Тип оплаты</Label>
-                  <RadioGroup
-                    value={paymentType}
-                    onValueChange={(v) => setPaymentType(v as "one_time" | "subscription")}
-                    className="flex gap-4"
-                  >
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="one_time" id="pt-one-time" />
-                      <Label htmlFor="pt-one-time" className="font-normal cursor-pointer">
-                        Разовая
-                      </Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="subscription" id="pt-subscription" />
-                      <Label htmlFor="pt-subscription" className="font-normal cursor-pointer">
-                        Подписка
-                      </Label>
-                    </div>
-                  </RadioGroup>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPaymentType("one_time");
+                        setSelectedOfferId("");
+                      }}
+                      className={cn(
+                        "flex flex-col items-center justify-center gap-2 rounded-lg border-2 p-4 text-sm font-medium transition-all",
+                        paymentType === "one_time"
+                          ? "border-primary bg-primary/5 text-foreground shadow-sm"
+                          : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                      )}
+                    >
+                      <CreditCard className="h-5 w-5" />
+                      Разовая оплата
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPaymentType("subscription");
+                        setSelectedOfferId("");
+                      }}
+                      className={cn(
+                        "flex flex-col items-center justify-center gap-2 rounded-lg border-2 p-4 text-sm font-medium transition-all",
+                        paymentType === "subscription"
+                          ? "border-primary bg-primary/5 text-foreground shadow-sm"
+                          : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                      )}
+                    >
+                      <RefreshCw className="h-5 w-5" />
+                      Подписка
+                    </button>
+                  </div>
                   <p className="text-xs text-muted-foreground">
-                    Фильтрует доступные кнопки оплаты ниже.
+                    Предпочтение пользователя. Если в тарифе нет кнопки нужного типа, будет использована основная кнопка тарифа.
                   </p>
                 </div>
               )}
 
-              {/* Кнопка оплаты (offer) — фильтруется по типу оплаты */}
+              {/* Кнопка оплаты — резолвер с явным fallback */}
               {selectedTariffId && (
-                <div className="space-y-2">
+                <div className="rounded-lg border bg-card p-4 space-y-2">
                   <Label className="flex items-center gap-2">
                     <MousePointerClick className="h-4 w-4 text-primary" />
                     Кнопка оплаты
                   </Label>
+
                   {offersLoading ? (
                     <Skeleton className="h-10 w-full" />
-                  ) : filteredOffers.length > 0 ? (
+                  ) : resolved.ok === false ? (
+                    <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+                      <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                      <p>{resolved.message}</p>
+                    </div>
+                  ) : (
                     <>
-                      <Select value={selectedOfferId} onValueChange={setSelectedOfferId}>
+                      <Select
+                        value={effectiveOffer?.id || ""}
+                        onValueChange={(v) => setSelectedOfferId(v)}
+                      >
                         <SelectTrigger>
                           <SelectValue placeholder="Выберите кнопку…" />
                         </SelectTrigger>
                         <SelectContent>
-                          {filteredOffers.map((o) => (
-                            <SelectItem key={o.id} value={o.id}>
-                              {o.button_label} — {Number(o.amount) / 100} BYN{o.is_primary ? " · основная" : ""}
-                            </SelectItem>
-                          ))}
+                          {activeOffers.map((o) => {
+                            const isSub = !!o.meta?.recurring?.is_recurring;
+                            return (
+                              <SelectItem key={o.id} value={o.id}>
+                                {o.button_label} — {Number(o.amount)} BYN
+                                {isSub ? " · подписка" : " · разовая"}
+                                {o.is_primary ? " · основная" : ""}
+                              </SelectItem>
+                            );
+                          })}
                         </SelectContent>
                       </Select>
+
+                      {/* Mismatch banner — fallback другого типа */}
+                      {effectiveMismatch && (
+                        <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-foreground">
+                          <Info className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
+                          <p>
+                            Для этого тарифа нет кнопки типа{" "}
+                            <strong>
+                              {paymentType === "subscription"
+                                ? "«Подписка»"
+                                : "«Разовая оплата»"}
+                            </strong>
+                            . Будет использована{" "}
+                            {resolved.ok && resolved.source === "primary"
+                              ? "основная"
+                              : "единственная активная"}{" "}
+                            кнопка типа{" "}
+                            <strong>
+                              {effectivePaymentType === "subscription"
+                                ? "«Подписка»"
+                                : "«Разовая оплата»"}
+                            </strong>
+                            .
+                          </p>
+                        </div>
+                      )}
+
                       <p className="text-xs text-muted-foreground">
                         Сделка попадёт в воронку CRM согласно настройкам этой кнопки. Сумму ниже можно скорректировать — привязка к кнопке сохранится.
                       </p>
                     </>
-                  ) : (
-                    <p className="text-xs text-destructive">
-                      В тарифе нет {paymentType === "subscription" ? "подписочной" : "разовой"} кнопки оплаты. Создайте её в настройках тарифа или переключите тип.
-                    </p>
                   )}
                 </div>
               )}
 
-              {/* Amount (можно переопределить) */}
+              {/* Сумма */}
               {selectedTariffId && (
-                <div className="space-y-2">
+                <div className="rounded-lg border bg-card p-4 space-y-2">
                   <Label htmlFor="link-amount">Сумма (BYN)</Label>
                   <Input
                     id="link-amount"
@@ -560,7 +743,7 @@ export function AdminPaymentLinkDialog({
                     onChange={(e) => setCustomAmount(e.target.value)}
                     required
                   />
-                  {tariffPrices?.price && filteredOffers.length === 0 && (
+                  {!effectiveOffer && tariffPrices?.price && (
                     <p className="text-xs text-muted-foreground">
                       Цена тарифа: {tariffPrices.price} BYN
                     </p>
@@ -568,10 +751,7 @@ export function AdminPaymentLinkDialog({
                 </div>
               )}
 
-              {/* (Тип оплаты перенесён выше — он фильтрует список кнопок) */}
-
-
-              {/* PATCH E: Conflict warning from server response */}
+              {/* Conflict (PATCH E) */}
               {conflictData && (
                 <div className="p-3 rounded-lg border border-destructive/50 bg-destructive/5 space-y-2">
                   <div className="flex items-center gap-2 text-destructive">
@@ -581,20 +761,32 @@ export function AdminPaymentLinkDialog({
                   <div className="text-xs text-muted-foreground space-y-0.5">
                     <p>Статус: {conflictData.status}</p>
                     {conflictData.display_next_charge_at && (
-                      <p>Следующее списание: {formatPaymentTimeIANA(conflictData.display_next_charge_at, conflictData.timezone_used || 'Europe/Minsk')}</p>
+                      <p>
+                        Следующее списание:{" "}
+                        {formatPaymentTimeIANA(
+                          conflictData.display_next_charge_at,
+                          conflictData.timezone_used || "Europe/Minsk"
+                        )}
+                      </p>
                     )}
                     {conflictData.display_access_end_at && (
-                      <p>Доступ до: {formatPaymentTimeIANA(conflictData.display_access_end_at, conflictData.timezone_used || 'Europe/Minsk')}</p>
+                      <p>
+                        Доступ до:{" "}
+                        {formatPaymentTimeIANA(
+                          conflictData.display_access_end_at,
+                          conflictData.timezone_used || "Europe/Minsk"
+                        )}
+                      </p>
                     )}
                     {conflictData.bepaid_subscription_id && (
                       <p>bePaid ID: {conflictData.bepaid_subscription_id}</p>
                     )}
                   </div>
-                  {replaceStep !== 'idle' && replaceStep !== 'error' ? (
+                  {replaceStep !== "idle" && replaceStep !== "error" ? (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      {replaceStep === 'cancelling' && 'Отменяем текущую подписку…'}
-                      {replaceStep === 'creating' && 'Создаём новую ссылку…'}
+                      {replaceStep === "cancelling" && "Отменяем текущую подписку…"}
+                      {replaceStep === "creating" && "Создаём новую ссылку…"}
                     </div>
                   ) : (
                     <div className="flex flex-col gap-2 mt-2">
@@ -619,15 +811,17 @@ export function AdminPaymentLinkDialog({
                       </Button>
                     </div>
                   )}
-                  {replaceStep === 'error' && (
-                    <p className="text-xs text-destructive mt-1">Ошибка замены. Попробуйте снова или отмените вручную.</p>
+                  {replaceStep === "error" && (
+                    <p className="text-xs text-destructive mt-1">
+                      Ошибка замены. Попробуйте снова или отмените вручную.
+                    </p>
                   )}
                 </div>
               )}
 
               {/* Description */}
               {selectedTariffId && (
-                <div className="space-y-2">
+                <div className="rounded-lg border bg-card p-4 space-y-2">
                   <Label htmlFor="link-description">Комментарий (опционально)</Label>
                   <Textarea
                     id="link-description"
@@ -640,7 +834,7 @@ export function AdminPaymentLinkDialog({
               )}
 
               {/* Summary */}
-              {selectedProduct && selectedTariff && amount > 0 && (
+              {selectedProduct && selectedTariff && amount > 0 && effectiveOffer && (
                 <div className="p-3 rounded-lg bg-primary/5 border border-primary/20 space-y-1">
                   <p className="font-medium">Ссылка на оплату:</p>
                   <p className="text-sm text-muted-foreground">
@@ -648,23 +842,18 @@ export function AdminPaymentLinkDialog({
                   </p>
                   <p className="text-lg font-bold">{amount} BYN</p>
                   <p className="text-xs text-muted-foreground">
-                    {paymentType === "subscription" ? "Подписка (ежемесячно)" : "Разовая оплата"}
+                    {effectivePaymentType === "subscription"
+                      ? "Подписка (ежемесячно)"
+                      : "Разовая оплата"}
                   </p>
                 </div>
               )}
 
               <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => onOpenChange(false)}
-                >
+                <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                   Отмена
                 </Button>
-                <Button
-                  type="submit"
-                  disabled={isCreateDisabled}
-                >
+                <Button type="submit" disabled={isCreateDisabled}>
                   {createLinkMutation.isPending ? (
                     <Loader2 className="h-4 w-4 animate-spin mr-2" />
                   ) : (
@@ -678,7 +867,6 @@ export function AdminPaymentLinkDialog({
         </DialogContent>
       </Dialog>
 
-      {/* Replace confirmation dialog */}
       <AlertDialog open={showCancelConfirm} onOpenChange={setShowCancelConfirm}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -689,9 +877,7 @@ export function AdminPaymentLinkDialog({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Нет, оставить</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmReplace}>
-              Да, заменить
-            </AlertDialogAction>
+            <AlertDialogAction onClick={confirmReplace}>Да, заменить</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
