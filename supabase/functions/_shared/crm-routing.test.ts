@@ -12,7 +12,7 @@
 
 import "https://deno.land/std@0.224.0/dotenv/load.ts";
 import { assertEquals, assert } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { resolveOfferRouting, applyCrmStageOnTerminal } from "./crm-routing.ts";
+import { resolveOfferRouting, applyCrmStageOnTerminal, resolveOfferRoutingWithFallback, buildNegativeSnapshot } from "./crm-routing.ts";
 
 // ---------- Helpers: мок Supabase-клиента ----------
 
