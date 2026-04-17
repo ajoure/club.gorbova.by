@@ -62,6 +62,7 @@ export function AdminPaymentLinkDialog({
   const queryClient = useQueryClient();
   const [selectedProductId, setSelectedProductId] = useState<string>("");
   const [selectedTariffId, setSelectedTariffId] = useState<string>("");
+  const [selectedOfferId, setSelectedOfferId] = useState<string>("");
   const [customAmount, setCustomAmount] = useState<string>("");
   const [description, setDescription] = useState("");
   const [paymentType, setPaymentType] = useState<"one_time" | "subscription">("one_time");
