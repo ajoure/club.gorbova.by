@@ -133,7 +133,8 @@ export function FormBlockEditor({ content, onChange, blockId }: FormBlockEditorP
     <div className="space-y-3">
       {/* Embed code action */}
       {pageId && blockId && (
-        <div className="flex justify-end">
+        <div className="flex justify-end items-center gap-1.5">
+          <HelpIcon helpKey="site_builder.form.embed_code" />
           <Button
             type="button"
             variant="outline"

@@ -126,7 +126,10 @@ export function QuestionnaireBlockEditor({ content, onChange }: Props) {
       </div>
 
       <div>
-        <Label className="text-xs">Анкета</Label>
+        <div className="flex items-center gap-1.5">
+          <Label className="text-xs">Анкета</Label>
+          <HelpIcon helpKey="site_builder.questionnaire.lesson" />
+        </div>
         <Select
           value={lessonId || "__none__"}
           onValueChange={(v) => onChange({ ...content, lessonId: v === "__none__" ? "" : v })}

@@ -24,9 +24,12 @@ export function BlockSettingsEditor({ settings, onChange, otherAnchorIds = [] }:
     <div className="space-y-4 border-t pt-4 mt-4">
       <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Настройки блока</p>
 
-      {/* ─── Anchor (Site Builder Sprint v2) ─── */}
+      {/* ─── Anchor ─── */}
       <div>
-        <Label className="text-xs">Якорь (anchor ID)</Label>
+        <div className="flex items-center gap-1.5">
+          <Label className="text-xs">Якорь (anchor ID)</Label>
+          <HelpIcon helpKey="site_builder.block.settings.anchor" />
+        </div>
         <Input
           value={anchor}
           onChange={(e) => update({ anchorId: e.target.value.toLowerCase().replace(/\s+/g, "-") })}
@@ -45,7 +48,10 @@ export function BlockSettingsEditor({ settings, onChange, otherAnchorIds = [] }:
 
       {/* ─── Initial visibility ─── */}
       <div>
-        <Label className="text-xs">Начальная видимость</Label>
+        <div className="flex items-center gap-1.5">
+          <Label className="text-xs">Начальная видимость</Label>
+          <HelpIcon helpKey="site_builder.block.settings.visibility" />
+        </div>
         <Select
           value={settings.initialVisibility || "visible"}
           onValueChange={(v) => update({ initialVisibility: v as BlockSettings["initialVisibility"] })}

@@ -67,9 +67,12 @@ export function ButtonBlockEditor({ content, onChange, registry, currentBlockId 
         <Input value={(content.text as string) || ""} onChange={(e) => onChange({ ...content, text: e.target.value })} />
       </div>
 
-      {/* ─── Action selector (canonical, stable IDs only) ─── */}
+      {/* ─── Action selector ─── */}
       <div>
-        <Label className="text-xs">Действие при клике</Label>
+        <div className="flex items-center gap-1.5">
+          <Label className="text-xs">Действие при клике</Label>
+          <HelpIcon helpKey="site_builder.actions.type" />
+        </div>
         <Select value={actionType} onValueChange={(v) => updateAction({ type: v as ButtonActionType })}>
           <SelectTrigger><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -93,7 +96,10 @@ export function ButtonBlockEditor({ content, onChange, registry, currentBlockId 
 
       {actionType !== "link" && (
         <div>
-          <Label className="text-xs">Цель действия</Label>
+          <div className="flex items-center gap-1.5">
+            <Label className="text-xs">Цель действия</Label>
+            <HelpIcon helpKey="site_builder.actions.target" />
+          </div>
           {targetOptions.length === 0 ? (
             <p className="text-[11px] text-muted-foreground border rounded-md p-2">
               {actionType === "scroll_to_anchor"
