@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { findProfileByAnyId } from '../_shared/user-resolver.ts';
+import { applyCrmStageOnTerminal } from '../_shared/crm-routing.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -268,6 +269,16 @@ Deno.serve(async (req) => {
         .eq('id', orderV2.id);
 
       if (!orderUpdateError) results.order_updated = true;
+
+      // CRM routing — Layer A: применить closed_won из snapshot (admin test terminal)
+      try {
+        const crmRes = await applyCrmStageOnTerminal(supabase, orderV2.id, 'success', 'admin_test_payment_complete');
+        results.crm_stage_applied = crmRes.applied;
+        results.crm_stage_reason = crmRes.reason;
+      } catch (e) {
+        console.error('[Test Payment] crm-routing apply failed:', e);
+        results.crm_stage_error = e instanceof Error ? e.message : String(e);
+      }
 
       // Create succeeded payment record for history
       const { data: paymentV2, error: paymentError } = await supabase
