@@ -2264,6 +2264,10 @@ Deno.serve(async (req) => {
         .eq('id', linkOrder.id);
       console.log('[WEBHOOK-LINK-ORDER] Order updated to paid:', linkOrder.id, 'amount:', paymentAmount, 'ppid_filled:', !linkOrder.provider_payment_id && !!transactionUid);
 
+      // CRM routing — Layer A: применить closed_won (subscription init / link-order success)
+      try { await applyCrmStageOnTerminal(supabase, linkOrder.id, 'success', 'webhook_link_order_paid'); }
+      catch (e) { console.error('[WEBHOOK-LINK-ORDER] crm-routing apply failed:', e); }
+
       // F12 P7: Audit log for fill operation
       if (!linkOrder.provider_payment_id && transactionUid) {
         await supabase.from('audit_logs').insert({
@@ -3852,6 +3856,10 @@ Deno.serve(async (req) => {
             .from('orders_v2')
             .update(mainOrderUpdate)
             .eq('id', orderV2.id);
+
+          // CRM routing — Layer A: применить closed_won (one-time main success branch)
+          try { await applyCrmStageOnTerminal(supabase, orderV2.id, 'success', 'webhook_first_payment_paid'); }
+          catch (e) { console.error('[WEBHOOK] crm-routing apply failed:', e); }
 
           // F12 P7: Audit log for fill operation (main branch)
           if (!orderV2.provider_payment_id && transactionUid) {
