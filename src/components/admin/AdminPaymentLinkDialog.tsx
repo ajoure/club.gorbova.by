@@ -979,12 +979,26 @@ export function AdminPaymentLinkDialog({
                   Отмена
                 </Button>
                 {/*
-                  Кнопки одного диалога — все используют canonical writers (admin-create-public-link
-                  или admin-create-payment-link). Никакого нового payment-path.
-                  Если у контакта привязан Telegram — основной CTA «Создать и отправить в Telegram»
-                  (одна цепочка: createPublicLink → telegram-send-notification).
+                  Кнопки одного диалога — все используют canonical writers
+                  (admin-create-public-link). Никакого нового payment-path.
+                  - Если Telegram привязан — даём ВЫБОР: «Создать ссылку» (без отправки)
+                    и «Создать и отправить в Telegram» (создание + отправка одной цепочкой).
+                  - Если Telegram не привязан — только «Создать ссылку».
                 */}
-                {telegramUserId ? (
+                <Button
+                  type="button"
+                  variant={telegramUserId ? "outline" : "default"}
+                  disabled={isCreateDisabled || combinedPending}
+                  onClick={() => createPublicLinkMutation.mutate()}
+                >
+                  {createPublicLinkMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <Link2 className="h-4 w-4 mr-2" />
+                  )}
+                  Создать ссылку
+                </Button>
+                {telegramUserId && (
                   <Button
                     type="button"
                     disabled={isCreateDisabled || combinedPending}
@@ -996,19 +1010,6 @@ export function AdminPaymentLinkDialog({
                       <Send className="h-4 w-4 mr-2" />
                     )}
                     Создать и отправить в Telegram
-                  </Button>
-                ) : (
-                  <Button
-                    type="button"
-                    disabled={isCreateDisabled}
-                    onClick={() => createPublicLinkMutation.mutate()}
-                  >
-                    {createPublicLinkMutation.isPending ? (
-                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    ) : (
-                      <Link2 className="h-4 w-4 mr-2" />
-                    )}
-                    Создать ссылку
                   </Button>
                 )}
               </DialogFooter>
