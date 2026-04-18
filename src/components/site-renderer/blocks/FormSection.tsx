@@ -1322,39 +1322,41 @@ function AuthFormSection({
   if (formStep === "extra_fields") {
     return wrapSection(customFields.length > 0 ? "Дополнительные вопросы" : null,
       <form onSubmit={handleExtraFieldsSubmit} className="space-y-4">
-        {customFields.map((field, i) => (
-          <div key={i}>
-            <label className="block text-sm font-medium text-foreground mb-1">
-              {field.label || `Поле ${i + 1}`}
-              {field.required && <span className="text-destructive ml-1">*</span>}
-            </label>
-            {field.type === "textarea" ? (
-              <textarea
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm min-h-[80px] focus:outline-none focus:ring-2 focus:ring-ring"
-                placeholder={field.label}
-                value={extraValues[i] || ""}
-                onChange={(e) => setExtraValues((prev) => ({ ...prev, [i]: e.target.value }))}
-              />
-            ) : (
-              <input
-                type={field.type === "phone" ? "tel" : field.type || "text"}
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                placeholder={field.label}
-                value={extraValues[i] || ""}
-                onChange={(e) => setExtraValues((prev) => ({ ...prev, [i]: e.target.value }))}
-              />
-            )}
-          </div>
-        ))}
+        {customFields.map((field, i) => {
+          const displayLabel = getFieldDisplayLabel(field, i);
+          const fid = `auth-extra-${i}`;
+          return (
+            <div key={i} className="space-y-2">
+              <Label htmlFor={fid} className="text-sm font-medium text-foreground">
+                {displayLabel}
+                {field.required && <span className="text-destructive ml-1">*</span>}
+              </Label>
+              {field.type === "textarea" ? (
+                <Textarea
+                  id={fid}
+                  placeholder={displayLabel}
+                  value={extraValues[i] || ""}
+                  onChange={(e) => setExtraValues((prev) => ({ ...prev, [i]: e.target.value }))}
+                  className="min-h-[96px] resize-y"
+                />
+              ) : (
+                <Input
+                  id={fid}
+                  type={field.type === "phone" ? "tel" : field.type || "text"}
+                  placeholder={displayLabel}
+                  value={extraValues[i] || ""}
+                  onChange={(e) => setExtraValues((prev) => ({ ...prev, [i]: e.target.value }))}
+                />
+              )}
+            </div>
+          );
+        })}
 
-        {error && <p className="text-sm text-destructive text-center">{error}</p>}
+        {error && <p className="text-xs text-destructive text-center">{error}</p>}
 
-        <button
-          type="submit"
-          className="w-full rounded-md bg-primary px-8 py-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-        >
+        <Button type="submit" className="w-full sm:w-auto sm:min-w-[180px]">
           Продолжить
-        </button>
+        </Button>
       </form>
     );
   }
