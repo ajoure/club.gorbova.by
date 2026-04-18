@@ -15,6 +15,7 @@
 
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
+import { supabase } from '@/integrations/supabase/client';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
 import { normalizeEdgeFunctionError } from '@/utils/normalizeEdgeFunctionError';
@@ -45,6 +46,7 @@ export default function PublicPayPage() {
   const { user } = useAuth();
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [identityError, setIdentityError] = useState<string | null>(null);
 
   const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
   const functionUrl = `https://${projectId}.supabase.co/functions/v1/public-checkout`;
@@ -69,19 +71,33 @@ export default function PublicPayPage() {
     if (!token) return;
     setIsProcessing(true);
     setError(null);
+    setIdentityError(null);
 
     try {
       const body: Record<string, unknown> = { url_token: token };
       if (payerEmail) body.email = payerEmail;
 
+      // ALWAYS read access token immediately before POST (post-inline-login session)
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (session?.access_token) {
+        headers.Authorization = `Bearer ${session.access_token}`;
+      }
+
       const res = await fetch(functionUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(body),
       });
 
       const data = await res.json();
       if (!res.ok || !data.redirect_url) {
+        // Identity-resolution error → keep inline auth open, surface inside form
+        if (res.status === 400 && data.error === 'identity_required') {
+          setIdentityError('Не удалось подтвердить аккаунт. Войдите или завершите регистрацию ниже.');
+          setIsProcessing(false);
+          return;
+        }
         throw new Error(data.error || 'Не удалось создать платёж');
       }
       window.location.href = data.redirect_url;
@@ -91,13 +107,13 @@ export default function PublicPayPage() {
     }
   };
 
-  // Branch A: target user is pre-bound — no email needed
+  // Branch A: target user pre-bound — no email, server uses link.user_id only
   const handlePayWithTarget = () => initiatePayment(undefined);
 
-  // Branch B: no target user, but auth.user — use session email
+  // Branch B: no target user, but session — Bearer token will be picked up live
   const handlePayWithSession = () => initiatePayment(user?.email || undefined);
 
-  // Auto-pay when guest finishes inline auth
+  // Auto-pay when guest finishes inline auth (Bearer token from fresh session)
   const handleGuestAuthenticated = async (email: string) => {
     await initiatePayment(email);
   };
