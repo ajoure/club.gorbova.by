@@ -456,7 +456,8 @@ export function AdminPaymentLinkDialog({
         "admin-create-public-link",
         {
           body: {
-            user_id: userId, // pre-assign к этому пользователю
+            // В public mode user_id опускаем — ссылка для любого плательщика.
+            ...(isPublicMode ? {} : { user_id: userId }),
             product_id: selectedProductId,
             tariff_id: selectedTariffId,
             offer_id: effectiveOffer.id,
@@ -624,14 +625,18 @@ export function AdminPaymentLinkDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-lg w-[calc(100vw-2rem)] max-h-[90vh] overflow-y-auto p-4 sm:p-6">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Link2 className="h-5 w-5" />
-              Ссылка на оплату
+            <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
+              <Link2 className="h-5 w-5 shrink-0" />
+              <span className="truncate">
+                {isPublicMode ? "Создать публичную ссылку" : "Ссылка на оплату"}
+              </span>
             </DialogTitle>
-            <DialogDescription>
-              Создайте ссылку для самостоятельной оплаты клиентом
+            <DialogDescription className="text-sm">
+              {isPublicMode
+                ? "Ссылка не привязана к пользователю и может быть оплачена любым человеком."
+                : "Создайте ссылку для самостоятельной оплаты клиентом"}
             </DialogDescription>
           </DialogHeader>
 
@@ -639,19 +644,16 @@ export function AdminPaymentLinkDialog({
             <div className="space-y-4">
               <div className="p-4 rounded-lg bg-primary/5 border border-primary/20">
                 <div className="flex items-center gap-2 mb-3">
-                  <CheckCircle className="h-5 w-5 text-primary" />
+                  <CheckCircle className="h-5 w-5 text-primary shrink-0" />
                   <p className="font-medium">Ссылка создана</p>
                 </div>
-                <p className="text-sm text-muted-foreground mb-2">
+                <p className="text-sm text-muted-foreground mb-2 break-words">
                   {selectedProduct?.name} — {selectedTariff?.name} · {amount} BYN
                   {effectivePaymentType === "subscription" ? " (подписка)" : " (разовая)"}
                 </p>
-                <Input
-                  readOnly
-                  value={generatedUrl}
-                  className="font-mono text-xs"
-                  onClick={(e) => (e.target as HTMLInputElement).select()}
-                />
+                <div className="rounded-md border bg-background p-2 font-mono text-xs break-all select-all">
+                  {generatedUrl}
+                </div>
               </div>
               <div className="flex gap-2">
                 <Button
