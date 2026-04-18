@@ -26,6 +26,12 @@ export interface CreateCheckoutParams {
   actor_type?: 'admin' | 'system';
   /** ID подписки, которую заменяем. Сервер проверит, что она реально отменена, прежде чем создать новую. */
   replacement_of_subscription_v2_id?: string;
+  /**
+   * Произвольные ключи, которые будут смёрджены в `orders_v2.meta` при создании.
+   * Канонический способ прокинуть `payment_link_id` (и подобные привязки) без дублирования.
+   * Анти-кейс: ручной post-insert UPDATE из вызывающей функции.
+   */
+  meta_extra?: Record<string, any>;
 }
 
 export interface CreateCheckoutSuccess {
@@ -63,7 +69,9 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     supabase, user_id, product_id, tariff_id, amount,
     payment_type, description, offer_id, origin, actor_user_id, actor_type,
     replacement_of_subscription_v2_id,
+    meta_extra,
   } = params;
+  const extraMeta = meta_extra && typeof meta_extra === 'object' ? meta_extra : {};
 
   // === STOP-GUARD: validate required fields ===
   if (!user_id || !product_id || !tariff_id || !amount) {
@@ -212,6 +220,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       product_name: product.name,
       tariff_name: tariff.name,
       payment_flow: paymentFlow,
+      ...extraMeta,
     };
 
     const accessDaysOneTime = tariff.access_days || 30;
@@ -618,6 +627,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       description: description || null,
       created_by: actorUserId,
       payment_flow: paymentFlow,
+      ...extraMeta,
     };
 
     const accessDaysSub = tariff.access_days || 30;

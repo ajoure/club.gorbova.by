@@ -4,6 +4,7 @@ import { endOfDayAppTz } from '../_shared/timezone.ts';
 import { buildAdminNotifyMessage, maskEmail } from '../_shared/admin-notify-message.ts';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 import { applyCrmStageOnTerminal } from '../_shared/crm-routing.ts';
+import { consumePaymentLinkForOrder } from '../_shared/consume-payment-link.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -2268,6 +2269,14 @@ Deno.serve(async (req) => {
       try { await applyCrmStageOnTerminal(supabase, linkOrder.id, 'success', 'webhook_link_order_paid'); }
       catch (e) { console.error('[WEBHOOK-LINK-ORDER] crm-routing apply failed:', e); }
 
+      // PATCH-PUBLIC-LINK-COUNTER: idempotently consume payment_links slot for subscription link orders
+      try {
+        const consumed = await consumePaymentLinkForOrder(supabase, linkOrder.id, 'bepaid-webhook[link-order]');
+        console.log('[WEBHOOK-LINK-ORDER] payment_link consume result:', consumed);
+      } catch (e) {
+        console.error('[WEBHOOK-LINK-ORDER] payment_link consume failed (non-fatal):', e);
+      }
+
       // F12 P7: Audit log for fill operation
       if (!linkOrder.provider_payment_id && transactionUid) {
         await supabase.from('audit_logs').insert({
@@ -3465,6 +3474,14 @@ Deno.serve(async (req) => {
       // CRM routing — Layer A: применить closed_won (если есть snapshot и не было manual override)
       try { await applyCrmStageOnTerminal(supabase, linkOrderV2.id, 'success', 'webhook_link_paid'); }
       catch (e) { console.error('[WEBHOOK-LINK] crm-routing apply failed:', e); }
+
+      // PATCH-PUBLIC-LINK-COUNTER: idempotently consume payment_links slot for one_time link orders
+      try {
+        const consumed = await consumePaymentLinkForOrder(supabase, linkOrderV2.id, 'bepaid-webhook[link]');
+        console.log('[WEBHOOK-LINK] payment_link consume result:', consumed);
+      } catch (e) {
+        console.error('[WEBHOOK-LINK] payment_link consume failed (non-fatal):', e);
+      }
 
       // 6. Upsert card_profile_links (stamp) with conflict guard
       const linkCardStamp = transaction?.credit_card?.stamp || null;
