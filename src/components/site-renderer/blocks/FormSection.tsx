@@ -6,7 +6,21 @@ import { useAuth } from "@/contexts/AuthContext";
 import { normalizeInstagram } from "@/lib/normalizeInstagram";
 import { z } from "zod";
 import { PhoneInput, isValidPhoneNumber } from "@/components/ui/phone-input";
-import { Loader2, Upload, X } from "lucide-react";
+import { Loader2, Upload, X, CalendarIcon } from "lucide-react";
+import { format } from "date-fns";
+import { ru } from "date-fns/locale";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { Badge } from "@/components/ui/badge";
+import { getFieldDisplayLabel } from "@/lib/formFieldLabel";
 
 interface FormField {
   label: string;
