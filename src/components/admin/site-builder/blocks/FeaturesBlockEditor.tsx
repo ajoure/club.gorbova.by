@@ -92,12 +92,12 @@ export function FeaturesBlockEditor({ content, onChange }: FeaturesBlockEditorPr
             <div>
               <Label className="text-[11px] text-muted-foreground">Планшет</Label>
               <Select
-                value={String((grid.columnsTablet as number) ?? "")}
-                onValueChange={(v) => updateGrid({ columnsTablet: v === "" ? undefined : Number(v) })}
+                value={grid.columnsTablet ? String(grid.columnsTablet) : "auto"}
+                onValueChange={(v) => updateGrid({ columnsTablet: v === "auto" ? undefined : Number(v) })}
               >
-                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="auto" /></SelectTrigger>
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">auto</SelectItem>
+                  <SelectItem value="auto">auto</SelectItem>
                   {[1, 2, 3, 4].map((n) => <SelectItem key={n} value={String(n)}>{n}</SelectItem>)}
                 </SelectContent>
               </Select>
