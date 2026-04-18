@@ -16,18 +16,15 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useInlineAuth } from '@/hooks/useInlineAuth';
 import { normalizeEdgeFunctionError } from '@/utils/normalizeEdgeFunctionError';
 import { LandingHeader } from '@/components/landing/LandingHeader';
 import { LandingFooter } from '@/components/landing/LandingFooter';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { CreditCard, CheckCircle, Clock, Shield, AlertCircle, Loader2, Mail } from 'lucide-react';
+import { InlineAuthForm } from '@/components/auth/InlineAuthForm';
+import { CreditCard, CheckCircle, Clock, Shield, AlertCircle, Loader2 } from 'lucide-react';
 
 interface PaymentLinkInfo {
   product_name: string;
@@ -49,14 +46,6 @@ export default function PublicPayPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Inline auth (used only when !has_target_user && guest)
-  const inlineAuth = useInlineAuth();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
-  const [phone, setPhone] = useState('');
-
   const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
   const functionUrl = `https://${projectId}.supabase.co/functions/v1/public-checkout`;
 
@@ -75,11 +64,6 @@ export default function PublicPayPage() {
     enabled: !!token,
     retry: false,
   });
-
-  // When user logs in via inline auth, auto-fill email
-  useEffect(() => {
-    if (user?.email && !email) setEmail(user.email);
-  }, [user, email]);
 
   const initiatePayment = async (payerEmail?: string) => {
     if (!token) return;
@@ -113,25 +97,9 @@ export default function PublicPayPage() {
   // Branch B: no target user, but auth.user — use session email
   const handlePayWithSession = () => initiatePayment(user?.email || undefined);
 
-  // Branch C: guest — inline email check → login/signup → pay
-  const handleGuestEmailContinue = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email.trim()) return;
-    await inlineAuth.checkEmail(email.trim());
-  };
-
-  const handleGuestLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const result = await inlineAuth.login(email, password);
-    if (result) await initiatePayment(email);
-  };
-
-  const handleGuestSignup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const result = await inlineAuth.signup(email, password, { firstName, lastName, phone });
-    if (result && !result.needsConfirmation) {
-      await initiatePayment(email);
-    }
+  // Auto-pay when guest finishes inline auth
+  const handleGuestAuthenticated = async (email: string) => {
+    await initiatePayment(email);
   };
 
   const formatPrice = (kopecks: number, currency: string) =>
