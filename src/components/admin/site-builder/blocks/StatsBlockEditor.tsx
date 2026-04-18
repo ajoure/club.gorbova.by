@@ -30,8 +30,14 @@ export function StatsBlockEditor({ content, onChange }: StatsBlockEditorProps) {
   const items = (content.items as StatsItem[]) || [];
   const columns = (content.columns as number) || 4;
   const iconMode = (content.iconMode as string) || "none";
+  const grid = (content.grid as Record<string, unknown>) || {};
 
   const update = (patch: Record<string, unknown>) => onChange({ ...content, ...patch });
+  const updateGrid = (patch: Record<string, unknown>) => {
+    const next = { ...grid, ...patch };
+    Object.keys(next).forEach((k) => next[k] === undefined && delete next[k]);
+    update({ grid: Object.keys(next).length === 0 ? undefined : next });
+  };
 
   const addItem = () => {
     update({ items: [...items, { number: "", suffix: "", label: "", description: "", icon: "" }] });
