@@ -2,408 +2,235 @@
 
 &nbsp;
 
-1. **Фазу 0 усилить обязательным discovery-пакетом до любого execution.**
-  До начала работ подрядчик должен приложить отдельный proof-блок:
+1. Страница ca44aae9-db96-4b4b-ae2b-540959b5873a остаётся **только черновиком-шаблоном**. Не публиковать, не привязывать к доменам, DomainRouter и routing gate сейчас не трогать.
+2. PATCH A по rich-text принять как обязательный:
   &nbsp;
-  - текущий порядок резолва в DomainRouter.tsx
-  - proof, что builder-page уже/ещё не проверяется раньше hardcoded
-  - карту канонического pricing flow: site_pages.product_id → useSitePricingData → PricingSection → PaymentDialog → checkout
-  - inventory текущих block types и уже существующих styling controls
-  - proof всех мест использования features
-  - proof текущих site_domain_bindings для [consultation.gorbova.by](http://consultation.gorbova.by) и [cons.gorbova.by](http://cons.gorbova.by)
-  - поиск, нет ли уже блока stats/metrics/achievements под другим именем
-    Без этого Фаза 1 не стартует.
+  - использовать **ровно тот же** FloatingToolbar + RichTextarea, что уже работают в тренингах;
+  - не делать новый редактор и не вводить новый формат хранения;
+  - подключить toolbar в Site Builder на верхнем уровне редактора;
+  - перевести на reused rich-text **все контентные поля**, а не выборочно.
   &nbsp;
-2. **Явно зафиксировать: DomainRouter.tsx не трогаем по умолчанию.**
-  Менять его можно только если discovery покажет, что builder реально не имеет нужного приоритета.
-  Если builder уже стоит раньше legacy/hardcoded, пункт про изменение порядка удалить из плана полностью.
-3. **Фаза 1 должна быть не только про “styling controls”, а про reusable design system внутри конструктора.**
-  Нужно прямо написать, что цель — собрать не Consultation, а **универсальный конструктор для подобных посадочных**, где потом без кода можно делать:
+3. Перед execution PATCH A сделать короткий discovery-список:
   &nbsp;
-  - консультации
-  - мини-лендинги курсов
-  - страницы продажи продукта
-  - страницы с динамическими тарифами
-  - страницы с CTA/FAQ/соцдоказательствами
-    Consultation — только proof-case.
+  - какие поля переводятся на rich-text;
+  - какие поля остаются plain/technical;
+  - в каких renderer-блоках сейчас текст выводится как plain string и где нужно перейти на безопасный HTML renderer.
   &nbsp;
-4. **Расширение BlockSettings сделать осторожно и только там, где это действительно block-agnostic.**
-  Разделить настройки на:
+4. В PATCH A явно разделить поля:
   &nbsp;
-  - **глобальные**: padding, background, maxWidth, mobile overrides, titleAlignment
-  - **карточные**: cardStyle, radius, shadow, borderOpacity
-  - **сеточные**: columns/gap/breakpoints
-  - **элементные**: itemAlignment, iconMode
-    И зафиксировать, что карточные и сеточные настройки применяются только к тем блокам, где это логично, а не “ко всем подряд”.
+  - **контентные**: title, subtitle, description, text, label, question, answer, testimonial text, CTA text, field labels формы и т.д. → rich-text;
+  - **технические**: slug, anchorId, URL, domain, product_id, tariff_id, padding, color, width, enum/select/switch, numeric fields → не трогаем.
   &nbsp;
-5. **features-блок расширять, но не превращать в свалку.**
-  В плане добавить guard:
+5. PATCH B по clone обязателен, иначе шаблон как шаблон не закрыт:
   &nbsp;
-  - layout=grid — текущий режим
-  - layout=card-list — вертикальные карточки
-  - layout=numbered-list — шаги
-    Но не добавлять туда лишние page-specific настройки.
-    Если для Consultation потребуется что-то сверх этого — сначала вернуть это в reusable discovery, а не пихать прямо в features.
+  - при копировании страницы очищать site_pages.product_id;
+  - в дубле очищать content.product_id у всех pricing блоков;
+  - дубль всегда создавать как draft;
+  - title/slug дубля делать уникальными;
+  - после открытия дубля должно быть видно, что продукт нужно выбрать вручную.
   &nbsp;
-6. **По stats-блоку добавить constraint: только generic renderer, без Consultation-логики.**
-  В плане прямо указать:
+6. В proof по clone нужны факты, а не теория:
   &nbsp;
-  - никаких зашитых цветов/отступов/размеров под одну страницу
-  - все параметры только через schema и editor controls
-  - renderer должен использовать существующие design tokens и текущую систему классов проекта
-  - никаких кастомных inline-стилей “как на Consultation” без общего параметра
+  - клик «Копировать»;
+  - дубль появился в списке;
+  - дубль открывается в editor без warnings;
+  - у дубля page-level product_id = null;
+  - у pricing-блока content.product_id = null;
+  - preview дубля открывается.
   &nbsp;
-7. **Фаза 4 (“сборка Consultation”) должна идти как UI-first, а seed — только как fallback.**
-  Правильно, что страница создаётся через UI. Но в плане надо жёстко записать:
+7. В PATCH C по proof обязательно показать identity reused editor:
   &nbsp;
-  - сначала попытка собрать страницу целиком через UI вручную
-  - если UI-сборка невозможна из-за объёма/риска человеческой ошибки, допустим controlled seed
-  - seed только в формате валидных block schemas
-  - после seed страница должна открываться и редактироваться без ошибок, warning и “unknown props”
+  - один скрин/доказательство toolbar в тренингах;
+  - один скрин/доказательство того же toolbar в Site Builder;
+  - одинаковый набор кнопок форматирования.
   &nbsp;
-8. **Добавить отдельный discovery по product binding и domain binding в UI.**
-  Нужно не только прочитать таблицы, но и подтвердить:
+8. По rich-text proof нужен минимальный реальный сценарий:
   &nbsp;
-  - где в админке реально задаётся site_pages.product_id
-  - где в UI создаётся site_domain_bindings
-  - есть ли уже workflow “страница как home для домена”
-  - не создаст ли Consultation конфликт с уже существующими bindings
-    Это важно, потому что здесь чаще всего и ломается пилот.
+  - изменить текст в шаблоне;
+  - применить bold/italic/align;
+  - сохранить;
+  - открыть preview;
+  - убедиться, что форматирование реально отображается;
+  - вернуть обратно и снова сохранить.
   &nbsp;
-9. **Фазу 5 (E2E pricing matrix) расширить ещё двумя проверками.**
-  Добавить:
+9. Mobile proof нужен фактический, не теоретический:
   &nbsp;
-  - **E9:** если на странице нет product_id, pricing block не должен идти по новому пути и не должен показывать чужие тарифы
-  - **E10:** если у продукта нет активных тарифов, builder-страница должна показывать корректное пустое состояние, а не ломаться
-    Это защитит канонический pricing flow от скрытых регрессий.
+  - либо viewport 390×844 в preview/editor;
+  - либо опубликованный preview URL без публикации на домен;
+  - но обязательно скрин реального mobile render после rich-text правки.
   &nbsp;
-10. **Rollback plan дополнить проверкой “фактический rollback”.**
-  В DoD добавить:
-  &nbsp;
-  - после draft/unpublish реально открывается legacy Consultation
-  - после удаления domain binding реально открывается legacy Consultation
-  - rollback подтверждён не теоретически, а скрином/видео/URL proof на обоих доменах
-  &nbsp;
-11. **Отдельно зафиксировать, что hardcoded Consultation остаётся эталоном сравнения, а не источником логики.**
-  То есть:
-  &nbsp;
-  - как референс по контенту/визуалу — да
-  - копировать оттуда бизнес-логику в builder — нет
-  - pricing/checkout/product flow — только из текущего канонического builder/commerce path
-  &nbsp;
-12. **В финальный discovery-пакет добавить “gap table”.**
-  Перед implementation подрядчик должен показать таблицу:
-  &nbsp;
-  - что уже есть в конструкторе
-  - чего не хватает для Consultation
-  - что будет добавлено reusable-способом
-  - что сознательно не делаем в этом спринте
-    Это сильно снизит риск расползания scope.
-  &nbsp;
-13. **Финальный DoD усилить пунктом про отсутствие нового параллельного пути.**
-  Добавить отдельный критерий:
-  &nbsp;
-  - **не создано ни одного нового checkout flow**
-  - **не создано ни одного нового источника тарифов**
-  - **не создано ни одного page-specific special case для Consultation**
-  - **не создана отдельная логика доменного резолва под пилот**, если discovery не доказал необходимость
-  &nbsp;
-14. **Запрос к подрядчику по окружению и документации.**
-  До execution пусть приложит:
-  &nbsp;
-  - текущее окружение, где будет пилотироваться Consultation
-  - доступный URL builder preview
-  - доступные домены/поддомены для теста
-  - есть ли уже внутренняя документация/архитектурные заметки по site_pages, site_domain_bindings, PricingBlock
-  - proof, что его работа будет идти поверх текущих canonical contracts, а не “по памяти”
-  &nbsp;
-15. **Рекомендация по фазированию исполнения.**
-  Делать в таком порядке:
-  &nbsp;
-  - Discovery пакет
-  - Reusable controls
-  - Расширение features
-  - stats только если discovery подтвердит отсутствие аналога
-  - Сборка Consultation
-  - Domain binding
-  - E2E pricing matrix
-  - Rollback proof
-    Не смешивать всё в один заход.
-  &nbsp;
+10. В финальном отчёте разделить статусы на 3 блока:
 
 &nbsp;
 
 &nbsp;
 
-Итог:
+&nbsp;
 
-план стал существенно лучше и уже выглядит рабочим. Главный акцент надо сохранить на трёх вещах: **discovery-first**, **reusable-first**, **no new commerce/domain path**. После этих уточнений план можно отдавать в реализацию.
+- **подтверждено фактами**;
+- **исправлено в этом PATCH**;
+- **отложено вне scope**.
 
 &nbsp;
 
-План v2: миграция хардкод-сайтов в конструктор. Reusable-first, discovery-first
+&nbsp;
 
-## Принцип
+&nbsp;
 
-Это **не миграция страницы Consultation**. Это **расширение конструктора reusable-настройками блоков**, после которого Consultation (и любой похожий лендинг) собирается без кода и без page-specific хаков. Pricing/checkout/domain flow остаются нетронутыми и подтверждаются discovery до execution.
+11. Отдельно в финальном отчёте дать сводку по шаблону:
 
----
+&nbsp;
 
-## Фаза 0. Discovery (read-only, до любых изменений)
+&nbsp;
 
-Обязательный пакет proof-документов перед execution. Ничего не меняем, пока не зафиксированы факты.
+&nbsp;
 
-**0.1. DomainRouter — порядок резолва**
+- page_id;
+- slug;
+- текущий product_id;
+- список 9 блоков по порядку;
+- какие блоки используют reusable controls;
+- что остаётся out-of-scope.
 
-- `src/components/layout/DomainRouter.tsx` — фактический порядок `if`-веток
-- `SiteRenderService.resolveByDomainAndPath` — что именно резолвит и в каком приоритете
-- **Вердикт:** если builder-page уже проверяется ДО hardcoded-веток (`isCourseDomain`/`isConsultationDomain`) — пункт «изменить порядок» удаляется из плана полностью. Не трогаем то, что работает.
+&nbsp;
 
-**0.2. Pricing / Product / Domain canonical flow**
-Карта текущего канонического потока (read-only):
+&nbsp;
 
-- `site_pages.product_id` — связь страница→продукт
-- `site_domain_bindings` — связь страница→домен (UI domain bindings)
-- `PricingBlock` (admin editor) → `useSitePricingData` → `PricingSection` (renderer)
-- `UniversalPricingSection` → `PaymentDialog` → `bepaid-create-token` (одноразовый checkout per `checkout-one-time-contract`)
-- CTA в тарифной карточке → существующий guest-checkout flow
-- **Зафиксировать в плане:** никакого нового пути оплаты, никакого нового источника тарифов, только reuse.
+&nbsp;
 
-**0.3. Block types inventory**
+12. Переименование страницы в **«Шаблон — Платная консультация»** допустимо только если не ломает текущие проверки и не мешает proof. Если мешает — оставить текущее имя, но в отчёте явно зафиксировать, что это шаблон.
+13. Никаких page-specific хаков под Consultation не добавлять. И rich-text, и clone-fix должны быть **общими улучшениями конструктора сайтов**.
 
-- Полный список текущих `BLOCK_TYPES` из `SiteBlockEditor.tsx`
-- Какие styling controls уже есть в `BlockSettings` (paddingTop/Bottom, backgroundColor, maxWidth, fullWidth, hideOnMobile/Desktop)
-- Какие настройки уже есть в content-схемах отдельных блоков
-- Это покажет gap: что добавлять, что уже есть.
+&nbsp;
 
-**0.4. features-блок — где используется**
+&nbsp;
 
-- Текущая schema `featuresContentSchema` в `src/services/sitePages/types.ts`
-- Все страницы в `site_pages`, использующие блок `features` (SQL по `blocks @> '[{"type":"features"}]'`)
-- Подтвердить: добавление опционального `layout` с default = текущему поведению не ломает ни одну существующую страницу.
+После этого уже можно будет отдельно делать следующий gate по routing/domain binding для [consultation-доменов.](http://consultation-доменов.Mini)
 
-**0.5. Stats/metrics/achievements — есть ли уже**
+&nbsp;
 
-- Поиск по `BLOCK_TYPES` и `blockContentSchemas` на наличие чего-то похожего (counters, metrics, numbers, achievements). Если есть — переиспользуем, новый блок не создаём.
+[Mini](http://consultation-доменов.Mini)-plan: 3 PATCH (add-only) для конструктора + закрытие Фазы 4
 
-**0.6. Текущее состояние Consultation в БД**
+## Контекст и фиксация по Фазе 4
 
-- Уже есть ли `site_pages` со `product_id` = consultation product UUID?
-- Текущие `site_domain_bindings` для `consultation.gorbova.by` / `cons.gorbova.by` — если есть, в каком статусе?
-- Это покажет: создаём с нуля или дополняем существующее.
+**Статус:** draft-шаблон создан, **остаётся черновиком**. Публичный routing для consultation-доменов **не запускаем**, `DomainRouter` не трогаем. Страница `ca44aae9...` — шаблон для копирования и ручного редактирования через UI.
 
-**Deliverable:** discovery-отчёт перед началом execution. Без него фаза 1 не стартует.
+## Discovery (что уже подтверждено чтением кода)
 
----
+**Канонический rich-text стек (из тренингов):**
 
-## Фаза 1. Reusable styling controls (универсальное расширение, не под Consultation)
+- `src/components/ui/RichTextarea.tsx` — обёртка `contentEditable` с маркером `data-rich-editable="true"`
+- `src/components/ui/FloatingToolbar.tsx` — глобальный popup, появляется при выделении внутри любого `[data-rich-editable]`. Поддерживает: **Bold, Italic, Underline, Strikethrough, Color, Font size, Link/Unlink, Align L/C/R**
+- Хранение: HTML-строка в том же поле. Контракт уже используется `TextBlockEditor` (`content.html`) — второго формата вводить не нужно
+- Toolbar монтируется **один раз** на верхнем уровне (`LessonBlockEditor`, строка 518: `<FloatingToolbar />`). В Site Builder его **не монтируют** — отсюда отсутствие popup
 
-Все настройки идут через **существующие схемы** `BlockSettings` и content-schemas, никаких ad-hoc пропсов.
+**Site Builder editor entry point:** `src/pages/admin/AdminSiteEditor.tsx` → `<SiteBlockEditor>` (строка 158). Сюда же добавляется `<FloatingToolbar />`.
 
-**1.1. Расширение `BlockSettings` (общее для всех блоков)**
-Add-only поля (опциональные, default = текущее поведение):
+**Clone:** `useSitePages.copyPage` (`AdminSiteBuilder.tsx:120`) — это и есть существующий путь дублирования. Падает из-за `idx_site_pages_product_id_unique` (зафиксировано в `mem://architecture/site-builder/clone-product-id-constraint.md`).
 
-- `containerMaxWidth`: переиспользовать существующий `maxWidth` (уже есть)
-- `mobilePaddingTop` / `mobilePaddingBottom` — overrides
-- `cardStyle`: `"plain" | "bordered" | "glass" | "filled"` — для блоков, использующих card-обёртки
-- `cardRadius`: `"none" | "sm" | "md" | "lg" | "xl"`
-- `cardShadow`: `"none" | "sm" | "md" | "lg"`
-- `borderOpacity`: число 0-100 (применяется как `border-border/{n}`)
-- `itemAlignment`: `"left" | "center" | "right"`
-- `titleAlignment`: `"left" | "center" | "right"`
+**Классификация полей по 25 редакторам блоков (`src/components/admin/site-builder/blocks/*`):**
 
-**1.2. Расширение grid-блоков (features, columns, gallery, pricing, stats)**
-Reusable secondary schema `gridLayoutSchema`:
 
-- `columnsDesktop`: 1-6
-- `columnsTablet`: 1-4
-- `columnsMobile`: 1-2
-- `gap`: `"sm" | "md" | "lg" | "xl"`
-
-**1.3. Icon mode (для features и stats)**
-
-- `iconMode`: `"none" | "circle" | "square" | "numbered"`
-- `numbered` = автоматический порядковый номер вместо иконки (закрывает кейс «После оплаты: 1, 2, 3»)
-- `circle` / `square` = форма обёртки иконки
-
-**1.4. Backward-compat гарантии (зафиксировано в DoD)**
-
-- Все новые поля **опциональные**.
-- Дефолты подобраны так, что старые страницы рендерятся **без визуальных изменений**.
-- Smoke-test: открыть 3-5 существующих страниц `site_pages` после деплоя — diff = 0.
-
-**Файлы:**
-
-- `src/services/sitePages/types.ts` — расширить `BlockSettings`, добавить `gridLayoutSchema`, расширить content-схемы
-- `src/components/admin/site-builder/blocks/BlockSettingsEditor.tsx` — UI для новых reusable полей
-- Затронутые renderer-блоки (`FeaturesSection`, `ColumnsSection`, `GallerySection`, etc.) — поддержка новых опций с fallback на текущее поведение
-
----
-
-## Фаза 2. features-блок — generic layout режимы
-
-Только после discovery 0.4.
-
-**2.1. Расширение схемы**
-
-- Добавить `layout: "grid" | "card-list" | "numbered-list"` (опциональное, default = `"grid"` = текущее поведение)
-- Добавить `iconMode` (см. 1.3)
-- Использовать reusable `gridLayoutSchema` (см. 1.2)
-
-**2.2. Backward-compat**
-
-- Старые блоки без `layout` → рендерятся как раньше (grid).
-- Старые блоки без `iconMode` → текущая иконка-emoji.
-- Прямое подтверждение: ни одна страница из discovery 0.4 не меняет вид.
-
-**Файлы:**
-
-- `src/services/sitePages/types.ts` — расширить `featuresContentSchema`
-- `src/components/admin/site-builder/blocks/FeaturesBlockEditor.tsx` — селекторы layout/iconMode
-- `src/components/site-renderer/blocks/FeaturesSection.tsx` (или inline в `SitePageRenderer`) — поддержка трёх режимов
-
----
-
-## Фаза 3. stats-блок — generic, не «под Consultation»
-
-Только если discovery 0.5 подтвердит, что блока ещё нет.
-
-**3.1. Schema (generic-first)**
-
-```ts
-statsContentSchema = {
-  title?: string,
-  subtitle?: string,
-  items: [{
-    number: string,        // "500+", "$100k", "24/7"
-    suffix?: string,       // опциональный отдельный суффикс
-    label: string,         // подпись
-    description?: string,  // опциональное второе описание
-    icon?: string          // опциональная иконка
-  }],
-  // grid через reusable gridLayoutSchema (1.2)
-  // cardStyle/iconMode/alignment через BlockSettings (1.1, 1.3)
-}
-```
-
-**3.2. Покрытие use-cases (generic scope)**
-
-- Optional title/subtitle ✓
-- 2/3/4 columns desktop + mobile overrides через reusable grid ✓
-- Optional icon + iconMode (none/circle/square/numbered) ✓
-- card / plain / glass / bordered через cardStyle ✓
-- alignment через titleAlignment/itemAlignment ✓
-- number + suffix + description ✓
-
-**Файлы:**
-
-- `src/services/sitePages/types.ts` — `statsContentSchema`, регистрация
-- `src/components/site-renderer/blocks/StatsSection.tsx` — create
-- `src/components/admin/site-builder/blocks/StatsBlockEditor.tsx` — create
-- `src/components/admin/site-builder/SiteBlockEditor.tsx` — регистрация в `BLOCK_TYPES`, `getDefaultContent`, switch
-- `src/components/site-renderer/SitePageRenderer.tsx` — case `"stats"`
-
----
-
-## Фаза 4. Сборка пилота Consultation (без page-specific хаков)
-
-Цель — **доказать, что новых возможностей достаточно**. Если в процессе сборки что-то требует кода — возвращаемся в фазу 1-3 и расширяем reusable-контролы, **не делаем спецкейс под страницу**.
-
-**4.1. Создание страницы**
-
-- Через UI `/admin/sites` → New page как обычную страницу
-- title/slug/product_id (consultation product UUID) → status: draft
-
-**4.2. Seed blocks (controlled)**
-
-- Допустимо: программный seed `blocks` через тот же schema contract (валидация против `blockContentSchemas`)
-- Запрещено: «сырой» JSON в обход валидации
-- Результат: страница потом свободно редактируется в UI без артефактов и предупреждений
-
-**4.3. Состав блоков (только из существующего + добавленного reusable)**
-
-- `hero` + CTA (scroll_to_anchor → tariffs)
-- `features` (layout=card-list, iconMode=circle) — «Кому подходит»
-- `stats` (variant=card, columns=4) — достижения
-- `features` (layout=card-list) — список результатов
-- `pricing` — product_id consultation, anchorId=`tariffs`
-- `features` (layout=numbered-list, iconMode=numbered) — «После оплаты»
-
-**4.4. Domain binding**
-
-- Через UI domain-bindings: `consultation.gorbova.by` (is_home, is_primary), `cons.gorbova.by` (is_home)
-- Проверка: `SiteRenderService.resolveByDomainAndPath` находит страницу первой (подтверждено в discovery 0.1)
-
----
-
-## Фаза 5. E2E pricing matrix (отдельный блок DoD)
-
-Каждый пункт — самостоятельная проверка, фиксируется отдельно:
-
-
-| #   | Проверка                                                                               | Метод           |
-| --- | -------------------------------------------------------------------------------------- | --------------- |
-| E1  | Страница привязана к продукту через `site_pages.product_id`                            | SQL + UI        |
-| E2  | `pricing` блок подхватывает тарифы именно этого продукта                               | preview + DOM   |
-| E3  | Кнопка тарифа открывает **существующий** checkout (PaymentDialog)                      | клик в браузере |
-| E4  | Успешная оплата идёт по канон. flow (`bepaid-create-token` + `grant-access-for-order`) | edge logs       |
-| E5  | После unpublish страницы → fallback на hardcoded работает                              | toggle + reload |
-| E6  | После remove domain binding → builder-страница не отдаётся, hardcoded работает         | toggle + reload |
-| E7  | Копирование страницы через UI → дубль редактируется                                    | UI clone        |
-| E8  | Старые страницы (5 шт. из discovery 0.4) рендерятся без визуального diff               | preview each    |
+| Группа                          | Поля → действие                                                                                                                                                                                                                                                                                                                          |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Контентные (→ RichTextarea)** | Hero: title, subtitle, buttonText. Heading: text. Cta: title, subtitle, buttonText. Faq: question, answer. Testimonials: text, author, role. Features: title, description (per item). Stats: label, suffix. Pricing: title, subtitle. Columns: cell text. Form: title, subtitle, buttonText, field.label. Logos: caption. Button: label. |
+| **Технические (НЕ трогаем)**    | slug, anchorId, URL, href, video URL, embed code, productId, tariffId, formId, mappingKey, padding/margin/числовые, width/height, color hex, switch, select (variant/level/layout/icon mode), domain, sort_order, ID                                                                                                                     |
 
 
 ---
 
-## Фаза 6. Rollback plan (explicit)
+## PATCH A — Reused rich-text toolbar в Site Builder
 
-Не «просто unpublish». Полный набор уровней отката:
+**Цель:** один и тот же floating popup в тренингах и в Site Builder. Никакого второго редактора и второго формата хранения.
 
-1. **L1: page status → draft** — builder-страница не отдаётся, fallback автоматический
-2. **L2: domain binding disable/remove** — то же на уровне домена
-3. **L3: hardcoded fallback intact** — `Consultation.tsx` / `CourseAccountant.tsx` / `Landing.tsx` физически не трогаются в этом спринте
-4. **L4: revert схемы** — все новые поля `BlockSettings` опциональные, default safe; revert не требует data migration
+**Шаги:**
 
-**Запрещено в этом спринте:** удаление legacy кода, изменение порядка веток в `DomainRouter` (если discovery 0.1 не покажет, что это критически нужно).
+1. **Монтирование toolbar (1 строка):** в `src/pages/admin/AdminSiteEditor.tsx` рядом с `<SiteBlockEditor>` добавить `<FloatingToolbar />` (как в `LessonBlockEditor`). Это сразу включает форматирование для всех уже существующих `RichTextarea` в Site Builder (`TextBlockEditor`).
+2. **Замена контентных `Input/Textarea` на `RichTextarea**` в редакторах блоков (только контентные поля из таблицы выше, технические не трогаем):
+  - `HeroBlockEditor` — title (inline), subtitle, buttonText (inline)
+  - `HeadingBlockEditor` — text (inline)
+  - `CtaBlockEditor` — title (inline), subtitle, buttonText (inline)
+  - `FaqBlockEditor` — question (inline), answer
+  - `TestimonialsBlockEditor` — text, author (inline), role (inline)
+  - `FeaturesBlockEditor` — title (inline), description (per item)
+  - `StatsBlockEditor` — label (inline), suffix (inline)
+  - `PricingBlockEditor` — title (inline), subtitle
+  - `FormBlockEditor` — title (inline), subtitle, buttonText (inline), field.label (inline)
+  - `ButtonBlockEditor` — label (inline)
+  - `ColumnsBlockEditor` — text cells
+  - `LogosBlockEditor` — caption (inline)
+   Где сейчас `<Input>` для короткой строки → `<RichTextarea inline />` (контракт уже есть). Где `<Textarea>` → `<RichTextarea />`. Контракт `value: string (HTML) / onChange(html)` совпадает с текущим `e.target.value` после простой адаптации.
+3. **Рендер на публичной стороне:** проверить, что соответствующие renderer-блоки уже выводят HTML через `dangerouslySetInnerHTML`/`SafeHtml`. Где встречается plain text вывод (`{title}`) — заменить на `<SafeHtml html={...} />` (компонент уже есть, используется в lesson blocks). Это разовая правка по тем же блокам.
+4. **Backward compatibility:** старый plain-text сохранится — `RichTextarea` выведет его как есть (innerHTML текста = тот же текст).
 
----
-
-## Что НЕ делаем в этом спринте
-
-- Не удаляем `Consultation.tsx`, `CourseAccountant.tsx`, `Landing.tsx`
-- Не меняем `DomainRouter.tsx` без явного результата discovery 0.1
-- Не трогаем `PricingSection`, `useSitePricingData`, `PaymentDialog`, payment flow
-- Не делаем page-specific компоненты — только reusable-расширение
-- Не мигрируем Course и Landing — они отдельным тикетом после стабильности Consultation
-
----
-
-## DoD (финальный)
-
-- Discovery-отчёт по фазе 0 приложен и зафиксирован
-- DomainRouter не изменён (или изменение явно обосновано discovery)
-- Все новые настройки блоков **generic и reusable**, не page-specific
-- Старые страницы (5 шт. на выбор из БД) — визуальный diff = 0
-- Consultation собран без code-hacks, только из существующих + добавленных reusable-блоков
-- E2E pricing matrix (E1-E8) пройдена полностью
-- Rollback plan проверен на L1 и L2 фактически (не «теоретически»)
-- Builder-версия Consultation визуально сопоставима с hardcoded (4 скрина: builder/hardcoded × desktop/mobile)
-- Страницу можно скопировать через UI и редактировать дубль без артефактов
-- Pricing/checkout идут по существующему каноническому пути (подтверждено edge logs)
+**Out of scope:** новый редактор, новые библиотеки (TipTap и т.п.), новый формат хранения, любые правки технических полей.
 
 ---
 
-## Список файлов (итого)
+## PATCH B — Clone-template fix для product-bound pages
 
+**Цель:** `copyPage` работает на страницах с `product_id` без падения unique constraint; дубль создаётся как «несвязанный» шаблон.
 
-| Файл                                                                   | Действие                                                                                                       | Фаза    |
-| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------- |
-| `src/services/sitePages/types.ts`                                      | edit — `BlockSettings` reusable поля, `gridLayoutSchema`, `featuresContentSchema.layout`, `statsContentSchema` | 1, 2, 3 |
-| `src/components/admin/site-builder/blocks/BlockSettingsEditor.tsx`     | edit — UI для reusable styling controls                                                                        | 1       |
-| `src/components/site-renderer/blocks/FeaturesSection.tsx` (или inline) | edit — layout режимы                                                                                           | 2       |
-| `src/components/admin/site-builder/blocks/FeaturesBlockEditor.tsx`     | edit — селектор layout/iconMode                                                                                | 2       |
-| `src/components/site-renderer/blocks/StatsSection.tsx`                 | create                                                                                                         | 3       |
-| `src/components/admin/site-builder/blocks/StatsBlockEditor.tsx`        | create                                                                                                         | 3       |
-| `src/components/admin/site-builder/SiteBlockEditor.tsx`                | edit — регистрация stats                                                                                       | 3       |
-| `src/components/site-renderer/SitePageRenderer.tsx`                    | edit — case stats, поддержка новых reusable опций в существующих блоках                                        | 1, 3    |
-| `src/components/layout/DomainRouter.tsx`                               | **only if discovery 0.1 требует** — иначе НЕ трогаем                                                           | 0       |
+**Шаги (в `useSitePages.copyPage` / `SitePageService`):**
+
+1. При копировании **не переносить** `product_id` в дубль (записывать `null`).
+2. Пройти по `blocks` дубля и для каждого блока с `type === "pricing"` обнулить `content.product_id` (и любые tariff overrides), оставив структуру блока валидной.
+3. Поставить дубль в `status: "draft"`, добавить суффикс к title (`"… (копия)"`) и slug (`"<slug>-copy-<n>"` с проверкой уникальности).
+4. После открытия дубля редактор показывает баннер «Страница не привязана к продукту» (используется существующий `selling-page-diagnostic-states`, состояние `not_linked`) — пользователь вручную выбирает product в `SiteSettingsPanel` и в `PricingBlockEditor`.
+
+**Out of scope:** автоматическое присвоение product, новые поля в схеме, изменения unique constraint.
+
+---
+
+## PATCH C — Proof-пакет (browser live-proof, в default mode)
+
+**Closing для Фазы 4 + acceptance для PATCH A/B.**
+
+Сценарии (screenshots в порядке выполнения):
+
+1. **Rich-text identity:** popup в тренинг-уроке + popup в Site Builder editor — одинаковые иконки/набор кнопок.
+2. **Форматирование в Site Builder:** на странице `ca44aae9...` выделить текст в hero subtitle → Bold + Italic + Align center → Save.
+3. **Persist:** перезагрузить editor → форматирование на месте; preview desktop → форматирование применено; preview mobile (390×844) → корректный рендер.
+4. **UI Save (закрытие 8/9 пробелов Фазы 4):** изменение поля → save → reload → значение сохранилось → откат.
+5. **Clone (закрытие 9/9):** на template-странице нажать «Дублировать» → дубль появляется в списке → открыть дубль → editor без warnings → product_id пуст → pricing block требует выбора продукта → screenshot всех четырёх состояний.
+6. **Переименование template (опционально):** title → «Шаблон — Платная консультация» (если не ломает ссылки/проверки; иначе оставить, в отчёте назвать шаблоном).
+
+---
+
+## DoD Фазы 4 (финальная сводка по 3 блокам)
+
+**Подтверждено фактами:**
+
+- draft-шаблон создан, blocks JSON валиден, editor/preview desktop без warnings, pricing резолвит 4 тарифа канонически
+- UI Save верифицирован (после PATCH C)
+
+**Подтверждается этим mini-plan'ом (после PATCH A+B+C):**
+
+- rich-text форматирование в Site Builder идентично тренингам
+- UI Clone работает на product-bound страницах
+- mobile preview — фактический скрин
+
+**Отложено в следующий gate (явно):**
+
+- routing gate / `site_domain_bindings` для consultation-доменов
+- любые правки `DomainRouter`
+- публикация шаблона
+
+---
+
+## Технические нотки
+
+- Файлы в `src/components/admin/site-builder/blocks/*Editor.tsx` — точечные правки JSX (Input/Textarea → RichTextarea + при необходимости `inline`).
+- `AdminSiteEditor.tsx` — одна строка `<FloatingToolbar />`.
+- `useSitePages.copyPage` (или соответствующий `SitePageService.copyPage`) — добавить очистку product_id страницы и `content.product_id` в pricing-блоках.
+- Никаких миграций БД, новых RPC, новых edge functions.
+- Никаких page-specific хаков под Consultation: и rich-text, и clone-fix — общие reusable улучшения конструктора.
+
+## Финальный блок шаблона (после PATCH B/C, для отчёта)
+
+- `page_id`: `ca44aae9-db96-4b4b-ae2b-540959b5873a`
+- `slug`: `consultation`
+- `product_id`: `9d0d6de8-4b0e-477f-b6c4-ab7def8268f6`
+- 9 блоков: hero · heading(#audience) · text · features(card-list) · stats(#results) · features(card-list) · pricing(#tariffs) · heading(#after-payment) · features(numbered-list)
+- Reusable controls (после PATCH A): rich-text во всех контентных полях каждого блока
+- Out-of-scope: routing/domain binding, публикация, html-fallback (gap=0), sticky nav, footer, animations
