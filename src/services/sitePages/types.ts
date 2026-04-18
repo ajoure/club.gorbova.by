@@ -332,6 +332,7 @@ export const blockContentSchemas = {
   audio: audioSiteContentSchema,
   embed: embedSiteContentSchema,
   site_questionnaire: siteQuestionnaireContentSchema,
+  stats: statsContentSchema,
 } as const;
 
 export type BlockType = keyof typeof blockContentSchemas;
