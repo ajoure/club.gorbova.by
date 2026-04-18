@@ -30,8 +30,14 @@ export function StatsBlockEditor({ content, onChange }: StatsBlockEditorProps) {
   const items = (content.items as StatsItem[]) || [];
   const columns = (content.columns as number) || 4;
   const iconMode = (content.iconMode as string) || "none";
+  const grid = (content.grid as Record<string, unknown>) || {};
 
   const update = (patch: Record<string, unknown>) => onChange({ ...content, ...patch });
+  const updateGrid = (patch: Record<string, unknown>) => {
+    const next = { ...grid, ...patch };
+    Object.keys(next).forEach((k) => next[k] === undefined && delete next[k]);
+    update({ grid: Object.keys(next).length === 0 ? undefined : next });
+  };
 
   const addItem = () => {
     update({ items: [...items, { number: "", suffix: "", label: "", description: "", icon: "" }] });
@@ -61,29 +67,77 @@ export function StatsBlockEditor({ content, onChange }: StatsBlockEditorProps) {
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div>
+        <Label className="text-xs">Режим иконки</Label>
+        <Select value={iconMode} onValueChange={(v) => update({ iconMode: v })}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {ICON_MODES.map((m) => (
+              <SelectItem key={m} value={m}>{ICON_MODE_LABELS[m]}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="space-y-2 border rounded p-3 bg-muted/30">
+        <Label className="text-xs font-medium">Сетка (responsive)</Label>
+        <div className="grid grid-cols-3 gap-2">
+          <div>
+            <Label className="text-[11px] text-muted-foreground">Десктоп</Label>
+            <Select
+              value={String((grid.columnsDesktop as number) ?? columns)}
+              onValueChange={(v) => updateGrid({ columnsDesktop: Number(v) })}
+            >
+              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {[1, 2, 3, 4, 5, 6].map((n) => <SelectItem key={n} value={String(n)}>{n}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-[11px] text-muted-foreground">Планшет</Label>
+            <Select
+              value={grid.columnsTablet ? String(grid.columnsTablet) : "auto"}
+              onValueChange={(v) => updateGrid({ columnsTablet: v === "auto" ? undefined : Number(v) })}
+            >
+              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">auto</SelectItem>
+                {[1, 2, 3, 4].map((n) => <SelectItem key={n} value={String(n)}>{n}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-[11px] text-muted-foreground">Моб.</Label>
+            <Select
+              value={String((grid.columnsMobile as number) ?? 2)}
+              onValueChange={(v) => updateGrid({ columnsMobile: Number(v) })}
+            >
+              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {[1, 2].map((n) => <SelectItem key={n} value={String(n)}>{n}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
         <div>
-          <Label className="text-xs">Колонок (desktop)</Label>
-          <Select value={String(columns)} onValueChange={(v) => update({ columns: Number(v) })}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
+          <Label className="text-[11px] text-muted-foreground">Расстояние между карточками</Label>
+          <Select
+            value={(grid.gap as string) ?? "lg"}
+            onValueChange={(v) => updateGrid({ gap: v })}
+          >
+            <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="2">2</SelectItem>
-              <SelectItem value="3">3</SelectItem>
-              <SelectItem value="4">4</SelectItem>
+              <SelectItem value="sm">Маленькое</SelectItem>
+              <SelectItem value="md">Среднее</SelectItem>
+              <SelectItem value="lg">Большое</SelectItem>
+              <SelectItem value="xl">Очень большое</SelectItem>
             </SelectContent>
           </Select>
         </div>
-        <div>
-          <Label className="text-xs">Режим иконки</Label>
-          <Select value={iconMode} onValueChange={(v) => update({ iconMode: v })}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {ICON_MODES.map((m) => (
-                <SelectItem key={m} value={m}>{ICON_MODE_LABELS[m]}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        <p className="text-[10px] text-muted-foreground">
+          Если «Десктоп» не задан — используется legacy значение «{columns}».
+        </p>
       </div>
 
       <div className="space-y-2">
@@ -127,7 +181,7 @@ export function StatsBlockEditor({ content, onChange }: StatsBlockEditorProps) {
               <Input
                 value={item.icon || ""}
                 onChange={(e) => updateItem(idx, "icon", e.target.value)}
-                placeholder="Иконка (emoji)"
+                placeholder="Иконка (эмодзи)"
                 className="text-sm"
               />
             )}
