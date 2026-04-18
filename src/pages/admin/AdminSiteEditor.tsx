@@ -92,44 +92,51 @@ export default function AdminSiteEditor() {
   return (
     <AdminLayout fullHeight>
       <div className="flex flex-col h-full">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b px-4 py-3 bg-background">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" onClick={() => navigate("/admin/sites")}>
+        {/* Header — responsive: title may wrap up to 2 lines, action buttons stay on the right and never overlap */}
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b px-3 sm:px-4 py-2 sm:py-3 bg-background">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+            <Button variant="ghost" size="icon" className="shrink-0" onClick={() => navigate("/admin/sites")}>
               <ArrowLeft className="h-4 w-4" />
             </Button>
-            <div>
-              <h1 className="text-lg font-semibold">{title}</h1>
-              <span className="text-xs text-muted-foreground">/{slug}</span>
+            <div className="min-w-0 flex-1">
+              <h1 className="text-base sm:text-lg font-semibold leading-tight line-clamp-2 break-words">
+                {title}
+              </h1>
+              <span className="block truncate text-xs text-muted-foreground">/{slug}</span>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap shrink-0 ml-auto">
             <Button
               variant="ghost"
               size="sm"
               onClick={() => window.open("/docs#site-builder", "_blank", "noopener,noreferrer")}
               title="Открыть полное руководство по Конструктору сайтов"
+              aria-label="Справка"
             >
-              <BookOpen className="h-4 w-4 mr-2" />
-              Справка
+              <BookOpen className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">Справка</span>
             </Button>
-            <Button variant="outline" onClick={handleSave} disabled={saving}>
-              {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
-              Сохранить
+            <Button variant="outline" size="sm" onClick={handleSave} disabled={saving} aria-label="Сохранить">
+              {saving ? <Loader2 className="h-4 w-4 animate-spin sm:mr-2" /> : <Save className="h-4 w-4 sm:mr-2" />}
+              <span className="hidden sm:inline">Сохранить</span>
             </Button>
             <Button
               variant={page.status === "published" ? "secondary" : "default"}
+              size="sm"
               onClick={handlePublish}
               disabled={publishing}
+              aria-label={page.status === "published" ? "Снять с публикации" : "Опубликовать"}
             >
               {publishing ? (
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                <Loader2 className="h-4 w-4 animate-spin sm:mr-2" />
               ) : page.status === "published" ? (
-                <GlobeIcon className="h-4 w-4 mr-2" />
+                <GlobeIcon className="h-4 w-4 sm:mr-2" />
               ) : (
-                <Globe className="h-4 w-4 mr-2" />
+                <Globe className="h-4 w-4 sm:mr-2" />
               )}
-              {page.status === "published" ? "Снять с публикации" : "Опубликовать"}
+              <span className="hidden sm:inline">
+                {page.status === "published" ? "Снять с публикации" : "Опубликовать"}
+              </span>
             </Button>
           </div>
         </div>
