@@ -1,146 +1,134 @@
 да, согласен, с учетом правок:
 
-1. В discovery по пункту 1 сразу зафиксируй **точный источник ошибки**:
-  - какой именно HTTP status и body возвращает public-checkout POST;
-  - на каком шаге это происходит: до createPaymentCheckout или уже внутри него.
-2. Это нужно, чтобы не перепутать bug в identity-resolution с багом materialize.
-3. В пункте 2 по PublicPayPage.tsx добавь отдельную проверку:
-  - что именно происходит после onAuthenticated(email, userId);
-  - сохраняется ли auth.step='authenticated';
-  - не очищается ли email/session до POST;
-  - не вызывается ли POST дважды.
-4. Иначе можно починить Bearer-заголовок, а проблема окажется в повторном рендере или race-condition.
-5. В discovery по GET /public-checkout для двух токенов добавь сравнение **сырого ответа**:
-  - has_target_user
-  - requires_identity_input
-  - payment_type
-  - status
-6. Это поможет сразу понять, это bug сервера GET или bug фронтового рендера.
-7. В пункте 4 по БД добавь ещё:
-  - offer_id
-  - description
-  - created_by
-8. Чтобы потом при live proof было проще связать конкретную ссылку с конкретным сценарием и админом.
-9. В корневой причине Bug A уточни, что серверный порядок resolution должен быть именно таким:  
+1. Перед UPDATE payment_links SET current_uses = 0 по bound-ссылке сначала **обязательно** зафиксируй read-only факт:  
 
-  - link.user_id
-  - Authorization / auth.uid
-  - email lookup
-  - ошибка  
-  И это нужно зафиксировать как **канонический contract resolution**, а не просто разовый фикс текущего бага.
-10. В PATCH A добавь важный guard:
-  - если есть и Authorization, и email, и они указывают на разных пользователей, а link.user_id пустой — приоритет всё равно у JWT, а email игнорируется.
-11. Иначе можно получить неоднозначную привязку target user.
-12. В PATCH A отдельно пропиши:
-  - для bound-ссылки (link.user_id есть) сервер **не должен** использовать email и **не должен** смотреть на JWT для выбора target user;
-  - JWT/email в этом случае могут существовать, но только как контекст плательщика, не получателя.
-13. Это критично для соответствия вашей бизнес-логике “оплатить может кто угодно”.
-14. В PATCH B добавь, что PublicPayPage должен брать access token не разово при монтировании, а **непосредственно перед POST**, через актуальную сессию.  
-Иначе после inline login токен может ещё не попасть в первый рендер, и проблема останется.
-15. В PATCH B по ошибкам раздели два типа:
-  - **ошибка identity-resolution** → вернуть пользователя в inline auth flow;
-  - **другая серверная ошибка оплаты** → обычный alert/notification.
-16. Иначе можно все ошибки свалить в форму, хотя не все они про логин/email.
-17. В PATCH B добавь явное правило для bound-ссылки:
+  - был ли уже создан orders_v2 по этой ссылке;
+  - какой у него status;
+  - есть ли audit от bepaid-webhook;
+  - какой сейчас current_uses/max_uses.  
+  И только после этого решай, делать ли reset. Иначе можно потерять доказательство уже прошедшей оплаты.
+2. В Discovery по пункту 3 добавь не только связь через meta->>'payment_link_id', но и проверку:
+  - сколько orders_v2 уже создано на один и тот же payment_link_id;
+  - есть ли среди них paid, pending, failed;
+  - не было ли уже двойного materialize по одной ссылке.  
+  Это важно для идемпотентности счётчика.
+3. В PATCH A зафиксируй, **где именно** будет сохраняться payment_link_id:
+  - если *shared/create-payment-checkout.ts уже принимает meta*extra или аналогичный механизм — использовать его;
+  - если нет — add-only расширить helper, а не делать post-insert костыль в нескольких местах.  
+  Нужен один канонический способ прокинуть payment_link_id в orders_v2.meta.
+4. В PATCH B не ограничивайся только order.meta.payment_link_counted. Добавь жёсткий порядок:
+  - проверить payment_link_id в order.meta;
+  - проверить payment_link_counted !== true;
+  - только потом попытка инкремента;
+  - после успешного инкремента — записать payment_link_counted=true;
+  - затем audit public_[checkout.link](http://checkout.link)_consumed.  
+  Это нужно прямо прописать как канонический sequence.
+5. Для PATCH B добавь защиту от повторного webhook не только на уровне order.meta.payment_link_counted, но и через **условный update**:
+  - инкремент делать только если current_uses < max_uses OR max_uses IS NULL;
+  - если update не затронул строку, логировать отдельный audit, а не молча проходить.  
+  Иначе будет трудно разбирать пограничные случаи на лимите.
+6. Добавь отдельный audit event для отказа в инкременте на лимите, например:
+  - public_[checkout.link](http://checkout.link)_consume_skipped_limit_reached
+7. Это полезно для диагностики, если webhook пришёл успешно, а счётчик уже упёрся в max_uses.
+8. В PATCH B уточни, что счётчик должен инкрементироваться **только для terminal success**, а не для failed, canceled, refunded.  
+Это очевидно из плана, но лучше зафиксировать явно.
+9. В Discovery по bepaid-webhook добавь отдельную проверку:
+  - во **всех** success-ветках, где order может прийти из public-link, есть ли доступ к order.meta.payment_link_id;
+  - нет ли параллельных success-веток, где этот инкремент можно пропустить.  
+  Это важно, чтобы не закрыть только один happy path.
+10. В пункте D про reset current_uses добавь STOP-guard:
+  - если по ссылке уже есть paid order и webhook proof нужен как артефакт, reset делать только **после** фиксации proof в отчёте;
+  - reset должен быть явно помечен как тестовый/manual maintenance step, не как часть бизнес-логики.
+11. В DoD пункт 1 уточни:
 
 &nbsp;
 
-- если has_target_user === true, requires_identity_input === false, то UI вообще не должен монтировать InlineAuthForm ни при каких условиях.
+- “вернуться назад → снова открыть → снова можно нажать оплатить”  
+должно проверяться **без создания нового paid order**, то есть только как отсутствие преждевременного сгорания ссылки от попытки checkout.  
+Иначе можно случайно смешать UX-проверку и реальную повторную оплату.
 
-Это должен быть жёсткий guard, а не просто “не показывать обычно”.
+11. В DoD пункт 2 добавь ещё одно условие:
 
-11. В пункте про normalizeEdgeFunctionError уточни:
+- после успешной оплаты current_uses увеличивается ровно на 1 **на одну успешную оплату**, даже если webhook был повторён.  
+Это ключевой идемпотентный инвариант.
 
-- серверный текст “Пользователь с таким email не найден” не должен показываться как финальное тупиковое сообщение;
-- он должен превращаться в понятную inline-подсказку внутри auth-формы.
+12. В DoD пункт 4 по guest-ссылке добавь before/after:
 
-Это и есть устранение текущего UX-багa.
+- before: current_uses=0
+- after success: current_uses=1
+- order.meta.payment_link_counted=true
+- audit public_[checkout.link](http://checkout.link)_consumed присутствует  
+Тогда proof будет завершённым.
 
-12. В DoD добавь ещё один обязательный кейс:
+13. В финальной цели уточни формулировку:  
+не просто “счётчик использования = счётчик успешных оплат”, а  
+**“счётчик использования больше не зависит от создания checkout-сессии и зависит только от подтверждённого terminal success”**.
 
-- **guest-ссылка, существующий email, успешный login, но первый POST не удался** → форма остаётся в рабочем состоянии, можно повторить без перезагрузки страницы и без потери token-контекста.
-
-Это защитит от тупика, который у тебя сейчас и наблюдается.
-
-13. В DoD по bound-ссылке уточни финал:
-
-- не только “InlineAuthForm не показывается”,
-- но и “POST /public-checkout уходит без email и без login requirement”.
-
-Это важно как серверный контракт.
-
-14. В финальной цели добавь, что после этого патча нужно делать **новый** live proof на свежей guest-ссылке, а не опираться на уже сломанную попытку, чтобы не смешивать старое поведение и новый код.
-
-В остальном план правильный: discovery узкий и по делу, бизнес-логика payment_links.user_id понята верно, scope не расползается, и именно этот патч нужен, чтобы добить корректный guest-flow без принудительного входа в “нужный” аккаунт.
+В остальном план правильный: сначала read-only discovery по уже использованным ссылкам и order-цепочке, потом перенос инкремента из public-checkout в bepaid-webhook, затем аккуратный reset только для тестовой повторной проверки и финальный live proof по guest-flow.
 
 &nbsp;
 
 ## Диагноз
 
-На скрине видно ошибку «Пользователь с таким email не найден. Завершите регистрацию и повторите оплату» — но кнопка «Оплатить» при этом активна, а на самом деле сервер возвращает ошибку при POST. То есть UX-логика гостевой ветки сейчас неправильная:
+На скрине ошибка `Payment link usage limit reached`. Это значит: `payment_links.current_uses >= max_uses`. Смотрю на ссылку #1 (bound, `h5f4bound3byn00000000000000a006`):
 
-1. **Existing user стучится по guest-ссылке** → `useInlineAuth.checkEmail` корректно отправляет на шаг `login` → пользователь вводит пароль → `supabase.auth.signInWithPassword` успешно → `onAuthenticated(email, userId)` в `PublicPayPage` вызывает POST `/public-checkout` с **email** (не с user_id из сессии).
-2. На сервере `public-checkout` POST для guest-ссылки делает `findByEmail(email)` через `auth-find-user-by-email` (или аналогичный lookup). Если lookup идёт через **service-role admin API по `email**`, он работает. Но если он смотрит на `profiles`/`auth.users` и не находит — возвращает «Пользователь с таким email не найден». То есть сейчас сервер не доверяет факту, что пользователь только что залогинился.
-3. На фронте показывается красный alert поверх формы, форма уже свёрнута (auth.step === 'authenticated'), и пользователь видит тупик.
+Скорее всего она была создана с `max_uses = 1`, а инкремент `current_uses` происходит **в момент создания checkout-сессии** в `public-checkout` POST (а не по факту успешной оплаты webhook'ом). Поэтому:
 
-Дополнительно: пользователь говорит, что **по ссылке #1 (которая была bound к админу) его всё равно просили логин/пароль**. Это означает, что `has_target_user` либо не пробрасывается с GET, либо UI его не уважает и всё равно показывает InlineAuthForm. Нужно проверить.
+- Первый клик на «Оплатить» → создан bePaid checkout → `current_uses = 1` → достигнут лимит.
+- Пользователь вернулся назад / страница перерендерилась → повторный POST → 410 «usage limit reached».
+- Даже если первая попытка дошла до bePaid и оплата прошла — повторно открыть ссылку нельзя.
 
-## Discovery (read-only, до правок)
+Это плохая UX-логика. По бизнес-смыслу `max_uses` должен считаться по **успешным оплатам** (webhook `paid`), а не по созданным checkout-сессиям. Иначе любая «вернулся назад» / «перезагрузил страницу» / «дважды нажал» сжигает ссылку.
 
-1. **Прочитать `supabase/functions/public-checkout/index.ts**` — точная ветка POST для guest. Где именно бросается «Пользователь с таким email не найден». Использует ли она `auth.admin.listUsers({ email })` или JWT-подтверждённый user из заголовка.
-2. **Прочитать `src/pages/PublicPayPage.tsx**` — что именно передаётся в POST после `onAuthenticated`. Передаётся ли `userId` или только `email`. Уважается ли `has_target_user` в рендере.
-3. **Прочитать GET-ответ `public-checkout**` для обоих токенов через `supabase--curl_edge_functions`:
-  - `f3d2bound2byn00000000000000a006` → должно быть `has_target_user: true, requires_identity_input: false`
-  - `g4e3free2byn0000000000000000b007` → должно быть `has_target_user: false, requires_identity_input: true`
-4. **Проверить в БД `payment_links**` для обоих токенов: `user_id`, `status`, `current_uses`, `max_uses`. Подтвердить, что bound-ссылка действительно имеет `user_id`.
-5. **Проверить, есть ли в проекте edge-функция `auth-find-user-by-email` / `auth-check-email**` и что она возвращает для существующего email.
+## Discovery (read-only)
 
-## Корневые причины (ожидаемые)
+1. Прочитать `public-checkout` POST — где именно инкрементируется `current_uses`. Подтвердить, что это происходит ДО подтверждения оплаты.
+2. Прочитать `bepaid-webhook` — есть ли там логика инкремента `payment_links.current_uses` при `status=paid` (через `orders_v2.meta.payment_link_id` или аналог).
+3. SELECT по обеим тестовым ссылкам: `current_uses`, `max_uses`, связанные `orders_v2` (через `meta->>payment_link_id`), их `status`.
+4. Проверить, передаётся ли `payment_link_id` в `orders_v2.meta` через `_shared/create-payment-checkout.ts` (нужно для post-payment инкремента).
 
-- **Bug A (критичный)**: `public-checkout` POST для guest-ветки не доверяет JWT/сессии после inline login. Он повторно ищет пользователя «по email» через ненадёжный путь и падает. Правильно: после login браузер уже имеет access_token; PublicPayPage должен передавать его как `Authorization: Bearer <token>`, а сервер — извлекать `auth.uid()` и использовать его как target user.
-- **Bug B (UI)**: Bound-ссылка показывает форму логина. Скорее всего `PublicPayPage` рендерит InlineAuthForm безусловно, не глядя на `has_target_user`, либо GET не возвращает этот флаг.
-- **Bug C (UX)**: Серверная ошибка показывается красным alert-блоком поверх свёрнутой формы вместо того, чтобы вернуть пользователя на нужный шаг inline-формы. Нарушает «Anti-duplication: тупикового состояния без формы быть не должно».
+## Корневая причина
 
-## PATCH (узкий, add-only где можно)
+`current_uses` считается «по попыткам», а должен считаться «по успехам». Это нарушает базовую UX — ссылка не должна сгорать от того, что пользователь вернулся назад.
 
-### A. Server: `supabase/functions/public-checkout/index.ts` — POST
+## PATCH (узкий)
 
-Канонический resolution target user для POST:
+### A. Server: `supabase/functions/public-checkout/index.ts`
 
-1. Если `link.user_id` — использовать его (bound-ссылка).
-2. Иначе — извлечь `Authorization: Bearer <token>` из заголовка, вызвать `supabase.auth.getUser(token)`. Если получен валидный `user.id` — использовать его как target user (это покрывает «inline login прямо на странице» и «уже авторизованный пользователь»).
-3. Иначе — если передан `email`, искать через `supabase.auth.admin.listUsers` (service role) → если найден, использовать его id; если не найден — 400 «Укажите email и завершите вход/регистрацию».
-4. Никаких ситуаций «пользователь только что залогинился, но сервер его не видит».
+- **Убрать** инкремент `current_uses` в POST.
+- Оставить guard `current_uses >= max_uses` на чтение (защита от явного превышения по факту), но не двигать счётчик здесь.
+- В `orders_v2.meta` обязательно класть `payment_link_id: link.id` (если ещё не кладётся — добавить через `_shared/create-payment-checkout.ts` параметром `meta_extra` или через прямую вставку после возврата из helper'а).
 
-### B. Client: `src/pages/PublicPayPage.tsx`
+### B. Server: `supabase/functions/bepaid-webhook/index.ts`
 
-- Перед POST `/public-checkout` всегда подставлять текущий access_token из `supabase.auth.getSession()` в `Authorization`-заголовок (если сессия есть). Так сервер увидит свежезалогиненного пользователя.
-- При `has_target_user === true` — **никогда** не рендерить InlineAuthForm. Только карточка + кнопка «Оплатить». Жёсткий guard.
-- При серверной ошибке — НЕ показывать тупиковый красный alert поверх свернутой формы. Вместо этого:
-  - если ошибка про identity и `requires_identity_input` — оставить InlineAuthForm развёрнутым на нужном шаге;
-  - текст ошибки нормализовать через `normalizeEdgeFunctionError` и поставить внутрь самой формы (как `auth.error`), а не отдельным блоком над кнопкой.
+- При успешном переходе ордера в `status='paid'` (внутри уже существующего grant-flow): если `order.meta.payment_link_id` задан — атомарно `UPDATE payment_links SET current_uses = current_uses + 1 WHERE id = ? AND current_uses < COALESCE(max_uses, 2147483647)`.
+- Идемпотентность: инкрементировать только если этот `order.id` ещё не помечен в `meta.payment_link_counted` (или проверять через `audit_logs` на наличие `public_checkout.link_consumed` для этого order_id). Минимально — добавить в `orders_v2.meta` флаг `payment_link_counted: true` после успешного инкремента, и проверять его перед инкрементом.
+- Audit: `public_checkout.link_consumed` с `payment_link_id`, `order_id`.
 
-### C. Anti-duplication / scope guards
+### C. Anti-duplication / scope
 
-- НЕ трогаю `bepaid-webhook`, `_shared/create-payment-checkout.ts`, `grant-access-for-order`, `admin-create-public-link`.
-- НЕ создаю второй inline-auth flow — InlineAuthForm + useInlineAuth остаются единственным источником.
-- НЕ меняю контракт `useInlineAuth`.
-- НЕ дублирую серверные тексты ошибок на клиенте как финальное состояние.
+- НЕ менять `useInlineAuth`, `InlineAuthForm`, `PublicPayPage` UI.
+- НЕ менять `grant-access-for-order`, `_shared/create-payment-checkout.ts` контракт (только при необходимости — добавление `meta.payment_link_id` через существующий механизм).
+- НЕ создавать новых таблиц / RPC.
+- НЕ трогать `admin-create-public-link`.
+
+### D. Восстановление текущей сломанной ссылки
+
+- Разовый UPDATE: `UPDATE payment_links SET current_uses = 0 WHERE url_token = 'h5f4bound3byn00000000000000a006'` — чтобы пользователь мог дотестить bound-ссылку. (Если первая попытка уже прошла оплату — отдельно зафиксирую live proof перед этим UPDATE, чтобы не потерять факт.)
+- Аналогично проверить `i6g5free3byn00000000000000d009` — судя по словам пользователя, по ней оплата прошла, поэтому её ресетить не нужно, только зафиксировать live proof для guest-flow.
 
 ## Memory update
 
-- Обновить `mem://commercial-logic/payments/public-checkout-architecture` — добавить раздел «POST resolution: link.user_id → JWT (auth.uid) → email lookup. Inline-login пользователь = доверенный target user через Authorization-заголовок».
-- Уточнить `mem://ui/auth/inline-auth-form-standard.md` — «после `authenticated` callback должен дернуть последующее действие с Bearer-токеном; тупиковый красный alert поверх свёрнутой формы запрещён».
+- `mem://commercial-logic/payments/public-checkout-architecture.md` — добавить раздел «`payment_links.current_uses` инкрементируется ТОЛЬКО webhook'ом по факту `orders_v2.status='paid'`, через `order.meta.payment_link_id`. Идемпотентно через `meta.payment_link_counted`. Создание checkout-сессии счётчик не трогает».
 
 ## DoD
 
-1. **Bound-ссылка** (`f3d2bound2byn00000000000000a006`): открытие без логина → InlineAuthForm НЕ показывается → одна кнопка «Оплатить» → оплата уходит в `link.user_id` (admin).
-2. **Guest-ссылка, существующий email с правильным паролем**: email → login → пароль → автоматический POST `/public-checkout` с Bearer-токеном → редирект в bePaid → оплата проходит. Никакой ошибки «Пользователь не найден».
-3. **Guest-ссылка, существующий email + «Забыл пароль?»**: success-state в той же карточке.
-4. **Guest-ссылка, новый email**: signup → (опц. email_confirm) → автоматический POST с Bearer → bePaid.
-5. **Guest-ссылка, существующий email с неправильным паролем**: ошибка показывается ВНУТРИ login-формы (`auth.error`), форма остаётся открытой на шаге `login`. Никаких alert-блоков поверх свернутой формы.
-6. **Live proof по guest-сценарию**: order → paid → `pipeline_stage_id=stage_on_success` → audit от `bepaid-webhook`. Закрывает повторный B.0 уже по guest-flow.
+1. **Bound-ссылка** (после ресета): открыть → нажать «Оплатить» → вернуться назад → снова открыть → снова можно нажать «Оплатить». Ссылка не сгорает от навигации.
+2. **После успешной оплаты**: `payment_links.current_uses` инкрементируется ровно на 1 (webhook), повторный webhook на тот же `order.id` счётчик не двигает.
+3. **При достижении `max_uses**` по факту успешных оплат — ссылка корректно показывает «недействительна».
+4. **Live proof по guest-ссылке `i6g5free3byn00000000000000d009**`: order → paid → `pipeline_stage_id=stage_on_success` → audit от `bepaid-webhook` → `payment_links.current_uses=1`. Закрытие B.0 по guest-flow.
+5. **Bound-ссылка `h5f4bound3byn00000000000000a006**`: проверить, прошла ли первая оплата live; если да — зафиксировать proof, потом ресет; если нет — просто ресет и дать пользователю переоткрыть.
 
 ## Финальная цель
 
-Public payment link работает одинаково ровно во всех трёх состояниях. Existing-пользователь, который заходит по guest-ссылке, может залогиниться прямо тут и оплатить без редиректа и без ошибки «не найден». Bound-ссылка не требует логина вообще. После патча создаём свежие тестовые ссылки и закрываем guest-flow live proof.
+Public payment links больше не сгорают от навигации/перезагрузки. Счётчик использования = счётчик успешных оплат. Bound-ссылка снова рабочая для дотеста; B.0 закрыт live proof по guest-flow.
