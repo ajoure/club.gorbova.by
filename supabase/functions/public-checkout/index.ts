@@ -29,7 +29,7 @@ Deno.serve(async (req) => {
       const { data: link, error: linkErr } = await supabase
         .from('payment_links')
         .select(`
-          id, url_token, amount, currency, payment_type, description, status,
+          id, url_token, user_id, amount, currency, payment_type, description, status,
           max_uses, current_uses, expires_at,
           products_v2!payment_links_product_id_fkey ( id, name, description, category ),
           tariffs!payment_links_tariff_id_fkey ( id, name, code, access_days )
@@ -113,28 +113,59 @@ Deno.serve(async (req) => {
       return errorResponse('Payment link usage limit reached', 410);
     }
 
-    // Canonical target-user resolution for public payment links:
-    //   1) link.user_id present  → ALWAYS use it (recipient pre-bound, no login required)
-    //   2) link.user_id absent + email provided → find user by email
-    //   3) link.user_id absent + no email → ask UI to collect email/identity (NOT a login requirement)
+    // Canonical target-user resolution for public payment links (CONTRACT):
+    //   1) link.user_id present  → ALWAYS use it (recipient pre-bound).
+    //      JWT/email are IGNORED for recipient selection — anyone can pay for that user.
+    //   2) link.user_id absent + Authorization Bearer token → use auth.uid() (trusted).
+    //      This covers inline-login on /pay/:token and already-authenticated users.
+    //      If both Authorization and email are provided and disagree, JWT WINS.
+    //   3) link.user_id absent + email only → lookup via admin API (paginated).
+    //   4) Otherwise → 400 with identity-input hint (UI keeps inline-auth open).
     let userId: string | null = link.user_id || null;
+    let resolvedVia: 'link' | 'jwt' | 'email' | null = userId ? 'link' : null;
+
+    if (!userId) {
+      // Try JWT from Authorization header
+      const authHeader = req.headers.get('Authorization') || req.headers.get('authorization');
+      if (authHeader?.toLowerCase().startsWith('bearer ')) {
+        const token = authHeader.slice(7).trim();
+        if (token) {
+          const { data: userData, error: userErr } = await supabase.auth.getUser(token);
+          if (!userErr && userData?.user?.id) {
+            userId = userData.user.id;
+            resolvedVia = 'jwt';
+          }
+        }
+      }
+    }
 
     if (!userId && email) {
-      const { data: existingUsers } = await supabase.auth.admin.listUsers();
-      const found = existingUsers?.users?.find(
-        (u: any) => u.email?.toLowerCase() === email.toLowerCase()
-      );
-      userId = found?.id || null;
+      // Paginated lookup — admin.listUsers() returns max 50 per page by default
+      const normalizedEmail = email.trim().toLowerCase();
+      let page = 1;
+      const perPage = 1000;
+      while (page <= 50 && !userId) {
+        const { data, error: listErr } = await supabase.auth.admin.listUsers({ page, perPage });
+        if (listErr || !data?.users?.length) break;
+        const found = data.users.find((u: any) => u.email?.toLowerCase() === normalizedEmail);
+        if (found) {
+          userId = found.id;
+          resolvedVia = 'email';
+          break;
+        }
+        if (data.users.length < perPage) break;
+        page++;
+      }
       if (!userId) {
-        return errorResponse('Пользователь с таким email не найден. Завершите регистрацию и повторите оплату.', 400);
+        return errorResponse('identity_required', 400);
       }
     }
 
     if (!userId) {
-      // Only reached when link has no target user AND no email was provided.
-      // Login is NEVER required — UI must collect email/inline-auth.
-      return errorResponse('Укажите email для оформления оплаты', 400);
+      return errorResponse('identity_required', 400);
     }
+
+    console.log('[public-checkout] target_user_resolved', { userId, resolvedVia, link_id: link.id });
 
     // Determine origin for return URLs
     const reqOrigin = req.headers.get('origin');
