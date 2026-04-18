@@ -1,6 +1,11 @@
 import { z } from "zod";
 
 // ─── Universal Block Settings ───
+//
+// REUSABLE STYLING CONTROLS (Sprint v3 — reusable-first):
+// Все новые поля опциональные с safe defaults. Старые блоки рендерятся БЕЗ изменений.
+// Whitelist применения по типам блоков задаётся на уровне рендереров (см. FeaturesSection,
+// StatsSection, TestimonialsSection и т.д.). Не все блоки используют все настройки.
 
 export const blockSettingsSchema = z.object({
   paddingTop: z.number().default(0),
@@ -13,10 +18,20 @@ export const blockSettingsSchema = z.object({
   hideOnMobile: z.boolean().default(false),
   hideOnDesktop: z.boolean().default(false),
   // ─── Site Builder Sprint v2 ───
-  // anchorId: slug (a-z, 0-9, '-'), unique per page (валидируется в SitePageService.save)
   anchorId: z.string().default(""),
-  // initialVisibility: первичное состояние блока на странице. runtime show/toggle меняют его.
   initialVisibility: z.enum(["visible", "hidden"]).default("visible"),
+  // ─── Sprint v3: reusable styling controls ───
+  // Mobile padding overrides
+  mobilePaddingTop: z.number().optional(),
+  mobilePaddingBottom: z.number().optional(),
+  // Card styling — applies only to whitelisted blocks (features, stats, testimonials, pricing, callout, accordion)
+  cardStyle: z.enum(["plain", "bordered", "glass", "filled"]).optional(),
+  cardRadius: z.enum(["none", "sm", "md", "lg", "xl"]).optional(),
+  cardShadow: z.enum(["none", "sm", "md", "lg"]).optional(),
+  borderOpacity: z.number().min(0).max(100).optional(),
+  // Alignment — applies to title/subtitle and items in supported blocks
+  titleAlignment: z.enum(["left", "center", "right"]).optional(),
+  itemAlignment: z.enum(["left", "center", "right"]).optional(),
 }).default({});
 
 export type BlockSettings = z.infer<typeof blockSettingsSchema>;
