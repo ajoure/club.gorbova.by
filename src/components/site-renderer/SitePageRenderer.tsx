@@ -21,6 +21,8 @@ import { FormSection } from "./blocks/FormSection";
 import { AudioSection } from "./blocks/AudioSection";
 import { EmbedSection } from "./blocks/EmbedSection";
 import { SiteQuestionnaireBlock } from "./blocks/SiteQuestionnaireBlock";
+import { StatsSection } from "./blocks/StatsSection";
+import { FeaturesSection } from "./blocks/FeaturesSection";
 import { AccordionBlock } from "@/components/admin/lesson-editor/blocks/AccordionBlock";
 import { TabsBlock } from "@/components/admin/lesson-editor/blocks/TabsBlock";
 import { CalloutBlock } from "@/components/admin/lesson-editor/blocks/CalloutBlock";
@@ -113,25 +115,8 @@ function ImageSection({ content }: { content: Record<string, unknown> }) {
   );
 }
 
-function FeaturesSection({ content }: { content: Record<string, unknown> }) {
-  const items = (content.items as Array<{ icon: string; title: string; description: string }>) || [];
-  const columns = (content.columns as number) || 3;
-  const gridCols: Record<number, string> = { 2: "md:grid-cols-2", 3: "md:grid-cols-3", 4: "md:grid-cols-4" };
+// FeaturesSection moved to ./blocks/FeaturesSection.tsx (Sprint v3 — layout режимы)
 
-  return (
-    <section className="py-12 px-6">
-      <div className={`max-w-5xl mx-auto grid gap-8 ${gridCols[columns] || "md:grid-cols-3"}`}>
-        {items.map((item, i) => (
-          <div key={i} className="text-center space-y-3">
-            {item.icon && <div className="text-3xl">{item.icon}</div>}
-            {item.title && <h3 className="text-lg font-semibold text-foreground">{item.title}</h3>}
-            {item.description && <p className="text-sm text-muted-foreground">{item.description}</p>}
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
 
 function CtaSection({ content }: { content: Record<string, unknown> }) {
   return (
@@ -208,12 +193,13 @@ export function SitePageRenderer({ blocks, themeSettings, pricingData, pageId, i
   }
 
   const renderBlock = (block: SiteBlock) => {
+    const settings = block.settings as any;
     switch (block.type) {
       case "hero": return <HeroSection content={block.content} />;
       case "text": return <TextSection content={block.content} />;
       case "heading": return <HeadingSection content={block.content} />;
       case "image": return <ImageSection content={block.content} />;
-      case "features": return <FeaturesSection content={block.content} />;
+      case "features": return <FeaturesSection content={block.content} settings={settings} />;
       case "cta": return <CtaSection content={block.content} />;
       case "faq": return <FaqSection content={block.content} />;
       case "divider": return <DividerSection content={block.content} />;
@@ -240,6 +226,7 @@ export function SitePageRenderer({ blocks, themeSettings, pricingData, pageId, i
       case "audio": return <AudioSection content={block.content} />;
       case "embed": return <EmbedSection content={block.content} />;
       case "site_questionnaire": return <SiteQuestionnaireBlock content={block.content} />;
+      case "stats": return <StatsSection content={block.content} settings={settings} />;
       default: return null;
     }
   };

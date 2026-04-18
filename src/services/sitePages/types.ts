@@ -1,6 +1,11 @@
 import { z } from "zod";
 
 // ─── Universal Block Settings ───
+//
+// REUSABLE STYLING CONTROLS (Sprint v3 — reusable-first):
+// Все новые поля опциональные с safe defaults. Старые блоки рендерятся БЕЗ изменений.
+// Whitelist применения по типам блоков задаётся на уровне рендереров (см. FeaturesSection,
+// StatsSection, TestimonialsSection и т.д.). Не все блоки используют все настройки.
 
 export const blockSettingsSchema = z.object({
   paddingTop: z.number().default(0),
@@ -13,10 +18,20 @@ export const blockSettingsSchema = z.object({
   hideOnMobile: z.boolean().default(false),
   hideOnDesktop: z.boolean().default(false),
   // ─── Site Builder Sprint v2 ───
-  // anchorId: slug (a-z, 0-9, '-'), unique per page (валидируется в SitePageService.save)
   anchorId: z.string().default(""),
-  // initialVisibility: первичное состояние блока на странице. runtime show/toggle меняют его.
   initialVisibility: z.enum(["visible", "hidden"]).default("visible"),
+  // ─── Sprint v3: reusable styling controls ───
+  // Mobile padding overrides
+  mobilePaddingTop: z.number().optional(),
+  mobilePaddingBottom: z.number().optional(),
+  // Card styling — applies only to whitelisted blocks (features, stats, testimonials, pricing, callout, accordion)
+  cardStyle: z.enum(["plain", "bordered", "glass", "filled"]).optional(),
+  cardRadius: z.enum(["none", "sm", "md", "lg", "xl"]).optional(),
+  cardShadow: z.enum(["none", "sm", "md", "lg"]).optional(),
+  borderOpacity: z.number().min(0).max(100).optional(),
+  // Alignment — applies to title/subtitle and items in supported blocks
+  titleAlignment: z.enum(["left", "center", "right"]).optional(),
+  itemAlignment: z.enum(["left", "center", "right"]).optional(),
 }).default({});
 
 export type BlockSettings = z.infer<typeof blockSettingsSchema>;
@@ -50,6 +65,21 @@ export const imageContentSchema = z.object({
   linkUrl: z.string().default(""),
 });
 
+// ─── Reusable grid layout schema (used by features, stats, etc.) ───
+// Все поля опциональные. Default = текущее поведение блока (через legacy `columns`).
+export const gridLayoutSchema = z.object({
+  columnsDesktop: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(6)]).optional(),
+  columnsTablet: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).optional(),
+  columnsMobile: z.union([z.literal(1), z.literal(2)]).optional(),
+  gap: z.enum(["sm", "md", "lg", "xl"]).optional(),
+}).optional();
+
+export type GridLayout = z.infer<typeof gridLayoutSchema>;
+
+// Icon mode — reusable для features и stats
+export const ICON_MODES = ["none", "circle", "square", "numbered"] as const;
+export type IconMode = typeof ICON_MODES[number];
+
 export const featuresContentSchema = z.object({
   items: z.array(z.object({
     icon: z.string().default(""),
@@ -57,6 +87,26 @@ export const featuresContentSchema = z.object({
     description: z.string().default(""),
   })).default([]),
   columns: z.union([z.literal(2), z.literal(3), z.literal(4)]).default(3),
+  // Sprint v3: layout режим. default = "grid" = текущее поведение (backward-compat).
+  layout: z.enum(["grid", "card-list", "numbered-list"]).optional(),
+  iconMode: z.enum(ICON_MODES).optional(),
+  grid: gridLayoutSchema,
+});
+
+// Stats / metrics / achievements — generic, reusable
+export const statsContentSchema = z.object({
+  title: z.string().default(""),
+  subtitle: z.string().default(""),
+  items: z.array(z.object({
+    number: z.string().default(""),
+    suffix: z.string().default(""),
+    label: z.string().default(""),
+    description: z.string().default(""),
+    icon: z.string().default(""),
+  })).default([]),
+  columns: z.union([z.literal(2), z.literal(3), z.literal(4)]).default(4),
+  iconMode: z.enum(ICON_MODES).optional(),
+  grid: gridLayoutSchema,
 });
 
 export const ctaContentSchema = z.object({
@@ -282,6 +332,7 @@ export const blockContentSchemas = {
   audio: audioSiteContentSchema,
   embed: embedSiteContentSchema,
   site_questionnaire: siteQuestionnaireContentSchema,
+  stats: statsContentSchema,
 } as const;
 
 export type BlockType = keyof typeof blockContentSchemas;
