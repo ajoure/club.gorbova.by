@@ -10,8 +10,8 @@ export default defineConfig(({ mode }) => ({
   },
   // Force a fresh dependency prebundle if the previous Vite deps chunk got corrupted
   // (fixes rare "Unexpected end of script" from /node_modules/.vite/deps/chunk-*.js)
-  // Cache bust: 2026-02-06
-  cacheDir: ".vite-cache-v3",
+  // Cache bust: 2026-04-18
+  cacheDir: ".vite-cache-v4",
   server: {
     host: "::",
     port: 8080,
