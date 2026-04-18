@@ -202,8 +202,9 @@ function LegacyFormSection({ content, pageId, isPreview }: FormSectionProps) {
     for (let i = 0; i < fields.length; i++) {
       const field = fields[i];
       const v = values[i];
+      const displayLabel = getFieldDisplayLabel(field, i);
       if (field.required && isEmpty(v)) {
-        setError(`Поле «${field.label || `Поле ${i + 1}`}» обязательно`);
+        setError(`Поле «${displayLabel}» обязательно`);
         return;
       }
       if (field.type === "email" && typeof v === "string" && v && !validateEmail(v)) {
@@ -213,15 +214,15 @@ function LegacyFormSection({ content, pageId, isPreview }: FormSectionProps) {
       if (field.type === "number" && v !== undefined && v !== null && v !== "") {
         const n = Number(v);
         if (Number.isNaN(n)) {
-          setError(`Поле «${field.label}» должно быть числом`);
+          setError(`Поле «${displayLabel}» должно быть числом`);
           return;
         }
         if (typeof field.min === "number" && n < field.min) {
-          setError(`Поле «${field.label}» должно быть ≥ ${field.min}`);
+          setError(`Поле «${displayLabel}» должно быть ≥ ${field.min}`);
           return;
         }
         if (typeof field.max === "number" && n > field.max) {
-          setError(`Поле «${field.label}» должно быть ≤ ${field.max}`);
+          setError(`Поле «${displayLabel}» должно быть ≤ ${field.max}`);
           return;
         }
       }
