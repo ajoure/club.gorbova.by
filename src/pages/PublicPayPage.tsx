@@ -16,18 +16,15 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useInlineAuth } from '@/hooks/useInlineAuth';
 import { normalizeEdgeFunctionError } from '@/utils/normalizeEdgeFunctionError';
 import { LandingHeader } from '@/components/landing/LandingHeader';
 import { LandingFooter } from '@/components/landing/LandingFooter';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { CreditCard, CheckCircle, Clock, Shield, AlertCircle, Loader2, Mail } from 'lucide-react';
+import { InlineAuthForm } from '@/components/auth/InlineAuthForm';
+import { CreditCard, CheckCircle, Clock, Shield, AlertCircle, Loader2 } from 'lucide-react';
 
 interface PaymentLinkInfo {
   product_name: string;
@@ -49,14 +46,6 @@ export default function PublicPayPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Inline auth (used only when !has_target_user && guest)
-  const inlineAuth = useInlineAuth();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
-  const [phone, setPhone] = useState('');
-
   const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
   const functionUrl = `https://${projectId}.supabase.co/functions/v1/public-checkout`;
 
@@ -75,11 +64,6 @@ export default function PublicPayPage() {
     enabled: !!token,
     retry: false,
   });
-
-  // When user logs in via inline auth, auto-fill email
-  useEffect(() => {
-    if (user?.email && !email) setEmail(user.email);
-  }, [user, email]);
 
   const initiatePayment = async (payerEmail?: string) => {
     if (!token) return;
@@ -113,25 +97,9 @@ export default function PublicPayPage() {
   // Branch B: no target user, but auth.user — use session email
   const handlePayWithSession = () => initiatePayment(user?.email || undefined);
 
-  // Branch C: guest — inline email check → login/signup → pay
-  const handleGuestEmailContinue = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email.trim()) return;
-    await inlineAuth.checkEmail(email.trim());
-  };
-
-  const handleGuestLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const result = await inlineAuth.login(email, password);
-    if (result) await initiatePayment(email);
-  };
-
-  const handleGuestSignup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const result = await inlineAuth.signup(email, password, { firstName, lastName, phone });
-    if (result && !result.needsConfirmation) {
-      await initiatePayment(email);
-    }
+  // Auto-pay when guest finishes inline auth
+  const handleGuestAuthenticated = async (email: string) => {
+    await initiatePayment(email);
   };
 
   const formatPrice = (kopecks: number, currency: string) =>
@@ -206,7 +174,6 @@ export default function PublicPayPage() {
 
   const priceFormatted = formatPrice(linkInfo.amount, linkInfo.currency);
   const needsIdentity = linkInfo.requires_identity_input && !user;
-  const inlineErr = inlineAuth.error;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-muted/30 to-background">
@@ -251,14 +218,14 @@ export default function PublicPayPage() {
               )}
             </div>
 
-            {(error || inlineErr) && (
+            {error && (
               <div className="flex items-center gap-2 text-destructive text-sm mb-4 p-3 rounded-md bg-destructive/10">
                 <AlertCircle className="h-4 w-4 shrink-0" />
-                <span>{error || inlineErr}</span>
+                <span>{error}</span>
               </div>
             )}
 
-            {/* State 1: target user pre-bound on link → just pay */}
+            {/* States 1 & 2: pre-bound target user OR session user → just pay */}
             {!needsIdentity && (
               <Button
                 size="lg"
@@ -274,114 +241,17 @@ export default function PublicPayPage() {
               </Button>
             )}
 
-            {/* State 3: guest + no target user → inline email/auth */}
-            {needsIdentity && inlineAuth.step === 'email' && (
-              <form onSubmit={handleGuestEmailContinue} className="space-y-3">
-                <div>
-                  <Label htmlFor="email">Email для оформления</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="you@example.com"
-                  />
-                </div>
-                <Button type="submit" size="lg" className="w-full" disabled={inlineAuth.isLoading}>
-                  {inlineAuth.isLoading ? (
-                    <><Loader2 className="mr-2 h-5 w-5 animate-spin" /> Проверка...</>
-                  ) : (
-                    <><Mail className="mr-2 h-5 w-5" /> Продолжить</>
-                  )}
-                </Button>
-              </form>
-            )}
-
-            {needsIdentity && inlineAuth.step === 'login' && (
-              <form onSubmit={handleGuestLogin} className="space-y-3">
-                <p className="text-sm text-muted-foreground">
-                  Аккаунт {email} найден. Введите пароль для оплаты.
-                </p>
-                <div>
-                  <Label htmlFor="password">Пароль</Label>
-                  <Input
-                    id="password"
-                    type="password"
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                  />
-                </div>
-                <Button type="submit" size="lg" className="w-full" disabled={inlineAuth.isLoading || isProcessing}>
-                  {(inlineAuth.isLoading || isProcessing) ? (
-                    <><Loader2 className="mr-2 h-5 w-5 animate-spin" /> Вход...</>
-                  ) : (
-                    <><CreditCard className="mr-2 h-5 w-5" /> Войти и оплатить</>
-                  )}
-                </Button>
-                <button
-                  type="button"
-                  className="text-xs text-muted-foreground underline w-full text-center"
-                  onClick={() => { inlineAuth.reset(); setPassword(''); }}
-                >
-                  Использовать другой email
-                </button>
-              </form>
-            )}
-
-            {needsIdentity && inlineAuth.step === 'signup' && (
-              <form onSubmit={handleGuestSignup} className="space-y-3">
-                <p className="text-sm text-muted-foreground">
-                  Создайте аккаунт для {email}, чтобы продолжить оплату.
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <Label htmlFor="firstName">Имя</Label>
-                    <Input id="firstName" value={firstName} onChange={(e) => setFirstName(e.target.value)} required />
-                  </div>
-                  <div>
-                    <Label htmlFor="lastName">Фамилия</Label>
-                    <Input id="lastName" value={lastName} onChange={(e) => setLastName(e.target.value)} />
-                  </div>
-                </div>
-                <div>
-                  <Label htmlFor="phone">Телефон</Label>
-                  <Input id="phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
-                </div>
-                <div>
-                  <Label htmlFor="password-new">Пароль</Label>
-                  <Input
-                    id="password-new"
-                    type="password"
-                    required
-                    minLength={6}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                  />
-                </div>
-                <Button type="submit" size="lg" className="w-full" disabled={inlineAuth.isLoading || isProcessing}>
-                  {(inlineAuth.isLoading || isProcessing) ? (
-                    <><Loader2 className="mr-2 h-5 w-5 animate-spin" /> Создание...</>
-                  ) : (
-                    <><CreditCard className="mr-2 h-5 w-5" /> Зарегистрироваться и оплатить</>
-                  )}
-                </Button>
-                <button
-                  type="button"
-                  className="text-xs text-muted-foreground underline w-full text-center"
-                  onClick={() => { inlineAuth.reset(); setPassword(''); }}
-                >
-                  Использовать другой email
-                </button>
-              </form>
-            )}
-
-            {needsIdentity && inlineAuth.step === 'email_confirm' && (
-              <div className="text-center text-sm text-muted-foreground p-4 rounded-md bg-muted/50">
-                Подтвердите email по ссылке из письма, затем вернитесь сюда — ссылка
-                <code className="mx-1 font-mono">/pay/{token}</code> остаётся активной.
-              </div>
+            {/* State 3: guest + no target user → shared inline auth (email/login/signup/forgot) */}
+            {needsIdentity && (
+              <InlineAuthForm
+                initialEmail={user?.email || ''}
+                onAuthenticated={handleGuestAuthenticated}
+                contextNote="Для оформления оплаты подтвердите email или войдите в аккаунт."
+                emailCtaLabel="Продолжить"
+                loginCtaLabel="Войти и оплатить"
+                signupCtaLabel="Зарегистрироваться и оплатить"
+                externalLoading={isProcessing}
+              />
             )}
 
             <p className="text-xs text-center text-muted-foreground mt-4">
