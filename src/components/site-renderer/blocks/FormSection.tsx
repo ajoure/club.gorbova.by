@@ -324,12 +324,19 @@ function LegacyFormSection({ content, pageId, isPreview }: FormSectionProps) {
   }
 
   return (
-    <section className="py-12 px-6">
-      <div className="max-w-xl mx-auto space-y-6">
-        {title && <h3 className="text-2xl font-bold text-foreground text-center">{title}</h3>}
-        {subtitle && <p className="text-muted-foreground text-center">{subtitle}</p>}
+    <section className="py-12 px-4 sm:px-6">
+      <div className="max-w-xl mx-auto space-y-5">
+        {(title || subtitle) && (
+          <div className="text-center space-y-2">
+            {title && <h3 className="text-2xl font-bold text-foreground">{title}</h3>}
+            {subtitle && <p className="text-sm text-muted-foreground">{subtitle}</p>}
+          </div>
+        )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form
+          onSubmit={handleSubmit}
+          className="rounded-xl border border-border/60 bg-card p-4 sm:p-6 shadow-sm space-y-5"
+        >
           {fields.map((field, i) => (
             <FieldRenderer
               key={i}
@@ -342,22 +349,25 @@ function LegacyFormSection({ content, pageId, isPreview }: FormSectionProps) {
             />
           ))}
 
-          {error && <p className="text-sm text-destructive text-center">{error}</p>}
+          {error && <p className="text-xs text-destructive text-center">{error}</p>}
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-md bg-primary px-8 py-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {loading ? "Отправка..." : buttonText}
-          </button>
+          <Button type="submit" disabled={loading} className="w-full sm:w-auto sm:min-w-[180px] sm:mx-auto sm:flex">
+            {loading ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Отправка...
+              </>
+            ) : (
+              buttonText
+            )}
+          </Button>
         </form>
       </div>
     </section>
   );
 }
 
-// ─── Универсальный рендерер поля ───
+// ─── Универсальный рендерер поля (shadcn-стиль, единый для preview и публичной формы) ───
 function FieldRenderer({
   field,
   index,
@@ -373,93 +383,100 @@ function FieldRenderer({
   onChange: (v: unknown) => void;
   onFiles: (files: FileList | null) => void;
 }) {
-  const baseInputClass =
-    "w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
+  const fieldId = `form-field-${index}`;
+  const displayLabel = getFieldDisplayLabel(field, index);
 
-  const label = (
-    <label className="block text-sm font-medium text-foreground mb-1">
-      {field.label || `Поле ${index + 1}`}
+  const labelNode = (
+    <Label htmlFor={fieldId} className="text-sm font-medium text-foreground">
+      {displayLabel}
       {field.required && <span className="text-destructive ml-1">*</span>}
-    </label>
+    </Label>
   );
 
   // textarea
   if (field.type === "textarea") {
     return (
-      <div>
-        {label}
-        <textarea
-          className={`${baseInputClass} min-h-[80px]`}
-          placeholder={field.label}
+      <div className="space-y-2">
+        {labelNode}
+        <Textarea
+          id={fieldId}
+          placeholder={displayLabel}
           value={(value as string) || ""}
           onChange={(e) => onChange(e.target.value)}
+          className="min-h-[96px] resize-y"
         />
       </div>
     );
   }
 
-  // boolean → Yes/No radio
+  // boolean → Да / Нет (RadioGroup)
   if (field.type === "boolean") {
-    const v = value === true || value === "true";
+    const current = value === true ? "true" : value === false ? "false" : "";
     return (
-      <div>
-        {label}
-        <div className="flex gap-4">
-          <label className="flex items-center gap-2 text-sm cursor-pointer">
-            <input type="radio" name={`bool-${index}`} checked={v === true} onChange={() => onChange(true)} />
-            Да
-          </label>
-          <label className="flex items-center gap-2 text-sm cursor-pointer">
-            <input type="radio" name={`bool-${index}`} checked={value === false} onChange={() => onChange(false)} />
-            Нет
-          </label>
-        </div>
+      <div className="space-y-2">
+        {labelNode}
+        <RadioGroup
+          value={current}
+          onValueChange={(v) => onChange(v === "true")}
+          className="flex gap-6"
+        >
+          <div className="flex items-center gap-2">
+            <RadioGroupItem id={`${fieldId}-yes`} value="true" />
+            <Label htmlFor={`${fieldId}-yes`} className="text-sm font-normal cursor-pointer">Да</Label>
+          </div>
+          <div className="flex items-center gap-2">
+            <RadioGroupItem id={`${fieldId}-no`} value="false" />
+            <Label htmlFor={`${fieldId}-no`} className="text-sm font-normal cursor-pointer">Нет</Label>
+          </div>
+        </RadioGroup>
       </div>
     );
   }
 
-  // select
+  // select (single choice) — shadcn Select
   if (field.type === "select") {
     const opts = field.options || [];
+    const current = (value as string) || "";
     return (
-      <div>
-        {label}
-        <select
-          className={baseInputClass}
-          value={(value as string) || ""}
-          onChange={(e) => onChange(e.target.value)}
-        >
-          <option value="">— выберите —</option>
-          {opts.map((o, oi) => (
-            <option key={oi} value={o}>{o}</option>
-          ))}
-        </select>
+      <div className="space-y-2">
+        {labelNode}
+        <Select value={current} onValueChange={(v) => onChange(v)}>
+          <SelectTrigger id={fieldId}>
+            <SelectValue placeholder="Выберите вариант" />
+          </SelectTrigger>
+          <SelectContent>
+            {opts.map((o, oi) => (
+              <SelectItem key={oi} value={o}>{o}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
     );
   }
 
-  // multiselect → checkboxes
+  // multiselect → группа Checkbox
   if (field.type === "multiselect") {
     const opts = field.options || [];
     const arr = Array.isArray(value) ? (value as string[]) : [];
     return (
-      <div>
-        {label}
-        <div className="space-y-1.5">
+      <div className="space-y-2">
+        {labelNode}
+        <div className="space-y-2 rounded-md border border-border/60 bg-background/60 p-3">
           {opts.map((o, oi) => {
             const checked = arr.includes(o);
+            const itemId = `${fieldId}-opt-${oi}`;
             return (
-              <label key={oi} className="flex items-center gap-2 text-sm cursor-pointer">
-                <input
-                  type="checkbox"
+              <div key={oi} className="flex items-center gap-2">
+                <Checkbox
+                  id={itemId}
                   checked={checked}
-                  onChange={(e) => {
-                    const next = e.target.checked ? [...arr, o] : arr.filter((x) => x !== o);
+                  onCheckedChange={(v) => {
+                    const next = v ? [...arr, o] : arr.filter((x) => x !== o);
                     onChange(next);
                   }}
                 />
-                {o}
-              </label>
+                <Label htmlFor={itemId} className="text-sm font-normal cursor-pointer">{o}</Label>
+              </div>
             );
           })}
         </div>
@@ -467,17 +484,56 @@ function FieldRenderer({
     );
   }
 
-  // date
+  // date — Popover + Calendar (значение хранится как локальный YYYY-MM-DD, без timezone-сдвига)
   if (field.type === "date") {
+    const dateString = typeof value === "string" && value ? value : "";
+    // Parse YYYY-MM-DD → local Date (no timezone shift)
+    const selectedDate = dateString
+      ? (() => {
+          const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateString);
+          if (!m) return undefined;
+          const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+          return isNaN(d.getTime()) ? undefined : d;
+        })()
+      : undefined;
     return (
-      <div>
-        {label}
-        <input
-          type="date"
-          className={baseInputClass}
-          value={(value as string) || ""}
-          onChange={(e) => onChange(e.target.value)}
-        />
+      <div className="space-y-2">
+        {labelNode}
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              id={fieldId}
+              className={cn(
+                "w-full justify-start text-left font-normal",
+                !selectedDate && "text-muted-foreground",
+              )}
+            >
+              <CalendarIcon className="h-4 w-4 mr-2 opacity-70" />
+              {selectedDate ? format(selectedDate, "d MMMM yyyy", { locale: ru }) : "Выберите дату"}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-auto p-0" align="start">
+            <Calendar
+              mode="single"
+              selected={selectedDate}
+              onSelect={(d) => {
+                if (!d) {
+                  onChange("");
+                  return;
+                }
+                // Format as local YYYY-MM-DD (no UTC drift)
+                const yyyy = d.getFullYear();
+                const mm = String(d.getMonth() + 1).padStart(2, "0");
+                const dd = String(d.getDate()).padStart(2, "0");
+                onChange(`${yyyy}-${mm}-${dd}`);
+              }}
+              initialFocus
+              className={cn("p-3 pointer-events-auto")}
+            />
+          </PopoverContent>
+        </Popover>
       </div>
     );
   }
@@ -485,12 +541,12 @@ function FieldRenderer({
   // number
   if (field.type === "number") {
     return (
-      <div>
-        {label}
-        <input
+      <div className="space-y-2">
+        {labelNode}
+        <Input
+          id={fieldId}
           type="number"
-          className={baseInputClass}
-          placeholder={field.label}
+          placeholder={displayLabel}
           min={field.min}
           max={field.max}
           step={field.step}
@@ -501,18 +557,25 @@ function FieldRenderer({
     );
   }
 
-  // file
+  // file — outline-кнопка с иконкой Upload + список загруженных как Badge
   if (field.type === "file") {
     const maxFiles = field.maxFiles ?? 1;
     const isMulti = maxFiles > 1;
     const files = isMulti
       ? (Array.isArray(value) ? (value as Array<{ filename: string; size: number }>) : [])
       : (value && typeof value === "object" ? [value as { filename: string; size: number }] : []);
+    const inputId = `${fieldId}-file`;
     return (
-      <div>
-        {label}
+      <div className="space-y-2">
+        {labelNode}
         <div className="space-y-2">
-          <label className="flex items-center justify-center gap-2 border border-dashed border-input rounded-md px-3 py-4 text-sm cursor-pointer hover:bg-muted/40 transition-colors">
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full justify-center gap-2"
+            disabled={uploading}
+            onClick={() => document.getElementById(inputId)?.click()}
+          >
             {uploading ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" /> Загрузка...
@@ -522,43 +585,49 @@ function FieldRenderer({
                 <Upload className="h-4 w-4" /> Выбрать {isMulti ? "файлы" : "файл"}
               </>
             )}
-            <input
-              type="file"
-              className="hidden"
-              multiple={isMulti}
-              disabled={uploading}
-              onChange={(e) => onFiles(e.target.files)}
-            />
-          </label>
+          </Button>
+          <input
+            id={inputId}
+            type="file"
+            className="hidden"
+            multiple={isMulti}
+            disabled={uploading}
+            onChange={(e) => onFiles(e.target.files)}
+          />
           {files.length > 0 && (
-            <ul className="space-y-1 text-xs">
+            <div className="flex flex-wrap gap-2">
               {files.map((f, fi) => (
-                <li key={fi} className="flex items-center justify-between gap-2 bg-muted/40 rounded px-2 py-1">
-                  <span className="truncate">{f.filename}</span>
+                <Badge
+                  key={fi}
+                  variant="secondary"
+                  className="gap-1.5 pl-2 pr-1 py-1 text-xs font-normal"
+                >
+                  <span className="truncate max-w-[160px]">{f.filename}</span>
                   <button
                     type="button"
-                    className="text-muted-foreground hover:text-destructive"
+                    aria-label="Удалить файл"
+                    className="rounded-sm hover:bg-background/60 p-0.5 text-muted-foreground hover:text-destructive transition-colors"
                     onClick={() => onChange(isMulti ? files.filter((_, idx) => idx !== fi) : null)}
                   >
                     <X className="h-3 w-3" />
                   </button>
-                </li>
+                </Badge>
               ))}
-            </ul>
+            </div>
           )}
         </div>
       </div>
     );
   }
 
-  // text / email / phone (default)
+  // text / email / phone (default) — shadcn Input
   return (
-    <div>
-      {label}
-      <input
+    <div className="space-y-2">
+      {labelNode}
+      <Input
+        id={fieldId}
         type={field.type === "phone" ? "tel" : field.type || "text"}
-        className={baseInputClass}
-        placeholder={field.label}
+        placeholder={displayLabel}
         value={(value as string) || ""}
         onChange={(e) => onChange(e.target.value)}
       />
