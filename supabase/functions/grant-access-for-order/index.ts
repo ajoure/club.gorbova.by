@@ -329,13 +329,51 @@ Deno.serve(async (req) => {
       getcourse: null,
     };
 
-    // 1. Upsert entitlement — PATCH: lookup by product_id (ID-first), not product_code
-    const { data: existingEntitlement } = await supabase
-      .from("entitlements")
-      .select("id, expires_at, product_code, product_id")
-      .eq("user_id", userId)
-      .eq("product_id", productId)
-      .maybeSingle();
+    // 1. Upsert entitlement — canonical reconcile flow:
+    //    a) lookup by (user_id, product_id) — ID-first (primary)
+    //    b) fallback: lookup legacy row by (user_id, product_code) WHERE product_id IS NULL
+    //       → backfill product_id (legacy reconciliation, allowed only when product_id IS NULL)
+    //    c) if INSERT fails on duplicate(user_id, product_code) constraint → reread by code
+    //       and treat as idempotent replay (merge, not fail)
+    //
+    // Invariants (entitlement_sync_engine):
+    //   • expires_at NEVER decreases (GREATEST(existing, new))
+    //   • status='active' on terminal completion
+    //   • product_id of legacy row is filled in, never overwritten if already set
+    //   • only access-window fields are touched on merge
+
+    // Step (a): primary lookup by product_id
+    let existingEntitlement: { id: string; expires_at: string | null; product_code: string | null; product_id: string | null } | null = null;
+    {
+      const { data } = await supabase
+        .from("entitlements")
+        .select("id, expires_at, product_code, product_id")
+        .eq("user_id", userId)
+        .eq("product_id", productId)
+        .maybeSingle();
+      existingEntitlement = data;
+    }
+
+    // Step (b): legacy fallback — only if no row by product_id AND we have product_code
+    let legacyBackfillNeeded = false;
+    if (!existingEntitlement && productCode) {
+      const { data: legacy } = await supabase
+        .from("entitlements")
+        .select("id, expires_at, product_code, product_id")
+        .eq("user_id", userId)
+        .eq("product_code", productCode)
+        .is("product_id", null)
+        .maybeSingle();
+
+      if (legacy) {
+        // Safe to merge: product_id IS NULL, product_code matches expected.
+        // Refuse merge if product_id is set to ANYTHING (even matching) — primary lookup
+        // already handles the matching case; non-matching is a foreign row.
+        existingEntitlement = legacy;
+        legacyBackfillNeeded = true;
+        console.log(`[grant-access] LEGACY BACKFILL: found entitlement ${legacy.id} (user=${userId}, code=${productCode}, product_id=NULL) → will backfill product_id=${productId}`);
+      }
+    }
 
     // Pre-INSERT: check for order_id collision (different product holding this order_id)
     const { data: orderIdCollision } = await supabase
@@ -389,24 +427,31 @@ Deno.serve(async (req) => {
     }
 
     if (existingEntitlement) {
-      // Update existing entitlement - extend if current expires_at is later than accessEndAt
-      const newExpiresAt = existingEntitlement.expires_at && 
+      // Merge existing entitlement — GREATEST(existing.expires_at, accessEndAt) — never decrease
+      const newExpiresAt = existingEntitlement.expires_at &&
         new Date(existingEntitlement.expires_at) > accessEndAt
           ? existingEntitlement.expires_at
           : accessEndAt.toISOString();
-          
+
+      const updatePayload: Record<string, unknown> = {
+        status: "active",
+        expires_at: newExpiresAt,
+        order_id: orderId,
+        updated_at: now.toISOString(),
+        meta: {
+          granted_by: legacyBackfillNeeded ? "legacy_product_id_backfill" : "primary_order_fulfillment",
+          granted_at: now.toISOString(),
+          ...(legacyBackfillNeeded ? { legacy_product_id_backfilled: true } : {}),
+        },
+      };
+      // Backfill product_id ONLY if the legacy row had it as NULL.
+      if (legacyBackfillNeeded) {
+        updatePayload.product_id = productId;
+      }
+
       const { error: updateError } = await supabase
         .from("entitlements")
-        .update({
-          status: "active",
-          expires_at: newExpiresAt,
-          order_id: orderId,
-          updated_at: now.toISOString(),
-          meta: {
-            granted_by: "primary_order_fulfillment",
-            granted_at: now.toISOString(),
-          },
-        })
+        .update(updatePayload)
         .eq("id", existingEntitlement.id);
 
       if (updateError) {
@@ -420,7 +465,28 @@ Deno.serve(async (req) => {
           { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      results.entitlement = { action: "updated", id: existingEntitlement.id };
+      results.entitlement = {
+        action: legacyBackfillNeeded ? "legacy_backfilled" : "updated",
+        id: existingEntitlement.id,
+      };
+
+      // Audit legacy backfill explicitly
+      if (legacyBackfillNeeded) {
+        await supabase.from("audit_logs").insert({
+          action: "entitlement.legacy_product_id_backfilled",
+          actor_type: "system",
+          actor_label: "grant-access-for-order",
+          target_user_id: userId,
+          meta: {
+            entitlement_id: existingEntitlement.id,
+            order_id: orderId,
+            product_id: productId,
+            product_code: productCode,
+            previous_product_id: null,
+            new_expires_at: newExpiresAt,
+          },
+        });
+      }
     } else {
       // Create new entitlement
       const { data: newEntitlement, error: insertError } = await supabase
@@ -442,18 +508,123 @@ Deno.serve(async (req) => {
         .single();
 
       if (insertError) {
-        console.error("HARD ERROR creating entitlement:", insertError);
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: "primary_entitlement_creation_failed",
-            details: insertError.message,
-            context: { order_id: orderId, user_id: userId, product_id: productId },
-          }),
-          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        // Idempotent replay path: duplicate by (user_id, product_code) unique constraint.
+        // Reread by product_code (legacy or recently-created sibling) and merge.
+        const isDuplicate =
+          insertError.code === "23505" ||
+          /duplicate key|entitlements_user_id_product_code_key/i.test(insertError.message || "");
+
+        if (isDuplicate && productCode) {
+          console.warn(`[grant-access] IDEMPOTENT REPLAY: insert duplicate on (user_id, product_code)=(${userId}, ${productCode}); rereading and merging.`);
+
+          const { data: dupRow } = await supabase
+            .from("entitlements")
+            .select("id, expires_at, product_id, product_code")
+            .eq("user_id", userId)
+            .eq("product_code", productCode)
+            .maybeSingle();
+
+          // Safety: only merge if product_id is NULL or matches our productId.
+          // Foreign product_id with same product_code is a data anomaly → hard fail.
+          if (!dupRow) {
+            console.error(`[grant-access] IDEMPOTENT REPLAY FAILED: duplicate signaled but reread returned no row.`);
+            return new Response(
+              JSON.stringify({
+                success: false,
+                error: "primary_entitlement_creation_failed",
+                details: insertError.message,
+                context: { order_id: orderId, user_id: userId, product_id: productId },
+              }),
+              { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+          if (dupRow.product_id && dupRow.product_id !== productId) {
+            console.error(`[grant-access] IDEMPOTENT REPLAY HARD STOP: duplicate row ${dupRow.id} has foreign product_id=${dupRow.product_id} (expected ${productId}, code=${productCode}).`);
+            return new Response(
+              JSON.stringify({
+                success: false,
+                error: "entitlement_product_code_collision_foreign_product",
+                details: {
+                  entitlement_id: dupRow.id,
+                  existing_product_id: dupRow.product_id,
+                  expected_product_id: productId,
+                  product_code: productCode,
+                },
+              }),
+              { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+
+          const mergedExpires = dupRow.expires_at &&
+            new Date(dupRow.expires_at) > accessEndAt
+              ? dupRow.expires_at
+              : accessEndAt.toISOString();
+
+          const wasLegacy = dupRow.product_id === null;
+          const mergePayload: Record<string, unknown> = {
+            status: "active",
+            expires_at: mergedExpires,
+            order_id: orderId,
+            updated_at: now.toISOString(),
+            meta: {
+              granted_by: "idempotent_replay_merge",
+              granted_at: now.toISOString(),
+              ...(wasLegacy ? { legacy_product_id_backfilled: true } : {}),
+            },
+          };
+          if (wasLegacy) mergePayload.product_id = productId;
+
+          const { error: mergeErr } = await supabase
+            .from("entitlements")
+            .update(mergePayload)
+            .eq("id", dupRow.id);
+
+          if (mergeErr) {
+            console.error("[grant-access] IDEMPOTENT REPLAY merge failed:", mergeErr);
+            return new Response(
+              JSON.stringify({
+                success: false,
+                error: "primary_entitlement_creation_failed",
+                details: mergeErr.message,
+              }),
+              { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+
+          await supabase.from("audit_logs").insert({
+            action: "grant_access.idempotent_replay",
+            actor_type: "system",
+            actor_label: "grant-access-for-order",
+            target_user_id: userId,
+            meta: {
+              entitlement_id: dupRow.id,
+              order_id: orderId,
+              product_id: productId,
+              product_code: productCode,
+              was_legacy_null_product_id: wasLegacy,
+              merged_expires_at: mergedExpires,
+            },
+          });
+
+          results.entitlement = {
+            action: wasLegacy ? "legacy_backfilled_via_replay" : "merged_via_replay",
+            id: dupRow.id,
+          };
+        } else {
+          console.error("HARD ERROR creating entitlement:", insertError);
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: "primary_entitlement_creation_failed",
+              details: insertError.message,
+              context: { order_id: orderId, user_id: userId, product_id: productId },
+            }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+      } else {
+        results.entitlement = { action: "created", id: newEntitlement?.id };
       }
-      results.entitlement = { action: "created", id: newEntitlement?.id };
     }
 
     // Post-check: verify primary entitlement exists with correct product_id
