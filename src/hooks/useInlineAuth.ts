@@ -11,11 +11,12 @@ import { useState, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
 export type InlineAuthStep =
-  | "email"           // Initial: enter email
-  | "login"           // Existing user: enter password
-  | "signup"          // New user: name, phone, password
-  | "email_confirm"   // Signup done, waiting for email confirmation
-  | "authenticated";  // Session active
+  | "email"               // Initial: enter email
+  | "login"               // Existing user: enter password
+  | "signup"              // New user: name, phone, password
+  | "email_confirm"       // Signup done, waiting for email confirmation
+  | "password_reset_sent" // Forgot-password email dispatched (success state)
+  | "authenticated";      // Session active
 
 export interface EmailCheckResult {
   exists: boolean;
@@ -41,6 +42,8 @@ export interface UseInlineAuthReturn extends InlineAuthState {
     lastName?: string;
     phone?: string;
   }) => Promise<{ userId: string; needsConfirmation: boolean } | null>;
+  /** Send password reset email; transitions to password_reset_sent on success. */
+  requestPasswordReset: (email: string) => Promise<boolean>;
   /** Reset to email step */
   reset: () => void;
   /** Set step manually (for external flow control) */
@@ -207,6 +210,35 @@ export function useInlineAuth(initialStep: InlineAuthStep = "email"): UseInlineA
     }
   }, []);
 
+  const requestPasswordReset = useCallback(async (email: string): Promise<boolean> => {
+    setError(null);
+    const trimmed = (email || "").trim();
+    if (!trimmed) {
+      setError("Введите email, чтобы восстановить пароль");
+      return false;
+    }
+    setIsLoading(true);
+    try {
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(
+        trimmed.toLowerCase(),
+        { redirectTo: `${window.location.origin}/auth?mode=reset` }
+      );
+      if (resetError) {
+        console.error("Password reset error:", resetError);
+        setError("Не удалось отправить письмо. Попробуйте позже.");
+        return false;
+      }
+      setStep("password_reset_sent");
+      return true;
+    } catch (err) {
+      console.error("Password reset exception:", err);
+      setError("Не удалось отправить письмо. Попробуйте позже.");
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
   return {
     step,
     isLoading,
@@ -215,6 +247,7 @@ export function useInlineAuth(initialStep: InlineAuthStep = "email"): UseInlineA
     checkEmail,
     login,
     signup,
+    requestPasswordReset,
     reset,
     setStep,
     clearError,
