@@ -1,5 +1,6 @@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { ButtonActionType } from "@/services/sitePages/types";
 import type { AnchorsRegistry } from "@/hooks/useSitePageAnchors";
@@ -64,7 +65,7 @@ export function ButtonBlockEditor({ content, onChange, registry, currentBlockId 
     <div className="space-y-3">
       <div>
         <Label className="text-xs">Текст кнопки</Label>
-        <Input value={(content.text as string) || ""} onChange={(e) => onChange({ ...content, text: e.target.value })} />
+        <RichTextarea inline value={(content.text as string) || ""} onChange={(v) => onChange({ ...content, text: v })} />
       </div>
 
       {/* ─── Action selector ─── */}

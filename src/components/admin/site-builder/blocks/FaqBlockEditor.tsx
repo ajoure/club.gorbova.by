@@ -1,5 +1,4 @@
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Button } from "@/components/ui/button";
 import { Plus, Trash2 } from "lucide-react";
 
@@ -39,8 +38,8 @@ export function FaqBlockEditor({ content, onChange }: FaqBlockEditorProps) {
               <Trash2 className="h-3 w-3 text-destructive" />
             </Button>
           </div>
-          <Input value={item.question} onChange={(e) => updateItem(idx, "question", e.target.value)} placeholder="Вопрос" className="text-sm" />
-          <Textarea value={item.answer} onChange={(e) => updateItem(idx, "answer", e.target.value)} placeholder="Ответ" rows={2} className="text-sm" />
+          <RichTextarea inline value={item.question} onChange={(v) => updateItem(idx, "question", v)} placeholder="Вопрос" />
+          <RichTextarea value={item.answer} onChange={(v) => updateItem(idx, "answer", v)} placeholder="Ответ" minHeight="60px" />
         </div>
       ))}
       <Button variant="outline" size="sm" onClick={addItem}>

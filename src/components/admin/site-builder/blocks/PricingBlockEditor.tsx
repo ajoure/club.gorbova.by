@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -46,17 +46,19 @@ export function PricingBlockEditor({ content, onChange }: PricingBlockEditorProp
       </div>
       <div>
         <Label className="text-xs">Заголовок секции</Label>
-        <Input
+        <RichTextarea
+          inline
           value={(content.title as string) || ""}
-          onChange={(e) => onChange({ ...content, title: e.target.value })}
+          onChange={(v) => onChange({ ...content, title: v })}
           placeholder="Тарифы"
         />
       </div>
       <div>
         <Label className="text-xs">Подзаголовок</Label>
-        <Input
+        <RichTextarea
+          inline
           value={(content.subtitle as string) || ""}
-          onChange={(e) => onChange({ ...content, subtitle: e.target.value })}
+          onChange={(v) => onChange({ ...content, subtitle: v })}
           placeholder="Выберите подходящий тариф"
         />
       </div>

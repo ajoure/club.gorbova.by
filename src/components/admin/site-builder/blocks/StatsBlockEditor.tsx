@@ -1,6 +1,6 @@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Trash2 } from "lucide-react";
@@ -53,17 +53,19 @@ export function StatsBlockEditor({ content, onChange }: StatsBlockEditorProps) {
     <div className="space-y-3">
       <div>
         <Label className="text-xs">Заголовок секции (опционально)</Label>
-        <Input
+        <RichTextarea
+          inline
           value={(content.title as string) || ""}
-          onChange={(e) => update({ title: e.target.value })}
+          onChange={(v) => update({ title: v })}
           placeholder="Например: Достижения"
         />
       </div>
       <div>
         <Label className="text-xs">Подзаголовок (опционально)</Label>
-        <Input
+        <RichTextarea
+          inline
           value={(content.subtitle as string) || ""}
-          onChange={(e) => update({ subtitle: e.target.value })}
+          onChange={(v) => update({ subtitle: v })}
         />
       </div>
 
@@ -164,18 +166,17 @@ export function StatsBlockEditor({ content, onChange }: StatsBlockEditorProps) {
                 className="text-sm"
               />
             </div>
-            <Input
+            <RichTextarea
+              inline
               value={item.label || ""}
-              onChange={(e) => updateItem(idx, "label", e.target.value)}
+              onChange={(v) => updateItem(idx, "label", v)}
               placeholder="Подпись (клиентов)"
-              className="text-sm"
             />
-            <Textarea
+            <RichTextarea
               value={item.description || ""}
-              onChange={(e) => updateItem(idx, "description", e.target.value)}
+              onChange={(v) => updateItem(idx, "description", v)}
               placeholder="Описание (опционально)"
-              rows={2}
-              className="text-sm"
+              minHeight="60px"
             />
             {iconMode !== "none" && iconMode !== "numbered" && (
               <Input

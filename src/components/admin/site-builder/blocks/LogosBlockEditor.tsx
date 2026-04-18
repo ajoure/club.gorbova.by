@@ -2,6 +2,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Plus, Trash2 } from "lucide-react";
 
 interface LogosBlockEditorProps {
@@ -47,7 +48,7 @@ export function LogosBlockEditor({ content, onChange }: LogosBlockEditorProps) {
             </Button>
           </div>
           <Input value={item.url} onChange={(e) => updateItem(i, { url: e.target.value })} placeholder="URL изображения" />
-          <Input value={item.alt} onChange={(e) => updateItem(i, { alt: e.target.value })} placeholder="Alt текст" />
+          <RichTextarea inline value={item.alt} onChange={(v) => updateItem(i, { alt: v })} placeholder="Alt / подпись" />
           <Input value={item.linkUrl} onChange={(e) => updateItem(i, { linkUrl: e.target.value })} placeholder="Ссылка (необязательно)" />
         </div>
       ))}
