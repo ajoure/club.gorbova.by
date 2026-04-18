@@ -1,99 +1,225 @@
 да, согласен, с учетом правок:
 
-1. По payment_links_enriched_v исправь **оба** join и зафиксируй это в отчёте явно:
-  - rec.user_id = pl.user_id
-  - cre.user_id = pl.created_by
-2. И отдельно покажи before/after SQL proof на 2–3 строках:
-  - до фикса recipient_name/email = null
-  - после фикса имя/email заполнены.
-3. В proof по таблице «Ссылки» проверь **оба сценария**:
-  - bound link → имя/email получателя отображаются;
-  - public link без user_id → остаётся «Любой плательщик».
-4. Это важно, чтобы не сломать корректный fallback.
-5. В FormsHubTable.tsx не просто подставь ClickableContactName, а сначала проверь, какой идентификатор у него ожидается:
-  - profileId
-  - userId
-  - contactId
-6. Нужно передать тот ключ, который реально открывает карточку без лишнего поиска. Если компонент умеет брать и user_id, и profile_id, используй самый каноничный для forms-flow и зафиксируй это в отчёте.
-7. Для таблицы «Анкеты и заявки» добавь ещё один guard:
-  - если контакт не найден / профиль отсутствует, имя остаётся текстом, а не ломает рендер пустой ссылкой.
-8. То есть:
-  - есть профиль → кликабельно;
-  - нет профиля → обычный текст.
-9. В proof по forms покажи не только клик, но и результат:
-  - клик по имени
-  - открылась карточка контакта / drawer / нужный route
-  - видно, что это именно тот контакт.
-10. Одного скрина таблицы мало.
-11. В mobile-proof для обеих таблиц отдельно проверь, что:
-  - имя не ломает row layout;
-  - кликабельный элемент не уезжает под соседние колонки;
-  - email под именем читаем.
-12. Контракт view-колонок действительно не меняй, но в отчёте всё равно отдельно перечисли:
-  - какие поля остались 1:1 прежними;
-  - что изменился только источник derived recipient_* и creator_*.
-13. В DoD добавь ещё один пункт:
-  - **исторические строки в payment links без привязанного пользователя продолжают отображаться корректно и не становятся ложноположительно “привязанными”.**
+1. **site-form-upload оставляй как новый узкий edge function — это правильно**, но сервер не должен доверять allowedGroups / maxSizeMB / maxFiles, пришедшим с клиента.  
+Добавь в план жёсткое правило:
+  - клиент передаёт только submission_token, field_id, файл и идентификатор формы/страницы;
+  - сервер сам находит **опубликованную конфигурацию FormBlock** и валидирует файл по настройкам поля;
+  - если такую конфигурацию на сервере быстро и надёжно не поднять — тогда честно фиксируй, что в первой итерации сервер применяет только **глобальный безопасный allowlist + hard size limit**, а field-level ограничения работают только в UI и переносятся во 2-й патч.
+2. **submission_token нужно формализовать как часть контракта.**  
+Добавь отдельный пункт:
+  - когда и где генерируется;
+  - один токен на одну открытую форму;
+  - как он прокидывается в upload и затем в final submit;
+  - как по нему потом связываются несколько файлов одной отправки.
+3. Нужен **guard на “осиротевшие” загрузки**.  
+Сейчас план описывает upload до submit, но не говорит, что делать, если пользователь загрузил файл и не отправил форму.  
+Добавь в отчёт/план:  
 
-В остальном план правильный: это узкий и безопасный фикс, без вмешательства в writers, webhook, RLS и UI-контракты таблиц.
+  - либо это допустимо как временный мусор и чистится отдельным cron/maintenance;
+  - либо site-form-submit помечает реально использованные файлы, а orphan cleanup идёт отдельно.  
+  Сейчас хотя бы зафиксируй это как **осознанное ограничение первой итерации**, чтобы потом не потерять.
+4. Для file и multi-file зафиксируй контракт **однозначно**:
+  - maxFiles = 1 → хранится один object;
+  - maxFiles > 1 → хранится массив objects;
+  - в detail-view и renderer это различается явно, без эвристик.
+5. По OptionsEditor:
+  - сначала действительно проверь, есть ли уже выделяемый компонент;
+  - если нет, новый OptionsEditor допустим;
+  - **но не лезь рефакторить quiz-блоки в этом спринте**, если это повышает риск.  
+  То есть: можно сделать общий компонент для будущего reuse, но не надо ради этого трогать lesson-editor, если он сейчас стабилен.
+6. Для FormsHubTable не перегружай таблицу.  
+Правильнее, как ты и написал:
+  - compact preview;
+  - основное раскрытие — в detail dialog.  
+  Это надо прямо зафиксировать как продуктовое решение, чтобы потом не пытались впихнуть все ответы в строки таблицы.
+7. Для training-assets-download добавь в план явный security-пункт:
+  - form-uploads/ скачиваются **только админом / superadmin**;
+  - публичного прямого download по path нет;
+  - ссылка в /admin/forms всегда идёт через proxy-download, не в Storage напрямую.
+8. По site-form-submit:
+  - недостаточно “убедиться, что не ломает unknown types”;  
+  добавь проверку, что он **не мутирует** структуру form_data, особенно:
+  - не stringify-массивы;
+  - не stringify-объекты файла;
+  - не превращает boolean/number в строки.  
+  Это отдельный proof-пункт.
+9. В DoD добавь отдельный пункт:
+  - **повторное открытие заявки в /admin/forms показывает те же типы без потери структуры после чтения из БД**, то есть round-trip proof: renderer → submit → jsonb → admin detail.
+10. И ещё одна важная граница:
 
 &nbsp;
 
-## Что нашёл
+- FormBlock расширяем как **базовый сайтовый сборщик ответов**;
+- QuestionnaireBlockEditor не трогаем и не “выравниваем один в один”.  
+Это стоит отдельно повторить в финальном отчёте как архитектурный принцип.
 
-### Баг 1 — "Получатель" в таблице ссылок всегда "—" / "Любой плательщик"
+Итог: план хороший и в правильную сторону.  
+Главная обязательная правка — **server-side upload validation не должна опираться на клиентские настройки поля**, иначе тип file получится небезопасным.
 
-В view `payment_links_enriched_v` join сделан по неверному ключу:
+&nbsp;
 
-```sql
-LEFT JOIN profiles rec ON rec.id = pl.user_id      -- ❌ pl.user_id = auth.users.id
-LEFT JOIN profiles cre ON cre.id = pl.created_by   -- ❌ то же
+## Что нашёл (discovery)
+
+### 1. Upload-механизмы в проекте
+
+Прочитал:
+
+- `src/components/admin/lesson-editor/blocks/uploadToTrainingAssets.ts` — для admin/auth uploads, путь `student-uploads/{user.id}/...`, требует `auth.uid()`.
+- `supabase/functions/training-assets-download/index.ts` — безопасный proxy-download, проверяет JWT + admin role, **не подходит для публичной формы** (гость не имеет JWT).
+- `src/components/site-renderer/blocks/SiteFormBlock.tsx` (если есть) и `supabase/functions/site-form-submit/` — публичный submit без auth.
+
+**Вывод:** готового signed-upload-helper для гостей **нет**. Есть два пути:
+
+- **Путь A (предпочтительный, безопаснее):** новая edge function `site-form-upload` — принимает файл от гостя (multipart), валидирует MIME/size/extension/submission_token, кладёт через service_role в `training-assets/form-uploads/{submission_token}/...`. Bucket остаётся **закрытым** для anonymous INSERT. Чтение — через существующий `training-assets-download` (расширить allowlist на `form-uploads/` + admin-only check).
+- **Путь B:** signed upload URL через service_role edge function (`site-form-upload-token`) → клиент кладёт напрямую в Storage по signed URL. Сложнее, но дешевле для крупных файлов.
+
+**Решение:** Путь A. Меньше кода, контроль на сервере, не открываем RLS на анонимный INSERT.
+
+### 2. Контракт значения «Файл» в `form_data`
+
+Зафиксирую структурированный объект:
+
+```json
+{
+  "type": "file",
+  "path": "form-uploads/{token}/{uuid}-{safeName}",
+  "filename": "Original Name.pdf",
+  "mime_type": "application/pdf",
+  "size": 12345,
+  "bucket": "training-assets"
+}
 ```
 
-Канон проекта (см. `useDisplayProfiles`, memory `ID-First Logic`): `payment_links.user_id` = **auth user_id**, а в `profiles` ключ — `profiles.user_id`. SQL-проверка подтвердила: join по `id` даёт NULL, по `user_id` — корректное имя/email. Поэтому колонки `recipient_name/email` и `creator_name/email` всегда пустые → UI показывает "—" для созданных и "Любой плательщик" когда `user_id IS NULL` (это оставляем — это правильно).
+### 3. site-form-submit сериализация
 
-### Баг 2 — В таблице "Анкеты и заявки" контакт некликабельный
+Проверю, что edge function принимает `boolean / string[] / number / date string / file object` без принудительного `String()`. Скорее всего просто `body.form_data` идёт как есть в jsonb — но подтвержу чтением кода.
 
-`FormsHubTable.tsx`, ячейки `client` / `email` рендерят просто текст. Уже есть готовый компонент `ClickableContactName` (`src/components/admin/ClickableContactName.tsx`), который умеет открывать карточку контакта в `/admin/contacts?contact=...&from=forms`. В `FormsHubRow` уже есть поля `user_id` и `profile_id` — данные есть, просто не используются.
+### 4. Reuse OptionsEditor
+
+Посмотрю в `QuizSingleBlock` / `QuizMultipleBlock` — есть ли выделяемый OptionsEditor. Если нет — создам **малый общий компонент** `src/components/admin/shared/OptionsEditor.tsx` (input-список с add/remove/reorder), и использую его и в FormBlockEditor, и в quiz-блоках (при низком риске рефакторинга — иначе только в FormBlock).
 
 ## План фикса
 
-### Фикс 1 — миграция view
+### A. FormBlockEditor (admin)
 
-`CREATE OR REPLACE VIEW public.payment_links_enriched_v` с правильными join-ключами:
+`src/components/admin/site-builder/blocks/FormBlockEditor.tsx`:
 
-```sql
-LEFT JOIN profiles rec ON rec.user_id = pl.user_id
-LEFT JOIN profiles cre ON cre.user_id = pl.created_by
-```
+Расширить `<Select>` типов: `text, textarea, email, phone, boolean, select, multiselect, date, number, file`.
 
-Сохранить `security_invoker=on`, `GRANT SELECT TO authenticated`. Контракт колонок не меняется — UI и `usePaymentLinks` не трогаем.
+Условные настройки:
 
-### Фикс 2 — кликабельный контакт в `FormsHubTable.tsx`
+- `select / multiselect` → показать `OptionsEditor`.
+- `file` → выбор `allowedGroups` (image / document / archive), `maxSizeMB`, `maxFiles` (контракт идентичен `StudentUploadContentData`).
+- `number` → `min / max / step`.
 
-В `case "client"`: заменить `<div>{row.client_name}</div>` на `<ClickableContactName userId={row.user_id} profileId={row.profile_id} name={row.client_name} fromPage="forms" />`. Текст ячейки `client_email` оставляю как есть (уже отдельная колонка), но если профиль есть — кликабельный label через тот же компонент с `showEmail={false}` (только имя кликабельно).
+Mapping в карточку — скрыть для типов ≠ text/email/phone/textarea (mapping не расширяем по решению пользователя).
 
-### Фикс 3 — proof скринами
+### B. Site renderer формы
 
-Через browser:
+`src/components/site-renderer/blocks/SiteFormBlock.tsx` (имя уточню):
 
-- `/admin/payments` → вкладка «Ссылки» → проверить колонку «Получатель» (не должно быть "—" у привязанных) и «Создал» (имя автора).
-- `/admin/forms` → таблица анкет → клик по имени клиента → должна открыться карточка контакта в `/admin/contacts`.
-- Скрины desktop + mobile (375).
+- `boolean` → `<Switch>` или `RadioGroup` Да/Нет.
+- `select` → `<Select>` с options.
+- `multiselect` → группа Checkbox.
+- `date` → `<input type="date">`, нормализация в ISO `YYYY-MM-DD`.
+- `number` → `<input type="number">`, отправка как `Number`, не `String`.
+- `file` → file input → upload через **edge function `site-form-upload**` → получаем file-object → кладём в `form_data`.
+
+Validation `required` для каждого типа.
+
+### C. Edge function `site-form-upload` (новая, узкая)
+
+`supabase/functions/site-form-upload/index.ts`:
+
+- POST multipart, без JWT, CORS open.
+- Параметры: `submission_token` (UUID, генерируется на клиенте при открытии формы), `field_id`, `file`.
+- Server-side validation:
+  - MIME-типы по allowlist (соответствует `allowedGroups` из конфига блока — но т.к. конфиг на клиенте, делаем безопасный default-allow: `image/*, application/pdf, application/zip, .docx, .xlsx, .txt`, без `application/x-msdownload` / `*.exe` / `*.sh` / `*.js`).
+  - Max size: 20 MB hard limit.
+  - Filename sanitize (как в `training-assets-download`).
+- Кладёт через service_role в `training-assets/form-uploads/{submission_token}/{uuid}-{safeName}`.
+- Возвращает file object для `form_data`.
+
+Bucket RLS **не трогаем** — anonymous INSERT не открываем.
+
+### D. Расширить `training-assets-download`
+
+Добавить `form-uploads/` в `ALLOWED_PREFIXES`. Для `form-uploads/...` требовать `admin / superadmin` через `has_role_v2` (как `student-uploads/`). Контракт остаётся.
+
+### E. site-form-submit — проверить + зафиксировать
+
+Прочитать и убедиться, что `form_data` jsonb сохраняется как есть. Если есть `String()` или валидация типов — расширить (минимально).
+
+### F. /admin/forms — отображение
+
+`FormsDetailOpener.tsx` (`SiteFormDetailDialog`):
+
+- `boolean` → «Да» / «Нет» / «—».
+- `string[]` (multiselect) → badges список, или join через `,` .
+- date → `format(parseISO(...), 'dd MMMM yyyy', ru)`.
+- number → as-is.
+- file (object) → ссылка «Скачать {filename}» → клик → `training-assets-download?path=...&name=...` с auth.
+- empty / null → «—».
+
+В `FormsHubTable.tsx` preview ячеек анкет уже компактный (контакт + дата). Файл/multiselect — показать иконку/счётчик («📎 1 файл», «3 значения»), без расширения колонок.
+
+### G. QuestionnaireBlockEditor
+
+**Не трогаем.** В отчёте явно зафиксирую: канонический движок анкет сайта = lesson editor; FormBlock получает расширенный набор базовых типов, совместимый по смыслу, без дублирования движка.
 
 ## Файлы
 
 **Изменю:**
 
-- новая миграция: фикс join в `payment_links_enriched_v`
-- `src/components/admin/forms/FormsHubTable.tsx` — кликабельный контакт через `ClickableContactName`
+- `src/components/admin/site-builder/blocks/FormBlockEditor.tsx` — расширение типов + условные редакторы.
+- `src/components/site-renderer/blocks/SiteFormBlock.tsx` (имя уточню) — рендер новых типов + file upload.
+- `src/components/admin/forms/FormsDetailOpener.tsx` — рендер новых типов в detail.
+- `src/components/admin/forms/FormsHubTable.tsx` — компактный preview для file/multiselect.
+- `supabase/functions/training-assets-download/index.ts` — `form-uploads/` в allowlist + admin guard.
+- `supabase/functions/site-form-submit/index.ts` — только если ломает сериализацию (минимально).
 
-**НЕ трогаю:** writers, edge functions, RLS, hooks, контракты колонок view, дизайн карточки контакта.
+**Создам (минимально):**
+
+- `supabase/functions/site-form-upload/index.ts` — guest file upload через service_role (узкий контракт).
+- `src/components/admin/shared/OptionsEditor.tsx` — общий мини-компонент для select/multiselect (если нет готового).
+
+**Миграция:** не нужна (bucket уже существует, RLS не меняем).
+
+**НЕ трогаю:** `QuestionnaireBlockEditor`, `SiteQuestionnaireBlock`, lesson editor, payment writers, RLS на `site_form_submissions`.
+
+## Контракт значения «Файл» в `form_data`
+
+```json
+{
+  "type": "file",
+  "path": "form-uploads/{submission_token}/{uuid}-name.pdf",
+  "filename": "name.pdf",
+  "mime_type": "application/pdf",
+  "size": 12345,
+  "bucket": "training-assets"
+}
+```
+
+## Контракт значений по типам
+
+- `boolean` → `true | false`.
+- `select` → `string` (выбранный option).
+- `multiselect` → `string[]`.
+- `date` → `string` (ISO `YYYY-MM-DD`).
+- `number` → `number` (не строка).
+- `file` → object выше; для `multi-file` — `array` of objects.
 
 ## DoD
 
-1. В `/admin/payments` → «Ссылки» колонка «Получатель» показывает имя+email для привязанных контактов; «Любой плательщик» — только если `user_id IS NULL`.
-2. Колонка «Создал» показывает имя/email админа, а не "—".
-3. В `/admin/forms` имя клиента в таблице — кликабельная ссылка на карточку контакта (поведение как в `/admin/payments`).
-4. Скрины desktop + mobile подтверждают оба фикса.
-5. Никаких изменений писателей/RLS/контракта view-колонок.
+1. В FormBlockEditor доступны типы: Строка, Многострочный, Email, Телефон, Да-Нет, Выбор, Множественный выбор, Дата, Число, Файл.
+2. Для select/multiselect редактируется список вариантов; для file — allowedGroups + maxSizeMB + maxFiles; для number — min/max/step.
+3. Публичная форма корректно рендерит все типы и валидирует required.
+4. Гость загружает файл **только** через edge function `site-form-upload` с server-side проверкой MIME/size/extension. Bucket НЕ открыт на anonymous INSERT.
+5. Запрещённые MIME (executables, scripts) отклоняются на сервере.
+6. Файл сохраняется в `form_data` как структурированный объект (path/filename/mime/size/bucket).
+7. В админке (`/admin/forms` detail) файл скачивается через `training-assets-download` (admin-only guard на `form-uploads/`). Прямого чтения чужих файлов нет.
+8. В таблице `/admin/forms` — компактный preview для файлов и multiselect.
+9. Числа сохраняются как `number`, даты как ISO `YYYY-MM-DD`; админка показывает форматированно.
+10. `QuestionnaireBlockEditor` не тронут; в отчёте зафиксирована граница: FormBlock — базовые типы для лендингов, lesson editor — канонический движок анкет.
+11. `site-form-submit` корректно принимает boolean/array/number/date/file без приведения к строке.
+12. Никакого нового payment-path, дубля Telegram-логики, изменений RLS на `site_form_submissions`.
