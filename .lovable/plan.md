@@ -1,184 +1,124 @@
+&nbsp;
+
 да, согласен, с учетом правок:
 
-1. **PATCH 1 не называть “новым каноническим writer” без discovery mapping.** Сначала явно зафиксируй:  
+1. В Discovery добавь явную проверку по тестовой ссылке a1be127182b0595f567cb4c7fa40241f:  
 
-  - есть ли уже любой скрытый writer / legacy writer / SQL seed path;
-  - почему admin-create-payment-link семантически не может быть расширен до dual-mode;
-  - почему отдельная admin-create-public-link не создаёт второй конкурирующий admin entrypoint.  
-  Если остаётся отдельная функция — в плане прямо запиши:  
-  **admin-create-payment-link = немедленный checkout**,  
-  **admin-create-public-link = только запись row в payment_links**,  
-  и это два режима одного продукта, но **один downstream checkout path** через public-checkout -> createPaymentCheckout.
-2. **В PATCH 1 добавь жёсткий контракт полей payment_links.** До execute составь таблицу:
-  - поле
-  - кто пишет
-  - кто читает
-  - обязательность
-  - дефолт
-  - источник значения  
-  И отдельно укажи, какие поля writer обязан писать всегда:  
-  url_token, product_id, tariff_id, amount, currency, payment_type, description, status, current_uses, max_uses, expires_at, offer_id, user_id.  
-  Без этого легко получить “writer есть, но /pay/:token всё равно поломан”.
-3. **Для PATCH 1 добавь явную проверку reuse counters.** В DoD должно быть:
-  - current_uses=0 на insert,
-  - после первого materialize current_uses корректно увеличивается,
-  - max_uses/expires_at реально ограничивают повторный checkout, а не только лежат в row.
-4. **RLS не формулировать предположительно.** Вместо “если ещё нет” добавь discovery-пункт:
-  - выписать все текущие policies на payment_links,
-  - доказать, что anon read идёт либо через service-role в edge function, либо через публичную policy;
-  - только после этого вносить минимальную add-only корректировку.  
-  Не менять RLS вслепую.
-5. **JWT-проверку в admin-create-public-link зафиксируй как обязательный production contract.** Не просто getUser(token), а:
-  - валидный bearer token,
-  - проверка admin/super_admin роли,
-  - audit с actor_user_id,
-  - отказ 403 без роли.  
-  Это должно быть отдельным DoD для PATCH 1.
-6. **В PATCH 1 добавь UI-решение по месту.** Не просто “добавить кнопку”, а явно:
-  - либо второй CTA в текущем AdminPaymentLinkDialog: **«Создать ссылку и открыть оплату»** / **«Создать публичную ссылку»**;
-  - либо отдельный AdminPublicLinkDialog, если различия по UX слишком большие.  
-  Сейчас это архитектурно неоднозначно. Нужен выбор в плане, не оставляй расплывчато.
-7. **Для PATCH 2 сначала зафиксируй текущий канонический terminal path.** До reorder нужно доказать:
-  - кто именно сегодня переводит order в paid,
-  - где вызывается CRM apply,
-  - является ли grant-access-for-order частью канонического terminal flow или только admin/manual fulfillment tool.  
-  Это критично, чтобы не сделать “paid” раньше, чем система действительно считает платёж успешным в других продуктах.
-8. **Порядок в PATCH 2 уточни.** Не писать просто “сначала paid+won, потом entitlement”. Нужен безопасный порядок:
-  - прочитать order и snapshot,
-  - проверить, что terminal condition действительно наступила,
-  - применить orders_v2.status='paid',
-  - применить CRM stage через канонический helper,
-  - затем entitlement upsert / side-effects,
-  - ошибки side-effects логировать отдельно, но не откатывать terminal state.  
-  И явно указать, что это касается **идемпотентного повтора по уже подтверждённому платёжному событию**, а не любого произвольного вызова.
-9. **Для entitlement upsert добавь строгий invariant “не уменьшать доступ”.** Ты это уже написал через GREATEST, но надо явно добавить:
-  - не затирать более длинний действующий entitlement более коротким,
-  - не менять чужие поля, не относящиеся к access window,
-  - проверить, что существующие downstream-процессы не зависят от “чистого insert-only” поведения.
-10. **grant_access.idempotent_replay — хорошо, но добавь ещё одно событие:**  
-grant_access.side_effect_failed_after_terminal  
-для случаев, когда order уже переведён в paid/won, но побочный шаг после этого упал. Иначе потом будет трудно разбирать полусломанные сценарии.
-11. **В Verify для P3 terminal не подменяй реальный webhook ручным grant-access-for-order, если цель — end-to-end /pay/:token.** Раздели proof:
+  - есть ли у неё payment_links.user_id
+  - какой status
+  - current_uses, max_uses, expires_at  
+  Чтобы сразу понимать, идём по ветке has_target_user=true или нет, и не чинить вслепую.
+2. На сервере в public-checkout зафиксируй порядок target user resolution:
+  - если link.user_id есть → **всегда** использовать его;
+  - если link.user_id нет и передан email → искать пользователя по email;
+  - если link.user_id нет и email не передан → только тогда ошибка.  
+  Это нужно оформить именно как канонический resolution flow, а не просто как частичный фикс guard.
+3. В GET ответ public-checkout кроме has_target_user добавь ещё безопасный флаг, который поможет UI:
+  - например requires_identity_input = !link.user_id  
+  Без раскрытия email и без user_id наружу. Тогда фронт не будет дублировать логику догадками.
+4. В клиентском плане явно раздели 3 экрана/состояния:
+  - has_target_user=true → только карточка + кнопка оплаты;
+  - has_target_user=false && auth.user → кнопка оплаты с уже определённым email;
+  - has_target_user=false && guest → inline auth/email.  
+  Это должно быть отражено и в UI, и в тестах как отдельные состояния.
+5. Для гостя без user_id не ограничивайся формулировкой «inline email → login/signup».  
+Прямо добавь:
+  - после успешного inline auth/email link-context не теряется;
+  - пользователь остаётся на том же /pay/:token;
+  - повторный GET/POST использует тот же token без ручного возврата.
+6. В DoD добавь отдельный кейс ошибки:
+  - ссылка без user_id, гость нажал оплатить без email → понятная inline-ошибка в карточке, без редиректа и без технического текста edge function.  
+  Нужно, чтобы UX был законченным, а не только happy path.
+7. В серверном PATCH не просто «удалить текст из codebase», а заменить его на более точную развилку:
+  - если link.user_id уже есть — этой ошибки вообще быть не должно;
+  - если link.user_id нет — ошибка должна быть про необходимость указать email, а не «войти в аккаунт».  
+  То есть полностью убрать требование логина как обязательное условие оплаты.
+8. В Anti-duplication / scope guards добавь ещё один guard:
+  - если discovery покажет, что PublicCheckoutPage уже частично использует другой auth-flow, не писать второй параллельный inline-auth, а переиспользовать существующий источник состояния 1:1.  
+  Это важно, чтобы не получить два разных поведения public page.
+9. В финальной цели допиши более точно:  
+после патча должен стать возможен не просто pending/materialize, а именно **финальный live proof по текущей тестовой ссылке**:
+  - открыть ссылку без логина;
+  - создать order;
+  - оплатить;
+  - получить status=paid;
+  - получить pipeline_stage_id=stage_on_success;
+  - увидеть audit от webhook.  
+  Это сразу держит фокус на завершении B.0, а не только на UI-фиксе.
 
 &nbsp;
 
-- P3 pending/materialize — через реальный /pay/:token -> public-checkout -> createPaymentCheckout
-- P3 terminal production-equivalent — либо через реальный bePaid/webhook, либо честно пометить как runtime-equivalent через grant-access-for-order, но не называть полноценным webhook end-to-end.  
-Это нужно прямо прописать в отчёте, чтобы не было ложного “full E2E”.
+В остальном план правильный: scope узкий, новый payment-path не создаётся, смысл payment_links.user_id описан верно, и именно этот патч нужен, чтобы добить финальный публичный платёжный сценарий.
 
-12. **Для P2 terminal с order 68a0dee0... добавь pre-check перед retry.**  
-Нужно сначала показать текущие:
+## Discovery (что прочитаю до правок)
 
-- status
-- pipeline_stage_id
-- entitlement row
-- audit trail  
-и только потом дожимать. Иначе proof будет без сравнения before/after.
+1. `src/pages/PublicCheckoutPage.tsx` — где источник текста «Для оплаты необходимо войти…», как сейчас работает CTA, как используется `user`/email, где вызывается `public-checkout`.
+2. `supabase/functions/public-checkout/index.ts` — уже видел: на POST guard `if (!userId) return errorResponse('Для оплаты необходимо войти в аккаунт или указать email', 400);`. `userId = link.user_id ?? findByEmail(email)`. Это и есть источник серверной ошибки.
+3. `src/hooks/useInlineAuth.ts` — переиспользую как есть для случая «ссылка без user_id и гость».
+4. `supabase/functions/_shared/create-payment-checkout.ts` — убедиться, что target user передаётся явно и не зависит от JWT.
+5. Проверю, что `admin-create-public-link` корректно проставляет `user_id` (для текущей тестовой ссылки `a1be1271…` — посмотрю в БД: есть ли там user_id).
 
-13. **Добавь отдельный STOP-guard на миграцию данных в payment_links writer.**  
-Если writer создаёт row, но downstream UI/edge already assumes another token format / URL shape / usage policy — стоп до выравнивания контракта. Это типовой скрытый риск.
-14. **В финальном отчёте по B.0 раздели статусы строже:**
+## Канонический смысл `payment_links.user_id` (фиксируется в коде и в memory)
 
-- closed
-- closed with runtime-equivalent proof
-- blocked
-- out of scope  
-Не смешивай полноценный live proof и admin-equivalent proof в один зелёный статус.
+`payment_links.user_id` — это **получатель результата оплаты** (target user для `orders_v2`, доступов, CRM-сделки).
+Это **НЕ**:
 
-15. **Добавь обязательный блок “Новый payment-path не создан” как проверяемый DoD, а не просто обещание.**  
-С доказательствами:
+- ограничение плательщика,
+- auth-guard,
+- проверка «тот ли пользователь открыл ссылку»,
+- требование логина.
 
-- список неизменённых downstream функций,
-- route map до/после,
-- где теперь создаётся payment_links,
-- где materialize заказа,
-- где terminal apply.
+Публичную ссылку может открыть и оплатить **кто угодно**, с любого устройства, без логина — если `user_id` задан в ссылке.
 
-В остальном план собран правильно: сначала writer для /pay/:token, потом идемпотентность/ordering в grant-access-for-order, затем повторный proof P3 и P2 terminal.
+## Матрица состояний `/pay/:token`
 
-&nbsp;
 
-# План: PATCH 1 + PATCH 2 для закрытия B.0
+| `link.user_id` | auth-user    | поведение                                                                                                    |
+| -------------- | ------------ | ------------------------------------------------------------------------------------------------------------ |
+| есть           | — (не важно) | сразу активная кнопка «Оплатить», логин не требуется, никакого email-поля; результат уходит в `link.user_id` |
+| нет            | авторизован  | email берётся из `auth.user.email`, кнопка активна, оплата сразу                                             |
+| нет            | гость        | inline email → login/signup через `useInlineAuth`, без редиректа на `/auth`                                  |
 
-## Discovery (выполнен сейчас в read-only)
 
-### PATCH 1 — payment_links writer
+Полностью запрещены состояния: «ссылка для другого аккаунта», «войдите в нужный аккаунт», блок оплаты из-за mismatch auth-user vs `link.user_id`.
 
-Прочитал:
+## PATCH (scope)
 
-- `supabase/functions/public-checkout/index.ts` — читает `payment_links` по `url_token`, требует поля: `url_token, amount, currency, payment_type, description, status, max_uses, current_uses, expires_at, product_id, tariff_id, offer_id, user_id`.
-- `supabase/functions.registry.txt` — есть `admin-create-payment-link`, но (по предыдущему discovery) он создаёт `orders_v2`-заказ + bePaid checkout, а **не** row в `payment_links`. То есть public-канал `/pay/:token` действительно не имеет writer'а — это подтверждено ранее (P3 BLOCKED).
-- `src/pages/PublicPayPage.tsx` — UI готов, ждёт только живые row'ы в `payment_links`.
+### Server: `supabase/functions/public-checkout/index.ts`
 
-Вывод: нужен **один новый канонический writer** — edge function `admin-create-public-link` (имя выбрано чтобы не конфликтовать с существующей `admin-create-payment-link`, которая занята другой семантикой — прямой заказ с checkout). Это **не** второй payment-path: writer только создаёт row в `payment_links`, сам платёж по-прежнему идёт через `public-checkout` → `createPaymentCheckout` (тот же canonical path).
+- POST: target user = `link.user_id` если задан → используется напрямую, **без** проверки JWT и без сравнения с текущим пользователем.
+- Если `link.user_id` пуст и пришёл `email` → как сейчас (find by email; если нет — создать гостя? — оставляю текущий fallback: возвращаем 400 «Укажите email», но **только** в этой ветке).
+- Никогда не блокировать запрос «нужен логин», если `link.user_id` есть.
+- GET: добавить в ответ флаг `has_target_user: !!link.user_id` (без раскрытия email — только bool), чтобы UI мог решать, показывать ли email-форму.
 
-### PATCH 2 — grant-access-for-order ordering
+### Client: `src/pages/PublicCheckoutPage.tsx`
 
-Не читал ещё `supabase/functions/grant-access-for-order/index.ts` — это сделаю в execute-фазе. По симптому (duplicate `entitlements_user_id_product_code_key` валит весь flow до перевода order в `paid` и до apply CRM stage) гипотеза: insert entitlement идёт раньше, чем `orders_v2.status='paid'` + `pipeline_stage_id=stage_on_success`, и на duplicate всё откатывается. Нужно: либо переставить порядок (сначала order/CRM, потом entitlement), либо обернуть entitlement insert в idempotent upsert/try-catch с трактовкой duplicate как ok.
+- Убрать любой guard «нужно войти», когда `has_target_user === true`.
+- Если `has_target_user`: показать карточку продукта + одна кнопка «Оплатить», POST `{ url_token }` без email.
+- Если `!has_target_user` и `auth.user`: автоматически использовать `user.email`, кнопка «Оплатить» активна, POST `{ url_token, email: user.email }`.
+- Если `!has_target_user` и гость: встроенный `useInlineAuth` (email → login/signup) внутри карточки. После успешной авторизации — POST `{ url_token, email }`. Никакого редиректа на `/auth`.
+- Все ошибки edge-функции — через `normalizeEdgeFunctionError` (canonical).
 
----
+### Anti-duplication / scope guards
 
-## Execute (после approval, в default-mode)
+- Не трогаю `_shared/create-payment-checkout.ts`, `bepaid-webhook`, `grant-access-for-order`, `applyCrmStageOnTerminal`, `admin-create-public-link`. Patch — только UI + 1 серверная ветка target-user в `public-checkout`.
+- Не создаю новый payment-path. Materialize и terminal остаются прежними.
 
-### PATCH 1 — `admin-create-public-link` + RLS
+## Memory update
 
-1. **Edge function `admin-create-public-link**` (новая, JWT-protected, требует `entitlements.manage`):
-  - Input: `product_id, tariff_id, offer_id?, amount, currency='BYN', payment_type='one_time', description?, max_uses?, expires_at?, user_id?`.
-  - Generates `url_token` (32-char hex).
-  - Validates: product+tariff+offer существуют и связаны; amount>0.
-  - INSERT в `payment_links` с `status='active', current_uses=0, created_by=auth.uid()`.
-  - Возвращает `{url_token, public_url: 'https://<domain>/pay/<token>'}`.
-  - Audit log `payment_link.created`.
-  - Регистрирует в `functions.registry.txt`.
-2. **Миграция RLS на `payment_links**` (если ещё нет):
-  - SELECT для anon — only по `url_token` (через edge function service-role, как сейчас).
-  - INSERT/UPDATE — only `has_role(auth.uid(), 'admin')` или `super_admin`.
-3. **Admin UI** — добавить кнопку «Создать публичную ссылку» в `AdminPaymentLinkDialog` (или отдельный `AdminPublicLinkDialog`), которая дёргает `admin-create-public-link` и показывает копируемый URL.
-4. **Контрактная сверка**: пройти по `public-checkout` GET+POST и убедиться, что все читаемые поля заполнены writer'ом. Никаких fallback-веток в `public-checkout` не оставлять (он и сейчас чистый — только проверить).
-
-### PATCH 2 — `grant-access-for-order` idempotency
-
-1. **Discovery в коде** `supabase/functions/grant-access-for-order/index.ts`: зафиксировать текущий порядок (order.status update → entitlement insert → CRM apply, или иной).
-2. **Рефактор порядка**:
-  - Шаг A: `orders_v2.status='paid'` + `pipeline_stage_id=stage_on_success` (atomic UPDATE) — **первым**.
-  - Шаг B: entitlement insert через `INSERT ... ON CONFLICT (user_id, product_code) DO UPDATE SET expires_at = GREATEST(entitlements.expires_at, EXCLUDED.expires_at), updated_at=now()`. Это уже соответствует [Entitlement Sync Engine](mem://architecture/access-control/entitlement-sync-engine) — GREATEST никогда не уменьшает.
-  - Шаг C: telegram grant + audit + остальное.
-  - Если шаг B падает по неожиданной причине (не duplicate) — логируем, но **order и CRM остаются paid/won** (idempotent terminal completion).
-3. **Audit log**: добавить event `grant_access.idempotent_replay` когда detected duplicate entitlement, с `meta.order_id, user_id, product_code`.
-4. **Дожать P2 order `68a0dee0-...**`: после deploy вызвать `grant-access-for-order` повторно — order должен перейти в `paid` + `stage_on_success`, без падения на duplicate.
-
-### Verify (proof B.0 закрыт)
-
-После обоих PATCH:
-
-1. **P3 live proof**: создать через `admin-create-public-link` ссылку на «Несрочная консультация», 1 BYN. Открыть `/pay/<token>` под анонимом → POST `public-checkout` (с моим email) → получить order_id → проверить `orders_v2.meta.crm_routing_snapshot` + `pipeline_stage_id=stage_on_pending`. Затем `grant-access-for-order` → `pipeline_stage_id=stage_on_success`.
-2. **P2 terminal**: дожать существующий `68a0dee0-...` через `grant-access-for-order` → `paid` + `stage_on_success`.
-3. **Финальный отчёт** в `supabase/functions/_shared/crm-routing.b0-proof-report.md`:
-  - **Closed:** P2 exact (pending+terminal), P2 terminal, P4a-1 negative, P4a-2 static, P4b static, **P3 public end-to-end**.
-  - **Blocked:** нет.
-  - **Next:** recurring (вне B.0).
-
-## STOP-guards
-
-- Если в коде найдётся забытый writer для `payment_links` — консолидируем, новый не создаём.
-- Если `grant-access-for-order` обслуживает разнотипные продукты с разной логикой — фиксируем mapping и применяем idempotency только к стандартному product/subscription branch, остальное не трогаем.
-- Если CRM stage apply в `grant-access-for-order` идёт не через canonical helper — сначала унификация, потом ordering.
-
-## Технические детали
-
-- `admin-create-public-link` — JWT-verify обязателен, без `verify_jwt=false` (это admin-tool).
-- `payment_links` уже имеет `url_token UNIQUE` (по существующему чтению) — UPSERT не нужен, просто INSERT с retry на коллизию токена.
-- `grant-access-for-order` ON CONFLICT — использовать существующий unique index `entitlements_user_id_product_code_key`.
-- Никаких изменений в `public-checkout/index.ts` не требуется — контракт уже совпадает.
-- `supabase/config.toml` править не нужно (default `verify_jwt=false` для Lovable не помешает — JWT-валидацию делаем в коде функции через `supabase.auth.getUser(token)` + `has_role`).
+- `mem://commercial-logic/payments/public-checkout-architecture` — добавить раздел «Семантика `payment_links.user_id` = target user, не auth-guard. Третье лицо может оплатить.»
+- В `index.md` Core добавить one-liner: «Public link `user_id` = получатель оплаты, не плательщик. Логин не требуется, если `user_id` задан.»
 
 ## DoD
 
+1. Открыть `/pay/a1be1271…` без логина (ссылка с `user_id`) → сразу активная кнопка, оплата проходит, никакого «войдите в аккаунт».
+2. Открыть ту же ссылку с другого устройства / другим человеком → оплата проходит, заказ уходит в `link.user_id`.
+3. Открыть ссылку **без** `user_id` гостем → inline email → login/signup, без редиректа на `/auth`.
+4. Открыть ссылку **без** `user_id` авторизованным пользователем → email подставлен из `auth.user`, кнопка активна.
+5. Нет ни одного сценария «ссылка для другого аккаунта».
+6. После оплаты: `current_uses` инкрементируется, `orders_v2` materialized, ready для финального webhook proof.
+7. Текст «Для оплаты необходимо войти в аккаунт или указать email» удалён из codebase.
 
-| Пункт       | Критерий                                                                                                                                      |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| PATCH 1     | `admin-create-public-link` deployed, row в `payment_links` создаётся, `/pay/:token` открывает checkout, `public-checkout` без fallback        |
-| PATCH 2     | `grant-access-for-order` идемпотентен на duplicate entitlement, order доходит до `paid`+`stage_on_success`, audit `idempotent_replay` пишется |
-| P3 proof    | Live order создан через `/pay/:token`, snapshot+stage materialized, terminal через `grant-access-for-order`                                   |
-| P2 terminal | Order `68a0dee0-...` доведён до `paid`+`stage_on_success` тем же caconical path                                                               |
-| B.0         | Финальный отчёт обновлён: всё closed, blocked=none                                                                                            |
+## Финальная цель
+
+После патча `/pay/:token` работает как обычная платёжная ссылка: кто угодно открывает и платит; если аккаунт в ссылке задан — логин не нужен; если нет — мягкий inline email/auth. Это разблокирует финальный live webhook proof B.0 (order → paid → stage_on_success → audit) на уже созданной тестовой ссылке `a1be127182b0595f567cb4c7fa40241f`.
