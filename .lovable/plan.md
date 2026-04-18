@@ -1,183 +1,146 @@
 да, согласен, с учетом правок:
 
-1. В Discovery по пункту 1 добавь ещё один обязательный read-only блок по самой payment_links записи:
-  - user_id
-  - status
-  - current_uses
-  - max_uses
-  - expires_at
-  - offer_id
+1. В discovery по пункту 1 сразу зафиксируй **точный источник ошибки**:
+  - какой именно HTTP status и body возвращает public-checkout POST;
+  - на каком шаге это происходит: до createPaymentCheckout или уже внутри него.
+2. Это нужно, чтобы не перепутать bug в identity-resolution с багом materialize.
+3. В пункте 2 по PublicPayPage.tsx добавь отдельную проверку:
+  - что именно происходит после onAuthenticated(email, userId);
+  - сохраняется ли auth.step='authenticated';
+  - не очищается ли email/session до POST;
+  - не вызывается ли POST дважды.
+4. Иначе можно починить Bearer-заголовок, а проблема окажется в повторном рендере или race-condition.
+5. В discovery по GET /public-checkout для двух токенов добавь сравнение **сырого ответа**:
+  - has_target_user
+  - requires_identity_input
   - payment_type
-2. Это нужно, чтобы сразу зафиксировать, почему ссылка №1 относится к bound-сценарию, а ссылка №2 — к guest-сценарию.
-3. В Discovery по live proof ссылки №1 добавь отдельную сверку:
-  - какой именно order_id был создан из этой ссылки,
-  - совпадает ли orders_v2.offer_id со ссылкой,
-  - совпадает ли pipeline_stage_id со snapshot.stage_on_success,
-  - есть ли запись в audit_logs именно от bepaid-webhook, а не от runtime-equivalent пути.
-4. Это нужно, чтобы B.0 закрывался именно живым webhook proof, а не косвенно.
-5. В пункте B по useInlineAuth добавь требование не ломать текущие step-сценарии:
-  - email
-  - login
-  - signup
-  - authenticated
-  - email_confirm
-6. Новый password_reset_sent должен быть add-only и не менять существующие переходы между шагами.
-7. В requestPasswordReset(email) зафиксируй поведение для пустого email:
-  - не вызывать Supabase,
-  - показать локальную понятную ошибку в форме.
-8. Иначе получится скрытая техническая ошибка вместо нормального UX.
-9. В пункте C добавь явный критерий выбора общего компонента:
-  - если общий компонент уже есть — переиспользуем его без изменения API;
-  - если нет — извлекаем новый InlineAuthForm из существующей реализации FormSection как source-of-truth, а не собираем заново “по мотивам”.
-10. Это важно для антидублирования.
-11. В пункте C добавь, что InlineAuthForm должен принимать callback вида:
-  - onAuthenticated(email, user?)
-  - initialEmail?
-  - mode/context
-12. Чтобы его можно было одинаково использовать в:  
+  - status
+6. Это поможет сразу понять, это bug сервера GET или bug фронтового рендера.
+7. В пункте 4 по БД добавь ещё:
+  - offer_id
+  - description
+  - created_by
+8. Чтобы потом при live proof было проще связать конкретную ссылку с конкретным сценарием и админом.
+9. В корневой причине Bug A уточни, что серверный порядок resolution должен быть именно таким:  
 
-  - PublicPayPage
-  - PaymentDialog
-  - FormSection  
-  без форков логики.
-13. В пункте D для PublicPayPage добавь отдельный guard:
-  - если requires_identity_input === false, никакой InlineAuthForm вообще не рендерится;
-  - если requires_identity_input === true и есть [auth.user.email](http://auth.user.email), email подставляется автоматически и ручной ввод не обязателен.
-14. Это нужно, чтобы не сломать already-bound ссылки.
-15. В пункте D уточни post-auth поведение:
-  - после успешного login/signup не делать redirect на другую страницу;
-  - не терять :token;
-  - повторный POST должен идти в рамках того же открытого /pay/:token.
-16. Это надо зафиксировать как обязательный flow, а не как пожелание.
-17. В пункте D добавь сценарий email_confirm:
-  - если signup требует подтверждения email, в карточке должно быть понятное сообщение;
-  - ссылка остаётся валидной;
-  - после подтверждения пользователь возвращается на тот же /pay/:token, а не ищет ссылку заново.
-18. В пункте E по PaymentDialog уточни:
+  - link.user_id
+  - Authorization / auth.uid
+  - email lookup
+  - ошибка  
+  И это нужно зафиксировать как **канонический contract resolution**, а не просто разовый фикс текущего бага.
+10. В PATCH A добавь важный guard:
+  - если есть и Authorization, и email, и они указывают на разных пользователей, а link.user_id пустой — приоритет всё равно у JWT, а email игнорируется.
+11. Иначе можно получить неоднозначную привязку target user.
+12. В PATCH A отдельно пропиши:
+  - для bound-ссылки (link.user_id есть) сервер **не должен** использовать email и **не должен** смотреть на JWT для выбора target user;
+  - JWT/email в этом случае могут существовать, но только как контекст плательщика, не получателя.
+13. Это критично для соответствия вашей бизнес-логике “оплатить может кто угодно”.
+14. В PATCH B добавь, что PublicPayPage должен брать access token не разово при монтировании, а **непосредственно перед POST**, через актуальную сессию.  
+Иначе после inline login токен может ещё не попасть в первый рендер, и проблема останется.
+15. В PATCH B по ошибкам раздели два типа:
+  - **ошибка identity-resolution** → вернуть пользователя в inline auth flow;
+  - **другая серверная ошибка оплаты** → обычный alert/notification.
+16. Иначе можно все ошибки свалить в форму, хотя не все они про логин/email.
+17. В PATCH B добавь явное правило для bound-ссылки:
 
 &nbsp;
 
-- если там уже есть тот же inline-auth flow, patch может ограничиться только подключением ссылки «Забыл пароль?» через обновлённый useInlineAuth;
-- не делать лишний рефакторинг PaymentDialog, если общий компонент там пока не нужен технически.
+- если has_target_user === true, requires_identity_input === false, то UI вообще не должен монтировать InlineAuthForm ни при каких условиях.
 
-Это снизит риск побочек.
+Это должен быть жёсткий guard, а не просто “не показывать обычно”.
 
-11. В Anti-duplication guards добавь ещё один:
+11. В пункте про normalizeEdgeFunctionError уточни:
 
-- не дублировать тексты ошибок edge function на клиенте как финальное состояние;
-- серверная ошибка про email должна быть либо устранена серверно, либо отображаться внутри того же InlineAuthForm, а не отдельным тупиковым alert-блоком.
+- серверный текст “Пользователь с таким email не найден” не должен показываться как финальное тупиковое сообщение;
+- он должен превращаться в понятную inline-подсказку внутри auth-формы.
 
-12. В DoD по ссылке №2 уточни три под-сценария:
+Это и есть устранение текущего UX-багa.
 
-- существующий пользователь с паролем;
-- новый пользователь через signup;
-- существующий пользователь, который нажал «Забыл пароль?» и получил success-state.
+12. В DoD добавь ещё один обязательный кейс:
 
-Без этого можно закрыть только один happy path.
+- **guest-ссылка, существующий email, успешный login, но первый POST не удался** → форма остаётся в рабочем состоянии, можно повторить без перезагрузки страницы и без потери token-контекста.
 
-13. В DoD по пункту 3 добавь, что «Забыл пароль?» должен появиться:
+Это защитит от тупика, который у тебя сейчас и наблюдается.
 
-- в PublicPayPage,
-- в FormSection,
-- в PaymentDialog  
-если в них есть login-step. Не только на новой странице оплаты.
+13. В DoD по bound-ссылке уточни финал:
 
-14. В DoD по пункту 4 уточни формулировку:  
-вместо “Текстов … больше нет” лучше зафиксировать так:
+- не только “InlineAuthForm не показывается”,
+- но и “POST /public-checkout уходит без email и без login requirement”.
 
-- тупикового состояния без формы больше нет;
-- если нужен email, рядом сразу есть поле/email-auth UI;
-- пользователь не остаётся на пустой ошибке без следующего шага.
+Это важно как серверный контракт.
 
-15. В финальной цели добавь, что после live proof по ссылке №1 надо отдельно обновить текущий B.0 отчёт:
+14. В финальной цели добавь, что после этого патча нужно делать **новый** live proof на свежей guest-ссылке, а не опираться на уже сломанную попытку, чтобы не смешивать старое поведение и новый код.
 
-- closed (live) для webhook proof,
-- убрать ограничение “terminal webhook proof не закрыт live”, если оно действительно будет снято фактами.
-
-В остальном план собран правильно: сначала read-only подтверждение уже прошедшей оплаты по bound-ссылке, потом узкий add-only патч общего inline-auth и forgot-password без создания второго guest-flow, затем live proof по guest-ссылке и финальное закрытие B.0.
+В остальном план правильный: discovery узкий и по делу, бизнес-логика payment_links.user_id понята верно, scope не расползается, и именно этот патч нужен, чтобы добить корректный guest-flow без принудительного входа в “нужный” аккаунт.
 
 &nbsp;
 
-## Discovery (read-only)
+## Диагноз
 
-1. Проверить факт оплаты по ссылке #1 (`d1b0bound1byn00000000000000a004`):
-  - `payment_links.current_uses`
-  - `orders_v2.status`, `pipeline_stage_id`, `meta`
-  - `audit_logs` от `bepaid-webhook`
-  - наличие `entitlements` для admin user
-2. Прочитать `src/pages/PublicPayPage.tsx` — текущий guest-flow, почему нет email-поля.
-3. Найти в site-renderer FormSection (`auth_mode`) каноничный inline-auth UI, который уже использует `useInlineAuth`. Кандидаты:
-  - `src/components/site-renderer/sections/FormSection*.tsx`
-  - поиск по `useInlineAuth` в `src/`
-4. Проверить, есть ли в найденном компоненте ветка «Забыл пароль» / `resetPasswordForEmail`. Если нет — спроектировать минимальное добавление в общий `useInlineAuth` (новый метод `requestPasswordReset`), чтобы переиспользовалось и в PaymentDialog, и в PublicPayPage, и в FormSection.
+На скрине видно ошибку «Пользователь с таким email не найден. Завершите регистрацию и повторите оплату» — но кнопка «Оплатить» при этом активна, а на самом деле сервер возвращает ошибку при POST. То есть UX-логика гостевой ветки сейчас неправильная:
 
-## Проблемы и причины (ожидаемые)
+1. **Existing user стучится по guest-ссылке** → `useInlineAuth.checkEmail` корректно отправляет на шаг `login` → пользователь вводит пароль → `supabase.auth.signInWithPassword` успешно → `onAuthenticated(email, userId)` в `PublicPayPage` вызывает POST `/public-checkout` с **email** (не с user_id из сессии).
+2. На сервере `public-checkout` POST для guest-ссылки делает `findByEmail(email)` через `auth-find-user-by-email` (или аналогичный lookup). Если lookup идёт через **service-role admin API по `email**`, он работает. Но если он смотрит на `profiles`/`auth.users` и не находит — возвращает «Пользователь с таким email не найден». То есть сейчас сервер не доверяет факту, что пользователь только что залогинился.
+3. На фронте показывается красный alert поверх формы, форма уже свёрнута (auth.step === 'authenticated'), и пользователь видит тупик.
 
-- **#1 — оплата прошла.** Нужен read-only proof из БД (live webhook proof для B.0).
-- **#2 — гостю показывает «Укажите email», но поля нет.** Текущий PublicPayPage в guest-ветке, видимо, не рендерит inline-auth UI или рендерит только сообщение об ошибке. Нужно подключить тот же UI-компонент, что используется в FormSection `auth_mode` — без дублирования.
-- **«Забыл пароль» отсутствует** в inline-auth (PaymentDialog / FormSection / PublicPayPage). Текущий `useInlineAuth` не имеет `requestPasswordReset`.
+Дополнительно: пользователь говорит, что **по ссылке #1 (которая была bound к админу) его всё равно просили логин/пароль**. Это означает, что `has_target_user` либо не пробрасывается с GET, либо UI его не уважает и всё равно показывает InlineAuthForm. Нужно проверить.
 
-## Канонический контракт inline-auth (после патча)
+## Discovery (read-only, до правок)
 
-`useInlineAuth` — единственный источник для всех guest/identity-форм:
+1. **Прочитать `supabase/functions/public-checkout/index.ts**` — точная ветка POST для guest. Где именно бросается «Пользователь с таким email не найден». Использует ли она `auth.admin.listUsers({ email })` или JWT-подтверждённый user из заголовка.
+2. **Прочитать `src/pages/PublicPayPage.tsx**` — что именно передаётся в POST после `onAuthenticated`. Передаётся ли `userId` или только `email`. Уважается ли `has_target_user` в рендере.
+3. **Прочитать GET-ответ `public-checkout**` для обоих токенов через `supabase--curl_edge_functions`:
+  - `f3d2bound2byn00000000000000a006` → должно быть `has_target_user: true, requires_identity_input: false`
+  - `g4e3free2byn0000000000000000b007` → должно быть `has_target_user: false, requires_identity_input: true`
+4. **Проверить в БД `payment_links**` для обоих токенов: `user_id`, `status`, `current_uses`, `max_uses`. Подтвердить, что bound-ссылка действительно имеет `user_id`.
+5. **Проверить, есть ли в проекте edge-функция `auth-find-user-by-email` / `auth-check-email**` и что она возвращает для существующего email.
 
-- PaymentDialog
-- site-renderer FormSection (`auth_mode`)
-- PublicPayPage (guest-ветка)
+## Корневые причины (ожидаемые)
 
-Шаги: `email` → (`login` | `signup`) → `authenticated`.
-На шаге `login` обязательна ссылка **«Забыл пароль?»** → новый метод `requestPasswordReset(email)` → `supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin + '/reset-password' })` → шаг `password_reset_sent` (тост + сообщение в карточке).
+- **Bug A (критичный)**: `public-checkout` POST для guest-ветки не доверяет JWT/сессии после inline login. Он повторно ищет пользователя «по email» через ненадёжный путь и падает. Правильно: после login браузер уже имеет access_token; PublicPayPage должен передавать его как `Authorization: Bearer <token>`, а сервер — извлекать `auth.uid()` и использовать его как target user.
+- **Bug B (UI)**: Bound-ссылка показывает форму логина. Скорее всего `PublicPayPage` рендерит InlineAuthForm безусловно, не глядя на `has_target_user`, либо GET не возвращает этот флаг.
+- **Bug C (UX)**: Серверная ошибка показывается красным alert-блоком поверх свёрнутой формы вместо того, чтобы вернуть пользователя на нужный шаг inline-формы. Нарушает «Anti-duplication: тупикового состояния без формы быть не должно».
 
-## PATCH (scope, anti-duplication)
+## PATCH (узкий, add-only где можно)
 
-### A. Live webhook proof по ссылке #1 (только чтение)
+### A. Server: `supabase/functions/public-checkout/index.ts` — POST
 
-SELECT по `payment_links`, `orders_v2`, `audit_logs`, `entitlements` → отчёт без правок.
+Канонический resolution target user для POST:
 
-### B. `src/hooks/useInlineAuth.ts` — расширение, не дублирование
+1. Если `link.user_id` — использовать его (bound-ссылка).
+2. Иначе — извлечь `Authorization: Bearer <token>` из заголовка, вызвать `supabase.auth.getUser(token)`. Если получен валидный `user.id` — использовать его как target user (это покрывает «inline login прямо на странице» и «уже авторизованный пользователь»).
+3. Иначе — если передан `email`, искать через `supabase.auth.admin.listUsers` (service role) → если найден, использовать его id; если не найден — 400 «Укажите email и завершите вход/регистрацию».
+4. Никаких ситуаций «пользователь только что залогинился, но сервер его не видит».
 
-- Добавить шаг `password_reset_sent` в `InlineAuthStep`.
-- Добавить метод `requestPasswordReset(email): Promise<boolean>` (обёртка над `supabase.auth.resetPasswordForEmail` с `redirectTo: window.location.origin + '/reset-password'`).
-- Никаких изменений существующих методов / контрактов / текстов ошибок.
+### B. Client: `src/pages/PublicPayPage.tsx`
 
-### C. Найти/выделить общий inline-auth UI-компонент
+- Перед POST `/public-checkout` всегда подставлять текущий access_token из `supabase.auth.getSession()` в `Authorization`-заголовок (если сессия есть). Так сервер увидит свежезалогиненного пользователя.
+- При `has_target_user === true` — **никогда** не рендерить InlineAuthForm. Только карточка + кнопка «Оплатить». Жёсткий guard.
+- При серверной ошибке — НЕ показывать тупиковый красный alert поверх свернутой формы. Вместо этого:
+  - если ошибка про identity и `requires_identity_input` — оставить InlineAuthForm развёрнутым на нужном шаге;
+  - текст ошибки нормализовать через `normalizeEdgeFunctionError` и поставить внутрь самой формы (как `auth.error`), а не отдельным блоком над кнопкой.
 
-- Если в site-renderer FormSection уже есть отдельный компонент (например, `InlineAuthForm.tsx`) — переиспользовать его 1:1.
-- Если его нет (логика встроена в FormSection) — **извлечь** в `src/components/auth/InlineAuthForm.tsx` с теми же шагами/текстами, и заменить inline-блок в FormSection на этот компонент. Без изменения UX.
-- Добавить в компонент кнопку «Забыл пароль?» на шаге `login` → вызывает `requestPasswordReset`, показывает success-state.
+### C. Anti-duplication / scope guards
 
-### D. `src/pages/PublicPayPage.tsx`
-
-- В guest-ветке (`requires_identity_input === true && !user`) рендерить `<InlineAuthForm />` вместо текущего сообщения об ошибке.
-- После `step === 'authenticated'` — автоматически вызывать тот же POST `/public-checkout` с `email` от завершившейся авторизации.
-- При `step === 'email_confirm'` — показать сообщение «Подтвердите email и вернитесь на эту страницу», ссылка остаётся валидной (тот же `:token`).
-- Никаких изменений в трёх других UI-состояниях (target_user / authenticated).
-
-### E. PaymentDialog
-
-- Заменить inline-блок (если он там встроен) на тот же `<InlineAuthForm />`. Только если patch C извлекает компонент. Если PaymentDialog уже использует общий компонент — не трогаем.
-
-### F. Anti-duplication guards
-
-- НЕ создавать второй inline-auth flow.
-- НЕ менять `_shared/create-payment-checkout.ts`, `bepaid-webhook`, `public-checkout` (они уже корректны после прошлого патча).
-- НЕ менять контракт `useInlineAuth` существующих методов.
-- `/reset-password` страница уже должна существовать (стандарт Lovable). Если её нет — discovery покажет, и я добавлю минимальную страницу в этот же патч.
+- НЕ трогаю `bepaid-webhook`, `_shared/create-payment-checkout.ts`, `grant-access-for-order`, `admin-create-public-link`.
+- НЕ создаю второй inline-auth flow — InlineAuthForm + useInlineAuth остаются единственным источником.
+- НЕ меняю контракт `useInlineAuth`.
+- НЕ дублирую серверные тексты ошибок на клиенте как финальное состояние.
 
 ## Memory update
 
-- `mem://commercial-logic/payments/public-checkout-architecture` — добавить: «Guest-ветка `/pay/:token` рендерит общий `InlineAuthForm` (тот же, что в site-renderer FormSection и PaymentDialog). Никаких отдельных guest-форм».
-- Новый файл `mem://ui/auth/inline-auth-form-standard.md` — «`InlineAuthForm` + `useInlineAuth` — единый источник identity/login/signup/forgot-password для всех публичных форм. Дублирование запрещено».
-- `mem://index.md` Core: добавить one-liner про InlineAuthForm как единый компонент.
+- Обновить `mem://commercial-logic/payments/public-checkout-architecture` — добавить раздел «POST resolution: link.user_id → JWT (auth.uid) → email lookup. Inline-login пользователь = доверенный target user через Authorization-заголовок».
+- Уточнить `mem://ui/auth/inline-auth-form-standard.md` — «после `authenticated` callback должен дернуть последующее действие с Bearer-токеном; тупиковый красный alert поверх свёрнутой формы запрещён».
 
 ## DoD
 
-1. **Ссылка #1 (bound)**: подтверждённый live proof — `orders_v2.status='paid'`, `pipeline_stage_id=stage_on_success`, audit от `bepaid-webhook`, `current_uses=1`, entitlement создан. Финальное закрытие B.0.
-2. **Ссылка #2 (guest)**: открытие без логина → видна форма email → существующий email → форма пароля + ссылка «Забыл пароль?» → новый email → форма signup. Все варианты ведут к успешной оплате того же `:token` без редиректа на `/auth`.
-3. **Forgot password**: на любом шаге `login` (PaymentDialog, FormSection, PublicPayPage) есть «Забыл пароль?» → отправка письма → success-state в той же карточке.
-4. **Anti-duplication**: только один компонент `InlineAuthForm`, только один хук `useInlineAuth`. Текстов «Укажите email для оформления оплаты» как тупиковой ошибки больше нет — это состояние всегда сопровождается формой ввода.
-5. **Existing UX intact**: PaymentDialog, FormSection (`auth_mode`) визуально и по шагам не меняются (кроме появления «Забыл пароль?»).
+1. **Bound-ссылка** (`f3d2bound2byn00000000000000a006`): открытие без логина → InlineAuthForm НЕ показывается → одна кнопка «Оплатить» → оплата уходит в `link.user_id` (admin).
+2. **Guest-ссылка, существующий email с правильным паролем**: email → login → пароль → автоматический POST `/public-checkout` с Bearer-токеном → редирект в bePaid → оплата проходит. Никакой ошибки «Пользователь не найден».
+3. **Guest-ссылка, существующий email + «Забыл пароль?»**: success-state в той же карточке.
+4. **Guest-ссылка, новый email**: signup → (опц. email_confirm) → автоматический POST с Bearer → bePaid.
+5. **Guest-ссылка, существующий email с неправильным паролем**: ошибка показывается ВНУТРИ login-формы (`auth.error`), форма остаётся открытой на шаге `login`. Никаких alert-блоков поверх свернутой формы.
+6. **Live proof по guest-сценарию**: order → paid → `pipeline_stage_id=stage_on_success` → audit от `bepaid-webhook`. Закрывает повторный B.0 уже по guest-flow.
 
 ## Финальная цель
 
-`/pay/:token` для guest-ссылок работает по тому же inline-auth UX, что и формы конструктора сайтов и PaymentDialog. «Забыл пароль?» доступен везде, где есть login-шаг. B.0 закрыт live proof по ссылке #1.
+Public payment link работает одинаково ровно во всех трёх состояниях. Existing-пользователь, который заходит по guest-ссылке, может залогиниться прямо тут и оплатить без редиректа и без ошибки «не найден». Bound-ссылка не требует логина вообще. После патча создаём свежие тестовые ссылки и закрываем guest-flow live proof.
