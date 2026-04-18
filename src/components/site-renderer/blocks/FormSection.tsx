@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useInlineAuth } from "@/hooks/useInlineAuth";
 import { useStartTelegramLink, useTelegramLinkStatus } from "@/hooks/useTelegramLink";
@@ -6,12 +6,20 @@ import { useAuth } from "@/contexts/AuthContext";
 import { normalizeInstagram } from "@/lib/normalizeInstagram";
 import { z } from "zod";
 import { PhoneInput, isValidPhoneNumber } from "@/components/ui/phone-input";
+import { Loader2, Upload, X } from "lucide-react";
 
 interface FormField {
   label: string;
   type: string;
   required: boolean;
   mapping?: string;
+  options?: string[];
+  allowedGroups?: string[];
+  maxSizeMB?: number;
+  maxFiles?: number;
+  min?: number;
+  max?: number;
+  step?: number;
 }
 
 interface FormSectionProps {
