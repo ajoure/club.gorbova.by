@@ -65,6 +65,21 @@ export const imageContentSchema = z.object({
   linkUrl: z.string().default(""),
 });
 
+// ─── Reusable grid layout schema (used by features, stats, etc.) ───
+// Все поля опциональные. Default = текущее поведение блока (через legacy `columns`).
+export const gridLayoutSchema = z.object({
+  columnsDesktop: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(6)]).optional(),
+  columnsTablet: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).optional(),
+  columnsMobile: z.union([z.literal(1), z.literal(2)]).optional(),
+  gap: z.enum(["sm", "md", "lg", "xl"]).optional(),
+}).optional();
+
+export type GridLayout = z.infer<typeof gridLayoutSchema>;
+
+// Icon mode — reusable для features и stats
+export const ICON_MODES = ["none", "circle", "square", "numbered"] as const;
+export type IconMode = typeof ICON_MODES[number];
+
 export const featuresContentSchema = z.object({
   items: z.array(z.object({
     icon: z.string().default(""),
@@ -72,6 +87,26 @@ export const featuresContentSchema = z.object({
     description: z.string().default(""),
   })).default([]),
   columns: z.union([z.literal(2), z.literal(3), z.literal(4)]).default(3),
+  // Sprint v3: layout режим. default = "grid" = текущее поведение (backward-compat).
+  layout: z.enum(["grid", "card-list", "numbered-list"]).optional(),
+  iconMode: z.enum(ICON_MODES).optional(),
+  grid: gridLayoutSchema,
+});
+
+// Stats / metrics / achievements — generic, reusable
+export const statsContentSchema = z.object({
+  title: z.string().default(""),
+  subtitle: z.string().default(""),
+  items: z.array(z.object({
+    number: z.string().default(""),
+    suffix: z.string().default(""),
+    label: z.string().default(""),
+    description: z.string().default(""),
+    icon: z.string().default(""),
+  })).default([]),
+  columns: z.union([z.literal(2), z.literal(3), z.literal(4)]).default(4),
+  iconMode: z.enum(ICON_MODES).optional(),
+  grid: gridLayoutSchema,
 });
 
 export const ctaContentSchema = z.object({
