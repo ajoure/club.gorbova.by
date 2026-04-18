@@ -115,25 +115,8 @@ function ImageSection({ content }: { content: Record<string, unknown> }) {
   );
 }
 
-function FeaturesSection({ content }: { content: Record<string, unknown> }) {
-  const items = (content.items as Array<{ icon: string; title: string; description: string }>) || [];
-  const columns = (content.columns as number) || 3;
-  const gridCols: Record<number, string> = { 2: "md:grid-cols-2", 3: "md:grid-cols-3", 4: "md:grid-cols-4" };
+// FeaturesSection moved to ./blocks/FeaturesSection.tsx (Sprint v3 — layout режимы)
 
-  return (
-    <section className="py-12 px-6">
-      <div className={`max-w-5xl mx-auto grid gap-8 ${gridCols[columns] || "md:grid-cols-3"}`}>
-        {items.map((item, i) => (
-          <div key={i} className="text-center space-y-3">
-            {item.icon && <div className="text-3xl">{item.icon}</div>}
-            {item.title && <h3 className="text-lg font-semibold text-foreground">{item.title}</h3>}
-            {item.description && <p className="text-sm text-muted-foreground">{item.description}</p>}
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
 
 function CtaSection({ content }: { content: Record<string, unknown> }) {
   return (
