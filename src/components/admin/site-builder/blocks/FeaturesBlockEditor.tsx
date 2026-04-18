@@ -4,7 +4,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Trash2 } from "lucide-react";
-import { ICON_MODES } from "@/services/sitePages/types";
+import { ICON_MODES, type IconMode } from "@/services/sitePages/types";
+
+const ICON_MODE_LABELS: Record<IconMode, string> = {
+  none: "Без иконки",
+  circle: "Круглая",
+  square: "Квадратная",
+  numbered: "Номер шага",
+};
 
 interface FeatureItem {
   icon: string;
@@ -52,7 +59,7 @@ export function FeaturesBlockEditor({ content, onChange }: FeaturesBlockEditorPr
             <SelectContent>
               <SelectItem value="default">По умолчанию (emoji)</SelectItem>
               {ICON_MODES.map((m) => (
-                <SelectItem key={m} value={m}>{m}</SelectItem>
+                <SelectItem key={m} value={m}>{ICON_MODE_LABELS[m]}</SelectItem>
               ))}
             </SelectContent>
           </Select>
