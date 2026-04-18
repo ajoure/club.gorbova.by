@@ -9,6 +9,7 @@ import { PreregistrationDetailSheet } from "@/components/admin/PreregistrationDe
 import { loadTrainingDetailContext, type TrainingDetailData } from "@/lib/training-detail-loader";
 import { supabase } from "@/integrations/supabase/client";
 import type { FormsHubRow } from "@/hooks/useFormsHubData";
+import { stripTechnicalSuffix } from "@/lib/formFieldLabel";
 
 interface Props {
   row: FormsHubRow | null;
@@ -203,12 +204,15 @@ function SiteFormDetailDialog({ row, onClose }: { row: FormsHubRow; onClose: () 
           {entries.length === 0 ? (
             <p className="text-sm text-muted-foreground">Нет данных формы</p>
           ) : (
-            entries.map(([key, value]) => (
-              <div key={key} className="flex flex-col gap-0.5">
-                <span className="text-xs font-medium text-muted-foreground">{key}</span>
-                <div className="text-sm">{renderValue(value)}</div>
-              </div>
-            ))
+            entries.map(([key, value]) => {
+              const displayKey = stripTechnicalSuffix(key) || key;
+              return (
+                <div key={key} className="flex flex-col gap-0.5">
+                  <span className="text-xs font-medium text-muted-foreground">{displayKey}</span>
+                  <div className="text-sm">{renderValue(value)}</div>
+                </div>
+              );
+            })
           )}
         </div>
       </DialogContent>

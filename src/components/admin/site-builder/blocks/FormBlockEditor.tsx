@@ -294,7 +294,6 @@ export function FormBlockEditor({ content, onChange, blockId }: FormBlockEditorP
                   <div key={sf.key} className="flex items-center gap-2 px-2 py-1.5 bg-muted rounded text-xs text-muted-foreground">
                     <Lock className="h-3 w-3 flex-shrink-0" />
                     <span>{sf.label}</span>
-                    <span className="ml-auto text-[10px] opacity-70">{sf.type}</span>
                   </div>
                 ))}
               </div>
