@@ -1,115 +1,99 @@
 да, согласен, с учетом правок:
 
-1. Перед удалением CreatePublicLinkDialog.tsx сначала сделай discovery по всем импортам и usage:
-  - grep по проекту;
-  - убедись, что нет ленивых импортов, registry, stories, тестов, роутов.
-2. Только после этого удаляй файл. В финальном отчёте отдельно покажи:  
-**старый диалог больше нигде не используется.**
-3. AdminPaymentLinkDialog нужно расширять **add-only** и без ломки текущего contact-flow:
-  - mode="contact" оставить дефолтом;
-  - все текущие вызовы без mode должны продолжить работать как раньше;
-  - Telegram-логика, contact-specific тексты и success-экран в режиме контакта не должны деградировать.
-4. В public режиме зафиксируй явный контракт:
-  - нет блока получателя;
-  - не передаётся userId;
-  - не рендерятся contact-only CTA;
-  - writer остаётся тот же admin-create-public-link;
-  - success-экран показывает именно публичную ссылку /pay/:token, а не direct checkout URL.
-5. В плане не хватает проверки, что AdminPaymentLinkDialog сейчас не содержит скрытых предположений про обязательный userId или telegramUserId.  
-Добавь discovery-пункт:
-  - проверить все mutation body, все вычисления success-screen, все guards if (!userId) / if (telegramUserId) / if (contact) внутри диалога;
-  - если есть жёсткая зависимость — обернуть условно по mode, а не ломать существующий код.
-6. По responsive fix добавь не только DialogContent, но и явную проверку:
-  - body скроллится внутри диалога, а не вся страница;
-  - footer остаётся доступен на мобильном;
-  - success-экран не ломает layout длинным URL;
-  - select / popover / calendar не вылезают за viewport.
-7. Это часто ломается не в DialogContent, а во вложенных блоках.
-8. Для success-экрана добавь отдельное правило:
-  - кнопки Копировать / Открыть / Отправить в Telegram на mobile идут столбцом;
-  - на desktop — строкой;
-  - длинный URL не должен выталкивать кнопки вниз хаотично.
-9. Во вкладке «Ссылки» после замены диалога нужно проверить полный сценарий:
-  - открыть диалог;
-  - создать публичную ссылку;
-  - закрыть success-screen;
-  - новая ссылка появляется в таблице без визуального конфликта и без потери русских текстов.
-10. В proof-пакет добавь не только скрины формы и success-экрана, но и один скрин самой вкладки после создания ссылки:
-  - видно новую строку;
-  - видно, что действие было именно из нового общего диалога.
-11. В DoD добавь ещё 2 пункта:
-  - **contact-mode визуально и функционально не сломан** после объединения диалогов;
-  - **public-mode не требует контактных данных и не показывает Telegram-flow.**
-12. В финальном отчёте отдельно зафиксируй:
+1. По payment_links_enriched_v исправь **оба** join и зафиксируй это в отчёте явно:
+  - rec.user_id = pl.user_id
+  - cre.user_id = pl.created_by
+2. И отдельно покажи before/after SQL proof на 2–3 строках:
+  - до фикса recipient_name/email = null
+  - после фикса имя/email заполнены.
+3. В proof по таблице «Ссылки» проверь **оба сценария**:
+  - bound link → имя/email получателя отображаются;
+  - public link без user_id → остаётся «Любой плательщик».
+4. Это важно, чтобы не сломать корректный fallback.
+5. В FormsHubTable.tsx не просто подставь ClickableContactName, а сначала проверь, какой идентификатор у него ожидается:
+  - profileId
+  - userId
+  - contactId
+6. Нужно передать тот ключ, который реально открывает карточку без лишнего поиска. Если компонент умеет брать и user_id, и profile_id, используй самый каноничный для forms-flow и зафиксируй это в отчёте.
+7. Для таблицы «Анкеты и заявки» добавь ещё один guard:
+  - если контакт не найден / профиль отсутствует, имя остаётся текстом, а не ломает рендер пустой ссылкой.
+8. То есть:
+  - есть профиль → кликабельно;
+  - нет профиля → обычный текст.
+9. В proof по forms покажи не только клик, но и результат:
+  - клик по имени
+  - открылась карточка контакта / drawer / нужный route
+  - видно, что это именно тот контакт.
+10. Одного скрина таблицы мало.
+11. В mobile-proof для обеих таблиц отдельно проверь, что:
+  - имя не ломает row layout;
+  - кликабельный элемент не уезжает под соседние колонки;
+  - email под именем читаем.
+12. Контракт view-колонок действительно не меняй, но в отчёте всё равно отдельно перечисли:
+  - какие поля остались 1:1 прежними;
+  - что изменился только источник derived recipient_* и creator_*.
+13. В DoD добавь ещё один пункт:
+  - **исторические строки в payment links без привязанного пользователя продолжают отображаться корректно и не становятся ложноположительно “привязанными”.**
 
-- какой exactly файл/экран теперь является **единым источником UI для создания ссылок**;
-- что это уменьшило дублирование;
-- что backend-контракт не менялся.
-
-В остальном план правильный: идея объединить диалоги через mode, а не поддерживать два параллельных UI, выглядит верной.
+В остальном план правильный: это узкий и безопасный фикс, без вмешательства в writers, webhook, RLS и UI-контракты таблиц.
 
 &nbsp;
 
 ## Что нашёл
 
-### Задача 1: Дублирование диалогов создания ссылки
+### Баг 1 — "Получатель" в таблице ссылок всегда "—" / "Любой плательщик"
 
-Сейчас два разных диалога:
+В view `payment_links_enriched_v` join сделан по неверному ключу:
 
-- `AdminPaymentLinkDialog.tsx` — создание из карточки контакта (богатый UX: продукт/тариф, telegram-flow, success-экран с copy/open/send).
-- `CreatePublicLinkDialog.tsx` — отдельный из вкладки «Ссылки» (упрощённый, дублирует логику).
+```sql
+LEFT JOIN profiles rec ON rec.id = pl.user_id      -- ❌ pl.user_id = auth.users.id
+LEFT JOIN profiles cre ON cre.id = pl.created_by   -- ❌ то же
+```
 
-Пользователь хочет: **переиспользовать `AdminPaymentLinkDialog**` для вкладки «Ссылки», а `CreatePublicLinkDialog` удалить. Логика та же — просто без привязки к конкретному контакту (publicMode).
+Канон проекта (см. `useDisplayProfiles`, memory `ID-First Logic`): `payment_links.user_id` = **auth user_id**, а в `profiles` ключ — `profiles.user_id`. SQL-проверка подтвердила: join по `id` даёт NULL, по `user_id` — корректное имя/email. Поэтому колонки `recipient_name/email` и `creator_name/email` всегда пустые → UI показывает "—" для созданных и "Любой плательщик" когда `user_id IS NULL` (это оставляем — это правильно).
 
-### Задача 2: Адаптив success-экрана
+### Баг 2 — В таблице "Анкеты и заявки" контакт некликабельный
 
-По скриншоту IMG_3605: на мобильном (375px) success-диалог обрезает заголовок «Создать публичную...», текст уезжает за края, URL не помещается. Нужно сделать responsive. Проверить заодно `AdminPaymentLinkDialog` на мобильном/планшете/desktop.
+`FormsHubTable.tsx`, ячейки `client` / `email` рендерят просто текст. Уже есть готовый компонент `ClickableContactName` (`src/components/admin/ClickableContactName.tsx`), который умеет открывать карточку контакта в `/admin/contacts?contact=...&from=forms`. В `FormsHubRow` уже есть поля `user_id` и `profile_id` — данные есть, просто не используются.
 
 ## План фикса
 
-### Фикс 1 — переиспользовать `AdminPaymentLinkDialog` для публичных ссылок
+### Фикс 1 — миграция view
 
-1. Прочитать текущий `AdminPaymentLinkDialog.tsx` — понять props контракт (`contact`, `telegramUserId`, etc).
-2. Расширить props новым опциональным режимом: `mode?: "contact" | "public"`.
-  - В режиме `public`: не показывать блок «Получатель», не предлагать Telegram-кнопку, заголовок «Создать публичную ссылку», описание про отсутствие привязки к пользователю.
-  - В режиме `contact` (default): текущее поведение без изменений.
-3. В `src/pages/admin/AdminPaymentsLinks.tsx` (или где открывается `CreatePublicLinkDialog`) — заменить импорт на `AdminPaymentLinkDialog` с `mode="public"`.
-4. Удалить `src/components/admin/payments/links/CreatePublicLinkDialog.tsx`.
-5. Все вызовы `admin-create-public-link` остаются каноническими — writer не трогаю.
+`CREATE OR REPLACE VIEW public.payment_links_enriched_v` с правильными join-ключами:
 
-### Фикс 2 — адаптив диалога
+```sql
+LEFT JOIN profiles rec ON rec.user_id = pl.user_id
+LEFT JOIN profiles cre ON cre.user_id = pl.created_by
+```
 
-В `AdminPaymentLinkDialog.tsx` (`DialogContent`):
+Сохранить `security_invoker=on`, `GRANT SELECT TO authenticated`. Контракт колонок не меняется — UI и `usePaymentLinks` не трогаем.
 
-- Заменить фиксированную ширину на responsive: `max-w-lg w-[calc(100vw-2rem)] max-h-[90vh] overflow-y-auto`.
-- На success-экране: URL обернуть в `break-all` вместо `truncate`, кнопки copy/open/send — в gap-2 с правильным wrapping.
-- Заголовок: обычный `DialogTitle` (он уже truncates), описание — `text-sm` без обрезаний.
-- Кнопки футера: в `flex-col sm:flex-row` чтобы на мобиле каждая занимала ширину.
+### Фикс 2 — кликабельный контакт в `FormsHubTable.tsx`
+
+В `case "client"`: заменить `<div>{row.client_name}</div>` на `<ClickableContactName userId={row.user_id} profileId={row.profile_id} name={row.client_name} fromPage="forms" />`. Текст ячейки `client_email` оставляю как есть (уже отдельная колонка), но если профиль есть — кликабельный label через тот же компонент с `showEmail={false}` (только имя кликабельно).
 
 ### Фикс 3 — proof скринами
 
-После правок — навигация в preview через browser:
+Через browser:
 
-- Открыть `/admin/payments` → вкладка «Ссылки» → нажать «Создать ссылку» → проверить что открывается единый диалог (тот же что в карточке контакта, но в `public` режиме).
-- Скриншоты на трёх viewport: mobile (375), tablet (768), desktop (1280) — на двух экранах диалога (форма + success).
+- `/admin/payments` → вкладка «Ссылки» → проверить колонку «Получатель» (не должно быть "—" у привязанных) и «Создал» (имя автора).
+- `/admin/forms` → таблица анкет → клик по имени клиента → должна открыться карточка контакта в `/admin/contacts`.
+- Скрины desktop + mobile (375).
 
 ## Файлы
 
 **Изменю:**
 
-- `src/components/admin/AdminPaymentLinkDialog.tsx` — добавить `mode` prop, responsive стили.
-- `src/pages/admin/AdminPaymentsLinks.tsx` (или соответствующий вызывающий файл) — заменить импорт.
+- новая миграция: фикс join в `payment_links_enriched_v`
+- `src/components/admin/forms/FormsHubTable.tsx` — кликабельный контакт через `ClickableContactName`
 
-**Удалю:**
-
-- `src/components/admin/payments/links/CreatePublicLinkDialog.tsx`.
-
-**НЕ трогаю:** writers, edge functions, RLS, view, hooks.
+**НЕ трогаю:** writers, edge functions, RLS, hooks, контракты колонок view, дизайн карточки контакта.
 
 ## DoD
 
-1. На вкладке «Ссылки» кнопка «Создать ссылку» открывает тот же диалог, что и в карточке контакта (в `public` режиме).
-2. `CreatePublicLinkDialog.tsx` удалён, ссылок на него нет.
-3. Диалог адаптивен: на 375px / 768px / 1280px весь контент виден без обрезаний (proof скринами).
-4. Создание ссылки работает на всех viewport.
-5. Никакого нового payment-path, нового writer'а, дубля логики Telegram.
+1. В `/admin/payments` → «Ссылки» колонка «Получатель» показывает имя+email для привязанных контактов; «Любой плательщик» — только если `user_id IS NULL`.
+2. Колонка «Создал» показывает имя/email админа, а не "—".
+3. В `/admin/forms` имя клиента в таблице — кликабельная ссылка на карточку контакта (поведение как в `/admin/payments`).
+4. Скрины desktop + mobile подтверждают оба фикса.
+5. Никаких изменений писателей/RLS/контракта view-колонок.
