@@ -900,17 +900,36 @@ export function AdminPaymentLinkDialog({
                 </div>
               )}
 
-              <DialogFooter>
+              <DialogFooter className="flex-col sm:flex-row gap-2">
                 <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                   Отмена
+                </Button>
+                {/*
+                  Два CTA одного диалога — НЕ два разных payment-path.
+                  CTA #1 (submit): admin-create-payment-link → orders_v2 + bePaid checkout (немедленная оплата)
+                  CTA #2 (button): admin-create-public-link → row в payment_links, заказ создаётся
+                                   позже когда клиент откроет /pay/:token (тот же downstream public-checkout)
+                */}
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={isCreateDisabled}
+                  onClick={() => createPublicLinkMutation.mutate()}
+                >
+                  {createPublicLinkMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <Link2 className="h-4 w-4 mr-2" />
+                  )}
+                  Создать публичную ссылку
                 </Button>
                 <Button type="submit" disabled={isCreateDisabled}>
                   {createLinkMutation.isPending ? (
                     <Loader2 className="h-4 w-4 animate-spin mr-2" />
                   ) : (
-                    <Link2 className="h-4 w-4 mr-2" />
+                    <CreditCard className="h-4 w-4 mr-2" />
                   )}
-                  Создать ссылку
+                  Создать ссылку и открыть оплату
                 </Button>
               </DialogFooter>
             </form>
