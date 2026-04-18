@@ -172,7 +172,11 @@ Deno.serve(async (req) => {
     const reqReferer = req.headers.get('referer');
     const origin = reqOrigin || (reqReferer ? new URL(reqReferer).origin : null) || 'https://club.gorbova.by';
 
-    // Delegate to shared checkout helper
+    // Delegate to shared checkout helper.
+    // PATCH-PUBLIC-LINK-COUNTER: payment_link_id уходит в orders_v2.meta через канонический meta_extra
+    // (никаких post-insert UPDATE на стороне public-checkout).
+    // Счётчик payment_links.current_uses ИНКРЕМЕНТИРУЕТСЯ ТОЛЬКО webhook'ом по факту paid order
+    // (через _shared/consume-payment-link.ts). Здесь мы счётчик не двигаем.
     const result = await createPaymentCheckout({
       supabase,
       user_id: userId,
@@ -184,23 +188,14 @@ Deno.serve(async (req) => {
       offer_id: link.offer_id || undefined,
       origin,
       actor_type: 'system',
+      meta_extra: { payment_link_id: link.id },
     });
 
     if (!result.success) {
       return errorResponse(result.error, 500);
     }
 
-    // Increment current_uses
-    const { error: updateErr } = await supabase
-      .from('payment_links')
-      .update({ current_uses: link.current_uses + 1, updated_at: new Date().toISOString() })
-      .eq('id', link.id);
-
-    if (updateErr) {
-      console.error('[public-checkout] Failed to increment current_uses:', updateErr);
-    }
-
-    // Audit log
+    // Audit log (создание checkout-сессии). Счётчик НЕ инкрементируем здесь — это делает webhook.
     await supabase.from('audit_logs').insert({
       actor_type: 'system',
       action: 'public_checkout.created',
