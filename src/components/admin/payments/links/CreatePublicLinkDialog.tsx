@@ -52,10 +52,12 @@ export function CreatePublicLinkDialog({ open, onOpenChange }: Props) {
     return primary || (active.length === 1 ? active[0] : null);
   }, [offers]);
 
-  // Auto-fill amount from offer
+  // Auto-fill amount from offer.
+  // ВАЖНО: tariff_offers.amount хранится в BYN — НЕ делить на 100.
+  // (Канонический контракт совпадает с AdminPaymentLinkDialog.)
   useEffect(() => {
     if (effectiveOffer && !amount) {
-      setAmount((effectiveOffer.amount / 100).toString());
+      setAmount(String(Number(effectiveOffer.amount)));
     }
   }, [effectiveOffer]); // eslint-disable-line
 
