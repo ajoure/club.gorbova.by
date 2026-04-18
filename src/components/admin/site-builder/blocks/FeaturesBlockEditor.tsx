@@ -57,7 +57,7 @@ export function FeaturesBlockEditor({ content, onChange }: FeaturesBlockEditorPr
           <Select value={iconMode || "default"} onValueChange={(v) => update({ iconMode: v === "default" ? undefined : v })}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="default">По умолчанию (emoji)</SelectItem>
+              <SelectItem value="default">По умолчанию (эмодзи)</SelectItem>
               {ICON_MODES.map((m) => (
                 <SelectItem key={m} value={m}>{ICON_MODE_LABELS[m]}</SelectItem>
               ))}
@@ -91,7 +91,7 @@ export function FeaturesBlockEditor({ content, onChange }: FeaturesBlockEditorPr
               </Button>
             </div>
             {iconMode !== "numbered" && iconMode !== "none" && (
-              <Input value={item.icon} onChange={(e) => updateItem(idx, "icon", e.target.value)} placeholder="Иконка (emoji)" className="text-sm" />
+              <Input value={item.icon} onChange={(e) => updateItem(idx, "icon", e.target.value)} placeholder="Иконка (эмодзи)" className="text-sm" />
             )}
             <Input value={item.title} onChange={(e) => updateItem(idx, "title", e.target.value)} placeholder="Заголовок" className="text-sm" />
             <Textarea value={item.description} onChange={(e) => updateItem(idx, "description", e.target.value)} placeholder="Описание" rows={2} className="text-sm" />

@@ -127,7 +127,7 @@ export function StatsBlockEditor({ content, onChange }: StatsBlockEditorProps) {
               <Input
                 value={item.icon || ""}
                 onChange={(e) => updateItem(idx, "icon", e.target.value)}
-                placeholder="Иконка (emoji)"
+                placeholder="Иконка (эмодзи)"
                 className="text-sm"
               />
             )}

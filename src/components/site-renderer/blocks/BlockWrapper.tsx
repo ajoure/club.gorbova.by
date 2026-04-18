@@ -20,14 +20,21 @@ interface BlockWrapperProps {
   children: React.ReactNode;
 }
 
-/** Tracks viewport mobile state for runtime mobilePadding overrides. */
+/**
+ * Tracks viewport mobile state for runtime mobilePadding overrides.
+ *
+ * Hydration safety: initial state ВСЕГДА false (соответствует серверному рендеру / первому клиентскому).
+ * Реальное значение устанавливается в effect ПОСЛЕ mount → нет mismatch и нет layout-jump
+ * для пользователей без явных mobilePadding overrides (default-path не меняется).
+ * Layout-jump возможен ТОЛЬКО если для блока заданы mobile overrides И пользователь на мобильном —
+ * это осознанная цена за корректное применение overrides без SSR-знания о viewport.
+ */
 function useIsMobile(): boolean {
-  const [isMobile, setIsMobile] = useState(
-    typeof window !== "undefined" ? window.matchMedia("(max-width: 767px)").matches : false,
-  );
+  const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const mq = window.matchMedia("(max-width: 767px)");
+    setIsMobile(mq.matches);
     const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches);
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);

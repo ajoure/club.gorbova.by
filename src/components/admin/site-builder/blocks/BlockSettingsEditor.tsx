@@ -149,7 +149,7 @@ export function BlockSettingsEditor({ settings, onChange, otherAnchorIds = [], b
       </div>
 
       {/* ─── Sprint v3: reusable styling controls (capability-gated) ─── */}
-      {showAdvanced && (
+      {showAdvanced && (canMobilePadding || canCard || canAlign) && (
         <div className="border-t pt-3 mt-2 space-y-3">
           <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
             Расширенное оформление
