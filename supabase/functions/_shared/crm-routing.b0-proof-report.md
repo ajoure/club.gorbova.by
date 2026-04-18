@@ -3,7 +3,24 @@
 **Дата:** 2026-04-18  
 **Контекст:** 8F42B1C3-5D9E-4A7B-B2E1-9C3F4D5A6E7B  
 **Учётка proof:** `7500084@gmail.com` (`a4b7c8c9-8210-499e-ae3f-2a5db2121577`)  
-**Статус этапа:** Discovery завершён. P3 признан **BLOCKED**. Требуется решение по продолжению UI-proof.
+**Статус этапа:** Discovery завершён. P3 → **BLOCKED** (PATCH `payment-links-writer`). B.0 закрывается как **partial-proof**: только P2 + P4a-1 live через admin UI; P4a-2 / P4b / P3 — не live.
+
+## Решение пользователя (финальное по B.0 scope)
+
+| Пункт | Решение |
+|---|---|
+| P3 (`/pay/:token`) | **BLOCKED** — не имитировать proof, не делать ручной seed как замену writer-у. Выносится отдельным PATCH `payment-links-writer`. |
+| P2 exact positive | **LIVE через admin UI** (pending+snapshot) — обязательный. |
+| P2 terminal | через **admin test payment** (`bepaid-create-token` `skipRedirect=true`), только если не списывает реальные деньги. |
+| P4a-1 (offer-level negative, `routing_disabled_or_missing`) | **LIVE через admin UI** — обязательный. |
+| P4a-2 (`no_offer_for_tariff`) | **static + unit only** — admin UI всегда передаёт offer_id, нативного канала без offer_id нет. |
+| P4b (`ambiguous_offers_for_tariff`) | **только Deno-test + static-proof** — временный второй offer в проде НЕ создавать. |
+| Финальный B.0 | partial-proof: после получения 2 order_id (P2 + P4a-1) собрать финальный отчёт **без P3**. |
+
+**Mapping blocked → next patch:**
+```
+blocked: public /pay/:token  →  next patch: payment-links-writer
+```
 
 ---
 
