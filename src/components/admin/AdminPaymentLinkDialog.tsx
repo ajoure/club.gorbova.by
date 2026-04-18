@@ -457,6 +457,7 @@ export function AdminPaymentLinkDialog({
     },
     onSuccess: (data) => {
       setGeneratedUrl(data.public_url);
+      queryClient.invalidateQueries({ queryKey: ["payment-links-enriched"] });
       toast.success("Публичная ссылка создана");
     },
     onError: (error) => {
