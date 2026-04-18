@@ -7,6 +7,7 @@ import { FileText, Loader2, AlertCircle } from "lucide-react";
 import { StudentProgressModal } from "@/components/admin/trainings/StudentProgressModal";
 import { PreregistrationDetailSheet } from "@/components/admin/PreregistrationDetailSheet";
 import { loadTrainingDetailContext, type TrainingDetailData } from "@/lib/training-detail-loader";
+import { supabase } from "@/integrations/supabase/client";
 import type { FormsHubRow } from "@/hooks/useFormsHubData";
 
 interface Props {
@@ -123,6 +124,59 @@ function SiteFormDetailDialog({ row, onClose }: { row: FormsHubRow; onClose: () 
   const formData = (row.raw?.form_data || {}) as Record<string, any>;
   const entries = Object.entries(formData);
 
+  const downloadFile = async (path: string, filename: string) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) return;
+      const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
+      const url = `https://${projectId}.supabase.co/functions/v1/training-assets-download?path=${encodeURIComponent(path)}&name=${encodeURIComponent(filename)}`;
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (e) {
+      console.error("download failed", e);
+    }
+  };
+
+  const renderValue = (value: any): React.ReactNode => {
+    if (value === null || value === undefined || value === "") return <span className="text-muted-foreground">—</span>;
+    if (typeof value === "boolean") return value ? "Да" : "Нет";
+    if (Array.isArray(value)) {
+      if (value.length === 0) return <span className="text-muted-foreground">—</span>;
+      // Массив файлов
+      if (value[0] && typeof value[0] === "object" && (value[0] as any).type === "file") {
+        return (
+          <div className="flex flex-col gap-1">
+            {value.map((f: any, i: number) => (
+              <button key={i} type="button" onClick={() => downloadFile(f.path, f.filename)} className="text-left text-primary hover:underline text-sm">
+                📎 {f.filename}
+              </button>
+            ))}
+          </div>
+        );
+      }
+      return <div className="flex flex-wrap gap-1">{value.map((v, i) => <Badge key={i} variant="secondary" className="text-[11px]">{String(v)}</Badge>)}</div>;
+    }
+    if (typeof value === "object" && value.type === "file" && value.path) {
+      return (
+        <button type="button" onClick={() => downloadFile(value.path, value.filename)} className="text-primary hover:underline text-sm text-left">
+          📎 {value.filename || "файл"}
+        </button>
+      );
+    }
+    // Дата ISO YYYY-MM-DD
+    if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      try { return format(new Date(value), "dd MMMM yyyy", { locale: ru }); } catch { return value; }
+    }
+    return String(value);
+  };
+
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="sm:max-w-2xl max-h-[80vh] flex flex-col p-0 gap-0">
@@ -152,7 +206,7 @@ function SiteFormDetailDialog({ row, onClose }: { row: FormsHubRow; onClose: () 
             entries.map(([key, value]) => (
               <div key={key} className="flex flex-col gap-0.5">
                 <span className="text-xs font-medium text-muted-foreground">{key}</span>
-                <span className="text-sm">{String(value ?? "—")}</span>
+                <div className="text-sm">{renderValue(value)}</div>
               </div>
             ))
           )}

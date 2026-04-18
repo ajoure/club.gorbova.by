@@ -59,7 +59,8 @@ function phoneLast9(phone: string): string {
 interface FormField {
   label: string;
   type: string;
-  value: string;
+  // value может быть string | string[] | number | boolean | object (file) | null
+  value: unknown;
   mapping?: string;
 }
 
@@ -145,7 +146,15 @@ Deno.serve(async (req) => {
     }
 
     // ─── LEGACY BRANCH (auth_mode=false) ───
-    const hasValue = fields.some((f) => f.value && f.value.trim());
+    // hasValue: считаем "есть значение" для любых не-null/не-undefined/не-пустых
+    const hasValue = fields.some((f) => {
+      const v = f.value;
+      if (v === null || v === undefined) return false;
+      if (typeof v === "string") return v.trim().length > 0;
+      if (Array.isArray(v)) return v.length > 0;
+      if (typeof v === "object") return Object.keys(v as object).length > 0;
+      return true; // number, boolean
+    });
     if (!hasValue) {
       return json({ error: "At least one field must have a value" }, 400);
     }
@@ -179,16 +188,19 @@ Deno.serve(async (req) => {
     }
 
     // ─── STAGE 1: Create submission (always) ───
-    const formData: Record<string, string> = {};
+    // form_data сохраняется как есть в jsonb — без mutate boolean/number/array/object.
+    const formData: Record<string, unknown> = {};
     const fieldMapping: Record<string, string> = {};
     const mappedValues: Record<string, string> = {};
 
     for (const field of fields) {
       const key = field.label || `field_${fields.indexOf(field)}`;
-      formData[key] = field.value || "";
-      if (field.mapping && field.mapping !== "none" && field.value) {
+      formData[key] = field.value;
+      // mapping имеет смысл только для строковых полей (email/phone/full_name/...)
+      const isStringValue = typeof field.value === "string" && field.value.trim().length > 0;
+      if (field.mapping && field.mapping !== "none" && isStringValue) {
         fieldMapping[key] = field.mapping;
-        mappedValues[field.mapping] = field.value;
+        mappedValues[field.mapping] = field.value as string;
       }
     }
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useInlineAuth } from "@/hooks/useInlineAuth";
 import { useStartTelegramLink, useTelegramLinkStatus } from "@/hooks/useTelegramLink";
@@ -6,12 +6,20 @@ import { useAuth } from "@/contexts/AuthContext";
 import { normalizeInstagram } from "@/lib/normalizeInstagram";
 import { z } from "zod";
 import { PhoneInput, isValidPhoneNumber } from "@/components/ui/phone-input";
+import { Loader2, Upload, X } from "lucide-react";
 
 interface FormField {
   label: string;
   type: string;
   required: boolean;
   mapping?: string;
+  options?: string[];
+  allowedGroups?: string[];
+  maxSizeMB?: number;
+  maxFiles?: number;
+  min?: number;
+  max?: number;
+  step?: number;
 }
 
 interface FormSectionProps {
@@ -86,7 +94,7 @@ export function FormSection({ content, pageId, isPreview }: FormSectionProps) {
   );
 }
 
-// ─── Legacy form (auth_mode=false) — unchanged behavior ───
+// ─── Legacy form (auth_mode=false) — расширенный набор типов полей ───
 function LegacyFormSection({ content, pageId, isPreview }: FormSectionProps) {
   const title = (content.title as string) || "";
   const subtitle = (content.subtitle as string) || "";
@@ -95,32 +103,113 @@ function LegacyFormSection({ content, pageId, isPreview }: FormSectionProps) {
   const fields = (content.fields as FormField[]) || [];
   const productBindingEnabled = (content.product_binding_enabled as boolean) ?? false;
 
-  const [values, setValues] = useState<Record<number, string>>({});
+  // submission_token — один на одну открытую форму. Используется для группировки файлов
+  // одной отправки внутри form-uploads/{token}/. Сохраняется в metadata.
+  const submissionTokenRef = useRef<string>(
+    typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
+
+  // values: тип значения зависит от типа поля
+  // string | string[] | number | boolean | FileObj | FileObj[] | null
+  const [values, setValues] = useState<Record<number, unknown>>({});
+  const [uploading, setUploading] = useState<Record<number, boolean>>({});
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState("");
 
-  const setValue = (index: number, value: string) => {
+  const setValue = (index: number, value: unknown) => {
     setValues((prev) => ({ ...prev, [index]: value }));
   };
 
   const validateEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+
+  const isEmpty = (v: unknown): boolean => {
+    if (v === null || v === undefined) return true;
+    if (typeof v === "string") return v.trim().length === 0;
+    if (Array.isArray(v)) return v.length === 0;
+    if (typeof v === "object") return Object.keys(v as object).length === 0;
+    return false;
+  };
+
+  const handleFileUpload = async (index: number, fileList: FileList | null, field: FormField) => {
+    if (!fileList || fileList.length === 0) return;
+    if (isPreview) {
+      setError("В предпросмотре загрузка файлов недоступна");
+      return;
+    }
+    setError("");
+    setUploading((p) => ({ ...p, [index]: true }));
+    try {
+      const maxFiles = field.maxFiles ?? 1;
+      const filesArr = Array.from(fileList).slice(0, maxFiles);
+      const uploaded: unknown[] = [];
+
+      for (const f of filesArr) {
+        // Клиентский pre-check (UX): размер. Сервер всё равно проверит.
+        const maxSize = (field.maxSizeMB ?? 10) * 1024 * 1024;
+        if (f.size > maxSize) {
+          setError(`Файл «${f.name}» больше ${field.maxSizeMB ?? 10} МБ`);
+          continue;
+        }
+        const fd = new FormData();
+        fd.append("submission_token", submissionTokenRef.current);
+        fd.append("field_id", `${index}-${field.label || "field"}`);
+        fd.append("file", f);
+
+        const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
+        const url = `https://${projectId}.supabase.co/functions/v1/site-form-upload`;
+        const res = await fetch(url, { method: "POST", body: fd });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data?.file) {
+          setError(data?.error || "Не удалось загрузить файл");
+          break;
+        }
+        uploaded.push(data.file);
+      }
+
+      if (uploaded.length > 0) {
+        // Контракт: maxFiles=1 → один объект; maxFiles>1 → массив
+        const next = (field.maxFiles ?? 1) > 1 ? uploaded : uploaded[0];
+        setValue(index, next);
+      }
+    } finally {
+      setUploading((p) => ({ ...p, [index]: false }));
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isPreview) { setSubmitted(true); return; }
     setError("");
 
+    // Validation
     for (let i = 0; i < fields.length; i++) {
       const field = fields[i];
-      const val = (values[i] || "").trim();
-      if (field.required && !val) {
+      const v = values[i];
+      if (field.required && isEmpty(v)) {
         setError(`Поле «${field.label || `Поле ${i + 1}`}» обязательно`);
         return;
       }
-      if (field.type === "email" && val && !validateEmail(val)) {
+      if (field.type === "email" && typeof v === "string" && v && !validateEmail(v)) {
         setError("Введите корректный email");
         return;
+      }
+      if (field.type === "number" && v !== undefined && v !== null && v !== "") {
+        const n = Number(v);
+        if (Number.isNaN(n)) {
+          setError(`Поле «${field.label}» должно быть числом`);
+          return;
+        }
+        if (typeof field.min === "number" && n < field.min) {
+          setError(`Поле «${field.label}» должно быть ≥ ${field.min}`);
+          return;
+        }
+        if (typeof field.max === "number" && n > field.max) {
+          setError(`Поле «${field.label}» должно быть ≤ ${field.max}`);
+          return;
+        }
       }
     }
 
@@ -131,25 +220,45 @@ function LegacyFormSection({ content, pageId, isPreview }: FormSectionProps) {
 
     setLoading(true);
     try {
-      // Only send product_id/tariff_id if product_binding_enabled
       const productId = productBindingEnabled ? (content.product_id as string) || undefined : undefined;
       const tariffId = productBindingEnabled ? (content.tariff_id as string) || undefined : undefined;
+
+      // Нормализация значений по типам — БЕЗ stringify массивов/объектов
+      const submissionFields = fields.map((field, i) => {
+        const raw = values[i];
+        let value: unknown = raw;
+        if (field.type === "number") {
+          value = raw === undefined || raw === null || raw === "" ? null : Number(raw);
+        } else if (field.type === "boolean") {
+          value = raw === true || raw === "true";
+        } else if (field.type === "date") {
+          value = typeof raw === "string" && raw ? raw : null; // ISO YYYY-MM-DD
+        } else if (field.type === "multiselect") {
+          value = Array.isArray(raw) ? raw : [];
+        } else if (field.type === "file") {
+          value = raw ?? null;
+        } else if (typeof raw === "string") {
+          value = raw.trim();
+        }
+        return {
+          label: field.label,
+          type: field.type,
+          value,
+          mapping: field.mapping || "none",
+        };
+      });
 
       const payload: Record<string, unknown> = {
         page_id: pageId,
         redirect_url: redirectUrl || undefined,
-        fields: fields.map((field, i) => ({
-          label: field.label,
-          type: field.type,
-          value: (values[i] || "").trim(),
-          mapping: field.mapping || "none",
-        })),
+        fields: submissionFields,
+        submission_token: submissionTokenRef.current,
       };
 
       if (productId) payload.product_id = productId;
       if (tariffId) payload.tariff_id = tariffId;
+      payload.product_binding_enabled = !!productBindingEnabled;
 
-      // Deal creation settings
       const dealEnabled = (content.deal_creation_enabled as boolean) ?? false;
       if (dealEnabled) {
         payload.deal_creation_enabled = true;
@@ -159,7 +268,6 @@ function LegacyFormSection({ content, pageId, isPreview }: FormSectionProps) {
         if (stageId) payload.pipeline_stage_id = stageId;
       }
 
-      // Embed metadata (если форма отрисована через EmbedFormPage)
       const embedOrigin = (content.__embed_origin as string) || "";
       const embedBlockId = (content.__embed_block_id as string) || "";
       if (embedOrigin) payload.embed_origin = embedOrigin;
@@ -168,10 +276,7 @@ function LegacyFormSection({ content, pageId, isPreview }: FormSectionProps) {
         payload.embed_mode = "iframe";
       }
 
-      const { error: fnError } = await supabase.functions.invoke(
-        "site-form-submit",
-        { body: payload }
-      );
+      const { error: fnError } = await supabase.functions.invoke("site-form-submit", { body: payload });
 
       if (fnError) {
         console.error("Form submit error:", fnError);
@@ -211,33 +316,18 @@ function LegacyFormSection({ content, pageId, isPreview }: FormSectionProps) {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {fields.map((field, i) => (
-            <div key={i}>
-              <label className="block text-sm font-medium text-foreground mb-1">
-                {field.label || `Поле ${i + 1}`}
-                {field.required && <span className="text-destructive ml-1">*</span>}
-              </label>
-              {field.type === "textarea" ? (
-                <textarea
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm min-h-[80px] focus:outline-none focus:ring-2 focus:ring-ring"
-                  placeholder={field.label}
-                  value={values[i] || ""}
-                  onChange={(e) => setValue(i, e.target.value)}
-                />
-              ) : (
-                <input
-                  type={field.type === "phone" ? "tel" : field.type || "text"}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  placeholder={field.label}
-                  value={values[i] || ""}
-                  onChange={(e) => setValue(i, e.target.value)}
-                />
-              )}
-            </div>
+            <FieldRenderer
+              key={i}
+              field={field}
+              index={i}
+              value={values[i]}
+              uploading={!!uploading[i]}
+              onChange={(v) => setValue(i, v)}
+              onFiles={(fl) => handleFileUpload(i, fl, field)}
+            />
           ))}
 
-          {error && (
-            <p className="text-sm text-destructive text-center">{error}</p>
-          )}
+          {error && <p className="text-sm text-destructive text-center">{error}</p>}
 
           <button
             type="submit"
@@ -249,6 +339,215 @@ function LegacyFormSection({ content, pageId, isPreview }: FormSectionProps) {
         </form>
       </div>
     </section>
+  );
+}
+
+// ─── Универсальный рендерер поля ───
+function FieldRenderer({
+  field,
+  index,
+  value,
+  uploading,
+  onChange,
+  onFiles,
+}: {
+  field: FormField;
+  index: number;
+  value: unknown;
+  uploading: boolean;
+  onChange: (v: unknown) => void;
+  onFiles: (files: FileList | null) => void;
+}) {
+  const baseInputClass =
+    "w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
+
+  const label = (
+    <label className="block text-sm font-medium text-foreground mb-1">
+      {field.label || `Поле ${index + 1}`}
+      {field.required && <span className="text-destructive ml-1">*</span>}
+    </label>
+  );
+
+  // textarea
+  if (field.type === "textarea") {
+    return (
+      <div>
+        {label}
+        <textarea
+          className={`${baseInputClass} min-h-[80px]`}
+          placeholder={field.label}
+          value={(value as string) || ""}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      </div>
+    );
+  }
+
+  // boolean → Yes/No radio
+  if (field.type === "boolean") {
+    const v = value === true || value === "true";
+    return (
+      <div>
+        {label}
+        <div className="flex gap-4">
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="radio" name={`bool-${index}`} checked={v === true} onChange={() => onChange(true)} />
+            Да
+          </label>
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="radio" name={`bool-${index}`} checked={value === false} onChange={() => onChange(false)} />
+            Нет
+          </label>
+        </div>
+      </div>
+    );
+  }
+
+  // select
+  if (field.type === "select") {
+    const opts = field.options || [];
+    return (
+      <div>
+        {label}
+        <select
+          className={baseInputClass}
+          value={(value as string) || ""}
+          onChange={(e) => onChange(e.target.value)}
+        >
+          <option value="">— выберите —</option>
+          {opts.map((o, oi) => (
+            <option key={oi} value={o}>{o}</option>
+          ))}
+        </select>
+      </div>
+    );
+  }
+
+  // multiselect → checkboxes
+  if (field.type === "multiselect") {
+    const opts = field.options || [];
+    const arr = Array.isArray(value) ? (value as string[]) : [];
+    return (
+      <div>
+        {label}
+        <div className="space-y-1.5">
+          {opts.map((o, oi) => {
+            const checked = arr.includes(o);
+            return (
+              <label key={oi} className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={(e) => {
+                    const next = e.target.checked ? [...arr, o] : arr.filter((x) => x !== o);
+                    onChange(next);
+                  }}
+                />
+                {o}
+              </label>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // date
+  if (field.type === "date") {
+    return (
+      <div>
+        {label}
+        <input
+          type="date"
+          className={baseInputClass}
+          value={(value as string) || ""}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      </div>
+    );
+  }
+
+  // number
+  if (field.type === "number") {
+    return (
+      <div>
+        {label}
+        <input
+          type="number"
+          className={baseInputClass}
+          placeholder={field.label}
+          min={field.min}
+          max={field.max}
+          step={field.step}
+          value={(value as number | string) ?? ""}
+          onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
+        />
+      </div>
+    );
+  }
+
+  // file
+  if (field.type === "file") {
+    const maxFiles = field.maxFiles ?? 1;
+    const isMulti = maxFiles > 1;
+    const files = isMulti
+      ? (Array.isArray(value) ? (value as Array<{ filename: string; size: number }>) : [])
+      : (value && typeof value === "object" ? [value as { filename: string; size: number }] : []);
+    return (
+      <div>
+        {label}
+        <div className="space-y-2">
+          <label className="flex items-center justify-center gap-2 border border-dashed border-input rounded-md px-3 py-4 text-sm cursor-pointer hover:bg-muted/40 transition-colors">
+            {uploading ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" /> Загрузка...
+              </>
+            ) : (
+              <>
+                <Upload className="h-4 w-4" /> Выбрать {isMulti ? "файлы" : "файл"}
+              </>
+            )}
+            <input
+              type="file"
+              className="hidden"
+              multiple={isMulti}
+              disabled={uploading}
+              onChange={(e) => onFiles(e.target.files)}
+            />
+          </label>
+          {files.length > 0 && (
+            <ul className="space-y-1 text-xs">
+              {files.map((f, fi) => (
+                <li key={fi} className="flex items-center justify-between gap-2 bg-muted/40 rounded px-2 py-1">
+                  <span className="truncate">{f.filename}</span>
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-destructive"
+                    onClick={() => onChange(isMulti ? files.filter((_, idx) => idx !== fi) : null)}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // text / email / phone (default)
+  return (
+    <div>
+      {label}
+      <input
+        type={field.type === "phone" ? "tel" : field.type || "text"}
+        className={baseInputClass}
+        placeholder={field.label}
+        value={(value as string) || ""}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </div>
   );
 }
 
