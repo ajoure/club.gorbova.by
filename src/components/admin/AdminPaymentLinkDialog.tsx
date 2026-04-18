@@ -408,6 +408,7 @@ export function AdminPaymentLinkDialog({
     onSuccess: (data) => {
       if (data) {
         setGeneratedUrl(data.redirect_url);
+        queryClient.invalidateQueries({ queryKey: ["payment-links-enriched"] });
         toast.success("Ссылка на оплату создана");
       }
     },
