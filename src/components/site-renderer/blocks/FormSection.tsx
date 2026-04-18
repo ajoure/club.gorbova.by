@@ -720,12 +720,27 @@ function AuthFormSection({
           />
         </div>
         {error && <p className="text-sm text-destructive text-center">{error}</p>}
+        {inlineAuth.step === "password_reset_sent" && (
+          <p className="text-sm text-primary text-center">
+            Письмо для восстановления пароля отправлено на {email}. Перейдите по ссылке, задайте новый пароль и вернитесь сюда.
+          </p>
+        )}
         <button
           type="submit"
           disabled={inlineAuth.isLoading}
           className="w-full rounded-md bg-primary px-8 py-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {inlineAuth.isLoading ? "Вход..." : "Войти"}
+        </button>
+        <button
+          type="button"
+          onClick={async () => {
+            if (isPreview) return;
+            await inlineAuth.requestPasswordReset(email);
+          }}
+          className="w-full text-sm text-primary hover:underline"
+        >
+          Забыли пароль?
         </button>
         <button
           type="button"
