@@ -8,7 +8,7 @@ const corsHeaders = {
 };
 
 // Строгий allowlist префиксов — только наши папки в training-assets
-const ALLOWED_PREFIXES = ["lesson-audio/", "lesson-files/", "lesson-images/", "student-uploads/"];
+const ALLOWED_PREFIXES = ["lesson-audio/", "lesson-files/", "lesson-images/", "student-uploads/", "form-uploads/"];
 
 function isPathAllowed(path: string): boolean {
   if (!path || typeof path !== "string") return false;
@@ -84,6 +84,24 @@ Deno.serve(async (req: Request) => {
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
+
+    // form-uploads/* — только admin/superadmin (гостевые загрузки из форм сайта)
+    if (path.startsWith("form-uploads/")) {
+      const { data: isAdm } = await adminClient.rpc("has_role_v2", {
+        _user_id: user.id,
+        _role_code: "admin",
+      });
+      const { data: isSuperAdm } = await adminClient.rpc("has_role_v2", {
+        _user_id: user.id,
+        _role_code: "superadmin",
+      });
+      if (!isAdm && !isSuperAdm) {
+        return new Response(
+          JSON.stringify({ error: "Forbidden" }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
 
     // Для student-uploads — строгая проверка owner/admin по сегментам пути
     if (path.startsWith("student-uploads/")) {
