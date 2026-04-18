@@ -24,7 +24,7 @@ import { copyToClipboard } from "@/utils/clipboardUtils";
 import { usePaymentLinks, type PaymentLinkRow } from "@/hooks/usePaymentLinks";
 import { LinkStatusBadge } from "./LinkStatusBadge";
 import { LinkDetailsDrawer } from "./LinkDetailsDrawer";
-import { CreatePublicLinkDialog } from "./CreatePublicLinkDialog";
+import { AdminPaymentLinkDialog } from "@/components/admin/AdminPaymentLinkDialog";
 import { EditPaymentLinkDialog } from "./EditPaymentLinkDialog";
 
 type StatusFilter = "all" | "active" | "invalidated" | "expired" | "exhausted";
@@ -275,7 +275,7 @@ export function LinksTabContent() {
       </div>
 
       {/* Dialogs */}
-      <CreatePublicLinkDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <AdminPaymentLinkDialog open={createOpen} onOpenChange={setCreateOpen} mode="public" />
       <LinkDetailsDrawer link={detailsLink} onOpenChange={(o) => !o && setDetailsLink(null)} />
       <EditPaymentLinkDialog
         link={editLink}
