@@ -907,7 +907,7 @@ function AuthFormSection({
       const field = customFields[i];
       const val = (extraValues[i] || "").trim();
       if (field.required && !val) {
-        setError(`Поле «${field.label || `Поле ${i + 1}`}» обязательно`);
+        setError(`Поле «${getFieldDisplayLabel(field, i)}» обязательно`);
         return;
       }
       if (field.type === "email" && val && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
