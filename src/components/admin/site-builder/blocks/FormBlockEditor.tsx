@@ -451,23 +451,105 @@ export function FormBlockEditor({ content, onChange, blockId }: FormBlockEditorP
           <Select value={field.type} onValueChange={(v) => updateField(i, { type: v })}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="text">Текст</SelectItem>
-              <SelectItem value="email">Email</SelectItem>
-              <SelectItem value="phone">Телефон</SelectItem>
-              <SelectItem value="textarea">Многострочный</SelectItem>
+              {FIELD_TYPES.map((ft) => (
+                <SelectItem key={ft.value} value={ft.value}>{ft.label}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
-          <div>
-            <Label className="text-xs">Привязка к карточке</Label>
-            <Select value={field.mapping || "none"} onValueChange={(v) => updateField(i, { mapping: v })}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {MAPPING_OPTIONS.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+
+          {/* select / multiselect — список вариантов */}
+          {(field.type === "select" || field.type === "multiselect") && (
+            <OptionsEditor
+              options={field.options || []}
+              onChange={(opts) => updateField(i, { options: opts })}
+            />
+          )}
+
+          {/* file — настройки загрузки */}
+          {field.type === "file" && (
+            <div className="space-y-2 border rounded-md p-2 bg-muted/30">
+              <Label className="text-xs">Допустимые форматы</Label>
+              <div className="grid grid-cols-2 gap-1.5">
+                {FILE_GROUP_OPTIONS.map((g) => {
+                  const checked = (field.allowedGroups || []).includes(g.key);
+                  return (
+                    <label key={g.key} className="flex items-center gap-1.5 text-[11px] cursor-pointer">
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={(v) => {
+                          const cur = field.allowedGroups || [];
+                          const next = v ? [...cur, g.key] : cur.filter((x) => x !== g.key);
+                          updateField(i, { allowedGroups: next });
+                        }}
+                      />
+                      {g.label}
+                    </label>
+                  );
+                })}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label className="text-[10px]">Макс. размер, МБ</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={field.maxSizeMB ?? 10}
+                    onChange={(e) => updateField(i, { maxSizeMB: Number(e.target.value) || 10 })}
+                    className="h-8 text-xs"
+                  />
+                </div>
+                <div>
+                  <Label className="text-[10px]">Макс. файлов</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={field.maxFiles ?? 1}
+                    onChange={(e) => updateField(i, { maxFiles: Number(e.target.value) || 1 })}
+                    className="h-8 text-xs"
+                  />
+                </div>
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                Сервер ограничивает размер до 20 МБ и блокирует исполняемые файлы независимо от настроек.
+              </p>
+            </div>
+          )}
+
+          {/* number — диапазон */}
+          {field.type === "number" && (
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <Label className="text-[10px]">Мин.</Label>
+                <Input type="number" value={field.min ?? ""} onChange={(e) => updateField(i, { min: e.target.value === "" ? undefined : Number(e.target.value) })} className="h-8 text-xs" />
+              </div>
+              <div>
+                <Label className="text-[10px]">Макс.</Label>
+                <Input type="number" value={field.max ?? ""} onChange={(e) => updateField(i, { max: e.target.value === "" ? undefined : Number(e.target.value) })} className="h-8 text-xs" />
+              </div>
+              <div>
+                <Label className="text-[10px]">Шаг</Label>
+                <Input type="number" value={field.step ?? ""} onChange={(e) => updateField(i, { step: e.target.value === "" ? undefined : Number(e.target.value) })} className="h-8 text-xs" />
+              </div>
+            </div>
+          )}
+
+          {/* mapping — только для строковых типов (email/phone/text/textarea) */}
+          {STRING_MAPPABLE_TYPES.has(field.type) && (
+            <div>
+              <Label className="text-xs">Привязка к карточке</Label>
+              <Select value={field.mapping || "none"} onValueChange={(v) => updateField(i, { mapping: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {MAPPING_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
           <div className="flex items-center justify-between">
             <Label className="text-xs">Обязательное</Label>
             <Switch checked={field.required} onCheckedChange={(v) => updateField(i, { required: v })} />
