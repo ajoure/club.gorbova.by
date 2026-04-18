@@ -435,7 +435,7 @@ function FieldRenderer({
 
   // select (single choice) — shadcn Select
   if (field.type === "select") {
-    const opts = field.options || [];
+    const opts = (field.options || []).filter((o) => typeof o === "string" && o.trim() !== "");
     const current = (value as string) || "";
     return (
       <div className="space-y-2">
