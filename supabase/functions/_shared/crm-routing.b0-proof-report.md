@@ -1,7 +1,12 @@
 # B.0 Proof Report — Final (post PATCH 1 + PATCH 2)
 
 **Дата:** 2026-04-18
-**Статус:** PASSED (с явным разделением closed / runtime-equivalent / out-of-scope)
+**Статус:** B.0 закрыт в части public-link writer / pending / materialize / legacy reconcile / negative-guards. Terminal webhook proof — НЕ закрыт live (только runtime-equivalent для P3, out-of-scope для P2). Recurring — out-of-scope.
+
+### Карта статусов
+- **closed (live):** P2 pending+snapshot, P2 entitlement reconcile, P3 GET, P3 POST materialize, P4a-1 negative, P4a-2/P4b static
+- **closed with runtime-equivalent proof only:** P3 terminal (через `grant-access-for-order`, не реальный webhook)
+- **out of scope / not live-proven:** P2 terminal via webhook, recurring
 
 ## Сценарии
 
