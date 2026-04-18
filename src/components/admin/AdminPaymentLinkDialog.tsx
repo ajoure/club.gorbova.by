@@ -655,24 +655,24 @@ export function AdminPaymentLinkDialog({
                   {generatedUrl}
                 </div>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2">
                 <Button
                   variant="outline"
-                  className="flex-1 gap-2"
+                  className="w-full sm:flex-1 gap-2"
                   onClick={() => copyToClipboard(generatedUrl)}
                 >
                   <Copy className="h-4 w-4" />
                   Копировать
                 </Button>
                 <Button
-                  className="flex-1 gap-2"
+                  className="w-full sm:flex-1 gap-2"
                   onClick={() => window.open(generatedUrl, "_blank")}
                 >
                   <ExternalLink className="h-4 w-4" />
                   Открыть
                 </Button>
               </div>
-              {telegramUserId && (
+              {effectiveTelegramUserId && (
                 <Button
                   variant="outline"
                   className="w-full gap-2"
@@ -697,11 +697,13 @@ export function AdminPaymentLinkDialog({
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
-              {/* User info */}
-              <div className="p-3 rounded-lg bg-muted/50 border">
-                <p className="font-medium">{userName || "—"}</p>
-                <p className="text-sm text-muted-foreground">{userEmail}</p>
-              </div>
+              {/* User info — только в contact mode */}
+              {!isPublicMode && (
+                <div className="p-3 rounded-lg bg-muted/50 border">
+                  <p className="font-medium truncate">{userName || "—"}</p>
+                  <p className="text-sm text-muted-foreground truncate">{userEmail}</p>
+                </div>
+              )}
 
               {/* Product */}
               <div className="rounded-lg border bg-card p-4 space-y-2">
