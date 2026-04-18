@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { sanitizeHtml } from "@/lib/sanitization";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import type { SiteBlock } from "@/services/sitePages/types";
 import type { PublicProduct, PublicTariff } from "@/hooks/usePublicProduct";
 
@@ -46,22 +47,25 @@ function HeroSection({ content }: { content: Record<string, unknown> }) {
       {content.backgroundImage && <div className="absolute inset-0 bg-black/40" />}
       <div className={`relative max-w-4xl mx-auto ${textAlign}`}>
         {content.title && (
-          <h1 className="text-4xl md:text-5xl font-bold text-foreground mb-4">
-            {content.title as string}
-          </h1>
+          <SafeHtml
+            as="h1"
+            html={(content.title as string) || ""}
+            className="text-4xl md:text-5xl font-bold text-foreground mb-4"
+          />
         )}
         {content.subtitle && (
-          <p className="text-lg md:text-xl text-muted-foreground mb-8 max-w-2xl mx-auto">
-            {content.subtitle as string}
-          </p>
+          <SafeHtml
+            as="p"
+            html={(content.subtitle as string) || ""}
+            className="text-lg md:text-xl text-muted-foreground mb-8 max-w-2xl mx-auto"
+          />
         )}
         {content.buttonText && (
           <a
             href={(content.buttonLink as string) || "#"}
             className="inline-flex items-center justify-center rounded-md bg-primary px-8 py-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-          >
-            {content.buttonText as string}
-          </a>
+            dangerouslySetInnerHTML={{ __html: sanitizeHtml((content.buttonText as string) || "") }}
+          />
         )}
       </div>
     </section>
@@ -80,13 +84,13 @@ function TextSection({ content }: { content: Record<string, unknown> }) {
 function HeadingSection({ content }: { content: Record<string, unknown> }) {
   const level = (content.level as number) || 2;
   const text = (content.text as string) || "";
-  const Tag = `h${level}` as keyof JSX.IntrinsicElements;
+  const Tag = `h${level}` as "h1" | "h2" | "h3" | "h4";
   const sizes: Record<number, string> = { 1: "text-4xl", 2: "text-3xl", 3: "text-2xl", 4: "text-xl" };
 
   return (
     <section className="py-6 px-6">
       <div className="max-w-4xl mx-auto">
-        <Tag className={`${sizes[level] || "text-2xl"} font-bold text-foreground`}>{text}</Tag>
+        <SafeHtml as={Tag} html={text} className={`${sizes[level] || "text-2xl"} font-bold text-foreground`} />
       </div>
     </section>
   );
@@ -122,15 +126,14 @@ function CtaSection({ content }: { content: Record<string, unknown> }) {
   return (
     <section className="py-16 px-6 bg-primary/5">
       <div className="max-w-3xl mx-auto text-center">
-        {content.title && <h2 className="text-3xl font-bold text-foreground mb-4">{content.title as string}</h2>}
-        {content.subtitle && <p className="text-lg text-muted-foreground mb-8">{content.subtitle as string}</p>}
+        {content.title && <SafeHtml as="h2" html={(content.title as string) || ""} className="text-3xl font-bold text-foreground mb-4" />}
+        {content.subtitle && <SafeHtml as="p" html={(content.subtitle as string) || ""} className="text-lg text-muted-foreground mb-8" />}
         {content.buttonText && (
           <a
             href={(content.buttonLink as string) || "#"}
             className="inline-flex items-center justify-center rounded-md bg-primary px-8 py-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-          >
-            {content.buttonText as string}
-          </a>
+            dangerouslySetInnerHTML={{ __html: sanitizeHtml((content.buttonText as string) || "") }}
+          />
         )}
       </div>
     </section>
@@ -145,8 +148,8 @@ function FaqSection({ content }: { content: Record<string, unknown> }) {
       <div className="max-w-3xl mx-auto space-y-4">
         {items.map((item, i) => (
           <details key={i} className="border rounded-lg p-4 group">
-            <summary className="font-medium cursor-pointer text-foreground">{item.question}</summary>
-            <p className="mt-3 text-sm text-muted-foreground">{item.answer}</p>
+            <summary className="font-medium cursor-pointer text-foreground" dangerouslySetInnerHTML={{ __html: sanitizeHtml(item.question || "") }} />
+            <SafeHtml as="p" html={item.answer || ""} className="mt-3 text-sm text-muted-foreground" />
           </details>
         ))}
       </div>

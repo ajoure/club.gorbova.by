@@ -1,6 +1,6 @@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface HeroBlockEditorProps {
@@ -15,16 +15,16 @@ export function HeroBlockEditor({ content, onChange }: HeroBlockEditorProps) {
     <div className="space-y-3">
       <div className="space-y-1.5">
         <Label className="text-xs">Заголовок</Label>
-        <Input value={(content.title as string) || ""} onChange={(e) => update("title", e.target.value)} placeholder="Главный заголовок" />
+        <RichTextarea inline value={(content.title as string) || ""} onChange={(v) => update("title", v)} placeholder="Главный заголовок" />
       </div>
       <div className="space-y-1.5">
         <Label className="text-xs">Подзаголовок</Label>
-        <Textarea value={(content.subtitle as string) || ""} onChange={(e) => update("subtitle", e.target.value)} rows={2} placeholder="Описание" />
+        <RichTextarea value={(content.subtitle as string) || ""} onChange={(v) => update("subtitle", v)} minHeight="60px" placeholder="Описание" />
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
           <Label className="text-xs">Текст кнопки</Label>
-          <Input value={(content.buttonText as string) || ""} onChange={(e) => update("buttonText", e.target.value)} placeholder="Начать" />
+          <RichTextarea inline value={(content.buttonText as string) || ""} onChange={(v) => update("buttonText", v)} placeholder="Начать" />
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs">Ссылка кнопки</Label>

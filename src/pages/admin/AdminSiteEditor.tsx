@@ -4,6 +4,7 @@ import { useSitePage } from "@/hooks/useSitePages";
 import { SitePageService } from "@/services/sitePages/SitePageService";
 import { SitePublicationService } from "@/services/sitePages/SitePublicationService";
 import { SiteBlockEditor } from "@/components/admin/site-builder/SiteBlockEditor";
+import { FloatingToolbar } from "@/components/ui/FloatingToolbar";
 import { SiteSettingsPanel } from "@/components/admin/site-builder/SiteSettingsPanel";
 import { SitePreview } from "@/components/admin/site-builder/SitePreview";
 import { AdminLayout } from "@/components/layout/AdminLayout";
@@ -91,6 +92,7 @@ export default function AdminSiteEditor() {
 
   return (
     <AdminLayout fullHeight>
+      <FloatingToolbar />
       <div className="flex flex-col h-full">
         {/* Header — responsive: title may wrap up to 2 lines, action buttons stay on the right and never overlap */}
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b px-3 sm:px-4 py-2 sm:py-3 bg-background">

@@ -1,6 +1,6 @@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Trash2 } from "lucide-react";
@@ -149,8 +149,8 @@ export function FeaturesBlockEditor({ content, onChange }: FeaturesBlockEditorPr
             {iconMode !== "numbered" && iconMode !== "none" && (
               <Input value={item.icon} onChange={(e) => updateItem(idx, "icon", e.target.value)} placeholder="Иконка (эмодзи)" className="text-sm" />
             )}
-            <Input value={item.title} onChange={(e) => updateItem(idx, "title", e.target.value)} placeholder="Заголовок" className="text-sm" />
-            <Textarea value={item.description} onChange={(e) => updateItem(idx, "description", e.target.value)} placeholder="Описание" rows={2} className="text-sm" />
+            <RichTextarea inline value={item.title} onChange={(v) => updateItem(idx, "title", v)} placeholder="Заголовок" />
+            <RichTextarea value={item.description} onChange={(v) => updateItem(idx, "description", v)} placeholder="Описание" minHeight="60px" />
           </div>
         ))}
         <Button variant="outline" size="sm" onClick={addItem}>

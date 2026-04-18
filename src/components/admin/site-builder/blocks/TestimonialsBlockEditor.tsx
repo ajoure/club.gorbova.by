@@ -1,7 +1,7 @@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Trash2 } from "lucide-react";
 
@@ -40,9 +40,9 @@ export function TestimonialsBlockEditor({ content, onChange }: TestimonialsBlock
               <Trash2 className="h-3 w-3" />
             </Button>
           </div>
-          <Input value={item.name} onChange={(e) => updateItem(i, { name: e.target.value })} placeholder="Имя" />
-          <Input value={item.role} onChange={(e) => updateItem(i, { role: e.target.value })} placeholder="Должность / роль" />
-          <Textarea value={item.text} onChange={(e) => updateItem(i, { text: e.target.value })} placeholder="Текст отзыва" rows={3} />
+          <RichTextarea inline value={item.name} onChange={(v) => updateItem(i, { name: v })} placeholder="Имя" />
+          <RichTextarea inline value={item.role} onChange={(v) => updateItem(i, { role: v })} placeholder="Должность / роль" />
+          <RichTextarea value={item.text} onChange={(v) => updateItem(i, { text: v })} placeholder="Текст отзыва" minHeight="80px" />
           <Input value={item.avatar} onChange={(e) => updateItem(i, { avatar: e.target.value })} placeholder="URL аватара" />
         </div>
       ))}
