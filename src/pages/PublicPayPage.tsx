@@ -260,13 +260,6 @@ export default function PublicPayPage() {
             </p>
           </GlassCard>
         </div>
-
-            <p className="text-xs text-center text-muted-foreground mt-4">
-              Нажимая кнопку, вы соглашаетесь с{' '}
-              <a href="/offer" className="text-primary hover:underline">условиями оферты</a>
-            </p>
-          </GlassCard>
-        </div>
       </main>
 
       <LandingFooter />
