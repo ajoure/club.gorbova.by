@@ -43,13 +43,24 @@ import { copyToClipboard } from "@/utils/clipboardUtils";
 import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
 import { cn } from "@/lib/utils";
 
+/**
+ * mode:
+ *   - "contact" (default) — текущее поведение: ссылка привязывается к контакту,
+ *     показывается блок получателя, доступна Telegram-цепочка.
+ *   - "public" — публичная ссылка без получателя: блок контакта скрыт,
+ *     userId не отправляется в writer, Telegram-логика не рендерится.
+ *     Writer тот же — admin-create-public-link → /pay/:token.
+ */
+export type AdminPaymentLinkDialogMode = "contact" | "public";
+
 interface AdminPaymentLinkDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  userId: string;
+  userId?: string;
   userName?: string;
   userEmail?: string;
   telegramUserId?: number | null;
+  mode?: AdminPaymentLinkDialogMode;
 }
 
 type PaymentType = "one_time" | "subscription";
@@ -153,7 +164,11 @@ export function AdminPaymentLinkDialog({
   userName,
   userEmail,
   telegramUserId,
+  mode = "contact",
 }: AdminPaymentLinkDialogProps) {
+  const isPublicMode = mode === "public";
+  // В public-режиме Telegram-цепочка и contact-блок не должны рендериться.
+  const effectiveTelegramUserId = isPublicMode ? null : telegramUserId;
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [selectedProductId, setSelectedProductId] = useState<string>("");
