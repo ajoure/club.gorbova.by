@@ -220,16 +220,31 @@ export class SitePageService {
       { actor_user_id: userId, actor_type: "user", source_page_id: id, new_slug: newSlug }
     );
 
+    // PATCH B: clone-template fix for product-bound pages.
+    // Page-level product_id is a 1:1 binding (idx_site_pages_product_id_unique) — must be null in copy.
+    // Inside blocks: pricing.content.product_id is also dropped so the duplicate is a clean template.
+    // User then explicitly re-binds product in SiteSettingsPanel + PricingBlockEditor.
+    const sourceBlocks = (source.blocks as unknown as SiteBlock[]) || [];
+    const sanitizedBlocks = sourceBlocks.map((block) => {
+      if (block.type !== "pricing") return block;
+      const content = { ...(block.content as Record<string, unknown>) };
+      if ("product_id" in content) content.product_id = "";
+      // Drop any tariff overrides bound to the source product
+      if ("tariff_overrides" in content) delete content.tariff_overrides;
+      return { ...block, content };
+    });
+
     const { data, error } = await (supabase
       .from("site_pages") as any)
       .insert({
         title: `${source.title} (копия)`,
         slug: newSlug,
-        product_id: source.product_id,
+        product_id: null, // PATCH B: never copy 1:1 product binding
         folder_id: source.folder_id,
-        blocks: source.blocks,
+        blocks: sanitizedBlocks,
         seo_settings: source.seo_settings,
         theme_settings: source.theme_settings,
+        status: "draft", // PATCH B: clone is always draft
         created_by: userId,
       })
       .select("*")
@@ -255,6 +270,8 @@ export class SitePageService {
       new_page_id: newPage.id,
       new_slug: newSlug,
       tags_copied: tagLinks.length,
+      product_id_cleared: !!source.product_id,
+      pricing_blocks_cleared: sanitizedBlocks.filter((b) => b.type === "pricing").length,
     });
 
     return newPage;
