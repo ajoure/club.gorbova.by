@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Plus, Trash2, Lock, Shield, Layers, Handshake, Code2, Copy } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -249,15 +250,15 @@ export function FormBlockEditor({ content, onChange, blockId }: FormBlockEditorP
       {/* Basic form settings */}
       <div>
         <Label className="text-xs">Заголовок</Label>
-        <Input value={(content.title as string) || ""} onChange={(e) => onChange({ ...content, title: e.target.value })} />
+        <RichTextarea inline value={(content.title as string) || ""} onChange={(v) => onChange({ ...content, title: v })} />
       </div>
       <div>
         <Label className="text-xs">Подзаголовок</Label>
-        <Input value={(content.subtitle as string) || ""} onChange={(e) => onChange({ ...content, subtitle: e.target.value })} />
+        <RichTextarea inline value={(content.subtitle as string) || ""} onChange={(v) => onChange({ ...content, subtitle: v })} />
       </div>
       <div>
         <Label className="text-xs">Текст кнопки</Label>
-        <Input value={(content.buttonText as string) || "Отправить"} onChange={(e) => onChange({ ...content, buttonText: e.target.value })} />
+        <RichTextarea inline value={(content.buttonText as string) || "Отправить"} onChange={(v) => onChange({ ...content, buttonText: v })} />
       </div>
       <div>
         <Label className="text-xs">URL перенаправления после отправки</Label>
