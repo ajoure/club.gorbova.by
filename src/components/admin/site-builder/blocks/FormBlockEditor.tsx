@@ -3,6 +3,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Plus, Trash2, Lock, Shield, Layers, Handshake, Code2, Copy } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -11,6 +12,32 @@ import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { HelpIcon } from "@/components/help/HelpComponents";
+import { OptionsEditor } from "@/components/admin/shared/OptionsEditor";
+
+// Типы полей формы. Совместимы по смыслу с lesson editor (не дублируют его движок).
+const FIELD_TYPES = [
+  { value: "text", label: "Строка" },
+  { value: "textarea", label: "Многострочный текст" },
+  { value: "email", label: "Email" },
+  { value: "phone", label: "Телефон" },
+  { value: "boolean", label: "Да / Нет" },
+  { value: "select", label: "Выбор (один)" },
+  { value: "multiselect", label: "Множественный выбор" },
+  { value: "date", label: "Дата" },
+  { value: "number", label: "Число" },
+  { value: "file", label: "Файл" },
+];
+
+const STRING_MAPPABLE_TYPES = new Set(["text", "textarea", "email", "phone"]);
+
+const FILE_GROUP_OPTIONS: Array<{ key: string; label: string }> = [
+  { key: "images", label: "Изображения" },
+  { key: "documents", label: "Документы (PDF, Word, TXT)" },
+  { key: "spreadsheets", label: "Таблицы (Excel, CSV)" },
+  { key: "audio", label: "Аудио" },
+  { key: "video", label: "Видео" },
+  { key: "archives", label: "Архивы (ZIP)" },
+];
 
 interface FormBlockEditorProps {
   content: Record<string, unknown>;
