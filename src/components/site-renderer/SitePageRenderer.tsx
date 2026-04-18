@@ -21,6 +21,8 @@ import { FormSection } from "./blocks/FormSection";
 import { AudioSection } from "./blocks/AudioSection";
 import { EmbedSection } from "./blocks/EmbedSection";
 import { SiteQuestionnaireBlock } from "./blocks/SiteQuestionnaireBlock";
+import { StatsSection } from "./blocks/StatsSection";
+import { FeaturesSection } from "./blocks/FeaturesSection";
 import { AccordionBlock } from "@/components/admin/lesson-editor/blocks/AccordionBlock";
 import { TabsBlock } from "@/components/admin/lesson-editor/blocks/TabsBlock";
 import { CalloutBlock } from "@/components/admin/lesson-editor/blocks/CalloutBlock";
