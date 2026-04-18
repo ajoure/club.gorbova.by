@@ -516,7 +516,6 @@ export function AdminPaymentLinkDialog({
   // Объединённый flow: создать публичную ссылку → сразу отправить в Telegram.
   // Используется когда у контакта привязан Telegram. Если отправка падает —
   // ссылка ВСЁ РАВНО создана и видна пользователю (ничего не теряется).
-  const [combinedPending, setCombinedPending] = useState(false);
   const handleCreateAndSendTelegram = async () => {
     if (!selectedProductId || !selectedTariffId || !effectiveOffer || amount <= 0) return;
     setCombinedPending(true);
