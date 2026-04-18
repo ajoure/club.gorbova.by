@@ -169,6 +169,7 @@ export function AdminPaymentLinkDialog({
   const [replaceStep, setReplaceStep] = useState<
     "idle" | "cancelling" | "creating" | "error"
   >("idle");
+  const [combinedPending, setCombinedPending] = useState(false);
 
   const { data: products, isLoading: productsLoading } = useProductsV2();
   const { data: tariffs, isLoading: tariffsLoading } = useTariffs(selectedProductId);
@@ -407,6 +408,7 @@ export function AdminPaymentLinkDialog({
     onSuccess: (data) => {
       if (data) {
         setGeneratedUrl(data.redirect_url);
+        queryClient.invalidateQueries({ queryKey: ["payment-links-enriched"] });
         toast.success("Ссылка на оплату создана");
       }
     },
@@ -456,6 +458,7 @@ export function AdminPaymentLinkDialog({
     },
     onSuccess: (data) => {
       setGeneratedUrl(data.public_url);
+      queryClient.invalidateQueries({ queryKey: ["payment-links-enriched"] });
       toast.success("Публичная ссылка создана");
     },
     onError: (error) => {
@@ -510,6 +513,77 @@ export function AdminPaymentLinkDialog({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     createLinkMutation.mutate();
+  };
+
+  // Объединённый flow: создать публичную ссылку → сразу отправить в Telegram.
+  // Используется когда у контакта привязан Telegram. Если отправка падает —
+  // ссылка ВСЁ РАВНО создана и видна пользователю (ничего не теряется).
+  const handleCreateAndSendTelegram = async () => {
+    if (!selectedProductId || !selectedTariffId || !effectiveOffer || amount <= 0) return;
+    setCombinedPending(true);
+    try {
+      const { data, error } = await supabase.functions.invoke(
+        "admin-create-public-link",
+        {
+          body: {
+            user_id: userId,
+            product_id: selectedProductId,
+            tariff_id: selectedTariffId,
+            offer_id: effectiveOffer.id,
+            amount: Math.round(amount * 100),
+            payment_type: effectivePaymentType,
+            description:
+              description || `${selectedProduct?.name} — ${selectedTariff?.name}`,
+          },
+        }
+      );
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Ошибка создания ссылки");
+
+      const publicUrl = data.public_url as string;
+      setGeneratedUrl(publicUrl);
+      // Инвалидируем список ссылок, чтобы новая сразу появилась во вкладке «Ссылки»
+      queryClient.invalidateQueries({ queryKey: ["payment-links-enriched"] });
+
+      // Пробуем отправить в Telegram (тот же существующий путь)
+      try {
+        const typeLabel =
+          effectivePaymentType === "subscription"
+            ? "Подписка (ежемесячно)"
+            : "Разовая оплата";
+        const telegramMessage = `💳 *Оплата подписки*
+
+📦 Продукт: ${selectedProduct?.name}
+📋 Тариф: ${selectedTariff?.name}
+💰 Стоимость: ${amount} BYN
+📅 Тип: ${typeLabel}`;
+        const { data: tgData, error: tgError } = await supabase.functions.invoke(
+          "telegram-send-notification",
+          {
+            body: {
+              user_id: userId,
+              message_type: "custom",
+              custom_message: telegramMessage,
+              reply_markup: {
+                inline_keyboard: [[{ text: "💳 Ссылка на оплату", url: publicUrl }]],
+              },
+            },
+          }
+        );
+        if (tgError) throw tgError;
+        if (!tgData?.success) throw new Error(tgData?.error || "Ошибка отправки");
+        toast.success("Ссылка создана и отправлена клиенту в Telegram");
+      } catch (tgErr) {
+        toast.warning(
+          "Ссылка создана, но отправка в Telegram не удалась: " +
+            ((tgErr as Error).message || "неизвестная ошибка")
+        );
+      }
+    } catch (err) {
+      toast.error("Ошибка: " + (err as Error).message);
+    } finally {
+      setCombinedPending(false);
+    }
   };
 
   const handleReplaceSubscription = () => {
@@ -905,32 +979,38 @@ export function AdminPaymentLinkDialog({
                   Отмена
                 </Button>
                 {/*
-                  Два CTA одного диалога — НЕ два разных payment-path.
-                  CTA #1 (submit): admin-create-payment-link → orders_v2 + bePaid checkout (немедленная оплата)
-                  CTA #2 (button): admin-create-public-link → row в payment_links, заказ создаётся
-                                   позже когда клиент откроет /pay/:token (тот же downstream public-checkout)
+                  Кнопки одного диалога — все используют canonical writers (admin-create-public-link
+                  или admin-create-payment-link). Никакого нового payment-path.
+                  Если у контакта привязан Telegram — основной CTA «Создать и отправить в Telegram»
+                  (одна цепочка: createPublicLink → telegram-send-notification).
                 */}
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={isCreateDisabled}
-                  onClick={() => createPublicLinkMutation.mutate()}
-                >
-                  {createPublicLinkMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  ) : (
-                    <Link2 className="h-4 w-4 mr-2" />
-                  )}
-                  Создать публичную ссылку
-                </Button>
-                <Button type="submit" disabled={isCreateDisabled}>
-                  {createLinkMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  ) : (
-                    <CreditCard className="h-4 w-4 mr-2" />
-                  )}
-                  Создать ссылку и открыть оплату
-                </Button>
+                {telegramUserId ? (
+                  <Button
+                    type="button"
+                    disabled={isCreateDisabled || combinedPending}
+                    onClick={handleCreateAndSendTelegram}
+                  >
+                    {combinedPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : (
+                      <Send className="h-4 w-4 mr-2" />
+                    )}
+                    Создать и отправить в Telegram
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    disabled={isCreateDisabled}
+                    onClick={() => createPublicLinkMutation.mutate()}
+                  >
+                    {createPublicLinkMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : (
+                      <Link2 className="h-4 w-4 mr-2" />
+                    )}
+                    Создать ссылку
+                  </Button>
+                )}
               </DialogFooter>
             </form>
           )}
