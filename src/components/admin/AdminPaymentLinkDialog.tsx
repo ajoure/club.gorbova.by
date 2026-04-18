@@ -525,6 +525,7 @@ export function AdminPaymentLinkDialog({
 
   const isCreateDisabled =
     createLinkMutation.isPending ||
+    createPublicLinkMutation.isPending ||
     !selectedProductId ||
     !selectedTariffId ||
     !effectiveOffer ||
