@@ -193,12 +193,13 @@ export function SitePageRenderer({ blocks, themeSettings, pricingData, pageId, i
   }
 
   const renderBlock = (block: SiteBlock) => {
+    const settings = block.settings as any;
     switch (block.type) {
       case "hero": return <HeroSection content={block.content} />;
       case "text": return <TextSection content={block.content} />;
       case "heading": return <HeadingSection content={block.content} />;
       case "image": return <ImageSection content={block.content} />;
-      case "features": return <FeaturesSection content={block.content} />;
+      case "features": return <FeaturesSection content={block.content} settings={settings} />;
       case "cta": return <CtaSection content={block.content} />;
       case "faq": return <FaqSection content={block.content} />;
       case "divider": return <DividerSection content={block.content} />;
@@ -225,6 +226,7 @@ export function SitePageRenderer({ blocks, themeSettings, pricingData, pageId, i
       case "audio": return <AudioSection content={block.content} />;
       case "embed": return <EmbedSection content={block.content} />;
       case "site_questionnaire": return <SiteQuestionnaireBlock content={block.content} />;
+      case "stats": return <StatsSection content={block.content} settings={settings} />;
       default: return null;
     }
   };
