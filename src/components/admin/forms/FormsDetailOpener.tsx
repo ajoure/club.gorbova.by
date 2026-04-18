@@ -7,6 +7,7 @@ import { FileText, Loader2, AlertCircle } from "lucide-react";
 import { StudentProgressModal } from "@/components/admin/trainings/StudentProgressModal";
 import { PreregistrationDetailSheet } from "@/components/admin/PreregistrationDetailSheet";
 import { loadTrainingDetailContext, type TrainingDetailData } from "@/lib/training-detail-loader";
+import { supabase } from "@/integrations/supabase/client";
 import type { FormsHubRow } from "@/hooks/useFormsHubData";
 
 interface Props {
