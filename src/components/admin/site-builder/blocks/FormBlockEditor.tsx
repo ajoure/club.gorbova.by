@@ -78,7 +78,20 @@ export function FormBlockEditor({ content, onChange, blockId }: FormBlockEditorP
   const selectedTariffId = (content.tariff_id as string) || "";
   const selectedPipelineId = (content.pipeline_id as string) || "";
   const selectedPipelineStageId = (content.pipeline_stage_id as string) || "";
-  const fields = (content.fields as Array<{ label: string; type: string; required: boolean; mapping?: string }>) || [];
+  type FormFieldConfig = {
+    label: string;
+    type: string;
+    required: boolean;
+    mapping?: string;
+    options?: string[];
+    allowedGroups?: string[];
+    maxSizeMB?: number;
+    maxFiles?: number;
+    min?: number;
+    max?: number;
+    step?: number;
+  };
+  const fields = (content.fields as FormFieldConfig[]) || [];
 
   // ─── Data queries ───
   const { data: products } = useQuery({
