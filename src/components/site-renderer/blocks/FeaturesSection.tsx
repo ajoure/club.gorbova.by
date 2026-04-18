@@ -7,6 +7,7 @@
  *   - "numbered-list" — нумерованные шаги (кружок с номером слева)
  */
 import { cn } from "@/lib/utils";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import type { BlockSettings, IconMode, GridLayout } from "@/services/sitePages/types";
 
 interface FeatureItem {
@@ -99,8 +100,8 @@ export function FeaturesSection({ content, settings }: FeaturesSectionProps) {
           {items.map((item, i) => (
             <div key={i} className={cn("space-y-3", alignClass, cardClasses)}>
               {renderIcon(item, i, iconMode ?? undefined)}
-              {item.title && <h3 className="text-lg font-semibold text-foreground">{item.title}</h3>}
-              {item.description && <p className="text-sm text-muted-foreground">{item.description}</p>}
+              {item.title && <SafeHtml as="h3" html={item.title} className="text-lg font-semibold text-foreground" />}
+              {item.description && <SafeHtml as="p" html={item.description} className="text-sm text-muted-foreground" />}
             </div>
           ))}
         </div>
@@ -119,8 +120,8 @@ export function FeaturesSection({ content, settings }: FeaturesSectionProps) {
             <div key={i} className={cn("flex items-start gap-4", cardClasses)}>
               {renderIcon(item, i, effectiveIconMode)}
               <div className="flex-1 min-w-0">
-                {item.title && <h3 className="text-base font-semibold text-foreground">{item.title}</h3>}
-                {item.description && <p className="mt-1 text-sm text-muted-foreground">{item.description}</p>}
+                {item.title && <SafeHtml as="h3" html={item.title} className="text-base font-semibold text-foreground" />}
+                {item.description && <SafeHtml as="p" html={item.description} className="mt-1 text-sm text-muted-foreground" />}
               </div>
             </div>
           ))}
@@ -138,8 +139,8 @@ export function FeaturesSection({ content, settings }: FeaturesSectionProps) {
             <div key={i} className="flex items-start gap-4">
               {renderIcon(item, i, "numbered")}
               <div className="flex-1 min-w-0 pt-1.5">
-                {item.title && <h3 className="text-base font-semibold text-foreground">{item.title}</h3>}
-                {item.description && <p className="mt-1 text-sm text-muted-foreground">{item.description}</p>}
+                {item.title && <SafeHtml as="h3" html={item.title} className="text-base font-semibold text-foreground" />}
+                {item.description && <SafeHtml as="p" html={item.description} className="mt-1 text-sm text-muted-foreground" />}
               </div>
             </div>
           ))}
