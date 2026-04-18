@@ -169,6 +169,7 @@ export function AdminPaymentLinkDialog({
   const [replaceStep, setReplaceStep] = useState<
     "idle" | "cancelling" | "creating" | "error"
   >("idle");
+  const [combinedPending, setCombinedPending] = useState(false);
 
   const { data: products, isLoading: productsLoading } = useProductsV2();
   const { data: tariffs, isLoading: tariffsLoading } = useTariffs(selectedProductId);
