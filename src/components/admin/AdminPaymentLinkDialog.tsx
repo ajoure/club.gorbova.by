@@ -361,6 +361,8 @@ export function AdminPaymentLinkDialog({
   const selectedTariff = tariffs?.find((t) => t.id === selectedTariffId);
   const amount = parseFloat(customAmount) || 0;
 
+  // CTA #1: «Создать ссылку и открыть оплату» → admin-create-payment-link
+  //   (создаёт orders_v2 + bePaid checkout, возвращает redirect_url для немедленной оплаты)
   const createLinkMutation = useMutation({
     mutationFn: async () => {
       if (!selectedProductId || !selectedTariffId) {
@@ -407,6 +409,54 @@ export function AdminPaymentLinkDialog({
         setGeneratedUrl(data.redirect_url);
         toast.success("Ссылка на оплату создана");
       }
+    },
+    onError: (error) => {
+      toast.error("Ошибка: " + (error as Error).message);
+    },
+  });
+
+  // CTA #2: «Создать публичную ссылку» → admin-create-public-link
+  //   (только пишет row в payment_links, возвращает /pay/:token URL).
+  //   НЕ создаёт orders_v2 и НЕ дёргает bePaid. Заказ материализуется позже через
+  //   public-checkout, когда клиент откроет /pay/:token. Тот же canonical downstream-path.
+  const createPublicLinkMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedProductId || !selectedTariffId) {
+        throw new Error("Выберите продукт и тариф");
+      }
+      if (!effectiveOffer) {
+        let errMsg = "Не выбрана кнопка оплаты";
+        if (!resolved.ok) {
+          errMsg = (resolved as ResolveBlocked).message;
+        }
+        throw new Error(errMsg);
+      }
+      if (amount <= 0) {
+        throw new Error("Введите корректную сумму");
+      }
+
+      const { data, error } = await supabase.functions.invoke(
+        "admin-create-public-link",
+        {
+          body: {
+            user_id: userId, // pre-assign к этому пользователю
+            product_id: selectedProductId,
+            tariff_id: selectedTariffId,
+            offer_id: effectiveOffer.id,
+            amount: Math.round(amount * 100),
+            payment_type: effectivePaymentType,
+            description:
+              description || `${selectedProduct?.name} — ${selectedTariff?.name}`,
+          },
+        }
+      );
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Ошибка создания публичной ссылки");
+      return data as { success: true; payment_link_id: string; url_token: string; public_url: string };
+    },
+    onSuccess: (data) => {
+      setGeneratedUrl(data.public_url);
+      toast.success("Публичная ссылка создана");
     },
     onError: (error) => {
       toast.error("Ошибка: " + (error as Error).message);
@@ -475,6 +525,7 @@ export function AdminPaymentLinkDialog({
 
   const isCreateDisabled =
     createLinkMutation.isPending ||
+    createPublicLinkMutation.isPending ||
     !selectedProductId ||
     !selectedTariffId ||
     !effectiveOffer ||
@@ -849,17 +900,36 @@ export function AdminPaymentLinkDialog({
                 </div>
               )}
 
-              <DialogFooter>
+              <DialogFooter className="flex-col sm:flex-row gap-2">
                 <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                   Отмена
+                </Button>
+                {/*
+                  Два CTA одного диалога — НЕ два разных payment-path.
+                  CTA #1 (submit): admin-create-payment-link → orders_v2 + bePaid checkout (немедленная оплата)
+                  CTA #2 (button): admin-create-public-link → row в payment_links, заказ создаётся
+                                   позже когда клиент откроет /pay/:token (тот же downstream public-checkout)
+                */}
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={isCreateDisabled}
+                  onClick={() => createPublicLinkMutation.mutate()}
+                >
+                  {createPublicLinkMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <Link2 className="h-4 w-4 mr-2" />
+                  )}
+                  Создать публичную ссылку
                 </Button>
                 <Button type="submit" disabled={isCreateDisabled}>
                   {createLinkMutation.isPending ? (
                     <Loader2 className="h-4 w-4 animate-spin mr-2" />
                   ) : (
-                    <Link2 className="h-4 w-4 mr-2" />
+                    <CreditCard className="h-4 w-4 mr-2" />
                   )}
-                  Создать ссылку
+                  Создать ссылку и открыть оплату
                 </Button>
               </DialogFooter>
             </form>
