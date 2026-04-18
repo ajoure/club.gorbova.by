@@ -1,6 +1,6 @@
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { useLocation, useNavigate } from "react-router-dom";
-import { CreditCard, BarChart3, RefreshCw, FileSpreadsheet, Repeat } from "lucide-react";
+import { CreditCard, BarChart3, RefreshCw, FileSpreadsheet, Repeat, Link2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAutoRenewalAlerts } from "@/hooks/useAutoRenewalAlerts";
 
@@ -10,9 +10,11 @@ import { DiagnosticsTabContent } from "@/components/admin/payments/DiagnosticsTa
 import { AutoRenewalsTabContent } from "@/components/admin/payments/AutoRenewalsTabContent";
 import { BepaidStatementTabContent } from "@/components/admin/payments/BepaidStatementTabContent";
 import { BepaidSubscriptionsTabContent } from "@/components/admin/payments/BepaidSubscriptionsTabContent";
+import { LinksTabContent } from "@/components/admin/payments/links/LinksTabContent";
 
 const tabs = [
   { id: "transactions", label: "Платежи", icon: CreditCard, path: "/admin/payments" },
+  { id: "links", label: "Ссылки", icon: Link2, path: "/admin/payments/links" },
   { id: "auto-renewals", label: "Автопродления", icon: RefreshCw, path: "/admin/payments/auto-renewals" },
   { id: "bepaid-subs", label: "Подписки BePaid", icon: Repeat, path: "/admin/payments/bepaid-subscriptions" },
   { id: "diagnostics", label: "Диагностика", icon: BarChart3, path: "/admin/payments/diagnostics" },
@@ -76,6 +78,7 @@ export default function AdminPaymentsHub() {
         {/* Tab Content - unified padding */}
         <div className="flex-1 min-h-0 overflow-auto px-3 md:px-4 pb-4">
           {activeTab === "transactions" && <PaymentsTabContent />}
+          {activeTab === "links" && <LinksTabContent />}
           {activeTab === "auto-renewals" && <AutoRenewalsTabContent />}
           {activeTab === "bepaid-subs" && <BepaidSubscriptionsTabContent />}
           {activeTab === "diagnostics" && <DiagnosticsTabContent />}
