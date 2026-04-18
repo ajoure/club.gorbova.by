@@ -29,7 +29,7 @@ Deno.serve(async (req) => {
       const { data: link, error: linkErr } = await supabase
         .from('payment_links')
         .select(`
-          id, url_token, amount, currency, payment_type, description, status,
+          id, url_token, user_id, amount, currency, payment_type, description, status,
           max_uses, current_uses, expires_at,
           products_v2!payment_links_product_id_fkey ( id, name, description, category ),
           tariffs!payment_links_tariff_id_fkey ( id, name, code, access_days )
