@@ -29,8 +29,15 @@ export function FeaturesBlockEditor({ content, onChange }: FeaturesBlockEditorPr
   const layout = (content.layout as string) || "grid";
   const iconMode = (content.iconMode as string) || "";
   const columns = (content.columns as number) || 3;
+  const grid = (content.grid as Record<string, unknown>) || {};
 
   const update = (patch: Record<string, unknown>) => onChange({ ...content, ...patch });
+  const updateGrid = (patch: Record<string, unknown>) => {
+    const next = { ...grid, ...patch };
+    // Удаляем undefined-поля чтобы JSON оставался чистым
+    Object.keys(next).forEach((k) => next[k] === undefined && delete next[k]);
+    update({ grid: Object.keys(next).length === 0 ? undefined : next });
+  };
 
   const addItem = () => update({ items: [...items, { icon: "", title: "", description: "" }] });
   const updateItem = (idx: number, field: string, value: string) => {
