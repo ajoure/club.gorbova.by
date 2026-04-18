@@ -43,13 +43,24 @@ import { copyToClipboard } from "@/utils/clipboardUtils";
 import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
 import { cn } from "@/lib/utils";
 
+/**
+ * mode:
+ *   - "contact" (default) — текущее поведение: ссылка привязывается к контакту,
+ *     показывается блок получателя, доступна Telegram-цепочка.
+ *   - "public" — публичная ссылка без получателя: блок контакта скрыт,
+ *     userId не отправляется в writer, Telegram-логика не рендерится.
+ *     Writer тот же — admin-create-public-link → /pay/:token.
+ */
+export type AdminPaymentLinkDialogMode = "contact" | "public";
+
 interface AdminPaymentLinkDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  userId: string;
+  userId?: string;
   userName?: string;
   userEmail?: string;
   telegramUserId?: number | null;
+  mode?: AdminPaymentLinkDialogMode;
 }
 
 type PaymentType = "one_time" | "subscription";
@@ -153,7 +164,11 @@ export function AdminPaymentLinkDialog({
   userName,
   userEmail,
   telegramUserId,
+  mode = "contact",
 }: AdminPaymentLinkDialogProps) {
+  const isPublicMode = mode === "public";
+  // В public-режиме Telegram-цепочка и contact-блок не должны рендериться.
+  const effectiveTelegramUserId = isPublicMode ? null : telegramUserId;
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [selectedProductId, setSelectedProductId] = useState<string>("");
@@ -441,7 +456,8 @@ export function AdminPaymentLinkDialog({
         "admin-create-public-link",
         {
           body: {
-            user_id: userId, // pre-assign к этому пользователю
+            // В public mode user_id опускаем — ссылка для любого плательщика.
+            ...(isPublicMode ? {} : { user_id: userId }),
             product_id: selectedProductId,
             tariff_id: selectedTariffId,
             offer_id: effectiveOffer.id,
@@ -609,14 +625,18 @@ export function AdminPaymentLinkDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-lg w-[calc(100vw-2rem)] max-h-[90vh] overflow-y-auto p-4 sm:p-6">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Link2 className="h-5 w-5" />
-              Ссылка на оплату
+            <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
+              <Link2 className="h-5 w-5 shrink-0" />
+              <span className="truncate">
+                {isPublicMode ? "Создать публичную ссылку" : "Ссылка на оплату"}
+              </span>
             </DialogTitle>
-            <DialogDescription>
-              Создайте ссылку для самостоятельной оплаты клиентом
+            <DialogDescription className="text-sm">
+              {isPublicMode
+                ? "Ссылка не привязана к пользователю и может быть оплачена любым человеком."
+                : "Создайте ссылку для самостоятельной оплаты клиентом"}
             </DialogDescription>
           </DialogHeader>
 
@@ -624,38 +644,35 @@ export function AdminPaymentLinkDialog({
             <div className="space-y-4">
               <div className="p-4 rounded-lg bg-primary/5 border border-primary/20">
                 <div className="flex items-center gap-2 mb-3">
-                  <CheckCircle className="h-5 w-5 text-primary" />
+                  <CheckCircle className="h-5 w-5 text-primary shrink-0" />
                   <p className="font-medium">Ссылка создана</p>
                 </div>
-                <p className="text-sm text-muted-foreground mb-2">
+                <p className="text-sm text-muted-foreground mb-2 break-words">
                   {selectedProduct?.name} — {selectedTariff?.name} · {amount} BYN
                   {effectivePaymentType === "subscription" ? " (подписка)" : " (разовая)"}
                 </p>
-                <Input
-                  readOnly
-                  value={generatedUrl}
-                  className="font-mono text-xs"
-                  onClick={(e) => (e.target as HTMLInputElement).select()}
-                />
+                <div className="rounded-md border bg-background p-2 font-mono text-xs break-all select-all">
+                  {generatedUrl}
+                </div>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2">
                 <Button
                   variant="outline"
-                  className="flex-1 gap-2"
+                  className="w-full sm:flex-1 gap-2"
                   onClick={() => copyToClipboard(generatedUrl)}
                 >
                   <Copy className="h-4 w-4" />
                   Копировать
                 </Button>
                 <Button
-                  className="flex-1 gap-2"
+                  className="w-full sm:flex-1 gap-2"
                   onClick={() => window.open(generatedUrl, "_blank")}
                 >
                   <ExternalLink className="h-4 w-4" />
                   Открыть
                 </Button>
               </div>
-              {telegramUserId && (
+              {effectiveTelegramUserId && (
                 <Button
                   variant="outline"
                   className="w-full gap-2"
@@ -680,11 +697,13 @@ export function AdminPaymentLinkDialog({
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
-              {/* User info */}
-              <div className="p-3 rounded-lg bg-muted/50 border">
-                <p className="font-medium">{userName || "—"}</p>
-                <p className="text-sm text-muted-foreground">{userEmail}</p>
-              </div>
+              {/* User info — только в contact mode */}
+              {!isPublicMode && (
+                <div className="p-3 rounded-lg bg-muted/50 border">
+                  <p className="font-medium truncate">{userName || "—"}</p>
+                  <p className="text-sm text-muted-foreground truncate">{userEmail}</p>
+                </div>
+              )}
 
               {/* Product */}
               <div className="rounded-lg border bg-card p-4 space-y-2">
@@ -987,9 +1006,10 @@ export function AdminPaymentLinkDialog({
                 */}
                 <Button
                   type="button"
-                  variant={telegramUserId ? "outline" : "default"}
+                  variant={effectiveTelegramUserId ? "outline" : "default"}
                   disabled={isCreateDisabled || combinedPending}
                   onClick={() => createPublicLinkMutation.mutate()}
+                  className="w-full sm:w-auto"
                 >
                   {createPublicLinkMutation.isPending ? (
                     <Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -998,11 +1018,12 @@ export function AdminPaymentLinkDialog({
                   )}
                   Создать ссылку
                 </Button>
-                {telegramUserId && (
+                {effectiveTelegramUserId && (
                   <Button
                     type="button"
                     disabled={isCreateDisabled || combinedPending}
                     onClick={handleCreateAndSendTelegram}
+                    className="w-full sm:w-auto"
                   >
                     {combinedPending ? (
                       <Loader2 className="h-4 w-4 animate-spin mr-2" />
