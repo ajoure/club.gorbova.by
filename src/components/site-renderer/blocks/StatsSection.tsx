@@ -10,6 +10,7 @@
  *   - number + suffix + label + description
  */
 import { cn } from "@/lib/utils";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import type { BlockSettings, IconMode, GridLayout } from "@/services/sitePages/types";
 
 interface StatsItem {
@@ -134,8 +135,8 @@ export function StatsSection({ content, settings }: StatsSectionProps) {
       <div className="max-w-5xl mx-auto">
         {(title || subtitle) && (
           <div className={cn("mb-8", getAlignClass(titleAlign))}>
-            {title && <h2 className="text-3xl font-bold text-foreground mb-2">{title}</h2>}
-            {subtitle && <p className="text-lg text-muted-foreground">{subtitle}</p>}
+            {title && <SafeHtml as="h2" html={title} className="text-3xl font-bold text-foreground mb-2" />}
+            {subtitle && <SafeHtml as="p" html={subtitle} className="text-lg text-muted-foreground" />}
           </div>
         )}
         <div className={cn("grid", colsMobile, colsTablet, colsDesktop, gap)}>
@@ -144,13 +145,13 @@ export function StatsSection({ content, settings }: StatsSectionProps) {
               {renderIcon(item, i, iconMode)}
               <div className="text-3xl md:text-4xl font-bold text-foreground">
                 {item.number}
-                {item.suffix && <span className="text-2xl ml-0.5 text-primary">{item.suffix}</span>}
+                {item.suffix && <SafeHtml as="span" html={item.suffix} className="text-2xl ml-0.5 text-primary" />}
               </div>
               {item.label && (
-                <div className="mt-1 text-sm font-medium text-foreground">{item.label}</div>
+                <SafeHtml as="div" html={item.label} className="mt-1 text-sm font-medium text-foreground" />
               )}
               {item.description && (
-                <div className="mt-1 text-xs text-muted-foreground">{item.description}</div>
+                <SafeHtml as="div" html={item.description} className="mt-1 text-xs text-muted-foreground" />
               )}
             </div>
           ))}

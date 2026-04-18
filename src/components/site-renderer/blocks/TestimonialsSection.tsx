@@ -1,3 +1,5 @@
+import { SafeHtml } from "@/components/ui/SafeHtml";
+
 interface TestimonialsSectionProps {
   content: Record<string, unknown>;
 }
@@ -14,14 +16,14 @@ export function TestimonialsSection({ content }: TestimonialsSectionProps) {
       <div className={`max-w-5xl mx-auto grid gap-6 ${gridCols[columns] || "md:grid-cols-2"}`}>
         {items.map((item, i) => (
           <div key={i} className="border rounded-lg p-6 space-y-3 bg-card">
-            <p className="text-sm text-muted-foreground italic">"{item.text}"</p>
+            <SafeHtml as="p" html={`"${item.text || ""}"`} className="text-sm text-muted-foreground italic" />
             <div className="flex items-center gap-3">
               {item.avatar && (
                 <img src={item.avatar} alt={item.name} className="w-10 h-10 rounded-full object-cover" loading="lazy" />
               )}
               <div>
-                {item.name && <p className="text-sm font-medium text-foreground">{item.name}</p>}
-                {item.role && <p className="text-xs text-muted-foreground">{item.role}</p>}
+                {item.name && <SafeHtml as="p" html={item.name} className="text-sm font-medium text-foreground" />}
+                {item.role && <SafeHtml as="p" html={item.role} className="text-xs text-muted-foreground" />}
               </div>
             </div>
           </div>

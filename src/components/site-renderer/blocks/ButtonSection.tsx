@@ -1,4 +1,5 @@
 import { useSiteVisibility } from "../SiteVisibilityContext";
+import { sanitizeHtml } from "@/lib/sanitization";
 
 interface ButtonSectionProps {
   content: Record<string, unknown>;
@@ -38,7 +39,7 @@ export function ButtonSection({ content, blockId }: ButtonSectionProps) {
     return (
       <section className="py-6 px-6">
         <div className={`max-w-4xl mx-auto ${alignClass}`}>
-          <a href={link} className={baseClass}>{text}</a>
+          <a href={link} className={baseClass} dangerouslySetInnerHTML={{ __html: sanitizeHtml(text) }} />
         </div>
       </section>
     );
@@ -87,7 +88,7 @@ export function ButtonSection({ content, blockId }: ButtonSectionProps) {
   return (
     <section className="py-6 px-6">
       <div className={`max-w-4xl mx-auto ${alignClass}`}>
-        <button type="button" onClick={handleClick} className={baseClass}>{text}</button>
+        <button type="button" onClick={handleClick} className={baseClass} dangerouslySetInnerHTML={{ __html: sanitizeHtml(text) }} />
       </div>
     </section>
   );
