@@ -1,0 +1,1 @@
+ALTER VIEW public.payment_links_enriched_v SET (security_invoker = on);
