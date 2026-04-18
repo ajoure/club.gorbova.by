@@ -234,6 +234,7 @@ export default function PublicPayPage() {
               )}
             </div>
 
+            {/* Non-identity payment errors only — identity errors stay inside form */}
             {error && (
               <div className="flex items-center gap-2 text-destructive text-sm mb-4 p-3 rounded-md bg-destructive/10">
                 <AlertCircle className="h-4 w-4 shrink-0" />
@@ -241,7 +242,8 @@ export default function PublicPayPage() {
               </div>
             )}
 
-            {/* States 1 & 2: pre-bound target user OR session user → just pay */}
+            {/* States 1 & 2: pre-bound target user OR session user → just pay
+                Hard guard: if has_target_user, NEVER mount InlineAuthForm. */}
             {!needsIdentity && (
               <Button
                 size="lg"
@@ -259,15 +261,23 @@ export default function PublicPayPage() {
 
             {/* State 3: guest + no target user → shared inline auth (email/login/signup/forgot) */}
             {needsIdentity && (
-              <InlineAuthForm
-                initialEmail={user?.email || ''}
-                onAuthenticated={handleGuestAuthenticated}
-                contextNote="Для оформления оплаты подтвердите email или войдите в аккаунт."
-                emailCtaLabel="Продолжить"
-                loginCtaLabel="Войти и оплатить"
-                signupCtaLabel="Зарегистрироваться и оплатить"
-                externalLoading={isProcessing}
-              />
+              <>
+                {identityError && (
+                  <div className="flex items-center gap-2 text-destructive text-sm mb-3 p-3 rounded-md bg-destructive/10">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <span>{identityError}</span>
+                  </div>
+                )}
+                <InlineAuthForm
+                  initialEmail={user?.email || ''}
+                  onAuthenticated={handleGuestAuthenticated}
+                  contextNote="Для оформления оплаты подтвердите email или войдите в аккаунт."
+                  emailCtaLabel="Продолжить"
+                  loginCtaLabel="Войти и оплатить"
+                  signupCtaLabel="Зарегистрироваться и оплатить"
+                  externalLoading={isProcessing}
+                />
+              </>
             )}
 
             <p className="text-xs text-center text-muted-foreground mt-4">
