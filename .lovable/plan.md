@@ -1,135 +1,86 @@
-&nbsp;
-
-да, согласен, с учетом правок:
-
-1. **Фикс 1 сделать максимально узким:**  
-сначала добавить индекс на orders_v2 ((meta->>'payment_link_id')) WHERE meta ? 'payment_link_id' и проверить, уходит ли timeout.  
-**Не пересоздавать view заранее**, если один индекс уже решает проблему. Пересоздание view делать только если после индекса запрос всё ещё тяжёлый. Это снизит риск лишних изменений.
-2. В proof по производительности показать **before / after**:
-  - до фикса: ошибка 57014 statement timeout;
-  - после фикса: запрос к payment_links_enriched_v успешен;
-  - в UI видно 13 строк;
-  - новая ссылка тоже появляется.
-3. Если всё же будешь оптимизировать view, **контракт колонок оставить 1:1 без изменений**.  
-usePaymentLinks.ts и UI трогать не надо.
-4. Для UX в AdminPaymentLinkDialog зафиксируй точную логику:
-  - если telegramUserId есть → основная кнопка: **«Создать и отправить в Telegram»**;
-  - если telegramUserId нет → основная кнопка: **«Создать ссылку»**;
-  - на success-экране оставить:
-    - «Копировать»
-    - «Открыть»
-    - «Отправить в Telegram» только если Telegram привязан.
-5. Важно: **не заменять canonical mutation цепочку**.  
-Должно быть так:  
-
-  - сначала createLinkMutation;
-  - только после успешного получения URL — sendToTelegramMutation;
-  - если Telegram-отправка не удалась, сама ссылка всё равно уже создана, и пользователь должен её видеть/скопировать.  
-  Нельзя делать так, чтобы сбой Telegram ломал создание ссылки.
-6. В toast / UX разделить результаты:
-  - если обе операции успешны → «Ссылка создана и отправлена клиенту в Telegram»
-  - если ссылка создана, но Telegram не отправился → «Ссылка создана, но отправка в Telegram не удалась»
-  - это важно, чтобы не потерять уже созданную ссылку.
-7. В proof по Telegram покажи именно **одношаговый сценарий**:
-  - из карточки контакта;
-  - одно нажатие;
-  - ссылка создалась;
-  - сообщение ушло;
-  - новый URL появился в таблице «Ссылки».
-8. В финальном отчёте отдельно зафиксируй:
-  - root cause пустой таблицы: **не права, а timeout view**;
-  - root cause UX-проблемы Telegram: **кнопка была не удалена, а спрятана во второй шаг**;
-  - оба фикса не создают новый payment-path.
-9. DoD дополни ещё двумя пунктами:
-  - **вкладка «Ссылки» показывает и старые, и только что созданные ссылки без рефреш-багов;**
-  - **ссылка, созданная из карточки контакта, сразу видна в общей таблице «Ссылки».**
+Согласен. Выполнить план. Проверить в режиме симуляции и подтвердить исправления скринами.
 
 &nbsp;
 
-В остальном план правильный: причина найдена точно, фиксы узкие и без лишнего вмешательства.
+## Что нашёл (discovery)
 
-## Что найдено (discovery)
+### Баг A: «Создать ссылку» из вкладки «Ссылки» падает
 
-### Дефект 1: «Платежи → Ссылки» показывает 0 строк, хотя в БД 13
+По скриншоту видно: открывается `CreatePublicLinkDialog`, заполнены продукт/тариф/сумма 900 BYN, нажатие на «Создать ссылку» приводит к ошибке (toast скрыт за «Approval needed»).
 
-Реальная причина — **statement timeout 57014** на запросе к `payment_links_enriched_v`. Сетевые логи показывают `{"code":"57014","message":"canceling statement due to statement timeout"}`. Это НЕ RLS и НЕ permissions (GRANT уже выдан, RLS корректна).
+В коде `CreatePublicLinkDialog.tsx` — **двойная конвертация суммы**:
 
-Внутри view три коррелированных subquery в `orders_v2` на каждую строку:
+- `useEffect`: `setAmount(String(Number(effectiveOffer.amount)))` (offer.amount уже в BYN — ок)
+- но при сабмите: `amount: Math.round(amt * 100)` — отправляет в writer **копейки**, хотя весь остальной канон (включая `AdminPaymentLinkDialog` и writer `admin-create-public-link`) ожидает **BYN**.
+- Дополнительно: writer `admin-create-public-link` валидирует `offer_id`/`tariff_id` строго; если что-то из них null/неправильное — 400.
 
-- `count(*) … where meta->>'payment_link_id' = pl.id`
-- `count(*) … where meta->>'payment_link_id' = pl.id AND status='paid'`
-- `select id … order by created_at desc limit 1`
+Нужно:
 
-В таблице **2876 заказов**, индекса по `meta->>'payment_link_id'` **нет**. Под admin-RLS на `orders_v2` (которая ещё и сложная) — три full-scan через JSONB на каждую из 13 ссылок ⇒ timeout. Поэтому новая только что созданная ссылка тоже «не появляется» — запрос просто падает.
+1. Убрать `* 100` — отправлять `amt` (BYN), как делает `AdminPaymentLinkDialog`.
+2. Подтвердить контракт writer'а (прочитать `supabase/functions/admin-create-public-link/index.ts`) — что `amount` действительно ожидается в BYN, и что 400-ответ корректно прокидывается в UI.
+3. Прочитать актуальные edge function logs `admin-create-public-link` для подтверждения причины 400/500.
 
-### Дефект 2: «Кнопка Telegram пропала из карточки контакта»
+### Баг B: таблица «Ссылки» по-прежнему пустая
 
-Кнопка **на месте** — в `AdminPaymentLinkDialog.tsx:584-598`, появляется когда у контакта `telegramUserId` задан. Но:
+После последней миграции (LATERAL + index) проверим SQL-фактом:
 
-- она появляется **только после** создания ссылки (двухшаговый UX);
-- пользователь хочет **одношаговый** flow: «Создать и отправить в Telegram» в одно нажатие, заменив бесполезную «Создать и открыть».
+- `SELECT count(*) FROM payment_links_enriched_v` под admin → должен быть 13.
+- Если view возвращает строки в SQL, но UI пуст — значит проблема не в БД, а в клиенте: например, RLS под `authenticated` JWT не пропускает (admin-роль проверяется по `has_role(auth.uid(),'admin')`, но текущий пользователь в preview может не иметь роли).
+- Проверим: `SELECT has_role(auth.uid(),'admin')` для текущего пользователя preview через `supabase--read_query` нельзя (нет JWT-контекста), поэтому посмотрим `user_roles` для текущего auth-пользователя preview и сетевой ответ от PostgREST в `usePaymentLinks`.
 
-Текст уведомления и контракт `telegram-send-notification` уже работают — переиспользую как есть, без нового пути.
+Если view всё ещё в timeout — упростим запрос дальше (например, временно уберём `last_order_id` через subquery, оставим только counts). Если RLS блокирует — проблема была всегда, и не в этом спринте, но зафиксируем для пользователя.
 
-### Что НЕ менять (явно)
+### Баг C (из прошлого сообщения, остаётся в плане)
 
-- `admin-create-public-link`, `admin-create-payment-link` — canonical writers.
-- `telegram-send-notification` — уже шлёт ровно тот формат, что нужен.
-- `public-checkout`, `bepaid-webhook`, `_shared/create-payment-checkout.ts`.
-- RLS на `payment_links` / `orders_v2`.
+- В `AdminPaymentLinkDialog` нет кнопки «Создать ссылку» без отправки в Telegram → нужен выбор: «Создать ссылку» (всегда) и «Создать и отправить в Telegram» (если Telegram привязан).
+- URL генерится на preview-домене → проверю writer и решу, нужно ли фиксить canonical base URL.
 
-## План фикса (две точечные правки)
+## План фикса
 
-### Фикс 1. Производительность view → таблица оживёт
+### Фикс 1 — `CreatePublicLinkDialog.tsx` (баг A)
 
-**Миграция (add-only):**
+- Убрать `* 100`, отправлять `amount: amt` (BYN) — синхронизация с `AdminPaymentLinkDialog` и каноническим контрактом writer'а.
+- Убрать дубликат «Сумма (BYN)» — оставить как есть, но без множителя.
+- Улучшить отображение ошибки writer'а через `normalizeEdgeFunctionError` (как в остальных диалогах).
 
-1. Создать частичный B-tree индекс на `orders_v2` по выражению JSONB:
-  ```sql
-   CREATE INDEX IF NOT EXISTS idx_orders_v2_payment_link_id
-     ON public.orders_v2 ((meta->>'payment_link_id'))
-     WHERE meta ? 'payment_link_id';
-  ```
-   Это превратит три seq-scan по 2876 строкам в три index-lookup на каждую ссылку.
-2. На всякий случай оптимизировать сам view: объединить два count в один агрегат (`count(*) FILTER (WHERE status='paid')`) и `last_order_id` тем же LATERAL — без изменения контракта колонок (хук читает те же поля). View пересоздаётся с теми же `security_invoker=on` и GRANT.
+### Фикс 2 — диагностика таблицы «Ссылки» (баг B)
 
-После этого:
+- Прочитать `supabase/functions/admin-create-public-link/index.ts` — подтвердить контракт `amount`.
+- Через `supabase--read_query`: `SELECT count(*) FROM payment_links` и `SELECT count(*) FROM payment_links_enriched_v` — убедиться, что view отдаёт строки на SQL-уровне.
+- Через `supabase--analytics_query`: посмотреть последние ошибки PostgREST/postgres logs на `payment_links_enriched_v`.
+- Через `supabase--curl_edge_functions` или `supabase--read_query`: проверить, нет ли блокировки RLS-уровня (роль `admin` у текущего preview-пользователя).
+- По результатам — либо ещё одна узкая правка view, либо вердикт «view ок, а у preview-пользователя нет admin-роли» (тогда покажу как починить роль).
 
-- `payment_links_enriched_v` отвечает мгновенно;
-- видны все 13 исторических ссылок;
-- новая ссылка пользователя появится сразу.
+### Фикс 3 — `AdminPaymentLinkDialog.tsx` (баг C, из предыдущего плана)
 
-### Фикс 2. Карточка контакта — «Создать и отправить в Telegram»
+- На первом экране две кнопки:
+  - Telegram привязан → primary «Создать и отправить в Telegram», secondary «Создать ссылку».
+  - Telegram не привязан → одна кнопка «Создать ссылку».
+- Если Telegram-отправка упала, ссылка всё равно сохраняется и показывается на success-экране (toast: «Ссылка создана, но отправка в Telegram не удалась»).
+- Success-экран без изменений: «Скопировать», «Открыть», «Отправить в Telegram» (если привязан).
 
-В `AdminPaymentLinkDialog.tsx`:
+### Фикс 4 — canonical base URL (баг про lovable.dev в ссылке)
 
-- Заменить кнопку «Создать и открыть» на **«Создать и отправить в Telegram»** (видна только если `telegramUserId` задан; если Telegram не привязан — оставить просто «Создать ссылку»).
-- Реализация: одна цепочка mutation — сначала `createLinkMutation` (canonical writer), при успехе сразу `sendToTelegramMutation` (тот же существующий путь).
-- На экране успеха оставить «Скопировать», «Открыть», и (если Telegram привязан) повторную «Отправить в Telegram» — на случай, если нужно переслать.
-- Никаких новых edge functions, никакого второго writer'а, никакого нового формата сообщения — переиспользую то, что уже есть.
+- Прочитать writer и решить:
+  - если URL берётся из `req.headers.origin` → preview-домен в preview ожидаем, в production будет prod-домен ⇒ оставляю как есть, фиксирую в отчёте.
+  - если зашит неправильно → правлю через ENV `PUBLIC_SITE_URL` или конфиг.
 
 ## Файлы
 
-**Изменяю:**
+**Изменю:**
 
-- `src/components/admin/AdminPaymentLinkDialog.tsx` — UX «создать и отправить в Telegram», замена кнопки.
+- `src/components/admin/payments/links/CreatePublicLinkDialog.tsx` — убрать `* 100`, использовать `normalizeEdgeFunctionError`.
+- `src/components/admin/AdminPaymentLinkDialog.tsx` — две кнопки, fallback при сбое Telegram.
+- (возможно) `supabase/functions/admin-create-public-link/index.ts` — только если URL формируется неправильно для prod.
+- (возможно) ещё одна миграция view — только если SQL-проверка покажет, что view всё ещё в timeout.
 
-**Новая миграция:**
-
-- индекс `idx_orders_v2_payment_link_id` + пересоздание view `payment_links_enriched_v` с тем же контрактом и `security_invoker=on` + GRANT SELECT TO authenticated.
-
-**НЕ трогаю:** все edge functions, `usePaymentLinks.ts` (контракт колонок сохраняется), RLS, writers, webhook, consume.
-
-## Proof после фикса
-
-1. `EXPLAIN` показывает index-scan вместо seq-scan по `orders_v2`.
-2. `/admin/payments/links` показывает 13 строк, включая только что созданную.
-3. Из карточки контакта одним нажатием создаётся ссылка и приходит в Telegram пользователя — toast «Ссылка отправлена клиенту в Telegram».
-4. Сетевой запрос к view возвращает 200 за < 500мс.
+**НЕ трогаю:** writers логику создания записей, telegram-send-notification, RLS на `payment_links`/`orders_v2`, `usePaymentLinks.ts` (контракт колонок сохраняется), webhook, consume, grant-access.
 
 ## DoD
 
-- `payment_links_enriched_v` отвечает без timeout под admin JWT.
-- Все исторические + новые ссылки видны в UI.
-- Из карточки контакта одна кнопка делает обе операции (создать + отправить).
-- Никакого нового payment-path, нового writer'а или дубля Telegram-логики.
+1. Из вкладки «Ссылки» одной кнопкой создаётся публичная ссылка на 900 BYN, без ошибки, и сразу появляется в таблице.
+2. Таблица показывает все 13 исторических ссылок + только что созданную.
+3. Из карточки контакта есть выбор: «Создать ссылку» (без Telegram) и «Создать и отправить в Telegram» (если привязан).
+4. Сбой Telegram не теряет уже созданную ссылку.
+5. По домену в URL: либо подтверждено, что preview-домен ожидаем для preview, либо зафиксирован canonical prod-URL.
+6. Никакого нового payment-path, нового writer'а, дубля Telegram-логики, изменений RLS.
