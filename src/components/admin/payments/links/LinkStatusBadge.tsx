@@ -12,7 +12,7 @@ export function LinkStatusBadge({ link }: { link: PaymentLinkRow }) {
     return <Badge variant="secondary">Исчерпана</Badge>;
   }
   if (link.status === "active") {
-    return <Badge className="bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/20 border-emerald-500/30">Активна</Badge>;
+    return <Badge variant="default">Активна</Badge>;
   }
   return <Badge variant="outline">{link.status}</Badge>;
 }
