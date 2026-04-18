@@ -42,18 +42,31 @@ const SHADOW_MAP: Record<string, string> = {
   none: "shadow-none", sm: "shadow-sm", md: "shadow-md", lg: "shadow-lg",
 };
 
+// Whitelist of border-opacity classes Tailwind safelist can guarantee.
+// Any opacity value snaps DOWN to nearest 10% step.
+const BORDER_OPACITY_MAP: Record<number, string> = {
+  10: "border-border/10", 20: "border-border/20", 30: "border-border/30",
+  40: "border-border/40", 50: "border-border/50", 60: "border-border/60",
+  70: "border-border/70", 80: "border-border/80", 90: "border-border/90",
+  100: "border-border",
+};
+
+function resolveBorderClass(opacity: number | undefined): string {
+  if (opacity === undefined || opacity >= 100) return "border-border";
+  if (opacity <= 0) return "border-transparent";
+  const snapped = Math.max(10, Math.min(100, Math.round(opacity / 10) * 10));
+  return BORDER_OPACITY_MAP[snapped] ?? "border-border";
+}
+
 function getCardClasses(settings?: BlockSettings): string {
   const style = settings?.cardStyle ?? "plain";
   const radius = RADIUS_MAP[settings?.cardRadius ?? "lg"];
   const shadow = SHADOW_MAP[settings?.cardShadow ?? "none"];
-  const opacity = settings?.borderOpacity ?? 100;
+  const borderClass = resolveBorderClass(settings?.borderOpacity);
 
   if (style === "plain") return "";
   if (style === "bordered") {
-    return cn(
-      "border bg-card p-6", radius, shadow,
-      opacity < 100 ? `border-border/${Math.round(opacity / 10) * 10}` : "border-border",
-    );
+    return cn("border bg-card p-6", borderClass, radius, shadow);
   }
   if (style === "glass") {
     return cn("border border-border/40 bg-card/60 backdrop-blur-sm p-6", radius, shadow);

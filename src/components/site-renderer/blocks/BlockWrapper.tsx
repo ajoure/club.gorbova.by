@@ -8,6 +8,7 @@
  * - data-block-id={blockId} для runtime querySelector (show/toggle/open_form)
  * - hidden если runtime visibility = false
  */
+import { useEffect, useState } from "react";
 import { blockSettingsSchema } from "@/services/sitePages/types";
 import type { BlockSettings } from "@/services/sitePages/types";
 import { cn } from "@/lib/utils";
@@ -17,6 +18,21 @@ interface BlockWrapperProps {
   settings: Record<string, unknown>;
   blockId?: string;
   children: React.ReactNode;
+}
+
+/** Tracks viewport mobile state for runtime mobilePadding overrides. */
+function useIsMobile(): boolean {
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== "undefined" ? window.matchMedia("(max-width: 767px)").matches : false,
+  );
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(max-width: 767px)");
+    const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  return isMobile;
 }
 
 const MAX_WIDTH_MAP: Record<string, string> = {
@@ -30,6 +46,7 @@ const MAX_WIDTH_MAP: Record<string, string> = {
 export function BlockWrapper({ settings: rawSettings, blockId, children }: BlockWrapperProps) {
   const settings = blockSettingsSchema.parse(rawSettings) as BlockSettings;
   const visibility = useSiteVisibility();
+  const isMobile = useIsMobile();
 
   // Runtime visibility — учитываем initial + actions из контекста
   const runtimeVisible = blockId ? visibility.isVisible(blockId) : true;
@@ -37,9 +54,15 @@ export function BlockWrapper({ settings: rawSettings, blockId, children }: Block
     return null;
   }
 
+  // Mobile padding overrides — применяются только когда явно заданы И viewport мобильный.
+  const effectivePaddingTop =
+    isMobile && settings.mobilePaddingTop !== undefined ? settings.mobilePaddingTop : settings.paddingTop;
+  const effectivePaddingBottom =
+    isMobile && settings.mobilePaddingBottom !== undefined ? settings.mobilePaddingBottom : settings.paddingBottom;
+
   const outerStyle: React.CSSProperties = {};
-  if (settings.paddingTop) outerStyle.paddingTop = `${settings.paddingTop}px`;
-  if (settings.paddingBottom) outerStyle.paddingBottom = `${settings.paddingBottom}px`;
+  if (effectivePaddingTop) outerStyle.paddingTop = `${effectivePaddingTop}px`;
+  if (effectivePaddingBottom) outerStyle.paddingBottom = `${effectivePaddingBottom}px`;
   if (settings.backgroundColor) outerStyle.backgroundColor = settings.backgroundColor;
   if (settings.textColor) outerStyle.color = settings.textColor;
   if (settings.backgroundImage) {
@@ -59,6 +82,8 @@ export function BlockWrapper({ settings: rawSettings, blockId, children }: Block
   const isDefault =
     !settings.paddingTop &&
     !settings.paddingBottom &&
+    settings.mobilePaddingTop === undefined &&
+    settings.mobilePaddingBottom === undefined &&
     !settings.backgroundColor &&
     !settings.backgroundImage &&
     !settings.textColor &&

@@ -4,7 +4,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Trash2 } from "lucide-react";
-import { ICON_MODES } from "@/services/sitePages/types";
+import { ICON_MODES, type IconMode } from "@/services/sitePages/types";
+
+const ICON_MODE_LABELS: Record<IconMode, string> = {
+  none: "Без иконки",
+  circle: "Круглая",
+  square: "Квадратная",
+  numbered: "Номер",
+};
 
 interface StatsItem {
   number?: string;
@@ -72,7 +79,7 @@ export function StatsBlockEditor({ content, onChange }: StatsBlockEditorProps) {
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
               {ICON_MODES.map((m) => (
-                <SelectItem key={m} value={m}>{m}</SelectItem>
+                <SelectItem key={m} value={m}>{ICON_MODE_LABELS[m]}</SelectItem>
               ))}
             </SelectContent>
           </Select>

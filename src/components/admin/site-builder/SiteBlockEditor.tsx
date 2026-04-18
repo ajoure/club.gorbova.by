@@ -190,7 +190,12 @@ function SortableBlock({ block, registry, onUpdate, onUpdateSettings, onDelete }
         <CardContent className="p-4">
           <BlockEditorComponent block={block} onChange={onUpdate} registry={registry} />
           {showSettings && (
-            <BlockSettingsEditor settings={parsedSettings} onChange={onUpdateSettings} otherAnchorIds={otherAnchorIds} />
+            <BlockSettingsEditor
+              settings={parsedSettings}
+              onChange={onUpdateSettings}
+              otherAnchorIds={otherAnchorIds}
+              blockType={block.type}
+            />
           )}
         </CardContent>
       </Card>
