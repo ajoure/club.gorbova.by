@@ -23,6 +23,7 @@ telegram-ai-analyze-prompt
 # P1 — Important (32)
 admin-manual-charge
 admin-create-payment-link
+admin-create-public-link
 admin-payments-diagnostics
 auth-actions
 auth-check-email
