@@ -34,6 +34,7 @@ import { useDragSelect } from "@/hooks/useDragSelect";
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { useFormsColumns } from "@/hooks/useFormsColumns";
 import type { FormsHubRow } from "@/hooks/useFormsHubData";
+import { ClickableContactName } from "@/components/admin/ClickableContactName";
 
 const SOURCE_CONFIG = {
   site_form: {
@@ -174,7 +175,13 @@ export function FormsHubTable({
       case "client":
         return (
           <TableCell key={col.key} style={{ width: col.width }}>
-            <div className="font-medium text-sm truncate">{row.client_name}</div>
+            <ClickableContactName
+              userId={row.user_id}
+              profileId={row.profile_id}
+              name={row.client_name}
+              fromPage="forms"
+              className="text-sm truncate"
+            />
           </TableCell>
         );
       case "email":
