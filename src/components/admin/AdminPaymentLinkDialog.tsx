@@ -1006,9 +1006,10 @@ export function AdminPaymentLinkDialog({
                 */}
                 <Button
                   type="button"
-                  variant={telegramUserId ? "outline" : "default"}
+                  variant={effectiveTelegramUserId ? "outline" : "default"}
                   disabled={isCreateDisabled || combinedPending}
                   onClick={() => createPublicLinkMutation.mutate()}
+                  className="w-full sm:w-auto"
                 >
                   {createPublicLinkMutation.isPending ? (
                     <Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -1017,11 +1018,12 @@ export function AdminPaymentLinkDialog({
                   )}
                   Создать ссылку
                 </Button>
-                {telegramUserId && (
+                {effectiveTelegramUserId && (
                   <Button
                     type="button"
                     disabled={isCreateDisabled || combinedPending}
                     onClick={handleCreateAndSendTelegram}
+                    className="w-full sm:w-auto"
                   >
                     {combinedPending ? (
                       <Loader2 className="h-4 w-4 animate-spin mr-2" />
