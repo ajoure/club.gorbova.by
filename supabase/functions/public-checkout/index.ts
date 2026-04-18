@@ -71,6 +71,10 @@ Deno.serve(async (req) => {
         currency: link.currency,
         description: link.description,
         payment_type: link.payment_type,
+        // Canonical: payment_links.user_id = recipient of result, NOT a payer guard.
+        // UI uses these flags to decide whether to ask for email / show inline auth.
+        has_target_user: !!link.user_id,
+        requires_identity_input: !link.user_id,
       });
     }
 
@@ -109,20 +113,27 @@ Deno.serve(async (req) => {
       return errorResponse('Payment link usage limit reached', 410);
     }
 
-    // Determine user_id: either pre-assigned on link, or find/create by email
-    let userId = link.user_id;
+    // Canonical target-user resolution for public payment links:
+    //   1) link.user_id present  → ALWAYS use it (recipient pre-bound, no login required)
+    //   2) link.user_id absent + email provided → find user by email
+    //   3) link.user_id absent + no email → ask UI to collect email/identity (NOT a login requirement)
+    let userId: string | null = link.user_id || null;
 
     if (!userId && email) {
-      // Try to find user by email
       const { data: existingUsers } = await supabase.auth.admin.listUsers();
       const found = existingUsers?.users?.find(
         (u: any) => u.email?.toLowerCase() === email.toLowerCase()
       );
       userId = found?.id || null;
+      if (!userId) {
+        return errorResponse('Пользователь с таким email не найден. Завершите регистрацию и повторите оплату.', 400);
+      }
     }
 
     if (!userId) {
-      return errorResponse('Для оплаты необходимо войти в аккаунт или указать email', 400);
+      // Only reached when link has no target user AND no email was provided.
+      // Login is NEVER required — UI must collect email/inline-auth.
+      return errorResponse('Укажите email для оформления оплаты', 400);
     }
 
     // Determine origin for return URLs
