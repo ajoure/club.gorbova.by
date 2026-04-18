@@ -1,225 +1,166 @@
-да, согласен, с учетом правок:
-
-1. **site-form-upload оставляй как новый узкий edge function — это правильно**, но сервер не должен доверять allowedGroups / maxSizeMB / maxFiles, пришедшим с клиента.  
-Добавь в план жёсткое правило:
-  - клиент передаёт только submission_token, field_id, файл и идентификатор формы/страницы;
-  - сервер сам находит **опубликованную конфигурацию FormBlock** и валидирует файл по настройкам поля;
-  - если такую конфигурацию на сервере быстро и надёжно не поднять — тогда честно фиксируй, что в первой итерации сервер применяет только **глобальный безопасный allowlist + hard size limit**, а field-level ограничения работают только в UI и переносятся во 2-й патч.
-2. **submission_token нужно формализовать как часть контракта.**  
-Добавь отдельный пункт:
-  - когда и где генерируется;
-  - один токен на одну открытую форму;
-  - как он прокидывается в upload и затем в final submit;
-  - как по нему потом связываются несколько файлов одной отправки.
-3. Нужен **guard на “осиротевшие” загрузки**.  
-Сейчас план описывает upload до submit, но не говорит, что делать, если пользователь загрузил файл и не отправил форму.  
-Добавь в отчёт/план:  
-
-  - либо это допустимо как временный мусор и чистится отдельным cron/maintenance;
-  - либо site-form-submit помечает реально использованные файлы, а orphan cleanup идёт отдельно.  
-  Сейчас хотя бы зафиксируй это как **осознанное ограничение первой итерации**, чтобы потом не потерять.
-4. Для file и multi-file зафиксируй контракт **однозначно**:
-  - maxFiles = 1 → хранится один object;
-  - maxFiles > 1 → хранится массив objects;
-  - в detail-view и renderer это различается явно, без эвристик.
-5. По OptionsEditor:
-  - сначала действительно проверь, есть ли уже выделяемый компонент;
-  - если нет, новый OptionsEditor допустим;
-  - **но не лезь рефакторить quiz-блоки в этом спринте**, если это повышает риск.  
-  То есть: можно сделать общий компонент для будущего reuse, но не надо ради этого трогать lesson-editor, если он сейчас стабилен.
-6. Для FormsHubTable не перегружай таблицу.  
-Правильнее, как ты и написал:
-  - compact preview;
-  - основное раскрытие — в detail dialog.  
-  Это надо прямо зафиксировать как продуктовое решение, чтобы потом не пытались впихнуть все ответы в строки таблицы.
-7. Для training-assets-download добавь в план явный security-пункт:
-  - form-uploads/ скачиваются **только админом / superadmin**;
-  - публичного прямого download по path нет;
-  - ссылка в /admin/forms всегда идёт через proxy-download, не в Storage напрямую.
-8. По site-form-submit:
-  - недостаточно “убедиться, что не ломает unknown types”;  
-  добавь проверку, что он **не мутирует** структуру form_data, особенно:
-  - не stringify-массивы;
-  - не stringify-объекты файла;
-  - не превращает boolean/number в строки.  
-  Это отдельный proof-пункт.
-9. В DoD добавь отдельный пункт:
-  - **повторное открытие заявки в /admin/forms показывает те же типы без потери структуры после чтения из БД**, то есть round-trip proof: renderer → submit → jsonb → admin detail.
-10. И ещё одна важная граница:
+## да, согласен, с учетом правок:
 
 &nbsp;
 
-- FormBlock расширяем как **базовый сайтовый сборщик ответов**;
-- QuestionnaireBlockEditor не трогаем и не “выравниваем один в один”.  
-Это стоит отдельно повторить в финальном отчёте как архитектурный принцип.
-
-Итог: план хороший и в правильную сторону.  
-Главная обязательная правка — **server-side upload validation не должна опираться на клиентские настройки поля**, иначе тип file получится небезопасным.
+1. **Сanitizer делать централизованно и переиспользуемо.**
+  Поддерживаю stripTechnicalSuffix(label) + getFieldDisplayLabel(), но зафиксируй правило:
+  &nbsp;
+  - stripTechnicalSuffix() применяется **только для display**;
+  - исходный label в state/JSON/БД не меняется;
+  - detail в /admin/forms тоже использует тот же helper, а не свою отдельную логику.
+  &nbsp;
+2. **Список вырезаемых суффиксов расширь и нормализуй.**
+  Удалять не только (boolean|select|multiselect|date|number|file|file single|file multi|text|email|phone|password), но и:
+  &nbsp;
+  - пробелы перед скобками;
+  - регистр любой;
+  - варианты с дефисом/underscore: file-single, multi-select, multi_select;
+  - повторные хвосты в конце, если их по ошибке несколько.
+  &nbsp;
+  Но вырезать **только хвост в конце строки**, чтобы не ломать нормальные названия.
+3. **По DoD формулировку про “нативные input не остаются” поправить.**
+  Это слишком жёстко и может быть технически неверно, потому что:
+  &nbsp;
+  - shadcn Checkbox/RadioGroup/Select внутри всё равно могут использовать native input;
+  - file upload почти всегда держится на скрытом native <input type="file">.
+  &nbsp;
+  Правильная формулировка:
+  &nbsp;
+  - в FormSection.tsx не должно остаться **голых, нестилизованных** нативных контролов в визуальном UI;
+  - скрытый native file input допустим как техническая реализация, если визуально используется shadcn-кнопка.
+  &nbsp;
+4. **Date picker не должен ломать submit-контракт.**
+  При замене input type="date" на Calendar + Popover обязательно сохранить:
+  &nbsp;
+  - значение в submit как YYYY-MM-DD;
+  - ту же валидацию required;
+  - отсутствие timezone-сдвига.
+  &nbsp;
+  Это отдельный stop-guard: не хранить Date.toISOString() вместо локальной даты поля.
+5. **Boolean-рендер зафиксируй явно.**
+  Для boolean оставляем два варианта **Да / Нет** через RadioGroup, а не Switch.
+  Это лучше для анкет и однозначно в данных даёт true/false, без двусмысленного “включено/выключено”.
+6. **Multiselect — без нового сложного компонента.**
+  Правильно использовать Checkbox + label в группе. Не делать кастомный dropdown multiselect, чтобы не раздувать скоуп и не плодить новый UI-паттерн.
+7. **Preview и публичная форма должны остаться на одном компоненте.**
+  Подчеркни это в плане:
+  &nbsp;
+  - FormSection.tsx — единый источник UI для preview и public;
+  - никаких отдельных preview-компонентов.
+  &nbsp;
+8. **В редакторе FormBlockEditor убрать технические хвосты не только у auth-полей.**
+  Проверить все места, где label поля показывается:
+  &nbsp;
+  - список полей;
+  - summary;
+  - preview внутри редактора;
+  - auth-поля;
+  - возможные helper-labels.
+  &nbsp;
+  Не ограничиваться только одним местом.
+9. **Шапку редактора чинить только layout-ом, без изменения структуры страницы.**
+  То есть:
+  &nbsp;
+  - не переносить бизнес-кнопки в новые панели;
+  - не менять маршруты/табы;
+  - только корректный responsive layout header-блока.
+  &nbsp;
+10. **Proof-скрины дополни ещё одной проверкой.**
+  Помимо 4 скринов, в финальном отчёте отдельно перечислить:
+  &nbsp;
+  - какой legacy label был до sanitizer;
+  - как он отображается после sanitizer;
+  - пример минимум для boolean, select, multiselect, file multi.
+  &nbsp;
 
 &nbsp;
 
-## Что нашёл (discovery)
+&nbsp;
 
-### 1. Upload-механизмы в проекте
+Итог: план хороший, можно запускать.
 
-Прочитал:
+Главное — не менять данные, не трогать submit/upload, и поправить DoD про “без нативных input” на более точную формулировку про отсутствие **голых** контролов.
 
-- `src/components/admin/lesson-editor/blocks/uploadToTrainingAssets.ts` — для admin/auth uploads, путь `student-uploads/{user.id}/...`, требует `auth.uid()`.
-- `supabase/functions/training-assets-download/index.ts` — безопасный proxy-download, проверяет JWT + admin role, **не подходит для публичной формы** (гость не имеет JWT).
-- `src/components/site-renderer/blocks/SiteFormBlock.tsx` (если есть) и `supabase/functions/site-form-submit/` — публичный submit без auth.
+&nbsp;
 
-**Вывод:** готового signed-upload-helper для гостей **нет**. Есть два пути:
+Дополнение к плану: визуальный апгрейд preview формы под стиль CRM «Сделки»
 
-- **Путь A (предпочтительный, безопаснее):** новая edge function `site-form-upload` — принимает файл от гостя (multipart), валидирует MIME/size/extension/submission_token, кладёт через service_role в `training-assets/form-uploads/{submission_token}/...`. Bucket остаётся **закрытым** для anonymous INSERT. Чтение — через существующий `training-assets-download` (расширить allowlist на `form-uploads/` + admin-only check).
-- **Путь B:** signed upload URL через service_role edge function (`site-form-upload-token`) → клиент кладёт напрямую в Storage по signed URL. Сложнее, но дешевле для крупных файлов.
+### Контекст
 
-**Решение:** Путь A. Меньше кода, контроль на сервере, не открываем RLS на анонимный INSERT.
+На скрине 1 — эталон стиля (CRM /admin/deals?view=board): мягкие нейтральные тона, скруглённые карточки, тонкие границы `border-border/60`, аккуратные badge'и, иконки с приглушённым акцентом. На скрине 2 — текущий preview формы: голые HTML `<input type="date">`, нативные `<select>`, нативные `<input type="checkbox">` и `<input type="radio">` без shadcn-обёрток. Плюс к label полей дописан технический type — `(boolean)`, `(select)`, `(multiselect)`, `(date)`, `(number)`, `(file single)`, `(file multi)`. Это и есть «английские хвосты», но они приходят не из кода рендера, а **из самого `field.label` в JSON-блоке** (тестовая страница так заведена).
 
-### 2. Контракт значения «Файл» в `form_data`
+### Что добавляется к ранее одобренному плану
 
-Зафиксирую структурированный объект:
+**A. Решение по «английским хвостам» — двухслойное:**
 
-```json
-{
-  "type": "file",
-  "path": "form-uploads/{token}/{uuid}-{safeName}",
-  "filename": "Original Name.pdf",
-  "mime_type": "application/pdf",
-  "size": 12345,
-  "bucket": "training-assets"
-}
-```
+1. Display formatter `getFieldDisplayLabel` (как и было) — гарантирует, что в UI выводится только `field.label`, без подмеса `field.type`.
+2. **Новое:** sanitizer `stripTechnicalSuffix(label)` — на этапе рендера label вырезает в конце скобочные суффиксы `(boolean|select|multiselect|date|number|file|file single|file multi|text|email|phone|password)`, регистронезависимо. Это закрывает кейс, когда в legacy-данных type уже зашит в сам label. Не мутирует данные, работает только на отображении.
+3. Применяется в публичной форме (`FormSection.tsx`), preview редактора, detail-диалоге `/admin/forms` (там label идёт как `key` — добавить sanitizer в отображаемый ключ, не трогая лежащие в БД ключи).
 
-### 3. site-form-submit сериализация
+**B. Визуальный апгрейд `FormSection.tsx` — preview и публичная форма (один компонент):**
+Заменить нативные HTML-контролы на shadcn-аналоги, использующиеся в CRM:
 
-Проверю, что edge function принимает `boolean / string[] / number / date string / file object` без принудительного `String()`. Скорее всего просто `body.form_data` идёт как есть в jsonb — но подтвержу чтением кода.
 
-### 4. Reuse OptionsEditor
+| Текущее                                                                                      | Заменить на                                                                                                                                |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `<select>` (single choice)                                                                   | `<Select>` из `@/components/ui/select` (как в фильтрах /admin/deals)                                                                       |
+| `<input type="checkbox">` (multiselect, group of options)                                    | `<Checkbox>` из `@/components/ui/checkbox` + `<Label>`                                                                                     |
+| `<input type="checkbox">` (single boolean) → сейчас рендерится как radio Да/Нет              | `<RadioGroup>` + `<RadioGroupItem>` из `@/components/ui/radio-group` (визуально аккуратные точки)                                          |
+| `<input type="radio">` (radio choice)                                                        | `<RadioGroup>` + `<RadioGroupItem>`                                                                                                        |
+| `<input type="date">` (нативный календарь браузера)                                          | shadcn `<Popover>` + `<Calendar>` (date-picker как в фильтре «Все периоды» CRM)                                                            |
+| `<input type="number">`, `<input type="text">`, `<input type="email">`, `<input type="tel">` | `<Input>` из `@/components/ui/input` (уже частично, проверить везде)                                                                       |
+| `<textarea>`                                                                                 | `<Textarea>` из `@/components/ui/textarea`                                                                                                 |
+| File-кнопка                                                                                  | `<Button variant="outline">` с иконкой `<Upload>` lucide, под ней список загруженных файлов — `<Badge variant="secondary">` с filename + ✕ |
+| Submit-кнопка                                                                                | `<Button>` основной (default), full-width на mobile                                                                                        |
 
-Посмотрю в `QuizSingleBlock` / `QuizMultipleBlock` — есть ли выделяемый OptionsEditor. Если нет — создам **малый общий компонент** `src/components/admin/shared/OptionsEditor.tsx` (input-список с add/remove/reorder), и использую его и в FormBlockEditor, и в quiz-блоках (при низком риске рефакторинга — иначе только в FormBlock).
 
-## План фикса
+**C. Контейнер формы — карточный стиль CRM:**
 
-### A. FormBlockEditor (admin)
+- Внешняя обёртка: `rounded-xl border border-border/60 bg-card p-4 sm:p-6 shadow-sm` (как карточка сделки на скрине 1).
+- Spacing между полями: `space-y-5` (вместо текущего сжатого).
+- Label поля: `text-sm font-medium text-foreground` + `*` для required `text-destructive`.
+- Helper-text/описание поля: `text-xs text-muted-foreground mt-1`.
+- Ошибки валидации: `text-xs text-destructive mt-1` (не alert-баннер сверху).
+- Required-звёздочка `*` рендерится через формат, не подмешивается в label.
 
-`src/components/admin/site-builder/blocks/FormBlockEditor.tsx`:
+**D. Цветовая палитра (semantic tokens, не raw):**
 
-Расширить `<Select>` типов: `text, textarea, email, phone, boolean, select, multiselect, date, number, file`.
+- Фон карточки: `bg-card`.
+- Границы: `border-border/60`.
+- Акценты (выбранный radio/checkbox/select item): primary tokens из `index.css` (тот же дорогой синий-индиго, что в Sidebar и в CRM-бейджах).
+- Hover на интерактивных элементах: `hover:bg-accent/50`.
+- Никаких `bg-blue-500`, `text-red-600` — только токены.
 
-Условные настройки:
+**E. Адаптив preview:**
 
-- `select / multiselect` → показать `OptionsEditor`.
-- `file` → выбор `allowedGroups` (image / document / archive), `maxSizeMB`, `maxFiles` (контракт идентичен `StudentUploadContentData`).
-- `number` → `min / max / step`.
+- На <640px: все контролы full-width, padding контейнера `p-4`.
+- Submit-кнопка: `w-full sm:w-auto`.
+- Date-picker popover: `w-auto` с авто-позиционированием.
 
-Mapping в карточку — скрыть для типов ≠ text/email/phone/textarea (mapping не расширяем по решению пользователя).
+### Что НЕ трогаем (повтор для ясности)
 
-### B. Site renderer формы
+- Логика submit/upload/validation/file-uploader контракт.
+- `FormBlockEditor` (редактор настроек блока) — только убрать `{sf.type}` у auth-полей (как в исходном плане).
+- Структура `field.type` во внутреннем state.
+- БД-ключи в `form_data`.
 
-`src/components/site-renderer/blocks/SiteFormBlock.tsx` (имя уточню):
+### Обновлённый список файлов
 
-- `boolean` → `<Switch>` или `RadioGroup` Да/Нет.
-- `select` → `<Select>` с options.
-- `multiselect` → группа Checkbox.
-- `date` → `<input type="date">`, нормализация в ISO `YYYY-MM-DD`.
-- `number` → `<input type="number">`, отправка как `Number`, не `String`.
-- `file` → file input → upload через **edge function `site-form-upload**` → получаем file-object → кладём в `form_data`.
 
-Validation `required` для каждого типа.
+| Файл                                                                                  | Действие                                                                              |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `src/pages/admin/AdminSiteEditor.tsx`                                                 | edit — адаптивная шапка                                                               |
+| `src/components/admin/site-builder/blocks/FormBlockEditor.tsx`                        | edit — убрать `{sf.type}` у auth-полей                                                |
+| `src/lib/formFieldLabel.ts`                                                           | create — `getFieldDisplayLabel` + `stripTechnicalSuffix`                              |
+| `src/components/site-renderer/blocks/FormSection.tsx`                                 | edit (крупно) — замена нативных контролов на shadcn, карточный стиль, sanitizer label |
+| `src/components/admin/forms/FormsDetailOpener.tsx` (или где рендерится detail-диалог) | edit — sanitizer на отображаемые ключи `form_data`                                    |
 
-### C. Edge function `site-form-upload` (новая, узкая)
 
-`supabase/functions/site-form-upload/index.ts`:
+### DoD (обновлённый)
 
-- POST multipart, без JWT, CORS open.
-- Параметры: `submission_token` (UUID, генерируется на клиенте при открытии формы), `field_id`, `file`.
-- Server-side validation:
-  - MIME-типы по allowlist (соответствует `allowedGroups` из конфига блока — но т.к. конфиг на клиенте, делаем безопасный default-allow: `image/*, application/pdf, application/zip, .docx, .xlsx, .txt`, без `application/x-msdownload` / `*.exe` / `*.sh` / `*.js`).
-  - Max size: 20 MB hard limit.
-  - Filename sanitize (как в `training-assets-download`).
-- Кладёт через service_role в `training-assets/form-uploads/{submission_token}/{uuid}-{safeName}`.
-- Возвращает file object для `form_data`.
-
-Bucket RLS **не трогаем** — anonymous INSERT не открываем.
-
-### D. Расширить `training-assets-download`
-
-Добавить `form-uploads/` в `ALLOWED_PREFIXES`. Для `form-uploads/...` требовать `admin / superadmin` через `has_role_v2` (как `student-uploads/`). Контракт остаётся.
-
-### E. site-form-submit — проверить + зафиксировать
-
-Прочитать и убедиться, что `form_data` jsonb сохраняется как есть. Если есть `String()` или валидация типов — расширить (минимально).
-
-### F. /admin/forms — отображение
-
-`FormsDetailOpener.tsx` (`SiteFormDetailDialog`):
-
-- `boolean` → «Да» / «Нет» / «—».
-- `string[]` (multiselect) → badges список, или join через `,` .
-- date → `format(parseISO(...), 'dd MMMM yyyy', ru)`.
-- number → as-is.
-- file (object) → ссылка «Скачать {filename}» → клик → `training-assets-download?path=...&name=...` с auth.
-- empty / null → «—».
-
-В `FormsHubTable.tsx` preview ячеек анкет уже компактный (контакт + дата). Файл/multiselect — показать иконку/счётчик («📎 1 файл», «3 значения»), без расширения колонок.
-
-### G. QuestionnaireBlockEditor
-
-**Не трогаем.** В отчёте явно зафиксирую: канонический движок анкет сайта = lesson editor; FormBlock получает расширенный набор базовых типов, совместимый по смыслу, без дублирования движка.
-
-## Файлы
-
-**Изменю:**
-
-- `src/components/admin/site-builder/blocks/FormBlockEditor.tsx` — расширение типов + условные редакторы.
-- `src/components/site-renderer/blocks/SiteFormBlock.tsx` (имя уточню) — рендер новых типов + file upload.
-- `src/components/admin/forms/FormsDetailOpener.tsx` — рендер новых типов в detail.
-- `src/components/admin/forms/FormsHubTable.tsx` — компактный preview для file/multiselect.
-- `supabase/functions/training-assets-download/index.ts` — `form-uploads/` в allowlist + admin guard.
-- `supabase/functions/site-form-submit/index.ts` — только если ломает сериализацию (минимально).
-
-**Создам (минимально):**
-
-- `supabase/functions/site-form-upload/index.ts` — guest file upload через service_role (узкий контракт).
-- `src/components/admin/shared/OptionsEditor.tsx` — общий мини-компонент для select/multiselect (если нет готового).
-
-**Миграция:** не нужна (bucket уже существует, RLS не меняем).
-
-**НЕ трогаю:** `QuestionnaireBlockEditor`, `SiteQuestionnaireBlock`, lesson editor, payment writers, RLS на `site_form_submissions`.
-
-## Контракт значения «Файл» в `form_data`
-
-```json
-{
-  "type": "file",
-  "path": "form-uploads/{submission_token}/{uuid}-name.pdf",
-  "filename": "name.pdf",
-  "mime_type": "application/pdf",
-  "size": 12345,
-  "bucket": "training-assets"
-}
-```
-
-## Контракт значений по типам
-
-- `boolean` → `true | false`.
-- `select` → `string` (выбранный option).
-- `multiselect` → `string[]`.
-- `date` → `string` (ISO `YYYY-MM-DD`).
-- `number` → `number` (не строка).
-- `file` → object выше; для `multi-file` — `array` of objects.
-
-## DoD
-
-1. В FormBlockEditor доступны типы: Строка, Многострочный, Email, Телефон, Да-Нет, Выбор, Множественный выбор, Дата, Число, Файл.
-2. Для select/multiselect редактируется список вариантов; для file — allowedGroups + maxSizeMB + maxFiles; для number — min/max/step.
-3. Публичная форма корректно рендерит все типы и валидирует required.
-4. Гость загружает файл **только** через edge function `site-form-upload` с server-side проверкой MIME/size/extension. Bucket НЕ открыт на anonymous INSERT.
-5. Запрещённые MIME (executables, scripts) отклоняются на сервере.
-6. Файл сохраняется в `form_data` как структурированный объект (path/filename/mime/size/bucket).
-7. В админке (`/admin/forms` detail) файл скачивается через `training-assets-download` (admin-only guard на `form-uploads/`). Прямого чтения чужих файлов нет.
-8. В таблице `/admin/forms` — компактный preview для файлов и multiselect.
-9. Числа сохраняются как `number`, даты как ISO `YYYY-MM-DD`; админка показывает форматированно.
-10. `QuestionnaireBlockEditor` не тронут; в отчёте зафиксирована граница: FormBlock — базовые типы для лендингов, lesson editor — канонический движок анкет.
-11. `site-form-submit` корректно принимает boolean/array/number/date/file без приведения к строке.
-12. Никакого нового payment-path, дубля Telegram-логики, изменений RLS на `site_form_submissions`.
+- Шапка `/admin/sites/:id` адаптивна на 375 / 768 / 1280 px.
+- В UI нигде не видно `(boolean)/(select)/(multiselect)/(date)/(number)/(file)/(text)/(email)/(phone)/(password)` — ни как подмес type, ни как legacy-хвост в label.
+- Preview формы и публичная форма визуально соответствуют стилю CRM /admin/deals: shadcn Select / Checkbox / RadioGroup / Calendar, карточный контейнер, semantic tokens, мягкие границы.
+- Нативных `<select>`, `<input type="date">`, `<input type="checkbox">`, `<input type="radio">` в `FormSection.tsx` не остаётся.
+- 4 proof-скрина: editor desktop, editor mobile, preview desktop (`/form-proof`), preview mobile (`/form-proof`).
+- Логика submit/upload/payment/validation/auth не изменена.
