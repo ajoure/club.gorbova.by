@@ -26,6 +26,12 @@ export interface CreateCheckoutParams {
   actor_type?: 'admin' | 'system';
   /** ID подписки, которую заменяем. Сервер проверит, что она реально отменена, прежде чем создать новую. */
   replacement_of_subscription_v2_id?: string;
+  /**
+   * Произвольные ключи, которые будут смёрджены в `orders_v2.meta` при создании.
+   * Канонический способ прокинуть `payment_link_id` (и подобные привязки) без дублирования.
+   * Анти-кейс: ручной post-insert UPDATE из вызывающей функции.
+   */
+  meta_extra?: Record<string, any>;
 }
 
 export interface CreateCheckoutSuccess {
