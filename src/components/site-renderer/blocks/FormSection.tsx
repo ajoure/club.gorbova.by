@@ -550,7 +550,6 @@ function FieldRenderer({
     </div>
   );
 }
-}
 
 // ─── Auth mode form ───
 interface AuthFormSectionProps {
