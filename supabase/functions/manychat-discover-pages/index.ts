@@ -27,6 +27,20 @@ interface ManyChatPage {
   timezone?: string;
 }
 
+type IdSource =
+  | "id"
+  | "page_id"
+  | "facebook_page_id"
+  | "fb_page_id"
+  | "username"
+  | "synthetic_hash";
+
+interface NormalizedPageResult {
+  page: ManyChatPage;
+  id_source: IdSource;
+  synthetic_id: boolean;
+}
+
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
