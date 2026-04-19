@@ -175,7 +175,7 @@ export const PROVIDERS: ProviderConfig[] = [
   },
   {
     id: "apix_instagram_dm",
-    name: "Instagram DM (ApiX-Drive)",
+    name: "Instagram (ApiX-Drive)",
     icon: "Instagram",
     category: "socials",
     description: "Двусторонний обмен сообщениями Instagram Direct через ApiX-Drive",
@@ -187,7 +187,7 @@ export const PROVIDERS: ProviderConfig[] = [
   },
   {
     id: "manychat",
-    name: "ManyChat",
+    name: "ManyChat (Instagram)",
     icon: "MessageCircle",
     category: "socials",
     description: "Instagram Direct через ManyChat Public API + External Request",
@@ -202,7 +202,7 @@ export const PROVIDERS: ProviderConfig[] = [
   },
   {
     id: "facebook",
-    name: "Facebook",
+    name: "Facebook (скоро)",
     icon: "Facebook",
     category: "socials",
     description: "Скоро",
