@@ -354,7 +354,9 @@ async function sendReply(supabase: any, body: any, adminUserId: string) {
       sender_name: 'Admin',
       ig_thread_id: thread_id || null,
       direction: 'outbound',
-      message_text,
+      message_text: message_text || null,
+      media_url: media_url || null,
+      media_type: media_type || null,
       status: initialStatus,
       peer_id: sender_id,
       recipient_id: sender_id,
@@ -372,7 +374,7 @@ async function sendReply(supabase: any, body: any, adminUserId: string) {
       supabase,
       accountRow.integration_instance_id,
       sender_id,
-      message_text,
+      { text: message_text, media_url, media_type },
       msg.id,
     );
 
