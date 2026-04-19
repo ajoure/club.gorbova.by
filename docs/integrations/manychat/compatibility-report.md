@@ -12,6 +12,23 @@
 
 ---
 
+## Source of truth for observability (контракт v1)
+
+> Этот раздел — **обязательный контракт** для подрядчика. Никто не имеет права обещать Inbox parity или real-time observability вне Flow.
+
+| Слой observability | Источник | Гарантия | Что **НЕ** покрывает |
+|---|---|---|---|
+| **Real-time observability** | **Только** External Request action из конкретных Flows / ветвей automation, куда мы сами врезали ingress-вызов | Доставка ≤ 10s от триггера, при условии работы Flow и нашего endpoint | Любые события из Flows без External Request; ручные действия оператора |
+| **Off-flow observability** | **Только** pull/diff через Public API (`getSubscriberInfo`, `getTags`, `getCustomFields`) по cron | Latency = период cron (минуты, не секунды); фиксируется как diff с предыдущим snapshot | Real-time реакция; точное время события (только сам факт изменения) |
+| **Native ManyChat Inbox actions** | — | **НЕ наблюдаются в v1.** Ручные ответы оператора в native ManyChat Inbox UI, статусы `delivered`/`read` оператора, typing-indicators — **out of scope** | Всё перечисленное в этой строке |
+
+**Следствие для контракта с подрядчиком:**
+- ❌ нельзя обещать «полную видимость переписки в платформе»;
+- ❌ нельзя обещать «зеркало native Inbox в нашей админке»;
+- ✅ можно обещать «события из tracked Flows real-time + snapshot периодики через pull».
+
+---
+
 ## A. `instagram_accounts` — текущее состояние
 
 | # | Column | Type | Nullable | Default |
@@ -32,9 +49,9 @@
 | Изменение | Тип | Migration plan |
 |---|---|---|
 | `provider_kind text` | NOT NULL DEFAULT `'apixdrive'` | `ALTER TABLE … ADD COLUMN provider_kind text NOT NULL DEFAULT 'apixdrive'` + `CHECK (provider_kind IN ('apixdrive', 'manychat'))` |
-| `workspace_id uuid` | NULL → backfill | для multi-tenant разделения; для single-tenant можно не вводить в v1, но лучше сразу |
+| `workspace_id uuid` | NULL → backfill | для multi-tenant; в v1 single-tenant можно отложить, но лучше сразу |
 
-> **Замечание:** `provider_kind` ENUM в БД ещё **нет** — будет создан как plain text + CHECK для add-only-совместимости. Колонка `workspace_id` отсутствует в большинстве таблиц проекта — оставляем `integration_instance_id` как natural workspace boundary в v1.
+> **Замечание по multi-channel:** колонки `instagram_*` остаются **Instagram-only** compatibility-layer. Расширение на Messenger / WhatsApp / Telegram **не делается** через эти таблицы — для этого в Phase 2 заводится generic `communications_accounts` / `communications_messages`.
 
 ---
 
@@ -64,46 +81,37 @@
 | 20 | `sending_at` | timestamptz | YES | — |
 | 21 | `sending_lock_id` | uuid | YES | — |
 
-**Записей:** 29. **`direction` уже NOT NULL** с двумя значениями: `inbound`, `outbound` ✅ — переиспользуем 1:1.
+**Записей:** 29. **`direction` уже NOT NULL** ✅ — переиспользуем 1:1.
 
-### ✅ Хорошие новости (можно переиспользовать без расширения)
+### ✅ Можно переиспользовать без расширения
 
 | Колонка | Используется как |
 |---|---|
-| `external_message_id` | будет = `message.id` от ManyChat (idempotency) |
+| `external_message_id` | будет = `message.provider_message_id` от ManyChat (idempotency приоритет 2) |
 | `sender_id` / `peer_id` / `recipient_id` | = `manychat_subscriber_id` |
 | `direction` | уже корректная семантика |
-| `raw_payload` | jsonb уже есть — кладём raw ManyChat webhook |
-| `status` | расширяемый text — добавим значения `queued`, `sent`, `delivered`, `read`, `failed` |
-| `read_at` | уже есть |
-| `media_url` / `media_type` | для attachments из ManyChat |
+| `raw_payload` | jsonb уже есть — кладём raw External Request payload |
+| `status` | расширяемый text — добавим `queued`, `sent`, `delivered`, `read`, `failed` |
+| `read_at`, `media_url`, `media_type` | переиспользуем |
 
-### ❌ Чего не хватает (требует add-only ALTER в PATCH 1)
+### ❌ Чего не хватает (add-only ALTER в PATCH 1)
 
 | Колонка | Тип | Default | Назначение |
 |---|---|---|---|
-| `provider_kind` | text | `'apixdrive'` | Discriminator (без него legacy ApiX-Drive строки смешаются с ManyChat) |
-| `provider_message_id` | text | NULL | ID сообщения у ManyChat (отдельно от `external_message_id` — для случаев когда ManyChat шлёт несколько ID) |
-| `thread_key` | text | NULL | Детерминированный ключ треда: `${provider_kind}:${integration_instance_id}:${peer_id}` |
-| `sent_at` | timestamptz | NULL | Сейчас есть `sending_at` (queued time), но нет фактического send time |
-| `delivered_at` | timestamptz | NULL | Сейчас есть статус `delivered`, но нет timestamp |
-| `idempotency_hash` | text | NULL | sha256 для anti-duplicate webhook |
+| `provider_kind` | text | `'apixdrive'` | Discriminator |
+| `provider_message_id` | text | NULL | ID сообщения у ManyChat |
+| `thread_key` | text | NULL | Детерминированный ключ треда |
+| `sent_at` | timestamptz | NULL | Когда ManyChat подтвердил отправку |
+| `delivered_at` | timestamptz | NULL | Когда дошло до Instagram |
+| `idempotency_hash` | text | NULL | Anti-duplicate (priority 2/3) |
 
-> **Замечание:** колонки `created_at`, `sending_at`, `read_at` уже есть, но семантика разная. `created_at` = когда мы записали, `sending_at` = когда оператор кликнул "send", `read_at` = когда подписчик прочёл. Не хватает именно `sent_at` (когда ManyChat подтвердил отправку) и `delivered_at` (когда дошло до Instagram).
-
-### Требуемые indexes / constraints (add-only)
+### Indexes / constraints (add-only)
 
 | Объект | Назначение |
 |---|---|
-| `UNIQUE (instagram_account_id, provider_kind, provider_message_id) WHERE provider_message_id IS NOT NULL` | Idempotency для ManyChat без ломания legacy ApiX |
-| `INDEX (thread_key) WHERE thread_key IS NOT NULL` | Группировка треда в Inbox |
-| `INDEX (idempotency_hash) WHERE idempotency_hash IS NOT NULL` | Anti-duplicate webhook |
-
-### Backfill plan для legacy ApiX-Drive строк
-
-- `provider_kind` → `'apixdrive'` через DEFAULT (29 строк закроются автоматически)
-- Остальные новые колонки → NULL для legacy, partial unique constraints их игнорируют
-- **Не трогаем** `direction`, `status`, `created_at`, `is_read`, `read_at` — они уже корректные
+| `UNIQUE (instagram_account_id, provider_kind, provider_message_id) WHERE provider_message_id IS NOT NULL` | Idempotency для ManyChat |
+| `INDEX (thread_key) WHERE thread_key IS NOT NULL` | Inbox группировка |
+| `INDEX (idempotency_hash) WHERE idempotency_hash IS NOT NULL` | Anti-duplicate |
 
 ---
 
@@ -113,27 +121,46 @@
 - `supabase/functions/instagram-webhook` — INSERT входящих
 - `supabase/functions/instagram-admin-chat` — admin reply UI backend
 - `supabase/functions/instagram-send` — outbound send
-- RPC `get_instagram_dialogs_v1` (видим в network logs) — Inbox UI
+- RPC `get_instagram_dialogs_v1` — Inbox UI
 
 | Контракт | Текущая семантика | Совместимость с ManyChat |
 |---|---|---|
-| `direction` enum | `inbound` / `outbound` | переиспользуем без изменений ✅ |
-| `status` enum | свободный text, default `'delivered'` | расширяем значениями (`queued`, `sent`, `read`, `failed`) — не ломаем ✅ |
-| Webhook idempotency у ApiX | через `external_message_id` (без unique constraint) | новый partial unique по `(account, provider_kind, provider_message_id)` legacy-rows не затрагивает ✅ |
-| Account resolution | `instagram_account_id` FK | новый ManyChat account = новая строка `instagram_accounts` с `provider_kind='manychat'` ✅ |
-| `get_instagram_dialogs_v1` | возвращает диалоги без фильтра по `provider_kind` | в PATCH 2 решение: либо добавить параметр `p_provider_kind`, либо оставить смешанный режим (UI один Inbox) — **выбираем смешанный**, как и было задумано в плане |
-
-### Risk register
-
-| Риск | Митигация |
-|---|---|
-| Existing `get_instagram_dialogs_v1` начнёт показывать ManyChat диалоги вперемешку с ApiX | **Это и есть цель** (один Inbox). Но колонка `provider_kind` в результате должна быть, чтобы UI мог показать badge ManyChat / ApiX. Доработать RPC в PATCH 2 |
-| RLS на `instagram_messages` для service-role webhook ManyChat | Пересмотр в PATCH 1: убедиться что ManyChat webhook (service role) проходит INSERT — должен, по аналогии с ApiX |
-| `peer_id NOT NULL` — у ManyChat есть подписчики без явного `peer_id`? | По live capture (PATCH 0.1) всегда есть `subscriber.id` — мапим в `peer_id` |
+| `direction` enum | `inbound` / `outbound` | переиспользуем ✅ |
+| `status` enum | свободный text, default `'delivered'` | расширяем (`queued`, `sent`, `read`, `failed`) ✅ |
+| Webhook idempotency у ApiX | через `external_message_id` (без unique constraint) | новый partial unique по `(account, provider_kind, provider_message_id)` legacy не затрагивает ✅ |
+| Account resolution | `instagram_account_id` FK | новый ManyChat account = новая строка с `provider_kind='manychat'` ✅ |
+| `get_instagram_dialogs_v1` | возвращает диалоги без фильтра | в PATCH 2 добавить `provider_kind` в return для UI badge — **смешанный режим Inbox** |
 
 ---
 
-## D. Новые таблицы (DDL summary для PATCH 1)
+## D. Что мы реально получаем через External Request (push) vs только pull/diff
+
+### Push events (через External Request action) — real-time из Flow
+
+| event_type | Триггер в ManyChat | Pre-req (что нужно настроить) |
+|---|---|---|
+| `message.received` | Default Reply / Keyword / любой message-trigger Flow | External Request **первым** action в Flow |
+| `subscriber.created` | Welcome Flow / Subscribe trigger | External Request в welcome Flow |
+| `subscriber.tagged` | Tag Applied trigger Flow (per-tag) | Отдельный Flow с триггером Tag Applied для каждого критичного тега |
+| `subscriber.untagged` | Tag Removed trigger Flow | per-tag Flow |
+| `subscriber.field_updated` | Custom Field Updated trigger / Set Field action | External Request после Set Field |
+| `flow.completed` | Терминальный шаг Flow | External Request как последний action |
+
+### Pull-only events (через Public API cron diff) — НЕ real-time
+
+| Событие | Покрывается | Latency |
+|---|---|---|
+| Ручной ответ оператора в native Inbox | `getSubscriberInfo.last_interaction` diff | period cron (минуты) |
+| Изменение тега вне Flow (manual в UI) | `getSubscriberInfo.tags` diff | period cron |
+| Изменение custom field вне Flow | `getSubscriberInfo.custom_fields` diff | period cron |
+| Opt-out / unsubscribe вне Flow | `getSubscriberInfo.subscribed` flag | period cron |
+| Любое изменение, не привязанное к Flow с External Request | snapshot diff | period cron |
+
+> **Зависимость от «нативных webhook events» из старого плана — invalidated.** Все обещания real-time для off-flow событий — **сняты**.
+
+---
+
+## E. Новые таблицы (DDL summary для PATCH 1)
 
 ### `manychat_subscribers` (бридж)
 
@@ -141,9 +168,9 @@
 - id uuid PK DEFAULT gen_random_uuid()
 - integration_instance_id uuid NOT NULL REFERENCES integration_instances(id) ON DELETE CASCADE
 - manychat_subscriber_id text NOT NULL
-- contact_id uuid NULL REFERENCES contacts(id) ON DELETE SET NULL  -- link только через explicit merge
+- contact_id uuid NULL REFERENCES contacts(id) ON DELETE SET NULL
 - merge_confidence numeric NULL
-- merge_method text NULL ('auto_email_match' / 'auto_phone_match' / 'manual')
+- merge_method text NULL
 - raw_subscriber jsonb
 - metadata jsonb NOT NULL DEFAULT '{}'::jsonb
 - created_at, updated_at timestamptz NOT NULL DEFAULT now()
@@ -151,74 +178,68 @@
 - RLS: admin SELECT, service_role write
 ```
 
-> Без `workspace_id` — `integration_instance_id` уже даёт workspace boundary (один instance = один ManyChat workspace = один тенант в нашей модели).
-
 ### `integration_event_mappings`
 
 ```
 - id uuid PK
 - integration_instance_id uuid NOT NULL
-- platform_event text NOT NULL  -- 'order.paid', 'subscription.cancelled', 'live_event.starting_soon'
-- manychat_action text NOT NULL CHECK (IN ('trigger_flow', 'add_tag', 'remove_tag', 'set_field'))
-- target_ref text NOT NULL  -- flow_ns / tag_name / field_name
-- mapping jsonb NOT NULL DEFAULT '{}'::jsonb  -- payload mapping platform → params ManyChat
+- platform_event text NOT NULL
+- manychat_action text NOT NULL CHECK (IN ('trigger_flow','add_tag','remove_tag','set_field'))
+- target_ref text NOT NULL
+- mapping jsonb NOT NULL DEFAULT '{}'::jsonb
 - is_active boolean NOT NULL DEFAULT true
-- metadata jsonb NOT NULL DEFAULT '{}'::jsonb
 - created_at, updated_at, created_by, updated_by
 - UNIQUE (integration_instance_id, platform_event, manychat_action, target_ref)
 - RLS: admin only
 ```
 
-### `integration_inbound_events` (новая, для External Request ingest)
+### `integration_inbound_events` (External Request ingest buffer)
 
 ```
 - id uuid PK DEFAULT gen_random_uuid()
 - integration_instance_id uuid NOT NULL REFERENCES integration_instances(id) ON DELETE CASCADE
-- provider_kind text NOT NULL CHECK (provider_kind IN ('manychat'))  -- v1 only
-- event_type text NOT NULL  -- 'subscriber.created' / 'message.received' / 'subscriber.tagged' / 'flow.completed' / 'field.updated'
+- provider_kind text NOT NULL CHECK (provider_kind IN ('manychat'))
+- event_type text NOT NULL
 - manychat_page_id text NOT NULL
 - manychat_subscriber_id text NOT NULL
 - raw_payload jsonb NOT NULL
-- raw_headers jsonb NOT NULL
+- raw_headers jsonb NOT NULL  -- secret-поля заменяются sha256-маркером
 - source_ip inet NULL
-- idempotency_hash text NOT NULL
+- client_event_id text NULL          -- priority 1 dedup
+- provider_message_id text NULL       -- priority 2 dedup
+- idempotency_hash text NOT NULL      -- финальный resolved key (любой из priorities)
 - received_at timestamptz NOT NULL DEFAULT now()
 - processed_at timestamptz NULL
 - processing_status text NOT NULL DEFAULT 'pending' CHECK (IN ('pending','processed','duplicate','failed'))
 - processing_error text NULL
-- UNIQUE (idempotency_hash)  -- canonical anti-duplicate
+- UNIQUE (idempotency_hash)
 - INDEX (integration_instance_id, processing_status, received_at)
 - RLS: superadmin SELECT, service_role write
 ```
 
-> **Назначение:** буфер всех входящих External Request от ManyChat. Endpoint `manychat-event-ingest` (создаётся в PATCH 2) пишет сюда синхронно (200 OK сразу после INSERT), фоновый worker разбирает в `instagram_messages` / `manychat_subscribers` / `domain_events`. Это даёт идемпотентность, retry-безопасность и полный audit trail для канала ManyChat → платформа.
+> **Назначение:** буфер всех входящих External Request. Endpoint `manychat-event-ingest` (PATCH 2) пишет сюда синхронно (200 OK сразу после INSERT), фоновый worker эмитит `domain_events` (`manychat.message.received.v1` и т.д.), downstream handlers подписываются на domain events. **Никаких прямых cross-domain вызовов из ingress.**
 
 ---
 
-## E. Контракт безопасности входящих External Request
+## F. Контракт безопасности входящих External Request
 
-> ManyChat **не предоставляет** криптографическую подпись для исходящих External Request — это известное ограничение продукта. Все прежние упоминания `signature_verified` / `x-manychat-signature` / HMAC из плана **исключены**.
+> ManyChat **не подписывает** External Request. Все прежние упоминания `signature_verified` / `x-manychat-signature` / HMAC из плана — **deprecated/invalidated assumption**.
 
-Защита трёхуровневая:
+Защита трёхуровневая (полный текст — в [external-request-setup.md](./external-request-setup.md)):
 
 | Уровень | Механизм | Хранение | Проверка |
 |---|---|---|---|
-| 1. Authn | `shared_secret_token` в URL path (`/manychat-event-ingest/{token}`) | `integration_instances.config_secrets` (Vault-encrypted) | constant-time compare на edge function |
-| 2. Authz | allowlist `manychat_page_id` в payload | `instagram_accounts.instagram_page_id WHERE provider_kind='manychat'` | `payload.manychat_page_id ∈ allowlist` для данного `integration_instance_id` |
-| 3. Integrity | dedup hash | `integration_inbound_events.idempotency_hash UNIQUE` | `sha256(workspace_id\|page_id\|subscriber_id\|event_type\|floor(received_at_ms/1000)\|sha256(payload))` |
-
-Acceptable v1 limitations (зафиксированы):
-- Best-effort dedup, не криптогарантия (разный payload в одну секунду — разные хэши; одинаковый — склеится, приемлемо для message flow).
-- Token rotation = ручной reissue + операторская задача обновить URL во всех Flows ManyChat.
-- Компрометация токена = весь push-канал workspace требует перенастройки (acceptable risk для v1).
+| 1. Authn | **`X-Workspace-Token` header** (основной канал); path-secret = legacy fallback с redaction | `integration_instances.config_secrets` (Vault-encrypted) | constant-time compare |
+| 2. Authz | allowlist `manychat_page_id` (и `manychat_business_id` если придёт) | `instagram_accounts.instagram_page_id WHERE provider_kind='manychat'` + `integration_instances.config.allowed_page_ids` | `payload.workspace.manychat_page_id ∈ allowlist` |
+| 3. Integrity | dedup по приоритетному ключу | `integration_inbound_events.idempotency_hash UNIQUE` | priority 1: `client_event_id` → priority 2: hash с `provider_message_id` → priority 3 (last resort): hash с time-bucket |
 
 ---
 
 ## Decision записи (финал PATCH 0.4)
 
 ✅ **Финальный DDL для PATCH 1 migration:**
-1. `ALTER TABLE instagram_accounts ADD COLUMN provider_kind text NOT NULL DEFAULT 'apixdrive' CHECK (provider_kind IN ('apixdrive', 'manychat'))`
-2. `ALTER TABLE instagram_messages ADD COLUMN provider_kind text NOT NULL DEFAULT 'apixdrive' CHECK (provider_kind IN ('apixdrive', 'manychat'))`
+1. `ALTER TABLE instagram_accounts ADD COLUMN provider_kind text NOT NULL DEFAULT 'apixdrive' CHECK (provider_kind IN ('apixdrive','manychat'))`
+2. `ALTER TABLE instagram_messages ADD COLUMN provider_kind text NOT NULL DEFAULT 'apixdrive' CHECK (provider_kind IN ('apixdrive','manychat'))`
 3. `ALTER TABLE instagram_messages ADD COLUMN provider_message_id text` + partial UNIQUE
 4. `ALTER TABLE instagram_messages ADD COLUMN thread_key text` + partial INDEX
 5. `ALTER TABLE instagram_messages ADD COLUMN sent_at timestamptz`
@@ -226,13 +247,14 @@ Acceptable v1 limitations (зафиксированы):
 7. `ALTER TABLE instagram_messages ADD COLUMN idempotency_hash text` + partial INDEX
 8. `CREATE TABLE manychat_subscribers (...)` + RLS
 9. `CREATE TABLE integration_event_mappings (...)` + RLS
-10. `CREATE TABLE integration_inbound_events (...)` + RLS + UNIQUE(idempotency_hash)
-11. `ALTER TABLE integration_instances ADD COLUMN config_secrets jsonb` (для `shared_secret_token`, encrypted at rest через Vault)
+10. `CREATE TABLE integration_inbound_events (...)` + RLS + UNIQUE(idempotency_hash) + columns `client_event_id`, `provider_message_id`
+11. `ALTER TABLE integration_instances ADD COLUMN config_secrets jsonb` (для `shared_secret_token`/`workspace_token`, encrypted) + `config.allowed_page_ids`
 
-✅ **SELECT-запросы, требующие пересмотра в PATCH 2:**
+✅ **Пересмотр в PATCH 2:**
 - RPC `get_instagram_dialogs_v1` — добавить `provider_kind` в return (UI badge)
 - Edge `instagram-admin-chat` — роутинг send: `if (provider_kind === 'manychat') call manychat-send else call instagram-send`
+- Worker pipeline: `integration_inbound_events → domain_events → handlers` (никаких прямых cross-domain вызовов из ingress)
 
-✅ **RLS пересмотр требуется на:** только новые таблицы (`manychat_subscribers`, `integration_event_mappings`). Existing `instagram_*` RLS не трогаем.
+✅ **RLS пересмотр:** только новые таблицы. Existing `instagram_*` RLS не трогаем.
 
-✅ **Backfill skript для legacy direction/status:** **НЕ требуется** — `direction` уже NOT NULL и корректный, `status` уже имеет default `'delivered'`. 29 legacy-строк автоматически получат `provider_kind='apixdrive'` через DEFAULT.
+✅ **Backfill:** не требуется — `direction`/`status` уже корректные; 29 legacy получают `provider_kind='apixdrive'` через DEFAULT.
