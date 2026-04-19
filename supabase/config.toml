@@ -3,6 +3,9 @@ project_id = "hdjgkjceownmmnrqqtuz"
 [functions.manychat-diagnose-capture]
 verify_jwt = false
 
+[functions.manychat-inbound]
+verify_jwt = false
+
 [functions.analyze-task-priority]
 verify_jwt = false
 
