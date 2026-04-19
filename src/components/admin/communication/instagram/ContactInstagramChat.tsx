@@ -233,57 +233,49 @@ export function ContactInstagramChat({
         ) : !messages?.length ? (
           <p className="text-center text-xs text-muted-foreground">Нет сообщений</p>
         ) : (
-          messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={cn(
-                "max-w-[75%] rounded-xl px-3 py-2",
-                msg.direction === "outbound"
-                  ? "ml-auto bg-primary/10 border border-primary/20"
-                  : "mr-auto bg-muted/50 border border-border/30"
-              )}
-            >
-              {isRealMedia(msg) && (
-                <div className="mb-1">
-                  {msg.media_type?.startsWith("audio") ? (
-                    <audio controls className="max-w-full" preload="metadata">
-                      <source src={msg.media_url!} />
-                      Аудио не поддерживается
-                    </audio>
-                  ) : msg.media_type?.startsWith("video") ? (
-                    <video controls className="rounded-lg max-h-48" preload="metadata">
-                      <source src={msg.media_url!} />
-                      Видео не поддерживается
-                    </video>
-                  ) : msg.media_type?.startsWith("image") || msg.media_url?.match(/\.(jpg|jpeg|png|gif|webp)/i) ? (
-                    <img
-                      src={msg.media_url!}
-                      alt="media"
-                      className="rounded-lg max-h-48 object-cover"
-                    />
-                  ) : (
-                    <a
-                      href={msg.media_url!}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-1 text-xs text-primary underline"
-                    >
-                      <ImageIcon className="h-3 w-3" /> Медиа
-                    </a>
-                  )}
+          messages.map((msg) => {
+            // P5/P6: media resolution с legacy repair на render-layer.
+            // Если media_url пуст, но message_text — это URL вложения (legacy записи),
+            // лечим прямо здесь, БЕЗ изменения БД.
+            const realMediaUrl =
+              msg.media_url && msg.media_type !== 'avatar'
+                ? msg.media_url
+                : (msg.message_text && isMediaUrl(msg.message_text) ? msg.message_text : null);
+            const realMediaType = realMediaUrl
+              ? (msg.media_type && msg.media_type !== 'avatar'
+                  ? msg.media_type
+                  : guessMediaTypeFromUrl(realMediaUrl))
+              : null;
+            // Если text — это media URL и мы его отрендерим как media, не показываем как текст.
+            const showText = msg.message_text && msg.message_text !== realMediaUrl;
+
+            return (
+              <div
+                key={msg.id}
+                className={cn(
+                  "max-w-[75%] rounded-xl px-3 py-2",
+                  msg.direction === "outbound"
+                    ? "ml-auto bg-primary/10 border border-primary/20"
+                    : "mr-auto bg-muted/50 border border-border/30"
+                )}
+              >
+                {realMediaUrl && (
+                  <div className={cn(showText && "mb-2")}>
+                    <InstagramMessageMedia url={realMediaUrl} type={realMediaType} />
+                  </div>
+                )}
+                {showText && (
+                  <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
+                )}
+                <div className="flex items-center justify-between mt-1 gap-2">
+                  <span className="text-[10px] text-muted-foreground">
+                    {format(new Date(msg.created_at), "HH:mm", { locale: ru })}
+                  </span>
+                  {renderStatusBadge(msg)}
                 </div>
-              )}
-              {msg.message_text && (
-                <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
-              )}
-              <div className="flex items-center justify-between mt-1 gap-2">
-                <span className="text-[10px] text-muted-foreground">
-                  {format(new Date(msg.created_at), "HH:mm", { locale: ru })}
-                </span>
-                {renderStatusBadge(msg)}
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
