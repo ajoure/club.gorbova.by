@@ -225,12 +225,7 @@ export function InstagramAttachComposer({
     }
   };
 
-  const KindIcon =
-    pending?.kind === "image"
-      ? ImageIcon
-      : pending?.kind === "video"
-        ? Video
-        : FileText;
+  const KindIcon = pending?.kind === "image" ? ImageIcon : Video;
 
   return (
     <div
