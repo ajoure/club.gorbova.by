@@ -299,12 +299,24 @@ async function sendReply(supabase: any, body: any, adminUserId: string) {
     throw new Error('Missing required fields: instagram_account_id, sender_id, message_text');
   }
 
+  // A7: Resolve provider_kind for routing
+  const { data: accountRow, error: accountErr } = await supabase
+    .from('instagram_accounts')
+    .select('id, provider_kind, integration_instance_id')
+    .eq('id', instagram_account_id)
+    .maybeSingle();
+
+  if (accountErr || !accountRow) {
+    throw new Error('instagram_account not found');
+  }
+
+  const providerKind = (accountRow.provider_kind || 'apixdrive').toLowerCase();
   const externalMsgId = client_msg_id || crypto.randomUUID();
 
   // Check idempotency
   const { data: existing } = await supabase
     .from('instagram_messages')
-    .select('id')
+    .select('id, status')
     .eq('instagram_account_id', instagram_account_id)
     .eq('external_message_id', externalMsgId)
     .maybeSingle();
@@ -314,6 +326,9 @@ async function sendReply(supabase: any, body: any, adminUserId: string) {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
+
+  // Initial status: ManyChat = sending (sync send below), others (apixdrive) = queued (worker pulls)
+  const initialStatus = providerKind === 'manychat' ? 'sending' : 'queued';
 
   const { data: msg, error: insertErr } = await supabase
     .from('instagram_messages')
@@ -325,17 +340,84 @@ async function sendReply(supabase: any, body: any, adminUserId: string) {
       ig_thread_id: thread_id || null,
       direction: 'outbound',
       message_text,
-      status: 'queued',
+      status: initialStatus,
       peer_id: sender_id,
       recipient_id: sender_id,
       sent_by_admin: adminUserId,
+      provider_kind: providerKind,
     })
     .select('id')
     .single();
 
   if (insertErr) throw insertErr;
 
-  // Audit log
+  // ─── A7: ManyChat synchronous send branch ──────────────────────────────────
+  if (providerKind === 'manychat') {
+    const sendResult = await sendViaManyChat(
+      supabase,
+      accountRow.integration_instance_id,
+      sender_id,
+      message_text,
+    );
+
+    const finalStatus = sendResult.ok ? 'delivered' : 'failed';
+    await supabase
+      .from('instagram_messages')
+      .update({
+        status: finalStatus,
+        error_message: sendResult.ok ? null : (sendResult.error || 'manychat send failed'),
+        provider_message_id: sendResult.provider_message_id || null,
+      })
+      .eq('id', msg.id);
+
+    // Integration log (non-blocking)
+    try {
+      await supabase.from('integration_logs').insert({
+        instance_id: accountRow.integration_instance_id,
+        event_type: 'manychat.send_content',
+        payload_meta: {
+          provider: 'manychat',
+          channel: 'instagram',
+          subscriber_id: sender_id,
+          message_id: msg.id,
+          status: finalStatus,
+        },
+        result: sendResult.ok ? 'success' : 'error',
+        error_message: sendResult.ok ? null : sendResult.error,
+      });
+    } catch (e) {
+      console.error('Failed to log manychat send:', e);
+    }
+
+    // Audit log
+    await supabase.from('audit_logs').insert({
+      action: 'instagram_reply_sent',
+      actor_type: 'user',
+      actor_user_id: adminUserId,
+      meta: {
+        instagram_account_id,
+        sender_id,
+        message_id: msg.id,
+        status: finalStatus,
+        provider_kind: 'manychat',
+        message_short: message_text.slice(0, 120),
+      },
+    });
+
+    if (!sendResult.ok) {
+      return new Response(
+        JSON.stringify({ ok: false, message_id: msg.id, status: 'failed', error: sendResult.error }),
+        { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
+
+    return new Response(
+      JSON.stringify({ ok: true, message_id: msg.id, status: 'delivered', provider_kind: 'manychat' }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    );
+  }
+
+  // ─── Legacy ApiX-Drive path (unchanged) ────────────────────────────────────
   await supabase.from('audit_logs').insert({
     action: 'instagram_reply_sent',
     actor_type: 'user',
@@ -345,6 +427,7 @@ async function sendReply(supabase: any, body: any, adminUserId: string) {
       sender_id,
       message_id: msg.id,
       status: 'queued',
+      provider_kind: providerKind,
       message_short: message_text.slice(0, 120),
     },
   });
@@ -352,6 +435,82 @@ async function sendReply(supabase: any, body: any, adminUserId: string) {
   return new Response(JSON.stringify({ ok: true, message_id: msg.id, status: 'queued' }), {
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
+}
+
+// ─── A7: ManyChat send helper ──────────────────────────────────────────────
+async function sendViaManyChat(
+  supabase: any,
+  integrationInstanceId: string,
+  subscriberId: string,
+  text: string,
+): Promise<{ ok: boolean; provider_message_id?: string; error?: string }> {
+  // Read api_key from config_secrets (NOT config) — A5 contract
+  const { data: instance, error: instErr } = await supabase
+    .from('integration_instances')
+    .select('config_secrets')
+    .eq('id', integrationInstanceId)
+    .maybeSingle();
+
+  if (instErr || !instance) {
+    return { ok: false, error: 'integration_instance not found' };
+  }
+  const apiKey = (instance.config_secrets || {})?.api_key;
+  if (!apiKey || typeof apiKey !== 'string') {
+    return { ok: false, error: 'manychat api_key missing in config_secrets' };
+  }
+
+  const payload = {
+    subscriber_id: subscriberId,
+    data: {
+      version: 'v2',
+      content: {
+        messages: [{ type: 'text', text }],
+      },
+    },
+    message_tag: 'ACCOUNT_UPDATE',
+  };
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10_000);
+
+  try {
+    const resp = await fetch('https://api.manychat.com/fb/sending/sendContent', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    let parsed: any = null;
+    try {
+      parsed = await resp.json();
+    } catch {
+      return { ok: false, error: `manychat non-JSON response (HTTP ${resp.status})` };
+    }
+
+    if (!resp.ok) {
+      const msg = parsed?.message || parsed?.error || `HTTP ${resp.status}`;
+      return { ok: false, error: `manychat http error: ${msg}` };
+    }
+
+    if (parsed?.status && parsed.status !== 'success') {
+      return { ok: false, error: `manychat api error: ${parsed?.message || 'unknown'}` };
+    }
+
+    const providerMsgId =
+      parsed?.data?.message_id || parsed?.data?.id || parsed?.message_id || null;
+    return { ok: true, provider_message_id: providerMsgId };
+  } catch (e: any) {
+    clearTimeout(timeoutId);
+    if (e?.name === 'AbortError') {
+      return { ok: false, error: 'manychat send timeout (10s)' };
+    }
+    return { ok: false, error: `manychat send exception: ${e?.message || String(e)}` };
+  }
 }
 
 async function markRead(supabase: any, body: any) {
