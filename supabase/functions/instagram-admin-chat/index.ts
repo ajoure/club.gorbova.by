@@ -572,11 +572,19 @@ async function sendViaManyChat(
   };
 
   const tryOnce = async (attemptNo: number, tag?: string) => {
-    const r = await callManychat(buildPayload(tag));
+    const payload = buildPayload(tag);
+    if (!payload) {
+      return {
+        r: { httpOk: false, status: 0, parsed: null, rawBody: 'invalid_payload' },
+        msg: 'invalid_payload: no text or media_url',
+        isSuccess: false,
+      };
+    }
+    const r = await callManychat(payload);
     const msg = r.parsed?.message || r.parsed?.error?.message || r.parsed?.error || r.rawBody || `HTTP ${r.status}`;
     const isSuccess = r.httpOk && (!r.parsed?.status || r.parsed.status === 'success');
     await logAttempt(attemptNo, tag || null, r, isSuccess ? 'success' : 'error');
-    console.log('[manychat:sendContent]', { attempt: attemptNo, tag: tag || 'none', status: r.status, httpOk: r.httpOk, msg: String(msg).slice(0, 200) });
+    console.log('[manychat:sendContent]', { attempt: attemptNo, tag: tag || 'none', media_type: content.media_type || 'text', status: r.status, httpOk: r.httpOk, msg: String(msg).slice(0, 200) });
     return { r, msg: String(msg), isSuccess };
   };
 
