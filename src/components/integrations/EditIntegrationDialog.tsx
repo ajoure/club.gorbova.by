@@ -88,13 +88,20 @@ export function EditIntegrationDialog({
 
     const { alias, is_default, ...configFields } = formData;
 
-    // PATCH-MIT: Protect password fields from being overwritten with empty values
+    // PATCH-MIT: Protect password fields from being overwritten with empty values.
+    // Работает и для legacy config-based секретов, и для новых config_secrets:
+    // удаление пустого ключа ниже + secret-merge в updateInstance гарантируют,
+    // что нетронутый секрет не затирается.
     const safeConfig = { ...configFields };
     const allFields = [...(provider?.fields || []), ...(provider?.advancedFields || [])];
     for (const field of allFields) {
       if (field.type === "password") {
         const currentValue = String(safeConfig[field.key] || "");
-        const originalValue = String((instance.config as Record<string, unknown>)?.[field.key] || "");
+        // Старое значение могло лежать как в config, так и в config_secrets —
+        // достаём из объединённого view, чтобы корректно решить, изменилось ли поле.
+        const originalConfig = (instance.config as Record<string, unknown>) || {};
+        const originalSecrets = (instance.config_secrets as Record<string, unknown>) || {};
+        const originalValue = String(originalConfig[field.key] ?? originalSecrets[field.key] ?? "");
         if (currentValue === "" && originalValue !== "") {
           // Don't include unchanged password in payload at all
           delete safeConfig[field.key];
@@ -104,6 +111,7 @@ export function EditIntegrationDialog({
 
     await updateInstance.mutateAsync({
       id: instance.id,
+      provider: instance.provider, // нужен для split config / config_secrets
       alias: String(alias),
       is_default: Boolean(is_default),
       config: safeConfig as Record<string, unknown>,
