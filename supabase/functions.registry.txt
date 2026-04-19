@@ -75,6 +75,8 @@ training-copy-move
 manage-news-schedule
 instagram-webhook
 instagram-admin-chat
+manychat-inbound
+manychat-discover-pages
 erip-reconcile-pending
 grp-lookup
 public-checkout
