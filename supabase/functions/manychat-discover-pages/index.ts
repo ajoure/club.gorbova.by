@@ -27,6 +27,20 @@ interface ManyChatPage {
   timezone?: string;
 }
 
+type IdSource =
+  | "id"
+  | "page_id"
+  | "facebook_page_id"
+  | "fb_page_id"
+  | "username"
+  | "synthetic_hash";
+
+interface NormalizedPageResult {
+  page: ManyChatPage;
+  id_source: IdSource;
+  synthetic_id: boolean;
+}
+
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -127,12 +141,28 @@ function pickString(obj: Record<string, unknown>, keys: string[]): string {
   return "";
 }
 
-function normalizePage(raw: unknown): ManyChatPage | null {
+async function sha256Hex(input: string): Promise<string> {
+  const data = new TextEncoder().encode(input);
+  const buf = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/**
+ * Резолвит id страницы по приоритету:
+ *   1) реальные id-ключи (id, page_id, facebook_page_id, fb_page_id)
+ *   2) username
+ *   3) synthetic: mc:<sha256_first_24>(username || name|timezone|is_pro)
+ *
+ * Synthetic id детерминирован между вызовами и помечен префиксом mc:
+ * чтобы downstream-код мог отличать его от реального FB numeric id.
+ */
+async function normalizePage(raw: unknown): Promise<NormalizedPageResult | null> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const r = raw as Record<string, unknown>;
-  const id = pickString(r, ["id", "page_id", "facebook_page_id", "fb_page_id"]);
-  if (!id) return null;
-  const name = pickString(r, ["name", "page_name", "title"]) || id;
+
+  const name = pickString(r, ["name", "page_name", "title"]);
   const username = pickString(r, ["username", "page_username"]) || undefined;
   const timezone = pickString(r, ["timezone", "time_zone"]) || undefined;
   const is_pro =
@@ -141,7 +171,46 @@ function normalizePage(raw: unknown): ManyChatPage | null {
       : typeof r.pro === "boolean"
         ? r.pro
         : undefined;
-  return { id, name, username, is_pro, timezone };
+
+  // Приоритет 1: реальные id-ключи
+  const realIdKeys: { key: string; source: IdSource }[] = [
+    { key: "id", source: "id" },
+    { key: "page_id", source: "page_id" },
+    { key: "facebook_page_id", source: "facebook_page_id" },
+    { key: "fb_page_id", source: "fb_page_id" },
+  ];
+  for (const { key, source } of realIdKeys) {
+    const v = r[key];
+    if (v !== undefined && v !== null && String(v).trim() !== "") {
+      const id = String(v).trim();
+      return {
+        page: { id, name: name || id, username, is_pro, timezone },
+        id_source: source,
+        synthetic_id: false,
+      };
+    }
+  }
+
+  // Приоритет 2: username (стабильный человекочитаемый идентификатор)
+  if (username) {
+    return {
+      page: { id: `mc:${username}`, name: name || username, username, is_pro, timezone },
+      id_source: "username",
+      synthetic_id: true,
+    };
+  }
+
+  // Приоритет 3: synthetic hash. Требуется как минимум name.
+  if (!name) return null;
+  const proPart = typeof is_pro === "boolean" ? String(is_pro) : "";
+  const inputStr = `${name}|${timezone ?? ""}|${proPart}`;
+  const hash = await sha256Hex(inputStr);
+  const id = `mc:${hash.slice(0, 24)}`;
+  return {
+    page: { id, name, username, is_pro, timezone },
+    id_source: "synthetic_hash",
+    synthetic_id: true,
+  };
 }
 
 /**
@@ -154,7 +223,9 @@ function normalizePage(raw: unknown): ManyChatPage | null {
  *
  * Возвращает массив только валидных страниц (с непустым id).
  */
-function extractManyChatPages(payload: unknown): ManyChatPage[] {
+async function extractManyChatPages(
+  payload: unknown,
+): Promise<{ pages: ManyChatPage[]; sources: IdSource[]; synthetic_flags: boolean[] }> {
   const candidates: unknown[] = [];
 
   if (Array.isArray(payload)) {
@@ -173,11 +244,17 @@ function extractManyChatPages(payload: unknown): ManyChatPage[] {
   }
 
   const pages: ManyChatPage[] = [];
+  const sources: IdSource[] = [];
+  const synthetic_flags: boolean[] = [];
   for (const c of candidates) {
-    const p = normalizePage(c);
-    if (p) pages.push(p);
+    const res = await normalizePage(c);
+    if (res) {
+      pages.push(res.page);
+      sources.push(res.id_source);
+      synthetic_flags.push(res.synthetic_id);
+    }
   }
-  return pages;
+  return { pages, sources, synthetic_flags };
 }
 
 Deno.serve(async (req) => {
@@ -298,12 +375,23 @@ Deno.serve(async (req) => {
       return errorResponse("unexpected_response", msg);
     }
 
-    const pages = extractManyChatPages(payload);
+    const { pages, sources, synthetic_flags } = await extractManyChatPages(payload);
+
+    // DEBUG-ONLY: id resolution trace (no secrets)
+    console.log(
+      JSON.stringify({
+        tag: "manychat_discover_id_resolution",
+        request_mode: requestMode,
+        pages_count: pages.length,
+        id_sources: sources,
+        synthetic_flags,
+      }),
+    );
 
     if (pages.length === 0) {
       return errorResponse(
         "unexpected_response",
-        "Page ID отсутствует в ответе",
+        "Не удалось извлечь страницу из ответа ManyChat",
       );
     }
 

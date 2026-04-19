@@ -108,7 +108,7 @@ export const ManyChatPageSelector = forwardRef<HTMLDivElement, Props>(function M
               {currentPageName || "Страница ManyChat"}
             </div>
             <div className="text-xs text-muted-foreground font-mono truncate">
-              ID: {currentPageId}
+              Идентификатор страницы: {currentPageId}
             </div>
           </div>
         </div>
@@ -204,11 +204,11 @@ export const ManyChatPageSelector = forwardRef<HTMLDivElement, Props>(function M
             <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
             <span>
               Не удалось автоматически получить страницу: {state.reason}.
-              Введите Page ID вручную (debug mode).
+              Введите идентификатор страницы вручную (debug mode).
             </span>
           </p>
           <Input
-            placeholder="ID Facebook Page в ManyChat"
+            placeholder="Идентификатор страницы ManyChat"
             value={currentPageId}
             onChange={(e) => onChange(e.target.value, currentPageName)}
           />
