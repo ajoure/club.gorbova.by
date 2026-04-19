@@ -15,7 +15,8 @@ import { SwipeableDialogCard } from "@/components/admin/communication/SwipeableD
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ContactInstagramChat } from "./ContactInstagramChat";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Instagram, Search, MessageSquare, ArrowLeft, RefreshCw, Check } from "lucide-react";
+import { Instagram, Search, MessageSquare, ArrowLeft, RefreshCw, Check, Pin, PinOff } from "lucide-react";
+import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
@@ -38,6 +39,8 @@ interface InstagramDialog {
   profile_id: string | null;
   account_name: string | null;
   integration_instance_id: string | null;
+  is_pinned?: boolean;
+  pinned_at?: string | null;
 }
 
 const IG_PANEL_SIZE_KEY = "ig-panel-sizes";
@@ -208,6 +211,40 @@ export function InstagramInboxView() {
     [activeAccountId, dialogs, queryClient]
   );
 
+  const togglePin = useCallback(
+    async (dialog: InstagramDialog) => {
+      if (!activeAccountId) return;
+      const { data: userRes } = await supabase.auth.getUser();
+      const adminId = userRes.user?.id;
+      if (!adminId) {
+        toast.error("Не удалось определить администратора");
+        return;
+      }
+      const wasPinned = !!dialog.is_pinned;
+      const nextPinned = !wasPinned;
+      const { error } = await supabase
+        .from("instagram_dialog_preferences")
+        .upsert(
+          {
+            admin_user_id: adminId,
+            instagram_account_id: activeAccountId,
+            thread_key: dialog.thread_key,
+            is_pinned: nextPinned,
+            pinned_at: nextPinned ? new Date().toISOString() : null,
+          },
+          { onConflict: "admin_user_id,instagram_account_id,thread_key" },
+        );
+      if (error) {
+        toast.error(`Не удалось ${wasPinned ? "открепить" : "закрепить"} диалог`);
+        return;
+      }
+      toast.success(nextPinned ? "Диалог закреплён" : "Диалог откреплён");
+      queryClient.invalidateQueries({ queryKey: ["instagram-dialogs", activeAccountId] });
+    },
+    [activeAccountId, queryClient],
+  );
+
+
   const getDisplayName = (d: InstagramDialog) =>
     d.full_name || d.sender_name || d.instagram_username || d.peer_id;
 
@@ -343,6 +380,9 @@ export function InstagramInboxView() {
                     </div>
                     <div className="flex-1 min-w-0 overflow-hidden">
                       <div className="flex items-center gap-1.5 min-w-0">
+                        {dialog.is_pinned && (
+                          <Pin className="h-3 w-3 shrink-0 text-primary fill-primary" />
+                        )}
                         <span className="text-xs font-semibold truncate flex-1 min-w-0 whitespace-nowrap">
                           {displayName}
                         </span>
@@ -371,11 +411,27 @@ export function InstagramInboxView() {
                         {dialog.last_message || (dialog.last_media_url ? "📷 Медиа" : "...")}
                       </p>
                     </div>
-                    {/* Quick action: mark read */}
+                    {/* Quick actions: pin + mark read */}
                     <div className="self-stretch flex flex-col items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto">
                       <button
                         type="button"
+                        title={dialog.is_pinned ? "Открепить" : "Закрепить"}
+                        className="h-6 w-6 rounded-md flex items-center justify-center transition-colors hover:bg-primary/15"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          togglePin(dialog);
+                        }}
+                      >
+                        {dialog.is_pinned ? (
+                          <PinOff className="h-3.5 w-3.5" />
+                        ) : (
+                          <Pin className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                      <button
+                        type="button"
                         disabled={dialog.unread_count === 0}
+                        title="Отметить прочитанным"
                         className={cn(
                           "h-6 w-6 rounded-md flex items-center justify-center transition-colors",
                           dialog.unread_count > 0

@@ -73,23 +73,22 @@ Deno.serve(async (req) => {
     : media_type === 'video' ? { type: 'video', url: signedUrl }
     : { type: 'file', url: signedUrl };
 
-  const buildPayload = (tag?: string) => {
-    const p: Record<string, unknown> = {
-      subscriber_id: subIdNum,
-      data: { version: 'v2', content: { type: 'instagram', messages: [block] } },
-    };
-    if (tag) p.message_tag = tag;
-    return p;
+  // Media send rule (proof-based):
+  //   - НЕ использовать HUMAN_AGENT для media (уже есть proof "Unsupported message tag")
+  //   - один normal attempt → нормализованный success/fail
+  const payload: Record<string, unknown> = {
+    subscriber_id: subIdNum,
+    data: { version: 'v2', content: { type: 'instagram', messages: [block] } },
   };
 
-  const callMc = async (tag?: string) => {
+  const callMc = async () => {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 15000);
     try {
       const r = await fetch('https://api.manychat.com/fb/sending/sendContent', {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildPayload(tag)),
+        body: JSON.stringify(payload),
         signal: ctrl.signal,
       });
       clearTimeout(t);
@@ -103,19 +102,14 @@ Deno.serve(async (req) => {
   };
 
   const a1 = await callMc();
-  const ok1 = a1.httpOk && (!a1.parsed?.status || a1.parsed.status === 'success');
-  if (ok1) {
-    return j({ ok: true, attempt: 1, signed_url: signedUrl, http_status: a1.status, response: a1.parsed }, 200);
-  }
-  const a2 = await callMc('HUMAN_AGENT');
-  const ok2 = a2.httpOk && (!a2.parsed?.status || a2.parsed.status === 'success');
+  const ok = a1.httpOk && (!a1.parsed?.status || a1.parsed.status === 'success');
   return j({
-    ok: ok2,
+    ok,
     pilot_summary: {
       media_type,
-      signed_url_ok: true,
-      attempt_1: { http_status: a1.status, body: a1.raw },
-      attempt_2_human_agent: { http_status: a2.status, body: a2.raw },
+      url_used: signedUrl,
+      url_kind: override_url ? 'override' : 'signed',
+      attempt: { http_status: a1.status, response: a1.parsed, raw_excerpt: a1.raw },
     },
   }, 200);
 });
