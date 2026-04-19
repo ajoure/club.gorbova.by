@@ -406,6 +406,44 @@ Deno.serve(async (req) => {
 
   // 6) Upsert contact (provider_kind='manychat')
   // Avatar: пишем только если получили валидный URL (никогда не перетираем на null).
+  // PATCH: если webhook payload не содержит profile_pic, делаем pull через /fb/subscriber/getInfo.
+  let resolvedAvatar: string | null = normalized.avatar_url;
+  if (!resolvedAvatar) {
+    const apiKey =
+      (instance.config_secrets?.api_key as string | undefined) ||
+      Deno.env.get("MANYCHAT_API_TOKEN") ||
+      null;
+    if (apiKey) {
+      try {
+        const subIdNum = /^\d+$/.test(String(normalized.sender_id))
+          ? Number(normalized.sender_id)
+          : normalized.sender_id;
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 4000);
+        const resp = await fetch(
+          `https://api.manychat.com/fb/subscriber/getInfo?subscriber_id=${encodeURIComponent(String(subIdNum))}`,
+          {
+            method: "GET",
+            headers: { Authorization: `Bearer ${apiKey}` },
+            signal: ctrl.signal,
+          },
+        );
+        clearTimeout(t);
+        if (resp.ok) {
+          const j: any = await resp.json().catch(() => null);
+          const pic = j?.data?.profile_pic ?? j?.data?.profile_pic_url ?? null;
+          if (typeof pic === "string" && /^https?:\/\//i.test(pic)) {
+            resolvedAvatar = pic;
+          }
+        } else {
+          console.warn("[manychat-inbound] avatar_pull_non_ok", resp.status);
+        }
+      } catch (e) {
+        console.warn("[manychat-inbound] avatar_pull_failed", e);
+      }
+    }
+  }
+
   try {
     const contactPayload: Record<string, unknown> = {
       instagram_account_id: accountId!,
@@ -415,8 +453,8 @@ Deno.serve(async (req) => {
       provider_kind: "manychat",
       updated_at: new Date().toISOString(),
     };
-    if (normalized.avatar_url) {
-      contactPayload.avatar_url = normalized.avatar_url;
+    if (resolvedAvatar) {
+      contactPayload.avatar_url = resolvedAvatar;
     }
     await supabase
       .from("instagram_contacts")
