@@ -169,13 +169,22 @@ export function ContactInstagramChat({
             <Loader2 className="h-3 w-3 animate-spin" /> Отправляется
           </span>
         );
-      case "failed":
+      case "failed": {
+        // PATCH-10: никогда не показывать сырой provider-error в ленте.
+        // Короткий пользовательский лейбл; полный текст — только в title для admin.
+        const raw = msg.error_message || "";
+        const isProviderTech = /manychat|http error|validation|fbsbx|graph\.facebook/i.test(raw);
+        const userLabel = isProviderTech ? "Не доставлено" : (raw.slice(0, 40) || "Ошибка");
         return (
-          <span className="flex items-center gap-0.5 text-[10px] text-destructive">
+          <span
+            className="flex items-center gap-0.5 text-[10px] text-destructive"
+            title={raw || undefined}
+          >
             <AlertCircle className="h-3 w-3" />
-            {msg.error_message?.slice(0, 40) || "Ошибка"}
+            {userLabel}
           </span>
         );
+      }
       case "pending":
         return (
           <Badge variant="outline" className="text-[10px] h-4 px-1">
