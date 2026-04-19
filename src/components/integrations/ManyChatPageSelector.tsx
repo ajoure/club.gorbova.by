@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { forwardRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,14 +44,10 @@ type State =
   | { kind: "invalid_key" }
   | { kind: "fallback"; reason: string };
 
-export function ManyChatPageSelector({
-  apiKey,
-  instanceId,
-  currentPageId,
-  currentPageName,
-  onChange,
-  label,
-}: Props) {
+export const ManyChatPageSelector = forwardRef<HTMLDivElement, Props>(function ManyChatPageSelector(
+  { apiKey, instanceId, currentPageId, currentPageName, onChange, label },
+  ref,
+) {
   const [state, setState] = useState<State>({ kind: "idle" });
 
   const canDiscover = apiKey.trim().length > 0 || Boolean(instanceId);
@@ -100,7 +96,7 @@ export function ManyChatPageSelector({
   };
 
   return (
-    <div className="space-y-2">
+    <div ref={ref} className="space-y-2">
       <Label>{label}</Label>
 
       {/* Текущая выбранная страница (если есть) */}
@@ -220,4 +216,4 @@ export function ManyChatPageSelector({
       )}
     </div>
   );
-}
+});

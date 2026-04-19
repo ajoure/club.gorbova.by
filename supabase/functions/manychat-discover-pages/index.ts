@@ -2,6 +2,10 @@
 // Принимает либо { api_key } (create flow), либо { instance_id } (edit flow).
 // При instance_id читает api_key из integration_instances.config_secrets.
 // Ничего не пишет в БД, не обновляет status, не логирует секреты.
+//
+// DEBUG-ONLY: содержит структурированное логирование envelope ManyChat
+// для отладки парсера. После закрытия proof понизить до debug-level
+// или удалить блок logEnvelope().
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
@@ -41,6 +45,141 @@ function errorResponse(
   );
 }
 
+// ---------- Debug logger (no secrets) ----------
+function safeBodyPreview(text: unknown): string {
+  if (typeof text !== "string") return "<non-string-body>";
+  if (text.length === 0) return "<empty>";
+  // обрезаем агрессивно до 300 символов
+  const sliced = text.slice(0, 300);
+  return sliced.length < text.length ? sliced + "...[truncated]" : sliced;
+}
+
+function describeShape(v: unknown): "object" | "array" | "missing" | "primitive" {
+  if (v === undefined || v === null) return "missing";
+  if (Array.isArray(v)) return "array";
+  if (typeof v === "object") return "object";
+  return "primitive";
+}
+
+function logEnvelope(params: {
+  request_mode: "api_key" | "instance_id";
+  http_status: number;
+  text: string;
+}) {
+  const { request_mode, http_status, text } = params;
+  let payload: unknown = undefined;
+  let parse_ok = false;
+  try {
+    payload = JSON.parse(text);
+    parse_ok = true;
+  } catch {
+    parse_ok = false;
+  }
+
+  const meta: Record<string, unknown> = {
+    tag: "manychat_discover_envelope",
+    request_mode,
+    http_status,
+    parse_ok,
+    body_preview_truncated: safeBodyPreview(text),
+  };
+
+  if (parse_ok && payload && typeof payload === "object" && !Array.isArray(payload)) {
+    const obj = payload as Record<string, unknown>;
+    meta.top_level_keys = Object.keys(obj);
+    meta.status_field = obj.status ?? null;
+    const data = obj.data;
+    meta.has_data = data !== undefined && data !== null;
+    const shape = describeShape(data);
+    meta.data_shape = shape;
+    if (shape === "object") {
+      meta.data_keys = Object.keys(data as Record<string, unknown>);
+    } else if (shape === "array") {
+      const arr = data as unknown[];
+      meta.data_length = arr.length;
+      const first = arr[0];
+      if (first && typeof first === "object" && !Array.isArray(first)) {
+        meta.data_first_keys = Object.keys(first as Record<string, unknown>);
+      }
+    }
+  } else if (parse_ok && Array.isArray(payload)) {
+    meta.top_level_keys = "<array>";
+    meta.data_length = payload.length;
+    const first = payload[0];
+    if (first && typeof first === "object" && !Array.isArray(first)) {
+      meta.data_first_keys = Object.keys(first as Record<string, unknown>);
+    }
+  } else {
+    meta.top_level_keys = "<primitive_or_unparsable>";
+  }
+
+  console.log(JSON.stringify(meta));
+}
+
+// ---------- Envelope normalization ----------
+function pickString(obj: Record<string, unknown>, keys: string[]): string {
+  for (const k of keys) {
+    const v = obj[k];
+    if (v !== undefined && v !== null && String(v).trim() !== "") {
+      return String(v);
+    }
+  }
+  return "";
+}
+
+function normalizePage(raw: unknown): ManyChatPage | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const id = pickString(r, ["id", "page_id", "facebook_page_id", "fb_page_id"]);
+  if (!id) return null;
+  const name = pickString(r, ["name", "page_name", "title"]) || id;
+  const username = pickString(r, ["username", "page_username"]) || undefined;
+  const timezone = pickString(r, ["timezone", "time_zone"]) || undefined;
+  const is_pro =
+    typeof r.is_pro === "boolean"
+      ? r.is_pro
+      : typeof r.pro === "boolean"
+        ? r.pro
+        : undefined;
+  return { id, name, username, is_pro, timezone };
+}
+
+/**
+ * Поддерживаемые формы envelope ManyChat:
+ *  - { status: "success", data: { id, name, ... } }
+ *  - { data: { id, name, ... } }                       (без status)
+ *  - { data: [ { id, name, ... }, ... ] }              (массив страниц)
+ *  - { id, name, ... }                                  (плоский объект)
+ *  - [ { id, name, ... }, ... ]                         (плоский массив)
+ *
+ * Возвращает массив только валидных страниц (с непустым id).
+ */
+function extractManyChatPages(payload: unknown): ManyChatPage[] {
+  const candidates: unknown[] = [];
+
+  if (Array.isArray(payload)) {
+    candidates.push(...payload);
+  } else if (payload && typeof payload === "object") {
+    const obj = payload as Record<string, unknown>;
+    const data = obj.data;
+    if (Array.isArray(data)) {
+      candidates.push(...data);
+    } else if (data && typeof data === "object") {
+      candidates.push(data);
+    } else {
+      // плоский объект-страница на верхнем уровне
+      candidates.push(obj);
+    }
+  }
+
+  const pages: ManyChatPage[] = [];
+  for (const c of candidates) {
+    const p = normalizePage(c);
+    if (p) pages.push(p);
+  }
+  return pages;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -74,6 +213,7 @@ Deno.serve(async (req) => {
   }
 
   let apiKey = (body.api_key || "").trim();
+  let requestMode: "api_key" | "instance_id" = apiKey ? "api_key" : "instance_id";
 
   // Если api_key не передан — пробуем взять из instance.config_secrets
   if (!apiKey && body.instance_id) {
@@ -100,6 +240,7 @@ Deno.serve(async (req) => {
         "API Key не сохранён для этого подключения",
       );
     }
+    requestMode = "instance_id";
   }
 
   if (!apiKey) {
@@ -126,6 +267,14 @@ Deno.serve(async (req) => {
     }
 
     const text = await resp.text();
+
+    // DEBUG-ONLY: structured envelope log (no secrets)
+    logEnvelope({
+      request_mode: requestMode,
+      http_status: resp.status,
+      text,
+    });
+
     let payload: unknown;
     try {
       payload = JSON.parse(text);
@@ -136,31 +285,29 @@ Deno.serve(async (req) => {
       );
     }
 
-    const env = payload as { status?: string; data?: Record<string, unknown> };
-    if (env.status !== "success" || !env.data) {
-      return errorResponse(
-        "unexpected_response",
-        "Неожиданный ответ ManyChat API",
-      );
+    // Если есть явный статус ошибки — отдаём как unexpected
+    if (
+      payload &&
+      typeof payload === "object" &&
+      !Array.isArray(payload) &&
+      (payload as Record<string, unknown>).status === "error"
+    ) {
+      const msg =
+        ((payload as Record<string, unknown>).message as string | undefined) ||
+        "ManyChat вернул status=error";
+      return errorResponse("unexpected_response", msg);
     }
 
-    const d = env.data;
-    const page: ManyChatPage = {
-      id: String(d.id ?? ""),
-      name: String(d.name ?? ""),
-      username: d.username ? String(d.username) : undefined,
-      is_pro: typeof d.is_pro === "boolean" ? d.is_pro : undefined,
-      timezone: d.timezone ? String(d.timezone) : undefined,
-    };
+    const pages = extractManyChatPages(payload);
 
-    if (!page.id) {
+    if (pages.length === 0) {
       return errorResponse(
         "unexpected_response",
         "Page ID отсутствует в ответе",
       );
     }
 
-    return jsonResponse({ success: true, pages: [page] });
+    return jsonResponse({ success: true, pages });
   } catch (err) {
     clearTimeout(timeout);
     const e = err as Error;
