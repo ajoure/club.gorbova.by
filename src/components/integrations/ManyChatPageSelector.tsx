@@ -216,4 +216,4 @@ export const ManyChatPageSelector = forwardRef<HTMLDivElement, Props>(function M
       )}
     </div>
   );
-}
+});
