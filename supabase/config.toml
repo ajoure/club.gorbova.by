@@ -392,3 +392,6 @@ verify_jwt = false
 
 [functions.erip-reconcile-pending]
 verify_jwt = false
+
+[functions.manychat-discover-pages]
+verify_jwt = true
