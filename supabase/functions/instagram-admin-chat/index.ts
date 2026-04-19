@@ -294,9 +294,24 @@ async function getHistory(supabase: any, body: any) {
 }
 
 async function sendReply(supabase: any, body: any, adminUserId: string) {
-  const { instagram_account_id, sender_id, thread_id, message_text, client_msg_id } = body;
-  if (!instagram_account_id || !sender_id || !message_text) {
-    throw new Error('Missing required fields: instagram_account_id, sender_id, message_text');
+  const {
+    instagram_account_id,
+    sender_id,
+    thread_id,
+    message_text,
+    client_msg_id,
+    media_url,
+    media_type, // 'image' | 'audio' | 'video' | 'file'
+  } = body;
+  if (!instagram_account_id || !sender_id) {
+    throw new Error('Missing required fields: instagram_account_id, sender_id');
+  }
+  // Либо текст, либо media — что-то одно обязательно.
+  if (!message_text && !media_url) {
+    throw new Error('Missing message_text or media_url');
+  }
+  if (media_url && !media_type) {
+    throw new Error('media_type required when media_url provided');
   }
 
   // A7: Resolve provider_kind for routing
