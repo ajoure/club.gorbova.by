@@ -36,20 +36,25 @@ Deno.serve(async (req) => {
     object_path = 'instagram-pilot/test.png',
     media_type = 'image',
     ttl_seconds = 86400,
+    override_url, // если задан — используем как есть, без signed URL
   } = body;
 
   if (!integration_instance_id || !subscriber_id) {
     return j({ error: 'integration_instance_id, subscriber_id required' }, 400);
   }
 
-  // 1) signed URL
-  const { data: signed, error: signErr } = await sr.storage
-    .from(bucket)
-    .createSignedUrl(object_path, ttl_seconds);
-  if (signErr || !signed?.signedUrl) {
-    return j({ ok: false, step: 'signed_url', error: signErr?.message || 'no signed url' }, 200);
+  let signedUrl: string;
+  if (override_url) {
+    signedUrl = override_url;
+  } else {
+    const { data: signed, error: signErr } = await sr.storage
+      .from(bucket)
+      .createSignedUrl(object_path, ttl_seconds);
+    if (signErr || !signed?.signedUrl) {
+      return j({ ok: false, step: 'signed_url', error: signErr?.message || 'no signed url' }, 200);
+    }
+    signedUrl = signed.signedUrl;
   }
-  const signedUrl = signed.signedUrl;
 
   // 2) load api_key
   const { data: instance } = await sr
