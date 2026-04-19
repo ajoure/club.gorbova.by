@@ -1,196 +1,114 @@
-## да, согласен, с учетом правок:
+## да, согласен, с учетом правок:    
 
-1. `manychat-discover-pages` **лучше сразу сделать в двух режимах**, а не завязывать edit-flow на `healthcheck`.  
-Сейчас в плане:
+1. Логирование делай **структурированным и временным**, не просто `console.log(text.slice(...))`.  
+Нужны поля:
   &nbsp;
   &nbsp;
-  - create → `api_key` из body;
-  - edit → “если api_key пустой, используем existing secret через healthcheck”.  
-  Это лишняя связка и побочный эффект. `healthcheck` меняет status/logs, а discover должен быть чистым preflight/read-only.  
-  Правильнее:
-  - `manychat-discover-pages` принимает **либо** `{ api_key }`, **либо** `{ instance_id }`;
-  - при `instance_id` сам читает `config_secrets.api_key` из БД;
-  - ничего не пишет в БД и не обновляет status.  
-  Тогда create и edit используют **один и тот же** чистый endpoint.
-2. **Новый тип поля** `manychat_page_select` **нужно явно добавить в типизацию** `ProviderField.type`**.**  
-Иначе план логически верный, но упрётся в compile/type error или в generic-renderer, который знает только стандартные типы.  
-То есть в A5/A8 patch нужно явно включить:
-  - расширение union-типа;
-  - default/fallback render для неизвестного field type не должен ломать остальные провайдеры.
-3. `manychat_page_name` **не делай обязательным “полем провайдера” в registry.**  
-Лучше трактовать его как **derived display cache**:
-  - `manychat_page_id` — source of truth в `config`;
-  - `manychat_page_name` — optional display snapshot в `config`, который автозаполняется после discover/select;
-  - отсутствие `manychat_page_name` не должно блокировать submit/edit.  
-  Иначе вы искусственно плодите вторичное обязательное поле.
-4. **Для create-flow зафиксируй точный UX trigger**, чтобы не было двусмысленности “blur или кнопка”.  
-Рекомендую так:
-  - основное действие — явная кнопка **«Получить страницу»**;
-  - авто-discover по blur можно оставить как enhancement, но не как единственный trigger.  
-  Это надёжнее и предсказуемее для пользователя, особенно для password-поля.
-5. **Fallback на ручной ввод** `Page ID` **оставь как hidden/debug mode, не как обычный happy path.**  
-Это правильная идея, но зафиксируй явно:
-  - по умолчанию ручное поле скрыто;
-  - показывается только при `network_error/non_json/unexpected_response`;
-  - при `401/403` ручной ввод не должен подменять неверный API key как будто всё в порядке.
-6. **Валидацию submit опиши чуть строже.**  
-Для ManyChat должно быть:
-  - обязателен `api_key`;
-  - обязателен `manychat_page_id`, но он может прийти либо из discover/select, либо из debug fallback;
-  - `workspace_token` не обязателен;
-  - `allowed_page_ids` не обязателен.  
-  То есть `required: false` в registry не должно превращаться в “page_id вообще не нужен”; просто источник заполнения меняется с ручного ввода на discover.
-7. **В proof после выполнения добавь ещё один обязательный regression-check:**  
-create/edit existing integrations для других провайдеров не ломаются из-за нового field type и новой логики в `AddIntegrationDialog`/`EditIntegrationDialog`.  
-Не только `apix_instagram_dm`, но и хотя бы один non-social/provider с обычными password fields.
+  - `http_status`
+  - `top_level_keys`
+  - `status_field`
+  - `has_data`
+  - `data_shape`
+  - `data_keys` или `data_first_keys`
+  - `body_preview_truncated`
+  - `request_mode` (`api_key` или `instance_id`)  
+  И сразу зафиксируй, что это **debug-only patch**, который потом убирается или понижается до debug-level после закрытия proof.
+2. В `body_preview` добавь явный guard по длине и типу.  
+Не просто “первые 300 символов”, а:
+  - максимум 300 символов;
+  - только строковое значение;
+  - если ответ слишком большой или бинарный/нестроковый — писать безопасный маркер.  
+  Это исключит случайный шум в логах.
+3. Парсер лучше оформить как **отдельный normalize helper**, а не inline-ветвления в handler.  
+Например:
+  - `extractManyChatPages(payload): ManyChatPage[]`
+  - handler только вызывает helper и логирует метаданные.  
+  Так будет проще быстро добавить 4-ю ветку, если реальный envelope окажется ещё другим.
+4. В normalize helper сразу заложи **мягкую фильтрацию пустых страниц**.  
+То есть если из массива пришли элементы без идентификатора, не падать сразу на первом мусорном элементе, а:
+  - отнормализовать все;
+  - оставить только элементы с валидным `id`;
+  - если после фильтрации пусто — тогда `unexpected_response`.
+5. Side-fix по `forwardRef` принимаю, но не раздувай его.  
+Это именно side-fix, а не часть основного proof.  
+Если warning убирается минимально — ок. Если начинает тянуть переписывание generic form wrappers, вынеси остаток в deferred.
+6. В DoD добавь ещё один пункт:  
+**при** `invalid_api_key` **fallback ручного ввода не показывается.**  
+Это уже было в UX-контракте, и сейчас важно явно проверить, что после parser-fix вы не сломали ветвление ошибок.
+7. После фикса не нужен новый большой план.  
+Нужен только короткий runtime-proof:
+  - create flow: page auto-fill;
+  - chip с именем;
+  - fallback не показан;
+  - лог содержит ожидаемые debug-поля без секрета.
 
 &nbsp;
 
-После этих правок план можно исполнять и не тормозить спринт.
+После этого UX-patch можно считать закрытым и идти дальше.
 
 &nbsp;
 
-Контекст
+Fix-to-patch: ManyChat discover envelope parser
 
-Текущая форма создания ManyChat instance в `AddIntegrationDialog` требует ручного ввода `manychat_page_id`, что плохой UX. У ManyChat API уже подтверждён endpoint `GET /fb/page/getInfo`, который возвращает данные привязанной к API Key страницы. Один API Key в ManyChat = одна привязанная FB-страница (account). Это упрощает решение: dropdown с множественным выбором по факту почти всегда вырождается в один элемент, но контракт UI должен поддержать оба сценария.
+### Root cause (гипотеза)
 
-## Расследование (что подтвердил)
+Текущий парсер ожидает `{status:"success", data:{id, name, ...}}`. ManyChat возвращает 200 + JSON, но фактическая форма отличается (вероятно `data` — массив страниц, либо ключ `id` лежит как `page_id`/`facebook_page_id`, либо envelope без `status`). Без debug-лога точно не сказать. Нужно сначала залогировать форму, потом расширить парсер.
 
-1. `**AddIntegrationDialog.tsx**` — generic форма, рендерит поля по `selectedProvider.fields`. Сейчас рендерит для ManyChat 4 поля как input/textarea без какой-либо провайдер-специфичной логики, кроме SMTP auto-detect.
-2. `**useIntegrations.tsx**` — `PROVIDERS[]` для `manychat` содержит:
-  - `api_key` (password, required, secret)
-  - `workspace_token` (password, optional, secret)
-  - `manychat_page_id` (text, **required**) ← убираем required
-  - `allowed_page_ids` (textarea, optional)
-3. `**integration-healthcheck/index.ts**` — уже имеет `case "manychat"`, читает `api_key` из `config_secrets` и вызывает `GET /fb/page/getInfo`. Возвращает `id`, `name`, `username`, `is_pro`, `timezone`. **Но** функция требует существующий `instance_id` — для preflight в форме создания (instance ещё не создан) нужен другой путь.
-4. **EditIntegrationDialog** — отдельный компонент с PATCH-MIT защитой секретов; туда тоже нужно добавить кнопку re-discover.
+### Что меняем
 
-## Архитектурное решение
+**1. `supabase/functions/manychat-discover-pages/index.ts` — debug-лог без секретов**
 
-### Ключевой выбор: где делать ManyChat API call в момент создания instance?
+После `resp.text()` логируем:
 
-Нужна edge function, которая принимает `api_key` напрямую (без instance_id) и возвращает список доступных pages. Назову её `**manychat-discover-pages**`. Это thin proxy к `GET /fb/page/getInfo`, без записи в БД, без логирования секретов.
+- `http_status`
+- `top_level_keys` (`Object.keys(payload)` если объект, иначе `"<array>"`/`"<primitive>"`)
+- `status_field` (значение `payload.status` если есть)
+- `has_data` (boolean)
+- `data_shape`: `"object"` / `"array"` / `"missing"`
+- если object → `data_keys` (`Object.keys(payload.data)`)
+- если array → `data_length` + `data_first_keys` (`Object.keys(payload.data[0])` для первого элемента)
+- `body_preview`: первые 300 символов `text`, **обрезаем перед логом** (не должно содержать api_key — это ответ, не запрос)
 
-**Почему отдельная функция, а не расширение healthcheck:**
+`apiKey` НИКОГДА не попадает в логи. Никаких `Authorization` headers тоже.
 
-- healthcheck читает секреты из БД по `instance_id` — это его контракт.
-- discover работает по сырому `api_key` из тела запроса — это preflight перед созданием.
-- Разделение упрощает аудит и не размывает ответственность healthcheck.
+**2. Расширенный парсер с поддержкой нескольких форм envelope**
 
-### Storage contract (без изменений)
+Поддержим три реальных варианта ManyChat:
 
-- `config_secrets`: `api_key`, `workspace_token`
-- `config`: `manychat_page_id` (выбранный), `manychat_page_name` (для отображения), `allowed_page_ids` (опционально)
+- `{status:"success", data:{id, name, ...}}` — текущий
+- `{data:{id, name, ...}}` без `status`
+- `{data:[{id, name, ...}, ...]}` — массив страниц
+- normalize id через несколько ключей: `id` → `page_id` → `facebook_page_id`
+- normalize name: `name` → `page_name` → `title`
 
-### UX-флоу
+Если ни один не подошёл — `unexpected_response` + лог `data_keys` уже будет в логах для разбора.
 
-**Create flow:**
+**3. Side-fix: ref warning в `ManyChatPageSelector**`
 
-1. Пользователь вводит `API Key`
-2. По blur (или кнопке "Получить страницы") → вызов `manychat-discover-pages`
-3. Состояние UI:
-  - **loading**: показываем spinner возле поля
-  - **single page**: автоподстановка + read-only chip с названием страницы + скрытый `manychat_page_id`
-  - **multiple pages** (теоретически): dropdown с выбором
-  - **error 401/403**: сообщение "Неверный API Key"
-  - **network error**: fallback — показать ручной input для `manychat_page_id` (debug mode)
-4. Поле `manychat_page_id` больше не `required` в registry — required становится **факт наличия выбранной страницы** (UI-level валидация)
-5. `workspace_token` остаётся optional/auto-generated (без изменений)
+Обернуть компонент в `forwardRef` (даже если ref не используется внутри), либо посмотреть `AddIntegrationDialog` — может, он передаёт `ref` в обёртку через сторонний контейнер. Чисто косметический warning, но устраним заодно, чтобы не засорять консоль во время proof.
 
-**Edit flow:**
+### Что НЕ меняем
 
-1. В `EditIntegrationDialog` показываем текущую `manychat_page_id` + `manychat_page_name` как read-only chip
-2. Кнопка "Перепроверить страницы" → если `api_key` не пустой в форме — discover; если пустой → используем существующий из `config_secrets` через **healthcheck** (он уже это умеет)
-3. PATCH-MIT защита секретов сохраняется
+- Контракт ответа функции (success/error_code/pages) остаётся прежним.
+- UI (`ManyChatPageSelector`) уже обрабатывает single/multiple page — менять не нужно.
+- Storage contract не трогаем.
+- Healthcheck не трогаем.
 
-## Технический контракт
-
-### Edge function `manychat-discover-pages`
-
-**Файл:** `supabase/functions/manychat-discover-pages/index.ts`
-
-**Request:**
-
-```json
-{ "api_key": "string" }
-```
-
-**Response (success):**
-
-```json
-{
-  "success": true,
-  "pages": [
-    { "id": "12345", "name": "My Page", "username": "@mypage", "is_pro": true, "timezone": "Europe/Minsk" }
-  ]
-}
-```
-
-**Response (error):**
-
-```json
-{ "success": false, "error_code": "invalid_api_key" | "timeout" | "network_error" | "non_json", "error_message": "human-readable" }
-```
-
-**Поведение:**
-
-- 10s timeout через AbortController
-- НЕ логируем `api_key` в `integration_logs` (preflight, нет instance_id)
-- НЕ записываем в БД
-- `verify_jwt = true` (нужна авторизация админа — добавить в `supabase/config.toml`)
-- ManyChat API возвращает один объект `data` (одна привязанная страница на key) → оборачиваем в массив `pages: [data]` чтобы UI поддержал будущее расширение
-
-### `PROVIDERS[]` в `useIntegrations.tsx`
-
-- `manychat_page_id`: убрать `required: true`, добавить `type: "manychat_page_select"` (новый тип поля)
-- Добавить `manychat_page_name`: hidden field для хранения имени
-
-### `AddIntegrationDialog.tsx`
-
-- Добавить специальный рендер для `type: "manychat_page_select"`:
-  - Если `api_key` пустой → disabled заглушка "Сначала введите API Key"
-  - При наличии `api_key` → автоматический discover (debounce 500ms на blur) или кнопка "Получить страницы"
-  - Single page → read-only chip
-  - Multiple → `<Select>` с pages
-  - Error → fallback `<Input>` для ручного ввода + warning
-
-### `EditIntegrationDialog.tsx`
-
-- Аналогичный рендер для `manychat_page_id`
-- Кнопка "Перепроверить страницы"
-- Текущая выбранная страница показывается как chip с именем
-
-### Валидация `isValid()`
-
-- Для ManyChat: вместо проверки `formData[field.key]` для `manychat_page_id` — проверить что поле не пустое (валидация остаётся, просто меняется источник заполнения)
-
-## Файлы для изменения
+### Файлы
 
 ```
-+ supabase/functions/manychat-discover-pages/index.ts   (новый)
-+ supabase/config.toml                                   (добавить function block с verify_jwt = true)
-~ src/hooks/useIntegrations.tsx                          (PROVIDERS[].manychat: убрать required, новый type)
-~ src/components/integrations/AddIntegrationDialog.tsx   (рендер manychat_page_select + discover hook)
-~ src/components/integrations/EditIntegrationDialog.tsx  (рендер manychat_page_select + кнопка перепроверки)
+~ supabase/functions/manychat-discover-pages/index.ts   (debug-лог + расширенный парсер)
+~ src/components/integrations/ManyChatPageSelector.tsx  (forwardRef для устранения warning)
 ```
 
-## Diagnose → Plan → Dry run → Execute → Verify
+### DoD
 
-- **Diagnose:** ✅ выше
-- **Plan:** ✅ выше
-- **Dry run:** функция thin-proxy, риск только в неправильной обработке ManyChat envelope. Mitigation: те же error codes, что и в healthcheck.
-- **Execute:** последовательно, без миграций БД.
-- **Verify (DoD):**
-  1. Поле `manychat_page_id` больше не `required` в `PROVIDERS[]`
-  2. После ввода API Key запускается discover, показывается loading-состояние
-  3. При success → имя страницы показывается как chip, `manychat_page_id` заполнен невидимо
-  4. При error 401 → сообщение "Неверный API Key"
-  5. При network error → fallback ручной input
-  6. `workspace_token` по-прежнему optional, не блокирует submit
-  7. Storage contract не изменён: api_key/workspace_token → config_secrets, page_id → config
-  8. Edit flow: existing instance показывает текущую страницу + кнопку перепроверки; PATCH-MIT секретов работает
-  9. Existing Instagram DM (apix_instagram_dm) форма не сломана (regression check)
+1. После клика «Получить страницу» в логах функции видны: `http_status`, `top_level_keys`, `data_shape`, `data_keys`/`data_first_keys`, `body_preview` — без `api_key`.
+2. Парсер корректно достаёт `id`+`name` из реального ответа ManyChat (object или array).
+3. Create flow в UI: page подставляется автоматически, `manychat_page_id` заполнен, имя в chip, fallback не появляется.
+4. Если ManyChat реально вернёт что-то нестандартное — лог покажет что именно, и мы добавим ещё одну ветку парсера без нового плана.
+5. Console warning про refs в `ManyChatPageSelector` исчезает.
 
-## Stop-condition
+### Stop-condition
 
-После выполнения — короткий proof-отчёт со скринами create flow (single page auto-fill) и edit flow (chip + кнопка перепроверки). Затем переход к **A8** без возврата к перепланировке.
+После фикса — короткий runtime proof из UI (создание ManyChat instance, авто-подстановка), без нового большого плана. A8 продолжается параллельно.
