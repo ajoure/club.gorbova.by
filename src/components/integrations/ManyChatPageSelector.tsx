@@ -96,7 +96,7 @@ export const ManyChatPageSelector = forwardRef<HTMLDivElement, Props>(function M
   };
 
   return (
-    <div className="space-y-2">
+    <div ref={ref} className="space-y-2">
       <Label>{label}</Label>
 
       {/* Текущая выбранная страница (если есть) */}
