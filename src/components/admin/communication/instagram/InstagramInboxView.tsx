@@ -380,6 +380,9 @@ export function InstagramInboxView() {
                     </div>
                     <div className="flex-1 min-w-0 overflow-hidden">
                       <div className="flex items-center gap-1.5 min-w-0">
+                        {dialog.is_pinned && (
+                          <Pin className="h-3 w-3 shrink-0 text-primary fill-primary" />
+                        )}
                         <span className="text-xs font-semibold truncate flex-1 min-w-0 whitespace-nowrap">
                           {displayName}
                         </span>
@@ -408,11 +411,27 @@ export function InstagramInboxView() {
                         {dialog.last_message || (dialog.last_media_url ? "📷 Медиа" : "...")}
                       </p>
                     </div>
-                    {/* Quick action: mark read */}
+                    {/* Quick actions: pin + mark read */}
                     <div className="self-stretch flex flex-col items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto">
                       <button
                         type="button"
+                        title={dialog.is_pinned ? "Открепить" : "Закрепить"}
+                        className="h-6 w-6 rounded-md flex items-center justify-center transition-colors hover:bg-primary/15"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          togglePin(dialog);
+                        }}
+                      >
+                        {dialog.is_pinned ? (
+                          <PinOff className="h-3.5 w-3.5" />
+                        ) : (
+                          <Pin className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                      <button
+                        type="button"
                         disabled={dialog.unread_count === 0}
+                        title="Отметить прочитанным"
                         className={cn(
                           "h-6 w-6 rounded-md flex items-center justify-center transition-colors",
                           dialog.unread_count > 0
