@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Instagram, Facebook, Copy, Check, ExternalLink, FlaskConical, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
+import { Instagram, Facebook, Copy, Check, ExternalLink, FlaskConical, ChevronDown, ChevronUp, Loader2, MessageCircle, Plus } from "lucide-react";
 import { useIntegrations, PROVIDERS, IntegrationInstance } from "@/hooks/useIntegrations";
 import { IntegrationInstanceList } from "@/components/integrations/IntegrationInstanceList";
 import { AddIntegrationDialog } from "@/components/integrations/AddIntegrationDialog";
