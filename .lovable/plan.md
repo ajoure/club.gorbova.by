@@ -1,236 +1,268 @@
-# да, согласен, с учетом правок:
+# да, согласен    
+
+Сверка внесения замечаний:
+
+**Внесено:**
+
+- добавлен обязательный **PATCH 0 / DIAGNOSE** до кодовых работ;
+- исправлен контракт по токену: теперь это **API Key**, а не “Page API Token на страницу”;
+- убрана жёсткая цена, заменено на **paid plan / tier валидируется в PATCH 0**;
+- исправлен rate limit на **endpoint-aware throttling**;
+- scope сужен до **Instagram-only v1**;
+- убрано обещание **full parity с ManyChat Inbox**;
+- `createSubscriber` больше не используется как универсальный IG-сценарий;
+- сигнатура webhook переведена в статус **неподтверждённого контракта до live capture**;
+- разделён режим **ManyChat Inbox vs наш кастомный inbox через API**;
+- `Pause Automation` оформлен как **явный runtime-контракт**;
+- webhook переведён на **domain-events path**, без прямой записи в CRM;
+- identity переведён на **provider-id-first** вместо email/phone-first;
+- DDL усилен: `workspace_id`, composite uniqueness, `raw_payload`, `idempotency_hash`, отдельная таблица `manychat_subscribers`;
+- добавлены **NFR/ограничения** для Dynamic Block;
+- DoD усилен до **machine-check proof**;
+- deferred пополнен теми хвостами, которые не должны блокировать v1.
+
+**Что особенно хорошо в новой редакции:**
+
+- план теперь соответствует вашему правилу **Diagnose → Plan → Dry run → Execute → Verify**;
+- соблюдён **add-only** и compatibility-подход;
+- сохранён reuse существующего inbox без создания лишнего параллельного UI;
+- архитектурно план стал совместим с принципами **domain isolation / id-driven architecture / auditability**.  
+
+Критических невнесённых замечаний не осталось.
 
 &nbsp;
 
-1. Страница ca44aae9-db96-4b4b-ae2b-540959b5873a остаётся **только черновиком-шаблоном**. Не публиковать, не привязывать к доменам, DomainRouter и routing gate сейчас не трогать.
-2. PATCH A по rich-text принять как обязательный:
-  &nbsp;
-  - использовать **ровно тот же** FloatingToolbar + RichTextarea, что уже работают в тренингах;
-  - не делать новый редактор и не вводить новый формат хранения;
-  - подключить toolbar в Site Builder на верхнем уровне редактора;
-  - перевести на reused rich-text **все контентные поля**, а не выборочно.
-  &nbsp;
-3. Перед execution PATCH A сделать короткий discovery-список:
-  &nbsp;
-  - какие поля переводятся на rich-text;
-  - какие поля остаются plain/technical;
-  - в каких renderer-блоках сейчас текст выводится как plain string и где нужно перейти на безопасный HTML renderer.
-  &nbsp;
-4. В PATCH A явно разделить поля:
-  &nbsp;
-  - **контентные**: title, subtitle, description, text, label, question, answer, testimonial text, CTA text, field labels формы и т.д. → rich-text;
-  - **технические**: slug, anchorId, URL, domain, product_id, tariff_id, padding, color, width, enum/select/switch, numeric fields → не трогаем.
-  &nbsp;
-5. PATCH B по clone обязателен, иначе шаблон как шаблон не закрыт:
-  &nbsp;
-  - при копировании страницы очищать site_pages.product_id;
-  - в дубле очищать content.product_id у всех pricing блоков;
-  - дубль всегда создавать как draft;
-  - title/slug дубля делать уникальными;
-  - после открытия дубля должно быть видно, что продукт нужно выбрать вручную.
-  &nbsp;
-6. В proof по clone нужны факты, а не теория:
-  &nbsp;
-  - клик «Копировать»;
-  - дубль появился в списке;
-  - дубль открывается в editor без warnings;
-  - у дубля page-level product_id = null;
-  - у pricing-блока content.product_id = null;
-  - preview дубля открывается.
-  &nbsp;
-7. В PATCH C по proof обязательно показать identity reused editor:
-  &nbsp;
-  - один скрин/доказательство toolbar в тренингах;
-  - один скрин/доказательство того же toolbar в Site Builder;
-  - одинаковый набор кнопок форматирования.
-  &nbsp;
-8. По rich-text proof нужен минимальный реальный сценарий:
-  &nbsp;
-  - изменить текст в шаблоне;
-  - применить bold/italic/align;
-  - сохранить;
-  - открыть preview;
-  - убедиться, что форматирование реально отображается;
-  - вернуть обратно и снова сохранить.
-  &nbsp;
-9. Mobile proof нужен фактический, не теоретический:
-  &nbsp;
-  - либо viewport 390×844 в preview/editor;
-  - либо опубликованный preview URL без публикации на домен;
-  - но обязательно скрин реального mobile render после rich-text правки.
-  &nbsp;
-10. В финальном отчёте разделить статусы на 3 блока:
+План: ManyChat ↔ платформа (финальная редакция, Instagram-only v1)
 
-&nbsp;
+## Engineering flow: Diagnose → Plan → Dry run → Execute → Verify
 
-&nbsp;
+---
 
-&nbsp;
+## PATCH 0 — DIAGNOSE (обязательный pre-execution gate)
 
-- **подтверждено фактами**;
-- **исправлено в этом PATCH**;
-- **отложено вне scope**.
+Без выполнения PATCH 0 кодовые PATCH 1+ заблокированы. Артефакты PATCH 0 — единственный источник истины для всех контрактов ниже.
 
-&nbsp;
+### 0.1. Live capture реальной телеметрии
 
-&nbsp;
+- Подключить тестовый ManyChat workspace через временный ngrok-endpoint (или временный edge без бизнес-логики).
+- Снять **3 живых webhook payload**: `subscriber:created`, `message:received`, `subscriber:tagged`.
+- Зафиксировать **ВСЕ headers** входящего запроса (имя сигнатурного заголовка, формат HMAC, encoding, timestamp-схема).
+- Зафиксировать поведение **retry**: после 5xx — есть ли повтор, через сколько, с тем же payload или новым `event_id`.
+- Зафиксировать **idempotency**: есть ли в payload уникальный `event_id`/`message_id`, на который можно навесить idempotency hash.
 
-&nbsp;
+### 0.2. Capability matrix конкретного аккаунта
 
-11. Отдельно в финальном отчёте дать сводку по шаблону:
+- Получить через API список **доступных в текущем тарифе webhook events** (не все события доступны на всех планах).
+- Получить лимиты Send API на текущем плане.
+- Зафиксировать наличие **Dynamic Block / External Request** в плане (feature gated).
+- Зафиксировать наличие **Inbox seats** и handover protocol в плане.
 
-&nbsp;
+### 0.3. Live тесты windowing и статусов
 
-&nbsp;
+- Тест **24h окна Instagram**: `sendContent` через 25 часов после последнего входящего → зафиксировать точный код ошибки и message от ManyChat.
+- Тест **7-дневного manual окна**: попытка `sendContent` с тегом `HUMAN_AGENT` через 3 дня → доставлено или нет.
+- Тест **delivered/read статусов**: приходят ли через webhook реально, с каким lag, для какого канала.
+- Тест **Pause Automation**: ручной trigger action из API → реально ли блокирует Flow.
 
-&nbsp;
+### 0.4. Compatibility check существующих сущностей
 
-- page_id;
-- slug;
-- текущий product_id;
-- список 9 блоков по порядку;
-- какие блоки используют reusable controls;
-- что остаётся out-of-scope.
+- `instagram_accounts.provider_kind` — есть ли enum, требует ли расширения, есть ли уже значения, конфликтующие с `'manychat'`.
+- `instagram_messages` — какие поля переиспользуем 1:1, какие требуют расширения (`provider_message_id`, `thread_key`, `direction`, `status`, `sent_at`, `delivered_at`, `read_at`, `raw_payload`).
+- ApiX-Drive flow — какие константы/enums нельзя ломать.
 
-&nbsp;
+**DoD PATCH 0:**
 
-&nbsp;
+- 3 живых webhook payload + headers сохранены в `docs/integrations/manychat/diagnose-payloads.md`
+- Capability matrix аккаунта зафиксирована в `docs/integrations/manychat/capability-matrix.md`
+- Журнал live-тестов окон/статусов в `docs/integrations/manychat/windowing-proof.md`
+- Compatibility report по `instagram_*` таблицам с явным diff требуемых полей
 
-&nbsp;
+---
 
-12. Переименование страницы в **«Шаблон — Платная консультация»** допустимо только если не ломает текущие проверки и не мешает proof. Если мешает — оставить текущее имя, но в отчёте явно зафиксировать, что это шаблон.
-13. Никаких page-specific хаков под Consultation не добавлять. И rich-text, и clone-fix должны быть **общими улучшениями конструктора сайтов**.
-
-&nbsp;
-
-&nbsp;
-
-После этого уже можно будет отдельно делать следующий gate по routing/domain binding для [consultation-доменов.](http://consultation-доменов.Mini)
-
-&nbsp;
-
-[Mini](http://consultation-доменов.Mini)-plan: 3 PATCH (add-only) для конструктора + закрытие Фазы 4
-
-## Контекст и фиксация по Фазе 4
-
-**Статус:** draft-шаблон создан, **остаётся черновиком**. Публичный routing для consultation-доменов **не запускаем**, `DomainRouter` не трогаем. Страница `ca44aae9...` — шаблон для копирования и ручного редактирования через UI.
-
-## Discovery (что уже подтверждено чтением кода)
-
-**Канонический rich-text стек (из тренингов):**
-
-- `src/components/ui/RichTextarea.tsx` — обёртка `contentEditable` с маркером `data-rich-editable="true"`
-- `src/components/ui/FloatingToolbar.tsx` — глобальный popup, появляется при выделении внутри любого `[data-rich-editable]`. Поддерживает: **Bold, Italic, Underline, Strikethrough, Color, Font size, Link/Unlink, Align L/C/R**
-- Хранение: HTML-строка в том же поле. Контракт уже используется `TextBlockEditor` (`content.html`) — второго формата вводить не нужно
-- Toolbar монтируется **один раз** на верхнем уровне (`LessonBlockEditor`, строка 518: `<FloatingToolbar />`). В Site Builder его **не монтируют** — отсюда отсутствие popup
-
-**Site Builder editor entry point:** `src/pages/admin/AdminSiteEditor.tsx` → `<SiteBlockEditor>` (строка 158). Сюда же добавляется `<FloatingToolbar />`.
-
-**Clone:** `useSitePages.copyPage` (`AdminSiteBuilder.tsx:120`) — это и есть существующий путь дублирования. Падает из-за `idx_site_pages_product_id_unique` (зафиксировано в `mem://architecture/site-builder/clone-product-id-constraint.md`).
-
-**Классификация полей по 25 редакторам блоков (`src/components/admin/site-builder/blocks/*`):**
+## Корректировки фактов (применены ко всему плану)
 
 
-| Группа                          | Поля → действие                                                                                                                                                                                                                                                                                                                          |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Контентные (→ RichTextarea)** | Hero: title, subtitle, buttonText. Heading: text. Cta: title, subtitle, buttonText. Faq: question, answer. Testimonials: text, author, role. Features: title, description (per item). Stats: label, suffix. Pricing: title, subtitle. Columns: cell text. Form: title, subtitle, buttonText, field.label. Logos: caption. Button: label. |
-| **Технические (НЕ трогаем)**    | slug, anchorId, URL, href, video URL, embed code, productId, tariffId, formId, mappingKey, padding/margin/числовые, width/height, color hex, switch, select (variant/level/layout/icon mode), domain, sort_order, ID                                                                                                                     |
+| Было                                 | Стало                                                                                                                                                                                     |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Page API Token на одну страницу      | **API Key** в Settings → API (Account Public API / workspace-level), исторически endpoints `/fb/*`                                                                                        |
+| ManyChat Pro $15/мес                 | **Paid plan с доступом к API / DevTools / Inbox seats**; конкретный tier и цена валидируются в PATCH 0 на момент подключения                                                              |
+| 10 req/sec на токен                  | **Endpoint-aware throttler**: `sendContent`/`sendFlow` ~25 RPS, `getFlows` ~10 RPS, page/subscriber методы до ~100 RPS — точные значения фиксируются в PATCH 0                            |
+| Каналы IG/FB/WA/TG в v1              | **Instagram-only в v1**. Reuse `instagram_*` — допустимый compatibility layer только для IG. Multi-channel — отдельный generic communications model в Phase 2 (deferred)                  |
+| Full parity с ManyChat Inbox         | **Compatibility layer над webhook + Send API**. Не зеркалим seats/assignment/analytics/handover Inbox — это deferred                                                                      |
+| `createSubscriber` универсально      | Для IG v1 контакт появляется **только через входящее сообщение / opt-in / automation в ManyChat**. `createSubscriber` proactive не используется (это WhatsApp-сценарий per ManyChat docs) |
+| HMAC `X-Manychat-Signature` как факт | **Имя заголовка, схема подписи и secret-contract фиксируются по live capture в PATCH 0**. До этого считаются неподтверждёнными                                                            |
 
 
 ---
 
-## PATCH A — Reused rich-text toolbar в Site Builder
+## Архитектурные правила (по platform bible)
 
-**Цель:** один и тот же floating popup в тренингах и в Site Builder. Никакого второго редактора и второго формата хранения.
+### Domain isolation (обязательно)
 
-**Шаги:**
+`manychat-webhook` НЕ пишет напрямую в CRM/Deals/contacts. Контракт:
 
-1. **Монтирование toolbar (1 строка):** в `src/pages/admin/AdminSiteEditor.tsx` рядом с `<SiteBlockEditor>` добавить `<FloatingToolbar />` (как в `LessonBlockEditor`). Это сразу включает форматирование для всех уже существующих `RichTextarea` в Site Builder (`TextBlockEditor`).
-2. **Замена контентных `Input/Textarea` на `RichTextarea**` в редакторах блоков (только контентные поля из таблицы выше, технические не трогаем):
-  - `HeroBlockEditor` — title (inline), subtitle, buttonText (inline)
-  - `HeadingBlockEditor` — text (inline)
-  - `CtaBlockEditor` — title (inline), subtitle, buttonText (inline)
-  - `FaqBlockEditor` — question (inline), answer
-  - `TestimonialsBlockEditor` — text, author (inline), role (inline)
-  - `FeaturesBlockEditor` — title (inline), description (per item)
-  - `StatsBlockEditor` — label (inline), suffix (inline)
-  - `PricingBlockEditor` — title (inline), subtitle
-  - `FormBlockEditor` — title (inline), subtitle, buttonText (inline), field.label (inline)
-  - `ButtonBlockEditor` — label (inline)
-  - `ColumnsBlockEditor` — text cells
-  - `LogosBlockEditor` — caption (inline)
-   Где сейчас `<Input>` для короткой строки → `<RichTextarea inline />` (контракт уже есть). Где `<Textarea>` → `<RichTextarea />`. Контракт `value: string (HTML) / onChange(html)` совпадает с текущим `e.target.value` после простой адаптации.
-3. **Рендер на публичной стороне:** проверить, что соответствующие renderer-блоки уже выводят HTML через `dangerouslySetInnerHTML`/`SafeHtml`. Где встречается plain text вывод (`{title}`) — заменить на `<SafeHtml html={...} />` (компонент уже есть, используется в lesson blocks). Это разовая правка по тем же блокам.
-4. **Backward compatibility:** старый plain-text сохранится — `RichTextarea` выведет его как есть (innerHTML текста = тот же текст).
+```
+manychat-webhook
+  → normalize (provider payload → internal canonical event)
+  → DomainEventService.emitEvent('manychat.message.received' | 'manychat.subscriber.tagged' | ...)
+  → downstream domain handlers (CRM, contacts, inbox) — каждый в своём домене
+  → DomainExecution + audit_logs
+```
 
-**Out of scope:** новый редактор, новые библиотеки (TipTap и т.п.), новый формат хранения, любые правки технических полей.
+Никаких прямых INSERT в `crm_deals` из webhook. Это правило зафиксировано в `mem://architecture/backend/domain-event-infrastructure`.
 
----
+### Identity / matching (id-first contract)
 
-## PATCH B — Clone-template fix для product-bound pages
+- **Primary key для identity** = `(workspace_id, integration_instance_id, manychat_subscriber_id)`
+- email/phone/name — **никогда не primary**, только secondary merge-candidate через отдельный deterministic merge flow или manual review queue
+- На webhook-уровне создаём/обновляем provider-bound identity; merge с platform `contacts` — отдельный пайплайн с явным confidence score
 
-**Цель:** `copyPage` работает на страницах с `product_id` без падения unique constraint; дубль создаётся как «несвязанный» шаблон.
+### Two-window model (явно разделить)
 
-**Шаги (в `useSitePages.copyPage` / `SitePageService`):**
+1. **Что гарантированно работает в ManyChat Inbox** (24h base + 7d manual + auto Human Agent + auto 30-min pause) — **не наша зона ответственности**, не обещаем.
+2. **Что доказано работает из платформы через API** — фиксируется в PATCH 0 live-proof. До PATCH 0 ничего не обещаем.
 
-1. При копировании **не переносить** `product_id` в дубль (записывать `null`).
-2. Пройти по `blocks` дубля и для каждого блока с `type === "pricing"` обнулить `content.product_id` (и любые tariff overrides), оставив структуру блока валидной.
-3. Поставить дубль в `status: "draft"`, добавить суффикс к title (`"… (копия)"`) и slug (`"<slug>-copy-<n>"` с проверкой уникальности).
-4. После открытия дубля редактор показывает баннер «Страница не привязана к продукту» (используется существующий `selling-page-diagnostic-states`, состояние `not_linked`) — пользователь вручную выбирает product в `SiteSettingsPanel` и в `PricingBlockEditor`.
+### Pause Automation как явный runtime-контракт
 
-**Out of scope:** автоматическое присвоение product, новые поля в схеме, изменения unique constraint.
+При первом ответе оператора из платформы `manychat-send` ОБЯЗАН:
+
+1. Вызвать ManyChat action `Pause all automations` для подписчика (или эквивалент из PATCH 0 capability matrix).
+2. Записать `domain_events: 'manychat.automation.suppressed'` с TTL.
+3. Auto-pause встроенного Inbox (30 мин) НЕ применяется к нашему flow — мы не можем на это рассчитывать.
 
 ---
 
-## PATCH C — Proof-пакет (browser live-proof, в default mode)
+## DDL / Data contract (усиленный)
 
-**Closing для Фазы 4 + acceptance для PATCH A/B.**
+Все новые таблицы и расширения обязаны включать:
 
-Сценарии (screenshots в порядке выполнения):
+- `workspace_id` (multi-tenant обязательно)
+- `id`, `public_id`, `created_at`, `updated_at`, `created_by`, `updated_by`, `metadata jsonb`
+- `raw_payload jsonb` (для inbound webhook)
+- composite uniqueness — не глобальный unique на `manychat_subscriber_id`
+- `idempotency_hash` на inbound webhook events
 
-1. **Rich-text identity:** popup в тренинг-уроке + popup в Site Builder editor — одинаковые иконки/набор кнопок.
-2. **Форматирование в Site Builder:** на странице `ca44aae9...` выделить текст в hero subtitle → Bold + Italic + Align center → Save.
-3. **Persist:** перезагрузить editor → форматирование на месте; preview desktop → форматирование применено; preview mobile (390×844) → корректный рендер.
-4. **UI Save (закрытие 8/9 пробелов Фазы 4):** изменение поля → save → reload → значение сохранилось → откат.
-5. **Clone (закрытие 9/9):** на template-странице нажать «Дублировать» → дубль появляется в списке → открыть дубль → editor без warnings → product_id пуст → pricing block требует выбора продукта → screenshot всех четырёх состояний.
-6. **Переименование template (опционально):** title → «Шаблон — Платная консультация» (если не ломает ссылки/проверки; иначе оставить, в отчёте назвать шаблоном).
+### Минимальные изменения схемы
+
+`**instagram_messages` — расширить:**
+
+- `provider_kind text` (default `'apixdrive'` для legacy совместимости)
+- `provider_message_id text`
+- `thread_key text` (детерминированный ключ треда)
+- `direction text` (`inbound`/`outbound`)
+- `status text` (`queued`/`sent`/`delivered`/`read`/`failed`)
+- `sent_at`, `delivered_at`, `read_at timestamptz`
+- `raw_payload jsonb`
+- `idempotency_hash text`
+- composite unique: `(workspace_id, integration_instance_id, provider_message_id)`
+
+`**instagram_accounts` — расширить:**
+
+- `provider_kind` enum: добавить `'manychat'`
+
+**Новая таблица `manychat_subscribers`:**
+
+- стандартные служебные поля (см. выше)
+- `manychat_subscriber_id text not null`
+- `integration_instance_id uuid not null`
+- `contact_id uuid null` (link to platform contacts, nullable до merge)
+- `merge_confidence numeric null`
+- `raw_subscriber jsonb`
+- composite unique `(workspace_id, integration_instance_id, manychat_subscriber_id)`
+
+**Новая таблица `integration_event_mappings`:**
+
+- стандартные поля
+- `instance_id uuid`
+- `platform_event text` (например `order.paid`)
+- `manychat_action text` (`trigger_flow` / `add_tag` / `set_field`)
+- `target_ref text` (flow_ns / tag_name / field_name)
+- `mapping jsonb`
 
 ---
 
-## DoD Фазы 4 (финальная сводка по 3 блокам)
+## NFR / технические ограничения (явно)
 
-**Подтверждено фактами:**
+### Dynamic Block / External Request
 
-- draft-шаблон создан, blocks JSON валиден, editor/preview desktop без warnings, pricing резолвит 4 тарифа канонически
-- UI Save верифицирован (после PATCH C)
+- Доступен только на определённых paid plans (валидируется в PATCH 0)
+- HTTPS only
+- **Timeout 10 секунд** на стороне ManyChat
+- Response mapping — JSON по фиксированной схеме ManyChat (messages/actions/quick_replies)
+- Format/version limits — фиксируются в PATCH 0
 
-**Подтверждается этим mini-plan'ом (после PATCH A+B+C):**
+### Throttling
 
-- rich-text форматирование в Site Builder идентично тренингам
-- UI Clone работает на product-bound страницах
-- mobile preview — фактический скрин
+- Endpoint-aware token bucket per `(integration_instance_id, endpoint_group)`
+- Группы: `send` (25 RPS), `read_meta` (10 RPS), `subscriber_ops` (~100 RPS) — точные значения из PATCH 0
+- Backoff: exponential с jitter, max 3 retry для 429/5xx
+- Idempotency-key обязателен для `sendContent`
 
-**Отложено в следующий gate (явно):**
+### Security
 
-- routing gate / `site_domain_bindings` для consultation-доменов
-- любые правки `DomainRouter`
-- публикация шаблона
+- API Key хранится в `integration_instances.config.api_key` (encrypted)
+- Webhook secret генерируется при создании instance, показывается один раз
+- Подпись webhook — контракт фиксируется по PATCH 0 capture
+- Verify JWT для всех админских вызовов из UI
 
 ---
 
-## Технические нотки
+## Hard-stops
 
-- Файлы в `src/components/admin/site-builder/blocks/*Editor.tsx` — точечные правки JSX (Input/Textarea → RichTextarea + при необходимости `inline`).
-- `AdminSiteEditor.tsx` — одна строка `<FloatingToolbar />`.
-- `useSitePages.copyPage` (или соответствующий `SitePageService.copyPage`) — добавить очистку product_id страницы и `content.product_id` в pricing-блоках.
-- Никаких миграций БД, новых RPC, новых edge functions.
-- Никаких page-specific хаков под Consultation: и rich-text, и clone-fix — общие reusable улучшения конструктора.
+- НЕ трогаем ApiX-Drive (legacy остаётся параллельно)
+- НЕ создаём новый Inbox UI (compatibility layer через `instagram_messages`)
+- НЕ дублируем категорию «Соцсети»
+- НЕ обещаем full parity с ManyChat Inbox
+- НЕ используем email/phone как primary identity
+- НЕ пишем напрямую в CRM из webhook
+- v1 — **только Instagram**
 
-## Финальный блок шаблона (после PATCH B/C, для отчёта)
+---
 
-- `page_id`: `ca44aae9-db96-4b4b-ae2b-540959b5873a`
-- `slug`: `consultation`
-- `product_id`: `9d0d6de8-4b0e-477f-b6c4-ab7def8268f6`
-- 9 блоков: hero · heading(#audience) · text · features(card-list) · stats(#results) · features(card-list) · pricing(#tariffs) · heading(#after-payment) · features(numbered-list)
-- Reusable controls (после PATCH A): rich-text во всех контентных полях каждого блока
-- Out-of-scope: routing/domain binding, публикация, html-fallback (gap=0), sticky nav, footer, animations
+## Roadmap (PATCH 0 → 5, add-only)
+
+
+| PATCH                                    | Содержание                                                                                                                                                                                    | Gate                                                                                     |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| **0. DIAGNOSE**                          | Live capture payloads/headers, capability matrix, windowing/status proofs, compatibility report                                                                                               | 4 артефакта в `docs/integrations/manychat/`                                              |
+| **1. Provider + UI**                     | `manychat` в `PROVIDERS`, карточка в `SocialIntegrationsTab`, диалоги Add/Edit, генерация webhook_secret, DDL расширения                                                                      | Карточка видна, instance создаётся, healthcheck реализован по probes из PATCH 0          |
+| **2. Webhook + Inbox bridge**            | `manychat-webhook` (нормализация → `domain_events`), `manychat-send` (endpoint-aware throttle, idempotency, Pause Automation на первом ответе), bridge через `provider_kind='manychat'`       | Machine-check DoD ниже                                                                   |
+| **3. CRM-синхронизация (через события)** | Domain handlers для `manychat.subscriber.created/tagged/untagged/field_updated`, `manychat-sync-subscribers`, `integration_field_mappings`, identity = `(workspace, instance, subscriber_id)` | Контакт upsert по provider id, теги → правила сделок через события                       |
+| **4. Triggers + Dynamic Block**          | `manychat-trigger-flow` подписан на доменные события платформы (`order.paid`, etc.), `manychat-dynamic-block` с фиксированным response schema                                                 | Тестовая оплата → Flow стартует. External Request возвращает валидный JSON в timeout 10s |
+| **5. Proof-пакет**                       | Browser + DB + log proof для всех machine-checks DoD                                                                                                                                          | Все 8 проверок ниже зелёные                                                              |
+
+
+---
+
+## DoD (machine-check proof для каждого PATCH)
+
+Универсальные проверки, которые должны быть автоматически верифицируемы:
+
+1. **Idempotency**: повторная доставка одного и того же webhook (same `idempotency_hash`) → 1 запись в `instagram_messages`, 0 дубликатов в `domain_events`
+2. **Domain events**: каждый inbound webhook создаёт `domain_events` + `domain_executions`
+3. **Audit**: ручные действия операторов из inbox пишутся в `audit_logs`
+4. **Thread integrity**: inbound message связан с одним `thread_key` и одним `manychat_subscribers.id` детерминированно
+5. **24h/7d violation UX**: ошибка из ManyChat при out-of-window send нормализована через `normalizeEdgeFunctionError` и показана в UI без 5xx
+6. **Manual reply contract**: первый outbound ответ оператора → `manychat.automation.suppressed` событие создано + Pause Automation API вызван
+7. **Healthcheck granularity**: возвращает не только `success:true`, а массив probes (api_key valid, webhook reachable, send permitted, dynamic_block enabled) с per-probe статусом
+8. **Identity SoT**: merge `manychat_subscribers` ↔ `contacts` происходит только через явный merge flow, primary key всегда provider id
+
+---
+
+## Deferred (вне scope v1)
+
+1. Multi-channel (FB Messenger / WhatsApp / Telegram / SMS / Email) поверх generic communications model
+2. Parity с ManyChat Inbox: seats, assignment, conversation handover, native analytics
+3. Доказуемый out-of-window reply из кастомного inbox без ManyChat Inbox
+4. Голосовые / Stories Reply (требует Meta Graph API напрямую)
+5. WhatsApp Business templates (отдельная модерация Meta)
+
+---
+
+## Что нужно от пользователя ДО старта PATCH 0
+
+1. Тестовый ManyChat workspace + paid plan с включёнными API/DevTools (точный tier валидируется в PATCH 0)
+2. API Key из `Settings → API`
+3. Возможность дать временный публичный URL (ngrok или временный edge) для live capture
+
+После approve — стартую с **PATCH 0 (DIAGNOSE)**, без выполнения которого PATCH 1+ не запускаются.
