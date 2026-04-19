@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Instagram, Facebook, Copy, Check, ExternalLink, FlaskConical, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
+import { Instagram, Facebook, Copy, Check, ExternalLink, FlaskConical, ChevronDown, ChevronUp, Loader2, MessageCircle, Plus } from "lucide-react";
 import { useIntegrations, PROVIDERS, IntegrationInstance } from "@/hooks/useIntegrations";
 import { IntegrationInstanceList } from "@/components/integrations/IntegrationInstanceList";
 import { AddIntegrationDialog } from "@/components/integrations/AddIntegrationDialog";
@@ -45,7 +45,12 @@ function useWebhookEvents(instanceId: string | null) {
 export function SocialIntegrationsTab() {
   const { data: instances, isLoading } = useIntegrations("socials");
   const queryClient = useQueryClient();
+  // addDialogProvider:
+  //   - "apix_instagram_dm" / "manychat" → preselect конкретного провайдера
+  //   - null + addDialogOpen → общий выбор провайдера
+  //   - null + !addDialogOpen → диалог закрыт
   const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [addDialogProvider, setAddDialogProvider] = useState<string | null>(null);
   const [editInstance, setEditInstance] = useState<IntegrationInstance | null>(null);
   const [logsInstance, setLogsInstance] = useState<IntegrationInstance | null>(null);
   const [copiedWebhook, setCopiedWebhook] = useState(false);
@@ -53,7 +58,13 @@ export function SocialIntegrationsTab() {
   const [showEvents, setShowEvents] = useState(false);
 
   const instagramInstances = (instances || []).filter((i) => i.provider === "apix_instagram_dm");
+  const manychatInstances = (instances || []).filter((i) => i.provider === "manychat");
   const currentInstance = instagramInstances[0] || null;
+
+  const openAddDialog = (providerId: string | null) => {
+    setAddDialogProvider(providerId);
+    setAddDialogOpen(true);
+  };
 
   const { data: webhookEvents, isLoading: eventsLoading } = useWebhookEvents(
     showEvents ? currentInstance?.id ?? null : null
@@ -121,6 +132,18 @@ export function SocialIntegrationsTab() {
 
   return (
     <div className="space-y-6">
+      {/* Top toolbar: общая кнопка «Добавить подключение» с выбором провайдера */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold">Социальные интеграции</h2>
+          <p className="text-sm text-muted-foreground">Подключения к мессенджерам и соцсетям</p>
+        </div>
+        <Button variant="outline" onClick={() => openAddDialog(null)}>
+          <Plus className="h-4 w-4 mr-2" />
+          Добавить подключение
+        </Button>
+      </div>
+
       {/* Instagram DM Card */}
       <Card>
         <CardHeader>
@@ -135,7 +158,7 @@ export function SocialIntegrationsTab() {
               </div>
             </div>
             {instagramInstances.length === 0 && (
-              <Button onClick={() => setAddDialogOpen(true)}>
+              <Button onClick={() => openAddDialog("apix_instagram_dm")}>
                 Подключить
               </Button>
             )}
@@ -300,6 +323,44 @@ export function SocialIntegrationsTab() {
         </CardContent>
       </Card>
 
+      {/* ManyChat Card (PATCH 1.1 — A5) */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-gradient-to-br from-emerald-500/20 to-teal-500/20">
+                <MessageCircle className="h-5 w-5 text-emerald-600" />
+              </div>
+              <div>
+                <CardTitle className="text-lg">ManyChat</CardTitle>
+                <CardDescription>Instagram Direct через ManyChat Public API + External Request</CardDescription>
+              </div>
+            </div>
+            {manychatInstances.length === 0 && (
+              <Button onClick={() => openAddDialog("manychat")}>
+                Подключить
+              </Button>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {isLoading ? (
+            <Skeleton className="h-12 w-full" />
+          ) : manychatInstances.length > 0 ? (
+            <IntegrationInstanceList
+              instances={manychatInstances}
+              onEdit={setEditInstance}
+              onViewLogs={setLogsInstance}
+              onHealthCheck={handleHealthCheck}
+            />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Подключите ManyChat для работы с Instagram Direct через Public API + External Request.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Facebook Placeholder */}
       <Card className="opacity-60">
         <CardHeader>
@@ -321,9 +382,12 @@ export function SocialIntegrationsTab() {
       {/* Dialogs */}
       <AddIntegrationDialog
         open={addDialogOpen}
-        onOpenChange={setAddDialogOpen}
+        onOpenChange={(open) => {
+          setAddDialogOpen(open);
+          if (!open) setAddDialogProvider(null);
+        }}
         category="socials"
-        preselectedProvider="apix_instagram_dm"
+        preselectedProvider={addDialogProvider ?? undefined}
       />
 
       <EditIntegrationDialog

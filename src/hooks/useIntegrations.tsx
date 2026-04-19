@@ -15,6 +15,7 @@ export interface IntegrationInstance {
   status: IntegrationStatus;
   last_check_at: string | null;
   config: Record<string, unknown>;
+  config_secrets?: Record<string, unknown>;
   error_message: string | null;
   created_at: string;
   updated_at: string;
@@ -38,6 +39,12 @@ export interface ProviderConfig {
   fields: ProviderField[];
   advancedFields?: ProviderField[];
   description?: string;
+  /**
+   * Список ключей полей, которые должны храниться в integration_instances.config_secrets
+   * (encrypted-at-rest канал) вместо публичного config jsonb.
+   * Если не задано — все поля идут в config (legacy behaviour).
+   */
+  secretFieldKeys?: string[];
 }
 
 export interface ProviderField {
@@ -170,6 +177,20 @@ export const PROVIDERS: ProviderConfig[] = [
     ],
   },
   {
+    id: "manychat",
+    name: "ManyChat",
+    icon: "MessageCircle",
+    category: "socials",
+    description: "Instagram Direct через ManyChat Public API + External Request",
+    secretFieldKeys: ["api_key", "workspace_token"],
+    fields: [
+      { key: "api_key", label: "API Key (ManyChat)", type: "password", required: true, placeholder: "Bearer токен Public API" },
+      { key: "manychat_page_id", label: "Page ID", type: "text", required: true, placeholder: "ID Facebook Page в ManyChat" },
+      { key: "workspace_token", label: "Workspace Token", type: "password", required: false, placeholder: "Опционально — генерируется backend" },
+      { key: "allowed_page_ids", label: "Дополнительные Page ID (whitelist)", type: "textarea", required: false, placeholder: "Один ID на строку" },
+    ],
+  },
+  {
     id: "facebook",
     name: "Facebook",
     icon: "Facebook",
@@ -226,6 +247,26 @@ export function useIntegrationLogs(instanceId: string | null) {
   });
 }
 
+/**
+ * Разделяет плоский набор полей формы на (config, config_secrets) согласно
+ * provider.secretFieldKeys. Если provider не задаёт secretFieldKeys — всё
+ * попадает в config (legacy behaviour, ничего не ломаем).
+ */
+export function splitConfigBySecrets(
+  providerId: string,
+  fields: Record<string, unknown>,
+): { config: Record<string, unknown>; config_secrets: Record<string, unknown> } {
+  const provider = PROVIDERS.find((p) => p.id === providerId);
+  const secretKeys = new Set(provider?.secretFieldKeys ?? []);
+  const config: Record<string, unknown> = {};
+  const config_secrets: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(fields)) {
+    if (secretKeys.has(key)) config_secrets[key] = value;
+    else config[key] = value;
+  }
+  return { config, config_secrets };
+}
+
 export function useIntegrationMutations() {
   const queryClient = useQueryClient();
 
@@ -239,6 +280,9 @@ export function useIntegrationMutations() {
       config: Record<string, unknown>;
       error_message: string | null;
     }) => {
+      // Per-provider routing: secret fields → config_secrets, остальные → config
+      const { config, config_secrets } = splitConfigBySecrets(data.provider, data.config);
+
       const { data: result, error } = await supabase
         .from("integration_instances")
         .insert({
@@ -247,7 +291,8 @@ export function useIntegrationMutations() {
           alias: data.alias,
           is_default: data.is_default,
           status: data.status,
-          config: data.config as Json,
+          config: config as Json,
+          config_secrets: config_secrets as Json,
           error_message: data.error_message,
         })
         .select()
@@ -265,14 +310,49 @@ export function useIntegrationMutations() {
   });
 
   const updateInstance = useMutation({
-    mutationFn: async ({ id, ...data }: { id: string; alias?: string; is_default?: boolean; config?: Record<string, unknown>; status?: string; error_message?: string | null }) => {
+    mutationFn: async ({ id, ...data }: {
+      id: string;
+      provider?: string;
+      alias?: string;
+      is_default?: boolean;
+      config?: Record<string, unknown>;
+      status?: string;
+      error_message?: string | null;
+    }) => {
       const updateData: Record<string, unknown> = {};
       if (data.alias !== undefined) updateData.alias = data.alias;
       if (data.is_default !== undefined) updateData.is_default = data.is_default;
-      if (data.config !== undefined) updateData.config = data.config as Json;
       if (data.status !== undefined) updateData.status = data.status;
       if (data.error_message !== undefined) updateData.error_message = data.error_message;
-      
+
+      // Если переданы поля config — расщепляем по provider.secretFieldKeys.
+      // provider обязателен для корректного routing; если не передан — пишем
+      // всё в config (legacy fallback) чтобы не ломать существующие вызовы.
+      if (data.config !== undefined) {
+        if (data.provider) {
+          const { config, config_secrets } = splitConfigBySecrets(data.provider, data.config);
+          updateData.config = config as Json;
+          // config_secrets обновляется только если в split что-то попало.
+          // EditIntegrationDialog отфильтровывает пустые секреты (PATCH-MIT),
+          // поэтому отсутствие ключа = «не менять секрет».
+          if (Object.keys(config_secrets).length > 0) {
+            // Merge с существующими: читаем текущее значение и накатываем сверху.
+            const { data: existing } = await supabase
+              .from("integration_instances")
+              .select("config_secrets")
+              .eq("id", id)
+              .single();
+            const merged = {
+              ...((existing?.config_secrets as Record<string, unknown>) || {}),
+              ...config_secrets,
+            };
+            updateData.config_secrets = merged as Json;
+          }
+        } else {
+          updateData.config = data.config as Json;
+        }
+      }
+
       const { data: result, error } = await supabase
         .from("integration_instances")
         .update(updateData)
