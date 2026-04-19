@@ -203,8 +203,8 @@ export function ManyChatPageSelector({
 
       {/* Network/non_json — fallback на ручной ввод page_id */}
       {state.kind === "fallback" && (
-        <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
-          <p className="text-xs flex items-start gap-1 text-amber-700 dark:text-amber-400">
+        <div className="space-y-2 rounded-md border border-destructive/30 bg-destructive/5 p-3">
+          <p className="text-xs flex items-start gap-1 text-destructive">
             <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
             <span>
               Не удалось автоматически получить страницу: {state.reason}.
