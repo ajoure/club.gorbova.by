@@ -265,7 +265,7 @@ Deno.serve(async (req) => {
     return jsonResponse({ success: false, error: "invalid_json" }, 400);
   }
 
-  const normalized = normalizePayload(rawBody);
+  const normalized = await normalizePayload(rawBody);
   if ("error" in normalized) {
     return jsonResponse(
       { success: false, error: normalized.error },
