@@ -31,6 +31,7 @@ import {
   getSmtpSettings,
 } from "@/hooks/useIntegrations";
 import { WebhookUrlDisplay } from "./WebhookUrlDisplay";
+import { ManyChatPageSelector } from "./ManyChatPageSelector";
 
 interface EditIntegrationDialogProps {
   instance: IntegrationInstance | null;
