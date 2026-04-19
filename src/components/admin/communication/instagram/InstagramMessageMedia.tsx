@@ -284,7 +284,7 @@ export function InstagramMessageMedia({
   }
 
   // ─── VIDEO ──────────────────────────────────────────────────────
-  if (isVideo && !videoError) {
+  if (isVideo && !videoError && !forceAudio) {
     if (rehosting && resolvedUrl === url) {
       return (
         <div className={cn("inline-flex items-center gap-2 rounded-2xl bg-muted/60 px-3 py-2 text-xs", className)}>
@@ -297,6 +297,7 @@ export function InstagramMessageMedia({
       <div className={className}>
         <CompactVideo
           src={resolvedUrl}
+          onAudioOnly={() => setForceAudio(true)}
           onError={() => {
             if (resolvedUrl === url && isUnstable) {
               void tryLazyRehost("video");
