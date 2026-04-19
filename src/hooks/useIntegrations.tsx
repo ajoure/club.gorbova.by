@@ -15,6 +15,7 @@ export interface IntegrationInstance {
   status: IntegrationStatus;
   last_check_at: string | null;
   config: Record<string, unknown>;
+  config_secrets?: Record<string, unknown>;
   error_message: string | null;
   created_at: string;
   updated_at: string;
@@ -38,6 +39,12 @@ export interface ProviderConfig {
   fields: ProviderField[];
   advancedFields?: ProviderField[];
   description?: string;
+  /**
+   * Список ключей полей, которые должны храниться в integration_instances.config_secrets
+   * (encrypted-at-rest канал) вместо публичного config jsonb.
+   * Если не задано — все поля идут в config (legacy behaviour).
+   */
+  secretFieldKeys?: string[];
 }
 
 export interface ProviderField {
