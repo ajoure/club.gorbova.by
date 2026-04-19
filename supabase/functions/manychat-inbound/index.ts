@@ -337,6 +337,18 @@ Deno.serve(async (req) => {
     return jsonResponse({ success: false, error: "unauthorized" }, 401);
   }
 
+  // 4.5) P3: backfill manychat_page_name в config, если payload его содержит, но его ещё нет.
+  if (normalized.manychat_page_name && !instance.config?.manychat_page_name) {
+    try {
+      await supabase
+        .from('integration_instances')
+        .update({ config: { ...(instance.config || {}), manychat_page_name: normalized.manychat_page_name } })
+        .eq('id', instance.id);
+    } catch (e) {
+      console.error('[manychat-inbound] page_name_update_failed', e);
+    }
+  }
+
   // 5) Resolve / create instagram_account for this ManyChat instance
   let accountId: string | null = null;
   {
