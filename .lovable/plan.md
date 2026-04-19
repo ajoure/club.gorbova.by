@@ -1,168 +1,204 @@
+# да, согласен, с учетом правок:
 
+1. Фрагмент стал существенно безопаснее.  
+Явный `DROP CONSTRAINT IF EXISTS instagram_contacts_instagram_account_id_instagram_user_id_key` вместо эвристики — это правильное исправление.
+2. Нужно добавить **идемпотентность / rerun-safety** для шага 5.  
+Сейчас:
+  &nbsp;
+  ```sql
+  ALTER TABLE public.instagram_contacts
+    ADD CONSTRAINT instagram_contacts_account_provider_user_unique
+      UNIQUE (instagram_account_id, provider_kind, instagram_user_id);
+  ```
+  при повторном запуске миграции упадёт, если constraint уже существует.  
+  Нужен guard через `DO $$ ... IF NOT EXISTS (...) THEN ALTER TABLE ... ADD CONSTRAINT ... END IF; END $$;`.
+3. Post-migration machine-check №3 в текущем виде **не rerun-safe**:
+  &nbsp;
+  ```sql
+  legacy_apixdrive_count = total_contacts
+  ```
+  Это корректно только для самого первого запуска до появления ManyChat-строк. При повторном запуске или если между миграциями уже появятся `provider_kind='manychat'`, check даст ложный fail.  
+  Этот assert нужно заменить на более безопасный вариант:
+  - либо убрать как неидемпотентный;
+  - либо проверять только то, что **нет** `NULL` и что старые строки до миграции были успешно backfill-нуты по заранее зафиксированному pre-count;
+  - либо явно пометить его как one-time pre-launch assertion и вынести из idempotent migration в verify-скрипт.
+4. Для полноты безопасного порядка добавь guard перед `DROP CONSTRAINT`, что колонка `provider_kind` действительно уже существует и `CHECK/NOT NULL` применены. Это не blocker, но усилит predictability.
+5. После этих двух правок фрагмент Migration 1 можно принимать в execute.  
+Критичных архитектурных замечаний по A4 больше нет.
+6. &nbsp;
+7. План: PATCH 1.1 v3 — Migration 1 (revised, A4 safe order)
 
-# План: PATCH 1.1 v3 — pre-approve discovery package (read-only)
+## Что меняется vs предыдущая версия
 
-## Scope
+Принятые правки ревью по A4:
 
-Это **не план execute**. Это план сбора 6 pre-approve deliverables через read-only tools. После них — финальный revised package на approve, и только потом execute.
-
-Базовый scope PATCH 1.1 жёстко зафиксирован: **A1–A10 + B1**. A11 = pending scope-change, не входит в execute до отдельного approve по доказательствам.
+1. ❌ Эвристика `contype='u' AND array_length(conkey,1)=2` для DROP — удалена. Дропаем только явно поименованный constraint.
+2. ✅ Preflight conflict-check выполняется по **целевому будущему ключу** после backfill `provider_kind='apixdrive'`.
+3. ✅ Жёсткий безопасный порядок для A4 (5 шагов).
+4. ✅ Machine-check после миграции (4 ассерта).
+5. ✅ Execute заблокирован до approve этого фрагмента.
 
 ---
 
-## Pre-approve deliverables (что соберу до approve)
+## Безопасный порядок для A4 (внутри Migration 1)
 
-### D1. Proof package по `instagram-webhook` (для A11)
+1. `ALTER TABLE instagram_contacts ADD COLUMN provider_kind text NOT NULL DEFAULT 'apixdrive'` (с CHECK)
+2. Verify `provider_kind IS NULL = 0` через `RAISE EXCEPTION` guard
+3. Preflight conflict-check по будущему composite UNIQUE `(instagram_account_id, provider_kind, instagram_user_id)` → hard-stop при ≥1 дубле
+4. `DROP CONSTRAINT IF EXISTS instagram_contacts_instagram_account_id_instagram_user_id_key`
+5. `ADD CONSTRAINT instagram_contacts_account_provider_user_unique UNIQUE (...)`
 
-Через `code--view supabase/functions/instagram-webhook/index.ts` + `code--search_files`:
-- Точный ingress contract: URL, методы, headers, query params
-- Handshake invariants: `hub.challenge` / `hub.verify_token` GET handler
-- Body invariants: `entry[].messaging[]` / `changes[]` shape, какие поля обязательны
-- Auth model: `X-Hub-Signature-256` HMAC SHA-256 от raw body, App Secret source
-- Где именно branch под ManyChat создаёт security regression (конкретные строки кода)
-- Почему thin-wrapper хуже отдельного endpoint (по invariants)
+Никаких эвристических `pg_constraint` поисков. Только явное имя.
 
-**Output:** блок в revised plan «A11 proof of impossibility».
+---
 
-### D2. §7.2 — generic domain-event dispatcher discovery
-
-Через `code--search_files` по `DomainEventService`, `domain_events`, `recordExecution`, по edge functions с pattern consumer/dispatcher:
-- Есть ли существующий generic consumer pattern для `domain_events`
-- Если да — какой артефакт reused (имя функции/RPC/cron)
-- Если нет — какой минимальный downstream pattern допустим без нарушения domain-isolation
-
-**Output:** один из двух конкретных выводов:
-- (a) reuse existing dispatcher X
-- (b) downstream выполняется inline через `DomainEventService.recordExecution` после ingress, без отдельного consumer (с обоснованием)
-
-Никаких «если-если» в финальном плане.
-
-### D3. B1 dry-run outputs (read-only SQL через `supabase--read_query`)
-
-Запросы:
-```sql
--- Структура integration_logs
-SELECT column_name, data_type, is_nullable, column_default
-FROM information_schema.columns
-WHERE table_schema='public' AND table_name='integration_logs';
-
--- Существующие индексы
-SELECT indexname, indexdef FROM pg_indexes
-WHERE schemaname='public' AND tablename='integration_logs';
-
--- Размер payload
-SELECT event_type, COUNT(*),
-       AVG(octet_length(payload_meta::text)),
-       MAX(octet_length(payload_meta::text))
-FROM integration_logs GROUP BY event_type;
-
--- Retention
-SELECT jobname, schedule, command FROM cron.job
-WHERE command ILIKE '%integration_logs%';
-
--- Конфликты UNIQUE / PK
-SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint
-WHERE conrelid='public.integration_logs'::regclass;
-```
-
-**Output:** реальные значения. На их основе финальный verdict B1 = `confirmed reuse` или `escalate to new table`.
-
-### D4. A4 pre-flight UNIQUE проверка
+## Обновлённый фрагмент Migration 1 (целиком, для approve)
 
 ```sql
--- Текущий UNIQUE
-SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint
-WHERE conrelid='public.instagram_contacts'::regclass AND contype='u';
+-- ============================================================
+-- PATCH 1.1 — Migration 1: schema add-only (A1, A2, A3 cols, A4)
+-- Безопасный порядок для A4: ADD col → verify → preflight → DROP old → ADD new
+-- ============================================================
 
--- Конфликт legacy строк под новый composite UNIQUE
-SELECT instagram_account_id, instagram_user_id, COUNT(*)
-FROM instagram_contacts
-GROUP BY 1,2 HAVING COUNT(*)>1;
+-- A1: integration_instances.config_secrets
+ALTER TABLE public.integration_instances
+  ADD COLUMN IF NOT EXISTS config_secrets jsonb NOT NULL DEFAULT '{}'::jsonb;
+
+-- A2: instagram_accounts.provider_kind
+ALTER TABLE public.instagram_accounts
+  ADD COLUMN IF NOT EXISTS provider_kind text NOT NULL DEFAULT 'apixdrive'
+    CHECK (provider_kind IN ('apixdrive','manychat'));
+
+-- A3: instagram_messages — 6 колонок (без индексов; индексы в Migration 2 CONCURRENTLY)
+ALTER TABLE public.instagram_messages
+  ADD COLUMN IF NOT EXISTS provider_kind text NOT NULL DEFAULT 'apixdrive'
+    CHECK (provider_kind IN ('apixdrive','manychat')),
+  ADD COLUMN IF NOT EXISTS provider_message_id text,
+  ADD COLUMN IF NOT EXISTS thread_key text,
+  ADD COLUMN IF NOT EXISTS idempotency_hash text,
+  ADD COLUMN IF NOT EXISTS sent_at timestamptz,
+  ADD COLUMN IF NOT EXISTS delivered_at timestamptz;
+
+-- ============================================================
+-- A4: instagram_contacts.provider_kind + UNIQUE swap (safe order)
+-- ============================================================
+
+-- Шаг 1: ADD COLUMN с DEFAULT (legacy backfill = 'apixdrive')
+ALTER TABLE public.instagram_contacts
+  ADD COLUMN IF NOT EXISTS provider_kind text NOT NULL DEFAULT 'apixdrive'
+    CHECK (provider_kind IN ('apixdrive','manychat'));
+
+-- Шаг 2: Verify backfill полностью применён (должно быть 0 NULL)
+DO $$
+DECLARE
+  null_count integer;
+BEGIN
+  SELECT COUNT(*) INTO null_count
+  FROM public.instagram_contacts
+  WHERE provider_kind IS NULL;
+
+  IF null_count > 0 THEN
+    RAISE EXCEPTION
+      'A4 backfill failed: % rows have provider_kind IS NULL after ADD COLUMN', null_count;
+  END IF;
+END $$;
+
+-- Шаг 3: Preflight по ЦЕЛЕВОМУ composite UNIQUE
+-- (instagram_account_id, provider_kind, instagram_user_id)
+DO $$
+DECLARE
+  conflict_count integer;
+BEGIN
+  SELECT COUNT(*) INTO conflict_count
+  FROM (
+    SELECT instagram_account_id, provider_kind, instagram_user_id
+    FROM public.instagram_contacts
+    GROUP BY instagram_account_id, provider_kind, instagram_user_id
+    HAVING COUNT(*) > 1
+  ) dupes;
+
+  IF conflict_count > 0 THEN
+    RAISE EXCEPTION
+      'A4 preflight failed: % duplicate (account, provider_kind, user_id) groups found. HARD STOP.', conflict_count;
+  END IF;
+END $$;
+
+-- Шаг 4: DROP старого UNIQUE по ЯВНОМУ имени (без эвристики)
+ALTER TABLE public.instagram_contacts
+  DROP CONSTRAINT IF EXISTS instagram_contacts_instagram_account_id_instagram_user_id_key;
+
+-- Шаг 5: ADD нового composite UNIQUE
+ALTER TABLE public.instagram_contacts
+  ADD CONSTRAINT instagram_contacts_account_provider_user_unique
+    UNIQUE (instagram_account_id, provider_kind, instagram_user_id);
+
+-- ============================================================
+-- Post-migration machine-check (4 ассерта)
+-- ============================================================
+DO $$
+DECLARE
+  old_unique_exists boolean;
+  new_unique_exists boolean;
+  legacy_apixdrive_count integer;
+  null_provider_count integer;
+  total_contacts integer;
+BEGIN
+  -- 1. Старый UNIQUE отсутствует
+  SELECT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.instagram_contacts'::regclass
+      AND conname = 'instagram_contacts_instagram_account_id_instagram_user_id_key'
+  ) INTO old_unique_exists;
+
+  IF old_unique_exists THEN
+    RAISE EXCEPTION 'A4 check failed: old UNIQUE still exists';
+  END IF;
+
+  -- 2. Новый UNIQUE существует
+  SELECT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.instagram_contacts'::regclass
+      AND conname = 'instagram_contacts_account_provider_user_unique'
+  ) INTO new_unique_exists;
+
+  IF NOT new_unique_exists THEN
+    RAISE EXCEPTION 'A4 check failed: new composite UNIQUE missing';
+  END IF;
+
+  -- 3. Все legacy строки = 'apixdrive'
+  SELECT COUNT(*) INTO total_contacts FROM public.instagram_contacts;
+  SELECT COUNT(*) INTO legacy_apixdrive_count
+    FROM public.instagram_contacts WHERE provider_kind = 'apixdrive';
+
+  IF legacy_apixdrive_count <> total_contacts THEN
+    RAISE EXCEPTION
+      'A4 check failed: % of % rows are not provider_kind=apixdrive',
+      (total_contacts - legacy_apixdrive_count), total_contacts;
+  END IF;
+
+  -- 4. provider_kind IS NULL = 0
+  SELECT COUNT(*) INTO null_provider_count
+    FROM public.instagram_contacts WHERE provider_kind IS NULL;
+
+  IF null_provider_count > 0 THEN
+    RAISE EXCEPTION 'A4 check failed: % rows with provider_kind IS NULL', null_provider_count;
+  END IF;
+
+  RAISE NOTICE 'A4 machine-check passed: old UNIQUE dropped, new UNIQUE active, % legacy rows=apixdrive', total_contacts;
+END $$;
 ```
 
-**Output:** если 0 конфликтов → execute разрешён по default plan (drop старого UNIQUE, add `(instagram_account_id, provider_kind, instagram_user_id)`). Если ≥1 конфликт → hard-stop + remediation plan отдельно.
+---
 
-### D5. Operational-safe DDL order
+## Что НЕ изменилось
 
-На основе D3+D4 размечу для каждого ALTER/INDEX:
-- Безопасен ли без long lock (ADD COLUMN с DEFAULT в Postgres ≥11 = быстрый)
-- Какие индексы создавать `CONCURRENTLY` (partial UNIQUE на `instagram_messages`, `integration_logs`)
-- Порядок: сначала ADD `provider_kind` с DEFAULT (legacy backfill), потом DROP старого UNIQUE на `instagram_contacts`, потом ADD нового composite UNIQUE — чтобы не словить дыру дедупликации
-
-**Output:** фиксированный SQL-порядок Migration 1.
-
-### D6. Updated `gap-register.md`
-
-Два варианта на approve:
-- (вариант A) addendum с A11 + полный proof из D1+D2 → PATCH 1.1 включает A1–A11 + B1
-- (вариант B) A11 переносится в **PATCH 1.2** → PATCH 1.1 = A1–A10 + B1 без ingress
-
-Решение принимаю на основе D1+D2: если proof убедителен — даю на approve вариант A; если нет — сразу вариант B без попытки протащить.
+- Migration 2 (CONCURRENTLY indexes на `instagram_messages`) — без изменений
+- Migration 3 (CONCURRENTLY composite UNIQUE на `integration_logs` для B1) — без изменений
+- Migration 4 (RPC `get_instagram_dialogs_v1`) — без изменений
+- Edges/UI порядок — без изменений
 
 ---
 
-## Закреплённые решения (без пересмотра в execute)
+## Жду approve по обновлённому фрагменту Migration 1
 
-| # | Решение | Жёсткость |
-|---|---|---|
-| A8 | Snapshot **только** в `config.sync_state`. Settings в root `config`. `integration_sync_logs` = история sync, **не SoT хранилище**. Вариант 2 удалён | final |
-| A7 | Только 24h окно до закрытия `windowing-proof.md`. Никаких hard-coded `message_tag`. Вне окна — блокировка через `normalizeEdgeFunctionError`. HUMAN_AGENT и др. policy — только после live-proof + explicit config flag | final |
-| A4 | Default = пересмотр UNIQUE на composite. Execute **только** при D4 = 0 конфликтов. Иначе hard-stop | conditional on D4 |
-| B1 | Reuse `integration_logs`+`domain_events` через partial UNIQUE — **только** при положительном D3. Иначе escalate | conditional on D3 |
-| A11 | Pending scope-change. Не входит в execute до D1+D2 + отдельного approve | gated |
-
----
-
-## Расширенный legacy verify (добавлено к L1–L8)
-
-| # | Verify шаг |
-|---|---|
-| L9 | Create/edit/delete существующего integration instance (ApiX-Drive/GetCourse/AmoCRM) после ADD `config_secrets` и ADD ManyChat в PROVIDERS — формы и сохранение работают |
-| L10 | Визуальный smoke `/admin/integrations`: existing provider cards, категории, порядок не поехали; ManyChat карточка добавлена в правильную категорию без layout shift |
-
----
-
-## Что НЕ делаю в pre-approve фазе
-
-- ❌ Никаких миграций
-- ❌ Никаких новых функций
-- ❌ Никаких изменений existing функций
-- ❌ Никакого UI кода
-- ❌ Никакого scope-change без proof
-
-Только read-only discovery + сбор пакета.
-
----
-
-## Финальный revised package на approve (после D1–D6)
-
-1. Updated `gap-register.md` (вариант A или B по итогам D1+D2)
-2. D3 dry-run outputs по B1 + verdict
-3. D4 pre-flight outputs по A4 UNIQUE + verdict
-4. D1 proof package по `instagram-webhook`
-5. D2 вывод по dispatcher (без развилок)
-6. Финальный PATCH 1.1 v3 plan без открытых веток с фиксированным DDL order из D5
-
-Только после approve этого пакета — execute.
-
----
-
-## Порядок работы pre-approve
-
-1. D1 (`code--view`, `code--search_files`) — instagram-webhook contract
-2. D2 (`code--search_files`, `code--view`) — dispatcher pattern
-3. D3 (`supabase--read_query` ×5) — B1 dry-run
-4. D4 (`supabase--read_query` ×2) — A4 pre-flight
-5. D5 — DDL order на основе D3+D4
-6. D6 — gap-register addendum или fallback
-7. Подача revised package
-
----
-
-## Fallback при отсутствии A11 proof
-
-Если D1+D2 не дают убедительного proof:
-- A11 → PATCH 1.2 (отдельный план)
-- PATCH 1.1 execute = только A1–A10 + B1
-- Никаких частичных ingress попыток
-
+После approve запускаю execute по полному порядку (Migration 1 → 2 → 3 → 4 → edges → UI → verify L1–L10).
