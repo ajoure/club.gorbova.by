@@ -459,15 +459,18 @@ async function sendViaManyChat(
     return { ok: false, error: 'manychat api_key missing in config_secrets' };
   }
 
-  const payload = {
-    subscriber_id: subscriberId,
+  // ManyChat: subscriber_id must be a number when numeric;
+  // message_tag is NOT used for Instagram inside the 24h reply window
+  // (sending it triggers "Validation error" on IG channel).
+  const subIdNum = /^\d+$/.test(String(subscriberId)) ? Number(subscriberId) : subscriberId;
+  const payload: Record<string, unknown> = {
+    subscriber_id: subIdNum,
     data: {
       version: 'v2',
       content: {
         messages: [{ type: 'text', text }],
       },
     },
-    message_tag: 'ACCOUNT_UPDATE',
   };
 
   const controller = new AbortController();
