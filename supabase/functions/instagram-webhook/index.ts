@@ -348,8 +348,27 @@ Deno.serve(async (req) => {
     }));
   }
 
+  // PATCH-MEDIA: Legacy URL fallback — если media_url пуст, но в message_text лежит URL медиафайла,
+  // поднимаем его в media_url + угадываем media_type.
+  if (!messageMediaUrl && messageText) {
+    const txt = String(messageText).trim();
+    const urlOnly = /^https?:\/\/\S+$/i.test(txt) ? txt : null;
+    if (urlOnly) {
+      const lower = urlOnly.toLowerCase();
+      let guessedType: string | null = null;
+      if (/\.(jpe?g|png|gif|webp|bmp|heic)(?:[?#]|$)/i.test(lower) || /lookaside\.fbsbx\.com.*ig_messaging_cdn/i.test(urlOnly)) guessedType = 'image';
+      else if (/\.(mp4|mov|webm|m4v)(?:[?#]|$)/i.test(lower)) guessedType = 'video';
+      else if (/\.(mp3|m4a|ogg|opus|wav|aac)(?:[?#]|$)/i.test(lower)) guessedType = 'audio';
+      else if (/\.(pdf|docx?|xlsx?|pptx?|zip)(?:[?#]|$)/i.test(lower)) guessedType = 'file';
+      if (guessedType) {
+        messageMediaUrl = urlOnly;
+        messageMediaType = guessedType;
+      }
+    }
+  }
+
   // Insert message with peer_id
-  const { error: msgErr } = await supabase
+  const { data: insertedMsg, error: msgErr } = await supabase
     .from('instagram_messages')
     .insert({
       instagram_account_id: accountId,
@@ -371,6 +390,25 @@ Deno.serve(async (req) => {
     })
     .select('id')
     .single();
+
+  // PATCH-MEDIA: Fire-and-forget rehost для нестабильных Instagram CDN URLs.
+  // Не ждём ответа — UI ленивого rehost-а тоже подхватит, если этот вызов не успеет.
+  if (!msgErr && insertedMsg?.id && messageMediaUrl &&
+      /(lookaside\.fbsbx\.com|fbcdn\.net|cdninstagram\.com)/i.test(messageMediaUrl)) {
+    const proxyUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/instagram-media-proxy`;
+    fetch(proxyUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''}`,
+      },
+      body: JSON.stringify({
+        message_id: insertedMsg.id,
+        source_url: messageMediaUrl,
+        media_type: messageMediaType,
+      }),
+    }).catch((e) => console.warn('[instagram-webhook] rehost dispatch failed:', e?.message));
+  }
 
   if (msgErr) {
     if (msgErr.code === '23505') {

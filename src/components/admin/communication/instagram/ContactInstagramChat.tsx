@@ -271,7 +271,7 @@ export function ContactInstagramChat({
               >
                 {realMediaUrl && (
                   <div className={cn(showText && "mb-2")}>
-                    <InstagramMessageMedia url={realMediaUrl} type={realMediaType} />
+                    <InstagramMessageMedia url={realMediaUrl} type={realMediaType} messageId={msg.id} />
                   </div>
                 )}
                 {showText && (
