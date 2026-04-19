@@ -97,9 +97,24 @@ Probe: `GET /fb/page/getInfo` → 200 OK (26 ms)
 
 ---
 
-## Webhook events (deferred — требует подписки в ManyChat UI)
+## Webhook / event delivery contract
 
-Список событий не возвращается через `getInfo`. Подписка делается в ManyChat Settings → API → Webhooks вручную, и подтверждается реальной доставкой на `manychat-diagnose-capture`. Финальный список фиксируется в `diagnose-payloads.md` после live capture.
+> **КРИТИЧНО:** в актуальном UI ManyChat **отсутствует** глобальная подписка на webhook events. Раздела `Settings → API → Webhooks` **не существует**. Public API не содержит ни одного `webhook`/`subscribe` endpoint (проверено по Swagger).
+>
+> Единственный нативный способ доставки события из ManyChat в нашу систему — **External Request action внутри конкретного Flow** (Pro-feature, у нас `is_pro=true`). См. [external-request-setup.md](./external-request-setup.md).
+
+| Параметр | Значение |
+|---|---|
+| Глобальная подписка на события | ❌ отсутствует в UI/API |
+| Нативный путь push | ✅ External Request action в Flow (Pro-only) |
+| Криптографическая подпись payload | ❌ ManyChat не подписывает |
+| Глобальный `event_id` | ❌ не передаётся → dedup на нашей стороне (sha256-hash) |
+| Auto-retry на 5xx | ❌ нет, 1 попытка |
+| Hard timeout | 10 секунд (как у Dynamic Block) |
+| Headers, контролируемые оператором | ✅ да (через UI External Request) |
+| Body schema | ✅ полностью **наша** — собирается из `{{system}}`+`{{custom}}` плейсхолдеров ManyChat |
+
+Финальный список Flows, в которые врезаны External Request actions, фиксируется в `diagnose-payloads.md` после PATCH 0.1 live capture.
 
 ---
 
@@ -145,8 +160,11 @@ Probe Inbox seats отдельным endpoint не предусмотрен. Liv
 
 ✅ **Применённые контракты для PATCH 1+:**
 
-- **Webhook events для PATCH 1:** список финализируется в `diagnose-payloads.md` после live capture (минимум `subscriber:created`, `message:received`, `subscriber:tagged`)
-- **Endpoint groups для throttler PATCH 2:** 3 группы (`send` 25 RPS, `read_meta` 10 RPS, `subscriber_ops` 100 RPS), proactive token bucket (rate headers ManyChat не возвращает)
-- **Pause Automation API call для PATCH 2:** через action в Flow (прямой API без TTL); валидируется в PATCH 0.3
-- **Dynamic Block включаем в PATCH 4:** ✅ да, `is_pro=true` подтверждён, timeout 10s, schema v2
-- **Custom Fields bootstrap при создании instance:** обязательно создать `platform_contact_id`, `platform_workspace_id`, `last_order_id`, `last_order_status`, `subscription_expires_at` (сейчас 0 fields в workspace)
+- **Канал событий v1:** гибрид Pull (Public API) + Push (External Request action в выбранных Flows). Нативные глобальные webhooks недоступны и в плане **не используются**.
+- **Минимальный набор Flows с External Request:** `subscriber:created`, `message:received`, `subscriber:tagged` — финализируется по факту PATCH 0.1 capture в `diagnose-payloads.md`.
+- **События вне Flow** (ручные действия в Inbox, прямые правки полей через UI): покрываются **только** pull-diff cron'ом в PATCH 2 — **без** гарантий real-time.
+- **Endpoint groups для throttler PATCH 2:** 3 группы (`send` 25 RPS, `read_meta` 10 RPS, `subscriber_ops` 100 RPS), proactive token bucket (rate headers ManyChat не возвращает).
+- **Pause Automation API call для PATCH 2:** через action в Flow (прямой API без TTL); валидируется в PATCH 0.3.
+- **Dynamic Block включаем в PATCH 4:** ✅ да, `is_pro=true` подтверждён, timeout 10s, schema v2.
+- **Custom Fields bootstrap при создании instance:** обязательно создать `platform_contact_id`, `platform_workspace_id`, `last_order_id`, `last_order_status`, `subscription_expires_at` (сейчас 0 fields в workspace).
+- **Защита входящих External Request:** `shared_secret_token` в URL path (constant-time compare) + allowlist по `manychat_page_id` + dedup `sha256(workspace|page|subscriber|event|sec_bucket|payload_hash)`. Криптографическая подпись недоступна в ManyChat — **не используем**.

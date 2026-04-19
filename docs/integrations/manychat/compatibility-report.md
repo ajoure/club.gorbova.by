@@ -169,6 +169,49 @@
 - RLS: admin only
 ```
 
+### `integration_inbound_events` (новая, для External Request ingest)
+
+```
+- id uuid PK DEFAULT gen_random_uuid()
+- integration_instance_id uuid NOT NULL REFERENCES integration_instances(id) ON DELETE CASCADE
+- provider_kind text NOT NULL CHECK (provider_kind IN ('manychat'))  -- v1 only
+- event_type text NOT NULL  -- 'subscriber.created' / 'message.received' / 'subscriber.tagged' / 'flow.completed' / 'field.updated'
+- manychat_page_id text NOT NULL
+- manychat_subscriber_id text NOT NULL
+- raw_payload jsonb NOT NULL
+- raw_headers jsonb NOT NULL
+- source_ip inet NULL
+- idempotency_hash text NOT NULL
+- received_at timestamptz NOT NULL DEFAULT now()
+- processed_at timestamptz NULL
+- processing_status text NOT NULL DEFAULT 'pending' CHECK (IN ('pending','processed','duplicate','failed'))
+- processing_error text NULL
+- UNIQUE (idempotency_hash)  -- canonical anti-duplicate
+- INDEX (integration_instance_id, processing_status, received_at)
+- RLS: superadmin SELECT, service_role write
+```
+
+> **Назначение:** буфер всех входящих External Request от ManyChat. Endpoint `manychat-event-ingest` (создаётся в PATCH 2) пишет сюда синхронно (200 OK сразу после INSERT), фоновый worker разбирает в `instagram_messages` / `manychat_subscribers` / `domain_events`. Это даёт идемпотентность, retry-безопасность и полный audit trail для канала ManyChat → платформа.
+
+---
+
+## E. Контракт безопасности входящих External Request
+
+> ManyChat **не предоставляет** криптографическую подпись для исходящих External Request — это известное ограничение продукта. Все прежние упоминания `signature_verified` / `x-manychat-signature` / HMAC из плана **исключены**.
+
+Защита трёхуровневая:
+
+| Уровень | Механизм | Хранение | Проверка |
+|---|---|---|---|
+| 1. Authn | `shared_secret_token` в URL path (`/manychat-event-ingest/{token}`) | `integration_instances.config_secrets` (Vault-encrypted) | constant-time compare на edge function |
+| 2. Authz | allowlist `manychat_page_id` в payload | `instagram_accounts.instagram_page_id WHERE provider_kind='manychat'` | `payload.manychat_page_id ∈ allowlist` для данного `integration_instance_id` |
+| 3. Integrity | dedup hash | `integration_inbound_events.idempotency_hash UNIQUE` | `sha256(workspace_id\|page_id\|subscriber_id\|event_type\|floor(received_at_ms/1000)\|sha256(payload))` |
+
+Acceptable v1 limitations (зафиксированы):
+- Best-effort dedup, не криптогарантия (разный payload в одну секунду — разные хэши; одинаковый — склеится, приемлемо для message flow).
+- Token rotation = ручной reissue + операторская задача обновить URL во всех Flows ManyChat.
+- Компрометация токена = весь push-канал workspace требует перенастройки (acceptable risk для v1).
+
 ---
 
 ## Decision записи (финал PATCH 0.4)
@@ -183,6 +226,8 @@
 7. `ALTER TABLE instagram_messages ADD COLUMN idempotency_hash text` + partial INDEX
 8. `CREATE TABLE manychat_subscribers (...)` + RLS
 9. `CREATE TABLE integration_event_mappings (...)` + RLS
+10. `CREATE TABLE integration_inbound_events (...)` + RLS + UNIQUE(idempotency_hash)
+11. `ALTER TABLE integration_instances ADD COLUMN config_secrets jsonb` (для `shared_secret_token`, encrypted at rest через Vault)
 
 ✅ **SELECT-запросы, требующие пересмотра в PATCH 2:**
 - RPC `get_instagram_dialogs_v1` — добавить `provider_kind` в return (UI badge)
