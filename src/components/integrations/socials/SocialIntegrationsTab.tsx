@@ -351,6 +351,7 @@ export function SocialIntegrationsTab() {
               instances={manychatInstances}
               onEdit={setEditInstance}
               onViewLogs={setLogsInstance}
+              onHealthCheck={handleHealthCheck}
             />
           ) : (
             <p className="text-sm text-muted-foreground">
