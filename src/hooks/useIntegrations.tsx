@@ -177,6 +177,20 @@ export const PROVIDERS: ProviderConfig[] = [
     ],
   },
   {
+    id: "manychat",
+    name: "ManyChat",
+    icon: "MessageCircle",
+    category: "socials",
+    description: "Instagram Direct через ManyChat Public API + External Request",
+    secretFieldKeys: ["api_key", "workspace_token"],
+    fields: [
+      { key: "api_key", label: "API Key (ManyChat)", type: "password", required: true, placeholder: "Bearer токен Public API" },
+      { key: "manychat_page_id", label: "Page ID", type: "text", required: true, placeholder: "ID Facebook Page в ManyChat" },
+      { key: "workspace_token", label: "Workspace Token", type: "password", required: false, placeholder: "Опционально — генерируется backend" },
+      { key: "allowed_page_ids", label: "Дополнительные Page ID (whitelist)", type: "textarea", required: false, placeholder: "Один ID на строку" },
+    ],
+  },
+  {
     id: "facebook",
     name: "Facebook",
     icon: "Facebook",
