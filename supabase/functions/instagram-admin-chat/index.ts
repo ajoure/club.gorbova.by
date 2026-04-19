@@ -459,61 +459,77 @@ async function sendViaManyChat(
     return { ok: false, error: 'manychat api_key missing in config_secrets' };
   }
 
-  // ManyChat: subscriber_id must be a number when numeric;
-  // message_tag is NOT used for Instagram inside the 24h reply window
-  // (sending it triggers "Validation error" on IG channel).
+  // ManyChat: subscriber_id must be a number when numeric.
+  // Strategy: пробуем без message_tag (24h окно). Если ManyChat отвечает
+  // "without a message tag" / "more than 24 hours" — повторяем с HUMAN_AGENT
+  // (окно 7 дней для manual reply). Если и это не проходит — нормализованная UX-ошибка.
   const subIdNum = /^\d+$/.test(String(subscriberId)) ? Number(subscriberId) : subscriberId;
-  const payload: Record<string, unknown> = {
-    subscriber_id: subIdNum,
-    data: {
-      version: 'v2',
-      content: {
-        messages: [{ type: 'text', text }],
-      },
-    },
+
+  const buildPayload = (tag?: string): Record<string, unknown> => {
+    const p: Record<string, unknown> = {
+      subscriber_id: subIdNum,
+      data: { version: 'v2', content: { messages: [{ type: 'text', text }] } },
+    };
+    if (tag) p.message_tag = tag;
+    return p;
   };
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10_000);
-
-  try {
-    const resp = await fetch('https://api.manychat.com/fb/sending/sendContent', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-
-    let parsed: any = null;
+  const callManychat = async (payload: Record<string, unknown>) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10_000);
     try {
-      parsed = await resp.json();
-    } catch {
-      return { ok: false, error: `manychat non-JSON response (HTTP ${resp.status})` };
+      const resp = await fetch('https://api.manychat.com/fb/sending/sendContent', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      let parsed: any = null;
+      try { parsed = await resp.json(); } catch {
+        return { httpOk: false, status: resp.status, parsed: null, raw: `non-JSON (HTTP ${resp.status})` };
+      }
+      return { httpOk: resp.ok, status: resp.status, parsed, raw: null as string | null };
+    } catch (e: any) {
+      clearTimeout(timeoutId);
+      if (e?.name === 'AbortError') return { httpOk: false, status: 0, parsed: null, raw: 'timeout' };
+      return { httpOk: false, status: 0, parsed: null, raw: e?.message || String(e) };
     }
+  };
 
-    if (!resp.ok) {
-      const msg = parsed?.message || parsed?.error || `HTTP ${resp.status}`;
-      return { ok: false, error: `manychat http error: ${msg}` };
-    }
+  const isOutside24h = (m: string) =>
+    /without a message tag/i.test(m) || /more than 24 hours/i.test(m) || /last interaction was over/i.test(m);
+  const isOutside7d = (m: string) =>
+    /outside.*(allowed|messaging) window/i.test(m) || /more than 7 days/i.test(m) || /human.?agent/i.test(m);
 
-    if (parsed?.status && parsed.status !== 'success') {
-      return { ok: false, error: `manychat api error: ${parsed?.message || 'unknown'}` };
-    }
+  // Attempt 1: без тега (24h окно)
+  const r = await callManychat(buildPayload());
+  if (r.raw === 'timeout') return { ok: false, error: 'manychat send timeout (10s)' };
 
-    const providerMsgId =
-      parsed?.data?.message_id || parsed?.data?.id || parsed?.message_id || null;
-    return { ok: true, provider_message_id: providerMsgId };
-  } catch (e: any) {
-    clearTimeout(timeoutId);
-    if (e?.name === 'AbortError') {
-      return { ok: false, error: 'manychat send timeout (10s)' };
+  const msg1 = r.parsed?.message || r.parsed?.error || r.raw || `HTTP ${r.status}`;
+  if (!r.httpOk && isOutside24h(String(msg1))) {
+    // Attempt 2: HUMAN_AGENT (окно 7 дней для manual replies)
+    const r2 = await callManychat(buildPayload('HUMAN_AGENT'));
+    if (r2.raw === 'timeout') return { ok: false, error: 'manychat send timeout (10s)' };
+    if (r2.httpOk && (!r2.parsed?.status || r2.parsed.status === 'success')) {
+      const pid = r2.parsed?.data?.message_id || r2.parsed?.data?.id || r2.parsed?.message_id || null;
+      return { ok: true, provider_message_id: pid };
     }
-    return { ok: false, error: `manychat send exception: ${e?.message || String(e)}` };
+    const msg2 = r2.parsed?.message || r2.parsed?.error || r2.raw || `HTTP ${r2.status}`;
+    if (isOutside7d(String(msg2)) || isOutside24h(String(msg2))) {
+      return { ok: false, error: 'Окно ответа истекло: подписчик не писал больше 7 дней. Meta запрещает отправку, пока не придёт новое входящее сообщение.' };
+    }
+    return { ok: false, error: `manychat http error: ${msg2}` };
   }
+
+  if (!r.httpOk) return { ok: false, error: `manychat http error: ${msg1}` };
+  if (r.parsed?.status && r.parsed.status !== 'success') {
+    return { ok: false, error: `manychat api error: ${r.parsed?.message || 'unknown'}` };
+  }
+
+  const providerMsgId =
+    r.parsed?.data?.message_id || r.parsed?.data?.id || r.parsed?.message_id || null;
+  return { ok: true, provider_message_id: providerMsgId };
 }
 
 async function markRead(supabase: any, body: any) {
