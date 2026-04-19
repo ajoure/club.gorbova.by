@@ -41,6 +41,7 @@ interface NormalizedInbound {
   external_message_id: string;
   sender_id: string;
   sender_name: string | null;
+  avatar_url: string | null;
   message_text: string | null;
   media_url: string | null;
   media_type: string | null;
@@ -181,6 +182,15 @@ async function normalizePayload(body: any): Promise<NormalizedInbound | { error:
     subscriber?.username,
   );
 
+  // Avatar: ManyChat присылает в `subscriber.profile_pic`. Безопасно — пишем только если URL валидный.
+  const rawAvatar = pickString(
+    subscriber?.profile_pic,
+    subscriber?.profile_pic_url,
+    body.profile_pic,
+    body.avatar_url,
+  );
+  const avatar_url = rawAvatar && /^https?:\/\//i.test(rawAvatar) ? rawAvatar : null;
+
   const ig_thread_id = pickString(body.ig_thread_id, body.thread_id);
   const thread_key = pickString(body.thread_key, ig_thread_id, sender_id);
 
@@ -201,6 +211,7 @@ async function normalizePayload(body: any): Promise<NormalizedInbound | { error:
     external_message_id,
     sender_id,
     sender_name,
+    avatar_url,
     message_text,
     media_url,
     media_type,
@@ -394,22 +405,24 @@ Deno.serve(async (req) => {
   }
 
   // 6) Upsert contact (provider_kind='manychat')
+  // Avatar: пишем только если получили валидный URL (никогда не перетираем на null).
   try {
+    const contactPayload: Record<string, unknown> = {
+      instagram_account_id: accountId!,
+      instagram_user_id: normalized.sender_id,
+      instagram_username: normalized.sender_name,
+      full_name: normalized.sender_name,
+      provider_kind: "manychat",
+      updated_at: new Date().toISOString(),
+    };
+    if (normalized.avatar_url) {
+      contactPayload.avatar_url = normalized.avatar_url;
+    }
     await supabase
       .from("instagram_contacts")
-      .upsert(
-        {
-          instagram_account_id: accountId!,
-          instagram_user_id: normalized.sender_id,
-          instagram_username: normalized.sender_name,
-          full_name: normalized.sender_name,
-          provider_kind: "manychat",
-          updated_at: new Date().toISOString(),
-        },
-        {
-          onConflict: "instagram_account_id,provider_kind,instagram_user_id",
-        },
-      );
+      .upsert(contactPayload, {
+        onConflict: "instagram_account_id,provider_kind,instagram_user_id",
+      });
   } catch (e) {
     console.error("[manychat-inbound] contact_upsert_failed", e);
     // non-fatal
