@@ -202,6 +202,7 @@ export function InstagramMessageMedia({
     setImgError(false);
     setVideoError(false);
     setAudioError(false);
+    setForceAudio(false);
     if (isUnstable && (isAudio || isVideo)) {
       setRehosting(true);
       rehostMedia(messageId, url, isAudio ? "audio" : "video")
