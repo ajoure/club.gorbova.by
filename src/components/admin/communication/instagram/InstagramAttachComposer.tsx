@@ -300,7 +300,7 @@ export function InstagramAttachComposer({
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*,video/*,application/pdf,application/*,text/plain"
+          accept="image/*,video/*"
           className="hidden"
           onChange={onFileInputChange}
         />
