@@ -589,9 +589,16 @@ async function sendViaManyChat(
   };
 
   // Retry chain (строго):
-  //   #1 без tag (24h standard reply window)
-  //   #2 HUMAN_AGENT — только если 24h окно закрыто ИЛИ Validation error
-  //   #3 нормализованный fail (без runtime crash)
+  //   text:
+  //     #1 без tag (24h standard reply window)
+  //     #2 HUMAN_AGENT — только если 24h окно закрыто ИЛИ Validation error
+  //     #3 нормализованный fail (без runtime crash)
+  //   media (image/audio/video/file):
+  //     #1 без tag — единственная попытка
+  //     proof: ManyChat возвращает "Unsupported message tag" для media + HUMAN_AGENT,
+  //     поэтому ретрай с тегом запрещён.
+
+  const isMedia = !!content.media_url;
 
   const a1 = await tryOnce(1);
   if (a1.r.rawBody === 'timeout') {
@@ -602,7 +609,7 @@ async function sendViaManyChat(
     return { ok: true, provider_message_id: pid };
   }
 
-  const needsTagRetry = isOutside24h(a1.msg) || isValidationError(a1.r.status, a1.msg);
+  const needsTagRetry = !isMedia && (isOutside24h(a1.msg) || isValidationError(a1.r.status, a1.msg));
 
   if (needsTagRetry) {
     const a2 = await tryOnce(2, 'HUMAN_AGENT');
