@@ -1,114 +1,116 @@
-## да, согласен, с учетом правок:    
+## да, согласен, с учетом правок:
 
-1. Логирование делай **структурированным и временным**, не просто `console.log(text.slice(...))`.  
-Нужны поля:
+1. **Synthetic id принимаю, но не через SHA-1.**  
+Для такого служебного идентификатора лучше сразу делать:
   &nbsp;
   &nbsp;
-  - `http_status`
-  - `top_level_keys`
-  - `status_field`
-  - `has_data`
-  - `data_shape`
-  - `data_keys` или `data_first_keys`
-  - `body_preview_truncated`
-  - `request_mode` (`api_key` или `instance_id`)  
-  И сразу зафиксируй, что это **debug-only patch**, который потом убирается или понижается до debug-level после закрытия proof.
-2. В `body_preview` добавь явный guard по длине и типу.  
-Не просто “первые 300 символов”, а:
-  - максимум 300 символов;
-  - только строковое значение;
-  - если ответ слишком большой или бинарный/нестроковый — писать безопасный маркер.  
-  Это исключит случайный шум в логах.
-3. Парсер лучше оформить как **отдельный normalize helper**, а не inline-ветвления в handler.  
+  - `mc:` + `sha256(...)`
+  - и брать, например, первые 16–24 hex символа.  
+  Не потому что тут нужна криптостойкость, а чтобы не закладывать новый техдолг с SHA-1 без причины.
+2. **Формулу synthetic id зафиксируй строже.**  
+Сейчас `name + timezone` может быть слишком хрупким.  
+Нужен deterministic input set с приоритетом:
+  - `username`, если есть;
+  - иначе `name + "|" + timezone + "|" + is_pro`;
+  - если часть полей пустая, всё равно собирать строку стабильно.  
+  Нужно, чтобы между вызовами id не “плавал”.
+3. **Обязательно логируй не только** `synthetic_id: true/false`**, но и** `id_source`**.**  
 Например:
-  - `extractManyChatPages(payload): ManyChatPage[]`
-  - handler только вызывает helper и логирует метаданные.  
-  Так будет проще быстро добавить 4-ю ветку, если реальный envelope окажется ещё другим.
-4. В normalize helper сразу заложи **мягкую фильтрацию пустых страниц**.  
-То есть если из массива пришли элементы без идентификатора, не падать сразу на первом мусорном элементе, а:
-  - отнормализовать все;
-  - оставить только элементы с валидным `id`;
-  - если после фильтрации пусто — тогда `unexpected_response`.
-5. Side-fix по `forwardRef` принимаю, но не раздувай его.  
-Это именно side-fix, а не часть основного proof.  
-Если warning убирается минимально — ок. Если начинает тянуть переписывание generic form wrappers, вынеси остаток в deferred.
-6. В DoD добавь ещё один пункт:  
-**при** `invalid_api_key` **fallback ручного ввода не показывается.**  
-Это уже было в UX-контракте, и сейчас важно явно проверить, что после parser-fix вы не сломали ветвление ошибок.
-7. После фикса не нужен новый большой план.  
-Нужен только короткий runtime-proof:
-  - create flow: page auto-fill;
-  - chip с именем;
-  - fallback не показан;
-  - лог содержит ожидаемые debug-поля без секрета.
+  - `id`
+  - `page_id`
+  - `facebook_page_id`
+  - `username`
+  - `synthetic_hash`  
+  Это потом сильно упростит отладку и миграцию, если ManyChat начнёт отдавать реальный id.
+4. **UI должен визуально не показывать synthetic id как будто это реальный Facebook Page ID.**  
+В chip и в форме основной акцент — на имени страницы.  
+Если где-то показываешь значение id, подпиши нейтрально, например:
+  - `Идентификатор страницы`  
+  а не `Facebook Page ID`.  
+  Иначе пользователь будет думать, что это реальный FB numeric id.
+5. **Текст fallback/debug mode нужно скорректировать.**  
+Сейчас ручной ввод позиционировался как “введите Page ID вручную”.  
+После введения synthetic id это уже не совсем верно. Нужно менять формулировку на что-то вроде:
+  - `Введите идентификатор страницы вручную (debug mode)`  
+  чтобы не обещать именно Facebook numeric id там, где его может не быть.
+6. **В DoD добавь один migration-safety пункт на будущее.**  
+Если позже ManyChat начнёт отдавать реальный `id`, система не должна ломаться.  
+Нужно явно зафиксировать:
+  - existing saved `mc:...` ids остаются валидными;
+  - новые instance могут получить real id;
+  - код не должен требовать, чтобы все старые записи были мигрированы немедленно.
+7. **Healthcheck и downstream A11/A7 не должны зависеть от “реальности” page_id.**  
+Это нужно явно написать в fix-note:
+  - `manychat_page_id` используется как внутренний stable marker/display key;
+  - рабочая авторизация и реальные API-вызовы идут по `api_key`, а не по `page_id`.  
+  Это важное архитектурное пояснение, чтобы дальше никто не начал строить критичный контракт на synthetic id.
 
 &nbsp;
 
-После этого UX-patch можно считать закрытым и идти дальше.
+После этих уточнений фикс можно делать без остановки спринта.
 
 &nbsp;
 
-Fix-to-patch: ManyChat discover envelope parser
+Diagnose
 
-### Root cause (гипотеза)
+**Реальный envelope (из логов):**
 
-Текущий парсер ожидает `{status:"success", data:{id, name, ...}}`. ManyChat возвращает 200 + JSON, но фактическая форма отличается (вероятно `data` — массив страниц, либо ключ `id` лежит как `page_id`/`facebook_page_id`, либо envelope без `status`). Без debug-лога точно не сказать. Нужно сначала залогировать форму, потом расширить парсер.
-
-### Что меняем
-
-**1. `supabase/functions/manychat-discover-pages/index.ts` — debug-лог без секретов**
-
-После `resp.text()` логируем:
-
-- `http_status`
-- `top_level_keys` (`Object.keys(payload)` если объект, иначе `"<array>"`/`"<primitive>"`)
-- `status_field` (значение `payload.status` если есть)
-- `has_data` (boolean)
-- `data_shape`: `"object"` / `"array"` / `"missing"`
-- если object → `data_keys` (`Object.keys(payload.data)`)
-- если array → `data_length` + `data_first_keys` (`Object.keys(payload.data[0])` для первого элемента)
-- `body_preview`: первые 300 символов `text`, **обрезаем перед логом** (не должно содержать api_key — это ответ, не запрос)
-
-`apiKey` НИКОГДА не попадает в логи. Никаких `Authorization` headers тоже.
-
-**2. Расширенный парсер с поддержкой нескольких форм envelope**
-
-Поддержим три реальных варианта ManyChat:
-
-- `{status:"success", data:{id, name, ...}}` — текущий
-- `{data:{id, name, ...}}` без `status`
-- `{data:[{id, name, ...}, ...]}` — массив страниц
-- normalize id через несколько ключей: `id` → `page_id` → `facebook_page_id`
-- normalize name: `name` → `page_name` → `title`
-
-Если ни один не подошёл — `unexpected_response` + лог `data_keys` уже будет в логах для разбора.
-
-**3. Side-fix: ref warning в `ManyChatPageSelector**`
-
-Обернуть компонент в `forwardRef` (даже если ref не используется внутри), либо посмотреть `AddIntegrationDialog` — может, он передаёт `ref` в обёртку через сторонний контейнер. Чисто косметический warning, но устраним заодно, чтобы не засорять консоль во время proof.
-
-### Что НЕ меняем
-
-- Контракт ответа функции (success/error_code/pages) остаётся прежним.
-- UI (`ManyChatPageSelector`) уже обрабатывает single/multiple page — менять не нужно.
-- Storage contract не трогаем.
-- Healthcheck не трогаем.
-
-### Файлы
-
-```
-~ supabase/functions/manychat-discover-pages/index.ts   (debug-лог + расширенный парсер)
-~ src/components/integrations/ManyChatPageSelector.tsx  (forwardRef для устранения warning)
+```json
+{"status":"success","data":{
+  "id":null,            ← ManyChat НЕ отдаёт числовой page_id через getInfo
+  "name":"БУХГАЛТЕР-МИЛЛИОНЕР•О НАЛОГАХ И ПРАВАХ РБ",
+  "is_pro":true,
+  "timezone":"Europe/Warsaw",
+  "username":null, "category":null, ...
+}}
 ```
 
-### DoD
+Парсер технически работает корректно: envelope распознан, `data` — object, ключи разобраны. Но `**id: null**` и нет `page_id`/`fb_page_id` → `normalizePage` возвращает null → `pages = []` → `unexpected_response`.
 
-1. После клика «Получить страницу» в логах функции видны: `http_status`, `top_level_keys`, `data_shape`, `data_keys`/`data_first_keys`, `body_preview` — без `api_key`.
-2. Парсер корректно достаёт `id`+`name` из реального ответа ManyChat (object или array).
-3. Create flow в UI: page подставляется автоматически, `manychat_page_id` заполнен, имя в chip, fallback не появляется.
-4. Если ManyChat реально вернёт что-то нестандартное — лог покажет что именно, и мы добавим ещё одну ветку парсера без нового плана.
-5. Console warning про refs в `ManyChatPageSelector` исчезает.
+**Это не баг парсера. Это особенность ManyChat API:** `getInfo` отдаёт metadata страницы, а не её Facebook Page ID. ManyChat API attached к одному api_key = одна page, и сам api_key служит идентификатором для последующих API-вызовов. Числовой page_id через публичные endpoints не выдаётся.
 
-### Stop-condition
+## Решение
 
-После фикса — короткий runtime proof из UI (создание ManyChat instance, авто-подстановка), без нового большого плана. A8 продолжается параллельно.
+Сменить контракт: **page_id перестаёт быть «Facebook numeric page ID» и становится synthetic stable identifier**, который мы сами вычисляем из ManyChat metadata. Это даст:
+
+- стабильный ключ для нашей БД (`config.manychat_page_id`),
+- работающий happy-path UX (auto-fill),
+- сохранение всей UI-логики без изменений,
+- честное отображение имени страницы.
+
+**Алгоритм синтетического id (приоритет):**
+
+1. `id` (если ManyChat когда-либо начнёт отдавать) — наивысший приоритет
+2. `page_id` / `fb_page_id` / `facebook_page_id` (на случай других endpoint'ов)
+3. `username` (если есть, например `@page`)
+4. fallback: `mc:` + sha1(name + timezone) первые 16 символов — детерминированный, одинаковый между вызовами
+
+Префикс `mc:` явно маркирует synthetic id, чтобы downstream-код (webhook handler, healthcheck) мог различать «реальный FB page id» и «manychat-derived id» если когда-то понадобится.
+
+## Изменения
+
+**1. `supabase/functions/manychat-discover-pages/index.ts**`
+
+- В `normalizePage`: если ни одного реального id-ключа нет, но есть `name` — генерировать synthetic id `mc:<hash>` через Web Crypto SHA-1 (Deno: `crypto.subtle.digest`).
+- Если нет даже `name` → возвращать `null` (это уже реальный мусор).
+- Логировать признак `synthetic_id: true/false` в `manychat_discover_envelope` для прозрачности.
+
+**2. Никаких изменений в:**
+
+- UI (`ManyChatPageSelector`, `AddIntegrationDialog`, `EditIntegrationDialog`) — он не знает и не должен знать, что id synthetic.
+- Storage contract — `manychat_page_id` остаётся string в `config`.
+- Healthcheck — он работает по `api_key` из `config_secrets`, не по page_id.
+- Registry `PROVIDERS[].manychat` — без изменений.
+
+## DoD
+
+1. После «Получить страницу» возвращается `success: true` + `pages: [{id: "mc:xxxxxxxxxxxxxxxx", name: "БУХГАЛТЕР-МИЛЛИОНЕР...", is_pro: true, timezone: "Europe/Warsaw"}]`.
+2. UI: `manychat_page_id` заполняется автоматически synthetic-значением, chip показывает реальное имя страницы, fallback ручного ввода НЕ появляется.
+3. В логах `manychat_discover_envelope` присутствует `synthetic_id: true` для текущей страницы — прозрачность для будущей отладки.
+4. При невалидном api_key → 401 → `invalid_api_key` (regression: fallback не показывается).
+5. При сетевой ошибке/non_json → fallback ручного ввода работает (regression).
+6. Существующая Instagram DM форма не сломана.
+
+## Stop-condition
+
+После фикса — короткий runtime proof из UI (auto-fill + chip с именем, без fallback). Без нового большого плана. A8 продолжается параллельно.
