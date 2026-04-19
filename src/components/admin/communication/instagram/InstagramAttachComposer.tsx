@@ -319,7 +319,7 @@ export function InstagramAttachComposer({
               </Button>
             </TooltipTrigger>
             <TooltipContent side="top">
-              Прикрепить изображение, видео или файл
+              Прикрепить изображение или видео
             </TooltipContent>
           </Tooltip>
 
