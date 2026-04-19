@@ -108,7 +108,7 @@ export const ManyChatPageSelector = forwardRef<HTMLDivElement, Props>(function M
               {currentPageName || "Страница ManyChat"}
             </div>
             <div className="text-xs text-muted-foreground font-mono truncate">
-              ID: {currentPageId}
+              Идентификатор страницы: {currentPageId}
             </div>
           </div>
         </div>
