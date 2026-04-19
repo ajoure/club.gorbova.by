@@ -105,14 +105,17 @@ export function InstagramAttachComposer({
       );
       return;
     }
+    if (kind === "file") {
+      toast.error(
+        "Отправка документов в Instagram не поддерживается провайдером (Meta IG). Можно отправлять только image/video.",
+      );
+      return;
+    }
     if (kind === "unknown") {
       toast.error("Неподдерживаемый тип файла.");
       return;
     }
-    const previewUrl =
-      kind === "image" || kind === "video"
-        ? URL.createObjectURL(file)
-        : undefined;
+    const previewUrl = URL.createObjectURL(file);
     setPending((prev) => {
       if (prev?.previewUrl) URL.revokeObjectURL(prev.previewUrl);
       return { file, kind, previewUrl };
