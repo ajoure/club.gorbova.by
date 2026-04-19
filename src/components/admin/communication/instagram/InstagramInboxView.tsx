@@ -138,10 +138,16 @@ export function InstagramInboxView() {
 
   const filteredDialogs = useMemo(() => {
     if (!dialogs) return [];
-    // FIX-4: Hide test probe dialogs
-    let list = dialogs.filter(
-      (d) => !d.sender_name?.includes('Webhook Test Probe') && !d.peer_id?.startsWith('test_')
-    );
+    // FIX-4 + PATCH: расширенный фильтр synthetic / test probe / smoke контактов.
+    let list = dialogs.filter((d) => {
+      const name = (d.sender_name || d.full_name || "").toLowerCase();
+      const peer = (d.peer_id || "").toLowerCase();
+      if (name.includes("webhook test probe")) return false;
+      if (name.includes("smoke test")) return false;
+      if (peer.startsWith("test_")) return false;
+      if (peer.startsWith("smoke_")) return false;
+      return true;
+    });
     if (filter === "unread") {
       list = list.filter((d) => d.unread_count > 0);
     }
