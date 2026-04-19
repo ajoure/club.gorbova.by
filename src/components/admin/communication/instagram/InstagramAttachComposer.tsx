@@ -15,7 +15,6 @@ import {
   Loader2,
   Image as ImageIcon,
   Video,
-  FileText,
   MicOff,
 } from "lucide-react";
 import { toast } from "sonner";
