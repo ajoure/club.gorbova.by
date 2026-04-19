@@ -226,6 +226,8 @@ Acceptable v1 limitations (зафиксированы):
 7. `ALTER TABLE instagram_messages ADD COLUMN idempotency_hash text` + partial INDEX
 8. `CREATE TABLE manychat_subscribers (...)` + RLS
 9. `CREATE TABLE integration_event_mappings (...)` + RLS
+10. `CREATE TABLE integration_inbound_events (...)` + RLS + UNIQUE(idempotency_hash)
+11. `ALTER TABLE integration_instances ADD COLUMN config_secrets jsonb` (для `shared_secret_token`, encrypted at rest через Vault)
 
 ✅ **SELECT-запросы, требующие пересмотра в PATCH 2:**
 - RPC `get_instagram_dialogs_v1` — добавить `provider_kind` в return (UI badge)
