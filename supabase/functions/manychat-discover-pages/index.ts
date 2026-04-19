@@ -375,12 +375,23 @@ Deno.serve(async (req) => {
       return errorResponse("unexpected_response", msg);
     }
 
-    const pages = extractManyChatPages(payload);
+    const { pages, sources, synthetic_flags } = await extractManyChatPages(payload);
+
+    // DEBUG-ONLY: id resolution trace (no secrets)
+    console.log(
+      JSON.stringify({
+        tag: "manychat_discover_id_resolution",
+        request_mode: requestMode,
+        pages_count: pages.length,
+        id_sources: sources,
+        synthetic_flags,
+      }),
+    );
 
     if (pages.length === 0) {
       return errorResponse(
         "unexpected_response",
-        "Page ID отсутствует в ответе",
+        "Не удалось извлечь страницу из ответа ManyChat",
       );
     }
 
