@@ -77,18 +77,11 @@ export function ManyChatPageSelector({
         | { success: true; pages: ManyChatPage[] }
         | { success: false; error_code: string; error_message: string };
 
-      if (!res.success) {
+      if (res.success === false) {
         if (res.error_code === "invalid_api_key") {
           setState({ kind: "invalid_key" });
-        } else if (
-          res.error_code === "network_error" ||
-          res.error_code === "non_json" ||
-          res.error_code === "unexpected_response" ||
-          res.error_code === "timeout"
-        ) {
-          setState({ kind: "fallback", reason: res.error_message });
         } else {
-          // missing_api_key / not_found / wrong_provider — не fallback
+          // network_error / non_json / unexpected_response / timeout / прочее
           setState({ kind: "fallback", reason: res.error_message });
         }
         return;
