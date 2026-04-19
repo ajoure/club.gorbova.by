@@ -41,6 +41,7 @@ interface NormalizedInbound {
   external_message_id: string;
   sender_id: string;
   sender_name: string | null;
+  avatar_url: string | null;
   message_text: string | null;
   media_url: string | null;
   media_type: string | null;
