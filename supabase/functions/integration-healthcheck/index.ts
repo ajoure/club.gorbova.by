@@ -452,6 +452,113 @@ serve(async (req) => {
         break;
       }
 
+      case "manychat": {
+        // ManyChat healthcheck (PATCH 1.1 — A6)
+        // Endpoint: GET https://api.manychat.com/fb/page/getInfo
+        // api_key хранится в integration_instances.config_secrets (НЕ в config),
+        // поэтому читаем его напрямую из БД через service-role (обходит RLS).
+        if (!instance_id) {
+          errorMessage = "instance_id обязателен для manychat healthcheck";
+          break;
+        }
+
+        const { data: instanceRow, error: instanceErr } = await supabaseAdmin
+          .from("integration_instances")
+          .select("config, config_secrets")
+          .eq("id", instance_id)
+          .maybeSingle();
+
+        if (instanceErr) {
+          errorMessage = `Ошибка чтения instance: ${instanceErr.message}`;
+          break;
+        }
+        if (!instanceRow) {
+          errorMessage = "Integration instance не найден";
+          break;
+        }
+
+        const secrets = (instanceRow.config_secrets as Record<string, unknown>) || {};
+        const cfg = (instanceRow.config as Record<string, unknown>) || {};
+        const apiKey = (secrets.api_key as string || "").trim();
+        const pageId = (cfg.manychat_page_id as string || "").trim();
+
+        if (!apiKey) {
+          errorMessage = "Отсутствует api_key в config_secrets. Заполните API Key в настройках подключения.";
+          break;
+        }
+
+        try {
+          let response: Response;
+          try {
+            response = await fetchWithTimeout(
+              "https://api.manychat.com/fb/page/getInfo",
+              {
+                method: "GET",
+                headers: {
+                  Authorization: `Bearer ${apiKey}`,
+                  "Content-Type": "application/json",
+                },
+              },
+              10000
+            );
+          } catch (e: unknown) {
+            const isAbort = e instanceof Error && e.name === "AbortError";
+            errorMessage = isAbort
+              ? "Timeout при подключении к ManyChat API (10s)"
+              : `Ошибка сети при вызове ManyChat API: ${String(e)}`;
+            break;
+          }
+
+          let data: Record<string, unknown> | null = null;
+          try {
+            data = await response.json();
+          } catch {
+            errorMessage = `ManyChat API вернул non-JSON (HTTP ${response.status})`;
+            break;
+          }
+
+          console.log("ManyChat /fb/page/getInfo status:", response.status, "body keys:", Object.keys(data || {}));
+
+          if (response.status === 401 || response.status === 403) {
+            errorMessage = "Неверный API Key ManyChat (UNAUTHORIZED)";
+            break;
+          }
+
+          // ManyChat envelope: { status: "success" | "error", data: {...}, message?: string }
+          const apiStatus = (data as Record<string, unknown>)?.status;
+          if (response.ok && apiStatus === "success") {
+            const pageInfo = ((data as Record<string, unknown>)?.data as Record<string, unknown>) || {};
+            const remotePageId = String(pageInfo.id ?? "");
+            const isPro = Boolean(pageInfo.is_pro);
+
+            // Если в config указан manychat_page_id — сверим, что аккаунт совпадает.
+            if (pageId && remotePageId && pageId !== remotePageId) {
+              errorMessage = `Page ID не совпадает: в настройках ${pageId}, у API ${remotePageId}`;
+              break;
+            }
+
+            success = true;
+            responseData = {
+              page_id: remotePageId,
+              page_name: pageInfo.name ?? null,
+              page_username: pageInfo.username ?? null,
+              is_pro: isPro,
+              timezone: pageInfo.timezone ?? null,
+            };
+          } else {
+            const apiMessage = (data as Record<string, unknown>)?.message;
+            errorMessage =
+              (typeof apiMessage === "string" && apiMessage) ||
+              `ManyChat API error (HTTP ${response.status})`;
+          }
+        } catch (e) {
+          const err = e instanceof Error ? e.message : String(e);
+          console.error("ManyChat healthcheck error:", err);
+          errorMessage = `Ошибка подключения к ManyChat: ${err}`;
+        }
+        break;
+      }
+
       case "apix_instagram_dm": {
         // Check webhook_secret in config
         const webhookSecret = config.webhook_secret as string;
