@@ -5,11 +5,13 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Instagram, Send, AlertCircle, Clock, Loader2, Image as ImageIcon, ArrowLeft } from "lucide-react";
+import { Instagram, Send, AlertCircle, Clock, Loader2, ArrowLeft } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { resolveInstagramSourceLabel } from "@/lib/resolveInstagramSourceLabel";
+import { InstagramMessageMedia, isMediaUrl, guessMediaTypeFromUrl } from "./InstagramMessageMedia";
 
 interface Message {
   id: string;
