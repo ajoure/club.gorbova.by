@@ -1,137 +1,111 @@
 ## да, согласен, с учетом правок:
 
-1. В `Diagnose` добавь ещё одну обязательную проверку: **создан ли вообще External Request в самом ManyChat Flow** и на какой URL/headers/body он сейчас настроен.  
-Иначе можно долго искать баг в backend, а проблема окажется в том, что ManyChat вообще не шлёт запросы или шлёт не туда.  
-Нужно зафиксировать:
+1. Блок про скрытие старой `apix_instagram_dm` интеграции через БД/миграцию **убрать из плана полностью**.  
+Пользователь уже отключил старую интеграцию, и она больше не показывается. Значит, этот подпункт больше не актуален и не должен тянуть за собой лишние изменения.
+2. В diagnose зафиксировать новый факт:
+  - старая интеграция `apix_instagram_dm` уже отключена пользователем;
+  - в dropdown/select старый аккаунт больше не отображается;
+  - отдельный патч на скрытие/деактивацию больше не нужен.
+3. Основной фокус плана теперь сузить до двух задач:
+  - **A.** factual-диагностика, почему сообщение `тест три` не дошло до `manychat-inbound`;
+  - **B.** при необходимости лёгкий UX-tail по русификации label’ов, только если это не мешает основной диагностике.
+4. Блок про `тест три не дошёл` оставить приоритетом №1.  
+Нужно сохранить жёсткую развилку:
+  - `0` запросов в `manychat-inbound` → проблема в настройке External Request / Flow в ManyChat;
+  - `401` → проблема в `X-ManyChat-Token`;
+  - `404 instance_not_found` → проблема в `instance_id/page_id` routing;
+  - `400 missing_sender_id/invalid_json` → проблема в body template;
+  - `500 insert_failed` → backend bug.
+5. В отчёте пользователю по `тест три` дать уже не общий вывод, а готовую инструкцию проверки:
   - exact URL;
   - exact headers;
-  - exact JSON body template;
-  - какой Flow/trigger это вызывает.
-2. В п.2 `supabase--read_query` добавь проверку `integration_instances` **для ManyChat instance**:
+  - exact body template;
+  - к какому Flow/trigger это должно быть привязано;
+  - как проверить в ManyChat, что Flow реально срабатывает на входящий DM.
+6. Блок русификации оставить только как **optional UX-tail**, не как часть основного runtime-fix.  
+Safe-scope, если будете делать сразу:
   &nbsp;
   &nbsp;
-  - есть ли `config`;
-  - есть ли `config_secrets`;
-  - есть ли `workspace_token` / `webhook_secret` / другой ingress-secret;
-  - какой `status`.  
-  Это важно, потому что входящий контур может рваться просто из-за отсутствия секрета или несогласованного имени ключа.
-3. В логах и запросах не ищи только `manychat.external_request`.  
-Ищи шире:
-  - `manychat%`
-  - `manychat.%`
-  - `manychat_%`
-  - `external_request`
-  - `send_content`  
-  Потому что фактический `event_type` мог быть назван иначе, и иначе diagnose даст ложный ноль.
-4. В проверке `instagram_messages` уточни не только `provider_kind='manychat'`, но и последние записи по:
-  - `provider_message_id`,
-  - `raw_payload`,
-  - `direction='inbound'`,
-  - `created_at DESC`.  
-  Нужно понять, не попадают ли сообщения в таблицу, но не видны в UI из-за фильтра/джойна.
-5. В проверке `instagram_contacts` добавь поиск не только по `provider_kind='manychat'`, но и по:
-  - тем же `peer_id/sender_id`, которые приходят из inbound payload;
-  - `integration_instance_id` / `instagram_account_id`, если они участвуют в связке.  
-  Иначе можно не увидеть, что контакт создаётся, но без `provider_kind` или в другой связке.
-6. В ветках fix-плана добавь ещё одну ветку:  
-**F. Inbound записывается в** `instagram_messages`**, но UI не поднимает диалог**  
-Тогда проверять:
-  - RPC/SQL, который строит список диалогов;
-  - сортировку по latest message;
-  - unread counter;
-  - фильтр по `provider_kind`;
-  - join на account/contact.  
-  Это отдельный класс проблемы, не сводимый просто к “UI не видит”.
-7. В DoD п.1 вместо `external_message_id` используй более общий критерий:
-  - новая строка с корректным **provider-side message identifier** (`provider_message_id` или `external_message_id`, смотря что реально используется в коде).  
-  Потому что после ваших последних правок primary ingress idempotency уже завязан на `provider_message_id`, и не надо жёстко прибивать DoD к старому имени поля.
-8. В DoD добавь проверку по `integration_logs` **и** `domain_events` **без 500/failed cascade**:
-  - ingress не должен создавать unhandled exception;
-  - если дубликат — должен быть мягкий dedup, а не 500.  
-  Это нужно явно закрепить.
-9. В stop-condition уточни порядок:
-  - сначала diagnose-отчёт;
-  - потом **один** targeted fix-patch;
-  - потом runtime-proof;
-  - только потом возвращение к A8 или любым следующим задачам.  
-  То есть A11 сейчас действительно должен стать приоритетом №1 до закрытия.
+  - `Instagram DM (ApiX-Drive)` → `Instagram (ApiX-Drive)`
+  - `ManyChat` → `ManyChat (Instagram)`
+  - `Facebook` → `Facebook (скоро)`  
+  Бренды `amoCRM`, `GetCourse`, `bePaid`, `Kinescope` не трогать.
+7. Обновить DoD:
+  - старый `apixdrive` аккаунт уже вне dropdown и не требует патча;
+  - diagnose по `тест три` даёт точную причину;
+  - есть короткий factual-отчёт с инструкцией, что именно проверить/настроить в ManyChat;
+  - финальный E2E inbound proof остаётся отдельным следующим шагом после корректной настройки External Request в ManyChat.
+8. Обновить порядок выполнения:
+  - сначала factual diagnose по `тест три`;
+  - потом краткий отчёт с exact причиной и инструкцией;
+  - только после этого, если останется время, лёгкая русификация label’ов.  
+  Не возвращаться к уже закрытой теме скрытия старой интеграции.
 
 &nbsp;
 
-В остальном план правильный: сначала установить фактическую точку разрыва, потом делать один адресный патч, а не стрелять вслепую.
-
 &nbsp;
 
-План: A11 — закрыть inbound-контур ManyChat → Contact Center
+План: русификация интеграций + скрытие отключённой Instagram + диагностика «тест три не дошёл»
 
-### Diagnose (что нужно проверить перед планом)
+### Diagnose (готов)
 
-Прежде чем писать план, нужно установить факты:
+1. **manychat-inbound endpoint** — рабочий. За ~17ч приходили только мои curl-smoke-tests (`A11 smoke test`, `A11 verify run #2`). Реального запроса от ManyChat за «тест три» НЕ БЫЛО.
+  - Вывод: External Request в ManyChat Flow ещё не настроен / не сработал на триггер. Это не баг кода — это конфигурация в самом ManyChat.
+2. **Старый Instagram (apix_instagram_dm)** до сих пор активен:
+  - `integration_instances`: id `676c484b...`, status=`connected`
+  - `instagram_accounts`: id `1a7485fb...`, page `601477270056529`, `is_active=true`, status=`active`
+  - Поэтому в dropdown «Контакт-центр → Instagram → выбор аккаунта» он продолжает показываться. Пользователь хочет его скрыть.
+3. **Названия провайдеров в UI** — частично русские (`bePaid`, `Instagram DM (ApiX-Drive)`, `ManyChat`, `Facebook`), но `name` для большинства — английские бренды. Описания (`description`) — все русские. Категории — русские. Что нужно русифицировать конкретно — нужно уточнить (см. вопросы ниже).
 
-1. Существует ли edge function `manychat-inbound` и `manychat-inbox-consumer` (ls + registry).
-2. Если да — деплой/последние логи + есть ли вызовы из ManyChat External Request.
-3. Есть ли записи в `integration_logs` с `event_type='manychat.external_request'` или похожим.
-4. Создаются ли `domain_events` типа `manychat.message.inbound.v1` (или аналогичного).
-5. Появляются ли строки в `instagram_messages` с `provider_kind='manychat'` за последний час.
-6. Создаются ли `instagram_contacts` с `provider_kind='manychat'`.
+### Что меняем — три блока
 
-Только после этого — конкретный fix-план для разорванного шага. Без этого писать план «вслепую» нельзя — может оказаться, что функции вообще нет, или есть, но не вызывается, или вызывается, но падает на парсинге, или доходит до consumer, но не пишет в `instagram_messages`.
+#### Блок 1. Скрыть отключённый Instagram (apix_instagram_dm) из dropdown
 
-### Что я сделаю в default mode (1 шаг — diagnose, без правок)
+Самый чистый путь: **деактивировать через UI/админку, не трогать код**. Пользователь говорит «я отключил предыдущую интеграцию», но в БД она всё ещё `status='connected'` и `is_active=true`. Это значит — отключил визуально (toggle?), но `instagram_accounts.is_active` не сбросился.
 
-1. `code--list_dir supabase/functions` → проверить наличие `manychat-inbound`, `manychat-inbox-consumer`.
-2. `supabase--read_query` →
-  - последние 20 записей `integration_logs` где `event_type ILIKE 'manychat%'` за 2 часа;
-  - последние 20 `domain_events` где `event_type ILIKE 'manychat%'`;
-  - последние 20 `instagram_messages` где `provider_kind='manychat'`;
-  - проверить `instagram_contacts` с `provider_kind='manychat'`.
-3. `supabase--edge_function_logs` для `manychat-inbound` и `manychat-inbox-consumer` (если существуют) — последние ошибки.
-4. Прочитать код `manychat-inbound/index.ts` и `manychat-inbox-consumer/index.ts` (если есть), чтобы понять текущий контракт ingestion.
-5. Прочитать `instagram_messages` schema (CHECK на `direction`, `provider_kind` enum/values) чтобы знать ограничения вставки.
+План:
 
-### Краткий отчёт после diagnose (формат)
+- Миграция: для `integration_instances.id='676c484b...'` (apix_instagram_dm) поставить `status='disconnected'`.
+- Миграция: для `instagram_accounts.id='1a7485fb...'` поставить `is_active=false`.
+- Это автоматически скроет аккаунт из dropdown (`getAccounts` в `instagram-admin-chat` уже фильтрует `is_active=true` + `InstagramInboxView` фильтрует `status !== 'error'` — тут statuses ok, главное is_active).
+- **История сообщений сохраняется** (29 старых apixdrive-сообщений в БД остаются, просто не видны в dropdown текущих диалогов).
 
-```
-A11 status:
-- manychat-inbound: [exists?/deployed?/last invocation]
-- manychat-inbox-consumer: [exists?/deployed?/last invocation]
-- integration_logs (manychat.*): [count за 2h] / [последняя запись]
-- domain_events (manychat.*): [count за 2h] / [последняя запись]
-- instagram_messages (provider_kind='manychat'): [count] / [последняя]
-- instagram_contacts (provider_kind='manychat'): [count]
-- Точка разрыва: [ingress / parse / domain_event / consumer / DB write]
-```
+Альтернатива (если нужна возможность включить обратно): не удалять, а только `is_active=false`. Это и делаем.
 
-### Fix-план (составится ПОСЛЕ diagnose, с привязкой к точке разрыва)
+#### Блок 2. Диагностика «тест три» — почему не дошло
 
-Возможные ветки:
+Это не code-fix, это **инструкция для пользователя** + одна проверка в edge-логах.
 
-**A. `manychat-inbound` не существует** → создать функцию:
+В отчёте дам:
 
-- POST endpoint, без verify_jwt (External Request от ManyChat не несёт наш JWT);
-- shared secret в header `X-ManyChat-Token` (config_secrets.webhook_secret);
-- payload normalize → `integration_logs` (event_type=`manychat.external_request`) + `DomainEventService.emitEvent('manychat.message.inbound.v1', ...)`;
-- зарегистрировать в `supabase/functions.registry.txt`.
+- свежий список последних запросов к `manychat-inbound` за последний час (через `supabase--analytics_query` по edge logs);
+- если 0 запросов → проблема 100% в настройке ManyChat External Request (не настроен / не на тот URL / Flow не триггерится на DM);
+- если запросы есть, но 4xx → точный error из логов, fix.
 
-**B. `manychat-inbound` есть, но не вызывается** → дать пользователю готовый ingest URL + инструкцию настройки External Request в ManyChat (URL + headers + JSON body template).
+Дам пользователю чек-лист настройки ManyChat External Request (URL, headers, body, на какой триггер вешать).
 
-**C. Вызывается, но падает (4xx/5xx)** → fix по конкретной ошибке из логов (auth, schema, parse).
+#### Блок 3. Русификация названий интеграций
 
-**D. Долетает до `domain_events`, но consumer не отрабатывает** → проверить/починить `manychat-inbox-consumer` (или синхронный путь — записать сразу в `instagram_messages` без отдельного consumer на v1, как у Instagram apix-flow).
+Нужно уточнить scope (см. вопрос). Если коротко: переименовать `name` в `PROVIDERS` для тех, что точно стоит локализовать, оставив бренды как есть. Например:
 
-**E. Consumer пишет, но UI не видит** → проверить `provider_kind` фильтр в `get_inbox_dialogs_v1` / `instagram_messages` join, badge в `InstagramInboxView`.
+- `SMTP` → `Почта (SMTP)`
+- `hoster.by Cloud` → `hoster.by (облако)`
+- `Kinescope` → `Kinescope (видеохостинг)`
+- `Instagram DM (ApiX-Drive)` → `Instagram (ApiX-Drive)`
+- `ManyChat` → `ManyChat (Instagram)`
+- `Facebook` → `Facebook (скоро)`
+- `amoCRM`, `GetCourse`, `bePaid` — оставить (это бренды).
 
-### DoD (фиксированный, не зависит от ветки)
+Но это дизайн-решение, поэтому спрошу пользователя.
 
-1. Тестовое сообщение в подключённый IG account через ManyChat → за ≤30 сек:
-  - `integration_logs`: новая запись `event_type='manychat.external_request'`, status=ok;
-  - `instagram_contacts`: запись с `provider_kind='manychat'` (created или updated);
-  - `instagram_messages`: новая строка с `direction='inbound'`, `provider_kind='manychat'`, корректный `external_message_id`;
-  - В UI `/admin/communication?tab=inbox` диалог поднимается наверх с непрочитанным счётчиком.
-2. Повторная отправка того же сообщения (idempotency) → не создаёт дубль (`UNIQUE(account_id, external_message_id)` срабатывает мягко, без 500).
-3. Невалидный shared secret → 401 + запись в `integration_logs` с status=`unauthorized`, без вставки в messages.
-4. Existing apix_instagram_dm flow продолжает работать (regression).
+### DoD
+
+1. В dropdown «Контакт-центр → Instagram» отключённый аккаунт `601477270056529` (apix_instagram_dm) НЕ показывается. Виден только `mc:305d6fa43ef5c6f8cc9602cb` (ManyChat).
+2. Старые apixdrive-сообщения сохранены в БД (regression: не удалены).
+3. Можно при необходимости переактивировать apix-инстанс через админку.
+4. Дан чёткий ответ почему «тест три» не пришёл + проверяемый чек-лист настройки ManyChat External Request.
+5. (По решению) переименованы `name` провайдеров в `PROVIDERS` без потери идентификации брендов.
 
 ### Stop-condition
 
-После diagnose-отчёта — один targeted fix-патч под найденную точку разрыва, потом runtime-proof по DoD. Без новых параллельных задач до закрытия A11.
+После выполнения — короткий runtime-proof: dropdown показывает только ManyChat-аккаунт, старая история не утеряна. Финальный E2E ManyChat → IG → inbox — после настройки External Request пользователем.
