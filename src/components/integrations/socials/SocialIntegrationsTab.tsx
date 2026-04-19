@@ -45,7 +45,12 @@ function useWebhookEvents(instanceId: string | null) {
 export function SocialIntegrationsTab() {
   const { data: instances, isLoading } = useIntegrations("socials");
   const queryClient = useQueryClient();
+  // addDialogProvider:
+  //   - "apix_instagram_dm" / "manychat" → preselect конкретного провайдера
+  //   - null + addDialogOpen → общий выбор провайдера
+  //   - null + !addDialogOpen → диалог закрыт
   const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [addDialogProvider, setAddDialogProvider] = useState<string | null>(null);
   const [editInstance, setEditInstance] = useState<IntegrationInstance | null>(null);
   const [logsInstance, setLogsInstance] = useState<IntegrationInstance | null>(null);
   const [copiedWebhook, setCopiedWebhook] = useState(false);
@@ -53,7 +58,13 @@ export function SocialIntegrationsTab() {
   const [showEvents, setShowEvents] = useState(false);
 
   const instagramInstances = (instances || []).filter((i) => i.provider === "apix_instagram_dm");
+  const manychatInstances = (instances || []).filter((i) => i.provider === "manychat");
   const currentInstance = instagramInstances[0] || null;
+
+  const openAddDialog = (providerId: string | null) => {
+    setAddDialogProvider(providerId);
+    setAddDialogOpen(true);
+  };
 
   const { data: webhookEvents, isLoading: eventsLoading } = useWebhookEvents(
     showEvents ? currentInstance?.id ?? null : null
