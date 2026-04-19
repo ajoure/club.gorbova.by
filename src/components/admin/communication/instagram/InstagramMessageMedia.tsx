@@ -311,7 +311,7 @@ export function InstagramMessageMedia({
   }
 
   // ─── AUDIO / VOICE ──────────────────────────────────────────────
-  if (isAudio && !audioError) {
+  if ((isAudio || forceAudio) && !audioError) {
     if (rehosting && resolvedUrl === url) {
       return (
         <div className={cn("inline-flex items-center gap-2 rounded-2xl bg-muted/60 px-3 py-2 text-xs", className)}>
