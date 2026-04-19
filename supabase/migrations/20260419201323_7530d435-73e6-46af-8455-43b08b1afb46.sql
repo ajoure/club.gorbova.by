@@ -1,0 +1,1 @@
+DELETE FROM public.instagram_messages WHERE external_message_id LIKE 'proof-%';
