@@ -132,6 +132,18 @@ export function SocialIntegrationsTab() {
 
   return (
     <div className="space-y-6">
+      {/* Top toolbar: общая кнопка «Добавить подключение» с выбором провайдера */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold">Социальные интеграции</h2>
+          <p className="text-sm text-muted-foreground">Подключения к мессенджерам и соцсетям</p>
+        </div>
+        <Button variant="outline" onClick={() => openAddDialog(null)}>
+          <Plus className="h-4 w-4 mr-2" />
+          Добавить подключение
+        </Button>
+      </div>
+
       {/* Instagram DM Card */}
       <Card>
         <CardHeader>
@@ -146,7 +158,7 @@ export function SocialIntegrationsTab() {
               </div>
             </div>
             {instagramInstances.length === 0 && (
-              <Button onClick={() => setAddDialogOpen(true)}>
+              <Button onClick={() => openAddDialog("apix_instagram_dm")}>
                 Подключить
               </Button>
             )}
