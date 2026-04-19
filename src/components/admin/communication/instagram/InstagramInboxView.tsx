@@ -15,7 +15,8 @@ import { SwipeableDialogCard } from "@/components/admin/communication/SwipeableD
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ContactInstagramChat } from "./ContactInstagramChat";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Instagram, Search, MessageSquare, ArrowLeft, RefreshCw, Check } from "lucide-react";
+import { Instagram, Search, MessageSquare, ArrowLeft, RefreshCw, Check, Pin, PinOff } from "lucide-react";
+import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
@@ -38,6 +39,8 @@ interface InstagramDialog {
   profile_id: string | null;
   account_name: string | null;
   integration_instance_id: string | null;
+  is_pinned?: boolean;
+  pinned_at?: string | null;
 }
 
 const IG_PANEL_SIZE_KEY = "ig-panel-sizes";
