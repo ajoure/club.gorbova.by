@@ -69,6 +69,18 @@ External Request POST
 
 ---
 
+## ⚠️ PATCH 1.0 — Anti-Duplication Gate (обязателен перед PATCH 1.1)
+
+Перед любой имплементацией PATCH 1.1 обязательно прочитать:
+- **[reuse-matrix.md](./reuse-matrix.md)** — главный hard-stop gate (16 областей, reuse vs extend vs new)
+- **[gap-register.md](./gap-register.md)** — closed allow-list для PATCH 1.1 (10 confirmed gaps + 1 conditional)
+- **[existing-environment-reused.md](./existing-environment-reused.md)** — inventory переиспользуемых tables / functions / RPCs / UI / cron
+- **[api-probe-findings.md](./api-probe-findings.md)** — endpoint normalization + canonical healthcheck path
+
+Любой `new artifact` без записи в `gap-register.md` = нарушение Platform Bible.
+
+---
+
 ## Артефакты PATCH 0 (DoD)
 
 | # | Файл | Статус | Содержание |

@@ -100,7 +100,9 @@ Probe: `GET /fb/page/getInfo` → 200 OK (26 ms)
 
 Оба пустые (`data: []`). **Факт.**
 
-> **Следствие для PATCH 1:** при создании первого ManyChat instance автосоздать стандартный набор Custom Fields (`platform_contact_id`, `platform_workspace_id`, `last_order_id`, `last_order_status`, `subscription_expires_at`) через `POST /fb/page/createCustomField`.
+> **Следствие для PATCH 1.1:** при создании первого ManyChat instance автосоздать стандартный набор Custom Fields (`platform_contact_id`, `platform_workspace_id`, `last_order_id`, `last_order_status`, `subscription_expires_at`) через `POST /fb/page/createCustomField`.
+
+> **PATCH 1.0 update (catalog storage):** хранение flows/tags/custom_fields = **on-demand read через Public API** (latency 22-36 ms подтверждён) + **optional snapshot в `integration_instances.config.catalog_snapshot jsonb`** через existing `integration-sync` framework. Создание отдельных cache-таблиц (`manychat_flows_cache` / `manychat_tags_cache` / `manychat_fields_cache`) **запрещено** — см. hard-stop в [reuse-matrix.md](./reuse-matrix.md).
 
 ---
 
