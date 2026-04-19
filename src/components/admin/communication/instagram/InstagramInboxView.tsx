@@ -211,6 +211,40 @@ export function InstagramInboxView() {
     [activeAccountId, dialogs, queryClient]
   );
 
+  const togglePin = useCallback(
+    async (dialog: InstagramDialog) => {
+      if (!activeAccountId) return;
+      const { data: userRes } = await supabase.auth.getUser();
+      const adminId = userRes.user?.id;
+      if (!adminId) {
+        toast.error("Не удалось определить администратора");
+        return;
+      }
+      const wasPinned = !!dialog.is_pinned;
+      const nextPinned = !wasPinned;
+      const { error } = await supabase
+        .from("instagram_dialog_preferences")
+        .upsert(
+          {
+            admin_user_id: adminId,
+            instagram_account_id: activeAccountId,
+            thread_key: dialog.thread_key,
+            is_pinned: nextPinned,
+            pinned_at: nextPinned ? new Date().toISOString() : null,
+          },
+          { onConflict: "admin_user_id,instagram_account_id,thread_key" },
+        );
+      if (error) {
+        toast.error(`Не удалось ${wasPinned ? "открепить" : "закрепить"} диалог`);
+        return;
+      }
+      toast.success(nextPinned ? "Диалог закреплён" : "Диалог откреплён");
+      queryClient.invalidateQueries({ queryKey: ["instagram-dialogs", activeAccountId] });
+    },
+    [activeAccountId, queryClient],
+  );
+
+
   const getDisplayName = (d: InstagramDialog) =>
     d.full_name || d.sender_name || d.instagram_username || d.peer_id;
 
