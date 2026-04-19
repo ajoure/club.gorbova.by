@@ -4347,6 +4347,47 @@ export type Database = {
           },
         ]
       }
+      instagram_dialog_preferences: {
+        Row: {
+          admin_user_id: string
+          created_at: string
+          id: string
+          instagram_account_id: string
+          is_pinned: boolean
+          pinned_at: string | null
+          thread_key: string
+          updated_at: string
+        }
+        Insert: {
+          admin_user_id: string
+          created_at?: string
+          id?: string
+          instagram_account_id: string
+          is_pinned?: boolean
+          pinned_at?: string | null
+          thread_key: string
+          updated_at?: string
+        }
+        Update: {
+          admin_user_id?: string
+          created_at?: string
+          id?: string
+          instagram_account_id?: string
+          is_pinned?: boolean
+          pinned_at?: string | null
+          thread_key?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "instagram_dialog_preferences_instagram_account_id_fkey"
+            columns: ["instagram_account_id"]
+            isOneToOne: false
+            referencedRelation: "instagram_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       instagram_messages: {
         Row: {
           created_at: string
