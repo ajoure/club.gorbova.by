@@ -162,7 +162,9 @@
 
 ## E. Новые таблицы (DDL summary для PATCH 1)
 
-### `manychat_subscribers` (бридж)
+> **PATCH 1.0 override:** блок ниже — **исторический план**. После discovery подтверждено, что **`instagram_contacts`** (UNIQUE `(instagram_account_id, instagram_user_id)`, FK на `profiles`) уже выполняет роль provider-identity bridge. В PATCH 1.1 используется **extension `instagram_contacts.provider_kind`** вместо новой таблицы `manychat_subscribers`. Аналогично `integration_inbound_events` оставлен как **conditional gap** — финальное решение по результатам PATCH 1.1 dry-run (см. [gap-register.md §B1](./gap-register.md)). Real-time границы и hard-stop — без изменений.
+
+### ~~`manychat_subscribers` (бридж)~~ — **superseded** (см. override выше)
 
 ```
 - id uuid PK DEFAULT gen_random_uuid()
