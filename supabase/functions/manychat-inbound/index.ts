@@ -47,19 +47,64 @@ interface NormalizedInbound {
   ig_thread_id: string | null;
   thread_key: string | null;
   manychat_page_id: string | null;
+  manychat_page_name: string | null;
+}
+
+// Классификация media URL по домену/расширению (быстрая, без сетевых вызовов).
+function classifyMediaUrlFast(url: string): string | null {
+  if (!url || typeof url !== 'string') return null;
+  const lower = url.toLowerCase();
+  const isFbCdn = /lookaside\.fbsbx\.com|scontent[\w.-]*\.fbcdn\.net|cdninstagram\.com/i.test(url);
+
+  if (/\.(jpe?g|png|gif|webp|bmp|heic|heif)(?:[?#]|$)/i.test(lower)) return 'image';
+  if (/\.(mp4|mov|webm|m4v|3gp)(?:[?#]|$)/i.test(lower)) return 'video';
+  if (/\.(mp3|m4a|ogg|oga|opus|wav|aac|flac)(?:[?#]|$)/i.test(lower)) return 'audio';
+  if (/\.(pdf|docx?|xlsx?|pptx?|zip|rar|7z|txt|csv)(?:[?#]|$)/i.test(lower)) return 'file';
+
+  if (/asset_type=(image|photo)/i.test(url)) return 'image';
+  if (/asset_type=(video|reel)/i.test(url)) return 'video';
+  if (/asset_type=(audio|voice)/i.test(url)) return 'audio';
+  if (/ig_messaging_cdn/i.test(url) && isFbCdn) return 'image'; // IG msg CDN без extension — обычно фото
+
+  if (isFbCdn) return 'file';
+  return null;
+}
+
+// Optional HEAD enrichment, не блокирующий — fallback по URL pattern всегда применяется.
+async function probeMimeOptional(url: string): Promise<string | null> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const resp = await fetch(url, { method: 'HEAD', signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (!resp.ok) return null;
+    const ct = resp.headers.get('content-type');
+    if (!ct) return null;
+    const main = ct.split(';')[0].trim().toLowerCase();
+    if (main.startsWith('image/')) return 'image';
+    if (main.startsWith('video/')) return 'video';
+    if (main.startsWith('audio/')) return 'audio';
+    if (main === 'application/pdf') return 'file';
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function isLikelyMediaUrl(s: string): boolean {
+  if (!s) return false;
+  return /^https?:\/\/(lookaside\.fbsbx\.com|scontent[\w.-]*\.fbcdn\.net|cdninstagram\.com)/i.test(s) ||
+         /^https?:\/\/\S+\.(jpe?g|png|gif|webp|mp4|mov|webm|mp3|m4a|ogg|wav|pdf|docx?|xlsx?|pptx?|zip)(?:[?#]|$)/i.test(s);
 }
 
 /**
  * Normalize ManyChat External Request body.
- * Поддерживаем оба варианта: «сырой» payload subscriber+message и
- * упрощённый шаблон, который пользователь сам собирает в External Request.
  */
-function normalizePayload(body: any): NormalizedInbound | { error: string } {
+async function normalizePayload(body: any): Promise<NormalizedInbound | { error: string }> {
   if (!body || typeof body !== "object") {
     return { error: "empty_or_invalid_body" };
   }
 
-  // ManyChat обычно шлёт subscriber + last_input_text / last_user_input.
   const subscriber = body.subscriber || body.user || {};
   const lastInput = body.last_input_text ?? body.last_user_input ?? null;
 
@@ -76,26 +121,43 @@ function normalizePayload(body: any): NormalizedInbound | { error: string } {
     return { error: "missing_sender_id" };
   }
 
-  const message_text = pickString(
+  const rawText = pickString(
     body.message_text,
     body.text,
     lastInput,
     body.message?.text,
   );
 
-  const media_url = pickString(
+  let media_url = pickString(
     body.media_url,
     body.attachment_url,
     body.message?.attachments?.[0]?.payload?.url,
   );
 
-  const media_type = pickString(
+  let media_type = pickString(
     body.media_type,
     body.message?.attachments?.[0]?.type,
   );
 
-  // External message id: prefer explicit, иначе generate stable hash from
-  // sender_id + ts + текст (best-effort detect duplicates).
+  let message_text: string | null = rawText;
+
+  // P1: если media_url не пришёл явно, но last_input_text — это URL вложения (lookaside/cdn),
+  // лечим: text → media_url, message_text=null (media-only сообщение).
+  if (!media_url && rawText && isLikelyMediaUrl(rawText)) {
+    media_url = rawText;
+    message_text = null;
+  }
+
+  // Классификация: быстрый pattern → optional HEAD enrichment.
+  if (media_url && !media_type) {
+    media_type = classifyMediaUrlFast(media_url);
+    if (!media_type || media_type === 'file') {
+      const probed = await probeMimeOptional(media_url);
+      if (probed) media_type = probed;
+    }
+    if (!media_type) media_type = 'file';
+  }
+
   let external_message_id = pickString(
     body.message_id,
     body.external_message_id,
@@ -128,16 +190,24 @@ function normalizePayload(body: any): NormalizedInbound | { error: string } {
     body.instance_id,
   );
 
+  const manychat_page_name = pickString(
+    body.page?.name,
+    body.account?.name,
+    body.page_name,
+    body.account_name,
+  );
+
   return {
     external_message_id,
     sender_id,
     sender_name,
-    message_text: message_text || (media_url ? "[media]" : null),
+    message_text,
     media_url,
     media_type,
     ig_thread_id,
     thread_key,
     manychat_page_id,
+    manychat_page_name,
   };
 }
 
@@ -195,7 +265,7 @@ Deno.serve(async (req) => {
     return jsonResponse({ success: false, error: "invalid_json" }, 400);
   }
 
-  const normalized = normalizePayload(rawBody);
+  const normalized = await normalizePayload(rawBody);
   if ("error" in normalized) {
     return jsonResponse(
       { success: false, error: normalized.error },
@@ -265,6 +335,18 @@ Deno.serve(async (req) => {
       "invalid_token",
     );
     return jsonResponse({ success: false, error: "unauthorized" }, 401);
+  }
+
+  // 4.5) P3: backfill manychat_page_name в config, если payload его содержит, но его ещё нет.
+  if (normalized.manychat_page_name && !instance.config?.manychat_page_name) {
+    try {
+      await supabase
+        .from('integration_instances')
+        .update({ config: { ...(instance.config || {}), manychat_page_name: normalized.manychat_page_name } })
+        .eq('id', instance.id);
+    } catch (e) {
+      console.error('[manychat-inbound] page_name_update_failed', e);
+    }
   }
 
   // 5) Resolve / create instagram_account for this ManyChat instance

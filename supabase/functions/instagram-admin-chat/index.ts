@@ -358,6 +358,7 @@ async function sendReply(supabase: any, body: any, adminUserId: string) {
       accountRow.integration_instance_id,
       sender_id,
       message_text,
+      msg.id,
     );
 
     const finalStatus = sendResult.ok ? 'delivered' : 'failed';
@@ -365,29 +366,10 @@ async function sendReply(supabase: any, body: any, adminUserId: string) {
       .from('instagram_messages')
       .update({
         status: finalStatus,
-        error_message: sendResult.ok ? null : (sendResult.error || 'manychat send failed'),
+        error_message: sendResult.ok ? null : (sendResult.user_error || sendResult.error || 'manychat send failed'),
         provider_message_id: sendResult.provider_message_id || null,
       })
       .eq('id', msg.id);
-
-    // Integration log (non-blocking)
-    try {
-      await supabase.from('integration_logs').insert({
-        instance_id: accountRow.integration_instance_id,
-        event_type: 'manychat.send_content',
-        payload_meta: {
-          provider: 'manychat',
-          channel: 'instagram',
-          subscriber_id: sender_id,
-          message_id: msg.id,
-          status: finalStatus,
-        },
-        result: sendResult.ok ? 'success' : 'error',
-        error_message: sendResult.ok ? null : sendResult.error,
-      });
-    } catch (e) {
-      console.error('Failed to log manychat send:', e);
-    }
 
     // Audit log
     await supabase.from('audit_logs').insert({
@@ -404,10 +386,19 @@ async function sendReply(supabase: any, body: any, adminUserId: string) {
       },
     });
 
+    // payment-error-handling standard: всегда HTTP 200, нормализованный JSON.
+    // UI не должен ловить runtime overlay/502 на бизнес-ошибки провайдера.
     if (!sendResult.ok) {
       return new Response(
-        JSON.stringify({ ok: false, message_id: msg.id, status: 'failed', error: sendResult.error }),
-        { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        JSON.stringify({
+          ok: false,
+          fallback: true,
+          message_id: msg.id,
+          status: 'failed',
+          error_code: sendResult.error_code || 'manychat_send_failed',
+          error: sendResult.user_error || sendResult.error || 'Не удалось отправить сообщение',
+        }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
       );
     }
 
@@ -443,7 +434,14 @@ async function sendViaManyChat(
   integrationInstanceId: string,
   subscriberId: string,
   text: string,
-): Promise<{ ok: boolean; provider_message_id?: string; error?: string }> {
+  messageId: string,
+): Promise<{
+  ok: boolean;
+  provider_message_id?: string;
+  error?: string;        // raw error для logs
+  user_error?: string;   // нормализованный для UI
+  error_code?: string;
+}> {
   // Read api_key from config_secrets (NOT config) — A5 contract
   const { data: instance, error: instErr } = await supabase
     .from('integration_instances')
@@ -452,23 +450,28 @@ async function sendViaManyChat(
     .maybeSingle();
 
   if (instErr || !instance) {
-    return { ok: false, error: 'integration_instance not found' };
+    return { ok: false, error: 'integration_instance not found', user_error: 'Конфигурация ManyChat не найдена', error_code: 'instance_missing' };
   }
   const apiKey = (instance.config_secrets || {})?.api_key;
   if (!apiKey || typeof apiKey !== 'string') {
-    return { ok: false, error: 'manychat api_key missing in config_secrets' };
+    return { ok: false, error: 'manychat api_key missing', user_error: 'API-ключ ManyChat не настроен', error_code: 'api_key_missing' };
   }
 
-  // ManyChat: subscriber_id must be a number when numeric.
-  // Strategy: пробуем без message_tag (24h окно). Если ManyChat отвечает
-  // "without a message tag" / "more than 24 hours" — повторяем с HUMAN_AGENT
-  // (окно 7 дней для manual reply). Если и это не проходит — нормализованная UX-ошибка.
   const subIdNum = /^\d+$/.test(String(subscriberId)) ? Number(subscriberId) : subscriberId;
 
+  // Canonical ManyChat /fb/sending/sendContent payload v2.
+  // message_tag — на верхнем уровне (не внутри data).
+  // content.type = 'instagram' для IG DM.
   const buildPayload = (tag?: string): Record<string, unknown> => {
     const p: Record<string, unknown> = {
       subscriber_id: subIdNum,
-      data: { version: 'v2', content: { messages: [{ type: 'text', text }] } },
+      data: {
+        version: 'v2',
+        content: {
+          type: 'instagram',
+          messages: [{ type: 'text', text }],
+        },
+      },
     };
     if (tag) p.message_tag = tag;
     return p;
@@ -485,15 +488,14 @@ async function sendViaManyChat(
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
+      const rawText = await resp.text();
       let parsed: any = null;
-      try { parsed = await resp.json(); } catch {
-        return { httpOk: false, status: resp.status, parsed: null, raw: `non-JSON (HTTP ${resp.status})` };
-      }
-      return { httpOk: resp.ok, status: resp.status, parsed, raw: null as string | null };
+      try { parsed = JSON.parse(rawText); } catch {}
+      return { httpOk: resp.ok, status: resp.status, parsed, rawBody: rawText.slice(0, 1000) };
     } catch (e: any) {
       clearTimeout(timeoutId);
-      if (e?.name === 'AbortError') return { httpOk: false, status: 0, parsed: null, raw: 'timeout' };
-      return { httpOk: false, status: 0, parsed: null, raw: e?.message || String(e) };
+      if (e?.name === 'AbortError') return { httpOk: false, status: 0, parsed: null, rawBody: 'timeout' };
+      return { httpOk: false, status: 0, parsed: null, rawBody: e?.message || String(e) };
     }
   };
 
@@ -504,41 +506,93 @@ async function sendViaManyChat(
   const isValidationError = (status: number, m: string) =>
     status === 422 || /validation error/i.test(m);
 
-  const tryOnce = async (tag?: string) => {
-    const r = await callManychat(buildPayload(tag));
-    const msg = r.parsed?.message || r.parsed?.error?.message || r.parsed?.error || r.raw || `HTTP ${r.status}`;
-    const fullDump = r.parsed ? JSON.stringify(r.parsed).slice(0, 500) : (r.raw || '');
-    console.log('[manychat:sendContent]', { tag: tag || 'none', status: r.status, httpOk: r.httpOk, msg, body: fullDump });
-    return { r, msg, fullDump };
+  const logAttempt = async (
+    attemptNo: number,
+    tag: string | null,
+    r: { httpOk: boolean; status: number; parsed: any; rawBody: string },
+    outcome: 'success' | 'error',
+  ) => {
+    try {
+      const topKeys = r.parsed && typeof r.parsed === 'object' ? Object.keys(r.parsed) : [];
+      await supabase.from('integration_logs').insert({
+        instance_id: integrationInstanceId,
+        event_type: 'manychat.send.response',
+        result: outcome,
+        error_message: outcome === 'error' ? (r.parsed?.message || r.parsed?.error?.message || r.rawBody?.slice(0, 200) || `HTTP ${r.status}`) : null,
+        payload_meta: {
+          provider: 'manychat',
+          channel: 'instagram',
+          message_id: messageId,
+          subscriber_id: String(subscriberId),
+          attempt_no: attemptNo,
+          message_tag: tag,
+          http_status: r.status,
+          http_ok: r.httpOk,
+          response_top_keys: topKeys,
+          response_body_preview: r.rawBody?.slice(0, 1000) ?? null,
+        },
+      });
+    } catch (e) {
+      console.error('[manychat] log_attempt_failed', e);
+    }
   };
 
-  // Attempt 1: без тега (24h standard reply window)
-  const a1 = await tryOnce();
-  if (a1.r.raw === 'timeout') return { ok: false, error: 'manychat send timeout (10s)' };
-  if (a1.r.httpOk && (!a1.r.parsed?.status || a1.r.parsed.status === 'success')) {
+  const tryOnce = async (attemptNo: number, tag?: string) => {
+    const r = await callManychat(buildPayload(tag));
+    const msg = r.parsed?.message || r.parsed?.error?.message || r.parsed?.error || r.rawBody || `HTTP ${r.status}`;
+    const isSuccess = r.httpOk && (!r.parsed?.status || r.parsed.status === 'success');
+    await logAttempt(attemptNo, tag || null, r, isSuccess ? 'success' : 'error');
+    console.log('[manychat:sendContent]', { attempt: attemptNo, tag: tag || 'none', status: r.status, httpOk: r.httpOk, msg: String(msg).slice(0, 200) });
+    return { r, msg: String(msg), isSuccess };
+  };
+
+  // Retry chain (строго):
+  //   #1 без tag (24h standard reply window)
+  //   #2 HUMAN_AGENT — только если 24h окно закрыто ИЛИ Validation error
+  //   #3 нормализованный fail (без runtime crash)
+
+  const a1 = await tryOnce(1);
+  if (a1.r.rawBody === 'timeout') {
+    return { ok: false, error: 'manychat send timeout', user_error: 'Превышено время ожидания ManyChat (10с)', error_code: 'timeout' };
+  }
+  if (a1.isSuccess) {
     const pid = a1.r.parsed?.data?.message_id || a1.r.parsed?.data?.id || a1.r.parsed?.message_id || null;
     return { ok: true, provider_message_id: pid };
   }
 
-  const needsTagRetry =
-    isOutside24h(String(a1.msg)) ||
-    isValidationError(a1.r.status, String(a1.msg));
+  const needsTagRetry = isOutside24h(a1.msg) || isValidationError(a1.r.status, a1.msg);
 
   if (needsTagRetry) {
-    // Attempt 2: HUMAN_AGENT (7-day window for manual replies — IG/FB)
-    const a2 = await tryOnce('HUMAN_AGENT');
-    if (a2.r.raw === 'timeout') return { ok: false, error: 'manychat send timeout (10s)' };
-    if (a2.r.httpOk && (!a2.r.parsed?.status || a2.r.parsed.status === 'success')) {
+    const a2 = await tryOnce(2, 'HUMAN_AGENT');
+    if (a2.r.rawBody === 'timeout') {
+      return { ok: false, error: 'manychat send timeout', user_error: 'Превышено время ожидания ManyChat (10с)', error_code: 'timeout' };
+    }
+    if (a2.isSuccess) {
       const pid = a2.r.parsed?.data?.message_id || a2.r.parsed?.data?.id || a2.r.parsed?.message_id || null;
       return { ok: true, provider_message_id: pid };
     }
-    if (isOutside7d(String(a2.msg)) || isOutside24h(String(a2.msg))) {
-      return { ok: false, error: 'Окно ответа истекло: подписчик не писал больше 7 дней. Meta запрещает отправку до нового входящего сообщения.' };
+    if (isOutside7d(a2.msg) || isOutside24h(a2.msg)) {
+      return {
+        ok: false,
+        error: a2.msg,
+        user_error: 'Окно ответа истекло: подписчик не писал больше 7 дней. Meta запрещает отправку до нового входящего сообщения.',
+        error_code: 'window_closed',
+      };
     }
-    return { ok: false, error: `manychat http error: ${a2.msg} | dump: ${a2.fullDump}` };
+    return {
+      ok: false,
+      error: a2.msg,
+      user_error: 'Не удалось отправить через ManyChat. Проверьте настройку аккаунта.',
+      error_code: 'manychat_error',
+    };
   }
 
-  return { ok: false, error: `manychat http error: ${a1.msg} | dump: ${a1.fullDump}` };
+  return {
+    ok: false,
+    error: a1.msg,
+    user_error: 'Не удалось отправить через ManyChat. Проверьте настройку аккаунта.',
+    error_code: 'manychat_error',
+  };
 }
 
 async function markRead(supabase: any, body: any) {
