@@ -205,7 +205,21 @@ export function AddIntegrationDialog({
 
             {selectedProvider.fields.map((field) => (
               <div key={field.key} className="space-y-2">
-                {field.type === "checkbox" ? (
+                {field.type === "hidden" ? null : field.type === "manychat_page_select" ? (
+                  <ManyChatPageSelector
+                    apiKey={String(formData.api_key || "")}
+                    currentPageId={String(formData.manychat_page_id || "")}
+                    currentPageName={String(formData.manychat_page_name || "")}
+                    onChange={(pageId, pageName) => {
+                      setFormData((prev) => ({
+                        ...prev,
+                        manychat_page_id: pageId,
+                        manychat_page_name: pageName,
+                      }));
+                    }}
+                    label={field.label}
+                  />
+                ) : field.type === "checkbox" ? (
                   <div className="flex items-center space-x-2">
                     <Checkbox
                       id={field.key}
