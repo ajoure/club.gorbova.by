@@ -405,22 +405,24 @@ Deno.serve(async (req) => {
   }
 
   // 6) Upsert contact (provider_kind='manychat')
+  // Avatar: пишем только если получили валидный URL (никогда не перетираем на null).
   try {
+    const contactPayload: Record<string, unknown> = {
+      instagram_account_id: accountId!,
+      instagram_user_id: normalized.sender_id,
+      instagram_username: normalized.sender_name,
+      full_name: normalized.sender_name,
+      provider_kind: "manychat",
+      updated_at: new Date().toISOString(),
+    };
+    if (normalized.avatar_url) {
+      contactPayload.avatar_url = normalized.avatar_url;
+    }
     await supabase
       .from("instagram_contacts")
-      .upsert(
-        {
-          instagram_account_id: accountId!,
-          instagram_user_id: normalized.sender_id,
-          instagram_username: normalized.sender_name,
-          full_name: normalized.sender_name,
-          provider_kind: "manychat",
-          updated_at: new Date().toISOString(),
-        },
-        {
-          onConflict: "instagram_account_id,provider_kind,instagram_user_id",
-        },
-      );
+      .upsert(contactPayload, {
+        onConflict: "instagram_account_id,provider_kind,instagram_user_id",
+      });
   } catch (e) {
     console.error("[manychat-inbound] contact_upsert_failed", e);
     // non-fatal
