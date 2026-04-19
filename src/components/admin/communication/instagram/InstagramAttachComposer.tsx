@@ -15,23 +15,22 @@ import {
   Loader2,
   Image as ImageIcon,
   Video,
-  FileText,
   MicOff,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 /**
- * Outbound media контракт ManyChat (подтверждено пилотом):
- *  - image: ✅ signed URL из telegram-media (TTL 24h)
+ * Outbound media контракт ManyChat / Meta IG (подтверждено пилотом + лог 400):
+ *  - image: ✅
  *  - video: ✅
- *  - file:  ✅
+ *  - file:  ❌ Meta IG Graph API не принимает document attachments в reply
  *  - audio: ❌ provider/API limitation for outbound audio
  *
- * Поэтому в композере audio запрещён на UI-уровне.
+ * Поэтому в композере file и audio запрещены на UI-уровне.
  */
 
-type AttachKind = "image" | "video" | "file";
+type AttachKind = "image" | "video";
 
 interface PendingAttachment {
   file: File;
@@ -41,7 +40,7 @@ interface PendingAttachment {
 
 const MAX_BYTES = 25 * 1024 * 1024; // 25 MB safety cap
 
-function detectKind(file: File): AttachKind | "audio" | "unknown" {
+function detectKind(file: File): AttachKind | "audio" | "file" | "unknown" {
   const m = file.type.toLowerCase();
   if (m.startsWith("image/")) return "image";
   if (m.startsWith("video/")) return "video";
@@ -105,14 +104,17 @@ export function InstagramAttachComposer({
       );
       return;
     }
+    if (kind === "file") {
+      toast.error(
+        "Отправка документов в Instagram не поддерживается провайдером (Meta IG). Можно отправлять только image/video.",
+      );
+      return;
+    }
     if (kind === "unknown") {
       toast.error("Неподдерживаемый тип файла.");
       return;
     }
-    const previewUrl =
-      kind === "image" || kind === "video"
-        ? URL.createObjectURL(file)
-        : undefined;
+    const previewUrl = URL.createObjectURL(file);
     setPending((prev) => {
       if (prev?.previewUrl) URL.revokeObjectURL(prev.previewUrl);
       return { file, kind, previewUrl };
@@ -222,12 +224,7 @@ export function InstagramAttachComposer({
     }
   };
 
-  const KindIcon =
-    pending?.kind === "image"
-      ? ImageIcon
-      : pending?.kind === "video"
-        ? Video
-        : FileText;
+  const KindIcon = pending?.kind === "image" ? ImageIcon : Video;
 
   return (
     <div
@@ -302,7 +299,7 @@ export function InstagramAttachComposer({
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*,video/*,application/pdf,application/*,text/plain"
+          accept="image/*,video/*"
           className="hidden"
           onChange={onFileInputChange}
         />
@@ -322,7 +319,7 @@ export function InstagramAttachComposer({
               </Button>
             </TooltipTrigger>
             <TooltipContent side="top">
-              Прикрепить изображение, видео или файл
+              Прикрепить изображение или видео
             </TooltipContent>
           </Tooltip>
 

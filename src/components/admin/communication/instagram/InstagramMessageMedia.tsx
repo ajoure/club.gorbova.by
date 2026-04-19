@@ -126,13 +126,12 @@ function CompactAudio({ src, isVoice, onError }: { src: string; isVoice: boolean
 }
 
 // ─── Custom compact VIDEO shell (poster + play overlay until first play) ──
-function CompactVideo({ src, onError }: { src: string; onError: () => void }) {
+function CompactVideo({ src, onError, onAudioOnly }: { src: string; onError: () => void; onAudioOnly: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [started, setStarted] = useState(false);
 
   const handleStart = () => {
     setStarted(true);
-    // play after render
     requestAnimationFrame(() => {
       videoRef.current?.play().catch(() => onError());
     });
@@ -147,6 +146,12 @@ function CompactVideo({ src, onError }: { src: string; onError: () => void }) {
         preload="metadata"
         playsInline
         className="block max-h-72 max-w-full w-auto h-auto"
+        onLoadedMetadata={(e) => {
+          // mp4 audio-only (Instagram voice-notes часто .mp4) — переключаем на audio renderer
+          if (e.currentTarget.videoWidth === 0 && e.currentTarget.videoHeight === 0) {
+            onAudioOnly();
+          }
+        }}
         onError={onError}
       />
       {!started && (
@@ -174,6 +179,7 @@ export function InstagramMessageMedia({
   const [imgError, setImgError] = useState(false);
   const [videoError, setVideoError] = useState(false);
   const [audioError, setAudioError] = useState(false);
+  const [forceAudio, setForceAudio] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [resolvedUrl, setResolvedUrl] = useState<string>(url);
   const [rehosting, setRehosting] = useState(false);
@@ -196,6 +202,7 @@ export function InstagramMessageMedia({
     setImgError(false);
     setVideoError(false);
     setAudioError(false);
+    setForceAudio(false);
     if (isUnstable && (isAudio || isVideo)) {
       setRehosting(true);
       rehostMedia(messageId, url, isAudio ? "audio" : "video")
@@ -277,7 +284,7 @@ export function InstagramMessageMedia({
   }
 
   // ─── VIDEO ──────────────────────────────────────────────────────
-  if (isVideo && !videoError) {
+  if (isVideo && !videoError && !forceAudio) {
     if (rehosting && resolvedUrl === url) {
       return (
         <div className={cn("inline-flex items-center gap-2 rounded-2xl bg-muted/60 px-3 py-2 text-xs", className)}>
@@ -290,6 +297,7 @@ export function InstagramMessageMedia({
       <div className={className}>
         <CompactVideo
           src={resolvedUrl}
+          onAudioOnly={() => setForceAudio(true)}
           onError={() => {
             if (resolvedUrl === url && isUnstable) {
               void tryLazyRehost("video");
@@ -303,7 +311,7 @@ export function InstagramMessageMedia({
   }
 
   // ─── AUDIO / VOICE ──────────────────────────────────────────────
-  if (isAudio && !audioError) {
+  if ((isAudio || forceAudio) && !audioError) {
     if (rehosting && resolvedUrl === url) {
       return (
         <div className={cn("inline-flex items-center gap-2 rounded-2xl bg-muted/60 px-3 py-2 text-xs", className)}>
