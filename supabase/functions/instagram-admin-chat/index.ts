@@ -399,7 +399,8 @@ async function sendReply(supabase: any, body: any, adminUserId: string) {
         message_id: msg.id,
         status: finalStatus,
         provider_kind: 'manychat',
-        message_short: message_text.slice(0, 120),
+        message_short: (message_text || '').slice(0, 120),
+        media_type: media_type || null,
       },
     });
 
