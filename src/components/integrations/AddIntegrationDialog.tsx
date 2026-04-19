@@ -140,7 +140,14 @@ export function AddIntegrationDialog({
   const isValid = () => {
     if (!selectedProvider) return false;
     const requiredFields = selectedProvider.fields.filter((f) => f.required);
-    return requiredFields.every((f) => formData[f.key]);
+    const baseValid = requiredFields.every((f) => formData[f.key]);
+    if (!baseValid) return false;
+    // ManyChat-специфичная валидация: page_id обязателен (источник —
+    // discover/select или debug fallback), но required: false в registry.
+    if (selectedProvider.id === "manychat") {
+      if (!String(formData.manychat_page_id || "").trim()) return false;
+    }
+    return true;
   };
 
   return (
