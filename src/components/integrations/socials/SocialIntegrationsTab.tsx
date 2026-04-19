@@ -323,6 +323,43 @@ export function SocialIntegrationsTab() {
         </CardContent>
       </Card>
 
+      {/* ManyChat Card (PATCH 1.1 — A5) */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-gradient-to-br from-emerald-500/20 to-teal-500/20">
+                <MessageCircle className="h-5 w-5 text-emerald-600" />
+              </div>
+              <div>
+                <CardTitle className="text-lg">ManyChat</CardTitle>
+                <CardDescription>Instagram Direct через ManyChat Public API + External Request</CardDescription>
+              </div>
+            </div>
+            {manychatInstances.length === 0 && (
+              <Button onClick={() => openAddDialog("manychat")}>
+                Подключить
+              </Button>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {isLoading ? (
+            <Skeleton className="h-12 w-full" />
+          ) : manychatInstances.length > 0 ? (
+            <IntegrationInstanceList
+              instances={manychatInstances}
+              onEdit={setEditInstance}
+              onViewLogs={setLogsInstance}
+            />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Подключите ManyChat для работы с Instagram Direct через Public API + External Request.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Facebook Placeholder */}
       <Card className="opacity-60">
         <CardHeader>
@@ -344,9 +381,12 @@ export function SocialIntegrationsTab() {
       {/* Dialogs */}
       <AddIntegrationDialog
         open={addDialogOpen}
-        onOpenChange={setAddDialogOpen}
+        onOpenChange={(open) => {
+          setAddDialogOpen(open);
+          if (!open) setAddDialogProvider(null);
+        }}
         category="socials"
-        preselectedProvider="apix_instagram_dm"
+        preselectedProvider={addDialogProvider ?? undefined}
       />
 
       <EditIntegrationDialog
