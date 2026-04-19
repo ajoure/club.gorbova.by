@@ -78,7 +78,17 @@ export function InstagramMessageMedia({
   const [resolvedUrl, setResolvedUrl] = useState<string>(url);
   const [rehosting, setRehosting] = useState(false);
 
-  const t = (type || "").toLowerCase();
+  // PATCH: URL-based override — если media_type ошибочный (например, "image" для .mp4),
+  // но URL явно указывает на video/audio — рендерим как настоящий тип.
+  // Защита для случаев, когда backfill/rehost ещё не отработали.
+  const lowerUrl = (url || "").toLowerCase();
+  const urlSaysVideo = /\.(mp4|mov|webm|m4v)(?:[?#]|$)/i.test(lowerUrl);
+  const urlSaysAudio = /\.(mp3|m4a|ogg|opus|wav|aac)(?:[?#]|$)/i.test(lowerUrl);
+
+  const rawT = (type || "").toLowerCase();
+  // Effective type: URL extension wins over заявленный media_type.
+  const t = urlSaysVideo ? "video" : urlSaysAudio ? "audio" : rawT;
+
   const isImage = t === "image" || t.startsWith("image/");
   const isVideo = t === "video" || t.startsWith("video/");
   const isVoice = t === "voice" || t === "audio/voice";
