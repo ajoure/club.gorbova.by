@@ -145,18 +145,23 @@ async function logIntegrationEvent(
   supabase: any,
   instance_id: string | null,
   event_type: string,
-  result: "ok" | "unauthorized" | "duplicate" | "error",
+  outcome: "ok" | "unauthorized" | "duplicate" | "error",
   payload_meta: Record<string, unknown>,
   error_message: string | null = null,
 ) {
+  // integration_logs.result CHECK allows only ('success','error','pending')
+  const result = outcome === "error" || outcome === "unauthorized"
+    ? "error"
+    : "success";
   try {
-    await supabase.from("integration_logs").insert({
+    const { error } = await supabase.from("integration_logs").insert({
       instance_id,
       event_type,
       result,
       error_message,
-      payload_meta,
+      payload_meta: { ...payload_meta, outcome },
     });
+    if (error) console.error("[manychat-inbound] log_failed", error.message);
   } catch (e) {
     console.error("[manychat-inbound] log_failed", e);
   }
@@ -319,7 +324,9 @@ Deno.serve(async (req) => {
           provider_kind: "manychat",
           updated_at: new Date().toISOString(),
         },
-        { onConflict: "instagram_account_id,instagram_user_id" },
+        {
+          onConflict: "instagram_account_id,provider_kind,instagram_user_id",
+        },
       );
   } catch (e) {
     console.error("[manychat-inbound] contact_upsert_failed", e);
