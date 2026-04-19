@@ -1,131 +1,159 @@
-да, согласен, с учетом правок:
 
-1. В [README.md](http://README.md) замени формулировку **«глобальной webhook-подписки в UI ManyChat нет»** на более точную: **«в v1 не используем глобальный webhook-механизм, потому что в официальных пользовательских docs подтверждён External Request внутри automation, а публичный API описывает pull/send endpoints; глобальный end-user webhook в используемом нами контуре документально не подтверждён»**. Так формулировка будет осторожной и не создаст ложный “абсолютный факт”.
-2. В том же [README.md](http://README.md) зафиксируй **жёсткую границу v1: Instagram-only**. Пока вы переиспользуете instagram_accounts и instagram_messages, это допустимо только как compatibility-layer для Instagram. Для Facebook/WhatsApp/Telegram later нужен уже generic communications layer, иначе будет конфликт по смыслу сущностей. Это прямо соответствует вашему правилу не плодить хаос и не смешивать домены/модели.
-3. В [diagnose-payloads.md](http://diagnose-payloads.md) оставь ваш JSON-контракт как **recommended canonical contract v1**, но добавь явную пометку: **реальный набор переменных и полей валидируется live capture в 3 тестовых Flows**. Официально External Request позволяет задавать method, URL, headers и body, но docs не гарантируют именно ваш состав payload — его вы определяете и подтверждаете тестом.
-4. В блоке security лучше сделать **основным секрет в custom header**, а не в URL path. External Request официально позволяет задавать headers, поэтому X-Workspace-Token/X-Manychat-Token безопаснее, чем секрет в path, который чаще попадает в access logs. Path-secret можно оставить только как fallback, если уже завязаны маршруты, но тогда с обязательным redaction в логах.
-5. Dedup strategy нужно усилить: не делай floor(occurred_at_ms/1000) частью единственного ключа как основной discriminator. Два разных сообщения с одинаковым текстом в одну секунду могут схлопнуться. Правильнее: **primary key = client_event_id если он передан**, fallback = hash от workspace_id | page_id | subscriber_id | event_type | provider_message_id | content_sha256, и только если provider_message_id отсутствует — тогда time bucket как аварийный fallback. Это соответствует вашему требованию к детерминированным связям и id-driven модели.
-6. В [compatibility-report.md](http://compatibility-report.md) добавь отдельный раздел **“Source of truth for observability”**:  
 
-  - real-time observability = только External Request из конкретных Flow/Actions;
-  - off-flow observability = только pull/diff через Public API;
-  - native Inbox actions не считаются наблюдаемыми в v1.  
-  Это хороший и правильный вывод, но его нужно явно записать как контракт, чтобы подрядчик не обещал Inbox parity. Публичный API действительно показывает send/page/subscriber endpoints, а Manychat Inbox описывается как отдельный UI-продукт с manual messaging внутри окна.
-7. В [capability-matrix.md](http://capability-matrix.md) исправь API-часть с токеном и лимитами: писать нужно **API Key из Settings → API для Account Public API**, а не page token; rate limit тоже нельзя описывать одной цифрой на всё — по docs лимиты зависят от endpoint-группы, поэтому в матрице и в NFR нужен **endpoint-aware throttling**.
-8. В итоговом PATCH 0 добавь правило обработки через события: ingress не должен сразу становиться cross-domain бизнес-логикой. Правильный путь для v1: **ingress → normalize → integration_inbound_events → domain_events → downstream handlers/services**. Это обязательно, потому что по вашему platform bible домены не должны напрямую менять друг друга, а интеграции должны идти через adapters и event-driven core.
-9. В DoD PATCH 0 добавь ещё 2 обязательных proof-пункта:
-  - **duplicate replay proof**: один и тот же External Request повторно приходит и не создаёт дубль;
-  - **off-flow diff proof**: хотя бы одно изменение вне Flow фиксируется только pull/diff-механизмом и не обещается как real-time.  
-  Это нужно по вашему правилу deep review и proof-first, чтобы не осталось “серой зоны” между push и pull.
-10. Пункт Windowing proof: 24h/7d/Pause Automation оставь, но раздели на два независимых proof-сценария:
+# План: PATCH 1.0 — ENV DISCOVERY (read-only) + Anti-Duplication Gate v2
 
-&nbsp;
+## Scope
 
-- **Manychat-native behavior**: Inbox/manual window 24h + 7-day manual behavior;
-- **our custom path**: что реально происходит при send из вашего ingress/adapter.  
-По официальным docs 7-дневное окно для Instagram/Messenger относится к manual messages via Inbox, а automations после первых 24 часов уже не доставляются; Pause all automations тоже существует как отдельное action в automation builder. Поэтому нельзя смешивать нативное поведение Inbox и ваш внешний send-path в один недоказанный тезис.
+**ТОЛЬКО read-only discovery.** Никакого DDL, ни одного нового файла кода, ни одного изменения existing функций/RPC/cron. Цель — полная карта существующего контура + reuse-matrix как hard-stop перед PATCH 1.1.
 
-11. В [external-request-setup.md](http://external-request-setup.md) добавь NFR-ограничения Dev Tools: **HTTPS обязателен**, request настраивается как method + URL + headers + body внутри automation, а сам Push существует только там, куда вы вручную вставили action. Это укрепит ваш single-path и снимет ожидание “магического” глобального ingress.
-12. В final text PATCH 0 добавь одну фразу про add-only/no-loss: **старые упоминания webhook-гипотезы не удаляются бесследно, а переводятся в deprecated/invalidated assumption с явным mapping old → new**. Это нужно по вашему правилу add-only и запрету на потерю содержания при ревизии плана.
+## Этап 1. DB discovery
 
-В остальном направление верное: single-path Hybrid для v1, отказ от обещаний parity с native Inbox, push только через External Request, всё остальное через pull/diff — это согласуется и с текущими официальными docs Manychat, и с вашими архитектурными правилами.
+**1.1.** Через `supabase--read_query` собрать:
+- Таблицы по маскам: `instagram_*`, `integration_*`, `manychat_*`, `inbox_*`, `messages*`, `conversations*`, `threads*`, `media_*`, `attachments*`, `contact_*`, `provider_*`
+- Колонки, FK, индексы (включая **partial indexes**), enum (`provider_kind`, `message_type`, `direction`)
+- **CHECK constraints** через `pg_constraint`
+- **Generated columns** через `information_schema.columns`
+- RLS policies
+- RPC: `pg_proc` filter по `instagram|inbox|integration|media|merge|dedup`
+- Cron jobs: `cron.job` связанные с интеграциями
 
-&nbsp;
+## Этап 2. Edge functions discovery
 
-# План: Финализация PATCH 0 — единый путь Hybrid (Pull API + Push External Request)
+**2.1.** Через `code--list_dir supabase/functions/` + `code--search_files`. Для каждой релевантной функции (`instagram-*`, `integration-*`, `manychat-*`, media workers) заполнить таблицу:
 
-## Что делаю
+| function | ingress type | auth model | service-role usage | retry/idempotency | writes to tables | emits domain_events / direct write |
 
-Полный cleanup всех артефактов PATCH 0 от старой гипотезы про `Settings → API → Webhooks` и фиксация единственного утверждённого пути для v1. Без альтернатив A/B/C.
+Это нужно для проверки соответствия domain isolation и anti-duplication.
 
-## Файлы к обновлению (5 шт.)
+## Этап 3. UI discovery
 
-### 1. `docs/integrations/manychat/README.md` — переписать целиком
+**3.1.** Поиск:
+- Existing integration card pattern (`/admin/integrations`, `useIntegrations`, `IntegrationCard`)
+- Existing settings dialog/page для интеграций
+- Existing field mapping UI
+- Existing event log UI
+- Existing inbox / contact center: компоненты, hooks, routing, **provider badges / discriminators** (для mixed-provider mode)
+- Existing test actions pattern
 
-- Удалить любые упоминания `Settings → API → Webhooks`.
-- Зафиксировать как факт: глобальной webhook-подписки в UI ManyChat нет.
-- Единственный утверждённый ingress v1: **External Request action внутри Flows**.
-- Всё, что вне Flow → только pull/diff через Public API.
-- Обновить roadmap: PATCH 0 → 5 с пометкой «hybrid Pull+Push approved».
-- Hard-stops: убрать упоминания webhook subscription; добавить «не обещаем parity с native ManyChat Inbox».
+## Этап 4. Provider identity bridge discovery
 
-### 2. `docs/integrations/manychat/diagnose-payloads.md` — переписать
+**4.1.** Искать:
+- Таблицы-бриджи `external_id ↔ contact` (`contact_identifiers`, `provider_subscribers`, etc.)
+- **Manual merge code, confidence score, duplicate review queue** — чтобы не задублировать existing merge pipeline
+- RPC/функции по match-логике
 
-- Убрать формулировки про headers глобального webhook.
-- Зафиксировать, что headers контролируем мы сами (через UI External Request) — список Content-Type, наш `X-Workspace-Token` и т.д.
-- Дать **точный рекомендуемый JSON-контракт v1** для External Request body:
-  ```json
-  {
-    "event_type": "message.received | subscriber.created | subscriber.tagged | subscriber.field_updated | flow.completed",
-    "workspace": { "manychat_page_id": "...", "manychat_business_id": "..." },
-    "flow": { "flow_ns": "...", "flow_name": "...", "step_id": "..." },
-    "subscriber": { "manychat_subscriber_id": "...", "ig_username": "...", "ig_id": "..." },
-    "message": { "provider_message_id": "...", "thread_key": "...", "text": "...", "attachments": [] },
-    "custom_fields": { "...": "..." },
-    "system": { "last_input_text": "...", "last_interaction_ms": 0, "user_tags": [] },
-    "occurred_at_ms": 0,
-    "correlation": { "client_event_id": "{{user_id}}-{{ts_ms}}-{{flow_ns}}", "content_sha256": "<computed>" }
-  }
-  ```
-- Capture procedure через 3 тестовых Flow остаётся, но без упоминания «webhooks».
+## Этап 5. Media pipeline discovery
 
-### 3. `docs/integrations/manychat/capability-matrix.md` — добавить новую секцию
+**5.1.** Собрать:
+- Storage buckets (`storage.buckets`) + private/public policy
+- Workers (по образцу `telegram-media-worker`)
+- **Signed URL pattern**
+- **Dedup/storage naming strategy**
+- **Fallback path** для media недоступного по URL
+- Как сейчас обрабатываются image/video/audio в Instagram inbox
 
-Структурировать матрицу по 4 колонкам:
+## Этап 6. Existing docs / prior ManyChat artifacts inventory
 
-- **Покрывается Public API (Pull)** — getSubscriberInfo, getTags, getCustomFields, sendContent, addTag, setCustomField, getFlows.
-- **Покрывается External Request (Push, real-time)** — message.received, subscriber.created, subscriber.tagged, flow.completed (и только то, куда мы вручную врежем action).
-- **Не покрывается в v1** — ручные действия в native Inbox, Stories Reply, voice, status delivered/read вне Flow.
-- **Deferred (Phase 2)** — full Manychat App (OAuth + moderation), Inbox parity, advanced event bridge, multi-channel.
+**6.1.** Через `code--list_dir docs/integrations/manychat/` + `code--view`:
+- Полный список существующих файлов PATCH 0
+- Что зафиксировано (контракты, JSON envelope, security model, capability matrix)
+- Что нужно reuse, что extend, что заменить
+- Защита от дублирования документов и повторного изобретения контрактов
 
-### 4. `docs/integrations/manychat/compatibility-report.md` — обновить выводы
+## Этап 7. ManyChat API probe (read-only)
 
-- Убрать любую зависимость от «нативных webhook events».
-- Список event_type, реально получаемых через External Request: `message.received`, `subscriber.created`, `subscriber.tagged`, `subscriber.untagged`, `subscriber.field_updated`, `flow.completed`.
-- Список событий **только pull/diff**: ручные ответы оператора в Inbox, изменение тегов вне Flow, изменение custom fields вне Flow, opt-out вне Flow.
-- DDL-расширения для `instagram_messages` остаются как были.
+**7.1.** Через `supabase--curl_edge_functions` к `manychat-diagnose-capture` или прямой curl. Заполнить **endpoint normalization table**:
 
-### 5. `docs/integrations/manychat/external-request-setup.md` — обновить
+| endpoint | method | auth type | required params | status | body shape | подходит для healthcheck/catalog/subscriber/send | примечание (404 = wrong path / 400 = missing param) |
 
-- Уже создан, но дополнить:
-  - **Security contract**: `shared_secret_token` в URL path обязателен; валидируется на ingress; нативной HMAC-signature от ManyChat нет — защита = shared secret + allowlist по `manychat_page_id` + dedup по `idempotency_hash`.
-  - **Allowlist**: `manychat_page_id` (из payload) сверяется со списком в `integration_instances.config.allowed_page_ids`.
-  - **Dedup strategy**: `idempotency_hash = sha256(workspace_id | page_id | subscriber_id | event_type | floor(occurred_at_ms/1000) | content_sha256)`. UNIQUE на `integration_inbound_events.idempotency_hash`. Дубликат → 200 OK без записи.
-  - Точный JSON template (тот же, что в diagnose-payloads.md) — copy-paste для оператора.
-  - Шаги в UI ManyChat: Flow → `+` → Action → External Request → Method POST → URL с `{shared_secret_token}` → Headers `Content-Type: application/json` → Body Custom JSON.
+Тестировать минимум: `/page/getInfo`, `/fb/page/getInfo`, `/page/getFlows`, `/page/getTags`, `/page/getCustomFields`, `/subscriber/getInfo`, `/subscriber/findByName`. Зафиксировать endpoint-aware rate limits.
 
-## Итоговый PATCH 0 (финальная редакция)
+## Этап 8. REUSE MATRIX (anti-duplication gate)
 
-После обновления всех 5 артефактов — единый утверждённый PATCH 0:
+Артефакт: `docs/integrations/manychat/reuse-matrix.md`. Минимум **16 областей**:
 
-```text
-PATCH 0 / DIAGNOSE (final, single path)
+| Область | Existing artifact | Решение | Обоснование (file/table ref) |
+|---|---|---|---|
+| Карточка интеграции | … | reuse / extend / new + proof |
+| Settings UI | … | … |
+| Field mapping UI | … | … |
+| Event log UI | … | … |
+| Inbox storage | `instagram_messages` | extend add-only через `provider_kind` | … |
+| Inbox provider badges | … | reuse / new + proof |
+| Subscriber identity bridge | … | reuse / new + proof |
+| **Identity merge pipeline** | … | reuse / new + proof |
+| Media pipeline | … | … |
+| Healthcheck framework | `integration-healthcheck` | extend | один endpoint multi-provider |
+| Send routing | `instagram-admin-chat` | extend / new |
+| Sync framework | `integration-sync` | extend | вместо cache-таблиц |
+| **Catalog storage (flows/tags/fields)** | Public API | **default: on-demand read через Public API + optional existing sync framework**. Cache-таблицы запрещены без proof of perf blocker |
+| **Domain event infrastructure** | `DomainEventService` (`src/lib/domain-events.ts`) | reuse as-is | стандартный emit/recordExecution |
+| **Scheduler / cron reuse** | existing cron jobs | reuse / new + proof |
+| **Docs / prior PATCH 0 artifacts** | 6 файлов в `docs/integrations/manychat/` | reuse / update | без дублирования |
+| RBAC | inherit existing pattern | new только при подтверждённом gap |
 
-Strategy: Hybrid
-  - Pull  = ManyChat Public API (on-demand + cron)
-  - Push  = External Request action внутри конкретных Flows
-  - Global webhook subscription = НЕ существует в UI ManyChat (зафиксировано)
+Каждая ячейка `new` обязана содержать ссылку на конкретный existing файл/таблицу + причину невозможности reuse.
 
-Границы v1:
-  - real-time только из Flows с нашим External Request
-  - вне Flow → только pull/diff
-  - native Inbox actions = НЕ наблюдаемы
-  - parity с Inbox = НЕ обещаем
+## Этап 9. Hard stop-guards
 
-Security ingress:
-  - shared_secret_token в URL path (mandatory)
-  - allowlist manychat_page_id
-  - dedup idempotency_hash (24h window)
-  - native signature = отсутствует (compensated by 3-layer guard)
+Зафиксировать письменно:
 
-DoD PATCH 0:
-  1. README обновлён, упоминаний Settings→API→Webhooks нет
-  2. diagnose-payloads.md содержит финальный JSON-контракт v1
-  3. capability-matrix.md имеет 4-колоночную секцию (Pull / Push / Not v1 / Deferred)
-  4. compatibility-report.md перечисляет push-events vs pull-only events
-  5. external-request-setup.md содержит security contract + dedup + allowlist
-  6. Live capture: 3 payload в manychat_diagnose_log из 3 тестовых Flows
-  7. Windowing proof: 24h/7d/Pause Automation тесты проведены на тестовом IG
-```
+- ❌ Запрет создавать `manychat_flows_cache`, `manychat_tags_cache`, `manychat_fields_cache` без proof of perf/UX blocker
+- ❌ Запрет создавать `manychat_subscribers` если есть existing provider-identity bridge
+- ❌ Запрет новой страницы settings если existing dialog покрывает
+- ❌ Запрет нового storage bucket для media если existing path работает
+- ❌ Запрет нового inbox storage — только `instagram_messages` extension через `provider_kind='manychat'`
+- ❌ Запрет multi-channel в v1 (только Instagram)
+- ❌ Запрет новых RLS правил без gap
+- ❌ Запрет healthcheck на `/me` без подтверждения probe
+- ❌ **Запрет проектировать новый merge-flow `subscriber↔contact`, пока не доказано отсутствие existing merge mechanism**
+- ❌ **Запрет новой event-ingest таблицы, если existing `domain_events` / logs / raw_payload storage покрывают нужный ingress**
 
-После approve — обновлю 5 файлов одной волной, без переименования endpoint.
+## Этап 10. Документация (артефакты PATCH 1.0)
+
+- `docs/integrations/manychat/reuse-matrix.md` — главный артефакт
+- `docs/integrations/manychat/existing-environment-reused.md` — конкретные файлы/таблицы/функции/компоненты
+- `docs/integrations/manychat/api-probe-findings.md` — endpoint normalization table + реальные ответы
+- **`docs/integrations/manychat/gap-register.md`** — только подтверждённые gaps, требующие extend/new в PATCH 1.1
+- Update `README.md` — ссылка на reuse-matrix как обязательный gate
+- Update `capability-matrix.md` — заменить cache-таблицы на «existing sync framework / on-demand»
+- Update `compatibility-report.md` — жёсткие границы real-time
+
+## Этап 11. DoD PATCH 1.0
+
+1. `reuse-matrix.md` заполнен по всем 16+ областям с явным решением
+2. Каждый `new` имеет proof of impossibility со ссылкой на код
+3. `existing-environment-reused.md` перечисляет конкретные артефакты
+4. `api-probe-findings.md` содержит endpoint normalization table с реальными ответами
+5. `gap-register.md` содержит только подтверждённые gaps
+6. README ссылается на reuse-matrix как обязательный gate перед PATCH 1.1
+7. **Подтверждение**: за PATCH 1.0
+   - не создано ни одной таблицы / функции / UI компонента
+   - **не изменено ни одной существующей функции**
+   - **не изменён ни один SQL / RPC / cron job**
+   - **все выводы подтверждены ссылками на конкретные файлы / таблицы / queries**
+
+## Этап 12. Финальный отчёт PATCH 1.0 (структура)
+
+Обязательные блоки:
+1. **Confirmed reuse** — что точно переиспользуется как есть / extend
+2. **Confirmed gaps** — что реально требует new
+3. **Deferred / out of scope** — что отложено
+4. **Hard-stop guards status** — каждый guard: соблюдён / нарушен (если нарушен — почему)
+5. **What PATCH 1.1 is allowed to touch** — закрытый список разрешённых артефактов
+
+## Порядок execute (после approve)
+
+1. DB discovery (read_query) — таблицы, колонки, индексы, CHECK, generated, RLS, RPC, cron
+2. Edge functions discovery (list_dir + search_files + view) — заполнение таблицы по 6 признакам
+3. UI discovery (search_files + view) — карточки, settings, mapping, event log, inbox badges
+4. **Existing docs / prior artifacts inventory** (list_dir docs/integrations/manychat/ + view)
+5. ManyChat API probe (curl_edge_functions / прямой fetch) — endpoint normalization table
+6. Заполнение reuse-matrix (16+ областей)
+7. Создание/обновление 7 документов
+8. Финальный отчёт по структуре из этапа 12
+
+## Что будет в PATCH 1.1
+
+Только то, что `gap-register.md` пометил как подтверждённый gap, а reuse-matrix — как `extend` или `new + proof`. Без PATCH 1.0 артефактов → PATCH 1.1 заблокирован.
+
