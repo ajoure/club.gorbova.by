@@ -294,9 +294,24 @@ async function getHistory(supabase: any, body: any) {
 }
 
 async function sendReply(supabase: any, body: any, adminUserId: string) {
-  const { instagram_account_id, sender_id, thread_id, message_text, client_msg_id } = body;
-  if (!instagram_account_id || !sender_id || !message_text) {
-    throw new Error('Missing required fields: instagram_account_id, sender_id, message_text');
+  const {
+    instagram_account_id,
+    sender_id,
+    thread_id,
+    message_text,
+    client_msg_id,
+    media_url,
+    media_type, // 'image' | 'audio' | 'video' | 'file'
+  } = body;
+  if (!instagram_account_id || !sender_id) {
+    throw new Error('Missing required fields: instagram_account_id, sender_id');
+  }
+  // Либо текст, либо media — что-то одно обязательно.
+  if (!message_text && !media_url) {
+    throw new Error('Missing message_text or media_url');
+  }
+  if (media_url && !media_type) {
+    throw new Error('media_type required when media_url provided');
   }
 
   // A7: Resolve provider_kind for routing
@@ -339,7 +354,9 @@ async function sendReply(supabase: any, body: any, adminUserId: string) {
       sender_name: 'Admin',
       ig_thread_id: thread_id || null,
       direction: 'outbound',
-      message_text,
+      message_text: message_text || null,
+      media_url: media_url || null,
+      media_type: media_type || null,
       status: initialStatus,
       peer_id: sender_id,
       recipient_id: sender_id,
@@ -357,7 +374,7 @@ async function sendReply(supabase: any, body: any, adminUserId: string) {
       supabase,
       accountRow.integration_instance_id,
       sender_id,
-      message_text,
+      { text: message_text, media_url, media_type },
       msg.id,
     );
 
@@ -433,7 +450,7 @@ async function sendViaManyChat(
   supabase: any,
   integrationInstanceId: string,
   subscriberId: string,
-  text: string,
+  content: { text?: string | null; media_url?: string | null; media_type?: string | null },
   messageId: string,
 ): Promise<{
   ok: boolean;
@@ -459,17 +476,34 @@ async function sendViaManyChat(
 
   const subIdNum = /^\d+$/.test(String(subscriberId)) ? Number(subscriberId) : subscriberId;
 
-  // Canonical ManyChat /fb/sending/sendContent payload v2.
-  // message_tag — на верхнем уровне (не внутри data).
-  // content.type = 'instagram' для IG DM.
-  const buildPayload = (tag?: string): Record<string, unknown> => {
+  // ─── Per-type message block ────────────────────────────────────────────────
+  // ManyChat /fb/sending/sendContent v2, content.type = 'instagram'.
+  // image  → { type: 'image',  url }   ← официально поддерживается
+  // audio  → { type: 'audio',  url }   ← pilot, может вернуть Validation error
+  // video  → { type: 'video',  url }   ← pilot
+  // file   → { type: 'file',   url }   ← pilot
+  // text   → { type: 'text',   text }
+  // Каждый attempt логируется в integration_logs с per-type tracking.
+  const buildMessageBlock = (): Record<string, unknown> | null => {
+    const t = (content.media_type || '').toLowerCase();
+    if (content.media_url && t === 'image') return { type: 'image', url: content.media_url };
+    if (content.media_url && (t === 'audio' || t === 'voice')) return { type: 'audio', url: content.media_url };
+    if (content.media_url && t === 'video') return { type: 'video', url: content.media_url };
+    if (content.media_url && (t === 'file' || t === 'document')) return { type: 'file', url: content.media_url };
+    if (content.text) return { type: 'text', text: content.text };
+    return null;
+  };
+
+  const buildPayload = (tag?: string): Record<string, unknown> | null => {
+    const block = buildMessageBlock();
+    if (!block) return null;
     const p: Record<string, unknown> = {
       subscriber_id: subIdNum,
       data: {
         version: 'v2',
         content: {
           type: 'instagram',
-          messages: [{ type: 'text', text }],
+          messages: [block],
         },
       },
     };
@@ -538,11 +572,19 @@ async function sendViaManyChat(
   };
 
   const tryOnce = async (attemptNo: number, tag?: string) => {
-    const r = await callManychat(buildPayload(tag));
+    const payload = buildPayload(tag);
+    if (!payload) {
+      return {
+        r: { httpOk: false, status: 0, parsed: null, rawBody: 'invalid_payload' },
+        msg: 'invalid_payload: no text or media_url',
+        isSuccess: false,
+      };
+    }
+    const r = await callManychat(payload);
     const msg = r.parsed?.message || r.parsed?.error?.message || r.parsed?.error || r.rawBody || `HTTP ${r.status}`;
     const isSuccess = r.httpOk && (!r.parsed?.status || r.parsed.status === 'success');
     await logAttempt(attemptNo, tag || null, r, isSuccess ? 'success' : 'error');
-    console.log('[manychat:sendContent]', { attempt: attemptNo, tag: tag || 'none', status: r.status, httpOk: r.httpOk, msg: String(msg).slice(0, 200) });
+    console.log('[manychat:sendContent]', { attempt: attemptNo, tag: tag || 'none', media_type: content.media_type || 'text', status: r.status, httpOk: r.httpOk, msg: String(msg).slice(0, 200) });
     return { r, msg: String(msg), isSuccess };
   };
 
