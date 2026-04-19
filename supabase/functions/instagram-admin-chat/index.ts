@@ -450,7 +450,7 @@ async function sendViaManyChat(
   supabase: any,
   integrationInstanceId: string,
   subscriberId: string,
-  text: string,
+  content: { text?: string | null; media_url?: string | null; media_type?: string | null },
   messageId: string,
 ): Promise<{
   ok: boolean;
@@ -476,17 +476,34 @@ async function sendViaManyChat(
 
   const subIdNum = /^\d+$/.test(String(subscriberId)) ? Number(subscriberId) : subscriberId;
 
-  // Canonical ManyChat /fb/sending/sendContent payload v2.
-  // message_tag — на верхнем уровне (не внутри data).
-  // content.type = 'instagram' для IG DM.
-  const buildPayload = (tag?: string): Record<string, unknown> => {
+  // ─── Per-type message block ────────────────────────────────────────────────
+  // ManyChat /fb/sending/sendContent v2, content.type = 'instagram'.
+  // image  → { type: 'image',  url }   ← официально поддерживается
+  // audio  → { type: 'audio',  url }   ← pilot, может вернуть Validation error
+  // video  → { type: 'video',  url }   ← pilot
+  // file   → { type: 'file',   url }   ← pilot
+  // text   → { type: 'text',   text }
+  // Каждый attempt логируется в integration_logs с per-type tracking.
+  const buildMessageBlock = (): Record<string, unknown> | null => {
+    const t = (content.media_type || '').toLowerCase();
+    if (content.media_url && t === 'image') return { type: 'image', url: content.media_url };
+    if (content.media_url && (t === 'audio' || t === 'voice')) return { type: 'audio', url: content.media_url };
+    if (content.media_url && t === 'video') return { type: 'video', url: content.media_url };
+    if (content.media_url && (t === 'file' || t === 'document')) return { type: 'file', url: content.media_url };
+    if (content.text) return { type: 'text', text: content.text };
+    return null;
+  };
+
+  const buildPayload = (tag?: string): Record<string, unknown> | null => {
+    const block = buildMessageBlock();
+    if (!block) return null;
     const p: Record<string, unknown> = {
       subscriber_id: subIdNum,
       data: {
         version: 'v2',
         content: {
           type: 'instagram',
-          messages: [{ type: 'text', text }],
+          messages: [block],
         },
       },
     };
