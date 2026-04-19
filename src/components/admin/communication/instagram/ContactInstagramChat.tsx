@@ -259,7 +259,6 @@ export function ContactInstagramChat({
             // Если text — это media URL и мы его отрендерим как media, не показываем как текст.
             const showText = msg.message_text && msg.message_text !== realMediaUrl;
 
-            const mediaOnly = !!realMediaUrl && !showText;
             return (
               <div
                 key={msg.id}
