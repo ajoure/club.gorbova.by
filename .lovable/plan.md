@@ -1,111 +1,191 @@
 ## да, согласен, с учетом правок:
 
-1. Блок про скрытие старой `apix_instagram_dm` интеграции через БД/миграцию **убрать из плана полностью**.  
-Пользователь уже отключил старую интеграцию, и она больше не показывается. Значит, этот подпункт больше не актуален и не должен тянуть за собой лишние изменения.
-2. В diagnose зафиксировать новый факт:
-  - старая интеграция `apix_instagram_dm` уже отключена пользователем;
-  - в dropdown/select старый аккаунт больше не отображается;
-  - отдельный патч на скрытие/деактивацию больше не нужен.
-3. Основной фокус плана теперь сузить до двух задач:
-  - **A.** factual-диагностика, почему сообщение `тест три` не дошло до `manychat-inbound`;
-  - **B.** при необходимости лёгкий UX-tail по русификации label’ов, только если это не мешает основной диагностике.
-4. Блок про `тест три не дошёл` оставить приоритетом №1.  
-Нужно сохранить жёсткую развилку:
-  - `0` запросов в `manychat-inbound` → проблема в настройке External Request / Flow в ManyChat;
-  - `401` → проблема в `X-ManyChat-Token`;
-  - `404 instance_not_found` → проблема в `instance_id/page_id` routing;
-  - `400 missing_sender_id/invalid_json` → проблема в body template;
-  - `500 insert_failed` → backend bug.
-5. В отчёте пользователю по `тест три` дать уже не общий вывод, а готовую инструкцию проверки:
-  - exact URL;
-  - exact headers;
-  - exact body template;
-  - к какому Flow/trigger это должно быть привязано;
-  - как проверить в ManyChat, что Flow реально срабатывает на входящий DM.
-6. Блок русификации оставить только как **optional UX-tail**, не как часть основного runtime-fix.  
-Safe-scope, если будете делать сразу:
-  &nbsp;
-  &nbsp;
-  - `Instagram DM (ApiX-Drive)` → `Instagram (ApiX-Drive)`
-  - `ManyChat` → `ManyChat (Instagram)`
-  - `Facebook` → `Facebook (скоро)`  
-  Бренды `amoCRM`, `GetCourse`, `bePaid`, `Kinescope` не трогать.
-7. Обновить DoD:
-  - старый `apixdrive` аккаунт уже вне dropdown и не требует патча;
-  - diagnose по `тест три` даёт точную причину;
-  - есть короткий factual-отчёт с инструкцией, что именно проверить/настроить в ManyChat;
-  - финальный E2E inbound proof остаётся отдельным следующим шагом после корректной настройки External Request в ManyChat.
-8. Обновить порядок выполнения:
-  - сначала factual diagnose по `тест три`;
-  - потом краткий отчёт с exact причиной и инструкцией;
-  - только после этого, если останется время, лёгкая русификация label’ов.  
-  Не возвращаться к уже закрытой теме скрытия старой интеграции.
+1. **P2 уточнить как PATCH с обязательным diagnose-before-fix**
+  - Не утверждать финально новый ManyChat payload как факт до снятия **sanitized raw-response proof** по последнему `Validation error`.
+  - В плане зафиксировать: сначала логируем **HTTP status + top-level keys + body preview до 1KB** ответа ManyChat на send, и только затем меняем payload.
+  - Иначе есть риск зашить неверный контракт второй раз.
+  - Но execute можно делать в одном PATCH: diagnose лог + фикс payload + retry/fallback.
+2. **P2: не возвращать runtime 500/502 наружу в UI**
+  - Зафиксировать явно:
+    - edge function для outbound ManyChat **никогда** не должна ронять UI runtime overlay;
+    - на бизнес-ошибке ManyChat возвращаем **200 + нормализованный JSON** (`ok:false`, `status:'failed'`, `error_code`, `error_message`, `provider_response_excerpt`);
+    - запись в `instagram_messages.status='failed'` и `integration_logs` обязательна.
+  - Это надо выделить отдельно как DoD, не только упомянуть в тексте.
+3. **P2: retry-chain сделать строгим и проверяемым**
+  - Не писать “без tag → HUMAN_AGENT при outside_24h ИЛИ Validation error” в расплывчатом виде.
+  - Нужен чёткий порядок:
+    1. первичный send;
+    2. если provider явно вернул признак outside-24h / tag required / message tag invalid for context — retry c допустимым tag;
+    3. если снова fail — нормализованный failed без runtime crash.
+  - Для каждого шага логировать отдельный `attempt_no` в `integration_logs.payload_meta`.
+4. **P1: media normalizer не должен делать обязательный HEAD как блокирующий шаг**
+  - HEAD к `lookaside.fbsbx.com` может быть нестабильным/медленным.
+  - Зафиксировать порядок:
+    - сначала быстрая классификация по URL/домену/расширению;
+    - потом optional HEAD с timeout 3s как enrichment, не как hard dependency.
+  - Если HEAD не удался, media всё равно должна отрендериться fallback-карточкой.
+5. **P1/P5: voice и audio различать, но с общим безопасным fallback**
+  - Если точно не удаётся отличить `voice` от `audio`, не выдумывать.
+  - Хранить `media_type='audio'`, а UI рендерить единым audio-player.
+  - `voice` использовать только если есть явный MIME/metadata.
+  - Это уменьшит ложную типизацию.
+6. **P3: display_name делать add-only без риска сломать существующие выборки**
+  - Поддерживаю добавление `display_name`, но в плане надо явно указать:
+    - старое поле `account_name` не переиспользуем и не переписываем как source-of-truth;
+    - UI читает `display_name` с fallback на `account_name`, но сам synthetic `mc:*` скрывает через resolver.
+  - Это безопаснее, чем массово перетирать старые значения.
+7. **P3: backfill display_name зафиксировать строго**
+  - Источник backfill:
+    - `integration_instances.config->>'manychat_page_name'`,
+    - затем metadata/healthcheck/discover cache,
+    - затем fallback `NULL`.
+  - Не брать synthetic `mc:*` как display_name ни при каких условиях.
+8. **P4: resolver вынести в одно место и использовать везде**
+  - Поддерживаю.
+  - Добавить явный запрет на локальные ad-hoc проверки `startsWith('mc:')` по компонентам.
+  - Только единая функция `resolveInstagramSourceLabel()` + единая функция `resolveInstagramAccountDisplayName()`.
+9. **P5/P6: legacy repair in UI делать только presentation-level**
+  - Хорошо, что существующие кривые записи не трогаем.
+  - Зафиксировать: “лечение на лету” для старых URL-сообщений — **только UI render layer**, без silent DB rewrite/миграции данных.
+10. **Добавить отдельный PATCH: скрыть provider/internal diagnostics из bubble**
+  - На скрине уже видны ошибки вида:
+    - `manychat http error: Validation error`
+    - `manychat http error: Content can't be se...`
+  - Это технические provider-errors в теле чата.
+  - Их нельзя показывать как пользовательские сообщения в переписке.
+  - Нужно:
+    - либо рендерить их как system/admin-only status badge;
+    - либо скрывать из user-facing thread и оставлять только в logs/debug panel.
+  - DoD: в обычной ленте переписки нет сырого provider error текста как будто это сообщение пользователя.
+11. **Добавить отдельный proof для outbound success именно в Instagram app**
+  - Недостаточно success log.
+  - Нужен proof-пакет:
+    - отправка из Contact Center,
+    - запись `sent/delivered` в нашей системе,
+    - фактическое появление сообщения в Instagram/ManyChat inbox.
+  - Это надо явно включить в финальный proof, иначе PATCH нельзя считать закрытым.
+12. **Regression DoD расширить**
+  - Помимо apixdrive, проверить:
+    - список диалогов не ломается,
+    - unread counter не ломается,
+    - search по диалогам не ломается,
+    - шапка диалога корректно показывает source label и для apix, и для manychat.
+13. **Файлы/объём патча**
+  - Поддерживаю текущий состав, но migration + RPC patch лучше явно разделить:
+    - Migration: `instagram_accounts.display_name`
+    - RPC patch: `get_instagram_dialogs_v1`
+    - Frontend resolver/renderer
+    - Edge inbound/outbound
+  - Это упростит proof и rollback.
+
+Итог: план хороший, логика верная. Главные обязательные правки перед execute — не утверждать outbound payload без raw-response proof, убрать технические provider-errors из ленты чата, и сделать `display_name`/resolver единым source-of-truth без перезаписи legacy данных.
 
 &nbsp;
 
-&nbsp;
+Diagnose (факты из логов и БД)
 
-План: русификация интеграций + скрытие отключённой Instagram + диагностика «тест три не дошёл»
+*1. mc: в UI** — в `get_instagram_dialogs_v1` поле `account_name` возвращается как `"mc:305d6fa43ef5c6f8cc9602cb"`. Это synthetic ID из ManyChat-аккаунта (`instagram_accounts.account_name`). UI показывает его как-есть в списке/шапке диалога.
 
-### Diagnose (готов)
+**2. Outbound 502 / Validation error** — последний fail (`a65237c5...`, `03faefd4...`) → `manychat http error: Validation error`. При этом 24h-окно НЕ закрыто (Сергей писал минуту назад: `Test 6666` в 18:44, ответ в 18:46). Значит проблема не в окне, а в **структуре payload**. Текущий код шлёт `data.version: 'v2'` + `content.messages[]`. По факту контракта `/fb/sending/sendContent` для Instagram валидным является `**message_tag` на верхнем уровне**, а не внутри data, и `data` должен содержать `version: "v2"` + `content: { type: "instagram", messages: [...] }` (с явным `type: "instagram"`). Также фронт получает 502, потому что edge function возвращает `status: 500`/non-2xx при fail вместо 200+`fallback:true` (нарушает `payment-error-handling` стандарт).
 
-1. **manychat-inbound endpoint** — рабочий. За ~17ч приходили только мои curl-smoke-tests (`A11 smoke test`, `A11 verify run #2`). Реального запроса от ManyChat за «тест три» НЕ БЫЛО.
-  - Вывод: External Request в ManyChat Flow ещё не настроен / не сработал на триггер. Это не баг кода — это конфигурация в самом ManyChat.
-2. **Старый Instagram (apix_instagram_dm)** до сих пор активен:
-  - `integration_instances`: id `676c484b...`, status=`connected`
-  - `instagram_accounts`: id `1a7485fb...`, page `601477270056529`, `is_active=true`, status=`active`
-  - Поэтому в dropdown «Контакт-центр → Instagram → выбор аккаунта» он продолжает показываться. Пользователь хочет его скрыть.
-3. **Названия провайдеров в UI** — частично русские (`bePaid`, `Instagram DM (ApiX-Drive)`, `ManyChat`, `Facebook`), но `name` для большинства — английские бренды. Описания (`description`) — все русские. Категории — русские. Что нужно русифицировать конкретно — нужно уточнить (см. вопросы ниже).
+**3. Inbound media** — приходит как `last_input_text: "https://lookaside.fbsbx.com/..."`. ManyChat в `last_input_text` суёт URL вложения для image/audio/video. Сейчас inbound-функция кладёт это в `message_text`, `media_url=null`, `media_type=null`. Нужно детектить URL+расширение/домен `lookaside.fbsbx.com` и нормализовать в media поля.
 
-### Что меняем — три блока
+**4. UI bubble** — рендерит `message_text` как plain text, длинная ссылка показывается строкой.
 
-#### Блок 1. Скрыть отключённый Instagram (apix_instagram_dm) из dropdown
+## План (8 точечных патчей, add-only)
 
-Самый чистый путь: **деактивировать через UI/админку, не трогать код**. Пользователь говорит «я отключил предыдущую интеграцию», но в БД она всё ещё `status='connected'` и `is_active=true`. Это значит — отключил визуально (toggle?), но `instagram_accounts.is_active` не сбросился.
+### Backend
 
-План:
+**P1. `manychat-inbound`: нормализация media**
 
-- Миграция: для `integration_instances.id='676c484b...'` (apix_instagram_dm) поставить `status='disconnected'`.
-- Миграция: для `instagram_accounts.id='1a7485fb...'` поставить `is_active=false`.
-- Это автоматически скроет аккаунт из dropdown (`getAccounts` в `instagram-admin-chat` уже фильтрует `is_active=true` + `InstagramInboxView` фильтрует `status !== 'error'` — тут statuses ok, главное is_active).
-- **История сообщений сохраняется** (29 старых apixdrive-сообщений в БД остаются, просто не видны в dropdown текущих диалогов).
+- Детектить `last_input_text`, начинающийся с `http(s)://lookaside.fbsbx.com/` или содержащий расширение `.jpg/.png/.mp4/.mp3/.ogg/.m4a/.webp`.
+- HEAD-запрос (с timeout 3s, fallback по URL pattern) → определить `mime_type`.
+- Маппинг: `image/* → image`, `audio/*|voice → voice/audio`, `video/* → video`, иначе `file`.
+- Писать в `instagram_messages`: `media_url=<url>`, `media_type=<тип>`, `message_text=NULL` (для media-only) или текст без URL.
+- Для уже существующих кривых записей — НЕ трогать (regression safety).
 
-Альтернатива (если нужна возможность включить обратно): не удалять, а только `is_active=false`. Это и делаем.
+**P2. `instagram-admin-chat` outbound: правильный ManyChat payload + graceful error**
 
-#### Блок 2. Диагностика «тест три» — почему не дошло
+- Payload v2:
+  ```json
+  {
+    "subscriber_id": <number>,
+    "data": {
+      "version": "v2",
+      "content": { "type": "instagram", "messages": [{"type":"text","text":"..."}] }
+    },
+    "message_tag": "<tag>"  // на верхнем уровне
+  }
+  ```
+- Retry chain: (1) без tag → (2) `HUMAN_AGENT` при `outside_24h` ИЛИ `Validation error`.
+- Полный sanitized dump ответа ManyChat (status + body 1KB) → `integration_logs.event_type='manychat.send.response'` (без токенов).
+- При финальном fail — возвращать **HTTP 200** + `{ok:false, fallback:true, error:"<normalized>"}`. UI больше не получит 502/runtime overlay.
 
-Это не code-fix, это **инструкция для пользователя** + одна проверка в edge-логах.
+**P3. Page display metadata SOT**
 
-В отчёте дам:
+- В `instagram_accounts` уже есть `account_name`. Добавим миграцией поле `display_name TEXT` (если ещё нет) + бэкфилл из `metadata.page_name`/`metadata.instagram_username` если присутствует.
+- При следующем inbound от ManyChat — если в payload есть `page.name` или `account.name` — апдейтить `display_name`.
+- RPC `get_instagram_dialogs_v1` дополнить: возвращать `display_name` отдельно, а `account_name` оставить для совместимости.
 
-- свежий список последних запросов к `manychat-inbound` за последний час (через `supabase--analytics_query` по edge logs);
-- если 0 запросов → проблема 100% в настройке ManyChat External Request (не настроен / не на тот URL / Flow не триггерится на DM);
-- если запросы есть, но 4xx → точный error из логов, fix.
+### Frontend
 
-Дам пользователю чек-лист настройки ManyChat External Request (URL, headers, body, на какой триггер вешать).
+**P4. Source label resolver (add-only утилита)**
 
-#### Блок 3. Русификация названий интеграций
+- Новая функция `resolveInstagramSourceLabel(account)`:
+  - Если `display_name` есть и не начинается с `mc:` → `"Instagram Direct · <display_name>"`.
+  - Иначе → `"Instagram Direct"`.
+  - Никогда не показывать `mc:*`, `subscriber_id`, `thread_key`.
+- Применить в: списке диалогов слева, шапке открытого диалога, subtitle карточки.
 
-Нужно уточнить scope (см. вопрос). Если коротко: переименовать `name` в `PROVIDERS` для тех, что точно стоит локализовать, оставив бренды как есть. Например:
+**P5. Media bubble renderer (add-only)**
 
-- `SMTP` → `Почта (SMTP)`
-- `hoster.by Cloud` → `hoster.by (облако)`
-- `Kinescope` → `Kinescope (видеохостинг)`
-- `Instagram DM (ApiX-Drive)` → `Instagram (ApiX-Drive)`
-- `ManyChat` → `ManyChat (Instagram)`
-- `Facebook` → `Facebook (скоро)`
-- `amoCRM`, `GetCourse`, `bePaid` — оставить (это бренды).
+- Новый компонент `<InstagramMessageMedia>`:
+  - `image` → `<img>` thumbnail с кликом → `MediaLightbox` (уже есть).
+  - `voice/audio` → `<audio controls>`.
+  - `video` → `<video controls>` с poster.
+  - `file` → карточка с иконкой + кнопка «Открыть».
+  - unknown + media_url → fallback карточка с кнопкой «Открыть ссылку» (НЕ сырой URL-текст).
+- В существующем bubble:
+  - если `media_url` есть → рендерить media + (опционально) текст;
+  - если text начинается с `http(s)://lookaside.fbsbx.com/` и `media_url` пуст → лечить «на лету» (legacy записи): показать как image/file fallback, не плейн-ссылкой.
 
-Но это дизайн-решение, поэтому спрошу пользователя.
+**P6. Mixed content handling**
 
-### DoD
+- text+media → text bubble сверху + media снизу.
+- media-only → только media bubble (без пустого пузыря).
+- unsupported → бейдж «Вложение недоступно» вместо «Unsupported message».
 
-1. В dropdown «Контакт-центр → Instagram» отключённый аккаунт `601477270056529` (apix_instagram_dm) НЕ показывается. Виден только `mc:305d6fa43ef5c6f8cc9602cb` (ManyChat).
-2. Старые apixdrive-сообщения сохранены в БД (regression: не удалены).
-3. Можно при необходимости переактивировать apix-инстанс через админку.
-4. Дан чёткий ответ почему «тест три» не пришёл + проверяемый чек-лист настройки ManyChat External Request.
-5. (По решению) переименованы `name` провайдеров в `PROVIDERS` без потери идентификации брендов.
+### Regression safety
+
+**P7. Legacy apixdrive**
+
+- Все изменения в RPC/UI — additive: новые поля опциональны, старый `account_name` остаётся.
+- Renderer для media срабатывает только при `media_url != null` ИЛИ если text — это валидный media URL (по pattern). Старые text-only диалоги не затрагиваются.
+
+### Финальный proof (после execute)
+
+1. Скрин Contact Center: в шапке/списке `Instagram Direct · <имя>` вместо `mc:*`.
+2. Скрин входящей картинки от Сергея — рендер preview, клик → лайтбокс.
+3. Скрин успешной отправки текста в Instagram (status `sent`, без 502).
+4. SQL-выписка из `integration_logs`: `manychat.send.response` с HTTP 200 от ManyChat.
+5. Diff-summary по файлам:
+  - `supabase/functions/manychat-inbound/index.ts` (P1, P3)
+  - `supabase/functions/instagram-admin-chat/index.ts` (P2)
+  - migration: `instagram_accounts.display_name` + RPC update (P3)
+  - `src/lib/resolveInstagramSourceLabel.ts` (new, P4)
+  - `src/components/admin/chat/InstagramMessageMedia.tsx` (new, P5)
+  - `src/components/admin/chat/MessageBubble.tsx` или эквивалент (P5, P6)
+  - инстанс-список + шапка диалога в `InboxTabContent`/Instagram-чате (P4)
+
+### DoD (cumulative)
+
+- Нигде в UI нет `mc:*`, `subscriber_id`, `thread_key`.
+- Source label единообразный во всех трёх местах.
+- Текст из Contact Center реально приходит в Instagram, в БД status=`sent`.
+- Никаких 502/runtime overlay при ошибках send — только нормализованный текст ошибки.
+- Inbound image/voice/video рендерится как media, не как URL-текст.
+- Legacy apixdrive диалоги визуально не изменились.
 
 ### Stop-condition
 
-После выполнения — короткий runtime-proof: dropdown показывает только ManyChat-аккаунт, старая история не утеряна. Финальный E2E ManyChat → IG → inbox — после настройки External Request пользователем.
+Закрываем только при выполнении всех 6 пунктов proof выше с приложенными скринами и SQL-выписками.
