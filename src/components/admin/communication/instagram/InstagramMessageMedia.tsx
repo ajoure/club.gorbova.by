@@ -126,13 +126,12 @@ function CompactAudio({ src, isVoice, onError }: { src: string; isVoice: boolean
 }
 
 // ─── Custom compact VIDEO shell (poster + play overlay until first play) ──
-function CompactVideo({ src, onError }: { src: string; onError: () => void }) {
+function CompactVideo({ src, onError, onAudioOnly }: { src: string; onError: () => void; onAudioOnly: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [started, setStarted] = useState(false);
 
   const handleStart = () => {
     setStarted(true);
-    // play after render
     requestAnimationFrame(() => {
       videoRef.current?.play().catch(() => onError());
     });
@@ -147,6 +146,12 @@ function CompactVideo({ src, onError }: { src: string; onError: () => void }) {
         preload="metadata"
         playsInline
         className="block max-h-72 max-w-full w-auto h-auto"
+        onLoadedMetadata={(e) => {
+          // mp4 audio-only (Instagram voice-notes часто .mp4) — переключаем на audio renderer
+          if (e.currentTarget.videoWidth === 0 && e.currentTarget.videoHeight === 0) {
+            onAudioOnly();
+          }
+        }}
         onError={onError}
       />
       {!started && (
