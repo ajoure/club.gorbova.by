@@ -22,7 +22,7 @@
 - **Reuse-matrix ref:** строка #6
 - **Proof:** колонка отсутствует (8 текущих колонок)
 
-### A3. `instagram_messages` extension (5 колонок add-only)
+### A3. `instagram_messages` extension (6 колонок add-only)
 - **Operations:**
   - `ADD COLUMN provider_kind text NOT NULL DEFAULT 'apixdrive' CHECK (...)`
   - `ADD COLUMN provider_message_id text`
@@ -30,13 +30,18 @@
   - `ADD COLUMN idempotency_hash text`
   - `ADD COLUMN sent_at timestamptz`
   - `ADD COLUMN delivered_at timestamptz`
-- **Indexes:**
-  - `CREATE UNIQUE INDEX … ON instagram_messages (instagram_account_id, provider_kind, provider_message_id) WHERE provider_message_id IS NOT NULL`
-  - `CREATE INDEX … ON instagram_messages (idempotency_hash) WHERE idempotency_hash IS NOT NULL`
-  - `CREATE INDEX … ON instagram_messages (thread_key) WHERE thread_key IS NOT NULL`
+- **Indexes (final state после Migration 2.1 corrective):**
+  - `uq_ig_msg_provider_message_id` UNIQUE `(instagram_account_id, provider_kind, provider_message_id) WHERE provider_message_id IS NOT NULL` — primary ingress idempotency
+  - `idx_ig_msg_idempotency_hash` `(instagram_account_id, provider_kind, idempotency_hash) WHERE idempotency_hash IS NOT NULL` — обычный partial INDEX (не UNIQUE)
+  - `idx_ig_msg_thread_key` `(instagram_account_id, thread_key, created_at DESC) WHERE thread_key IS NOT NULL`
 - **Reuse-matrix ref:** строка #6
-- **Proof:** колонки отсутствуют в 21-column current schema; индексы подтверждены через `pg_indexes`
+- **Proof:** колонки отсутствуют в 21-column current schema; индексы подтверждены через `pg_indexes` (canonical column name: `instagram_account_id`, не `account_id`)
 - **Backfill:** не требуется (29 legacy строк получают `provider_kind='apixdrive'` через DEFAULT)
+
+#### Migration 2 → 2.1 audit trail
+- **Migration 2 (2026-04-19) drift:** созданы `idx_ig_msg_manychat_provider` (scope creep, не в плане) + `uq_ig_msg_provider_idempotency` (UNIQUE вместо INDEX). UNIQUE по `provider_message_id` пропущен.
+- **Migration 2.1 (2026-04-19) remediation:** оба drift-индекса удалены, добавлены plan-aligned `idx_ig_msg_idempotency_hash` и `uq_ig_msg_provider_message_id`. Write-contract verify (Smoke A/B) пройден.
+- **Fallback A (без CONCURRENTLY)** зафиксирован как локальное исключение для Migration 2 и Migration 2.1: причины — transaction wrapper migration tool + restricted role без ownership на таблицу + малый объём (29 строк). Не переносится автоматически на Migration 3.
 
 ### A4. `instagram_contacts.provider_kind text`
 - **Operation:** `ALTER TABLE … ADD COLUMN provider_kind text NOT NULL DEFAULT 'apixdrive' CHECK (provider_kind IN ('apixdrive','manychat'))`
