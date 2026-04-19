@@ -26,6 +26,7 @@ import {
   useIntegrationMutations,
   getSmtpSettings,
 } from "@/hooks/useIntegrations";
+import { ManyChatPageSelector } from "./ManyChatPageSelector";
 
 interface AddIntegrationDialogProps {
   open: boolean;
