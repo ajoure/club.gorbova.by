@@ -5,13 +5,14 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Instagram, Send, AlertCircle, Clock, Loader2, ArrowLeft } from "lucide-react";
+import { Instagram, AlertCircle, Clock, Loader2, ArrowLeft } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { resolveInstagramSourceLabel } from "@/lib/resolveInstagramSourceLabel";
 import { InstagramMessageMedia, isMediaUrl, guessMediaTypeFromUrl } from "./InstagramMessageMedia";
+import { InstagramAttachComposer } from "./InstagramAttachComposer";
 
 interface Message {
   id: string;
@@ -290,24 +291,19 @@ export function ContactInstagramChat({
 
       {/* Input */}
       <div className="p-3 border-t border-border/20 shrink-0">
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleSend();
+        <InstagramAttachComposer
+          accountId={accountId}
+          senderId={senderId}
+          threadId={threadId}
+          text={message}
+          onTextChange={setMessage}
+          onSendText={handleSend}
+          sending={sending}
+          onMediaSent={() => {
+            queryClient.invalidateQueries({ queryKey: ["instagram-chat", accountId, senderId, threadId] });
+            queryClient.invalidateQueries({ queryKey: ["instagram-dialogs"] });
           }}
-          className="flex items-center gap-2"
-        >
-          <Input
-            className="flex-1 h-9 text-sm"
-            placeholder="Написать сообщение..."
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            disabled={sending}
-          />
-          <Button type="submit" size="icon" className="h-9 w-9 shrink-0" disabled={sending || !message.trim()}>
-            <Send className="h-4 w-4" />
-          </Button>
-        </form>
+        />
       </div>
     </div>
   );
