@@ -6089,6 +6089,48 @@ export type Database = {
         }
         Relationships: []
       }
+      manychat_diagnose_log: {
+        Row: {
+          content_type: string | null
+          headers: Json
+          http_method: string | null
+          id: string
+          metadata: Json
+          notes: string | null
+          parsed_body: Json | null
+          raw_body: string | null
+          received_at: string
+          signature_header_candidates: Json | null
+          source_ip: string | null
+        }
+        Insert: {
+          content_type?: string | null
+          headers?: Json
+          http_method?: string | null
+          id?: string
+          metadata?: Json
+          notes?: string | null
+          parsed_body?: Json | null
+          raw_body?: string | null
+          received_at?: string
+          signature_header_candidates?: Json | null
+          source_ip?: string | null
+        }
+        Update: {
+          content_type?: string | null
+          headers?: Json
+          http_method?: string | null
+          id?: string
+          metadata?: Json
+          notes?: string | null
+          parsed_body?: Json | null
+          raw_body?: string | null
+          received_at?: string
+          signature_header_candidates?: Json | null
+          source_ip?: string | null
+        }
+        Relationships: []
+      }
       marketing_insights: {
         Row: {
           content: string
