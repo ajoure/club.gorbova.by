@@ -19,6 +19,7 @@ import { Instagram, Search, MessageSquare, ArrowLeft, RefreshCw, Check } from "l
 import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
+import { resolveInstagramAccountDisplayName } from "@/lib/resolveInstagramSourceLabel";
 
 interface InstagramDialog {
   thread_key: string;
@@ -237,11 +238,16 @@ export function InstagramInboxView() {
               <SelectValue placeholder="Аккаунт" />
             </SelectTrigger>
             <SelectContent>
-              {accounts.map((acc: any) => (
-                <SelectItem key={acc.id} value={acc.id} className="text-xs">
-                  {acc.instagram_page_id || acc.id.slice(0, 8)}
-                </SelectItem>
-              ))}
+              {accounts.map((acc: any) => {
+                const label =
+                  resolveInstagramAccountDisplayName(acc) ||
+                  "Instagram Direct";
+                return (
+                  <SelectItem key={acc.id} value={acc.id} className="text-xs">
+                    {label}
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
         )}
@@ -334,11 +340,17 @@ export function InstagramInboxView() {
                         <span className="text-xs font-semibold truncate flex-1 min-w-0 whitespace-nowrap">
                           {displayName}
                         </span>
-                        {dialog.account_name && (
-                          <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5 shrink-0 font-normal text-muted-foreground border-border/40 whitespace-nowrap max-w-[100px] truncate">
-                            {dialog.account_name}
-                          </Badge>
-                        )}
+                        {(() => {
+                          const label = resolveInstagramAccountDisplayName({
+                            account_name: dialog.account_name,
+                          });
+                          if (!label) return null;
+                          return (
+                            <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5 shrink-0 font-normal text-muted-foreground border-border/40 whitespace-nowrap max-w-[100px] truncate">
+                              {label}
+                            </Badge>
+                          );
+                        })()}
                         <span className="text-[10px] text-muted-foreground shrink-0 whitespace-nowrap">
                           {formatDistanceToNow(new Date(dialog.last_at), { addSuffix: false, locale: ru })}
                         </span>
