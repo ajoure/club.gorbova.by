@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { FileText, ExternalLink, Image as ImageIcon, Play, Mic, Download, X, Loader2 } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { FileText, ExternalLink, Image as ImageIcon, Play, Pause, Mic, Download, X, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { supabase } from "@/integrations/supabase/client";
@@ -12,9 +12,6 @@ interface InstagramMessageMediaProps {
   messageId?: string;
 }
 
-/**
- * Извлекает «человеческое» имя файла из URL.
- */
 function deriveFileName(url: string, type: string): string {
   try {
     const u = new URL(url);
@@ -29,13 +26,15 @@ function deriveFileName(url: string, type: string): string {
   return "Вложение";
 }
 
+function formatTime(sec: number): string {
+  if (!isFinite(sec) || sec < 0) return "0:00";
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
 const UNSTABLE_HOST_RE = /(lookaside\.fbsbx\.com|fbcdn\.net|cdninstagram\.com)/i;
 
-/**
- * Lazy server-side rehost для нестабильных Instagram CDN URL.
- * Ставим в очередь только при реальной ошибке playback или для audio/video,
- * где browser обычно не открывает напрямую signed lookaside ссылки.
- */
 async function rehostMedia(
   messageId: string | undefined,
   sourceUrl: string,
@@ -55,16 +54,117 @@ async function rehostMedia(
   }
 }
 
-/**
- * Рендерит медиа-вложение Instagram/ManyChat в чат-пузыре.
- *
- * PATCH: Inbound media playback fix.
- *  - audio/video теперь ВСЕГДА проходит через rehost (lookaside lookup-only headers
- *    ломают <audio>/<video>) → inline player работает стабильно;
- *  - image: остаётся inline lightbox; на 404/CORS — пробуем rehost;
- *  - file: карточка с download.
- *  - fallback "Открыть" — только если inline-play реально невозможен.
- */
+// ─── Custom compact AUDIO player (Instagram-like) ──────────────────────
+function CompactAudio({ src, isVoice, onError }: { src: string; isVoice: boolean; onError: () => void }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+
+  const togglePlay = () => {
+    const el = audioRef.current;
+    if (!el) return;
+    if (playing) {
+      el.pause();
+    } else {
+      el.play().catch(() => onError());
+    }
+  };
+
+  const onSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    const el = audioRef.current;
+    if (!el || !duration) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = (e.clientX - rect.left) / rect.width;
+    el.currentTime = Math.max(0, Math.min(duration, ratio * duration));
+  };
+
+  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+
+  return (
+    <div className="flex items-center gap-2.5 rounded-2xl bg-muted/60 px-2.5 py-1.5 min-w-[200px] max-w-[280px]">
+      <audio
+        ref={audioRef}
+        src={src}
+        preload="metadata"
+        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 0)}
+        onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => {
+          setPlaying(false);
+          setCurrentTime(0);
+        }}
+        onError={onError}
+        className="hidden"
+      />
+      <button
+        type="button"
+        onClick={togglePlay}
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+        aria-label={playing ? "Пауза" : "Воспроизвести"}
+      >
+        {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 ml-0.5" />}
+      </button>
+      <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+        <div
+          className="relative h-1 w-full cursor-pointer rounded-full bg-foreground/15 overflow-hidden"
+          onClick={onSeek}
+        >
+          <div
+            className="absolute left-0 top-0 h-full bg-primary rounded-full transition-[width] duration-100"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+        <div className="flex justify-between text-[10px] text-muted-foreground tabular-nums leading-none">
+          <span>{formatTime(currentTime)}</span>
+          <span>{isVoice && !duration ? "voice" : formatTime(duration)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Custom compact VIDEO shell (poster + play overlay until first play) ──
+function CompactVideo({ src, onError }: { src: string; onError: () => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [started, setStarted] = useState(false);
+
+  const handleStart = () => {
+    setStarted(true);
+    // play after render
+    requestAnimationFrame(() => {
+      videoRef.current?.play().catch(() => onError());
+    });
+  };
+
+  return (
+    <div className="relative inline-block max-w-[280px] rounded-2xl overflow-hidden bg-black/90">
+      <video
+        ref={videoRef}
+        src={src}
+        controls={started}
+        preload="metadata"
+        playsInline
+        className="block max-h-72 max-w-full w-auto h-auto"
+        onError={onError}
+      />
+      {!started && (
+        <button
+          type="button"
+          onClick={handleStart}
+          className="absolute inset-0 flex items-center justify-center bg-black/10 hover:bg-black/20 transition-colors group"
+          aria-label="Воспроизвести видео"
+        >
+          <span className="flex h-12 w-12 items-center justify-center rounded-full bg-background/90 text-foreground shadow-lg group-hover:scale-105 transition-transform">
+            <Play className="h-5 w-5 ml-0.5" fill="currentColor" />
+          </span>
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function InstagramMessageMedia({
   url,
   type,
@@ -78,15 +178,11 @@ export function InstagramMessageMedia({
   const [resolvedUrl, setResolvedUrl] = useState<string>(url);
   const [rehosting, setRehosting] = useState(false);
 
-  // PATCH: URL-based override — если media_type ошибочный (например, "image" для .mp4),
-  // но URL явно указывает на video/audio — рендерим как настоящий тип.
-  // Защита для случаев, когда backfill/rehost ещё не отработали.
   const lowerUrl = (url || "").toLowerCase();
   const urlSaysVideo = /\.(mp4|mov|webm|m4v)(?:[?#]|$)/i.test(lowerUrl);
   const urlSaysAudio = /\.(mp3|m4a|ogg|opus|wav|aac)(?:[?#]|$)/i.test(lowerUrl);
 
   const rawT = (type || "").toLowerCase();
-  // Effective type: URL extension wins over заявленный media_type.
   const t = urlSaysVideo ? "video" : urlSaysAudio ? "audio" : rawT;
 
   const isImage = t === "image" || t.startsWith("image/");
@@ -95,7 +191,6 @@ export function InstagramMessageMedia({
   const isAudio = t === "audio" || isVoice || t.startsWith("audio/");
   const isUnstable = UNSTABLE_HOST_RE.test(url);
 
-  // Eager rehost для audio/video с нестабильных CDN — иначе browser не сможет проиграть.
   useEffect(() => {
     setResolvedUrl(url);
     setImgError(false);
@@ -111,9 +206,8 @@ export function InstagramMessageMedia({
     }
   }, [url, isAudio, isVideo, isUnstable, messageId]);
 
-  // Lazy rehost при ошибке image/video → пробуем заменить URL.
   const tryLazyRehost = async (kind: "image" | "video" | "audio") => {
-    if (resolvedUrl !== url) return; // уже rehosted и снова сломалось — не зацикливаем
+    if (resolvedUrl !== url) return;
     setRehosting(true);
     const stable = await rehostMedia(messageId, url, kind);
     setRehosting(false);
@@ -133,7 +227,7 @@ export function InstagramMessageMedia({
           type="button"
           onClick={() => setLightboxOpen(true)}
           className={cn(
-            "group block max-w-[260px] rounded-lg overflow-hidden border border-border/30 hover:border-border/60 transition-colors",
+            "group block max-w-[260px] rounded-2xl overflow-hidden",
             className,
           )}
           aria-label="Открыть изображение"
@@ -142,7 +236,7 @@ export function InstagramMessageMedia({
             src={resolvedUrl}
             alt="Вложение"
             loading="lazy"
-            className="w-full max-h-64 object-cover group-hover:opacity-90 transition-opacity"
+            className="block w-auto h-auto max-w-full max-h-72 object-cover group-hover:opacity-95 transition-opacity"
             onError={() => {
               if (resolvedUrl === url && isUnstable) {
                 void tryLazyRehost("image");
@@ -186,76 +280,56 @@ export function InstagramMessageMedia({
   if (isVideo && !videoError) {
     if (rehosting && resolvedUrl === url) {
       return (
-        <div className={cn("flex items-center gap-2 rounded-lg border border-border/40 bg-background/60 px-3 py-2 text-xs", className)}>
-          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        <div className={cn("inline-flex items-center gap-2 rounded-2xl bg-muted/60 px-3 py-2 text-xs", className)}>
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
           <span className="text-muted-foreground">Готовим видео…</span>
         </div>
       );
     }
     return (
-      <video
-        controls
-        preload="metadata"
-        playsInline
-        className={cn("rounded-lg max-h-64 max-w-[280px] border border-border/30 bg-black", className)}
-        onError={() => {
-          if (resolvedUrl === url && isUnstable) {
-            void tryLazyRehost("video");
-          } else {
-            setVideoError(true);
-          }
-        }}
-      >
-        <source src={resolvedUrl} />
-      </video>
+      <div className={className}>
+        <CompactVideo
+          src={resolvedUrl}
+          onError={() => {
+            if (resolvedUrl === url && isUnstable) {
+              void tryLazyRehost("video");
+            } else {
+              setVideoError(true);
+            }
+          }}
+        />
+      </div>
     );
   }
 
   // ─── AUDIO / VOICE ──────────────────────────────────────────────
   if (isAudio && !audioError) {
+    if (rehosting && resolvedUrl === url) {
+      return (
+        <div className={cn("inline-flex items-center gap-2 rounded-2xl bg-muted/60 px-3 py-2 text-xs", className)}>
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+          <span className="text-muted-foreground">Готовим аудио…</span>
+        </div>
+      );
+    }
     return (
-      <div
-        className={cn(
-          "flex items-center gap-2 rounded-lg border border-border/40 bg-background/60 px-3 py-2 max-w-[320px]",
-          className,
-        )}
-      >
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-          {rehosting && resolvedUrl === url ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Mic className="h-4 w-4" />
-          )}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-xs font-medium text-foreground/80 mb-1">
-            {isVoice ? "Голосовое сообщение" : "Аудио"}
-          </div>
-          {rehosting && resolvedUrl === url ? (
-            <div className="text-[11px] text-muted-foreground">Готовим аудио…</div>
-          ) : (
-            <audio
-              controls
-              preload="metadata"
-              className="w-full h-8"
-              onError={() => {
-                if (resolvedUrl === url && isUnstable) {
-                  void tryLazyRehost("audio");
-                } else {
-                  setAudioError(true);
-                }
-              }}
-            >
-              <source src={resolvedUrl} />
-            </audio>
-          )}
-        </div>
+      <div className={className}>
+        <CompactAudio
+          src={resolvedUrl}
+          isVoice={isVoice}
+          onError={() => {
+            if (resolvedUrl === url && isUnstable) {
+              void tryLazyRehost("audio");
+            } else {
+              setAudioError(true);
+            }
+          }}
+        />
       </div>
     );
   }
 
   // ─── FILE / UNKNOWN / FALLBACK ──────────────────────────────────
-  // Сюда попадаем только если inline-play реально не удался.
   const Icon = isImage ? ImageIcon : isVideo ? Play : isAudio ? Mic : FileText;
   const fileName = deriveFileName(resolvedUrl, t);
   const playFailedHint = imgError || videoError || audioError;
@@ -266,29 +340,24 @@ export function InstagramMessageMedia({
       rel="noopener noreferrer"
       download
       className={cn(
-        "inline-flex items-center gap-2 rounded-lg border border-border/40 bg-background/60 px-3 py-2 text-xs hover:bg-background/90 transition-colors max-w-[280px] group",
+        "inline-flex items-center gap-2.5 rounded-2xl bg-muted/60 px-3 py-2 text-xs hover:bg-muted/80 transition-colors max-w-[280px] group",
         className,
       )}
     >
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary transition-colors">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background text-muted-foreground group-hover:text-primary transition-colors">
         <Icon className="h-4 w-4" />
       </div>
       <div className="flex-1 min-w-0">
-        <span className="block truncate font-medium">{fileName}</span>
-        {playFailedHint && (
-          <span className="block text-[10px] text-muted-foreground">
-            Не удалось встроенно проиграть — открыть в новой вкладке
-          </span>
-        )}
+        <span className="block truncate font-medium text-foreground">{fileName}</span>
+        <span className="block text-[10px] text-muted-foreground">
+          {playFailedHint ? "Открыть в новой вкладке" : "Файл"}
+        </span>
       </div>
       <Download className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
     </a>
   );
 }
 
-/**
- * Проверка: является ли строка media-URL.
- */
 const MEDIA_URL_RE = /^https?:\/\/(lookaside\.fbsbx\.com|scontent[\w.-]*\.fbcdn\.net|cdninstagram\.com)|^https?:\/\/\S+\.(jpe?g|png|gif|webp|mp4|mov|webm|mp3|m4a|ogg|wav|pdf|docx?|xlsx?|pptx?|zip)(?:[?#]|$)/i;
 
 export function isMediaUrl(s: string | null | undefined): boolean {
@@ -296,9 +365,6 @@ export function isMediaUrl(s: string | null | undefined): boolean {
   return MEDIA_URL_RE.test(s.trim());
 }
 
-/**
- * Угадать тип media из URL (fallback render-layer для legacy записей).
- */
 export function guessMediaTypeFromUrl(url: string): string {
   const lower = url.toLowerCase();
   if (/\.(jpe?g|png|gif|webp|bmp|heic)(?:[?#]|$)/i.test(lower)) return "image";
