@@ -4257,6 +4257,7 @@ export type Database = {
           instagram_page_id: string | null
           integration_instance_id: string
           is_active: boolean
+          provider_kind: string
           status: string
           updated_at: string
         }
@@ -4267,6 +4268,7 @@ export type Database = {
           instagram_page_id?: string | null
           integration_instance_id: string
           is_active?: boolean
+          provider_kind?: string
           status?: string
           updated_at?: string
         }
@@ -4277,6 +4279,7 @@ export type Database = {
           instagram_page_id?: string | null
           integration_instance_id?: string
           is_active?: boolean
+          provider_kind?: string
           status?: string
           updated_at?: string
         }
@@ -4300,6 +4303,7 @@ export type Database = {
           instagram_user_id: string
           instagram_username: string | null
           profile_id: string | null
+          provider_kind: string
           updated_at: string
         }
         Insert: {
@@ -4311,6 +4315,7 @@ export type Database = {
           instagram_user_id: string
           instagram_username?: string | null
           profile_id?: string | null
+          provider_kind?: string
           updated_at?: string
         }
         Update: {
@@ -4322,6 +4327,7 @@ export type Database = {
           instagram_user_id?: string
           instagram_username?: string | null
           profile_id?: string | null
+          provider_kind?: string
           updated_at?: string
         }
         Relationships: [
@@ -4344,10 +4350,12 @@ export type Database = {
       instagram_messages: {
         Row: {
           created_at: string
+          delivered_at: string | null
           direction: string
           error_message: string | null
           external_message_id: string | null
           id: string
+          idempotency_hash: string | null
           ig_thread_id: string | null
           instagram_account_id: string
           is_read: boolean
@@ -4355,6 +4363,8 @@ export type Database = {
           media_url: string | null
           message_text: string | null
           peer_id: string
+          provider_kind: string
+          provider_message_id: string | null
           raw_payload: Json | null
           read_at: string | null
           recipient_id: string | null
@@ -4362,15 +4372,19 @@ export type Database = {
           sender_name: string | null
           sending_at: string | null
           sending_lock_id: string | null
+          sent_at: string | null
           sent_by_admin: string | null
           status: string
+          thread_key: string | null
         }
         Insert: {
           created_at?: string
+          delivered_at?: string | null
           direction: string
           error_message?: string | null
           external_message_id?: string | null
           id?: string
+          idempotency_hash?: string | null
           ig_thread_id?: string | null
           instagram_account_id: string
           is_read?: boolean
@@ -4378,6 +4392,8 @@ export type Database = {
           media_url?: string | null
           message_text?: string | null
           peer_id: string
+          provider_kind?: string
+          provider_message_id?: string | null
           raw_payload?: Json | null
           read_at?: string | null
           recipient_id?: string | null
@@ -4385,15 +4401,19 @@ export type Database = {
           sender_name?: string | null
           sending_at?: string | null
           sending_lock_id?: string | null
+          sent_at?: string | null
           sent_by_admin?: string | null
           status?: string
+          thread_key?: string | null
         }
         Update: {
           created_at?: string
+          delivered_at?: string | null
           direction?: string
           error_message?: string | null
           external_message_id?: string | null
           id?: string
+          idempotency_hash?: string | null
           ig_thread_id?: string | null
           instagram_account_id?: string
           is_read?: boolean
@@ -4401,6 +4421,8 @@ export type Database = {
           media_url?: string | null
           message_text?: string | null
           peer_id?: string
+          provider_kind?: string
+          provider_message_id?: string | null
           raw_payload?: Json | null
           read_at?: string | null
           recipient_id?: string | null
@@ -4408,8 +4430,10 @@ export type Database = {
           sender_name?: string | null
           sending_at?: string | null
           sending_lock_id?: string | null
+          sent_at?: string | null
           sent_by_admin?: string | null
           status?: string
+          thread_key?: string | null
         }
         Relationships: [
           {
@@ -4578,6 +4602,7 @@ export type Database = {
           alias: string
           category: string
           config: Json | null
+          config_secrets: Json
           created_at: string
           error_message: string | null
           id: string
@@ -4592,6 +4617,7 @@ export type Database = {
           alias: string
           category: string
           config?: Json | null
+          config_secrets?: Json
           created_at?: string
           error_message?: string | null
           id?: string
@@ -4606,6 +4632,7 @@ export type Database = {
           alias?: string
           category?: string
           config?: Json | null
+          config_secrets?: Json
           created_at?: string
           error_message?: string | null
           id?: string
@@ -13506,10 +13533,12 @@ export type Database = {
         Args: { p_account_id: string; p_limit: number; p_lock_id: string }
         Returns: {
           created_at: string
+          delivered_at: string | null
           direction: string
           error_message: string | null
           external_message_id: string | null
           id: string
+          idempotency_hash: string | null
           ig_thread_id: string | null
           instagram_account_id: string
           is_read: boolean
@@ -13517,6 +13546,8 @@ export type Database = {
           media_url: string | null
           message_text: string | null
           peer_id: string
+          provider_kind: string
+          provider_message_id: string | null
           raw_payload: Json | null
           read_at: string | null
           recipient_id: string | null
@@ -13524,8 +13555,10 @@ export type Database = {
           sender_name: string | null
           sending_at: string | null
           sending_lock_id: string | null
+          sent_at: string | null
           sent_by_admin: string | null
           status: string
+          thread_key: string | null
         }[]
         SetofOptions: {
           from: "*"
