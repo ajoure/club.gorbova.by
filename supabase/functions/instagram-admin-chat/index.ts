@@ -358,6 +358,7 @@ async function sendReply(supabase: any, body: any, adminUserId: string) {
       accountRow.integration_instance_id,
       sender_id,
       message_text,
+      msg.id,
     );
 
     const finalStatus = sendResult.ok ? 'delivered' : 'failed';
@@ -365,29 +366,10 @@ async function sendReply(supabase: any, body: any, adminUserId: string) {
       .from('instagram_messages')
       .update({
         status: finalStatus,
-        error_message: sendResult.ok ? null : (sendResult.error || 'manychat send failed'),
+        error_message: sendResult.ok ? null : (sendResult.user_error || sendResult.error || 'manychat send failed'),
         provider_message_id: sendResult.provider_message_id || null,
       })
       .eq('id', msg.id);
-
-    // Integration log (non-blocking)
-    try {
-      await supabase.from('integration_logs').insert({
-        instance_id: accountRow.integration_instance_id,
-        event_type: 'manychat.send_content',
-        payload_meta: {
-          provider: 'manychat',
-          channel: 'instagram',
-          subscriber_id: sender_id,
-          message_id: msg.id,
-          status: finalStatus,
-        },
-        result: sendResult.ok ? 'success' : 'error',
-        error_message: sendResult.ok ? null : sendResult.error,
-      });
-    } catch (e) {
-      console.error('Failed to log manychat send:', e);
-    }
 
     // Audit log
     await supabase.from('audit_logs').insert({
@@ -404,10 +386,19 @@ async function sendReply(supabase: any, body: any, adminUserId: string) {
       },
     });
 
+    // payment-error-handling standard: всегда HTTP 200, нормализованный JSON.
+    // UI не должен ловить runtime overlay/502 на бизнес-ошибки провайдера.
     if (!sendResult.ok) {
       return new Response(
-        JSON.stringify({ ok: false, message_id: msg.id, status: 'failed', error: sendResult.error }),
-        { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        JSON.stringify({
+          ok: false,
+          fallback: true,
+          message_id: msg.id,
+          status: 'failed',
+          error_code: sendResult.error_code || 'manychat_send_failed',
+          error: sendResult.user_error || sendResult.error || 'Не удалось отправить сообщение',
+        }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
       );
     }
 
