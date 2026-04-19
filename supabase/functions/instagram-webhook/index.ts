@@ -367,6 +367,21 @@ Deno.serve(async (req) => {
     }
   }
 
+  // PATCH: priority detection for media_type — НЕ доверять blindly значению от ManyChat.
+  // Если URL имеет явное video/audio расширение, тип media_type override-им,
+  // даже если ManyChat прислал media_type='image'.
+  if (messageMediaUrl) {
+    const lower = messageMediaUrl.toLowerCase();
+    if (/\.(mp4|mov|webm|m4v)(?:[?#]|$)/i.test(lower)) {
+      messageMediaType = 'video';
+    } else if (/\.(mp3|m4a|ogg|opus|wav|aac)(?:[?#]|$)/i.test(lower)) {
+      messageMediaType = 'audio';
+    } else if (/\.(pdf|docx?|xlsx?|pptx?|zip)(?:[?#]|$)/i.test(lower)) {
+      messageMediaType = 'file';
+    }
+    // image и неизвестные типы — оставляем как есть (rehost потом уточнит по Content-Type)
+  }
+
   // Insert message with peer_id
   const { data: insertedMsg, error: msgErr } = await supabase
     .from('instagram_messages')

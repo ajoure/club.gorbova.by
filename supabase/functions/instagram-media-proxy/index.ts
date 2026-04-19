@@ -141,8 +141,43 @@ Deno.serve(async (req) => {
       );
     }
 
-    const contentType =
-      fetchRes.headers.get('content-type') || 'application/octet-stream';
+    // PATCH: priority for content-type detection:
+    //   1) HTTP Content-Type header (если адекватный, не octet-stream)
+    //   2) extension URL (.mp4/.mov/.webm/.mp3/.m4a/.ogg/.wav/.jpg/.png/...)
+    //   3) fallback application/octet-stream
+    const headerCT = (fetchRes.headers.get('content-type') || '').toLowerCase();
+    const headerCTUseful =
+      headerCT && !headerCT.includes('octet-stream') && !headerCT.includes('binary');
+
+    function ctFromUrlExt(u: string): string | null {
+      try {
+        const p = new URL(u).pathname.toLowerCase();
+        const m = p.match(/\.([a-z0-9]{2,5})(?:$|[?#])/);
+        if (!m) return null;
+        switch (m[1]) {
+          case 'mp4':  return 'video/mp4';
+          case 'mov':  return 'video/quicktime';
+          case 'webm': return 'video/webm';
+          case 'm4v':  return 'video/x-m4v';
+          case 'mp3':  return 'audio/mpeg';
+          case 'm4a':  return 'audio/mp4';
+          case 'ogg':  return 'audio/ogg';
+          case 'opus': return 'audio/ogg';
+          case 'wav':  return 'audio/wav';
+          case 'aac':  return 'audio/aac';
+          case 'jpg':
+          case 'jpeg': return 'image/jpeg';
+          case 'png':  return 'image/png';
+          case 'gif':  return 'image/gif';
+          case 'webp': return 'image/webp';
+          case 'pdf':  return 'application/pdf';
+          default:     return null;
+        }
+      } catch { return null; }
+    }
+    const urlCT = ctFromUrlExt(source_url);
+    const contentType = headerCTUseful ? headerCT : (urlCT || headerCT || 'application/octet-stream');
+
     const arrayBuf = await fetchRes.arrayBuffer();
     const bytes = arrayBuf.byteLength;
 
@@ -192,7 +227,9 @@ Deno.serve(async (req) => {
     }
 
     const stableUrl = signed.signedUrl;
-    const finalMediaType = requested_media_type || inferMediaType(contentType);
+    // PATCH: media_type ALWAYS derived from real contentType (которому мы доверяем),
+    // НЕ от requested_media_type — ManyChat шлёт "image" для всего подряд.
+    const finalMediaType = inferMediaType(contentType);
 
     // ── Patch back into instagram_messages: media_url + raw_payload.rehosted_media_url
     if (message_id) {
