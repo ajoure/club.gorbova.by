@@ -179,6 +179,7 @@ export function InstagramMessageMedia({
   const [imgError, setImgError] = useState(false);
   const [videoError, setVideoError] = useState(false);
   const [audioError, setAudioError] = useState(false);
+  const [forceAudio, setForceAudio] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [resolvedUrl, setResolvedUrl] = useState<string>(url);
   const [rehosting, setRehosting] = useState(false);
