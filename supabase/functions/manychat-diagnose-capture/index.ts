@@ -141,7 +141,7 @@ Deno.serve(async (req: Request) => {
       auth: { persistSession: false },
     });
     const { data: roleCheck } = await svc.rpc("has_role", {
-      _user_id: claims.claims.sub,
+      _user_id: userData.user.id,
       _role: "superadmin",
     });
     if (!roleCheck) {
