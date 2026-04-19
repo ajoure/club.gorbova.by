@@ -259,25 +259,37 @@ export function ContactInstagramChat({
             // Если text — это media URL и мы его отрендерим как media, не показываем как текст.
             const showText = msg.message_text && msg.message_text !== realMediaUrl;
 
+            const mediaOnly = !!realMediaUrl && !showText;
             return (
               <div
                 key={msg.id}
                 className={cn(
-                  "max-w-[75%] rounded-xl px-3 py-2",
-                  msg.direction === "outbound"
-                    ? "ml-auto bg-primary/10 border border-primary/20"
-                    : "mr-auto bg-muted/50 border border-border/30"
+                  "max-w-[75%] flex flex-col",
+                  msg.direction === "outbound" ? "ml-auto items-end" : "mr-auto items-start",
                 )}
               >
                 {realMediaUrl && (
-                  <div className={cn(showText && "mb-2")}>
-                    <InstagramMessageMedia url={realMediaUrl} type={realMediaType} messageId={msg.id} />
-                  </div>
+                  <InstagramMessageMedia url={realMediaUrl} type={realMediaType} messageId={msg.id} />
                 )}
                 {showText && (
-                  <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
+                  <div
+                    className={cn(
+                      "rounded-2xl px-3 py-2",
+                      realMediaUrl && "mt-1",
+                      msg.direction === "outbound"
+                        ? "bg-primary/10 border border-primary/20"
+                        : "bg-muted/50 border border-border/30",
+                    )}
+                  >
+                    <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
+                  </div>
                 )}
-                <div className="flex items-center justify-between mt-1 gap-2">
+                <div
+                  className={cn(
+                    "flex items-center gap-2 mt-1 px-1",
+                    msg.direction === "outbound" ? "justify-end" : "justify-start",
+                  )}
+                >
                   <span className="text-[10px] text-muted-foreground">
                     {format(new Date(msg.created_at), "HH:mm", { locale: ru })}
                   </span>
