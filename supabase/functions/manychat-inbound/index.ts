@@ -182,6 +182,15 @@ async function normalizePayload(body: any): Promise<NormalizedInbound | { error:
     subscriber?.username,
   );
 
+  // Avatar: ManyChat присылает в `subscriber.profile_pic`. Безопасно — пишем только если URL валидный.
+  const rawAvatar = pickString(
+    subscriber?.profile_pic,
+    subscriber?.profile_pic_url,
+    body.profile_pic,
+    body.avatar_url,
+  );
+  const avatar_url = rawAvatar && /^https?:\/\//i.test(rawAvatar) ? rawAvatar : null;
+
   const ig_thread_id = pickString(body.ig_thread_id, body.thread_id);
   const thread_key = pickString(body.thread_key, ig_thread_id, sender_id);
 
@@ -202,6 +211,7 @@ async function normalizePayload(body: any): Promise<NormalizedInbound | { error:
     external_message_id,
     sender_id,
     sender_name,
+    avatar_url,
     message_text,
     media_url,
     media_type,
