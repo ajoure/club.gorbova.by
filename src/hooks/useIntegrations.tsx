@@ -50,7 +50,16 @@ export interface ProviderConfig {
 export interface ProviderField {
   key: string;
   label: string;
-  type: "text" | "password" | "email" | "url" | "select" | "checkbox" | "textarea";
+  type:
+    | "text"
+    | "password"
+    | "email"
+    | "url"
+    | "select"
+    | "checkbox"
+    | "textarea"
+    | "manychat_page_select"
+    | "hidden";
   required?: boolean;
   placeholder?: string;
   options?: { value: string; label: string }[];
