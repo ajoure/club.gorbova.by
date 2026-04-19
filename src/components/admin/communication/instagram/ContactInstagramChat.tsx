@@ -219,13 +219,9 @@ export function ContactInstagramChat({
           <p className="text-sm font-semibold truncate">{senderName}</p>
           <p className="text-[10px] text-muted-foreground flex items-center gap-1 truncate">
             <Instagram className="h-3 w-3 shrink-0" />
-            <span>Instagram Direct</span>
-            {accountName && (
-              <>
-                <span className="mx-0.5">·</span>
-                <span className="truncate">{accountName}</span>
-              </>
-            )}
+            <span className="truncate">
+              {resolveInstagramSourceLabel({ display_name: accountName, account_name: accountName })}
+            </span>
           </p>
         </div>
       </div>
