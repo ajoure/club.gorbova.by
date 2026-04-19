@@ -500,36 +500,45 @@ async function sendViaManyChat(
   const isOutside24h = (m: string) =>
     /without a message tag/i.test(m) || /more than 24 hours/i.test(m) || /last interaction was over/i.test(m);
   const isOutside7d = (m: string) =>
-    /outside.*(allowed|messaging) window/i.test(m) || /more than 7 days/i.test(m) || /human.?agent/i.test(m);
+    /outside.*(allowed|messaging) window/i.test(m) || /more than 7 days/i.test(m);
+  const isValidationError = (status: number, m: string) =>
+    status === 422 || /validation error/i.test(m);
 
-  // Attempt 1: без тега (24h окно)
-  const r = await callManychat(buildPayload());
-  if (r.raw === 'timeout') return { ok: false, error: 'manychat send timeout (10s)' };
+  const tryOnce = async (tag?: string) => {
+    const r = await callManychat(buildPayload(tag));
+    const msg = r.parsed?.message || r.parsed?.error?.message || r.parsed?.error || r.raw || `HTTP ${r.status}`;
+    const fullDump = r.parsed ? JSON.stringify(r.parsed).slice(0, 500) : (r.raw || '');
+    console.log('[manychat:sendContent]', { tag: tag || 'none', status: r.status, httpOk: r.httpOk, msg, body: fullDump });
+    return { r, msg, fullDump };
+  };
 
-  const msg1 = r.parsed?.message || r.parsed?.error || r.raw || `HTTP ${r.status}`;
-  if (!r.httpOk && isOutside24h(String(msg1))) {
-    // Attempt 2: HUMAN_AGENT (окно 7 дней для manual replies)
-    const r2 = await callManychat(buildPayload('HUMAN_AGENT'));
-    if (r2.raw === 'timeout') return { ok: false, error: 'manychat send timeout (10s)' };
-    if (r2.httpOk && (!r2.parsed?.status || r2.parsed.status === 'success')) {
-      const pid = r2.parsed?.data?.message_id || r2.parsed?.data?.id || r2.parsed?.message_id || null;
+  // Attempt 1: без тега (24h standard reply window)
+  const a1 = await tryOnce();
+  if (a1.r.raw === 'timeout') return { ok: false, error: 'manychat send timeout (10s)' };
+  if (a1.r.httpOk && (!a1.r.parsed?.status || a1.r.parsed.status === 'success')) {
+    const pid = a1.r.parsed?.data?.message_id || a1.r.parsed?.data?.id || a1.r.parsed?.message_id || null;
+    return { ok: true, provider_message_id: pid };
+  }
+
+  const needsTagRetry =
+    isOutside24h(String(a1.msg)) ||
+    isValidationError(a1.r.status, String(a1.msg));
+
+  if (needsTagRetry) {
+    // Attempt 2: HUMAN_AGENT (7-day window for manual replies — IG/FB)
+    const a2 = await tryOnce('HUMAN_AGENT');
+    if (a2.r.raw === 'timeout') return { ok: false, error: 'manychat send timeout (10s)' };
+    if (a2.r.httpOk && (!a2.r.parsed?.status || a2.r.parsed.status === 'success')) {
+      const pid = a2.r.parsed?.data?.message_id || a2.r.parsed?.data?.id || a2.r.parsed?.message_id || null;
       return { ok: true, provider_message_id: pid };
     }
-    const msg2 = r2.parsed?.message || r2.parsed?.error || r2.raw || `HTTP ${r2.status}`;
-    if (isOutside7d(String(msg2)) || isOutside24h(String(msg2))) {
-      return { ok: false, error: 'Окно ответа истекло: подписчик не писал больше 7 дней. Meta запрещает отправку, пока не придёт новое входящее сообщение.' };
+    if (isOutside7d(String(a2.msg)) || isOutside24h(String(a2.msg))) {
+      return { ok: false, error: 'Окно ответа истекло: подписчик не писал больше 7 дней. Meta запрещает отправку до нового входящего сообщения.' };
     }
-    return { ok: false, error: `manychat http error: ${msg2}` };
+    return { ok: false, error: `manychat http error: ${a2.msg} | dump: ${a2.fullDump}` };
   }
 
-  if (!r.httpOk) return { ok: false, error: `manychat http error: ${msg1}` };
-  if (r.parsed?.status && r.parsed.status !== 'success') {
-    return { ok: false, error: `manychat api error: ${r.parsed?.message || 'unknown'}` };
-  }
-
-  const providerMsgId =
-    r.parsed?.data?.message_id || r.parsed?.data?.id || r.parsed?.message_id || null;
-  return { ok: true, provider_message_id: providerMsgId };
+  return { ok: false, error: `manychat http error: ${a1.msg} | dump: ${a1.fullDump}` };
 }
 
 async function markRead(supabase: any, body: any) {
