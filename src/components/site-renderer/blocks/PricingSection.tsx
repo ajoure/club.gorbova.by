@@ -19,11 +19,21 @@ export function PricingSection({ content, product, tariffs }: PricingSectionProp
   const title = (content.title as string) || undefined;
   const subtitle = (content.subtitle as string) || undefined;
 
+  // Filter tariffs by mode. Backward-compat: missing mode === 'all'.
+  const mode = (content.tariff_filter_mode as "all" | "selected" | undefined) ?? "all";
+  const allowedIds = (content.tariff_ids as string[] | undefined) ?? [];
+  const filteredTariffs =
+    mode === "selected"
+      ? tariffs.filter((t) => allowedIds.includes(t.id)) // preserves source order; silently drops stale IDs
+      : tariffs;
+
+  if (filteredTariffs.length === 0) return null;
+
   return (
     <section id="tariffs" className="py-12 px-6">
       <UniversalPricingSection
         product={product}
-        tariffs={tariffs}
+        tariffs={filteredTariffs}
         sectionTitle={title}
         sectionSubtitle={subtitle}
       />
