@@ -73,6 +73,9 @@ import { LiveEventExportButtons } from "@/components/live/LiveEventExportButtons
 import { RoomLifecycleActions } from "@/components/live/RoomLifecycleActions";
 import { useActiveParticipants } from "@/hooks/useActiveParticipants";
 import { parseRoomState, getRoomStateBadgeVM, type RoomState } from "@/lib/liveRoomLifecycle";
+import { ColumnSettings } from "@/components/admin/ColumnSettings";
+import { LiveEventsTable } from "@/components/admin/live/LiveEventsTable";
+import { useLiveEventsColumns, LIVE_EVENTS_LOCKED_KEYS } from "@/hooks/useLiveEventsColumns";
 
 // Final follow-up sprint PATCH F3: отдельная компактная ячейка count активных участников
 function ActiveParticipantsCell({ eventId }: { eventId: string }) {
