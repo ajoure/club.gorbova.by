@@ -1,310 +1,131 @@
 # да, согласен, с учетом правок:
 
-1. **Не ограничивать scope только 3 UI-багами.**  
-Этот план нужно оформить как:
+1. Если в ходе regression найден blocker и делается точечный фикс, после фикса не перезапускать весь прогон с нуля. Повторно проверять:
+  - сам упавший пункт;
+  - соседние зависимые сценарии;
+  - затем продолжать regression дальше по списку.
+2. Moderation в 2 окнах зафиксировать честно как:
+  - runtime proof в 1 сессии + code review realtime/guard логики;
+  - если нет второй независимой пользовательской сессии, статус ставить `partial`, а не `passed`.
+3. Для пунктов 38–39 (`provider degraded-mode`) заранее зафиксировать формат результата:
+  - `partial: code-reviewed only`;
+  - без имитации фальшивого runtime proof.
+4. В smoke по `/admin/live-events` добавить явную проверку locked-column policy:
+  - `checkbox` и `actions` не скрываются;
+  - `checkbox` и `actions` не перетаскиваются;
+  - selection UX не ломается после resize/reorder остальных колонок.
+5. В regression по delete-flow отдельно проверить bulk-сценарий со смешанным набором:
   &nbsp;
   &nbsp;
-  - исправление найденных багов;
-  - **сразу после этого — полный regression всех спринтов**.  
-  То есть это не отдельный микро-патч, а **bugfix + финальный тестовый проход**.
-2. **Bug 1 / закругление таблицы**  
-Фикс правильный, но явно зафиксируй, что:
-  - `rounded-md overflow-hidden` должен стоять на **том же контейнере**, который является scroll-wrapper;
-  - sticky header после этого не должен обрезаться/ломаться;
-  - horizontal scroll должен сохраниться.  
-  Это надо включить в DoD отдельно.
-3. **Bug 2 / горизонтальный scroll табов в диалоге**  
-Фикс через `overflow-x-auto` правильный.  
-Добавь:
-  - `TabsList` не должен сжиматься;
-  - табы должны оставаться кликабельными по всей ширине;
-  - на desktop не должно появиться лишнего scrollbar, если все табы помещаются.  
-  То есть поведение должно быть адаптивным, а не всегда со скроллом “ради скролла”.
-4. **Bug 3 / scroll комментариев в диалоге**  
-Правильно, что проблема в контейнере, а не в `LiveEventComments`.  
-Но нужно зафиксировать:
-  - одинаковую высоту дать не только `comments`, `questions`, `moderation`, но проверить и остальные admin-tabs;
-  - если `scenario`, `blocks`, `cta`, `theme` не требуют собственного scroll — это должно быть подтверждено, а не предположено;
-  - если хотя бы один из них тоже переполняется, его тоже нужно привести к тому же контейнерному контракту.
-5. **Не делать локальную починку только в одном месте, если те же табы есть в room/admin-view.**  
-Нужно прямо проверить:
-  - вкладки комнаты;
-  - вкладки диалога редактирования;
-  - любые staff/admin-варианты того же интерфейса.  
-  Если баг со scroll/tabs повторяется в двух местах, фикс должен быть системным, а не точечным.
-6. **После bugfix — обязательный полный regression.**  
-Добавить отдельный этап:
-  - table/admin smoke;
-  - regression по `docs/SPRINT_FINAL_REGRESSION.md`;
-  - повторная проверка именно тех багов, которые ты только что исправил:
-    - угол таблицы;
-    - horizontal scroll табов;
-    - внутренний scroll комментариев/вопросов/модерации.
-7. **Regression не разбивать.**  
-После этих исправлений не делать ещё один отдельный мини-спринт на тесты.  
-Сразу один проход:
-  - bugfix proof;
-  - полный regression;
-  - единый финальный список remaining defects, если они останутся.
-8. **Финальный отчёт**  
-В отчёте потом обязательно показать отдельно:
-  - какие баги пользователя были исправлены;
-  - где именно были root causes;
-  - что проверено runtime;
-  - какие пункты regression passed / failed / partial;
-  - есть ли ещё blockers до финальной приёмки.
-
-&nbsp;
-
-```text
-План: bugfix найденных UI-багов + полный финальный regression live-модуля
-
-## Жёсткие правила исполнения для Lovable.dev
-
-### Обязательные принципы и критерии исполнения
-- ничего не ломать и не трогать лишнее;
-- add-only;
-- dry-run → execute;
-- строгие STOP-предохранители;
-- после исправления багов сразу провести полный regression, не откладывая его на отдельный микро-спринт;
-- финальный отчёт с proof, списком изменённых файлов, diff-summary и статусом passed / failed / partial по regression-checklist.
-
-## Scope этого этапа
-
-Этот этап включает сразу два блока:
-1. исправление найденных UI-багов;
-2. затем полный regression всех Sprint 1–3 и финального follow-up.
-
----
-
-## PATCH B1 — разрыв закругления таблицы
-
-### Файл
-- `src/components/admin/live/LiveEventsTable.tsx`
-
-### Проблема
-Визуальный разрыв/слом угла таблицы при scroll.
-
-### Причина
-Border/radius и scroll clipping находятся не в одном и том же контейнере.
-
-### Исправление
-- перенести `rounded-md overflow-hidden` на реальный scroll-wrapper;
-- сохранить horizontal scroll;
-- проверить, что sticky header после этого не ломается и не режется.
-
-### DoD
-- угол таблицы визуально цельный;
-- horizontal scroll работает;
-- sticky header сохраняется корректно.
-
----
-
-## PATCH B2 — горизонтальный scroll табов в диалоге редактирования эфира
-
-### Файл
-- `src/pages/admin/AdminLiveEvents.tsx`
-
-### Проблема
-Табы не помещаются и обрезаются, скролл отсутствует.
-
-### Причина
-`TabsList` не обёрнут в horizontal scroll container.
-
-### Исправление
-- обернуть `TabsList` в `overflow-x-auto`;
-- `TabsList` сделать `w-max` / non-shrinking;
-- проверить адаптив:
-  - на узком экране есть горизонтальный scroll;
-  - на широком экране лишний scroll не появляется.
-
-### DoD
-- все табы доступны;
-- horizontal scroll работает на узких viewport;
-- на широких viewport UI не деградирует.
-
----
-
-## PATCH B3 — не работает внутренний scroll комментариев/вопросов/модерации в диалоге
-
-### Файл
-- `src/pages/admin/AdminLiveEvents.tsx`
-
-### Проблема
-Внутренние панели не скроллятся, растягивается весь диалог.
-
-### Причина
-`TabsContent` не имеет фиксированной/ограниченной высоты, а внутренние панели завязаны на `h-full/min-h-0`.
-
-### Исправление
-- задать корректный height/max-height контейнеру tab content в диалоге;
-- применить не только к `comments`, `questions`, `moderation`, но и проверить остальные tab panes;
-- если другие табы тоже переполняются, привести их к тому же контейнерному контракту.
-
-### DoD
-- комментарии скроллятся внутри панели;
-- вопросы скроллятся внутри панели;
-- модерация скроллится внутри панели;
-- диалог не растягивается бесконтрольно.
-
----
-
-## PATCH B4 — системная проверка табов room/admin surfaces
-
-### Задача
-Проверить, не дублируется ли тот же баг scroll/tabs:
-- в комнате эфира;
-- в admin/staff room view;
-- в диалоге редактирования эфира.
-
-### Требование
-Если баг общий, фикс должен быть системным, а не точечным.
-
-### DoD
-- одинаковые проблемы tabs/scroll не остались в соседних surface.
-
----
-
-## PATCH B5 — table/admin smoke после bugfix
-
-### Обязательно проверить
-- sticky header;
-- horizontal scroll таблицы;
-- vertical scroll таблицы;
-- resize колонок;
-- reorder колонок;
-- hide/show columns;
-- tri-state checkbox;
-- select-all на текущей выборке;
-- single delete;
-- bulk delete;
-- delete only platform;
-- delete with Kinescope;
-- partial delete при наличии `live`-эфира;
-- очистка selection после delete/refetch.
-
-### DoD
-- каноническая таблица `/admin/live-events` проходит smoke без новых регрессий.
-
----
-
-## PATCH B6 — полный regression live-модуля
-
-После B1–B5 пройти единый checklist из `docs/SPRINT_FINAL_REGRESSION.md`.
-
-### Обязательно включить
-- Sprint 1 proof;
-- Sprint 2 lifecycle/waiting-state/participant count;
-- Sprint 3 theme/mobile/performance;
-- F-follow-up delete flow;
-- повторную проверку трёх свежих багов:
-  - угол таблицы;
-  - horizontal scroll табов;
-  - внутренний scroll комментариев.
-
-### Формат результата
-Для каждого пункта:
-- passed
-- failed
-- partial
-
-С runtime proof для load-bearing сценариев.
-
----
-
-## PATCH B7 — финальный consolidated результат
-
-После bugfix и regression:
-- либо модуль принят;
-- либо вернуть **один consolidated список** remaining defects.
-
-Без запуска нового мелкого согласовательного цикла.
-
-## Итоговый DoD
-- исправлены все три заявленные UI-проблемы;
-- таблица `/admin/live-events` не сломана после фиксов;
-- выполнен table/admin smoke;
-- выполнен полный regression live-модуля;
-- выдан финальный статус по модулю.
-```
+  - обычные эфиры;
+  - эфир с provider linkage;
+  - `live`-эфир, который должен быть пропущен.  
+  Нужен явный summary: deleted / skipped_live / provider_deleted / provider_failed.
+6. В итоговом отчёте кроме `passed / failed / partial` обязательно помечать приоритет дефектов:
+  - blocker;
+  - major;
+  - minor.  
+  Чтобы финальный verdict был не только по количеству fail, а по критичности.
+7. Если smoke B1–B3 проходит, а дальше в regression находятся только cosmetic/minor замечания без load-bearing поломок, это не должно автоматически блокировать финальную приёмку. В таком случае они уходят в consolidated residual list.
 
 &nbsp;
 
 &nbsp;
 
-# План: фикс 3 UI-багов в `/admin/live-events`
+План: финальное тестирование live-модуля (smoke + полный regression)
 
-## Bug 1 — разрыв закругления таблицы (угол)
+## Scope
 
-**Файл:** `src/components/admin/live/LiveEventsTable.tsx` (line 350–355)
-
-**Причина:** Внешний `<div className="rounded-md border bg-card">` имеет border и закругления, но внутренний scroll-контейнер `<div className="overflow-x-auto">` не клипит содержимое по этим углам — когда таблица шире viewport, появляется визуальный «разрыв» в угле.
-
-**Фикс:** Перенести `rounded-md overflow-hidden` на scroll-обёртку, чтобы скруглить и клипнуть содержимое в одном элементе:
-
-```tsx
-<div className="rounded-md border bg-card overflow-hidden">
-  <div ref={containerRef} onMouseDown={handleMouseDown}
-       className="overflow-x-auto select-none relative">
-```
-
-Закруглены все 4 угла, scroll работает, sticky header не ломается.
+Это **этап тестирования**, а не новый код-спринт. Никаких изменений в код без явно найденного дефекта. Только runtime-проверка через browser-automation + чтение кода для cross-reference.
 
 ---
 
-## Bug 2 — нет горизонтального scroll вкладок в диалоге «Редактирование эфира»
+## Этап 1 — Smoke по последним bugfix (B1–B3)
 
-**Файл:** `src/pages/admin/AdminLiveEvents.tsx` (line 2329–2352)
+Цель: подтвердить, что 3 свежих UI-фикса работают и не сломали соседние сценарии.
 
-**Причина:** В диалоге 7 табов (Комментарии/Вопросы/Модерация/Сценарий/Блоки/CTA/Тема), `TabsList` по умолчанию `inline-flex` без overflow, а контейнер диалога имеет `overflow-x-hidden` (line 945) → табы просто обрезаются, перенос отсутствует, скролла нет.
+**Проверки на `/admin/live-events`:**
 
-**Фикс:** Обернуть `TabsList` в горизонтальный scroll-контейнер:
+1. Угол/закругление таблицы цельный при горизонтальном scroll (1102px и узкие viewport — 768px).
+2. Sticky header не обрезается при scroll.
+3. Horizontal scroll работает, колонки не расплываются.
+4. Vertical scroll таблицы работает.
+5. Канонический table-shell не деградировал: resize колонок, reorder через DnD, hide/show через ColumnSettings.
 
-```tsx
-<div className="overflow-x-auto -mx-1 px-1">
-  <TabsList className="w-max">
-    ...все 7 TabsTrigger...
-  </TabsList>
-</div>
-```
+**Проверки в диалоге «Редактирование эфира»:**
+6. Horizontal scroll табов работает на 1102px (7 табов: Комментарии/Вопросы/Модерация/Сценарий/Блоки/CTA/Тема).
+7. На широких viewport (1536px) лишний scrollbar не появляется.
+8. Внутренний scroll Комментарии — работает в своей панели, диалог не растягивается.
+9. Внутренний scroll Вопросы — работает в своей панели.
+10. Внутренний scroll Модерация — работает в своей панели.
 
-`w-max` даёт TabsList свою ширину, обёртка с `overflow-x-auto` обеспечивает горизонтальный scroll внутри узкого диалога.
-
----
-
-## Bug 3 — не работает scroll комментариев в диалоге «Редактирование эфира»
-
-**Файл:** `src/pages/admin/AdminLiveEvents.tsx` (lines 2353–2374)
-
-**Причина:** `LiveEventComments` / `LiveEventQuestions` / прочие табы используют `flex flex-col h-full min-h-0 + flex-1 overflow-y-auto` (как в `LiveEvent.tsx`). В комнате это работает — родитель имеет фиксированную высоту. Но `<TabsContent>` в диалоге высоту не задаёт → `h-full = 0`, scroll внутри панели мёртвый, диалог растягивается и пользователь скроллит весь диалог.
-
-**Фикс:** Дать `TabsContent` фиксированную высоту, чтобы внутренний `flex-1 overflow-y-auto` имел якорь:
-
-```tsx
-<TabsContent value="comments" className="border rounded-lg mt-2 h-[500px] overflow-hidden">
-  <LiveEventComments liveEventId={editingId} />
-</TabsContent>
-<TabsContent value="questions" className="border rounded-lg mt-2 h-[500px] overflow-hidden">
-  <LiveEventQuestions liveEventId={editingId} />
-</TabsContent>
-```
-
-Применяется к табам с внутренним scroll: `comments`, `questions`, `moderation`. Для остальных (`scenario`, `blocks`, `cta`, `theme`) высота не нужна — они без своего scroll-а, естественно растут с диалогом.
+**Stop-gate:** если хоть один пункт fail — фиксируем дефект и не идём дальше до его устранения.
 
 ---
 
-## Изменяемые файлы
+## Этап 2 — Полный regression по `docs/SPRINT_FINAL_REGRESSION.md` (39 пунктов)
 
-- `src/components/admin/live/LiveEventsTable.tsx` — фикс закругления (1 строка).
-- `src/pages/admin/AdminLiveEvents.tsx` — обёртка над `TabsList` + высота для 3-х `TabsContent` (`comments`, `questions`, `moderation`).
+Прогон в порядке файла, без перестановки секций:
 
-## Не трогается
 
-`LiveEventComments.tsx`, `LiveEventQuestions.tsx`, `LiveEventModerationPanel.tsx` — внутренняя flex-логика остаётся как есть, она корректна для комнаты. Чиним только контейнер диалога.
+| Секция                     | Пункты | Метод проверки                                                          |
+| -------------------------- | ------ | ----------------------------------------------------------------------- |
+| Lifecycle                  | 1–5    | Browser: 3 кнопки в админке + кнопка завершения в комнате               |
+| Waiting-state              | 6–8    | Browser: переход в opened, наблюдение чата/CTA/heartbeat                |
+| Chat / Questions / Replies | 9–12   | Browser: отправка, realtime, threaded reply                             |
+| Moderation (2 окна)        | 13–15  | Browser в 2 вкладках: mute/unmute, remove/restore, баннер               |
+| CTA                        | 16–18  | Browser: visibility-режимы, mobile sticky, empty-state                  |
+| Theme                      | 19–21  | Browser: 8 CSS-переменных, изоляция `.live-room-themed`                 |
+| Participant count v1       | 22–23  | Browser: badge + tooltip                                                |
+| Role colors / hierarchy    | 24–26  | Browser: 5 типов сообщений, reply-quote, приоритет                      |
+| Mobile regression          | 27–30  | Browser viewport 375x812: sticky input, переносы, sidebar, safe-area    |
+| Button sync / save         | 31–32  | Browser: live-save + lifecycle                                          |
+| Navigation                 | 33–34  | Browser: back/forward, background return                                |
+| Replay                     | 35–37  | Browser: replay-state, completed без/с replay                           |
+| Provider degraded-mode     | 38–39  | Code review (требует искусственный сбой Kinescope, недостижимо в smoke) |
 
-## DoD
 
-- Закругление таблицы целое со всех 4-х углов даже при горизонтальном scroll.
-- Горизонтальный scroll табов «Редактирование эфира» работает на 1102px и уже.
-- Скроллинг комментариев / вопросов / модерации работает внутри своей панели в диалоге, диалог не растягивается.
-- Sprint 1+2+3, F-CANON и прочие функции live-модуля не сломаны.
+**Дополнительно (follow-up F2–F7 + F-CANON):**
+
+- Single delete через dropdown.
+- Bulk delete через BulkActionsBar.
+- Delete только platform / platform + Kinescope.
+- Guard 409 на удаление `live`-эфира.
+- Очистка selection после delete/refetch (signature-based reset).
+- Locked columns checkbox/actions не скрываются и не перетаскиваются.
+
+---
+
+## Этап 3 — Формат отчёта
+
+Один consolidated отчёт. Никаких промежуточных микро-итераций.
+
+**Структура:**
+
+1. **Smoke результат (B1–B3)** — passed / failed / partial по каждому из 10 пунктов.
+2. **Regression результат** — таблица 39+ пунктов: статус + краткая нота по failed/partial.
+3. **Runtime proof** — screenshot ключевых сценариев (lifecycle переходы, mute/unmute в 2 окнах, mobile sticky, theme).
+4. **Файлы изменены за этот этап** — ожидается 0 (только тестирование). Если найден критичный дефект и устранён точечно — список с diff-summary.
+5. **Final verdict** — один из двух:
+  - ✅ **Live-модуль принят** (все critical + высокий приоритет passed, остатки только cosmetic).
+  - ❌ **Consolidated список remaining defects** с приоритетом (blocker / major / minor) для следующей итерации.
+
+---
+
+## Ограничения и допущения
+
+- Provider degraded-mode (пункты 38–39) — невозможно проверить без искусственного сбоя Kinescope; будет отмечено как **partial: code-reviewed only**.
+- Moderation в 2 окнах — browser-automation поддерживает только одну активную сессию; будет проверено через 1 окно + code-review realtime-канала.
+- Background return / reload (пункт 34) — частично проверяемо через navigate + reload, без реального background.
+- Если во время regression обнаружится **blocker** (пользователь не может пройти load-bearing сценарий) — стоп, фикс точечный, потом продолжение regression с этого пункта.
+- Все остальные defect-классы (major/minor/cosmetic) собираются в финальный список без остановки прогона.
+
+---
+
+## DoD этапа тестирования
+
+- Smoke B1–B3 прошёл с фиксацией каждого пункта.
+- Regression 39 пунктов прогнан с явным статусом по каждому.
+- Runtime proof собран для load-bearing сценариев.
+- Выдан **один** финальный verdict: принят или consolidated defect list.
+- Никаких новых мелких циклов согласования.
