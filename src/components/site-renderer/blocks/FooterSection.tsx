@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { FOOTER_ASSETS, buildFooterDefaultContent, type FooterBlockContent, type FooterNavItem } from "@/components/layout/footerDefaults";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 
 interface FooterSectionProps {
   content: Record<string, unknown>;
@@ -22,24 +23,23 @@ function isExternal(href: string) {
   return /^https?:\/\//i.test(href);
 }
 
-/** RichTextarea returns HTML; render as inline HTML safely. */
+/** RichTextarea returns HTML; render via shared SafeHtml sanitizer. */
 function RichInline({ html, className }: { html: string; className?: string }) {
-  return <span className={className} dangerouslySetInnerHTML={{ __html: html }} />;
+  return <SafeHtml html={html} as="span" className={className} />;
 }
 function RichBlock({ html, className, as: As = "p" }: { html: string; className?: string; as?: "p" | "div" | "h4" }) {
-  return <As className={className} dangerouslySetInnerHTML={{ __html: html }} />;
+  return <SafeHtml html={html} as={As} className={className} />;
 }
 
 function FooterLink({ item }: { item: FooterNavItem }) {
   const cls = "text-muted-foreground hover:text-foreground transition-colors";
   const target = item.openInNewTab ? "_blank" : undefined;
   const rel = item.openInNewTab ? "noopener noreferrer" : undefined;
-  const labelHtml = <span dangerouslySetInnerHTML={{ __html: item.label }} />;
 
   if (isExternal(item.href) || target) {
-    return <a href={item.href} target={target} rel={rel} className={cls}>{labelHtml}</a>;
+    return <a href={item.href} target={target} rel={rel} className={cls}><SafeHtml html={item.label} /></a>;
   }
-  return <Link to={item.href} className={cls}>{labelHtml}</Link>;
+  return <Link to={item.href} className={cls}><SafeHtml html={item.label} /></Link>;
 }
 
 export function FooterSection({ content }: FooterSectionProps) {
@@ -139,7 +139,7 @@ export function FooterSection({ content }: FooterSectionProps) {
             <div className="flex flex-wrap items-center justify-center gap-3">
               {data.social.items.map((s, i) => (
                 <a key={i} href={s.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 px-4 py-2 rounded-full border hover:bg-muted transition-colors text-sm text-foreground">
-                  <span dangerouslySetInnerHTML={{ __html: s.label || s.platform }} />
+                  <SafeHtml html={s.label || s.platform} />
                 </a>
               ))}
             </div>
