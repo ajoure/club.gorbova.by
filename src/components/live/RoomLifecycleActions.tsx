@@ -4,29 +4,11 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 /**
- * Локальные glass-классы для admin/room lifecycle-кнопок.
- * Цветной полупрозрачный fill (как Sonner-уведомления, mem://ui/notifications/sonner-visual-standard),
- * единая форма (h-9, min-w, padding, gap), tone задаёт сам цвет фона + tint текста/иконки.
+ * Glass-классы для lifecycle-кнопок вынесены в shared helper
+ * (`lifecycleButtonStyles.ts`) — он же используется для «Создать эфир»,
+ * «Справка», «Пересоздать» в /admin/live-events. Единая форма + tones.
  */
-const GLASS_BASE =
-  "h-9 min-w-[148px] justify-center gap-1.5 px-3 " +
-  "backdrop-blur-md border shadow-sm hover:shadow-md transition-all " +
-  "disabled:opacity-40 disabled:bg-white/30 disabled:border-white/30 disabled:shadow-none disabled:hover:shadow-none";
-
-const GLASS_TONE = {
-  // нейтральная (Открыть комнату): мягкий серо-белый стеклянный fill
-  neutral:
-    "bg-white/60 hover:bg-white/80 border-white/40 text-foreground/85 [&_svg]:text-foreground/70",
-  // primary (Начать вебинар): мягкий blue-tinted glass fill
-  primary:
-    "bg-primary/15 hover:bg-primary/25 border-primary/25 text-primary [&_svg]:text-primary",
-  // destructive (Завершить): мягкий red-tinted glass fill (admin-таблица — чуть мягче)
-  destructive:
-    "bg-destructive/12 hover:bg-destructive/20 border-destructive/25 text-destructive/85 [&_svg]:text-destructive/85",
-  // destructive room: чуть плотнее, чтобы оставаться заметной на любом фоне комнаты
-  destructiveRoom:
-    "bg-destructive/15 hover:bg-destructive/25 border-destructive/30 text-destructive/90 [&_svg]:text-destructive/90",
-} as const;
+import { LIFECYCLE_BUTTON_BASE as GLASS_BASE, LIFECYCLE_BUTTON_TONES as GLASS_TONE } from "./lifecycleButtonStyles";
 
 /** Бейдж в той же палитре, тише кнопок (мягче, не спорит с ними) */
 const BADGE_TONE: Record<RoomState, string> = {
