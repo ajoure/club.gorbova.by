@@ -619,6 +619,11 @@ export default function AdminLiveEvents() {
       };
 
 
+      // SURGICAL HARDENING (live-bugfix): never write platform_status/status from form save.
+      // Lifecycle (draft → scheduled → live → ended → replay_available) is owned exclusively
+      // by lifecycle actions (handleLifecycleAction) and provider sync. Form save MUST NOT
+      // downgrade an active 'live' status back to whatever stale value sits in form state.
+      // Initial 'status' is set only on INSERT (new event creation).
       const payload: Record<string, any> = {
         slug: data.slug,
         title: data.title,
@@ -626,7 +631,6 @@ export default function AdminLiveEvents() {
         kinescope_video_id: data.kinescope_video_id || null,
         product_id: null,
         access_rule: { mode: "rules", product_id: null, tariff_id: null },
-        status: data.status,
         is_published: data.is_published,
         scheduled_at: data.scheduled_at || null,
         replay_enabled: data.replay_enabled,
@@ -635,11 +639,16 @@ export default function AdminLiveEvents() {
         event_type: data.event_type,
         source_kind: sourceKind,
         event_timezone: data.event_timezone,
-        platform_status: data.status,
         kinescope_live_event_id: data.kinescope_live_event_id || null,
         kinescope_project_id: data.kinescope_project_id || null,
         metadata: mergedMetadata,
       };
+
+      // On INSERT only: seed initial lifecycle status. UPDATE never touches platform_status/status.
+      if (!editingId) {
+        payload.status = data.status || "draft";
+        payload.platform_status = data.status || "draft";
+      }
 
       let eventId = editingId;
 
@@ -712,6 +721,7 @@ export default function AdminLiveEvents() {
       setPublishAttempted(false);
       queryClient.invalidateQueries({ queryKey: ["admin-live-events"] });
       queryClient.invalidateQueries({ queryKey: ["live-event-access-rules"] });
+      queryClient.invalidateQueries({ queryKey: ["live-event-provider"] });
     },
     onError: (err: any) => {
       const msg = err?.message || (typeof err === "object" ? JSON.stringify(err) : String(err));
