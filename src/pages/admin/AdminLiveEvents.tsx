@@ -2037,36 +2037,53 @@ function LiveStreamControlPanel({
   const isSourceMissingOrBroken = providerSourceStatus === "missing" || providerSourceStatus === "broken";
 
   return (
-    <div className="space-y-4">
-      {/* Block A: Источник трансляции Kinescope */}
-      <div className="rounded-lg border p-3 space-y-3">
-        <h4 className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
-          Источник трансляции Kinescope
-        </h4>
+    <div className="space-y-4 min-w-0">
+      {/* Block A: Источник трансляции Kinescope — стандарт contact-card */}
+      <div className="rounded-lg border border-border bg-card p-4 space-y-3 shadow-sm overflow-hidden min-w-0">
+        <div className="flex items-center gap-2">
+          <div className="p-1.5 rounded-md bg-primary/10 shrink-0">
+            <Video className="h-4 w-4 text-primary" />
+          </div>
+          <h4 className="text-sm font-semibold text-foreground">Источник трансляции Kinescope</h4>
+        </div>
 
         {/* Dual status badges */}
         <div className="flex flex-wrap gap-2">
           <div className="flex items-center gap-1.5">
-            <span className="text-[10px] text-muted-foreground">Платформа:</span>
-            <Badge variant="outline" className="text-[10px]">
+            <span className="text-xs text-muted-foreground">Платформа:</span>
+            <Badge variant="outline" className="text-xs">
               {platformStatusLabels[platformStatus] || platformStatus}
             </Badge>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className="text-[10px] text-muted-foreground">Kinescope:</span>
-            <Badge className={`text-[10px] ${providerSourceColors[providerSourceStatus]}`}>
+            <span className="text-xs text-muted-foreground">Kinescope:</span>
+            <Badge className={`text-xs ${providerSourceColors[providerSourceStatus]}`}>
               {providerSourceLabels[providerSourceStatus]}
             </Badge>
           </div>
         </div>
 
         {kinescopeLiveEventId && (
-          <p className="text-xs text-muted-foreground">
-            ID: <code className="bg-muted px-1.5 py-0.5 rounded text-[11px]">{kinescopeLiveEventId}</code>
-          </p>
+          <div className="space-y-1.5 min-w-0">
+            <Label className="text-xs font-medium text-muted-foreground">ID источника</Label>
+            <div className="flex items-stretch gap-1.5 min-w-0">
+              <code className="flex-1 min-w-0 bg-muted/60 border border-border px-3 py-2 rounded-md text-xs font-mono break-all overflow-hidden">
+                {kinescopeLiveEventId}
+              </code>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-9 w-9 shrink-0"
+                onClick={() => copyToClipboard(kinescopeLiveEventId, "ID")}
+                title="Скопировать"
+              >
+                <Copy className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
         )}
         {lastSync && (
-          <p className="text-[10px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             Последняя синхронизация: {format(new Date(lastSync), "dd.MM.yyyy HH:mm:ss", { locale: ru })}
           </p>
         )}
@@ -2075,7 +2092,7 @@ function LiveStreamControlPanel({
         {providerSourceStatus === "missing" && (
           <div className="flex items-start gap-2 rounded-md bg-destructive/5 border border-destructive/20 p-2.5">
             <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
-            <div className="text-xs space-y-1">
+            <div className="text-xs space-y-1 min-w-0">
               <p className="font-medium text-destructive">Источник трансляции удалён в Kinescope</p>
               <p className="text-muted-foreground">Пересоздайте эфир или отвяжите источник.</p>
             </div>
@@ -2084,7 +2101,7 @@ function LiveStreamControlPanel({
         {providerSourceStatus === "broken" && (
           <div className="flex items-start gap-2 rounded-md bg-amber-500/5 border border-amber-500/20 p-2.5">
             <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-            <div className="text-xs space-y-1">
+            <div className="text-xs space-y-1 min-w-0">
               <p className="font-medium text-amber-700">Источник трансляции повреждён</p>
               <p className="text-muted-foreground">Отсутствуют ключевые поля (stream, play_link). Попробуйте обновить или пересоздать.</p>
             </div>
@@ -2094,9 +2111,9 @@ function LiveStreamControlPanel({
 
       {/* Block B: OBS / Streaming settings — only if source is available */}
       {isSourceAvailable && (playLink || streamkey) && (
-        <div className="rounded-lg border border-border bg-card p-4 space-y-4 shadow-sm overflow-hidden">
+        <div className="rounded-lg border border-border bg-card p-4 space-y-4 shadow-sm overflow-hidden min-w-0">
           <div className="flex items-center gap-2">
-            <div className="p-1.5 rounded-md bg-primary/10">
+            <div className="p-1.5 rounded-md bg-primary/10 shrink-0">
               <Radio className="h-4 w-4 text-primary" />
             </div>
             <h4 className="text-sm font-semibold text-foreground">Настройки трансляции (OBS)</h4>
@@ -2138,55 +2155,57 @@ function LiveStreamControlPanel({
         </div>
       )}
 
-      {/* Block C: Actions */}
-      <div className="flex flex-wrap gap-2">
-        {/* Enable / Complete — only if source OK */}
-        {editingId && isSourceAvailable && platformStatus !== "live" && platformStatus !== "ended" && (
-          <Button variant="outline" size="sm" className="gap-1.5"
-            onClick={() => onLifecycleAction(editingId, "enable_live_event", kinescopeLiveEventId)}>
-            <Zap className="h-3.5 w-3.5" /> Запустить эфир
-          </Button>
-        )}
-        {editingId && isSourceAvailable && platformStatus === "live" && (
-          <Button variant="outline" size="sm" className="gap-1.5 text-destructive"
-            onClick={() => onLifecycleAction(editingId, "complete_live_event", kinescopeLiveEventId)}>
-            <Square className="h-3.5 w-3.5" /> Завершить эфир
-          </Button>
-        )}
+      {/* Block C: Actions — единый стандарт кнопок */}
+      <div className="rounded-lg border border-border bg-card p-4 shadow-sm min-w-0">
+        <div className="flex flex-wrap gap-2">
+          {/* Enable / Complete — only if source OK */}
+          {editingId && isSourceAvailable && platformStatus !== "live" && platformStatus !== "ended" && (
+            <Button variant="default" size="default" className="h-10 gap-2"
+              onClick={() => onLifecycleAction(editingId, "enable_live_event", kinescopeLiveEventId)}>
+              <Zap className="h-4 w-4" /> Запустить эфир
+            </Button>
+          )}
+          {editingId && isSourceAvailable && platformStatus === "live" && (
+            <Button variant="destructive" size="default" className="h-10 gap-2"
+              onClick={() => onLifecycleAction(editingId, "complete_live_event", kinescopeLiveEventId)}>
+              <Square className="h-4 w-4" /> Завершить эфир
+            </Button>
+          )}
 
-        {/* Sync — always available if we have an ID */}
-        {kinescopeLiveEventId && (
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={handleSyncProvider} disabled={syncStatus === "syncing"}>
-            {syncStatus === "syncing" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-            Обновить источник
-          </Button>
-        )}
+          {/* Sync — always available if we have an ID */}
+          {kinescopeLiveEventId && (
+            <Button variant="outline" size="default" className="h-10 gap-2" onClick={handleSyncProvider} disabled={syncStatus === "syncing"}>
+              {syncStatus === "syncing" ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Обновить источник
+            </Button>
+          )}
 
-        {/* Recreate */}
-        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setRecreateDialogOpen(true)}
-          disabled={!canRecreate || recreating}>
-          <RotateCcw className="h-3.5 w-3.5" /> Пересоздать эфир
-        </Button>
-
-        {/* Detach — only if there's a provider bound */}
-        {kinescopeLiveEventId && (
-          <Button variant="outline" size="sm" className="gap-1.5 text-muted-foreground" onClick={() => setDetachDialogOpen(true)}
-            disabled={detaching}>
-            <Unlink className="h-3.5 w-3.5" /> Отвязать источник
+          {/* Recreate */}
+          <Button variant="outline" size="default" className="h-10 gap-2" onClick={() => setRecreateDialogOpen(true)}
+            disabled={!canRecreate || recreating}>
+            <RotateCcw className="h-4 w-4" /> Пересоздать эфир
           </Button>
+
+          {/* Detach — only if there's a provider bound */}
+          {kinescopeLiveEventId && (
+            <Button variant="outline" size="default" className="h-10 gap-2 text-muted-foreground" onClick={() => setDetachDialogOpen(true)}
+              disabled={detaching}>
+              <Unlink className="h-4 w-4" /> Отвязать источник
+            </Button>
+          )}
+        </div>
+
+        {/* Recreate blockers */}
+        {!canRecreate && recreateBlockers.length > 0 && (
+          <div className="text-xs text-muted-foreground space-y-0.5 mt-3">
+            {recreateBlockers.map((b, i) => (
+              <p key={i} className="flex items-center gap-1">
+                <AlertCircle className="h-3 w-3 shrink-0" /> {b}
+              </p>
+            ))}
+          </div>
         )}
       </div>
-
-      {/* Recreate blockers */}
-      {!canRecreate && recreateBlockers.length > 0 && (
-        <div className="text-xs text-muted-foreground space-y-0.5">
-          {recreateBlockers.map((b, i) => (
-            <p key={i} className="flex items-center gap-1">
-              <AlertCircle className="h-3 w-3" /> {b}
-            </p>
-          ))}
-        </div>
-      )}
 
       {/* Confirm: Recreate */}
       <AlertDialog open={recreateDialogOpen} onOpenChange={setRecreateDialogOpen}>
