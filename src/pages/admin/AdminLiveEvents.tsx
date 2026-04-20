@@ -2533,3 +2533,13 @@ function RoomStateCell({ event }: { event: LiveEvent }) {
     </div>
   );
 }
+
+// Final follow-up sprint PATCH F3: отдельная компактная ячейка count активных участников
+function ActiveParticipantsCell({ eventId }: { eventId: string }) {
+  const { data } = useActiveParticipants(eventId, true);
+  return (
+    <span className="text-sm tabular-nums" title="Активные участники за последние 2 минуты">
+      {typeof data === "number" ? data : "—"}
+    </span>
+  );
+}
