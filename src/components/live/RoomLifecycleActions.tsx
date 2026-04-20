@@ -1,6 +1,24 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
+
+/**
+ * Локальные glass-классы для admin layout lifecycle-кнопок.
+ * НЕ добавляем глобальный variant в button.tsx — это локальный use-case.
+ * Все 3 кнопки имеют одинаковую форму (h-9, min-w, padding, gap), tone несёт только цвет иконки/текста.
+ */
+const GLASS_BASE =
+  "h-9 min-w-[148px] justify-center gap-1.5 px-3 " +
+  "bg-white/60 backdrop-blur-md border border-white/40 shadow-sm " +
+  "hover:bg-white/80 hover:shadow-md transition-all " +
+  "disabled:opacity-40 disabled:bg-white/30 disabled:shadow-none disabled:hover:bg-white/30";
+
+const GLASS_TONE = {
+  neutral: "text-foreground/80 [&_svg]:text-foreground/70",
+  primary: "text-primary [&_svg]:text-primary",
+  destructive: "text-destructive/80 [&_svg]:text-destructive/80",
+} as const;
 import {
   AlertDialog,
   AlertDialogAction,
