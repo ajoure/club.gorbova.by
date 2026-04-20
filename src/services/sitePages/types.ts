@@ -304,6 +304,62 @@ export const siteQuestionnaireContentSchema = z.object({
   subtitle: z.string().default(""),
 });
 
+// ─── Footer block (reusable site builder block) ───
+const footerNavItemSchema = z.object({
+  label: z.string().default(""),
+  href: z.string().default(""),
+  openInNewTab: z.boolean().default(false),
+});
+
+const footerSocialItemSchema = z.object({
+  platform: z.string().default("telegram"),
+  url: z.string().default(""),
+  label: z.string().default(""),
+});
+
+export const footerContentSchema = z.object({
+  brand: z.object({
+    showBrand: z.boolean().default(true),
+    logoUrl: z.string().default(""),
+    name: z.string().default(""),
+    subtitle: z.string().default(""),
+    description: z.string().default(""),
+  }).default({ showBrand: true, logoUrl: "", name: "", subtitle: "", description: "" }),
+  company: z.object({
+    showCompany: z.boolean().default(true),
+    name: z.string().default(""),
+    unp: z.string().default(""),
+    legalAddress: z.string().default(""),
+    mailingAddress: z.string().default(""),
+    phone: z.string().default(""),
+    phoneHref: z.string().default(""),
+    email: z.string().default(""),
+    workHours: z.string().default(""),
+  }).default({ showCompany: true, name: "", unp: "", legalAddress: "", mailingAddress: "", phone: "", phoneHref: "", email: "", workHours: "" }),
+  navigation: z.object({
+    showNavigation: z.boolean().default(true),
+    title: z.string().default("Навигация"),
+    items: z.array(footerNavItemSchema).default([]),
+  }).default({ showNavigation: true, title: "Навигация", items: [] }),
+  legal: z.object({
+    showLegal: z.boolean().default(true),
+    title: z.string().default("Документы"),
+    items: z.array(footerNavItemSchema).default([]),
+  }).default({ showLegal: true, title: "Документы", items: [] }),
+  social: z.object({
+    showSocial: z.boolean().default(false),
+    title: z.string().default("Мы в соцсетях"),
+    items: z.array(footerSocialItemSchema).default([]),
+  }).default({ showSocial: false, title: "Мы в соцсетях", items: [] }),
+  payments: z.object({
+    showPayments: z.boolean().default(true),
+  }).default({ showPayments: true }),
+  copyright: z.object({
+    showCopyright: z.boolean().default(true),
+    text: z.string().default(""),
+  }).default({ showCopyright: true, text: "" }),
+});
+
 // ─── Block Content Schemas Map ───
 
 export const blockContentSchemas = {
@@ -335,6 +391,7 @@ export const blockContentSchemas = {
   embed: embedSiteContentSchema,
   site_questionnaire: siteQuestionnaireContentSchema,
   stats: statsContentSchema,
+  footer: footerContentSchema,
 } as const;
 
 export type BlockType = keyof typeof blockContentSchemas;

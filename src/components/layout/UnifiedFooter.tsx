@@ -1,8 +1,6 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useEffect } from "react";
-import logoImage from "@/assets/logo.png";
-import paymentSystemsImage from "@/assets/payment-systems.png";
-import eripLogoImage from "@/assets/erip-logo.png";
+import { BRAND_INFO, COMPANY_INFO, LEGAL_LINKS, FOOTER_ASSETS } from "./footerDefaults";
 
 interface UnifiedFooterProps {
   /** Включить навигацию по якорям на главной странице */
@@ -52,29 +50,29 @@ export function UnifiedFooter({
           {/* Company info */}
           <div className="lg:col-span-2">
             <Link to="/" className="flex items-center gap-3 mb-4 hover:opacity-80 transition-opacity w-fit">
-              <img src={logoImage} alt="Буква Закона" className="h-8 w-auto" width={32} height={32} loading="lazy" />
+              <img src={BRAND_INFO.logoUrl} alt={BRAND_INFO.name} className="h-8 w-auto" width={32} height={32} loading="lazy" />
               <div>
-                <span className="font-bold text-foreground">БУКВА ЗАКОНА</span>
-                <span className="block text-xs text-muted-foreground">Клуб по законодательству</span>
+                <span className="font-bold text-foreground">{BRAND_INFO.name}</span>
+                <span className="block text-xs text-muted-foreground">{BRAND_INFO.subtitle}</span>
               </div>
             </Link>
             
             <div className="text-sm text-muted-foreground space-y-1">
-              <p className="font-medium text-foreground">ЗАО «АЖУР инкам»</p>
-              <p>УНП: 193405000</p>
-              <p>Юр. адрес: 220035, г. Минск, ул. Панфилова, 2, офис 49Л</p>
-              <p>Почтовый адрес: 220052, Республика Беларусь, г. Минск, а/я 63</p>
+              <p className="font-medium text-foreground">{COMPANY_INFO.name}</p>
+              <p>УНП: {COMPANY_INFO.unp}</p>
+              <p>Юр. адрес: {COMPANY_INFO.legalAddress}</p>
+              <p>Почтовый адрес: {COMPANY_INFO.mailingAddress}</p>
               <p className="pt-2">
-                <a href="tel:+375291714321" className="hover:text-foreground transition-colors">
-                  Телефон: +375 29 171-43-21
+                <a href={COMPANY_INFO.phoneHref} className="hover:text-foreground transition-colors">
+                  Телефон: {COMPANY_INFO.phone}
                 </a>
               </p>
               <p>
-                <a href="mailto:info@ajoure.by" className="hover:text-foreground transition-colors">
-                  E-mail: info@ajoure.by
+                <a href={`mailto:${COMPANY_INFO.email}`} className="hover:text-foreground transition-colors">
+                  E-mail: {COMPANY_INFO.email}
                 </a>
               </p>
-              <p>Режим работы: Пн–Пт 9:00–18:00 (Минск)</p>
+              <p>Режим работы: {COMPANY_INFO.workHours}</p>
             </div>
           </div>
 
@@ -123,18 +121,11 @@ export function UnifiedFooter({
           <div>
             <h4 className="font-semibold text-foreground mb-4">Документы</h4>
             <nav className="flex flex-col gap-2 text-sm">
-              <Link to="/offer" className="text-muted-foreground hover:text-foreground transition-colors">
-                Публичная оферта
-              </Link>
-              <Link to="/order-payment" className="text-muted-foreground hover:text-foreground transition-colors">
-                Заказ и оплата услуг
-              </Link>
-              <Link to="/privacy" className="text-muted-foreground hover:text-foreground transition-colors">
-                Политика конфиденциальности
-              </Link>
-              <Link to="/consent" className="text-muted-foreground hover:text-foreground transition-colors">
-                Согласие на обработку данных
-              </Link>
+              {LEGAL_LINKS.map((item) => (
+                <Link key={item.href} to={item.href} className="text-muted-foreground hover:text-foreground transition-colors">
+                  {item.label}
+                </Link>
+              ))}
             </nav>
           </div>
         </div>
@@ -144,7 +135,7 @@ export function UnifiedFooter({
           <div className="flex flex-col sm:flex-row items-center justify-center gap-6">
             <Link to="/order-payment" className="opacity-70 hover:opacity-100 transition-opacity">
               <img 
-                src={paymentSystemsImage} 
+                src={FOOTER_ASSETS.paymentSystems} 
                 alt="Принимаем к оплате: Visa, MasterCard, Белкарт, bePaid, Samsung Pay, Google Pay" 
                 className="h-8 w-auto"
                 width={347}
@@ -154,7 +145,7 @@ export function UnifiedFooter({
             </Link>
             <Link to="/order-payment" className="opacity-70 hover:opacity-100 transition-opacity">
               <img 
-                src={eripLogoImage} 
+                src={FOOTER_ASSETS.erip} 
                 alt="Оплата через ЕРИП" 
                 className="h-8 w-auto"
                 width={64}
@@ -168,7 +159,7 @@ export function UnifiedFooter({
         {/* Copyright */}
         <div className="border-t border-border/50 pt-6 text-center">
           <p className="text-sm text-muted-foreground">
-            © {new Date().getFullYear()} ЗАО «АЖУР инкам». Все права защищены.
+            © {new Date().getFullYear()} {COMPANY_INFO.name}. Все права защищены.
           </p>
         </div>
       </div>
