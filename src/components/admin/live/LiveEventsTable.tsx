@@ -351,7 +351,11 @@ export function LiveEventsTable({
         <div
           ref={containerRef}
           onMouseDown={handleMouseDown}
-          className="overflow-x-auto select-none relative"
+          className="overflow-x-auto select-none relative live-events-table-scroll"
+          style={{
+            scrollbarWidth: "auto",
+            scrollbarColor: "hsl(var(--muted-foreground) / 0.4) transparent",
+          }}
         >
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
             <Table style={{ tableLayout: "fixed", width: "max-content", minWidth: "100%" }}>
