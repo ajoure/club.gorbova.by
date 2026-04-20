@@ -5,6 +5,9 @@
  * IMPORTANT: `presenter` is NOT a system auth role.
  * It is a visual room-label, derived from `live_events.metadata.presenter_user_id`.
  * Permissions/moderation are unaffected.
+ *
+ * Role priority (for highlight resolution):
+ *   presenter > admin > employee > own > user
  */
 
 import { Badge } from "@/components/ui/badge";
@@ -52,6 +55,33 @@ export function getMessageHighlightClass(role: AuthorRole | string | null | unde
 /** Highlight class for own messages (separate visual lane). */
 export function getOwnMessageClass(): string {
   return "bg-primary/5 border-l-2 border-l-primary/40";
+}
+
+/**
+ * PATCH 3.2: Unified message highlight resolver.
+ * Single function, single priority: presenter > admin > employee > own > user.
+ * Use this instead of separate isOwn/role checks in components.
+ */
+export function resolveMessageHighlight({
+  isOwn,
+  role,
+}: {
+  isOwn: boolean;
+  role: AuthorRole | string | null | undefined;
+}): string {
+  // Staff/presenter role always wins over "own" styling
+  const normalizedRole = (role as AuthorRole) || "user";
+  if (normalizedRole !== "user") {
+    return ROLE_HIGHLIGHT_CLASSES[normalizedRole] || "";
+  }
+  // Own message for regular users
+  if (isOwn) return getOwnMessageClass();
+  return "";
+}
+
+/** CSS class for reply-state messages — light indent + subtle border. */
+export function getReplyStateClass(): string {
+  return "ml-4 border-l border-l-muted-foreground/20 pl-2";
 }
 
 /** Role badge component — renders nothing for regular users */

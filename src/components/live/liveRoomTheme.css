@@ -9,6 +9,10 @@
  *
  * Each rule uses `var(--room-*, <fallback>)` so when a variable is unset
  * the default app theme (background/foreground/etc.) is used.
+ *
+ * Themed states:
+ *   waiting / live / completed / replay — themed
+ *   access denied / removed / session expired / revoked / generic error — neutral system states (NOT themed)
  */
 
 .live-room-themed {
@@ -49,4 +53,90 @@
 }
 .live-room-themed .room-meta-text {
   color: var(--room-text-secondary, hsl(var(--muted-foreground)));
+}
+
+/* ========== PATCH 3.1 — full theme coverage ========== */
+
+/* Textarea / Input inside panels */
+.live-room-themed .room-panel-input textarea,
+.live-room-themed .room-panel-input input {
+  background-color: var(--room-panel, hsl(var(--card)));
+  color: var(--room-text, hsl(var(--card-foreground)));
+  border-color: color-mix(in srgb, var(--room-text, hsl(var(--foreground))) 15%, transparent);
+  caret-color: var(--room-accent, hsl(var(--primary)));
+}
+.live-room-themed .room-panel-input textarea::placeholder,
+.live-room-themed .room-panel-input input::placeholder {
+  color: var(--room-text-secondary, hsl(var(--muted-foreground)));
+}
+.live-room-themed .room-panel-input textarea:focus,
+.live-room-themed .room-panel-input input:focus {
+  border-color: var(--room-accent, hsl(var(--primary)));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--room-accent, hsl(var(--primary))) 20%, transparent);
+}
+.live-room-themed .room-panel-input textarea:disabled,
+.live-room-themed .room-panel-input input:disabled {
+  opacity: 0.5;
+}
+
+/* Send button (ghost) in panel input area */
+.live-room-themed .room-panel-input button:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--room-accent, hsl(var(--primary))) 10%, transparent);
+  color: var(--room-accent, hsl(var(--primary)));
+}
+
+/* Sticky bottom wrapper (chat/questions input area) */
+.live-room-themed .room-panel-sticky {
+  background-color: var(--room-panel, hsl(var(--card)));
+  border-color: color-mix(in srgb, var(--room-text, hsl(var(--foreground))) 10%, transparent);
+}
+
+/* CTA card */
+.live-room-themed .room-cta-card {
+  background-color: var(--room-panel, hsl(var(--card)));
+  color: var(--room-text, hsl(var(--card-foreground)));
+  border-color: color-mix(in srgb, var(--room-accent, hsl(var(--primary))) 25%, transparent);
+}
+.live-room-themed .room-cta-card .room-cta-button {
+  background-color: var(--room-accent, hsl(var(--primary)));
+  color: var(--room-bg, hsl(var(--primary-foreground)));
+}
+.live-room-themed .room-cta-card .room-cta-button:hover {
+  opacity: 0.9;
+}
+
+/* Empty state in chat/questions */
+.live-room-themed .room-empty-state {
+  color: var(--room-text-secondary, hsl(var(--muted-foreground)));
+}
+
+/* Waiting state placeholder */
+.live-room-themed .room-waiting-card {
+  background-color: var(--room-panel, hsl(var(--muted)));
+  color: var(--room-text, hsl(var(--foreground)));
+}
+.live-room-themed .room-waiting-card .room-waiting-icon {
+  background-color: color-mix(in srgb, var(--room-accent, hsl(var(--primary))) 10%, transparent);
+  color: var(--room-accent, hsl(var(--primary)));
+}
+.live-room-themed .room-waiting-card .room-waiting-badge {
+  background-color: color-mix(in srgb, var(--room-bg, hsl(var(--background))) 60%, transparent);
+  color: var(--room-text-secondary, hsl(var(--muted-foreground)));
+}
+
+/* ScrollArea thumb */
+.live-room-themed [data-radix-scroll-area-thumb] {
+  background-color: color-mix(in srgb, var(--room-text, hsl(var(--foreground))) 25%, transparent);
+}
+
+/* Reply quote */
+.live-room-themed .room-reply-quote {
+  background-color: color-mix(in srgb, var(--room-panel, hsl(var(--card))) 50%, transparent);
+  border-left: 2px solid var(--room-accent, hsl(var(--primary)));
+}
+
+/* Long message word-break safety */
+.live-room-themed .room-message-text {
+  overflow-wrap: anywhere;
+  max-width: 100%;
 }

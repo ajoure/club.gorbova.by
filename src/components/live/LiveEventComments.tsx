@@ -9,8 +9,7 @@ import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import {
   LiveRoleBadge,
-  getMessageHighlightClass,
-  getOwnMessageClass,
+  resolveMessageHighlight,
   type AuthorRole,
 } from "./LiveRoleBadge";
 import { LiveEventReplyForm, LiveEventRepliesList } from "./LiveEventReplies";
@@ -188,7 +187,7 @@ export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile 
             const initials = getInitials(displayName);
             const displayRole = resolveDisplayRole(comment);
             const isOwn = user?.id === comment.user_id;
-            const highlight = isOwn ? getOwnMessageClass() : getMessageHighlightClass(displayRole);
+            const highlight = resolveMessageHighlight({ isOwn, role: displayRole });
             return (
               <div key={comment.id}>
                 <div className={`flex gap-2 group rounded-lg p-2 ${highlight}`}>
@@ -245,7 +244,7 @@ export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile 
       </div>
 
       {user && (
-        <div className="border-t sticky bottom-0 z-10 bg-background">
+        <div className="border-t sticky bottom-0 z-10 room-panel-sticky">
           <LiveModerationBanner isMuted={isMuted} isRemoved={isRemoved} />
           <div
             className="flex gap-2 items-end p-3 room-panel-input"
