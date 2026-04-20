@@ -3325,12 +3325,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               )}
             </TabsContent>
 
-            {/* Webinars Tab — staff only (полная история активности по эфирам, SoT: live_event_comments + live_event_questions) */}
-            {isStaffRole(authRole) && resolvedUserId && (
-              <TabsContent value="webinars" className="m-0 space-y-4">
-                <ContactWebinarsTab userId={resolvedUserId} />
-              </TabsContent>
-            )}
+            </TabsContent>
 
             {/* Communications Tab */}
             <TabsContent value="communications" className="m-0 space-y-4">
