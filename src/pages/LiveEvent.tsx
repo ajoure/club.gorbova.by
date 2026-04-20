@@ -17,7 +17,7 @@ import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { useLiveContactSheet } from "@/hooks/useLiveContactSheet";
 
 interface ResolvedSource {
-  resolved_source_kind: 'kinescope_video' | 'kinescope_live_embed' | 'none';
+  resolved_source_kind: 'kinescope_video' | 'kinescope_live_embed' | 'live_pending' | 'none';
   resolved_embed_url: string | null;
   resolved_play_url: string | null;
   provider_source_status: string | null;
