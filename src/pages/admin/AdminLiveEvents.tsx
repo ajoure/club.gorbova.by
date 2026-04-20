@@ -558,7 +558,12 @@ export default function AdminLiveEvents() {
       }
 
       toast.success(action === "enable_live_event" ? "Эфир запущен" : action === "complete_live_event" ? "Эфир завершён" : "Статус обновлён");
-      queryClient.invalidateQueries({ queryKey: ["admin-live-events"] });
+      // Полная инвалидация всех derived источников: список + provider-карточка + access rules.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["admin-live-events"] }),
+        queryClient.invalidateQueries({ queryKey: ["live-event-provider", eventId] }),
+        queryClient.invalidateQueries({ queryKey: ["live-event-provider"] }),
+      ]);
     } catch (err: any) {
       const msg = err?.message || (typeof err === "object" ? JSON.stringify(err) : String(err));
       toast.error(`Ошибка: ${msg}`);
