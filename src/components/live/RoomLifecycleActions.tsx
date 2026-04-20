@@ -4,21 +4,41 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 /**
- * Локальные glass-классы для admin layout lifecycle-кнопок.
- * НЕ добавляем глобальный variant в button.tsx — это локальный use-case.
- * Все 3 кнопки имеют одинаковую форму (h-9, min-w, padding, gap), tone несёт только цвет иконки/текста.
+ * Локальные glass-классы для admin/room lifecycle-кнопок.
+ * Цветной полупрозрачный fill (как Sonner-уведомления, mem://ui/notifications/sonner-visual-standard),
+ * единая форма (h-9, min-w, padding, gap), tone задаёт сам цвет фона + tint текста/иконки.
  */
 const GLASS_BASE =
   "h-9 min-w-[148px] justify-center gap-1.5 px-3 " +
-  "bg-white/60 backdrop-blur-md border border-white/40 shadow-sm " +
-  "hover:bg-white/80 hover:shadow-md transition-all " +
-  "disabled:opacity-40 disabled:bg-white/30 disabled:shadow-none disabled:hover:bg-white/30";
+  "backdrop-blur-md border shadow-sm hover:shadow-md transition-all " +
+  "disabled:opacity-40 disabled:bg-white/30 disabled:border-white/30 disabled:shadow-none disabled:hover:shadow-none";
 
 const GLASS_TONE = {
-  neutral: "text-foreground/80 [&_svg]:text-foreground/70",
-  primary: "text-primary [&_svg]:text-primary",
-  destructive: "text-destructive/80 [&_svg]:text-destructive/80",
+  // нейтральная (Открыть комнату): мягкий серо-белый стеклянный fill
+  neutral:
+    "bg-white/60 hover:bg-white/80 border-white/40 text-foreground/85 [&_svg]:text-foreground/70",
+  // primary (Начать вебинар): мягкий blue-tinted glass fill
+  primary:
+    "bg-primary/15 hover:bg-primary/25 border-primary/25 text-primary [&_svg]:text-primary",
+  // destructive (Завершить): мягкий red-tinted glass fill (admin-таблица — чуть мягче)
+  destructive:
+    "bg-destructive/12 hover:bg-destructive/20 border-destructive/25 text-destructive/85 [&_svg]:text-destructive/85",
+  // destructive room: чуть плотнее, чтобы оставаться заметной на любом фоне комнаты
+  destructiveRoom:
+    "bg-destructive/15 hover:bg-destructive/25 border-destructive/30 text-destructive/90 [&_svg]:text-destructive/90",
 } as const;
+
+/** Бейдж в той же палитре, тише кнопок (мягче, не спорит с ними) */
+const BADGE_TONE: Record<RoomState, string> = {
+  closed:
+    "bg-muted/60 backdrop-blur-md border-white/40 text-foreground/70",
+  opened:
+    "bg-primary/12 backdrop-blur-md border-primary/20 text-primary/90",
+  live:
+    "bg-destructive/12 backdrop-blur-md border-destructive/25 text-destructive/85 animate-pulse",
+  completed:
+    "bg-muted/60 backdrop-blur-md border-white/40 text-foreground/60",
+};
 import {
   AlertDialog,
   AlertDialogAction,
@@ -94,11 +114,15 @@ export function RoomLifecycleActions({
     return (
       <AlertDialog>
         <AlertDialogTrigger asChild>
-          <Button size="sm" variant="destructive" disabled={!!pending}>
+          <Button
+            variant="outline"
+            className={cn(GLASS_BASE, GLASS_TONE.destructiveRoom)}
+            disabled={!!pending}
+          >
             {pending === "complete_webinar" ? (
-              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+              <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <Square className="h-4 w-4 mr-1" />
+              <Square className="h-4 w-4" />
             )}
             Завершить вебинар
           </Button>
@@ -125,14 +149,14 @@ export function RoomLifecycleActions({
     );
   }
 
-  // admin layout — все 3 кнопки + badge (glass-стиль)
+  // admin layout — все 3 кнопки + badge (glass-стиль, цветные tint-фоны)
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <Badge
         variant="outline"
         className={cn(
-          "h-9 px-3 bg-white/60 backdrop-blur-md border-white/40 text-foreground/80 font-medium",
-          badge.pulse && "text-destructive/90 border-destructive/30 animate-pulse",
+          "h-9 px-3 font-medium border",
+          BADGE_TONE[roomState],
         )}
       >
         {badge.label}

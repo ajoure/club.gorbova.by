@@ -485,7 +485,7 @@ export default function LiveEvent() {
   return (
     <div className="live-room-themed min-h-screen flex flex-col" style={themeStyle}>
       {/* Header — compact */}
-      <div className="max-w-[1400px] w-full mx-auto px-3 md:px-6 pt-3 md:pt-4 pb-2">
+      <div className="max-w-[1600px] w-full mx-auto px-3 md:px-6 pt-3 md:pt-4 pb-2">
         <div className="flex items-center gap-2 md:gap-3 mb-1 flex-wrap">
           <h1 className="room-title text-lg md:text-2xl font-bold truncate">{data?.title}</h1>
           {/* Sprint 2 PATCH 2.5/2.7: room state badge через единый VM, не локальное вычисление */}
@@ -528,9 +528,9 @@ export default function LiveEvent() {
       </div>
 
       {/* Main content — fills remaining height */}
-      <div className="flex-1 max-w-[1400px] w-full mx-auto px-3 md:px-6 pb-3 md:pb-6 flex flex-col lg:flex-row gap-3 md:gap-4 min-h-0">
+      <div className="flex-1 max-w-[1600px] w-full mx-auto px-3 md:px-6 pb-3 md:pb-6 flex flex-col lg:flex-row lg:items-start gap-3 md:gap-4 min-h-0">
         {/* Player column — takes most width on desktop */}
-        <div className="lg:flex-[2.5] flex flex-col gap-2 min-w-0">
+        <div className="lg:flex-[3] flex flex-col gap-2 min-w-0">
           {isWaiting ? (
             <RoomWaitingState scheduledAt={data?.scheduled_at} eventTimezone={data?.event_timezone} />
           ) : resolvedSource?.resolved_source_kind === 'kinescope_video' && resolvedSource.resolved_embed_url ? (
@@ -564,9 +564,9 @@ export default function LiveEvent() {
           )}
         </div>
 
-        {/* Chat / Questions sidebar — full height on desktop, sensible on mobile */}
+        {/* Chat / Questions sidebar — fixed width on desktop, stack on mobile */}
         {eventId && (
-          <div className="lg:flex-1 flex flex-col min-h-0 h-[70dvh] lg:h-auto lg:max-h-[calc(100vh-120px)] gap-2">
+          <div className="w-full lg:w-[360px] xl:w-[400px] lg:shrink-0 lg:self-start flex flex-col min-h-0 h-[70dvh] lg:h-[calc(100vh-140px)] gap-2">
             {/* Sidebar room blocks (legacy, only if no product CTA bindings) */}
             {!hasSidebarCta && (
               <LiveEventRoomBlocks
@@ -594,6 +594,7 @@ export default function LiveEvent() {
                   <TabsTrigger value="questions" className="room-tab-trigger gap-1.5 text-xs">
                     <HelpCircle className="h-3.5 w-3.5" />
                     Вопросы
+                    <Lock className="h-3 w-3 opacity-60" />
                   </TabsTrigger>
                 </TabsList>
                 {/* PATCH 3.5: forceMount keeps both tabs in DOM — preserves scroll position and realtime subscriptions.
