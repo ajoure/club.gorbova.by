@@ -1428,13 +1428,32 @@ export default function AdminLiveEvents() {
                 const lastSync = meta?.last_synced_at || meta?.last_provider_sync_at;
                 const hasVideoId = !!currentEvent.kinescope_video_id;
                 const hasLiveId = !!currentEvent.kinescope_live_event_id;
-                const resolvedKind = hasVideoId ? "kinescope_video" : hasLiveId ? "kinescope_live_embed" : "none";
-                const embedUrl = hasVideoId 
-                  ? `https://kinescope.io/embed/${currentEvent.kinescope_video_id}`
-                  : hasLiveId 
-                    ? `https://kinescope.io/embed/live/${currentEvent.kinescope_live_event_id}`
-                    : null;
-                const playUrl = hasVideoId ? `https://kinescope.io/${currentEvent.kinescope_video_id}` : null;
+                const providerCurrent = (meta?.provider?.current ?? {}) as Record<string, any>;
+                const embedLinkRaw: string | null = providerCurrent?.embed_link ?? null;
+                const playLinkRaw: string | null = providerCurrent?.play_link ?? null;
+                const playSlug = (() => {
+                  if (!playLinkRaw) return null;
+                  const s = String(playLinkRaw).trim();
+                  if (!s) return null;
+                  const noProto = s.replace(/^https?:\/\/[^/]+\//, '');
+                  const slug = noProto.split(/[/?#]/)[0]?.trim() || null;
+                  return slug && slug.length > 0 ? slug : null;
+                })();
+                const liveEmbedFromProvider = embedLinkRaw && String(embedLinkRaw).trim().length > 0
+                  ? String(embedLinkRaw).trim()
+                  : (playSlug ? `https://kinescope.io/embed/${playSlug}` : null);
+                const isLiveActive = currentEvent.platform_status === "live";
+                const resolvedKind = isLiveActive
+                  ? (liveEmbedFromProvider ? "kinescope_live_embed" : "live_pending")
+                  : (hasVideoId ? "kinescope_video" : hasLiveId ? "kinescope_live_embed" : "none");
+                const embedUrl = isLiveActive
+                  ? liveEmbedFromProvider
+                  : (hasVideoId
+                      ? `https://kinescope.io/embed/${currentEvent.kinescope_video_id}`
+                      : (liveEmbedFromProvider ?? null));
+                const playUrl = hasVideoId
+                  ? `https://kinescope.io/${currentEvent.kinescope_video_id}`
+                  : (playLinkRaw || null);
 
                 return (
                   <div className="rounded-lg border border-dashed border-muted-foreground/30 bg-muted/10 p-3 space-y-2">

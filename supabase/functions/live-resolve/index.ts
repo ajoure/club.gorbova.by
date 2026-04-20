@@ -335,19 +335,43 @@ function resolveVideoSource(event: any): ResolvedSource {
   const isReplay = platformStatus === 'replay_available'
     || (event.status === 'ended' && event.replay_enabled);
 
+  // Helper: build live embed URL from provider metadata.
+  // Priority: explicit embed_link → derived from play_link slug → null (live_pending).
+  // NOTE: shape `https://kinescope.io/embed/live/<live_event_id>` НЕ работает у Kinescope для live —
+  // правильная форма embed/<play_slug>.
+  const providerCurrent = meta?.provider?.current as Record<string, any> | null | undefined;
+  const embedLinkRaw: string | null = (providerCurrent?.embed_link ?? null) as string | null;
+  const playLinkRaw: string | null = (providerCurrent?.play_link ?? null) as string | null;
+  const embedLink = embedLinkRaw && typeof embedLinkRaw === 'string' && embedLinkRaw.trim().length > 0
+    ? embedLinkRaw.trim()
+    : null;
+  const playSlug = (() => {
+    if (!playLinkRaw || typeof playLinkRaw !== 'string') return null;
+    const s = playLinkRaw.trim();
+    if (!s) return null;
+    const noProto = s.replace(/^https?:\/\/[^/]+\//, '');
+    const slug = noProto.split(/[/?#]/)[0]?.trim() || null;
+    return slug && slug.length > 0 ? slug : null;
+  })();
+  const liveEmbedUrl: string | null = embedLink
+    ? embedLink
+    : (playSlug ? `https://kinescope.io/embed/${playSlug}` : null);
+  const liveEmbedReason: string = embedLink
+    ? 'active_live_via_embed_link'
+    : (playSlug ? 'active_live_via_play_link' : 'active_live_pending_play_link');
+
   // Priority 1 — ACTIVE LIVE: live embed must win over any pre-existing video_id.
   if (isLiveStream && isLiveActive) {
-    if (event.kinescope_live_event_id) {
+    if (liveEmbedUrl) {
       return {
         resolved_source_kind: 'kinescope_live_embed',
-        resolved_embed_url: `https://kinescope.io/embed/live/${event.kinescope_live_event_id}`,
-        resolved_play_url: null,
+        resolved_embed_url: liveEmbedUrl,
+        resolved_play_url: playLinkRaw || null,
         provider_source_status: providerStatus,
-        source_reason: 'active_live_priority',
+        source_reason: liveEmbedReason,
         last_synced_at: lastSynced,
       };
     }
-    // Anti-blank: статус live, но провайдер ещё не отдал live_event_id.
     return {
       resolved_source_kind: 'live_pending',
       resolved_embed_url: null,
@@ -383,12 +407,22 @@ function resolveVideoSource(event: any): ResolvedSource {
   }
 
   if (event.kinescope_live_event_id) {
+    if (liveEmbedUrl) {
+      return {
+        resolved_source_kind: 'kinescope_live_embed',
+        resolved_embed_url: liveEmbedUrl,
+        resolved_play_url: playLinkRaw || null,
+        provider_source_status: providerStatus,
+        source_reason: 'live_embed_fallback_via_provider',
+        last_synced_at: lastSynced,
+      };
+    }
     return {
-      resolved_source_kind: 'kinescope_live_embed',
-      resolved_embed_url: `https://kinescope.io/embed/live/${event.kinescope_live_event_id}`,
+      resolved_source_kind: 'live_pending',
+      resolved_embed_url: null,
       resolved_play_url: null,
       provider_source_status: providerStatus,
-      source_reason: 'live_embed_fallback',
+      source_reason: 'live_pending_no_embed_link',
       last_synced_at: lastSynced,
     };
   }
