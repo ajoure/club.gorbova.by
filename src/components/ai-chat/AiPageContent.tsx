@@ -620,8 +620,8 @@ export function AiPageContent({ mode }: AiPageContentProps) {
               Новый чат
             </Button>
           </div>
-          <ScrollArea ref={scrollAreaRef} className="flex-1 min-h-0 p-4">
-            <div className="space-y-4">
+          <ScrollArea ref={scrollAreaRef} className="flex-1 min-h-0 min-w-0 p-2 sm:p-4">
+            <div className="space-y-4 min-w-0">
               {aiChat.messages.map((message) => (
                 <ChatMessageBubble key={message.id} message={message} />
               ))}
@@ -651,7 +651,7 @@ export function AiPageContent({ mode }: AiPageContentProps) {
             />
           )}
 
-          <div className="border-t border-border/50 p-4 bg-background/50 shrink-0">
+          <div className="border-t border-border/50 p-2 sm:p-4 bg-background/50 shrink-0 min-w-0">
             {/* Compact file uploader */}
             {(showUploader || chatFiles.length > 0) && (
               <div className="mb-3">
@@ -666,7 +666,7 @@ export function AiPageContent({ mode }: AiPageContentProps) {
               </div>
             )}
 
-            <div className="flex gap-2">
+            <div className="flex gap-1.5 sm:gap-2 min-w-0 items-end">
               <div className="flex flex-col gap-1 shrink-0">
                 <ChatScenarioLauncher
                   scenarios={aiChat.scenarios}
@@ -681,7 +681,7 @@ export function AiPageContent({ mode }: AiPageContentProps) {
                   size="icon"
                   onClick={() => setShowUploader((v) => !v)}
                   className={cn(
-                    "h-[36px] w-[36px] mx-auto",
+                    "h-9 w-9 mx-auto",
                     (showUploader || chatFiles.length > 0) && "text-primary bg-primary/10"
                   )}
                   disabled={aiChat.isLoading}
@@ -694,19 +694,19 @@ export function AiPageContent({ mode }: AiPageContentProps) {
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleKeyPress}
                 placeholder="Напиши свой вопрос..."
-                className="min-h-[44px] max-h-[120px] resize-none"
+                className="flex-1 min-w-0 min-h-[44px] max-h-[120px] resize-none text-base sm:text-sm"
                 disabled={aiChat.isLoading}
               />
               <Button
                 onClick={handleSendMessage}
                 disabled={!(inputValue.trim() || chatFiles.length > 0) || aiChat.isLoading}
                 size="icon"
-                className="h-[44px] w-[44px] shrink-0"
+                className="h-11 w-11 shrink-0 self-end"
               >
                 <Send className="h-4 w-4" />
               </Button>
             </div>
-            <p className="text-xs text-muted-foreground mt-2 text-center">
+            <p className="hidden sm:block text-xs text-muted-foreground mt-2 text-center">
               Нажми Enter для отправки, Shift+Enter для новой строки
             </p>
           </div>
