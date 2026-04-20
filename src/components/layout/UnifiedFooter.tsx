@@ -1,8 +1,6 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useEffect } from "react";
-import logoImage from "@/assets/logo.png";
-import paymentSystemsImage from "@/assets/payment-systems.png";
-import eripLogoImage from "@/assets/erip-logo.png";
+import { BRAND_INFO, COMPANY_INFO, LEGAL_LINKS, FOOTER_ASSETS } from "./footerDefaults";
 
 interface UnifiedFooterProps {
   /** Включить навигацию по якорям на главной странице */
