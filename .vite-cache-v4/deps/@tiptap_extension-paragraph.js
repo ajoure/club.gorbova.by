@@ -1,11 +1,12 @@
 import {
   Node3,
   mergeAttributes
-} from "./chunk-7Q4SBMD3.js";
-import "./chunk-YLIL3JKF.js";
+} from "./chunk-WXBZYG5O.js";
+import "./chunk-KWB4SJQI.js";
+import "./chunk-AOE4NH37.js";
 import "./chunk-OL46QLBJ.js";
 
-// node_modules/@tiptap/extension-paragraph/dist/index.js
+// node_modules/.bun/@tiptap+extension-paragraph@3.20.1+fc8ed9c11a098567/node_modules/@tiptap/extension-paragraph/dist/index.js
 var EMPTY_PARAGRAPH_MARKDOWN = "&nbsp;";
 var NBSP_CHAR = " ";
 var Paragraph = Node3.create({

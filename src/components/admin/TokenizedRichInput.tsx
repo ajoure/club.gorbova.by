@@ -399,7 +399,7 @@ export function TokenizedRichInput({
   }, [singleLine]);
 
   const editor = useEditor({
-    extensions,
+    extensions: extensions as any,
     content: parseToDoc(singleLine ? value.replace(/\n/g, " ") : value),
     editable: !disabled,
     editorProps: {

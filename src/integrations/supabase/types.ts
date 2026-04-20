@@ -6056,16 +6056,20 @@ export type Database = {
           kinescope_project_id: string | null
           kinescope_stream_id: string | null
           kinescope_video_id: string | null
+          live_started_at: string | null
           metadata: Json | null
           platform_status: string
           product_id: string | null
           replay_enabled: boolean
+          room_opened_at: string | null
+          room_state: string
           scheduled_at: string | null
           slug: string
           source_kind: string
           status: string
           title: string
           updated_at: string
+          webinar_completed_at: string | null
         }
         Insert: {
           access_rule?: Json
@@ -6081,16 +6085,20 @@ export type Database = {
           kinescope_project_id?: string | null
           kinescope_stream_id?: string | null
           kinescope_video_id?: string | null
+          live_started_at?: string | null
           metadata?: Json | null
           platform_status?: string
           product_id?: string | null
           replay_enabled?: boolean
+          room_opened_at?: string | null
+          room_state?: string
           scheduled_at?: string | null
           slug: string
           source_kind?: string
           status?: string
           title: string
           updated_at?: string
+          webinar_completed_at?: string | null
         }
         Update: {
           access_rule?: Json
@@ -6106,16 +6114,20 @@ export type Database = {
           kinescope_project_id?: string | null
           kinescope_stream_id?: string | null
           kinescope_video_id?: string | null
+          live_started_at?: string | null
           metadata?: Json | null
           platform_status?: string
           product_id?: string | null
           replay_enabled?: boolean
+          room_opened_at?: string | null
+          room_state?: string
           scheduled_at?: string | null
           slug?: string
           source_kind?: string
           status?: string
           title?: string
           updated_at?: string
+          webinar_completed_at?: string | null
         }
         Relationships: [
           {
@@ -12553,6 +12565,21 @@ export type Database = {
           use_for?: Json | null
         }
         Relationships: []
+      }
+      live_event_active_participants_v: {
+        Row: {
+          active_count: number | null
+          live_event_id: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_active_sessions_live_event_id_fkey"
+            columns: ["live_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       payment_links_enriched_v: {
         Row: {
