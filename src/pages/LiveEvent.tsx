@@ -451,8 +451,10 @@ export default function LiveEvent() {
     );
   }
 
-  // state === "live" | "room_open_waiting" — общее дерево комнаты (PATCH 2.5).
-  // В waiting режиме плеер заменяется на RoomWaitingState, чат/вопросы/CTA активны.
+  // state === "live" | "room_open_waiting" — shared room tree (PATCH 2.5).
+  // In waiting mode the player is replaced by RoomWaitingState; chat/questions/CTA stay active.
+  // PATCH 3.5 IMPORTANT: root `.live-room-themed` wrapper is shared — switching waiting→live
+  // changes ONLY the player column. Chat/CTA/header are NOT remounted. Do NOT break this.
   const isWaiting = state === "room_open_waiting";
   const eventId = data?.event_id;
   const isReplay = !isWaiting && (data?.platform_status === "replay_available" ||
@@ -564,7 +566,7 @@ export default function LiveEvent() {
 
         {/* Chat / Questions sidebar — full height on desktop, sensible on mobile */}
         {eventId && (
-          <div className="lg:flex-1 flex flex-col min-h-0 h-[70dvh] lg:h-auto lg:max-h-[calc(100vh-120px)]">
+          <div className="lg:flex-1 flex flex-col min-h-0 h-[70dvh] lg:h-auto lg:max-h-[calc(100vh-120px)] gap-2">
             {/* Sidebar room blocks (legacy, only if no product CTA bindings) */}
             {!hasSidebarCta && (
               <LiveEventRoomBlocks
@@ -573,13 +575,15 @@ export default function LiveEvent() {
                 position="sidebar"
               />
             )}
-            {/* Product CTA — sidebar */}
-            <LiveEventProductCta
-              liveEventId={eventId}
-              position="sidebar"
-              displayContext={isReplay ? "replay" : "live"}
-              eventStartedAt={data?.scheduled_at}
-            />
+            {/* Product CTA — sidebar. Mobile: constrained height to not eat chat space */}
+            <div className="lg:max-h-none max-h-[35vh] overflow-y-auto shrink-0">
+              <LiveEventProductCta
+                liveEventId={eventId}
+                position="sidebar"
+                displayContext={isReplay ? "replay" : "live"}
+                eventStartedAt={data?.scheduled_at}
+              />
+            </div>
             <Card className="room-panel flex-1 flex flex-col overflow-hidden min-h-0">
               <Tabs defaultValue="comments" className="flex flex-col h-full min-h-0">
                 <TabsList className="room-tabs-list w-full grid grid-cols-2 rounded-none border-b shrink-0 sticky top-0 z-10 bg-card">
@@ -592,10 +596,11 @@ export default function LiveEvent() {
                     Вопросы
                   </TabsTrigger>
                 </TabsList>
-                <TabsContent value="comments" className="flex-1 min-h-0 overflow-hidden m-0">
+                {/* PATCH 3.5: forceMount keeps both tabs in DOM — preserves scroll position and realtime subscriptions */}
+                <TabsContent value="comments" className="flex-1 min-h-0 overflow-hidden m-0" forceMount style={{ display: undefined }}>
                   <LiveEventComments liveEventId={eventId} presenterUserId={presenterUserId} onOpenProfile={isStaff ? openContactSheet : undefined} />
                 </TabsContent>
-                <TabsContent value="questions" className="flex-1 min-h-0 overflow-hidden m-0">
+                <TabsContent value="questions" className="flex-1 min-h-0 overflow-hidden m-0" forceMount style={{ display: undefined }}>
                   <LiveEventQuestions liveEventId={eventId} presenterUserId={presenterUserId} onOpenProfile={isStaff ? openContactSheet : undefined} />
                 </TabsContent>
               </Tabs>
@@ -614,8 +619,8 @@ export default function LiveEvent() {
   );
 }
 
-/** Player for recorded/replay videos via Kinescope SDK */
-function KinescopePlayerWrapper({ videoId }: { videoId: string }) {
+/** Player for recorded/replay videos via Kinescope SDK — PATCH 3.5: memo by videoId */
+const KinescopePlayerWrapper = React.memo(function KinescopePlayerWrapper({ videoId }: { videoId: string }) {
   const containerId = "live-player-container";
 
   useKinescopePlayer({
@@ -628,10 +633,10 @@ function KinescopePlayerWrapper({ videoId }: { videoId: string }) {
       <div id={containerId} className="w-full h-full" />
     </div>
   );
-}
+}, (prev, next) => prev.videoId === next.videoId);
 
-/** Player for live stream embed via iframe */
-function LiveEmbedPlayer({ embedUrl }: { embedUrl: string }) {
+/** Player for live stream embed via iframe — PATCH 3.5: memo by embedUrl */
+const LiveEmbedPlayer = React.memo(function LiveEmbedPlayer({ embedUrl }: { embedUrl: string }) {
   return (
     <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden">
       <iframe
@@ -642,4 +647,4 @@ function LiveEmbedPlayer({ embedUrl }: { embedUrl: string }) {
       />
     </div>
   );
-}
+}, (prev, next) => prev.embedUrl === next.embedUrl);
