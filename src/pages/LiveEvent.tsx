@@ -57,6 +57,15 @@ export default function LiveEvent() {
   const isStaff = role === "admin" || role === "superadmin" || role === "employee";
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Refs to read latest session/data without triggering effect restarts on TOKEN_REFRESHED.
+  const sessionRef = useRef(session);
+  useEffect(() => { sessionRef.current = session; }, [session]);
+  const dataRef = useRef<LiveResolveResult | null>(null);
+  useEffect(() => { dataRef.current = data; }, [data]);
+
+  // accessToken as primitive — only used for cold-start gate, not as effect-restart trigger.
+  const hasAccessToken = !!session?.access_token;
+
   // Hooks must be called unconditionally — keep before any early returns
   const eventIdForCta = data?.event_id || "";
   const hasUnderVideoCta = useHasActiveCtaBindings(eventIdForCta, "under_video");
