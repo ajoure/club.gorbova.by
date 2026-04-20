@@ -30,9 +30,10 @@ interface ContactArtifactsTabProps {
   userId: string | null | undefined;
   enabled: boolean;
   contactName?: string;
+  isStaff?: boolean;
 }
 
-type FilterType = 'all' | 'forms' | 'training';
+type FilterType = 'all' | 'forms' | 'training' | 'webinars';
 
 const SOURCE_TYPE_CONFIG: Record<ArtifactSourceType, { label: string; icon: typeof ClipboardList; color: string }> = {
   site_form: { label: "Анкета", icon: ClipboardList, color: "text-blue-500" },
