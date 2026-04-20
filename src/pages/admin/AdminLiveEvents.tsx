@@ -937,12 +937,12 @@ export default function AdminLiveEvents() {
 
         {/* --- Create/Edit Dialog --- */}
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogContent className="w-[calc(100vw-1rem)] sm:w-[calc(100vw-2rem)] max-w-2xl max-h-[90vh] overflow-y-auto overflow-x-hidden p-3 sm:p-6">
             <DialogHeader>
               <DialogTitle>{editingId ? "Редактировать эфир" : "Создать эфир"}</DialogTitle>
             </DialogHeader>
 
-            <div className="space-y-6 py-2">
+            <div className="space-y-6 py-2 min-w-0 overflow-x-hidden [&_*]:min-w-0">
               {/* Step 0: Event type selector (only for new events) */}
               {!editingId && (
                 <FormSection title="Тип эфира">
@@ -1552,11 +1552,11 @@ function SwitchRow({
   error?: boolean;
 }) {
   return (
-    <div className={`flex items-start gap-3 rounded-lg p-3 ${error ? "bg-destructive/5 border border-destructive/30" : "bg-muted/20"}`}>
-      <Switch checked={checked} onCheckedChange={onCheckedChange} className="mt-0.5" />
-      <div className="space-y-0.5">
-        <Label className="text-sm cursor-pointer" onClick={() => onCheckedChange(!checked)}>{label}</Label>
-        {description && <p className="text-xs text-muted-foreground">{description}</p>}
+    <div className={`flex items-start gap-3 rounded-lg p-3 min-w-0 ${error ? "bg-destructive/5 border border-destructive/30" : "bg-muted/20"}`}>
+      <Switch checked={checked} onCheckedChange={onCheckedChange} className="mt-0.5 shrink-0" />
+      <div className="space-y-0.5 min-w-0 flex-1">
+        <Label className="text-sm cursor-pointer break-words" onClick={() => onCheckedChange(!checked)}>{label}</Label>
+        {description && <p className="text-xs text-muted-foreground break-words">{description}</p>}
       </div>
     </div>
   );
