@@ -347,11 +347,11 @@ export function LiveEventsTable({
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="rounded-md border bg-card overflow-hidden">
+      <div className="rounded-md border bg-card">
         <div
           ref={containerRef}
           onMouseDown={handleMouseDown}
-          className="overflow-x-auto select-none relative live-events-table-scroll"
+          className="overflow-x-auto select-none relative live-events-table-scroll rounded-md"
           style={{
             scrollbarWidth: "auto",
             scrollbarColor: "hsl(var(--muted-foreground) / 0.4) transparent",
