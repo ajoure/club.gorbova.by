@@ -8,7 +8,12 @@ import { cn } from "@/lib/utils";
  * (`lifecycleButtonStyles.ts`) — он же используется для «Создать эфир»,
  * «Справка», «Пересоздать» в /admin/live-events. Единая форма + tones.
  */
-import { LIFECYCLE_BUTTON_BASE as GLASS_BASE, LIFECYCLE_BUTTON_TONES as GLASS_TONE } from "./lifecycleButtonStyles";
+import {
+  LIFECYCLE_BUTTON_BASE as GLASS_BASE,
+  LIFECYCLE_BUTTON_TONES as GLASS_TONE,
+  LIFECYCLE_BUTTON_WIDTH_FIXED,
+  LIFECYCLE_BUTTON_WIDTH_MIN,
+} from "./lifecycleButtonStyles";
 
 /** Бейдж в той же палитре, тише кнопок (мягче, не спорит с ними) */
 const BADGE_TONE: Record<RoomState, string> = {
@@ -98,7 +103,7 @@ export function RoomLifecycleActions({
         <AlertDialogTrigger asChild>
           <Button
             variant="outline"
-            className={cn(GLASS_BASE, GLASS_TONE.destructiveRoom)}
+            className={cn(GLASS_BASE, GLASS_TONE.destructiveRoom, LIFECYCLE_BUTTON_WIDTH_MIN)}
             disabled={!!pending}
           >
             {pending === "complete_webinar" ? (
@@ -146,7 +151,7 @@ export function RoomLifecycleActions({
 
       <Button
         variant="outline"
-        className={cn(GLASS_BASE, GLASS_TONE.neutral)}
+        className={cn(GLASS_BASE, GLASS_TONE.neutral, LIFECYCLE_BUTTON_WIDTH_FIXED)}
         disabled={!canPerformAction(roomState, "open_room") || !!pending}
         onClick={() => callAction("open_room")}
       >
@@ -160,7 +165,7 @@ export function RoomLifecycleActions({
 
       <Button
         variant="outline"
-        className={cn(GLASS_BASE, GLASS_TONE.primary)}
+        className={cn(GLASS_BASE, GLASS_TONE.primary, LIFECYCLE_BUTTON_WIDTH_FIXED)}
         disabled={!canPerformAction(roomState, "start_live") || !!pending}
         onClick={() => callAction("start_live")}
       >
@@ -176,7 +181,7 @@ export function RoomLifecycleActions({
         <AlertDialogTrigger asChild>
           <Button
             variant="outline"
-            className={cn(GLASS_BASE, GLASS_TONE.destructive)}
+            className={cn(GLASS_BASE, GLASS_TONE.destructive, LIFECYCLE_BUTTON_WIDTH_FIXED)}
             disabled={!canPerformAction(roomState, "complete_webinar") || !!pending}
           >
             {pending === "complete_webinar" ? (

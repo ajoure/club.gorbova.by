@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { LIFECYCLE_BUTTON_BASE, LIFECYCLE_BUTTON_TONES } from "@/components/live/lifecycleButtonStyles";
+import { LIFECYCLE_BUTTON_BASE, LIFECYCLE_BUTTON_TONES, LIFECYCLE_BUTTON_WIDTH_MIN, LIFECYCLE_BUTTON_WIDTH_ICON } from "@/components/live/lifecycleButtonStyles";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
