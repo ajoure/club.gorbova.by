@@ -293,6 +293,10 @@ Deno.serve(async (req) => {
       platform_status: event.platform_status,
       kinescope_live_event_id: event.kinescope_live_event_id,
       resolved_source: resolvedSource,
+      // UX-only metadata pass-through (Sprint 1) — does NOT influence access/resolver logic.
+      room_theme: (event.metadata as any)?.room_theme || null,
+      live_badge_mode: (event.metadata as any)?.live_badge_mode || null,
+      presenter_user_id: (event.metadata as any)?.presenter_user_id || null,
     });
   } catch (err) {
     console.error('[live-resolve] Unexpected error:', err);
