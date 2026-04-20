@@ -3556,13 +3556,14 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               <ContactLoyaltyTab contact={contact} />
             </TabsContent>
 
-            {/* Artifacts Tab — Анкеты и обучение */}
+            {/* Artifacts Tab — Анкеты, обучение и вебинары */}
             <TabsContent value="artifacts" className="m-0">
               <ContactArtifactsTab
                 profileId={contact.id}
                 userId={contact.user_id}
                 enabled={activeTab === "artifacts"}
                 contactName={contact.full_name || undefined}
+                isStaff={isStaffRole(authRole)}
               />
             </TabsContent>
 
