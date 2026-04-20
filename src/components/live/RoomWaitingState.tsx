@@ -8,26 +8,26 @@ interface Props {
 }
 
 /**
- * Sprint 2 PATCH 2.5: controlled waiting-state.
- * Заменяет плеер, когда room_state='opened' (комната открыта, эфир не начат).
- * Чат / вопросы / CTA / тема — рендерятся обычным room layout вокруг этого блока.
+ * Sprint 2 PATCH 2.5 + Sprint 3 PATCH 3.1: controlled waiting-state with room theme tokens.
+ * Replaces the player when room_state='opened' (room open, stream not started).
+ * Chat/questions/CTA/theme render normally via the room layout around this block.
  */
 export function RoomWaitingState({ scheduledAt, eventTimezone }: Props) {
   return (
-    <div className="relative w-full aspect-video bg-muted rounded-lg overflow-hidden flex items-center justify-center">
+    <div className="room-waiting-card relative w-full aspect-video rounded-lg overflow-hidden flex items-center justify-center">
       <div className="text-center px-6 py-8 max-w-md">
-        <div className="mx-auto w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-4">
-          <CalendarClock className="h-8 w-8 text-primary" />
+        <div className="room-waiting-icon mx-auto w-16 h-16 rounded-full flex items-center justify-center mb-4">
+          <CalendarClock className="h-8 w-8" />
         </div>
-        <h3 className="text-lg font-semibold text-foreground mb-2">
+        <h3 className="text-lg font-semibold room-title mb-2">
           Комната открыта
         </h3>
-        <p className="text-sm text-muted-foreground mb-3">
+        <p className="text-sm room-meta-text mb-3">
           Эфир скоро начнётся. Вы уже в комнате — можно общаться в чате и задавать вопросы.
           Плеер появится автоматически в момент старта.
         </p>
         {scheduledAt && (
-          <div className="inline-flex items-center gap-2 bg-background/60 backdrop-blur rounded-md px-3 py-1.5 text-xs text-muted-foreground">
+          <div className="room-waiting-badge inline-flex items-center gap-2 backdrop-blur rounded-md px-3 py-1.5 text-xs">
             <CalendarClock className="h-3.5 w-3.5" />
             Запланировано: {format(new Date(scheduledAt), "dd MMM yyyy, HH:mm", { locale: ru })}
             {eventTimezone && <span className="opacity-70">({eventTimezone})</span>}
