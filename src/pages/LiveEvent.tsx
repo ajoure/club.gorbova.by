@@ -564,27 +564,13 @@ export default function LiveEvent() {
           )}
         </div>
 
-        {/* Chat / Questions sidebar — fixed width on desktop, stack on mobile */}
+        {/* Chat / Questions sidebar — fixed width on desktop, stack on mobile.
+            PATCH 1: Card-чат ВСЕГДА первый элемент DOM-сайдбара на desktop —
+            гарантирует, что top чата === top видео. CTA/room blocks рендерятся
+            ниже Card. На mobile порядок остаётся естественным (column stack). */}
         {eventId && (
           <div className="w-full lg:w-[360px] xl:w-[400px] lg:shrink-0 lg:self-start flex flex-col min-h-0 h-[70dvh] lg:h-[calc(100vh-140px)] gap-2">
-            {/* Sidebar room blocks (legacy, only if no product CTA bindings) */}
-            {!hasSidebarCta && (
-              <LiveEventRoomBlocks
-                liveEventId={eventId}
-                displayContext={isReplay ? "replay" : "live"}
-                position="sidebar"
-              />
-            )}
-            {/* Product CTA — sidebar. Mobile: constrained height to not eat chat space */}
-            <div className="lg:max-h-none max-h-[35vh] overflow-y-auto shrink-0">
-              <LiveEventProductCta
-                liveEventId={eventId}
-                position="sidebar"
-                displayContext={isReplay ? "replay" : "live"}
-                eventStartedAt={data?.scheduled_at}
-              />
-            </div>
-            <Card className="room-panel flex-1 flex flex-col overflow-hidden min-h-0">
+            <Card className="room-panel flex-1 flex flex-col overflow-hidden min-h-0 order-1">
               <Tabs defaultValue="comments" className="flex flex-col h-full min-h-0">
                 <TabsList className="room-tabs-list w-full grid grid-cols-2 rounded-none border-b shrink-0 sticky top-0 z-10 bg-card">
                   <TabsTrigger value="comments" className="room-tab-trigger gap-1.5 text-xs">
@@ -607,6 +593,25 @@ export default function LiveEvent() {
                 </TabsContent>
               </Tabs>
             </Card>
+            {/* Sidebar room blocks (legacy, only if no product CTA bindings) — ПОД чатом */}
+            {!hasSidebarCta && (
+              <div className="order-2 shrink-0">
+                <LiveEventRoomBlocks
+                  liveEventId={eventId}
+                  displayContext={isReplay ? "replay" : "live"}
+                  position="sidebar"
+                />
+              </div>
+            )}
+            {/* Product CTA — sidebar (ПОД чатом). Mobile: constrained height to not eat chat space */}
+            <div className="order-3 lg:max-h-none max-h-[35vh] overflow-y-auto shrink-0">
+              <LiveEventProductCta
+                liveEventId={eventId}
+                position="sidebar"
+                displayContext={isReplay ? "replay" : "live"}
+                eventStartedAt={data?.scheduled_at}
+              />
+            </div>
           </div>
         )}
       </div>
