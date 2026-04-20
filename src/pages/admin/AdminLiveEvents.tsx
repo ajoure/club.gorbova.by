@@ -2200,21 +2200,21 @@ function LiveStreamControlPanel({
 
           {/* Sync — always available if we have an ID */}
           {kinescopeLiveEventId && (
-            <Button className={cn(LIFECYCLE_BUTTON_BASE, LIFECYCLE_BUTTON_TONES.info)} onClick={handleSyncProvider} disabled={syncStatus === "syncing"}>
+            <Button className={cn(LIFECYCLE_BUTTON_BASE, LIFECYCLE_BUTTON_TONES.info, LIFECYCLE_BUTTON_WIDTH_MIN)} onClick={handleSyncProvider} disabled={syncStatus === "syncing"}>
               {syncStatus === "syncing" ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               Обновить источник
             </Button>
           )}
 
           {/* Recreate */}
-          <Button className={cn(LIFECYCLE_BUTTON_BASE, LIFECYCLE_BUTTON_TONES.warning)} onClick={() => setRecreateDialogOpen(true)}
+          <Button className={cn(LIFECYCLE_BUTTON_BASE, LIFECYCLE_BUTTON_TONES.warning, LIFECYCLE_BUTTON_WIDTH_MIN)} onClick={() => setRecreateDialogOpen(true)}
             disabled={!canRecreate || recreating}>
             <RotateCcw className="h-4 w-4" /> Пересоздать эфир
           </Button>
 
           {/* Detach — only if there's a provider bound */}
           {kinescopeLiveEventId && (
-            <Button className={cn(LIFECYCLE_BUTTON_BASE, LIFECYCLE_BUTTON_TONES.warning)} onClick={() => setDetachDialogOpen(true)}
+            <Button className={cn(LIFECYCLE_BUTTON_BASE, LIFECYCLE_BUTTON_TONES.warning, LIFECYCLE_BUTTON_WIDTH_MIN)} onClick={() => setDetachDialogOpen(true)}
               disabled={detaching}>
               <Unlink className="h-4 w-4" /> Отвязать источник
             </Button>
