@@ -42,7 +42,7 @@ Deno.serve(async (req) => {
     // Fetch all published events
     const { data: events, error: eventsError } = await supabase
       .from('live_events')
-      .select('id, slug, title, description, event_type, platform_status, scheduled_at, event_timezone, replay_enabled, is_published, status')
+      .select('id, slug, title, description, event_type, platform_status, scheduled_at, event_timezone, replay_enabled, is_published, status, room_state')
       .eq('is_published', true)
       .order('scheduled_at', { ascending: false, nullsFirst: false });
 
@@ -94,6 +94,7 @@ Deno.serve(async (req) => {
           scheduled_at: e.scheduled_at,
           event_timezone: e.event_timezone,
           replay_enabled: e.replay_enabled,
+          room_state: (e as any).room_state ?? 'closed',
         })),
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

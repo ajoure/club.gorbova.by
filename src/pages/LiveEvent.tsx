@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useKinescopePlayer } from "@/hooks/useKinescopePlayer";
-import { Loader2, Lock, CalendarClock, AlertTriangle, Video, MonitorX, TimerOff, MessageCircle, HelpCircle, ShieldX } from "lucide-react";
+import { Loader2, Lock, CalendarClock, AlertTriangle, Video, MonitorX, TimerOff, MessageCircle, HelpCircle, ShieldX, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card } from "@/components/ui/card";
@@ -17,6 +17,9 @@ import { LiveBadge, type LiveBadgeMode } from "@/components/live/LiveBadge";
 import "@/components/live/liveRoomTheme.css";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { useLiveContactSheet } from "@/hooks/useLiveContactSheet";
+import { RoomWaitingState } from "@/components/live/RoomWaitingState";
+import { RoomLifecycleActions } from "@/components/live/RoomLifecycleActions";
+import { parseRoomState, getRoomStateBadgeVM, type RoomState } from "@/lib/liveRoomLifecycle";
 
 interface ResolvedSource {
   resolved_source_kind: 'kinescope_video' | 'kinescope_live_embed' | 'live_pending' | 'none';
@@ -43,9 +46,13 @@ interface LiveResolveResult {
   kinescope_live_event_id?: string;
   event_id?: string;
   resolved_source?: ResolvedSource;
+  // Sprint 2 PATCH 2.5/2.6
+  room_state?: RoomState;
+  room_phase?: "closed" | "waiting" | "live" | "completed";
+  active_participants?: number;
 }
 
-type PageState = "loading" | "not_found" | "unpublished" | "access_denied" | "invite_required" | "source_unavailable" | "removed_from_room" | "scheduled" | "live" | "live_pending" | "ended_no_replay" | "session_revoked" | "session_expired" | "error";
+type PageState = "loading" | "not_found" | "unpublished" | "access_denied" | "invite_required" | "source_unavailable" | "removed_from_room" | "scheduled" | "live" | "live_pending" | "ended_no_replay" | "session_revoked" | "session_expired" | "room_open_waiting" | "error";
 
 const HEARTBEAT_INTERVAL_MS = 45_000;
 const RESOLVE_POLL_INTERVAL_MS = 12_000;
@@ -203,8 +210,15 @@ export default function LiveEvent() {
             const ps = json.platform_status;
             const es = json.event_status;
             const sourceKind = json.resolved_source?.resolved_source_kind;
+            // Sprint 2 PATCH 2.5: room_phase из live-resolve — отдельный SoT для UI-веток.
+            // Если комната открыта но эфир ещё не начат → waiting (вход разрешён, чат активен).
+            const roomPhase = json.room_phase;
 
-            if (ps === "scheduled" || es === "scheduled") {
+            if (roomPhase === "waiting") {
+              nextState = "room_open_waiting";
+              startHeartbeat();
+            } else if (ps === "scheduled" || es === "scheduled") {
+              // Fallback: если комната ещё closed — старый scheduled-экран.
               nextState = "scheduled";
             } else if (sourceKind === "live_pending") {
               nextState = "live_pending";
@@ -225,7 +239,8 @@ export default function LiveEvent() {
 
         const shouldPoll = nextState === "scheduled"
           || nextState === "live_pending"
-          || nextState === "live";
+          || nextState === "live"
+          || nextState === "room_open_waiting";
         if (shouldPoll && !pollTimer) {
           pollTimer = setInterval(() => resolve(true), RESOLVE_POLL_INTERVAL_MS);
         } else if (!shouldPoll) {
@@ -436,11 +451,16 @@ export default function LiveEvent() {
     );
   }
 
-  // state === "live" — show player + comments/questions
+  // state === "live" | "room_open_waiting" — общее дерево комнаты (PATCH 2.5).
+  // В waiting режиме плеер заменяется на RoomWaitingState, чат/вопросы/CTA активны.
+  const isWaiting = state === "room_open_waiting";
   const eventId = data?.event_id;
-  const isReplay = data?.platform_status === "replay_available" || 
-    (data?.event_status === "ended" && data?.replay_enabled);
+  const isReplay = !isWaiting && (data?.platform_status === "replay_available" ||
+    (data?.event_status === "ended" && data?.replay_enabled));
   const resolvedSource = data?.resolved_source;
+  const roomState = parseRoomState(data?.room_state);
+  const roomBadgeVM = getRoomStateBadgeVM(roomState);
+  const activeParticipants = data?.active_participants;
 
   // CTA bindings hooks moved to top of component (Rules of Hooks)
 
@@ -466,11 +486,33 @@ export default function LiveEvent() {
       <div className="max-w-[1400px] w-full mx-auto px-3 md:px-6 pt-3 md:pt-4 pb-2">
         <div className="flex items-center gap-2 md:gap-3 mb-1 flex-wrap">
           <h1 className="room-title text-lg md:text-2xl font-bold truncate">{data?.title}</h1>
-          <LiveBadge platformStatus={data?.platform_status} mode={liveBadgeMode} />
+          {/* Sprint 2 PATCH 2.5/2.7: room state badge через единый VM, не локальное вычисление */}
+          {isWaiting ? (
+            <Badge variant={roomBadgeVM.variant}>{roomBadgeVM.shortLabel}</Badge>
+          ) : (
+            <LiveBadge platformStatus={data?.platform_status} mode={liveBadgeMode} />
+          )}
           {data?.event_type && (
             <Badge variant="outline" className="text-xs shrink-0">
               {data.event_type === "live_stream" ? "Эфир" : "Видео"}
             </Badge>
+          )}
+          {/* Sprint 2 PATCH 2.6: participant count v1 (честный — активные за 2 мин) */}
+          {typeof activeParticipants === "number" && (roomState === "opened" || roomState === "live") && (
+            <Badge variant="outline" className="text-xs gap-1 shrink-0" title="Активные участники за последние 2 минуты">
+              <Users className="h-3 w-3" /> {activeParticipants}
+            </Badge>
+          )}
+          {/* Sprint 2 PATCH 2.4: «Завершить вебинар» внутри комнаты, только staff в state=live */}
+          {isStaff && eventId && roomState === "live" && (
+            <div className="ml-auto">
+              <RoomLifecycleActions
+                eventId={eventId}
+                roomState={roomState}
+                layout="room"
+                invalidateKeys={[["admin-live-events"]]}
+              />
+            </div>
           )}
         </div>
         {data?.description && (
@@ -487,7 +529,9 @@ export default function LiveEvent() {
       <div className="flex-1 max-w-[1400px] w-full mx-auto px-3 md:px-6 pb-3 md:pb-6 flex flex-col lg:flex-row gap-3 md:gap-4 min-h-0">
         {/* Player column — takes most width on desktop */}
         <div className="lg:flex-[2.5] flex flex-col gap-2 min-w-0">
-          {resolvedSource?.resolved_source_kind === 'kinescope_video' && resolvedSource.resolved_embed_url ? (
+          {isWaiting ? (
+            <RoomWaitingState scheduledAt={data?.scheduled_at} eventTimezone={data?.event_timezone} />
+          ) : resolvedSource?.resolved_source_kind === 'kinescope_video' && resolvedSource.resolved_embed_url ? (
             <KinescopePlayerWrapper videoId={data?.kinescope_video_id!} />
           ) : resolvedSource?.resolved_source_kind === 'kinescope_live_embed' && resolvedSource.resolved_embed_url ? (
             <LiveEmbedPlayer embedUrl={resolvedSource.resolved_embed_url} />

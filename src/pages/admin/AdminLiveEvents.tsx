@@ -65,6 +65,9 @@ import { LiveEventThemeEditor } from "@/components/admin/live/LiveEventThemeEdit
 import { DomainEventService } from "@/lib/domain-events";
 import { LiveEventsHelpDialog } from "@/components/admin/live/LiveEventsHelpDialog";
 import { LiveEventExportButtons } from "@/components/live/LiveEventExportButtons";
+import { RoomLifecycleActions } from "@/components/live/RoomLifecycleActions";
+import { useActiveParticipants } from "@/hooks/useActiveParticipants";
+import { parseRoomState, getRoomStateBadgeVM, type RoomState } from "@/lib/liveRoomLifecycle";
 
 type EventType = "live_stream" | "recorded_webinar";
 type SourceKind = "kinescope_live_event" | "kinescope_video";
@@ -92,6 +95,11 @@ interface LiveEvent {
   kinescope_live_event_id: string | null;
   kinescope_project_id: string | null;
   kinescope_stream_id: string | null;
+  // Sprint 2: room lifecycle (independent SoT)
+  room_state?: "closed" | "opened" | "live" | "completed" | null;
+  room_opened_at?: string | null;
+  live_started_at?: string | null;
+  webinar_completed_at?: string | null;
 }
 
 interface NotificationOffset {
@@ -860,6 +868,7 @@ export default function AdminLiveEvents() {
                     <TableHead>Название</TableHead>
                     <TableHead>Тип</TableHead>
                     <TableHead>Статус</TableHead>
+                    <TableHead>Комната</TableHead>
                     <TableHead>Опубликован</TableHead>
                     <TableHead>Дата</TableHead>
                     <TableHead></TableHead>
@@ -901,6 +910,9 @@ export default function AdminLiveEvents() {
                         </div>
                       </TableCell>
                       <TableCell>
+                        <RoomStateCell event={event} />
+                      </TableCell>
+                      <TableCell>
                         {event.is_published ? (
                           <Badge variant="default">Да</Badge>
                         ) : (
@@ -913,33 +925,28 @@ export default function AdminLiveEvents() {
                           : "—"}
                       </TableCell>
                       <TableCell>
-                        <div className="flex gap-1">
-                          <Button variant="ghost" size="sm" onClick={() => handleEdit(event)}>
-                            <Edit2 className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => window.open(`/live/${event.slug}`, "_blank")}>
-                            <ExternalLink className="h-4 w-4" />
-                          </Button>
-                          {event.event_type === "live_stream" && event.kinescope_live_event_id && (
-                            <>
-                              {event.platform_status === "scheduled" && (
-                                <Button variant="ghost" size="sm" title="Запустить эфир"
-                                  onClick={() => handleLifecycleAction(event.id, "enable_live_event", event.kinescope_live_event_id!)}>
-                                  <Zap className="h-4 w-4 text-green-600" />
-                                </Button>
-                              )}
-                              {event.platform_status === "live" && (
-                                <Button variant="ghost" size="sm" title="Завершить эфир"
-                                  onClick={() => handleLifecycleAction(event.id, "complete_live_event", event.kinescope_live_event_id!)}>
-                                  <Square className="h-4 w-4 text-red-600" />
-                                </Button>
-                              )}
-                              <Button variant="ghost" size="sm" title="Обновить статус"
+                        <div className="flex flex-col gap-2 min-w-[280px]">
+                          {/* Sprint 2 PATCH 2.3: lifecycle-actions для room (отдельный контур) */}
+                          <RoomLifecycleActions
+                            eventId={event.id}
+                            roomState={parseRoomState(event.room_state)}
+                            layout="admin"
+                          />
+                          <div className="flex gap-1">
+                            <Button variant="ghost" size="sm" onClick={() => handleEdit(event)} title="Редактировать">
+                              <Edit2 className="h-4 w-4" />
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => window.open(`/live/${event.slug}`, "_blank")} title="Открыть страницу">
+                              <ExternalLink className="h-4 w-4" />
+                            </Button>
+                            {/* Provider-actions (Kinescope sync) — service-level, не lifecycle */}
+                            {event.event_type === "live_stream" && event.kinescope_live_event_id && (
+                              <Button variant="ghost" size="sm" title="Синхронизировать источник Kinescope"
                                 onClick={() => handleLifecycleAction(event.id, "sync_live_event", event.kinescope_live_event_id!)}>
                                 <RefreshCw className="h-4 w-4" />
                               </Button>
-                            </>
-                          )}
+                            )}
+                          </div>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -2407,6 +2414,26 @@ function ProviderField({ label, value, onCopy }: { label: string; value: string;
           <Copy className="h-4 w-4" />
         </Button>
       </div>
+    </div>
+  );
+}
+
+// Sprint 2 PATCH 2.3 + 2.6: room state badge + active participants counter в одной ячейке.
+// Использует общий VM-маппер (PATCH 2.7) — чтобы список / карточка / комната не расходились.
+function RoomStateCell({ event }: { event: LiveEvent }) {
+  const state = parseRoomState(event.room_state);
+  const vm = getRoomStateBadgeVM(state);
+  const { data: activeCount } = useActiveParticipants(event.id, state === "opened" || state === "live");
+  return (
+    <div className="flex flex-col gap-1">
+      <Badge variant={vm.variant} className={vm.pulse ? "animate-pulse" : ""}>
+        {vm.shortLabel}
+      </Badge>
+      {(state === "opened" || state === "live") && typeof activeCount === "number" && (
+        <span className="text-[10px] text-muted-foreground inline-flex items-center gap-1" title="Активные участники за последние 2 минуты">
+          <Users className="h-3 w-3" /> {activeCount}
+        </span>
+      )}
     </div>
   );
 }
