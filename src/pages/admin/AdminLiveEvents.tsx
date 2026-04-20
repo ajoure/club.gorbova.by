@@ -65,6 +65,9 @@ import { LiveEventThemeEditor } from "@/components/admin/live/LiveEventThemeEdit
 import { DomainEventService } from "@/lib/domain-events";
 import { LiveEventsHelpDialog } from "@/components/admin/live/LiveEventsHelpDialog";
 import { LiveEventExportButtons } from "@/components/live/LiveEventExportButtons";
+import { RoomLifecycleActions } from "@/components/live/RoomLifecycleActions";
+import { useActiveParticipants } from "@/hooks/useActiveParticipants";
+import { parseRoomState, getRoomStateBadgeVM, type RoomState } from "@/lib/liveRoomLifecycle";
 
 type EventType = "live_stream" | "recorded_webinar";
 type SourceKind = "kinescope_live_event" | "kinescope_video";
@@ -92,6 +95,11 @@ interface LiveEvent {
   kinescope_live_event_id: string | null;
   kinescope_project_id: string | null;
   kinescope_stream_id: string | null;
+  // Sprint 2: room lifecycle (independent SoT)
+  room_state?: "closed" | "opened" | "live" | "completed" | null;
+  room_opened_at?: string | null;
+  live_started_at?: string | null;
+  webinar_completed_at?: string | null;
 }
 
 interface NotificationOffset {
