@@ -79,7 +79,7 @@ export default function LiveEvent() {
   }, []);
 
   const startHeartbeat = useCallback(() => {
-    if (!slug || !session) return;
+    if (!slug) return;
     stopHeartbeat();
 
     const sessionKey = sessionStorage.getItem(`live_session_${slug}`);
@@ -87,13 +87,15 @@ export default function LiveEvent() {
 
     const ping = async () => {
       try {
+        const token = sessionRef.current?.access_token;
+        if (!token) return;
         const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
         const response = await fetch(
           `${supabaseUrl}/functions/v1/live-session-heartbeat`,
           {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${session.access_token}`,
+              Authorization: `Bearer ${token}`,
               apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
               "Content-Type": "application/json",
             },
@@ -116,7 +118,7 @@ export default function LiveEvent() {
 
     ping();
     heartbeatRef.current = setInterval(ping, HEARTBEAT_INTERVAL_MS);
-  }, [slug, session, stopHeartbeat]);
+  }, [slug, stopHeartbeat]);
 
   useEffect(() => {
     return () => stopHeartbeat();
