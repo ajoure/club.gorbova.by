@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useKinescopePlayer } from "@/hooks/useKinescopePlayer";
-import { Loader2, Lock, CalendarClock, AlertTriangle, Video, MonitorX, TimerOff, MessageCircle, HelpCircle, ShieldX } from "lucide-react";
+import { Loader2, Lock, CalendarClock, AlertTriangle, Video, MonitorX, TimerOff, MessageCircle, HelpCircle, ShieldX, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card } from "@/components/ui/card";
@@ -17,6 +17,9 @@ import { LiveBadge, type LiveBadgeMode } from "@/components/live/LiveBadge";
 import "@/components/live/liveRoomTheme.css";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { useLiveContactSheet } from "@/hooks/useLiveContactSheet";
+import { RoomWaitingState } from "@/components/live/RoomWaitingState";
+import { RoomLifecycleActions } from "@/components/live/RoomLifecycleActions";
+import { parseRoomState, getRoomStateBadgeVM, type RoomState } from "@/lib/liveRoomLifecycle";
 
 interface ResolvedSource {
   resolved_source_kind: 'kinescope_video' | 'kinescope_live_embed' | 'live_pending' | 'none';
@@ -43,9 +46,13 @@ interface LiveResolveResult {
   kinescope_live_event_id?: string;
   event_id?: string;
   resolved_source?: ResolvedSource;
+  // Sprint 2 PATCH 2.5/2.6
+  room_state?: RoomState;
+  room_phase?: "closed" | "waiting" | "live" | "completed";
+  active_participants?: number;
 }
 
-type PageState = "loading" | "not_found" | "unpublished" | "access_denied" | "invite_required" | "source_unavailable" | "removed_from_room" | "scheduled" | "live" | "live_pending" | "ended_no_replay" | "session_revoked" | "session_expired" | "error";
+type PageState = "loading" | "not_found" | "unpublished" | "access_denied" | "invite_required" | "source_unavailable" | "removed_from_room" | "scheduled" | "live" | "live_pending" | "ended_no_replay" | "session_revoked" | "session_expired" | "room_open_waiting" | "error";
 
 const HEARTBEAT_INTERVAL_MS = 45_000;
 const RESOLVE_POLL_INTERVAL_MS = 12_000;
