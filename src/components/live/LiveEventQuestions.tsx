@@ -243,21 +243,36 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
         </div>
 
         {user && (
-          <div
-            className="flex gap-2 items-end p-3 border-t room-panel-input sticky bottom-0 z-10"
-            style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
-          >
-            <LiveAutoGrowTextarea
-              value={newQuestion}
-              onChange={setNewQuestion}
-              onSubmit={handleSend}
-              placeholder="Задать вопрос ведущему..."
-              maxHeight={160}
-              className="flex-1"
-            />
-            <Button size="icon" variant="ghost" onClick={handleSend} disabled={!newQuestion.trim() || sendMutation.isPending}>
-              <Send className="h-4 w-4" />
-            </Button>
+          <div className="border-t sticky bottom-0 z-10 bg-background">
+            <LiveModerationBanner isMuted={isMuted} isRemoved={isRemoved} />
+            <div
+              className="flex gap-2 items-end p-3 room-panel-input"
+              style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
+            >
+              <LiveAutoGrowTextarea
+                value={newQuestion}
+                onChange={setNewQuestion}
+                onSubmit={handleSend}
+                placeholder={
+                  isRemoved
+                    ? "Вы удалены из комнаты"
+                    : isMuted
+                    ? "Вы заглушены модератором"
+                    : "Задать вопрос ведущему..."
+                }
+                maxHeight={160}
+                className="flex-1"
+                disabled={isBlocked}
+              />
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={handleSend}
+                disabled={!newQuestion.trim() || sendMutation.isPending || isBlocked}
+              >
+                <Send className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
         )}
       </div>
