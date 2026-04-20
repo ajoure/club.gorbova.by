@@ -57,6 +57,11 @@ export default function LiveEvent() {
   const isStaff = role === "admin" || role === "superadmin" || role === "employee";
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Hooks must be called unconditionally — keep before any early returns
+  const eventIdForCta = data?.event_id || "";
+  const hasUnderVideoCta = useHasActiveCtaBindings(eventIdForCta, "under_video");
+  const hasSidebarCta = useHasActiveCtaBindings(eventIdForCta, "sidebar");
+
   const stopHeartbeat = useCallback(() => {
     if (heartbeatRef.current) {
       clearInterval(heartbeatRef.current);
@@ -413,9 +418,7 @@ export default function LiveEvent() {
     (data?.event_status === "ended" && data?.replay_enabled);
   const resolvedSource = data?.resolved_source;
 
-  // Legacy CTA priority: product CTA bindings take precedence over legacy room blocks
-  const hasUnderVideoCta = useHasActiveCtaBindings(eventId || "", "under_video");
-  const hasSidebarCta = useHasActiveCtaBindings(eventId || "", "sidebar");
+  // CTA bindings hooks moved to top of component (Rules of Hooks)
 
   // Room theme from metadata
   const roomTheme = (data as any)?.room_theme || (data as any)?.metadata?.room_theme;
