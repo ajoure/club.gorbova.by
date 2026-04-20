@@ -942,7 +942,7 @@ export default function AdminLiveEvents() {
               <DialogTitle>{editingId ? "Редактировать эфир" : "Создать эфир"}</DialogTitle>
             </DialogHeader>
 
-            <div className="space-y-6 py-2">
+            <div className="space-y-6 py-2 min-w-0 overflow-x-hidden [&_*]:min-w-0">
               {/* Step 0: Event type selector (only for new events) */}
               {!editingId && (
                 <FormSection title="Тип эфира">
