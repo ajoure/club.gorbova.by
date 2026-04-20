@@ -101,9 +101,27 @@ function groupByProduct(artifacts: ContactArtifact[]): ProductGroup[] {
 
 // ── Main component ───────────────────────────────────────────────────
 
-export function ContactArtifactsTab({ profileId, userId, enabled, contactName }: ContactArtifactsTabProps) {
+export function ContactArtifactsTab({ profileId, userId, enabled, contactName, isStaff = false }: ContactArtifactsTabProps) {
   const { artifacts, isLoading, formCount, trainingCount } = useContactArtifacts(profileId, userId, enabled);
   const [filter, setFilter] = useState<FilterType>('all');
+
+  // Webinar count — distinct live_event_id из comments + questions; только для staff
+  const { data: webinarCount = 0 } = useQuery({
+    queryKey: ["contact-webinar-count", userId],
+    queryFn: async () => {
+      if (!userId) return 0;
+      const [c, q] = await Promise.all([
+        supabase.from("live_event_comments").select("live_event_id").eq("user_id", userId).limit(1000),
+        supabase.from("live_event_questions").select("live_event_id").eq("user_id", userId).limit(1000),
+      ]);
+      const ids = new Set<string>();
+      (c.data ?? []).forEach((r: any) => r.live_event_id && ids.add(r.live_event_id));
+      (q.data ?? []).forEach((r: any) => r.live_event_id && ids.add(r.live_event_id));
+      return ids.size;
+    },
+    enabled: enabled && isStaff && !!userId,
+    staleTime: 60_000,
+  });
 
   // Site form detail
   const [selectedForm, setSelectedForm] = useState<ContactArtifact | null>(null);
