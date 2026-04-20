@@ -439,9 +439,12 @@ export default function LiveEvent() {
 
   // CTA bindings hooks moved to top of component (Rules of Hooks)
 
-  // Room theme from metadata
-  const roomTheme = (data as any)?.room_theme || (data as any)?.metadata?.room_theme;
-  const themeStyle: React.CSSProperties = roomTheme ? {
+  // Room theme from metadata — strictly local to .live-room-themed scope.
+  const metadata = (data as any)?.metadata || {};
+  const roomTheme = (data as any)?.room_theme || metadata.room_theme || {};
+  const presenterUserId: string | null = metadata.presenter_user_id || null;
+  const liveBadgeMode: LiveBadgeMode = (metadata.live_badge_mode as LiveBadgeMode) || "auto";
+  const themeStyle: React.CSSProperties = {
     ['--room-bg' as string]: roomTheme.background_color || undefined,
     ['--room-text' as string]: roomTheme.primary_text_color || undefined,
     ['--room-text-secondary' as string]: roomTheme.secondary_text_color || undefined,
@@ -450,24 +453,23 @@ export default function LiveEvent() {
     ['--room-tabs' as string]: roomTheme.tabs_color || undefined,
     ['--room-admin-badge' as string]: roomTheme.admin_badge_color || undefined,
     ['--room-employee-badge' as string]: roomTheme.employee_badge_color || undefined,
-    backgroundColor: roomTheme.background_color || undefined,
-    color: roomTheme.primary_text_color || undefined,
-  } : {};
+  };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col" style={themeStyle}>
+    <div className="live-room-themed min-h-screen flex flex-col" style={themeStyle}>
       {/* Header — compact */}
       <div className="max-w-[1400px] w-full mx-auto px-3 md:px-6 pt-3 md:pt-4 pb-2">
-        <div className="flex items-center gap-3 mb-1">
-          <h1 className="text-lg md:text-2xl font-bold text-foreground truncate">{data?.title}</h1>
+        <div className="flex items-center gap-2 md:gap-3 mb-1 flex-wrap">
+          <h1 className="room-title text-lg md:text-2xl font-bold truncate">{data?.title}</h1>
+          <LiveBadge platformStatus={data?.platform_status} mode={liveBadgeMode} />
           {data?.event_type && (
             <Badge variant="outline" className="text-xs shrink-0">
-              {data.event_type === "live_stream" ? "Живой эфир" : "Видео"}
+              {data.event_type === "live_stream" ? "Эфир" : "Видео"}
             </Badge>
           )}
         </div>
         {data?.description && (
-          <p className="text-sm text-muted-foreground line-clamp-1 mb-1">{data.description}</p>
+          <p className="room-subtitle text-sm line-clamp-1 mb-1">{data.description}</p>
         )}
         {isReplay && (
           <div className="inline-flex items-center gap-2 bg-muted rounded-lg px-2.5 py-1 text-xs text-muted-foreground">
@@ -513,7 +515,7 @@ export default function LiveEvent() {
 
         {/* Chat / Questions sidebar — full height on desktop, sensible on mobile */}
         {eventId && (
-          <div className="lg:flex-1 flex flex-col min-h-0 lg:min-h-0" style={{ maxHeight: 'calc(100vh - 120px)' }}>
+          <div className="lg:flex-1 flex flex-col min-h-0 h-[70dvh] lg:h-auto lg:max-h-[calc(100vh-120px)]">
             {/* Sidebar room blocks (legacy, only if no product CTA bindings) */}
             {!hasSidebarCta && (
               <LiveEventRoomBlocks
@@ -529,23 +531,23 @@ export default function LiveEvent() {
               displayContext={isReplay ? "replay" : "live"}
               eventStartedAt={data?.scheduled_at}
             />
-            <Card className="flex-1 flex flex-col overflow-hidden min-h-[300px] lg:min-h-0">
-              <Tabs defaultValue="comments" className="flex flex-col h-full">
-                <TabsList className="w-full grid grid-cols-2 rounded-none border-b shrink-0 sticky top-0 z-10 bg-card">
-                  <TabsTrigger value="comments" className="gap-1.5 text-xs">
+            <Card className="room-panel flex-1 flex flex-col overflow-hidden min-h-0">
+              <Tabs defaultValue="comments" className="flex flex-col h-full min-h-0">
+                <TabsList className="room-tabs-list w-full grid grid-cols-2 rounded-none border-b shrink-0 sticky top-0 z-10 bg-card">
+                  <TabsTrigger value="comments" className="room-tab-trigger gap-1.5 text-xs">
                     <MessageCircle className="h-3.5 w-3.5" />
                     Чат
                   </TabsTrigger>
-                  <TabsTrigger value="questions" className="gap-1.5 text-xs">
+                  <TabsTrigger value="questions" className="room-tab-trigger gap-1.5 text-xs">
                     <HelpCircle className="h-3.5 w-3.5" />
                     Вопросы
                   </TabsTrigger>
                 </TabsList>
-                <TabsContent value="comments" className="flex-1 overflow-hidden m-0">
-                  <LiveEventComments liveEventId={eventId} onOpenProfile={isStaff ? openContactSheet : undefined} />
+                <TabsContent value="comments" className="flex-1 min-h-0 overflow-hidden m-0">
+                  <LiveEventComments liveEventId={eventId} presenterUserId={presenterUserId} onOpenProfile={isStaff ? openContactSheet : undefined} />
                 </TabsContent>
-                <TabsContent value="questions" className="flex-1 overflow-hidden m-0">
-                  <LiveEventQuestions liveEventId={eventId} onOpenProfile={isStaff ? openContactSheet : undefined} />
+                <TabsContent value="questions" className="flex-1 min-h-0 overflow-hidden m-0">
+                  <LiveEventQuestions liveEventId={eventId} presenterUserId={presenterUserId} onOpenProfile={isStaff ? openContactSheet : undefined} />
                 </TabsContent>
               </Tabs>
             </Card>

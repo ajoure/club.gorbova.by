@@ -191,7 +191,23 @@ export function LiveEventProductCtaBindings({ liveEventId }: { liveEventId: stri
       {isLoading ? (
         <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
       ) : !bindings?.length ? (
-        <p className="text-sm text-muted-foreground text-center py-4">Нет привязанных CTA</p>
+        <Card className="border-dashed">
+          <CardContent className="p-6 flex flex-col items-center text-center gap-3">
+            <ShoppingCart className="h-8 w-8 text-muted-foreground/60" />
+            <div className="space-y-1">
+              <p className="text-sm font-medium">Нет привязанных CTA</p>
+              <p className="text-xs text-muted-foreground max-w-xs">
+                Чтобы продающий блок появился в комнате эфира, добавьте хотя бы одну привязку.
+                Выберите продукт, тариф и режим показа — блок отобразится участникам автоматически.
+              </p>
+            </div>
+            {canManageCta && (
+              <Button size="sm" className="h-8 text-xs gap-1" onClick={() => { setForm(EMPTY_FORM); setDialogOpen(true); }}>
+                <Plus className="h-3.5 w-3.5" /> Добавить первый CTA
+              </Button>
+            )}
+          </CardContent>
+        </Card>
       ) : (
         <div className="space-y-2">
           {bindings.map((b: any) => (

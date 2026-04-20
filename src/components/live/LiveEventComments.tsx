@@ -3,14 +3,19 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Loader2, Send } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { LiveRoleBadge, getMessageHighlightClass } from "./LiveRoleBadge";
+import {
+  LiveRoleBadge,
+  getMessageHighlightClass,
+  getOwnMessageClass,
+  type AuthorRole,
+} from "./LiveRoleBadge";
 import { LiveEventReplyForm, LiveEventRepliesList } from "./LiveEventReplies";
 import { LiveInlineModeration } from "./LiveInlineModeration";
+import { LiveAutoGrowTextarea } from "./LiveAutoGrowTextarea";
 
 interface Comment {
   id: string;
@@ -38,10 +43,11 @@ function getInitials(name: string): string {
 
 interface LiveEventCommentsProps {
   liveEventId: string;
+  presenterUserId?: string | null;
   onOpenProfile?: (userId: string) => void;
 }
 
-export function LiveEventComments({ liveEventId, onOpenProfile }: LiveEventCommentsProps) {
+export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile }: LiveEventCommentsProps) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [newComment, setNewComment] = useState("");
@@ -129,22 +135,32 @@ export function LiveEventComments({ liveEventId, onOpenProfile }: LiveEventComme
     sendMutation.mutate(newComment.trim());
   };
 
+  const resolveDisplayRole = (c: Comment): AuthorRole | string | null => {
+    // Visual presenter label is derived from live_events.metadata.presenter_user_id.
+    // Auth role is unaffected; this is UI-only.
+    if (presenterUserId && c.user_id === presenterUserId) return "presenter";
+    return c.author_role;
+  };
+
   return (
-    <div className="flex flex-col h-full">
-      <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-1 p-3">
+    <div className="flex flex-col h-full min-h-0 room-panel">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto space-y-1 p-3 overscroll-contain">
         {isLoading ? (
           <div className="flex justify-center py-4">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
         ) : !comments?.length ? (
-          <p className="text-sm text-muted-foreground text-center py-4">Пока нет комментариев</p>
+          <p className="text-sm room-meta-text text-center py-4">Пока нет комментариев</p>
         ) : (
           comments.map((comment) => {
             const displayName = resolveDisplayName(comment);
             const initials = getInitials(displayName);
+            const displayRole = resolveDisplayRole(comment);
+            const isOwn = user?.id === comment.user_id;
+            const highlight = isOwn ? getOwnMessageClass() : getMessageHighlightClass(displayRole);
             return (
               <div key={comment.id}>
-                <div className={`flex gap-2 group rounded-lg p-2 ${getMessageHighlightClass(comment.author_role)}`}>
+                <div className={`flex gap-2 group rounded-lg p-2 ${highlight}`}>
                   <Avatar
                     className="h-7 w-7 shrink-0 cursor-pointer"
                     onClick={() => onOpenProfile?.(comment.user_id)}
@@ -154,13 +170,14 @@ export function LiveEventComments({ liveEventId, onOpenProfile }: LiveEventComme
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span
-                        className="text-xs font-medium text-foreground cursor-pointer hover:underline"
+                        className="text-xs font-medium room-message-text cursor-pointer hover:underline"
                         onClick={() => onOpenProfile?.(comment.user_id)}
                       >
                         {displayName}
+                        {isOwn && <span className="ml-1 text-[10px] text-primary">(вы)</span>}
                       </span>
-                      <LiveRoleBadge role={comment.author_role} />
-                      <span className="text-[10px] text-muted-foreground">{format(new Date(comment.created_at), "HH:mm", { locale: ru })}</span>
+                      <LiveRoleBadge role={displayRole} />
+                      <span className="text-[10px] room-meta-text">{format(new Date(comment.created_at), "HH:mm", { locale: ru })}</span>
                       <LiveInlineModeration
                         liveEventId={liveEventId}
                         messageId={comment.id}
@@ -170,7 +187,7 @@ export function LiveEventComments({ liveEventId, onOpenProfile }: LiveEventComme
                         onOpenProfile={onOpenProfile}
                       />
                     </div>
-                    <p className="text-sm text-foreground break-words">{comment.content}</p>
+                    <p className="text-sm room-message-text break-words whitespace-pre-wrap">{comment.content}</p>
                   </div>
                 </div>
                 {/* Threaded replies */}
@@ -197,13 +214,17 @@ export function LiveEventComments({ liveEventId, onOpenProfile }: LiveEventComme
       </div>
 
       {user && (
-        <div className="flex gap-2 p-3 border-t bg-card sticky bottom-0 z-10" style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
-          <Input
+        <div
+          className="flex gap-2 items-end p-3 border-t room-panel-input sticky bottom-0 z-10"
+          style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
+        >
+          <LiveAutoGrowTextarea
             value={newComment}
-            onChange={(e) => setNewComment(e.target.value)}
+            onChange={setNewComment}
+            onSubmit={handleSend}
             placeholder="Написать комментарий..."
-            className="text-sm"
-            onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
+            maxHeight={120}
+            className="flex-1"
           />
           <Button size="icon" variant="ghost" onClick={handleSend} disabled={!newComment.trim() || sendMutation.isPending}>
             <Send className="h-4 w-4" />
