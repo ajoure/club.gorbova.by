@@ -111,8 +111,19 @@ export default function LiveEvent() {
   useEffect(() => {
     if (!slug || !session) return;
 
-    const resolve = async () => {
-      setState("loading");
+    let cancelled = false;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+    const abortController = new AbortController();
+
+    const stopPolling = () => {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    };
+
+    const resolve = async (isPoll = false) => {
+      if (!isPoll) setState("loading");
       try {
         const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
         const response = await fetch(
@@ -122,57 +133,92 @@ export default function LiveEvent() {
               Authorization: `Bearer ${session.access_token}`,
               apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
             },
+            signal: abortController.signal,
           }
         );
 
+        if (cancelled) return;
         const json: LiveResolveResult = await response.json();
+        if (cancelled) return;
         setData(json);
 
+        // PROOF DEBUG — runtime branch trace
+        console.debug('[live-resolve]', {
+          status: json.status,
+          platform_status: json.platform_status,
+          event_status: json.event_status,
+          has_live_id: !!json.kinescope_live_event_id,
+          has_video_id: !!json.kinescope_video_id,
+          source_kind: json.resolved_source?.resolved_source_kind,
+          source_reason: json.resolved_source?.source_reason,
+          source_url: json.resolved_source?.resolved_embed_url,
+        });
+
+        let nextState: PageState = "error";
         switch (json.status) {
           case "not_found":
-            setState("not_found");
-            break;
+            nextState = "not_found"; break;
           case "unpublished":
-            setState("unpublished");
-            break;
+            nextState = "unpublished"; break;
           case "access_denied":
-            setState("access_denied");
-            break;
+            nextState = "access_denied"; break;
           case "invite_required":
-            setState("invite_required");
-            break;
+            nextState = "invite_required"; break;
           case "session_missing":
-            setState("session_expired");
-            break;
+            nextState = "session_expired"; break;
           case "source_unavailable":
-            setState("source_unavailable");
-            break;
+            nextState = "source_unavailable"; break;
           case "removed_from_room":
-            setState("removed_from_room");
-            break;
-          case "ok":
-            if (json.event_status === "scheduled" || json.platform_status === "scheduled") {
-              setState("scheduled");
-            } else if (json.platform_status === "replay_available" || 
-                       (json.event_status === "ended" && json.replay_enabled)) {
-              setState("live"); // show player with recording
-            } else if (json.event_status === "ended" && !json.replay_enabled) {
-              setState("ended_no_replay");
+            nextState = "removed_from_room"; break;
+          case "ok": {
+            const ps = json.platform_status;
+            const es = json.event_status;
+            const sourceKind = json.resolved_source?.resolved_source_kind;
+
+            if (ps === "scheduled" || es === "scheduled") {
+              nextState = "scheduled";
+            } else if (sourceKind === "live_pending") {
+              // Active live, но провайдер ещё не отдал embed — controlled state, продолжаем поллить.
+              nextState = "live_pending";
+            } else if (ps === "replay_available" || (es === "ended" && json.replay_enabled)) {
+              nextState = "live"; // replay-плеер
+            } else if (es === "ended" && !json.replay_enabled) {
+              nextState = "ended_no_replay";
             } else {
-              setState("live");
+              nextState = "live";
               startHeartbeat();
             }
             break;
+          }
           default:
-            setState("error");
+            nextState = "error";
         }
-      } catch (err) {
+        setState(nextState);
+
+        // Polling: запускаем только для transitional состояний.
+        const shouldPoll = nextState === "scheduled"
+          || nextState === "live_pending"
+          || nextState === "live";
+        if (shouldPoll && !pollTimer) {
+          pollTimer = setInterval(() => resolve(true), RESOLVE_POLL_INTERVAL_MS);
+        } else if (!shouldPoll) {
+          stopPolling();
+        }
+      } catch (err: any) {
+        if (err?.name === 'AbortError' || cancelled) return;
         console.error("[LiveEvent] resolve error:", err);
         setState("error");
+        stopPolling();
       }
     };
 
-    resolve();
+    resolve(false);
+
+    return () => {
+      cancelled = true;
+      stopPolling();
+      abortController.abort();
+    };
   }, [slug, session, startHeartbeat]);
 
   if (state === "loading") {
