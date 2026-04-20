@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import { parseRoomState, getRoomStateBadgeVM } from "@/lib/liveRoomLifecycle";
 
 interface LiveEventItem {
   id: string;
@@ -19,6 +20,7 @@ interface LiveEventItem {
   scheduled_at: string | null;
   event_timezone: string;
   replay_enabled: boolean;
+  room_state?: "closed" | "opened" | "live" | "completed" | null;
 }
 
 export default function LiveEvents() {
@@ -47,8 +49,17 @@ export default function LiveEvents() {
   });
 
   const getStatusBadge = (event: LiveEventItem) => {
-    if (event.platform_status === "live") {
-      return <Badge variant="default" className="bg-red-500 text-white"><Radio className="h-3 w-3 mr-1 animate-pulse" />Идёт сейчас</Badge>;
+    // Sprint 2 PATCH 2.7: приоритет — room_state (новый SoT).
+    const rs = parseRoomState(event.room_state);
+    if (rs === "live") {
+      return <Badge variant="destructive" className="animate-pulse"><Radio className="h-3 w-3 mr-1" />Идёт сейчас</Badge>;
+    }
+    if (rs === "opened") {
+      const vm = getRoomStateBadgeVM(rs);
+      return <Badge variant={vm.variant}>{vm.shortLabel}</Badge>;
+    }
+    if (rs === "completed" && (event.platform_status === "replay_available" || event.replay_enabled)) {
+      return <Badge variant="outline"><PlayCircle className="h-3 w-3 mr-1" />Запись</Badge>;
     }
     if (event.platform_status === "scheduled" && event.scheduled_at) {
       return <Badge variant="secondary"><CalendarClock className="h-3 w-3 mr-1" />Запланирован</Badge>;
