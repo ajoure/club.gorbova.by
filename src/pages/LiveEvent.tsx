@@ -43,9 +43,10 @@ interface LiveResolveResult {
   resolved_source?: ResolvedSource;
 }
 
-type PageState = "loading" | "not_found" | "unpublished" | "access_denied" | "invite_required" | "source_unavailable" | "removed_from_room" | "scheduled" | "live" | "ended_no_replay" | "session_revoked" | "session_expired" | "error";
+type PageState = "loading" | "not_found" | "unpublished" | "access_denied" | "invite_required" | "source_unavailable" | "removed_from_room" | "scheduled" | "live" | "live_pending" | "ended_no_replay" | "session_revoked" | "session_expired" | "error";
 
 const HEARTBEAT_INTERVAL_MS = 45_000;
+const RESOLVE_POLL_INTERVAL_MS = 12_000;
 
 export default function LiveEvent() {
   const { slug } = useParams<{ slug: string }>();
