@@ -596,11 +596,12 @@ export default function LiveEvent() {
                     Вопросы
                   </TabsTrigger>
                 </TabsList>
-                {/* PATCH 3.5: forceMount keeps both tabs in DOM — preserves scroll position and realtime subscriptions */}
-                <TabsContent value="comments" className="flex-1 min-h-0 overflow-hidden m-0" forceMount style={{ display: undefined }}>
+                {/* PATCH 3.5: forceMount keeps both tabs in DOM — preserves scroll position and realtime subscriptions.
+                    Inactive tab is hidden via data-state styling but stays mounted. */}
+                <TabsContent value="comments" className="flex-1 min-h-0 overflow-hidden m-0 data-[state=inactive]:hidden" forceMount>
                   <LiveEventComments liveEventId={eventId} presenterUserId={presenterUserId} onOpenProfile={isStaff ? openContactSheet : undefined} />
                 </TabsContent>
-                <TabsContent value="questions" className="flex-1 min-h-0 overflow-hidden m-0" forceMount style={{ display: undefined }}>
+                <TabsContent value="questions" className="flex-1 min-h-0 overflow-hidden m-0 data-[state=inactive]:hidden" forceMount>
                   <LiveEventQuestions liveEventId={eventId} presenterUserId={presenterUserId} onOpenProfile={isStaff ? openContactSheet : undefined} />
                 </TabsContent>
               </Tabs>
