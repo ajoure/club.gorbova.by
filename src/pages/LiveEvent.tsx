@@ -451,11 +451,16 @@ export default function LiveEvent() {
     );
   }
 
-  // state === "live" — show player + comments/questions
+  // state === "live" | "room_open_waiting" — общее дерево комнаты (PATCH 2.5).
+  // В waiting режиме плеер заменяется на RoomWaitingState, чат/вопросы/CTA активны.
+  const isWaiting = state === "room_open_waiting";
   const eventId = data?.event_id;
-  const isReplay = data?.platform_status === "replay_available" || 
-    (data?.event_status === "ended" && data?.replay_enabled);
+  const isReplay = !isWaiting && (data?.platform_status === "replay_available" ||
+    (data?.event_status === "ended" && data?.replay_enabled));
   const resolvedSource = data?.resolved_source;
+  const roomState = parseRoomState(data?.room_state);
+  const roomBadgeVM = getRoomStateBadgeVM(roomState);
+  const activeParticipants = data?.active_participants;
 
   // CTA bindings hooks moved to top of component (Rules of Hooks)
 
@@ -481,11 +486,33 @@ export default function LiveEvent() {
       <div className="max-w-[1400px] w-full mx-auto px-3 md:px-6 pt-3 md:pt-4 pb-2">
         <div className="flex items-center gap-2 md:gap-3 mb-1 flex-wrap">
           <h1 className="room-title text-lg md:text-2xl font-bold truncate">{data?.title}</h1>
-          <LiveBadge platformStatus={data?.platform_status} mode={liveBadgeMode} />
+          {/* Sprint 2 PATCH 2.5/2.7: room state badge через единый VM, не локальное вычисление */}
+          {isWaiting ? (
+            <Badge variant={roomBadgeVM.variant}>{roomBadgeVM.shortLabel}</Badge>
+          ) : (
+            <LiveBadge platformStatus={data?.platform_status} mode={liveBadgeMode} />
+          )}
           {data?.event_type && (
             <Badge variant="outline" className="text-xs shrink-0">
               {data.event_type === "live_stream" ? "Эфир" : "Видео"}
             </Badge>
+          )}
+          {/* Sprint 2 PATCH 2.6: participant count v1 (честный — активные за 2 мин) */}
+          {typeof activeParticipants === "number" && (roomState === "opened" || roomState === "live") && (
+            <Badge variant="outline" className="text-xs gap-1 shrink-0" title="Активные участники за последние 2 минуты">
+              <Users className="h-3 w-3" /> {activeParticipants}
+            </Badge>
+          )}
+          {/* Sprint 2 PATCH 2.4: «Завершить вебинар» внутри комнаты, только staff в state=live */}
+          {isStaff && eventId && roomState === "live" && (
+            <div className="ml-auto">
+              <RoomLifecycleActions
+                eventId={eventId}
+                roomState={roomState}
+                layout="room"
+                invalidateKeys={[["admin-live-events"]]}
+              />
+            </div>
           )}
         </div>
         {data?.description && (
@@ -502,7 +529,9 @@ export default function LiveEvent() {
       <div className="flex-1 max-w-[1400px] w-full mx-auto px-3 md:px-6 pb-3 md:pb-6 flex flex-col lg:flex-row gap-3 md:gap-4 min-h-0">
         {/* Player column — takes most width on desktop */}
         <div className="lg:flex-[2.5] flex flex-col gap-2 min-w-0">
-          {resolvedSource?.resolved_source_kind === 'kinescope_video' && resolvedSource.resolved_embed_url ? (
+          {isWaiting ? (
+            <RoomWaitingState scheduledAt={data?.scheduled_at} eventTimezone={data?.event_timezone} />
+          ) : resolvedSource?.resolved_source_kind === 'kinescope_video' && resolvedSource.resolved_embed_url ? (
             <KinescopePlayerWrapper videoId={data?.kinescope_video_id!} />
           ) : resolvedSource?.resolved_source_kind === 'kinescope_live_embed' && resolvedSource.resolved_embed_url ? (
             <LiveEmbedPlayer embedUrl={resolvedSource.resolved_embed_url} />
