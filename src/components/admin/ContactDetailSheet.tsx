@@ -109,7 +109,6 @@ import {
   
   RefreshCw,
   Link2,
-  Video,
 } from "lucide-react";
 import { copyToClipboard, getContactUrl } from "@/utils/clipboardUtils";
 import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
