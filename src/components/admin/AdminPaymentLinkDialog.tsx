@@ -993,44 +993,46 @@ export function AdminPaymentLinkDialog({
                 </div>
               )}
 
-              <DialogFooter className="flex-col sm:flex-row gap-2">
-                <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              <DialogFooter className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => onOpenChange(false)}
+                  className="w-full sm:w-auto"
+                >
                   Отмена
                 </Button>
                 {/*
                   Кнопки одного диалога — все используют canonical writers
                   (admin-create-public-link). Никакого нового payment-path.
-                  - Если Telegram привязан — даём ВЫБОР: «Создать ссылку» (без отправки)
-                    и «Создать и отправить в Telegram» (создание + отправка одной цепочкой).
-                  - Если Telegram не привязан — только «Создать ссылку».
                 */}
                 <Button
                   type="button"
                   variant={effectiveTelegramUserId ? "outline" : "default"}
                   disabled={isCreateDisabled || combinedPending}
                   onClick={() => createPublicLinkMutation.mutate()}
-                  className="w-full sm:w-auto"
+                  className="w-full sm:w-auto min-w-0"
                 >
                   {createPublicLinkMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    <Loader2 className="h-4 w-4 animate-spin mr-2 shrink-0" />
                   ) : (
-                    <Link2 className="h-4 w-4 mr-2" />
+                    <Link2 className="h-4 w-4 mr-2 shrink-0" />
                   )}
-                  Создать ссылку
+                  <span className="truncate">Создать ссылку</span>
                 </Button>
                 {effectiveTelegramUserId && (
                   <Button
                     type="button"
                     disabled={isCreateDisabled || combinedPending}
                     onClick={handleCreateAndSendTelegram}
-                    className="w-full sm:w-auto"
+                    className="w-full sm:w-auto min-w-0"
                   >
                     {combinedPending ? (
-                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      <Loader2 className="h-4 w-4 animate-spin mr-2 shrink-0" />
                     ) : (
-                      <Send className="h-4 w-4 mr-2" />
+                      <Send className="h-4 w-4 mr-2 shrink-0" />
                     )}
-                    Создать и отправить в Telegram
+                    <span className="truncate">Создать и отправить</span>
                   </Button>
                 )}
               </DialogFooter>
