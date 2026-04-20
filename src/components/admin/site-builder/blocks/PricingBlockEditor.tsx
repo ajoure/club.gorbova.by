@@ -168,18 +168,18 @@ export function PricingBlockEditor({ content, onChange }: PricingBlockEditorProp
                       return (
                         <label
                           key={t.id}
-                          className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 cursor-pointer"
+                          className="flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 cursor-pointer min-w-0"
                         >
                           <Checkbox
                             checked={checked}
                             onCheckedChange={(v) => toggleTariff(t.id, v === true)}
+                            className="shrink-0 mt-0.5"
                           />
-                          <span className="text-sm flex-1">{t.name}</span>
-                          {t.code && (
-                            <span className="text-xs text-muted-foreground font-mono">{t.code}</span>
-                          )}
+                          <span className="text-sm flex-1 min-w-0 break-words">{t.name}</span>
                           {t.is_popular && (
-                            <Badge variant="secondary" className="text-xs">Популярный</Badge>
+                            <Badge variant="secondary" className="text-xs shrink-0 whitespace-nowrap self-start">
+                              Популярный
+                            </Badge>
                           )}
                         </label>
                       );
