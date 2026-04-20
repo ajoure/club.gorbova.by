@@ -1,138 +1,150 @@
 ## да, согласен, с учетом правок:
 
-1. В `live-resolve` не ограничивайся только `play_link`. Делай приоритет источника для live так:
+1. Сначала править **локально** `LiveEvent.tsx`, а `AuthContext.tsx` не трогать, если не будет доказано, что без этого баг не закрывается.  
+Глобальный auth-контекст слишком широкий по blast radius. Предпочтительный порядок:
+  - `sessionRef` / `accessTokenRef` внутри `LiveEvent.tsx`;
+  - убрать зависимость эффекта от объекта `session` и от `startHeartbeat`;
+  - silent refresh без `setState("loading")`, если уже есть валидный live-source;
+  - только если этого недостаточно, отдельно и доказуемо трогать `AuthContext`.
+2. В отчёте отдельно зафиксировать, **какой именно механизм вызывает перерисовку** при возврате:
   &nbsp;
   &nbsp;
-  - `metadata.provider.current.embed_link` — если уже есть готовый embed URL, использовать его как SoT;
-  - иначе `metadata.provider.current.play_link` → извлечь slug → собрать `https://kinescope.io/embed/{slug}`;
-  - если ни `embed_link`, ни `play_link` нет — `live_pending`, без fallback на `embed/live/{kinescope_live_event_id}`.  
-  Это снизит риск повторного black screen из-за разных форматов ссылок у провайдера.
-2. При извлечении slug из `play_link` сделай нормализацию безопасно:
-  - убрать домен,
-  - убрать query/hash,
-  - trim,
-  - не использовать slug, если он пустой.  
-  В отчете приложи raw `play_link` и итоговый `resolved_embed_url`.
-3. В `AdminLiveEvents.tsx` исправь не только debug-блок, но и все места, где embed/play URL показываются или копируются из live source. Внутри карточки диагностика должна показывать тот же URL, который реально уходит в room player.
-4. В proof для blank screen обязательно добавь еще один факт:
-  - в network/DOM подтвердить, что iframe в комнате загружен именно с `embed/{slug}`, а не со старым `embed/live/{id}`.  
-  Иначе будет неполный proof.
-5. Для бага кнопки в карточке в финальном proof отдельно покажи сценарий:
-  - live уже идет,
-  - открыть карточку,
-  - нажать обычное «Сохранить» в карточке,
-  - статус и кнопка не откатываются.  
-  Это нужно как доказательство, что прошлый downgrade-path реально закрыт.
-6. Для навигации пока не повышай статус выше `partially fixed`, если не будет отдельного runtime-proof:
-  - зайти в комнату,
-  - назад,
-  - снова вперед / повторно открыть,
-  - без hard reload и без зависшего black screen.
-7. Ничего не менять в `LiveEmbedPlayer`, если после смены URL live-видео реально появится. Лезть в player только если после правильного `embed/{slug}` экран останется черным.
-8. В следующем отчете статус по багам дать так:
-  - blank screen — только после UI-proof живого видео;
-  - рассинхрон кнопки — только после proof без reload и без downgrade после save;
-  - навигация — отдельно, не объединять с первыми двумя.
+  - `TOKEN_REFRESHED`,
+  - `focus`,
+  - `visibilitychange`,
+  - reconnect realtime,
+  - poll `live-resolve`.  
+  Нужен не общий вывод, а точный факт из console/network.
+3. Для `LiveEvent.tsx` требую жёсткое правило:
+  - Loader показывать **только на самом первом cold start**, когда `data == null`;
+  - при любом последующем refresh/repoll/focus/return **не размонтировать player**;
+  - обновление resolver делать фоново, add-only, без сброса room UI.
+4. Нужен proof не только “ушёл/вернулся”, но и **двух отдельных сценариев**:
+  - вкладка в фоне 30–60 сек → возврат;
+  - переход на другую страницу сайта и обратно через back/forward.  
+  По обоим нужен отдельный вердикт.
+5. Если live к моменту проверки уже остановится, подрядчик должен всё равно сам сделать максимум без меня:
+  - проверить отсутствие full-loading/remount на replay-состоянии;
+  - проверить network/console при `TOKEN_REFRESHED`;
+  - подготовить весь фикс и все доказательства, кроме финального live-screen proof.
+6. В следующем отчёте дать отдельной таблицей:
+  - root cause,
+  - что изменено,
+  - какой именно proof получен,
+  - статус по каждому багу: `fixed / partially fixed / blocked`.  
+  Отдельно для:
+  - background return reload,
+  - blank screen,
+  - button sync,
+  - back/forward navigation.
+7. Ничего не менять в `live-resolve`, `access-core`, `notifications`, `replay`, `recorded_webinar`, если в discovery не появятся новые факты. Сейчас этот follow-up должен быть максимально узким и клиентским.
 
 &nbsp;
 
-После этих правок план можно исполнять.
-
 &nbsp;
 
-План: финальный фикс blank screen — неверный live embed URL
+План: устранить перезагрузку live-room при возврате на вкладку
 
-### Главное открытие
+### Корневая причина (доказана из кода + network-логов)
 
-Из БД: `kinescope_live_event_id = 019daada-...`, но реально работающий `play_link = https://kinescope.io/0czf27DrCof4abeYASUMew` (см. `metadata.provider.current.play_link`).
+Эффект в `src/pages/LiveEvent.tsx` (строка 116) имеет deps `[slug, session, startHeartbeat]`. Когда вкладка уходит в background и пользователь возвращается, Supabase Auth **автоматически рефрешит JWT** (`TOKEN_REFRESHED` event). В `src/contexts/AuthContext.tsx` (строка 95) вызывается `setSession(currentSession)` с **новой ссылкой** на объект Session → effect перезапускается → срабатывает `resolve(false)` → `**setState("loading")` (строка 131) полностью размонтирует комнату** (плеер, чат, CTA, вкладки) → новая загрузка с нуля.
 
-Наш resolver строит URL по шаблону `https://kinescope.io/embed/live/<live_event_id>` — **этот шаблон у Kinescope не работает для live**. Правильный embed для live: `https://kinescope.io/embed/<play_link_slug>` (slug из `play_link`).
+Дополнительно: `startHeartbeat` через `useCallback` зависит от `session` → тоже пересоздаётся при рефреше токена → дублирующий триггер.
 
-Именно поэтому:
+### Что меняю (add-only, минимально)
 
-- статус «В эфире» виден (resolver вернул `kinescope_live_embed`),
-- плеер смонтирован (iframe есть в DOM, чёрный прямоугольник на скрине),
-- но видео не идёт — iframe загружает несуществующий/пустой Kinescope URL.
+#### 1. `src/pages/LiveEvent.tsx` — стабилизация effect deps + защита от full-loading
 
-Это полностью объясняет blank-плеер при правильном статусе. Writer-downgrade в прошлой итерации был отдельным реальным багом (он закрыт триггером и правкой формы), но **корневой причиной самого blank** оказался **неверный шаблон embed URL**.
-
-### Что меняю (точечно, add-only)
-
-#### 1. `supabase/functions/live-resolve/index.ts` — корректный live embed
-
-В resolver добавить извлечение play_link slug из `metadata.provider.current.play_link` и строить embed как `https://kinescope.io/embed/<slug>`:
+**Изменение А.** Использовать `session?.access_token` (примитив) вместо `session` (объект-ссылка) в deps. При TOKEN_REFRESHED новый токен будет использован для следующего запроса, но effect не перезапустится сам — он стабилен по slug.
 
 ```ts
-const playLink: string | null = meta?.provider?.current?.play_link ?? null;
-const playSlug = playLink ? playLink.replace(/^https?:\/\/kinescope\.io\//, '').split(/[/?#]/)[0] : null;
+// было:
+}, [slug, session, startHeartbeat]);
+
+// станет:
+const accessToken = session?.access_token;
+}, [slug, accessToken]);  // startHeartbeat выносим из deps
 ```
 
-Применить в обеих ветках live (`active_live_priority` и `live_embed_fallback`):
+Аналогично для `startHeartbeat` — убрать `session` из его deps, читать актуальный token через `ref`.
 
-- если `playSlug` есть → `resolved_embed_url = https://kinescope.io/embed/${playSlug}`
-- если нет → `live_pending` (controlled state, не blank).
+**Изменение B.** Защита от full-remount: если уже есть валидный `data` с активным live-источником — **не показывать Loader**. Добавить условие:
 
-`source_reason` дополнить: `active_live_via_play_link` / `active_live_pending_play_link`.
+```ts
+if (state === "loading" && data?.resolved_source?.resolved_source_kind === "kinescope_live_embed") {
+  // тихо обновляем в фоне, плеер остаётся смонтированным
+  // не возвращаем Loader, продолжаем рендерить текущее состояние
+}
+```
 
-#### 2. `src/pages/admin/AdminLiveEvents.tsx` — диагностика в карточке
+Конкретнее: ввести `isInitialLoad = state === "loading" && !data`. Loader показывать только при `isInitialLoad`. Все последующие `setState("loading")` из `resolve(false)` — заменить на silent re-resolve без сброса state, если уже `data` валидна.
 
-В debug-блоке (строки ~1429–1437) тоже строить embed URL из `play_link`, а не из `live_event_id`. Чтобы proof в админке совпадал с runtime resolver.
+**Изменение C.** Использовать `sessionRef` (через `useRef`) для актуального токена внутри `resolve`/`ping`, чтобы effect не зависел от меняющейся ссылки `session`.
+
+#### 2. `src/contexts/AuthContext.tsx` — guard от лишних setSession при TOKEN_REFRESHED
+
+Add-only: если `currentSession?.access_token === session?.access_token` — не вызывать `setSession` (избежать создания новой ссылки на тот же логический session). Это снижает blast-radius для всех экранов, не только live-room.
+
+```ts
+setSession(prev => {
+  if (prev?.access_token === currentSession?.access_token &&
+      prev?.refresh_token === currentSession?.refresh_token) {
+    return prev; // та же ссылка → React не триггерит ре-рендер
+  }
+  return currentSession;
+});
+```
+
+Это **не ломает** auth-flow: при реальном изменении токена ссылка обновится; при рефреше с тем же токеном (бывает) — ничего лишнего.
 
 #### 3. Ничего больше не трогаю
 
-- Не трогаю writer-guard, триггер БД, lifecycle actions, query keys, cleanup `LiveEvent.tsx`, replay/recorded flow, access-core.
-- Не меняю компонент `LiveEmbedPlayer` — он корректный, проблема не в нём.
+- Не трогаю `LiveEmbedPlayer`, `LiveEventComments`, `useVisibilityPolling`, `live-resolve` edge function.
+- Не трогаю access-core, notifications, replay, recorded_webinar, kill-switch, proof_mode.
+- Не меняю поведение для других багов (button sync, navigation) — они отдельной итерации.
 
-### Runtime proof, который собираю сам после деплоя
+### Runtime proof, который соберу сам после деплоя
 
-#### UI proof (browser tools)
+#### UI proof
 
-1. `/admin/live-events` — скрин, статус «В эфире» у `testovyy-vebinar-200416`.
-2. Открыть карточку — скрин, кнопка «Завершить эфир», debug-блок показывает `embed/<play_slug>`.
-3. `/live/testovyy-vebinar-200416` — скрин с **реальным видео** в плеере.
+1. `/live/testovyy-vebinar-200416` — скрин с live-видео.
+2. Уйти на другую вкладку (через preview можно эмулировать через `document.visibilityState='hidden'` в DevTools или просто открыть другую страницу sandbox в новой вкладке).
+3. Через 60 секунд вернуться — скрин: видео продолжается, чат не перезагружен, нет Loader2.
 
 #### Network proof
 
-`browser--list_network_requests` + `get_network_request_details` по `live-resolve` → JSON с:
-
-- `platform_status`
-- `resolved_source.resolved_source_kind`
-- `resolved_source.resolved_embed_url` (должен быть `embed/0czf27DrCof4abeYASUMew`)
-- `resolved_source.source_reason`
+- `browser--list_network_requests` до/после фокуса. Должно: НЕ появляться лишних `live-resolve` сразу при возврате (только плановый poll каждые 12s).
+- При TOKEN_REFRESHED не должно быть всплеска запросов с `loading` сбросом.
 
 #### Console proof
 
-`browser--read_console_logs(search='[live-resolve]')` — debug-лог из комнаты в момент live.
+- `[live-resolve]` debug-логи: между уходом и возвратом интервал = 12s × N (количество прошедших циклов), без всплеска.
+- `[AuthContext] onAuthStateChange: event=TOKEN_REFRESHED` — присутствует, но не вызывает повторный mount LiveEvent.
 
-#### SQL proof (timeline)
+#### SQL proof
 
-```sql
-SELECT updated_at, platform_status, status,
-       metadata->'provider'->'current'->>'stream_status' AS provider_status,
-       metadata->'provider'->'current'->>'play_link' AS play_link
-FROM live_events
-WHERE id = '1514525a-e693-4791-93c7-8f00ff76fe40';
-```
-
-- проверка после нажатия «Сохранить» в карточке во время live: статус остаётся `live` (триггер защищает).
+Не требуется — баг чисто клиентский (state management).
 
 ### Финальный отчёт — таблица
 
 
-| Баг               | Root cause                                                    | Файл                                                      | Чем доказано                                                           | Статус                                                  |
-| ----------------- | ------------------------------------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------- |
-| Blank screen      | embed URL строился из `live_event_id` вместо `play_link` slug | `live-resolve/index.ts`, `AdminLiveEvents.tsx` debug-блок | UI скрин с live-видео + network payload + console log                  | будет `fixed` после UI-proof                            |
-| Рассинхрон кнопки | save затирал `platform_status`, query keys не пересекались    | `AdminLiveEvents.tsx` (прошлая итерация) + триггер БД     | UI скрин «Завершить эфир» без reload + SQL что save не понижает статус | будет `fixed` после UI-proof                            |
-| Навигация         | cleanup без AbortController/clearInterval                     | `LiveEvent.tsx` (прошлая итерация)                        | console без leaked logs + ручной back/forward                          | `partially fixed` (требует ручной верификации сценария) |
+| Баг                      | Root cause                                                                      | Файл                               | Чем доказано                                                                                         | Статус                                                        |
+| ------------------------ | ------------------------------------------------------------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Background return reload | session-ref change при TOKEN_REFRESHED + setState("loading") размонтирует плеер | `LiveEvent.tsx`, `AuthContext.tsx` | UI скрин «вкладка→назад» с тем же видео + network без всплеска + console TOKEN_REFRESHED без remount | будет `fixed` после UI-proof                                  |
+| Blank screen             | embed URL (прошлая итерация)                                                    | —                                  | —                                                                                                    | `fixed`                                                       |
+| Button desync            | save-downgrade (прошлая итерация)                                               | —                                  | —                                                                                                    | `partially fixed` (нужен runtime UI-proof save во время live) |
+| Navigation back/forward  | cleanup (прошлая итерация)                                                      | —                                  | —                                                                                                    | `partially fixed` (нужен runtime UI-proof)                    |
 
-
-### Что остаётся Сергею (минимум)
-
-- **OBS уже стримит** на `testovyy-vebinar-200416` — этого достаточно. Если поток успеет завершиться до моего runtime-proof, попрошу 3 минуты повторного OBS.
-- Audio-loop тест в комнате (чисто перцептивная проверка).
 
 ### Ограничения / правила
 
-- Add-only. Не трогаю access-core, notifications, replay, recorded_webinar, kill-switch, proof_mode.
-- Verdict `fixed` для blank screen и кнопки — только после UI-скрина живого player.
-- Все 4 блока proof обязательны.
+- Add-only.
+- Не давать `fixed` без UI-proof background→return сценария.
+- Не размонтировать плеер при тихом обновлении.
+- Если после фикса видео всё равно перезагружается → искать причину в Realtime/Kinescope, а не в state.
+
+### Что нужно от Сергея
+
+- Если live ещё активен — оставить OBS на 3–5 минут для финального UI-proof background→return.
+- Если поток уже остановлен — короткое окно 3 минуты на повторный live для финального скрина.
+- Всё остальное (код, network, console) собираю сам.
