@@ -1,225 +1,287 @@
 # да, согласен, с учетом правок:
 
-1. **PATCH 3.4 / mobile height**  
-Не вводить расчёт `h-[calc(100dvh-var(--room-header-h,140px))]` как новый базовый layout без proof, что это не сломает desktop/tablet и встроенные контейнеры.  
-Сначала сделать **локальный add-only mobile guard** только для узких viewport и только для sidebar/input зоны. Базовую высоту текущего room layout не переписывать глобально.
-2. **PATCH 3.4 / visualViewport**  
-Логику `visualViewport resize -> scrollToBottom` добавлять очень осторожно:
+1. **PATCH F1 / порядок работ**  
+Единый runtime regression лучше запускать **после** F2–F7, а не параллельно им. Иначе proof будет собран на старой неканоничной админке эфиров и часть сценариев придется перепроходить повторно. Зафиксируй это прямо в плане:
+  - сначала F2–F7;
+  - потом один финальный regression F1;
+  - потом F8 verdict.
+2. **PATCH F2 / sticky header**  
+`sticky top-0 z-10 bg-card` для `TableHeader` допустим только если таблица будет внутри правильного scroll-контейнера. Нужно явно указать:
+  - sticky работает относительно `ScrollArea` / table wrapper;
+  - проверить, что header не конфликтует с верхней toolbar/filter bar;
+  - не допустить двойного sticky.
+3. **PATCH F3 / “каноническая таблица как Контакты”**  
+Нужно прямо зафиксировать, что мы переиспользуем **тот же table-shell/pattern**, что и в `AdminContacts`, а не просто “делаем похоже”.  
+То есть:
   &nbsp;
   &nbsp;
-  - только для mobile;
-  - только когда textarea/input в фокусе;
-  - с debounce;
-  - без принудительного скролла, если пользователь вручную читает старые сообщения.  
-  Иначе можно сломать UX чтения. Нужен явный guard `only if near bottom before resize`.
-3. **PATCH 3.5 / Tabs forceMount**  
-`forceMount` для обоих табов — потенциально полезно, но это уже влияет на память, подписки и hidden DOM.  
-Перед внедрением нужен mini-discovery:
-  - какие realtime subscriptions живут в Comments;
-  - какие в Questions;
-  - не будет ли двойной активности/двойного polling/render cost.  
-  Если оба таба уже держат активные подписки, `forceMount` вводить только после проверки, либо использовать локальное сохранение scroll state без постоянного mount обоих табов.
-4. **PATCH 3.5 / React.memo player wrappers**  
-Не просто “обернуть в memo”, а явно зафиксировать критерий сравнения:
-  - `videoId` для video wrapper;
-  - `embedUrl` для live embed;
-  - theme/phase changes не должны размонтировать player, если source не изменился.  
-  Это надо указать прямо, иначе патч останется слишком общим.
-5. **PATCH 3.1 / off-room fallback states**  
-Правильно, что не все full-screen fallback надо тематизировать.  
-Но это надо зафиксировать как правило:
-  - `waiting/live/completed/replay` — themed;
-  - `access denied / removed / session expired / revoked / generic error` — neutral system states.  
-  Иначе подрядчик может начать насильно тянуть theme туда, где это не нужно.
-6. **PATCH 3.1 / textarea styling**  
-В плане есть theme для textarea/input, но нужно явно добавить:
-  - placeholder color через `--room-text-secondary`;
-  - disabled/readOnly states;
-  - caret color = accent/text compatible.  
-  Иначе останутся мелкие дефолтные хвосты.
-7. **PATCH 3.3 / CTA sidebar max-height**  
-`max-h-[40vh] overflow-y-auto` для sidebar CTA — норм как идея, но только если:
-  - не ломает порядок “чат выше CTA / CTA выше чата” в текущем layout;
-  - не создаёт второй неудобный nested-scroll рядом с чатом на desktop.  
-  Нужен guard: desktop и mobile проверить отдельно. Не делать жёсткий `40vh` без адаптивной проверки.
-8. **PATCH 3.2 / role hierarchy**  
-Зафиксировать единый приоритет явно в одном SoT:  
-`presenter > admin > employee > own > user`.  
-И использовать его не только для message highlight, но и для reply-preview/quoted-state, чтобы не было второй локальной логики.
-9. **PATCH 3.7 / LiveBadge**  
-Формулировку уточнить: не “убрать из header”, а **не дублировать LIVE-сигнал в header, если там уже есть lifecycle badge**.  
-Если в текущем UX есть отдельный load-bearing индикатор LIVE в header, его нельзя удалить без mapping old -> new. Нужен явный mapping и проверка, что смысл не потерян.
-10. **PATCH 3.6 / regression checklist**  
-В checklist добавить отдельные пункты:
-  - `opened -> live` без сброса scroll/chat/questions/session;
-  - degraded provider scenario не только по audit, но и по UI-поведенческому результату;
-  - save формы не меняет lifecycle-state;
-  - lifecycle-action не перетирает theme/CTA/settings.
-11. **PATCH 3.5 / participant polling**  
-Если добавляется visibility-pause, зафиксировать отдельно:
-  - `live-resolve` polling можно паузить в скрытой вкладке;
-  - heartbeat/presence логика не должна быть случайно выключена тем же механизмом, если она нужна для active session.  
-  Нельзя одним общим хелпером нечаянно “усыпить” то, что должно продолжать жить.
-12. **Изменяемые файлы**  
-Добавить в план явную проверку `LiveEventQuestions.tsx` на parity не только sticky/safe-area, но и input/theme/empty-state/submit-button, чтобы comments/questions реально стали симметричными.
+  - reuse `ScrollArea`;
+  - reuse selection pattern;
+  - reuse row density / header style / hover behavior;
+  - reuse dropdown-actions pattern.  
+  Иначе подрядчик снова может собрать “почти таблицу”.
+4. **PATCH F3 / колонка Lifecycle actions**  
+Отдельная колонка под `RoomLifecycleActions` правильная, но нужно ограничить ее по ширине и привести к компактному виду.  
+Прямо добавь:
+  - lifecycle-actions должны быть compact;
+  - без многострочного вертикального стека;
+  - без раздувания строки по высоте;
+  - при узком viewport действия могут сворачиваться в компактный action-group, но без потери доступности.
+5. **PATCH F4 / select-all semantics**  
+Нужно явно определить, что именно значит master checkbox:
+  - select all **на текущей загруженной странице/выборке**, а не “во всей БД”.  
+  И это должно быть показано в UI текстом/поведением, чтобы не было ложного ожидания массового удаления всех записей за пределами текущего списка.
+6. **PATCH F5 / delete dialog summary**  
+В summary нужно добавить не только Kinescope linkage, но и:
+  - сколько выбранных эфиров сейчас `completed`;
+  - сколько `opened`;
+  - сколько `closed`;
+  - сколько удаление заблокировано из-за `live`.  
+  Это важно для bulk UX и понимания, почему часть набора может не пройти.
+7. **PATCH F6 / provider delete strategy**  
+Нужно заранее зафиксировать порядок:
+  - сначала provider delete attempts;
+  - потом local delete;
+  - partial provider failure не блокирует local delete, но явно помечается как degraded.  
+  Это у тебя описано, но нужно дополнительно потребовать **понятный summary в UI**, а не только audit/log.
+8. **PATCH F6 / 404 from Kinescope**  
+Зафиксируй отдельно:
+  - provider 404 трактуется как success/already absent;
+  - это не считается failed delete.  
+  Это надо написать явно в DoD/контракте, чтобы потом не спорить по summary.
+9. **PATCH F6 / live guard**  
+Запрет удаления `room_state='live'` правильный, но надо явно указать поведение для bulk:
+  - либо весь bulk reject целиком, если внутри есть live-эфир;
+  - либо live-эфиры исключаются, а остальные удаляются.  
+  Это нужно определить сейчас. Рекомендую второй вариант: частичное выполнение с явным summary, какие id пропущены из-за `cannot_delete_live`.
+10. **PATCH F6 / каскады FK**  
+Отлично, что предусмотрен discovery на `ON DELETE CASCADE`. Но в плане надо добавить правило:
+  - сначала discovery всех связанных таблиц;
+  - только потом add-only миграция, если реально не хватает каскада;
+  - не менять FK массово без точного списка затронутых таблиц и доказательства, что это безопасно.
+11. **PATCH F7 / orphan-check**  
+Помимо `live_active_sessions`, `comments`, `questions`, `access_rules`, нужно явно проверить:
+  - reply/thread tables, если они отдельные;
+  - moderation-related tables;
+  - audit/proof tables, если они должны сохраняться отдельно и не каскадиться.  
+  То есть не все связи обязаны удаляться каскадом — часть может быть исторической. Это надо разделить:
+  - operational children → delete/cascade;
+  - audit/history → сохранить, но без битых ссылок либо через snapshot/meta.
+12. **PATCH F8 / финальный verdict**  
+Добавь правило, что после F1–F7 нельзя запускать новый цикл мелких правок без новых фактов.  
+Итог должен быть:
+  - либо модуль принят;
+  - либо один consolidated финальный список remaining defects.  
+  Без ещё одного “мини-спринта на 5 мелочей”.
 
 &nbsp;
 
-В остальном план хороший: scope удержан, новых параллельных контуров нет, Sprint 1–2 не пересобираются, а дополировываются.
+В остальном план сильный: scope удержан, reuse найден, delete contour собран правильно, и новый комментарий про scroll/table/bulk/delete не потерян.
 
 &nbsp;
 
-План: Sprint 3 — финальный UX/polish и боевая доводка live-room
+План: Финальный добивающий sprint — regression + каноническая таблица эфиров + delete-flow
 
-## Discovery (что уже есть, не дублируем)
+## Discovery
 
-- **Тема:** `.live-room-themed` + CSS-переменные `--room-bg/text/text-secondary/panel/accent/tabs/admin-badge/employee-badge` (`liveRoomTheme.css`). Применяется на root, header, чат-панель, табы, message-text, meta-text, input-обёртку. **Не покрыты:** waiting-state, ended/replay-state, source_unavailable, removed_from_room, scheduled, error, фокус/border textarea, кнопка Send, сам Textarea (использует `bg-background`), ScrollArea-bar, sticky bottom (`bg-background` хардкод в LiveEventComments:248), CTA-карточки (`<Card>` shadcn → дефолтный bg).
-- **Роли:** `LiveRoleBadge.tsx` — единый SoT с 4 ролями (presenter/admin/employee/user), highlight + badge classes. Sprint 1 уже развёл цвета. Полировать только мелочи (reply-state, dark/light читаемость).
-- **Polling:** `dataRef.current` уже защищает от ре-маунта при resolve refresh; `hasAccessToken` как primitive не дёргает effect на TOKEN_REFRESHED. **Дёргается:** `useHasActiveCtaBindings` без `staleTime` на `["cta-bindings-exists"]` (есть 60s), но `useActiveParticipants` polling 20s + invalidate всей room — проверить scope.
-- **Mobile:** sticky input + safe-area уже есть в `LiveEventComments.tsx:248-253`, `LiveAutoGrowTextarea` корректный. **Не покрыто:** аналогичный sticky/safe-area в `LiveEventQuestions.tsx` (проверить parity), `h-[70dvh]` для сайдбара на mobile может конфликтовать с клавиатурой (нужно `dvh` уже стоит — ок, но CTA в сайдбаре + чат вместе могут переполнять).
-- **Lifecycle SoT:** `liveRoomLifecycle.ts` (Sprint 2) — единый mapper. Используется в admin/cabinet/room. Не трогаем логику, только consistency проверки.
+**Текущее состояние `/admin/live-events`:**
 
----
+- Это **уже `<Table>**`, не карточки (lines 865–876). Но обёрнут в `<Card><CardContent p-0>` без `ScrollArea`, без sticky header, **без чекбоксов**, **без bulk-toolbar**, без scroll-контейнера. Колонка actions содержит вертикальный стек `RoomLifecycleActions` + ряд иконок c `min-w-[280px]` (line 928) — это и есть «ощущение карточек» и horizontal overflow без скролла. Нет колонки «Активные участники» (компонент `RoomStateCell` есть, но без отдельной колонки count). Нет single-row delete.
+- Query: `["admin-live-events"]`, `select("*")` без пагинации (все эфиры разом).
+- **Удаление эфиров вообще отсутствует** в коде — ни single, ни bulk.
 
-## PATCH 3.1 — полное покрытие темы (add-only в `liveRoomTheme.css`)
+**Эталоны из проекта (reuse, не плодим новое):**
 
-Добавить scoped правила под `.live-room-themed`:
+- `AdminContacts.tsx` — sticky header, `<Checkbox>` selection, `ScrollArea`, AlertDialog для delete.
+- `src/components/admin/BulkActionsBar.tsx` — готовый sticky-bar с props `onBulkDelete`, `onSelectAll`, `selectedCount`, `totalCount`, `entityName`. Используется уже в `AdminTrainingModules`, `Forms`, `Preregistrations`.
+- `src/components/admin/forms/FormsBulkActionsBar.tsx` + `useFormsBulkDelete` — готовый паттерн: `BulkActionsBar` + AlertDialog с summary. Скопируем подход.
 
-- **Textarea/Input:** `.room-panel-input textarea, .room-panel-input input` — `background-color: var(--room-panel)`, `color: var(--room-text)`, `border-color: color-mix(in srgb, var(--room-text) 15%, transparent)`, focus-ring через `--room-accent`.
-- **Send button (ghost):** `.room-panel-input button:hover` — `background: color-mix(--room-accent 10%, transparent)`.
-- **Sticky bottom wrapper:** заменить `bg-background` в `LiveEventComments.tsx:248` и `LiveEventQuestions.tsx` (аналог) на класс `room-panel-sticky` → `background-color: var(--room-panel, hsl(var(--card)))`.
-- **CTA card:** новый класс `.room-cta-card` для `<Card>` в `LiveEventProductCta.tsx` и `LiveEventRoomBlocks.tsx` → `var(--room-panel)` + accent для CTA-кнопки.
-- **Empty/loading states чата и вопросов:** `room-meta-text` уже применён, добавить `room-empty-state` с большим padding и иконкой в тон.
-- **Waiting state:** `RoomWaitingState.tsx` — заменить `bg-muted` / `text-foreground` / `bg-primary/10` на room-tokens (`room-panel`, `room-title`, accent badge).
-- **Полноэкранные fallback-состояния** (`scheduled`, `ended_no_replay`, `source_unavailable`, `removed_from_room`, `error`, `session_expired`, `session_revoked`): сейчас рендерятся **до** обёртки `.live-room-themed`, без темы. Не оборачиваем их в room-theme (это off-room экраны), но для `ended_no_replay` (replay-state) и `scheduled` сделать опциональную обёртку с темой, если она уже в `dataRef` — иначе остаётся neutral.
-- **ScrollArea-thumb:** scoped правило `.live-room-themed [data-radix-scroll-area-thumb]` → `bg: color-mix(--room-text 25%, transparent)`.
+**Kinescope API (`supabase/functions/kinescope-api/index.ts`):**
 
-DoD: дефолтный grey-bg не выпадает ни на одном видимом элементе комнаты при выставленной теме.
+- Поддерживает: `create_live_event`, `enable/complete/get/list/sync_live_event`, `get_video`, `list_videos`. **Нет `delete_live_event` и `delete_video**` — добавим в add-only режиме (REST: `DELETE /v2/live/events/{id}` и `DELETE /v1/videos/{id}`).
+
+**Lifecycle / SoT — не трогаем.** `room_state`, `live-event-lifecycle`, `liveRoomLifecycle.ts`, тема, waiting-state, participant count — всё остаётся как есть. Только presentation-layer таблицы + delete contour + regression run.
 
 ---
 
-## PATCH 3.2 — финальная иерархия сообщений и ролей
+## PATCH F1 — единый runtime regression Sprint 1+2+3
 
-`LiveRoleBadge.tsx`:
+Прогон чек-листа `docs/SPRINT_FINAL_REGRESSION.md` (39 пунктов) в формате двух сессий (admin / user) на тестовом эфире `testovyy-vebinar-200416` с QA-аккаунтами.
 
-- **Reply-state:** добавить новый класс `getReplyStateClass()` — лёгкий left-indent + `border-l border-l-muted-foreground/20`, чтобы reply визуально отделялся от parent message без конфликта с role highlight.
-- **Own message:** уже есть `getOwnMessageClass()`. Усилить: если own + presenter → presenter highlight выигрывает (presenter > admin > employee > own > user). Зафиксировать приоритет в одной функции `resolveMessageHighlight({ isOwn, role })`.
-- **Reply preview (quoted):** в `LiveEventReplies.tsx` добавить класс `room-reply-quote` — `bg: color-mix(--room-panel 50%, transparent)`, `border-l-2 border-l-room-accent`, маленький font.
-- **Dark/light читаемость:** все текущие role-classes используют `text-{color}-600 dark:text-{color}-400` — оставить, добавить fallback `text-room-text` если custom theme override.
+**Формат отчёта:** для каждого пункта — `passed / failed / partial` + ссылка на скрин/SQL-proof для критичных (lifecycle transitions, moderation 2 окна, waiting→live без сброса scroll, degraded provider).
 
-DoD: 5 типов сообщений (user/own/admin/employee/presenter) + reply-quote визуально различимы и читаемы.
+**Не блокирует код-патчи F2–F7** — выполняется после них на готовой админке, чтобы regression сразу включал и новый delete-flow.
 
 ---
 
-## PATCH 3.3 — polish CTA
+## PATCH F2 — scroll-фикс на `/admin/live-events`
 
-В `LiveEventProductCta.tsx` и `LiveEventRoomBlocks.tsx`:
+Один атомарный фикс презентации (lines 862–950 `AdminLiveEvents.tsx`):
 
-- Применить `.room-cta-card` класс (PATCH 3.1).
-- Унифицировать spacing: `gap-3 p-3 md:p-4` для всех CTA-карточек, `mb-2` между несколькими CTA.
-- Mobile: `under_video` CTA — full-width, `sidebar` CTA — `max-h-[40vh] overflow-y-auto` чтобы не съедал чат.
-- Empty-state без CTA: уже корректно (компонент возвращает `null`). Проверить что `useHasActiveCtaBindings` не вызывает лишний placeholder div в `LiveEvent.tsx:546-553`.
-- CTA-кнопка: `bg-room-accent text-room-bg` через CSS-var, hover — `accent + 10% opacity`.
+- Заменить `<Card><CardContent p-0><Table>` на `<div className="rounded-md border bg-card"><div className="overflow-x-auto"><Table>` — горизонтальный скролл при узком viewport.
+- `TableHeader` → `sticky top-0 z-10 bg-card` для удержания заголовка при вертикальном скролле страницы.
+- Убрать `min-w-[280px]` с ячейки actions → ввести фиксированную узкую колонку «Действия» (icon-only Edit/Open/Delete) **+ отдельную колонку «Lifecycle»** для `RoomLifecycleActions` (она и так логически отдельная).
+- Для длинных значений в ячейках — `truncate max-w-[XXXpx]` + tooltip на title.
 
-DoD: CTA выглядит частью комнаты, не ломает sticky input, на mobile sidebar-CTA скроллится отдельно от чата.
-
----
-
-## PATCH 3.4 — финальная mobile-доводка
-
-- **Questions parity:** в `LiveEventQuestions.tsx` повторить sticky bottom + `safe-area-inset-bottom` + `room-panel-sticky` класс как в Comments.
-- **Sidebar высота:** заменить `h-[70dvh]` на `h-[calc(100dvh-var(--room-header-h,140px))]` — CSS-var `--room-header-h` выставляется на `.live-room-themed` через `style` (140px desktop / 110px mobile), чтобы клавиатура не перекрывала input.
-- **Auto-scroll:** при открытии клавиатуры в Comments — детектить `visualViewport` resize и удерживать `scrollTop = scrollHeight` через 200ms debounce.
-- **Длинные сообщения:** `break-words whitespace-pre-wrap` уже стоит, добавить `max-w-full overflow-wrap-anywhere` на `.room-message-text`.
-- **CTA на mobile:** sticky-CTA не блокирует input — проверить z-index (input z-10, CTA — без sticky на mobile, только в потоке).
-
-DoD: mobile комната стабильна, sticky input не перекрывается клавиатурой, чат и вопросы ведут себя одинаково.
+DoD: на 1102px viewport нет обрезанных колонок; sticky header работает; нет вложенных мёртвых scroll-зон.
 
 ---
 
-## PATCH 3.5 — performance / анти-дёргание
+## PATCH F3 — каноническая табличная раскладка
 
-- `**useHasActiveCtaBindings`:** добавить `staleTime: 60_000` (уже есть) + `refetchOnWindowFocus: false` — чтобы возврат во вкладку не ре-фетчил CTA.
-- `**useActiveParticipants`:** убедиться что `useVisibilityPolling(20_000)` используется (если нет — добавить), invalidate scope только `["live-active-participants", eventId]`, **не** инвалидировать комнату.
-- **resolve polling:** уже `12s` + AbortController + dataRef-guard. Добавить `useVisibilityPolling` обёртку, чтобы при скрытом табе polling паузился (heartbeat остаётся активным до browser-suspend).
-- **Tab content:** `<TabsContent>` уже использует `forceMount={false}` дефолтно — Radix размонтирует inactive tab. Добавить `forceMount` чтобы чат и вопросы оба остались в DOM (не теряют scroll position при переключении). Подписка realtime тоже не пересоздаётся.
-- **Player wrapper:** `KinescopePlayerWrapper` ре-маунтится только при смене `videoId`. `LiveEmbedPlayer` — при смене `embedUrl`. Обернуть в `React.memo` с поверхностным сравнением.
-- **Phase transition `waiting → live`:** сейчас при переходе меняется `state`, но root `<div className="live-room-themed">` остаётся — чат/CTA/header не размонтируются. Только колонка плеера переключается с `RoomWaitingState` на player. Это уже корректно — добавить comment в коде, чтобы будущие правки не сломали.
+Привести колонки и стиль строго к эталону `AdminContacts`:
 
-STOP-guard: не вводить новый state-manager, не менять структуру компонентов.
 
-DoD: при polling нет ре-маунтов, переключение табов сохраняет scroll, переход waiting→live меняет только player-колонку.
+| #   | Колонка             | Источник                                                                                             | Ширина |
+| --- | ------------------- | ---------------------------------------------------------------------------------------------------- | ------ |
+| 1   | ☑ checkbox          | local selection                                                                                      | `w-10` |
+| 2   | Название            | `event.title` + slug под ним муtedmuted                                                              | flex   |
+| 3   | Тип                 | `event_type` badge (Radio/Video)                                                                     | `w-32` |
+| 4   | Lifecycle (комната) | `getRoomStateBadgeVM(room_state)` через `liveRoomLifecycle.ts`                                       | `w-32` |
+| 5   | Источник            | provider_source_status badge с tooltip «Источник видео» (PATCH 3.7 уже сделан, добиваем consistency) | `w-32` |
+| 6   | Опубликован         | `is_published`                                                                                       | `w-24` |
+| 7   | Дата                | `scheduled_at` formatted                                                                             | `w-40` |
+| 8   | Активные            | `useActiveParticipants(event.id)` → число + tooltip «Активные за 2 мин»                              | `w-20` |
+| 9   | Запись              | `replay_enabled` ? «Доступна» : «—»                                                                  | `w-24` |
+| 10  | Lifecycle actions   | `RoomLifecycleActions layout="admin"` (компактный)                                                   | `w-44` |
+| 11  | Действия            | DropdownMenu: Редактировать / Открыть страницу / **Удалить…**                                        | `w-12` |
 
----
 
-## PATCH 3.6 — финальный regression checklist (документ)
+- `<TableRow>` — `hover:bg-muted/50 cursor-default`, double-click на строку → открыть редактор (как в Contacts).
+- Старый карточный «хаос» (вертикальный стек кнопок в одной ячейке) → разнесён по колонкам Lifecycle (отдельная) и Действия (DropdownMenu).
+- Никакой логики данных не меняем — только presentation. Все query/mutation остаются.
 
-Создать `docs/SPRINT_FINAL_REGRESSION.md` с единым checklist (без кода):
-
-1. Lifecycle: `closed → opened → live → completed` через 3 кнопки в админке + кнопка завершения в комнате.
-2. Waiting-state: пользователь заходит в `opened`, видит чат/вопросы/CTA/тему, плеера нет.
-3. Chat / Questions / Replies: отправка, realtime, threaded reply, длинный текст.
-4. Moderation 2 окна: mute/unmute + remove/restore (Sprint 1 deferred).
-5. CTA visibility / mobile.
-6. Theme apply: 8 CSS-переменных применяются ко всем элементам PATCH 3.1.
-7. Participant count v1.
-8. Role colors / hierarchy: 5 типов сообщений + reply.
-9. Mobile regression: sticky input, клавиатура, длинные сообщения, sidebar scroll.
-10. Button sync во время live-save (Sprint 2 deferred).
-11. Back/forward navigation room ↔ list ↔ edit.
-12. Background return / reload — нет ре-маунта плеера и чата.
-13. Replay-state + theme.
-14. Provider degraded-mode: Kinescope упал, lifecycle перешёл, audit с `degraded:true`.
-
-DoD: документ существует, все Sprint 1+2 deferred включены.
+DoD: визуально и поведенчески таблица как `/admin/contacts`; одна терминология lifecycle через `liveRoomLifecycle.ts` (PATCH 3.7 reuse).
 
 ---
 
-## PATCH 3.7 — финальная sync-проверка label/badges
+## PATCH F4 — row selection + select-all + BulkActionsBar
 
-- Проверить что в `AdminLiveEvents.tsx` (список + карточка), `LiveEvents.tsx` (cabinet), `LiveEvent.tsx` (room header) используются **только** `roomStateLabels` / `roomStateShortLabels` / `getRoomStateBadgeVM` из `liveRoomLifecycle.ts`. Никаких локальных строк.
-- `platform_status` badge остаётся как **provider-уровень** (рядом с `room_state`) — добавить tooltip «Источник видео» чтобы не путать с lifecycle.
-- Replay-state: если `room_state = completed` + `replay_enabled = true` → label «Запись доступна» (единый), если без replay → «Эфир завершён».
-- `LiveBadge` (mode `auto/live/off`) — оставить только для player-area (внутри плеера), убрать из header (там уже `roomBadgeVM` badge).
+- `selectedIds: Set<string>` в state `AdminLiveEvents`.
+- Чекбокс в каждой строке + master-checkbox в `TableHead` с tri-state (`checked` / `indeterminate` / `unchecked`) — `<Checkbox>` уже поддерживает indeterminate (`src/components/ui/checkbox.tsx`).
+- При смене query-key (фильтры/refetch) — `setSelectedIds(new Set())`.
+- Reuse существующего `BulkActionsBar` (`src/components/admin/BulkActionsBar.tsx`) с `entityName="эфиров"`, `onBulkDelete`, `onSelectAll`, `onClearSelection`. Не плодим новый.
+- Новых bulk actions кроме delete сейчас не добавляем (по жёсткому правилу «не плодить лишнее без необходимости»).
 
-DoD: одна терминология, нет визуального конфликта между `room_state` и `platform_status`.
+DoD: можно выбрать N эфиров, видна плавающая bulk-bar с count, кнопка `Удалить…` открывает delete-dialog (PATCH F5).
 
 ---
 
-## Изменяемые файлы
+## PATCH F5 — delete-flow (single + bulk) с двумя режимами
+
+**Новый компонент** `src/components/admin/live/LiveEventDeleteDialog.tsx` (один — для single и bulk):
+
+Props: `eventIds: string[]`, `onClose`, `onSuccess`.
+
+Внутри:
+
+1. **Загрузка summary** при открытии — клиентский `select id, title, kinescope_live_event_id, kinescope_video_id, room_state, replay_enabled from live_events where id in (...)`.
+2. **Preview-блок:**
+  - Всего выбрано: N
+  - С привязкой к Kinescope live: M
+  - С привязкой к Kinescope video: K
+  - В состоянии `live`: L (warning если >0 — предлагаем сначала завершить)
+3. **RadioGroup — выбор режима:**
+  - `platform_only` — «Удалить только в платформе. Сущности в Kinescope сохранятся.»
+  - `platform_and_provider` — «Удалить в платформе **и** связанные сущности в Kinescope (live events + видео-записи).»
+4. Type-to-confirm: `confirmText === "УДАЛИТЬ"` для активации кнопки (как в опасных delete у нас в `useFormsBulkDelete`).
+5. Submit → новая edge function `live-events-delete` (PATCH F6).
+6. После успеха — `invalidateQueries(["admin-live-events"])` + clear selection + toast с summary `{ deleted, provider_deleted, provider_failed }`.
+
+**Single delete** — та же кнопка `Удалить…` в DropdownMenu строки → открывает тот же диалог с одним id.
+
+DoD: оба режима видны, явный confirm, summary до выполнения, нет silent destructive action.
+
+---
+
+## PATCH F6 — edge function `live-events-delete` (новая)
+
+`supabase/functions/live-events-delete/index.ts` + добавление в `kinescope-api` двух actions: `delete_live_event`, `delete_video`.
+
+**Контракт `live-events-delete`:**
+
+```
+POST { event_ids: string[], mode: 'platform_only' | 'platform_and_provider' }
+→ { success, summary: { total, deleted, provider_attempted, provider_deleted, provider_failed: [{event_id, reason}] }, audit_id }
+```
+
+Логика:
+
+1. Auth: JWT, проверка `has_role_v2(user, 'admin' | 'superadmin')` через `_shared/auth-guards.ts`.
+2. Загрузка эфиров (`id, kinescope_live_event_id, kinescope_video_id, room_state`).
+3. Guard: если есть эфир в `room_state = 'live'` — отказ 409 `cannot_delete_live` (нужно сначала завершить через lifecycle).
+4. Если `mode = platform_and_provider`:
+  - Для каждого эфира с `kinescope_live_event_id` — `kinescope-api delete_live_event`.
+  - Для каждого с `kinescope_video_id` (replay) — `kinescope-api delete_video`.
+  - Failures **не блокируют** локальный delete, но фиксируются в `summary.provider_failed[]` и в audit с `degraded:true`.
+5. Локальный delete через `service_role`: `DELETE FROM live_events WHERE id = ANY($1)`. Связанные строки (`live_event_comments`, `live_event_questions`, `live_event_access_rules`, `live_active_sessions`, и т.д.) удалятся каскадом по существующим FK `ON DELETE CASCADE` — **проверим в discovery перед миграцией; если каких-то FK нет каскадом, добавим миграцией add-only `ALTER TABLE ... ON DELETE CASCADE**`.
+6. Audit: `DomainEventService.emitEvent("live_event_deleted", actor, ...)` для каждого удалённого + сводный `live_events_bulk_deleted` со счётчиками.
+
+**Kinescope-api добавление:**
+
+```ts
+case "delete_live_event": result = await makeV2Request(`/live/events/${live_event_id}`, apiToken, "DELETE"); break;
+case "delete_video":      result = await makeV1Request(`/videos/${video_id}`, apiToken, "DELETE"); break;
+```
+
+- корректная обработка 404 (уже удалён) как успеха.
+
+DoD: edge function отвечает 200 со summary; partial-failure прозрачен; single и bulk идут через один путь; audit пишется.
+
+---
+
+## PATCH F7 — consistency после delete
+
+В UI после успеха:
+
+- `queryClient.invalidateQueries({ queryKey: ["admin-live-events"] })` — рефетч списка.
+- `setSelectedIds(new Set())` — clear selection.
+- Если открыт edit-dialog для удалённого id → закрыть + toast «Эфир удалён».
+- `queryClient.invalidateQueries({ queryKey: ["live-active-participants"] })` — убрать battle-counter удалённых из кэша.
+
+В edge function:
+
+- Перед локальным delete — `check_orphans` секция: убедиться, что нет висящих `live_access_proofs`, `live_event_audit_logs` без CASCADE → discovery sql покажет, нужна ли add-only миграция CASCADE.
+- В отчёте F8 — orphan/guard-check ровно по этим таблицам.
+
+DoD: после delete нет UI-мусора, нет 404 от висящих компонентов, orphan-check passed.
+
+---
+
+## PATCH F8 — финальная приёмка live-модуля
+
+После F1–F7 — единый сводный отчёт:
+
+1. Sprint 1/2/3 deferred runtime points — passed/failed по 39-пунктовому checklist (F1).
+2. F2–F7 — diff-summary, изменённые файлы, новые edge functions.
+3. Orphan/guard-check после delete — список таблиц + результат.
+4. Финальный verdict: **принят** / **возвращён с consolidated patch list** (без новых дроблений).
+
+---
+
+## Изменяемые файлы (add-only, без удаления существующих веток)
 
 **Новые:**
 
-- `docs/SPRINT_FINAL_REGRESSION.md` (PATCH 3.6)
+- `src/components/admin/live/LiveEventDeleteDialog.tsx` (PATCH F5)
+- `supabase/functions/live-events-delete/index.ts` (PATCH F6)
+- `supabase/migrations/<ts>_live_events_cascade_safety.sql` — **только если discovery покажет**, что какие-то связанные таблицы не имеют `ON DELETE CASCADE` к `live_events.id` (PATCH F6/F7)
 
-**Изменяемые (add-only, без удаления существующих веток):**
+**Изменяемые:**
 
-- `src/components/live/liveRoomTheme.css` (PATCH 3.1 — расширение scoped правил)
-- `src/components/live/LiveRoleBadge.tsx` (PATCH 3.2 — `resolveMessageHighlight`, reply-quote class)
-- `src/components/live/LiveEventReplies.tsx` (PATCH 3.2 — применить reply-quote)
-- `src/components/live/LiveEventComments.tsx` (PATCH 3.1/3.4/3.5 — `room-panel-sticky` класс, `forceMount`, visualViewport scroll)
-- `src/components/live/LiveEventQuestions.tsx` (PATCH 3.1/3.4 — parity sticky/safe-area)
-- `src/components/live/LiveEventProductCta.tsx` (PATCH 3.1/3.3 — `room-cta-card`, mobile spacing)
-- `src/components/live/LiveEventRoomBlocks.tsx` (PATCH 3.1/3.3 — `room-cta-card`)
-- `src/components/live/RoomWaitingState.tsx` (PATCH 3.1 — room-tokens)
-- `src/hooks/useActiveParticipants.ts` (PATCH 3.5 — `useVisibilityPolling`)
-- `src/pages/LiveEvent.tsx` (PATCH 3.4/3.5/3.7 — CSS-var `--room-header-h`, visibility polling, badge consistency, `forceMount` на TabsContent)
-- `src/pages/admin/AdminLiveEvents.tsx` (PATCH 3.7 — tooltip для `platform_status`, единые label)
-- `src/pages/LiveEvents.tsx` (PATCH 3.7 — completed/replay label единый)
+- `src/pages/admin/AdminLiveEvents.tsx` (PATCH F2/F3/F4/F5/F7 — scroll wrap, sticky header, новые колонки, checkbox selection, BulkActionsBar wiring, delete dialog hookup)
+- `supabase/functions/kinescope-api/index.ts` (PATCH F6 — два новых action: `delete_live_event`, `delete_video`)
+
+**Не трогаем:** `liveRoomLifecycle.ts`, `live-event-lifecycle/`, `live-resolve/`, `RoomLifecycleActions.tsx`, тема, waiting-state, participant hook, role badges, moderation.
 
 ---
 
-## DoD Sprint 3
+## DoD финального sprint
 
-- Все 8 CSS-переменных темы применяются: header, чат, вопросы, textarea, табы, CTA, waiting, replay, empty-state.
-- 5 типов сообщений + reply визуально различимы, не теряют читабельность в light/dark.
-- CTA polished: spacing, mobile, не ломает sticky input.
-- Mobile: sticky input + safe-area в Comments **и** Questions, sidebar высота через CSS-var, длинный контент скроллится.
-- Polling тихий: visibility-pause, AbortController, dataRef-guard, `forceMount` табов, memo плееров.
-- Final regression checklist задокументирован, все Sprint 1+2 deferred включены.
-- `room_state` и `platform_status` визуально разведены, label единый через `liveRoomLifecycle.ts`.
-- Sprint 1+2 не сломаны: lifecycle actions, waiting-state, participant count, moderation banner, role badges, theme — всё работает как раньше.
-
-## Deferred → финальный regression после Sprint 3
-
-Не плодим новые. Все из Sprint 1+2 (moderation 2 окна UI proof, button sync во время live-save, back/forward navigation, background return) идут в единый regression PATCH 3.6.
+- `/admin/live-events` визуально и поведенчески = `/admin/contacts` (sticky header, scroll-обёртка, чекбоксы, selection, bulk-bar).
+- Single и bulk delete работают через единый dialog с двумя режимами и type-to-confirm.
+- Kinescope delete: success / partial-failure / silent-failure-нет (всё в summary + audit).
+- Удалить `live`-эфир напрямую нельзя — guard 409.
+- Sprint 1+2+3 не сломаны: `room_state`, lifecycle actions, waiting-state, participant count, тема, role badges.
+- Полный regression checklist (39 пунктов) пройден и зафиксирован.
+- Финальный verdict по live-модулю выдан.
