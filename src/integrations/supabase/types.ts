@@ -6052,6 +6052,7 @@ export type Database = {
           id: string
           invite_mode: string
           is_published: boolean
+          kinescope_instance_id: string | null
           kinescope_live_event_id: string | null
           kinescope_project_id: string | null
           kinescope_stream_id: string | null
@@ -6081,6 +6082,7 @@ export type Database = {
           id?: string
           invite_mode?: string
           is_published?: boolean
+          kinescope_instance_id?: string | null
           kinescope_live_event_id?: string | null
           kinescope_project_id?: string | null
           kinescope_stream_id?: string | null
@@ -6110,6 +6112,7 @@ export type Database = {
           id?: string
           invite_mode?: string
           is_published?: boolean
+          kinescope_instance_id?: string | null
           kinescope_live_event_id?: string | null
           kinescope_project_id?: string | null
           kinescope_stream_id?: string | null
