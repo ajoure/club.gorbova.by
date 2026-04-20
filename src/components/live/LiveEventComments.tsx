@@ -16,6 +16,9 @@ import {
 import { LiveEventReplyForm, LiveEventRepliesList } from "./LiveEventReplies";
 import { LiveInlineModeration } from "./LiveInlineModeration";
 import { LiveAutoGrowTextarea } from "./LiveAutoGrowTextarea";
+import { LiveModerationBanner } from "./LiveModerationBanner";
+import { useRoomModerationState } from "@/hooks/useRoomModerationState";
+import { toast } from "sonner";
 
 interface Comment {
   id: string;
@@ -115,6 +118,9 @@ export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile 
     }
   }, [comments]);
 
+  const { isMuted, isRemoved } = useRoomModerationState(liveEventId, user?.id);
+  const isBlocked = isMuted || isRemoved;
+
   const sendMutation = useMutation({
     mutationFn: async (content: string) => {
       const { error } = await supabase.from("live_event_comments").insert({
@@ -128,10 +134,35 @@ export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile 
       setNewComment("");
       queryClient.invalidateQueries({ queryKey: ["live-event-comments", liveEventId] });
     },
+    onError: (err: any) => {
+      // Server-side RLS will reject if user is muted/removed; surface a clear message.
+      const msg = String(err?.message || "");
+      if (msg.includes("row-level security") || msg.includes("violates")) {
+        toast.error(
+          isRemoved
+            ? "Вы удалены из комнаты — отправка недоступна"
+            : "Вы заглушены — отправка временно недоступна",
+        );
+      } else {
+        toast.error(`Ошибка отправки: ${err.message}`);
+      }
+      // Refresh state in case it changed in another tab.
+      queryClient.invalidateQueries({
+        queryKey: ["live-user-mod-state", liveEventId, user?.id],
+      });
+    },
   });
 
   const handleSend = () => {
     if (!newComment.trim() || !user) return;
+    if (isBlocked) {
+      toast.error(
+        isRemoved
+          ? "Вы удалены из комнаты модератором"
+          : "Вы заглушены модератором",
+      );
+      return;
+    }
     sendMutation.mutate(newComment.trim());
   };
 
@@ -214,21 +245,36 @@ export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile 
       </div>
 
       {user && (
-        <div
-          className="flex gap-2 items-end p-3 border-t room-panel-input sticky bottom-0 z-10"
-          style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
-        >
-          <LiveAutoGrowTextarea
-            value={newComment}
-            onChange={setNewComment}
-            onSubmit={handleSend}
-            placeholder="Написать комментарий..."
-            maxHeight={120}
-            className="flex-1"
-          />
-          <Button size="icon" variant="ghost" onClick={handleSend} disabled={!newComment.trim() || sendMutation.isPending}>
-            <Send className="h-4 w-4" />
-          </Button>
+        <div className="border-t sticky bottom-0 z-10 bg-background">
+          <LiveModerationBanner isMuted={isMuted} isRemoved={isRemoved} />
+          <div
+            className="flex gap-2 items-end p-3 room-panel-input"
+            style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
+          >
+            <LiveAutoGrowTextarea
+              value={newComment}
+              onChange={setNewComment}
+              onSubmit={handleSend}
+              placeholder={
+                isRemoved
+                  ? "Вы удалены из комнаты"
+                  : isMuted
+                  ? "Вы заглушены модератором"
+                  : "Написать комментарий..."
+              }
+              maxHeight={120}
+              className="flex-1"
+              disabled={isBlocked}
+            />
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={handleSend}
+              disabled={!newComment.trim() || sendMutation.isPending || isBlocked}
+            >
+              <Send className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
       )}
     </div>
