@@ -1,5 +1,8 @@
 import { useState, useCallback, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 import { useContactArtifacts, type ContactArtifact, type ArtifactSourceType } from "@/hooks/useContactArtifacts";
+import { ContactWebinarsView } from "./ContactWebinarsTab";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,7 +15,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { BookOpen, CheckCircle, ClipboardList, GraduationCap, ScrollText, ChevronRight, ChevronDown, Loader2, Layers } from "lucide-react";
+import { BookOpen, CheckCircle, ClipboardList, GraduationCap, ScrollText, ChevronRight, ChevronDown, Loader2, Layers, Video } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import {
@@ -27,9 +30,10 @@ interface ContactArtifactsTabProps {
   userId: string | null | undefined;
   enabled: boolean;
   contactName?: string;
+  isStaff?: boolean;
 }
 
-type FilterType = 'all' | 'forms' | 'training';
+type FilterType = 'all' | 'forms' | 'training' | 'webinars';
 
 const SOURCE_TYPE_CONFIG: Record<ArtifactSourceType, { label: string; icon: typeof ClipboardList; color: string }> = {
   site_form: { label: "Анкета", icon: ClipboardList, color: "text-blue-500" },
@@ -97,9 +101,27 @@ function groupByProduct(artifacts: ContactArtifact[]): ProductGroup[] {
 
 // ── Main component ───────────────────────────────────────────────────
 
-export function ContactArtifactsTab({ profileId, userId, enabled, contactName }: ContactArtifactsTabProps) {
+export function ContactArtifactsTab({ profileId, userId, enabled, contactName, isStaff = false }: ContactArtifactsTabProps) {
   const { artifacts, isLoading, formCount, trainingCount } = useContactArtifacts(profileId, userId, enabled);
   const [filter, setFilter] = useState<FilterType>('all');
+
+  // Webinar count — distinct live_event_id из comments + questions; только для staff
+  const { data: webinarCount = 0 } = useQuery({
+    queryKey: ["contact-webinar-count", userId],
+    queryFn: async () => {
+      if (!userId) return 0;
+      const [c, q] = await Promise.all([
+        supabase.from("live_event_comments").select("live_event_id").eq("user_id", userId).limit(1000),
+        supabase.from("live_event_questions").select("live_event_id").eq("user_id", userId).limit(1000),
+      ]);
+      const ids = new Set<string>();
+      (c.data ?? []).forEach((r: any) => r.live_event_id && ids.add(r.live_event_id));
+      (q.data ?? []).forEach((r: any) => r.live_event_id && ids.add(r.live_event_id));
+      return ids.size;
+    },
+    enabled: enabled && isStaff && !!userId,
+    staleTime: 60_000,
+  });
 
   // Site form detail
   const [selectedForm, setSelectedForm] = useState<ContactArtifact | null>(null);
@@ -188,7 +210,8 @@ export function ContactArtifactsTab({ profileId, userId, enabled, contactName }:
     );
   }
 
-  if (artifacts.length === 0) {
+  // Empty-state: только если нет ни artifacts, ни вебинарной активности у staff
+  if (artifacts.length === 0 && (!isStaff || webinarCount === 0)) {
     return (
       <Card>
         <CardContent className="py-12 text-center">
@@ -214,21 +237,37 @@ export function ContactArtifactsTab({ profileId, userId, enabled, contactName }:
           <GraduationCap className="w-3 h-3 mr-1" />
           Обучение ({trainingCount})
         </Button>
+        {isStaff && (
+          <Button
+            variant={filter === 'webinars' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setFilter('webinars')}
+            className="text-xs h-7"
+            disabled={webinarCount === 0}
+          >
+            <Video className="w-3 h-3 mr-1" />
+            Вебинары ({webinarCount})
+          </Button>
+        )}
       </div>
 
-      {/* Grouped artifact list */}
-      <div className="space-y-2">
-        {groups.map(group => (
-          <ProductGroupSection
-            key={group.key}
-            group={group}
-            isOpen={!collapsedGroups.has(group.key)}
-            onToggle={() => toggleGroup(group.key)}
-            onItemClick={handleArtifactClick}
-            contactName={contactName}
-          />
-        ))}
-      </div>
+      {/* Контент: либо artifacts list, либо webinars view */}
+      {filter === 'webinars' && isStaff && userId ? (
+        <ContactWebinarsView userId={userId} />
+      ) : (
+        <div className="space-y-2">
+          {groups.map(group => (
+            <ProductGroupSection
+              key={group.key}
+              group={group}
+              isOpen={!collapsedGroups.has(group.key)}
+              onToggle={() => toggleGroup(group.key)}
+              onItemClick={handleArtifactClick}
+              contactName={contactName}
+            />
+          ))}
+        </div>
+      )}
 
       {/* Site Form Detail Dialog */}
       <SiteFormDetailDialog artifact={selectedForm} onClose={() => setSelectedForm(null)} />
