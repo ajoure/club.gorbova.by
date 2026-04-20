@@ -1,0 +1,52 @@
+/**
+ * Local-only theme styling for the webinar room.
+ * Scoped strictly under .live-room-themed — never leaks into the rest of the app.
+ *
+ * Variables expected on the root container:
+ *   --room-bg, --room-text, --room-text-secondary,
+ *   --room-panel, --room-accent, --room-tabs,
+ *   --room-admin-badge, --room-employee-badge
+ *
+ * Each rule uses `var(--room-*, <fallback>)` so when a variable is unset
+ * the default app theme (background/foreground/etc.) is used.
+ */
+
+.live-room-themed {
+  background-color: var(--room-bg, hsl(var(--background)));
+  color: var(--room-text, hsl(var(--foreground)));
+}
+
+/* Heading + secondary text */
+.live-room-themed .room-title {
+  color: var(--room-text, hsl(var(--foreground)));
+}
+.live-room-themed .room-subtitle {
+  color: var(--room-text-secondary, hsl(var(--muted-foreground)));
+}
+
+/* Panels (chat/questions card) */
+.live-room-themed .room-panel {
+  background-color: var(--room-panel, hsl(var(--card)));
+  color: var(--room-text, hsl(var(--card-foreground)));
+}
+.live-room-themed .room-panel-input {
+  background-color: var(--room-panel, hsl(var(--card)));
+  color: var(--room-text, hsl(var(--card-foreground)));
+}
+
+/* Tabs */
+.live-room-themed .room-tabs-list {
+  background-color: var(--room-tabs, transparent);
+}
+.live-room-themed .room-tab-trigger[data-state="active"] {
+  color: var(--room-accent, hsl(var(--primary)));
+  border-bottom: 2px solid var(--room-accent, hsl(var(--primary)));
+}
+
+/* Message text */
+.live-room-themed .room-message-text {
+  color: var(--room-text, hsl(var(--foreground)));
+}
+.live-room-themed .room-meta-text {
+  color: var(--room-text-secondary, hsl(var(--muted-foreground)));
+}
