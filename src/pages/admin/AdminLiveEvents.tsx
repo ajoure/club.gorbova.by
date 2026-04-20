@@ -230,6 +230,8 @@ export default function AdminLiveEvents() {
   // Final follow-up sprint PATCH F4/F5: bulk selection + delete dialog
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleteIds, setDeleteIds] = useState<string[]>([]);
+  // PATCH F-CANON: shared canonical column state (resize / reorder / hide-show + persist)
+  const { columns, setColumns } = useLiveEventsColumns();
 
   const isLiveStream = form.event_type === "live_stream";
 
