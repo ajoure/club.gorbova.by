@@ -121,18 +121,11 @@ export function UnifiedFooter({
           <div>
             <h4 className="font-semibold text-foreground mb-4">Документы</h4>
             <nav className="flex flex-col gap-2 text-sm">
-              <Link to="/offer" className="text-muted-foreground hover:text-foreground transition-colors">
-                Публичная оферта
-              </Link>
-              <Link to="/order-payment" className="text-muted-foreground hover:text-foreground transition-colors">
-                Заказ и оплата услуг
-              </Link>
-              <Link to="/privacy" className="text-muted-foreground hover:text-foreground transition-colors">
-                Политика конфиденциальности
-              </Link>
-              <Link to="/consent" className="text-muted-foreground hover:text-foreground transition-colors">
-                Согласие на обработку данных
-              </Link>
+              {LEGAL_LINKS.map((item) => (
+                <Link key={item.href} to={item.href} className="text-muted-foreground hover:text-foreground transition-colors">
+                  {item.label}
+                </Link>
+              ))}
             </nav>
           </div>
         </div>
@@ -142,7 +135,7 @@ export function UnifiedFooter({
           <div className="flex flex-col sm:flex-row items-center justify-center gap-6">
             <Link to="/order-payment" className="opacity-70 hover:opacity-100 transition-opacity">
               <img 
-                src={paymentSystemsImage} 
+                src={FOOTER_ASSETS.paymentSystems} 
                 alt="Принимаем к оплате: Visa, MasterCard, Белкарт, bePaid, Samsung Pay, Google Pay" 
                 className="h-8 w-auto"
                 width={347}
@@ -152,7 +145,7 @@ export function UnifiedFooter({
             </Link>
             <Link to="/order-payment" className="opacity-70 hover:opacity-100 transition-opacity">
               <img 
-                src={eripLogoImage} 
+                src={FOOTER_ASSETS.erip} 
                 alt="Оплата через ЕРИП" 
                 className="h-8 w-auto"
                 width={64}
@@ -166,7 +159,7 @@ export function UnifiedFooter({
         {/* Copyright */}
         <div className="border-t border-border/50 pt-6 text-center">
           <p className="text-sm text-muted-foreground">
-            © {new Date().getFullYear()} ЗАО «АЖУР инкам». Все права защищены.
+            © {new Date().getFullYear()} {COMPANY_INFO.name}. Все права защищены.
           </p>
         </div>
       </div>
