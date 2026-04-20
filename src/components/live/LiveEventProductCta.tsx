@@ -166,6 +166,16 @@ export function LiveEventProductCta({ liveEventId, position, displayContext, eve
     });
   }, [bindings, runtimeEvents, eventStartedAt]);
 
+  // PROOF DEBUG — transparent CTA pipeline diagnostic
+  console.debug('[live-cta]', {
+    liveEventId,
+    position,
+    displayContext,
+    bindingsCount: bindings?.length ?? 0,
+    visibleCount: visibleBindings.length,
+    runtimeEventsCount: runtimeEvents?.length ?? 0,
+  });
+
   if (!visibleBindings.length) return null;
 
   const handleCtaClick = async (binding: CtaBinding, product: ProductInfo | null, tariff: TariffInfo | null, offer: OfferInfo | null) => {
