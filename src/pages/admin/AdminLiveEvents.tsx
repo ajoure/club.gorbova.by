@@ -868,6 +868,7 @@ export default function AdminLiveEvents() {
                     <TableHead>Название</TableHead>
                     <TableHead>Тип</TableHead>
                     <TableHead>Статус</TableHead>
+                    <TableHead>Комната</TableHead>
                     <TableHead>Опубликован</TableHead>
                     <TableHead>Дата</TableHead>
                     <TableHead></TableHead>
@@ -909,6 +910,9 @@ export default function AdminLiveEvents() {
                         </div>
                       </TableCell>
                       <TableCell>
+                        <RoomStateCell event={event} />
+                      </TableCell>
+                      <TableCell>
                         {event.is_published ? (
                           <Badge variant="default">Да</Badge>
                         ) : (
@@ -921,33 +925,28 @@ export default function AdminLiveEvents() {
                           : "—"}
                       </TableCell>
                       <TableCell>
-                        <div className="flex gap-1">
-                          <Button variant="ghost" size="sm" onClick={() => handleEdit(event)}>
-                            <Edit2 className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => window.open(`/live/${event.slug}`, "_blank")}>
-                            <ExternalLink className="h-4 w-4" />
-                          </Button>
-                          {event.event_type === "live_stream" && event.kinescope_live_event_id && (
-                            <>
-                              {event.platform_status === "scheduled" && (
-                                <Button variant="ghost" size="sm" title="Запустить эфир"
-                                  onClick={() => handleLifecycleAction(event.id, "enable_live_event", event.kinescope_live_event_id!)}>
-                                  <Zap className="h-4 w-4 text-green-600" />
-                                </Button>
-                              )}
-                              {event.platform_status === "live" && (
-                                <Button variant="ghost" size="sm" title="Завершить эфир"
-                                  onClick={() => handleLifecycleAction(event.id, "complete_live_event", event.kinescope_live_event_id!)}>
-                                  <Square className="h-4 w-4 text-red-600" />
-                                </Button>
-                              )}
-                              <Button variant="ghost" size="sm" title="Обновить статус"
+                        <div className="flex flex-col gap-2 min-w-[280px]">
+                          {/* Sprint 2 PATCH 2.3: lifecycle-actions для room (отдельный контур) */}
+                          <RoomLifecycleActions
+                            eventId={event.id}
+                            roomState={parseRoomState(event.room_state)}
+                            layout="admin"
+                          />
+                          <div className="flex gap-1">
+                            <Button variant="ghost" size="sm" onClick={() => handleEdit(event)} title="Редактировать">
+                              <Edit2 className="h-4 w-4" />
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => window.open(`/live/${event.slug}`, "_blank")} title="Открыть страницу">
+                              <ExternalLink className="h-4 w-4" />
+                            </Button>
+                            {/* Provider-actions (Kinescope sync) — service-level, не lifecycle */}
+                            {event.event_type === "live_stream" && event.kinescope_live_event_id && (
+                              <Button variant="ghost" size="sm" title="Синхронизировать источник Kinescope"
                                 onClick={() => handleLifecycleAction(event.id, "sync_live_event", event.kinescope_live_event_id!)}>
                                 <RefreshCw className="h-4 w-4" />
                               </Button>
-                            </>
-                          )}
+                            )}
+                          </div>
                         </div>
                       </TableCell>
                     </TableRow>
