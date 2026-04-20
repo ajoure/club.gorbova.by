@@ -50,29 +50,29 @@ export function UnifiedFooter({
           {/* Company info */}
           <div className="lg:col-span-2">
             <Link to="/" className="flex items-center gap-3 mb-4 hover:opacity-80 transition-opacity w-fit">
-              <img src={logoImage} alt="Буква Закона" className="h-8 w-auto" width={32} height={32} loading="lazy" />
+              <img src={BRAND_INFO.logoUrl} alt={BRAND_INFO.name} className="h-8 w-auto" width={32} height={32} loading="lazy" />
               <div>
-                <span className="font-bold text-foreground">БУКВА ЗАКОНА</span>
-                <span className="block text-xs text-muted-foreground">Клуб по законодательству</span>
+                <span className="font-bold text-foreground">{BRAND_INFO.name}</span>
+                <span className="block text-xs text-muted-foreground">{BRAND_INFO.subtitle}</span>
               </div>
             </Link>
             
             <div className="text-sm text-muted-foreground space-y-1">
-              <p className="font-medium text-foreground">ЗАО «АЖУР инкам»</p>
-              <p>УНП: 193405000</p>
-              <p>Юр. адрес: 220035, г. Минск, ул. Панфилова, 2, офис 49Л</p>
-              <p>Почтовый адрес: 220052, Республика Беларусь, г. Минск, а/я 63</p>
+              <p className="font-medium text-foreground">{COMPANY_INFO.name}</p>
+              <p>УНП: {COMPANY_INFO.unp}</p>
+              <p>Юр. адрес: {COMPANY_INFO.legalAddress}</p>
+              <p>Почтовый адрес: {COMPANY_INFO.mailingAddress}</p>
               <p className="pt-2">
-                <a href="tel:+375291714321" className="hover:text-foreground transition-colors">
-                  Телефон: +375 29 171-43-21
+                <a href={COMPANY_INFO.phoneHref} className="hover:text-foreground transition-colors">
+                  Телефон: {COMPANY_INFO.phone}
                 </a>
               </p>
               <p>
-                <a href="mailto:info@ajoure.by" className="hover:text-foreground transition-colors">
-                  E-mail: info@ajoure.by
+                <a href={`mailto:${COMPANY_INFO.email}`} className="hover:text-foreground transition-colors">
+                  E-mail: {COMPANY_INFO.email}
                 </a>
               </p>
-              <p>Режим работы: Пн–Пт 9:00–18:00 (Минск)</p>
+              <p>Режим работы: {COMPANY_INFO.workHours}</p>
             </div>
           </div>
 
