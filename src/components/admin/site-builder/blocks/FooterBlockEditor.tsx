@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Plus, Trash2, ArrowUp, ArrowDown, ChevronDown } from "lucide-react";
 import { SOCIAL_PLATFORMS, type SocialPlatform } from "@/services/sitePages/types";
 import { buildFooterDefaultContent, type FooterBlockContent, type FooterNavItem, type FooterSocialItem } from "@/components/layout/footerDefaults";
@@ -104,16 +104,23 @@ export function FooterBlockEditor({ content, onChange }: FooterBlockEditorProps)
                 </Button>
               </div>
             </div>
-            <Input
-              value={item.label}
-              onChange={(e) => updateNavItems(key, items.map((it, j) => (j === i ? { ...it, label: e.target.value } : it)))}
-              placeholder="Название"
-            />
-            <Input
-              value={item.href}
-              onChange={(e) => updateNavItems(key, items.map((it, j) => (j === i ? { ...it, href: e.target.value } : it)))}
-              placeholder="/path или https://..."
-            />
+            <div>
+              <Label className="text-xs">Подпись</Label>
+              <RichTextarea
+                inline
+                value={item.label}
+                onChange={(v) => updateNavItems(key, items.map((it, j) => (j === i ? { ...it, label: v } : it)))}
+                placeholder="Название ссылки"
+              />
+            </div>
+            <div>
+              <Label className="text-xs">URL / путь</Label>
+              <Input
+                value={item.href}
+                onChange={(e) => updateNavItems(key, items.map((it, j) => (j === i ? { ...it, href: e.target.value } : it)))}
+                placeholder="/path или https://..."
+              />
+            </div>
             <div className="flex items-center justify-between">
               <Label className="text-xs">Открывать в новой вкладке</Label>
               <Switch
@@ -139,68 +146,66 @@ export function FooterBlockEditor({ content, onChange }: FooterBlockEditorProps)
       <Section title="Бренд" defaultOpen>
         <ToggleRow label="Показывать блок бренда" checked={data.brand.showBrand} onChange={(v) => update("brand", { showBrand: v })} />
         <div>
-          <Label className="text-xs">URL логотипа</Label>
+          <Label className="text-xs">URL логотипа (техническое поле)</Label>
           <Input value={data.brand.logoUrl} onChange={(e) => update("brand", { logoUrl: e.target.value })} placeholder="/logo.png" />
         </div>
         <div>
           <Label className="text-xs">Название</Label>
-          <Input value={data.brand.name} onChange={(e) => update("brand", { name: e.target.value })} />
+          <RichTextarea inline value={data.brand.name} onChange={(v) => update("brand", { name: v })} placeholder="Название бренда" />
         </div>
         <div>
           <Label className="text-xs">Подпись</Label>
-          <Input value={data.brand.subtitle} onChange={(e) => update("brand", { subtitle: e.target.value })} />
+          <RichTextarea inline value={data.brand.subtitle} onChange={(v) => update("brand", { subtitle: v })} placeholder="Подпись под названием" />
         </div>
         <div>
           <Label className="text-xs">Описание (необязательно)</Label>
-          <Textarea value={data.brand.description} onChange={(e) => update("brand", { description: e.target.value })} rows={2} />
+          <RichTextarea value={data.brand.description} onChange={(v) => update("brand", { description: v })} minHeight="60px" placeholder="Короткое описание" />
         </div>
       </Section>
 
       <Section title="Компания и контакты">
         <ToggleRow label="Показывать блок компании" checked={data.company.showCompany} onChange={(v) => update("company", { showCompany: v })} />
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <Label className="text-xs">Название</Label>
-            <Input value={data.company.name} onChange={(e) => update("company", { name: e.target.value })} />
-          </div>
-          <div>
-            <Label className="text-xs">УНП</Label>
-            <Input value={data.company.unp} onChange={(e) => update("company", { unp: e.target.value })} />
-          </div>
+        <div>
+          <Label className="text-xs">Название компании</Label>
+          <RichTextarea inline value={data.company.name} onChange={(v) => update("company", { name: v })} placeholder="ЗАО «...»" />
         </div>
         <div>
-          <Label className="text-xs">Юридический адрес</Label>
+          <Label className="text-xs">УНП (техническое поле)</Label>
+          <Input value={data.company.unp} onChange={(e) => update("company", { unp: e.target.value })} />
+        </div>
+        <div>
+          <Label className="text-xs">Юридический адрес (техническое поле)</Label>
           <Input value={data.company.legalAddress} onChange={(e) => update("company", { legalAddress: e.target.value })} />
         </div>
         <div>
-          <Label className="text-xs">Почтовый адрес</Label>
+          <Label className="text-xs">Почтовый адрес (техническое поле)</Label>
           <Input value={data.company.mailingAddress} onChange={(e) => update("company", { mailingAddress: e.target.value })} />
         </div>
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <Label className="text-xs">Телефон (отображаемый)</Label>
+            <Label className="text-xs">Телефон отображаемый (техническое поле)</Label>
             <Input value={data.company.phone} onChange={(e) => update("company", { phone: e.target.value })} />
           </div>
           <div>
-            <Label className="text-xs">tel: ссылка</Label>
+            <Label className="text-xs">tel: ссылка (техническое поле)</Label>
             <Input value={data.company.phoneHref} onChange={(e) => update("company", { phoneHref: e.target.value })} placeholder="tel:+375..." />
           </div>
         </div>
         <div>
-          <Label className="text-xs">Email</Label>
+          <Label className="text-xs">Email (техническое поле)</Label>
           <Input value={data.company.email} onChange={(e) => update("company", { email: e.target.value })} placeholder="mail@example.com" />
         </div>
         <div>
           <Label className="text-xs">Режим работы</Label>
-          <Input value={data.company.workHours} onChange={(e) => update("company", { workHours: e.target.value })} />
+          <RichTextarea inline value={data.company.workHours} onChange={(v) => update("company", { workHours: v })} placeholder="Пн–Пт 9:00–18:00" />
         </div>
       </Section>
 
       <Section title="Навигация">
         <ToggleRow label="Показывать блок навигации" checked={data.navigation.showNavigation} onChange={(v) => update("navigation", { showNavigation: v })} />
         <div>
-          <Label className="text-xs">Заголовок</Label>
-          <Input value={data.navigation.title} onChange={(e) => update("navigation", { title: e.target.value })} />
+          <Label className="text-xs">Заголовок секции</Label>
+          <RichTextarea inline value={data.navigation.title} onChange={(v) => update("navigation", { title: v })} placeholder="Навигация" />
         </div>
         {renderNavList("navigation")}
       </Section>
@@ -208,8 +213,8 @@ export function FooterBlockEditor({ content, onChange }: FooterBlockEditorProps)
       <Section title="Документы">
         <ToggleRow label="Показывать блок документов" checked={data.legal.showLegal} onChange={(v) => update("legal", { showLegal: v })} />
         <div>
-          <Label className="text-xs">Заголовок</Label>
-          <Input value={data.legal.title} onChange={(e) => update("legal", { title: e.target.value })} />
+          <Label className="text-xs">Заголовок секции</Label>
+          <RichTextarea inline value={data.legal.title} onChange={(v) => update("legal", { title: v })} placeholder="Документы" />
         </div>
         {renderNavList("legal")}
       </Section>
@@ -217,8 +222,8 @@ export function FooterBlockEditor({ content, onChange }: FooterBlockEditorProps)
       <Section title="Соцсети">
         <ToggleRow label="Показывать блок соцсетей" checked={data.social.showSocial} onChange={(v) => update("social", { showSocial: v })} />
         <div>
-          <Label className="text-xs">Заголовок</Label>
-          <Input value={data.social.title} onChange={(e) => update("social", { title: e.target.value })} />
+          <Label className="text-xs">Заголовок секции</Label>
+          <RichTextarea inline value={data.social.title} onChange={(v) => update("social", { title: v })} placeholder="Мы в соцсетях" />
         </div>
         <div className="space-y-2">
           {data.social.items.map((item, i) => (
@@ -229,16 +234,30 @@ export function FooterBlockEditor({ content, onChange }: FooterBlockEditorProps)
                   <Trash2 className="h-3 w-3" />
                 </Button>
               </div>
-              <Select value={item.platform} onValueChange={(v) => updateSocialItems(data.social.items.map((it, j) => (j === i ? { ...it, platform: v } : it)))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {SOCIAL_PLATFORMS.map((p) => (
-                    <SelectItem key={p} value={p}>{PLATFORM_LABELS[p]}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Input value={item.url} onChange={(e) => updateSocialItems(data.social.items.map((it, j) => (j === i ? { ...it, url: e.target.value } : it)))} placeholder="https://..." />
-              <Input value={item.label} onChange={(e) => updateSocialItems(data.social.items.map((it, j) => (j === i ? { ...it, label: e.target.value } : it)))} placeholder="Подпись (необязательно)" />
+              <div>
+                <Label className="text-xs">Платформа</Label>
+                <Select value={item.platform} onValueChange={(v) => updateSocialItems(data.social.items.map((it, j) => (j === i ? { ...it, platform: v } : it)))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {SOCIAL_PLATFORMS.map((p) => (
+                      <SelectItem key={p} value={p}>{PLATFORM_LABELS[p]}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">URL (техническое поле)</Label>
+                <Input value={item.url} onChange={(e) => updateSocialItems(data.social.items.map((it, j) => (j === i ? { ...it, url: e.target.value } : it)))} placeholder="https://..." />
+              </div>
+              <div>
+                <Label className="text-xs">Подпись</Label>
+                <RichTextarea
+                  inline
+                  value={item.label}
+                  onChange={(v) => updateSocialItems(data.social.items.map((it, j) => (j === i ? { ...it, label: v } : it)))}
+                  placeholder="Подпись (необязательно)"
+                />
+              </div>
             </div>
           ))}
           <Button variant="outline" size="sm" className="w-full" onClick={() => updateSocialItems([...data.social.items, { platform: "telegram", url: "", label: "" }])}>
@@ -251,8 +270,13 @@ export function FooterBlockEditor({ content, onChange }: FooterBlockEditorProps)
         <ToggleRow label="Показывать платёжные системы" checked={data.payments.showPayments} onChange={(v) => update("payments", { showPayments: v })} />
         <ToggleRow label="Показывать copyright" checked={data.copyright.showCopyright} onChange={(v) => update("copyright", { showCopyright: v })} />
         <div>
-          <Label className="text-xs">Текст copyright (пусто → авто «© {"{год}"} {data.company.name}»)</Label>
-          <Input value={data.copyright.text} onChange={(e) => update("copyright", { text: e.target.value })} placeholder="© 2025 Моя компания. Все права защищены." />
+          <Label className="text-xs">Текст copyright (пусто → авто «© {"{год}"} {"{название компании}"}»)</Label>
+          <RichTextarea
+            value={data.copyright.text}
+            onChange={(v) => update("copyright", { text: v })}
+            minHeight="60px"
+            placeholder="© 2025 Моя компания. Все права защищены."
+          />
         </div>
       </Section>
     </div>
