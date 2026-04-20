@@ -129,7 +129,7 @@ export function LiveEventRepliesList({ liveEventId, sourceCommentId, sourceQuest
   return (
     <div className="ml-6 mt-1 space-y-1">
       {replies.map((r) => (
-        <div key={r.id} className={`text-xs p-2 rounded ${r.visibility_scope === 'private' ? 'bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800' : 'bg-muted/50'}`}>
+        <div key={r.id} className={`room-reply-quote text-xs p-2 rounded ${r.visibility_scope === 'private' ? 'bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800' : 'bg-muted/50'}`}>
           <div className="flex items-center gap-1.5 mb-0.5">
             <Badge variant="outline" className="text-[9px] px-1 py-0">
               {r.visibility_scope === 'private' ? <><Lock className="h-2.5 w-2.5 mr-0.5" />Приватный</> : <><Globe className="h-2.5 w-2.5 mr-0.5" />Публичный</>}

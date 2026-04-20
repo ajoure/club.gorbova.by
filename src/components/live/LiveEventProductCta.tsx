@@ -77,6 +77,7 @@ export function useHasActiveCtaBindings(liveEventId: string, position: string): 
       return count || 0;
     },
     staleTime: 60_000,
+    refetchOnWindowFocus: false,
   });
   return (data || 0) > 0;
 }
@@ -327,7 +328,7 @@ function CtaCard({
   const ButtonIcon = getCtaIcon(binding.cta_type);
 
   return (
-    <Card className="border-primary/20 bg-primary/5">
+    <Card className="room-cta-card border-primary/20 bg-primary/5">
       <CardContent className="p-3 space-y-2">
         {binding.image_override && (
           <img src={binding.image_override} alt={title} className="w-full rounded-md object-cover max-h-32" />
@@ -343,7 +344,7 @@ function CtaCard({
         </div>
         <Button
           size="sm"
-          className="w-full gap-1.5 text-xs"
+          className="room-cta-button w-full gap-1.5 text-xs"
           onClick={() => onCtaClick(binding, product || null, tariff || null, offer || null)}
         >
           <ButtonIcon className="h-3.5 w-3.5" />

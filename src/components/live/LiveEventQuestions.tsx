@@ -9,8 +9,7 @@ import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import {
   LiveRoleBadge,
-  getMessageHighlightClass,
-  getOwnMessageClass,
+  resolveMessageHighlight,
   type AuthorRole,
 } from "./LiveRoleBadge";
 import { LiveEventReplyForm, LiveEventRepliesList } from "./LiveEventReplies";
@@ -176,7 +175,7 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
               const initials = getInitials(displayName);
               const displayRole = resolveDisplayRole(q);
               const isOwn = user?.id === q.user_id;
-              const highlight = isOwn ? getOwnMessageClass() : getMessageHighlightClass(displayRole);
+              const highlight = resolveMessageHighlight({ isOwn, role: displayRole });
               return (
                 <div key={q.id}>
                   <div className={`flex gap-2 group rounded-lg p-2 ${q.is_answered ? "opacity-70" : ""} ${highlight}`}>
@@ -243,7 +242,7 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
         </div>
 
         {user && (
-          <div className="border-t sticky bottom-0 z-10 bg-background">
+          <div className="border-t sticky bottom-0 z-10 room-panel-sticky">
             <LiveModerationBanner isMuted={isMuted} isRemoved={isRemoved} />
             <div
               className="flex gap-2 items-end p-3 room-panel-input"

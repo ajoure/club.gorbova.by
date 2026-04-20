@@ -78,7 +78,7 @@ function BannerBlock({ config }: { config: Record<string, any> }) {
   const { title, body, cta_text, cta_url, image_url } = config;
 
   return (
-    <div className="rounded-lg border bg-card p-3 space-y-2">
+    <div className="room-cta-card rounded-lg border bg-card p-3 space-y-2">
       {image_url && (
         <img src={image_url} alt="" className="w-full rounded-md object-cover max-h-32" />
       )}
