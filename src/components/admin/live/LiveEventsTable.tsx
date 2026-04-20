@@ -347,7 +347,7 @@ export function LiveEventsTable({
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="rounded-md border bg-card">
+      <div className="rounded-md border bg-card overflow-hidden">
         <div
           ref={containerRef}
           onMouseDown={handleMouseDown}
