@@ -303,7 +303,7 @@ Deno.serve(async (req) => {
 // autoCreateSession removed — sessions are created ONLY in live-token-validate
 
 interface ResolvedSource {
-  resolved_source_kind: 'kinescope_video' | 'kinescope_live_embed' | 'none';
+  resolved_source_kind: 'kinescope_video' | 'kinescope_live_embed' | 'live_pending' | 'none';
   resolved_embed_url: string | null;
   resolved_play_url: string | null;
   provider_source_status: string | null;
@@ -311,36 +311,88 @@ interface ResolvedSource {
   last_synced_at: string | null;
 }
 
+/**
+ * Source priority resolver.
+ *
+ * RULES (canonical):
+ *   1. event_type='live_stream' AND platform_status='live'
+ *      → ALWAYS prefer kinescope_live_event_id (live embed),
+ *        even if kinescope_video_id уже заполнен (это будущая запись).
+ *      → если live_event_id отсутствует, но мы в статусе 'live' — отдаём
+ *        controlled 'live_pending' state (НИКОГДА blank).
+ *   2. platform_status='replay_available' OR (event_status='ended' AND replay_enabled)
+ *      → kinescope_video_id (replay).
+ *   3. recorded_webinar / прочее
+ *      → kinescope_video_id (если есть), иначе kinescope_live_event_id, иначе none.
+ */
 function resolveVideoSource(event: any): ResolvedSource {
   const meta = event.metadata as Record<string, any> | null;
   const providerStatus = meta?.provider_source_status || null;
-  const lastSynced = meta?.last_synced_at || null;
+  const lastSynced = meta?.last_synced_at || meta?.last_provider_sync_at || null;
+  const platformStatus = event.platform_status || null;
+  const isLiveStream = event.event_type === 'live_stream';
+  const isLiveActive = platformStatus === 'live';
+  const isReplay = platformStatus === 'replay_available'
+    || (event.status === 'ended' && event.replay_enabled);
 
-  // Priority 1: kinescope_video_id (works for recorded_webinar, replay, and live with recording)
+  // Priority 1 — ACTIVE LIVE: live embed must win over any pre-existing video_id.
+  if (isLiveStream && isLiveActive) {
+    if (event.kinescope_live_event_id) {
+      return {
+        resolved_source_kind: 'kinescope_live_embed',
+        resolved_embed_url: `https://kinescope.io/embed/live/${event.kinescope_live_event_id}`,
+        resolved_play_url: null,
+        provider_source_status: providerStatus,
+        source_reason: 'active_live_priority',
+        last_synced_at: lastSynced,
+      };
+    }
+    // Anti-blank: статус live, но провайдер ещё не отдал live_event_id.
+    return {
+      resolved_source_kind: 'live_pending',
+      resolved_embed_url: null,
+      resolved_play_url: null,
+      provider_source_status: providerStatus,
+      source_reason: 'live_pending_provider_sync',
+      last_synced_at: lastSynced,
+    };
+  }
+
+  // Priority 2 — REPLAY: завершённый эфир с записью.
+  if (isReplay && event.kinescope_video_id) {
+    return {
+      resolved_source_kind: 'kinescope_video',
+      resolved_embed_url: `https://kinescope.io/embed/${event.kinescope_video_id}`,
+      resolved_play_url: `https://kinescope.io/${event.kinescope_video_id}`,
+      provider_source_status: providerStatus,
+      source_reason: 'replay',
+      last_synced_at: lastSynced,
+    };
+  }
+
+  // Priority 3 — recorded_webinar / другое: video_id, потом live_event_id (legacy).
   if (event.kinescope_video_id) {
     return {
       resolved_source_kind: 'kinescope_video',
       resolved_embed_url: `https://kinescope.io/embed/${event.kinescope_video_id}`,
       resolved_play_url: `https://kinescope.io/${event.kinescope_video_id}`,
       provider_source_status: providerStatus,
-      source_reason: null,
+      source_reason: 'recorded_or_default',
       last_synced_at: lastSynced,
     };
   }
 
-  // Priority 2: kinescope_live_event_id (live stream embed)
   if (event.kinescope_live_event_id) {
     return {
       resolved_source_kind: 'kinescope_live_embed',
       resolved_embed_url: `https://kinescope.io/embed/live/${event.kinescope_live_event_id}`,
       resolved_play_url: null,
       provider_source_status: providerStatus,
-      source_reason: null,
+      source_reason: 'live_embed_fallback',
       last_synced_at: lastSynced,
     };
   }
 
-  // No source available
   return {
     resolved_source_kind: 'none',
     resolved_embed_url: null,
