@@ -3325,8 +3325,6 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               )}
             </TabsContent>
 
-            </TabsContent>
-
             {/* Communications Tab */}
             <TabsContent value="communications" className="m-0 space-y-4">
               {/* Webinar Activity Section */}
