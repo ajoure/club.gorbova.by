@@ -22,15 +22,24 @@ function isExternal(href: string) {
   return /^https?:\/\//i.test(href);
 }
 
+/** RichTextarea returns HTML; render as inline HTML safely. */
+function RichInline({ html, className }: { html: string; className?: string }) {
+  return <span className={className} dangerouslySetInnerHTML={{ __html: html }} />;
+}
+function RichBlock({ html, className, as: As = "p" }: { html: string; className?: string; as?: "p" | "div" | "h4" }) {
+  return <As className={className} dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
 function FooterLink({ item }: { item: FooterNavItem }) {
   const cls = "text-muted-foreground hover:text-foreground transition-colors";
   const target = item.openInNewTab ? "_blank" : undefined;
   const rel = item.openInNewTab ? "noopener noreferrer" : undefined;
+  const labelHtml = <span dangerouslySetInnerHTML={{ __html: item.label }} />;
 
   if (isExternal(item.href) || target) {
-    return <a href={item.href} target={target} rel={rel} className={cls}>{item.label}</a>;
+    return <a href={item.href} target={target} rel={rel} className={cls}>{labelHtml}</a>;
   }
-  return <Link to={item.href} className={cls}>{item.label}</Link>;
+  return <Link to={item.href} className={cls}>{labelHtml}</Link>;
 }
 
 export function FooterSection({ content }: FooterSectionProps) {
@@ -51,6 +60,9 @@ export function FooterSection({ content }: FooterSectionProps) {
     ? data.copyright.text
     : `© ${new Date().getFullYear()} ${data.company.name}. Все права защищены.`;
 
+  // Plain-text fallback for alt/title attributes.
+  const stripHtml = (s: string) => (s || "").replace(/<[^>]*>/g, "").trim();
+
   return (
     <footer className="py-12 border-t border-border/50 bg-background/50">
       <div className="container mx-auto px-4">
@@ -60,21 +72,21 @@ export function FooterSection({ content }: FooterSectionProps) {
               {data.brand.showBrand && (
                 <div className="flex items-center gap-3 mb-4 w-fit">
                   {data.brand.logoUrl && (
-                    <img src={data.brand.logoUrl} alt={data.brand.name} className="h-8 w-auto" width={32} height={32} loading="lazy" />
+                    <img src={data.brand.logoUrl} alt={stripHtml(data.brand.name)} className="h-8 w-auto" width={32} height={32} loading="lazy" />
                   )}
                   <div>
-                    {data.brand.name && <span className="font-bold text-foreground">{data.brand.name}</span>}
-                    {data.brand.subtitle && <span className="block text-xs text-muted-foreground">{data.brand.subtitle}</span>}
+                    {data.brand.name && <RichInline html={data.brand.name} className="font-bold text-foreground" />}
+                    {data.brand.subtitle && <RichBlock as="div" html={data.brand.subtitle} className="text-xs text-muted-foreground" />}
                   </div>
                 </div>
               )}
               {data.brand.showBrand && data.brand.description && (
-                <p className="text-sm text-muted-foreground mb-4">{data.brand.description}</p>
+                <RichBlock html={data.brand.description} className="text-sm text-muted-foreground mb-4" />
               )}
 
               {data.company.showCompany && (
                 <div className="text-sm text-muted-foreground space-y-1">
-                  {data.company.name && <p className="font-medium text-foreground">{data.company.name}</p>}
+                  {data.company.name && <RichBlock html={data.company.name} className="font-medium text-foreground" />}
                   {data.company.unp && <p>УНП: {data.company.unp}</p>}
                   {data.company.legalAddress && <p>Юр. адрес: {data.company.legalAddress}</p>}
                   {data.company.mailingAddress && <p>Почтовый адрес: {data.company.mailingAddress}</p>}
@@ -92,7 +104,11 @@ export function FooterSection({ content }: FooterSectionProps) {
                       </a>
                     </p>
                   )}
-                  {data.company.workHours && <p>Режим работы: {data.company.workHours}</p>}
+                  {data.company.workHours && (
+                    <p>
+                      Режим работы: <RichInline html={data.company.workHours} />
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -100,7 +116,7 @@ export function FooterSection({ content }: FooterSectionProps) {
 
           {data.navigation.showNavigation && data.navigation.items.length > 0 && (
             <div>
-              {data.navigation.title && <h4 className="font-semibold text-foreground mb-4">{data.navigation.title}</h4>}
+              {data.navigation.title && <RichBlock as="h4" html={data.navigation.title} className="font-semibold text-foreground mb-4" />}
               <nav className="flex flex-col gap-2 text-sm">
                 {data.navigation.items.map((item, i) => <FooterLink key={i} item={item} />)}
               </nav>
@@ -109,7 +125,7 @@ export function FooterSection({ content }: FooterSectionProps) {
 
           {data.legal.showLegal && data.legal.items.length > 0 && (
             <div>
-              {data.legal.title && <h4 className="font-semibold text-foreground mb-4">{data.legal.title}</h4>}
+              {data.legal.title && <RichBlock as="h4" html={data.legal.title} className="font-semibold text-foreground mb-4" />}
               <nav className="flex flex-col gap-2 text-sm">
                 {data.legal.items.map((item, i) => <FooterLink key={i} item={item} />)}
               </nav>
@@ -119,11 +135,11 @@ export function FooterSection({ content }: FooterSectionProps) {
 
         {data.social.showSocial && data.social.items.length > 0 && (
           <div className="border-t border-border/50 pt-8 mb-8">
-            {data.social.title && <h4 className="font-semibold text-foreground mb-4 text-center">{data.social.title}</h4>}
+            {data.social.title && <RichBlock as="h4" html={data.social.title} className="font-semibold text-foreground mb-4 text-center" />}
             <div className="flex flex-wrap items-center justify-center gap-3">
               {data.social.items.map((s, i) => (
                 <a key={i} href={s.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 px-4 py-2 rounded-full border hover:bg-muted transition-colors text-sm text-foreground">
-                  {s.label || s.platform}
+                  <span dangerouslySetInnerHTML={{ __html: s.label || s.platform }} />
                 </a>
               ))}
             </div>
@@ -145,7 +161,7 @@ export function FooterSection({ content }: FooterSectionProps) {
 
         {data.copyright.showCopyright && (
           <div className="border-t border-border/50 pt-6 text-center">
-            <p className="text-sm text-muted-foreground">{copyrightText}</p>
+            <RichBlock html={copyrightText} className="text-sm text-muted-foreground" />
           </div>
         )}
       </div>
