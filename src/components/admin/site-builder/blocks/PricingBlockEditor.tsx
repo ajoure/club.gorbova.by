@@ -148,7 +148,9 @@ export function PricingBlockEditor({ content, onChange }: PricingBlockEditorProp
 
           {filterMode === "selected" && (
             <div className="space-y-2 pt-2">
-              {tariffs.length === 0 ? (
+              {tariffsPending ? (
+                <p className="text-xs text-muted-foreground">Загрузка тарифов…</p>
+              ) : tariffs.length === 0 ? (
                 <p className="text-xs text-muted-foreground">У продукта нет активных тарифов.</p>
               ) : (
                 <>
