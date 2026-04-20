@@ -35,7 +35,7 @@ Deno.serve(async (req) => {
     // 1. Find event by slug
     const { data: event, error: eventError } = await supabase
       .from('live_events')
-      .select('id, slug, title, description, kinescope_video_id, product_id, access_rule, status, is_published, scheduled_at, replay_enabled, invite_mode, direct_access_allowed, event_type, source_kind, event_timezone, platform_status, kinescope_live_event_id, metadata')
+      .select('id, slug, title, description, kinescope_video_id, product_id, access_rule, status, is_published, scheduled_at, replay_enabled, invite_mode, direct_access_allowed, event_type, source_kind, event_timezone, platform_status, kinescope_live_event_id, metadata, room_state, room_opened_at, live_started_at, webinar_completed_at')
       .eq('slug', slug)
       .maybeSingle();
 
@@ -273,9 +273,34 @@ Deno.serve(async (req) => {
     // 6. Resolve video source — unified server-side resolver
     const resolvedSource = resolveVideoSource(event);
 
+    // Sprint 2 PATCH 2.5: room phase derived from room_state (explicit, не косвенно через platform_status)
+    const roomState = (event.room_state ?? 'closed') as 'closed' | 'opened' | 'live' | 'completed';
+    let roomPhase: 'closed' | 'waiting' | 'live' | 'completed';
+    switch (roomState) {
+      case 'opened': roomPhase = 'waiting'; break;
+      case 'live': roomPhase = 'live'; break;
+      case 'completed': roomPhase = 'completed'; break;
+      default: roomPhase = 'closed';
+    }
+
+    // Sprint 2 PATCH 2.6: active participants v1 (view: live_event_active_participants_v)
+    let activeParticipants = 0;
+    try {
+      const { data: ap } = await supabase
+        .from('live_event_active_participants_v')
+        .select('active_count')
+        .eq('live_event_id', event.id)
+        .maybeSingle();
+      activeParticipants = ((ap as any)?.active_count as number) ?? 0;
+    } catch (e) {
+      console.warn('[live-resolve] active_participants fetch failed:', e);
+    }
+
     // 7. Access granted
     await logAudit(supabase, 'live_access_granted', userId, slug, event.id, {
       product_id: event.product_id,
+      room_state: roomState,
+      room_phase: roomPhase,
     });
 
     return jsonRes({
@@ -293,6 +318,13 @@ Deno.serve(async (req) => {
       platform_status: event.platform_status,
       kinescope_live_event_id: event.kinescope_live_event_id,
       resolved_source: resolvedSource,
+      // Sprint 2 PATCH 2.4 / 2.5 / 2.6: room lifecycle SoT в payload (add-only)
+      room_state: roomState,
+      room_phase: roomPhase,
+      room_opened_at: event.room_opened_at,
+      live_started_at: event.live_started_at,
+      webinar_completed_at: event.webinar_completed_at,
+      active_participants: activeParticipants,
       // UX-only metadata pass-through (Sprint 1) — does NOT influence access/resolver logic.
       room_theme: (event.metadata as any)?.room_theme || null,
       live_badge_mode: (event.metadata as any)?.live_badge_mode || null,

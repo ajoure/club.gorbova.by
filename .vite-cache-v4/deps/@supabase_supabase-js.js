@@ -2,7 +2,7 @@ import {
   __awaiter,
   __rest
 } from "./chunk-7T6AMIE5.js";
-import "./chunk-WOOG5QLI.js";
+import "./chunk-OL46QLBJ.js";
 
 // node_modules/.bun/@supabase+functions-js@2.89.0/node_modules/@supabase/functions-js/dist/module/helper.js
 var resolveFetch = (customFetch) => {
