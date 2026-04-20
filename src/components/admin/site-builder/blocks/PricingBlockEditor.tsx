@@ -43,7 +43,7 @@ export function PricingBlockEditor({ content, onChange }: PricingBlockEditorProp
   const tariffIds = (content.tariff_ids as string[]) || [];
 
   // Load tariffs for the selected product (same EF as renderer — single source of truth)
-  const { data: productData } = useQuery({
+  const { data: productData, isLoading: isTariffsLoading, isFetching: isTariffsFetching } = useQuery({
     queryKey: ["pricing-editor-product", productId],
     queryFn: async (): Promise<PublicProductData | null> => {
       const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/public-product?product_id=${encodeURIComponent(productId)}`;
@@ -61,6 +61,7 @@ export function PricingBlockEditor({ content, onChange }: PricingBlockEditorProp
   });
 
   const tariffs: PublicTariff[] = productData?.tariffs ?? [];
+  const tariffsPending = isTariffsLoading || (isTariffsFetching && !productData);
 
   const handleProductChange = (newProductId: string) => {
     // ID-first: reset filter on product change to prevent stale UUID references
@@ -147,7 +148,9 @@ export function PricingBlockEditor({ content, onChange }: PricingBlockEditorProp
 
           {filterMode === "selected" && (
             <div className="space-y-2 pt-2">
-              {tariffs.length === 0 ? (
+              {tariffsPending ? (
+                <p className="text-xs text-muted-foreground">Загрузка тарифов…</p>
+              ) : tariffs.length === 0 ? (
                 <p className="text-xs text-muted-foreground">У продукта нет активных тарифов.</p>
               ) : (
                 <>
