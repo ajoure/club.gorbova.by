@@ -47,7 +47,6 @@
     "@supabase/supabase-js": "^2.89.0",
     "@tanstack/react-query": "^5.83.0",
     "@tanstack/react-virtual": "^3.13.18",
-    "@tiptap/core": "^3.22.4",
     "@tiptap/extension-bold": "^3.20.1",
     "@tiptap/extension-code": "^3.20.1",
     "@tiptap/extension-document": "^3.20.1",
