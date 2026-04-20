@@ -210,7 +210,8 @@ export function ContactArtifactsTab({ profileId, userId, enabled, contactName, i
     );
   }
 
-  if (artifacts.length === 0) {
+  // Empty-state: только если нет ни artifacts, ни вебинарной активности у staff
+  if (artifacts.length === 0 && (!isStaff || webinarCount === 0)) {
     return (
       <Card>
         <CardContent className="py-12 text-center">
@@ -236,21 +237,37 @@ export function ContactArtifactsTab({ profileId, userId, enabled, contactName, i
           <GraduationCap className="w-3 h-3 mr-1" />
           Обучение ({trainingCount})
         </Button>
+        {isStaff && (
+          <Button
+            variant={filter === 'webinars' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setFilter('webinars')}
+            className="text-xs h-7"
+            disabled={webinarCount === 0}
+          >
+            <Video className="w-3 h-3 mr-1" />
+            Вебинары ({webinarCount})
+          </Button>
+        )}
       </div>
 
-      {/* Grouped artifact list */}
-      <div className="space-y-2">
-        {groups.map(group => (
-          <ProductGroupSection
-            key={group.key}
-            group={group}
-            isOpen={!collapsedGroups.has(group.key)}
-            onToggle={() => toggleGroup(group.key)}
-            onItemClick={handleArtifactClick}
-            contactName={contactName}
-          />
-        ))}
-      </div>
+      {/* Контент: либо artifacts list, либо webinars view */}
+      {filter === 'webinars' && isStaff && userId ? (
+        <ContactWebinarsView userId={userId} />
+      ) : (
+        <div className="space-y-2">
+          {groups.map(group => (
+            <ProductGroupSection
+              key={group.key}
+              group={group}
+              isOpen={!collapsedGroups.has(group.key)}
+              onToggle={() => toggleGroup(group.key)}
+              onItemClick={handleArtifactClick}
+              contactName={contactName}
+            />
+          ))}
+        </div>
+      )}
 
       {/* Site Form Detail Dialog */}
       <SiteFormDetailDialog artifact={selectedForm} onClose={() => setSelectedForm(null)} />
