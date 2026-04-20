@@ -369,6 +369,19 @@ export default function LiveEvent() {
     );
   }
 
+  if (state === "live_pending") {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4 px-4">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+        <h1 className="text-2xl font-bold text-foreground">{data?.title || "Эфир запускается"}</h1>
+        <p className="text-muted-foreground text-center max-w-md">
+          Эфир уже начался, подключаемся к источнику видео. Это может занять несколько секунд.
+        </p>
+        <p className="text-xs text-muted-foreground/70">Страница обновится автоматически.</p>
+      </div>
+    );
+  }
+
   if (state === "ended_no_replay") {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4 px-4">
