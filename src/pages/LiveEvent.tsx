@@ -13,6 +13,7 @@ import { LiveEventComments } from "@/components/live/LiveEventComments";
 import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 import { LiveEventRoomBlocks } from "@/components/live/LiveEventRoomBlocks";
 import { LiveEventProductCta, useHasActiveCtaBindings } from "@/components/live/LiveEventProductCta";
+import { LiveBadge, type LiveBadgeMode } from "@/components/live/LiveBadge";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { useLiveContactSheet } from "@/hooks/useLiveContactSheet";
 
