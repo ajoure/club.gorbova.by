@@ -57,6 +57,11 @@ export default function LiveEvent() {
   const isStaff = role === "admin" || role === "superadmin" || role === "employee";
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Hooks must be called unconditionally — keep before any early returns
+  const eventIdForCta = data?.event_id || "";
+  const hasUnderVideoCta = useHasActiveCtaBindings(eventIdForCta, "under_video");
+  const hasSidebarCta = useHasActiveCtaBindings(eventIdForCta, "sidebar");
+
   const stopHeartbeat = useCallback(() => {
     if (heartbeatRef.current) {
       clearInterval(heartbeatRef.current);
