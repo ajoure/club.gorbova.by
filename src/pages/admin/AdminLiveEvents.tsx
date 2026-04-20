@@ -74,6 +74,16 @@ import { RoomLifecycleActions } from "@/components/live/RoomLifecycleActions";
 import { useActiveParticipants } from "@/hooks/useActiveParticipants";
 import { parseRoomState, getRoomStateBadgeVM, type RoomState } from "@/lib/liveRoomLifecycle";
 
+// Final follow-up sprint PATCH F3: отдельная компактная ячейка count активных участников
+function ActiveParticipantsCell({ eventId }: { eventId: string }) {
+  const { data } = useActiveParticipants(eventId, true);
+  return (
+    <span className="text-sm tabular-nums" title="Активные участники за последние 2 минуты">
+      {typeof data === "number" ? data : "—"}
+    </span>
+  );
+}
+
 type EventType = "live_stream" | "recorded_webinar";
 type SourceKind = "kinescope_live_event" | "kinescope_video";
 
@@ -2531,15 +2541,5 @@ function RoomStateCell({ event }: { event: LiveEvent }) {
         </span>
       )}
     </div>
-  );
-}
-
-// Final follow-up sprint PATCH F3: отдельная компактная ячейка count активных участников
-function ActiveParticipantsCell({ eventId }: { eventId: string }) {
-  const { data } = useActiveParticipants(eventId, true);
-  return (
-    <span className="text-sm tabular-nums" title="Активные участники за последние 2 минуты">
-      {typeof data === "number" ? data : "—"}
-    </span>
   );
 }
