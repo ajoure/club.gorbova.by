@@ -210,8 +210,15 @@ export default function LiveEvent() {
             const ps = json.platform_status;
             const es = json.event_status;
             const sourceKind = json.resolved_source?.resolved_source_kind;
+            // Sprint 2 PATCH 2.5: room_phase из live-resolve — отдельный SoT для UI-веток.
+            // Если комната открыта но эфир ещё не начат → waiting (вход разрешён, чат активен).
+            const roomPhase = json.room_phase;
 
-            if (ps === "scheduled" || es === "scheduled") {
+            if (roomPhase === "waiting") {
+              nextState = "room_open_waiting";
+              startHeartbeat();
+            } else if (ps === "scheduled" || es === "scheduled") {
+              // Fallback: если комната ещё closed — старый scheduled-экран.
               nextState = "scheduled";
             } else if (sourceKind === "live_pending") {
               nextState = "live_pending";
@@ -232,7 +239,8 @@ export default function LiveEvent() {
 
         const shouldPoll = nextState === "scheduled"
           || nextState === "live_pending"
-          || nextState === "live";
+          || nextState === "live"
+          || nextState === "room_open_waiting";
         if (shouldPoll && !pollTimer) {
           pollTimer = setInterval(() => resolve(true), RESOLVE_POLL_INTERVAL_MS);
         } else if (!shouldPoll) {
