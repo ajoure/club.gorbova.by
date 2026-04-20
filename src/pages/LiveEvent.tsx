@@ -57,6 +57,15 @@ export default function LiveEvent() {
   const isStaff = role === "admin" || role === "superadmin" || role === "employee";
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Refs to read latest session/data without triggering effect restarts on TOKEN_REFRESHED.
+  const sessionRef = useRef(session);
+  useEffect(() => { sessionRef.current = session; }, [session]);
+  const dataRef = useRef<LiveResolveResult | null>(null);
+  useEffect(() => { dataRef.current = data; }, [data]);
+
+  // accessToken as primitive — only used for cold-start gate, not as effect-restart trigger.
+  const hasAccessToken = !!session?.access_token;
+
   // Hooks must be called unconditionally — keep before any early returns
   const eventIdForCta = data?.event_id || "";
   const hasUnderVideoCta = useHasActiveCtaBindings(eventIdForCta, "under_video");
@@ -70,7 +79,7 @@ export default function LiveEvent() {
   }, []);
 
   const startHeartbeat = useCallback(() => {
-    if (!slug || !session) return;
+    if (!slug) return;
     stopHeartbeat();
 
     const sessionKey = sessionStorage.getItem(`live_session_${slug}`);
@@ -78,13 +87,15 @@ export default function LiveEvent() {
 
     const ping = async () => {
       try {
+        const token = sessionRef.current?.access_token;
+        if (!token) return;
         const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
         const response = await fetch(
           `${supabaseUrl}/functions/v1/live-session-heartbeat`,
           {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${session.access_token}`,
+              Authorization: `Bearer ${token}`,
               apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
               "Content-Type": "application/json",
             },
@@ -107,14 +118,14 @@ export default function LiveEvent() {
 
     ping();
     heartbeatRef.current = setInterval(ping, HEARTBEAT_INTERVAL_MS);
-  }, [slug, session, stopHeartbeat]);
+  }, [slug, stopHeartbeat]);
 
   useEffect(() => {
     return () => stopHeartbeat();
   }, [stopHeartbeat]);
 
   useEffect(() => {
-    if (!slug || !session) return;
+    if (!slug || !hasAccessToken) return;
 
     let cancelled = false;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -128,14 +139,21 @@ export default function LiveEvent() {
     };
 
     const resolve = async (isPoll = false) => {
-      if (!isPoll) setState("loading");
+      // Silent refresh guard: never flip back to "loading" if we already have valid data.
+      // Only the very first cold-start (no data yet) shows the Loader.
+      const hasValidData = !!dataRef.current;
+      if (!isPoll && !hasValidData) {
+        setState("loading");
+      }
       try {
+        const token = sessionRef.current?.access_token;
+        if (!token) return;
         const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
         const response = await fetch(
           `${supabaseUrl}/functions/v1/live-resolve?slug=${encodeURIComponent(slug)}`,
           {
             headers: {
-              Authorization: `Bearer ${session.access_token}`,
+              Authorization: `Bearer ${token}`,
               apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
             },
             signal: abortController.signal,
@@ -157,6 +175,7 @@ export default function LiveEvent() {
           source_kind: json.resolved_source?.resolved_source_kind,
           source_reason: json.resolved_source?.source_reason,
           source_url: json.resolved_source?.resolved_embed_url,
+          is_poll: isPoll,
         });
 
         let nextState: PageState = "error";
@@ -183,10 +202,9 @@ export default function LiveEvent() {
             if (ps === "scheduled" || es === "scheduled") {
               nextState = "scheduled";
             } else if (sourceKind === "live_pending") {
-              // Active live, но провайдер ещё не отдал embed — controlled state, продолжаем поллить.
               nextState = "live_pending";
             } else if (ps === "replay_available" || (es === "ended" && json.replay_enabled)) {
-              nextState = "live"; // replay-плеер
+              nextState = "live";
             } else if (es === "ended" && !json.replay_enabled) {
               nextState = "ended_no_replay";
             } else {
@@ -200,7 +218,6 @@ export default function LiveEvent() {
         }
         setState(nextState);
 
-        // Polling: запускаем только для transitional состояний.
         const shouldPoll = nextState === "scheduled"
           || nextState === "live_pending"
           || nextState === "live";
@@ -212,7 +229,8 @@ export default function LiveEvent() {
       } catch (err: any) {
         if (err?.name === 'AbortError' || cancelled) return;
         console.error("[LiveEvent] resolve error:", err);
-        setState("error");
+        // Don't downgrade state to "error" if we already have valid data — keep room mounted.
+        if (!dataRef.current) setState("error");
         stopPolling();
       }
     };
@@ -224,7 +242,8 @@ export default function LiveEvent() {
       stopPolling();
       abortController.abort();
     };
-  }, [slug, session, startHeartbeat]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slug, hasAccessToken]);
 
   if (state === "loading") {
     return (
