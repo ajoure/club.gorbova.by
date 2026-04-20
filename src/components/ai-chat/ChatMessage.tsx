@@ -12,19 +12,31 @@ interface ChatMessageProps {
 
 const markdownComponents = {
   h1: ({ children }: any) => (
-    <h1 className="text-lg font-bold mt-4 mb-2 pb-1 border-b border-border/40 first:mt-0">{children}</h1>
+    <h1 className="text-lg font-bold mt-4 mb-2 pb-1 border-b border-border/40 first:mt-0 break-words">{children}</h1>
   ),
   h2: ({ children }: any) => (
-    <h2 className="text-base font-semibold mt-3 mb-1.5 pb-0.5 border-b border-border/20 first:mt-0">{children}</h2>
+    <h2 className="text-base font-semibold mt-3 mb-1.5 pb-0.5 border-b border-border/20 first:mt-0 break-words">{children}</h2>
   ),
   h3: ({ children }: any) => (
-    <h3 className="text-sm font-semibold mt-2 mb-1 first:mt-0">{children}</h3>
+    <h3 className="text-sm font-semibold mt-2 mb-1 first:mt-0 break-words">{children}</h3>
   ),
-  p: ({ children }: any) => <p className="mb-2 last:mb-0">{children}</p>,
+  p: ({ children }: any) => <p className="mb-2 last:mb-0 break-words">{children}</p>,
   ul: ({ children }: any) => <ul className="list-disc pl-5 mb-2 space-y-0.5">{children}</ul>,
   ol: ({ children }: any) => <ol className="list-decimal pl-5 mb-2 space-y-0.5">{children}</ol>,
-  li: ({ children }: any) => <li className="text-sm">{children}</li>,
+  li: ({ children }: any) => <li className="text-sm break-words">{children}</li>,
   strong: ({ children }: any) => <strong className="font-semibold">{children}</strong>,
+  a: ({ children, href }: any) => (
+    <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary underline break-all">{children}</a>
+  ),
+  code: ({ inline, children }: any) =>
+    inline ? (
+      <code className="px-1 py-0.5 rounded bg-muted/70 text-[0.85em] font-mono break-all">{children}</code>
+    ) : (
+      <code className="block p-2 rounded-md bg-muted/70 text-xs font-mono whitespace-pre-wrap break-words overflow-x-auto">{children}</code>
+    ),
+  pre: ({ children }: any) => (
+    <pre className="my-2 p-2 rounded-md bg-muted/70 text-xs font-mono whitespace-pre-wrap break-words overflow-x-auto">{children}</pre>
+  ),
   table: ({ children }: any) => (
     <div className="overflow-x-auto my-2 -mx-1 rounded-lg border border-border/40">
       <table className="min-w-full text-xs border-collapse">
@@ -40,11 +52,11 @@ const markdownComponents = {
     <th className="px-2.5 py-1.5 text-left font-semibold border-b border-border/30 whitespace-nowrap">{children}</th>
   ),
   td: ({ children }: any) => (
-    <td className="px-2.5 py-1.5 border-b border-border/20">{children}</td>
+    <td className="px-2.5 py-1.5 border-b border-border/20 break-words">{children}</td>
   ),
   hr: () => <hr className="my-3 border-border/30" />,
   blockquote: ({ children }: any) => (
-    <blockquote className="border-l-2 border-primary/30 pl-3 my-2 text-muted-foreground italic">{children}</blockquote>
+    <blockquote className="border-l-2 border-primary/30 pl-3 my-2 text-muted-foreground italic break-words">{children}</blockquote>
   ),
 };
 
