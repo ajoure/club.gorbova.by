@@ -1552,11 +1552,11 @@ function SwitchRow({
   error?: boolean;
 }) {
   return (
-    <div className={`flex items-start gap-3 rounded-lg p-3 ${error ? "bg-destructive/5 border border-destructive/30" : "bg-muted/20"}`}>
-      <Switch checked={checked} onCheckedChange={onCheckedChange} className="mt-0.5" />
-      <div className="space-y-0.5">
-        <Label className="text-sm cursor-pointer" onClick={() => onCheckedChange(!checked)}>{label}</Label>
-        {description && <p className="text-xs text-muted-foreground">{description}</p>}
+    <div className={`flex items-start gap-3 rounded-lg p-3 min-w-0 ${error ? "bg-destructive/5 border border-destructive/30" : "bg-muted/20"}`}>
+      <Switch checked={checked} onCheckedChange={onCheckedChange} className="mt-0.5 shrink-0" />
+      <div className="space-y-0.5 min-w-0 flex-1">
+        <Label className="text-sm cursor-pointer break-words" onClick={() => onCheckedChange(!checked)}>{label}</Label>
+        {description && <p className="text-xs text-muted-foreground break-words">{description}</p>}
       </div>
     </div>
   );
