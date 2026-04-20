@@ -2417,3 +2417,23 @@ function ProviderField({ label, value, onCopy }: { label: string; value: string;
     </div>
   );
 }
+
+// Sprint 2 PATCH 2.3 + 2.6: room state badge + active participants counter в одной ячейке.
+// Использует общий VM-маппер (PATCH 2.7) — чтобы список / карточка / комната не расходились.
+function RoomStateCell({ event }: { event: LiveEvent }) {
+  const state = parseRoomState(event.room_state);
+  const vm = getRoomStateBadgeVM(state);
+  const { data: activeCount } = useActiveParticipants(event.id, state === "opened" || state === "live");
+  return (
+    <div className="flex flex-col gap-1">
+      <Badge variant={vm.variant} className={vm.pulse ? "animate-pulse" : ""}>
+        {vm.shortLabel}
+      </Badge>
+      {(state === "opened" || state === "live") && typeof activeCount === "number" && (
+        <span className="text-[10px] text-muted-foreground inline-flex items-center gap-1" title="Активные участники за последние 2 минуты">
+          <Users className="h-3 w-3" /> {activeCount}
+        </span>
+      )}
+    </div>
+  );
+}
