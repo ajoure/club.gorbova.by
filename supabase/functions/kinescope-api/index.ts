@@ -313,6 +313,39 @@ serve(async (req) => {
         break;
       }
 
+      // Final follow-up sprint PATCH F6: provider delete для live event.
+      // 404 трактуется как success (already absent) — фиксируется в DoD контракта.
+      case "delete_live_event": {
+        if (!live_event_id) {
+          result = { success: false, error: "live_event_id обязателен" };
+          break;
+        }
+        const delResult = await makeV2Request(`/live/events/${live_event_id}`, apiToken, "DELETE");
+        if (!delResult.success && delResult.status_code === 404) {
+          // already absent → success
+          result = { success: true, data: { already_absent: true, live_event_id }, status_code: 404 };
+        } else {
+          result = delResult;
+        }
+        break;
+      }
+
+      // Final follow-up sprint PATCH F6: provider delete для video (replay record).
+      // 404 трактуется как success (already absent).
+      case "delete_video": {
+        if (!video_id) {
+          result = { success: false, error: "video_id обязателен" };
+          break;
+        }
+        const delResult = await makeV1Request(`/videos/${video_id}`, apiToken, "DELETE");
+        if (!delResult.success && delResult.status_code === 404) {
+          result = { success: true, data: { already_absent: true, video_id }, status_code: 404 };
+        } else {
+          result = delResult;
+        }
+        break;
+      }
+
       case "sync_live_event": {
         // Sync provider status: get event details + videos (replay check)
         if (!live_event_id) {

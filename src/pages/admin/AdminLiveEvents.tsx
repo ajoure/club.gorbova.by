@@ -48,7 +48,12 @@ import {
 } from "@/components/ui/collapsible";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DateTimePicker } from "@/components/ui/datetime-picker";
-import { Plus, Edit2, Loader2, Video, ExternalLink, ChevronDown, AlertCircle, CheckCircle2, Users, Link2, PlayCircle, Shield, Radio, Zap, Square, RefreshCw, Send, Copy, Eye, EyeOff, MessageSquare, HelpCircle, Unlink, RotateCcw, AlertTriangle, LayoutGrid, Monitor, ShoppingCart } from "lucide-react";
+import { Plus, Edit2, Loader2, Video, ExternalLink, ChevronDown, AlertCircle, CheckCircle2, Users, Link2, PlayCircle, Shield, Radio, Zap, Square, RefreshCw, Send, Copy, Eye, EyeOff, MessageSquare, HelpCircle, Unlink, RotateCcw, AlertTriangle, LayoutGrid, Monitor, ShoppingCart, Trash2, MoreHorizontal } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
+import { LiveEventDeleteDialog } from "@/components/admin/live/LiveEventDeleteDialog";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -209,6 +214,9 @@ export default function AdminLiveEvents() {
   const [publishAttempted, setPublishAttempted] = useState(false);
   const [creatingLiveEvent, setCreatingLiveEvent] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  // Final follow-up sprint PATCH F4/F5: bulk selection + delete dialog
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleteIds, setDeleteIds] = useState<string[]>([]);
 
   const isLiveStream = form.event_type === "live_stream";
 
@@ -860,102 +868,190 @@ export default function AdminLiveEvents() {
             </CardContent>
           </Card>
         ) : (
-          <Card>
-            <CardContent className="p-0">
+          <TooltipProvider delayDuration={300}>
+          <div className="rounded-md border bg-card">
+            <div className="overflow-x-auto">
               <Table>
-                <TableHeader>
+                <TableHeader className="sticky top-0 z-10 bg-card">
                   <TableRow>
+                    <TableHead className="w-10">
+                      <Checkbox
+                        checked={
+                          events.length > 0 && selectedIds.size === events.length
+                            ? true
+                            : selectedIds.size > 0
+                              ? "indeterminate"
+                              : false
+                        }
+                        onCheckedChange={(v) => {
+                          if (v) setSelectedIds(new Set(events.map((e) => e.id)));
+                          else setSelectedIds(new Set());
+                        }}
+                        aria-label="Выбрать все на странице"
+                      />
+                    </TableHead>
                     <TableHead>Название</TableHead>
-                    <TableHead>Тип</TableHead>
-                    <TableHead>Статус</TableHead>
-                    <TableHead>Комната</TableHead>
-                    <TableHead>Опубликован</TableHead>
-                    <TableHead>Дата</TableHead>
-                    <TableHead></TableHead>
+                    <TableHead className="w-32">Тип</TableHead>
+                    <TableHead className="w-36">Комната</TableHead>
+                    <TableHead className="w-36">Источник</TableHead>
+                    <TableHead className="w-24">Опубликован</TableHead>
+                    <TableHead className="w-40">Дата</TableHead>
+                    <TableHead className="w-20 text-center">Активные</TableHead>
+                    <TableHead className="w-24">Запись</TableHead>
+                    <TableHead className="w-44">Lifecycle</TableHead>
+                    <TableHead className="w-12"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {events.map((event) => (
-                    <TableRow key={event.id}>
-                      <TableCell className="font-medium">{event.title}</TableCell>
+                  {events.map((event) => {
+                    const checked = selectedIds.has(event.id);
+                    return (
+                    <TableRow
+                      key={event.id}
+                      className="hover:bg-muted/50 cursor-default"
+                      data-state={checked ? "selected" : undefined}
+                      onDoubleClick={() => handleEdit(event)}
+                    >
+                      <TableCell>
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={(v) => {
+                            setSelectedIds((prev) => {
+                              const next = new Set(prev);
+                              if (v) next.add(event.id);
+                              else next.delete(event.id);
+                              return next;
+                            });
+                          }}
+                          aria-label={`Выбрать ${event.title}`}
+                        />
+                      </TableCell>
+                      <TableCell className="font-medium max-w-[280px]">
+                        <div className="truncate" title={event.title}>{event.title}</div>
+                        <div className="text-xs text-muted-foreground truncate" title={event.slug}>{event.slug}</div>
+                      </TableCell>
                       <TableCell>
                         <Badge variant={event.event_type === "live_stream" ? "default" : "secondary"} className="text-[10px]">
                           {event.event_type === "live_stream" ? (
-                            <><Radio className="h-3 w-3 mr-1" />Живой эфир</>
+                            <><Radio className="h-3 w-3 mr-1" />Живой</>
                           ) : (
                             <><Video className="h-3 w-3 mr-1" />Видео</>
                           )}
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        <div className="flex flex-col gap-1">
-                          <Badge variant="outline">{platformStatusLabels[event.platform_status] || event.platform_status}</Badge>
-                          {event.event_type === "live_stream" && (() => {
-                            const meta = event.metadata as any;
-                            const pss = meta?.provider_source_status;
-                            if (!event.kinescope_live_event_id && !pss) {
-                              return <Badge variant="outline" className="text-[9px] bg-muted text-muted-foreground">⚪ Не создан</Badge>;
-                            }
-                            if (pss === "missing") {
-                              return <Badge variant="destructive" className="text-[9px]">🔴 Источник удалён</Badge>;
-                            }
-                            if (pss === "broken") {
-                              return <Badge variant="outline" className="text-[9px] bg-amber-500/10 text-amber-700 border-amber-500/30">🟡 Источник повреждён</Badge>;
-                            }
-                            if (event.kinescope_live_event_id) {
-                              return <Badge variant="outline" className="text-[9px] bg-primary/10 text-primary border-primary/30">🟢 Источник активен</Badge>;
-                            }
-                            return null;
-                          })()}
-                        </div>
-                      </TableCell>
-                      <TableCell>
                         <RoomStateCell event={event} />
                       </TableCell>
                       <TableCell>
-                        {event.is_published ? (
-                          <Badge variant="default">Да</Badge>
-                        ) : (
-                          <Badge variant="outline">Нет</Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {event.scheduled_at
-                          ? format(new Date(event.scheduled_at), "dd.MM.yyyy HH:mm", { locale: ru })
-                          : "—"}
+                        {(() => {
+                          const meta = event.metadata as any;
+                          const pss = meta?.provider_source_status;
+                          let badge: JSX.Element;
+                          if (event.event_type !== "live_stream") {
+                            badge = <Badge variant="outline" className="text-[10px]">{platformStatusLabels[event.platform_status] || event.platform_status}</Badge>;
+                          } else if (!event.kinescope_live_event_id && !pss) {
+                            badge = <Badge variant="outline" className="text-[10px] bg-muted text-muted-foreground">⚪ Не создан</Badge>;
+                          } else if (pss === "missing") {
+                            badge = <Badge variant="destructive" className="text-[10px]">🔴 Удалён</Badge>;
+                          } else if (pss === "broken") {
+                            badge = <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-700 border-amber-500/30">🟡 Повреждён</Badge>;
+                          } else {
+                            badge = <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/30">🟢 Активен</Badge>;
+                          }
+                          return (
+                            <Tooltip>
+                              <TooltipTrigger asChild><span>{badge}</span></TooltipTrigger>
+                              <TooltipContent>Источник видео (provider)</TooltipContent>
+                            </Tooltip>
+                          );
+                        })()}
                       </TableCell>
                       <TableCell>
-                        <div className="flex flex-col gap-2 min-w-[280px]">
-                          {/* Sprint 2 PATCH 2.3: lifecycle-actions для room (отдельный контур) */}
-                          <RoomLifecycleActions
-                            eventId={event.id}
-                            roomState={parseRoomState(event.room_state)}
-                            layout="admin"
-                          />
-                          <div className="flex gap-1">
-                            <Button variant="ghost" size="sm" onClick={() => handleEdit(event)} title="Редактировать">
-                              <Edit2 className="h-4 w-4" />
+                        {event.is_published ? <Badge variant="default">Да</Badge> : <Badge variant="outline">Нет</Badge>}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                        {event.scheduled_at ? format(new Date(event.scheduled_at), "dd.MM.yyyy HH:mm", { locale: ru }) : "—"}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <ActiveParticipantsCell eventId={event.id} />
+                      </TableCell>
+                      <TableCell>
+                        {event.replay_enabled ? (
+                          <Badge variant="outline" className="text-[10px]">Доступна</Badge>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <RoomLifecycleActions
+                          eventId={event.id}
+                          roomState={parseRoomState(event.room_state)}
+                          layout="admin"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                              <MoreHorizontal className="h-4 w-4" />
                             </Button>
-                            <Button variant="ghost" size="sm" onClick={() => window.open(`/live/${event.slug}`, "_blank")} title="Открыть страницу">
-                              <ExternalLink className="h-4 w-4" />
-                            </Button>
-                            {/* Provider-actions (Kinescope sync) — service-level, не lifecycle */}
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-52">
+                            <DropdownMenuItem onClick={() => handleEdit(event)}>
+                              <Edit2 className="h-4 w-4 mr-2" />Редактировать
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => window.open(`/live/${event.slug}`, "_blank")}>
+                              <ExternalLink className="h-4 w-4 mr-2" />Открыть страницу
+                            </DropdownMenuItem>
                             {event.event_type === "live_stream" && event.kinescope_live_event_id && (
-                              <Button variant="ghost" size="sm" title="Синхронизировать источник Kinescope"
-                                onClick={() => handleLifecycleAction(event.id, "sync_live_event", event.kinescope_live_event_id!)}>
-                                <RefreshCw className="h-4 w-4" />
-                              </Button>
+                              <DropdownMenuItem onClick={() => handleLifecycleAction(event.id, "sync_live_event", event.kinescope_live_event_id!)}>
+                                <RefreshCw className="h-4 w-4 mr-2" />Синхронизировать Kinescope
+                              </DropdownMenuItem>
                             )}
-                          </div>
-                        </div>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() => setDeleteIds([event.id])}
+                              className="text-destructive focus:text-destructive"
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />Удалить…
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </TableCell>
                     </TableRow>
-                  ))}
+                  );})}
                 </TableBody>
               </Table>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
+          </TooltipProvider>
         )}
+
+        {/* Final follow-up sprint PATCH F4: bulk actions bar (selection на текущей странице) */}
+        <BulkActionsBar
+          selectedCount={selectedIds.size}
+          totalCount={events?.length || 0}
+          entityName="эфиров на странице"
+          onClearSelection={() => setSelectedIds(new Set())}
+          onSelectAll={() => events && setSelectedIds(new Set(events.map((e) => e.id)))}
+          onBulkDelete={() => setDeleteIds(Array.from(selectedIds))}
+        />
+
+        {/* Final follow-up sprint PATCH F5: единый delete dialog (single + bulk) */}
+        <LiveEventDeleteDialog
+          open={deleteIds.length > 0}
+          eventIds={deleteIds}
+          onOpenChange={(o) => { if (!o) setDeleteIds([]); }}
+          onSuccess={() => {
+            setSelectedIds(new Set());
+            // Если открыт edit-dialog для удалённого id — закрыть
+            if (editingId && deleteIds.includes(editingId)) {
+              setDialogOpen(false);
+              setEditingId(null);
+            }
+          }}
+        />
+
 
         {/* --- Create/Edit Dialog --- */}
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -2435,5 +2531,15 @@ function RoomStateCell({ event }: { event: LiveEvent }) {
         </span>
       )}
     </div>
+  );
+}
+
+// Final follow-up sprint PATCH F3: отдельная компактная ячейка count активных участников
+function ActiveParticipantsCell({ eventId }: { eventId: string }) {
+  const { data } = useActiveParticipants(eventId, true);
+  return (
+    <span className="text-sm tabular-nums" title="Активные участники за последние 2 минуты">
+      {typeof data === "number" ? data : "—"}
+    </span>
   );
 }
