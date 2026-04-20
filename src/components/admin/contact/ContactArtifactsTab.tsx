@@ -15,7 +15,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { BookOpen, CheckCircle, ClipboardList, GraduationCap, ScrollText, ChevronRight, ChevronDown, Loader2, Layers } from "lucide-react";
+import { BookOpen, CheckCircle, ClipboardList, GraduationCap, ScrollText, ChevronRight, ChevronDown, Loader2, Layers, Video } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import {
