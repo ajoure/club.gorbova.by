@@ -16,6 +16,9 @@ import {
 import { LiveEventReplyForm, LiveEventRepliesList } from "./LiveEventReplies";
 import { LiveInlineModeration } from "./LiveInlineModeration";
 import { LiveAutoGrowTextarea } from "./LiveAutoGrowTextarea";
+import { LiveModerationBanner } from "./LiveModerationBanner";
+import { useRoomModerationState } from "@/hooks/useRoomModerationState";
+import { toast } from "sonner";
 
 interface Question {
   id: string;
@@ -101,6 +104,9 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
       return () => { supabase.removeChannel(channel); };
     }, [liveEventId, queryClient]);
 
+    const { isMuted, isRemoved } = useRoomModerationState(liveEventId, user?.id);
+    const isBlocked = isMuted || isRemoved;
+
     const sendMutation = useMutation({
       mutationFn: async (content: string) => {
         const { error } = await supabase.from("live_event_questions").insert({
@@ -114,6 +120,21 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
         setNewQuestion("");
         queryClient.invalidateQueries({ queryKey: ["live-event-questions", liveEventId] });
       },
+      onError: (err: any) => {
+        const msg = String(err?.message || "");
+        if (msg.includes("row-level security") || msg.includes("violates")) {
+          toast.error(
+            isRemoved
+              ? "Вы удалены из комнаты — отправка недоступна"
+              : "Вы заглушены — отправка временно недоступна",
+          );
+        } else {
+          toast.error(`Ошибка отправки: ${err.message}`);
+        }
+        queryClient.invalidateQueries({
+          queryKey: ["live-user-mod-state", liveEventId, user?.id],
+        });
+      },
     });
 
     const toggleAnsweredMutation = useMutation({
@@ -126,6 +147,14 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
 
     const handleSend = () => {
       if (!newQuestion.trim() || !user) return;
+      if (isBlocked) {
+        toast.error(
+          isRemoved
+            ? "Вы удалены из комнаты модератором"
+            : "Вы заглушены модератором",
+        );
+        return;
+      }
       sendMutation.mutate(newQuestion.trim());
     };
 
