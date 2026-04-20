@@ -937,7 +937,7 @@ export default function AdminLiveEvents() {
 
         {/* --- Create/Edit Dialog --- */}
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogContent className="w-[calc(100vw-1rem)] sm:w-[calc(100vw-2rem)] max-w-2xl max-h-[90vh] overflow-y-auto overflow-x-hidden p-3 sm:p-6">
             <DialogHeader>
               <DialogTitle>{editingId ? "Редактировать эфир" : "Создать эфир"}</DialogTitle>
             </DialogHeader>
