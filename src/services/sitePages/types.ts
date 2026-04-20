@@ -199,6 +199,8 @@ export const pricingContentSchema = z.object({
   product_id: z.string().default(""),
   title: z.string().default(""),
   subtitle: z.string().default(""),
+  tariff_filter_mode: z.enum(["all", "selected"]).default("all"),
+  tariff_ids: z.array(z.string()).default([]),
 });
 
 export const SOCIAL_PLATFORMS = [

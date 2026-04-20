@@ -231,6 +231,9 @@ export class SitePageService {
       if ("product_id" in content) content.product_id = "";
       // Drop any tariff overrides bound to the source product
       if ("tariff_overrides" in content) delete content.tariff_overrides;
+      // Reset tariff filter (UUIDs belonged to source product — would be invalid for new binding)
+      content.tariff_ids = [];
+      content.tariff_filter_mode = "all";
       return { ...block, content };
     });
 
