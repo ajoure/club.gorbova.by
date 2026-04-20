@@ -24,6 +24,7 @@ import { EmbedSection } from "./blocks/EmbedSection";
 import { SiteQuestionnaireBlock } from "./blocks/SiteQuestionnaireBlock";
 import { StatsSection } from "./blocks/StatsSection";
 import { FeaturesSection } from "./blocks/FeaturesSection";
+import { FooterSection } from "./blocks/FooterSection";
 import { AccordionBlock } from "@/components/admin/lesson-editor/blocks/AccordionBlock";
 import { TabsBlock } from "@/components/admin/lesson-editor/blocks/TabsBlock";
 import { CalloutBlock } from "@/components/admin/lesson-editor/blocks/CalloutBlock";
@@ -230,6 +231,7 @@ export function SitePageRenderer({ blocks, themeSettings, pricingData, pageId, i
       case "embed": return <EmbedSection content={block.content} />;
       case "site_questionnaire": return <SiteQuestionnaireBlock content={block.content} />;
       case "stats": return <StatsSection content={block.content} settings={settings} />;
+      case "footer": return <FooterSection content={block.content} />;
       default: return null;
     }
   };
