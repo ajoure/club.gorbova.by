@@ -212,3 +212,18 @@ body.impersonation-active .impersonation-offset {
 .scrollbar-none::-webkit-scrollbar {
   display: none;
 }
+
+/* Always-visible horizontal scrollbar for wide admin tables (UX hint on narrow viewports) */
+.live-events-table-scroll::-webkit-scrollbar {
+  height: 10px;
+}
+.live-events-table-scroll::-webkit-scrollbar-track {
+  background: hsl(var(--muted) / 0.3);
+}
+.live-events-table-scroll::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.4);
+  border-radius: 5px;
+}
+.live-events-table-scroll::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.6);
+}
