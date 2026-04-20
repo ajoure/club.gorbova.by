@@ -1,75 +1,101 @@
 да, согласен, с учетом правок:
 
-1. Перед удалением сделать один discovery-проход и приложить список фактически найденных артефактов по маскам: instagram-pilot-send, pilot-, instagram-pilot, proof-. Не удалять по предположению.
-2. В cleanup добавить не только файлы в репо, но и **storage-артефакты**:
-  - объекты в bucket telegram-media с префиксом instagram-pilot/
-  - только если они реально существуют
-  - с proof списком удалённых путей
-3. Добавить **DB-check** после cleanup:
-  - нет ли instagram_[messages.media](http://messages.media)_url / raw_payload / логов, ссылающихся на instagram-pilot или pilot-URL
-  - если такие записи есть, не удалять вслепую, а показать отдельно как residual list
-4. В Verify добавить поиск остаточных ссылок по коду:
-  - rg -n "instagram-pilot-send|pilot-|instagram-pilot|proof-" supabase src public
-  - результат должен быть пустой, кроме исторических миграций/отчётов, если они сознательно сохраняются
-5. В шаги исполнения добавить порядок:
-  - discovery
-  - удаление ссылок из UI/импортов/конфига
-  - удаление файлов из репо
-  - удаление storage-объектов
-  - удаление deployed edge function
-  - финальный grep + smoke-check Inbox
-6. В финальном отчёте отдельно показать:
-  - что удалено из репо
-  - что удалено из storage
-  - что удалено из deploy
-  - что сознательно оставлено и почему
-7. Не удалять production-proof и исторические миграции. Если есть pilot SQL/data-fix, сначала явно классифицировать: temporary artifact или исторический след спринта.
+1. В текущем контракте есть логическое противоречие: undefined и [] у тебя означают «показать все тарифы», но дальше ты хочешь поддержать состояние «режим выбранных тарифов, но не выбрано ничего» и в этом случае скрывать блок. Это невозможно без отдельного флага режима.  
+Исправь контракт так:
+  - tariff_filter_mode?: 'all' | 'selected'
+  - tariff_ids?: string[]
+  - backward-compat: если tariff_filter_mode отсутствует, считать 'all'
+  - только при tariff_filter_mode === 'selected' использовать tariff_ids
+2. Обязательно добавь в список файлов:  
+
+  - src/services/sitePages/types.ts — расширить pricingContentSchema  
+  Иначе это будет «несхемное» поле в JSON и потом сломается на валидации/редакторе.
+3. При смене product_id нужно сбрасывать не только tariff_ids, но и tariff_filter_mode обратно в 'all'. Иначе легко получить пустой блок после смены продукта.
+4. В редакторе зафиксируй 3 состояния явно:
+  - продукт не выбран → секция выбора тарифов не показывается
+  - режим «Все тарифы» → чекбоксы скрыты
+  - режим «Выбранные», но ничего не отмечено → warning в editor, а в preview/public блок не рендерится
+5. В рендерере фильтрация должна:
+  - сохранять исходный порядок тарифов продукта
+  - молча игнорировать tariff_ids, которых уже нет у продукта
+  - не создавать новый путь данных: только фильтр поверх уже полученных tariffs
+6. Так как у нас уже есть clone-fix для product-bound pages, добавь в scope совместимость с ним:
+  - при копировании страницы вместе с очисткой content.product_id очищать и content.tariff_ids
+  - иначе дубль может неявно сохранить старую фильтрацию от исходного продукта
+7. В DoD не пиши только «на published странице», потому что текущая страница-шаблон у нас draft. Исправь на:
+  - проверка в editor save/reopen
+  - проверка в preview
+  - проверка на published только если страница реально опубликована отдельным gate
+8. В proof отдельно зафиксируй:
+  - сохранённый block.content в БД
+  - режим all → все тарифы
+  - режим selected → один выбранный тариф
+  - смена продукта → mode сброшен, tariff_ids очищены
+  - clone страницы → tariff_ids очищены вместе с product_id
 
 &nbsp;
 
-## План: Cleanup временных pilot-артефактов
+После этих правок план нормальный и безопасный.
 
-### Что удалить
+&nbsp;
 
-**1. Временные pilot-функции и UI:**
+## План: фильтр тарифов в блоке «Тарифы» конструктора сайтов
 
-- `supabase/functions/instagram-pilot-send/` — временная функция для тестового outbound
-- `src/components/admin/communication/instagram/InstagramPilotPanel.tsx` (если есть) — UI для pilot-отправки
-- Любые упоминания pilot-кнопок/панелей в `ContactInstagramChat.tsx` / `InstagramInboxView.tsx`
+### Цель
 
-**2. Временные pilot-ассеты:**
+Дать редактору возможность выбрать, какие именно тарифы из связанного продукта показывать в блоке. По умолчанию — все. Опционально — только выбранные. ID-first, без строкового матчинга.
 
-- `public/pilot-*.png` / `public/pilot-*.mp4` / `public/pilot-*.pdf` — тестовые файлы, которые гонялись через outbound
+### Контракт данных
 
-**3. Конфиг:**
+В `block.content` блока `pricing` добавляется одно опциональное поле:
 
-- Запись `[functions.instagram-pilot-send]` из `supabase/config.toml`
+- `tariff_ids?: string[]` — массив UUID тарифов из выбранного продукта.
+  - `undefined` или `[]` → показать **все** тарифы продукта (текущее поведение, обратная совместимость).
+  - непустой массив → показать только тарифы, чьи `id` входят в массив, в порядке, заданном продуктом (не пересортировываем).
 
-**4. Деплой:**
+Поле `product_id` остаётся источником истины для продукта. `tariff_ids` — чистый UI-фильтр поверх уже подгруженных `tariffs`.
 
-- Вызвать `supabase--delete_edge_functions` для `instagram-pilot-send`, чтобы удалить из развёрнутого окружения
+### Изменения в UI редактора (`PricingBlockEditor.tsx`)
 
-### Что НЕ трогать
+1. После выбора продукта подгружать список его активных тарифов (через тот же EF `public-product?product_id=...`, который уже используется в `useSitePricingData` — единый источник, не дублируем).
+2. Добавить секцию «Какие тарифы показывать»:
+  - Радио/Switch-режим: «Все тарифы» / «Выбранные».
+  - В режиме «Выбранные» — список чекбоксов (переиспользуем `@/components/ui/checkbox`, тот же стиль, что в `FormBlockEditor`) по одному на тариф: чекбокс + название + код + бейдж «Популярный», если есть.
+  - Кнопки «Выбрать все» / «Снять все».
+3. При смене `product_id` — сбрасывать `tariff_ids` (иначе останутся UUID от другого продукта — нарушение ID-first).
+4. Если выбран режим «Выбранные», но массив пуст — показать inline-предупреждение «Не выбрано ни одного тарифа — блок не будет ничего отображать».
 
-- `instagram-media-proxy` — production, остаётся
-- `instagram-webhook` / `instagram-admin-chat` — production
-- `telegram-media` bucket и его RLS — production transport
-- migrations (backfill `media_type`) — историчны, не откатываем
-- любые ApiX-Drive/Telegram пути
+### Изменения в рендерере (`PricingSection.tsx`)
 
-### Verify (DoD)
+1. Принимать `tariff_ids` из `content`.
+2. Перед передачей в `UniversalPricingSection` фильтровать массив `tariffs`:
+  ```
+   const allowed = (content.tariff_ids as string[] | undefined) ?? [];
+   const filtered = allowed.length > 0 ? tariffs.filter(t => allowed.includes(t.id)) : tariffs;
+  ```
+3. Если `filtered.length === 0` — `return null` (как сейчас).
+4. `UniversalPricingSection` не трогаем — он уже умеет работать с произвольным списком тарифов.
 
-- В `supabase/functions/` нет директории `instagram-pilot-send`
-- В `supabase/config.toml` нет блока `[functions.instagram-pilot-send]`
-- В `public/` нет файлов `pilot-*`
-- В `src/components/admin/communication/instagram/` нет компонентов с `Pilot` в имени
-- Inbox UI грузится без ошибок, inbound/outbound media продолжают работать
-- `supabase--delete_edge_functions(["instagram-pilot-send"])` отработала успешно
+### Что НЕ меняется
 
-### Шаги исполнения
+- EF `public-product` и `useSitePricingData` — не трогаем, фильтрация только на клиенте, чтобы не плодить варианты ответа.
+- БД: миграции не нужны, `block.content` — JSON.
+- Логика покупки, PaymentDialog, access — не затрагиваются.
+- Пути «продукт → страница», `product_id` биндинг, canonical URLs — без изменений.
 
-1. Прочитать актуальное содержимое директории `supabase/functions/`, `public/`, `src/components/admin/communication/instagram/` чтобы зафиксировать точный список pilot-артефактов
-2. Удалить файлы (через перезапись пустыми не подойдёт — использовать прямое удаление через системные инструменты в default mode)
-3. Убрать блок из `supabase/config.toml`
-4. Вызвать `supabase--delete_edge_functions`
-5. Дать короткий отчёт со списком удалённого
+### Файлы
+
+- `src/components/admin/site-builder/blocks/PricingBlockEditor.tsx` — добавить загрузку тарифов + UI выбора.
+- `src/components/site-renderer/blocks/PricingSection.tsx` — добавить фильтрацию по `tariff_ids`.
+
+### DoD
+
+- В редакторе блока «Тарифы» после выбора продукта появляется секция выбора тарифов с переключателем «Все / Выбранные» и чекбоксами.
+- Сохранение страницы пишет в `block.content.tariff_ids` массив UUID.
+- На опубликованной странице:
+  - режим «Все» → видны все активные тарифы продукта (поведение не изменилось);
+  - режим «Выбранные» → видны только выбранные;
+  - пустой массив в режиме «Выбранные» → блок не рендерится.
+- Смена продукта обнуляет `tariff_ids`.
+- Никаких изменений в EF, БД, оплате; ApiX/Telegram/доступы не задеты.
+- Проверить на странице `/consultation-copy` (из скриншота): выбрать только «Срочная консультация», убедиться что в превью и на published странице показывается только она.
