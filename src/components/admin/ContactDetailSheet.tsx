@@ -109,6 +109,7 @@ import {
   
   RefreshCw,
   Link2,
+  Video,
 } from "lucide-react";
 import { copyToClipboard, getContactUrl } from "@/utils/clipboardUtils";
 import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
@@ -137,6 +138,7 @@ import { LinkedCardItem } from "./cards/LinkedCardItem";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useAdminUsers } from "@/hooks/useAdminUsers";
 import { WebinarActivitySection } from "./contact/WebinarActivitySection";
+import { ContactWebinarsTab } from "./contact/ContactWebinarsTab";
 import { isStaffRole } from "@/lib/liveRoomRoles";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -1606,6 +1608,13 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               <TabsTrigger value="deals" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 Сделки {deals && deals.filter(d => d.status === "paid").length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{deals.filter(d => d.status === "paid").length}</Badge>}
               </TabsTrigger>
+              {/* Вкладка «Вебинары» — только для staff (security: см. mem://security/access-control/webinar-staff-action-guards) */}
+              {isStaffRole(authRole) && resolvedUserId && (
+                <TabsTrigger value="webinars" className="text-xs sm:text-sm px-2.5 sm:px-3">
+                  <Video className="w-3 h-3 mr-1" />
+                  Вебинары
+                </TabsTrigger>
+              )}
               <TabsTrigger value="payments" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 <CreditCard className="w-3 h-3 mr-1" />
                 Платежи
@@ -3323,6 +3332,13 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 })
               )}
             </TabsContent>
+
+            {/* Webinars Tab — staff only (полная история активности по эфирам, SoT: live_event_comments + live_event_questions) */}
+            {isStaffRole(authRole) && resolvedUserId && (
+              <TabsContent value="webinars" className="m-0 space-y-4">
+                <ContactWebinarsTab userId={resolvedUserId} />
+              </TabsContent>
+            )}
 
             {/* Communications Tab */}
             <TabsContent value="communications" className="m-0 space-y-4">

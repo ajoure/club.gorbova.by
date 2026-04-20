@@ -3,6 +3,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { LIFECYCLE_BUTTON_BASE, LIFECYCLE_BUTTON_TONES } from "@/components/live/lifecycleButtonStyles";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -861,11 +863,11 @@ export default function AdminLiveEvents() {
             <p className="text-sm text-muted-foreground">Управление живыми эфирами и автовебинарами</p>
           </div>
           <div className="flex items-center gap-2">
-            <Button onClick={handleCreate} className="gap-2">
+            <Button onClick={handleCreate} className={cn(LIFECYCLE_BUTTON_BASE, LIFECYCLE_BUTTON_TONES.success)}>
               <Plus className="h-4 w-4" />
               Создать эфир
             </Button>
-            <Button variant="outline" size="icon" onClick={() => setHelpOpen(true)} title="Справка">
+            <Button onClick={() => setHelpOpen(true)} title="Справка" className={cn(LIFECYCLE_BUTTON_BASE, LIFECYCLE_BUTTON_TONES.info, "min-w-0 w-9 px-0")}>
               <HelpCircle className="h-4 w-4" />
             </Button>
           </div>
@@ -2198,21 +2200,21 @@ function LiveStreamControlPanel({
 
           {/* Sync — always available if we have an ID */}
           {kinescopeLiveEventId && (
-            <Button variant="outline" size="default" className="h-10 gap-2" onClick={handleSyncProvider} disabled={syncStatus === "syncing"}>
+            <Button className={cn(LIFECYCLE_BUTTON_BASE, LIFECYCLE_BUTTON_TONES.info)} onClick={handleSyncProvider} disabled={syncStatus === "syncing"}>
               {syncStatus === "syncing" ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               Обновить источник
             </Button>
           )}
 
           {/* Recreate */}
-          <Button variant="outline" size="default" className="h-10 gap-2" onClick={() => setRecreateDialogOpen(true)}
+          <Button className={cn(LIFECYCLE_BUTTON_BASE, LIFECYCLE_BUTTON_TONES.warning)} onClick={() => setRecreateDialogOpen(true)}
             disabled={!canRecreate || recreating}>
             <RotateCcw className="h-4 w-4" /> Пересоздать эфир
           </Button>
 
           {/* Detach — only if there's a provider bound */}
           {kinescopeLiveEventId && (
-            <Button variant="outline" size="default" className="h-10 gap-2 text-muted-foreground" onClick={() => setDetachDialogOpen(true)}
+            <Button className={cn(LIFECYCLE_BUTTON_BASE, LIFECYCLE_BUTTON_TONES.warning)} onClick={() => setDetachDialogOpen(true)}
               disabled={detaching}>
               <Unlink className="h-4 w-4" /> Отвязать источник
             </Button>
