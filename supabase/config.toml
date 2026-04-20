@@ -401,3 +401,6 @@ verify_jwt = false
 
 [functions.manychat-discover-pages]
 verify_jwt = false
+
+[functions.cleanup-pilot-storage]
+verify_jwt = false
