@@ -125,37 +125,43 @@ export function RoomLifecycleActions({
     );
   }
 
-  // admin layout — все 3 кнопки + badge
+  // admin layout — все 3 кнопки + badge (glass-стиль)
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <Badge variant={badge.variant} className={badge.pulse ? "animate-pulse" : ""}>
+    <div className="flex flex-wrap items-center gap-1.5">
+      <Badge
+        variant="outline"
+        className={cn(
+          "h-9 px-3 bg-white/60 backdrop-blur-md border-white/40 text-foreground/80 font-medium",
+          badge.pulse && "text-destructive/90 border-destructive/30 animate-pulse",
+        )}
+      >
         {badge.label}
       </Badge>
 
       <Button
-        size="sm"
         variant="outline"
+        className={cn(GLASS_BASE, GLASS_TONE.neutral)}
         disabled={!canPerformAction(roomState, "open_room") || !!pending}
         onClick={() => callAction("open_room")}
       >
         {pending === "open_room" ? (
-          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+          <Loader2 className="h-4 w-4 animate-spin" />
         ) : (
-          <DoorOpen className="h-4 w-4 mr-1" />
+          <DoorOpen className="h-4 w-4" />
         )}
         Открыть комнату
       </Button>
 
       <Button
-        size="sm"
-        variant="default"
+        variant="outline"
+        className={cn(GLASS_BASE, GLASS_TONE.primary)}
         disabled={!canPerformAction(roomState, "start_live") || !!pending}
         onClick={() => callAction("start_live")}
       >
         {pending === "start_live" ? (
-          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+          <Loader2 className="h-4 w-4 animate-spin" />
         ) : (
-          <PlayCircle className="h-4 w-4 mr-1" />
+          <PlayCircle className="h-4 w-4" />
         )}
         Начать вебинар
       </Button>
@@ -163,14 +169,14 @@ export function RoomLifecycleActions({
       <AlertDialog>
         <AlertDialogTrigger asChild>
           <Button
-            size="sm"
-            variant="destructive"
+            variant="outline"
+            className={cn(GLASS_BASE, GLASS_TONE.destructive)}
             disabled={!canPerformAction(roomState, "complete_webinar") || !!pending}
           >
             {pending === "complete_webinar" ? (
-              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+              <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <Square className="h-4 w-4 mr-1" />
+              <Square className="h-4 w-4" />
             )}
             Завершить вебинар
           </Button>
