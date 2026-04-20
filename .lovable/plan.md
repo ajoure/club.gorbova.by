@@ -1,208 +1,188 @@
 # да, согласен, с учетом правок:
 
-1. **Participant count v1**  
-Источник считать не по `last_seen_at > now() - interval '2 minutes'` как основному критерию, а по **неистекшей сессии**: `expires_at > now()` и `revoked_at IS NULL`.  
-`last_seen_at` можно оставить только как диагностический/secondary signal. Иначе будет риск расхождения с уже существующей heartbeat-моделью.
-2. **PATCH 2.2 / lifecycle handler**  
-В контракте явно зафиксировать, что:
+1. **PATCH 3.4 / mobile height**  
+Не вводить расчёт `h-[calc(100dvh-var(--room-header-h,140px))]` как новый базовый layout без proof, что это не сломает desktop/tablet и встроенные контейнеры.  
+Сначала сделать **локальный add-only mobile guard** только для узких viewport и только для sidebar/input зоны. Базовую высоту текущего room layout не переписывать глобально.
+2. **PATCH 3.4 / visualViewport**  
+Логику `visualViewport resize -> scrollToBottom` добавлять очень осторожно:
   &nbsp;
   &nbsp;
-  - для `event_type != live_stream` provider-call **не делается**, меняется только room lifecycle;
-  - для `live_stream` provider-call делается только если есть валидный `kinescope_live_event_id`;
-  - если provider-call упал, не допускается частичный переход room-state без явно описанной стратегии. Нужен один из двух режимов:
-    &nbsp;
-    - либо fail whole action;
-    - либо explicit degraded-mode с отдельным audit/log reason.  
-    Это надо определить заранее, чтобы не было полупереходов.
-3. **PATCH 2.1 / backfill**  
-В миграции добавить явный mapping-комментарий и safe-guard:
-  - `draft/scheduled -> closed`
-  - `live -> live`
-  - `ended/replay_available -> completed`
-  - все прочие/unknown значения -> `closed` **с отдельной диагностикой количества строк**.  
-  Нельзя оставлять “молчаливый” fallback без числа затронутых записей.
-4. **PATCH 2.5 / waiting-state**  
-В `live-resolve` зафиксировать, что для `room_state='opened'` возвращается отдельный признак waiting-state, а не только общий `status:'ok'`.  
-Нужен явный флаг уровня payload, например `room_phase: 'waiting' | 'live' | 'completed'`, чтобы UI не вычислял это косвенно.
-5. **PATCH 2.7 / единый SoT UI**  
-В shared-helper добавить не только `getNextAction`, `canTransition`, `roomStateLabels`, но и **единый badge/view-model mapper** для:
-  - label,
-  - tone/color,
-  - visibility of actions,
-  - terminal-state flag.  
-  Чтобы список / карточка / room-header не начали расходиться по мелочам.
-6. **PATCH 2.8 / DB trigger**  
-В триггере явно разрешить:
-  - unchanged update (`OLD.room_state = NEW.room_state`);
-  - migration/backfill режим;
-  - service-role/edge-function controlled transition по допустимой матрице.  
-  Иначе можно случайно заблокировать легитимные UPDATE, где room-state не меняется, но меняются другие поля.
-7. **PATCH 2.3 / admin actions**  
-Старые `enable_live_event/complete_live_event/sync_live_event` нельзя просто “оставить как provider-уровень” без UI-ограничения.  
-Нужно явно:
-  - либо спрятать их из основного UX под secondary/dev/provider-tools блок;
-  - либо визуально развести как service/provider actions, не рядом с основным lifecycle.  
-  Иначе будет два конкурирующих контура управления.
-8. **PATCH 2.4 / кнопка в комнате**  
-Кнопку в комнате лучше делать не только для `room_state === 'live'`, но и через общий helper/permission gate из PATCH 2.7, чтобы не было второй отдельной логики доступности.
-9. **PATCH 2.6 / participant count UI**  
-В тексте/tooltip явно писать не “участники онлайн”, а **«активные участники»**.  
-Это важно, чтобы не обещать realtime presence точнее, чем реально есть.
-10. **DoD**  
-Добавить отдельный пункт в DoD:
-  - `opened`-room не ломает heartbeat/session tracking;
-  - при waiting-state participant count продолжает считаться;
-  - переход `opened -> live` не сбрасывает чат/вопросы/active session.
+  - только для mobile;
+  - только когда textarea/input в фокусе;
+  - с debounce;
+  - без принудительного скролла, если пользователь вручную читает старые сообщения.  
+  Иначе можно сломать UX чтения. Нужен явный guard `only if near bottom before resize`.
+3. **PATCH 3.5 / Tabs forceMount**  
+`forceMount` для обоих табов — потенциально полезно, но это уже влияет на память, подписки и hidden DOM.  
+Перед внедрением нужен mini-discovery:
+  - какие realtime subscriptions живут в Comments;
+  - какие в Questions;
+  - не будет ли двойной активности/двойного polling/render cost.  
+  Если оба таба уже держат активные подписки, `forceMount` вводить только после проверки, либо использовать локальное сохранение scroll state без постоянного mount обоих табов.
+4. **PATCH 3.5 / React.memo player wrappers**  
+Не просто “обернуть в memo”, а явно зафиксировать критерий сравнения:
+  - `videoId` для video wrapper;
+  - `embedUrl` для live embed;
+  - theme/phase changes не должны размонтировать player, если source не изменился.  
+  Это надо указать прямо, иначе патч останется слишком общим.
+5. **PATCH 3.1 / off-room fallback states**  
+Правильно, что не все full-screen fallback надо тематизировать.  
+Но это надо зафиксировать как правило:
+  - `waiting/live/completed/replay` — themed;
+  - `access denied / removed / session expired / revoked / generic error` — neutral system states.  
+  Иначе подрядчик может начать насильно тянуть theme туда, где это не нужно.
+6. **PATCH 3.1 / textarea styling**  
+В плане есть theme для textarea/input, но нужно явно добавить:
+  - placeholder color через `--room-text-secondary`;
+  - disabled/readOnly states;
+  - caret color = accent/text compatible.  
+  Иначе останутся мелкие дефолтные хвосты.
+7. **PATCH 3.3 / CTA sidebar max-height**  
+`max-h-[40vh] overflow-y-auto` для sidebar CTA — норм как идея, но только если:
+  - не ломает порядок “чат выше CTA / CTA выше чата” в текущем layout;
+  - не создаёт второй неудобный nested-scroll рядом с чатом на desktop.  
+  Нужен guard: desktop и mobile проверить отдельно. Не делать жёсткий `40vh` без адаптивной проверки.
+8. **PATCH 3.2 / role hierarchy**  
+Зафиксировать единый приоритет явно в одном SoT:  
+`presenter > admin > employee > own > user`.  
+И использовать его не только для message highlight, но и для reply-preview/quoted-state, чтобы не было второй локальной логики.
+9. **PATCH 3.7 / LiveBadge**  
+Формулировку уточнить: не “убрать из header”, а **не дублировать LIVE-сигнал в header, если там уже есть lifecycle badge**.  
+Если в текущем UX есть отдельный load-bearing индикатор LIVE в header, его нельзя удалить без mapping old -> new. Нужен явный mapping и проверка, что смысл не потерян.
+10. **PATCH 3.6 / regression checklist**  
+В checklist добавить отдельные пункты:
+  - `opened -> live` без сброса scroll/chat/questions/session;
+  - degraded provider scenario не только по audit, но и по UI-поведенческому результату;
+  - save формы не меняет lifecycle-state;
+  - lifecycle-action не перетирает theme/CTA/settings.
+11. **PATCH 3.5 / participant polling**  
+Если добавляется visibility-pause, зафиксировать отдельно:
+  - `live-resolve` polling можно паузить в скрытой вкладке;
+  - heartbeat/presence логика не должна быть случайно выключена тем же механизмом, если она нужна для active session.  
+  Нельзя одним общим хелпером нечаянно “усыпить” то, что должно продолжать жить.
+12. **Изменяемые файлы**  
+Добавить в план явную проверку `LiveEventQuestions.tsx` на parity не только sticky/safe-area, но и input/theme/empty-state/submit-button, чтобы comments/questions реально стали симметричными.
 
 &nbsp;
 
+В остальном план хороший: scope удержан, новых параллельных контуров нет, Sprint 1–2 не пересобираются, а дополировываются.
+
 &nbsp;
 
-План: Sprint 2 — lifecycle комнаты и вебинара
+План: Sprint 3 — финальный UX/polish и боевая доводка live-room
 
-## Discovery (что есть сейчас)
+## Discovery (что уже есть, не дублируем)
 
-**Существующие источники в `live_events`:**
-
-- `status` (text, default `draft`) — legacy lifecycle
-- `platform_status` (text, default `draft`) — текущий de-facto SoT, значения: `draft | scheduled | live | ended | replay_available`
-- `is_published` (bool) — publish flag
-- `metadata.provider_source_status` — состояние Kinescope-источника
-- `kinescope_*` поля — provider-state видео
-
-**Существующие lifecycle-actions:** `handleLifecycleAction(enable_live_event | complete_live_event | sync_live_event)` в `AdminLiveEvents.tsx` — один путь, работает только для live_stream c `kinescope_live_event_id`, дергает Kinescope и потом пишет `platform_status` напрямую.
-
-**Save формы:** уже захардённый guard — `platform_status` не пишется на UPDATE (строки 622–651 `AdminLiveEvents.tsx`).
-
-**Реальный источник activity:** `live_active_sessions` (поля `live_event_id`, `user_id`, `last_seen_at`, `expires_at`, `revoked_at`) + edge-функция `live-session-heartbeat` (45 сек). Это и есть честный источник для participant count v1 — никакой fake presence строить не надо.
-
-**Room state до старта видео:** сейчас при `platform_status = scheduled` пользователь падает в `state = "scheduled"` и видит full-screen «Эфир ещё не начался» — без чата и вопросов. Это и есть проблема, которую закрывает PATCH 2.5.
-
-**Mapping старого → нового lifecycle:**
-
-- `draft` → `room_state = closed`
-- `scheduled` → `room_state = closed`
-- `live` → `room_state = live`
-- `ended` / `replay_available` → `room_state = completed`
-
-`platform_status` остаётся как есть — для provider/video/publish логики и replay. Не удаляем, не переопределяем.
+- **Тема:** `.live-room-themed` + CSS-переменные `--room-bg/text/text-secondary/panel/accent/tabs/admin-badge/employee-badge` (`liveRoomTheme.css`). Применяется на root, header, чат-панель, табы, message-text, meta-text, input-обёртку. **Не покрыты:** waiting-state, ended/replay-state, source_unavailable, removed_from_room, scheduled, error, фокус/border textarea, кнопка Send, сам Textarea (использует `bg-background`), ScrollArea-bar, sticky bottom (`bg-background` хардкод в LiveEventComments:248), CTA-карточки (`<Card>` shadcn → дефолтный bg).
+- **Роли:** `LiveRoleBadge.tsx` — единый SoT с 4 ролями (presenter/admin/employee/user), highlight + badge classes. Sprint 1 уже развёл цвета. Полировать только мелочи (reply-state, dark/light читаемость).
+- **Polling:** `dataRef.current` уже защищает от ре-маунта при resolve refresh; `hasAccessToken` как primitive не дёргает effect на TOKEN_REFRESHED. **Дёргается:** `useHasActiveCtaBindings` без `staleTime` на `["cta-bindings-exists"]` (есть 60s), но `useActiveParticipants` polling 20s + invalidate всей room — проверить scope.
+- **Mobile:** sticky input + safe-area уже есть в `LiveEventComments.tsx:248-253`, `LiveAutoGrowTextarea` корректный. **Не покрыто:** аналогичный sticky/safe-area в `LiveEventQuestions.tsx` (проверить parity), `h-[70dvh]` для сайдбара на mobile может конфликтовать с клавиатурой (нужно `dvh` уже стоит — ок, но CTA в сайдбаре + чат вместе могут переполнять).
+- **Lifecycle SoT:** `liveRoomLifecycle.ts` (Sprint 2) — единый mapper. Используется в admin/cabinet/room. Не трогаем логику, только consistency проверки.
 
 ---
 
-## PATCH 2.1 — модель lifecycle (миграция, add-only)
+## PATCH 3.1 — полное покрытие темы (add-only в `liveRoomTheme.css`)
 
-Миграция добавляет в `live_events`:
+Добавить scoped правила под `.live-room-themed`:
 
-- `room_state text NOT NULL DEFAULT 'closed'` с CHECK `IN ('closed','opened','live','completed')`
-- `room_opened_at timestamptz NULL`
-- `live_started_at timestamptz NULL`
-- `webinar_completed_at timestamptz NULL`
+- **Textarea/Input:** `.room-panel-input textarea, .room-panel-input input` — `background-color: var(--room-panel)`, `color: var(--room-text)`, `border-color: color-mix(in srgb, var(--room-text) 15%, transparent)`, focus-ring через `--room-accent`.
+- **Send button (ghost):** `.room-panel-input button:hover` — `background: color-mix(--room-accent 10%, transparent)`.
+- **Sticky bottom wrapper:** заменить `bg-background` в `LiveEventComments.tsx:248` и `LiveEventQuestions.tsx` (аналог) на класс `room-panel-sticky` → `background-color: var(--room-panel, hsl(var(--card)))`.
+- **CTA card:** новый класс `.room-cta-card` для `<Card>` в `LiveEventProductCta.tsx` и `LiveEventRoomBlocks.tsx` → `var(--room-panel)` + accent для CTA-кнопки.
+- **Empty/loading states чата и вопросов:** `room-meta-text` уже применён, добавить `room-empty-state` с большим padding и иконкой в тон.
+- **Waiting state:** `RoomWaitingState.tsx` — заменить `bg-muted` / `text-foreground` / `bg-primary/10` на room-tokens (`room-panel`, `room-title`, accent badge).
+- **Полноэкранные fallback-состояния** (`scheduled`, `ended_no_replay`, `source_unavailable`, `removed_from_room`, `error`, `session_expired`, `session_revoked`): сейчас рендерятся **до** обёртки `.live-room-themed`, без темы. Не оборачиваем их в room-theme (это off-room экраны), но для `ended_no_replay` (replay-state) и `scheduled` сделать опциональную обёртку с темой, если она уже в `dataRef` — иначе остаётся neutral.
+- **ScrollArea-thumb:** scoped правило `.live-room-themed [data-radix-scroll-area-thumb]` → `bg: color-mix(--room-text 25%, transparent)`.
 
-Backfill из текущего `platform_status` по mapping выше (одноразовый UPDATE в той же миграции). Старые поля не трогаем.
-
----
-
-## PATCH 2.2 — lifecycle handler (edge function)
-
-Новая функция `supabase/functions/live-event-lifecycle/index.ts` с одним endpoint и параметром `action`:
-
-- `open_room`: `closed → opened`, set `room_opened_at = now()`
-- `start_live`: `opened → live`, set `live_started_at = now()`. Дополнительно — если у эфира `event_type = live_stream` и есть `kinescope_live_event_id`, вызывает существующий `kinescope-api enable_live_event` (re-use, без дубля логики); пишет `platform_status = 'live'` атомарно.
-- `complete_webinar`: `live → completed`, set `webinar_completed_at = now()`. Аналогично, для live_stream — вызывает `complete_live_event` и пишет `platform_status = 'ended'`.
-
-Контракт: проверка роли (`admin | superadmin | employee` через `has_role_v2`), JWT actor, audit в `audit_logs` (action + before/after state), идемпотентность (повторный вызов в целевом/последующем состоянии возвращает 200 `{ skipped: true }` без изменений). Guard на недопустимые переходы → 409.
-
-Реюзаем существующие хелперы из `_shared/`. Никаких новых параллельных audit-механизмов.
+DoD: дефолтный grey-bg не выпадает ни на одном видимом элементе комнаты при выставленной теме.
 
 ---
 
-## PATCH 2.3 — lifecycle-кнопки в `AdminLiveEvents.tsx`
+## PATCH 3.2 — финальная иерархия сообщений и ролей
 
-В колонке actions таблицы и в карточке редактирования — три отдельные кнопки:
+`LiveRoleBadge.tsx`:
 
-- `Открыть комнату` (enabled только при `room_state = closed`)
-- `Начать вебинар` (enabled только при `room_state = opened`)
-- `Завершить вебинар` (enabled только при `room_state = live`, AlertDialog confirm)
+- **Reply-state:** добавить новый класс `getReplyStateClass()` — лёгкий left-indent + `border-l border-l-muted-foreground/20`, чтобы reply визуально отделялся от parent message без конфликта с role highlight.
+- **Own message:** уже есть `getOwnMessageClass()`. Усилить: если own + presenter → presenter highlight выигрывает (presenter > admin > employee > own > user). Зафиксировать приоритет в одной функции `resolveMessageHighlight({ isOwn, role })`.
+- **Reply preview (quoted):** в `LiveEventReplies.tsx` добавить класс `room-reply-quote` — `bg: color-mix(--room-panel 50%, transparent)`, `border-l-2 border-l-room-accent`, маленький font.
+- **Dark/light читаемость:** все текущие role-classes используют `text-{color}-600 dark:text-{color}-400` — оставить, добавить fallback `text-room-text` если custom theme override.
 
-Каждая кнопка: один вызов `live-event-lifecycle`, блокировка на время запроса, после ответа — invalidate `["admin-live-events"]`. Показывать текущий `room_state` отдельным badge рядом со старым `platform_status`. Старые кнопки `enable_live_event/complete_live_event/sync_live_event` оставляем как provider-уровень (sync, ручная синхронизация Kinescope) — они не ломаются.
-
----
-
-## PATCH 2.4 — кнопка «Завершить вебинар» в комнате
-
-В `src/pages/LiveEvent.tsx`, в room-header: кнопка `Завершить вебинар` рендерится только если `isStaff && room_state === 'live'`. AlertDialog с явным предупреждением, disable-on-submit, после успеха — refetch resolve. Серверная проверка прав уже в edge function (PATCH 2.2) — фронт-скрытие только для UX.
-
-`live-resolve` дополняем полем `room_state` в ответе (add-only, не ломаем существующих потребителей).
+DoD: 5 типов сообщений (user/own/admin/employee/presenter) + reply-quote визуально различимы и читаемы.
 
 ---
 
-## PATCH 2.5 — controlled waiting-state (`opened` без `live`)
+## PATCH 3.3 — polish CTA
 
-В `LiveEvent.tsx`:
+В `LiveEventProductCta.tsx` и `LiveEventRoomBlocks.tsx`:
 
-- Новый `PageState = "room_open_waiting"`.
-- Routing: если `json.room_state === 'opened'` (и не live) → `nextState = "room_open_waiting"`, **не блокируем resolve**, выдаём session_key как для live, чтобы heartbeat работал.
-- UI рендер: full room layout (header, чат, вопросы, role-badges, theme, CTA блоки) — **то же дерево, что и для `live**`, но вместо плеера/embed — карточка-плейсхолдер «Комната открыта. Эфир скоро начнётся».
-- При polling `resolve()` обнаруживается переход `opened → live` — UI автоматически переключается на player, без размонтирования чата (общий wrapper).
+- Применить `.room-cta-card` класс (PATCH 3.1).
+- Унифицировать spacing: `gap-3 p-3 md:p-4` для всех CTA-карточек, `mb-2` между несколькими CTA.
+- Mobile: `under_video` CTA — full-width, `sidebar` CTA — `max-h-[40vh] overflow-y-auto` чтобы не съедал чат.
+- Empty-state без CTA: уже корректно (компонент возвращает `null`). Проверить что `useHasActiveCtaBindings` не вызывает лишний placeholder div в `LiveEvent.tsx:546-553`.
+- CTA-кнопка: `bg-room-accent text-room-bg` через CSS-var, hover — `accent + 10% opacity`.
 
-`live-resolve` для `room_state = 'opened'`: вместо ранней ветки `scheduled` отдаёт `status: 'ok'` + флаг waiting, доступ проверяется как для live (access rules / invite).
-
----
-
-## PATCH 2.6 — participant count v1
-
-Источник — `live_active_sessions` (уже существует, реальный heartbeat).
-
-- View `live_event_active_participants_v`: `SELECT live_event_id, COUNT(DISTINCT user_id) AS active_count FROM live_active_sessions WHERE revoked_at IS NULL AND last_seen_at > now() - interval '2 minutes' GROUP BY live_event_id`. Окно 2 мин = 2.5 heartbeat-цикла.
-- Edge `live-resolve` добавляет в ответ `active_participants: number`.
-- Хук `useActiveParticipants(eventId)` — polling раз в 20 сек (тот же интервал, что resolve).
-- UI: badge `Users + N` в header комнаты, в admin-таблице (колонка), в карточке редактирования. Один источник — один selector.
-- Текст в tooltip честный: «Активные участники за последние 2 минуты».
-
-Никакого fake realtime presence, никаких WebSocket-presence channels.
+DoD: CTA выглядит частью комнаты, не ломает sticky input, на mobile sidebar-CTA скроллится отдельно от чата.
 
 ---
 
-## PATCH 2.7 — sync lifecycle между UI
+## PATCH 3.4 — финальная mobile-доводка
 
-- Единый shared-helper `src/lib/liveRoomLifecycle.ts`: типы `RoomState`, функции `getNextAction(state)`, `canTransition(from, to)`, `roomStateLabels`.
-- Использовать в: списке `AdminLiveEvents`, форме редактирования, `LiveEvent.tsx` (room header), `pages/LiveEvents.tsx` (cabinet).
-- Никаких локальных вычислений «жив ли эфир» по косвенным полям. После lifecycle-action — `invalidateQueries` всех затронутых ключей.
+- **Questions parity:** в `LiveEventQuestions.tsx` повторить sticky bottom + `safe-area-inset-bottom` + `room-panel-sticky` класс как в Comments.
+- **Sidebar высота:** заменить `h-[70dvh]` на `h-[calc(100dvh-var(--room-header-h,140px))]` — CSS-var `--room-header-h` выставляется на `.live-room-themed` через `style` (140px desktop / 110px mobile), чтобы клавиатура не перекрывала input.
+- **Auto-scroll:** при открытии клавиатуры в Comments — детектить `visualViewport` resize и удерживать `scrollTop = scrollHeight` через 200ms debounce.
+- **Длинные сообщения:** `break-words whitespace-pre-wrap` уже стоит, добавить `max-w-full overflow-wrap-anywhere` на `.room-message-text`.
+- **CTA на mobile:** sticky-CTA не блокирует input — проверить z-index (input z-10, CTA — без sticky на mobile, только в потоке).
 
----
-
-## PATCH 2.8 — разделение save и lifecycle
-
-- Save формы (`saveMutation` в `AdminLiveEvents.tsx`) **не пишет** `room_state`, `room_opened_at`, `live_started_at`, `webinar_completed_at` — добавить в payload-whitelist гард, аналогично существующему для `platform_status` (строка 622–651).
-- Lifecycle-actions **не пишут** ничего, кроме своих 4 полей + при необходимости `platform_status` для legacy-видимости.
-- DB-триггер `trg_guard_room_state_transition` на UPDATE: блокирует переходы вне матрицы `closed→opened→live→completed` (raise exception). Дополнительная защита от прямой записи мимо handler.
+DoD: mobile комната стабильна, sticky input не перекрывается клавиатурой, чат и вопросы ведут себя одинаково.
 
 ---
 
-## PATCH 2.9 — deferred list
+## PATCH 3.5 — performance / анти-дёргание
 
-В отчёте Sprint 2 явно вынести в раздел «Deferred → финальный regression после Sprint 3»:
+- `**useHasActiveCtaBindings`:** добавить `staleTime: 60_000` (уже есть) + `refetchOnWindowFocus: false` — чтобы возврат во вкладку не ре-фетчил CTA.
+- `**useActiveParticipants`:** убедиться что `useVisibilityPolling(20_000)` используется (если нет — добавить), invalidate scope только `["live-active-participants", eventId]`, **не** инвалидировать комнату.
+- **resolve polling:** уже `12s` + AbortController + dataRef-guard. Добавить `useVisibilityPolling` обёртку, чтобы при скрытом табе polling паузился (heartbeat остаётся активным до browser-suspend).
+- **Tab content:** `<TabsContent>` уже использует `forceMount={false}` дефолтно — Radix размонтирует inactive tab. Добавить `forceMount` чтобы чат и вопросы оба остались в DOM (не теряют scroll position при переключении). Подписка realtime тоже не пересоздаётся.
+- **Player wrapper:** `KinescopePlayerWrapper` ре-маунтится только при смене `videoId`. `LiveEmbedPlayer` — при смене `embedUrl`. Обернуть в `React.memo` с поверхностным сравнением.
+- **Phase transition `waiting → live`:** сейчас при переходе меняется `state`, но root `<div className="live-room-themed">` остаётся — чат/CTA/header не размонтируются. Только колонка плеера переключается с `RoomWaitingState` на player. Это уже корректно — добавить comment в коде, чтобы будущие правки не сломали.
 
-1. Moderation runtime proof в 2 окнах (из Sprint 1).
-2. Button sync во время live-save.
-3. Back/forward navigation между room/list/edit.
-4. Финальный regression: full E2E lifecycle закрытой комнаты от open до completed с пользователем в waiting-state.
+STOP-guard: не вводить новый state-manager, не менять структуру компонентов.
 
-Эти пункты не блокируют приёмку Sprint 2.
+DoD: при polling нет ре-маунтов, переключение табов сохраняет scroll, переход waiting→live меняет только player-колонку.
 
 ---
 
-## State transition matrix
+## PATCH 3.6 — финальный regression checklist (документ)
 
-```text
-closed   --open_room-->   opened
-opened   --start_live-->  live
-live     --complete-->    completed
-completed (terminal, no transitions)
+Создать `docs/SPRINT_FINAL_REGRESSION.md` с единым checklist (без кода):
 
-любой повторный вызов в целевом/последующем состоянии = idempotent skip
-любой другой переход = 409 Conflict
-```
+1. Lifecycle: `closed → opened → live → completed` через 3 кнопки в админке + кнопка завершения в комнате.
+2. Waiting-state: пользователь заходит в `opened`, видит чат/вопросы/CTA/тему, плеера нет.
+3. Chat / Questions / Replies: отправка, realtime, threaded reply, длинный текст.
+4. Moderation 2 окна: mute/unmute + remove/restore (Sprint 1 deferred).
+5. CTA visibility / mobile.
+6. Theme apply: 8 CSS-переменных применяются ко всем элементам PATCH 3.1.
+7. Participant count v1.
+8. Role colors / hierarchy: 5 типов сообщений + reply.
+9. Mobile regression: sticky input, клавиатура, длинные сообщения, sidebar scroll.
+10. Button sync во время live-save (Sprint 2 deferred).
+11. Back/forward navigation room ↔ list ↔ edit.
+12. Background return / reload — нет ре-маунта плеера и чата.
+13. Replay-state + theme.
+14. Provider degraded-mode: Kinescope упал, lifecycle перешёл, audit с `degraded:true`.
+
+DoD: документ существует, все Sprint 1+2 deferred включены.
+
+---
+
+## PATCH 3.7 — финальная sync-проверка label/badges
+
+- Проверить что в `AdminLiveEvents.tsx` (список + карточка), `LiveEvents.tsx` (cabinet), `LiveEvent.tsx` (room header) используются **только** `roomStateLabels` / `roomStateShortLabels` / `getRoomStateBadgeVM` из `liveRoomLifecycle.ts`. Никаких локальных строк.
+- `platform_status` badge остаётся как **provider-уровень** (рядом с `room_state`) — добавить tooltip «Источник видео» чтобы не путать с lifecycle.
+- Replay-state: если `room_state = completed` + `replay_enabled = true` → label «Запись доступна» (единый), если без replay → «Эфир завершён».
+- `LiveBadge` (mode `auto/live/off`) — оставить только для player-area (внутри плеера), убрать из header (там уже `roomBadgeVM` badge).
+
+DoD: одна терминология, нет визуального конфликта между `room_state` и `platform_status`.
 
 ---
 
@@ -210,29 +190,36 @@ completed (terminal, no transitions)
 
 **Новые:**
 
-- `supabase/migrations/<ts>_room_lifecycle.sql` (PATCH 2.1, 2.8 trigger)
-- `supabase/functions/live-event-lifecycle/index.ts` (PATCH 2.2)
-- `src/lib/liveRoomLifecycle.ts` (PATCH 2.7)
-- `src/hooks/useActiveParticipants.ts` (PATCH 2.6)
-- `src/components/live/RoomLifecycleActions.tsx` (PATCH 2.3, переиспользуется в admin)
-- `src/components/live/RoomWaitingState.tsx` (PATCH 2.5)
+- `docs/SPRINT_FINAL_REGRESSION.md` (PATCH 3.6)
 
-**Изменяемые (add-only, без удаления веток):**
+**Изменяемые (add-only, без удаления существующих веток):**
 
-- `src/pages/admin/AdminLiveEvents.tsx` (PATCH 2.3, 2.8)
-- `src/pages/LiveEvent.tsx` (PATCH 2.4, 2.5, 2.6)
-- `src/pages/LiveEvents.tsx` (PATCH 2.7 — badge room_state)
-- `supabase/functions/live-resolve/index.ts` (отдать `room_state`, `active_participants`, разрешить waiting-state)
+- `src/components/live/liveRoomTheme.css` (PATCH 3.1 — расширение scoped правил)
+- `src/components/live/LiveRoleBadge.tsx` (PATCH 3.2 — `resolveMessageHighlight`, reply-quote class)
+- `src/components/live/LiveEventReplies.tsx` (PATCH 3.2 — применить reply-quote)
+- `src/components/live/LiveEventComments.tsx` (PATCH 3.1/3.4/3.5 — `room-panel-sticky` класс, `forceMount`, visualViewport scroll)
+- `src/components/live/LiveEventQuestions.tsx` (PATCH 3.1/3.4 — parity sticky/safe-area)
+- `src/components/live/LiveEventProductCta.tsx` (PATCH 3.1/3.3 — `room-cta-card`, mobile spacing)
+- `src/components/live/LiveEventRoomBlocks.tsx` (PATCH 3.1/3.3 — `room-cta-card`)
+- `src/components/live/RoomWaitingState.tsx` (PATCH 3.1 — room-tokens)
+- `src/hooks/useActiveParticipants.ts` (PATCH 3.5 — `useVisibilityPolling`)
+- `src/pages/LiveEvent.tsx` (PATCH 3.4/3.5/3.7 — CSS-var `--room-header-h`, visibility polling, badge consistency, `forceMount` на TabsContent)
+- `src/pages/admin/AdminLiveEvents.tsx` (PATCH 3.7 — tooltip для `platform_status`, единые label)
+- `src/pages/LiveEvents.tsx` (PATCH 3.7 — completed/replay label единый)
 
 ---
 
-## DoD Sprint 2
+## DoD Sprint 3
 
-- Миграция применена, backfill корректный, старые поля живы.
-- Edge `live-event-lifecycle` отвечает на 3 action, idempotent, role-guarded, audit пишется.
-- В админке 3 кнопки enable/disable строго по матрице.
-- В комнате есть «Завершить вебинар» только для staff.
-- При `room_state = opened` пользователь заходит в комнату, видит чат/вопросы/CTA/тему, вместо плеера — waiting-state. После `start_live` UI переключается без перезагрузки чата.
-- Participant count v1 виден в комнате/списке/карточке, источник один (`live_active_sessions` + view), окно 2 мин.
-- Save формы не дёргает lifecycle, lifecycle не дёргает unrelated поля; DB-триггер блокирует невалидные переходы.
-- Sprint 1 deferred + Sprint 2 deferred вынесены в финальный regression после Sprint 3.
+- Все 8 CSS-переменных темы применяются: header, чат, вопросы, textarea, табы, CTA, waiting, replay, empty-state.
+- 5 типов сообщений + reply визуально различимы, не теряют читабельность в light/dark.
+- CTA polished: spacing, mobile, не ломает sticky input.
+- Mobile: sticky input + safe-area в Comments **и** Questions, sidebar высота через CSS-var, длинный контент скроллится.
+- Polling тихий: visibility-pause, AbortController, dataRef-guard, `forceMount` табов, memo плееров.
+- Final regression checklist задокументирован, все Sprint 1+2 deferred включены.
+- `room_state` и `platform_status` визуально разведены, label единый через `liveRoomLifecycle.ts`.
+- Sprint 1+2 не сломаны: lifecycle actions, waiting-state, participant count, moderation banner, role badges, theme — всё работает как раньше.
+
+## Deferred → финальный regression после Sprint 3
+
+Не плодим новые. Все из Sprint 1+2 (moderation 2 окна UI proof, button sync во время live-save, back/forward navigation, background return) идут в единый regression PATCH 3.6.
