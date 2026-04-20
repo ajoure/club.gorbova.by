@@ -10,16 +10,28 @@
  * backdrop-blur, без насыщенного fill.
  *
  * Контракт формы:
- *  - h-9 для всех вариантов
- *  - текстовые кнопки: min-w-[148px] (длинные лейблы не ломаются — wrap не ставим)
- *  - icon-only: переопределить min-w + добавить w-9 px-0
+ *  - h-9 для всех вариантов (BASE задаёт высоту, но НЕ ширину)
+ *  - 3 lifecycle-кнопки admin (Открыть/Начать/Завершить): WIDTH_FIXED = w-[184px]
+ *  - одиночные action-кнопки (Создать эфир, Пересоздать, Отвязать, Обновить): WIDTH_MIN
+ *  - icon-only (Справка): WIDTH_ICON
  */
 export const LIFECYCLE_BUTTON_BASE =
-  "inline-flex items-center justify-center h-9 min-w-[148px] gap-1.5 px-3 rounded-md text-sm font-medium " +
+  "inline-flex items-center justify-center h-9 gap-1.5 px-3 rounded-md text-sm font-medium " +
   "backdrop-blur-md border shadow-sm hover:shadow-md transition-all " +
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 " +
   "disabled:pointer-events-none disabled:opacity-40 disabled:bg-white/30 disabled:border-white/30 disabled:shadow-none disabled:hover:shadow-none " +
   "[&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0";
+
+/** Фиксированная одинаковая ширина для трёх lifecycle-кнопок admin layout
+ *  (Открыть комнату / Начать вебинар / Завершить вебинар) — ровная колонка,
+ *  не зависит от длины текста и disabled-состояния. */
+export const LIFECYCLE_BUTTON_WIDTH_FIXED = "w-[184px]";
+
+/** Min-width для одиночных action-кнопок (Создать эфир, Пересоздать, Отвязать, Обновить источник). */
+export const LIFECYCLE_BUTTON_WIDTH_MIN = "min-w-[148px]";
+
+/** Icon-only вариант (Справка). */
+export const LIFECYCLE_BUTTON_WIDTH_ICON = "w-9 px-0";
 
 export const LIFECYCLE_BUTTON_TONES = {
   /** Нейтральная (Открыть комнату): мягкий серо-белый стеклянный fill */
