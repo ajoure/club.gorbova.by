@@ -1,128 +1,204 @@
 ## да, согласен, с учетом правок:
 
-1. Не ограничивайся только `platform_status` и `metadata.provider.current.stream_status`. В discovery и proof обязательно отдельно фиксируй **оба слоя источника**:
-  - `kinescope_live_event_id` / live-source branch;
-  - `kinescope_video_id` / replay-source branch.
-  Нужно доказать, какой именно branch выбирается в момент blank screen и почему. Иначе можно «починить» кнопку, но не источник live-видео.
-2. В `live-resolve` не делай упрощённое правило только по `stream_status ∈ {on_air, live, active}`. Добавь правку:
-  - если live-source существует и `platform_status = live`, приоритет live должен быть выше replay даже если `kinescope_video_id` уже заполнен;
-  - если live-source существует, но provider status не успел обновиться, нельзя падать в blank — нужен controlled transitional state.
-  То есть нужен не просто priority, а **явный anti-blank branch** между scheduled и replay.
-3. В `LiveEvent.tsx` polling сделай ограниченным и доказуемым:
-  - polling только для состояний `scheduled`, `live_pending`, `live`;
-  - после `replay_available`, `ended_no_replay`, `source_unavailable` polling останавливается;
-  - cleanup таймера и realtime subscriptions обязателен с proof, что дубликатов нет.
-  Это важно, чтобы не создать новый баг с навигацией и повторными mount.
-4. По навигации добавь отдельный диагностический блок:
-  - проверить, не остаётся ли page в состоянии `loading/live-transition` после unmount;
-  - проверить cleanup `heartbeat`, realtime channel, player instance, pending fetch/abort controller;
-  - если есть `navigate(-1)` / browser back issue, зафиксировать, это из-за history stack или из-за неочищенного state.
-  Иначе баг «не выходит назад» останется недолокализованным.
-5. По `AdminLiveEvents.tsx` добавь важную правку:
-  - обновлять нужно **не только список** и **не только форму**, но и все derived UI-blocks карточки: source debug, action buttons, badges, OBS/source section.
-  - если есть локальный `events` массив + локальный `formData`, нужен единый post-action refresh path для обоих источников.
-  Здесь цель не просто сменить текст кнопки, а убрать весь рассинхрон карточка ↔ список ↔ source block.
-6. В runtime proof раздели автономную проверку на 2 части:
-  - **без OBS**: проверить синхронизацию кнопки, refetch, back navigation, branch selection, controlled states;
-  - **с OBS**: проверить реальное live-video и audio-loop.
-  Это нужно явно прописать, чтобы подрядчик максимально закрыл всё сам до участия Сергея.
-7. В разделе “Что останется только Сергею” уточни:
-  - от Сергея нужен только реальный запуск OBS + короткое подтверждение по audio-loop;
-  - всё остальное — discovery, код-фикс, SQL proof, edge-log proof, UI proof, проверка кнопок и навигации — исполнитель делает сам.
-8. В финальном отчёте добавь обязательный блок:
-  - **что исправлено автономно и подтверждено без OBS**;
-  - **что подтверждено только после live-прогона с OBS**;
-  - **что осталось blocked**, если live-video всё ещё не воспроизвёлся.
-  И финальный verdict давать только в формате: `fixed / partially fixed / blocked`, отдельно по каждому из трёх багов, а не одним общим словом.
-9. &nbsp;
-10. Контекст
+1. Не фиксируй как установленный факт формулировку «последний PATCH записал `platform_status='draft'`», пока не будет доказан **точный writer**. В отчёте и в discovery называй это так: **«подозрение на write-path downgrade статуса»**. Обязательно покажи:
+  - какой именно код/edge-function/client patch пишет `platform_status/status`;
+  - старое значение → новое значение;
+  - timestamp;
+  - actor/source;
+  - связь с конкретным action (`enable_live_event`, `sync_live_event`, save form, autosync и т.д.).
+2. В SQL proof добавь отдельный блок **timeline статуса** по одному эфиру:
+  &nbsp;
+  &nbsp;
+  - `platform_status`
+  - `status`
+  - `updated_at`
+  - `last_provider_sync_at`
+  - `metadata.provider.current.stream_status`  
+  Это нужно в хронологии до live / во время live / после stop, а не только один текущий snapshot.
+3. В discovery по коду ищи не только `platform_status`, но и любые массовые `.update(...)`, где в payload уходит весь `formData`/`eventData`. Нужен отдельный вывод:
+  - где статус пишется намеренно;
+  - где он может улетать побочно вместе с остальными полями формы.  
+  Это важно, потому что downgrade может идти не из `kinescope-api`, а из клиентского save/edit path.
+4. Для bug №1 раздели две возможные причины и докажи, какая из них реальная:
+  - resolver возвращает не тот branch;
+  - renderer/player в комнате не монтирует live branch, даже если resolver вернул корректный live source.  
+  В отчёте нужен явный verdict по обоим слоям отдельно.
+5. Для bug №2 по кнопке в карточке проверь и зафиксируй **query keys фактически используемого хука**. В отчёте покажи:
+  - каким queryKey загружается список;
+  - каким queryKey загружается карточка;
+  - какие invalidate/refetch вызываются после lifecycle action.  
+  Без этого нельзя считать фикс доказанным.
+6. Для bug №3 по навигации нужен отдельный proof, а не побочный вывод. Проверь и приложи:
+  - воспроизведение шага назад/вперёд;
+  - есть ли pending interval/subscription/fetch после unmount;
+  - есть ли ошибки в console при уходе со страницы;
+  - исчезает ли проблема после фикса cleanup.  
+  Итоговый статус по навигации не связывай автоматически с blank screen, пока нет прямого proof.
+7. В runtime proof по комнате добавь обязательный контроль:
+  - сколько player/iframe инстансов реально в DOM;
+  - какой `src` у iframe;
+  - меняется ли branch после polling без reload.  
+  Это критично для исключения двойного mount / неверного embed URL.
+8. Если подтвердится downgrade статуса, делай минимальный фикс с защитой от понижения:
+  - sync-path не должен понижать `platform_status` из `live` обратно в `draft/scheduled`, если provider уже `on-air`;
+  - form save не должен отправлять `platform_status/status`, если пользователь не менял lifecycle action.  
+  Это оформить как **surgical hardening**, без затрагивания replay/recorded/access/notifications.
+9. В следующем отчёте хочу видеть не только proof, но и короткую таблицу:
+  - root cause;
+  - файл/функция;
+  - что изменено;
+  - чем доказано;
+  - статус по багу (`fixed / partially fixed / blocked`).
+10. Если live уже остановится до снятия proof, не закрывай баг по косвенным данным. Тогда делай всё автономное сейчас, а для финального UI proof запроси короткое повторное окно live на 3–5 минут и отдельно пометь это как единственный remaining blocker.
 
-Три блокирующих бага в live-флоу:
+&nbsp;
 
-1. **Blank screen** на `/live/:slug` во время реального live (Kinescope транслирует — наша комната пустая).
-2. **Сломанная навигация** после захода в комнату (back/forward требуют hard reload).
-3. **Рассинхрон кнопки** «Запустить эфир» в карточке vs список vs комната.
+Итог: план правильный, двигайся по нему. Главный акцент — сначала доказать точный writer статуса и разделить resolver/render/navigation на независимые слои, потом уже давать фикс и verdict.
 
-Правило исполнения: add-only, surgical, без затрагивания access-core / notifications / replay flow / recorded_webinar.
+&nbsp;
 
-## Discovery (что я уже понял из кода и runtime)
+Цель
 
-Основные подозрения по архитектуре:
+Закрыть требование подрядчика: дать **доказуемый runtime proof** на реальном live-эфире, а не симуляцию. По каждому из 3 багов вынести verdict в формате `fixed / partially fixed / blocked` отдельно.
 
-- `live-resolve` edge function = SoT для source branch (`scheduled`/`live`/`replay`/`source_unavailable`).
-- `LiveEvent.tsx` (страница комнаты) выбирает branch и монтирует `LiveKinescopePlayer`.
-- `AdminLiveEvents.tsx` — карточка с lifecycle actions; есть локальная `formData`, которая после `enable_live_event` не перечитывается.
-- В `live_events` есть пара полей `kinescope_live_event_id` (стрим) и `kinescope_video_id` (запись/replay) — потенциальная коллизия приоритетов.
-- Console уже показывает `Function components cannot be given refs` в `AdminLiveEvents` Dialog — отдельный варнинг, в патч-скоуп не лезу.
+## Контекст из network-логов (что уже видно)
 
-Что нужно прочитать/проверить (Discovery шаг патча):
+По эфиру `1514525a-e693-4791-93c7-8f00ff76fe40` (`testovyy-vebinar-200416`):
 
-- `src/pages/LiveEvent.tsx` — branch selection, mount/unmount, cleanup useEffect.
-- `supabase/functions/live-resolve/index.ts` — приоритет live > replay > scheduled, как реагирует на одновременное наличие `kinescope_live_event_id` + `kinescope_video_id`.
-- `src/pages/admin/AdminLiveEvents.tsx` — invalidate queries после lifecycle action, источник `platform_status` для текста кнопки.
-- `src/components/live/LiveKinescopePlayer.tsx` (или аналог) — guard на пустой src.
-- Любые `subscribe()` / `setInterval` / `useHeartbeat` в `LiveEvent.tsx` без cleanup.
+- `kinescope_live_event_id = 019daab7-341f-7cca-6d31-bea9026d6564` ✅
+- `metadata.provider.current.stream_status = "on-air"` ✅ (Kinescope реально стримит)
+- `metadata.provider.current.play_link = https://kinescope.io/0czeY9ooXTeQ5JV35ctZZf` ✅
+- НО: последний PATCH к `live_events` записал `platform_status = "draft"` и `status = "draft"` ❌
 
-## План правок (5 точечных, add-only)
+**Это ключевой факт**: provider синхронизируется правильно, но наш UI/sync-функция **затирает platform_status обратно в `draft**`, хотя stream идёт. Отсюда:
 
-### 1. Resolver priority (live-resolve edge)
+- `live-resolve` не видит `platform_status='live'` → не отдаёт live-branch → blank screen
+- Карточка показывает «Запустить эфир» — потому что снаружи действительно уже не `live`, а `draft`
 
-Зафиксировать приоритет: `live` (есть `kinescope_live_event_id` + `stream_status` ∈ {`on_air`,`live`,`active`}) → `replay` (`platform_status='replay_available'` + `kinescope_video_id`) → `scheduled` → `source_unavailable`. Никогда не возвращать blank, если есть хоть какой-то источник.
+Это объясняет оба бага одной причиной: **есть write-path, который затирает `platform_status` после ручного запуска эфира**.
 
-### 2. Live-room rendering (`src/pages/LiveEvent.tsx`)
+## Discovery (шаг 1, без правок кода)
 
-- Явный switch по `resolved_source.kind` без implicit fallthrough.
-- Если `kind==='live'` и есть `play_link`/`live_id` → монтируем live-player.
-- Если `kind==='live'` но source пустой → показываем controlled state «Эфир запускается, подождите…» вместо blank.
-- Поллинг `live-resolve` каждые 10–15 сек пока `platform_status='scheduled'|'live'`, чтобы автоматически переключиться на live без ручного reload.
+### 1.1. SQL proof — текущее состояние БД
 
-### 3. Cleanup и навигация
+```sql
+-- A. Текущее состояние эфира
+SELECT id, slug, platform_status, status,
+       kinescope_live_event_id, kinescope_video_id, replay_video_id,
+       metadata->'provider'->'current'->>'stream_status' AS provider_stream_status,
+       metadata->'provider'->'current'->>'play_link' AS play_link,
+       last_provider_sync_at, updated_at
+FROM live_events
+WHERE id = '1514525a-e693-4791-93c7-8f00ff76fe40';
 
-В `LiveEvent.tsx`:
+-- B. История изменений platform_status за последний час (через domain_events)
+SELECT created_at, event_type, source, payload
+FROM domain_events
+WHERE entity_id = '1514525a-e693-4791-93c7-8f00ff76fe40'
+  AND created_at > now() - interval '2 hours'
+ORDER BY created_at DESC
+LIMIT 50;
 
-- В `useEffect` все `setInterval`, supabase realtime channels, player refs обязательно очищаются в return.
-- Убрать любые `await` внутри `onAuthStateChange` (известная race-condition).
-- Player `unmount` перед navigate, без блокирующих promise.
+-- C. Кто и когда сетил status='draft'
+SELECT *
+FROM audit_logs
+WHERE meta::text ILIKE '%1514525a-e693-4791-93c7-8f00ff76fe40%'
+  AND created_at > now() - interval '2 hours'
+ORDER BY created_at DESC LIMIT 20;
+```
 
-### 4. SoT синхронизация кнопки `Запустить эфир` (`src/pages/admin/AdminLiveEvents.tsx`)
+### 1.2. Edge logs — payload `live-resolve` и `kinescope-api`
 
-- После `enable_live_event` / `complete_live_event` → `queryClient.invalidateQueries(['admin-live-events'])` + повторный fetch конкретного эфира + `setFormData` из свежего ответа.
-- Текст кнопки рассчитывать **только** из `formData.platform_status` после refetch, не из локального `isStarted` флага.
-- Realtime subscription на `live_events` UPDATE для текущего id — если статус меняется снаружи, форма сама обновится.
+- `supabase--edge_function_logs(function_name='live-resolve', search='1514525a')` — что resolver реально возвращает по этому slug.
+- `supabase--edge_function_logs(function_name='kinescope-api', search='019daab7')` — на каком вызове записался `platform_status='draft'`.
 
-### 5. Диагностика proof
+### 1.3. Code review — кто пишет `platform_status`
 
-Добавить `console.debug('[live-resolve]', { kind, platform_status, has_live_id, has_video_id, source_url })` в `LiveEvent.tsx` — для runtime proof в консоли preview, без UI-шума.
+Поиск всех write-path:
 
-## Что НЕ трогаю
+- `code--search_files query="platform_status\s*[:=]" include_patterns="src/**,supabase/functions/**"`
+- особое внимание: `kinescope-api/sync_live_event`, `useEventProvider`, `AdminLiveEvents.tsx` PATCH.
 
-- `live_event_access_rules`, `user_has_live_event_access`, `notifications`, `kill-switch`, `proof_mode`, recorded_webinar flow, comments/questions/moderation, product CTA, theme.
-- `src/integrations/supabase/{client,types}.ts`, `supabase/config.toml` (project-level).
+Гипотеза: в `kinescope-api` (action `sync_live_event`) или в клиенте после sync есть PATCH, который пишет `platform_status = 'draft'` поверх `live`, потому что берёт `status` из локального formData, который не обновился.
 
-## Файлы под правку (предварительно)
+## Шаг 2 — Live runtime proof (browser tools, на текущем live)
 
-- `supabase/functions/live-resolve/index.ts` — priority + null-safety.
-- `src/pages/LiveEvent.tsx` — branch switch, polling, cleanup, debug-log.
-- `src/pages/admin/AdminLiveEvents.tsx` — refetch после lifecycle, кнопка из свежего status, realtime subscription.
-- (опц.) `src/components/live/LiveKinescopePlayer.tsx` — guard на пустой src.
+### 2.1. UI proof через browser tools
 
-## Runtime proof (что сделаю сам без Сергея)
+- `browser--navigate_to_sandbox(path='/admin/live-events')` — список со статусами.
+- `browser--screenshot()` — фиксирую: какой статус на карточке у `testovyy-vebinar-200416`.
+- открыть карточку, screenshot — текст кнопки.
+- `browser--navigate_to_sandbox(path='/live/testovyy-vebinar-200416')` — состояние комнаты.
+- `browser--screenshot()` — пустой экран / live player / scheduled / replay.
 
-- Открою список → карточку → нажму «Запустить эфир» (если безопасно для теста) → проверю обновление кнопки и списка → открою `/live/testovyy-sergey` → проверю branch в console.debug → нажму «Завершить эфир» → проверю replay-state.
-- SQL: `live_events` до/после каждого action, `platform_status` + `metadata.provider.current.stream_status`.
-- Edge logs: `live-resolve` payload (kind, source).
+### 2.2. Network proof через browser tools
 
-## Что останется только Сергею
+- `browser--list_network_requests` — отфильтровать `live-resolve`.
+- `browser--get_network_request_details` — снять полный JSON ответа: `kind`, `play_link`, `live_id`, `video_id`, `platform_status`, `reason`.
 
-- Реальный OBS-стрим на RTMP Kinescope (только так можно проверить, что live-player реально воспроизводит видео и аудио).
-- Audio-loop test в момент реального live.
+### 2.3. Console proof
 
-## Финальный отчёт (структура)
+- `browser--read_console_logs(search='[live-resolve]')` — что debug-log печатает в комнате.
 
-1. Root cause blank screen.
-2. Root cause рассинхрона кнопки.
-3. Root cause навигации (или подтверждение, что это тот же state-management баг).
-4. Список изменённых файлов.
-5. Что проверено автономно (UI / SQL / edge-logs proof).
-6. Остаток для Сергея (OBS live).
-7. Verdict: fixed / partially fixed / blocked.
+## Шаг 3 — Локализация root cause (без правок кода до подтверждения)
+
+Анализирую матрицу:
+
+
+| `live-resolve.kind`       | UI в комнате    | Root cause                                                       |
+| ------------------------- | --------------- | ---------------------------------------------------------------- |
+| `live` + есть `play_link` | blank           | баг в `LiveEvent.tsx` / player mount                             |
+| `scheduled`               | blank/scheduled | resolver не получает `platform_status='live'` → write-path затёр |
+| `replay`                  | replay          | приоритет неверный (но в этом эфире `kinescope_video_id=null`)   |
+| `source_unavailable`      | placeholder     | resolver падает                                                  |
+
+
+Если подтверждается «гипотеза затирания» (status=draft при on-air) → правка точечная: убрать запись `status`/`platform_status` из sync-path, либо защитить write от downgrade.
+
+## Шаг 4 — Точечный фикс (только после подтверждения root cause)
+
+Add-only, без правок access-core/notifications/replay:
+
+- **Если затирание из `kinescope-api/sync_live_event**`: убрать `platform_status` и `status` из UPDATE — sync должен писать только `metadata.provider.*` и `last_provider_sync_at`.
+- **Если затирание из клиента (`AdminLiveEvents.tsx`)**: убрать `platform_status: 'draft'` из `formData` PATCH — оно не должно быть частью полей формы.
+- **Если resolver правильный, но room blank**: фикс в `LiveEvent.tsx` — явный switch по `kind === 'live'`, mount `LiveKinescopePlayer`, guard на пустой `play_link`.
+- **Если карточка не рефрешится**: уже добавлен `invalidateQueries(['live-event-provider', eventId])` — проверить, что хук в карточке использует именно этот ключ, иначе поправить queryKey.
+
+## Шаг 5 — Финальный отчёт (4 блока + matrix)
+
+### UI proof (скрины)
+
+- админка список → статус
+- карточка → текст кнопки
+- комната → реальный рендер
+
+### Network proof
+
+- payload `live-resolve` целиком (kind, source, embed)
+
+### Console proof
+
+- лог `[live-resolve]` из комнаты
+
+### SQL proof
+
+- `live_events` снапшот до/во время/после
+- `domain_events` timeline кто и когда менял `platform_status`
+
+### Verdict (отдельно по каждому багу)
+
+- **Blank screen**: `fixed / partially fixed / blocked`
+- **Рассинхрон кнопки**: `fixed / partially fixed / blocked`
+- **Навигация**: `fixed / partially fixed / blocked`
+
+## Ограничения / правила
+
+- Add-only. Не трогаю: `live_event_access_rules`, notifications, replay flow, recorded_webinar, access-core (`user_has_live_event_access`), kill-switch, proof_mode.
+- Не даю verdict `fixed` без UI-скрина живого player.
+- Все 4 блока proof обязательны.
+- Если live от Сергея уже завершён (stream_status станет `finished`) — попрошу его перезапустить OBS на 3–5 минут для финального UI-proof; всё остальное (SQL/edge/code) сделаю автономно прямо сейчас.
+
+## Что нужно от Сергея (минимум)
+
+- Подтвердить, что OBS прямо сейчас стримит на эфир `testovyy-vebinar-200416` (по network-логу `stream_status=on-air` — стримит). Если уже остановил — перезапустить на 3–5 минут для финального скрина комнаты.
+- Всё остальное собираю сам без его участия.
