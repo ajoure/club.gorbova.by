@@ -178,6 +178,9 @@ export default function LiveEvent() {
           source_reason: json.resolved_source?.source_reason,
           source_url: json.resolved_source?.resolved_embed_url,
           is_poll: isPoll,
+          room_theme: (json as any).room_theme,
+          live_badge_mode: (json as any).live_badge_mode,
+          presenter_user_id: (json as any).presenter_user_id,
         });
 
         let nextState: PageState = "error";
@@ -441,11 +444,11 @@ export default function LiveEvent() {
 
   // CTA bindings hooks moved to top of component (Rules of Hooks)
 
-  // Room theme from metadata — strictly local to .live-room-themed scope.
-  const metadata = (data as any)?.metadata || {};
-  const roomTheme = (data as any)?.room_theme || metadata.room_theme || {};
-  const presenterUserId: string | null = metadata.presenter_user_id || null;
-  const liveBadgeMode: LiveBadgeMode = (metadata.live_badge_mode as LiveBadgeMode) || "auto";
+  // Room theme + UX metadata from live-resolve (passed through from live_events.metadata).
+  // Strictly local to .live-room-themed scope — never leaks globally.
+  const roomTheme: any = (data as any)?.room_theme || {};
+  const presenterUserId: string | null = (data as any)?.presenter_user_id || null;
+  const liveBadgeMode: LiveBadgeMode = ((data as any)?.live_badge_mode as LiveBadgeMode) || "auto";
   const themeStyle: React.CSSProperties = {
     ['--room-bg' as string]: roomTheme.background_color || undefined,
     ['--room-text' as string]: roomTheme.primary_text_color || undefined,
