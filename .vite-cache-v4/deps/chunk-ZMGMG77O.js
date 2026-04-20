@@ -8,16 +8,6 @@ import {
   __toESM
 } from "./chunk-WOOG5QLI.js";
 
-// node_modules/.bun/@radix-ui+primitive@1.1.2/node_modules/@radix-ui/primitive/dist/index.mjs
-function composeEventHandlers(originalEventHandler, ourEventHandler, { checkForDefaultPrevented = true } = {}) {
-  return function handleEvent(event) {
-    originalEventHandler == null ? void 0 : originalEventHandler(event);
-    if (checkForDefaultPrevented === false || !event.defaultPrevented) {
-      return ourEventHandler == null ? void 0 : ourEventHandler(event);
-    }
-  };
-}
-
 // node_modules/.bun/@radix-ui+react-use-controllable-state@1.2.2+0e2fb8dbc083adda/node_modules/@radix-ui/react-use-controllable-state/dist/index.mjs
 var React2 = __toESM(require_react(), 1);
 var React22 = __toESM(require_react(), 1);
@@ -97,7 +87,6 @@ function isFunction(value) {
 var SYNC_STATE = Symbol("RADIX:SYNC_STATE");
 
 export {
-  composeEventHandlers,
   useControllableState
 };
-//# sourceMappingURL=chunk-5UUJO5LN.js.map
+//# sourceMappingURL=chunk-ZMGMG77O.js.map
