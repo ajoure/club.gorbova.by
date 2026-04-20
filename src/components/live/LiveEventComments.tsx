@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Loader2, Send } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -26,16 +26,20 @@ interface Comment {
   created_at: string;
   author_display_name: string | null;
   author_role: string | null;
-  profile?: { full_name: string | null; first_name: string | null; last_name: string | null } | null;
+  author_avatar_url: string | null;
+  // Legacy fallback: только avatar_url используется (snapshot — SoT для имени).
+  profile?: { avatar_url: string | null } | null;
 }
 
 function resolveDisplayName(comment: Comment): string {
+  // Snapshot author_display_name — единственный SoT для имени автора сообщения.
+  // Profile fallback оставлен только для аватарки (см. resolveAvatarUrl).
   if (comment.author_display_name) return comment.author_display_name;
-  const p = comment.profile;
-  if (p?.full_name) return p.full_name;
-  const parts = [p?.first_name, p?.last_name].filter(Boolean);
-  if (parts.length > 0) return parts.join(" ");
   return "Пользователь";
+}
+
+function resolveAvatarUrl(comment: Comment): string | null {
+  return comment.author_avatar_url || comment.profile?.avatar_url || null;
 }
 
 function getInitials(name: string): string {
@@ -61,22 +65,24 @@ export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile 
     queryFn: async () => {
       const { data, error } = await supabase
         .from("live_event_comments")
-        .select("id, user_id, content, created_at, author_display_name, author_role")
+        .select("id, user_id, content, created_at, author_display_name, author_role, author_avatar_url")
         .eq("live_event_id", liveEventId)
         .order("created_at", { ascending: true })
         .limit(200);
       if (error) throw error;
 
-      const legacyComments = (data || []).filter(c => !c.author_display_name);
-      let profiles: Record<string, { full_name: string | null; first_name: string | null; last_name: string | null }> = {};
-      if (legacyComments.length > 0) {
-        const userIds = [...new Set(legacyComments.map(c => c.user_id))];
+      // Legacy fallback: тянем ТОЛЬКО avatar_url, имя берётся из snapshot (см. resolveDisplayName).
+      // Минимизация данных: никаких email/phone/admin-данных в participant-facing UI.
+      const needsAvatarFallback = (data || []).filter(c => !c.author_avatar_url);
+      let profiles: Record<string, { avatar_url: string | null }> = {};
+      if (needsAvatarFallback.length > 0) {
+        const userIds = [...new Set(needsAvatarFallback.map(c => c.user_id))];
         const { data: profileData } = await supabase
           .from("profiles")
-          .select("user_id, full_name, first_name, last_name")
+          .select("user_id, avatar_url")
           .in("user_id", userIds);
         for (const p of profileData || []) {
-          profiles[p.user_id] = { full_name: p.full_name, first_name: p.first_name, last_name: p.last_name };
+          profiles[p.user_id] = { avatar_url: p.avatar_url };
         }
       }
 
@@ -184,24 +190,30 @@ export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile 
         ) : (
           comments.map((comment) => {
             const displayName = resolveDisplayName(comment);
+            const avatarUrl = resolveAvatarUrl(comment);
             const initials = getInitials(displayName);
             const displayRole = resolveDisplayRole(comment);
             const isOwn = user?.id === comment.user_id;
             const highlight = resolveMessageHighlight({ isOwn, role: displayRole });
+            // SECURITY: onOpenProfile передаётся ТОЛЬКО если isStaff===true (см. LiveEvent.tsx).
+            // Для non-staff handler === undefined → нет onClick/cursor-pointer/aria-button.
+            // Политика: mem://security/access-control/webinar-staff-action-guards.
+            const canOpenProfile = !!onOpenProfile;
             return (
               <div key={comment.id}>
                 <div className={`flex gap-2 group rounded-lg p-2 ${highlight}`}>
                   <Avatar
-                    className="h-7 w-7 shrink-0 cursor-pointer"
-                    onClick={() => onOpenProfile?.(comment.user_id)}
+                    className={`h-7 w-7 shrink-0 ${canOpenProfile ? "cursor-pointer" : ""}`}
+                    onClick={canOpenProfile ? () => onOpenProfile!(comment.user_id) : undefined}
                   >
+                    {avatarUrl && <AvatarImage src={avatarUrl} alt={displayName} />}
                     <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span
-                        className="text-xs font-medium room-message-text cursor-pointer hover:underline"
-                        onClick={() => onOpenProfile?.(comment.user_id)}
+                        className={`text-xs font-medium room-message-text ${canOpenProfile ? "cursor-pointer hover:underline" : ""}`}
+                        onClick={canOpenProfile ? () => onOpenProfile!(comment.user_id) : undefined}
                       >
                         {displayName}
                         {isOwn && <span className="ml-1 text-[10px] text-primary">(вы)</span>}

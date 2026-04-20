@@ -3,8 +3,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Loader2, Send, CheckCircle2 } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Loader2, Send, CheckCircle2, Lock } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import {
@@ -27,16 +27,19 @@ interface Question {
   created_at: string;
   author_display_name: string | null;
   author_role: string | null;
-  profile?: { full_name: string | null; first_name: string | null; last_name: string | null } | null;
+  author_avatar_url: string | null;
+  // Legacy fallback: только avatar_url (snapshot — SoT для имени).
+  profile?: { avatar_url: string | null } | null;
 }
 
 function resolveDisplayName(q: Question): string {
+  // Snapshot — единственный SoT для имени автора.
   if (q.author_display_name) return q.author_display_name;
-  const p = q.profile;
-  if (p?.full_name) return p.full_name;
-  const parts = [p?.first_name, p?.last_name].filter(Boolean);
-  if (parts.length > 0) return parts.join(" ");
   return "Пользователь";
+}
+
+function resolveAvatarUrl(q: Question): string | null {
+  return q.author_avatar_url || q.profile?.avatar_url || null;
 }
 
 function getInitials(name: string): string {
@@ -64,22 +67,23 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
       queryFn: async () => {
         const { data, error } = await supabase
           .from("live_event_questions")
-          .select("id, user_id, content, is_answered, created_at, author_display_name, author_role")
+          .select("id, user_id, content, is_answered, created_at, author_display_name, author_role, author_avatar_url")
           .eq("live_event_id", liveEventId)
           .order("created_at", { ascending: true })
           .limit(200);
         if (error) throw error;
 
-        const legacy = (data || []).filter(q => !q.author_display_name);
-        let profiles: Record<string, { full_name: string | null; first_name: string | null; last_name: string | null }> = {};
-        if (legacy.length > 0) {
-          const userIds = [...new Set(legacy.map(q => q.user_id))];
+        // Legacy fallback: тянем ТОЛЬКО avatar_url. Имя — из snapshot.
+        const needsAvatarFallback = (data || []).filter(q => !q.author_avatar_url);
+        let profiles: Record<string, { avatar_url: string | null }> = {};
+        if (needsAvatarFallback.length > 0) {
+          const userIds = [...new Set(needsAvatarFallback.map(q => q.user_id))];
           const { data: profileData } = await supabase
             .from("profiles")
-            .select("user_id, full_name, first_name, last_name")
+            .select("user_id, avatar_url")
             .in("user_id", userIds);
           for (const p of profileData || []) {
-            profiles[p.user_id] = { full_name: p.full_name, first_name: p.first_name, last_name: p.last_name };
+            profiles[p.user_id] = { avatar_url: p.avatar_url };
           }
         }
 
@@ -165,6 +169,11 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
     return (
       <div ref={ref} className="flex flex-col h-full min-h-0 room-panel">
         <div className="flex-1 min-h-0 overflow-y-auto space-y-1 p-3 overscroll-contain">
+          {/* Анонимность вопросов: hint всегда сверху */}
+          <div className="flex items-center gap-1.5 bg-muted/50 rounded-md px-2 py-1.5 text-xs text-muted-foreground mb-2">
+            <Lock className="h-3 w-3 shrink-0" />
+            <span>Анонимные вопросы. Их видят модераторы и ведущий.</span>
+          </div>
           {isLoading ? (
             <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
           ) : !questions?.length ? (
@@ -172,24 +181,30 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
           ) : (
             questions.map((q) => {
               const displayName = resolveDisplayName(q);
+              const avatarUrl = resolveAvatarUrl(q);
               const initials = getInitials(displayName);
               const displayRole = resolveDisplayRole(q);
               const isOwn = user?.id === q.user_id;
               const highlight = resolveMessageHighlight({ isOwn, role: displayRole });
+              // SECURITY: onOpenProfile передаётся ТОЛЬКО при isStaff (см. LiveEvent.tsx).
+              // Для non-staff handler === undefined → нет onClick/cursor-pointer/aria-роли.
+              // Политика: mem://security/access-control/webinar-staff-action-guards.
+              const canOpenProfile = !!onOpenProfile;
               return (
                 <div key={q.id}>
                   <div className={`flex gap-2 group rounded-lg p-2 ${q.is_answered ? "opacity-70" : ""} ${highlight}`}>
                     <Avatar
-                      className="h-7 w-7 shrink-0 cursor-pointer"
-                      onClick={() => onOpenProfile?.(q.user_id)}
+                      className={`h-7 w-7 shrink-0 ${canOpenProfile ? "cursor-pointer" : ""}`}
+                      onClick={canOpenProfile ? () => onOpenProfile!(q.user_id) : undefined}
                     >
+                      {avatarUrl && <AvatarImage src={avatarUrl} alt={displayName} />}
                       <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
                     </Avatar>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span
-                          className="text-xs font-medium room-message-text cursor-pointer hover:underline"
-                          onClick={() => onOpenProfile?.(q.user_id)}
+                          className={`text-xs font-medium room-message-text ${canOpenProfile ? "cursor-pointer hover:underline" : ""}`}
+                          onClick={canOpenProfile ? () => onOpenProfile!(q.user_id) : undefined}
                         >
                           {displayName}
                           {isOwn && <span className="ml-1 text-[10px] text-primary">(вы)</span>}
@@ -257,7 +272,7 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
                     ? "Вы удалены из комнаты"
                     : isMuted
                     ? "Вы заглушены модератором"
-                    : "Задать вопрос ведущему..."
+                    : "Задать анонимный вопрос..."
                 }
                 maxHeight={160}
                 className="flex-1"
