@@ -682,6 +682,24 @@ export default function AdminLiveEvents() {
       // by lifecycle actions (handleLifecycleAction) and provider sync. Form save MUST NOT
       // downgrade an active 'live' status back to whatever stale value sits in form state.
       // Initial 'status' is set only on INSERT (new event creation).
+      // Sprint A — autowebinar mapping:
+      //   one_time     → event_type='recorded_webinar' (NO autoweb_mode), без дублей
+      //   scheduled/JIT/on_demand → event_type='autowebinar' + autoweb_mode
+      // Один источник истины: пользователь выбирает 4 режима в UI, БД хранит 2 типа.
+      let effectiveEventType: EventType = data.event_type;
+      let autowebMode: AutowebUserMode | null = null;
+      if (data.event_type === "recorded_webinar" || data.event_type === "autowebinar") {
+        if (data.autoweb_user_mode === "one_time") {
+          effectiveEventType = "recorded_webinar";
+          autowebMode = null;
+        } else {
+          effectiveEventType = "autowebinar";
+          autowebMode = data.autoweb_user_mode;
+        }
+      }
+      const effectiveSourceKind: SourceKind =
+        effectiveEventType === "live_stream" ? "kinescope_live_event" : "kinescope_video";
+
       const payload: Record<string, any> = {
         slug: data.slug,
         title: data.title,
@@ -694,12 +712,14 @@ export default function AdminLiveEvents() {
         replay_enabled: data.replay_enabled,
         invite_mode: data.invite_mode,
         direct_access_allowed: data.direct_access_allowed,
-        event_type: data.event_type,
-        source_kind: sourceKind,
+        event_type: effectiveEventType,
+        source_kind: effectiveSourceKind,
         event_timezone: data.event_timezone,
         kinescope_live_event_id: data.kinescope_live_event_id || null,
         kinescope_project_id: data.kinescope_project_id || null,
         metadata: mergedMetadata,
+        autoweb_mode: autowebMode,
+        autoweb_config: effectiveEventType === "autowebinar" ? data.autoweb_config : {},
       };
 
       // On INSERT only: seed initial lifecycle status. UPDATE never touches platform_status/status.
