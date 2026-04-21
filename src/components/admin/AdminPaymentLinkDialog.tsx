@@ -386,15 +386,12 @@ export function AdminPaymentLinkDialog({
     }
   }, [open]);
 
-  // PATCH PAYMENT-CONFLICT: helper — конфликт релевантен только для текущей exact-pair и только для подписки.
+  // PATCH PAYMENT-CONFLICT v3: конфликт product-level (без tariff_id) и только для подписки.
   const isCurrentConflict = useMemo(() => {
     if (!conflictData) return false;
     if (effectivePaymentType !== "subscription") return false;
-    return (
-      conflictData.product_id === selectedProductId &&
-      conflictData.tariff_id === selectedTariffId
-    );
-  }, [conflictData, effectivePaymentType, selectedProductId, selectedTariffId]);
+    return conflictData.product_id === selectedProductId;
+  }, [conflictData, effectivePaymentType, selectedProductId]);
 
   const selectedProduct = products?.find((p) => p.id === selectedProductId);
   const selectedTariff = tariffs?.find((t) => t.id === selectedTariffId);
@@ -437,14 +434,11 @@ export function AdminPaymentLinkDialog({
 
       if (error) throw error;
       if (!data.success && data.error === "existing_subscription_conflict" && data.conflict) {
-        // PATCH PAYMENT-CONFLICT: принимаем конфликт только если это same-pair для текущего выбора.
-        if (
-          data.conflict.product_id === selectedProductId &&
-          data.conflict.tariff_id === selectedTariffId
-        ) {
+        // PATCH PAYMENT-CONFLICT v3: принимаем конфликт только если это same-product для текущего выбора.
+        if (data.conflict.product_id === selectedProductId) {
           setConflictData(data.conflict);
         } else {
-          console.warn("[AdminPaymentLinkDialog] received conflict for different pair — ignoring", data.conflict);
+          console.warn("[AdminPaymentLinkDialog] received conflict for different product — ignoring", data.conflict);
         }
         return null;
       }

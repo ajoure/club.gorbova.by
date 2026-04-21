@@ -1135,11 +1135,11 @@ export function PaymentDialog({
               </Alert>
             )}
 
-            {conflictData && isSubscription && !isTrial && (
+            {conflictData && conflictData.product_id === productId && isSubscription && !isTrial && (
               <Alert className="border-amber-500/50 bg-amber-50 dark:bg-amber-950/20">
                 <Repeat className="h-4 w-4 text-amber-600" />
                 <AlertTitle className="text-amber-800 dark:text-amber-200">
-                  У вас уже есть активная подписка на этот тариф
+                  У вас уже есть активная подписка на этот продукт
                 </AlertTitle>
                 <AlertDescription className="space-y-3">
                   <div className="text-sm space-y-1 text-amber-800 dark:text-amber-200">
