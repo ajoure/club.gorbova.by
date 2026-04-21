@@ -634,7 +634,7 @@ export default function AdminLiveEvents() {
     mutationFn: async (data: LiveEventForm) => {
       if (slugExists) throw new Error("Такой slug уже существует. Выберите другой.");
 
-      const sourceKind: SourceKind = data.event_type === "live_stream" ? "kinescope_live_event" : "kinescope_video";
+      // sourceKind вычисляется ниже в зависимости от effectiveEventType (Sprint A patch).
 
       // Merge metadata: preserve existing provider data
       let mergedMetadata: Record<string, any> = {
