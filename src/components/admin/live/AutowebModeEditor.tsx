@@ -395,8 +395,21 @@ export function AutowebModeEditor({ userMode, onUserModeChange, config, onConfig
                 </Button>
               </div>
               {previewError && (
-                <div className="flex items-center gap-2 text-xs text-destructive">
-                  <AlertCircle className="h-3 w-3" /> {previewError}
+                <div className="space-y-2">
+                  <div className="flex items-start gap-2 text-xs text-destructive">
+                    <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                    <span>{previewError}</span>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={loadPreview}
+                    disabled={previewLoading}
+                  >
+                    {previewLoading ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
+                    Повторить
+                  </Button>
                 </div>
               )}
               {!previewError && preview.length === 0 && !previewLoading && (
