@@ -224,6 +224,7 @@ export default function Consultation() {
           tariffs={productData.tariffs}
           isReentryPricing={productData.is_reentry_pricing}
           reentryMessage={productData.reentry_message}
+          layout="vertical-grid"
         />
       ) : (
         <section id="tariffs" className="py-20">
