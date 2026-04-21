@@ -288,6 +288,37 @@ export default function AdminProductDetailV2() {
   const [sectionPreviewMode, setSectionPreviewMode] = useState<"desktop" | "mobile">("desktop");
   const isMobile = useIsMobile();
 
+  // Layout-настройка тарифной секции (SoT — продукт.landing_config.tariffs_layout).
+  // Сохраняется через useUpdateProductV2 (тот же путь, что и любые другие поля продукта).
+  // После save инвалидируем кэш публичных продуктов, чтобы preview/публичные страницы/site-builder
+  // подхватили новое значение без перезагрузки страницы.
+  const queryClient = useQueryClient();
+  const updateProductMutation = useUpdateProductV2();
+  const currentTariffsLayout: "auto" | "vertical-grid" =
+    ((product as any)?.landing_config?.tariffs_layout as "auto" | "vertical-grid" | undefined) ?? "auto";
+
+  const handleChangeTariffsLayout = async (next: "auto" | "vertical-grid") => {
+    if (!productId || !product) return;
+    if (next === currentTariffsLayout) return;
+    const prevConfig = ((product as any).landing_config ?? {}) as Record<string, any>;
+    const nextConfig = { ...prevConfig, tariffs_layout: next };
+    try {
+      await updateProductMutation.mutateAsync({
+        id: productId,
+        landing_config: nextConfig as any,
+      } as any);
+      // Invalidate public-product caches so preview + public pages + site-builder pick up the change
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["products_v2", productId] }),
+        queryClient.invalidateQueries({ queryKey: ["public-product"] }),
+        queryClient.invalidateQueries({ queryKey: ["public-product-by-slug"] }),
+      ]);
+    } catch (e) {
+      // toast обрабатывается внутри mutation onError
+    }
+  };
+
+
   // Offer form
   const [offerForm, setOfferForm] = useState({
     tariff_id: "",
