@@ -21,6 +21,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { z } from "zod";
 import { PhoneInput, isValidPhoneNumber } from "@/components/ui/phone-input";
 import { useTelegramLinkStatus, useStartTelegramLink } from "@/hooks/useTelegramLink";
+import {
+  cancelOldSubscriptionForReplacement,
+  type SubscriptionConflictInfo,
+} from "@/lib/subscriptionReplacement";
 
 interface SubscriptionMessage {
   title?: string;           // "Ежемесячная подписка" / "Подписка на Клуб"
