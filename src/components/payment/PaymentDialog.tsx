@@ -211,6 +211,9 @@ export function PaymentDialog({
       setTelegramDeepLink(null);
       setShowTrialUsedModal(false);
       setPaymentError(null);
+      setConflictData(null);
+      setReplaceStep('idle');
+      setShowReplaceConfirm(false);
       if (user && session) {
         // User is authenticated - use their data
         setFormData({
