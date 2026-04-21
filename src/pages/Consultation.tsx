@@ -101,7 +101,7 @@ export default function Consultation() {
             <AnimatedSection animation="fade-up" delay={100}>
               <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-foreground leading-tight mb-6">
                 Платная консультация{" "}
-                <span className="text-primary">Катерины Горбова</span>
+                <span className="text-primary">Катерины Горбовой</span>
               </h1>
             </AnimatedSection>
 
