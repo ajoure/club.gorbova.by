@@ -331,6 +331,9 @@ export function AdminPaymentLinkDialog({
     setSelectedOfferId("");
     setCustomAmount("");
     setGeneratedUrl(null);
+    setConflictData(null);
+    setReplaceStep("idle");
+    setShowCancelConfirm(false);
   }, [selectedProductId]);
 
   // Reset offer override на смене тарифа
@@ -338,7 +341,17 @@ export function AdminPaymentLinkDialog({
     setSelectedOfferId("");
     setCustomAmount("");
     setGeneratedUrl(null);
+    setConflictData(null);
+    setReplaceStep("idle");
+    setShowCancelConfirm(false);
   }, [selectedTariffId]);
+
+  // Сбрасывать stale conflict при смене типа оплаты или конкретного offer
+  useEffect(() => {
+    setConflictData(null);
+    setReplaceStep("idle");
+    setShowCancelConfirm(false);
+  }, [paymentType, selectedOfferId]);
 
   // Автоподстановка суммы при смене effective offer.
   // ВАЖНО: offer.amount хранится в BYN — НЕ делить на 100.
@@ -372,6 +385,16 @@ export function AdminPaymentLinkDialog({
       setReplaceStep("idle");
     }
   }, [open]);
+
+  // PATCH PAYMENT-CONFLICT: helper — конфликт релевантен только для текущей exact-pair и только для подписки.
+  const isCurrentConflict = useMemo(() => {
+    if (!conflictData) return false;
+    if (effectivePaymentType !== "subscription") return false;
+    return (
+      conflictData.product_id === selectedProductId &&
+      conflictData.tariff_id === selectedTariffId
+    );
+  }, [conflictData, effectivePaymentType, selectedProductId, selectedTariffId]);
 
   const selectedProduct = products?.find((p) => p.id === selectedProductId);
   const selectedTariff = tariffs?.find((t) => t.id === selectedTariffId);
