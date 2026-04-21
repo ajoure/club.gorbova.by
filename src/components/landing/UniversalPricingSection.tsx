@@ -17,6 +17,12 @@ interface UniversalPricingSectionProps {
   disclaimer?: string;
   isReentryPricing?: boolean;
   reentryMessage?: string;
+  /**
+   * Layout mode for tariff cards.
+   * - "auto" (default): TariffCarouselGrid decides (carousel for >3, grid otherwise).
+   * - "vertical-grid": Always vertical CSS grid — 1 col on mobile, 2 cols on md+. No carousel.
+   */
+  layout?: "auto" | "vertical-grid";
 }
 
 export function UniversalPricingSection({
@@ -27,6 +33,7 @@ export function UniversalPricingSection({
   disclaimer,
   isReentryPricing,
   reentryMessage,
+  layout = "auto",
 }: UniversalPricingSectionProps) {
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [selectedOffer, setSelectedOffer] = useState<{
