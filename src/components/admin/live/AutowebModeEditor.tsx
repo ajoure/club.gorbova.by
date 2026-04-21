@@ -352,10 +352,10 @@ export function AutowebModeEditor({ userMode, onUserModeChange, config, onConfig
 
             <div className="space-y-2">
               <Label>Исключённые даты (blackout)</Label>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-end gap-2">
                 {blackoutDates.map((d, i) => (
                   <Badge key={i} variant="secondary" className="gap-1">
-                    {d}
+                    {format(parseISO(d), "d MMM yyyy", { locale: ru })}
                     <button
                       type="button"
                       className="ml-1 text-muted-foreground hover:text-destructive"
@@ -365,18 +365,22 @@ export function AutowebModeEditor({ userMode, onUserModeChange, config, onConfig
                     </button>
                   </Badge>
                 ))}
-                <Input
-                  type="date"
-                  className="h-7 w-40"
-                  onChange={(e) => {
-                    if (!e.target.value) return;
-                    if (!blackoutDates.includes(e.target.value)) {
-                      patchSchedule({ blackout_dates: [...blackoutDates, e.target.value].sort() });
-                    }
-                    e.target.value = "";
-                  }}
-                />
+                <div className="w-44">
+                  <DatePicker
+                    value=""
+                    placeholder="+ добавить дату"
+                    onChange={(v) => {
+                      if (!v) return;
+                      if (!blackoutDates.includes(v)) {
+                        patchSchedule({ blackout_dates: [...blackoutDates, v].sort() });
+                      }
+                    }}
+                  />
+                </div>
               </div>
+              <p className="text-xs text-muted-foreground">
+                Сравнение даты делается в часовом поясе эфира ({sched.timezone ?? timezone}).
+              </p>
             </div>
 
             <div className="rounded-lg border bg-muted/30 p-3">
