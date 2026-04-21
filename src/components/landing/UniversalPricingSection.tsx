@@ -17,6 +17,12 @@ interface UniversalPricingSectionProps {
   disclaimer?: string;
   isReentryPricing?: boolean;
   reentryMessage?: string;
+  /**
+   * Layout mode for tariff cards.
+   * - "auto" (default): TariffCarouselGrid decides (carousel for >3, grid otherwise).
+   * - "vertical-grid": Always vertical CSS grid — 1 col on mobile, 2 cols on md+. No carousel.
+   */
+  layout?: "auto" | "vertical-grid";
 }
 
 export function UniversalPricingSection({
@@ -27,6 +33,7 @@ export function UniversalPricingSection({
   disclaimer,
   isReentryPricing,
   reentryMessage,
+  layout = "auto",
 }: UniversalPricingSectionProps) {
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [selectedOffer, setSelectedOffer] = useState<{
@@ -77,18 +84,33 @@ export function UniversalPricingSection({
             </AnimatedSection>
           )}
 
-          <TariffCarouselGrid count={tariffs.length}>
-            {tariffs.map((tariff, index) => (
-              <AnimatedSection key={tariff.id} animation="fade-up" delay={index * 100} className="h-full">
-                <TariffCard
-                  tariff={tariff}
-                  onSelectOffer={handleSelectOffer}
-                  showBadges={config.show_badges !== false}
-                  priceSuffix={priceSuffix}
-                />
-              </AnimatedSection>
-            ))}
-          </TariffCarouselGrid>
+          {layout === "vertical-grid" ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-5xl mx-auto items-stretch">
+              {tariffs.map((tariff, index) => (
+                <AnimatedSection key={tariff.id} animation="fade-up" delay={index * 100} className="h-full">
+                  <TariffCard
+                    tariff={tariff}
+                    onSelectOffer={handleSelectOffer}
+                    showBadges={config.show_badges !== false}
+                    priceSuffix={priceSuffix}
+                  />
+                </AnimatedSection>
+              ))}
+            </div>
+          ) : (
+            <TariffCarouselGrid count={tariffs.length}>
+              {tariffs.map((tariff, index) => (
+                <AnimatedSection key={tariff.id} animation="fade-up" delay={index * 100} className="h-full">
+                  <TariffCard
+                    tariff={tariff}
+                    onSelectOffer={handleSelectOffer}
+                    showBadges={config.show_badges !== false}
+                    priceSuffix={priceSuffix}
+                  />
+                </AnimatedSection>
+              ))}
+            </TariffCarouselGrid>
+          )}
 
           {disclaimerText && (
             <AnimatedSection animation="fade-up" delay={400}>
