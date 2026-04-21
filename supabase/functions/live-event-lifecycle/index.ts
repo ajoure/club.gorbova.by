@@ -143,27 +143,55 @@ Deno.serve(async (req) => {
   ) {
     providerResult.attempted = true;
     try {
-      const providerAction = action === "start_live" ? "enable_live_event" : "complete_live_event";
-      const resp = await fetch(`${SUPABASE_URL}/functions/v1/kinescope-api`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${SERVICE_KEY}`,
-          apikey: SERVICE_KEY,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          action: providerAction,
-          live_event_id: ev.kinescope_live_event_id,
-        }),
-      });
-      if (!resp.ok) {
-        const txt = await resp.text();
+      // PATCH KINESCOPE-TOKEN: подтягиваем активный Kinescope instance_id из integration_instances.
+      // kinescope-api читает api_token из integration_instances.config по instance_id.
+      // Если instance_id не передан — функция вернёт "API токен не найден" (400).
+      const { data: kinescopeInstance } = await admin
+        .from("integration_instances")
+        .select("id, status")
+        .eq("provider", "kinescope")
+        .eq("status", "connected")
+        .order("is_default", { ascending: false })
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      if (!kinescopeInstance?.id) {
         providerResult = {
           attempted: true,
           ok: false,
-          reason: "provider_call_failed",
-          error: `${resp.status} ${txt.slice(0, 300)}`,
+          reason: "provider_token_missing",
+          error: "Не настроена интеграция Kinescope (нет активного instance в integration_instances).",
         };
+      } else {
+        const providerAction = action === "start_live" ? "enable_live_event" : "complete_live_event";
+        const resp = await fetch(`${SUPABASE_URL}/functions/v1/kinescope-api`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${SERVICE_KEY}`,
+            apikey: SERVICE_KEY,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            action: providerAction,
+            live_event_id: ev.kinescope_live_event_id,
+            instance_id: kinescopeInstance.id,
+          }),
+        });
+        if (!resp.ok) {
+          const txt = await resp.text();
+          // PATCH KINESCOPE-TOKEN: распознаём специфичную ошибку отсутствия токена.
+          const reason =
+            txt.includes("токен не найден") || txt.includes("API token") || resp.status === 401
+              ? "provider_token_missing"
+              : "provider_call_failed";
+          providerResult = {
+            attempted: true,
+            ok: false,
+            reason,
+            error: `${resp.status} ${txt.slice(0, 300)}`,
+          };
+        }
       }
     } catch (e) {
       providerResult = {
