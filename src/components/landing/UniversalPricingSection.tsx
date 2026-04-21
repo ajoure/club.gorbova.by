@@ -38,7 +38,7 @@ export function UniversalPricingSection({
   disclaimer,
   isReentryPricing,
   reentryMessage,
-  layout = "auto",
+  layout: layoutProp,
 }: UniversalPricingSectionProps) {
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [selectedOffer, setSelectedOffer] = useState<{
@@ -49,6 +49,11 @@ export function UniversalPricingSection({
 
   const config = product.landing_config || {};
   const priceSuffix = config.price_suffix || "BYN";
+
+  // SoT для раскладки тарифной секции — продукт.
+  // Явный prop разрешён только для debug/test (см. JSDoc на UniversalPricingSectionProps.layout).
+  const effectiveLayout: "auto" | "vertical-grid" =
+    layoutProp ?? config.tariffs_layout ?? "auto";
 
   const handleSelectOffer = (offer: TariffOffer, tariff: PublicTariff) => {
     setSelectedOffer({ offer, tariff, productId: product.id });
