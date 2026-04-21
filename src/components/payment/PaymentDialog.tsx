@@ -1285,7 +1285,7 @@ export function PaymentDialog({
               >
                 {user && session ? "Отмена" : "Назад"}
               </Button>
-              <Button onClick={handlePayment} disabled={isLoading || isTestPaymentLoading || isLoadingCard} className="flex-1">
+              <Button onClick={handlePayment} disabled={isLoading || isTestPaymentLoading || isLoadingCard || !!conflictData} className="flex-1">
                 {isLoadingCard ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
