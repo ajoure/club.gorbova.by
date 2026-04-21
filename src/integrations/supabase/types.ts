@@ -6041,9 +6041,170 @@ export type Database = {
           },
         ]
       }
+      live_event_session_progress: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          cta_clicks: Json
+          first_joined_at: string | null
+          id: string
+          last_seen_at: string | null
+          last_video_position_seconds: number
+          max_watched_seconds: number
+          metadata: Json
+          poll_answers: Json
+          session_id: string
+          updated_at: string
+          viewer_proof_id: string | null
+          viewer_user_id: string | null
+          watch_percent: number
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          cta_clicks?: Json
+          first_joined_at?: string | null
+          id?: string
+          last_seen_at?: string | null
+          last_video_position_seconds?: number
+          max_watched_seconds?: number
+          metadata?: Json
+          poll_answers?: Json
+          session_id: string
+          updated_at?: string
+          viewer_proof_id?: string | null
+          viewer_user_id?: string | null
+          watch_percent?: number
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          cta_clicks?: Json
+          first_joined_at?: string | null
+          id?: string
+          last_seen_at?: string | null
+          last_video_position_seconds?: number
+          max_watched_seconds?: number
+          metadata?: Json
+          poll_answers?: Json
+          session_id?: string
+          updated_at?: string
+          viewer_proof_id?: string | null
+          viewer_user_id?: string | null
+          watch_percent?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_event_session_progress_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_event_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_event_sessions: {
+        Row: {
+          created_at: string
+          ends_at: string
+          id: string
+          live_event_id: string
+          metadata: Json
+          mode: string
+          starts_at: string
+          status: string
+          updated_at: string
+          viewer_proof_id: string | null
+          viewer_user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          ends_at: string
+          id?: string
+          live_event_id: string
+          metadata?: Json
+          mode: string
+          starts_at: string
+          status?: string
+          updated_at?: string
+          viewer_proof_id?: string | null
+          viewer_user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          ends_at?: string
+          id?: string
+          live_event_id?: string
+          metadata?: Json
+          mode?: string
+          starts_at?: string
+          status?: string
+          updated_at?: string
+          viewer_proof_id?: string | null
+          viewer_user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_event_sessions_live_event_id_fkey"
+            columns: ["live_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_event_timeline_events: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          is_active: boolean
+          kind: string
+          live_event_id: string
+          offset_seconds: number
+          payload: Json
+          sort_order: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          kind: string
+          live_event_id: string
+          offset_seconds: number
+          payload?: Json
+          sort_order?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          kind?: string
+          live_event_id?: string
+          offset_seconds?: number
+          payload?: Json
+          sort_order?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_event_timeline_events_live_event_id_fkey"
+            columns: ["live_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_events: {
         Row: {
           access_rule: Json
+          autoweb_config: Json
+          autoweb_mode: string | null
           created_at: string
           description: string | null
           direct_access_allowed: boolean
@@ -6074,6 +6235,8 @@ export type Database = {
         }
         Insert: {
           access_rule?: Json
+          autoweb_config?: Json
+          autoweb_mode?: string | null
           created_at?: string
           description?: string | null
           direct_access_allowed?: boolean
@@ -6104,6 +6267,8 @@ export type Database = {
         }
         Update: {
           access_rule?: Json
+          autoweb_config?: Json
+          autoweb_mode?: string | null
           created_at?: string
           description?: string | null
           direct_access_allowed?: boolean
