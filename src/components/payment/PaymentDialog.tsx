@@ -1415,6 +1415,47 @@ export function PaymentDialog({
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Replace subscription confirmation */}
+      <Dialog open={showReplaceConfirm} onOpenChange={setShowReplaceConfirm}>
+        <DialogContent className="w-[calc(100vw-24px)] sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Repeat className="h-5 w-5 text-amber-600" />
+              Заменить подписку?
+            </DialogTitle>
+            <DialogDescription>
+              Текущая активная подписка будет отменена у провайдера, после чего откроется страница оплаты новой подписки. Доступ по старой подписке прекратится.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-2 mt-4">
+            <Button
+              variant="outline"
+              onClick={() => setShowReplaceConfirm(false)}
+              disabled={replaceStep !== 'idle'}
+              className="flex-1"
+            >
+              Отмена
+            </Button>
+            <Button
+              onClick={handleReplaceSubscription}
+              disabled={replaceStep !== 'idle'}
+              className="flex-1"
+            >
+              {replaceStep !== 'idle' ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Repeat className="mr-2 h-4 w-4" />
+              )}
+              {replaceStep === 'cancelling'
+                ? 'Отменяем старую…'
+                : replaceStep === 'creating'
+                ? 'Создаём новую…'
+                : 'Подтвердить замену'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
