@@ -1,76 +1,81 @@
 
 
-# План: PATCH KINESCOPE-TOKEN — восстановление API-токена Kinescope для lifecycle-вызовов
+# План: PATCH LIVE-EVENTS-TABLE-RESET — каноническая шапка таблицы /admin/live-events
 
 ## 1. Diagnose (зафиксировано)
 
-`audit_logs` для эфира `ee1ec5ca-2ecf-417e-9f0c-83201abcb4a5` (Тест 21.04.26):
-- `complete_webinar` 16:16:54Z → `room_state=completed` ✅
-- `provider.attempted=true`, `provider.ok=false`, `provider.error="400 {\"success\":false,\"error\":\"API токен не найден\"}"` ❌
-- Та же ошибка на `start_live` 06:29:06Z.
+На скриншоте `/admin/live-events` заголовки колонок наезжают друг на друга:
+- «Комната» накладывается на «Источник»
+- «Опубликован» накладывается на «Дата»
+- «Активные» накладывается на «Запись»
 
-Вывод: **lifecycle работает**, падает только провайдерский вызов в `kinescope-api`. На UI это даёт warning toast — пользователь воспринимает его как «ошибку завершения», хотя room_state переключился штатно.
+При этом ячейки тела отрисованы корректно и в правильном порядке. Значит, данные/рендер cell — ок, ломается шапка.
 
-`root_cause = kinescope_api_token_missing_or_invalid` (не lifecycle).
+Корневая причина: устаревший snapshot колонок в `localStorage` под ключом `admin_live_events_columns_v1`. После добавления новых колонок (`room_state`, `provider`, `participants`, `replay`) в `LIVE_EVENTS_DEFAULT_COLUMNS` старая запись содержит:
+- частично отсутствующие/повторяющиеся `order`,
+- `width` от прежней схемы,
+- порядок ключей, конфликтующий с новыми defaults.
+
+`loadColumns()` в `useLiveEventsColumns.ts` мерджит сохранённые поля поверх defaults без нормализации `order`. В результате `SortableContext` (dnd-kit) получает массив с дублирующимися/смешанными `order`, transform-ы для соседних `<th>` накладываются — визуально шапка «слипается».
+
+Тело таблицы рендерится напрямую через `style={{ width: col.width }}` без dnd-transform, поэтому строки выглядят правильно — отсюда расхождение шапки и тела.
+
+`root_cause = stale_localstorage_columns_snapshot_v1`.
 
 ## 2. Бизнес-правило
 
-Завершение вебинара типа `live_stream` обязано:
-1. Перевести `room_state` в `completed` (выполняется).
-2. Дернуть Kinescope `complete_live_event`, чтобы провайдер закрыл стрим (НЕ выполняется).
-
-Без шага 2 у Kinescope стрим может остаться открытым → проблемы с записью/replay.
+Каноническая таблица `/admin/live-events` должна:
+1. Рендериться с дефолтными ширинами и порядком, заданными в `LIVE_EVENTS_DEFAULT_COLUMNS`.
+2. Шапка и тело строго синхронизированы по числу/порядку/ширине колонок.
+3. Любая ломаная/устаревшая запись в `localStorage` не должна ломать рендер — fallback на defaults.
 
 ## 3. Изменения
 
-### A. Проверить и восстановить секрет `KINESCOPE_API_TOKEN`
-- Прочитать через `secrets--fetch_secrets`, какой именно секрет ожидает `kinescope-api/index.ts`.
-- Если секрет отсутствует / пустой / устарел — запросить у пользователя через `add_secret`.
-- Не подставлять заглушки.
+### A. `src/hooks/useLiveEventsColumns.ts`
+- Bump `STORAGE_KEY` с `admin_live_events_columns_v1` → `admin_live_events_columns_v2`. Старый кеш игнорируется автоматически, пользователи получают чистые defaults.
+- В `loadColumns()` добавить нормализацию:
+  - если у сохранённой колонки `order` отсутствует или не число → брать `order` из defaults;
+  - если `width` отсутствует/≤ 0/не число → брать `width` из defaults;
+  - убедиться, что итоговый массив содержит ровно те ключи, что в defaults (без дублей и без посторонних), и `order` уникален (повторно проиндексировать после сортировки).
+- (Опционально) добавить «cleanup»: при первом запуске v2 удалить ключ v1 из `localStorage`.
 
-### B. `supabase/functions/kinescope-api/index.ts`
-- Прочитать текущую обработку отсутствия токена.
-- Убедиться, что функция возвращает структурированный ответ (не голый 400 с русским текстом), чтобы в audit_logs писалось пригодное для диагностики поле, а в UI выводилось понятное сообщение.
-
-### C. `supabase/functions/live-event-lifecycle/index.ts`
-- Improvement (small): при `provider.error` содержащем `"API токен не найден"` маркировать `provider.reason='provider_token_missing'`, чтобы admin UI показывал понятный текст «Не настроен токен Kinescope — обратитесь к админу», а не raw JSON.
-
-### D. UI — `src/components/live/RoomLifecycleActions.tsx`
-- В warning toast подменять `provider.error` на пользовательскую формулировку, если `provider.reason='provider_token_missing'`.
-- Не показывать сырой JSON английским/русским смешанным текстом.
+### B. Никаких других правок
+- `LiveEventsTable.tsx` не трогаем — он канонический.
+- `SortableResizableTableHead` не трогаем.
+- `LIVE_EVENTS_DEFAULT_COLUMNS` остаются как есть (значения уже корректные: 40/280/110/140/140/110/160/90/100/200/60).
 
 ## 4. Файлы
 
 | Файл | Изменение |
 |---|---|
-| секрет `KINESCOPE_API_TOKEN` | восстановить через add_secret (если отсутствует/невалиден) |
-| `supabase/functions/kinescope-api/index.ts` | проверить обработку отсутствия токена, структурированный ответ |
-| `supabase/functions/live-event-lifecycle/index.ts` | mapping `provider.reason='provider_token_missing'` |
-| `src/components/live/RoomLifecycleActions.tsx` | человеческий текст warning toast |
+| `src/hooks/useLiveEventsColumns.ts` | bump storage key до v2 + нормализация `order`/`width` в `loadColumns`, чистка v1 |
 
 ## 5. Не трогаем
 
-- схему `live_events`, `audit_logs`;
-- room lifecycle state machine (она работает);
-- replay flow, kinescope-webhook;
-- общую логику provider degraded-mode.
+- схему таблиц БД, RLS, edge functions;
+- `LiveEventsTable.tsx`, `SortableResizableTableHead.tsx`, `ColumnSettings.tsx`;
+- любую логику lifecycle/Kinescope/replay;
+- другие admin-таблицы и их storage-ключи.
 
 ## 6. Verify
 
-1. Реальный вызов `kinescope-api` с действующим токеном — `200 OK`.
-2. Завершение тестового live_stream-эфира → `audit_logs.meta.provider.ok=true`, без `provider_call_failed`.
-3. UI больше не показывает warning toast; только success toast «Завершить вебинар — выполнено».
-4. Проверка идемпотентности: повторный complete на уже completed → `skipped: true`.
+1. После деплоя зайти на `/admin/live-events`, **localStorage очищать вручную не нужно** — v2 ключ создаётся пустым.
+2. Шапка отрисовывается без наложений: колонки «Название · Тип · Комната · Источник · Опубликован · Дата · Активные · Запись · Lifecycle · ⋯» расположены подряд, заголовки не пересекаются.
+3. Каждая ячейка тела находится строго под своим заголовком.
+4. Drag-reorder и resize работают; после reload порядок/ширина сохраняются под ключом v2.
+5. Скрытие/показ колонок через `ColumnSettings` работает; locked-колонки (`checkbox`, `actions`) недоступны для скрытия.
 
 ## 7. STOP-guards
 
-- Если пользователь не может предоставить валидный Kinescope токен — НЕ деплоить C/D, оставить только улучшение текста ошибки, чтобы пользователь не воспринимал degraded-mode как фатальную ошибку.
-- Не трогать саму lifecycle-функцию в части перехода состояний.
+- Не менять структуру `ColumnConfig` и контракт `useFormsColumns`-подобных хуков.
+- Не трогать другие таблицы (`/admin/contacts`, `/admin/forms`, `/admin/payments/links`) — у них свои storage-ключи.
+- Если после v2 проблема воспроизводится — это значит дефект в `SortableResizableTableHead`, тогда отдельный патч.
 
 ## 8. DoD
 
-1. `KINESCOPE_API_TOKEN` валиден и читается функцией `kinescope-api`.
-2. Тестовое завершение live_stream-эфира проходит с `provider.ok=true`.
-3. Сырой JSON провайдера больше не показывается пользователю.
-4. Lifecycle-state-machine не изменена.
+1. Шапка `/admin/live-events` рендерится без наложений на свежем сеансе и при наличии старого `v1` кеша.
+2. Storage-ключ переключён на `admin_live_events_columns_v2`, старый `v1` удаляется при первом запуске.
+3. `loadColumns` устойчив к мусору в localStorage (нормализация `order`/`width`).
+4. Resize/reorder/visibility работают, изменения сохраняются.
+5. Скриншот mobile 440×798 + desktop с корректной шапкой приложен.
 
