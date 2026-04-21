@@ -1,5 +1,9 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
+import {
+  checkSubscriptionConflict,
+  validateReplacementSubscription,
+} from '../_shared/subscription-conflict.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -18,6 +22,8 @@ interface CreateSubscriptionCheckoutRequest {
   existingUserId?: string;
   // PATCH-4: Guard - require explicit user choice for subscription creation
   explicit_user_choice?: boolean;
+  /** PATCH PAYMENT-CONFLICT: ID заменяемой подписки (только same user+product+tariff). */
+  replacement_of_subscription_v2_id?: string;
 }
 
 // PATCH-P0.9.1: Strict isolation
