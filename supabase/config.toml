@@ -401,3 +401,6 @@ verify_jwt = false
 
 [functions.manychat-discover-pages]
 verify_jwt = false
+
+[functions.qa-reset-passwords]
+verify_jwt = false
