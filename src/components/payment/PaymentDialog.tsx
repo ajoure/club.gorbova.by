@@ -457,9 +457,68 @@ export function PaymentDialog({
     setStep("ready");
   };
 
+  // Helper: invoke subscription checkout, optionally as replacement of existing same-pair sub
+  const invokeProviderManagedCheckout = async (replacementOfSubscriptionV2Id?: string) => {
+    return await supabase.functions.invoke("bepaid-create-subscription-checkout", {
+      body: {
+        productId,
+        tariffCode,
+        offerId,
+        customerEmail: formData.email,
+        customerPhone: formData.phone,
+        customerFirstName: formData.firstName,
+        customerLastName: formData.lastName,
+        existingUserId,
+        explicit_user_choice: true,
+        ...(replacementOfSubscriptionV2Id
+          ? { replacement_of_subscription_v2_id: replacementOfSubscriptionV2Id }
+          : {}),
+      },
+    });
+  };
+
+  const handleReplaceSubscription = async () => {
+    if (!conflictData) return;
+    setShowReplaceConfirm(false);
+    setIsLoading(true);
+    setPaymentError(null);
+    setStep("processing");
+    try {
+      setReplaceStep('cancelling');
+      await cancelOldSubscriptionForReplacement({
+        conflict: conflictData,
+        source: 'public_checkout_replace',
+        targetUserId: existingUserId,
+      });
+
+      setReplaceStep('creating');
+      const { data, error } = await invokeProviderManagedCheckout(conflictData.subscription_v2_id);
+      if (error) throw new Error(data?.error || error.message);
+      if (!data?.success) throw new Error(data?.error || 'Ошибка создания новой подписки');
+
+      if (data.redirect_url) {
+        window.location.href = data.redirect_url;
+        return;
+      }
+      throw new Error('Не удалось получить ссылку на оплату.');
+    } catch (e) {
+      console.error('[PaymentDialog] replace flow failed', e);
+      const message = e instanceof Error ? e.message : 'Не удалось заменить подписку';
+      setPaymentError(message);
+      toast.error(message);
+      setReplaceStep('idle');
+      setStep('ready');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handlePayment = async () => {
     setIsLoading(true);
     setPaymentError(null);
+    setConflictData(null);
+    setReplaceStep('idle');
+    setShowReplaceConfirm(false);
     setStep("processing");
 
     console.log("handlePayment called", { savedCard, tariffCode, user: !!user, productId, paymentFlowType });
@@ -469,20 +528,7 @@ export function PaymentDialog({
       // This explicitly creates a bePaid subscription (provider-managed recurring)
       if (paymentFlowType === 'provider_managed' && isSubscription && !isTrial) {
         console.log("Using provider_managed flow (bePaid subscription checkout) - explicit user choice");
-        const { data, error } = await supabase.functions.invoke("bepaid-create-subscription-checkout", {
-          body: {
-            productId,
-            tariffCode,
-            offerId,
-            customerEmail: formData.email,
-            customerPhone: formData.phone,
-            customerFirstName: formData.firstName,
-            customerLastName: formData.lastName,
-            existingUserId,
-            // PATCH-4: Explicit user choice guard
-            explicit_user_choice: true,
-          },
-        });
+        const { data, error } = await invokeProviderManagedCheckout();
 
         if (error) {
           if (data?.alreadyUsedTrial) {
@@ -491,10 +537,23 @@ export function PaymentDialog({
             setIsLoading(false);
             return;
           }
+          // Same-pair subscription conflict — show keep/replace UI, do NOT redirect to /purchases
+          if (data?.error === 'existing_subscription_conflict' && data?.conflict) {
+            setConflictData(data.conflict as SubscriptionConflictInfo);
+            setStep('ready');
+            setIsLoading(false);
+            return;
+          }
           throw new Error(data?.error || error.message);
         }
 
         if (!data.success) {
+          if (data?.error === 'existing_subscription_conflict' && data?.conflict) {
+            setConflictData(data.conflict as SubscriptionConflictInfo);
+            setStep('ready');
+            setIsLoading(false);
+            return;
+          }
           throw new Error(data.error || "Ошибка создания подписки bePaid");
         }
 
