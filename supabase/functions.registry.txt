@@ -87,3 +87,8 @@ live-event-notifications-cron
 rules-retroapply
 webinar-activity-consumer
 repair-module-entitlements
+
+# Autowebinars (Sprint A)
+autoweb-resolve-sessions
+autoweb-create-personal-session
+autoweb-generate-occurrences
