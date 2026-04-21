@@ -61,7 +61,7 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const body: CreateSubscriptionCheckoutRequest = await req.json();
-    const { productId, tariffCode, offerId, customerEmail, customerPhone, customerFirstName, customerLastName, existingUserId, explicit_user_choice } = body;
+    const { productId, tariffCode, offerId, customerEmail, customerPhone, customerFirstName, customerLastName, existingUserId, explicit_user_choice, replacement_of_subscription_v2_id } = body;
 
     // PATCH-4: Guard - require explicit user choice
     if (!explicit_user_choice) {
