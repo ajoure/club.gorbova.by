@@ -84,18 +84,33 @@ export function UniversalPricingSection({
             </AnimatedSection>
           )}
 
-          <TariffCarouselGrid count={tariffs.length}>
-            {tariffs.map((tariff, index) => (
-              <AnimatedSection key={tariff.id} animation="fade-up" delay={index * 100} className="h-full">
-                <TariffCard
-                  tariff={tariff}
-                  onSelectOffer={handleSelectOffer}
-                  showBadges={config.show_badges !== false}
-                  priceSuffix={priceSuffix}
-                />
-              </AnimatedSection>
-            ))}
-          </TariffCarouselGrid>
+          {layout === "vertical-grid" ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-5xl mx-auto items-stretch">
+              {tariffs.map((tariff, index) => (
+                <AnimatedSection key={tariff.id} animation="fade-up" delay={index * 100} className="h-full">
+                  <TariffCard
+                    tariff={tariff}
+                    onSelectOffer={handleSelectOffer}
+                    showBadges={config.show_badges !== false}
+                    priceSuffix={priceSuffix}
+                  />
+                </AnimatedSection>
+              ))}
+            </div>
+          ) : (
+            <TariffCarouselGrid count={tariffs.length}>
+              {tariffs.map((tariff, index) => (
+                <AnimatedSection key={tariff.id} animation="fade-up" delay={index * 100} className="h-full">
+                  <TariffCard
+                    tariff={tariff}
+                    onSelectOffer={handleSelectOffer}
+                    showBadges={config.show_badges !== false}
+                    priceSuffix={priceSuffix}
+                  />
+                </AnimatedSection>
+              ))}
+            </TariffCarouselGrid>
+          )}
 
           {disclaimerText && (
             <AnimatedSection animation="fade-up" delay={400}>
