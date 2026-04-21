@@ -78,6 +78,14 @@ export interface LandingConfig {
   disclaimer_text?: string;
   show_badges?: boolean;
   price_suffix?: string;
+  /**
+   * Раскладка тарифной секции на всех product-driven рендерерах
+   * (publish pages, site-builder pricing block, admin preview).
+   * - "auto" (default): TariffCarouselGrid решает сам (карусель при count > 3, иначе grid).
+   * - "vertical-grid": всегда CSS-grid 1col mobile / 2col md+. Без карусели.
+   * SoT — продукт. Page/block-specific override запрещён.
+   */
+  tariffs_layout?: "auto" | "vertical-grid";
   sections?: {
     type: string;
     title?: string;
