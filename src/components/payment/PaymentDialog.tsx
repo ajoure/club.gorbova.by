@@ -717,6 +717,9 @@ export function PaymentDialog({
     setEmailCheckResult(null);
     setLoginError(null);
     setPaymentError(null);
+    setConflictData(null);
+    setReplaceStep('idle');
+    setShowReplaceConfirm(false);
     setErrors({});
     setStep("email");
   };
