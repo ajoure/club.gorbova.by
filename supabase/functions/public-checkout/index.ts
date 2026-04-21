@@ -84,7 +84,7 @@ Deno.serve(async (req) => {
 
     // POST — create checkout
     const body = await req.json();
-    const { url_token, email } = body;
+    const { url_token, email, replacement_of_subscription_v2_id } = body;
 
     if (!url_token) {
       return errorResponse('Missing url_token', 400);
@@ -188,11 +188,19 @@ Deno.serve(async (req) => {
       offer_id: link.offer_id || undefined,
       origin,
       actor_type: 'system',
+      replacement_of_subscription_v2_id: replacement_of_subscription_v2_id || undefined,
       meta_extra: { payment_link_id: link.id },
     });
 
     if (!result.success) {
-      return errorResponse(result.error, 500);
+      if (result.error === 'existing_subscription_conflict' && result.conflict) {
+        return jsonResponse({
+          success: false,
+          error: 'existing_subscription_conflict',
+          conflict: result.conflict,
+        });
+      }
+      return jsonResponse({ success: false, error: result.error });
     }
 
     // Audit log (создание checkout-сессии). Счётчик НЕ инкрементируем здесь — это делает webhook.
