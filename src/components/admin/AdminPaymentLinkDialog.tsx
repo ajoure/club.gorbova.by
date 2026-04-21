@@ -437,7 +437,15 @@ export function AdminPaymentLinkDialog({
 
       if (error) throw error;
       if (!data.success && data.error === "existing_subscription_conflict" && data.conflict) {
-        setConflictData(data.conflict);
+        // PATCH PAYMENT-CONFLICT: принимаем конфликт только если это same-pair для текущего выбора.
+        if (
+          data.conflict.product_id === selectedProductId &&
+          data.conflict.tariff_id === selectedTariffId
+        ) {
+          setConflictData(data.conflict);
+        } else {
+          console.warn("[AdminPaymentLinkDialog] received conflict for different pair — ignoring", data.conflict);
+        }
         return null;
       }
       if (!data.success) throw new Error(data.error || "Ошибка создания ссылки");
@@ -643,7 +651,7 @@ export function AdminPaymentLinkDialog({
     !selectedTariffId ||
     !effectiveOffer ||
     amount <= 0 ||
-    !!conflictData;
+    isCurrentConflict;
 
   return (
     <>
@@ -919,7 +927,7 @@ export function AdminPaymentLinkDialog({
               )}
 
               {/* Conflict (PATCH E) */}
-              {conflictData && (
+              {isCurrentConflict && conflictData && (
                 <div className="p-3 rounded-lg border border-destructive/50 bg-destructive/5 space-y-2">
                   <div className="flex items-center gap-2 text-destructive">
                     <AlertTriangle className="h-4 w-4 shrink-0" />
