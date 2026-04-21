@@ -78,6 +78,7 @@ import { parseRoomState, getRoomStateBadgeVM, type RoomState } from "@/lib/liveR
 import { ColumnSettings } from "@/components/admin/ColumnSettings";
 import { LiveEventsTable } from "@/components/admin/live/LiveEventsTable";
 import { useLiveEventsColumns, LIVE_EVENTS_LOCKED_KEYS } from "@/hooks/useLiveEventsColumns";
+import { AutowebModeEditor, type AutowebUserMode as AutowebUserModeT, type AutowebConfig } from "@/components/admin/live/AutowebModeEditor";
 
 // Final follow-up sprint PATCH F3: отдельная компактная ячейка count активных участников
 function ActiveParticipantsCell({ eventId }: { eventId: string }) {
@@ -89,7 +90,8 @@ function ActiveParticipantsCell({ eventId }: { eventId: string }) {
   );
 }
 
-type EventType = "live_stream" | "recorded_webinar";
+type EventType = "live_stream" | "recorded_webinar" | "autowebinar";
+type AutowebUserMode = "one_time" | "scheduled" | "just_in_time" | "on_demand";
 type SourceKind = "kinescope_live_event" | "kinescope_video";
 
 interface LiveEvent {
@@ -160,6 +162,9 @@ interface LiveEventForm {
   notification_template_id: string;
   notification_channels: string[];
   notification_offsets: NotificationOffset[];
+  // Sprint A — autowebinar
+  autoweb_user_mode: AutowebUserMode;
+  autoweb_config: AutowebConfig;
 }
 
 const defaultForm: LiveEventForm = {
@@ -188,6 +193,26 @@ const defaultForm: LiveEventForm = {
     { minutes: 1440, enabled: true, label: "За 1 день" },
     { minutes: 60, enabled: true, label: "За 1 час" },
   ],
+  autoweb_user_mode: "one_time",
+  autoweb_config: {
+    just_in_time: { offsets_minutes: [5, 10, 15, 30], show_countdown: true },
+    on_demand: { min_delay_seconds: 0 },
+    replay: {
+      enabled: true,
+      open_strategy: "immediate",
+      delay_minutes: 0,
+      window_hours: 48,
+      show_chat_history: false,
+      cta_strategy: "same_as_live",
+    },
+    viewer_controls: {
+      allow_pause: true,
+      allow_seek: false,
+      allow_speed_control: false,
+      resume_from_last_position: true,
+      allow_rewatch_before_end: false,
+    },
+  },
 };
 
 const platformStatusLabels: Record<string, string> = {
@@ -609,7 +634,7 @@ export default function AdminLiveEvents() {
     mutationFn: async (data: LiveEventForm) => {
       if (slugExists) throw new Error("Такой slug уже существует. Выберите другой.");
 
-      const sourceKind: SourceKind = data.event_type === "live_stream" ? "kinescope_live_event" : "kinescope_video";
+      // sourceKind вычисляется ниже в зависимости от effectiveEventType (Sprint A patch).
 
       // Merge metadata: preserve existing provider data
       let mergedMetadata: Record<string, any> = {
@@ -657,6 +682,24 @@ export default function AdminLiveEvents() {
       // by lifecycle actions (handleLifecycleAction) and provider sync. Form save MUST NOT
       // downgrade an active 'live' status back to whatever stale value sits in form state.
       // Initial 'status' is set only on INSERT (new event creation).
+      // Sprint A — autowebinar mapping:
+      //   one_time     → event_type='recorded_webinar' (NO autoweb_mode), без дублей
+      //   scheduled/JIT/on_demand → event_type='autowebinar' + autoweb_mode
+      // Один источник истины: пользователь выбирает 4 режима в UI, БД хранит 2 типа.
+      let effectiveEventType: EventType = data.event_type;
+      let autowebMode: AutowebUserMode | null = null;
+      if (data.event_type === "recorded_webinar" || data.event_type === "autowebinar") {
+        if (data.autoweb_user_mode === "one_time") {
+          effectiveEventType = "recorded_webinar";
+          autowebMode = null;
+        } else {
+          effectiveEventType = "autowebinar";
+          autowebMode = data.autoweb_user_mode;
+        }
+      }
+      const effectiveSourceKind: SourceKind =
+        effectiveEventType === "live_stream" ? "kinescope_live_event" : "kinescope_video";
+
       const payload: Record<string, any> = {
         slug: data.slug,
         title: data.title,
@@ -669,12 +712,14 @@ export default function AdminLiveEvents() {
         replay_enabled: data.replay_enabled,
         invite_mode: data.invite_mode,
         direct_access_allowed: data.direct_access_allowed,
-        event_type: data.event_type,
-        source_kind: sourceKind,
+        event_type: effectiveEventType,
+        source_kind: effectiveSourceKind,
         event_timezone: data.event_timezone,
         kinescope_live_event_id: data.kinescope_live_event_id || null,
         kinescope_project_id: data.kinescope_project_id || null,
         metadata: mergedMetadata,
+        autoweb_mode: autowebMode,
+        autoweb_config: effectiveEventType === "autowebinar" ? data.autoweb_config : {},
       };
 
       // On INSERT only: seed initial lifecycle status. UPDATE never touches platform_status/status.
@@ -807,6 +852,12 @@ export default function AdminLiveEvents() {
         { minutes: 1440, enabled: true, label: "За 1 день" },
         { minutes: 60, enabled: true, label: "За 1 час" },
       ],
+      autoweb_user_mode: (
+        event.event_type === "autowebinar"
+          ? (((event as any).autoweb_mode as AutowebUserMode) ?? "on_demand")
+          : "one_time"
+      ),
+      autoweb_config: ((event as any).autoweb_config as AutowebConfig) ?? defaultForm.autoweb_config,
     });
     setDialogOpen(true);
   };
@@ -986,6 +1037,19 @@ export default function AdminLiveEvents() {
                     {isLiveStream ? <><Radio className="h-3 w-3 mr-1" />Живой эфир</> : <><Video className="h-3 w-3 mr-1" />Видео / Автовебинар</>}
                   </Badge>
                 </div>
+              )}
+
+              {/* Sprint A — Конструктор режима автовебинара (для recorded_webinar/autowebinar) */}
+              {(form.event_type === "recorded_webinar" || form.event_type === "autowebinar") && (
+                <FormSection title="Режим показа">
+                  <AutowebModeEditor
+                    userMode={form.autoweb_user_mode}
+                    onUserModeChange={(m) => setForm((f) => ({ ...f, autoweb_user_mode: m }))}
+                    config={form.autoweb_config}
+                    onConfigChange={(c) => setForm((f) => ({ ...f, autoweb_config: c }))}
+                    timezone={form.event_timezone}
+                  />
+                </FormSection>
               )}
 
               <Separator />

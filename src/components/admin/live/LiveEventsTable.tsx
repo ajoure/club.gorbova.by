@@ -69,7 +69,7 @@ export interface LiveEventRow {
   id: string;
   slug: string;
   title: string;
-  event_type: "live_stream" | "recorded_webinar";
+  event_type: "live_stream" | "recorded_webinar" | "autowebinar";
   is_published: boolean;
   scheduled_at: string | null;
   replay_enabled: boolean;
