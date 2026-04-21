@@ -25,7 +25,19 @@ import { GlassCard } from '@/components/ui/GlassCard';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { InlineAuthForm } from '@/components/auth/InlineAuthForm';
-import { CreditCard, CheckCircle, Clock, Shield, AlertCircle, Loader2 } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { cancelOldSubscriptionForReplacement, type SubscriptionConflictInfo } from '@/lib/subscriptionReplacement';
+import { CreditCard, CheckCircle, Clock, Shield, AlertCircle, Loader2, Repeat } from 'lucide-react';
 
 interface PaymentLinkInfo {
   product_name: string;
@@ -47,6 +59,9 @@ export default function PublicPayPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [identityError, setIdentityError] = useState<string | null>(null);
+  const [conflictData, setConflictData] = useState<SubscriptionConflictInfo | null>(null);
+  const [showReplaceConfirm, setShowReplaceConfirm] = useState(false);
+  const [replaceStep, setReplaceStep] = useState<'idle' | 'cancelling' | 'creating'>('idle');
 
   const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
   const functionUrl = `https://${projectId}.supabase.co/functions/v1/public-checkout`;
@@ -67,7 +82,7 @@ export default function PublicPayPage() {
     retry: false,
   });
 
-  const initiatePayment = async (payerEmail?: string) => {
+  const initiatePayment = async (payerEmail?: string, replacementId?: string) => {
     if (!token) return;
     setIsProcessing(true);
     setError(null);
@@ -76,6 +91,7 @@ export default function PublicPayPage() {
     try {
       const body: Record<string, unknown> = { url_token: token };
       if (payerEmail) body.email = payerEmail;
+      if (replacementId) body.replacement_of_subscription_v2_id = replacementId;
 
       // ALWAYS read access token immediately before POST (post-inline-login session)
       const { data: { session } } = await supabase.auth.getSession();
@@ -91,6 +107,11 @@ export default function PublicPayPage() {
       });
 
       const data = await res.json();
+      if (data?.error === 'existing_subscription_conflict' && data?.conflict) {
+        setConflictData(data.conflict as SubscriptionConflictInfo);
+        setIsProcessing(false);
+        return;
+      }
       if (!res.ok || !data.redirect_url) {
         // Identity-resolution error → keep inline auth open, surface inside form
         if (res.status === 400 && data.error === 'identity_required') {
@@ -112,6 +133,26 @@ export default function PublicPayPage() {
 
   // Branch B: no target user, but session — Bearer token will be picked up live
   const handlePayWithSession = () => initiatePayment(user?.email || undefined);
+
+  const handleReplaceSubscription = async () => {
+    if (!conflictData) return;
+    setShowReplaceConfirm(false);
+    setReplaceStep('cancelling');
+    setError(null);
+    try {
+      await cancelOldSubscriptionForReplacement({
+        conflict: conflictData,
+        source: 'public_link_replace',
+      });
+      setReplaceStep('creating');
+      await initiatePayment(user?.email || undefined, conflictData.subscription_v2_id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось заменить подписку');
+      setIsProcessing(false);
+    } finally {
+      setReplaceStep('idle');
+    }
+  };
 
   // Auto-pay when guest finishes inline auth (Bearer token from fresh session)
   const handleGuestAuthenticated = async (email: string) => {
@@ -242,6 +283,27 @@ export default function PublicPayPage() {
               </div>
             )}
 
+            {conflictData && linkInfo.payment_type === 'subscription' && (
+              <Alert className="mb-4 border-amber-500/50 bg-amber-50 dark:bg-amber-950/20">
+                <Repeat className="h-4 w-4 text-amber-600" />
+                <AlertTitle className="text-amber-800 dark:text-amber-200">
+                  Уже есть активная подписка на этот тариф
+                </AlertTitle>
+                <AlertDescription className="space-y-3 text-amber-800 dark:text-amber-200">
+                  <p>Можно оставить текущую подписку или заменить её новой оплатой.</p>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <Button type="button" variant="outline" size="sm" className="flex-1" onClick={() => setConflictData(null)}>
+                      Оставить текущую
+                    </Button>
+                    <Button type="button" size="sm" className="flex-1" disabled={isProcessing || replaceStep !== 'idle'} onClick={() => setShowReplaceConfirm(true)}>
+                      {replaceStep !== 'idle' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Repeat className="mr-2 h-4 w-4" />}
+                      Заменить подписку
+                    </Button>
+                  </div>
+                </AlertDescription>
+              </Alert>
+            )}
+
             {/* States 1 & 2: pre-bound target user OR session user → just pay
                 Hard guard: if has_target_user, NEVER mount InlineAuthForm. */}
             {!needsIdentity && (
@@ -289,6 +351,21 @@ export default function PublicPayPage() {
       </main>
 
       <LandingFooter />
+
+      <AlertDialog open={showReplaceConfirm} onOpenChange={setShowReplaceConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Заменить текущую подписку?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Старая подписка будет отменена, после этого откроется новая страница оплаты.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={handleReplaceSubscription}>Заменить</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
