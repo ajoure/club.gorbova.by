@@ -162,6 +162,14 @@ export function LiveEventsTable({
 }: Props) {
   const { visibleColumns, handleColumnResize, handleDragEnd } = useLiveEventsColumns();
 
+  // PATCH: explicit total width = sum of visible column widths.
+  // tableLayout:fixed + width:max-content alone не давал корректную итоговую ширину
+  // в текущем admin-shell — таблица растягивалась под viewport, scroll не активировался.
+  const totalTableWidth = useMemo(
+    () => visibleColumns.reduce((sum, col) => sum + (col.width ?? 120), 0),
+    [visibleColumns],
+  );
+
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   const getRowKey = useCallback((e: LiveEventRow) => e.id, []);
