@@ -29,22 +29,52 @@ export const LIVE_EVENTS_DEFAULT_COLUMNS: ColumnConfig[] = [
 /** Колонки, которые нельзя скрыть/перетащить в произвольное место. */
 export const LIVE_EVENTS_LOCKED_KEYS = new Set(["checkbox", "actions"]);
 
-const STORAGE_KEY = "admin_live_events_columns_v1";
+const STORAGE_KEY = "admin_live_events_columns_v2";
+const LEGACY_STORAGE_KEYS = ["admin_live_events_columns_v1"];
 const SYNC_EVENT = "live-events-columns-changed";
 
+function cleanupLegacy() {
+  try {
+    for (const k of LEGACY_STORAGE_KEYS) localStorage.removeItem(k);
+  } catch {
+    /* ignore */
+  }
+}
+
 function loadColumns(): ColumnConfig[] {
+  cleanupLegacy();
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (!saved) return LIVE_EVENTS_DEFAULT_COLUMNS;
     const parsed = JSON.parse(saved);
-    return LIVE_EVENTS_DEFAULT_COLUMNS.map((dc) => {
-      const savedCol = parsed.find((p: ColumnConfig) => p.key === dc.key);
-      // Locked keys: всегда visible (защита от поломанного localStorage)
-      if (LIVE_EVENTS_LOCKED_KEYS.has(dc.key)) {
-        return savedCol ? { ...dc, ...savedCol, visible: true } : dc;
-      }
-      return savedCol ? { ...dc, ...savedCol } : dc;
+    if (!Array.isArray(parsed)) return LIVE_EVENTS_DEFAULT_COLUMNS;
+
+    // Build canonical list strictly from defaults; merge only known fields with normalization
+    const merged = LIVE_EVENTS_DEFAULT_COLUMNS.map((dc) => {
+      const savedCol = parsed.find((p: any) => p && p.key === dc.key);
+      if (!savedCol) return { ...dc };
+
+      const widthValid =
+        typeof savedCol.width === "number" && Number.isFinite(savedCol.width) && savedCol.width > 0;
+      const orderValid = typeof savedCol.order === "number" && Number.isFinite(savedCol.order);
+      const visible = LIVE_EVENTS_LOCKED_KEYS.has(dc.key)
+        ? true
+        : typeof savedCol.visible === "boolean"
+          ? savedCol.visible
+          : dc.visible;
+
+      return {
+        ...dc,
+        width: widthValid ? savedCol.width : dc.width,
+        order: orderValid ? savedCol.order : dc.order,
+        visible,
+      };
     });
+
+    // Sort by saved order, then re-index to guarantee unique sequential orders
+    return merged
+      .sort((a, b) => a.order - b.order)
+      .map((c, i) => ({ ...c, order: i }));
   } catch {
     return LIVE_EVENTS_DEFAULT_COLUMNS;
   }
