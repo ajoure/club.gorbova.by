@@ -1039,6 +1039,19 @@ export default function AdminLiveEvents() {
                 </div>
               )}
 
+              {/* Sprint A — Конструктор режима автовебинара (для recorded_webinar/autowebinar) */}
+              {(form.event_type === "recorded_webinar" || form.event_type === "autowebinar") && (
+                <FormSection title="Режим показа">
+                  <AutowebModeEditor
+                    userMode={form.autoweb_user_mode}
+                    onUserModeChange={(m) => setForm((f) => ({ ...f, autoweb_user_mode: m }))}
+                    config={form.autoweb_config}
+                    onConfigChange={(c) => setForm((f) => ({ ...f, autoweb_config: c }))}
+                    timezone={form.event_timezone}
+                  />
+                </FormSection>
+              )}
+
               <Separator />
 
               {/* Section 1: Основное */}
