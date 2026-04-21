@@ -21,6 +21,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { z } from "zod";
 import { PhoneInput, isValidPhoneNumber } from "@/components/ui/phone-input";
 import { useTelegramLinkStatus, useStartTelegramLink } from "@/hooks/useTelegramLink";
+import {
+  cancelOldSubscriptionForReplacement,
+  type SubscriptionConflictInfo,
+} from "@/lib/subscriptionReplacement";
 
 interface SubscriptionMessage {
   title?: string;           // "Ежемесячная подписка" / "Подписка на Клуб"
@@ -152,7 +156,11 @@ export function PaymentDialog({
   const [showTrialUsedModal, setShowTrialUsedModal] = useState(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [paymentFlowType, setPaymentFlowType] = useState<PaymentFlowType>('provider_managed');
-  
+
+  // Same-pair subscription conflict (existing active subscription on same product+tariff)
+  const [conflictData, setConflictData] = useState<SubscriptionConflictInfo | null>(null);
+  const [replaceStep, setReplaceStep] = useState<'idle' | 'cancelling' | 'creating'>('idle');
+  const [showReplaceConfirm, setShowReplaceConfirm] = useState(false);
   // Telegram link hooks
   const { data: telegramStatus, refetch: refetchTelegramStatus, isLoading: isTelegramStatusLoading } = useTelegramLinkStatus();
   const startTelegramLink = useStartTelegramLink();
@@ -203,6 +211,9 @@ export function PaymentDialog({
       setTelegramDeepLink(null);
       setShowTrialUsedModal(false);
       setPaymentError(null);
+      setConflictData(null);
+      setReplaceStep('idle');
+      setShowReplaceConfirm(false);
       if (user && session) {
         // User is authenticated - use their data
         setFormData({
@@ -446,9 +457,68 @@ export function PaymentDialog({
     setStep("ready");
   };
 
+  // Helper: invoke subscription checkout, optionally as replacement of existing same-pair sub
+  const invokeProviderManagedCheckout = async (replacementOfSubscriptionV2Id?: string) => {
+    return await supabase.functions.invoke("bepaid-create-subscription-checkout", {
+      body: {
+        productId,
+        tariffCode,
+        offerId,
+        customerEmail: formData.email,
+        customerPhone: formData.phone,
+        customerFirstName: formData.firstName,
+        customerLastName: formData.lastName,
+        existingUserId,
+        explicit_user_choice: true,
+        ...(replacementOfSubscriptionV2Id
+          ? { replacement_of_subscription_v2_id: replacementOfSubscriptionV2Id }
+          : {}),
+      },
+    });
+  };
+
+  const handleReplaceSubscription = async () => {
+    if (!conflictData) return;
+    setShowReplaceConfirm(false);
+    setIsLoading(true);
+    setPaymentError(null);
+    setStep("processing");
+    try {
+      setReplaceStep('cancelling');
+      await cancelOldSubscriptionForReplacement({
+        conflict: conflictData,
+        source: 'public_checkout_replace',
+        targetUserId: existingUserId,
+      });
+
+      setReplaceStep('creating');
+      const { data, error } = await invokeProviderManagedCheckout(conflictData.subscription_v2_id);
+      if (error) throw new Error(data?.error || error.message);
+      if (!data?.success) throw new Error(data?.error || 'Ошибка создания новой подписки');
+
+      if (data.redirect_url) {
+        window.location.href = data.redirect_url;
+        return;
+      }
+      throw new Error('Не удалось получить ссылку на оплату.');
+    } catch (e) {
+      console.error('[PaymentDialog] replace flow failed', e);
+      const message = e instanceof Error ? e.message : 'Не удалось заменить подписку';
+      setPaymentError(message);
+      toast.error(message);
+      setReplaceStep('idle');
+      setStep('ready');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handlePayment = async () => {
     setIsLoading(true);
     setPaymentError(null);
+    setConflictData(null);
+    setReplaceStep('idle');
+    setShowReplaceConfirm(false);
     setStep("processing");
 
     console.log("handlePayment called", { savedCard, tariffCode, user: !!user, productId, paymentFlowType });
@@ -458,20 +528,7 @@ export function PaymentDialog({
       // This explicitly creates a bePaid subscription (provider-managed recurring)
       if (paymentFlowType === 'provider_managed' && isSubscription && !isTrial) {
         console.log("Using provider_managed flow (bePaid subscription checkout) - explicit user choice");
-        const { data, error } = await supabase.functions.invoke("bepaid-create-subscription-checkout", {
-          body: {
-            productId,
-            tariffCode,
-            offerId,
-            customerEmail: formData.email,
-            customerPhone: formData.phone,
-            customerFirstName: formData.firstName,
-            customerLastName: formData.lastName,
-            existingUserId,
-            // PATCH-4: Explicit user choice guard
-            explicit_user_choice: true,
-          },
-        });
+        const { data, error } = await invokeProviderManagedCheckout();
 
         if (error) {
           if (data?.alreadyUsedTrial) {
@@ -480,10 +537,23 @@ export function PaymentDialog({
             setIsLoading(false);
             return;
           }
+          // Same-pair subscription conflict — show keep/replace UI, do NOT redirect to /purchases
+          if (data?.error === 'existing_subscription_conflict' && data?.conflict) {
+            setConflictData(data.conflict as SubscriptionConflictInfo);
+            setStep('ready');
+            setIsLoading(false);
+            return;
+          }
           throw new Error(data?.error || error.message);
         }
 
         if (!data.success) {
+          if (data?.error === 'existing_subscription_conflict' && data?.conflict) {
+            setConflictData(data.conflict as SubscriptionConflictInfo);
+            setStep('ready');
+            setIsLoading(false);
+            return;
+          }
           throw new Error(data.error || "Ошибка создания подписки bePaid");
         }
 
@@ -706,6 +776,9 @@ export function PaymentDialog({
     setEmailCheckResult(null);
     setLoginError(null);
     setPaymentError(null);
+    setConflictData(null);
+    setReplaceStep('idle');
+    setShowReplaceConfirm(false);
     setErrors({});
     setStep("email");
   };
@@ -1062,6 +1135,60 @@ export function PaymentDialog({
               </Alert>
             )}
 
+            {conflictData && isSubscription && !isTrial && (
+              <Alert className="border-amber-500/50 bg-amber-50 dark:bg-amber-950/20">
+                <Repeat className="h-4 w-4 text-amber-600" />
+                <AlertTitle className="text-amber-800 dark:text-amber-200">
+                  У вас уже есть активная подписка на этот тариф
+                </AlertTitle>
+                <AlertDescription className="space-y-3">
+                  <div className="text-sm space-y-1 text-amber-800 dark:text-amber-200">
+                    <p>Статус: {conflictData.status}</p>
+                    {conflictData.access_end_at && (
+                      <p>
+                        Доступ до:{" "}
+                        {new Date(conflictData.access_end_at).toLocaleString("ru-RU", {
+                          timeZone: conflictData.timezone_used || "Europe/Minsk",
+                        })}
+                      </p>
+                    )}
+                    {conflictData.next_charge_at && (
+                      <p>
+                        Следующее списание:{" "}
+                        {new Date(conflictData.next_charge_at).toLocaleString("ru-RU", {
+                          timeZone: conflictData.timezone_used || "Europe/Minsk",
+                        })}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setConflictData(null);
+                        onOpenChange(false);
+                      }}
+                      className="flex-1"
+                    >
+                      Оставить текущую
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => setShowReplaceConfirm(true)}
+                      disabled={isLoading}
+                      className="flex-1"
+                    >
+                      <Repeat className="mr-2 h-4 w-4" />
+                      Заменить подписку
+                    </Button>
+                  </div>
+                </AlertDescription>
+              </Alert>
+            )}
+
             <div className="rounded-lg bg-muted/50 p-4 space-y-2">
               <div className="flex items-center gap-2 text-sm">
                 <CheckCircle className="h-4 w-4 text-primary" />
@@ -1158,7 +1285,7 @@ export function PaymentDialog({
               >
                 {user && session ? "Отмена" : "Назад"}
               </Button>
-              <Button onClick={handlePayment} disabled={isLoading || isTestPaymentLoading || isLoadingCard} className="flex-1">
+              <Button onClick={handlePayment} disabled={isLoading || isTestPaymentLoading || isLoadingCard || !!conflictData} className="flex-1">
                 {isLoadingCard ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
@@ -1285,6 +1412,47 @@ export function PaymentDialog({
                 Купить полный тариф
               </Button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Replace subscription confirmation */}
+      <Dialog open={showReplaceConfirm} onOpenChange={setShowReplaceConfirm}>
+        <DialogContent className="w-[calc(100vw-24px)] sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Repeat className="h-5 w-5 text-amber-600" />
+              Заменить подписку?
+            </DialogTitle>
+            <DialogDescription>
+              Текущая активная подписка будет отменена у провайдера, после чего откроется страница оплаты новой подписки. Доступ по старой подписке прекратится.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-2 mt-4">
+            <Button
+              variant="outline"
+              onClick={() => setShowReplaceConfirm(false)}
+              disabled={replaceStep !== 'idle'}
+              className="flex-1"
+            >
+              Отмена
+            </Button>
+            <Button
+              onClick={handleReplaceSubscription}
+              disabled={replaceStep !== 'idle'}
+              className="flex-1"
+            >
+              {replaceStep !== 'idle' ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Repeat className="mr-2 h-4 w-4" />
+              )}
+              {replaceStep === 'cancelling'
+                ? 'Отменяем старую…'
+                : replaceStep === 'creating'
+                ? 'Создаём новую…'
+                : 'Подтвердить замену'}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
