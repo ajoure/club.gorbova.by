@@ -24,10 +24,10 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 type SupabaseClient = ReturnType<typeof createClient>;
 
 /** Статусы, которые блокируют новую покупку same-pair. */
-export const CONFLICTING_STATUSES = ['active', 'trial', 'past_due', 'grace_period'] as const;
+export const CONFLICTING_STATUSES = ['active', 'trial', 'past_due'] as const;
 
 /** Финальные статусы, разрешённые для заменяемой подписки. */
-export const TERMINAL_STATUSES = ['canceled', 'superseded', 'revoked', 'expired', 'expired_reentry'] as const;
+export const TERMINAL_STATUSES = ['canceled', 'superseded', 'expired', 'expired_reentry'] as const;
 
 export interface SubscriptionConflict {
   subscription_v2_id: string;
