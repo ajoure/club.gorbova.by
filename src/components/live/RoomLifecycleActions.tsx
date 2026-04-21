@@ -81,10 +81,18 @@ export function RoomLifecycleActions({
         toast.info("Действие пропущено: комната уже в нужном состоянии.");
       } else {
         toast.success(`${lifecycleActionLabels[action]} — выполнено`);
-        if ((data as any)?.provider?.attempted && !(data as any).provider.ok) {
-          toast.warning(
-            `Provider call (Kinescope) упал: ${(data as any).provider.error?.slice(0, 120) ?? "unknown"}. Состояние комнаты обновлено в degraded-режиме (см. audit_logs).`,
-          );
+        const provider = (data as any)?.provider;
+        if (provider?.attempted && !provider.ok) {
+          // PATCH KINESCOPE-TOKEN: human-friendly toast вместо raw JSON провайдера.
+          if (provider.reason === "provider_token_missing") {
+            toast.warning(
+              "Kinescope: интеграция не настроена или токен недействителен. Состояние комнаты обновлено, но провайдер не получил команду. Обратитесь к администратору.",
+            );
+          } else {
+            toast.warning(
+              `Kinescope временно недоступен. Состояние комнаты обновлено в degraded-режиме (детали в audit_logs).`,
+            );
+          }
         }
       }
       invalidateKeys.forEach((key) => qc.invalidateQueries({ queryKey: key }));
