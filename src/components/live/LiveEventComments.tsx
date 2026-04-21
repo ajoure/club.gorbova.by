@@ -51,9 +51,15 @@ interface LiveEventCommentsProps {
   liveEventId: string;
   presenterUserId?: string | null;
   onOpenProfile?: (userId: string) => void;
+  /**
+   * Sprint B: для autowebinar event_type обязателен session_id.
+   * Если передан — записывается в metadata.session_id и клиент валидирует
+   * наличие до submit. Для legacy live_stream/recorded_webinar — undefined.
+   */
+  autowebSessionId?: string | null;
 }
 
-export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile }: LiveEventCommentsProps) {
+export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile, autowebSessionId }: LiveEventCommentsProps) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [newComment, setNewComment] = useState("");
@@ -128,11 +134,20 @@ export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile 
 
   const sendMutation = useMutation({
     mutationFn: async (content: string) => {
-      const { error } = await supabase.from("live_event_comments").insert({
+      // Sprint B: если prop autowebSessionId передан (autowebinar room) — обязателен.
+      // Server-side trigger продублирует проверку.
+      if (autowebSessionId === null) {
+        throw new Error("Сессия не выбрана — обновите страницу и выберите сессию заново.");
+      }
+      const payload: Record<string, unknown> = {
         live_event_id: liveEventId,
         user_id: user!.id,
         content,
-      } as any);
+      };
+      if (autowebSessionId) {
+        payload.metadata = { session_id: autowebSessionId };
+      }
+      const { error } = await supabase.from("live_event_comments").insert(payload as any);
       if (error) throw error;
     },
     onSuccess: () => {
