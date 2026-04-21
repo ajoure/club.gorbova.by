@@ -39,5 +39,15 @@ Phase computation — UTC math, TZ только для UI-лейблов.
 - `useAutowebSessionResolver`, `useAutowebRoomState`, `AutowebRoomRuntime`, `AutowebSessionSelector`, `AutowebTimelineOverlay`.
 - `LiveEvent.tsx` тронут минимально: одна early-return ветка + вынос legacy в `LiveEventLegacy()`.
 
+### autoweb_config shape (resolver contract)
+Resolver читает поля ВЛОЖЕННО, не плоско:
+- `autoweb_config.video.duration_seconds` (default 3600)
+- `autoweb_config.video.kinescope_video_id`
+- `autoweb_config.replay.{enabled, open_strategy, delay_minutes, window_hours}`
+- `autoweb_config.viewer_controls.*`
+- `autoweb_config.{timeline,chat,questions}.enabled`
+Любой seed/fixture/админ-форма обязаны соблюдать эту структуру; плоское `duration_seconds` игнорируется.
+
 ### Tests
 8 unit-тестов чистой логики `computeRoomState` в `supabase/functions/autoweb-room-state/index.test.ts` (все проходят).
+E2E proof-pack Sprint B: `/mnt/documents/sprintB-proof-{01..06}` (selector / pre_show / live / live+real-comment / replay / SQL+grep).
