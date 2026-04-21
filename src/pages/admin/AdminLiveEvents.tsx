@@ -78,6 +78,7 @@ import { parseRoomState, getRoomStateBadgeVM, type RoomState } from "@/lib/liveR
 import { ColumnSettings } from "@/components/admin/ColumnSettings";
 import { LiveEventsTable } from "@/components/admin/live/LiveEventsTable";
 import { useLiveEventsColumns, LIVE_EVENTS_LOCKED_KEYS } from "@/hooks/useLiveEventsColumns";
+import { AutowebModeEditor, type AutowebUserMode as AutowebUserModeT, type AutowebConfig } from "@/components/admin/live/AutowebModeEditor";
 
 // Final follow-up sprint PATCH F3: отдельная компактная ячейка count активных участников
 function ActiveParticipantsCell({ eventId }: { eventId: string }) {
@@ -89,7 +90,8 @@ function ActiveParticipantsCell({ eventId }: { eventId: string }) {
   );
 }
 
-type EventType = "live_stream" | "recorded_webinar";
+type EventType = "live_stream" | "recorded_webinar" | "autowebinar";
+type AutowebUserMode = "one_time" | "scheduled" | "just_in_time" | "on_demand";
 type SourceKind = "kinescope_live_event" | "kinescope_video";
 
 interface LiveEvent {
@@ -160,6 +162,9 @@ interface LiveEventForm {
   notification_template_id: string;
   notification_channels: string[];
   notification_offsets: NotificationOffset[];
+  // Sprint A — autowebinar
+  autoweb_user_mode: AutowebUserMode;
+  autoweb_config: AutowebConfig;
 }
 
 const defaultForm: LiveEventForm = {
@@ -188,6 +193,26 @@ const defaultForm: LiveEventForm = {
     { minutes: 1440, enabled: true, label: "За 1 день" },
     { minutes: 60, enabled: true, label: "За 1 час" },
   ],
+  autoweb_user_mode: "one_time",
+  autoweb_config: {
+    just_in_time: { offsets_minutes: [5, 10, 15, 30], show_countdown: true },
+    on_demand: { min_delay_seconds: 0 },
+    replay: {
+      enabled: true,
+      open_strategy: "immediate",
+      delay_minutes: 0,
+      window_hours: 48,
+      show_chat_history: false,
+      cta_strategy: "same_as_live",
+    },
+    viewer_controls: {
+      allow_pause: true,
+      allow_seek: false,
+      allow_speed_control: false,
+      resume_from_last_position: true,
+      allow_rewatch_before_end: false,
+    },
+  },
 };
 
 const platformStatusLabels: Record<string, string> = {
