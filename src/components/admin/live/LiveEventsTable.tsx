@@ -366,7 +366,7 @@ export function LiveEventsTable({
           }}
         >
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            <Table style={{ tableLayout: "fixed", width: "max-content", minWidth: "100%" }}>
+            <Table style={{ tableLayout: "fixed", width: totalTableWidth, minWidth: totalTableWidth }}>
               <colgroup>
                 {visibleColumns.map((col) => (
                   <col key={col.key} style={{ width: `${col.width}px` }} />
