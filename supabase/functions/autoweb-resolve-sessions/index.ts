@@ -1,7 +1,15 @@
 // autoweb-resolve-sessions
-// Sprint A — единая входная точка для лендинга/session selector автовебинара.
+// Sprint A (PATCH-1): единая входная точка для лендинга/session selector автовебинара.
 // Возвращает ближайшие сессии для всех 4 режимов (one_time/scheduled/just_in_time/on_demand).
 // Для one_time → читает legacy live_events.scheduled_at (recorded_webinar) — без миграции данных.
+//
+// ACCESS MODEL (зафиксировано в Sprint A review):
+//   • Это PUBLIC pre-входная точка (как существующий /live/:slug landing).
+//   • Возвращает только метаданные расписания и слоты — НЕ выдаёт URL комнаты, токенов, видео-источника.
+//   • Проверяет ТОЛЬКО is_published=true. Доступ по access_rules проверяется уже в комнате
+//     (live-resolve / autoweb-room-state в Sprint B), а не здесь.
+//   • Соответствует UX: незарегистрированный пользователь должен видеть «ближайшие старты»
+//     и выбрать слот ПЕРЕД регистрацией.
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 

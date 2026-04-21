@@ -430,6 +430,43 @@ export default function AdminLiveEvents() {
       items.push(
         { key: "kinescope", label: "Источник видео привязан", ok: !!form.kinescope_video_id.trim(), blocker: true },
       );
+
+      // PATCH-1 (Sprint A → B): валидация конфигурации режима автовебинара.
+      const mode = form.autoweb_user_mode;
+      if (mode === "one_time") {
+        items.push({
+          key: "autoweb_one_time_date",
+          label: "Дата и время разового показа заданы",
+          ok: !!form.scheduled_at,
+          blocker: true,
+        });
+      } else if (mode === "scheduled") {
+        const sched = form.autoweb_config?.schedule ?? {};
+        const wd = (sched.weekdays ?? []).length;
+        const tm = (sched.times ?? []).length;
+        const rrules = (sched.rrules ?? []).length;
+        items.push(
+          { key: "autoweb_sched_weekday", label: "Выбран хотя бы 1 день недели", ok: wd > 0, blocker: true },
+          { key: "autoweb_sched_time", label: "Указано хотя бы 1 время запуска", ok: tm > 0, blocker: true },
+          { key: "autoweb_sched_rrules", label: "Расписание сгенерировано", ok: rrules > 0, blocker: true },
+        );
+      } else if (mode === "just_in_time") {
+        const offsets = (form.autoweb_config?.just_in_time?.offsets_minutes ?? []).length;
+        items.push({
+          key: "autoweb_jit_offsets",
+          label: "Выбран хотя бы 1 офсет «через N минут»",
+          ok: offsets > 0,
+          blocker: true,
+        });
+      } else if (mode === "on_demand") {
+        const delay = form.autoweb_config?.on_demand?.min_delay_seconds ?? 0;
+        items.push({
+          key: "autoweb_on_demand_delay",
+          label: "Задержка перед стартом валидна (0–120 сек)",
+          ok: Number.isFinite(delay) && delay >= 0 && delay <= 120,
+          blocker: true,
+        });
+      }
     }
 
     items.push(

@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Calendar, Clock, Zap, PlayCircle, Loader2, AlertCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { format, parseISO } from "date-fns";
@@ -28,12 +29,15 @@ export type AutowebUserMode = "one_time" | "scheduled" | "just_in_time" | "on_de
 
 export interface AutowebConfig {
   schedule?: {
+    /** PATCH-1: массив RRULE — по одному на каждый time-slot (нет декартова BYHOUR×BYMINUTE). */
+    rrules?: string[];
+    /** Legacy single RRULE — оставлен для обратной совместимости при чтении. */
     rrule?: string;
     timezone?: string;
     occurrences_window_days?: number;
     blackout_dates?: string[];
     /** UI-only — храним отдельно для последующей пересборки RRULE */
-    weekdays?: number[]; // 0=ВС .. 6=СБ (ISO MO=1..SU=7 конвертим внутри)
+    weekdays?: number[]; // 1=ПН .. 7=ВС
     times?: string[]; // ["19:00", "20:30"]
   };
   just_in_time?: {
@@ -84,17 +88,26 @@ const WEEKDAYS_RU = [
 
 const JIT_OFFSET_OPTIONS = [5, 10, 15, 30, 60];
 
-function buildRRule(weekdays: number[], times: string[]): string | null {
-  if (weekdays.length === 0 || times.length === 0) return null;
+/**
+ * PATCH-1: строим МАССИВ RRULE — по одному per time-slot.
+ * Это устраняет баг декартова произведения BYHOUR × BYMINUTE
+ * (раньше 09:15 + 10:30 разворачивались в 09:15 / 09:30 / 10:15 / 10:30).
+ */
+function buildRRules(weekdays: number[], times: string[]): string[] {
+  if (weekdays.length === 0 || times.length === 0) return [];
   const byday = weekdays
     .map((idx) => WEEKDAYS_RU.find((w) => w.idx === idx)?.rrule)
     .filter(Boolean)
     .join(",");
-  // Берём первый временной слот как BYHOUR/BYMINUTE — для multi-times нужен набор RRULE.
-  // MVP: один RRULE с массивом BYHOUR/BYMINUTE (rrule lib поддерживает множественные значения).
-  const hours = Array.from(new Set(times.map((t) => parseInt(t.split(":")[0] ?? "0", 10)))).join(",");
-  const minutes = Array.from(new Set(times.map((t) => parseInt(t.split(":")[1] ?? "0", 10)))).join(",");
-  return `FREQ=WEEKLY;BYDAY=${byday};BYHOUR=${hours};BYMINUTE=${minutes}`;
+  return times
+    .map((t) => {
+      const [hh, mm] = t.split(":");
+      const h = parseInt(hh ?? "0", 10);
+      const m = parseInt(mm ?? "0", 10);
+      if (Number.isNaN(h) || Number.isNaN(m)) return null;
+      return `FREQ=WEEKLY;BYDAY=${byday};BYHOUR=${h};BYMINUTE=${m}`;
+    })
+    .filter((s): s is string => !!s);
 }
 
 export function AutowebModeEditor({ userMode, onUserModeChange, config, onConfigChange, timezone }: Props) {
@@ -119,21 +132,29 @@ export function AutowebModeEditor({ userMode, onUserModeChange, config, onConfig
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
-  const rruleString = useMemo(() => buildRRule(weekdays, times), [weekdays, times]);
+  const rrules = useMemo(() => buildRRules(weekdays, times), [weekdays, times]);
+  const rrulesKey = useMemo(() => rrules.join("|"), [rrules]);
+  const storedKey = useMemo(() => (sched.rrules ?? []).join("|"), [sched.rrules]);
 
-  // Auto-update rrule в config при изменениях
+  // Auto-update rrules в config при изменениях
   useEffect(() => {
     if (userMode !== "scheduled") return;
-    if (sched.rrule === rruleString) return;
+    if (storedKey === rrulesKey) return;
     onConfigChange({
       ...cfg,
-      schedule: { ...sched, rrule: rruleString ?? "", timezone: sched.timezone ?? timezone },
+      schedule: {
+        ...sched,
+        rrules,
+        // legacy single rrule НЕ записываем — readers умеют fallback на rrules
+        rrule: undefined,
+        timezone: sched.timezone ?? timezone,
+      },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rruleString, userMode]);
+  }, [rrulesKey, userMode]);
 
   async function loadPreview() {
-    if (!rruleString) {
+    if (rrules.length === 0) {
       setPreview([]);
       setPreviewError("Выберите дни и время для расписания");
       return;
@@ -143,7 +164,7 @@ export function AutowebModeEditor({ userMode, onUserModeChange, config, onConfig
     try {
       const { data, error } = await supabase.functions.invoke("autoweb-generate-occurrences?dry_run=true", {
         body: {
-          preview_rrule: rruleString,
+          preview_rrules: rrules,
           preview_config: {
             schedule: {
               occurrences_window_days: windowDays,
@@ -172,11 +193,11 @@ export function AutowebModeEditor({ userMode, onUserModeChange, config, onConfig
   }
 
   useEffect(() => {
-    if (userMode === "scheduled" && rruleString) {
+    if (userMode === "scheduled" && rrules.length > 0) {
       loadPreview();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userMode, rruleString, windowDays, JSON.stringify(blackoutDates)]);
+  }, [userMode, rrulesKey, windowDays, JSON.stringify(blackoutDates)]);
 
   function patchSchedule(p: Partial<NonNullable<AutowebConfig["schedule"]>>) {
     onConfigChange({ ...cfg, schedule: { ...sched, ...p } });
@@ -331,10 +352,10 @@ export function AutowebModeEditor({ userMode, onUserModeChange, config, onConfig
 
             <div className="space-y-2">
               <Label>Исключённые даты (blackout)</Label>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-end gap-2">
                 {blackoutDates.map((d, i) => (
                   <Badge key={i} variant="secondary" className="gap-1">
-                    {d}
+                    {format(parseISO(d), "d MMM yyyy", { locale: ru })}
                     <button
                       type="button"
                       className="ml-1 text-muted-foreground hover:text-destructive"
@@ -344,18 +365,22 @@ export function AutowebModeEditor({ userMode, onUserModeChange, config, onConfig
                     </button>
                   </Badge>
                 ))}
-                <Input
-                  type="date"
-                  className="h-7 w-40"
-                  onChange={(e) => {
-                    if (!e.target.value) return;
-                    if (!blackoutDates.includes(e.target.value)) {
-                      patchSchedule({ blackout_dates: [...blackoutDates, e.target.value].sort() });
-                    }
-                    e.target.value = "";
-                  }}
-                />
+                <div className="w-44">
+                  <DatePicker
+                    value=""
+                    placeholder="+ добавить дату"
+                    onChange={(v) => {
+                      if (!v) return;
+                      if (!blackoutDates.includes(v)) {
+                        patchSchedule({ blackout_dates: [...blackoutDates, v].sort() });
+                      }
+                    }}
+                  />
+                </div>
               </div>
+              <p className="text-xs text-muted-foreground">
+                Сравнение даты делается в часовом поясе эфира ({sched.timezone ?? timezone}).
+              </p>
             </div>
 
             <div className="rounded-lg border bg-muted/30 p-3">
