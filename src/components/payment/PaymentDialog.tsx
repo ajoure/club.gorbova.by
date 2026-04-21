@@ -156,7 +156,11 @@ export function PaymentDialog({
   const [showTrialUsedModal, setShowTrialUsedModal] = useState(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [paymentFlowType, setPaymentFlowType] = useState<PaymentFlowType>('provider_managed');
-  
+
+  // Same-pair subscription conflict (existing active subscription on same product+tariff)
+  const [conflictData, setConflictData] = useState<SubscriptionConflictInfo | null>(null);
+  const [replaceStep, setReplaceStep] = useState<'idle' | 'cancelling' | 'creating'>('idle');
+  const [showReplaceConfirm, setShowReplaceConfirm] = useState(false);
   // Telegram link hooks
   const { data: telegramStatus, refetch: refetchTelegramStatus, isLoading: isTelegramStatusLoading } = useTelegramLinkStatus();
   const startTelegramLink = useStartTelegramLink();
