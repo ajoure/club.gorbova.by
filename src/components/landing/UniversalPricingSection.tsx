@@ -19,8 +19,13 @@ interface UniversalPricingSectionProps {
   reentryMessage?: string;
   /**
    * Layout mode for tariff cards.
-   * - "auto" (default): TariffCarouselGrid decides (carousel for >3, grid otherwise).
+   * - "auto": TariffCarouselGrid decides (carousel for >3, grid otherwise).
    * - "vertical-grid": Always vertical CSS grid — 1 col on mobile, 2 cols on md+. No carousel.
+   *
+   * ⚠️ DO NOT pass this prop in production product-driven flows
+   * (public pages, site-builder pricing block, admin preview).
+   * Layout MUST come from `product.landing_config.tariffs_layout` (single source of truth).
+   * This prop exists only as a debug/test override and for non-product-driven rendering paths.
    */
   layout?: "auto" | "vertical-grid";
 }
