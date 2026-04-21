@@ -98,7 +98,7 @@ Deno.serve(async (req) => {
   // 4. Load current event
   const { data: ev, error: evErr } = await admin
     .from("live_events")
-    .select("id, room_state, event_type, kinescope_live_event_id, platform_status, slug, title")
+    .select("id, room_state, event_type, kinescope_live_event_id, platform_status, status, replay_enabled, slug, title")
     .eq("id", event_id)
     .maybeSingle();
   if (evErr || !ev) {
@@ -181,23 +181,37 @@ Deno.serve(async (req) => {
     };
   }
 
-  // 8. Apply room_state transition + timestamps + legacy platform_status (for live/ended)
+  // 8. Apply room_state transition + timestamps + sync status/platform_status.
+  // PATCH 1 (Sprint 4): status и platform_status — два legacy поля, оставшиеся в UI/queries.
+  // Чтобы избежать desync (room_state=completed, но status=live), обновляем их согласованно.
   const updatePayload: Record<string, unknown> = { room_state: targetState };
-  if (action === "open_room") updatePayload.room_opened_at = new Date().toISOString();
+  if (action === "open_room") {
+    updatePayload.room_opened_at = new Date().toISOString();
+    // Поднимаем 'draft' → 'scheduled' (если ещё не выше). Никогда не понижаем с live/ended/replay_available.
+    if (ev.status === "draft") {
+      updatePayload.status = "scheduled";
+    }
+    if (ev.platform_status === "draft") {
+      updatePayload.platform_status = "scheduled";
+    }
+  }
   if (action === "start_live") {
     updatePayload.live_started_at = new Date().toISOString();
+    updatePayload.status = "live";
     updatePayload.platform_status = "live";
   }
   if (action === "complete_webinar") {
+    const terminalStatus = ev.replay_enabled ? "replay_available" : "ended";
     updatePayload.webinar_completed_at = new Date().toISOString();
-    updatePayload.platform_status = "ended";
+    updatePayload.status = terminalStatus;
+    updatePayload.platform_status = terminalStatus;
   }
 
   const { data: updated, error: updErr } = await admin
     .from("live_events")
     .update(updatePayload)
     .eq("id", event_id)
-    .select("id, room_state, room_opened_at, live_started_at, webinar_completed_at, platform_status")
+    .select("id, room_state, room_opened_at, live_started_at, webinar_completed_at, status, platform_status")
     .single();
   if (updErr) {
     return jsonResponse({
