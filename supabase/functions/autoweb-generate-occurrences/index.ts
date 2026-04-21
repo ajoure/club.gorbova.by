@@ -15,7 +15,8 @@
 //   • совместимость: если schedule.rrules отсутствует → fallback на legacy schedule.rrule (один RRULE).
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { RRule, rrulestr } from 'npm:rrule@2.8.1';
+import rrulePkg from 'npm:rrule@2.8.1';
+const { RRule, rrulestr } = rrulePkg as any;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
