@@ -117,13 +117,12 @@
     const secretKeyFromBody = body.admin_key;
     const isSecretKeyAuth = secretKeyFromBody === Deno.env.get('CRON_SECRET');
 
-    // Auth check - require admin via JWT OR allow special internal calls
+    // SECURITY: Require service role, CRON_SECRET, or admin JWT. No hardcoded bypass.
     const authHeader = req.headers.get('Authorization');
     const token = authHeader?.replace('Bearer ', '') || '';
     const isServiceRole = token === supabaseServiceKey;
-    const isInternalCall = authHeader === 'Bearer lovable-cloud-internal';
-    
-    if (isServiceRole || isInternalCall || isSecretKeyAuth) {
+
+    if (isServiceRole || isSecretKeyAuth) {
       console.log('[GC-FIX] Internal/service call authorized');
     } else if (authHeader?.startsWith('Bearer ')) {
         const { data: { user }, error: authError } = await supabase.auth.getUser(token);
@@ -133,14 +132,14 @@
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
         }
-      
+
         // Check user_roles table for admin access
         const { data: userRole } = await supabase
           .from('user_roles')
           .select('role')
           .eq('user_id', user.id)
           .maybeSingle();
-      
+
         if (!['admin', 'superadmin'].includes(userRole?.role || '')) {
           return new Response(JSON.stringify({ error: 'Forbidden: admin required' }), {
             status: 403,
@@ -149,8 +148,11 @@
         }
         console.log('[GC-FIX] Admin authorized:', user.email);
     } else {
-      // No auth header - check if it's a Lovable Cloud test call
-      console.log('[GC-FIX] No auth header, allowing for testing');
+      // No auth — reject. Removed the previous "allow for testing" bypass.
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
  
      const dryRun = body.dry_run !== false; // Default to dry run for safety

@@ -263,8 +263,15 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Generate HMAC-secured preview hash for execute validation
-    const previewSecret = Deno.env.get('PREVIEW_HASH_SECRET') || 'fallback-secret-change-in-prod';
+    // SECURITY: HMAC secret must be configured — no insecure fallback.
+    const previewSecret = Deno.env.get('PREVIEW_HASH_SECRET');
+    if (!previewSecret) {
+      console.error('[admin-fix-club-billing-dates] PREVIEW_HASH_SECRET is not configured');
+      return new Response(JSON.stringify({ error: 'Server misconfiguration: PREVIEW_HASH_SECRET missing' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
     const previewHashGenerated = await generatePreviewHash(
       problematic.map(p => p.id),
       user.id,
