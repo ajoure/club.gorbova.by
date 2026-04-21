@@ -126,20 +126,25 @@ Deno.serve(async (req) => {
 
   try {
     const url = new URL(req.url);
-    const dryRun = url.searchParams.get('dry_run') === 'true';
-    const onlyEventId = url.searchParams.get('live_event_id');
     let body: any = null;
     if (req.method === 'POST') {
       body = await req.json().catch(() => null);
     }
+    // PATCH B: dry_run может прийти и через query (legacy / cron), и через body (supabase-js invoke).
+    const dryRun = url.searchParams.get('dry_run') === 'true' || body?.dry_run === true;
+    const onlyEventId = url.searchParams.get('live_event_id') || body?.live_event_id || null;
 
     const previewRrule = body?.preview_rrule as string | undefined;
     const previewRrules = body?.preview_rrules as string[] | undefined;
     const previewConfig = body?.preview_config as Record<string, any> | undefined;
     const previewLimit = Number(body?.preview_limit ?? 10);
 
-    // --- DRY-RUN preview (admin UI), без записи в БД ---
-    if (dryRun && (previewRrule || (Array.isArray(previewRrules) && previewRrules.length > 0))) {
+    // --- DRY-RUN preview (admin UI), STRICT READ-ONLY early-return.
+    // Никаких чтений/записей в live_event_sessions ниже этой ветки при dry_run=true.
+    if (dryRun) {
+      if (!previewRrule && !(Array.isArray(previewRrules) && previewRrules.length > 0)) {
+        return jsonRes({ status: 'invalid_request', message: 'preview_rrules required for dry_run' }, 400);
+      }
       const cfg = previewConfig ?? {};
       const windowDays = Number(cfg?.schedule?.occurrences_window_days ?? 14);
       const blackout = (cfg?.schedule?.blackout_dates ?? []) as string[];

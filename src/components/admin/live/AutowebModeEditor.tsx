@@ -162,8 +162,10 @@ export function AutowebModeEditor({ userMode, onUserModeChange, config, onConfig
     setPreviewLoading(true);
     setPreviewError(null);
     try {
-      const { data, error } = await supabase.functions.invoke("autoweb-generate-occurrences?dry_run=true", {
+      // PATCH B: dry_run передаём ЧЕРЕЗ BODY. supabase-js v2 не парсит query string из имени функции.
+      const { data, error } = await supabase.functions.invoke("autoweb-generate-occurrences", {
         body: {
+          dry_run: true,
           preview_rrules: rrules,
           preview_config: {
             schedule: {
@@ -179,13 +181,15 @@ export function AutowebModeEditor({ userMode, onUserModeChange, config, onConfig
       });
       if (error) throw error;
       if ((data as any)?.status !== "ok") {
-        setPreviewError((data as any)?.message ?? "Не удалось построить превью");
+        setPreviewError((data as any)?.message ?? "Не удалось загрузить превью. Попробуйте ещё раз.");
         setPreview([]);
         return;
       }
       setPreview((data as any).preview ?? []);
     } catch (e: any) {
-      setPreviewError(e?.message ?? "Ошибка превью");
+      // PATCH B: техническую причину — только в console, пользователю — понятный текст.
+      console.error("[AutowebModeEditor] preview error:", e);
+      setPreviewError("Не удалось загрузить превью. Попробуйте ещё раз.");
       setPreview([]);
     } finally {
       setPreviewLoading(false);
