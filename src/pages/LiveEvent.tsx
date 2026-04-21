@@ -61,15 +61,16 @@ type PageState = "loading" | "not_found" | "unpublished" | "access_denied" | "in
 const HEARTBEAT_INTERVAL_MS = 45_000;
 const RESOLVE_POLL_INTERVAL_MS = 12_000;
 
+/**
+ * Sprint B: add-only autowebinar branch wrapper.
+ * Lookup event_type by slug; if autowebinar — render selector/runtime.
+ * Иначе — fallback в legacy LiveEventLegacy без изменений.
+ */
 export default function LiveEvent() {
   const { slug } = useParams<{ slug: string }>();
-  const { session, role } = useAuth();
-
-  // Sprint B: add-only autowebinar branch. Lookup event_type by slug; if it's autowebinar,
-  // render selector or runtime BEFORE touching the legacy live/recorded flow.
   const [searchParams, setSearchParams] = useSearchParams();
   const urlSessionId = searchParams.get("session");
-  const { data: autowebMeta } = useQuery({
+  const { data: autowebMeta, isLoading: autowebMetaLoading } = useQuery({
     queryKey: ["autoweb-event-meta", slug],
     enabled: !!slug,
     staleTime: 60_000,
@@ -82,6 +83,14 @@ export default function LiveEvent() {
       return data ?? null;
     },
   });
+
+  if (autowebMetaLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin" />
+      </div>
+    );
+  }
 
   if (autowebMeta?.event_type === "autowebinar") {
     if (urlSessionId) {
@@ -99,7 +108,13 @@ export default function LiveEvent() {
     );
   }
 
-  // Legacy flow (live_stream / recorded_webinar) — без изменений.
+  // Legacy flow (live_stream / recorded_webinar) — рендерится без изменений.
+  return <LiveEventLegacy />;
+}
+
+function LiveEventLegacy() {
+  const { slug } = useParams<{ slug: string }>();
+  const { session, role } = useAuth();
   const [state, setState] = useState<PageState>("loading");
   const [data, setData] = useState<LiveResolveResult | null>(null);
   const { selectedContact, contactSheetOpen, setContactSheetOpen, openContactSheet } = useLiveContactSheet();
