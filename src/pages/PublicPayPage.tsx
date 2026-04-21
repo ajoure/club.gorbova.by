@@ -287,7 +287,7 @@ export default function PublicPayPage() {
               <Alert className="mb-4 border-amber-500/50 bg-amber-50 dark:bg-amber-950/20">
                 <Repeat className="h-4 w-4 text-amber-600" />
                 <AlertTitle className="text-amber-800 dark:text-amber-200">
-                  Уже есть активная подписка на этот тариф
+                  У вас уже есть активная подписка на этот продукт
                 </AlertTitle>
                 <AlertDescription className="space-y-3 text-amber-800 dark:text-amber-200">
                   <p>Можно оставить текущую подписку или заменить её новой оплатой.</p>
