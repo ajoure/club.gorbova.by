@@ -331,6 +331,9 @@ export function AdminPaymentLinkDialog({
     setSelectedOfferId("");
     setCustomAmount("");
     setGeneratedUrl(null);
+    setConflictData(null);
+    setReplaceStep("idle");
+    setShowCancelConfirm(false);
   }, [selectedProductId]);
 
   // Reset offer override на смене тарифа
@@ -338,7 +341,17 @@ export function AdminPaymentLinkDialog({
     setSelectedOfferId("");
     setCustomAmount("");
     setGeneratedUrl(null);
+    setConflictData(null);
+    setReplaceStep("idle");
+    setShowCancelConfirm(false);
   }, [selectedTariffId]);
+
+  // Сбрасывать stale conflict при смене типа оплаты или конкретного offer
+  useEffect(() => {
+    setConflictData(null);
+    setReplaceStep("idle");
+    setShowCancelConfirm(false);
+  }, [paymentType, selectedOfferId]);
 
   // Автоподстановка суммы при смене effective offer.
   // ВАЖНО: offer.amount хранится в BYN — НЕ делить на 100.
@@ -372,6 +385,16 @@ export function AdminPaymentLinkDialog({
       setReplaceStep("idle");
     }
   }, [open]);
+
+  // PATCH PAYMENT-CONFLICT: helper — конфликт релевантен только для текущей exact-pair и только для подписки.
+  const isCurrentConflict = useMemo(() => {
+    if (!conflictData) return false;
+    if (effectivePaymentType !== "subscription") return false;
+    return (
+      conflictData.product_id === selectedProductId &&
+      conflictData.tariff_id === selectedTariffId
+    );
+  }, [conflictData, effectivePaymentType, selectedProductId, selectedTariffId]);
 
   const selectedProduct = products?.find((p) => p.id === selectedProductId);
   const selectedTariff = tariffs?.find((t) => t.id === selectedTariffId);
@@ -414,7 +437,15 @@ export function AdminPaymentLinkDialog({
 
       if (error) throw error;
       if (!data.success && data.error === "existing_subscription_conflict" && data.conflict) {
-        setConflictData(data.conflict);
+        // PATCH PAYMENT-CONFLICT: принимаем конфликт только если это same-pair для текущего выбора.
+        if (
+          data.conflict.product_id === selectedProductId &&
+          data.conflict.tariff_id === selectedTariffId
+        ) {
+          setConflictData(data.conflict);
+        } else {
+          console.warn("[AdminPaymentLinkDialog] received conflict for different pair — ignoring", data.conflict);
+        }
         return null;
       }
       if (!data.success) throw new Error(data.error || "Ошибка создания ссылки");
@@ -620,7 +651,7 @@ export function AdminPaymentLinkDialog({
     !selectedTariffId ||
     !effectiveOffer ||
     amount <= 0 ||
-    !!conflictData;
+    isCurrentConflict;
 
   return (
     <>
@@ -896,7 +927,7 @@ export function AdminPaymentLinkDialog({
               )}
 
               {/* Conflict (PATCH E) */}
-              {conflictData && (
+              {isCurrentConflict && conflictData && (
                 <div className="p-3 rounded-lg border border-destructive/50 bg-destructive/5 space-y-2">
                   <div className="flex items-center gap-2 text-destructive">
                     <AlertTriangle className="h-4 w-4 shrink-0" />

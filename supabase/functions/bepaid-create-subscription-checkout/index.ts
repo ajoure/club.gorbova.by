@@ -1,5 +1,9 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
+import {
+  checkSubscriptionConflict,
+  validateReplacementSubscription,
+} from '../_shared/subscription-conflict.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -18,6 +22,8 @@ interface CreateSubscriptionCheckoutRequest {
   existingUserId?: string;
   // PATCH-4: Guard - require explicit user choice for subscription creation
   explicit_user_choice?: boolean;
+  /** PATCH PAYMENT-CONFLICT: ID заменяемой подписки (только same user+product+tariff). */
+  replacement_of_subscription_v2_id?: string;
 }
 
 // PATCH-P0.9.1: Strict isolation
@@ -55,7 +61,7 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const body: CreateSubscriptionCheckoutRequest = await req.json();
-    const { productId, tariffCode, offerId, customerEmail, customerPhone, customerFirstName, customerLastName, existingUserId, explicit_user_choice } = body;
+    const { productId, tariffCode, offerId, customerEmail, customerPhone, customerFirstName, customerLastName, existingUserId, explicit_user_choice, replacement_of_subscription_v2_id } = body;
 
     // PATCH-4: Guard - require explicit user choice
     if (!explicit_user_choice) {
@@ -276,6 +282,60 @@ Deno.serve(async (req) => {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    }
+
+    // === PATCH PAYMENT-CONFLICT: shared exact-pair guard + replacement validation ===
+    if (!userId || !productId || !tariff?.id) {
+      console.error('[bepaid-sub-checkout] STOP-guard: missing user/product/tariff for conflict check', {
+        has_user: !!userId, has_product: !!productId, has_tariff: !!tariff?.id,
+      });
+      return new Response(JSON.stringify({ error: 'Не удалось определить пользователя, продукт или тариф.' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (replacement_of_subscription_v2_id) {
+      const repl = await validateReplacementSubscription(supabase, {
+        replacement_of_subscription_v2_id,
+        user_id: userId,
+        product_id: productId,
+        tariff_id: tariff.id,
+      });
+      if (repl.status === 'error') {
+        return new Response(JSON.stringify({ success: false, error: repl.error }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      console.log('[bepaid-sub-checkout] replacement verified (shared)', {
+        replacement_of_subscription_v2_id, user_id: userId, product_id: productId, tariff_id: tariff.id,
+      });
+    } else {
+      const conflictCheck = await checkSubscriptionConflict(supabase, {
+        user_id: userId, product_id: productId, tariff_id: tariff.id,
+      });
+      if (conflictCheck.status === 'error') {
+        return new Response(JSON.stringify({ success: false, error: conflictCheck.error }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      if (conflictCheck.status === 'conflict') {
+        console.log('[bepaid-sub-checkout] DUPLICATE GUARD (shared) — same-pair active subscription', {
+          existing_sub_id: conflictCheck.conflict.subscription_v2_id,
+          status: conflictCheck.conflict.status,
+          user_id: userId, product_id: productId, tariff_id: tariff.id,
+        });
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'existing_subscription_conflict',
+          conflict: conflictCheck.conflict,
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
     }
 
     const subCheckoutAccessDays = tariff.access_days || 30;

@@ -11,6 +11,11 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from './bepaid-credentials.ts';
 import { buildPurchaseSnapshot } from './build-purchase-snapshot.ts';
 import { resolveOfferRoutingWithFallback, buildNegativeSnapshot, auditNegativeSnapshot } from './crm-routing.ts';
+import {
+  checkSubscriptionConflict,
+  validateReplacementSubscription,
+  type SubscriptionConflict as SharedSubscriptionConflict,
+} from './subscription-conflict.ts';
 
 export interface CreateCheckoutParams {
   supabase: ReturnType<typeof createClient>;
@@ -422,110 +427,38 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
   } else if (payment_type === 'subscription') {
     // === SUBSCRIPTION ===
 
-    // === PATCH E: DUPLICATE ACTIVE SUBSCRIPTION GUARD (subscriptions_v2 canonical + fail-closed) ===
-    {
-      // If this is a replacement checkout, verify old subscription is truly cancelled/superseded
-      if (replacement_of_subscription_v2_id) {
-        const { data: oldSub, error: oldSubErr } = await supabase
-          .from('subscriptions_v2')
-          .select('id, status')
-          .eq('id', replacement_of_subscription_v2_id)
-          .maybeSingle();
-
-        if (oldSubErr || !oldSub) {
-          console.error('[create-payment-checkout] PATCH E: replacement subscription not found or query error', {
-            replacement_of_subscription_v2_id, error: oldSubErr,
-          });
-          return { success: false, error: 'Не удалось найти заменяемую подписку. Повторите попытку.' };
-        }
-
-        const terminalStatuses = ['canceled', 'superseded', 'revoked', 'expired', 'expired_reentry'];
-        if (!terminalStatuses.includes(oldSub.status)) {
-          console.error('[create-payment-checkout] PATCH E: replacement subscription not in terminal status', {
-            replacement_of_subscription_v2_id, status: oldSub.status,
-          });
-          return {
-            success: false,
-            error: `Заменяемая подписка ещё не отменена (статус: ${oldSub.status}). Сначала отмените её у провайдера.`,
-          };
-        }
-
-        console.log('[create-payment-checkout] PATCH E: replacement verified, old sub is terminal', {
-          replacement_of_subscription_v2_id, status: oldSub.status,
+    // === PATCH PAYMENT-CONFLICT: shared exact-pair guard + replacement validation ===
+    if (replacement_of_subscription_v2_id) {
+      const repl = await validateReplacementSubscription(supabase, {
+        replacement_of_subscription_v2_id,
+        user_id,
+        product_id,
+        tariff_id,
+      });
+      if (repl.status === 'error') {
+        return { success: false, error: repl.error };
+      }
+      console.log('[create-payment-checkout] replacement verified (shared)', {
+        replacement_of_subscription_v2_id, user_id, product_id, tariff_id,
+      });
+    } else {
+      const conflictCheck = await checkSubscriptionConflict(supabase, {
+        user_id, product_id, tariff_id,
+      });
+      if (conflictCheck.status === 'error') {
+        return { success: false, error: conflictCheck.error };
+      }
+      if (conflictCheck.status === 'conflict') {
+        console.log('[create-payment-checkout] DUPLICATE GUARD (shared) — same-pair active subscription', {
+          existing_sub_id: conflictCheck.conflict.subscription_v2_id,
+          status: conflictCheck.conflict.status,
+          product_id, tariff_id, user_id,
         });
-        // Replacement verified — skip duplicate guard for this product+tariff
-      } else {
-        // Normal flow — check for existing active subscription
-        const TZ = 'Europe/Minsk';
-        const { data: existingSub, error: guardError } = await supabase
-          .from('subscriptions_v2')
-          .select('id, status, access_end_at, next_charge_at, billing_type, product_id, tariff_id')
-          .eq('user_id', user_id)
-          .eq('product_id', product_id)
-          .eq('tariff_id', tariff_id)
-          .in('status', ['active', 'trial', 'past_due'])
-          .limit(1)
-          .maybeSingle();
-
-        if (guardError) {
-          // FAIL-CLOSED: if we can't reliably check, block checkout
-          console.error('[create-payment-checkout] PATCH E: duplicate guard query failed (fail-closed)', guardError);
-          return { success: false, error: 'Ошибка проверки существующих подписок. Повторите попытку.' };
-        }
-
-        if (existingSub) {
-          // Additional provider verification — look up via provider_subscriptions linked to this sub
-          let bepaidSubscriptionId: string | null = null;
-          let providerSubscriptionId: string | null = null;
-          const { data: provSub } = await supabase
-            .from('provider_subscriptions')
-            .select('provider_subscription_id, state')
-            .eq('subscription_v2_id', existingSub.id)
-            .eq('provider', 'bepaid')
-            .in('state', ['active', 'pending'])
-            .limit(1)
-            .maybeSingle();
-          if (provSub) {
-            bepaidSubscriptionId = provSub.provider_subscription_id;
-            providerSubscriptionId = provSub.provider_subscription_id;
-          }
-
-          // Format dates for display
-          const formatForDisplay = (dateStr: string | null): string | null => {
-            if (!dateStr) return null;
-            try {
-              const d = new Date(dateStr);
-              if (isNaN(d.getTime())) return null;
-              return d.toISOString();
-            } catch { return null; }
-          };
-
-          console.log('[create-payment-checkout] PATCH E: DUPLICATE GUARD — active subscription found', {
-            existing_sub_id: existingSub.id,
-            status: existingSub.status,
-            product_id,
-            tariff_id,
-            user_id,
-          });
-
-          return {
-            success: false,
-            error: 'existing_subscription_conflict',
-            conflict: {
-              subscription_v2_id: existingSub.id,
-              status: existingSub.status,
-              next_charge_at: existingSub.next_charge_at,
-              access_end_at: existingSub.access_end_at,
-              bepaid_subscription_id: bepaidSubscriptionId,
-              provider_subscription_id: providerSubscriptionId,
-              product_id: existingSub.product_id,
-              tariff_id: existingSub.tariff_id,
-              display_next_charge_at: formatForDisplay(existingSub.next_charge_at),
-              display_access_end_at: formatForDisplay(existingSub.access_end_at),
-              timezone_used: TZ,
-            },
-          };
-        }
+        return {
+          success: false,
+          error: 'existing_subscription_conflict',
+          conflict: conflictCheck.conflict as SharedSubscriptionConflict,
+        };
       }
     }
 
