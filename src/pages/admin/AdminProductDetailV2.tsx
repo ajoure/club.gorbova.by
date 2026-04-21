@@ -51,6 +51,7 @@ import { ProductSitePageBinding } from "@/components/admin/product/ProductSitePa
 import { getStatusBadgeClass } from "@/utils/badgeUtils";
 import {
   useProductV2,
+  useUpdateProductV2,
   useTariffs, useCreateTariff, useUpdateTariff, useDeleteTariff, useReorderTariffs,
   useFlows, useCreateFlow, useUpdateFlow, useDeleteFlow,
 } from "@/hooks/useProductsV2";
