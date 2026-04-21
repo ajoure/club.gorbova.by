@@ -5,28 +5,34 @@
  *   - supabase/functions/_shared/create-payment-checkout.ts (admin / token-flow)
  *   - supabase/functions/bepaid-create-subscription-checkout/index.ts (provider-managed)
  *
- * Бизнес-правило (зафиксировано в memory):
- *   Конфликт = same user_id + same product_id + same tariff_id
- *              + status in CONFLICTING_STATUSES.
- *   Подписки на ДРУГОЙ продукт или ДРУГОЙ тариф конфликтом не являются.
+ * === БИЗНЕС-ПРАВИЛО (PATCH PAYMENT-CONFLICT v3) ===
+ *
+ * Конфликт = same user_id + same product_id
+ *          + status in CONFLICTING_STATUSES
+ *          + provider-managed nature подтверждена.
+ *
+ * Provider-managed nature = существует строка в `provider_subscriptions`
+ * для этой `subscription_v2_id` (provider id-полей в `subscriptions_v2` не существует).
+ *
+ * - tariff_id, amount, price НЕ участвуют в conflict detection.
+ * - Локальные active-записи без provider-связи — это data anomalies, не блокеры.
+ * - Replacement разрешён между разными тарифами одного продукта.
+ * - "Подписка" = bePaid recurrent subscription (provider-managed).
  *
  * Replacement (`replacement_of_subscription_v2_id`) разрешён ТОЛЬКО когда:
- *   - Старая подписка реально отменена и переведена в один из TERMINAL_STATUSES.
- *   - Старая подписка принадлежит тому же user_id + product_id + tariff_id.
- *   - На момент вызова реально существует same-pair conflict (либо подписка
- *     уже стала terminal — тогда replacement используется как явная привязка
- *     истории; конфликта на этот момент уже нет, но product/tariff/user
- *     совпадают, что уже проверено).
+ *   - Старая подписка существует;
+ *   - Принадлежит тому же user_id + product_id (tariff может отличаться);
+ *   - Находится в одном из TERMINAL_STATUSES.
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
-/** Статусы, которые блокируют новую покупку same-pair. */
+/** Статусы, которые блокируют новую покупку same-product (при наличии provider-связи). */
 export const CONFLICTING_STATUSES = ['active', 'trial', 'past_due'] as const;
 
-/** Финальные статусы, разрешённые для заменяемой подписки. */
+/** Финальные статусы, разрешённые для заменяемой подписки (из живого enum). */
 export const TERMINAL_STATUSES = ['canceled', 'superseded', 'expired', 'expired_reentry'] as const;
 
 export interface SubscriptionConflict {
@@ -62,70 +68,96 @@ function formatForDisplay(dateStr: string | null): string | null {
 }
 
 /**
- * Проверка exact-pair конфликта. Используется ОБЕИМИ точками создания подписки.
+ * Проверка product-level provider-managed конфликта.
+ * Алгоритм:
+ *   1. Найти все subscriptions_v2 same user + product + status in CONFLICTING_STATUSES.
+ *   2. Для каждой проверить наличие записи в provider_subscriptions.
+ *   3. Если есть хотя бы одна с provider-связью — это блокирующий конфликт.
+ *   4. Если есть только зомби (без provider-связи) — игнорируем (data anomaly).
+ *
  * fail-closed: при ошибке запроса возвращает `error` — caller обязан остановить flow.
  */
 export async function checkSubscriptionConflict(
   supabase: SupabaseClient,
-  params: { user_id: string; product_id: string; tariff_id: string },
+  params: { user_id: string; product_id: string; tariff_id?: string },
 ): Promise<ConflictCheckResult> {
-  const { user_id, product_id, tariff_id } = params;
+  const { user_id, product_id } = params;
 
-  if (!user_id || !product_id || !tariff_id) {
-    return { status: 'error', error: 'Missing required fields for conflict check' };
+  if (!user_id || !product_id) {
+    return { status: 'error', error: 'Missing required fields for conflict check (user_id, product_id)' };
   }
 
-  const { data: existingSub, error: guardError } = await supabase
+  // 1. Все potential conflict-кандидаты по user+product (без фильтра по tariff!).
+  const { data: candidates, error: guardError } = await supabase
     .from('subscriptions_v2')
-    .select('id, status, access_end_at, next_charge_at, billing_type, product_id, tariff_id')
+    .select('id, status, access_end_at, next_charge_at, billing_type, product_id, tariff_id, created_at')
     .eq('user_id', user_id)
     .eq('product_id', product_id)
-    .eq('tariff_id', tariff_id)
     .in('status', CONFLICTING_STATUSES as unknown as string[])
-    .limit(1)
-    .maybeSingle();
+    .order('created_at', { ascending: false });
 
   if (guardError) {
     console.error('[subscription-conflict] guard query failed (fail-closed)', guardError);
     return { status: 'error', error: 'Ошибка проверки существующих подписок. Повторите попытку.' };
   }
 
-  if (!existingSub) {
+  if (!candidates || candidates.length === 0) {
+    console.log('[subscription-conflict] no candidates (no active/trial/past_due for product)', {
+      user_id, product_id,
+    });
     return { status: 'no_conflict' };
   }
 
-  // Подтягиваем provider id (если есть активный/pending у провайдера).
-  let bepaidSubscriptionId: string | null = null;
-  let providerSubscriptionId: string | null = null;
-  const { data: provSub } = await supabase
-    .from('provider_subscriptions')
-    .select('provider_subscription_id, state')
-    .eq('subscription_v2_id', existingSub.id)
-    .eq('provider', 'bepaid')
-    .in('state', ['active', 'pending'])
-    .limit(1)
-    .maybeSingle();
-  if (provSub) {
-    bepaidSubscriptionId = provSub.provider_subscription_id;
-    providerSubscriptionId = provSub.provider_subscription_id;
+  // 2. Для каждой проверяем provider-связь — это и есть «настоящая» bePaid-подписка.
+  for (const cand of candidates) {
+    const { data: provSub, error: provErr } = await supabase
+      .from('provider_subscriptions')
+      .select('provider_subscription_id, state, provider')
+      .eq('subscription_v2_id', cand.id)
+      .eq('provider', 'bepaid')
+      .in('state', ['active', 'pending'])
+      .limit(1)
+      .maybeSingle();
+
+    if (provErr) {
+      console.error('[subscription-conflict] provider_subscriptions query failed (fail-closed)', provErr);
+      return { status: 'error', error: 'Ошибка проверки провайдерской подписки. Повторите попытку.' };
+    }
+
+    if (provSub) {
+      // 3. Provider-managed подписка найдена — это блокирующий конфликт.
+      console.log('[subscription-conflict] BLOCKING — provider-managed sub found', {
+        subscription_v2_id: cand.id,
+        product_id,
+        tariff_id: cand.tariff_id,
+        bepaid_id: provSub.provider_subscription_id,
+        state: provSub.state,
+      });
+      return {
+        status: 'conflict',
+        conflict: {
+          subscription_v2_id: cand.id,
+          status: cand.status,
+          next_charge_at: cand.next_charge_at,
+          access_end_at: cand.access_end_at,
+          bepaid_subscription_id: provSub.provider_subscription_id,
+          provider_subscription_id: provSub.provider_subscription_id,
+          product_id: cand.product_id,
+          tariff_id: cand.tariff_id,
+          display_next_charge_at: formatForDisplay(cand.next_charge_at),
+          display_access_end_at: formatForDisplay(cand.access_end_at),
+          timezone_used: TZ,
+        },
+      };
+    }
   }
 
-  return {
-    status: 'conflict',
-    conflict: {
-      subscription_v2_id: existingSub.id,
-      status: existingSub.status,
-      next_charge_at: existingSub.next_charge_at,
-      access_end_at: existingSub.access_end_at,
-      bepaid_subscription_id: bepaidSubscriptionId,
-      provider_subscription_id: providerSubscriptionId,
-      product_id: existingSub.product_id,
-      tariff_id: existingSub.tariff_id,
-      display_next_charge_at: formatForDisplay(existingSub.next_charge_at),
-      display_access_end_at: formatForDisplay(existingSub.access_end_at),
-      timezone_used: TZ,
-    },
-  };
+  // 4. Все кандидаты — зомби (без provider-связи). Не блокируем.
+  console.log('[subscription-conflict] no_conflict — only zombie rows (active without provider linkage)', {
+    user_id, product_id, zombie_count: candidates.length,
+    zombie_ids: candidates.map((c) => c.id),
+  });
+  return { status: 'no_conflict' };
 }
 
 export type ReplacementValidationResult =
@@ -133,10 +165,12 @@ export type ReplacementValidationResult =
   | { status: 'error'; error: string };
 
 /**
- * Валидация replacement_of_subscription_v2_id:
+ * Валидация replacement_of_subscription_v2_id (PATCH PAYMENT-CONFLICT v3):
  *   - подписка существует;
- *   - принадлежит тому же user_id + product_id + tariff_id;
- *   - находится в TERMINAL_STATUSES.
+ *   - принадлежит тому же user_id + product_id (tariff МОЖЕТ отличаться);
+ *   - находится в одном из TERMINAL_STATUSES.
+ *
+ * НЕ требует tariff_id match — пользователь может заменить тариф в рамках продукта.
  */
 export async function validateReplacementSubscription(
   supabase: SupabaseClient,
@@ -144,7 +178,7 @@ export async function validateReplacementSubscription(
     replacement_of_subscription_v2_id: string;
     user_id: string;
     product_id: string;
-    tariff_id: string;
+    tariff_id?: string; // принимается для логов, в проверке не участвует
   },
 ): Promise<ReplacementValidationResult> {
   const { replacement_of_subscription_v2_id, user_id, product_id, tariff_id } = params;
@@ -176,13 +210,6 @@ export async function validateReplacementSubscription(
     return { status: 'error', error: 'Заменяемая подписка относится к другому продукту.' };
   }
 
-  if (oldSub.tariff_id !== tariff_id) {
-    console.error('[subscription-conflict] replacement: tariff mismatch', {
-      replacement_of_subscription_v2_id, expected_tariff: tariff_id, actual_tariff: oldSub.tariff_id,
-    });
-    return { status: 'error', error: 'Заменяемая подписка относится к другому тарифу.' };
-  }
-
   if (!(TERMINAL_STATUSES as unknown as string[]).includes(oldSub.status)) {
     console.error('[subscription-conflict] replacement: not terminal', {
       replacement_of_subscription_v2_id, status: oldSub.status,
@@ -193,5 +220,10 @@ export async function validateReplacementSubscription(
     };
   }
 
+  console.log('[subscription-conflict] replacement validated (product-level, tariff-agnostic)', {
+    replacement_of_subscription_v2_id, user_id, product_id,
+    new_tariff_id: tariff_id, old_tariff_id: oldSub.tariff_id,
+    tariff_changed: tariff_id !== oldSub.tariff_id,
+  });
   return { status: 'ok' };
 }
