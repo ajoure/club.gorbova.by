@@ -1,7 +1,18 @@
 // autoweb-generate-occurrences
-// Sprint A — материализует publishable scheduled-сессии по RRULE на occurrences_window_days вперёд.
-// Идемпотентно: уникальный partial-индекс live_event_sessions_public_uq защищает от дублей.
-// Cron: запускать раз в час. Также используется admin-ом для preview (dry_run=true).
+// Sprint A (PATCH-1): материализует publishable scheduled-сессии по RRULE на occurrences_window_days вперёд.
+//
+// РЕЖИМЫ:
+//   - dry_run=true → возвращает occurrences БЕЗ записи (для admin UI preview)
+//   - dry_run=false (cron / manual execute) → INSERT в live_event_sessions с защитой через partial unique index
+//
+// Идемпотентно: live_event_sessions_public_uq (live_event_id, starts_at) WHERE viewer_user_id IS NULL.
+//
+// PATCH-1 (Sprint A → B):
+//   • поддержка autoweb_config.schedule.rrules (string[]) — по одному RRULE на каждый time-slot,
+//     чтобы избежать декартова произведения BYHOUR×BYMINUTE при нескольких слотах (09:15 + 10:30
+//     больше НЕ генерирует 09:30 / 10:15);
+//   • blackout сравнение в event_timezone (Intl.DateTimeFormat), а не по UTC ISO;
+//   • совместимость: если schedule.rrules отсутствует → fallback на legacy schedule.rrule (один RRULE).
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { RRule, rrulestr } from 'npm:rrule@2.8.1';
@@ -24,13 +35,30 @@ interface OccurrencePreview {
   excluded_blackout: boolean;
 }
 
-function expandRRule(
+/** YYYY-MM-DD в указанной таймзоне (для сравнения с blackout_dates). */
+function dateKeyInTz(d: Date, tz: string): string {
+  try {
+    const fmt = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    // en-CA → "YYYY-MM-DD"
+    return fmt.format(d);
+  } catch {
+    return d.toISOString().slice(0, 10);
+  }
+}
+
+function expandSingleRRule(
   rruleStr: string,
   windowDays: number,
   blackoutDates: string[],
   durationMs: number,
   replayDelayMin: number,
   replayWindowH: number,
+  timezone: string,
 ): OccurrencePreview[] {
   const now = new Date();
   const until = new Date(now.getTime() + windowDays * 24 * 3600 * 1000);
@@ -46,13 +74,49 @@ function expandRRule(
     const endIso = new Date(
       d.getTime() + durationMs + replayDelayMin * 60_000 + replayWindowH * 3600_000,
     ).toISOString();
-    const dateKey = startIso.slice(0, 10); // YYYY-MM-DD UTC
+    const dateKey = dateKeyInTz(d, timezone);
     return {
       starts_at: startIso,
       ends_at: endIso,
       excluded_blackout: blackoutSet.has(dateKey),
     };
   });
+}
+
+/** Объединяет несколько RRULE → дедуплицирует по starts_at → сортирует. */
+function expandRules(
+  rules: string[],
+  windowDays: number,
+  blackoutDates: string[],
+  durationMs: number,
+  replayDelayMin: number,
+  replayWindowH: number,
+  timezone: string,
+): OccurrencePreview[] {
+  const merged = new Map<string, OccurrencePreview>();
+  for (const r of rules) {
+    if (!r) continue;
+    let occ: OccurrencePreview[] = [];
+    try {
+      occ = expandSingleRRule(r, windowDays, blackoutDates, durationMs, replayDelayMin, replayWindowH, timezone);
+    } catch (e) {
+      console.error('[autoweb-generate-occurrences] bad rule, skipping', r, e);
+      continue;
+    }
+    for (const o of occ) {
+      if (!merged.has(o.starts_at)) merged.set(o.starts_at, o);
+    }
+  }
+  return Array.from(merged.values()).sort((a, b) => a.starts_at.localeCompare(b.starts_at));
+}
+
+/** Вытаскивает массив RRULE из config: новый schedule.rrules ИЛИ legacy schedule.rrule. */
+function rulesFromConfig(cfg: Record<string, any>): string[] {
+  const arr = cfg?.schedule?.rrules;
+  if (Array.isArray(arr) && arr.length > 0) return arr.filter((s: unknown) => typeof s === 'string');
+  const single = cfg?.schedule?.rrule;
+  if (typeof single === 'string' && single) return [single];
+  return [];
 }
 
 Deno.serve(async (req) => {
@@ -68,34 +132,40 @@ Deno.serve(async (req) => {
     if (req.method === 'POST') {
       body = await req.json().catch(() => null);
     }
+
     const previewRrule = body?.preview_rrule as string | undefined;
+    const previewRrules = body?.preview_rrules as string[] | undefined;
     const previewConfig = body?.preview_config as Record<string, any> | undefined;
     const previewLimit = Number(body?.preview_limit ?? 10);
 
-    // Dry-run preview без записи в БД (используется админкой для UI-превью)
-    if (dryRun && previewRrule) {
+    // --- DRY-RUN preview (admin UI), без записи в БД ---
+    if (dryRun && (previewRrule || (Array.isArray(previewRrules) && previewRrules.length > 0))) {
       const cfg = previewConfig ?? {};
       const windowDays = Number(cfg?.schedule?.occurrences_window_days ?? 14);
       const blackout = (cfg?.schedule?.blackout_dates ?? []) as string[];
+      const tz = (cfg?.schedule?.timezone as string) ?? 'Europe/Minsk';
       const duration = Number(cfg?.video?.duration_seconds ?? 3600);
       const replayDelay = Number(cfg?.replay?.delay_minutes ?? 0);
       const replayWindow = Number(cfg?.replay?.window_hours ?? 0);
 
+      const rules = previewRrules && previewRrules.length > 0 ? previewRrules : [previewRrule!];
       try {
-        const occ = expandRRule(
-          previewRrule,
+        const occ = expandRules(
+          rules,
           windowDays,
           blackout,
           duration * 1000,
           replayDelay,
           replayWindow,
+          tz,
         ).slice(0, previewLimit);
-        return jsonRes({ status: 'ok', preview: occ });
+        return jsonRes({ status: 'ok', preview: occ, timezone: tz, source_rules: rules.length });
       } catch (e) {
         return jsonRes({ status: 'invalid_rrule', message: String(e) }, 400);
       }
     }
 
+    // --- EXECUTE (cron / manual materialization) ---
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
@@ -103,7 +173,7 @@ Deno.serve(async (req) => {
 
     let q = supabase
       .from('live_events')
-      .select('id, autoweb_config')
+      .select('id, autoweb_config, event_timezone')
       .eq('event_type', 'autowebinar')
       .eq('autoweb_mode', 'scheduled')
       .eq('is_published', true);
@@ -122,20 +192,21 @@ Deno.serve(async (req) => {
 
     for (const ev of events ?? []) {
       const cfg = (ev.autoweb_config ?? {}) as Record<string, any>;
-      const rrule = cfg?.schedule?.rrule as string | undefined;
-      if (!rrule) continue;
+      const rules = rulesFromConfig(cfg);
+      if (rules.length === 0) continue;
 
       const windowDays = Number(cfg?.schedule?.occurrences_window_days ?? 14);
       const blackout = (cfg?.schedule?.blackout_dates ?? []) as string[];
+      const tz = (cfg?.schedule?.timezone as string) ?? (ev as any).event_timezone ?? 'Europe/Minsk';
       const duration = Number(cfg?.video?.duration_seconds ?? 3600);
       const replayDelay = Number(cfg?.replay?.delay_minutes ?? 0);
       const replayWindow = Number(cfg?.replay?.window_hours ?? 0);
 
       let occurrences: OccurrencePreview[] = [];
       try {
-        occurrences = expandRRule(rrule, windowDays, blackout, duration * 1000, replayDelay, replayWindow);
+        occurrences = expandRules(rules, windowDays, blackout, duration * 1000, replayDelay, replayWindow, tz);
       } catch (e) {
-        console.error(`[autoweb-generate-occurrences] bad rrule for ${ev.id}`, e);
+        console.error(`[autoweb-generate-occurrences] bad rrules for ${ev.id}`, e);
         continue;
       }
 
