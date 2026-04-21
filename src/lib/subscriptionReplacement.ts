@@ -118,7 +118,7 @@ export async function cancelOldSubscriptionForReplacement(
 
   // --- 4. Audit (mode виден явно) ---
   const { data: { user: currentUser } } = await supabase.auth.getUser();
-  const { error: auditErr } = await supabase.from("audit_logs").insert({
+  const { error: auditErr } = await supabase.from("audit_logs").insert([{
     actor_type: "user",
     actor_user_id: currentUser?.id || null,
     target_user_id: targetUserId ?? currentUser?.id ?? null,
@@ -129,10 +129,10 @@ export async function cancelOldSubscriptionForReplacement(
       tariff_id: conflict.tariff_id,
       old_bepaid_subscription_id: conflict.bepaid_subscription_id,
       replacement_mode: mode,
-      cancel_result: cancelResult,
+      cancel_result: cancelResult as never,
       source,
     },
-  });
+  }]);
   if (auditErr) console.error("[replacement] replace_started audit insert failed:", auditErr);
 
   return { mode };
