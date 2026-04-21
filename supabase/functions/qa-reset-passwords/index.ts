@@ -5,13 +5,15 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// One-shot QA helper. Resets passwords of two known QA accounts.
-// Auth: requires header x-qa-key matching env QA_RESET_KEY.
+// Throwaway one-shot QA helper. Resets passwords of two known QA accounts.
+// Will be deleted after the QA runtime pass completes.
+const ONE_SHOT_KEY = "qa-runtime-2026-04-21-temp";
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   const key = req.headers.get("x-qa-key") ?? "";
-  if (key !== Deno.env.get("QA_RESET_KEY")) {
+  if (key !== ONE_SHOT_KEY) {
     return new Response(JSON.stringify({ error: "forbidden" }), {
       status: 403,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
