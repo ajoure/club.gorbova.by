@@ -94,7 +94,7 @@ export function UniversalPricingSection({
             </AnimatedSection>
           )}
 
-          {layout === "vertical-grid" ? (
+          {effectiveLayout === "vertical-grid" ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-5xl mx-auto items-stretch">
               {tariffs.map((tariff, index) => (
                 <AnimatedSection key={tariff.id} animation="fade-up" delay={index * 100} className="h-full">
