@@ -98,7 +98,7 @@ Deno.serve(async (req) => {
   // 4. Load current event
   const { data: ev, error: evErr } = await admin
     .from("live_events")
-    .select("id, room_state, event_type, kinescope_live_event_id, platform_status, slug, title")
+    .select("id, room_state, event_type, kinescope_live_event_id, platform_status, status, replay_enabled, slug, title")
     .eq("id", event_id)
     .maybeSingle();
   if (evErr || !ev) {
