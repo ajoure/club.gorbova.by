@@ -162,6 +162,14 @@ export function LiveEventsTable({
 }: Props) {
   const { visibleColumns, handleColumnResize, handleDragEnd } = useLiveEventsColumns();
 
+  // PATCH: explicit total width = sum of visible column widths.
+  // tableLayout:fixed + width:max-content alone не давал корректную итоговую ширину
+  // в текущем admin-shell — таблица растягивалась под viewport, scroll не активировался.
+  const totalTableWidth = useMemo(
+    () => visibleColumns.reduce((sum, col) => sum + (col.width ?? 120), 0),
+    [visibleColumns],
+  );
+
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   const getRowKey = useCallback((e: LiveEventRow) => e.id, []);
@@ -358,7 +366,7 @@ export function LiveEventsTable({
           }}
         >
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            <Table style={{ tableLayout: "fixed", width: "max-content", minWidth: "100%" }}>
+            <Table style={{ tableLayout: "fixed", width: totalTableWidth, minWidth: totalTableWidth }}>
               <colgroup>
                 {visibleColumns.map((col) => (
                   <col key={col.key} style={{ width: `${col.width}px` }} />
