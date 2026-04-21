@@ -284,6 +284,60 @@ Deno.serve(async (req) => {
       });
     }
 
+    // === PATCH PAYMENT-CONFLICT: shared exact-pair guard + replacement validation ===
+    if (!userId || !productId || !tariff?.id) {
+      console.error('[bepaid-sub-checkout] STOP-guard: missing user/product/tariff for conflict check', {
+        has_user: !!userId, has_product: !!productId, has_tariff: !!tariff?.id,
+      });
+      return new Response(JSON.stringify({ error: 'Не удалось определить пользователя, продукт или тариф.' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (replacement_of_subscription_v2_id) {
+      const repl = await validateReplacementSubscription(supabase, {
+        replacement_of_subscription_v2_id,
+        user_id: userId,
+        product_id: productId,
+        tariff_id: tariff.id,
+      });
+      if (repl.status === 'error') {
+        return new Response(JSON.stringify({ success: false, error: repl.error }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      console.log('[bepaid-sub-checkout] replacement verified (shared)', {
+        replacement_of_subscription_v2_id, user_id: userId, product_id: productId, tariff_id: tariff.id,
+      });
+    } else {
+      const conflictCheck = await checkSubscriptionConflict(supabase, {
+        user_id: userId, product_id: productId, tariff_id: tariff.id,
+      });
+      if (conflictCheck.status === 'error') {
+        return new Response(JSON.stringify({ success: false, error: conflictCheck.error }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      if (conflictCheck.status === 'conflict') {
+        console.log('[bepaid-sub-checkout] DUPLICATE GUARD (shared) — same-pair active subscription', {
+          existing_sub_id: conflictCheck.conflict.subscription_v2_id,
+          status: conflictCheck.conflict.status,
+          user_id: userId, product_id: productId, tariff_id: tariff.id,
+        });
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'existing_subscription_conflict',
+          conflict: conflictCheck.conflict,
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
     const subCheckoutAccessDays = tariff.access_days || 30;
     const subCheckoutNow = new Date();
     const subCheckoutPlannedEnd = new Date(subCheckoutNow);
