@@ -34,6 +34,7 @@ import { TariffCardCompact } from "@/components/admin/product/TariffCardCompact"
 import { OfferRowCompact } from "@/components/admin/product/OfferRowCompact";
 import { TariffCard } from "@/components/landing/TariffCard";
 import { TariffCarouselGrid } from "@/components/landing/TariffCarouselGrid";
+import { UniversalPricingSection } from "@/components/landing/UniversalPricingSection";
 import { buildTariffCardViewModel, type CardConfig } from "@/lib/tariffCardViewModel";
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { SortPill } from "@/components/admin/SortPill";
