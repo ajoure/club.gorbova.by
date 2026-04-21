@@ -51,11 +51,17 @@ interface LiveEventQuestionsProps {
   liveEventId: string;
   presenterUserId?: string | null;
   onOpenProfile?: (userId: string) => void;
+  /**
+   * Sprint B: для autowebinar event_type обязателен session_id.
+   * Если передан — записывается в metadata.session_id и клиент валидирует
+   * наличие до submit. Для legacy live_stream/recorded_webinar — undefined.
+   */
+  autowebSessionId?: string | null;
 }
 
 // forwardRef to satisfy Tabs/Radix ref forwarding (fixes console warning).
 export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsProps>(
-  function LiveEventQuestions({ liveEventId, presenterUserId, onOpenProfile }, ref) {
+  function LiveEventQuestions({ liveEventId, presenterUserId, onOpenProfile, autowebSessionId }, ref) {
     const { user, role } = useAuth();
     const queryClient = useQueryClient();
     const [newQuestion, setNewQuestion] = useState("");
@@ -112,11 +118,19 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
 
     const sendMutation = useMutation({
       mutationFn: async (content: string) => {
-        const { error } = await supabase.from("live_event_questions").insert({
+        // Sprint B: для autowebinar обязателен session_id.
+        if (autowebSessionId === null) {
+          throw new Error("Сессия не выбрана — обновите страницу и выберите сессию заново.");
+        }
+        const payload: Record<string, unknown> = {
           live_event_id: liveEventId,
           user_id: user!.id,
           content,
-        } as any);
+        };
+        if (autowebSessionId) {
+          payload.metadata = { session_id: autowebSessionId };
+        }
+        const { error } = await supabase.from("live_event_questions").insert(payload as any);
         if (error) throw error;
       },
       onSuccess: () => {

@@ -19,6 +19,10 @@ telegram-revoke-access
 telegram-webhook
 telegram-ai-support
 telegram-ai-analyze-prompt
+autoweb-resolve-sessions
+autoweb-create-personal-session
+autoweb-generate-occurrences
+autoweb-room-state
 
 # P1 — Important (32)
 admin-manual-charge

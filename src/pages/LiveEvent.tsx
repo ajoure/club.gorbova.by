@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { AutowebSessionSelector } from "@/components/live/AutowebSessionSelector";
+import { AutowebRoomRuntime } from "@/components/live/AutowebRoomRuntime";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 import { useKinescopePlayer } from "@/hooks/useKinescopePlayer";
 import { Loader2, Lock, CalendarClock, AlertTriangle, Video, MonitorX, TimerOff, MessageCircle, HelpCircle, ShieldX, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -57,7 +61,58 @@ type PageState = "loading" | "not_found" | "unpublished" | "access_denied" | "in
 const HEARTBEAT_INTERVAL_MS = 45_000;
 const RESOLVE_POLL_INTERVAL_MS = 12_000;
 
+/**
+ * Sprint B: add-only autowebinar branch wrapper.
+ * Lookup event_type by slug; if autowebinar — render selector/runtime.
+ * Иначе — fallback в legacy LiveEventLegacy без изменений.
+ */
 export default function LiveEvent() {
+  const { slug } = useParams<{ slug: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlSessionId = searchParams.get("session");
+  const { data: autowebMeta, isLoading: autowebMetaLoading } = useQuery({
+    queryKey: ["autoweb-event-meta", slug],
+    enabled: !!slug,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("live_events")
+        .select("id, event_type, title, description")
+        .eq("slug", slug!)
+        .maybeSingle();
+      return data ?? null;
+    },
+  });
+
+  if (autowebMetaLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin" />
+      </div>
+    );
+  }
+
+  if (autowebMeta?.event_type === "autowebinar") {
+    if (urlSessionId) {
+      return <AutowebRoomRuntime sessionId={urlSessionId} title={autowebMeta.title} description={autowebMeta.description} />;
+    }
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6">
+        <div className="w-full max-w-2xl">
+          <AutowebSessionSelector
+            liveEventId={autowebMeta.id}
+            onSessionChosen={(sid) => setSearchParams({ session: sid }, { replace: true })}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // Legacy flow (live_stream / recorded_webinar) — рендерится без изменений.
+  return <LiveEventLegacy />;
+}
+
+function LiveEventLegacy() {
   const { slug } = useParams<{ slug: string }>();
   const { session, role } = useAuth();
   const [state, setState] = useState<PageState>("loading");
