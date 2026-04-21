@@ -832,6 +832,12 @@ export default function AdminLiveEvents() {
         { minutes: 1440, enabled: true, label: "За 1 день" },
         { minutes: 60, enabled: true, label: "За 1 час" },
       ],
+      autoweb_user_mode: (
+        event.event_type === "autowebinar"
+          ? (((event as any).autoweb_mode as AutowebUserMode) ?? "on_demand")
+          : "one_time"
+      ),
+      autoweb_config: ((event as any).autoweb_config as AutowebConfig) ?? defaultForm.autoweb_config,
     });
     setDialogOpen(true);
   };
