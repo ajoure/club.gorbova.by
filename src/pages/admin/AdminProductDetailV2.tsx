@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useParams, useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import { AdminLayout } from "@/components/layout/AdminLayout";
@@ -34,6 +34,7 @@ import { TariffCardCompact } from "@/components/admin/product/TariffCardCompact"
 import { OfferRowCompact } from "@/components/admin/product/OfferRowCompact";
 import { TariffCard } from "@/components/landing/TariffCard";
 import { TariffCarouselGrid } from "@/components/landing/TariffCarouselGrid";
+import { UniversalPricingSection } from "@/components/landing/UniversalPricingSection";
 import { buildTariffCardViewModel, type CardConfig } from "@/lib/tariffCardViewModel";
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { SortPill } from "@/components/admin/SortPill";
@@ -51,6 +52,7 @@ import { ProductSitePageBinding } from "@/components/admin/product/ProductSitePa
 import { getStatusBadgeClass } from "@/utils/badgeUtils";
 import {
   useProductV2,
+  useUpdateProductV2,
   useTariffs, useCreateTariff, useUpdateTariff, useDeleteTariff, useReorderTariffs,
   useFlows, useCreateFlow, useUpdateFlow, useDeleteFlow,
 } from "@/hooks/useProductsV2";
@@ -285,6 +287,37 @@ export default function AdminProductDetailV2() {
   const [tariffPreviewMode, setTariffPreviewMode] = useState<"desktop" | "mobile">("desktop");
   const [sectionPreviewMode, setSectionPreviewMode] = useState<"desktop" | "mobile">("desktop");
   const isMobile = useIsMobile();
+
+  // Layout-настройка тарифной секции (SoT — продукт.landing_config.tariffs_layout).
+  // Сохраняется через useUpdateProductV2 (тот же путь, что и любые другие поля продукта).
+  // После save инвалидируем кэш публичных продуктов, чтобы preview/публичные страницы/site-builder
+  // подхватили новое значение без перезагрузки страницы.
+  const queryClient = useQueryClient();
+  const updateProductMutation = useUpdateProductV2();
+  const currentTariffsLayout: "auto" | "vertical-grid" =
+    ((product as any)?.landing_config?.tariffs_layout as "auto" | "vertical-grid" | undefined) ?? "auto";
+
+  const handleChangeTariffsLayout = async (next: "auto" | "vertical-grid") => {
+    if (!productId || !product) return;
+    if (next === currentTariffsLayout) return;
+    const prevConfig = ((product as any).landing_config ?? {}) as Record<string, any>;
+    const nextConfig = { ...prevConfig, tariffs_layout: next };
+    try {
+      await updateProductMutation.mutateAsync({
+        id: productId,
+        landing_config: nextConfig as any,
+      } as any);
+      // Invalidate public-product caches so preview + public pages + site-builder pick up the change
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["products_v2", productId] }),
+        queryClient.invalidateQueries({ queryKey: ["public-product"] }),
+        queryClient.invalidateQueries({ queryKey: ["public-product-by-slug"] }),
+      ]);
+    } catch (e) {
+      // toast обрабатывается внутри mutation onError
+    }
+  };
+
 
   // Offer form
   const [offerForm, setOfferForm] = useState({
@@ -1182,6 +1215,38 @@ export default function AdminProductDetailV2() {
                     </div>
                   </div>
 
+                  {/* Layout setting (SoT — продукт.landing_config.tariffs_layout) */}
+                  <GlassCard className="p-4">
+                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-sm font-medium">Раскладка тарифной секции</Label>
+                        <p className="text-xs text-muted-foreground max-w-md">
+                          Применяется ко всем product-driven отображениям тарифов: превью, публичные страницы продукта, блок тарифов в конструкторе сайтов.
+                        </p>
+                      </div>
+                      <RadioGroup
+                        value={currentTariffsLayout}
+                        onValueChange={(v) => handleChangeTariffsLayout(v as "auto" | "vertical-grid")}
+                        className="flex flex-col gap-2 sm:min-w-[280px]"
+                      >
+                        <label className="flex items-start gap-2 cursor-pointer rounded-md border p-2 hover:bg-muted/50">
+                          <RadioGroupItem value="auto" id="tariffs-layout-auto" className="mt-0.5" />
+                          <div className="flex flex-col">
+                            <span className="text-sm font-medium">Авто (карусель при 4+)</span>
+                            <span className="text-xs text-muted-foreground">Текущее поведение по умолчанию</span>
+                          </div>
+                        </label>
+                        <label className="flex items-start gap-2 cursor-pointer rounded-md border p-2 hover:bg-muted/50">
+                          <RadioGroupItem value="vertical-grid" id="tariffs-layout-vgrid" className="mt-0.5" />
+                          <div className="flex flex-col">
+                            <span className="text-sm font-medium">Вертикальная сетка (1 / 2 колонки)</span>
+                            <span className="text-xs text-muted-foreground">Mobile — 1 колонка, desktop — 2 колонки, без карусели</span>
+                          </div>
+                        </label>
+                      </RadioGroup>
+                    </div>
+                  </GlassCard>
+
                   <GlassCard className="p-4 sm:p-8">
                     {!(product as any).is_active ? (
                       <div className="py-12 text-center text-muted-foreground">
@@ -1189,40 +1254,32 @@ export default function AdminProductDetailV2() {
                         <p className="text-sm mt-1">Превью недоступно. Активируйте продукт для просмотра.</p>
                       </div>
                     ) : (
+                      // Preview parity: используем тот же UniversalPricingSection,
+                      // что и публичные страницы / site-builder pricing block.
+                      // Mobile-режим эмулируется ограничением ширины контейнера (max-w-[360px]).
+                      // Layout берётся автоматически из product.landing_config.tariffs_layout (SoT).
                       <div className={cn("mx-auto transition-all", sectionPreviewMode === "mobile" ? "max-w-[360px]" : "")}>
-                        <div className="text-center mb-8">
-                          <h2 className="text-3xl font-bold mb-2">
-                            {(product as any).public_title || "Тарифы"}
-                          </h2>
-                          <p className="text-muted-foreground">
-                            {(product as any).public_subtitle || "Выберите подходящий вариант"}
-                          </p>
-                        </div>
-
-                        <TariffCarouselGrid
-                          count={tariffs?.filter((t: any) => t.is_active).length || 0}
-                          forceMobile={sectionPreviewMode === "mobile"}
-                        >
-                          {tariffs?.filter((t: any) => t.is_active).map((tariff: any) => {
-                            const vm = buildTariffCardViewModel(tariff, (product as any)?.landing_config?.price_suffix);
+                        {(() => {
+                          const activeTariffs = (tariffs ?? []).filter((t: any) => t.is_active);
+                          const previewTariffs = activeTariffs.map((t: any) => ({
+                            ...t,
+                            features: getFeaturesForTariff(t.id),
+                            offers: getOffersForTariff(t.id),
+                          })) as any;
+                          if (previewTariffs.length === 0) {
                             return (
-                              <TariffCard
-                                key={tariff.id}
-                                tariff={vm}
-                                features={getFeaturesForTariff(tariff.id)}
-                                offers={getOffersForTariff(tariff.id)}
-                                onSelectOffer={handlePreviewSelectOffer}
-                                priceSuffix={(product as any)?.landing_config?.price_suffix || "BYN"}
-                              />
+                              <p className="text-center text-sm text-muted-foreground py-8">
+                                Нет активных тарифов для превью
+                              </p>
                             );
-                          })}
-                        </TariffCarouselGrid>
-
-                        {(product as any).payment_disclaimer_text && (
-                          <p className="text-center text-sm text-muted-foreground mt-8">
-                            {(product as any).payment_disclaimer_text}
-                          </p>
-                        )}
+                          }
+                          return (
+                            <UniversalPricingSection
+                              product={product as any}
+                              tariffs={previewTariffs}
+                            />
+                          );
+                        })()}
                       </div>
                     )}
                   </GlassCard>
