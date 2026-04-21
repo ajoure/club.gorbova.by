@@ -1135,6 +1135,60 @@ export function PaymentDialog({
               </Alert>
             )}
 
+            {conflictData && isSubscription && !isTrial && (
+              <Alert className="border-amber-500/50 bg-amber-50 dark:bg-amber-950/20">
+                <Repeat className="h-4 w-4 text-amber-600" />
+                <AlertTitle className="text-amber-800 dark:text-amber-200">
+                  У вас уже есть активная подписка на этот тариф
+                </AlertTitle>
+                <AlertDescription className="space-y-3">
+                  <div className="text-sm space-y-1 text-amber-800 dark:text-amber-200">
+                    <p>Статус: {conflictData.status}</p>
+                    {conflictData.access_end_at && (
+                      <p>
+                        Доступ до:{" "}
+                        {new Date(conflictData.access_end_at).toLocaleString("ru-RU", {
+                          timeZone: conflictData.timezone_used || "Europe/Minsk",
+                        })}
+                      </p>
+                    )}
+                    {conflictData.next_charge_at && (
+                      <p>
+                        Следующее списание:{" "}
+                        {new Date(conflictData.next_charge_at).toLocaleString("ru-RU", {
+                          timeZone: conflictData.timezone_used || "Europe/Minsk",
+                        })}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setConflictData(null);
+                        onOpenChange(false);
+                      }}
+                      className="flex-1"
+                    >
+                      Оставить текущую
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => setShowReplaceConfirm(true)}
+                      disabled={isLoading}
+                      className="flex-1"
+                    >
+                      <Repeat className="mr-2 h-4 w-4" />
+                      Заменить подписку
+                    </Button>
+                  </div>
+                </AlertDescription>
+              </Alert>
+            )}
+
             <div className="rounded-lg bg-muted/50 p-4 space-y-2">
               <div className="flex items-center gap-2 text-sm">
                 <CheckCircle className="h-4 w-4 text-primary" />
