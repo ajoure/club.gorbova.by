@@ -1,285 +1,191 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
-1. **Не дублировать one_time в БД как второй смысл рядом с recorded_webinar.**  
-В UI можно оставить 4 карточки выбора, но в модели данных сделать так:  
-
-  - Разовый показ → сохраняется как текущий recorded_webinar;
-  - По расписанию / Через N минут / Сразу → event_type='autowebinar' + autoweb_mode.  
-  Иначе получится двойная логика одного и того же режима.
-2. **Сессии делать с жёсткой защитой от дублей.**  
-Для live_event_sessions не один общий unique, а два:
-  - public scheduled: unique (live_event_id, starts_at) where viewer_user_id is null;
-  - personal JIT/on_demand: unique (live_event_id, starts_at, viewer_user_id) where viewer_user_id is not null.
-3. **Статус сессии не делать главным источником истины.**  
-status в live_event_sessions оставить как кэш/диагностику, а реальное состояние комнаты считать от:
-  - starts_at
-  - duration_seconds
-  - [replay.open](http://replay.open)_strategy
-  - replay.delay_minutes
-  - replay.window_hours  
-  Иначе будут desync-эффекты, как уже было в live lifecycle.
-4. **Добавить обязательную политику viewer controls для автовеба.**  
-В autoweb_config нужен блок:
-  - allow_pause
-  - allow_seek
-  - allow_speed_control
-  - resume_from_last_position
-  - allow_rewatch_before_end  
-  Это важная часть UX для evergreen-вебинаров.
-5. **Session selector нужен не только для scheduled/JIT, но и как единая входная точка режима.**  
-Даже если режим on_demand, вход лучше вести через единый selector/resolver слой, чтобы не плодить разный room-flow.
-6. **JIT и on-demand защитить от раздувания количества персональных сессий.**  
-Сразу добавить:
-  - dedupe по viewer_user_id + live_event_id + time bucket;
-  - TTL/cleanup expired sessions;
-  - guard от повторного создания 10 одинаковых сессий подряд.
-7. **live_event_session_progress расширить сразу.**  
-Нужны поля:
-  - first_joined_at
-  - last_seen_at
-  - completed_at
-  - max_watched_seconds
-  - watch_percent
-  - last_video_position_seconds  
-  И ключ (session_id, viewer_user_id) либо (session_id, viewer_proof_id).
-8. **Timeline MVP правильный, но host_message и system_message лучше сразу рендерить через единый runtime-слой событий.**  
-Не разносить логику по нескольким независимым рендерам.  
-Иначе потом scripted_chat в Sprint E будет тяжело встраивать.
-9. **В админке нужен dry-run preview generated sessions до сохранения.**  
-Для scheduled админ должен видеть:
-  - ближайшие 5–10 сессий;
-  - TZ;
-  - blackout exclusions;
-  - итог после сохранения.  
-  Не просто “RRULE сгенерирован”, а человекочитаемое превью.
-10. **Reminder-матрицу привязать к session-level, а не только к event-level.**  
-Напоминания должны отправляться по конкретному session_id, иначе для scheduled/JIT будут ошибки с неправильным временем.
-11. **В аналитике разделить 3 уровня.**
-
-&nbsp;
-
-- event-level
-- session-level
-- viewer-level  
-Иначе потом нельзя будет нормально понять:
-- какой слот конвертит;
-- какие CTA сработали;
-- кто смотрел live-slot, а кто replay.
-
-12. **Для Анкеты -> Вебинары зафиксировать отдельный инвариант в DoD.**  
-Там должны попадать:
-
-- только реальные live_event_comments
-- только реальные live_event_questions
-- только реальные viewer/session связи  
-Ни timeline_events, ни simulated_messages, ни host_message туда никогда не попадают.
-
-13. **Добавить Phase 0 перед Sprint A — discovery/integration audit.**  
-До миграций отдельно проверить:
-
-- как сейчас выбирается duration_seconds;
-- как встроены CTA и moderation;
-- какие текущие TG/email reminders уже есть;
-- где лучше хранить viewer timezone;
-- нет ли конфликтов с текущим recorded_webinar.  
-Это должен быть короткий read-only этап, чтобы потом не переделывать БД.
-
-14. **В DoD добавить обратную совместимость явно.**  
-Нужно прямо написать:
-
-- текущие live_stream не ломаются;
-- текущие recorded_webinar не ломаются;
-- существующие room/comments/questions/contacts/webinars карточки продолжают работать без миграции данных.
-
-В остальном план сильный и уже выглядит как нормальная архитектура продукта, а не просто “ещё один тип эфира”.
+1. **PATCH A делать максимально узко и с обязательным regression-check не только на** `/admin/live-events`**, но и минимум на 2 донорских экрана общих таблиц.**  
+Раз ты нашёл root cause в `src/components/ui/table.tsx`, это глобальный primitive. Значит после отката single-wrapper нужно обязательно показать proof не только на `/admin/live-events`, но ещё минимум на:
+  &nbsp;
+  &nbsp;
+  - одну таблицу из Contacts/Forms,
+  - одну таблицу из Payments/другого админ-раздела.  
+  Иначе можно починить live-events и тихо сломать другие 60+ мест.
+2. **В PATCH A не трогать** `LiveEventsTable.tsx`**, если после отката** `table.tsx` **таблица возвращается в норму.**  
+Любые дополнительные правки в `LiveEventsTable.tsx` допустимы только если после отката остаётся доказуемый дефект.  
+Сначала rollback primitive, потом повторная проверка. Не смешивать rollback и дополнительные локальные фиксы без необходимости.
+3. **В PATCH A отдельно проверить именно канонический контракт:**
+  - sticky header,
+  - horizontal scroll,
+  - vertical scroll,
+  - colgroup widths,
+  - lifecycle/actions columns,
+  - column settings,
+  - locked columns,
+  - одинаковая ширина lifecycle-кнопок.  
+  Это всё должно быть в одном proof-пакете, а не выборочно.
+4. **PATCH B — dry-run обязательно оставить read-only.**  
+Зафиксируй прямо в плане: preview не должен ничего писать в `live_event_sessions`.  
+После фикса отдельно покажи proof, что dry-run не создаёт записей в БД.
+5. **В PATCH B добавить явную проверку save/load для** `scheduled` **с несколькими слотами времени.**  
+Не только preview, но и:
+  - сохранить,
+  - переоткрыть,
+  - убедиться, что `schedule.rrules[]`, weekdays, times, blackout, timezone восстановились 1:1.
+6. **Для** `one_time` **явно проверить legacy-мэппинг.**  
+В отчёте показать, что:
+  - UI режим = «Разовый показ»,
+  - в БД сохраняется `event_type='recorded_webinar'`,
+  - `autoweb_mode IS NULL`,
+  - reopen корректно возвращает этот режим в UI.  
+  Это важно, чтобы не сломать старую модель.
+7. **В PATCH B fail-safe UI проверить не только на реальной ошибке, но и на повторном восстановлении.**  
+Сценарий:
+  - ошибка preview,
+  - форма остаётся usable,
+  - Retry,
+  - preview восстановился,
+  - данные формы не потерялись.  
+  Это обязательный proof, иначе fail-safe неполный.
+8. **Отчёты должны быть строго раздельными и с diff-summary по каждому патчу.**  
+В каждом отчёте отдельно:
+  - root cause,
+  - какие файлы изменены,
+  - что именно исправлено,
+  - что не трогалось,
+  - proof,
+  - скриншоты,
+  - regression-check.
+9. **После PATCH A и PATCH B не переходить дальше в Sprint B/Sprint C, пока оба патча не будут доказуемо закрыты.**  
+Сейчас задача — стабилизировать базу: таблицу и форму. Без продолжения новых фич.
+10. **Финальный критерий по PATCH A:**  
+таблица должна выглядеть **ровно как раньше**, а не “стало лучше”.  
+То есть не новая трактовка дизайна, а восстановление канонического состояния.
+11. **Финальный критерий по PATCH B:**  
+форма автовеба должна быть не просто “без ошибки”, а реально пригодной к работе:
+  - preview работает,
+  - режимы сохраняются,
+  - reopen корректен,
+  - legacy не сломан,
+  - dry-run read-only доказан.
 
 &nbsp;
 
+Приступай с PATCH A.
+
 &nbsp;
 
-# План: Модуль «Автовебинары» (Evergreen Webinars) v2
+План: PATCH A + PATCH B (раздельно)
 
-## Контекст и принципы
+Два независимых патча. Сначала полностью PATCH A, потом отдельно PATCH B. Никакого смешивания.
 
-Расширяем `live_events` четвёртым каноническим типом — `autowebinar` — с движком, сравнимым с EverWebinar / eWebinar / Demio / WebinarKit. Текущий `recorded_webinar` остаётся как «разовый показ» (один из 4 user-modes). Архитектурные правки против v1 плана:
+---
 
-- **4 режима показа** вместо 3 (добавлен «разовый показ» в одном UI с остальными).
-- **Симулированный контент изолирован** от реальных SoT-таблиц (`live_event_comments` / `live_event_questions` не загрязняются).
-- **MVP без fake viewer count и без simulated_question/chat** — это advanced (Sprint E).
-- **Timeline MVP**: CTA, poll, resource_link, host_message, system_message, end_screen.
-- **Реальный чат/Q&A** работает поверх автоматической сессии (eWebinar-style live moderation).
-- **Session selector** для зрителя — обязательный экран.
-- **Полная analytics-матрица** (registration → attendance → retention → CTA).
+## PATCH A — Восстановление table-shell в /admin/live-events
 
-## Модель: 4 режима показа
+### Root cause (точно)
 
+Файл `src/components/ui/table.tsx` был изменён (commit `a970a3a9`): обёртка вокруг `<table>` стала **двойным div'ом** с `-mx-4 sm:mx-0` (отрицательный margin) и **внутренним `overflow-x-auto px-4**`.
 
-| Mode           | UI label      | Поведение                                                                                                |
-| -------------- | ------------- | -------------------------------------------------------------------------------------------------------- |
-| `one_time`     | Разовый показ | Эквивалент текущего `recorded_webinar`: одна дата `scheduled_at`                                         |
-| `scheduled`    | По расписанию | RRULE внутри, визуальный редактор снаружи (дни недели + времена). Материализация в `live_event_sessions` |
-| `just_in_time` | Через N минут | На лендинге зритель выбирает старт через 5/10/15/30 мин; персональная сессия                             |
-| `on_demand`    | Сразу         | Стартует мгновенно при заходе                                                                            |
+Последствия для `LiveEventsTable`:
 
+1. **Двойной scroll-контейнер.** Внешний `live-events-table-scroll` (с `overflow-x-auto` + `width: max-content`) теперь содержит ещё один `overflow-x-auto` от `ui/table`. Внутренний контейнер обрезает таблицу по своей ширине → горизонтальный scroll не активируется → ширины колонок «съезжают».
+2. **Сдвиг на -16px.** `-mx-4` вытаскивает таблицу за границу `rounded-md border bg-card` → визуально таблица «уродская», накладывается на края карточки.
+3. **Sticky header ломается.** Sticky опирается на ближайший scroll-ancestor. Двойная вложенность scroll-контейнеров делает sticky неработающим.
+4. **Это глобально**: тот же баг во всех 60+ админских таблицах (contacts, forms, payments…), но визуально заметнее всего на live-events из-за `width: max-content` + множества колонок.
 
-Все 4 — общий тип `event_type = 'autowebinar'`, отличаются `autoweb_mode`. `recorded_webinar` остаётся для legacy-совместимости (миграция не нужна, можно перевести вручную).
+### Решение
 
-## БД-изменения
+**Откат `src/components/ui/table.tsx` к каноническому однослойному виду** (как было до `a970a3a9`):
 
-### `live_events` (новые колонки)
-
-- `autoweb_mode` text NULL — `one_time | scheduled | just_in_time | on_demand`
-- `autoweb_config` jsonb DEFAULT `'{}'` — единый контейнер настроек:
-
-```json
-{
-  "schedule": {
-    "rrule": "FREQ=WEEKLY;BYDAY=MO,WE,FR;BYHOUR=19;BYMINUTE=0",
-    "timezone": "Europe/Minsk",
-    "occurrences_window_days": 14,
-    "blackout_dates": ["2026-05-09"]
-  },
-  "just_in_time": {
-    "offsets_minutes": [5, 10, 15, 30],
-    "show_countdown": true
-  },
-  "on_demand": { "min_delay_seconds": 0 },
-  "replay": {
-    "enabled": true,
-    "open_strategy": "immediate",
-    "delay_minutes": 0,
-    "window_hours": 48,
-    "show_chat_history": false,
-    "cta_strategy": "same_as_live"
-  },
-  "video": { "kinescope_video_id": "...", "duration_seconds": 3600 }
-}
+```tsx
+<div className="relative w-full overflow-auto">
+  <table className="w-full caption-bottom text-sm" ... />
+</div>
 ```
 
-### `live_event_sessions` (новая)
+Это минимально-инвазивно: один файл, одна обёртка, никаких хаков ширины. Все админские таблицы возвращаются к каноническому состоянию одним патчем.
 
-Каждый сеанс показа: `id`, `live_event_id`, `mode`, `starts_at`, `ends_at`, `viewer_user_id` NULL (для JIT/on_demand), `status` (`pending | live | replay | ended | expired`), уникальный индекс `(live_event_id, starts_at, viewer_user_id)`.
+`LiveEventsTable.tsx` **не трогаем** — там всё канонически правильно (colgroup + tableLayout:fixed + width:max-content + sticky + DndContext). Бизнес-логику lifecycle/delete/select также не трогаем.
 
-### `live_event_timeline_events` (новая)
+### Файлы
 
-Сценарные события: `id`, `live_event_id`, `offset_seconds`, `kind` (`cta_show | cta_hide | poll | resource_link | host_message | system_message | end_screen`), `payload` jsonb, `is_active`. Индекс `(live_event_id, offset_seconds)`.
+- `src/components/ui/table.tsx` — откат к single-div overflow-auto обёртке.
 
-### `live_event_simulated_messages` (новая, изолированная SoT)
+### DoD PATCH A
 
-Sprint E. **Не смешивается** с `live_event_comments`. Колонки: `id`, `session_id`, `timeline_event_id`, `display_at`, `author_name`, `author_avatar_url`, `text`, `kind` (`scripted_chat | scripted_question`).
+- Таблица /admin/live-events визуально восстановлена.
+- Заголовки не налезают, ширины колонок ровные.
+- Lifecycle и actions колонки видны корректно.
+- Горизонтальный scroll работает (виден при сумме ширин > viewport).
+- Sticky header работает при вертикальном scroll.
+- Column settings + locked columns (checkbox, actions) не сломаны.
+- Proof-pack: screenshot до/после на 1366px и 1102px.
+- Regression-check: lifecycle proof из прошлых спринтов (open room / start live / complete / single delete / bulk delete) — переиграть.
+- Никаких других файлов не тронуто. Никаких хаков ширины не добавлено.
 
-### `live_event_session_progress` (новая)
+---
 
-Метрики просмотра по сессии: `session_id`, `viewer_user_id`, `joined_at`, `left_at`, `max_watched_seconds`, `cta_clicks` jsonb, `poll_answers` jsonb.
+## PATCH B — Починка preview формы автовебинара (scheduled mode)
 
-### RLS
+### Root cause (точно)
 
-По образцу `live_event_questions`: admin RW, authenticated SELECT по своим сессиям.
+В `src/components/admin/live/AutowebModeEditor.tsx:165`:
 
-## Backend (edge functions)
+```ts
+supabase.functions.invoke("autoweb-generate-occurrences?dry_run=true", { body: ... })
+```
 
-1. `**autoweb-generate-occurrences**` — cron (1/час), материализует `live_event_sessions` по RRULE на `occurrences_window_days` вперёд, исключая `blackout_dates`. Идемпотентно.
-2. `**autoweb-resolve-sessions**` — для лендинга/session-selector: возвращает 3–5 ближайших публичных сессий (scheduled), варианты JIT-офсетов или мгновенную сессию (on_demand) в timezone зрителя.
-3. `**autoweb-create-personal-session**` — создаёт персональную сессию для JIT/on_demand при выборе зрителя.
-4. `**autoweb-room-state**` — вычисляет `pre_show | live | replay | ended` по `now() vs session.starts_at + duration + replay.delay + replay.window`.
-5. `**autoweb-timeline-tick**` — отдаёт клиенту scripted-события для текущего `currentVideoTime` (CTA/poll/host_message). Идемпотентно по `(session_id, timeline_event_id)`.
-6. `**autoweb-import-chat**` — Sprint E. Конвертирует реальный live-чат в `live_event_simulated_messages`.
+`supabase-js` v2 **не парсит query string из имени функции** — он URL-encodes всю строку как имя: запрос уходит на `/functions/v1/autoweb-generate-occurrences%3Fdry_run%3Dtrue` → 404 на gateway → клиент получает `FunctionsFetchError: Failed to send a request to the Edge Function`. Подтверждение: edge logs `autoweb-generate-occurrences` пусты — функция запросов не получает.
 
-## UI: админ — конструктор режима
+Edge function ожидает `dry_run` через `url.searchParams.get('dry_run')`, но клиент его никогда не передаёт. Если бы запрос доходил, он бы упал в EXECUTE-ветку (требующую service-role и записи в БД), что тоже неверно для preview.
 
-В диалоге `AdminLiveEvents.tsx` при `event_type = autowebinar` — 4 карточки выбора режима (Разовый / По расписанию / Через N минут / Сразу). Под каждой раскрывается контекстная секция:
+### Решение
 
-- **Разовый**: один date-time picker (как сейчас).
-- **По расписанию**: визуальный редактор (чекбоксы дней недели + временные слоты + TZ + окно генерации 7/14/30/90 + blackout-даты). Превью «Ближайшие 5 запусков». RRULE генерируется автоматически и хранится скрыто.
-- **Через N минут**: чекбоксы офсетов (5/10/15/30/60), тоггл «Показывать обратный отсчёт».
-- **Сразу**: только тоггл «Минимальная задержка перед стартом».
+**Два минимальных фикса** (клиент + сервер) + fail-safe UI:
 
-Отдельные секции (общие для всех режимов кроме `one_time`):
+1. **Клиент** (`AutowebModeEditor.tsx`): убрать query string из имени функции. Передавать `dry_run` через body:
+  ```ts
+   supabase.functions.invoke("autoweb-generate-occurrences", {
+     body: { dry_run: true, preview_rrules, preview_config, preview_limit }
+   })
+  ```
+2. **Сервер** (`autoweb-generate-occurrences/index.ts`): принимать `dry_run` из body как fallback:
+  ```ts
+   const dryRun = url.searchParams.get('dry_run') === 'true' || body?.dry_run === true;
+  ```
+   (URL-вариант оставляем для обратной совместимости с cron, который может звать через прямой fetch.)
+3. **Fail-safe UI** в preview-блоке:
+  - Чёткое error-state сообщение (уже есть `previewError` + AlertCircle) → улучшить текст: «Не удалось загрузить превью. Попробуйте ещё раз.»
+  - Кнопка **Retry** рядом с error (явная, не только «Обновить»).
+  - При ошибке форма остаётся usable: переключение режимов, сохранение полей не блокируются.
+  - Никакого красного шума — ошибка только внутри preview-блока, не на всю форму.
+4. **Save/load contract verify** (без правок кода, только проверка):
+  - scheduled с 2 weekdays + 2 times → save → reopen edit → значения те же → preview совпадает.
+  - just_in_time с офсетами → save → reopen → офсеты на месте.
+  - on_demand с delay → save → reopen → delay сохранён.
+  - one_time → save как `recorded_webinar` (без `autoweb_mode`) → reopen → форма показывает «Разовый показ».
+  - legacy live_stream / recorded_webinar (без режима автовеба) → save/reopen без ошибок.
 
-- **Источник видео**: Kinescope picker + автодетект `duration_seconds`.
-- **Replay**: тоггл, `open_strategy` (immediately / after delay), `delay_minutes`, `window_hours`, `cta_strategy` (same as live / replay-only CTAs), `show_chat_history`.
+### Файлы
 
-## UI: Timeline Editor (новая вкладка карточки эфира)
+- `src/components/admin/live/AutowebModeEditor.tsx` — fix invoke + fail-safe UI с Retry-кнопкой.
+- `supabase/functions/autoweb-generate-occurrences/index.ts` — accept `dry_run` from body as fallback.
 
-Компонент `AutowebTimelineEditor.tsx` — видео-плеер Kinescope + дорожка с маркерами + список событий (sortable по offset). Канонический набор MVP (Sprint C):
+### DoD PATCH B
 
+- Preview scheduled-режима работает без ошибки `Failed to send a request`.
+- Multi-times RRULE: проверка с 2 weekdays + 2 times (например, ПН/СР × 09:15 + 10:30) → preview показывает ровно 4 occurrences в неделю (без декартова 09:30 / 10:15).
+- Blackout dates: добавить дату в окне → исключённый occurrence не появляется.
+- Timezone: сменить TZ с Europe/Minsk на Europe/London → preview-времена пересчитаны.
+- Save → reopen edit dialog → все поля autoweb на месте (4 режима × все вариации).
+- Legacy live_stream и recorded_webinar (one_time) сохраняются и открываются без регрессий.
+- Fail-safe: при искусственной ошибке (выключенная сеть) preview-блок показывает понятный текст + Retry; форма остаётся usable.
+- Proof-pack: screenshot scheduled с 2 weekdays + 2 times без ошибки + список occurrences.
 
-| kind                    | UI                                                                                     |
-| ----------------------- | -------------------------------------------------------------------------------------- |
-| `cta_show` / `cta_hide` | выбор существующего sales block                                                        |
-| `poll`                  | вопрос + варианты ответа                                                               |
-| `resource_link`         | заголовок + URL                                                                        |
-| `host_message`          | автор + аватар + текст (видно как «системное сообщение от ведущего» отдельным styling) |
-| `system_message`        | технический баннер                                                                     |
-| `end_screen`            | финальный экран с кнопками                                                             |
+---
 
+## Порядок выполнения и формат отчёта
 
-Превью-режим: запустить плеер, видеть всплывающие события. Bulk import из CSV. Импорт чата из прошлого live и `scripted_chat/scripted_question` — Sprint E.
+1. **Сначала PATCH A полностью** → отдельный отчёт `PATCH A REPORT` (root cause / файлы / что исправлено / proof / скриншоты 1366px+1102px / что не тронуто).
+2. **Потом PATCH B полностью** → отдельный отчёт `PATCH B REPORT` (root cause / файлы / что исправлено / proof / скриншоты).
 
-## UI: страница зрителя
+Никакого смешивания. Никаких «временных» хаков. После PATCH A — переигрываем lifecycle proof. После PATCH B — переигрываем save/load contract.
 
-### Session Selector (новый экран, обязательный)
-
-Перед регистрацией:
-
-- Для `scheduled`: список 3–5 ближайших стартов в TZ зрителя + смена слота.
-- Для `just_in_time`: 4 кнопки «Начать через 5/10/15/30 мин».
-- Для `on_demand`: одна кнопка «Начать сейчас».
-- Для `one_time`: фиксированная дата + countdown.
-
-### Комната
-
-- `pre_show`: countdown + описание.
-- `live`: Kinescope-плеер + чат + Q&A. Чат показывает **только реальные сообщения** (из `live_event_comments`). Scripted host_message рендерится **отдельным визуальным слоем** (слева, с pin-стилем «от ведущего»), не в чат-feed. Sprint E добавит scripted_chat в feed с пометкой `metadata.kind = 'scripted'`.
-- Реальные вопросы зрителя → `live_event_questions` как сейчас. Модератор может отвечать вживую (eWebinar-style) или позже (slow-response fallback — Sprint E).
-- CTA/poll/resource_link всплывают по timeline-tick.
-- `replay`: те же CTA (или replay-CTA по `cta_strategy`); чат-история скрыта по умолчанию.
-- `ended`: end_screen.
-
-## Изоляция симулированного контента (архитектурный инвариант)
-
-
-| Источник                          | Таблица                         | Видимость                                                                         |
-| --------------------------------- | ------------------------------- | --------------------------------------------------------------------------------- |
-| Реальные комментарии зрителей     | `live_event_comments`           | Чат-feed, карточка контакта, аналитика, Анкеты → Вебинары                         |
-| Реальные вопросы зрителей         | `live_event_questions`          | Q&A panel, Анкеты → Вебинары, moderation                                          |
-| Scripted host_message             | `live_event_timeline_events`    | Отдельный визуальный слой в комнате; **не в карточке контакта**, **не в Анкеты**  |
-| Scripted chat/question (Sprint E) | `live_event_simulated_messages` | Мерж в чат-feed на чтении с явной меткой; **не в SoT-аналитике**, **не в Анкеты** |
-
-
-Анкеты → Вебинары и карточка контакта читают **только** `live_event_comments` / `live_event_questions` — гарантия чистоты.
-
-## Аналитика (расширенная матрица)
-
-Метрики на уровне эфира и сессии:
-
-- registration → attendance (показатели регистрации vs прихода)
-- attendance → stayed 25 / 50 / 75 / 100% (retention curve)
-- clicks by timeline event (per CTA / poll / link)
-- questions asked (количество, среднее на зрителя)
-- moderator response time (от вопроса до первого ответа)
-- replay watchers vs live-slot watchers (cohort split)
-- per-session funnel (для scheduled — какой слот конвертит лучше)
-
-Источники: `live_event_session_progress` + существующие `live_event_questions`/`comments`.
-
-## Этапы (новая разбивка под безопасный MVP)
-
-1. **Sprint A — Ядро.** Миграции (`autoweb_mode`, `autoweb_config`, `live_event_sessions`), 4 режима в admin-UI (включая `one_time`), session resolver, RRULE-движок внутри.
-2. **Sprint B — Room runtime.** `autoweb-room-state`, countdown / pre-show / live / replay экраны, реальный чат и Q&A, базовый session picker.
-3. **Sprint C — Timeline MVP.** Editor + 7 канонических event kinds (CTA, poll, link, host_message, system_message, end_screen), preview simulator, runtime-tick.
-4. **Sprint D — Replay + reminders + analytics.** Полная replay-модель (open_strategy, cta_strategy), reminder-матрица (email/TG за 24ч/1ч/при старте), core analytics dashboard.
-5. **Sprint E — Advanced.** `live_event_simulated_messages`, scripted_chat / scripted_question, import chat from live, fake viewer count (feature flag), slow-response moderator automation.
-
-## DoD
-
-- 4 режима (one_time / scheduled / just_in_time / on_demand) работают end-to-end через визуальный конструктор без показа RRULE.
-- Session selector показывает ближайшие старты в TZ зрителя; JIT-офсеты выбираются.
-- Timeline Editor поддерживает 7 MVP-типов; preview работает.
-- Реальный чат и Q&A зрителя работают поверх автоматической сессии; модератор отвечает вживую.
-- Replay открывается по `open_strategy` и закрывается по `window_hours`; CTA-стратегия применяется.
-- Аналитика показывает registration → attendance → retention 25/50/75/100% + CTA clicks + Q&A метрики.
-- **Реальные комментарии/вопросы не смешиваются с simulated feed** (DB-инвариант: разные таблицы; UI-инвариант: scripted host_message — отдельный слой).
-- **Анкеты → Вебинары и карточка контакта** показывают только реальную активность зрителя (запрос только к `live_event_comments` / `live_event_questions`, без timeline-источников).
-- Текущие `live_stream` и `recorded_webinar` не сломаны (regression-pass).
-- Memory: `mem://architecture/webinars/autowebinar-engine-v1` + `mem://architecture/webinars/simulated-content-isolation`.
+Подтверди — приступаю с PATCH A.
