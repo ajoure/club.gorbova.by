@@ -1,151 +1,446 @@
-# да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. Сначала зафиксируй **PATCH B как отдельный патч без смешивания с PATCH A**. В отчёте явно укажи: PATCH A не трогаем, таблицу не меняем, только preview scheduled mode.
-2. В `autoweb-generate-occurrences` сделай **жёсткий early-return для dry_run до любых чтений/записей execute-ветки**. Нужно исключить даже теоретическую запись в `live_event_sessions` при preview.
-3. В proof по dry-run добавь не только `count(*) за последнюю минуту = 0`, но и **двойную проверку**:
-  &nbsp;
-  &nbsp;
-  - до preview,
-  - после 2–3 повторных preview-вызовов,
-  - diff = 0.  
-  Это будет доказуемее, чем одиночный count.
-4. В fail-safe UI не показывай технический текст `Failed to send a request to the Edge Function`. Пользователю нужен нормальный текст:
-  - «Не удалось загрузить превью. Попробуйте ещё раз.»
-  - отдельная кнопка **«Повторить»**
-  - техническую причину можно оставить только в console / logs, не в основном UI.
-5. В save/load proof по `scheduled` обязательно проверь **именно 2 weekday × 2 times**, а не более простой кейс. Это главный regression-risk после фикса `rrules[]`.
-6. Для `one_time` в отчёте покажи не только UI reopen, но и **SQL-proof**:
-  - `event_type='recorded_webinar'`
-  - `autoweb_mode IS NULL`
-  - `autoweb_config` не содержит scheduled/jit/on_demand мусора.
-7. Для `just_in_time` и `on_demand` в save/load proof проверь, что после reopen **не появляются лишние scheduled-поля** и не остаются старые `rrules[]` от предыдущего режима. Нужна проверка очистки несовместимых полей при смене режима.
-8. Для blackout proof возьми дату, которая точно попадает в одно из preview-occurrences, и покажи:
-  - preview до blackout,
-  - добавление blackout,
-  - preview после blackout,
-  - нужный слот исчез.  
-  Просто “добавили дату” без сравнения недостаточно.
-9. Для timezone proof зафиксируй ожидаемое поведение явно:
-  - меняется именно **локальное время occurrences в preview**,
-  - порядок и количество запусков не ломаются,
-  - blackout продолжает работать в новой TZ.
-10. В отчёте по PATCH B дай отдельный раздел **«Что не трогалось»** и там явно перечисли:
+1. **Не дублировать duplicate-guard в двух backend-точках вручную.**  
+Для `bepaid-create-subscription-checkout` и `_shared/create-payment-checkout.ts` должен быть **один общий shared helper**:
+  - exact duplicate query;
+  - единый список конфликтующих статусов;
+  - единый формат ответа `existing_subscription_conflict`.
+  Иначе через 1–2 спринта снова появится расхождение между admin-flow и public-flow.
+2. **Conflict должен существовать только для подписочного сценария.**  
+Явно добавь в план:
+  - если выбран `payment_type !== 'subscription'`, никакой subscription-conflict UI не рендерится;
+  - stale `conflictData` должен сбрасываться также при переключении с подписки на разовую оплату.
+3. **Уточнить allowed statuses для replacement после отмены.**  
+Формулировка `terminal statuses` слишком расплывчатая.  
+Нужно явно перечислить, какие статусы сервер принимает для `replacement_of_subscription_v2_id` после успешной отмены. Минимально:
+  - `superseded`
+  - и, если реально используются в проекте, другие финальные статусы по текущему контракту.
+  Нельзя оставлять это как “любой terminal”, иначе потом кто-то подмешает неподходящий статус.
+4. **Server-side validation replacement нужно делать в обе стороны.**  
+Проверять не только:
+  - `oldSub.user_id === user_id`
+  - `oldSub.product_id === product_id`
+  - `oldSub.tariff_id === tariff_id`
+  Но и то, что:
+  - `replacement_of_subscription_v2_id` передан **только** когда реально есть same-pair conflict;
+  - нельзя передать replacement для случая, где активной same-pair подписки нет.
+5. **В** `AdminPaymentLinkDialog` **stale-conflict надо сбрасывать не только по product/tariff/offer/type, но и перед каждым новым submit-cycle.**  
+То есть:
+  - перед `createLinkMutation.mutate()`;
+  - перед `replaceSubscriptionMutation.mutate()`;
+  - при закрытии/повторном открытии;
+  - при смене режима direct/public, если там есть разные ветки создания ссылки.
+6. **UI-блок конфликта должен быть привязан к текущей exact-pair, а не просто к наличию объекта.**  
+Добавь явный helper:
+  - `isCurrentConflict(conflictData, selectedProductId, selectedTariffId)`
+  И используй его и для рендера, и для disable состояния кнопки, и для показа confirm-dialog. Не дублировать условие в нескольких местах.
+7. **Public** `PaymentDialog` **должен переиспользовать уже существующую admin replacement-логику, а не копировать её вручную.**  
+Если сейчас `AdminPaymentLinkDialog` уже содержит рабочий сценарий:
+  - cancel old sub;
+  - mark superseded;
+  - create new checkout with `replacement_of_subscription_v2_id`;
+  то в public dialog нужно вынести это в shared action/helper, а не писать вторую похожую реализацию.
+8. **Верификация different-product case должна быть на живом конкретном пользователе из жалобы.**  
+В `Verify` добавь обязательный proof именно на проблемном кейсе:
+  - у пользователя есть активная подписка на продукт A;
+  - он покупает продукт B;
+  - backend не возвращает `existing_subscription_conflict`;
+  - UI не показывает replacement-блок;
+  - checkout создаётся штатно.
+  Без этого патч нельзя считать закрытым.
+9. **Regression-check по public path обязателен отдельно от admin path.**  
+Не объединяй их в один пункт.  
+Нужно раздельно доказать:
+  - admin contact sheet;
+  - public `PaymentDialog`;
+  - backend direct response для `bepaid-create-subscription-checkout`.
+10. **В dry-run добавь ещё один обязательный поиск.**  
+Нужно найти все места в коде, где обрабатывается строка:
+  - `existing_subscription_conflict`
+  И убедиться, что нигде не осталось старое поведение с переходом в `/purchases` или общий “активная подписка уже есть” без проверки exact pair.
+11. **Audit-proof нужно зафиксировать явнее.**  
+В `Verify` добавь отдельный пункт:
+  - при replacement есть proof по трём событиям:
+    1. отмена старой подписки у провайдера;
+    2. перевод старой подписки в `superseded`;
+    3. создание новой оплаты с `replacement_of_subscription_v2_id`.
+  Просто “пишет audit” слишком общее.
+12. **STOP-guard на unknown user/product/tariff оставить, но не переводить это в user-facing generic message.**  
+Во frontend должен идти понятный текст, а не сырой backend error.  
+Это особенно важно для public `PaymentDialog`.
+
+Итог: план хороший, но его нужно чуть усилить в части **shared helper**, **точного списка replacement-statuses**, **same-pair only для subscription-flow**, и **proof на реальном кейсе different-product**.
 
 &nbsp;
 
-- lifecycle,
-- delete-flow,
-- table-shell,
-- live room runtime,
-- execute-ветка cron кроме fallback чтения `dry_run` из body.
+План: PATCH PAYMENT-CONFLICT — исправить ложный блок оплаты по чужой подписке и вернуть правильный flow замены подписки
 
-11. Итоговый `PATCH B REPORT` должен закончиться только одним из двух статусов:
+## 1. Проблема
 
-- `PATCH B accepted`
-- `PATCH B not accepted`  
-Без промежуточных формулировок.
+Текущая ошибка не должна решаться отправкой пользователя в «Мои покупки».
 
-12. После принятия PATCH B сразу приложи **короткий список residual risks**, если они останутся:
+Правильная логика, которая уже была согласована и частично реализована раньше:
 
-- только preview fixed,
-- execute-ветка cron не прогонялась runtime,
-- room runtime не затрагивался.
-- &nbsp;
-- План: PATCH B — починка preview ближайших запусков (scheduled mode)
+1. Если у пользователя есть активная подписка **на тот же `product_id + tariff_id**`, система показывает конфликт и предлагает:
+  - оставить текущую подписку;
+  - заменить подписку: сначала отменить старую у провайдера, затем создать новую оплату с `replacement_of_subscription_v2_id`.
+2. Если у пользователя есть активная подписка **на другой продукт или другой тариф**, новая покупка не должна блокироваться.
 
-## Root cause
+Сейчас поведение выглядит как критическая регрессия: наличие любой активной подписки может блокировать оплату другого продукта либо UI может показывать старый конфликт после смены продукта/тарифа.
 
-В `src/components/admin/live/AutowebModeEditor.tsx` (строка ~165):
+## 2. Диагностика
 
-```ts
-supabase.functions.invoke("autoweb-generate-occurrences?dry_run=true", { body: ... })
+Найденные уже существующие спринты/контракты:
+
+- `mem://commercial-logic/subscriptions/duplicate-subscription-prevention-guard`
+  - duplicate guard должен работать только по паре `product_id + tariff_id`;
+  - конфликтующие статусы: `active`, `trial`, `past_due`, `grace_period`;
+  - UI должен предлагать оставить или заменить подписку;
+  - общий `force_replace` запрещен;
+  - разрешен только конкретный `replacement_of_subscription_v2_id`.
+- `mem://commercial-logic/subscriptions/safe-replacement-flow`
+  - сначала отмена старой подписки у провайдера через `bepaid-cancel-subscriptions`;
+  - затем перевод старой подписки в `superseded`;
+  - затем создание новой оплаты с `replacement_of_subscription_v2_id`;
+  - если отмена у провайдера не подтверждена — создание новой подписки запрещено.
+
+Найденная реализация, которую надо не придумывать заново, а восстановить/дотянуть:
+
+- `src/components/admin/AdminPaymentLinkDialog.tsx`
+  - уже содержит `conflictData`;
+  - уже содержит `replaceSubscriptionMutation`;
+  - уже вызывает `bepaid-cancel-subscriptions`;
+  - уже передает `replacement_of_subscription_v2_id`;
+  - уже показывает кнопки:
+    - «Оставить текущую подписку»;
+    - «Заменить подписку (отменить старую)».
+- `supabase/functions/_shared/create-payment-checkout.ts`
+  - уже содержит `replacement_of_subscription_v2_id`;
+  - уже содержит guard по `user_id + product_id + tariff_id`;
+  - это канонический backend-path для `admin-create-payment-link`.
+
+Подозреваемые точки регрессии:
+
+1. `src/components/admin/AdminPaymentLinkDialog.tsx`
+  - `conflictData` сбрасывается при закрытии диалога, но не сбрасывается надежно при смене продукта/тарифа/оффера/типа оплаты;
+  - из-за этого UI может продолжать показывать конфликт от предыдущего продукта и визуально выглядеть так, будто «любой активный продукт блокирует оплату».
+2. `src/components/payment/PaymentDialog.tsx`
+  - публичный диалог оплаты не повторяет правильный replacement-flow;
+  - предыдущий предложенный план с переходом в `/purchases` был неверным и будет отменен.
+3. `supabase/functions/bepaid-create-subscription-checkout/index.ts`
+  - отдельный provider-managed subscription entrypoint должен быть приведен к тому же контракту:
+    - конфликт только по тому же `product_id + tariff_id`;
+    - structured response `existing_subscription_conflict`;
+    - replacement только через конкретный `replacement_of_subscription_v2_id`.
+
+## 3. Предлагаемое решение
+
+### A. Не менять бизнес-правило
+
+Сохраняю строгое правило:
+
+```text
+Конфликт = same user_id + same product_id + same tariff_id + active/trial/past_due/grace_period
 ```
 
-`supabase-js` v2 **не парсит query string из имени функции** — он URL-encode-ит всю строку как имя функции. Запрос уходит на `/functions/v1/autoweb-generate-occurrences%3Fdry_run%3Dtrue` → 404 на gateway → клиент получает `FunctionsFetchError: Failed to send a request to the Edge Function`.
+Подписки на другие продукты не являются конфликтом.
 
-Подтверждение: edge logs `autoweb-generate-occurrences` пусты при попытке preview — функция вообще не получает запрос.
+### B. Исправить stale-conflict в админском payment link UI
 
-Edge function ожидает `dry_run` через `url.searchParams.get('dry_run')`, но клиент его никогда туда не передаст. Если бы запрос даже дошёл — он бы попал в EXECUTE-ветку (требует service-role и пишет в `live_event_sessions`), что **категорически неверно** для preview.
+Файл:
 
-## Решение (минимально-инвазивное)
+- `src/components/admin/AdminPaymentLinkDialog.tsx`
 
-### 1. Клиент — `src/components/admin/live/AutowebModeEditor.tsx`
+Изменения:
 
-Убрать query string из имени функции. Передавать `dry_run` через body:
-
-```ts
-const { data, error } = await supabase.functions.invoke("autoweb-generate-occurrences", {
-  body: {
-    dry_run: true,
-    preview_rrules: schedule.rrules,
-    preview_config: { timezone: schedule.timezone, blackout_dates: schedule.blackout_dates },
-    preview_limit: 5,
-  },
-});
-```
-
-### 2. Сервер — `supabase/functions/autoweb-generate-occurrences/index.ts`
-
-Принимать `dry_run` из body как fallback (URL-вариант оставляем для обратной совместимости с cron):
+1. При смене:
+  - `selectedProductId`;
+  - `selectedTariffId`;
+  - `selectedOfferId`;
+  - `paymentType`;
+   сбрасывать:
+  - `conflictData`;
+  - `replaceStep`;
+  - `showCancelConfirm`.
+2. Перед каждым новым созданием ссылки явно очищать старый конфликт.
+3. Рендерить блок конфликта только если он соответствует текущей выбранной паре:
 
 ```ts
-const body = await req.json().catch(() => ({}));
-const dryRun = url.searchParams.get('dry_run') === 'true' || body?.dry_run === true;
+conflictData.product_id === selectedProductId &&
+conflictData.tariff_id === selectedTariffId
 ```
 
-**Гарантия read-only:** dry-run ветка возвращает массив occurrences **без единой записи** в `live_event_sessions`. Зафиксировать это явным early-return до любого `supabase.from(...).insert(...)`.
+Если конфликт не соответствует текущему выбору — он считается stale UI state и не блокирует создание ссылки.
 
-### 3. Fail-safe UI в preview-блоке
+### C. Вернуть правильный public PaymentDialog flow
 
-В `AutowebModeEditor.tsx` улучшить error-state:
+Файл:
 
-- Текст: «Не удалось загрузить превью. Попробуйте ещё раз.»
-- Кнопка **«Повторить»** (Retry) явно рядом с ошибкой.
-- Форма остаётся usable: переключение режимов, ввод полей, сохранение не блокируются.
-- Ошибка локализована **только внутри preview-блока**, не на всю форму.
-- Сценарий восстановления: ошибка → Retry → preview восстанавливается → данные формы (weekdays, times, blackout, timezone) **не потеряны**.
+- `src/components/payment/PaymentDialog.tsx`
 
-## Файлы
+Изменения:
 
+1. Не делать переход в «Мои покупки» при `existing_subscription_conflict`.
+2. Добавить UI по аналогии с уже реализованным `AdminPaymentLinkDialog`:
+  - текст: «У вас уже есть активная подписка на этот тариф»;
+  - даты следующего списания/доступа;
+  - кнопка «Оставить текущую подписку»;
+  - кнопка «Заменить подписку».
+3. Для замены:
+  - вызвать `bepaid-cancel-subscriptions` с `subscription_v2_id`;
+  - если отмена успешна — создать новую оплату с `replacement_of_subscription_v2_id`;
+  - если отмена неуспешна — остановиться и показать понятную ошибку.
+4. Сохранять введенные данные формы, не сбрасывать email/телефон/имя.
 
-| Файл                                                       | Изменение                                                          |
-| ---------------------------------------------------------- | ------------------------------------------------------------------ |
-| `src/components/admin/live/AutowebModeEditor.tsx`          | invoke без query string, dry_run в body, fail-safe UI с Retry      |
-| `supabase/functions/autoweb-generate-occurrences/index.ts` | accept `dry_run` from body, гарантированный read-only early-return |
+### D. Унифицировать backend entrypoint для provider-managed checkout
 
+Файл:
 
-## Что не трогаем
+- `supabase/functions/bepaid-create-subscription-checkout/index.ts`
 
-- `LiveEventsTable.tsx` и table layout (PATCH A закрыт).
-- `src/components/ui/table.tsx` (PATCH A закрыт).
-- Бизнес-логика lifecycle / delete / select / cron-вызовы execute-ветки.
-- Структуру `autoweb_config`, `autoweb_mode`, RRULE формат.
-- Save/load контракт формы (только верифицируем).
+Изменения:
 
-## DoD PATCH B
+1. Добавить в request:
 
-1. Preview scheduled-режима работает без ошибки `Failed to send a request`.
-2. **Dry-run read-only proof**: SQL-проверка `SELECT count(*) FROM live_event_sessions WHERE created_at > now() - interval '1 minute'` после нескольких preview-запросов = 0.
-3. Multi-times RRULE: ПН/СР × 09:15 + 10:30 → preview показывает ровно 4 occurrences/неделю (без декартова произведения 09:30/10:15).
-4. Blackout dates: добавить дату в окне → исключённый occurrence не появляется в preview.
-5. Timezone: смена с Europe/Minsk на Europe/London → preview-времена пересчитаны.
-6. **Save/load contract** для всех 4 режимов:
-  - `scheduled` (multi-weekday + multi-time) → save → reopen → `schedule.rrules[]`, weekdays, times, blackout, timezone восстановлены 1:1.
-  - `just_in_time` с офсетами → save → reopen → офсеты на месте.
-  - `on_demand` с delay → save → reopen → delay сохранён.
-  - `one_time`: UI «Разовый показ» → в БД `event_type='recorded_webinar'`, `autoweb_mode IS NULL` → reopen возвращает «Разовый показ».
-7. Legacy `live_stream` и `recorded_webinar` (без autoweb) — save/reopen без регрессий.
-8. **Fail-safe end-to-end**: искусственно симулировать ошибку (выключить сеть) → preview-блок показывает понятный текст + кнопку Retry → форма usable → восстановить сеть → Retry → preview восстановлен → введённые данные не потеряны.
+```ts
+replacement_of_subscription_v2_id?: string
+```
 
-## Формат отчёта
+2. До создания `orders_v2`, `subscriptions_v2` и запроса к bePaid выполнить duplicate guard:
 
-`PATCH B REPORT`:
+```text
+user_id = resolved user
+product_id = текущий продукт
+tariff_id = текущий тариф
+status in active/trial/past_due/grace_period
+```
 
-- root cause
-- diff-summary (2 файла)
-- что не трогалось
-- proof: скриншот scheduled с 2 weekdays + 2 times без ошибки + список occurrences
-- dry-run read-only SQL proof
-- save/load proof по всем 4 режимам + legacy
-- fail-safe + recovery proof
-- итог: PATCH B accepted / not accepted
+3. Если найден конфликт по той же паре — вернуть:
+
+```json
+{
+  "success": false,
+  "error": "existing_subscription_conflict",
+  "conflict": {
+    "subscription_v2_id": "...",
+    "status": "...",
+    "next_charge_at": "...",
+    "access_end_at": "...",
+    "product_id": "...",
+    "tariff_id": "..."
+  }
+}
+```
+
+4. Если активная подписка есть на другой продукт/тариф — не блокировать.
+5. Если передан `replacement_of_subscription_v2_id`, проверить серверно:
+
+```text
+oldSub.user_id === user_id
+oldSub.product_id === product_id
+oldSub.tariff_id === tariff_id
+oldSub.status in terminal statuses
+```
+
+Если не совпадает — STOP, не создавать оплату.
+
+### E. Усилить shared helper replacement guard
+
+Файл:
+
+- `supabase/functions/_shared/create-payment-checkout.ts`
+
+Минимальное усиление:
+
+Сейчас replacement проверяет статус старой подписки. Нужно дополнительно проверить, что заменяемая подписка принадлежит тому же:
+
+- `user_id`;
+- `product_id`;
+- `tariff_id`.
+
+Это закрывает риск, когда в `replacement_of_subscription_v2_id` передают чужую или другую подписку и тем самым обходят duplicate guard.
+
+## 4. Изменяемые компоненты
+
+Файлы:
+
+1. `src/components/admin/AdminPaymentLinkDialog.tsx`
+  - reset stale conflict;
+  - display guard по текущему `product_id + tariff_id`.
+2. `src/components/payment/PaymentDialog.tsx`
+  - правильный conflict UI;
+  - replacement-flow вместо перехода в `/purchases`.
+3. `supabase/functions/bepaid-create-subscription-checkout/index.ts`
+  - exact duplicate guard;
+  - structured conflict response;
+  - support `replacement_of_subscription_v2_id`.
+4. `supabase/functions/_shared/create-payment-checkout.ts`
+  - усиление проверки replacement по `user_id + product_id + tariff_id`.
+
+## 5. Что не будет изменено
+
+Не трогаю:
+
+- `src/components/ui/table.tsx`;
+- table-shell;
+- `/admin/live-events`;
+- scroll-контейнеры;
+- colgroup / widths;
+- роли;
+- Eisenhower matrix;
+- Balance Wheel;
+- раздел «Стратегия»;
+- Glass UI темы;
+- таблицы базы данных;
+- RLS;
+- `orders_v2` schema;
+- `subscriptions_v2` schema;
+- `provider_subscriptions` schema;
+- webhook fulfillment;
+- Telegram-доступы;
+- `grant-access-for-order`.
+
+## 6. Dry-run
+
+Перед Execute выполнить только read-only проверки:
+
+### SQL proof 1 — текущие подписки пользователя
+
+Проверить для проблемного пользователя список активных подписок:
+
+```sql
+select
+  s.id,
+  s.status,
+  s.product_id,
+  pv.name as product_name,
+  s.tariff_id,
+  t.name as tariff_name,
+  s.next_charge_at,
+  s.access_end_at
+from subscriptions_v2 s
+left join profiles p on p.user_id = s.user_id
+left join products_v2 pv on pv.id = s.product_id
+left join tariffs t on t.id = s.tariff_id
+where lower(p.email) = lower('iryna.troinich@gmail.com')
+order by s.created_at desc;
+```
+
+### SQL proof 2 — точная конфликтная пара
+
+Для продукта/тарифа, который реально пытаются оплатить, проверить:
+
+```sql
+select count(*)
+from subscriptions_v2
+where user_id = :user_id
+  and product_id = :target_product_id
+  and tariff_id = :target_tariff_id
+  and status in ('active', 'trial', 'past_due', 'grace_period');
+```
+
+Ожидания:
+
+- если `count = 0` — оплата не должна блокироваться;
+- если `count = 1` — показывается replacement-flow;
+- если найдена подписка на другой `product_id` — она не влияет.
+
+### Static dry-run
+
+Проверить, что все duplicate queries используют exact tuple:
+
+```text
+user_id + product_id + tariff_id
+```
+
+и нет условий вида:
+
+```text
+user_id + active status only
+```
+
+для блокировки покупки.
+
+## 7. Execute
+
+После approval:
+
+1. Внести минимальные изменения в 4 файла.
+2. Не создавать миграций.
+3. Не менять таблицы.
+4. Не менять UI таблиц.
+5. Деплой затронутых backend functions:
+  - `bepaid-create-subscription-checkout`;
+  - функции, использующие `_shared/create-payment-checkout.ts`, если потребуется redeploy.
+
+## 8. STOP-guards
+
+Остановить выполнение и не создавать оплату, если:
+
+1. Не удалось определить `user_id`.
+2. Не удалось определить `product_id`.
+3. Не удалось определить `tariff_id`.
+4. Duplicate guard query вернул ошибку.
+5. `replacement_of_subscription_v2_id`:
+  - не найден;
+  - принадлежит другому пользователю;
+  - относится к другому продукту;
+  - относится к другому тарифу;
+  - не находится в terminal status после отмены.
+6. Отмена у провайдера не подтверждена.
+7. В dry-run обнаружится backend path, который блокирует только по `user_id` без `product_id + tariff_id`.
+
+## 9. Verify
+
+После Execute проверить:
+
+### Backend proof
+
+1. Пользователь с активной подпиской на другой продукт может создать оплату нового продукта.
+2. Пользователь с активной подпиской на тот же `product_id + tariff_id` получает `existing_subscription_conflict`.
+3. Replacement:
+  - отменяет старую подписку;
+  - переводит ее в `superseded`;
+  - создает новую оплату с `replacement_of_subscription_v2_id`;
+  - пишет audit.
+
+### UI proof
+
+1. В админском contact sheet:
+  - выбрать продукт A с конфликтом;
+  - получить conflict block;
+  - переключиться на продукт B без конфликта;
+  - conflict block исчезает;
+  - кнопка создания ссылки снова доступна.
+2. В public `PaymentDialog`:
+  - при same product/tariff conflict видны кнопки «Оставить» и «Заменить»;
+  - нет перехода в «Мои покупки»;
+  - сырое `existing_subscription_conflict` пользователю не показывается.
+
+### Regression proof
+
+Проверить, что:
+
+- разовая оплата работает как раньше;
+- подписка на другой продукт не блокируется;
+- same subscription replacement работает;
+- stale conflict не переносится между продуктами;
+- таблица `/admin/live-events` не изменилась.
+
+## 10. DoD
+
+PATCH считается принятым, если:
+
+1. Ложный блок по подписке другого продукта устранен.
+2. Duplicate guard работает только по `user_id + product_id + tariff_id`.
+3. Старый replacement-flow восстановлен, а не заменен переходом в «Мои покупки».
+4. Stale `conflictData` не может блокировать другой продукт в UI.
+5. `replacement_of_subscription_v2_id` нельзя использовать для чужой/другой подписки.
+6. Нет изменений в таблицах, RLS и table-shell.
+7. Есть proof:
+  - SQL по конкретному пользователю;
+  - SQL по точной конфликтной паре;
+  - backend response для different product;
+  - backend response для same product;
+  - UI proof в админке;
+  - UI proof в public checkout.
