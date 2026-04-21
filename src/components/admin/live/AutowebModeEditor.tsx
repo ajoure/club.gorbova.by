@@ -132,21 +132,29 @@ export function AutowebModeEditor({ userMode, onUserModeChange, config, onConfig
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
-  const rruleString = useMemo(() => buildRRule(weekdays, times), [weekdays, times]);
+  const rrules = useMemo(() => buildRRules(weekdays, times), [weekdays, times]);
+  const rrulesKey = useMemo(() => rrules.join("|"), [rrules]);
+  const storedKey = useMemo(() => (sched.rrules ?? []).join("|"), [sched.rrules]);
 
-  // Auto-update rrule в config при изменениях
+  // Auto-update rrules в config при изменениях
   useEffect(() => {
     if (userMode !== "scheduled") return;
-    if (sched.rrule === rruleString) return;
+    if (storedKey === rrulesKey) return;
     onConfigChange({
       ...cfg,
-      schedule: { ...sched, rrule: rruleString ?? "", timezone: sched.timezone ?? timezone },
+      schedule: {
+        ...sched,
+        rrules,
+        // legacy single rrule НЕ записываем — readers умеют fallback на rrules
+        rrule: undefined,
+        timezone: sched.timezone ?? timezone,
+      },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rruleString, userMode]);
+  }, [rrulesKey, userMode]);
 
   async function loadPreview() {
-    if (!rruleString) {
+    if (rrules.length === 0) {
       setPreview([]);
       setPreviewError("Выберите дни и время для расписания");
       return;
@@ -156,7 +164,7 @@ export function AutowebModeEditor({ userMode, onUserModeChange, config, onConfig
     try {
       const { data, error } = await supabase.functions.invoke("autoweb-generate-occurrences?dry_run=true", {
         body: {
-          preview_rrule: rruleString,
+          preview_rrules: rrules,
           preview_config: {
             schedule: {
               occurrences_window_days: windowDays,
@@ -185,11 +193,11 @@ export function AutowebModeEditor({ userMode, onUserModeChange, config, onConfig
   }
 
   useEffect(() => {
-    if (userMode === "scheduled" && rruleString) {
+    if (userMode === "scheduled" && rrules.length > 0) {
       loadPreview();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userMode, rruleString, windowDays, JSON.stringify(blackoutDates)]);
+  }, [userMode, rrulesKey, windowDays, JSON.stringify(blackoutDates)]);
 
   function patchSchedule(p: Partial<NonNullable<AutowebConfig["schedule"]>>) {
     onConfigChange({ ...cfg, schedule: { ...sched, ...p } });
