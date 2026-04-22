@@ -18,6 +18,8 @@ import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 import { LiveEventRoomBlocks } from "@/components/live/LiveEventRoomBlocks";
 import { LiveEventProductCta, useHasActiveCtaBindings } from "@/components/live/LiveEventProductCta";
 import { LiveBadge, type LiveBadgeMode } from "@/components/live/LiveBadge";
+import { RoomParticipantsList } from "@/components/live/RoomParticipantsList";
+import { LiveRoomReactionsBar } from "@/components/live/LiveRoomReactionsBar";
 import "@/components/live/liveRoomTheme.css";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { useLiveContactSheet } from "@/hooks/useLiveContactSheet";
@@ -649,6 +651,10 @@ function LiveEventLegacy() {
               eventStartedAt={data?.scheduled_at}
             />
           )}
+          {/* Sprint final: Live-room reactions bar (room-level emoji reactions). */}
+          {eventId && roomSettings.reactions.enabled && !isReplay && (
+            <LiveRoomReactionsBar liveEventId={eventId} enabled={roomSettings.reactions.enabled} />
+          )}
         </div>
 
         {/* Chat / Questions sidebar — fixed width on desktop, stack on mobile.
@@ -658,27 +664,57 @@ function LiveEventLegacy() {
         {eventId && (
           <div className="w-full lg:w-[360px] xl:w-[400px] lg:shrink-0 lg:self-start flex flex-col min-h-0 h-[70dvh] lg:h-[calc(100vh-140px)] gap-2">
             <Card className="room-panel flex-1 flex flex-col overflow-hidden min-h-0 order-1">
-              <Tabs defaultValue="comments" className="flex flex-col h-full min-h-0">
-                <TabsList className="room-tabs-list w-full grid grid-cols-2 rounded-none border-b shrink-0 sticky top-0 z-10 bg-card">
-                  <TabsTrigger value="comments" className="room-tab-trigger gap-1.5 text-xs">
-                    <MessageCircle className="h-3.5 w-3.5" />
-                    Чат
-                  </TabsTrigger>
-                  <TabsTrigger value="questions" className="room-tab-trigger gap-1.5 text-xs">
-                    <HelpCircle className="h-3.5 w-3.5" />
-                    Вопросы
-                    <Lock className="h-3 w-3 opacity-60" />
-                  </TabsTrigger>
-                </TabsList>
-                {/* PATCH 3.5: forceMount keeps both tabs in DOM — preserves scroll position and realtime subscriptions.
-                    Inactive tab is hidden via data-state styling but stays mounted. */}
-                <TabsContent value="comments" className="flex-1 min-h-0 overflow-hidden m-0 data-[state=inactive]:hidden" forceMount>
-                  <LiveEventComments liveEventId={eventId} presenterUserId={presenterUserId} onOpenProfile={isStaff ? openContactSheet : undefined} />
-                </TabsContent>
-                <TabsContent value="questions" className="flex-1 min-h-0 overflow-hidden m-0 data-[state=inactive]:hidden" forceMount>
-                  <LiveEventQuestions liveEventId={eventId} presenterUserId={presenterUserId} onOpenProfile={isStaff ? openContactSheet : undefined} />
-                </TabsContent>
-              </Tabs>
+              {(() => {
+                const showParticipantsTab = isStaff || roomSettings.participants.visible_for_students;
+                const tabsCols = showParticipantsTab ? "grid-cols-3" : "grid-cols-2";
+                return (
+                  <Tabs defaultValue="comments" className="flex flex-col h-full min-h-0">
+                    <TabsList className={`room-tabs-list w-full grid ${tabsCols} rounded-none border-b shrink-0 sticky top-0 z-10 bg-card`}>
+                      <TabsTrigger value="comments" className="room-tab-trigger gap-1.5 text-xs">
+                        <MessageCircle className="h-3.5 w-3.5" />
+                        Чат
+                      </TabsTrigger>
+                      <TabsTrigger value="questions" className="room-tab-trigger gap-1.5 text-xs">
+                        <HelpCircle className="h-3.5 w-3.5" />
+                        Вопросы
+                        <Lock className="h-3 w-3 opacity-60" />
+                      </TabsTrigger>
+                      {showParticipantsTab && (
+                        <TabsTrigger value="participants" className="room-tab-trigger gap-1.5 text-xs">
+                          <Users className="h-3.5 w-3.5" />
+                          Участники
+                        </TabsTrigger>
+                      )}
+                    </TabsList>
+                    {/* PATCH 3.5: forceMount keeps both tabs in DOM — preserves scroll position and realtime subscriptions. */}
+                    <TabsContent value="comments" className="flex-1 min-h-0 overflow-hidden m-0 data-[state=inactive]:hidden" forceMount>
+                      <LiveEventComments
+                        liveEventId={eventId}
+                        presenterUserId={presenterUserId}
+                        onOpenProfile={isStaff ? openContactSheet : undefined}
+                        emojiNormalizationEnabled={roomSettings.chat.emoji_normalization_enabled}
+                      />
+                    </TabsContent>
+                    <TabsContent value="questions" className="flex-1 min-h-0 overflow-hidden m-0 data-[state=inactive]:hidden" forceMount>
+                      <LiveEventQuestions
+                        liveEventId={eventId}
+                        presenterUserId={presenterUserId}
+                        onOpenProfile={isStaff ? openContactSheet : undefined}
+                        emojiNormalizationEnabled={roomSettings.chat.emoji_normalization_enabled}
+                      />
+                    </TabsContent>
+                    {showParticipantsTab && (
+                      <TabsContent value="participants" className="flex-1 min-h-0 overflow-hidden m-0 data-[state=inactive]:hidden" forceMount>
+                        <RoomParticipantsList
+                          liveEventId={eventId}
+                          isStaff={isStaff}
+                          visibleForStudents={roomSettings.participants.visible_for_students}
+                        />
+                      </TabsContent>
+                    )}
+                  </Tabs>
+                );
+              })()}
             </Card>
             {/* Sidebar room blocks (legacy, only if no product CTA bindings) — ПОД чатом */}
             {!hasSidebarCta && (
