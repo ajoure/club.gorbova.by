@@ -262,7 +262,7 @@ export function LiveEventRoomBlocksEditor({ liveEventId }: { liveEventId: string
                     placeholder="**Жирный** текст, _курсив_, [ссылки](https://...)"
                   />
                   <p className="text-[10px] text-muted-foreground mt-1">
-                    Runtime-рендер появится в следующем запуске (PHASE 4).
+                    Поддержка: **жирный**, _курсив_, [ссылка](https://...). Только http/https.
                   </p>
                 </div>
               </div>
@@ -289,7 +289,7 @@ export function LiveEventRoomBlocksEditor({ liveEventId }: { liveEventId: string
                     placeholder="Купить" />
                 </div>
                 <p className="text-[10px] text-muted-foreground">
-                  Runtime-рендер появится в следующем запуске (PHASE 4) — каноническая оплата createPaymentCheckout, ID-first.
+                  Каноническая оплата через bepaid-create-token (isOneTime: true → createPaymentCheckout). ID-first.
                 </p>
               </div>
             )}
