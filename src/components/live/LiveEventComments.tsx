@@ -314,6 +314,19 @@ export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile,
         )}
       </div>
 
+      {/* M1.1: «Новые сообщения» pill — only when user scrolled away from bottom and new arrived. */}
+      {hasNewBelow && (
+        <button
+          type="button"
+          onClick={() => scrollToBottom(true)}
+          className="absolute left-1/2 -translate-x-1/2 bottom-[calc(var(--room-composer-h,64px)+12px)] lg:bottom-20 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-primary-foreground text-xs shadow-lg hover:opacity-90 transition-opacity"
+          aria-label="Перейти к новым сообщениям"
+        >
+          <ArrowDown className="h-3 w-3" />
+          Новые сообщения
+        </button>
+      )}
+
       {user && (
         <div className="room-composer border-t lg:sticky lg:bottom-0 z-10 room-panel-sticky">
           <LiveModerationBanner isMuted={isMuted} isRemoved={isRemoved} />
