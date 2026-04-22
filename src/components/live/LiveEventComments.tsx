@@ -192,9 +192,15 @@ export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile,
           <p className="text-sm room-meta-text text-center py-4">Пока нет комментариев</p>
         ) : (
           comments.map((comment) => {
-            const displayName = resolveDisplayName(comment);
-            const avatarUrl = resolveAvatarUrl(comment);
-            const initials = getInitials(displayName);
+            const display = resolveParticipantDisplay({
+              user_id: comment.user_id,
+              author_display_name: comment.author_display_name,
+              author_avatar_url: comment.author_avatar_url,
+              legacy_avatar_url: comment.profile?.avatar_url ?? null,
+            });
+            const displayName = display.displayName;
+            const avatarUrl = display.avatarUrl;
+            const initials = display.initials;
             const displayRole = resolveDisplayRole(comment);
             const isOwn = user?.id === comment.user_id;
             const highlight = resolveMessageHighlight({ isOwn, role: displayRole });
@@ -232,7 +238,7 @@ export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile,
                         onOpenProfile={onOpenProfile}
                       />
                     </div>
-                    <p className="text-sm room-message-text break-words whitespace-pre-wrap">{comment.content}</p>
+                    <p className="text-sm room-message-text break-words whitespace-pre-wrap">{normalizeEmoji(comment.content, emojiNormalizationEnabled)}</p>
                   </div>
                 </div>
                 {/* Threaded replies */}
