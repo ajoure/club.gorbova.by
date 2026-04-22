@@ -20,6 +20,7 @@ import { useRoomModerationState } from "@/hooks/useRoomModerationState";
 import { toast } from "sonner";
 import { resolveParticipantDisplay } from "@/lib/participantDisplay";
 import { normalizeEmoji } from "@/lib/normalizeEmoji";
+import { useStaffNameMap } from "@/hooks/useStaffNameMap";
 
 interface Comment {
   id: string;
@@ -53,6 +54,10 @@ export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile,
   const [newComment, setNewComment] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const [replyingTo, setReplyingTo] = useState<{ id: string; userId: string; name: string } | null>(null);
+  // Staff display rule: ФИО приходит ТОЛЬКО из RPC get_room_participants.
+  // onOpenProfile передаётся ТОЛЬКО при isStaff (см. LiveEvent.tsx) — используем как маркер.
+  const isStaffViewer = !!onOpenProfile;
+  const staffNameMap = useStaffNameMap(liveEventId, isStaffViewer);
 
   const { data: comments, isLoading } = useQuery({
     queryKey: ["live-event-comments", liveEventId],
@@ -197,6 +202,8 @@ export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile,
               author_display_name: comment.author_display_name,
               author_avatar_url: comment.author_avatar_url,
               legacy_avatar_url: comment.profile?.avatar_url ?? null,
+              viewerIsStaff: isStaffViewer,
+              staff_real_name: isStaffViewer ? staffNameMap.get(comment.user_id) ?? null : null,
             });
             const displayName = display.displayName;
             const avatarUrl = display.avatarUrl;
