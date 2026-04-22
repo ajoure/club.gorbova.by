@@ -210,23 +210,42 @@ function ProductChoiceBlock({ config }: { config: Record<string, any> }) {
   if (!tariff_id) return null;
 
   const handleBuy = async () => {
-    if (!session?.user) {
+    if (!session?.user?.email) {
       toast.error("Войдите, чтобы оформить покупку");
       return;
     }
     setLoading(true);
     try {
+      // ID-first: резолвим product_id + code по tariff_id (UUID).
+      const { data: tariff, error: tariffError } = await supabase
+        .from("tariffs")
+        .select("id, code, product_id")
+        .eq("id", tariff_id)
+        .maybeSingle();
+
+      if (tariffError || !tariff?.product_id) {
+        throw new Error("Тариф не найден или не привязан к продукту");
+      }
+
+      // Канонический контракт bepaid-create-token (isOneTime: true → createPaymentCheckout).
       const { data, error } = await supabase.functions.invoke("bepaid-create-token", {
         body: {
-          tariffId: tariff_id,
+          productId: tariff.product_id,
+          customerEmail: session.user.email,
+          tariffCode: tariff.code,
           isOneTime: true,
-          source: "live_room_product_choice",
+          description: title || undefined,
         },
       });
       if (error) throw error;
-      const url = (data as any)?.redirect_url || (data as any)?.checkout?.redirect_url;
+      const url =
+        (data as any)?.redirectUrl ||
+        (data as any)?.redirect_url ||
+        (data as any)?.checkout?.redirect_url;
       if (url) {
         window.location.href = url;
+      } else if ((data as any)?.error) {
+        throw new Error((data as any).error);
       } else {
         toast.error("Не удалось получить ссылку на оплату");
       }
