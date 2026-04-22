@@ -208,11 +208,30 @@ body.impersonation-active .impersonation-offset {
     padding-top: max(0.75rem, env(safe-area-inset-top, 0px));
   }
 
-  /* Sticky main / video-shell сами не получают доп. padding-top —
-     header уже принял safe-area, иначе будет двойной отступ. */
+  /* CRITICAL: header у нас НЕ sticky — он уезжает вверх при body-scroll (M1.2).
+     После ухода header sticky main приклеивается к top:0, а top:0 в standalone =
+     ПОД notch. Поэтому safe-area нужен и на sticky main, иначе video-shell
+     стартует под челкой и статус-бар накладывается на видео.
+     Дублирования с header нет: они никогда не видны одновременно в одном
+     визуальном слоте (header в обычном flow выше, sticky main приклеивается
+     к top:0 ТОЛЬКО когда header уже ушёл за пределы viewport). */
+  [data-mobile-sticky-main] {
+    padding-top: env(safe-area-inset-top, 0px);
+    /* bg-background уже задан Tailwind-классом на элементе — статус-бар
+       не просвечивает на видео в standalone. */
+  }
 
   /* Home indicator на iPhone: composer уже использует
      max(0.75rem, env(safe-area-inset-bottom)) — оставляем как есть. */
+}
+
+/* iOS legacy fallback: navigator.standalone выставляет .is-ios-standalone
+   на <html>. На старых iOS Safari `display-mode: standalone` иногда не
+   срабатывает в @media — дублируем правило через классовый селектор. */
+@media (max-width: 1023px) {
+  html.is-ios-standalone [data-mobile-sticky-main] {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
 }
 
 /* Route-scoped override: публичные сайты не ограничены #root constraints */
