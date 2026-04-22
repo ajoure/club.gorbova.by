@@ -31,6 +31,7 @@ import { RoomEntryDialog } from "@/components/live/RoomEntryDialog";
 import { RoomPreStartScreen } from "@/components/live/RoomPreStartScreen";
 import { useRoomEntryPrefs } from "@/hooks/useRoomEntryPrefs";
 import { readRoomSettings } from "@/lib/roomSettings";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface ResolvedSource {
   resolved_source_kind: 'kinescope_video' | 'kinescope_live_embed' | 'live_pending' | 'none';
@@ -129,6 +130,7 @@ function LiveEventLegacy() {
   const { selectedContact, contactSheetOpen, setContactSheetOpen, openContactSheet } = useLiveContactSheet();
   const isStaff = role === "admin" || role === "superadmin" || role === "employee";
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isMobile = useIsMobile();
 
   // Refs to read latest session/data without triggering effect restarts on TOKEN_REFRESHED.
   const sessionRef = useRef(session);
@@ -175,18 +177,43 @@ function LiveEventLegacy() {
     }
   }, []);
 
-  const startHeartbeat = useCallback(() => {
+  /**
+   * M2 unified entry tracking:
+   * - если в sessionStorage уже лежит session_key (token-flow или прошлый soft-join) — обычный ping;
+   * - если ключа нет, но передан liveEventId и mode ∈ {'live','room_open_waiting'} — soft-join:
+   *   первый ping идёт с { live_event_id }, сервер делает access-check и UPSERT в live_active_sessions,
+   *   возвращает выданный session_key, который мы сохраняем в sessionStorage и продолжаем heartbeat.
+   * entry_path: token | direct | menu (наличие nav state hint) — для будущей аналитики (M3).
+   */
+  const startHeartbeat = useCallback((opts?: { liveEventId?: string }) => {
     if (!slug) return;
     stopHeartbeat();
 
-    const sessionKey = sessionStorage.getItem(`live_session_${slug}`);
-    if (!sessionKey) return;
+    const liveEventId = opts?.liveEventId;
+    let sessionKey = sessionStorage.getItem(`live_session_${slug}`);
+
+    if (!sessionKey && !liveEventId) {
+      // Нет ни ключа, ни eventId — нечего пинговать (классический cold-start без token-link).
+      return;
+    }
+
+    // Определяем entry_path для soft-join: token уже даёт session_key, поэтому здесь только non-token.
+    // Подсказку о входе из меню можно класть в sessionStorage[`live_entry_${slug}`] = 'menu'.
+    const entryPathHint = sessionStorage.getItem(`live_entry_${slug}`) || "direct";
 
     const ping = async () => {
       try {
         const token = sessionRef.current?.access_token;
         if (!token) return;
         const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+
+        const body: Record<string, unknown> = {};
+        if (sessionKey) body.session_key = sessionKey;
+        if (!sessionKey && liveEventId) {
+          body.live_event_id = liveEventId;
+          body.entry_path = entryPathHint;
+        }
+
         const response = await fetch(
           `${supabaseUrl}/functions/v1/live-session-heartbeat`,
           {
@@ -196,17 +223,24 @@ function LiveEventLegacy() {
               apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
               "Content-Type": "application/json",
             },
-            body: JSON.stringify({ session_key: sessionKey }),
+            body: JSON.stringify(body),
           }
         );
         const json = await response.json();
 
-        if (json.status === "session_revoked") {
+        if (json.status === "ok" && json.session_key && !sessionKey) {
+          // Soft-join успешен — сохраняем выданный ключ для следующих ping-ов.
+          sessionKey = json.session_key as string;
+          sessionStorage.setItem(`live_session_${slug}`, sessionKey);
+        } else if (json.status === "session_revoked") {
           stopHeartbeat();
           setState("session_revoked");
         } else if (json.status === "session_expired") {
           stopHeartbeat();
           setState("session_expired");
+        } else if (json.status === "access_denied") {
+          // Soft-join отклонён сервером (нет доступа) — ничего не делаем, не флапаем UI.
+          stopHeartbeat();
         }
       } catch (err) {
         console.error("[LiveEvent] heartbeat error:", err);
@@ -304,7 +338,7 @@ function LiveEventLegacy() {
 
             if (roomPhase === "waiting") {
               nextState = "room_open_waiting";
-              startHeartbeat();
+              startHeartbeat({ liveEventId: json.event_id });
             } else if (ps === "scheduled" || es === "scheduled") {
               // Fallback: если комната ещё closed — старый scheduled-экран.
               nextState = "scheduled";
@@ -316,7 +350,7 @@ function LiveEventLegacy() {
               nextState = "ended_no_replay";
             } else {
               nextState = "live";
-              startHeartbeat();
+              startHeartbeat({ liveEventId: json.event_id });
             }
             break;
           }
@@ -606,7 +640,7 @@ function LiveEventLegacy() {
           )}
         </div>
         {data?.description && (
-          <p className="room-subtitle text-sm line-clamp-1 mb-1">{data.description}</p>
+          <p className="room-subtitle text-sm line-clamp-1 mb-1 hidden md:block">{data.description}</p>
         )}
         {isReplay && (
           <div className="inline-flex items-center gap-2 bg-muted rounded-lg px-2.5 py-1 text-xs text-muted-foreground">
@@ -624,7 +658,7 @@ function LiveEventLegacy() {
             {roomSettings.prestart.enabled && data?.scheduled_at && new Date(data.scheduled_at).getTime() > Date.now() && (state === "room_open_waiting" || isWaiting) ? (
               <RoomPreStartScreen prestart={roomSettings.prestart} scheduledAt={data?.scheduled_at} />
             ) : isWaiting ? (
-              <RoomWaitingState scheduledAt={data?.scheduled_at} eventTimezone={data?.event_timezone} />
+              <RoomWaitingState scheduledAt={data?.scheduled_at} eventTimezone={data?.event_timezone} compact={isMobile} />
             ) : resolvedSource?.resolved_source_kind === 'kinescope_video' && resolvedSource.resolved_embed_url ? (
               <KinescopePlayerWrapper videoId={data?.kinescope_video_id!} />
             ) : resolvedSource?.resolved_source_kind === 'kinescope_live_embed' && resolvedSource.resolved_embed_url ? (
@@ -670,7 +704,7 @@ function LiveEventLegacy() {
             гарантирует, что top чата === top видео. CTA/room blocks рендерятся
             ниже Card. На mobile порядок остаётся естественным (column stack). */}
         {eventId && (
-          <div className="w-full lg:w-[360px] xl:w-[400px] lg:shrink-0 lg:self-start flex flex-col min-h-0 h-[70dvh] lg:h-[calc(100vh-140px)] gap-2">
+          <div className="w-full lg:w-[360px] xl:w-[400px] lg:shrink-0 lg:self-start flex flex-col min-h-0 flex-1 min-h-[60dvh] lg:min-h-0 lg:flex-none lg:h-[calc(100vh-140px)] gap-2">
             <Card className="room-panel flex-1 flex flex-col overflow-hidden min-h-0 order-1">
               {(() => {
                 const showParticipantsTab = isStaff || roomSettings.participants.visible_for_students;
