@@ -609,7 +609,7 @@ function LiveEventLegacy() {
 
   return (
     <div
-      className="live-room-themed flex flex-col min-h-screen lg:min-h-screen"
+      className="live-room-themed flex flex-col min-h-[100dvh] lg:min-h-screen"
       style={themeStyle}
     >
       {/* Header — compact. M1.2: на mobile уезжает вверх при body-scroll (НЕ sticky), на desktop — обычный flow. */}
@@ -656,8 +656,9 @@ function LiveEventLegacy() {
       </div>
 
       {/* Main content — fills remaining height. M1.2: на mobile sticky top-0 + h-100dvh + overflow-hidden,
-          чтобы после ухода header дальнейший body-scroll прекращался, а скролл оставался только внутри messages. */}
-      <div className="flex-1 max-w-[1600px] w-full mx-auto px-3 md:px-6 pb-3 md:pb-6 flex flex-col lg:flex-row lg:items-start gap-3 md:gap-4 min-h-0 max-lg:sticky max-lg:top-0 max-lg:h-[100dvh] max-lg:overflow-hidden">
+          чтобы после ухода header дальнейший body-scroll прекращался, а скролл оставался только внутри messages.
+          bg-background + z-[1] — чтобы header при уходе вверх не просвечивал и не накладывался по слоям. */}
+      <div className="flex-1 max-w-[1600px] w-full mx-auto px-3 md:px-6 pb-3 md:pb-6 flex flex-col lg:flex-row lg:items-start gap-3 md:gap-4 min-h-0 max-lg:sticky max-lg:top-0 max-lg:h-[100dvh] max-lg:overflow-hidden max-lg:bg-background max-lg:z-[1]">
         {/* Player column — takes most width on desktop */}
         <div className="lg:flex-[3] flex flex-col gap-2 min-w-0 max-lg:shrink-0">
           {/* Wrapper для overlay реакций — relative, чтобы absolute overlay лёг поверх плеера. */}
