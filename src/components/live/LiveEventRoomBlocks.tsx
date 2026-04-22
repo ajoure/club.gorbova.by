@@ -136,7 +136,7 @@ function TextBlock({ config }: { config: Record<string, any> }) {
   const body: string = config.body || "";
   if (!body.trim()) return null;
   return (
-    <div className="room-cta-card rounded-lg border bg-card p-3 text-sm text-card-foreground leading-relaxed">
+    <div className="room-cta-card rounded-lg border bg-card p-3 text-sm text-card-foreground leading-relaxed w-full max-w-full min-w-0 overflow-hidden break-words [overflow-wrap:anywhere] [word-break:break-word] whitespace-pre-wrap">
       {renderInlineMarkdown(body)}
     </div>
   );
@@ -146,7 +146,7 @@ function renderInlineMarkdown(text: string): JSX.Element[] {
   // Безопасный парсер: разбиваем по строкам, потом по токенам [..](..), **..**, _.._.
   const lines = text.split(/\r?\n/);
   return lines.map((line, lineIdx) => (
-    <span key={lineIdx} className="block">
+    <span key={lineIdx} className="block min-w-0 max-w-full break-words [overflow-wrap:anywhere]">
       {tokenize(line)}
     </span>
   ));
