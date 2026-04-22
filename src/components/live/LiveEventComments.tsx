@@ -272,7 +272,7 @@ export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile,
       </div>
 
       {user && (
-        <div className="border-t sticky bottom-0 z-10 room-panel-sticky">
+        <div className="room-composer border-t lg:sticky lg:bottom-0 z-10 room-panel-sticky">
           <LiveModerationBanner isMuted={isMuted} isRemoved={isRemoved} />
           <div
             className="flex gap-2 items-end p-3 room-panel-input"
