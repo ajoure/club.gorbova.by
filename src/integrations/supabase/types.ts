@@ -5430,34 +5430,43 @@ export type Database = {
         Row: {
           client_instance_id: string | null
           created_at: string
+          display_name: string | null
           expires_at: string
           id: string
           last_seen_at: string
           live_event_id: string
+          nickname_color: string | null
           revoked_at: string | null
           session_key: string
+          show_avatar: boolean
           user_id: string
         }
         Insert: {
           client_instance_id?: string | null
           created_at?: string
+          display_name?: string | null
           expires_at: string
           id?: string
           last_seen_at?: string
           live_event_id: string
+          nickname_color?: string | null
           revoked_at?: string | null
           session_key: string
+          show_avatar?: boolean
           user_id: string
         }
         Update: {
           client_instance_id?: string | null
           created_at?: string
+          display_name?: string | null
           expires_at?: string
           id?: string
           last_seen_at?: string
           live_event_id?: string
+          nickname_color?: string | null
           revoked_at?: string | null
           session_key?: string
+          show_avatar?: boolean
           user_id?: string
         }
         Relationships: [
@@ -5523,6 +5532,7 @@ export type Database = {
         Row: {
           author_avatar_url: string | null
           author_display_name: string | null
+          author_nickname_color: string | null
           author_role: string | null
           content: string
           created_at: string
@@ -5535,6 +5545,7 @@ export type Database = {
         Insert: {
           author_avatar_url?: string | null
           author_display_name?: string | null
+          author_nickname_color?: string | null
           author_role?: string | null
           content: string
           created_at?: string
@@ -5547,6 +5558,7 @@ export type Database = {
         Update: {
           author_avatar_url?: string | null
           author_display_name?: string | null
+          author_nickname_color?: string | null
           author_role?: string | null
           content?: string
           created_at?: string
@@ -5705,6 +5717,47 @@ export type Database = {
           },
         ]
       }
+      live_event_participant_prefs: {
+        Row: {
+          created_at: string
+          display_name: string | null
+          id: string
+          live_event_id: string
+          nickname_color: string | null
+          show_avatar: boolean
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          live_event_id: string
+          nickname_color?: string | null
+          show_avatar?: boolean
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          live_event_id?: string
+          nickname_color?: string | null
+          show_avatar?: boolean
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_event_participant_prefs_live_event_id_fkey"
+            columns: ["live_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_event_product_cta_bindings: {
         Row: {
           button_text_override: string | null
@@ -5816,6 +5869,7 @@ export type Database = {
         Row: {
           author_avatar_url: string | null
           author_display_name: string | null
+          author_nickname_color: string | null
           author_role: string | null
           content: string
           created_at: string
@@ -5829,6 +5883,7 @@ export type Database = {
         Insert: {
           author_avatar_url?: string | null
           author_display_name?: string | null
+          author_nickname_color?: string | null
           author_role?: string | null
           content: string
           created_at?: string
@@ -5842,6 +5897,7 @@ export type Database = {
         Update: {
           author_avatar_url?: string | null
           author_display_name?: string | null
+          author_nickname_color?: string | null
           author_role?: string | null
           content?: string
           created_at?: string
@@ -5855,6 +5911,38 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "live_event_questions_live_event_id_fkey"
+            columns: ["live_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_event_reactions: {
+        Row: {
+          created_at: string
+          emoji: string
+          id: string
+          live_event_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          emoji: string
+          id?: string
+          live_event_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          emoji?: string
+          id?: string
+          live_event_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_event_reactions_live_event_id_fkey"
             columns: ["live_event_id"]
             isOneToOne: false
             referencedRelation: "live_events"
@@ -13208,6 +13296,10 @@ export type Database = {
         Args: { _ban_case_id: string; _identifiers: Json }
         Returns: number
       }
+      can_send_reaction: {
+        Args: { _event_id: string; _user_id: string }
+        Returns: boolean
+      }
       cascade_order_cancellation: {
         Args: { p_order_id: string; p_reason?: string }
         Returns: Json
@@ -13641,6 +13733,19 @@ export type Database = {
         Args: { p_search?: string }
         Returns: number
       }
+      get_room_participants: {
+        Args: { _event_id: string }
+        Returns: {
+          avatar_url: string
+          display_name: string
+          last_seen_at: string
+          nickname_color: string
+          real_name_for_staff: string
+          role_in_room: string
+          show_avatar: boolean
+          user_id: string
+        }[]
+      }
       get_schema_columns: {
         Args: never
         Returns: {
@@ -13812,6 +13917,7 @@ export type Database = {
         }[]
       }
       inv22_subscription_desync: { Args: { p_limit?: number }; Returns: Json }
+      is_staff_reserved_color: { Args: { _color: string }; Returns: boolean }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
       is_superadmin: { Args: { check_user_id: string }; Returns: boolean }
       is_user_muted_in_room: {
