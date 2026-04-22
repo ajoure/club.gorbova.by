@@ -232,6 +232,9 @@ function LiveEventLegacy() {
           // Soft-join успешен — сохраняем выданный ключ для следующих ping-ов.
           sessionKey = json.session_key as string;
           sessionStorage.setItem(`live_session_${slug}`, sessionKey);
+          // M2: одноразовый hint о пути входа — удаляем после успешного использования,
+          // чтобы повторное открытие из direct-URL не наследовало 'menu'.
+          try { sessionStorage.removeItem(`live_entry_${slug}`); } catch {/* noop */}
         } else if (json.status === "session_revoked") {
           stopHeartbeat();
           setState("session_revoked");
@@ -606,11 +609,11 @@ function LiveEventLegacy() {
 
   return (
     <div
-      className="live-room-themed flex flex-col min-h-screen lg:min-h-screen max-lg:h-[100dvh] max-lg:overflow-hidden"
+      className="live-room-themed flex flex-col min-h-screen lg:min-h-screen"
       style={themeStyle}
     >
-      {/* Header — compact */}
-      <div className="max-w-[1600px] w-full mx-auto px-3 md:px-6 pt-3 md:pt-4 pb-2">
+      {/* Header — compact. M1.2: на mobile уезжает вверх при body-scroll (НЕ sticky), на desktop — обычный flow. */}
+      <div data-mobile-header className="max-w-[1600px] w-full mx-auto px-3 md:px-6 pt-3 md:pt-4 pb-2 max-lg:flex-shrink-0">
         <div className="flex items-center gap-2 md:gap-3 mb-1 flex-wrap">
           <h1 className="room-title text-lg md:text-2xl font-bold truncate">{data?.title}</h1>
           {/* Sprint 2 PATCH 2.5/2.7: room state badge через единый VM, не локальное вычисление */}
@@ -652,8 +655,9 @@ function LiveEventLegacy() {
         )}
       </div>
 
-      {/* Main content — fills remaining height */}
-      <div className="flex-1 max-w-[1600px] w-full mx-auto px-3 md:px-6 pb-3 md:pb-6 flex flex-col lg:flex-row lg:items-start gap-3 md:gap-4 min-h-0 max-lg:overflow-hidden">
+      {/* Main content — fills remaining height. M1.2: на mobile sticky top-0 + h-100dvh + overflow-hidden,
+          чтобы после ухода header дальнейший body-scroll прекращался, а скролл оставался только внутри messages. */}
+      <div className="flex-1 max-w-[1600px] w-full mx-auto px-3 md:px-6 pb-3 md:pb-6 flex flex-col lg:flex-row lg:items-start gap-3 md:gap-4 min-h-0 max-lg:sticky max-lg:top-0 max-lg:h-[100dvh] max-lg:overflow-hidden">
         {/* Player column — takes most width on desktop */}
         <div className="lg:flex-[3] flex flex-col gap-2 min-w-0 max-lg:shrink-0">
           {/* Wrapper для overlay реакций — relative, чтобы absolute overlay лёг поверх плеера. */}
