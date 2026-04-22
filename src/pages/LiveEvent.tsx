@@ -232,6 +232,9 @@ function LiveEventLegacy() {
           // Soft-join успешен — сохраняем выданный ключ для следующих ping-ов.
           sessionKey = json.session_key as string;
           sessionStorage.setItem(`live_session_${slug}`, sessionKey);
+          // M2: одноразовый hint о пути входа — удаляем после успешного использования,
+          // чтобы повторное открытие из direct-URL не наследовало 'menu'.
+          try { sessionStorage.removeItem(`live_entry_${slug}`); } catch {/* noop */}
         } else if (json.status === "session_revoked") {
           stopHeartbeat();
           setState("session_revoked");
