@@ -606,11 +606,11 @@ function LiveEventLegacy() {
 
   return (
     <div
-      className="live-room-themed flex flex-col min-h-screen lg:min-h-screen max-lg:h-[100dvh] max-lg:overflow-hidden"
+      className="live-room-themed flex flex-col min-h-screen lg:min-h-screen"
       style={themeStyle}
     >
-      {/* Header — compact */}
-      <div className="max-w-[1600px] w-full mx-auto px-3 md:px-6 pt-3 md:pt-4 pb-2">
+      {/* Header — compact. M1.2: на mobile уезжает вверх при body-scroll (НЕ sticky), на desktop — обычный flow. */}
+      <div data-mobile-header className="max-w-[1600px] w-full mx-auto px-3 md:px-6 pt-3 md:pt-4 pb-2 max-lg:flex-shrink-0">
         <div className="flex items-center gap-2 md:gap-3 mb-1 flex-wrap">
           <h1 className="room-title text-lg md:text-2xl font-bold truncate">{data?.title}</h1>
           {/* Sprint 2 PATCH 2.5/2.7: room state badge через единый VM, не локальное вычисление */}
