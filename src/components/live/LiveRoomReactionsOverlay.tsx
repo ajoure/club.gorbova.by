@@ -38,6 +38,14 @@ export function LiveRoomReactionsOverlay({
       aria-hidden="true"
       data-overlay="reactions-rail"
       className="pointer-events-none absolute right-2 md:right-3 bottom-3 md:bottom-4 w-[72px] md:w-[96px] h-[32%] overflow-hidden z-20 flex flex-col-reverse items-center gap-1"
+      style={{
+        // Плавное растворение вверх: снизу полностью видимо,
+        // с ~45% высоты начинается затухание, к ~85% почти прозрачно.
+        WebkitMaskImage:
+          "linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 45%, rgba(0,0,0,0.4) 75%, rgba(0,0,0,0) 100%)",
+        maskImage:
+          "linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 45%, rgba(0,0,0,0.4) 75%, rgba(0,0,0,0) 100%)",
+      }}
     >
       {items.map((r) => (
         <span
@@ -61,10 +69,11 @@ export function LiveRoomReactionsOverlay({
       {/* Локальные keyframes (изоляция в overlay, не глобально). */}
       <style>{`
         @keyframes reaction-float-up {
-          0%   { transform: translateY(8px)  scale(0.85); opacity: 0; }
-          15%  { transform: translateY(0)    scale(1);    opacity: 0.55; }
-          80%  { transform: translateY(-90px) scale(1);   opacity: 0.55; }
-          100% { transform: translateY(-130px) scale(0.9); opacity: 0; }
+          0%   { transform: translateY(8px)   scale(0.85); opacity: 0; }
+          12%  { transform: translateY(0)     scale(1);    opacity: 0.55; }
+          45%  { transform: translateY(-50px) scale(1);    opacity: 0.5;  }
+          70%  { transform: translateY(-95px) scale(0.98); opacity: 0.25; }
+          100% { transform: translateY(-140px) scale(0.9); opacity: 0;    }
         }
         .reaction-float {
           animation-name: reaction-float-up;
