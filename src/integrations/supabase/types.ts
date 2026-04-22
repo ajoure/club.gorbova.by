@@ -13917,6 +13917,7 @@ export type Database = {
         }[]
       }
       inv22_subscription_desync: { Args: { p_limit?: number }; Returns: Json }
+      is_room_staff: { Args: { _user_id: string }; Returns: boolean }
       is_staff_reserved_color: { Args: { _color: string }; Returns: boolean }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
       is_superadmin: { Args: { check_user_id: string }; Returns: boolean }
