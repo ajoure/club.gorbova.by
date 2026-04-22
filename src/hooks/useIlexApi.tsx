@@ -86,8 +86,9 @@ export function useIlexApi() {
         hasCredentials: data?.hasCredentials ?? false,
       });
       
-      // Update settings in database
-      await supabase
+      // Update settings in database (best-effort: только super_admin имеет UPDATE-доступ
+      // по новой RLS-политике; для обычных admin тихо пропускаем без тоста/ретрая).
+      const { error: updErr } = await supabase
         .from('ilex_settings')
         .update({
           last_connection_check: new Date().toISOString(),
@@ -95,7 +96,10 @@ export function useIlexApi() {
           updated_at: new Date().toISOString(),
         })
         .eq('id', '00000000-0000-0000-0000-000000000001');
-      
+      if (updErr && updErr.code !== '42501' && !/permission|policy|row-level/i.test(updErr.message ?? '')) {
+        console.warn('[useIlexApi] non-RLS update warn:', updErr.message);
+      }
+
       return isAuthenticated;
     } catch (error) {
       console.error('Connection check failed:', error);
