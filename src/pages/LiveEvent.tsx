@@ -18,6 +18,8 @@ import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 import { LiveEventRoomBlocks } from "@/components/live/LiveEventRoomBlocks";
 import { LiveEventProductCta, useHasActiveCtaBindings } from "@/components/live/LiveEventProductCta";
 import { LiveBadge, type LiveBadgeMode } from "@/components/live/LiveBadge";
+import { RoomParticipantsList } from "@/components/live/RoomParticipantsList";
+import { LiveRoomReactionsBar } from "@/components/live/LiveRoomReactionsBar";
 import "@/components/live/liveRoomTheme.css";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { useLiveContactSheet } from "@/hooks/useLiveContactSheet";
@@ -648,6 +650,10 @@ function LiveEventLegacy() {
               displayContext={isReplay ? "replay" : "live"}
               eventStartedAt={data?.scheduled_at}
             />
+          )}
+          {/* Sprint final: Live-room reactions bar (room-level emoji reactions). */}
+          {eventId && roomSettings.reactions.enabled && !isReplay && (
+            <LiveRoomReactionsBar liveEventId={eventId} enabled={roomSettings.reactions.enabled} />
           )}
         </div>
 
