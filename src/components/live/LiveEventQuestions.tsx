@@ -18,6 +18,8 @@ import { LiveAutoGrowTextarea } from "./LiveAutoGrowTextarea";
 import { LiveModerationBanner } from "./LiveModerationBanner";
 import { useRoomModerationState } from "@/hooks/useRoomModerationState";
 import { toast } from "sonner";
+import { resolveParticipantDisplay } from "@/lib/participantDisplay";
+import { normalizeEmoji } from "@/lib/normalizeEmoji";
 
 interface Question {
   id: string;
@@ -32,21 +34,6 @@ interface Question {
   profile?: { avatar_url: string | null } | null;
 }
 
-function resolveDisplayName(q: Question): string {
-  // Snapshot — единственный SoT для имени автора.
-  if (q.author_display_name) return q.author_display_name;
-  return "Пользователь";
-}
-
-function resolveAvatarUrl(q: Question): string | null {
-  return q.author_avatar_url || q.profile?.avatar_url || null;
-}
-
-function getInitials(name: string): string {
-  const parts = name.split(/\s+/).filter(Boolean);
-  return (parts[0]?.[0] || "") + (parts[1]?.[0] || "") || "?";
-}
-
 interface LiveEventQuestionsProps {
   liveEventId: string;
   presenterUserId?: string | null;
@@ -57,11 +44,13 @@ interface LiveEventQuestionsProps {
    * наличие до submit. Для legacy live_stream/recorded_webinar — undefined.
    */
   autowebSessionId?: string | null;
+  /** Sprint final: render-time emoji normalization toggle. */
+  emojiNormalizationEnabled?: boolean;
 }
 
 // forwardRef to satisfy Tabs/Radix ref forwarding (fixes console warning).
 export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsProps>(
-  function LiveEventQuestions({ liveEventId, presenterUserId, onOpenProfile, autowebSessionId }, ref) {
+  function LiveEventQuestions({ liveEventId, presenterUserId, onOpenProfile, autowebSessionId, emojiNormalizationEnabled = true }, ref) {
     const { user, role } = useAuth();
     const queryClient = useQueryClient();
     const [newQuestion, setNewQuestion] = useState("");
