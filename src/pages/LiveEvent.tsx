@@ -584,13 +584,6 @@ function LiveEventLegacy() {
   const isWaiting = state === "room_open_waiting";
   const eventId = data?.event_id;
 
-  // Wake Lock: держим экран активным во время просмотра live и waiting room.
-  // Все прочие state (loading/ended/access_denied/session_revoked/...) сюда не
-  // доходят — этот блок рендерится только при state === "live" | "room_open_waiting".
-  // Поэтому enabled=true здесь по контракту корректен. Release произойдёт автоматически
-  // через cleanup useEffect внутри хука при размонтировании / смене state.
-  useScreenWakeLock(true);
-
   const isReplay = !isWaiting && (data?.platform_status === "replay_available" ||
     (data?.event_status === "ended" && data?.replay_enabled));
   const resolvedSource = data?.resolved_source;
