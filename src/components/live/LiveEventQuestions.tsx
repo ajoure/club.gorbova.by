@@ -1,10 +1,10 @@
-import { useState, useEffect, forwardRef } from "react";
+import { useState, useEffect, useRef, useCallback, forwardRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Loader2, Send, CheckCircle2, Lock } from "lucide-react";
+import { Loader2, Send, CheckCircle2, Lock, ArrowDown } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import {
@@ -105,6 +105,55 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
       return () => { supabase.removeChannel(channel); };
     }, [liveEventId, queryClient]);
 
+    // M1.1: smart auto-scroll for questions list (same pattern as comments).
+    const scrollRef = useRef<HTMLDivElement>(null);
+    const [hasNewBelow, setHasNewBelow] = useState(false);
+    const wasNearBottomRef = useRef(true);
+    const lastCountRef = useRef(0);
+
+    const isNearBottom = useCallback(() => {
+      const el = scrollRef.current;
+      if (!el) return true;
+      return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    }, []);
+
+    const scrollToBottom = useCallback((smooth = true) => {
+      const el = scrollRef.current;
+      if (!el) return;
+      el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+      setHasNewBelow(false);
+    }, []);
+
+    useEffect(() => {
+      const el = scrollRef.current;
+      if (!el) return;
+      const onScroll = () => {
+        wasNearBottomRef.current = isNearBottom();
+        if (wasNearBottomRef.current) setHasNewBelow(false);
+      };
+      el.addEventListener("scroll", onScroll, { passive: true });
+      return () => el.removeEventListener("scroll", onScroll);
+    }, [isNearBottom]);
+
+    useEffect(() => {
+      const count = questions?.length ?? 0;
+      const prev = lastCountRef.current;
+      if (count === 0) {
+        lastCountRef.current = 0;
+        return;
+      }
+      if (prev === 0) {
+        requestAnimationFrame(() => scrollToBottom(false));
+      } else if (count > prev) {
+        if (wasNearBottomRef.current) {
+          requestAnimationFrame(() => scrollToBottom(true));
+        } else {
+          setHasNewBelow(true);
+        }
+      }
+      lastCountRef.current = count;
+    }, [questions, scrollToBottom]);
+
     const { isMuted, isRemoved } = useRoomModerationState(liveEventId, user?.id);
     const isBlocked = isMuted || isRemoved;
 
@@ -173,8 +222,8 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
     };
 
     return (
-      <div ref={ref} className="flex flex-col h-full min-h-0 room-panel">
-        <div className="room-messages-scroll flex-1 min-h-0 overflow-y-auto space-y-1 p-3 overscroll-contain">
+      <div ref={ref} className="relative flex flex-col h-full min-h-0 room-panel">
+        <div ref={scrollRef} className="room-messages-scroll flex-1 min-h-0 overflow-y-auto space-y-1 p-3 overscroll-contain">
           {/* Анонимность вопросов: hint всегда сверху */}
           <div className="flex items-center gap-1.5 bg-muted/50 rounded-md px-2 py-1.5 text-xs text-muted-foreground mb-2">
             <Lock className="h-3 w-3 shrink-0" />
@@ -269,6 +318,19 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
             })
           )}
         </div>
+
+        {/* M1.1: «Новые вопросы» pill — only when user scrolled away from bottom and new arrived. */}
+        {hasNewBelow && (
+          <button
+            type="button"
+            onClick={() => scrollToBottom(true)}
+            className="absolute left-1/2 -translate-x-1/2 bottom-[calc(var(--room-composer-h,64px)+12px)] lg:bottom-20 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-primary-foreground text-xs shadow-lg hover:opacity-90 transition-opacity"
+            aria-label="Перейти к новым вопросам"
+          >
+            <ArrowDown className="h-3 w-3" />
+            Новые вопросы
+          </button>
+        )}
 
         {user && (
           <div className="room-composer border-t lg:sticky lg:bottom-0 z-10 room-panel-sticky">
