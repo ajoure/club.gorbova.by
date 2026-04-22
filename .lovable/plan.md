@@ -1,323 +1,229 @@
-# Да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
-### **1. По UX лучшее решение**
+1. Для mobile **не переворачивать порядок сообщений**. Лучший вариант — оставить чат в нормальной хронологии: старые сверху, новые снизу. Иначе будет путаница, сломается привычная логика чтения, автоскролл, pill “Новые сообщения” и later-proof станет грязным. Проблему нужно решать **не реверсом списка**, а **изоляцией scroll-area**.
+2. Добавь в план как обязательное UX-решение:
+  - **video-shell, reactions bar, tabs и composer на mobile не должны ездить при чтении сообщений**;
+  - скроллится **только** контейнер сообщений/вопросов;
+  - composer остаётся pinned/fixed снизу;
+  - video остаётся сверху как отдельный блок;
+  - header с названием эфира можно уводить вверх при page-scroll, но после этого верхняя точка экрана должна начинаться с video-shell.
+3. Зафиксируй в плане, что на mobile выбираем именно такую архитектуру:
+  &nbsp;
+  &nbsp;
+  - **header scroll-away**;
+  - **video-shell pinned в верхней части рабочей области**;
+  - **tabs под reactions**;
+  - **messages area = единственный scroll-container**;
+  - **composer fixed снизу viewport**.  
+  Это и есть правильное решение. Не “либо это, либо реверс сообщений”, а именно этот путь.
+4. Допиши отдельный блок в DoD по mobile:
+  - при длинном чате пользователь может листать сообщения, **не двигая видео**;
+  - новые сообщения появляются внизу списка;
+  - если пользователь у низа — мягкий auto-scroll;
+  - если пользователь ушёл вверх — появляется pill “Новые сообщения”;
+  - composer всегда доступен без прокрутки всей страницы;
+  - video не исчезает и не уезжает вместе с chat-scroll.
+5. В Этап 1 добавь подзадачу **M1.3 — chat-only scroll isolation**:
+  - root mobile layout: page-scroll нужен только чтобы убрать header;
+  - после ухода header основной runtime-блок фиксируется по высоте viewport;
+  - внутри runtime-блока scroll только у `.room-messages-scroll`;
+  - у video-shell и reactions bar `flex-shrink-0`;
+  - у messages area `flex-1 min-h-0 overflow-y-auto`;
+  - composer fixed bottom;
+  - tabs/header внутри Card не скроллятся.
+6. В live-proof для Этапа 1 добавь отдельные acceptance-критерии:
+  - свайп по сообщениям **не меняет позицию video-shell**;
+  - список сообщений двигается независимо;
+  - header уехал вверх, но video остался на месте;
+  - composer виден и доступен;
+  - порядок сообщений обычный: старые сверху, новые снизу;
+  - pill работает корректно.
+7. В план M1.2 поправь формулировку:
+  - сейчас у тебя header scroll-away есть, но этого мало;
+  - нужно явно написать, что **после scroll-away header body-scroll должен прекращаться**, а дальнейший скролл идёт только внутри messages list.  
+  Иначе снова получится, что двигается весь экран вместе с видео.
+8. По M2 и M3 план в целом правильный, но отдельно зафиксируй:
+  - **Participants** должны показывать всех, кто реально сейчас в эфире, независимо от пути входа: token / direct / menu;
+  - **Analytics** должны считать всех, кто реально присутствовал, тоже независимо от пути входа;
+  - runtime online и историческая аналитика — это разные сущности и не смешиваются.
+9. Что осталось сделать сейчас до M3:
+  - добить **M1.2 + M1.3**;
+  - собрать **живой mobile-proof**, что video не ездит при chat-scroll;
+  - закрыть **M2 live-proof** по путям входа;
+  - выпустить **closing report Этапа 1**;
+  - только потом переходить к M3.
 
-Для mobile лучше **не переворачивать чат снизу вверх**.  
-Оптимальнее:
+&nbsp;
 
-- оставить порядок сообщений стандартным: **старые сверху, новые снизу**;
-- **зафиксировать верхнюю зону**: header + compact video/waiting + reactions + tabs;
-- **скроллить только список сообщений**;
-- composer оставить **fixed снизу viewport**;
-- при открытии вкладки чата делать **auto-scroll к последнему сообщению**;
-- если пользователь ушёл вверх по истории и пришли новые сообщения — показывать pill **«Новые сообщения» / «К последним»**, без автопрыжка.
+Итоговое UX-решение: **не реверсировать чат**. Делать **scroll-away header + pinned video area + isolated messages scroll + fixed composer**. Это самый чистый и профессиональный вариант для mobile.
 
-Это лучше, чем реверс списка, потому что:
+&nbsp;
 
-- не ломает привычную механику чата;
-- не усложняет reply/unread/new-message logic;
-- desktop и mobile остаются одинаковыми по смыслу;
-- меньше риск регрессий.
+План: Закрытие Этапа 1 (live-proof M1.1 + M2) + scroll-away header на mobile
 
----
+## Принятые UX-решения (фиксация)
 
-## **Добавление в план — M1.1 mobile chat viewport**
-
-### **M1.1 — mobile-only изоляция скролла чата**
-
-**Цель:** на mobile при чтении чата video-shell, reactions bar и tabs не двигаются; скроллится только список сообщений; composer всегда виден снизу. Desktop без изменений.
-
-### **Изменения**
-
-1. `src/pages/LiveEvent.tsx` (mobile-only ветка `isMobile`):
-  - корневой layout: `h-[100dvh] flex flex-col overflow-hidden`;
-  - верхняя зона (`header + compact waiting/video + reactions + tabs`) — `flex-shrink-0`;
-  - sidebar/chat container — `flex-1 min-h-0 flex flex-col overflow-hidden`;
-  - tabs content — `flex-1 min-h-0 flex flex-col`;
-  - video-shell и tabs остаются на месте, не участвуют в scroll сообщений.
-2. `src/components/live/LiveEventComments.tsx`:
-  - `.room-messages-scroll` сделать единственной scroll-area: `flex-1 min-h-0 overflow-y-auto`;
-  - при mount вкладки Chat → auto-scroll к последнему сообщению;
-  - при новых сообщениях:
-    - если пользователь уже у нижнего края (within ~80px) → мягко скроллить вниз;
-    - если пользователь ушёл вверх → **не** прыгать, а показать pill `↓ Новые сообщения`;
-  - клик по pill → scroll to bottom + hide pill.
-3. `src/components/live/LiveEventQuestions.tsx`:
-  - та же логика layout: `flex-1 min-h-0` для scroll-area;
-  - composer остаётся fixed/sticky как уже реализовано;
-  - без реверса списка.
-4. `src/components/live/liveRoomTheme.css`:
-  - оставить текущую механику fixed composer;
-  - убедиться, что `room-messages-scroll` имеет корректный bottom padding под composer;
-  - без desktop-изменений.
-
----
-
-## **Уточнение к DoD для M1.1**
-
-- на mobile video-shell **не двигается** при scroll чата;
-- tabs / reactions / header не прыгают;
-- composer всегда pinned снизу;
-- скролл работает **только** внутри `.room-messages-scroll`;
-- при открытии Chat пользователь попадает к последним сообщениям;
-- новые сообщения не дёргают экран, если пользователь читает историю — вместо этого появляется pill `Новые сообщения`;
-- порядок сообщений остаётся обычным: старые сверху, новые снизу;
-- desktop ≥1024px без изменений.
-
----
-
-## **Что поменять в текущем плане**
-
-### **Этап 1 — Closing M1/M2 + добор M1.1**
-
-В секцию **M1.1 — Mobile-only изоляция скролла чата** добавить:
-
-- **не использовать reverse/chat-from-bottom layout**;
-- **верхнюю часть комнаты зафиксировать**, а не делать scroll всей страницы;
-- **последние сообщения показывать через auto-scroll-to-bottom**, а не через инверсию списка;
-- добавить pill `Новые сообщения` для случая, когда пользователь ушёл вверх по истории.
-
-### **В DoD M1.1 заменить/уточнить:**
-
-вместо идеи “сделать сообщения снизу вверх” зафиксировать:
-
-- **обычная хронология**;
-- **локальный scroll списка**;
-- **auto-scroll only when already near bottom**;
-- **new messages pill when user scrolled away**.
+1. **Чат НЕ переворачиваем.** Старые сообщения сверху, новые снизу. Проблема mobile решается через isolated scroll + fixed composer + new-messages pill. Подрядчику запрещено возвращаться к идее реверса списка.
+2. **Mobile scroll-away header (новое):** при скролле в mobile блок «название вебинара + LIVE-бейдж + кнопка "Завершить вебинар" + счётчик участников» уезжает вверх за экран. Видео-карточка и всё ниже (reactions, tabs, composer) — остаются зафиксированы как сейчас.
 
 ---
 
-## **Короткий блок для вставки в Lovable**
+## Часть A — M1.2: Mobile scroll-away header
 
-```text
-Дополнение к M1.1 (mobile chat viewport):
+### Цель
 
-Не переворачивать порядок сообщений снизу вверх.
-Оставить стандартную хронологию:
-- старые сообщения сверху
-- новые снизу
+На mobile (≤1023px) при скролле страницы header с названием эфира уходит вверх. Стартовая зона экрана после скролла = video-shell. Ниже всё остаётся pinned по текущей механике M1.1.
 
-Проблему mobile UX решить через layout:
-1. video-shell / waiting-state / reactions bar / tabs закрепить сверху;
-2. composer оставить fixed снизу viewport;
-3. скроллить только messages list (`.room-messages-scroll`);
-4. при входе во вкладку Chat делать auto-scroll к последнему сообщению;
-5. если пользователь ушёл вверх по истории и приходят новые сообщения — не дёргать список, а показывать pill `↓ Новые сообщения` / `К последним`;
-6. клик по pill → scroll to bottom + hide.
+### Архитектурное изменение
 
-Почему так:
-- видео не уезжает при чтении чата;
-- composer всегда доступен;
-- UX остаётся стандартным;
-- reply/unread/new-message logic не ломается;
-- desktop не меняется.
+Текущий mobile-layout (после M1.1) = `h-[100dvh] flex flex-col overflow-hidden` — **вся страница не скроллится вообще**, header всегда виден. Это и есть причина, почему сейчас header нельзя «увезти».
 
-DoD:
-- на mobile video-shell не двигается при scroll чата;
-- composer pinned снизу;
-- tabs/header/reactions не прыгают;
-- scroll только внутри списка сообщений;
-- Chat открывается на последних сообщениях;
-- при scroll вверх новые сообщения показывают pill, без автопрыжка;
-- desktop без изменений.
+Новая структура mobile (только `isMobile === true`):
 
-План: Closing M1/M2 + M1.1 mobile chat viewport + M3 analytics + follow-ups
+```
+<div class="min-h-[100dvh] flex flex-col">     // НЕ overflow-hidden, НЕ h-100dvh
+  <header class="flex-shrink-0">…title+badges…</header>   // скроллится с body
+  <main class="sticky top-0 h-[100dvh] flex flex-col overflow-hidden">
+    <video-shell compact />                     // pinned top после ухода header
+    <reactions-bar />
+    <Card class="flex-1 min-h-0 overflow-hidden">
+      <Tabs>…messages-scroll + fixed composer…</Tabs>
+    </Card>
+  </main>
+</div>
 ```
 
-## Этап 1 — Closing M1/M2 (live-proof + добор M1.1)
+Логика:
 
-### M1.1 — Mobile-only изоляция скролла чата
+- Body scroll переносит header вверх; как только `<main>` достигает top, он залипает (`sticky top-0`) и дальнейший body-scroll не происходит (главный имеет высоту `100dvh`).
+- Внутри залипшего main всё работает как M1.1: composer fixed, messages list — единственный scroll.
 
-**Цель:** на mobile при чтении чата video-shell, reactions bar и tabs не двигаются; скроллится только список сообщений; composer всегда виден снизу. Desktop без изменений.
+Desktop (`lg:`) — без изменений.
 
-**Решение по UX:** порядок сообщений НЕ переворачиваем (старые сверху, новые снизу). Проблему решаем layout-механикой, а не реверсом списка.
+### Изменения
 
-#### Изменения
+`**src/pages/LiveEvent.tsx**` (mobile-only):
 
-1. `**src/pages/LiveEvent.tsx**` — mobile layout (`isMobile === true`):
-  - Корневой `<div>`: `h-[100dvh] flex flex-col overflow-hidden` (вместо `min-h-screen`).
-  - Header: `flex-shrink-0`, description уже скрыт (M1).
-  - Колонка плеера (video + reactions bar): `flex-shrink-0` (фиксированная высота под compact-карточку, не растёт).
-  - Sidebar `<Card>`: `flex-1 min-h-0 flex flex-col overflow-hidden` (без `min-h-[60dvh]` на mobile — оставить только desktop-ветке).
-  - Внутри Card: TabsList `flex-shrink-0` sticky top-0; TabsContent `flex-1 min-h-0 flex flex-col`.
-2. `**src/components/live/LiveEventComments.tsx**` и `**LiveEventQuestions.tsx**`:
-  - Контейнер сообщений `room-messages-scroll` уже `overflow-y-auto` — добавить `flex-1 min-h-0` для корректного flex-сжатия внутри Card.
-  - Composer уже `.room-composer` (fixed bottom mobile / sticky desktop) — без изменений.
-  - **Auto-scroll-to-bottom**: при первом mount + при поступлении новых сообщений, **если** пользователь уже находится у нижнего края (within ~80px). Если нет — НЕ дёргать список.
-  - **«Новые сообщения» pill**: when пользователь ушёл вверх и пришло новое сообщение → показать кнопку поверх списка (absolute bottom-20 right-4): «↓ Новые сообщения». Клик → scroll to bottom + скрыть pill. Скрывать также при ручном scroll-to-bottom.
-3. `**src/components/live/liveRoomTheme.css**`:
-  - Убедиться, что `.room-messages-scroll` имеет `padding-bottom` под fixed composer (уже сделано через `--room-composer-h`).
-  - Никаких изменений desktop-веток.
+- Убрать с root `h-[100dvh] overflow-hidden`, заменить на `min-h-[100dvh] flex flex-col`.
+- Header-блок: добавить data-attr `data-mobile-header`, `flex-shrink-0`, без sticky.
+- Main-обёртка над video+sidebar: на mobile `sticky top-0 h-[100dvh] overflow-hidden flex flex-col`; на desktop — текущее поведение.
+- Композеры (`.room-composer`) уже `position: fixed bottom: 0` — продолжают работать (привязаны к viewport, не к sticky-родителю).
 
-#### DoD M1.1
+`**src/components/live/liveRoomTheme.css**`:
 
-- 375×812 mobile: video-shell не двигается при scroll чата.
-- composer всегда виден снизу (fixed).
-- tabs / header / reactions bar не прыгают.
-- Скролл работает только внутри `.room-messages-scroll`.
-- При входе во вкладку Chat — auto-scroll к последнему сообщению.
-- При scroll вверх + входящие новые → показывается pill «Новые сообщения», без принудительного прыжка.
-- Desktop ≥1024px: визуально и функционально без изменений.
-- Порядок сообщений: старые сверху, новые снизу (не реверс).
+- Без изменений. `.room-composer` остаётся fixed mobile / sticky desktop.
 
-### M1 + M2 live-proof package
+### DoD M1.2
 
-После доработки M1.1:
-
-1. **M1/M1.1 live-proof:**
-  - Screenshot 375×812 idle (waiting-state): видны header / compact card / reactions / tabs / composer.
-  - Screenshot 375×812 focused composer: composer над клавиатурой, video-shell сверху не двигается.
-  - Screenshot 375×812 scroll state: длинный список сообщений, composer pinned.
-  - DOM proof: `.room-composer` имеет `position: fixed` на mobile; `.room-messages-scroll` — единственный `overflow-y-auto` ancestor.
-2. **M2 live-proof (4 сценария + edge cases):**
-  - **Token-link** `/live-access/:token` → `live_active_sessions` row exists (SQL count = 1 для user/event).
-  - **Direct `/live/:slug**` (admin/staff/owner) → row создана через soft-join, `session_key` сохранён в `sessionStorage`.
-  - **Из меню эфиров** (entry_path передаётся) → row создана, `entry_path='menu'` (поддержка добавится в M3 — см. ниже).
-  - **Вторая вкладка** того же user → SQL `count(*) = 1` (UNIQUE constraint).
-  - **Без доступа** → soft-join возвращает `403 access_denied`, `live_active_sessions` пустой.
-  - **Participants tab**: один и тот же admin виден независимо от пути входа.
-  - Network proof: capture `live-session-heartbeat` request/response для каждого сценария.
-
-**Files to edit (Этап 1):** `src/pages/LiveEvent.tsx`, `src/components/live/LiveEventComments.tsx`, `src/components/live/LiveEventQuestions.tsx`, `src/components/live/liveRoomTheme.css`.
+- 390×844 mobile: при свайпе вниз header «название + LIVE + Завершить вебинар + счётчик» уходит за верхний край.
+- После ухода header верхний край экрана = video-shell.
+- video / reactions / tabs / composer после скролла остаются зафиксированы.
+- Composer всегда виден внизу (fixed).
+- Скролл сообщений по-прежнему изолирован в `.room-messages-scroll`.
+- Desktop ≥1024px: ничего не меняется, header не двигается.
 
 ---
 
-## Этап 2 — M3 Analytics (после закрытия Этапа 1)
+## Часть B — Live-proof Этапа 1 (M1 + M1.1 + M1.2 + M2)
 
-### Архитектура (как утверждено ранее)
+Без proof Этап 1 не закрывается и к M3 не переходим. **Stop-guard: миграции аналитики M3 не начинать до closing report.**
 
-- `live_active_sessions` = только runtime online.
-- `live_view_sessions` = add-only история посещений (server-only write).
-- `live_session_events` = add-only лог (`join`/`heartbeat`/`leave`/`timeout`/`event_ended`).
+### B1. M1/M1.1/M1.2 live-proof (mobile 390×844)
 
-### Миграция (add-only)
+Сценарии и доказательства:
 
-```sql
-CREATE TABLE public.live_view_sessions (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  live_event_id uuid NOT NULL REFERENCES live_events(id) ON DELETE CASCADE,
-  user_id uuid NOT NULL,
-  entry_path text NOT NULL DEFAULT 'direct'
-    CHECK (entry_path IN ('token','direct','menu','unknown')),
-  joined_at timestamptz NOT NULL DEFAULT now(),
-  left_at timestamptz,
-  last_seen_at timestamptz NOT NULL DEFAULT now(),
-  duration_sec integer,
-  close_reason text CHECK (close_reason IN
-    ('explicit_leave','inactivity_timeout','event_ended','page_unload','revoked')),
-  created_at timestamptz NOT NULL DEFAULT now()
-);
-CREATE UNIQUE INDEX ux_lvs_open_per_user_event
-  ON live_view_sessions(user_id, live_event_id) WHERE left_at IS NULL;
-CREATE INDEX idx_lvs_event_joined ON live_view_sessions(live_event_id, joined_at);
 
-CREATE TABLE public.live_session_events (
-  id bigserial PRIMARY KEY,
-  view_session_id uuid NOT NULL REFERENCES live_view_sessions(id) ON DELETE CASCADE,
-  live_event_id uuid NOT NULL,
-  user_id uuid NOT NULL,
-  event_type text NOT NULL CHECK (event_type IN
-    ('join','heartbeat','leave','timeout','event_ended')),
-  occurred_at timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX idx_lse_event_time ON live_session_events(live_event_id, occurred_at);
+| #   | Сценарий                      | Что показать                                                                                                                                              |
+| --- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | idle waiting/live state       | screenshot: header + compact video + reactions + tabs + composer на первом экране без скролла                                                             |
+| 2   | focused composer              | screenshot: фокус в input, клавиатура (если эмулируется) — composer над клавиатурой, video не двигается                                                   |
+| 3   | scroll page вниз              | screenshot: header ушёл, экран стартует с video-shell, остальное pinned                                                                                   |
+| 4   | scroll messages list          | screenshot: список прокручивается, video/tabs/composer на месте                                                                                           |
+| 5   | new message at bottom         | пользователь у низа → автоскролл вниз; screenshot до/после                                                                                                |
+| 6   | new message при скролле вверх | автоскролла нет, появляется pill «↓ Новые сообщения»; screenshot                                                                                          |
+| 7   | click pill                    | scroll to bottom, pill исчезает; screenshot                                                                                                               |
+| 8   | DOM proof                     | через `browser--observe` подтвердить: `.room-composer { position: fixed }` (mobile), `.room-messages-scroll` — единственный ancestor с `overflow-y: auto` |
 
--- RLS: read для staff/owner эфира, write только service_role.
-```
 
-Триггер закрытия при `live_events.status → 'ended'`: массовый UPDATE открытых rows + INSERT events.
+**Desktop regression** (1366×768):
 
-### Edge functions
+- screenshot desktop layout: video слева, sidebar справа, header виден всегда, composer sticky внутри Card, порядок сообщений старые→новые.
 
-1. `**live-session-heartbeat**` (расширить):
-  - Soft-join: при создании новой `live_active_sessions` row → INSERT в `live_view_sessions` (через UNIQUE-guard `WHERE left_at IS NULL`) + INSERT event=`join`. Принимать `entry_path` (`token`/`direct`/`menu`).
-  - Heartbeat-mode: UPDATE `last_seen_at` в обеих таблицах. INSERT event=`heartbeat` throttle 60s (проверять `MAX(occurred_at)` по open session).
-  - Idempotency: `join` event — только при инсёрте новой open-row.
-2. `**live-session-leave**` (новая, `verify_jwt = false`, валидация JWT в коде):
-  - POST `{ session_key }`. UPDATE open `live_view_sessions`: `left_at=now`, `duration_sec`, `close_reason='page_unload'`. INSERT event=`leave` (только если `left_at IS NULL` до update).
-  - Вызов через `navigator.sendBeacon` на `pagehide` / `beforeunload`.
-3. `**live-sessions-sweeper**` (новая, cron pg_cron каждые 2 мин):
-  - Закрывает open-rows с `last_seen_at < now() - interval '3 min'`: `left_at = last_seen_at`, `close_reason='inactivity_timeout'`. INSERT events=`timeout`.
-4. `**live-token-validate**` (расширить):
-  - При создании `live_active_sessions` row → также INSERT в `live_view_sessions` с `entry_path='token'`.
+### B2. M2 live-proof — 4 сценария + edge
 
-### Client
 
-1. `**src/pages/LiveEvent.tsx**`:
-  - При soft-join передавать `entry_path` (определяется по navigation source: если referrer = `/menu/live` → `'menu'`, иначе `'direct'`).
-  - На `useEffect` cleanup + `pagehide` listener → `navigator.sendBeacon('/functions/v1/live-session-leave', { session_key })`.
+| Сценарий                         | Network proof                                                     | SQL proof                                                                                                  | UI proof                |
+| -------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------- |
+| token-link `/live-access/:token` | `live-token-validate` 200                                         | `SELECT count(*) FROM live_active_sessions WHERE user_id=… AND live_event_id=… AND revoked_at IS NULL` = 1 | user в Participants tab |
+| direct `/live/:slug` (admin)     | `live-session-heartbeat` soft-join 200 + `session_key` в response | count = 1                                                                                                  | user в Participants     |
+| из меню эфиров                   | `live-session-heartbeat` 200 с `entry_path='menu'`                | row + (после M3) `live_view_sessions.entry_path='menu'`                                                    | user в Participants     |
+| вторая вкладка                   | `live-session-heartbeat` 200                                      | count = 1 (UNIQUE constraint)                                                                              | один user, без дубля    |
+| без доступа                      | `live-session-heartbeat` 403                                      | count = 0                                                                                                  | user НЕ в Participants  |
 
-### Метрики — RPC `get_live_event_analytics(_event_id uuid)`
 
-Возвращает:
+**Acceptance Participants:**
 
-- `online_now` — count `live_active_sessions` (revoked_at IS NULL, last_seen_at > now-2min).
-- `unique_viewers` — count distinct `user_id` from `live_view_sessions`.
-- `max_concurrent` — оконно по `live_session_events` (running sum: +1 на join, −1 на leave/timeout/event_ended), возвращает MAX. Источник истины — events, не snapshots.
-- `total_watch_sec`, `avg_watch_sec` — sum/avg `duration_sec` (только closed sessions).
-- `avg_retention_pct` — `avg_watch_sec / event_duration_sec`. **NULL** если `live_started_at` или `webinar_completed_at` отсутствуют.
-- `exit_distribution` — гистограмма `(left_at − live_started_at) / event_duration` по 10%-бакетам. **NULL** если duration недоступен.
-- `concurrency_timeline` — массив `{ts, concurrent}`.
+- один и тот же user виден независимо от пути входа;
+- count в badge header (`<2/> N`) = количество строк в Participants tab;
+- повторная вкладка не плодит дубль;
+- user без доступа не появляется ни в UI, ни в `live_active_sessions`.
 
-### UI — admin analytics tab
+### B3. Особый pin по entry_path='menu'
 
-**Где:** `src/pages/admin/LiveEventDetail.tsx` (или эквивалент) → новая вкладка **«Аналитика»** (read-only, отдельно от Participants).
+В план явно зафиксировать **частичную готовность menu-path**:
 
-**Блоки:**
+**Что сейчас есть:** soft-join принимает поле `entry_path` (после Этапа 2 будет писаться в `live_view_sessions`). Сейчас в `live_active_sessions` оно не сохраняется (там нет колонки) → различить menu vs direct можно только по network-payload.
 
-- Live-блок: `online_now`, `unique_viewers (today)`.
-- Итог эфира (после end): `max_concurrent`, `unique_viewers`, `total_watch_sec`, `avg_watch_sec`, `avg_retention_pct` (либо «—» если NULL).
-- Графики: concurrency timeline (recharts LineChart), exit distribution (BarChart).
-- Если `live_started_at IS NULL` → показать «Аналитика будет доступна после старта эфира».
+**Что нужно добавить в Этапе 1 (минимальный hint):**
 
-### Stop-guards M3
+- В `src/pages/LiveEvent.tsx`: при mount читать `sessionStorage['live_entry_path_${slug}']`. Если ключ есть → передавать как `entry_path` в первый soft-join, затем удалять ключ. Иначе — `'direct'`.
+- В компоненте списка эфиров (страница меню) — `src/pages/LiveEventsListing.tsx` или эквивалент: при клике на карточку перед navigate записывать `sessionStorage.setItem('live_entry_path_${slug}', 'menu')`.
+- Token-flow ставит `'token'` в `live-token-validate` (уже корректно).
 
-- НЕ смешивать runtime Participants и историческую аналитику в одну таблицу.
-- НЕ считать retention из `live_active_sessions`.
-- `live_view_sessions` / `live_session_events` пишутся **только** server-side (edge / cron / trigger). UI пишет напрямую — запрещено.
+**Статус в closing report:**
+
+- `entry_path='token'` — полностью закрыто (в `live-token-validate`).
+- `entry_path='menu'` — **частично закрыто**: hint пишется на клиенте, передаётся в edge, но **долгосрочное хранение** в истории появится только в M3 (`live_view_sessions.entry_path`).
+- `entry_path='direct'` — fallback по умолчанию.
+
+### B4. Файлы Этапа 1
+
+- `src/pages/LiveEvent.tsx` — M1.2 layout + entry_path hint reader.
+- Список эфиров (определить точный файл при выполнении: `src/pages/LiveEventsListing.tsx` / `src/pages/cabinet/LiveEvents.tsx` — найти через search) — set `live_entry_path_${slug}` перед navigate.
+- (опционально) `src/components/live/LiveEventComments.tsx` / `LiveEventQuestions.tsx` — мелкие правки, если scroll-away root меняет flex-контейнер.
+
+---
+
+## Часть C — Closing report по Этапу 1
+
+Перед стартом M3 обязательный отчёт со структурой:
+
+1. **Что сделано** — M1, M1.1, M1.2, M2 (soft-join + entry_path hint).
+2. **Файлы изменены** — список с краткими заметками.
+3. **Diff-summary** — по каждому файлу 1–3 строки.
+4. **Доказано живыми скринами/UI** — таблица из B1+B2 со ссылками на screenshots.
+5. **Доказано только кодом/SQL/network** — что не показано визуально (например, sweeper не существует, 403 на edge).
+6. **Что ещё не закрыто / частично** — `entry_path='menu'` хранение (ждёт M3), отсутствие `live_view_sessions`, отсутствие админской аналитики.
+7. **T1 regression** — `T1 checked / no code changes required`.
+
+---
+
+## Часть D — После Этапа 1 (последовательность)
+
+1. **M3 analytics** — миграции `live_view_sessions` / `live_session_events`, sweeper, `live-session-leave`, RPC, admin-вкладка. **Не начинать до closing report**. План M3 — без изменений (как утверждён ранее).
+2. **Follow-ups** — отдельным PATCH после M3:
+  - reactions overlay fade-out live proof;
+  - player stability live proof (mount counter);
+  - non-staff Participants live proof;
+  - финальный room proof-pack.
+
+---
+
+## Stop-guards (повторно зафиксировано)
+
+- НЕ реверсировать чат.
+- НЕ начинать M3 до closing report Этапа 1.
+- НЕ трогать desktop layout.
 - НЕ ломать token-flow.
-- НЕ менять access logic (только entry tracking после успешной access-проверки).
-
-### DoD M3
-
-- Один user joined+left → `duration_sec` корректен, события `join`+`leave` записаны.
-- Двое одновременно → `max_concurrent ≥ 2`.
-- Один вышел раньше → exit point в `live_session_events`.
-- Token и menu/direct входы → одинаково в `live_view_sessions`, разный `entry_path`.
-- Повторная вкладка тем же user → одна open-row (UNIQUE), `unique_viewers` не растёт.
-- Закрытие вкладки без leave → sweeper закрывает в ≤3 мин с `close_reason='inactivity_timeout'`.
-- Event ended → массово закрывает open-rows, нет хвостов `left_at IS NULL`.
-- Если эфир не стартовал → `avg_retention_pct = NULL`, `exit_distribution = NULL` (не псевдозначения).
-
-**Files to add/edit (Этап 2):**
-
-- Migration: `live_view_sessions`, `live_session_events`, RLS, trigger on `live_events.status`, RPC `get_live_event_analytics`, pg_cron job.
-- Edge: `live-session-leave/index.ts` (new), `live-sessions-sweeper/index.ts` (new), `live-session-heartbeat/index.ts` (extend), `live-token-validate/index.ts` (extend).
-- Client: `src/pages/LiveEvent.tsx` (entry_path + sendBeacon).
-- Admin UI: новая вкладка «Аналитика» в карточке эфира + компонент с recharts.
-
----
-
-## Этап 3 — Follow-ups (отдельным PATCH после Этапа 2)
-
-Не смешивать с M1/M2/M3. Делать только после закрытия Этапа 2.
-
-1. **Reactions overlay fade-out live proof**: before/after screenshots серии реакций, DOM-proof `.reaction-float` lifecycle (0 → ≥1 → 0).
-2. **Player stability live proof**: mount-counter в video-shell (временный `useRef` counter в console), доказать отсутствие remount при tabs/reactions/chat updates.
-3. **Non-staff Participants live proof**: войти под обычным user → виден в Participants без staff fields (real_name_for_staff = null).
-4. **Финальный room proof-pack**: сводная таблица «runtime vs analytics», разведение что показывает где.
-
----
-
-## Финальная структура отчёта
-
-После каждого этапа отдельный отчёт со структурой:
-
-1. Что сделано.
-2. Файлы изменены.
-3. Diff-summary.
-4. Live proof (screenshots/DOM/network).
-5. Code/SQL proof.
-6. Что вынесено в follow-up.
-7. T1 regression: `T1 checked / no code changes required`.
+- НЕ менять access logic — только entry tracking после успешной access-проверки.
+- `live_view_sessions` / `live_session_events` (когда появятся в M3) — server-only write, UI напрямую запрещено.
