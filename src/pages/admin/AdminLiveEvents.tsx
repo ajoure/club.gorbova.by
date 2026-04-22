@@ -2454,6 +2454,9 @@ function LiveStreamControlPanel({
                 <TabsTrigger value="theme" className="gap-1.5 text-xs shrink-0">
                   <Monitor className="h-3 w-3" /> Тема
                 </TabsTrigger>
+                <TabsTrigger value="room" className="gap-1.5 text-xs shrink-0">
+                  <Settings className="h-3 w-3" /> Комната
+                </TabsTrigger>
               </TabsList>
             </div>
             <TabsContent value="comments" className="border rounded-lg mt-2 h-[500px] overflow-hidden">
@@ -2477,6 +2480,9 @@ function LiveStreamControlPanel({
             </TabsContent>
             <TabsContent value="theme" className="border rounded-lg mt-2">
               <LiveEventThemeEditor liveEventId={editingId} />
+            </TabsContent>
+            <TabsContent value="room" className="border rounded-lg mt-2">
+              <WebinarRoomSettingsCard liveEventId={editingId} />
             </TabsContent>
           </Tabs>
         </>
