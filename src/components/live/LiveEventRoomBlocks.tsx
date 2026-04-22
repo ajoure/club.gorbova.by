@@ -136,7 +136,7 @@ function TextBlock({ config }: { config: Record<string, any> }) {
   const body: string = config.body || "";
   if (!body.trim()) return null;
   return (
-    <div className="room-cta-card rounded-lg border bg-card p-3 text-sm text-card-foreground leading-relaxed">
+    <div className="room-cta-card rounded-lg border bg-card p-3 text-sm text-card-foreground leading-relaxed w-full max-w-full min-w-0 overflow-hidden break-words [overflow-wrap:anywhere] [word-break:break-word] whitespace-pre-wrap">
       {renderInlineMarkdown(body)}
     </div>
   );
