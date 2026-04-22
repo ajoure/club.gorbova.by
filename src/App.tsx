@@ -322,6 +322,9 @@ const App = () => {
               {/* Public embed routes (без AdminLayout, без auth) */}
               <Route path="/embed/form/:pageId/:blockId" element={<LazyRoute><EmbedFormPage /></LazyRoute>} />
 
+              {/* TEMP: T1 overflow proof — remove after T1 closure */}
+              <Route path="/dev/t1-proof" element={<LazyRoute><T1ProofPage /></LazyRoute>} />
+
               {/* Public slug resolution layer — explicit static routes always take priority */}
               <Route path="/:slug" element={<LazyRoute><SitePageBySlug /></LazyRoute>} />
               <Route path="*" element={<LazyRoute><NotFound /></LazyRoute>} />
