@@ -154,6 +154,13 @@ function LiveEventLegacy() {
   const [entryDialogOpen, setEntryDialogOpen] = useState(false);
   const [entrySatisfied, setEntrySatisfied] = useState(false);
 
+  // Wake Lock: держим экран активным ТОЛЬКО в live / room_open_waiting.
+  // Для всех остальных state (loading/ended/session_revoked/session_expired/
+  // access_denied/room_closed/error/...) enabled=false → cleanup освобождает lock.
+  // Хук размещён ДО early returns по Rules of Hooks (всегда вызывается).
+  // Привязка только к state комнаты — никаких tabs/chat/reactions/composer.
+  useScreenWakeLock(state === "live" || state === "room_open_waiting");
+
   // Reconnect contract: prefs already exist → silent mirror to session, skip dialog.
   useEffect(() => {
     if (!data?.event_id || prefsLoading) return;
