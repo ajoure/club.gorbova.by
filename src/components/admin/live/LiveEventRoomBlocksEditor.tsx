@@ -27,6 +27,8 @@ interface RoomBlock {
 const blockTypeLabels: Record<string, string> = {
   button: "Кнопка",
   banner: "Баннер",
+  text: "Текст",
+  product_choice: "Выбор продукта",
 };
 
 const displayScopeLabels: Record<string, string> = {
@@ -149,6 +151,14 @@ export function LiveEventRoomBlocksEditor({ liveEventId }: { liveEventId: string
               {block.block_type === "banner" && (
                 <span>Заголовок: {block.config.title || "—"}</span>
               )}
+              {block.block_type === "text" && (
+                <span>Markdown: {(block.config.body || "").slice(0, 60) || "—"}</span>
+              )}
+              {block.block_type === "product_choice" && (
+                <span>
+                  Заголовок: {block.config.title || "—"} · Tariff ID: <code className="text-[10px]">{block.config.tariff_id || "—"}</code>
+                </span>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -172,6 +182,8 @@ export function LiveEventRoomBlocksEditor({ liveEventId }: { liveEventId: string
                   <SelectContent>
                     <SelectItem value="button">Кнопка</SelectItem>
                     <SelectItem value="banner">Баннер</SelectItem>
+                    <SelectItem value="text">Текст / Markdown</SelectItem>
+                    <SelectItem value="product_choice">Выбор продукта</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
