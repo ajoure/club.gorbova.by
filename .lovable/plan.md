@@ -1,229 +1,248 @@
-да, согласен, с учетом правок:
+# Да, согласен, с учетом правок:
 
-1. **Не создавать новый route-файл src/pages/LiveEventLegacy.tsx**, если его сейчас нет как отдельной страницы.  
-В этом запуске сохранить текущий вход через LiveEvent.tsx и встроить gating туда add-only:
-  - либо через уже существующий внутренний LiveEventLegacy
-  - либо через отдельный room-компонент, но **без смены маршрута и без ломки текущего entry-point**.
-2. **Шаг 1 — Admin UI**: зафиксируй, что Entry Settings и Pre-start сохраняются в один и тот же [metadata.room](http://metadata.room)_settings без перетирания соседних веток.  
-Нужен merge-safe update:
-  - не терять prestart, если меняем entry
-  - не терять participants/chat/reactions, если меняем prestart
-  - не ломать существующие metadata ветки автоспринтов и live-модуля.
-3. **Шаг 2 — Entry Flow**: добавь явную клиентскую валидацию перед submit:
-  - если name_required=true → пустое имя запрещено
-  - если color_required=true → цвет обязателен
-  - если выбран red non-staff → блокируем submit ещё до запроса
-  - trim имени, запрет строки из одних пробелов
-  - лимит длины display name, чтобы не ломать чат и список участников.
-4. **Reconnect contract** надо зафиксировать жёстче:  
-если prefs уже есть, room не должен снова спрашивать имя, но **обязан** сделать silent-resync в live_active_sessions:  
+1. В verify по реакциям исправь критерий:
+  &nbsp;
+  &nbsp;
+  - проверять нужно, что реакции **не пишутся в** `live_event_comments` **/** `live_event_questions`;
+  - рост в `live_event_reactions` — это **нормально**, потому что bar отправки как раз пишет туда.  
+  Текущая формулировка про `live_event_reactions ... без неожиданного роста` неверная.
+2. По rail реакций зафиксируй норму ещё жёстче:
+  - **только bottom-right rail**;
+  - ширина `72–96px`;
+  - высота активной зоны не больше `30–35%` высоты video-shell;
+  - без случайного `left`, без drift, без появления выше средней линии видео;
+  - максимум `5` desktop / `3` mobile одновременно;
+  - одинаковые реакции агрегируются в `×N`.
+3. В acceptance для overlay добавь явный критерий:
+  - rail не должен пересекать центральные `40%` ширины видео;
+  - rail не должен выходить за границы video-shell;
+  - overlay контейнер обязан быть дочерним элементом именно video-shell, а не общего layout.
+4. По player stability:
+  - сначала discovery обязан доказать, что remount/re-render реально идёт от UI-state;
+  - если у текущего wrapper нет штатного `onError` / retry API, **soft reconnect не делать** и не имитировать remount’ами;
+  - тогда в этом патче оставить только `React.memo`, stable props/callbacks и key-guard;
+  - silent reconnect в этом случае вынести в follow-up PATCH отдельным пунктом.
+5. Временное `console.log('[player-shell] mount')` допустимо только как proof-инструмент, но:
+  - в финальном diff его быть не должно;
+  - в отчёте отдельно указать, что инструментирование добавлялось временно и удалено до сдачи.
+6. Mobile verify уточнить:
+  - composer должен быть виден **без дополнительного скролла** на первом экране;
+  - скроллится только messages area;
+  - tabs/header/composer не прыгают при открытии клавиатуры;
+  - video остаётся видимым хотя бы частично в верхней зоне при focus на input.
+7. По T1-regression:
+  - `LiveEventRoomBlocks.tsx` повторно **не трогать**, если регрессии нет;
+  - regression proof допустим, но без лишней архитектуры и без постоянных dev-route;
+  - в отчёте отдельно: `T1 checked / no code changes required` либо `T1 checked / direct relation proven / file changed`.
+8. Stop-guards дополни:
+  - не менять `LiveRoomReactionsBar.tsx`, если для rail это не требуется;
+  - не менять `LiveEventRoomBlocks.tsx`, кроме случая доказанной прямой связи с rail/mobile;
+  - не трогать submit/write path реакций в БД;
+  - не добавлять миграций и edge-правок в этом патче.
+9. В финальном отчёте добавь отдельный блок:
+  - **что доказано живыми скриншотами/UI**;
+  - **что доказано только кодом/DOM/network**;
+  - **что вынесено в follow-up** и почему.
+10. В секции proof поправь SQL-пункт:
 
-  - display_name
-  - nickname_color
-  - show_avatar  
-  И только после успешного mirror-sync пускать дальше. Иначе будут расхождения между prefs и runtime-списком участников.
-5. **RoomEntryDialog self-preview**: прямое чтение profiles.avatar_url допустимо только для self-preview, но:
-  - не прокидывать этот payload дальше в room state
-  - не сохранять avatar url в prefs
-  - не дублировать avatar в metadata/comments/questions  
-  Это надо явно указать в DoD и proof.
-6. **Pre-start audio UX**: добавь в план обязательную проверку двух сценариев:
-  - браузер заблокировал autoplay → экран остаётся рабочим, показывается понятная кнопка запуска музыки
-  - переход prestart → live действительно останавливает звук и очищает источник  
-  Нужен proof не только визуальный, но и через cleanup-факт.
-7. **Sales Blocks**: в этом запуске достаточно расширить editor и сохранение типов text / product_choice, но **runtime-полный показ этих новых типов не считать закрытым**, если он не входит в шаги запуска 2.  
-То есть:
-  - admin CRUD новых типов — в этом запуске
-  - room-runtime новых типов — в следующем запуске вместе с PHASE 4  
-  Иначе scope расползётся.
-8. **Mini-proof 6 фактов** дополни ещё двумя обязательными privacy-check:
-  - в network/DOM для non-staff нет full_name, email, phone, contact_id
-  - при show_avatar=false в room payload и в snapshot новых сообщений avatar остаётся NULL
-9. **Автотесты / mini-proof**: минимально добавить хотя бы:
-  - unit на merge room_settings
-  - unit на entry validation
-  - unit/integration на reconnect decision: prefs exist -> dialog skipped -> session mirror update called  
-  Это нужно сейчас, чтобы потом не возвращаться.
-10. **Stop-gate** уточнить:
+- вместо проверки `live_event_reactions` на отсутствие роста используй:
+  - `live_event_comments` не увеличились;
+  - `live_event_questions` не увеличились;
+  - `live_event_reactions` увеличились ожидаемо на число отправленных реакций или больше/меньше только в рамках агрегации UI, но без записи в чат.
 
-&nbsp;
-
-- если silent-resync в live_active_sessions не работает стабильно
-- или privacy-check по network/DOM не пройден
-- или hidden avatar попадает в snapshot комментария  
-тогда запуск 2 не закрывать и к PHASE 4 не переходить.
-
-После этих правок запуск 2 можно брать в работу без риска снова потерять privacy-контракт и без расползания scope.
+Если подрядчик это учтёт, план можно запускать.
 
 &nbsp;
 
-# Запуск 2: PHASE 2 (Admin UI) + PHASE 3 (Entry Flow + Pre-start)
+План: PATCH стабилизации вебинарной комнаты (reactions / player / mobile)
 
-Add-only поверх текущей комнаты. Privacy-инварианты из Запуска 1.1 уже в БД (snapshot prefs-first, hard NULL для hidden avatar, staff-checks с super_admin).
+## Discovery (что уже прочитано)
 
-## Порядок внутри запуска 2 (строгий)
+- `src/components/live/LiveRoomReactionsOverlay.tsx` — overlay сейчас `absolute inset-0`, разлёт по ширине, opacity 1, без агрегации, размер `text-3xl/4xl`.
+- `src/hooks/useLiveReactionOverlayStream.ts` — INSERT-стрим, MAX=30, TTL=3000, без агрегации.
+- `src/components/live/liveRoomTheme.css` — изолированная темизация под `.live-room-themed`.
+- `src/hooks/use-mobile.tsx` — breakpoint 768.
+- `src/components/live/LiveRoomReactionsBar.tsx` — bar реакций (не трогаем).
 
-1. **Admin UI settings** (расширение `WebinarRoomSettingsCard.tsx` в `AdminLiveEvents`)
-2. **Entry Flow** (`RoomEntryDialog.tsx` + интеграция в `LiveEventLegacy`)
-3. **Pre-start screen** (`RoomPreStartScreen.tsx`)
-4. **mini-proof** по 6 фактам перед закрытием
+## Discovery to-do (выполнить в Execute ДО любых правок)
 
-Не смешивать. Каждый шаг проверяется до следующего.
+1. `code--list_dir src/components/live` — найти runtime room page, player wrapper, composer, video-shell.
+2. `code--search_files "LiveRoomReactionsOverlay"` — найти точку монтирования overlay (требование: должен быть **внутри** video-shell, не у layout root).
+3. `code--search_files "Kinescope|iframe|HlsPlayer"` в `src/components/live` — определить player wrapper и его пропсы.
+4. Прочитать runtime room page целиком — определить mobile/desktop ветвление и текущую композицию.
+5. Прочитать player wrapper — есть ли `key`, зависящий от UI-state; есть ли `onError`/штатный retry hook.
 
----
+**Условные ветки по результатам discovery:**
 
-## Шаг 1 — Admin UI settings
-
-Расширить **существующий** `WebinarRoomSettingsCard.tsx` (или создать, если ещё нет — проверю на месте) внутри `AdminLiveEvents`. Один проход, все секции:
-
-### Секция «Pre-start»
-
-- cover_url (storage upload в `webinar-prestart`)
-- title, timer_enabled
-- music_url (upload или url)
-- gallery: array `{url, caption}` (add/remove items)
-
-### Секция «Sales Blocks»
-
-- **Только расширение** существующего `LiveEventRoomBlocksEditor` — добавить типы `text` и `product_choice` (tariff/product selector ID-first). Никакого нового редактора.
-
-### Секция «Participants Visibility»
-
-- toggle `participants.visible_for_students`
-
-### Секция «Entry Settings» (полный блок, без откладывания)
-
-- `entry.name_required` toggle
-- `entry.color_required` toggle
-- `entry.avatar_toggle_enabled` toggle
-- `entry.allowed_colors`: multi-color picker (палитра 8 цветов, включая `#ef4444`)
-- `entry.staff_reserved_colors`: подсветка red как «Только для staff»
-- privacy-copy preview блок (что увидит пользователь в RoomEntryDialog)
-
-### Секция «Chat & Reactions»
-
-- `chat.emoji_normalization_enabled` toggle
-- `reactions.enabled` toggle
-- `reactions.rate_limit_per_min` number
-
-### Сохранение
-
-Один UPDATE `live_events.metadata.room_settings = jsonb_set(...)`. Используется существующий useLiveEvent / mutation.
-
-**Step DoD:** настройки сохраняются и переоткрываются ровно в том же виде; sales-блоки `text`/`product_choice` создаются.
+- Если overlay уже внутри video-shell → правим только сам overlay.
+- Если overlay снаружи → переносим точку монтирования внутрь video-shell (правка в room page).
+- Если у player wrapper нет штатного error API / SDK → soft reconnect **НЕ делаем**, выносим в follow-up. Оставляем только memo + key guard + stable callbacks.
 
 ---
 
-## Шаг 2 — Entry Flow
+## PATCH-план (add-only, минимально инвазивно)
 
-### `RoomEntryDialog.tsx` — финальный контракт сразу
+### Часть 1. Reactions overlay — bottom-right rail внутри video-shell
+
+**Файл:** `src/components/live/LiveRoomReactionsOverlay.tsx`
+
+- Контейнер: `absolute right-2 md:right-3 bottom-3 md:bottom-4 w-[72px] md:w-[96px] h-[32%] pointer-events-none overflow-hidden z-20 flex flex-col-reverse items-center gap-1`.
+  - `flex-col-reverse` — новые снизу, уходят вверх.
+  - Высота 32% video-shell (в норме 30–35%).
+  - Центр видео физически не затрагивается.
+- Без `left`, без `drift`, без горизонтального разлёта.
+- Размер: `text-xl md:text-2xl`. Opacity: `0.55`. Тень: `drop-shadow(0 1px 2px rgba(0,0,0,0.35))`.
+- TTL: 2600ms (синхронно с CSS).
+- Бейдж `×N` рядом с emoji при `count > 1`: `<span class="text-[10px] font-semibold opacity-80 ml-0.5">×{count}</span>`.
+
+**Файл:** `src/hooks/useLiveReactionOverlayStream.ts`
+
+- Тип `FloatingReaction`: добавить `count: number`, `lastUpdatedAt: number`.
+- Окно агрегации: `AGGREGATION_WINDOW_MS = 800`.
+- Логика: при INSERT того же `emoji`, если последний активный элемент с тем же emoji обновлялся < 800ms назад — `count++`, `lastUpdatedAt = now`. TTL **не продлеваем** (визуальная стабильность).
+- Хук принимает `isMobile?: boolean` (передаётся из overlay через `useIsMobile()`).
+- Лимиты: `MAX_DESKTOP = 5`, `MAX_MOBILE = 3`. При превышении — drop старейших.
+- Пишем **только в локальный state** — никаких `INSERT` в `live_event_reactions`/`comments`/`questions`. Это уже соблюдается, фиксируем явно.
+
+**Гарантия позиционирования:** в discovery шаг 2 проверить вложенность overlay. Если overlay вне video-shell — перенести (точечная правка JSX в room page).
+
+---
+
+### Часть 2. Player stability — только то, что доказуемо без backend
+
+**Файл:** player wrapper (определить в discovery).
+
+Действия (только при подтверждении в discovery):
+
+1. **Memo guard:** обернуть player container в `React.memo` со сравнением только по `sourceUrl`, `provider`, `isLive`, `eventId`. UI-состояние (tabs, reactions, новые сообщения) **не должно** проходить через props плеера.
+2. **Key guard:** убрать любые `key={tab}` / `key={reactionsCount}` у iframe/video. Разрешён только `key={sourceUrl}` или отсутствие key.
+3. **Callback stability:** `onEvent`/`onReady`/`onError` стабилизировать через `useCallback` с минимальным deps в родителе.
+4. **Silent retry:** **только если** у wrapper уже есть штатный `onError` hook. Тогда — локальный retry 1s → 2s → 4s, max 3 попытки **внутри wrapper**, без remount комнаты. Banner показывать после 3-й неудачи.
+5. **Если штатного error API нет** → soft reconnect **НЕ имитируем**. Явно фиксируем в финальном отчёте как **follow-up PATCH**.
+
+**Stop-guards в этой части:**
+
+- НЕ трогаем `LiveEvent.tsx` session refresh memoization (mem://features/webinars/session-stability-protocol).
+- НЕ трогаем `live-resolve` edge function.
+- НЕ меняем провайдера, ABR не дублируем.
+- НЕ добавляем костылей-ремоунтов.
+
+---
+
+### Часть 3. Mobile UX — sticky composer + 100dvh + scroll-area
+
+**Файл:** runtime room page (определить в discovery), под `useIsMobile() === true`:
 
 Структура:
 
-1. **Avatar preview** сверху — `profiles.avatar_url` текущего пользователя (рендерится **только в этом dialog**, не утекает в room payload).
-2. **Поле «Как вас показывать в комнате»** — текстовый input.
-  - Draft из `prefs.display_name` если есть → fallback `profiles.full_name` → пусто.
-3. **Палитра цветов** — grid из `entry.allowed_colors`.
-  - Red (`#ef4444`) для non-staff: `disabled` + tooltip «Этот цвет доступен только сотрудникам».
-  - Серверный guard уже включён (триггер `validate_nickname_color`) — клиент не может обойти.
-4. **Toggle «Показывать мой аватар»** (default: `false` для приватности).
-5. **Privacy-copy** (3 строки видимы):
-  - «Другие участники увидят только это имя»
-  - «Аватар будет показан только если вы включите эту опцию»
-  - «Администратор видит ваши контактные данные отдельно»
-6. **Кнопка «Войти»**.
+```
+[root: room-mobile-shell — h-[100dvh] flex flex-col]
+  [video shell]    shrink-0, aspect-video, position:relative (хост overlay)
+  [reactions bar]  shrink-0
+  [tabs header]    shrink-0
+  [messages area]  room-mobile-scroll (flex-1 min-h-0 overflow-y-auto)
+  [composer]       room-mobile-composer (sticky bottom-0 + safe-area)
+```
 
-### Save-flow (атомарный)
+**Файл:** `src/components/live/liveRoomTheme.css` — добавить **новые** классы (существующие не трогаем):
 
-1. UPSERT `live_event_participant_prefs (live_event_id, user_id)` с `display_name`, `nickname_color`, `show_avatar`.
-2. UPDATE `live_active_sessions` (own row) — синхронный runtime mirror.
-3. invalidate query → диалог закрывается.
+```css
+.room-mobile-shell {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+.room-mobile-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.room-mobile-composer {
+  position: sticky;
+  bottom: 0;
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--room-panel, hsl(var(--background)));
+  border-top: 1px solid color-mix(in srgb, var(--room-text, hsl(var(--foreground))) 10%, transparent);
+}
+```
 
-### Reconnect / повторный вход
+Keyboard guard: `100dvh` сам корректно отрабатывает появление клавиатуры — JS-логика не нужна.
 
-В `LiveEventLegacy` чтение prefs до показа dialog:
-
-- если `prefs.display_name` существует → диалог НЕ показывается, сразу runtime mirror в session и вход.
-- gating: `entry.name_required && !prefs.display_name` → блокируем диалогом.
-
-**Step DoD:** prefs сохраняются 1:1; reconnect не показывает диалог повторно; red недоступен non-staff (UI + DB); hidden avatar нигде не светится в payload.
-
----
-
-## Шаг 3 — Pre-start screen
-
-### `RoomPreStartScreen.tsx`
-
-Render:
-
-- Cover image (full-width)
-- Title
-- Countdown к `live_event.scheduled_at` (если `timer_enabled`)
-- Music control:
-  - `**<audio>` muted-by-default** (browser autoplay policy)
-  - Кнопка play/pause/mute (в одном control)
-  - **При unmount гарантированный cleanup** (`useEffect` return → `audio.pause(); audio.src = ''`)
-- Gallery grid (если есть items)
-
-### Gating в `LiveEventLegacy`
-
-- `room_settings.prestart.enabled && roomState in ('closed','opened') && now < scheduled_at` → `RoomPreStartScreen`
-- При переходе room → `live` → размонтировать pre-start (cleanup останавливает музыку)
-- При переходе → entry dialog (если nameless)
-
-**Step DoD:**
-
-- Cover/timer/music/gallery рендерятся
-- Музыка НЕ автоиграет со звуком (mute по умолчанию)
-- Есть кнопка включить звук
-- При live transition музыка остановлена (network-tab proof)
+**Desktop:** не трогаем, изменения только в mobile-ветке.
 
 ---
 
-## Шаг 4 — mini-proof перед закрытием
+### Stop-guards (что НЕ трогаю)
 
-6 обязательных фактов:
-
-1. Entry settings в админке сохраняются и переоткрываются
-2. Entry dialog показывает аватар
-3. `show_avatar=false` сохраняется в prefs (DB read)
-4. Reconnect (logout/login или refresh) подтягивает prefs, диалог не показывается повторно
-5. Non-staff не может выбрать red (UI disabled + DB triggered reject)
-6. Pre-start cover/timer/music/gallery реально рендерятся
+- `supabase/functions/*` — ноль изменений.
+- DB / migrations / `live_event_reactions` / `live_event_comments` / `live_event_questions` / `live_event_room_blocks` — ноль изменений.
+- `LiveEntryDialog`, privacy flow, pre-start, sales-blocks, table-shell, admin tables.
+- Submit-логика чата/вопросов.
+- `LiveEventRoomBlocks.tsx` — **не трогаю** (T1 был починен в прошлом проходе, прямой связи с новым rail/mobile нет).
+- `LiveEvent.tsx` session refresh logic.
+- `LiveRoomReactionsBar.tsx` — bar отправки, не входит в scope overlay.
+- Провайдер видео, ABR, `live-resolve`.
 
 ---
 
-## Privacy guards (жёстко в этом запуске)
+### Файлы под изменение (ожидаемо)
 
-- **PHASE 2/3 НЕ выводят `profiles.full_name` в room payload**. Avatar preview в `RoomEntryDialog` — единственное место чтения `profiles.avatar_url` напрямую (для self-preview перед входом). В сам room это не утекает.
-- Все room-side компоненты в этом запуске работают только с `prefs` / snapshot полями.
-- Никаких новых SELECT из `profiles` в `LiveEventComments`/`LiveEventQuestions`/`LiveEventLegacy`.
+1. `src/components/live/LiveRoomReactionsOverlay.tsx` — bottom-right rail, opacity, count badge, размер, без drift.
+2. `src/hooks/useLiveReactionOverlayStream.ts` — агрегация по emoji+window, лимиты по платформе, count.
+3. `src/components/live/liveRoomTheme.css` — 3 новых класса (`room-mobile-shell` / `room-mobile-scroll` / `room-mobile-composer`).
+4. **[discovery]** Runtime room page — mobile flex-column layout + (условно) перенос overlay внутрь video-shell.
+5. **[discovery, условно]** Player wrapper — `React.memo` + key guard + stable callbacks. Soft reconnect — только при штатном error API.
 
-## Stop-gate Запуска 2
+---
 
-PHASE 4 не начинать, если:
+### Verify / DoD
 
-- entry dialog не сохраняет prefs 1:1
-- hidden avatar где-то светится
-- pre-start не переключается в комнату корректно
+**Reactions proof:**
 
-В этом случае — закрыть в рамках текущего запуска перед переходом.
+- Desktop: 10 одинаковых эмодзи подряд → один пузырь с `×10` в правом нижнем rail. Скриншот.
+- Desktop: 5 разных серией → вертикальный стек ≤5, без горизонтального разлёта. Скриншот.
+- Mobile (375×812): стек ≤3, rail 72px, центр видео и зона ведущего свободны. Скриншот.
+- DOM-проба: overlay контейнер физически вложен в video-shell (`document.querySelector` цепочка в DevTools), `pointer-events: none` подтверждён.
+- DOM-переход 0 → ≥1 → 0 наблюдается в Elements panel (через TTL).
+- SQL-проверка: `select count(*) from live_event_reactions where created_at > now() - interval '2 minutes'` до и после серии overlay-only взаимодействий — без неожиданного роста (overlay только читает realtime, не пишет).
 
-## Файлы (ожидаемые)
+**Player stability proof:**
 
-**Frontend admin:**
+- Временное инструментирование: `console.log('[player-shell] mount', Date.now())` в effect c `[]` deps в player wrapper.
+- Сценарий: переключение табов 10 раз подряд → ровно **1** mount-лог.
+- Сценарий: 20 реакций подряд → ровно **1** mount-лог.
+- После proof — `console.log` удалить тем же патчем.
+- Если soft reconnect не реализуем → явно зафиксировать в отчёте секцией follow-up.
 
-- `src/components/admin/live-events/WebinarRoomSettingsCard.tsx` (создать или расширить)
-- `src/components/admin/live-events/LiveEventRoomBlocksEditor.tsx` (расширить: типы `text`, `product_choice`)
+**Mobile UX proof (375×812):**
 
-**Frontend room:**
+- Скриншот idle: на первом экране одновременно видны video, reactions bar, tabs header, composer.
+- Скриншот с фокусом на input: composer прижат к низу клавиатуры, video остаётся видимым в верхней части (не исчезает полностью), layout не "прыгает".
+- Скриншот скролла messages: скроллится только messages area; video, tabs, composer — на месте.
 
-- `src/components/live-event/RoomEntryDialog.tsx` (создать)
-- `src/components/live-event/RoomPreStartScreen.tsx` (создать)
-- `src/pages/LiveEventLegacy.tsx` (интеграция gating + reconnect)
+**T1 regression check (без правок файла):**
 
-**Hooks:**
+- Создать временный banner+text блок (миграция add-only, `proof_tag='REGRESSION-T1-RAIL-PATCH'`) с длинной строкой без пробелов.
+- Скриншот: текст переносится, layout не ломается, overflow не возвращается.
+- Cleanup миграцией строго по `proof_tag`.
+- Если регрессии нет — `LiveEventRoomBlocks.tsx` повторно **не трогаем**, явно зафиксировать в отчёте.
 
-- `src/hooks/useRoomEntryPrefs.ts` (создать: read/upsert prefs + sync session)
+---
 
-Backend в этом запуске не трогаем — фундамент готов.
+### Финальный отчёт (4 секции)
+
+1. **Reactions overlay** — changed files, что изменено, скриншоты desktop/mobile, DOM-вложенность, SQL count-сверка.
+2. **Player stability** — changed files, mount-counter proof (tabs ×10 → 1 mount, реакции ×20 → 1 mount), что НЕ удалось доказать локально и вынесено в follow-up (если применимо).
+3. **Mobile UX** — changed files, 3 скриншота (idle / focused / scroll messages).
+4. **Regression / что не тронуто** — T1 проверен (banner/text overflow в норме, файл не менялся повторно), явный список stop-guards.
+
+---
+
+### Follow-up PATCH (только при необходимости из discovery)
+
+Если у текущего player wrapper нет штатного error API / SDK для soft reconnect:
+
+- Локально стабилизировано: memo, key-guard, stable callbacks.
+- Не реализовано без provider-level доступа: programmatic retry, ABR-tuning, network-level recovery.
+- Эти пункты выносятся отдельной задачей с явной пометкой требуемого scope (Kinescope SDK / провайдерский API).
