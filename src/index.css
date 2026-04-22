@@ -166,6 +166,55 @@ body.impersonation-active .impersonation-offset {
   }
 }
 
+/* ==========================================================================
+   iOS standalone (PWA) safe-area / notch fix — MOBILE ONLY.
+
+   Цель: в режиме «Add to Home Screen» (standalone) контент не должен заезжать
+   под верхний notch и под home indicator. В обычном Safari (browser mode)
+   правила не должны менять существующий layout.
+
+   Гарды:
+   - Все правила завёрнуты в @media (max-width: 1023px) — desktop не трогаем.
+   - Standalone-специфичные усиления применяются только при наличии класса
+     `is-ios-standalone` на <html> (выставляется в src/main.tsx через
+     matchMedia('(display-mode: standalone)') / navigator.standalone) или
+     через @media (display-mode: standalone).
+   - Composer уже использует `max(0.75rem, env(safe-area-inset-bottom))` —
+     home indicator учтён в исходном коде, здесь не дублируем.
+   ========================================================================== */
+
+@media (max-width: 1023px) {
+  /* Header в комнате эфира: даём safe-area отступ сверху ТОЛЬКО в standalone.
+     В обычном Safari env(safe-area-inset-top) часто = 0 и существующий pt-3
+     остаётся достаточным; не добавляем здесь ничего, чтобы избежать
+     двойного отступа в browser mode. */
+  html.is-ios-standalone [data-mobile-header],
+  [data-mobile-header] {
+    /* base — без изменений (управляется Tailwind pt-3) */
+  }
+
+  /* Фон под notch: sticky main уже bg-background, но header выше него.
+     Чтобы в standalone не было полупрозрачной полосы под notch, задаём
+     header сплошной фон только в standalone. */
+  html.is-ios-standalone [data-mobile-header] {
+    background: hsl(var(--background));
+    padding-top: max(0.75rem, env(safe-area-inset-top, 0px));
+  }
+}
+
+@media (max-width: 1023px) and (display-mode: standalone) {
+  [data-mobile-header] {
+    background: hsl(var(--background));
+    padding-top: max(0.75rem, env(safe-area-inset-top, 0px));
+  }
+
+  /* Sticky main / video-shell сами не получают доп. padding-top —
+     header уже принял safe-area, иначе будет двойной отступ. */
+
+  /* Home indicator на iPhone: composer уже использует
+     max(0.75rem, env(safe-area-inset-bottom)) — оставляем как есть. */
+}
+
 /* Route-scoped override: публичные сайты не ограничены #root constraints */
 #root:has(.site-public-layout) {
   max-width: none;
