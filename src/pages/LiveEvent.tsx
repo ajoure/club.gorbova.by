@@ -725,6 +725,7 @@ function LiveEventLegacy() {
           }}
         />
       )}
+    </div>
   );
 }
 
