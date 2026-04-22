@@ -98,7 +98,14 @@ export default function LiveEvents() {
               <Card
                 key={event.id}
                 className="cursor-pointer hover:border-primary/50 transition-colors"
-                onClick={() => navigate(`/live/${event.slug}`)}
+                onClick={() => {
+                  // M2 entry-path hint: помечаем заход из списка эфиров для последующего soft-join.
+                  // LiveEvent.tsx прочитает sessionStorage[`live_entry_${slug}`] при первом heartbeat.
+                  try {
+                    sessionStorage.setItem(`live_entry_${event.slug}`, "menu");
+                  } catch {/* sessionStorage may be unavailable in some embeds */}
+                  navigate(`/live/${event.slug}`);
+                }}
               >
                 <CardContent className="p-5 space-y-3">
                   <div className="flex items-start justify-between gap-2">
