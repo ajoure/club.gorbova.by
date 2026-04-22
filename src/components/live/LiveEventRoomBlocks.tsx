@@ -78,7 +78,7 @@ export function LiveEventRoomBlocks({ liveEventId, displayContext, position }: L
   if (!visible.length) return null;
 
   return (
-    <div className="space-y-2">
+    <div className="w-full max-w-full min-w-0 space-y-2">
       {visible.map((block) => {
         if (block.block_type === "button") return <ButtonBlock key={block.id} config={block.config} />;
         if (block.block_type === "banner") return <BannerBlock key={block.id} config={block.config} />;
@@ -111,12 +111,20 @@ function BannerBlock({ config }: { config: Record<string, any> }) {
   const { title, body, cta_text, cta_url, image_url } = config;
 
   return (
-    <div className="room-cta-card rounded-lg border bg-card p-3 space-y-2">
+    <div className="room-cta-card rounded-lg border bg-card p-3 space-y-2 w-full max-w-full min-w-0 overflow-hidden">
       {image_url && (
         <img src={image_url} alt="" className="w-full rounded-md object-cover max-h-32" />
       )}
-      {title && <h4 className="font-semibold text-sm text-card-foreground">{title}</h4>}
-      {body && <p className="text-xs text-muted-foreground">{body}</p>}
+      {title && (
+        <h4 className="font-semibold text-sm text-card-foreground break-words [overflow-wrap:anywhere]">
+          {title}
+        </h4>
+      )}
+      {body && (
+        <p className="text-xs text-muted-foreground break-words [overflow-wrap:anywhere] whitespace-pre-wrap">
+          {body}
+        </p>
+      )}
       {cta_text && cta_url && (
         <Button size="sm" className="w-full" onClick={() => window.open(cta_url, "_blank")}>
           {cta_text}
