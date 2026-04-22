@@ -134,8 +134,10 @@ Deno.serve(async (req) => {
         session_key: newSessionKey,
         expires_at: expiresIso,
         last_seen_at: nowIso,
-        meta: { entry_path },
       });
+    // entry_path передаётся клиентом и используется в M3 (live_view_sessions). На уровне
+    // live_active_sessions колонки meta нет — это runtime SoT, не история.
+    void entry_path;
 
     if (insertErr) {
       // Race: someone else (parallel tab) inserted in between → re-read and reuse.
