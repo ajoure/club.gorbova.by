@@ -20,6 +20,7 @@ import { LiveEventProductCta, useHasActiveCtaBindings } from "@/components/live/
 import { LiveBadge, type LiveBadgeMode } from "@/components/live/LiveBadge";
 import { RoomParticipantsList } from "@/components/live/RoomParticipantsList";
 import { LiveRoomReactionsBar } from "@/components/live/LiveRoomReactionsBar";
+import { LiveRoomReactionsOverlay } from "@/components/live/LiveRoomReactionsOverlay";
 import "@/components/live/liveRoomTheme.css";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { useLiveContactSheet } from "@/hooks/useLiveContactSheet";
@@ -618,22 +619,29 @@ function LiveEventLegacy() {
       <div className="flex-1 max-w-[1600px] w-full mx-auto px-3 md:px-6 pb-3 md:pb-6 flex flex-col lg:flex-row lg:items-start gap-3 md:gap-4 min-h-0">
         {/* Player column — takes most width on desktop */}
         <div className="lg:flex-[3] flex flex-col gap-2 min-w-0">
-          {roomSettings.prestart.enabled && data?.scheduled_at && new Date(data.scheduled_at).getTime() > Date.now() && (state === "room_open_waiting" || isWaiting) ? (
-            <RoomPreStartScreen prestart={roomSettings.prestart} scheduledAt={data?.scheduled_at} />
-          ) : isWaiting ? (
-            <RoomWaitingState scheduledAt={data?.scheduled_at} eventTimezone={data?.event_timezone} />
-          ) : resolvedSource?.resolved_source_kind === 'kinescope_video' && resolvedSource.resolved_embed_url ? (
-            <KinescopePlayerWrapper videoId={data?.kinescope_video_id!} />
-          ) : resolvedSource?.resolved_source_kind === 'kinescope_live_embed' && resolvedSource.resolved_embed_url ? (
-            <LiveEmbedPlayer embedUrl={resolvedSource.resolved_embed_url} />
-          ) : (
-            <div className="relative w-full aspect-video bg-muted rounded-lg overflow-hidden flex items-center justify-center">
-              <div className="text-center p-4">
-                <AlertTriangle className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
-                <p className="text-sm text-muted-foreground">Источник видео недоступен</p>
+          {/* Wrapper для overlay реакций — relative, чтобы absolute overlay лёг поверх плеера. */}
+          <div className="relative">
+            {roomSettings.prestart.enabled && data?.scheduled_at && new Date(data.scheduled_at).getTime() > Date.now() && (state === "room_open_waiting" || isWaiting) ? (
+              <RoomPreStartScreen prestart={roomSettings.prestart} scheduledAt={data?.scheduled_at} />
+            ) : isWaiting ? (
+              <RoomWaitingState scheduledAt={data?.scheduled_at} eventTimezone={data?.event_timezone} />
+            ) : resolvedSource?.resolved_source_kind === 'kinescope_video' && resolvedSource.resolved_embed_url ? (
+              <KinescopePlayerWrapper videoId={data?.kinescope_video_id!} />
+            ) : resolvedSource?.resolved_source_kind === 'kinescope_live_embed' && resolvedSource.resolved_embed_url ? (
+              <LiveEmbedPlayer embedUrl={resolvedSource.resolved_embed_url} />
+            ) : (
+              <div className="relative w-full aspect-video bg-muted rounded-lg overflow-hidden flex items-center justify-center">
+                <div className="text-center p-4">
+                  <AlertTriangle className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
+                  <p className="text-sm text-muted-foreground">Источник видео недоступен</p>
+                </div>
               </div>
-            </div>
-          )}
+            )}
+            {/* Sprint final: Reactions overlay поверх видео — emoji-only, fade-out ~3s, realtime для всех. */}
+            {eventId && roomSettings.reactions.enabled && !isReplay && (
+              <LiveRoomReactionsOverlay liveEventId={eventId} enabled={roomSettings.reactions.enabled} />
+            )}
+          </div>
           {/* Room blocks — under_video (legacy, only if no product CTA bindings) */}
           {eventId && !hasUnderVideoCta && (
             <LiveEventRoomBlocks
