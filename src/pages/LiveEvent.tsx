@@ -24,6 +24,10 @@ import { useLiveContactSheet } from "@/hooks/useLiveContactSheet";
 import { RoomWaitingState } from "@/components/live/RoomWaitingState";
 import { RoomLifecycleActions } from "@/components/live/RoomLifecycleActions";
 import { parseRoomState, getRoomStateBadgeVM, type RoomState } from "@/lib/liveRoomLifecycle";
+import { RoomEntryDialog } from "@/components/live/RoomEntryDialog";
+import { RoomPreStartScreen } from "@/components/live/RoomPreStartScreen";
+import { useRoomEntryPrefs } from "@/hooks/useRoomEntryPrefs";
+import { readRoomSettings } from "@/lib/roomSettings";
 
 interface ResolvedSource {
   resolved_source_kind: 'kinescope_video' | 'kinescope_live_embed' | 'live_pending' | 'none';
