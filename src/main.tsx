@@ -19,5 +19,22 @@ import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
 
+// iOS standalone (PWA / Add to Home Screen) detector — sets `is-ios-standalone`
+// class on <html>. Used by index.css to apply notch/safe-area fixes ONLY in
+// standalone mode, without affecting regular Safari browser mode.
+try {
+  const isStandalone =
+    (typeof window !== "undefined" &&
+      window.matchMedia &&
+      window.matchMedia("(display-mode: standalone)").matches) ||
+    // iOS Safari legacy flag
+    (typeof navigator !== "undefined" && (navigator as any).standalone === true);
+  if (isStandalone) {
+    document.documentElement.classList.add("is-ios-standalone");
+  }
+} catch (e) {
+  console.warn("[standalone-detect] failed", e);
+}
+
 // Force Vite cache invalidation
 createRoot(document.getElementById("root")!).render(<App />);
