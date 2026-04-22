@@ -8,7 +8,7 @@ interface LiveRoomReactionsBarProps {
   enabled: boolean;
 }
 
-const QUICK_REACTIONS = ["👍", "❤️", "🔥", "👏", "😂", "🎉", "🤔", "💯"];
+const QUICK_REACTIONS = ["👍", "❤️", "🔥", "👏", "😂", "🤔", "💯"];
 
 /**
  * Панель быстрых реакций уровня комнаты.

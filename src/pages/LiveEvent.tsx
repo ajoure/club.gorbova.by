@@ -32,6 +32,7 @@ import { RoomPreStartScreen } from "@/components/live/RoomPreStartScreen";
 import { useRoomEntryPrefs } from "@/hooks/useRoomEntryPrefs";
 import { readRoomSettings } from "@/lib/roomSettings";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useScreenWakeLock } from "@/hooks/useScreenWakeLock";
 
 interface ResolvedSource {
   resolved_source_kind: 'kinescope_video' | 'kinescope_live_embed' | 'live_pending' | 'none';
