@@ -78,7 +78,7 @@ export function LiveEventRoomBlocks({ liveEventId, displayContext, position }: L
   if (!visible.length) return null;
 
   return (
-    <div className="space-y-2">
+    <div className="w-full max-w-full min-w-0 space-y-2">
       {visible.map((block) => {
         if (block.block_type === "button") return <ButtonBlock key={block.id} config={block.config} />;
         if (block.block_type === "banner") return <BannerBlock key={block.id} config={block.config} />;
