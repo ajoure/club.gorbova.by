@@ -50,7 +50,7 @@ import {
 } from "@/components/ui/collapsible";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DateTimePicker } from "@/components/ui/datetime-picker";
-import { Plus, Edit2, Loader2, Video, ExternalLink, ChevronDown, AlertCircle, CheckCircle2, Users, Link2, PlayCircle, Shield, Radio, Zap, Square, RefreshCw, Send, Copy, Eye, EyeOff, MessageSquare, HelpCircle, Unlink, RotateCcw, AlertTriangle, LayoutGrid, Monitor, ShoppingCart, Trash2, MoreHorizontal } from "lucide-react";
+import { Plus, Edit2, Loader2, Video, ExternalLink, ChevronDown, AlertCircle, CheckCircle2, Users, Link2, PlayCircle, Shield, Radio, Zap, Square, RefreshCw, Send, Copy, Eye, EyeOff, MessageSquare, HelpCircle, Unlink, RotateCcw, AlertTriangle, LayoutGrid, Monitor, ShoppingCart, Trash2, MoreHorizontal, Settings } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -69,6 +69,7 @@ import { LiveEventRoomBlocksEditor } from "@/components/admin/live/LiveEventRoom
 import { LiveEventProductCtaBindings } from "@/components/admin/live/LiveEventProductCtaBindings";
 import { LiveEventCtaRuntimePanel } from "@/components/admin/live/LiveEventCtaRuntimePanel";
 import { LiveEventThemeEditor } from "@/components/admin/live/LiveEventThemeEditor";
+import { WebinarRoomSettingsCard } from "@/components/admin/live/WebinarRoomSettingsCard";
 import { DomainEventService } from "@/lib/domain-events";
 import { LiveEventsHelpDialog } from "@/components/admin/live/LiveEventsHelpDialog";
 import { LiveEventExportButtons } from "@/components/live/LiveEventExportButtons";
@@ -2453,6 +2454,9 @@ function LiveStreamControlPanel({
                 <TabsTrigger value="theme" className="gap-1.5 text-xs shrink-0">
                   <Monitor className="h-3 w-3" /> Тема
                 </TabsTrigger>
+                <TabsTrigger value="room" className="gap-1.5 text-xs shrink-0">
+                  <Settings className="h-3 w-3" /> Комната
+                </TabsTrigger>
               </TabsList>
             </div>
             <TabsContent value="comments" className="border rounded-lg mt-2 h-[500px] overflow-hidden">
@@ -2476,6 +2480,9 @@ function LiveStreamControlPanel({
             </TabsContent>
             <TabsContent value="theme" className="border rounded-lg mt-2">
               <LiveEventThemeEditor liveEventId={editingId} />
+            </TabsContent>
+            <TabsContent value="room" className="border rounded-lg mt-2">
+              <WebinarRoomSettingsCard liveEventId={editingId} />
             </TabsContent>
           </Tabs>
         </>

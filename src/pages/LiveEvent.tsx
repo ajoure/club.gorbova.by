@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { AutowebSessionSelector } from "@/components/live/AutowebSessionSelector";
@@ -24,6 +24,10 @@ import { useLiveContactSheet } from "@/hooks/useLiveContactSheet";
 import { RoomWaitingState } from "@/components/live/RoomWaitingState";
 import { RoomLifecycleActions } from "@/components/live/RoomLifecycleActions";
 import { parseRoomState, getRoomStateBadgeVM, type RoomState } from "@/lib/liveRoomLifecycle";
+import { RoomEntryDialog } from "@/components/live/RoomEntryDialog";
+import { RoomPreStartScreen } from "@/components/live/RoomPreStartScreen";
+import { useRoomEntryPrefs } from "@/hooks/useRoomEntryPrefs";
+import { readRoomSettings } from "@/lib/roomSettings";
 
 interface ResolvedSource {
   resolved_source_kind: 'kinescope_video' | 'kinescope_live_embed' | 'live_pending' | 'none';
@@ -134,6 +138,30 @@ function LiveEventLegacy() {
   const eventIdForCta = data?.event_id || "";
   const hasUnderVideoCta = useHasActiveCtaBindings(eventIdForCta, "under_video");
   const hasSidebarCta = useHasActiveCtaBindings(eventIdForCta, "sidebar");
+
+  // Room settings + entry prefs (Запуск 2)
+  const roomSettings = useMemo(() => readRoomSettings((data as any)?.room_settings), [data]);
+  const { prefs, isLoading: prefsLoading, profileAvatarUrl, profileFullName, upsertPrefs, syncSessionMirror } =
+    useRoomEntryPrefs(data?.event_id);
+  const [entryDialogOpen, setEntryDialogOpen] = useState(false);
+  const [entrySatisfied, setEntrySatisfied] = useState(false);
+
+  // Reconnect contract: prefs already exist → silent mirror to session, skip dialog.
+  useEffect(() => {
+    if (!data?.event_id || prefsLoading) return;
+    if (entrySatisfied) return;
+    const nameRequired = roomSettings.entry.name_required;
+    if (!nameRequired) {
+      setEntrySatisfied(true);
+      return;
+    }
+    if (prefs?.display_name) {
+      // silent resync runtime mirror, then proceed
+      void syncSessionMirror(prefs).finally(() => setEntrySatisfied(true));
+    } else if (state === "live" || state === "room_open_waiting") {
+      setEntryDialogOpen(true);
+    }
+  }, [data?.event_id, prefs, prefsLoading, roomSettings.entry.name_required, state, entrySatisfied, syncSessionMirror]);
 
   const stopHeartbeat = useCallback(() => {
     if (heartbeatRef.current) {
@@ -586,7 +614,9 @@ function LiveEventLegacy() {
       <div className="flex-1 max-w-[1600px] w-full mx-auto px-3 md:px-6 pb-3 md:pb-6 flex flex-col lg:flex-row lg:items-start gap-3 md:gap-4 min-h-0">
         {/* Player column — takes most width on desktop */}
         <div className="lg:flex-[3] flex flex-col gap-2 min-w-0">
-          {isWaiting ? (
+          {roomSettings.prestart.enabled && data?.scheduled_at && new Date(data.scheduled_at).getTime() > Date.now() && (state === "room_open_waiting" || isWaiting) ? (
+            <RoomPreStartScreen prestart={roomSettings.prestart} scheduledAt={data?.scheduled_at} />
+          ) : isWaiting ? (
             <RoomWaitingState scheduledAt={data?.scheduled_at} eventTimezone={data?.event_timezone} />
           ) : resolvedSource?.resolved_source_kind === 'kinescope_video' && resolvedSource.resolved_embed_url ? (
             <KinescopePlayerWrapper videoId={data?.kinescope_video_id!} />
@@ -677,6 +707,24 @@ function LiveEventLegacy() {
         open={contactSheetOpen}
         onOpenChange={setContactSheetOpen}
       />
+
+      {/* Room Entry Dialog — Запуск 2 PHASE 3 */}
+      {data?.event_id && (
+        <RoomEntryDialog
+          open={entryDialogOpen}
+          onOpenChange={setEntryDialogOpen}
+          settings={roomSettings.entry}
+          isStaff={isStaff}
+          initialPrefs={prefs}
+          profileAvatarUrl={profileAvatarUrl}
+          profileFullName={profileFullName}
+          onSubmit={async (next) => {
+            const saved = await upsertPrefs(next);
+            await syncSessionMirror(saved);
+            setEntrySatisfied(true);
+          }}
+        />
+      )}
     </div>
   );
 }
