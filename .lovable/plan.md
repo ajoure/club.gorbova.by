@@ -1,173 +1,201 @@
 # да, согласен, с учетом правок:
 
-1. В пункте 3.B для DOM-proof зафиксируй не только `top ≈ 0`, но и допуск, например `Math.abs(top_after) <= 2`. Иначе проверка будет хрупкой из-за mobile browser chrome/safe-area.
-2. В пункте 3.B добавь ещё один обязательный замер:
-  &nbsp;
-  &nbsp;
-  - `document.querySelector('[data-room-messages-scroll]').getBoundingClientRect()`
-  - до и после body-scroll.  
-  Это нужно, чтобы доказать, что после ухода header scroll-area остаётся в том же pinned-блоке под video, а не пересобирается.
-3. В пункте 4 по M2 entry_path hint зафиксируй точный критерий accepted для второго heartbeat:
-  - stale `'menu'` не должен повторно уходить;
-  - допустимо либо отсутствие `entry_path` в body, либо явный `'direct'`;
-  - но **недопустимо** повторное `'menu'`.  
-  Это надо прописать явно.
-4. В пункте 6 добавь ещё один технический маркер для proof:
-  - на sticky main контейнер повесь `data-mobile-sticky-main`.  
-  Тогда в DOM-proof можно надёжно проверить:
-  - `getComputedStyle(...).position === 'sticky'`
-  - `top === '0px'`  
-  без двусмысленного поиска по классам.
-5. В пункте 8.2 зафиксируй, что сначала снимаются mobile screenshots/DOM-proof по M1.2, и только потом M2 entry_path proof. Иначе navigation через список эфиров может сбить чистый scroll-proof по mobile layout.
-6. В closing report добавь отдельную строку:
-  - `proof artifacts saved = yes/no`  
-  Если `no`, Этап 1 не закрывать.
-7. В финальном статусе после proof используй только один из трёх вариантов:
-  - `accepted`
-  - `not accepted`
-  - `deferred`  
-  Не писать смешанные формулировки вроде `code complete, live-proof pending` в финальном closing report; это оставить только для текущего промежуточного состояния.
-8. В pre-proof patch явно зафиксируй, что добавление `data-*` атрибутов — это единственная допустимая инструментальная правка перед proof. Никаких новых layout-изменений на этом шаге не делать.
+1. В clean M2 proof зафиксируй, что acceptance строится по **payload и lifecycle hint**, а не по факту новой INSERT-строки. То есть допустимы оба server-ответа:
+  - `soft_join_created`
+  - `soft_join_resumed`
+  Критично доказать именно:
+  - первый request после клика из списка уходит с `entry_path: 'menu'`;
+  - после успешного ответа hint удалён;
+  - следующий heartbeat больше не уносит stale `menu`.
+2. В pre-conditions для M2 добавь два варианта clean-среды:
+  - либо fresh tab/incognito + пустой `sessionStorage`;
+  - либо отдельный тестовый user/event без активной open-session.
+  Иначе снова можно уткнуться в «грязную» сессию и получить неполный proof.
+3. Для closing report Stage 1 зафиксируй жёстко:
+  - если M2 не accepted, то итог только `Stage 1 — not closed`;
+  - формулировка `accepted with deferred` для Stage 1 запрещена.
+4. В PATCH по iOS safe-area добавь отдельную проверку именно для standalone-режима:
+  - `@media (display-mode: standalone)`
+  - плюс iOS fallback через `navigator.standalone` / класс на root, если потребуется.
+  Просто общий `env(safe-area-inset-top)` без разделения режимов может дать лишний отступ там, где Safari и так уже отображает всё правильно.
+5. В safe-area PATCH отдельно проверь не только header, но и:
+  - fixed composer;
+  - sticky main/video-shell;
+  - верхний фон под notch, чтобы не было просвечивания/наложения текста на статус-бар.
+6. В Wake Lock PATCH зафиксируй точнее условие включения:
+  - `enabled = state === 'live' || state === 'room_open_waiting'`
+  - для `ended`, `session_revoked`, `session_expired`, `loading`, `error` — lock всегда release.
+  И добавь явный guard: никаких падений и никаких retry-циклов, если API недоступен или браузер отказал в lock.
+7. В proof по Wake Lock заранее разведи:
+  - что подтверждается реально руками на устройстве;
+  - что подтверждается только console logs.
+  И не принимать PATCH только по логам без ручной device-проверки хотя бы на одном поддерживаемом браузере.
+8. Последовательность исполнения оставь, но дополни:
+  - после clean M2 proof сразу перевыпустить closing report;
+  - только после формального `Stage 1 — closed` начинать iOS safe-area PATCH;
+  - только потом Wake Lock;
+  - только потом M3.
+
+Итоговая последовательность должна быть такой:
+
+1. clean M2 proof
+2. перевыпуск closing report Stage 1
+3. iOS standalone safe-area PATCH + proof
+4. Wake Lock PATCH + proof
+5. старт M3 analytics
+
+В остальном план корректный.
 
 &nbsp;
 
-&nbsp;
+План: Перевыпуск closing report Этапа 1 + clean M2 proof + два новых PATCH (iOS safe-area, Wake Lock)
 
-План: Закрытие Этапа 1 — runtime live-proof M1.2 + M2 entry_path hint
+## 1. Корректировка статусов Этапа 1
 
-## Принятые правки к плану
-
-### 1. M1.2 — статус строго до proof
-
-`**M1.2 — code patched, live-proof pending**`
-`**Stage 1 — not closed**`
-`**M3 — blocked until Stage 1 closing report**`
-
-Code-review не засчитывается как доказательство. Принимается только runtime live-proof в реальном браузере на mobile 390×844.
-
-### 2. Acceptance criteria M1.2 (жёсткие, все обязательны)
-
-1. Header (`data-mobile-header`) полностью ушёл за верхний край viewport после body-scroll.
-2. Верхний край экрана после scroll начинается с video-shell.
-3. video-shell остаётся видимым и не уезжает дальше.
-4. reactions bar и tabs остаются под video-shell, не двигаются.
-5. composer остаётся `position: fixed` у нижнего края viewport.
-6. После порога scroll body перестаёт двигаться; дальнейший scroll возможен только внутри `.room-messages-scroll`.
-7. Desktop 1366×768: header виден, video и sidebar не развалились, чат работает как раньше — **0 регрессий**.
-
-### 3. Runtime live-proof пакет — обязательный набор
-
-#### A. Mobile 390×844 — screenshots (5 кадров)
-
-
-| #   | Состояние                                                  | Что должно быть видно                                                |
-| --- | ---------------------------------------------------------- | -------------------------------------------------------------------- |
-| 1   | стартовый экран (без скролла)                              | header + compact video + reactions + tabs + composer                 |
-| 2   | body-scroll до порога (≈50% пути)                          | header частично ушёл, video всё ещё с отступом сверху                |
-| 3   | состояние после полного ухода header                       | верх экрана = video-shell, header невидим                            |
-| 4   | scroll внутри `.room-messages-scroll` (после ухода header) | сообщения прокручиваются, video/reactions/tabs/composer не двигаются |
-| 5   | focused composer (фокус в input)                           | composer над клавиатурой, video не двигается                         |
-
-
-#### B. DOM-замеры (не только скрины — **обязательно числами**)
-
-Через `browser--observe` / `browser--extract` снять и приложить в отчёт:
-
-```js
-// До body-scroll
-document.querySelector('[data-mobile-header]').getBoundingClientRect()
-// → ожидание: top ≥ 0, bottom > 0 (виден)
-
-document.querySelector('[data-video-shell]').getBoundingClientRect()
-// → запомнить top_before
-
-window.scrollTo(0, 1000)
-
-// После body-scroll
-document.querySelector('[data-mobile-header]').getBoundingClientRect()
-// → ожидание: bottom ≤ 0 (header ушёл выше viewport)
-
-document.querySelector('[data-video-shell]').getBoundingClientRect()
-// → ожидание: top ≈ 0 (video залип сверху), top_after < top_before
-```
-
-Computed-style проверки:
-
-- `getComputedStyle(main).position === 'sticky'` и `top === '0px'`.
-- `getComputedStyle(roomMessagesScroll).overflowY === 'auto'`.
-- `getComputedStyle(composer).position === 'fixed'` (на mobile).
-
-**Технический preрequisite:** добавить `data-video-shell` атрибут на корневой элемент колонки video в `LiveEvent.tsx` (уже есть `data-mobile-header` — добавить парный маркер для измерений). Это не меняет layout, только добавляет селектор для proof.
-
-#### C. Desktop regression 1366×768 — screenshots (2 кадра)
-
-1. desktop layout: video слева, sidebar справа, header виден всегда.
-2. desktop scroll: header не двигается (нет sticky-механики), composer sticky внутри Card, чат скроллится внутри.
-
-### 4. M2 entry_path hint — runtime live-proof в том же пакете
-
-#### Сценарии (network + sessionStorage proof):
-
-
-| #   | Шаг                                                 | Доказательство                                                                                   |
-| --- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| 1   | Открыть `/live` (список эфиров), кликнуть карточку  | `sessionStorage.getItem('live_entry_${slug}')` === `'menu'`                                      |
-| 2   | После navigate в `/live/:slug` — первый soft-join   | `live-session-heartbeat` request body содержит `entry_path: 'menu'`                              |
-| 3   | После успешного ответа soft-join                    | `sessionStorage.getItem('live_entry_${slug}')` === `null`                                        |
-| 4   | Следующий heartbeat (через ~30s или ручной trigger) | request body **не** содержит `entry_path` (или содержит fallback `'direct'`), без stale `'menu'` |
-
-
-Network proof: capture через `browser--list_network_requests` + `browser--get_network_request_details` для `live-session-heartbeat`, приложить request body raw.
-
-### 5. Структура closing report — жёсткое разведение статусов
-
-Отчёт обязан содержать **четыре отдельных секции**:
-
-1. **Что исправлено кодом** — список файлов + diff-summary (1–3 строки на файл).
-2. **Что подтверждено live-proof** — таблица screenshots + ссылки.
-3. **Что подтверждено только DOM/network/SQL** — getBoundingClientRect, computed style, network payloads (без UI-визуала).
-4. **Что ещё не принято** — список open issues, partial states, deferred items (например, `entry_path='menu'` storage в `live_view_sessions` ждёт M3).
-
-Запрещено смешивать «сделано в коде» и «доказано работой». Если нет runtime proof — в секцию 4.
-
-### 6. Технические prerequisite-правки в коде (минимальные, для proof)
-
-Перед запуском proof-сессии:
-
-- `src/pages/LiveEvent.tsx`:
-  - На корневой контейнер колонки video (mobile-обёртка над video-shell) добавить `data-video-shell` атрибут. Без изменений layout.
-  - Убедиться, что header имеет `data-mobile-header` (если ещё нет — добавить).
-- `src/components/live/LiveEventComments.tsx` / `LiveEventQuestions.tsx`:
-  - Убедиться, что `.room-messages-scroll` контейнер имеет `data-room-messages-scroll` атрибут для надёжного селектора в proof.
-
-### 7. Stop-rules (повторно зафиксированы)
-
-- НЕ считать M1.2 закрытым по code-review.
-- НЕ начинать M3 миграции до closing report Этапа 1.
-- НЕ трогать desktop layout.
-- НЕ трогать `.room-messages-scroll` / composer / M1.1, если sticky чинится одной правкой layout.
-- НЕ реверсировать чат (правило закреплено в Этапе 1).
-- НЕ удалять `entry_path` hint до успешного ответа soft-join.
-
-### 8. Последовательность исполнения (после approval)
-
-1. **Pre-proof patch**: добавить `data-video-shell`, `data-room-messages-scroll` атрибуты (если отсутствуют). Это не code-fix, это инструментирование.
-2. **Runtime live-proof session** (browser tool, default mode):
-  - Open `/live/test-sergey-2204-v-1540` в viewport 390×844.
-  - Снять 5 mobile screenshots по таблице A.
-  - Снять DOM-замеры по таблице B (до и после `window.scrollTo`).
-  - Перейти в desktop 1366×768, снять 2 regression screenshots.
-  - Воспроизвести 4 сценария M2 entry_path hint, capture network + sessionStorage.
-3. **Closing report Этапа 1** по структуре из п.5.
-4. **Только после этого** — старт Этапа 2 (M3 analytics) по уже утверждённому плану.
-
-### 9. Финальный статус текущего состояния
+Текущий отчёт неверно зафиксировал Stage 1 как accepted. Правильные статусы:
 
 ```
-M1.1                — code complete, live-proof pending
-M2 entry_path hint  — code complete, live-proof pending
-M1.2                — code patched, live-proof pending
+M1.1                — accepted (визуальный mobile proof)
+M1.2                — accepted (визуальный mobile proof)
+M2 entry_path hint  — deferred (нет clean first soft-join proof)
+DOM numeric proof   — not confirmed (ограничение browser tool)
 Stage 1             — not closed
-M3 analytics        — blocked until Stage 1 closing report
-Follow-ups          — blocked until M3 done
+M3 analytics        — blocked until clean M2 proof
 ```
+
+Никаких code-правок на этом шаге не делать.
+
+---
+
+## 2. Clean M2 entry_path runtime-proof (микропрогон)
+
+### Pre-conditions
+
+- Свежая сессия / приватная вкладка (нет активного `session_key` в `live_active_sessions` для тестового user × event).
+- DevTools Network открыт, фильтр `live-session-heartbeat`.
+- В Application → Session Storage очищены ключи `live_entry_*`.
+
+### Шаги и acceptance
+
+
+| #   | Шаг                                                                             | Acceptance                                                                                                                     |
+| --- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | До клика по карточке эфира в `/live`                                            | `sessionStorage.getItem('live_entry_${slug}') === null`                                                                        |
+| 2   | Клик по карточке нужного эфира                                                  | `sessionStorage.getItem('live_entry_${slug}') === 'menu'`                                                                      |
+| 3   | После navigate на `/live/:slug` — capture первого `live-session-heartbeat` POST | Request body содержит `"entry_path": "menu"`. Response 200 + `session_key`.                                                    |
+| 4   | Сразу после успешного ответа soft-join                                          | `sessionStorage.getItem('live_entry_${slug}') === null`                                                                        |
+| 5   | Следующий heartbeat (~30s или принудительный)                                   | Request body **не** содержит `"entry_path": "menu"` (допустимо отсутствие поля или `'direct'`). Повторное `'menu'` = **fail**. |
+
+
+Артефакты для отчёта:
+
+- raw request body первого soft-join (через `browser--get_network_request_details`);
+- raw request body второго heartbeat;
+- скрин Application → Session Storage до/после;
+- скрин Network panel с двумя запросами.
+
+Если все 5 пунктов зелёные → M2 переводится из `deferred` в `accepted`.
+
+---
+
+## 3. Перевыпуск closing report Этапа 1
+
+После clean M2 proof выпустить новый отчёт со строгой структурой (4 секции, без смешения):
+
+1. **Что подтверждено живыми скриншотами/UI**
+  - M1.1 (5 mobile screenshots).
+  - M1.2 (sticky video после scroll-away header).
+  - Desktop regression (2 screenshots).
+2. **Что подтверждено только кодом / network**
+  - M2 entry_path hint (raw network bodies + sessionStorage скрин).
+  - removeItem после успешного soft-join.
+3. **Что не подтверждено**
+  - DOM numeric proof (`getBoundingClientRect`, computed styles) — ограничение browser tool. Помечается как `not confirmed by tooling`, а не `accepted`.
+4. **Что отложено в follow-up**
+  - iOS standalone safe-area / notch fix (см. секцию 4).
+  - Screen Wake Lock во время видео (см. секцию 5).
+  - M3 analytics (`live_view_sessions`, sweeper, admin-вкладка).
+
+Финальная строка статуса (один из трёх): `accepted` / `not accepted` / `deferred`.
+`proof artifacts saved = yes/no`.
+
+---
+
+## 4. PATCH: iOS standalone safe-area / notch fix (отдельный)
+
+### Проблема
+
+В режиме PWA / "Add to Home Screen" на iOS контент уезжает под notch и верхний safe-area. В обычном Safari отображается корректно.
+
+### Изменения
+
+- `index.html`: проверить `<meta name="viewport" content="..., viewport-fit=cover">`. Если `viewport-fit=cover` отсутствует — добавить.
+- `index.html`: убедиться, что есть `<meta name="apple-mobile-web-app-capable" content="yes">` и `apple-mobile-web-app-status-bar-style` (например, `black-translucent`).
+- `src/index.css` (или `src/components/live/liveRoomTheme.css`): для mobile header (`[data-mobile-header]`) и sticky main (`[data-mobile-sticky-main]`) добавить:
+  - `padding-top: env(safe-area-inset-top)` — header.
+  - `padding-bottom: env(safe-area-inset-bottom)` — composer (`.room-composer`), чтобы home indicator не перекрывал input.
+- Использовать `100dvh` (уже применено) — проверить корректность с safe-area в standalone.
+
+### DoD
+
+- В PWA standalone режиме на iOS header не уезжает под notch.
+- Composer не перекрывается home indicator.
+- В обычном Safari (`display-mode: browser`) — без регрессии: header/composer на тех же позициях, что сейчас.
+- Desktop — без изменений.
+
+### Proof
+
+- Скриншоты iOS standalone (после Add to Home Screen) до/после фикса.
+- Скриншоты Safari mobile до/после (доказать отсутствие регрессии).
+
+---
+
+## 5. PATCH: Screen Wake Lock во время вебинара (отдельный)
+
+### Проблема
+
+Во время просмотра live-эфира экран телефона гаснет / устройство блокируется по таймауту, что прерывает просмотр.
+
+### Изменения
+
+- Создать новый хук `src/hooks/useScreenWakeLock.ts`:
+  - Проверка `'wakeLock' in navigator` — если нет, тихий no-op (no throw).
+  - `navigator.wakeLock.request('screen')` при `enabled === true`.
+  - Re-acquire на `document.visibilitychange` (когда вкладка снова видима) — Wake Lock автоматически освобождается при backgrounding.
+  - Release при `enabled === false`, при unmount, и при уходе со страницы.
+  - Все ошибки логировать в console, не падать.
+- Подключение в `src/pages/LiveEvent.tsx`:
+  - Активировать `useScreenWakeLock(enabled)` где `enabled = isLive || isWaitingRoomOpen` (только когда есть смысл смотреть).
+  - НЕ активировать в `ended` / `replay` состояниях — пользователь сам решает, когда уйти.
+
+### DoD
+
+- Во время просмотра видео экран не гаснет на поддерживаемых браузерах (Chrome Android, Safari iOS 16.4+).
+- При уходе со страницы / закрытии вкладки lock освобождается.
+- В неподдерживающих браузерах функциональность отсутствует, но ошибок в console нет.
+- Вкладка в фоне → возврат → wake lock переактивируется.
+
+### Proof
+
+- Console log: `[wake-lock] acquired` при входе в эфир, `[wake-lock] released` при уходе.
+- Тест на Android Chrome / iOS Safari (manual, описать в отчёте по PATCH).
+- Скриншот network/console без ошибок в Firefox или старом Safari (fallback).
+
+---
+
+## 6. Последовательность исполнения
+
+1. **Сейчас (default mode):** clean M2 proof-прогон в свежей сессии (только browser tool, без code-правок).
+2. **После M2 proof:** перевыпуск closing report Этапа 1 с правильными статусами.
+3. **После closing report:**
+  - PATCH iOS safe-area (отдельный план + execute + proof).
+  - PATCH Wake Lock (отдельный план + execute + proof).
+4. **Только после двух PATCH** — старт Этапа 2 (M3 analytics).
+
+## 7. Stop-rules
+
+- НЕ закрывать Stage 1 пока M2 не `accepted`.
+- НЕ начинать M3 до closing report Stage 1.
+- НЕ объединять iOS safe-area и Wake Lock в один PATCH — это разные домены.
+- НЕ смешивать в отчёте «подтверждено UI» и «подтверждено только кодом».
+- НЕ трогать desktop layout, M1.1, composer, `.room-messages-scroll`.
