@@ -146,7 +146,7 @@ function renderInlineMarkdown(text: string): JSX.Element[] {
   // Безопасный парсер: разбиваем по строкам, потом по токенам [..](..), **..**, _.._.
   const lines = text.split(/\r?\n/);
   return lines.map((line, lineIdx) => (
-    <span key={lineIdx} className="block">
+    <span key={lineIdx} className="block min-w-0 max-w-full break-words [overflow-wrap:anywhere]">
       {tokenize(line)}
     </span>
   ));
