@@ -222,8 +222,8 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
     };
 
     return (
-      <div ref={ref} className="flex flex-col h-full min-h-0 room-panel">
-        <div className="room-messages-scroll flex-1 min-h-0 overflow-y-auto space-y-1 p-3 overscroll-contain">
+      <div ref={ref} className="relative flex flex-col h-full min-h-0 room-panel">
+        <div ref={scrollRef} className="room-messages-scroll flex-1 min-h-0 overflow-y-auto space-y-1 p-3 overscroll-contain">
           {/* Анонимность вопросов: hint всегда сверху */}
           <div className="flex items-center gap-1.5 bg-muted/50 rounded-md px-2 py-1.5 text-xs text-muted-foreground mb-2">
             <Lock className="h-3 w-3 shrink-0" />
@@ -318,6 +318,19 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
             })
           )}
         </div>
+
+        {/* M1.1: «Новые вопросы» pill — only when user scrolled away from bottom and new arrived. */}
+        {hasNewBelow && (
+          <button
+            type="button"
+            onClick={() => scrollToBottom(true)}
+            className="absolute left-1/2 -translate-x-1/2 bottom-[calc(var(--room-composer-h,64px)+12px)] lg:bottom-20 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-primary-foreground text-xs shadow-lg hover:opacity-90 transition-opacity"
+            aria-label="Перейти к новым вопросам"
+          >
+            <ArrowDown className="h-3 w-3" />
+            Новые вопросы
+          </button>
+        )}
 
         {user && (
           <div className="room-composer border-t lg:sticky lg:bottom-0 z-10 room-panel-sticky">
