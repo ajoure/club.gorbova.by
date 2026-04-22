@@ -188,7 +188,7 @@ export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile,
 
   return (
     <div className="flex flex-col h-full min-h-0 room-panel">
-      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto space-y-1 p-3 overscroll-contain">
+      <div ref={scrollRef} className="room-messages-scroll flex-1 min-h-0 overflow-y-auto space-y-1 p-3 overscroll-contain">
         {isLoading ? (
           <div className="flex justify-center py-4">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -272,7 +272,7 @@ export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile,
       </div>
 
       {user && (
-        <div className="border-t sticky bottom-0 z-10 room-panel-sticky">
+        <div className="room-composer border-t lg:sticky lg:bottom-0 z-10 room-panel-sticky">
           <LiveModerationBanner isMuted={isMuted} isRemoved={isRemoved} />
           <div
             className="flex gap-2 items-end p-3 room-panel-input"

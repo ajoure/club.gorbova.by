@@ -140,3 +140,40 @@
   overflow-wrap: anywhere;
   max-width: 100%;
 }
+
+/* ========== M1.2 — Mobile composer pinned to viewport bottom ==========
+ * На mobile composer чата/вопросов должен быть всегда у нижнего края
+ * экрана, поверх всего, с safe-area-inset-bottom. На desktop —
+ * прежнее sticky-поведение внутри Card.
+ *
+ * Контракт:
+ *  - .room-composer — обёртка composer (sticky на desktop, fixed на mobile);
+ *  - .room-messages-scroll — скроллируемая область сообщений; на mobile
+ *    получает padding-bottom = высоте composer, чтобы последние сообщения
+ *    не пряталось за фиксированным полем.
+ *  - --room-composer-h — фактическая высота composer (резерв ~120px,
+ *    реальный composer авто-grow до этого предела).
+ */
+:root {
+  --room-composer-h: 64px;
+}
+
+@media (max-width: 1023px) {
+  .live-room-themed .room-composer {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 50;
+    background-color: var(--room-panel, hsl(var(--card)));
+    border-top: 1px solid color-mix(in srgb, var(--room-text, hsl(var(--foreground))) 10%, transparent);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    /* iOS visualViewport: подъём над клавиатурой обеспечивается JS-хуком,
+       но fixed bottom гарантирует, что composer виден всегда. */
+  }
+
+  .live-room-themed .room-messages-scroll {
+    /* Резерв под fixed composer, чтобы последние сообщения не уезжали под него. */
+    padding-bottom: calc(var(--room-composer-h, 64px) + env(safe-area-inset-bottom, 0px) + 12px);
+  }
+}
