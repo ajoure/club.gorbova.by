@@ -707,7 +707,24 @@ function LiveEventLegacy() {
         open={contactSheetOpen}
         onOpenChange={setContactSheetOpen}
       />
-    </div>
+
+      {/* Room Entry Dialog — Запуск 2 PHASE 3 */}
+      {data?.event_id && (
+        <RoomEntryDialog
+          open={entryDialogOpen}
+          onOpenChange={setEntryDialogOpen}
+          settings={roomSettings.entry}
+          isStaff={isStaff}
+          initialPrefs={prefs}
+          profileAvatarUrl={profileAvatarUrl}
+          profileFullName={profileFullName}
+          onSubmit={async (next) => {
+            const saved = await upsertPrefs(next);
+            await syncSessionMirror(saved);
+            setEntrySatisfied(true);
+          }}
+        />
+      )}
   );
 }
 
