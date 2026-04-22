@@ -60,10 +60,11 @@ export function useRoomEntryPrefs(liveEventId: string | undefined): RoomEntryPre
     }
     let cancelled = false;
     (async () => {
+      // Канонический ключ: profiles.user_id (id ≠ user_id в этом проекте).
       const { data } = await supabase
         .from("profiles")
         .select("avatar_url, full_name")
-        .eq("id", userId)
+        .eq("user_id", userId)
         .maybeSingle();
       if (cancelled) return;
       setProfileAvatarUrl(data?.avatar_url || null);
