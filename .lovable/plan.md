@@ -1,229 +1,173 @@
 # да, согласен, с учетом правок:
 
-1. Для mobile **не переворачивать порядок сообщений**. Лучший вариант — оставить чат в нормальной хронологии: старые сверху, новые снизу. Иначе будет путаница, сломается привычная логика чтения, автоскролл, pill “Новые сообщения” и later-proof станет грязным. Проблему нужно решать **не реверсом списка**, а **изоляцией scroll-area**.
-2. Добавь в план как обязательное UX-решение:
-  - **video-shell, reactions bar, tabs и composer на mobile не должны ездить при чтении сообщений**;
-  - скроллится **только** контейнер сообщений/вопросов;
-  - composer остаётся pinned/fixed снизу;
-  - video остаётся сверху как отдельный блок;
-  - header с названием эфира можно уводить вверх при page-scroll, но после этого верхняя точка экрана должна начинаться с video-shell.
-3. Зафиксируй в плане, что на mobile выбираем именно такую архитектуру:
+1. В пункте 3.B для DOM-proof зафиксируй не только `top ≈ 0`, но и допуск, например `Math.abs(top_after) <= 2`. Иначе проверка будет хрупкой из-за mobile browser chrome/safe-area.
+2. В пункте 3.B добавь ещё один обязательный замер:
   &nbsp;
   &nbsp;
-  - **header scroll-away**;
-  - **video-shell pinned в верхней части рабочей области**;
-  - **tabs под reactions**;
-  - **messages area = единственный scroll-container**;
-  - **composer fixed снизу viewport**.  
-  Это и есть правильное решение. Не “либо это, либо реверс сообщений”, а именно этот путь.
-4. Допиши отдельный блок в DoD по mobile:
-  - при длинном чате пользователь может листать сообщения, **не двигая видео**;
-  - новые сообщения появляются внизу списка;
-  - если пользователь у низа — мягкий auto-scroll;
-  - если пользователь ушёл вверх — появляется pill “Новые сообщения”;
-  - composer всегда доступен без прокрутки всей страницы;
-  - video не исчезает и не уезжает вместе с chat-scroll.
-5. В Этап 1 добавь подзадачу **M1.3 — chat-only scroll isolation**:
-  - root mobile layout: page-scroll нужен только чтобы убрать header;
-  - после ухода header основной runtime-блок фиксируется по высоте viewport;
-  - внутри runtime-блока scroll только у `.room-messages-scroll`;
-  - у video-shell и reactions bar `flex-shrink-0`;
-  - у messages area `flex-1 min-h-0 overflow-y-auto`;
-  - composer fixed bottom;
-  - tabs/header внутри Card не скроллятся.
-6. В live-proof для Этапа 1 добавь отдельные acceptance-критерии:
-  - свайп по сообщениям **не меняет позицию video-shell**;
-  - список сообщений двигается независимо;
-  - header уехал вверх, но video остался на месте;
-  - composer виден и доступен;
-  - порядок сообщений обычный: старые сверху, новые снизу;
-  - pill работает корректно.
-7. В план M1.2 поправь формулировку:
-  - сейчас у тебя header scroll-away есть, но этого мало;
-  - нужно явно написать, что **после scroll-away header body-scroll должен прекращаться**, а дальнейший скролл идёт только внутри messages list.  
-  Иначе снова получится, что двигается весь экран вместе с видео.
-8. По M2 и M3 план в целом правильный, но отдельно зафиксируй:
-  - **Participants** должны показывать всех, кто реально сейчас в эфире, независимо от пути входа: token / direct / menu;
-  - **Analytics** должны считать всех, кто реально присутствовал, тоже независимо от пути входа;
-  - runtime online и историческая аналитика — это разные сущности и не смешиваются.
-9. Что осталось сделать сейчас до M3:
-  - добить **M1.2 + M1.3**;
-  - собрать **живой mobile-proof**, что video не ездит при chat-scroll;
-  - закрыть **M2 live-proof** по путям входа;
-  - выпустить **closing report Этапа 1**;
-  - только потом переходить к M3.
+  - `document.querySelector('[data-room-messages-scroll]').getBoundingClientRect()`
+  - до и после body-scroll.  
+  Это нужно, чтобы доказать, что после ухода header scroll-area остаётся в том же pinned-блоке под video, а не пересобирается.
+3. В пункте 4 по M2 entry_path hint зафиксируй точный критерий accepted для второго heartbeat:
+  - stale `'menu'` не должен повторно уходить;
+  - допустимо либо отсутствие `entry_path` в body, либо явный `'direct'`;
+  - но **недопустимо** повторное `'menu'`.  
+  Это надо прописать явно.
+4. В пункте 6 добавь ещё один технический маркер для proof:
+  - на sticky main контейнер повесь `data-mobile-sticky-main`.  
+  Тогда в DOM-proof можно надёжно проверить:
+  - `getComputedStyle(...).position === 'sticky'`
+  - `top === '0px'`  
+  без двусмысленного поиска по классам.
+5. В пункте 8.2 зафиксируй, что сначала снимаются mobile screenshots/DOM-proof по M1.2, и только потом M2 entry_path proof. Иначе navigation через список эфиров может сбить чистый scroll-proof по mobile layout.
+6. В closing report добавь отдельную строку:
+  - `proof artifacts saved = yes/no`  
+  Если `no`, Этап 1 не закрывать.
+7. В финальном статусе после proof используй только один из трёх вариантов:
+  - `accepted`
+  - `not accepted`
+  - `deferred`  
+  Не писать смешанные формулировки вроде `code complete, live-proof pending` в финальном closing report; это оставить только для текущего промежуточного состояния.
+8. В pre-proof patch явно зафиксируй, что добавление `data-*` атрибутов — это единственная допустимая инструментальная правка перед proof. Никаких новых layout-изменений на этом шаге не делать.
 
 &nbsp;
 
-Итоговое UX-решение: **не реверсировать чат**. Делать **scroll-away header + pinned video area + isolated messages scroll + fixed composer**. Это самый чистый и профессиональный вариант для mobile.
-
 &nbsp;
 
-План: Закрытие Этапа 1 (live-proof M1.1 + M2) + scroll-away header на mobile
+План: Закрытие Этапа 1 — runtime live-proof M1.2 + M2 entry_path hint
 
-## Принятые UX-решения (фиксация)
+## Принятые правки к плану
 
-1. **Чат НЕ переворачиваем.** Старые сообщения сверху, новые снизу. Проблема mobile решается через isolated scroll + fixed composer + new-messages pill. Подрядчику запрещено возвращаться к идее реверса списка.
-2. **Mobile scroll-away header (новое):** при скролле в mobile блок «название вебинара + LIVE-бейдж + кнопка "Завершить вебинар" + счётчик участников» уезжает вверх за экран. Видео-карточка и всё ниже (reactions, tabs, composer) — остаются зафиксированы как сейчас.
+### 1. M1.2 — статус строго до proof
 
----
+`**M1.2 — code patched, live-proof pending**`
+`**Stage 1 — not closed**`
+`**M3 — blocked until Stage 1 closing report**`
 
-## Часть A — M1.2: Mobile scroll-away header
+Code-review не засчитывается как доказательство. Принимается только runtime live-proof в реальном браузере на mobile 390×844.
 
-### Цель
+### 2. Acceptance criteria M1.2 (жёсткие, все обязательны)
 
-На mobile (≤1023px) при скролле страницы header с названием эфира уходит вверх. Стартовая зона экрана после скролла = video-shell. Ниже всё остаётся pinned по текущей механике M1.1.
+1. Header (`data-mobile-header`) полностью ушёл за верхний край viewport после body-scroll.
+2. Верхний край экрана после scroll начинается с video-shell.
+3. video-shell остаётся видимым и не уезжает дальше.
+4. reactions bar и tabs остаются под video-shell, не двигаются.
+5. composer остаётся `position: fixed` у нижнего края viewport.
+6. После порога scroll body перестаёт двигаться; дальнейший scroll возможен только внутри `.room-messages-scroll`.
+7. Desktop 1366×768: header виден, video и sidebar не развалились, чат работает как раньше — **0 регрессий**.
 
-### Архитектурное изменение
+### 3. Runtime live-proof пакет — обязательный набор
 
-Текущий mobile-layout (после M1.1) = `h-[100dvh] flex flex-col overflow-hidden` — **вся страница не скроллится вообще**, header всегда виден. Это и есть причина, почему сейчас header нельзя «увезти».
+#### A. Mobile 390×844 — screenshots (5 кадров)
 
-Новая структура mobile (только `isMobile === true`):
 
+| #   | Состояние                                                  | Что должно быть видно                                                |
+| --- | ---------------------------------------------------------- | -------------------------------------------------------------------- |
+| 1   | стартовый экран (без скролла)                              | header + compact video + reactions + tabs + composer                 |
+| 2   | body-scroll до порога (≈50% пути)                          | header частично ушёл, video всё ещё с отступом сверху                |
+| 3   | состояние после полного ухода header                       | верх экрана = video-shell, header невидим                            |
+| 4   | scroll внутри `.room-messages-scroll` (после ухода header) | сообщения прокручиваются, video/reactions/tabs/composer не двигаются |
+| 5   | focused composer (фокус в input)                           | composer над клавиатурой, video не двигается                         |
+
+
+#### B. DOM-замеры (не только скрины — **обязательно числами**)
+
+Через `browser--observe` / `browser--extract` снять и приложить в отчёт:
+
+```js
+// До body-scroll
+document.querySelector('[data-mobile-header]').getBoundingClientRect()
+// → ожидание: top ≥ 0, bottom > 0 (виден)
+
+document.querySelector('[data-video-shell]').getBoundingClientRect()
+// → запомнить top_before
+
+window.scrollTo(0, 1000)
+
+// После body-scroll
+document.querySelector('[data-mobile-header]').getBoundingClientRect()
+// → ожидание: bottom ≤ 0 (header ушёл выше viewport)
+
+document.querySelector('[data-video-shell]').getBoundingClientRect()
+// → ожидание: top ≈ 0 (video залип сверху), top_after < top_before
 ```
-<div class="min-h-[100dvh] flex flex-col">     // НЕ overflow-hidden, НЕ h-100dvh
-  <header class="flex-shrink-0">…title+badges…</header>   // скроллится с body
-  <main class="sticky top-0 h-[100dvh] flex flex-col overflow-hidden">
-    <video-shell compact />                     // pinned top после ухода header
-    <reactions-bar />
-    <Card class="flex-1 min-h-0 overflow-hidden">
-      <Tabs>…messages-scroll + fixed composer…</Tabs>
-    </Card>
-  </main>
-</div>
-```
 
-Логика:
+Computed-style проверки:
 
-- Body scroll переносит header вверх; как только `<main>` достигает top, он залипает (`sticky top-0`) и дальнейший body-scroll не происходит (главный имеет высоту `100dvh`).
-- Внутри залипшего main всё работает как M1.1: composer fixed, messages list — единственный scroll.
+- `getComputedStyle(main).position === 'sticky'` и `top === '0px'`.
+- `getComputedStyle(roomMessagesScroll).overflowY === 'auto'`.
+- `getComputedStyle(composer).position === 'fixed'` (на mobile).
 
-Desktop (`lg:`) — без изменений.
+**Технический preрequisite:** добавить `data-video-shell` атрибут на корневой элемент колонки video в `LiveEvent.tsx` (уже есть `data-mobile-header` — добавить парный маркер для измерений). Это не меняет layout, только добавляет селектор для proof.
 
-### Изменения
+#### C. Desktop regression 1366×768 — screenshots (2 кадра)
 
-`**src/pages/LiveEvent.tsx**` (mobile-only):
+1. desktop layout: video слева, sidebar справа, header виден всегда.
+2. desktop scroll: header не двигается (нет sticky-механики), composer sticky внутри Card, чат скроллится внутри.
 
-- Убрать с root `h-[100dvh] overflow-hidden`, заменить на `min-h-[100dvh] flex flex-col`.
-- Header-блок: добавить data-attr `data-mobile-header`, `flex-shrink-0`, без sticky.
-- Main-обёртка над video+sidebar: на mobile `sticky top-0 h-[100dvh] overflow-hidden flex flex-col`; на desktop — текущее поведение.
-- Композеры (`.room-composer`) уже `position: fixed bottom: 0` — продолжают работать (привязаны к viewport, не к sticky-родителю).
+### 4. M2 entry_path hint — runtime live-proof в том же пакете
 
-`**src/components/live/liveRoomTheme.css**`:
-
-- Без изменений. `.room-composer` остаётся fixed mobile / sticky desktop.
-
-### DoD M1.2
-
-- 390×844 mobile: при свайпе вниз header «название + LIVE + Завершить вебинар + счётчик» уходит за верхний край.
-- После ухода header верхний край экрана = video-shell.
-- video / reactions / tabs / composer после скролла остаются зафиксированы.
-- Composer всегда виден внизу (fixed).
-- Скролл сообщений по-прежнему изолирован в `.room-messages-scroll`.
-- Desktop ≥1024px: ничего не меняется, header не двигается.
-
----
-
-## Часть B — Live-proof Этапа 1 (M1 + M1.1 + M1.2 + M2)
-
-Без proof Этап 1 не закрывается и к M3 не переходим. **Stop-guard: миграции аналитики M3 не начинать до closing report.**
-
-### B1. M1/M1.1/M1.2 live-proof (mobile 390×844)
-
-Сценарии и доказательства:
+#### Сценарии (network + sessionStorage proof):
 
 
-| #   | Сценарий                      | Что показать                                                                                                                                              |
-| --- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | idle waiting/live state       | screenshot: header + compact video + reactions + tabs + composer на первом экране без скролла                                                             |
-| 2   | focused composer              | screenshot: фокус в input, клавиатура (если эмулируется) — composer над клавиатурой, video не двигается                                                   |
-| 3   | scroll page вниз              | screenshot: header ушёл, экран стартует с video-shell, остальное pinned                                                                                   |
-| 4   | scroll messages list          | screenshot: список прокручивается, video/tabs/composer на месте                                                                                           |
-| 5   | new message at bottom         | пользователь у низа → автоскролл вниз; screenshot до/после                                                                                                |
-| 6   | new message при скролле вверх | автоскролла нет, появляется pill «↓ Новые сообщения»; screenshot                                                                                          |
-| 7   | click pill                    | scroll to bottom, pill исчезает; screenshot                                                                                                               |
-| 8   | DOM proof                     | через `browser--observe` подтвердить: `.room-composer { position: fixed }` (mobile), `.room-messages-scroll` — единственный ancestor с `overflow-y: auto` |
+| #   | Шаг                                                 | Доказательство                                                                                   |
+| --- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| 1   | Открыть `/live` (список эфиров), кликнуть карточку  | `sessionStorage.getItem('live_entry_${slug}')` === `'menu'`                                      |
+| 2   | После navigate в `/live/:slug` — первый soft-join   | `live-session-heartbeat` request body содержит `entry_path: 'menu'`                              |
+| 3   | После успешного ответа soft-join                    | `sessionStorage.getItem('live_entry_${slug}')` === `null`                                        |
+| 4   | Следующий heartbeat (через ~30s или ручной trigger) | request body **не** содержит `entry_path` (или содержит fallback `'direct'`), без stale `'menu'` |
 
 
-**Desktop regression** (1366×768):
+Network proof: capture через `browser--list_network_requests` + `browser--get_network_request_details` для `live-session-heartbeat`, приложить request body raw.
 
-- screenshot desktop layout: video слева, sidebar справа, header виден всегда, composer sticky внутри Card, порядок сообщений старые→новые.
+### 5. Структура closing report — жёсткое разведение статусов
 
-### B2. M2 live-proof — 4 сценария + edge
+Отчёт обязан содержать **четыре отдельных секции**:
 
+1. **Что исправлено кодом** — список файлов + diff-summary (1–3 строки на файл).
+2. **Что подтверждено live-proof** — таблица screenshots + ссылки.
+3. **Что подтверждено только DOM/network/SQL** — getBoundingClientRect, computed style, network payloads (без UI-визуала).
+4. **Что ещё не принято** — список open issues, partial states, deferred items (например, `entry_path='menu'` storage в `live_view_sessions` ждёт M3).
 
-| Сценарий                         | Network proof                                                     | SQL proof                                                                                                  | UI proof                |
-| -------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------- |
-| token-link `/live-access/:token` | `live-token-validate` 200                                         | `SELECT count(*) FROM live_active_sessions WHERE user_id=… AND live_event_id=… AND revoked_at IS NULL` = 1 | user в Participants tab |
-| direct `/live/:slug` (admin)     | `live-session-heartbeat` soft-join 200 + `session_key` в response | count = 1                                                                                                  | user в Participants     |
-| из меню эфиров                   | `live-session-heartbeat` 200 с `entry_path='menu'`                | row + (после M3) `live_view_sessions.entry_path='menu'`                                                    | user в Participants     |
-| вторая вкладка                   | `live-session-heartbeat` 200                                      | count = 1 (UNIQUE constraint)                                                                              | один user, без дубля    |
-| без доступа                      | `live-session-heartbeat` 403                                      | count = 0                                                                                                  | user НЕ в Participants  |
+Запрещено смешивать «сделано в коде» и «доказано работой». Если нет runtime proof — в секцию 4.
 
+### 6. Технические prerequisite-правки в коде (минимальные, для proof)
 
-**Acceptance Participants:**
+Перед запуском proof-сессии:
 
-- один и тот же user виден независимо от пути входа;
-- count в badge header (`<2/> N`) = количество строк в Participants tab;
-- повторная вкладка не плодит дубль;
-- user без доступа не появляется ни в UI, ни в `live_active_sessions`.
+- `src/pages/LiveEvent.tsx`:
+  - На корневой контейнер колонки video (mobile-обёртка над video-shell) добавить `data-video-shell` атрибут. Без изменений layout.
+  - Убедиться, что header имеет `data-mobile-header` (если ещё нет — добавить).
+- `src/components/live/LiveEventComments.tsx` / `LiveEventQuestions.tsx`:
+  - Убедиться, что `.room-messages-scroll` контейнер имеет `data-room-messages-scroll` атрибут для надёжного селектора в proof.
 
-### B3. Особый pin по entry_path='menu'
+### 7. Stop-rules (повторно зафиксированы)
 
-В план явно зафиксировать **частичную готовность menu-path**:
-
-**Что сейчас есть:** soft-join принимает поле `entry_path` (после Этапа 2 будет писаться в `live_view_sessions`). Сейчас в `live_active_sessions` оно не сохраняется (там нет колонки) → различить menu vs direct можно только по network-payload.
-
-**Что нужно добавить в Этапе 1 (минимальный hint):**
-
-- В `src/pages/LiveEvent.tsx`: при mount читать `sessionStorage['live_entry_path_${slug}']`. Если ключ есть → передавать как `entry_path` в первый soft-join, затем удалять ключ. Иначе — `'direct'`.
-- В компоненте списка эфиров (страница меню) — `src/pages/LiveEventsListing.tsx` или эквивалент: при клике на карточку перед navigate записывать `sessionStorage.setItem('live_entry_path_${slug}', 'menu')`.
-- Token-flow ставит `'token'` в `live-token-validate` (уже корректно).
-
-**Статус в closing report:**
-
-- `entry_path='token'` — полностью закрыто (в `live-token-validate`).
-- `entry_path='menu'` — **частично закрыто**: hint пишется на клиенте, передаётся в edge, но **долгосрочное хранение** в истории появится только в M3 (`live_view_sessions.entry_path`).
-- `entry_path='direct'` — fallback по умолчанию.
-
-### B4. Файлы Этапа 1
-
-- `src/pages/LiveEvent.tsx` — M1.2 layout + entry_path hint reader.
-- Список эфиров (определить точный файл при выполнении: `src/pages/LiveEventsListing.tsx` / `src/pages/cabinet/LiveEvents.tsx` — найти через search) — set `live_entry_path_${slug}` перед navigate.
-- (опционально) `src/components/live/LiveEventComments.tsx` / `LiveEventQuestions.tsx` — мелкие правки, если scroll-away root меняет flex-контейнер.
-
----
-
-## Часть C — Closing report по Этапу 1
-
-Перед стартом M3 обязательный отчёт со структурой:
-
-1. **Что сделано** — M1, M1.1, M1.2, M2 (soft-join + entry_path hint).
-2. **Файлы изменены** — список с краткими заметками.
-3. **Diff-summary** — по каждому файлу 1–3 строки.
-4. **Доказано живыми скринами/UI** — таблица из B1+B2 со ссылками на screenshots.
-5. **Доказано только кодом/SQL/network** — что не показано визуально (например, sweeper не существует, 403 на edge).
-6. **Что ещё не закрыто / частично** — `entry_path='menu'` хранение (ждёт M3), отсутствие `live_view_sessions`, отсутствие админской аналитики.
-7. **T1 regression** — `T1 checked / no code changes required`.
-
----
-
-## Часть D — После Этапа 1 (последовательность)
-
-1. **M3 analytics** — миграции `live_view_sessions` / `live_session_events`, sweeper, `live-session-leave`, RPC, admin-вкладка. **Не начинать до closing report**. План M3 — без изменений (как утверждён ранее).
-2. **Follow-ups** — отдельным PATCH после M3:
-  - reactions overlay fade-out live proof;
-  - player stability live proof (mount counter);
-  - non-staff Participants live proof;
-  - финальный room proof-pack.
-
----
-
-## Stop-guards (повторно зафиксировано)
-
-- НЕ реверсировать чат.
-- НЕ начинать M3 до closing report Этапа 1.
+- НЕ считать M1.2 закрытым по code-review.
+- НЕ начинать M3 миграции до closing report Этапа 1.
 - НЕ трогать desktop layout.
-- НЕ ломать token-flow.
-- НЕ менять access logic — только entry tracking после успешной access-проверки.
-- `live_view_sessions` / `live_session_events` (когда появятся в M3) — server-only write, UI напрямую запрещено.
+- НЕ трогать `.room-messages-scroll` / composer / M1.1, если sticky чинится одной правкой layout.
+- НЕ реверсировать чат (правило закреплено в Этапе 1).
+- НЕ удалять `entry_path` hint до успешного ответа soft-join.
+
+### 8. Последовательность исполнения (после approval)
+
+1. **Pre-proof patch**: добавить `data-video-shell`, `data-room-messages-scroll` атрибуты (если отсутствуют). Это не code-fix, это инструментирование.
+2. **Runtime live-proof session** (browser tool, default mode):
+  - Open `/live/test-sergey-2204-v-1540` в viewport 390×844.
+  - Снять 5 mobile screenshots по таблице A.
+  - Снять DOM-замеры по таблице B (до и после `window.scrollTo`).
+  - Перейти в desktop 1366×768, снять 2 regression screenshots.
+  - Воспроизвести 4 сценария M2 entry_path hint, capture network + sessionStorage.
+3. **Closing report Этапа 1** по структуре из п.5.
+4. **Только после этого** — старт Этапа 2 (M3 analytics) по уже утверждённому плану.
+
+### 9. Финальный статус текущего состояния
+
+```
+M1.1                — code complete, live-proof pending
+M2 entry_path hint  — code complete, live-proof pending
+M1.2                — code patched, live-proof pending
+Stage 1             — not closed
+M3 analytics        — blocked until Stage 1 closing report
+Follow-ups          — blocked until M3 done
+```
