@@ -1,248 +1,220 @@
-# Да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. В verify по реакциям исправь критерий:
-  &nbsp;
-  &nbsp;
-  - проверять нужно, что реакции **не пишутся в** `live_event_comments` **/** `live_event_questions`;
-  - рост в `live_event_reactions` — это **нормально**, потому что bar отправки как раз пишет туда.  
-  Текущая формулировка про `live_event_reactions ... без неожиданного роста` неверная.
-2. По rail реакций зафиксируй норму ещё жёстче:
-  - **только bottom-right rail**;
-  - ширина `72–96px`;
-  - высота активной зоны не больше `30–35%` высоты video-shell;
-  - без случайного `left`, без drift, без появления выше средней линии видео;
-  - максимум `5` desktop / `3` mobile одновременно;
-  - одинаковые реакции агрегируются в `×N`.
-3. В acceptance для overlay добавь явный критерий:
-  - rail не должен пересекать центральные `40%` ширины видео;
-  - rail не должен выходить за границы video-shell;
-  - overlay контейнер обязан быть дочерним элементом именно video-shell, а не общего layout.
-4. По player stability:
-  - сначала discovery обязан доказать, что remount/re-render реально идёт от UI-state;
-  - если у текущего wrapper нет штатного `onError` / retry API, **soft reconnect не делать** и не имитировать remount’ами;
-  - тогда в этом патче оставить только `React.memo`, stable props/callbacks и key-guard;
-  - silent reconnect в этом случае вынести в follow-up PATCH отдельным пунктом.
-5. Временное `console.log('[player-shell] mount')` допустимо только как proof-инструмент, но:
-  - в финальном diff его быть не должно;
-  - в отчёте отдельно указать, что инструментирование добавлялось временно и удалено до сдачи.
-6. Mobile verify уточнить:
-  - composer должен быть виден **без дополнительного скролла** на первом экране;
-  - скроллится только messages area;
-  - tabs/header/composer не прыгают при открытии клавиатуры;
-  - video остаётся видимым хотя бы частично в верхней зоне при focus на input.
-7. По T1-regression:
-  - `LiveEventRoomBlocks.tsx` повторно **не трогать**, если регрессии нет;
-  - regression proof допустим, но без лишней архитектуры и без постоянных dev-route;
-  - в отчёте отдельно: `T1 checked / no code changes required` либо `T1 checked / direct relation proven / file changed`.
-8. Stop-guards дополни:
-  - не менять `LiveRoomReactionsBar.tsx`, если для rail это не требуется;
-  - не менять `LiveEventRoomBlocks.tsx`, кроме случая доказанной прямой связи с rail/mobile;
-  - не трогать submit/write path реакций в БД;
-  - не добавлять миграций и edge-правок в этом патче.
-9. В финальном отчёте добавь отдельный блок:
-  - **что доказано живыми скриншотами/UI**;
-  - **что доказано только кодом/DOM/network**;
-  - **что вынесено в follow-up** и почему.
-10. В секции proof поправь SQL-пункт:
+1. **M2 scope уточнить явно:** unified entry tracking распространяется только на режимы, где есть “присутствие в комнате”: room_open_waiting и live. Для ended/replay/recorded_webinar presence в live_active_sessions не открывать, иначе Participants и analytics загрязнятся просмотрами записи.
+2. **Для menu/direct distinction добавить источник входа:** soft-join должен принимать entry_path/entry_source (menu / direct / token). Если источник не передан из UI, писать direct по умолчанию. Иначе в M3 вы не сможете честно разделить вход “из меню” и “по прямой ссылке”.
+3. **В M2 зафиксировать правило одной открытой viewing-session:** одновременно может существовать только **одна открытая** live_view_sessions на (user_id, live_event_id). Повторная вкладка не создаёт новую открытую сессию, а только обновляет текущую. Новая строка создаётся только после закрытия предыдущей сессии.
+4. **В M2 добавить DoD на выход из списка участников:** пользователь должен исчезать из Participants не только по explicit leave, но и по inactivity timeout в пределах SLA, например ≤ 3 минут после последнего heartbeat.
+5. **В M3 retention считать только если есть базовая длительность эфира:** если нет started_at/ended_at или эфир ещё не начат, avg_retention_pct и exit_distribution должны возвращать NULL / not_available, а не псевдозначение.
+6. **Для M3 зафиксировать server-only write path:** live_view_sessions и live_session_events заполняются только сервером/edge/cron, UI туда не пишет напрямую. Это нужно явно прописать в архитектурном принципе и stop-guards.
+7. **Добавить уникальность/идемпотентность для истории:** кроме индексов, нужен явный guard, чтобы repeated heartbeat не плодил join-events и не создавал вторую открытую историю. То есть:
+  - join — только при создании новой open-session;
+  - heartbeat — throttled;
+  - leave/timeout/event_ended — только если left_at IS NULL.
+8. **Для M3 concurrency/timeline зафиксировать источник истины:** max_concurrent и timeline считаются из live_session_events, а не из снимков live_active_sessions. Это стоит прописать прямо в разделе метрик.
+9. **UI analytics уточнить:** вкладка “Аналитика” в admin должна быть **read-only**, отдельно от runtime Participants. В отчёте потом обязательно развести:
+  - runtime Participants = кто сейчас в комнате;
+  - analytics = история и метрики по факту присутствия.
+10. **M1 safety fallback добавить в план:** если после compact waiting-state + hidden description + flex-1 sidebar composer всё ещё не попадает на первый экран на 375×812, допускается mobile-only дополнительное ужатие waiting-card ещё на один шаг. Иначе можно застрять между “почти влезает” и фактическим DoD.
+11. **Verify для M2/M3 дополнить двумя обязательными кейсами:**
 
-- вместо проверки `live_event_reactions` на отсутствие роста используй:
-  - `live_event_comments` не увеличились;
-  - `live_event_questions` не увеличились;
-  - `live_event_reactions` увеличились ожидаемо на число отправленных реакций или больше/меньше только в рамках агрегации UI, но без записи в чат.
+- direct /live/:slug с доступом + menu-вход дают одинаковый результат в Participants и в истории, но с разным entry_path;
+- event ended закрывает все open-session массово и не оставляет хвостов left_at IS NULL.
 
-Если подрядчик это учтёт, план можно запускать.
+12. **T1 regression** оставить отдельной строкой в финальном отчёте:
+
+- T1 checked / no code changes required.
+
+Если хочешь, я соберу это сразу в финальный готовый блок плана для вставки в Lovable без пояснений.
 
 &nbsp;
 
-План: PATCH стабилизации вебинарной комнаты (reactions / player / mobile)
+# План: M1 — mobile composer / M2 — unified entry tracking / M3 — live analytics
 
-## Discovery (что уже прочитано)
+## M1 — Mobile composer на первом экране + compact waiting-state
 
-- `src/components/live/LiveRoomReactionsOverlay.tsx` — overlay сейчас `absolute inset-0`, разлёт по ширине, opacity 1, без агрегации, размер `text-3xl/4xl`.
-- `src/hooks/useLiveReactionOverlayStream.ts` — INSERT-стрим, MAX=30, TTL=3000, без агрегации.
-- `src/components/live/liveRoomTheme.css` — изолированная темизация под `.live-room-themed`.
-- `src/hooks/use-mobile.tsx` — breakpoint 768.
-- `src/components/live/LiveRoomReactionsBar.tsx` — bar реакций (не трогаем).
+### Цель
 
-## Discovery to-do (выполнить в Execute ДО любых правок)
+На mobile (≤768px) при waiting-state композер чата виден без скролла на первом экране.
 
-1. `code--list_dir src/components/live` — найти runtime room page, player wrapper, composer, video-shell.
-2. `code--search_files "LiveRoomReactionsOverlay"` — найти точку монтирования overlay (требование: должен быть **внутри** video-shell, не у layout root).
-3. `code--search_files "Kinescope|iframe|HlsPlayer"` в `src/components/live` — определить player wrapper и его пропсы.
-4. Прочитать runtime room page целиком — определить mobile/desktop ветвление и текущую композицию.
-5. Прочитать player wrapper — есть ли `key`, зависящий от UI-state; есть ли `onError`/штатный retry hook.
+### Изменения
 
-**Условные ветки по результатам discovery:**
+1. `**src/components/live/RoomWaitingState.tsx**`: добавить `compact?: boolean`. При `compact` убрать `aspect-video`, заменить на `min-h-[140px] py-5`, текст в одну строку, бейдж даты ниже.
+2. `**src/pages/LiveEvent.tsx**` (mobile-only):
+  - description в header → `hidden md:block`.
+  - sidebar `<Card>` (стр. ~673): mobile-ветку с `h-[70dvh]` заменить на `min-h-[60dvh] flex-1 min-h-0`.
+  - `<RoomWaitingState compact={isMobile} ... />`.
+3. Desktop layout не трогаем. Composer уже `sticky bottom-0` в `LiveEventComments` — без изменений.
 
-- Если overlay уже внутри video-shell → правим только сам overlay.
-- Если overlay снаружи → переносим точку монтирования внутрь video-shell (правка в room page).
-- Если у player wrapper нет штатного error API / SDK → soft reconnect **НЕ делаем**, выносим в follow-up. Оставляем только memo + key guard + stable callbacks.
+### DoD
 
----
-
-## PATCH-план (add-only, минимально инвазивно)
-
-### Часть 1. Reactions overlay — bottom-right rail внутри video-shell
-
-**Файл:** `src/components/live/LiveRoomReactionsOverlay.tsx`
-
-- Контейнер: `absolute right-2 md:right-3 bottom-3 md:bottom-4 w-[72px] md:w-[96px] h-[32%] pointer-events-none overflow-hidden z-20 flex flex-col-reverse items-center gap-1`.
-  - `flex-col-reverse` — новые снизу, уходят вверх.
-  - Высота 32% video-shell (в норме 30–35%).
-  - Центр видео физически не затрагивается.
-- Без `left`, без `drift`, без горизонтального разлёта.
-- Размер: `text-xl md:text-2xl`. Opacity: `0.55`. Тень: `drop-shadow(0 1px 2px rgba(0,0,0,0.35))`.
-- TTL: 2600ms (синхронно с CSS).
-- Бейдж `×N` рядом с emoji при `count > 1`: `<span class="text-[10px] font-semibold opacity-80 ml-0.5">×{count}</span>`.
-
-**Файл:** `src/hooks/useLiveReactionOverlayStream.ts`
-
-- Тип `FloatingReaction`: добавить `count: number`, `lastUpdatedAt: number`.
-- Окно агрегации: `AGGREGATION_WINDOW_MS = 800`.
-- Логика: при INSERT того же `emoji`, если последний активный элемент с тем же emoji обновлялся < 800ms назад — `count++`, `lastUpdatedAt = now`. TTL **не продлеваем** (визуальная стабильность).
-- Хук принимает `isMobile?: boolean` (передаётся из overlay через `useIsMobile()`).
-- Лимиты: `MAX_DESKTOP = 5`, `MAX_MOBILE = 3`. При превышении — drop старейших.
-- Пишем **только в локальный state** — никаких `INSERT` в `live_event_reactions`/`comments`/`questions`. Это уже соблюдается, фиксируем явно.
-
-**Гарантия позиционирования:** в discovery шаг 2 проверить вложенность overlay. Если overlay вне video-shell — перенести (точечная правка JSX в room page).
+- 375×812 waiting-state: header + compact-card + reactions bar + tabs + composer на первом экране без скролла.
+- Фокус в composer: composer прижат над клавиатурой, video-карточка частично видна сверху.
+- Скроллится только messages area.
+- Desktop ≥1024px без визуальных регрессий.
 
 ---
 
-### Часть 2. Player stability — только то, что доказуемо без backend
+## M2 — Unified entry tracking (единый учет всех путей входа)
 
-**Файл:** player wrapper (определить в discovery).
+### Цель
 
-Действия (только при подтверждении в discovery):
+**Единый entry-tracking для всех путей входа в эфир.** Любой путь попадания в комнату при наличии доступа → ровно одна актуальная запись в `live_active_sessions`. Пользователь появляется в Participants независимо от того, как зашёл.
 
-1. **Memo guard:** обернуть player container в `React.memo` со сравнением только по `sourceUrl`, `provider`, `isLive`, `eventId`. UI-состояние (tabs, reactions, новые сообщения) **не должно** проходить через props плеера.
-2. **Key guard:** убрать любые `key={tab}` / `key={reactionsCount}` у iframe/video. Разрешён только `key={sourceUrl}` или отсутствие key.
-3. **Callback stability:** `onEvent`/`onReady`/`onError` стабилизировать через `useCallback` с минимальным deps в родителе.
-4. **Silent retry:** **только если** у wrapper уже есть штатный `onError` hook. Тогда — локальный retry 1s → 2s → 4s, max 3 попытки **внутри wrapper**, без remount комнаты. Banner показывать после 3-й неудачи.
-5. **Если штатного error API нет** → soft reconnect **НЕ имитируем**. Явно фиксируем в финальном отчёте как **follow-up PATCH**.
+### Контракт (unify)
 
-**Stop-guards в этой части:**
 
-- НЕ трогаем `LiveEvent.tsx` session refresh memoization (mem://features/webinars/session-stability-protocol).
-- НЕ трогаем `live-resolve` edge function.
-- НЕ меняем провайдера, ABR не дублируем.
-- НЕ добавляем костылей-ремоунтов.
+| Путь входа                                       | Endpoint                              | Результат                                                    |
+| ------------------------------------------------ | ------------------------------------- | ------------------------------------------------------------ |
+| `/live-access/:token` (persona)                  | `live-token-validate` (без изменений) | INSERT/UPSERT в `live_active_sessions`, выдача `session_key` |
+| `/live/:slug` direct (admin/staff/owner)         | `live-session-heartbeat` soft-join    | UPSERT в `live_active_sessions`, выдача `session_key`        |
+| Из меню/списка эфиров (по доступу через продукт) | `live-session-heartbeat` soft-join    | UPSERT в `live_active_sessions`, выдача `session_key`        |
+
+
+Оба пути сходятся в **одной SoT** — `live_active_sessions`. Уникальность по `(user_id, live_event_id) WHERE revoked_at IS NULL` — дубликаты невозможны.
+
+### Изменения
+
+1. `**supabase/functions/live-session-heartbeat/index.ts**` — добавить ветку soft-join:
+  - Payload расширить: `live_event_id?: string` (опционально, рядом с `session_key`).
+  - Если есть `session_key` и сессия найдена → текущая логика (UPDATE `last_seen_at`).
+  - Если `session_key` пустой ИЛИ сессия не найдена, но передан `live_event_id`:
+    - Серверная проверка `user_has_live_event_access(user.id, live_event_id)`. Если `false` → `403 access_denied`.
+    - Сгенерировать `session_key = crypto.randomUUID()`, `expires_at = now() + 12h`.
+    - INSERT ON CONFLICT `(user_id, live_event_id) WHERE revoked_at IS NULL` DO UPDATE SET `last_seen_at = now()`, RETURNING `session_key`.
+    - Вернуть `{ status: 'ok', session_key }`.
+2. `**src/pages/LiveEvent.tsx**` — в `startHeartbeat`:
+  - Если `sessionKey` отсутствует и есть `eventId` и состояние ∈ {`live`, `room_open_waiting`} → первый ping вызывается с `{ live_event_id: eventId }` (без `session_key`).
+  - Полученный `session_key` сохранить в `sessionStorage[live_session_${slug}]`.
+  - Дальнейшие ping-и идут как сейчас.
+  - Если `session_key` уже валиден — soft-join не вызывается.
+3. `**live-token-validate**` — без изменений (уже корректно пишет в SoT).
+4. **БД** — миграций нет. Уникальный индекс `idx_live_active_sessions_user_event` уже обеспечивает идемпотентность.
+
+### DoD M2
+
+- Пользователь с доступом заходит из **меню эфиров** → в течение ≤25s появляется в Participants.
+- Пользователь по **token-link** → появляется в Participants (как сейчас).
+- Пользователь **direct /live/:slug** с доступом → появляется в Participants.
+- **Вторая вкладка** тем же user_id → запись одна (UNIQUE constraint).
+- **Доступа нет** → soft-join возвращает 403, в `live_active_sessions` ничего не появляется.
+- Список Participants отражает всех присутствующих, **независимо от пути входа**.
 
 ---
 
-### Часть 3. Mobile UX — sticky composer + 100dvh + scroll-area
+## M3 — Live event analytics (history / retention / concurrency)
 
-**Файл:** runtime room page (определить в discovery), под `useIsMobile() === true`:
+### Цель
 
-Структура:
+Считать **постфактум-аналитику** эфира по всем, кто реально присутствовал, независимо от пути входа. Источник — отдельная add-only история, **не** `live_active_sessions`.
 
+### Архитектурный принцип
+
+- `live_active_sessions` = **только runtime online** (текущее присутствие).
+- `live_view_sessions` = **add-only история** просмотров (каждое посещение — строка с `joined_at` / `left_at` / `duration_sec`).
+- `live_session_events` = **add-only лог событий** (`join`, `heartbeat`, `leave`, `timeout`, `event_ended`) для timeline/concurrency.
+
+Без отдельной истории retention/exit points/avg watch time посчитать честно нельзя.
+
+### Миграция (add-only)
+
+```sql
+-- История просмотров (1 строка на одно посещение)
+CREATE TABLE public.live_view_sessions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  live_event_id uuid NOT NULL REFERENCES live_events(id) ON DELETE CASCADE,
+  user_id uuid NOT NULL,
+  entry_path text NOT NULL CHECK (entry_path IN ('token','direct','menu','unknown')),
+  joined_at timestamptz NOT NULL DEFAULT now(),
+  left_at timestamptz,
+  last_seen_at timestamptz NOT NULL DEFAULT now(),
+  duration_sec integer,
+  close_reason text CHECK (close_reason IN ('explicit_leave','inactivity_timeout','event_ended','page_unload','revoked', NULL)),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_lvs_event_user ON live_view_sessions(live_event_id, user_id);
+CREATE INDEX idx_lvs_event_joined ON live_view_sessions(live_event_id, joined_at);
+CREATE INDEX idx_lvs_open ON live_view_sessions(live_event_id) WHERE left_at IS NULL;
+
+-- Лог событий (для timeline/concurrency)
+CREATE TABLE public.live_session_events (
+  id bigserial PRIMARY KEY,
+  view_session_id uuid NOT NULL REFERENCES live_view_sessions(id) ON DELETE CASCADE,
+  live_event_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  event_type text NOT NULL CHECK (event_type IN ('join','heartbeat','leave','timeout','event_ended')),
+  occurred_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_lse_event_time ON live_session_events(live_event_id, occurred_at);
+
+-- RLS: read для staff/owner эфира, write только service role.
 ```
-[root: room-mobile-shell — h-[100dvh] flex flex-col]
-  [video shell]    shrink-0, aspect-video, position:relative (хост overlay)
-  [reactions bar]  shrink-0
-  [tabs header]    shrink-0
-  [messages area]  room-mobile-scroll (flex-1 min-h-0 overflow-y-auto)
-  [composer]       room-mobile-composer (sticky bottom-0 + safe-area)
-```
 
-**Файл:** `src/components/live/liveRoomTheme.css` — добавить **новые** классы (существующие не трогаем):
+### Точки фиксации событий
 
-```css
-.room-mobile-shell {
-  height: 100dvh;
-  display: flex;
-  flex-direction: column;
-}
-.room-mobile-scroll {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-.room-mobile-composer {
-  position: sticky;
-  bottom: 0;
-  padding-bottom: env(safe-area-inset-bottom);
-  background: var(--room-panel, hsl(var(--background)));
-  border-top: 1px solid color-mix(in srgb, var(--room-text, hsl(var(--foreground))) 10%, transparent);
-}
-```
 
-Keyboard guard: `100dvh` сам корректно отрабатывает появление клавиатуры — JS-логика не нужна.
+| Момент                 | Триггер                                                                                   | Действие                                                                                   |
+| ---------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| **join**               | первый успешный `live-session-heartbeat` (soft-join) или `live-token-validate`            | INSERT в `live_view_sessions` (`joined_at=now`), INSERT event=`join`                       |
+| **heartbeat**          | каждый успешный ping (≤25s)                                                               | UPDATE `last_seen_at`, INSERT event=`heartbeat` (раз в 60s, throttle)                      |
+| **leave (explicit)**   | `beforeunload` / `pagehide` → `navigator.sendBeacon('/live-session-leave')`               | UPDATE `left_at=now`, `duration_sec`, `close_reason='page_unload'`, INSERT event=`leave`   |
+| **inactivity timeout** | cron `live-sessions-sweeper` каждые 2 мин: открытые сессии с `last_seen_at < now - 3 min` | UPDATE `left_at=last_seen_at`, `close_reason='inactivity_timeout'`, INSERT event=`timeout` |
+| **event ended**        | при переходе `live_events.status → 'ended'` (триггер)                                     | массовый UPDATE открытых сессий: `left_at=now`, `close_reason='event_ended'`               |
 
-**Desktop:** не трогаем, изменения только в mobile-ветке.
 
----
+**Закрытие сессии при «просто закрыл вкладку»**: основной механизм — sweeper по `last_seen_at`. `sendBeacon` — best-effort ускорение. Это даёт честную нижнюю границу `duration_sec`.
 
-### Stop-guards (что НЕ трогаю)
+### Метрики (view + RPC)
 
-- `supabase/functions/*` — ноль изменений.
-- DB / migrations / `live_event_reactions` / `live_event_comments` / `live_event_questions` / `live_event_room_blocks` — ноль изменений.
-- `LiveEntryDialog`, privacy flow, pre-start, sales-blocks, table-shell, admin tables.
-- Submit-логика чата/вопросов.
-- `LiveEventRoomBlocks.tsx` — **не трогаю** (T1 был починен в прошлом проходе, прямой связи с новым rail/mobile нет).
-- `LiveEvent.tsx` session refresh logic.
-- `LiveRoomReactionsBar.tsx` — bar отправки, не входит в scope overlay.
-- Провайдер видео, ABR, `live-resolve`.
+`live_event_analytics_v` (вьюха) и `get_live_event_analytics(_event_id)` (RPC):
 
----
+- `online_now` — count `live_active_sessions` (live).
+- `unique_viewers` — count distinct `user_id` из `live_view_sessions`.
+- `max_concurrent` — оконно по `live_session_events` (sum joins − sum leaves во времени).
+- `total_watch_sec`, `avg_watch_sec` — sum/avg `duration_sec` (для закрытых сессий).
+- `avg_retention_pct` — `avg_watch_sec / event_duration`.
+- `exit_distribution` — гистограмма `left_at` относительно `event_started_at` (бакеты по 10%).
+- `concurrency_timeline` — массив `{ts, concurrent}` для графика.
 
-### Файлы под изменение (ожидаемо)
+### Edge functions (новые)
 
-1. `src/components/live/LiveRoomReactionsOverlay.tsx` — bottom-right rail, opacity, count badge, размер, без drift.
-2. `src/hooks/useLiveReactionOverlayStream.ts` — агрегация по emoji+window, лимиты по платформе, count.
-3. `src/components/live/liveRoomTheme.css` — 3 новых класса (`room-mobile-shell` / `room-mobile-scroll` / `room-mobile-composer`).
-4. **[discovery]** Runtime room page — mobile flex-column layout + (условно) перенос overlay внутрь video-shell.
-5. **[discovery, условно]** Player wrapper — `React.memo` + key guard + stable callbacks. Soft reconnect — только при штатном error API.
+1. `**live-session-leave**` — POST `{ session_key }`. Закрывает текущую открытую `live_view_sessions` (UPDATE `left_at`, `duration_sec`, `close_reason='page_unload'`). Вызывается через `navigator.sendBeacon`.
+2. `**live-sessions-sweeper**` — cron (pg_cron каждые 2 мин). Закрывает «зависшие» сессии по `last_seen_at`.
 
----
+### UI (admin)
 
-### Verify / DoD
+**Где выводить**: вкладка «Аналитика» в карточке конкретного эфира `/admin/live-events/:id` (отдельная вкладка, **не** runtime room).
 
-**Reactions proof:**
+Блоки:
 
-- Desktop: 10 одинаковых эмодзи подряд → один пузырь с `×10` в правом нижнем rail. Скриншот.
-- Desktop: 5 разных серией → вертикальный стек ≤5, без горизонтального разлёта. Скриншот.
-- Mobile (375×812): стек ≤3, rail 72px, центр видео и зона ведущего свободны. Скриншот.
-- DOM-проба: overlay контейнер физически вложен в video-shell (`document.querySelector` цепочка в DevTools), `pointer-events: none` подтверждён.
-- DOM-переход 0 → ≥1 → 0 наблюдается в Elements panel (через TTL).
-- SQL-проверка: `select count(*) from live_event_reactions where created_at > now() - interval '2 minutes'` до и после серии overlay-only взаимодействий — без неожиданного роста (overlay только читает realtime, не пишет).
+- **Текущие** (live): `online_now`, `unique_viewers (today)`.
+- **Итог эфира** (после end): `max_concurrent`, `unique_viewers`, `total_watch_sec`, `avg_watch_sec`, `avg_retention_pct`.
+- **Графики**: concurrency timeline (line chart по времени), exit distribution (bar chart по 10%-бакетам).
+- **Список текущих участников в runtime-комнате** (Participants tab) — это **другое UI**, остаётся в `/live/:slug`.
 
-**Player stability proof:**
+### Stop-guards M3
 
-- Временное инструментирование: `console.log('[player-shell] mount', Date.now())` в effect c `[]` deps в player wrapper.
-- Сценарий: переключение табов 10 раз подряд → ровно **1** mount-лог.
-- Сценарий: 20 реакций подряд → ровно **1** mount-лог.
-- После proof — `console.log` удалить тем же патчем.
-- Если soft reconnect не реализуем → явно зафиксировать в отчёте секцией follow-up.
+- НЕ смешивать runtime Participants и историческую аналитику в одну таблицу.
+- НЕ считать retention из одной `live_active_sessions`.
+- НЕ менять access logic — только унифицировать entry tracking **после** успешной проверки доступа.
+- НЕ ломать token-flow.
+- НЕ трогать `LiveEventRoomBlocks.tsx`, reactions overlay, submit chat/questions, `live-resolve`.
 
-**Mobile UX proof (375×812):**
+### DoD M3
 
-- Скриншот idle: на первом экране одновременно видны video, reactions bar, tabs header, composer.
-- Скриншот с фокусом на input: composer прижат к низу клавиатуры, video остаётся видимым в верхней части (не исчезает полностью), layout не "прыгает".
-- Скриншот скролла messages: скроллится только messages area; video, tabs, composer — на месте.
-
-**T1 regression check (без правок файла):**
-
-- Создать временный banner+text блок (миграция add-only, `proof_tag='REGRESSION-T1-RAIL-PATCH'`) с длинной строкой без пробелов.
-- Скриншот: текст переносится, layout не ломается, overflow не возвращается.
-- Cleanup миграцией строго по `proof_tag`.
-- Если регрессии нет — `LiveEventRoomBlocks.tsx` повторно **не трогаем**, явно зафиксировать в отчёте.
+- Один пользователь зашёл и вышел → `duration_sec` посчитан корректно.
+- Двое одновременно → `max_concurrent ≥ 2`.
+- Один вышел раньше → retention/exit point зафиксирован в `live_session_events`.
+- Token-вход и menu-вход одинаково попадают в `live_view_sessions` (с разным `entry_path`).
+- Повторный вход того же пользователя в новой сессии (после закрытия предыдущей) → новая строка в `live_view_sessions`, `unique_viewers` не растёт.
+- Параллельная вкладка → `live_view_sessions` идёт по той же `(user_id, live_event_id)` open-row (через `live_active_sessions` UNIQUE), без мусора.
+- Принудительное закрытие вкладки → sweeper закрывает в течение ≤3 мин с `close_reason='inactivity_timeout'`.
 
 ---
 
-### Финальный отчёт (4 секции)
+## Финальная структура отчёта (после Execute)
 
-1. **Reactions overlay** — changed files, что изменено, скриншоты desktop/mobile, DOM-вложенность, SQL count-сверка.
-2. **Player stability** — changed files, mount-counter proof (tabs ×10 → 1 mount, реакции ×20 → 1 mount), что НЕ удалось доказать локально и вынесено в follow-up (если применимо).
-3. **Mobile UX** — changed files, 3 скриншота (idle / focused / scroll messages).
-4. **Regression / что не тронуто** — T1 проверен (banner/text overflow в норме, файл не менялся повторно), явный список stop-guards.
-
----
-
-### Follow-up PATCH (только при необходимости из discovery)
-
-Если у текущего player wrapper нет штатного error API / SDK для soft reconnect:
-
-- Локально стабилизировано: memo, key-guard, stable callbacks.
-- Не реализовано без provider-level доступа: programmatic retry, ABR-tuning, network-level recovery.
-- Эти пункты выносятся отдельной задачей с явной пометкой требуемого scope (Kinescope SDK / провайдерский API).
+1. **M1**: changed files, mobile-скрины (idle / focused / scroll), desktop без регрессий.
+2. **M2**: changed files, contract diagram, по 3 сценария входа (token / direct / menu) → Participants.
+3. **M3**: новые таблицы, edge functions, cron, UI-вкладка аналитики, ключевые метрики на тестовом эфире.
+4. **Развести**: что показывает runtime Participants vs что сохраняется в аналитике; какие метрики online vs постфактум.
+5. **T1 regression**: `T1 checked / no code changes required`.
