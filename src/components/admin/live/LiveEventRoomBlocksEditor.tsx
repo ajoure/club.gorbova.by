@@ -251,6 +251,49 @@ export function LiveEventRoomBlocksEditor({ liveEventId }: { liveEventId: string
               </div>
             )}
 
+            {newBlock.block_type === "text" && (
+              <div className="space-y-2">
+                <div>
+                  <Label className="text-xs">Текст / Markdown</Label>
+                  <textarea
+                    className="w-full min-h-[80px] text-xs rounded-md border border-input bg-background px-3 py-2"
+                    value={newBlock.config.body || ""}
+                    onChange={(e) => setNewBlock((p) => ({ ...p, config: { ...p.config, body: e.target.value } }))}
+                    placeholder="**Жирный** текст, _курсив_, [ссылки](https://...)"
+                  />
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    Runtime-рендер появится в следующем запуске (PHASE 4).
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {newBlock.block_type === "product_choice" && (
+              <div className="space-y-2">
+                <div>
+                  <Label className="text-xs">Заголовок</Label>
+                  <Input className="h-8 text-xs" value={newBlock.config.title || ""}
+                    onChange={(e) => setNewBlock((p) => ({ ...p, config: { ...p.config, title: e.target.value } }))}
+                    placeholder="Выберите тариф" />
+                </div>
+                <div>
+                  <Label className="text-xs">Tariff ID (UUID, ID-first)</Label>
+                  <Input className="h-8 text-xs font-mono" value={newBlock.config.tariff_id || ""}
+                    onChange={(e) => setNewBlock((p) => ({ ...p, config: { ...p.config, tariff_id: e.target.value } }))}
+                    placeholder="00000000-0000-0000-0000-000000000000" />
+                </div>
+                <div>
+                  <Label className="text-xs">CTA текст</Label>
+                  <Input className="h-8 text-xs" value={newBlock.config.cta_text || ""}
+                    onChange={(e) => setNewBlock((p) => ({ ...p, config: { ...p.config, cta_text: e.target.value } }))}
+                    placeholder="Купить" />
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                  Runtime-рендер появится в следующем запуске (PHASE 4) — каноническая оплата createPaymentCheckout, ID-first.
+                </p>
+              </div>
+            )}
+
             <div className="flex gap-2 justify-end">
               <Button size="sm" variant="outline" onClick={() => setAdding(false)}>Отмена</Button>
               <Button size="sm" onClick={() => addMutation.mutate()} disabled={addMutation.isPending}>
