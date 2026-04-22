@@ -1,208 +1,202 @@
-# да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. Зафиксируй явно, где именно сохраняется `landing_config.tariffs_layout` в `AdminProductDetailV2.tsx`:  
-не просто “через тот же путь”, а конкретно:
-  &nbsp;
-  &nbsp;
-  - какой state/handler используется;
-  - какой mutation/save-action пишет `landing_config`;
-  - какие query keys потом инвалидируются.  
-  Это нужно, чтобы не получилось, что UI переключатель появился, а сохраняется не туда или не вызывает live-update.
-2. В `UniversalPricingSection.tsx` добавь жёсткое правило приоритета источников:
-  - production path: `product.landing_config.tariffs_layout`
-  - fallback: `"auto"`
-  - `layout` prop оставить только как debug/test override и явно пометить комментарием, что в product-driven страницах и блоках он не должен передаваться.  
-  Иначе через пару спринтов снова появится page-specific хардкод.
-3. В `AdminProductDetailV2.tsx` перед заменой превью на `UniversalPricingSection` сделай discovery-проверку, не использует ли текущий preview какие-то дополнительные product-specific props/бейджи/обёртки, которых нет в `UniversalPricingSection`.  
-Если есть расхождение, не дублировать старую логику, а сначала явно перечислить gap и только потом свести к одному renderer.
-4. Добавь в verify отдельную проверку публичной **ссылки на блок тарифов продукта**, не только `/consultation`.  
-Ты сам зафиксировал, что продукт может жить и без сайта, а ссылка на блок тарифов уже существует.  
-Значит proof должен быть по 4 точкам:
-  - admin preview,
-  - публичная product pricing link,
-  - публичная `/consultation`,
-  - site-builder pricing block.
-5. Уточни правило для site-builder:
-  - если блок `pricing` product-driven, он обязан брать layout из продукта;
-  - если block manual/non-product-driven, layout продукта не применяется;
-  - если product-driven + `tariff_filter_mode="selected"`, сначала берём layout из продукта, потом фильтруем тарифы.  
-  Это нужно явно вписать в data-flow, чтобы не было двойного толкования.
-6. Добавь regression-проверку для already existing builder pages с pricing block:
-  - хотя бы 2 страницы, где pricing block привязан к другим продуктам;
-  - подтвердить, что без `tariffs_layout` у продукта поведение осталось `auto`.
-7. Добавь отдельный no-scroll proof:  
-для `vertical-grid` на mobile/tablet/desktop подтвердить:
-  - нет горизонтального скролла контейнера;
-  - нет горизонтального скролла страницы;
-  - нет dots/стрелок карусели.  
-  Это один из главных пользовательских критериев.
-8. В DoD добавь пункт про сохранение порядка:  
-`vertical-grid` не меняет порядок тарифов и не делает локальный reorder.  
-Карточки идут строго в том порядке, который уже задан в продукте.
-9. Добавь explicit smoke-check по оплате в каждом renderer-path:  
-хотя бы один клик по CTA в:
-  - admin preview,
-  - публичной product pricing link,
-  - site-builder pricing block.  
-  Нужно подтвердить, что везде открывается тот же `PaymentDialog` с корректными `productId/offerId`.
-10. Добавь stop-guard:  
-не менять `PricingSection.tsx` block content schema ради layout.  
-Layout — только из продукта.  
-В block content не должно появиться нового `layout`, иначе снова получится второй source of truth.
-11. В финальном proof-пакете раздели статусы:
-  - подтверждено фактами;
-  - не подтверждено;
-  - отложено.  
-  Не смешивай кодовую готовность и реальный browser-proof.
-12. После execution в отчёте обязательно покажи один явный блок фактов:
-  - product id,
-  - `landing_config.tariffs_layout` до/после,
-  - какие renderer-paths использовали это значение,
-  - какие query invalidations сработали после save.
+1. Сначала не просто discovery, а **единая матрица вызовов** по каждому подозрительному ресурсу:  
+ресурс → caller → операция (select/insert/update/delete) → auth context (anon/authenticated/service_role) → ожидаемая политика → фактическая ошибка.  
+Без этой таблицы нельзя принимать решение, что чинить в RLS, а что переводить на edge/service_role.  
+Это и есть твой Role Access Matrix, но как **обязательный артефакт discovery**, а не как отдельная абстрактная задача.
+2. В discovery добавь отдельную развилку по **контексту пользователя**:  
+
+  - public pages под anon,
+  - admin preview под authenticated,
+  - edge/system flows под service_role.  
+  Сейчас это критично, потому что симптомы затрагивают и публичные сайты, и админку, а значит нельзя смешивать их в один класс ошибок.
+3. По H1–H5 добавь ещё один обязательный поиск:  
+**все прямые browser-writes в Supabase** по проекту, не только перечисленные таблицы.  
+Нужен grep по .insert( / .update( / .upsert( / .delete( для frontend-кода с последующей классификацией:  
+допустимо из клиента / должно идти только через edge.  
+Иначе можно пропустить неочевидный write-path, который тоже сломался после миграции.
+4. Runtime Error Boundary не делать глобально “на всякий случай”.  
+Правило:
+  - сначала найти **конкретный query/component**, который валит дерево;
+  - потом поставить **локальный boundary/fallback** вокруг него;
+  - не маскировать RLS-регрессию общим boundary на весь shell.  
+  Иначе белый экран уйдёт, а причина останется.
+5. Health Checks включить в план, но как **post-fix smoke suite**, а не как первый шаг.  
+Набор health-checks должен быть минимальным и привязанным к реальным путям:
+  - public product read,
+  - site page resolve by domain,
+  - admin preview critical query,
+  - storage asset fetch,
+  - 1–2 edge functions из зоны риска.  
+  Не делать отдельную “систему мониторинга” в этом патче.
+6. По storage добавь проверку не только upload/update/remove, но и:
+  - createSignedUrl,
+  - getPublicUrl,
+  - любые преобразования путей/папок.  
+  Часто белый экран даёт не сам storage write, а циклический retry на битой загрузке ассета.
+7. По edge functions добавь точный критерий:  
+чинить только те, которые реально вызываются из shell/public path.  
+admin-fix-* не трогать, если discovery покажет, что они не вызываются автоматически.  
+Иначе план расползётся.
+8. Пункт про Publish/CDN invalidation убери из основного фикса и перенеси в конец как **опциональный post-fix step**.  
+Если корень в RLS/401/403, publish не лечит проблему и только размывает причинно-следственную связь.
+9. В блоке RLS зафиксируй жёсткое правило:
+  - bepaid_sync_logs, ilex_settings, системные логи/настройки — **не открывать обратно клиенту**;
+  - если клиент туда пишет, это баг пути, а не повод ослаблять политику;
+  - canonical fix = edge/service_role либо полный запрет client write.
+10. Для access_rules пропиши отдельный STOP:  
+**никаких временных write-policy “для проверки”**.  
+Если выяснится, что туда реально пишет клиентский runtime, сначала:
 
 &nbsp;
 
-Если хочешь, следующим сообщением я соберу уже финальный короткий блок ТЗ для вставки подрядчику без пояснений.
+- назвать конкретный caller,
+- показать, почему он должен существовать,
+- и только потом переводить его на canonical write-path через edge.
+
+11. В verify добавь **no-retry-storm proof**:
+
+- в браузере нет бесконечных повторных 401/403/500,
+- в React Query/Network не идёт шквал повторов,
+- page load стабилен.  
+Сейчас это один из ключевых пользовательских симптомов.
+
+12. Итоговый отчёт после фикса раздели строго на 3 блока:
+
+- **Подтверждено фактами**: какие таблицы/функции реально ломали runtime и чем именно.
+- **Исправлено**: какой адресный патч сделан для каждого caller.
+- **Не подтверждено / не понадобилось**: какие гипотезы H1–H5 отпали после discovery.  
+Это важно, чтобы не осталось “подозрений”, которые на самом деле не влияли.
+
+13. Из добавок в конец плана оставить так:
+
+- Add Recovery Diagnostics — да, как discovery-matrix + лог-корреляция;
+- Implement Health Checks — да, но только post-fix smoke;
+- Add Runtime Error Boundary — только локально и по факту;
+- Create Role Access Matrix — да, как обязательный discovery artifact;
+- Set Up Safe CORS/401 Handling — только для реально вызываемых публичных/admin edge functions.
+
+14. В DoD добавь ещё 2 явных критерия:
+
+- **public anon path** и **admin authenticated path** оба подтверждены отдельно;
+- после фикса за 15 минут нет не только permission denied, но и повторяющихся 401/403/500 по тем же вызовам.
+
+15. В финальном proof-пакете обязательно покажи один компактный факт-блок:
+
+- какая именно миграция/политика дала регрессию,
+- какой caller на неё упирался,
+- каким способом исправлено: RLS scope / move-to-edge / enabled-gate / local boundary,
+- почему security-выигрыш сохранён.
+
+Если хочешь, следующим сообщением соберу уже **готовый копируемый блок ТЗ для подрядчика** без пояснений.
 
 &nbsp;
 
-План: PATCH PRODUCT-TARIFFS-LAYOUT-SOT — единая настройка раскладки тарифов на уровне продукта
+# План: PATCH SITE-RECOVERY-RLS-REGRESSION — восстановить превью и публичные сайты после ночной security-миграции
 
-## 1. Цель
+## 1. Diagnose (зафиксировано)
 
-Добавить **одну универсальную настройку раскладки тарифов в продукт**, чтобы все product-driven отображения тарифов — карточка продукта, product preview, публичные ссылки, опубликованные страницы и site-builder pricing block — синхронно использовали одно и то же отображение. SoT — продукт. Page-specific хардкоды запрещены.
+Симптом: после миграции `20260421221151_*` периодически отваливаются превью админки, опубликованный сайт и кастомные домены. Загрузка медленная, через 5 минут «всё умирает», затем иногда снова поднимается.
 
-## 2. Discovery (зафиксировано)
+Что подтверждено фактами:
 
-**SoT настроек продукта:** `products_v2.landing_config` JSONB. Уже хранит `tariffs_title`, `tariffs_subtitle`, `price_suffix`, `show_badges` и т.п. Подходит для нового ключа без миграции.
+- Сборка чистая, бандл доступен.
+- `public-product?product_code=club` отвечает 200 за < 1 c.
+- В Postgres-логах массово `canceling statement due to statement timeout` (вторичный симптом).
+- Жалобы строго совпадают по времени с применением миграции.
 
-**Renderer paths тарифов (актуальный список):**
+Корневая гипотеза (по приоритету):
 
+**H1 — RLS-регрессия в `bepaid_sync_logs` / `product_reentry_pricing` / `ilex_settings`.**
+Старые политики перезаписаны на `TO service_role` без `TO authenticated` для INSERT/UPDATE. Любой клиентский код (включая фоновые задачи и хуки в shell приложения), который писал в эти таблицы под обычным JWT, теперь падает с RLS-violation. Если ошибка не обработана, React-дерево падает в `Error Boundary` → белый экран.
 
-| Путь                                           | Файл                                                               | Использует                                       |
-| ---------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------ |
-| Публичная страница `/consultation` (и аналоги) | `src/pages/Consultation.tsx`                                       | `UniversalPricingSection`                        |
-| Публичная страница продукта по slug            | `src/components/landing/LandingPricing.tsx` → `ProductLanding.tsx` | `UniversalPricingSection`                        |
-| Site-builder блок «Тарифы» (product-driven)    | `src/components/site-renderer/blocks/PricingSection.tsx`           | `UniversalPricingSection`                        |
-| Domain-bound лендинги                          | `src/components/layout/DomainRouter.tsx`                           | `UniversalPricingSection`                        |
-| **Admin product preview**                      | `src/pages/admin/AdminProductDetailV2.tsx` (≈ строки 1200-1219)    | ❌ напрямую `TariffCarouselGrid` — **разрыв SoT** |
+**H2 — `live_event_active_participants_v` с `security_invoker=true`.**
+Если view раньше возвращала строки без проверки RLS базовых таблиц, теперь анонимный/обычный пользователь получает пустой результат или RLS-ошибку. Любой публичный/admin компонент, который читает эту view, может ронять страницу.
 
+**H3 — Storage-политики `training-assets` ужесточены до `auth.uid()::text = (storage.foldername(name))[1]`.**
+Если хоть один клиентский путь (превью, медиа в карточке тарифа, баннер на лендинге) загружает/обновляет файл вне «своей» папки — теперь 403. Может приводить к infinite-retry в React Query → деградация.
 
-`UniversalPricingSection` уже принимает prop `layout: "auto" | "vertical-grid"` (PATCH CONSULTATION-TARIFFS-VERTICAL), но default — `"auto"`, и значение нигде не читается из продукта. На `Consultation.tsx` сейчас стоит хардкод `layout="vertical-grid"` — его убираем.
+**H4 — Новая политика `access_rules` запрещает INSERT/UPDATE/DELETE всем, кроме admin.**
+Если какой-либо runtime-flow (например, `grant-access-for-order` через клиентский JWT, авто-привязки при оплате, fallback в UI) писал в `access_rules` от имени authenticated-пользователя — теперь блок. Это объясняет каскадные таймауты (ретраи + блокирующие транзакции).
 
-**Порядок тарифов и офферов:** управляется `sort_order` в БД (`tariffs_v2`, `tariff_offers_v2`), не зависит от layout — не трогаем.
+**H5 — Edge-функции `admin-fix-*` / `export-schema` / `telegram-notify-admins**` теперь требуют JWT/role. Если что-то в шелле приложения дёргает их без актуального токена — 401/403 в цикле.
 
-**Ссылки:** `#tariffs` anchor + UUID-driven `productId/offerId` → `PaymentDialog`. От layout не зависят, не трогаем.
+Дополнительно: статусы пользователя «то работает, то нет» характерны именно для **частичного RLS-блока** (часть запросов в кэше React Query живёт, часть — крашится при invalidate).
 
-**Site-builder фильтрация:** `tariff_filter_mode` / `tariff_ids` в `PricingSection.tsx` работает поверх — фильтрует список тарифов до передачи в `UniversalPricingSection`. Не зависит от layout, остаётся как есть.
+## 2. Discovery (без правок, обязательный шаг перед фиксом)
 
-## 3. Бизнес-правило
+Прежде чем что-либо откатывать — собрать факты:
 
-- Настройка `landing_config.tariffs_layout: "auto" | "vertical-grid"` живёт **только в продукте**.
-- Default — `"auto"` (полная обратная совместимость для всех существующих продуктов).
-- Любой product-driven рендерер тарифов **обязан** читать это значение из `product.landing_config.tariffs_layout`. Page/block-specific override запрещён.
-- Если тарифы не привязаны к продукту (manual config в site-builder) — настройка не применяется, поведение прежнее.
-- Live-update: меняем в админке → React Query invalidate → preview/публичные страницы/site-builder блоки видят новое значение без redeploy.
+1. **Postgres-логи за последние 30 минут**: грепнуть `permission denied for`, `new row violates row-level security policy for table`, `policy for relation`. Зафиксировать таблицы-виновники.
+2. **Edge logs**: статусы 401/403/500 за то же окно, по функциям из ночной миграции.
+3. **Search в коде** на:
+  - `from('bepaid_sync_logs')`, `from('product_reentry_pricing')`, `from('ilex_settings')`, `from('access_rules').insert/update/delete`;
+  - `from('live_event_active_participants_v')`;
+  - `storage.from('training-assets').upload/update/remove`;
+  - `functions.invoke('admin-fix-sub-orders-gc' | 'admin-fix-club-billing-dates' | 'export-schema' | 'telegram-notify-admins')`.
+4. **Browser console + Network** на сломанной странице: первая красная ошибка + первый 4xx/5xx.
+5. **Список всех клиентских callers**, которые могут писать в перечисленные таблицы под user-JWT (а не service_role).
 
-## 4. Изменения
+Без этого шага фиксить вслепую = риск откатить security-баланс целиком.
 
-### A. Типы — `src/hooks/usePublicProduct.tsx`
+## 3. Plan фиксации (адресный, минимальная инвазия)
 
-- В `LandingConfig` добавить `tariffs_layout?: "auto" | "vertical-grid"`.
+Принцип: **сохранить security-выигрыш**, восстановить только реально сломанные пути.
 
-### B. Канонический рендерер — `src/components/landing/UniversalPricingSection.tsx`
+### A. RLS — точечные SELECT-разрешения (если discovery подтвердит чтение клиентом)
 
-- Изменить вычисление эффективного layout:
-  ```
-  const effectiveLayout = layoutProp ?? product.landing_config?.tariffs_layout ?? "auto";
-  ```
-- Prop `layout` сохраняется только для тестов/превью; в продакшен-коде его передавать **запрещено** (фиксируется комментарием в файле).
+- `live_event_active_participants_v` — добавить SELECT для `authenticated` через security definer-функцию, либо убрать `security_invoker` если view сознательно проектировалась как read-through. Решение по факту того, кто её читает.
+- `product_reentry_pricing` — оставить как есть (политики `Admins can read` + `Users can read own` уже корректны), но проверить, что фронт не делает `select *` без фильтра `user_id`.
+- `bepaid_sync_logs` — клиент не должен читать/писать вообще. Если читает — переписать на edge function.
 
-### C. Удалить page-specific хардкод — `src/pages/Consultation.tsx`
+### B. RLS — восстановление write-политик ТОЛЬКО там, где это критично для runtime
 
-- Убрать `layout="vertical-grid"`. Значение придёт из `product.landing_config.tariffs_layout`.
+- `access_rules`: если какой-либо легитимный runtime-flow пишет под user-JWT — мигрировать его на edge function с service_role (canonical write-path), а не ослаблять RLS. Если такого пути нет — оставить как есть.
+- Для всех write-flow проверить, что они идут через edge functions с `SUPABASE_SERVICE_ROLE_KEY`, а не из браузера под JWT.
 
-### D. Admin preview parity — `src/pages/admin/AdminProductDetailV2.tsx`
+### C. Storage — fallback для system-папок
 
-- В блоке превью (≈ строки 1180-1230) **заменить прямое использование `TariffCarouselGrid` на `UniversalPricingSection**` с теми же `product` + активные `tariffs`.
-- Tumbler Desktop/Mobile превью реализовать через ширину контейнера-обёртки (`max-w-[360px]` для mobile), а не через prop `forceMobile` карусели — `UniversalPricingSection` сам решит layout по `landing_config`.
-- Удалить дублирование заголовка/подзаголовка/disclaimer в превью — `UniversalPricingSection` отрисует сам.
+- Если discovery покажет, что часть файлов `training-assets` грузится по системному пути (не `{user_id}/...`), добавить дополнительную INSERT/UPDATE/DELETE политику с проверкой `has_role(auth.uid(), 'admin')`. Не ослаблять основную user-folder политику.
 
-### E. Admin UI — `src/pages/admin/AdminProductDetailV2.tsx` (вкладка настроек продукта)
+### D. Frontend — error boundaries и `enabled`-gating
 
-- В существующей секции `landing_config` добавить SegmentedControl/RadioGroup «Раскладка тарифной секции»:
-  - «Авто (карусель при 4+)» → `auto`
-  - «Вертикальная сетка (1 / 2 колонки)» → `vertical-grid`
-- Сохранение через тот же путь обновления `landing_config` (никаких новых EF/RPC).
-- После сохранения — invalidate React Query ключей `["public-product", ...]` и `["public-product-by-slug", ...]`, чтобы preview и публичные страницы обновились немедленно.
+- Везде, где `useQuery` читает таблицы из списка миграции, добавить `enabled: !!user` и `retry: 1` (предотвращает retry-storm при 403).
+- В местах, где RLS-ошибка ронит дерево — обернуть в локальный `<ErrorBoundary>` с fallback (а не белый экран).
 
-### F. Edge functions — `supabase/functions/public-product/index.ts` и `public-product-by-slug/index.ts`
+### E. Edge functions — graceful degradation
 
-- Проверить, что оба возвращают `landing_config` целиком (по данным discovery — да). Никаких правок не требуется, поле уже включено.
+- В `telegram-notify-admins`, `export-schema`, `admin-fix-*` при отсутствии JWT возвращать 401 с CORS-хедерами и `fallback:true` — не 500. Это уже частично сделано, проверить парность.
 
-## 5. Файлы
+### F. Кэш и публикация
 
+- После фикса: один раз нажать **Publish** для инвалидации CDN edge cache на доменах `gorbova.lovable.app`, `club.gorbova.by`, `consultation.gorbova.by`, `cb.gorbova.by`.
+- Пользователю — hard-refresh (Ctrl+Shift+R) для сброса SW-кэша.
 
-| Файл                                                 | Изменение                                                                                     |
-| ---------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `src/hooks/usePublicProduct.tsx`                     | + `tariffs_layout` в `LandingConfig`                                                          |
-| `src/components/landing/UniversalPricingSection.tsx` | fallback prop → `product.landing_config.tariffs_layout` → `"auto"`                            |
-| `src/pages/Consultation.tsx`                         | удалить хардкод `layout`                                                                      |
-| `src/pages/admin/AdminProductDetailV2.tsx`           | (1) UI-настройка `tariffs_layout`; (2) preview через `UniversalPricingSection` для 1:1 parity |
+## 4. STOP-guards
 
+- **НЕ откатывать миграцию `20260421221151_*` целиком.** В ней 6 независимых фиксов, откат сломает security.
+- **НЕ возвращать `TO public` / `USING (true)` ни на одну из ужесточённых таблиц.**
+- **НЕ ослаблять `access_rules` write-политику** — это privilege escalation, который уже закрыт. Любой легитимный writer обязан идти через service_role edge function (canonical write-path).
+- **НЕ трогать UniversalPricingSection / Consultation.tsx / usePublicProduct** — public read-paths подтверждённо работают.
+- **НЕ менять storage public-read** для `training-assets` — публичное чтение должно остаться.
+- **НЕ модифицировать `realtime.*` / `auth.*` / `storage.*` schemas напрямую** — реconfigure только через RLS на `storage.objects` и dashboard для realtime.
 
-## 6. Не трогаем
+## 5. DoD
 
-- БД, миграции, RLS, edge functions — поле живёт в существующем JSONB.
-- API `TariffCard`, `PaymentDialog`, `usePublicProduct`, `usePublicTariff`.
-- `TariffCarouselGrid` — продолжает работать в режиме `auto`.
-- `tariff_filter_mode` / `tariff_ids` логику в `site-renderer/blocks/PricingSection.tsx`.
-- Порядок тарифов и офферов (`sort_order`).
-- Anchor `#tariffs`, публичные ссылки на тарифы и checkout flow.
+1. Найдены **точные** строки в Postgres-логах с `permission denied` / `RLS violation` после миграции — с именами таблиц и операций.
+2. Для каждой строки определён владелец-вызыватель (frontend hook / edge function / external).
+3. Адресный патч: либо frontend переведён на edge с service_role, либо добавлена строго scoped RLS-политика (с обоснованием), либо frontend gated по `enabled: !!user` + ErrorBoundary.
+4. После патча: `/`, `/consultation`, `https://club.gorbova.by`, admin-превью site-builder и admin product preview открываются без белого экрана за < 3 c.
+5. Re-scan безопасности: число open-findings **не выросло**, security-выигрыш ночной миграции сохранён.
+6. В Postgres-логах за 15 минут после фикса — нулевой `permission denied for`.
+7. В отчёте отдельным блоком: список таблиц, в которые ходит фронт под user-JWT, и подтверждение, что все write-операции туда идут через canonical write-path.
 
-## 7. Verify (data-flow proof)
+## 6. Что нужно от пользователя сейчас
 
-**Single source of truth:**
+Один из двух вариантов (любой):
 
-1. Открыть админку → продукт «Платная консультация» → раздел настроек landing → переключатель раскладки видим, значение по умолчанию `auto`.
-2. Установить `vertical-grid` → сохранить.
-3. **Admin preview** (Desktop): 2 колонки × 2 ряда без карусели; Mobile (max-w 360): 1 колонка.
-4. **Публичная** `/consultation`: 375 → 1 колонка; 768 → 2 колонки; 1280 → 2 колонки.
-5. **Site-builder страница** с product-driven pricing block, привязанным к этому продукту: тот же layout.
-6. Вернуть `auto` → во всех трёх местах сразу карусель/грид по count (без redeploy, без перезагрузки страницы кроме React Query refetch).
+**Вариант A — быстрый**: одобрить план, тогда я сам пройду discovery (Postgres-логи + edge-логи + grep по коду) и принесу адресный патч + явный список «кто куда писал и почему сломалось».
 
-**Регрессия:**
-7. Любой другой продукт без `tariffs_layout` в `landing_config` → поведение строго прежнее (`auto`).
-8. Site-builder pricing block в manual-config режиме (не привязан к продукту) → настройка продукта не применяется, поведение прежнее.
-9. `tariff_filter_mode="selected"` поверх `vertical-grid` → отфильтрованные тарифы отрисованы в 1/2 колонки, фильтрация работает.
-10. Оплата с любой карточки во всех точках → `productId` + `offerId` корректны, открывается `PaymentDialog`, checkout flow не изменён.
+**Вариант B — точечный**: открыть сломанную страницу, F12 → Console → прислать первую красную ошибку и первый 4xx/5xx из Network. Тогда фикс будет ещё точнее и быстрее.
 
-**Визуальный DoD для `vertical-grid`:**
-
-- mobile 1 кол / tablet+desktop 2 кол;
-- нет dots, стрелок, горизонтального скролла;
-- одинаковая высота карточек (`items-stretch` + `h-full`);
-- CTA на одной линии в пределах ряда;
-- порядок тарифов = `sort_order` из продукта.
-
-## 8. STOP-guards
-
-- НЕ менять API `TariffCard` / `PaymentDialog` / `usePublicProduct`.
-- НЕ заводить новые таблицы / колонки / EF — только ключ внутри существующего `landing_config`.
-- НЕ оставлять `layout="..."` хардкод ни в одной странице/блоке.
-- НЕ трогать manual-config режим site-builder pricing block.
-- НЕ менять `sort_order` тарифов и офферов.
-- НЕ менять anchor `#tariffs` и публичные ссылки.
-- Если `landing_config.tariffs_layout` отсутствует — поведение **строго** `auto`.
-
-## 9. DoD
-
-1. В `LandingConfig` появился ключ `tariffs_layout` (`"auto" | "vertical-grid"`, default `auto`).
-2. В админке продукта есть UI-переключатель раскладки, значение сохраняется в `landing_config`.
-3. Admin preview использует тот же `UniversalPricingSection`, что и публичные страницы → 1:1 parity (Desktop/Mobile).
-4. `/consultation` рендерит 1/2/2 колонки, потому что у продукта выбрано `vertical-grid` (хардкод в `Consultation.tsx` удалён).
-5. Site-builder pricing block, привязанный к продукту, подхватывает ту же настройку без правок content блока.
-6. Все остальные продукты остаются на `auto` без визуальных изменений.
-7. Live-update: смена настройки в админке → preview + публичные страницы + site-builder обновляются без redeploy.
-8. Оплата по ID-first контракту работает во всех точках.
-9. Приложены 5 скриншотов: admin preview Desktop, admin preview Mobile, публичная `/consultation` 375, публичная `/consultation` 1280, site-builder страница с тем же продуктом.
+Без discovery (вариант A или факты из B) любая правка миграции = удар по security вслепую.
