@@ -25,6 +25,7 @@ const Auth = lazy(() => import("./pages/Auth"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const SitePageBySlug = lazy(() => import("./pages/SitePageBySlug"));
 const EmbedFormPage = lazy(() => import("./pages/embed/EmbedFormPage"));
+const T1ProofPage = lazy(() => import("./pages/T1ProofPage"));
 
 // Lazy-loaded pages - code splitting for bundle optimization
 const Accountant = lazy(() => import("./pages/Accountant"));
