@@ -32,6 +32,7 @@ import { RoomPreStartScreen } from "@/components/live/RoomPreStartScreen";
 import { useRoomEntryPrefs } from "@/hooks/useRoomEntryPrefs";
 import { readRoomSettings } from "@/lib/roomSettings";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useScreenWakeLock } from "@/hooks/useScreenWakeLock";
 
 interface ResolvedSource {
   resolved_source_kind: 'kinescope_video' | 'kinescope_live_embed' | 'live_pending' | 'none';
@@ -152,6 +153,13 @@ function LiveEventLegacy() {
     useRoomEntryPrefs(data?.event_id);
   const [entryDialogOpen, setEntryDialogOpen] = useState(false);
   const [entrySatisfied, setEntrySatisfied] = useState(false);
+
+  // Wake Lock: держим экран активным ТОЛЬКО в live / room_open_waiting.
+  // Для всех остальных state (loading/ended/session_revoked/session_expired/
+  // access_denied/room_closed/error/...) enabled=false → cleanup освобождает lock.
+  // Хук размещён ДО early returns по Rules of Hooks (всегда вызывается).
+  // Привязка только к state комнаты — никаких tabs/chat/reactions/composer.
+  useScreenWakeLock(state === "live" || state === "room_open_waiting");
 
   // Reconnect contract: prefs already exist → silent mirror to session, skip dialog.
   useEffect(() => {
@@ -582,6 +590,7 @@ function LiveEventLegacy() {
   // changes ONLY the player column. Chat/CTA/header are NOT remounted. Do NOT break this.
   const isWaiting = state === "room_open_waiting";
   const eventId = data?.event_id;
+
   const isReplay = !isWaiting && (data?.platform_status === "replay_available" ||
     (data?.event_status === "ended" && data?.replay_enabled));
   const resolvedSource = data?.resolved_source;
