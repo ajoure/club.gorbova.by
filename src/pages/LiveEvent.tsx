@@ -58,6 +58,8 @@ interface LiveResolveResult {
   room_state?: RoomState;
   room_phase?: "closed" | "waiting" | "live" | "completed";
   active_participants?: number;
+  // Запуск 2: room_settings (entry/prestart/participants/chat/reactions/sales) — pass-through из metadata.
+  room_settings?: Record<string, any> | null;
 }
 
 type PageState = "loading" | "not_found" | "unpublished" | "access_denied" | "invite_required" | "source_unavailable" | "removed_from_room" | "scheduled" | "live" | "live_pending" | "ended_no_replay" | "session_revoked" | "session_expired" | "room_open_waiting" | "error";

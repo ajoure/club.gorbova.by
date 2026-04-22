@@ -329,6 +329,9 @@ Deno.serve(async (req) => {
       room_theme: (event.metadata as any)?.room_theme || null,
       live_badge_mode: (event.metadata as any)?.live_badge_mode || null,
       presenter_user_id: (event.metadata as any)?.presenter_user_id || null,
+      // Запуск 2: room_settings pass-through (entry/prestart/participants/chat/reactions/sales).
+      // UX-only — не влияет на access/resolver. SoT остаётся live_events.metadata.room_settings.
+      room_settings: (event.metadata as any)?.room_settings || null,
     });
   } catch (err) {
     console.error('[live-resolve] Unexpected error:', err);
