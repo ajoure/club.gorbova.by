@@ -47,10 +47,14 @@ export function RoomParticipantsList({
           <p className="text-sm room-meta-text text-center py-4">Нет активных участников</p>
         ) : (
           participants.map((p: RoomParticipant) => {
+            // Sprint final: staff display rule — единый helper.
+            // student-view → alias; staff-view → "ФИО (alias)" если есть и отличается.
             const display = resolveParticipantDisplay({
               user_id: p.user_id,
               author_display_name: p.display_name,
               author_avatar_url: p.show_avatar === false ? null : p.avatar_url,
+              viewerIsStaff: isStaff,
+              staff_real_name: isStaff ? p.real_name_for_staff : null,
             });
             const role = (p.role_in_room as AuthorRole | string | null) || null;
             return (
@@ -60,7 +64,7 @@ export function RoomParticipantsList({
               >
                 <Avatar className="h-7 w-7 shrink-0">
                   {display.avatarUrl && (
-                    <AvatarImage src={display.avatarUrl} alt={display.displayName} />
+                    <AvatarImage src={display.avatarUrl} alt={display.alias} />
                   )}
                   <AvatarFallback className="text-[10px]">{display.initials}</AvatarFallback>
                 </Avatar>
@@ -69,16 +73,12 @@ export function RoomParticipantsList({
                     <span
                       className="text-xs font-medium room-message-text truncate"
                       style={p.nickname_color ? { color: p.nickname_color } : undefined}
+                      title={display.isStaffFormatted ? display.alias : undefined}
                     >
                       {display.displayName}
                     </span>
                     <LiveRoleBadge role={role} />
                   </div>
-                  {isStaff && p.real_name_for_staff && (
-                    <p className="text-[10px] room-meta-text truncate">
-                      {p.real_name_for_staff}
-                    </p>
-                  )}
                 </div>
               </div>
             );

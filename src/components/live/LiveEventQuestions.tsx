@@ -20,6 +20,7 @@ import { useRoomModerationState } from "@/hooks/useRoomModerationState";
 import { toast } from "sonner";
 import { resolveParticipantDisplay } from "@/lib/participantDisplay";
 import { normalizeEmoji } from "@/lib/normalizeEmoji";
+import { useStaffNameMap } from "@/hooks/useStaffNameMap";
 
 interface Question {
   id: string;
@@ -56,6 +57,8 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
     const [newQuestion, setNewQuestion] = useState("");
     const isStaff = role === "admin" || role === "superadmin" || role === "employee";
     const [replyingTo, setReplyingTo] = useState<{ id: string; userId: string; name: string } | null>(null);
+    // Staff display rule (sprint final): ФИО ТОЛЬКО из RPC get_room_participants.
+    const staffNameMap = useStaffNameMap(liveEventId, isStaff);
 
     const { data: questions, isLoading } = useQuery({
       queryKey: ["live-event-questions", liveEventId],
@@ -188,6 +191,8 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
                 author_display_name: q.author_display_name,
                 author_avatar_url: q.author_avatar_url,
                 legacy_avatar_url: q.profile?.avatar_url ?? null,
+                viewerIsStaff: isStaff,
+                staff_real_name: isStaff ? staffNameMap.get(q.user_id) ?? null : null,
               });
               const displayName = display.displayName;
               const avatarUrl = display.avatarUrl;
