@@ -605,7 +605,10 @@ function LiveEventLegacy() {
   };
 
   return (
-    <div className="live-room-themed min-h-screen flex flex-col" style={themeStyle}>
+    <div
+      className="live-room-themed flex flex-col min-h-screen lg:min-h-screen max-lg:h-[100dvh] max-lg:overflow-hidden"
+      style={themeStyle}
+    >
       {/* Header — compact */}
       <div className="max-w-[1600px] w-full mx-auto px-3 md:px-6 pt-3 md:pt-4 pb-2">
         <div className="flex items-center gap-2 md:gap-3 mb-1 flex-wrap">
