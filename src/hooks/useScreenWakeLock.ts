@@ -57,8 +57,8 @@ export function useScreenWakeLock(enabled: boolean): void {
       if (cancelled) return;
       if (sentinelRef.current) return; // уже держим
       try {
-        // @ts-expect-error — TS lib может не знать про wakeLock на старых конфигах
-        const sentinel: WakeLockSentinel = await navigator.wakeLock.request("screen");
+        const wakeLock = (navigator as Navigator & { wakeLock: { request: (type: "screen") => Promise<WakeLockSentinel> } }).wakeLock;
+        const sentinel: WakeLockSentinel = await wakeLock.request("screen");
         if (cancelled) {
           // Если успели уйти пока ждали request — сразу release
           try {
