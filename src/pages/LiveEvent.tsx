@@ -130,6 +130,7 @@ function LiveEventLegacy() {
   const { selectedContact, contactSheetOpen, setContactSheetOpen, openContactSheet } = useLiveContactSheet();
   const isStaff = role === "admin" || role === "superadmin" || role === "employee";
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isMobile = useIsMobile();
 
   // Refs to read latest session/data without triggering effect restarts on TOKEN_REFRESHED.
   const sessionRef = useRef(session);
@@ -337,7 +338,7 @@ function LiveEventLegacy() {
 
             if (roomPhase === "waiting") {
               nextState = "room_open_waiting";
-              startHeartbeat();
+              startHeartbeat({ liveEventId: json.event_id });
             } else if (ps === "scheduled" || es === "scheduled") {
               // Fallback: если комната ещё closed — старый scheduled-экран.
               nextState = "scheduled";
@@ -349,7 +350,7 @@ function LiveEventLegacy() {
               nextState = "ended_no_replay";
             } else {
               nextState = "live";
-              startHeartbeat();
+              startHeartbeat({ liveEventId: json.event_id });
             }
             break;
           }
@@ -639,7 +640,7 @@ function LiveEventLegacy() {
           )}
         </div>
         {data?.description && (
-          <p className="room-subtitle text-sm line-clamp-1 mb-1">{data.description}</p>
+          <p className="room-subtitle text-sm line-clamp-1 mb-1 hidden md:block">{data.description}</p>
         )}
         {isReplay && (
           <div className="inline-flex items-center gap-2 bg-muted rounded-lg px-2.5 py-1 text-xs text-muted-foreground">
@@ -657,7 +658,7 @@ function LiveEventLegacy() {
             {roomSettings.prestart.enabled && data?.scheduled_at && new Date(data.scheduled_at).getTime() > Date.now() && (state === "room_open_waiting" || isWaiting) ? (
               <RoomPreStartScreen prestart={roomSettings.prestart} scheduledAt={data?.scheduled_at} />
             ) : isWaiting ? (
-              <RoomWaitingState scheduledAt={data?.scheduled_at} eventTimezone={data?.event_timezone} />
+              <RoomWaitingState scheduledAt={data?.scheduled_at} eventTimezone={data?.event_timezone} compact={isMobile} />
             ) : resolvedSource?.resolved_source_kind === 'kinescope_video' && resolvedSource.resolved_embed_url ? (
               <KinescopePlayerWrapper videoId={data?.kinescope_video_id!} />
             ) : resolvedSource?.resolved_source_kind === 'kinescope_live_embed' && resolvedSource.resolved_embed_url ? (
@@ -703,7 +704,7 @@ function LiveEventLegacy() {
             гарантирует, что top чата === top видео. CTA/room blocks рендерятся
             ниже Card. На mobile порядок остаётся естественным (column stack). */}
         {eventId && (
-          <div className="w-full lg:w-[360px] xl:w-[400px] lg:shrink-0 lg:self-start flex flex-col min-h-0 h-[70dvh] lg:h-[calc(100vh-140px)] gap-2">
+          <div className="w-full lg:w-[360px] xl:w-[400px] lg:shrink-0 lg:self-start flex flex-col min-h-0 flex-1 min-h-[60dvh] lg:min-h-0 lg:flex-none lg:h-[calc(100vh-140px)] gap-2">
             <Card className="room-panel flex-1 flex flex-col overflow-hidden min-h-0 order-1">
               {(() => {
                 const showParticipantsTab = isStaff || roomSettings.participants.visible_for_students;
