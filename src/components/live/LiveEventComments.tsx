@@ -231,7 +231,7 @@ export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile,
 
   return (
     <div className="relative flex flex-col h-full min-h-0 room-panel">
-      <div ref={scrollRef} className="room-messages-scroll flex-1 min-h-0 overflow-y-auto space-y-1 p-3 overscroll-contain">
+      <div ref={scrollRef} data-room-messages-scroll className="room-messages-scroll flex-1 min-h-0 overflow-y-auto space-y-1 p-3 overscroll-contain">
         {isLoading ? (
           <div className="flex justify-center py-4">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
