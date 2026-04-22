@@ -653,9 +653,9 @@ function LiveEventLegacy() {
       </div>
 
       {/* Main content — fills remaining height */}
-      <div className="flex-1 max-w-[1600px] w-full mx-auto px-3 md:px-6 pb-3 md:pb-6 flex flex-col lg:flex-row lg:items-start gap-3 md:gap-4 min-h-0">
+      <div className="flex-1 max-w-[1600px] w-full mx-auto px-3 md:px-6 pb-3 md:pb-6 flex flex-col lg:flex-row lg:items-start gap-3 md:gap-4 min-h-0 max-lg:overflow-hidden">
         {/* Player column — takes most width on desktop */}
-        <div className="lg:flex-[3] flex flex-col gap-2 min-w-0">
+        <div className="lg:flex-[3] flex flex-col gap-2 min-w-0 max-lg:shrink-0">
           {/* Wrapper для overlay реакций — relative, чтобы absolute overlay лёг поверх плеера. */}
           <div className="relative">
             {roomSettings.prestart.enabled && data?.scheduled_at && new Date(data.scheduled_at).getTime() > Date.now() && (state === "room_open_waiting" || isWaiting) ? (
@@ -707,7 +707,7 @@ function LiveEventLegacy() {
             гарантирует, что top чата === top видео. CTA/room blocks рендерятся
             ниже Card. На mobile порядок остаётся естественным (column stack). */}
         {eventId && (
-          <div className="w-full lg:w-[360px] xl:w-[400px] lg:shrink-0 lg:self-start flex flex-col min-h-0 flex-1 min-h-[60dvh] lg:min-h-0 lg:flex-none lg:h-[calc(100vh-140px)] gap-2">
+          <div className="w-full lg:w-[360px] xl:w-[400px] lg:shrink-0 lg:self-start flex flex-col min-h-0 flex-1 lg:flex-none lg:h-[calc(100vh-140px)] gap-2 max-lg:overflow-hidden">
             <Card className="room-panel flex-1 flex flex-col overflow-hidden min-h-0 order-1">
               {(() => {
                 const showParticipantsTab = isStaff || roomSettings.participants.visible_for_students;
