@@ -139,6 +139,30 @@ function LiveEventLegacy() {
   const hasUnderVideoCta = useHasActiveCtaBindings(eventIdForCta, "under_video");
   const hasSidebarCta = useHasActiveCtaBindings(eventIdForCta, "sidebar");
 
+  // Room settings + entry prefs (Запуск 2)
+  const roomSettings = useMemo(() => readRoomSettings((data as any)?.room_settings), [data]);
+  const { prefs, isLoading: prefsLoading, profileAvatarUrl, profileFullName, upsertPrefs, syncSessionMirror } =
+    useRoomEntryPrefs(data?.event_id);
+  const [entryDialogOpen, setEntryDialogOpen] = useState(false);
+  const [entrySatisfied, setEntrySatisfied] = useState(false);
+
+  // Reconnect contract: prefs already exist → silent mirror to session, skip dialog.
+  useEffect(() => {
+    if (!data?.event_id || prefsLoading) return;
+    if (entrySatisfied) return;
+    const nameRequired = roomSettings.entry.name_required;
+    if (!nameRequired) {
+      setEntrySatisfied(true);
+      return;
+    }
+    if (prefs?.display_name) {
+      // silent resync runtime mirror, then proceed
+      void syncSessionMirror(prefs).finally(() => setEntrySatisfied(true));
+    } else if (state === "live" || state === "room_open_waiting") {
+      setEntryDialogOpen(true);
+    }
+  }, [data?.event_id, prefs, prefsLoading, roomSettings.entry.name_required, state, entrySatisfied, syncSessionMirror]);
+
   const stopHeartbeat = useCallback(() => {
     if (heartbeatRef.current) {
       clearInterval(heartbeatRef.current);
