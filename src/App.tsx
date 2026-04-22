@@ -25,7 +25,6 @@ const Auth = lazy(() => import("./pages/Auth"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const SitePageBySlug = lazy(() => import("./pages/SitePageBySlug"));
 const EmbedFormPage = lazy(() => import("./pages/embed/EmbedFormPage"));
-const T1ProofPage = lazy(() => import("./pages/T1ProofPage"));
 
 // Lazy-loaded pages - code splitting for bundle optimization
 const Accountant = lazy(() => import("./pages/Accountant"));
@@ -322,9 +321,6 @@ const App = () => {
               
               {/* Public embed routes (без AdminLayout, без auth) */}
               <Route path="/embed/form/:pageId/:blockId" element={<LazyRoute><EmbedFormPage /></LazyRoute>} />
-
-              {/* TEMP: T1 overflow proof — remove after T1 closure */}
-              <Route path="/dev/t1-proof" element={<LazyRoute><T1ProofPage /></LazyRoute>} />
 
               {/* Public slug resolution layer — explicit static routes always take priority */}
               <Route path="/:slug" element={<LazyRoute><SitePageBySlug /></LazyRoute>} />
