@@ -1,10 +1,10 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Loader2, Send } from "lucide-react";
+import { Loader2, Send, ArrowDown } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import {
@@ -115,12 +115,55 @@ export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile,
     };
   }, [liveEventId, queryClient]);
 
-  // Auto-scroll
+  // M1.1: smart auto-scroll — only follow if user is already near bottom; otherwise show pill.
+  const [hasNewBelow, setHasNewBelow] = useState(false);
+  const wasNearBottomRef = useRef(true);
+  const lastCountRef = useRef(0);
+
+  const isNearBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }, []);
+
+  const scrollToBottom = useCallback((smooth = true) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+    setHasNewBelow(false);
+  }, []);
+
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      wasNearBottomRef.current = isNearBottom();
+      if (wasNearBottomRef.current) setHasNewBelow(false);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [isNearBottom]);
+
+  // First load — jump to bottom; new messages — follow only if near bottom, else show pill.
+  useEffect(() => {
+    const count = comments?.length ?? 0;
+    const prev = lastCountRef.current;
+    if (count === 0) {
+      lastCountRef.current = 0;
+      return;
     }
-  }, [comments]);
+    if (prev === 0) {
+      // initial load
+      requestAnimationFrame(() => scrollToBottom(false));
+    } else if (count > prev) {
+      if (wasNearBottomRef.current) {
+        requestAnimationFrame(() => scrollToBottom(true));
+      } else {
+        setHasNewBelow(true);
+      }
+    }
+    lastCountRef.current = count;
+  }, [comments, scrollToBottom]);
 
   const { isMuted, isRemoved } = useRoomModerationState(liveEventId, user?.id);
   const isBlocked = isMuted || isRemoved;
