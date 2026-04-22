@@ -1,0 +1,1 @@
+DELETE FROM public.live_event_room_blocks WHERE id = '84f6eb16-0322-43a5-9096-2d38552ee881' AND config->>'proof_tag' = 'T1-OVERFLOW-PROOF-20260422';
