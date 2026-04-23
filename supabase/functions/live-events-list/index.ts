@@ -24,20 +24,21 @@ Deno.serve(async (req) => {
       );
     }
 
-    const token = authHeader.replace('Bearer ', '');
+    const token = authHeader.replace('Bearer ', '').trim();
     const userClient = createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY')!, {
       global: { headers: { Authorization: `Bearer ${token}` } },
     });
-    const { data: { user }, error: authError } = await userClient.auth.getUser();
+    const { data: claimsData, error: authError } = await userClient.auth.getClaims(token);
 
-    if (authError || !user) {
+    if (authError || !claimsData?.claims?.sub) {
+      console.error('[live-events-list] Auth error:', authError);
       return new Response(
         JSON.stringify({ error: 'Неверный токен' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    const userId = user.id;
+    const userId = claimsData.claims.sub;
 
     // Fetch all published events
     const { data: events, error: eventsError } = await supabase
