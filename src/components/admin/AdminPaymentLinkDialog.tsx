@@ -66,18 +66,29 @@ interface AdminPaymentLinkDialogProps {
 type PaymentType = "one_time" | "subscription";
 
 type ResolveSource = "exact" | "primary" | "single";
+type ResolveMode = "canonical" | "override";
 
 interface ResolvedOffer {
   ok: true;
   offer: TariffOffer;
   source: ResolveSource;
-  effectiveType: PaymentType;
-  mismatchedType: boolean;
+  /**
+   * Режим резолва:
+   *  - 'canonical' — найден active pay_now offer ровно того типа, что выбрал админ.
+   *  - 'override'  — exact-match нет; offer используется как источник параметров
+   *                  (цена/описание/product linkage), но payment_type ссылки
+   *                  остаётся равен выбору админа (controlled override).
+   */
+  mode: ResolveMode;
+  /** true только в режиме override — UI показывает явное предупреждение. */
+  isOverride: boolean;
+  /** Тип найденного offer (для отображения «у тарифа есть только …»). */
+  offerType: PaymentType;
 }
 
 interface ResolveBlocked {
   ok: false;
-  reason: "no_active_offers" | "ambiguous_no_primary";
+  reason: "no_active_offers";
   message: string;
 }
 
@@ -85,11 +96,17 @@ type ResolveResult = ResolvedOffer | ResolveBlocked;
 
 /**
  * Канонический резолвер offer для admin payment link.
- * Приоритет (строгий, без эвристик):
- *   1. exact — active pay_now с совпадающим типом (по recurring.is_recurring)
- *   2. primary — is_primary=true среди active pay_now (любого типа)
- *   3. single — единственный active pay_now
- *   4. STOP — несколько active без primary, либо нет ни одного active
+ *
+ * Контракт системы:
+ *  - payment_type ссылки = выбор админа (source of truth).
+ *  - offer = источник параметров тарифа (цена, описание, продукт).
+ *
+ * Режимы:
+ *   A. canonical — exact: active pay_now нужного типа найден.
+ *   B. override  — exact нет, но есть хотя бы один active pay_now offer любого типа.
+ *                  Используем primary / single как источник параметров; payment_type
+ *                  ссылки = desiredType (выбор админа).
+ *   STOP — нет ни одного active pay_now offer (тариф не продаётся).
  */
 function resolveCanonicalOffer(
   allOffers: TariffOffer[] | undefined,
@@ -113,47 +130,35 @@ function resolveCanonicalOffer(
   const offerType = (o: TariffOffer): PaymentType =>
     isOfferSubscription(o) ? "subscription" : "one_time";
 
-  // 1. exact match
+  // A. exact match — режим canonical
   const exact = active.find((o) => offerType(o) === desiredType);
   if (exact) {
     return {
       ok: true,
       offer: exact,
       source: "exact",
-      effectiveType: desiredType,
-      mismatchedType: false,
+      mode: "canonical",
+      isOverride: false,
+      offerType: desiredType,
     };
   }
 
-  // 2. primary fallback (другого типа)
-  const primary = active.find((o) => o.is_primary);
-  if (primary) {
-    return {
-      ok: true,
-      offer: primary,
-      source: "primary",
-      effectiveType: offerType(primary),
-      mismatchedType: true,
-    };
-  }
+  // B. override — берём primary, иначе single, иначе первый active
+  const fallbackOffer =
+    active.find((o) => o.is_primary) ??
+    (active.length === 1 ? active[0] : active[0]);
 
-  // 3. single active
-  if (active.length === 1) {
-    return {
-      ok: true,
-      offer: active[0],
-      source: "single",
-      effectiveType: offerType(active[0]),
-      mismatchedType: true,
-    };
-  }
-
-  // 4. STOP — несколько без primary
   return {
-    ok: false,
-    reason: "ambiguous_no_primary",
-    message:
-      "В тарифе несколько активных кнопок без основной. Назначьте основную кнопку в настройках тарифа.",
+    ok: true,
+    offer: fallbackOffer,
+    source: active.find((o) => o.is_primary)
+      ? "primary"
+      : active.length === 1
+      ? "single"
+      : "primary",
+    mode: "override",
+    isOverride: true,
+    offerType: offerType(fallbackOffer),
   };
 }
 
