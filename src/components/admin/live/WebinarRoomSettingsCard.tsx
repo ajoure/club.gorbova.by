@@ -99,6 +99,7 @@ export function WebinarRoomSettingsCard({ liveEventId }: { liveEventId: string }
       const url = await uploadFile(file, "cover");
       setSettings((p) => patchRoomSettingsSection(p, "prestart", { cover_url: url }));
       toast.success("Обложка загружена");
+      ensurePrestartEnabled("обложка");
     } catch (err: any) {
       toast.error(err.message || "Не удалось загрузить");
     }
@@ -111,6 +112,7 @@ export function WebinarRoomSettingsCard({ liveEventId }: { liveEventId: string }
       const url = await uploadFile(file, "music");
       setSettings((p) => patchRoomSettingsSection(p, "prestart", { music_url: url }));
       toast.success("Музыка загружена");
+      ensurePrestartEnabled("музыка");
     } catch (err: any) {
       toast.error(err.message || "Не удалось загрузить");
     }
@@ -125,6 +127,7 @@ export function WebinarRoomSettingsCard({ liveEventId }: { liveEventId: string }
         gallery: [...p.prestart.gallery, { url, caption: "" }],
       }));
       toast.success("Изображение добавлено в галерею");
+      ensurePrestartEnabled("галерея");
       e.target.value = "";
     } catch (err: any) {
       toast.error(err.message || "Не удалось загрузить");
