@@ -162,7 +162,11 @@ export default function PublicPayPage() {
   const formatPrice = (kopecks: number, currency: string) =>
     `${(kopecks / 100).toFixed(2)} ${currency}`;
 
-  const getCategoryLabel = (category: string | null) => {
+  // Тип ссылки имеет приоритет над категорией продукта.
+  // Иначе one_time-ссылка на subscription-продукт показывалась бы как «Подписка».
+  const getTypeLabel = (paymentType: string, category: string | null) => {
+    if (paymentType === 'one_time') return 'Разовый платёж';
+    if (paymentType === 'subscription') return 'Подписка';
     switch (category) {
       case 'subscription': return 'Подписка';
       case 'course': return 'Курс';
@@ -231,6 +235,7 @@ export default function PublicPayPage() {
 
   const priceFormatted = formatPrice(linkInfo.amount, linkInfo.currency);
   const needsIdentity = linkInfo.requires_identity_input && !user;
+  const isSubscription = linkInfo.payment_type === 'subscription';
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-muted/30 to-background">
@@ -244,7 +249,7 @@ export default function PublicPayPage() {
                 <CreditCard className="h-8 w-8 text-primary" />
               </div>
               <h1 className="text-2xl font-bold mb-2">{linkInfo.product_name}</h1>
-              <p className="text-muted-foreground">{getCategoryLabel(linkInfo.product_category)}</p>
+              <p className="text-muted-foreground">{getTypeLabel(linkInfo.payment_type, linkInfo.product_category)}</p>
             </div>
 
             {linkInfo.description && (
@@ -259,7 +264,11 @@ export default function PublicPayPage() {
               {linkInfo.access_days && (
                 <div className="flex items-center gap-3 text-sm">
                   <Clock className="h-5 w-5 text-primary shrink-0" />
-                  <span>Срок действия: {linkInfo.access_days} дней</span>
+                  <span>
+                    {isSubscription
+                      ? `Срок действия: ${linkInfo.access_days} дней`
+                      : `Доступ на ${linkInfo.access_days} дней`}
+                  </span>
                 </div>
               )}
               <div className="flex items-center gap-3 text-sm">
@@ -270,8 +279,10 @@ export default function PublicPayPage() {
 
             <div className="text-center mb-6">
               <div className="text-4xl font-bold text-primary mb-1">{priceFormatted}</div>
-              {linkInfo.access_days && (
+              {isSubscription && linkInfo.access_days ? (
                 <p className="text-sm text-muted-foreground">за {linkInfo.access_days} дней</p>
+              ) : (
+                <p className="text-sm text-muted-foreground">разовый платёж</p>
               )}
             </div>
 
