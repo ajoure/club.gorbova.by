@@ -1057,23 +1057,13 @@ export default function AdminLiveEvents() {
 
         {/* --- Create/Edit Dialog --- */}
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogContent className="w-[calc(100vw-1rem)] sm:w-[calc(100vw-2rem)] max-w-4xl h-[min(900px,92vh)] p-0 flex flex-col overflow-hidden">
-            <DialogHeader className="px-4 sm:px-6 pt-4 sm:pt-6 pb-3 border-b shrink-0">
+          <DialogContent className="w-[calc(100vw-1rem)] sm:w-[calc(100vw-2rem)] max-w-4xl max-h-[90vh] overflow-y-auto overflow-x-hidden p-3 sm:p-6">
+            <DialogHeader>
               <DialogTitle>{editingId ? "Редактировать эфир" : "Создать эфир"}</DialogTitle>
             </DialogHeader>
 
-            <Tabs defaultValue="basic" className="flex-1 flex flex-col min-h-0 overflow-hidden">
-              <TabsList className="mx-4 sm:mx-6 mt-3 grid grid-flow-row auto-rows-fr gap-1 h-auto p-1 grid-cols-3 sm:grid-cols-6 shrink-0">
-                <TabsTrigger value="basic" className="text-xs">Основное</TabsTrigger>
-                <TabsTrigger value="source" className="text-xs">Источник</TabsTrigger>
-                <TabsTrigger value="access" className="text-xs">Доступ</TabsTrigger>
-                {isLiveStream && <TabsTrigger value="notifications" className="text-xs">Уведомления</TabsTrigger>}
-                <TabsTrigger value="recording" className="text-xs">Запись</TabsTrigger>
-                <TabsTrigger value="publish" className="text-xs">Публикация</TabsTrigger>
-              </TabsList>
-
-            <div className="space-y-6 py-4 px-4 sm:px-6 min-w-0 overflow-x-hidden overflow-y-auto flex-1 [&_*]:min-w-0">
-              {/* legacy single-scroll wrapper kept for fallback content positioning — actual sectioning is via TabsContent below */}
+            <div className="space-y-6 py-2 min-w-0 overflow-x-hidden [&_*]:min-w-0">
+              {/* Step 0: Event type selector (only for new events) */}
 
               {!editingId && (
                 <FormSection title="Тип эфира">
