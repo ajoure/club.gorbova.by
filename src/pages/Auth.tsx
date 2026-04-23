@@ -229,9 +229,14 @@ export default function Auth() {
   const handleSendResetFromExists = async () => {
     setIsSubmitting(true);
     try {
-      await supabase.functions.invoke("auth-actions", {
+      const { data, error } = await supabase.functions.invoke("auth-actions", {
         body: { action: "reset_password", email: existingEmail },
       });
+
+      if (error || (data && typeof data === "object" && "error" in data)) {
+        throw error ?? new Error("reset_failed");
+      }
+
       toast({
         title: "Письмо отправлено",
         description: "Проверьте почту для установки пароля",
@@ -271,6 +276,10 @@ export default function Auth() {
 
       if (error) {
         throw error;
+      }
+
+      if (data && typeof data === "object" && "error" in data) {
+        throw new Error(String(data.error));
       }
 
       toast({
