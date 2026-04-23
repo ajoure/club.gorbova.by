@@ -435,12 +435,19 @@ export function AdminPaymentLinkDialog({
             user_id: userId,
             product_id: selectedProductId,
             tariff_id: selectedTariffId,
-            // СОГЛАСОВАННЫЙ КОНТРАКТ: offer_id и payment_type оба от effective offer
+            // КОНТРАКТ: payment_type = выбор админа (source of truth).
+            // offer_id передаётся как источник параметров; writer не блокирует
+            // по recurring-flag offer'а.
             offer_id: effectiveOffer.id,
             amount: Math.round(amount * 100),
             payment_type: effectivePaymentType,
             description:
               description || `${selectedProduct?.name} — ${selectedTariff?.name}`,
+            // Audit: трассировка режима резолва на стороне writer'а.
+            requested_payment_type: paymentType,
+            resolved_mode: isOverrideMode ? "override" : "canonical",
+            cta_source: "admin_manual",
+            cta_contract_version: 1,
           },
         }
       );
