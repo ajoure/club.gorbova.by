@@ -219,12 +219,14 @@ export function useInlineAuth(initialStep: InlineAuthStep = "email"): UseInlineA
     }
     setIsLoading(true);
     try {
-      const { error: resetError } = await supabase.auth.resetPasswordForEmail(
-        trimmed.toLowerCase(),
-        { redirectTo: `${window.location.origin}/auth?mode=reset` }
-      );
-      if (resetError) {
-        console.error("Password reset error:", resetError);
+      // Canonical recovery path: same `auth-actions` Edge Function used by Auth.tsx
+      // and PaymentDialog. Single source of truth — do NOT call
+      // supabase.auth.resetPasswordForEmail() directly from the client.
+      const { data, error: fnError } = await supabase.functions.invoke("auth-actions", {
+        body: { action: "reset_password", email: trimmed.toLowerCase() },
+      });
+      if (fnError || (data && (data as any).error)) {
+        console.error("Password reset error:", fnError || (data as any).error);
         setError("Не удалось отправить письмо. Попробуйте позже.");
         return false;
       }
