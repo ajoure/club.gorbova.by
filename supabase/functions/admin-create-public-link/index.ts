@@ -29,6 +29,11 @@ interface CreatePublicLinkRequest {
   max_uses?: number | null;
   expires_at?: string | null; // ISO
   user_id?: string | null; // optional pre-assignment
+  // Audit / трассировка контракта (writer не использует для решений, только пишет в audit_logs)
+  requested_payment_type?: 'one_time' | 'subscription';
+  resolved_mode?: 'canonical' | 'override';
+  cta_source?: 'admin_manual' | 'reminder' | 'contact_card' | 'telegram_combined' | string;
+  cta_contract_version?: number;
 }
 
 Deno.serve(async (req) => {
@@ -59,6 +64,7 @@ Deno.serve(async (req) => {
       currency = 'BYN',
       payment_type = 'one_time',
       description = null, max_uses = null, expires_at = null, user_id = null,
+      requested_payment_type, resolved_mode, cta_source, cta_contract_version,
     } = body;
 
     // ── Validate required ──
@@ -71,24 +77,67 @@ Deno.serve(async (req) => {
     }
 
     // ── Validate referential integrity ──
-    const { data: product } = await supabase.from('products_v2').select('id').eq('id', product_id).maybeSingle();
+    const { data: product } = await supabase
+      .from('products_v2').select('id, is_active').eq('id', product_id).maybeSingle();
     if (!product) return errorResponse('Product not found', 400);
+    if (product.is_active === false) return errorResponse('Product is not active', 400);
 
-    const { data: tariff } = await supabase.from('tariffs').select('id, product_id').eq('id', tariff_id).maybeSingle();
+    const { data: tariff } = await supabase
+      .from('tariffs').select('id, product_id, is_active').eq('id', tariff_id).maybeSingle();
     if (!tariff) return errorResponse('Tariff not found', 400);
     if (tariff.product_id !== product_id) {
       return errorResponse('Tariff does not belong to product', 400);
     }
+    if (tariff.is_active === false) return errorResponse('Tariff is not active', 400);
 
+    // ── Override-safety: у тарифа должен существовать хотя бы один active pay_now offer.
+    //    Это защищает от создания one_time ссылки на основе мёртвого/архивного offer'а.
+    //    ВАЖНО: НЕ блокируем по recurring-flag — payment_type ссылки = выбору источника CTA.
+    const { data: anyActiveOffer } = await supabase
+      .from('tariff_offers')
+      .select('id')
+      .eq('tariff_id', tariff_id)
+      .eq('is_active', true)
+      .eq('offer_type', 'pay_now')
+      .limit(1)
+      .maybeSingle();
+    if (!anyActiveOffer) {
+      return errorResponse('Tariff has no active pay_now offer (override forbidden)', 400);
+    }
+
+    // ── Если передан offer_id — он должен быть active pay_now этого тарифа.
+    let offerIsRecurring: boolean | null = null;
     if (offer_id) {
       const { data: offer } = await supabase
-        .from('tariff_offers').select('id, tariff_id').eq('id', offer_id).maybeSingle();
+        .from('tariff_offers')
+        .select('id, tariff_id, is_active, offer_type, meta')
+        .eq('id', offer_id).maybeSingle();
       if (!offer) return errorResponse('Offer not found', 400);
       if (offer.tariff_id !== tariff_id) return errorResponse('Offer does not belong to tariff', 400);
+      if (!offer.is_active) return errorResponse('Offer is not active', 400);
+      if (offer.offer_type !== 'pay_now') return errorResponse('Offer is not a pay_now offer', 400);
+      offerIsRecurring = !!(offer as any).meta?.recurring?.is_recurring;
     }
+
+    // Финальная нормализация audit-полей.
+    const auditRequestedType = requested_payment_type || payment_type;
+    const auditMode: 'canonical' | 'override' =
+      resolved_mode === 'canonical' || resolved_mode === 'override'
+        ? resolved_mode
+        : (offerIsRecurring === null
+            ? 'canonical'
+            : ((offerIsRecurring && payment_type === 'subscription') ||
+               (!offerIsRecurring && payment_type === 'one_time')
+                ? 'canonical'
+                : 'override'));
+    const auditCtaSource = cta_source || 'admin_manual';
+    const auditContractVersion =
+      typeof cta_contract_version === 'number' ? cta_contract_version : 1;
 
     // ── INSERT row in payment_links ──
     // url_token / status='active' / current_uses=0 заполняются server-side defaults.
+    // КОНТРАКТ: payment_links.payment_type = строго равен payment_type из body
+    //           (= выбору админа / источника CTA), без silent derive из offer.recurring.
     const { data: link, error: insertErr } = await supabase
       .from('payment_links')
       .insert({
@@ -118,9 +167,9 @@ Deno.serve(async (req) => {
     const origin = reqOrigin || (reqReferer ? new URL(reqReferer).origin : null) || 'https://club.gorbova.by';
     const public_url = `${origin}/pay/${link.url_token}`;
 
-    // ── Audit ──
+    // ── Audit (proof contract: payment_type / mode / offer_id / tariff_id / cta_source) ──
     await supabase.from('audit_logs').insert({
-      actor_type: 'admin',
+      actor_type: 'user',
       actor_user_id: user.id,
       action: 'payment_link.created',
       actor_label: 'admin-create-public-link',
@@ -128,7 +177,14 @@ Deno.serve(async (req) => {
         payment_link_id: link.id,
         url_token: link.url_token,
         product_id, tariff_id, offer_id: offer_id || null,
-        amount, currency, payment_type,
+        amount, currency,
+        payment_type,                         // фактический payment_type ссылки
+        requested_payment_type: auditRequestedType, // что просил источник CTA
+        resolved_offer_id: offer_id || null,
+        offer_is_recurring: offerIsRecurring, // null если offer не передан
+        resolved_mode: auditMode,             // 'canonical' | 'override'
+        cta_source: auditCtaSource,
+        cta_contract_version: auditContractVersion,
         max_uses, expires_at,
         target_user_id: user_id,
         public_url,
@@ -140,6 +196,12 @@ Deno.serve(async (req) => {
       payment_link_id: link.id,
       url_token: link.url_token,
       public_url,
+      // Proof contract — клиент может мгновенно проверить, что link создан с нужным типом/режимом.
+      payment_type: link.payment_type,
+      resolved_mode: auditMode,
+      offer_id: link.offer_id,
+      tariff_id: link.tariff_id,
+      cta_source: auditCtaSource,
       row: link,
     });
   } catch (e) {

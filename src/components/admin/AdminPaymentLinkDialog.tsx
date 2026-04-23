@@ -66,18 +66,29 @@ interface AdminPaymentLinkDialogProps {
 type PaymentType = "one_time" | "subscription";
 
 type ResolveSource = "exact" | "primary" | "single";
+type ResolveMode = "canonical" | "override";
 
 interface ResolvedOffer {
   ok: true;
   offer: TariffOffer;
   source: ResolveSource;
-  effectiveType: PaymentType;
-  mismatchedType: boolean;
+  /**
+   * Режим резолва:
+   *  - 'canonical' — найден active pay_now offer ровно того типа, что выбрал админ.
+   *  - 'override'  — exact-match нет; offer используется как источник параметров
+   *                  (цена/описание/product linkage), но payment_type ссылки
+   *                  остаётся равен выбору админа (controlled override).
+   */
+  mode: ResolveMode;
+  /** true только в режиме override — UI показывает явное предупреждение. */
+  isOverride: boolean;
+  /** Тип найденного offer (для отображения «у тарифа есть только …»). */
+  offerType: PaymentType;
 }
 
 interface ResolveBlocked {
   ok: false;
-  reason: "no_active_offers" | "ambiguous_no_primary";
+  reason: "no_active_offers";
   message: string;
 }
 
@@ -85,11 +96,17 @@ type ResolveResult = ResolvedOffer | ResolveBlocked;
 
 /**
  * Канонический резолвер offer для admin payment link.
- * Приоритет (строгий, без эвристик):
- *   1. exact — active pay_now с совпадающим типом (по recurring.is_recurring)
- *   2. primary — is_primary=true среди active pay_now (любого типа)
- *   3. single — единственный active pay_now
- *   4. STOP — несколько active без primary, либо нет ни одного active
+ *
+ * Контракт системы:
+ *  - payment_type ссылки = выбор админа (source of truth).
+ *  - offer = источник параметров тарифа (цена, описание, продукт).
+ *
+ * Режимы:
+ *   A. canonical — exact: active pay_now нужного типа найден.
+ *   B. override  — exact нет, но есть хотя бы один active pay_now offer любого типа.
+ *                  Используем primary / single как источник параметров; payment_type
+ *                  ссылки = desiredType (выбор админа).
+ *   STOP — нет ни одного active pay_now offer (тариф не продаётся).
  */
 function resolveCanonicalOffer(
   allOffers: TariffOffer[] | undefined,
@@ -113,47 +130,35 @@ function resolveCanonicalOffer(
   const offerType = (o: TariffOffer): PaymentType =>
     isOfferSubscription(o) ? "subscription" : "one_time";
 
-  // 1. exact match
+  // A. exact match — режим canonical
   const exact = active.find((o) => offerType(o) === desiredType);
   if (exact) {
     return {
       ok: true,
       offer: exact,
       source: "exact",
-      effectiveType: desiredType,
-      mismatchedType: false,
+      mode: "canonical",
+      isOverride: false,
+      offerType: desiredType,
     };
   }
 
-  // 2. primary fallback (другого типа)
-  const primary = active.find((o) => o.is_primary);
-  if (primary) {
-    return {
-      ok: true,
-      offer: primary,
-      source: "primary",
-      effectiveType: offerType(primary),
-      mismatchedType: true,
-    };
-  }
+  // B. override — берём primary, иначе single, иначе первый active
+  const fallbackOffer =
+    active.find((o) => o.is_primary) ??
+    (active.length === 1 ? active[0] : active[0]);
 
-  // 3. single active
-  if (active.length === 1) {
-    return {
-      ok: true,
-      offer: active[0],
-      source: "single",
-      effectiveType: offerType(active[0]),
-      mismatchedType: true,
-    };
-  }
-
-  // 4. STOP — несколько без primary
   return {
-    ok: false,
-    reason: "ambiguous_no_primary",
-    message:
-      "В тарифе несколько активных кнопок без основной. Назначьте основную кнопку в настройках тарифа.",
+    ok: true,
+    offer: fallbackOffer,
+    source: active.find((o) => o.is_primary)
+      ? "primary"
+      : active.length === 1
+      ? "single"
+      : "primary",
+    mode: "override",
+    isOverride: true,
+    offerType: offerType(fallbackOffer),
   };
 }
 
@@ -210,16 +215,24 @@ export function AdminPaymentLinkDialog({
     return resolved.offer;
   }, [resolved, selectedOfferId, allOffers]);
 
-  // Effective payment type: всегда от effective offer (источник истины)
-  const effectivePaymentType: PaymentType = useMemo(() => {
+  // КОНТРАКТ: payment_type ссылки = ВСЕГДА выбор админа (ToggleGroup).
+  // Offer используется только как источник параметров (цена/описание/продукт).
+  // Никаких silent derive из offer.meta.recurring — это и было корнем бага
+  // «выбираю one_time → создаётся subscription».
+  const effectivePaymentType: PaymentType = paymentType;
+
+  // Тип выбранного offer'а (для отображения badge / warning).
+  const effectiveOfferType: PaymentType = useMemo(() => {
     if (!effectiveOffer) return paymentType;
     return effectiveOffer.meta?.recurring?.is_recurring
       ? "subscription"
       : "one_time";
   }, [effectiveOffer, paymentType]);
 
-  const effectiveMismatch =
-    !!effectiveOffer && effectivePaymentType !== paymentType;
+  // Override = выбор админа не совпадает с типом offer'а, но ссылка всё равно
+  // создаётся как payment_type выбранный админом (controlled override).
+  const isOverrideMode =
+    !!effectiveOffer && effectiveOfferType !== effectivePaymentType;
 
   // Список всех active pay_now offers (для select override) — без фильтрации по типу
   const activeOffers = useMemo(
@@ -303,6 +316,10 @@ export function AdminPaymentLinkDialog({
             description:
               description || `${selectedProduct?.name} — ${selectedTariff?.name}`,
             replacement_of_subscription_v2_id: subV2Id,
+            requested_payment_type: paymentType,
+            resolved_mode: isOverrideMode ? "override" : "canonical",
+            cta_source: "admin_manual",
+            cta_contract_version: 1,
           },
         }
       );
@@ -422,12 +439,19 @@ export function AdminPaymentLinkDialog({
             user_id: userId,
             product_id: selectedProductId,
             tariff_id: selectedTariffId,
-            // СОГЛАСОВАННЫЙ КОНТРАКТ: offer_id и payment_type оба от effective offer
+            // КОНТРАКТ: payment_type = выбор админа (source of truth).
+            // offer_id передаётся как источник параметров; writer не блокирует
+            // по recurring-flag offer'а.
             offer_id: effectiveOffer.id,
             amount: Math.round(amount * 100),
             payment_type: effectivePaymentType,
             description:
               description || `${selectedProduct?.name} — ${selectedTariff?.name}`,
+            // Audit: трассировка режима резолва на стороне writer'а.
+            requested_payment_type: paymentType,
+            resolved_mode: isOverrideMode ? "override" : "canonical",
+            cta_source: "admin_manual",
+            cta_contract_version: 1,
           },
         }
       );
@@ -490,6 +514,10 @@ export function AdminPaymentLinkDialog({
             payment_type: effectivePaymentType,
             description:
               description || `${selectedProduct?.name} — ${selectedTariff?.name}`,
+            requested_payment_type: paymentType,
+            resolved_mode: isOverrideMode ? "override" : "canonical",
+            cta_source: "admin_manual",
+            cta_contract_version: 1,
           },
         }
       );
@@ -575,6 +603,10 @@ export function AdminPaymentLinkDialog({
             payment_type: effectivePaymentType,
             description:
               description || `${selectedProduct?.name} — ${selectedTariff?.name}`,
+            requested_payment_type: paymentType,
+            resolved_mode: isOverrideMode ? "override" : "canonical",
+            cta_source: "telegram_combined",
+            cta_contract_version: 1,
           },
         }
       );
@@ -864,28 +896,46 @@ export function AdminPaymentLinkDialog({
                         </SelectContent>
                       </Select>
 
-                      {/* Mismatch banner — fallback другого типа */}
-                      {effectiveMismatch && (
+                      {/* Audit-бейдж режима резолва */}
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-medium",
+                            isOverrideMode
+                              ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                              : "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                          )}
+                        >
+                          <Info className="h-3 w-3" />
+                          {isOverrideMode
+                            ? "Режим: Override"
+                            : "Режим: Точное совпадение"}
+                        </span>
+                        <span className="text-muted-foreground">
+                          Параметры берутся из кнопки «{effectiveOffer?.button_label}».
+                        </span>
+                      </div>
+
+                      {/* Override warning — у тарифа нет кнопки нужного типа,
+                          но ссылка всё равно создастся как payment_type выбора админа. */}
+                      {isOverrideMode && (
                         <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-foreground">
                           <Info className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
                           <p>
-                            Для этого тарифа нет кнопки типа{" "}
+                            У тарифа нет отдельной кнопки типа{" "}
                             <strong>
                               {paymentType === "subscription"
                                 ? "«Подписка»"
                                 : "«Разовая оплата»"}
                             </strong>
-                            . Будет использована{" "}
-                            {resolved.ok && resolved.source === "primary"
-                              ? "основная"
-                              : "единственная активная"}{" "}
-                            кнопка типа{" "}
+                            . Будет создана{" "}
                             <strong>
-                              {effectivePaymentType === "subscription"
-                                ? "«Подписка»"
-                                : "«Разовая оплата»"}
-                            </strong>
-                            .
+                              {paymentType === "subscription"
+                                ? "подписочная"
+                                : "разовая"}
+                            </strong>{" "}
+                            ссылка на основе текущего тарифа (цена, продукт,
+                            описание из кнопки «{effectiveOffer?.button_label}»).
                           </p>
                         </div>
                       )}

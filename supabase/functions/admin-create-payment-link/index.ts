@@ -11,6 +11,11 @@ interface CreatePaymentLinkRequest {
   description?: string;
   offer_id?: string;
   replacement_of_subscription_v2_id?: string;
+  // Audit / трассировка контракта (writer не использует для решений, только пробрасывает)
+  requested_payment_type?: 'one_time' | 'subscription';
+  resolved_mode?: 'canonical' | 'override';
+  cta_source?: 'admin_manual' | 'reminder' | 'contact_card' | 'telegram_combined' | string;
+  cta_contract_version?: number;
 }
 
 Deno.serve(async (req) => {
@@ -47,7 +52,11 @@ Deno.serve(async (req) => {
     }
 
     const body: CreatePaymentLinkRequest = await req.json();
-    const { user_id, product_id, tariff_id, amount, payment_type, description, offer_id, replacement_of_subscription_v2_id } = body;
+    const {
+      user_id, product_id, tariff_id, amount, payment_type, description, offer_id,
+      replacement_of_subscription_v2_id,
+      requested_payment_type, resolved_mode, cta_source, cta_contract_version,
+    } = body;
 
     if (!user_id || !product_id || !tariff_id || !amount) {
       return errorResponse('Missing required fields: user_id, product_id, tariff_id, amount');
@@ -56,13 +65,17 @@ Deno.serve(async (req) => {
     if (amount < 100) {
       return errorResponse('Minimum amount is 100 kopecks (1 BYN)');
     }
+    if (!['one_time', 'subscription'].includes(payment_type)) {
+      return errorResponse('Invalid payment_type');
+    }
 
     // Determine origin for return URL
     const reqOrigin = req.headers.get('origin');
     const reqReferer = req.headers.get('referer');
     const origin = reqOrigin || (reqReferer ? new URL(reqReferer).origin : null) || 'https://club.gorbova.by';
 
-    // Delegate to shared helper (same logic as before, just extracted)
+    // Delegate to shared helper. КОНТРАКТ: payment_type = выбор админа
+    // (source of truth). Helper НЕ derive payment_type из offer.recurring.
     const result = await createPaymentCheckout({
       supabase,
       user_id,
@@ -76,6 +89,12 @@ Deno.serve(async (req) => {
       actor_user_id: user.id,
       actor_type: 'admin',
       replacement_of_subscription_v2_id,
+      meta_extra: {
+        requested_payment_type: requested_payment_type || payment_type,
+        resolved_mode: resolved_mode || 'canonical',
+        cta_source: cta_source || 'admin_manual',
+        cta_contract_version: typeof cta_contract_version === 'number' ? cta_contract_version : 1,
+      },
     });
 
     if (!result.success) {
@@ -94,6 +113,10 @@ Deno.serve(async (req) => {
       order_id: result.order_id,
       order_number: result.order_number,
       payment_type: result.payment_type,
+      // Proof contract — UI/audit может убедиться, что тип совпал с запросом.
+      requested_payment_type: requested_payment_type || payment_type,
+      resolved_mode: resolved_mode || 'canonical',
+      cta_source: cta_source || 'admin_manual',
     });
 
   } catch (error) {
