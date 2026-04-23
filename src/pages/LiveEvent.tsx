@@ -127,7 +127,7 @@ export default function LiveEvent() {
 
 function LiveEventLegacy() {
   const { slug } = useParams<{ slug: string }>();
-  const { session, role } = useAuth();
+  const { session, user, role } = useAuth();
   const [state, setState] = useState<PageState>("loading");
   const [data, setData] = useState<LiveResolveResult | null>(null);
   const { selectedContact, contactSheetOpen, setContactSheetOpen, openContactSheet } = useLiveContactSheet();
