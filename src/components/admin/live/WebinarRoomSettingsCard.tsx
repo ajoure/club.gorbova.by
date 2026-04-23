@@ -27,6 +27,17 @@ export function WebinarRoomSettingsCard({ liveEventId }: { liveEventId: string }
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState<"cover" | "music" | "gallery" | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+
+  // Auto-enable pre-start при первой загрузке материалов / вводе title.
+  // Явный UX-сигнал: toast + Switch визуально переходит в on.
+  const ensurePrestartEnabled = (label: string) => {
+    setSettings((p) => {
+      if (p.prestart.enabled) return p;
+      toast.success(`Pre-start включён автоматически (${label})`);
+      return patchRoomSettingsSection(p, "prestart", { enabled: true });
+    });
+  };
 
   useEffect(() => {
     (async () => {
