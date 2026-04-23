@@ -39,23 +39,20 @@ const PAYMENT_LINKS_QUERY_KEY = ["payment-links-enriched"] as const;
 const FULL_SYNC_MAX_AGE_MS = 5 * 60 * 1000;
 
 async function fetchAllPaymentLinks(): Promise<PaymentLinkRow[]> {
-  const { data, error } = await supabase
-    .from("payment_links_enriched_v" as never)
-    .select("*")
-    .order("created_at", { ascending: false })
-    .limit(1000);
+  const { data, error } = await supabase.rpc(
+    "get_admin_payment_links_v1" as never,
+    { p_since: null, p_limit: 1000 } as never
+  );
 
   if (error) throw error;
   return (data as unknown as PaymentLinkRow[]) || [];
 }
 
 async function fetchPaymentLinksDelta(since: string): Promise<PaymentLinkRow[]> {
-  const { data, error } = await supabase
-    .from("payment_links_enriched_v" as never)
-    .select("*")
-    .gt("updated_at", since)
-    .order("created_at", { ascending: false })
-    .limit(1000);
+  const { data, error } = await supabase.rpc(
+    "get_admin_payment_links_v1" as never,
+    { p_since: since, p_limit: 1000 } as never
+  );
 
   if (error) throw error;
   return (data as unknown as PaymentLinkRow[]) || [];
