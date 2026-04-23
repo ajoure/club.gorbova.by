@@ -148,6 +148,17 @@ function LiveEventLegacy() {
   const eventIdForCta = data?.event_id || "";
   const hasUnderVideoCta = useHasActiveCtaBindings(eventIdForCta, "under_video");
   const hasSidebarCta = useHasActiveCtaBindings(eventIdForCta, "sidebar");
+  // Staff badge: счётчик неотвеченных вопросов для модераторов / ведущего.
+  // Должен вызываться ДО early returns ниже (Rules of Hooks).
+  // RLS на live_event_questions гарантирует, что non-staff увидят только свои → нет утечки.
+  const presenterUserIdForBadge: string | null =
+    ((data as any)?.presenter_user_id as string | null) || null;
+  const isPresenterForBadge =
+    !!user?.id && !!presenterUserIdForBadge && user.id === presenterUserIdForBadge;
+  const unansweredCount = useUnansweredQuestionsCount(
+    eventIdForCta || null,
+    isStaff || isPresenterForBadge,
+  );
 
   // Room settings + entry prefs (Запуск 2)
   // P1 ROOT CAUSE FIX: live-resolve отдаёт уже-распакованный room_settings
@@ -618,8 +629,6 @@ function LiveEventLegacy() {
   // Strictly local to .live-room-themed scope — never leaks globally.
   const roomTheme: any = (data as any)?.room_theme || {};
   const presenterUserId: string | null = (data as any)?.presenter_user_id || null;
-  // Staff badge: счётчик неотвеченных для модераторов / ведущего.
-  // RLS сама ограничивает не-staff (увидят только свои), но enabled-флаг страхует от лишних запросов.
   const isPresenter = !!user?.id && !!presenterUserId && user.id === presenterUserId;
   const unansweredCount = useUnansweredQuestionsCount(eventId, isStaff || isPresenter);
   const liveBadgeMode: LiveBadgeMode = ((data as any)?.live_badge_mode as LiveBadgeMode) || "auto";
