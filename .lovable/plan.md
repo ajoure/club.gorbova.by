@@ -1,284 +1,289 @@
-План:
-
 # да, согласен, с учетом правок:
 
-1. **Privacy-контракт вопросов зафиксируй жёстко.**  
-Сейчас в плане остаётся двусмысленность: “только свои вопросы (или пусто)”.  
-По тексту интерфейса *«Их видят модераторы и ведущий»* нужно принять один контракт и не размывать его:
+1. Добавить отдельный раздел **«План тестов / Verify matrix»** и не оставлять DoD абстрактным. Разбить тесты на 4 зоны:
+  - **Платежи / canonical flow**
+    - сайтовая кнопка для one-time продукта;
+    - сайтовая кнопка для подписки;
+    - ссылка из карточки контакта на тот же продукт/тариф;
+    - сравнение: одинаковый backend owner-path, одинаковый downstream, `orders_v2`, одинаковый tracking pattern.
+  - **MIT-off / recurring-off**
+    - после execute нет новых runtime-вызовов `verify-recurring` / `direct-charge` / MIT paths;
+    - нет новых runtime `card.verification.failed` от активного боевого сценария;
+    - подписочный flow bePaid продолжает работать.
+  - **Telegram-напоминания**
+    - `auto_renew=false` кейсы начали получать reminder;
+    - `auto_renew=true + SBS` кейсы не получили paylink и сохранили старую логику;
+    - тексты различаются правильно.
+  - **Regression**
+    - клуб не сломан;
+    - one-time checkout не сломан;
+    - `/pay/:token` не сломан;
+    - downstream после оплаты не сломан.
+2. Уточнить **проверку дублей** для reminders. Сейчас фраза общая. Нужно явно зафиксировать:
+  - дедуп-проверка по `user_id + event_type + date(created_at)` минимум;
+  - отдельно проверить, что один и тот же пользователь не получает в один день два сообщения из веток:
+    - `auto_renew=true / SBS`
+    - `auto_renew=false / CTA`
+  - отдельно проверить, что после расширения когорты не возникает дубля при повторном запуске cron в тот же день;
+  - в Verify включить SQL before/after:
+    - список пользователей с >1 reminder в день;
+    - ожидание: **0 дублей**.
+3. Сформировать отдельный **grep / inventory checklist** как deliverable, а не «поиск по коду в целом». Прямо перечислить, что нужно проверить и приложить в отчёт:
+  - `payment-method-verify-recurring`
+  - `verify-recurring`
+  - `direct-charge`
+  - `payment-methods-tokenize`
+  - `payment-methods-webhook`
+  - `card.verification.failed`
+  - `recurring`
+  - `MIT`
+  - `savedCard`
+  - `payment_method_id`
+  - `bepaid-create-token`
+  - `bepaid-create-subscription-checkout`
+  - `admin-create-public-link`
+  - `public-checkout`
+  - `/pay/:token`
+  Для каждого найденного entrypoint в отчёте должна быть таблица:
+  - файл / функция;
+  - runtime active или orphan;
+  - current purpose;
+  - should keep / disable / reroute;
+  - доказательство, что после execute он либо отключён, либо идёт в canonical path.
+4. Отдельно определить **acceptance для Елены** как обязательный бизнес-кейс, а не просто «создать ссылку и посмотреть». Нужно зафиксировать:
+  - создать canonical public-link через рабочий owner-flow;
+  - Елена открывает ссылку и доходит минимум до страницы bePaid без fallback;
+  - создаётся `orders_v2`, не legacy `orders`;
+  - в случае отказа провайдера в `orders_v2.meta.last_provider_error` есть реальная причина;
+  - если canonical public-link проходит, а сайтовая кнопка нет — P0 **не закрыт**;
+  - P0 можно закрыть только если:
+    - **и public-link, и сайтовая кнопка** для того же продукта/тарифа у Елены идут по одному owner-path и ведут к одному корректному checkout result.
+5. Разнести **STOP-guards по зонам**, а не держать их общим списком. Сделать 3 блока:
+  &nbsp;
+  **STOP-GUARDS: Payments**
+  - не создавать новых edge functions / новых checkout flows;
+  - не лечить MIT credentials, если MIT выводится из runtime;
+  - не латать legacy-сайтовую ветку как самостоятельный final path;
+  - не закрывать P0 без runtime-proof сайтовой кнопки.
+  **STOP-GUARDS: Reminders**
+  - не отправлять CTA, если нет валидного product/tariff/link;
+  - не выкатывать execute remaining users, если есть дубли;
+  - не менять текстовую логику SBS/non-SBS без proof.
+  **STOP-GUARDS: Workaround / Elena**
+  - workaround через public-link не считается инженерным закрытием P0;
+  - если public-link работает, а сайтовая кнопка нет — задача остаётся открытой;
+  - если и public-link не работает, обязательно фиксировать provider-error, а не закрывать общим fallback.
+6. В DoD по платежам добавить ещё один обязательный пункт:
   &nbsp;
   &nbsp;
-  - обычный участник **не видит список чужих вопросов вообще**;
-  - staff/presenter видит все;
-  - показывать ли автору его собственные вопросы — зафиксируй отдельно как product decision.  
-  Без этого нельзя корректно собрать ни RLS, ни proof.
-2. **Не расширяй** `DELETE policy` **без необходимости.**  
-В этом патче нужен только сценарий `mark-as-answered`.  
-Значит:
-  - `SELECT` — privacy fix;
-  - `UPDATE` — только для staff/presenter;
-  - `DELETE` — не трогать, если нет отдельного требования удалять вопросы.  
-  Иначе лишне расширишь права.
-3. **Для** `mark-as-answered` **лучше не открывать широкий UPDATE на всю таблицу.**  
-Более безопасно:
-  - либо отдельный RPC / edge action `mark_live_question_answered(question_id)`;
-  - либо очень аккуратный UPDATE path, но тогда в отчёте явно указать риск, что staff технически сможет менять и другие поля строки.  
-  Предпочтительно первое.
-4. `Badge новых вопросов` **и** `badge неотвеченных` **— это не одно и то же.**  
-Без отдельного per-staff read cursor / last_seen state ты можешь честно сделать только:
-  - **badge количества неотвеченных**.  
-  Не называй это “новые вопросы”, если не вводится отдельное состояние “последний просмотр staff”. Иначе это будет функциональная ложь.
-5. `is_live_event_presenter(...)` **не придумывать заранее.**  
-Сначала подтвердить реальный SoT:
-  - presenter хранится в `live_events.metadata`;
-  - или в отдельной колонке/связи;
-  - или уже есть общий staff-guard helper.  
-  В плане зафиксируй: использовать **существующий server-side guard**, а не вводить новую функцию, пока не подтверждён источник.
-6. **Realtime-proof должен учитывать RLS, а не только UI.**  
-Обязательно добавь в diagnose/proof:
-  - обычный участник не получает чужие вопросы не только через select, но и через realtime subscription;
-  - staff получает все вопросы и badge обновляется в realtime.  
-  Это ключевой privacy-proof.
-7. **По answered-state добавь индекс/производительность.**  
-Если делаешь badge `WHERE live_event_id = ? AND is_answered = false`, добавь в план:
-  - индекс по `(live_event_id, is_answered)` или эквивалентный частичный индекс.  
-  Иначе на больших эфирах staff-badge будет ненужно дорогим.
-8. **Desktop nickname color сформулируй точнее.**  
-Это не “desktop ветка”, а баг общего chat renderer, где цвет ника в чате не применяется, хотя в participant list применяется.  
-В плане так и напиши:
-  - исправить **chat renderer**;
-  - mobile participant list не трогать;
-  - источник строго `author_nickname_color`.
-9. **Proof regular user view сделай двойным.**  
-Нужно показать:
-  - обычный участник A не видит вопрос участника B;
-  - staff видит оба вопроса.  
-  Одного скрина “вижу только свои” недостаточно.
-10. **В финальном отчёте раздели статусы так:**
+  - **legacy** `orders` **больше не участвует в рабочем сайтовом checkout path**.  
+  Это нужно прописать явно, а не подразумевать через owner-flow.
+7. В DoD по MIT-off добавить явную проверку:
+  - **сохранённая карта остаётся только UX-артефактом / идентификатором, но не триггерит server-side charge ни в одном рабочем сценарии**.  
+  Это должно быть подтверждено grep-таблицей и runtime-proof.
+8. В разделе порядка execute добавить перед S2 короткий шаг:
+  - **сначала зафиксировать canonical owner map в отчёте одной таблицей**:
+    &nbsp;
+    - UI entrypoint
+    - edge function
+    - writer
+    - tracking
+    - downstream
+    - status keep/disable/reroute  
+    Без этой таблицы нельзя начинать execute, иначе снова получится «чиним не тот путь».
+  &nbsp;
+9. В финальный отчёт обязать включить **before/after summary**:
+  - какие active payment paths были до;
+  - какие active payment paths остались после;
+  - какие MIT paths отключены;
+  - сколько пользователей `auto_renew=false` добавилось в reminder cohort;
+  - сколько дублей найдено/осталось;
+  - кейс Елены: before / after / итог.
 
 &nbsp;
 
-- privacy вопросов;
-- badge/count;
-- mark-as-answered;
-- nickname color;
-- что не тронуто;
-- что осталось open.  
-И отдельно укажи, что визуальный баг вкладки “Вопросы” в этот PATCH не входит.
+&nbsp;
 
-11. **Stop-guard дополни:**  
-если для privacy требуется менять не только RLS, но и клиентский UX обычного участника (например, полностью скрывать список и оставлять только форму), это нужно явно зафиксировать до execute, а не решать по ходу.
-12. **DoD уточни формулировкой без двусмысленности:**
+План: восстановление сайтовых платежей + Telegram-напоминаний (v3)
 
-- обычный участник не видит чужие вопросы;
-- staff/presenter видит все вопросы;
-- badge показывает количество **неотвеченных**;
-- mark-as-answered сохраняет статус серверно;
-- цвет ника в чате совпадает с выбранным цветом и не зависит от desktop/mobile.
-- &nbsp;
-- PATCH: Privacy «Вопросов» + Staff-badge + Desktop nickname color
+## Цель патча
 
-## 1. Diagnose (подтверждено tools)
+Вернуть все сайты и UI-кнопки оплаты на тот же рабочий backend payment path, который уже доказан в карточке контакта (admin-create-public-link / canonical owner-flow), без новых функций и без расхождения downstream после оплаты. Параллельно — устранить «исчезновение» Telegram-напоминаний о продлении.
 
-**B1. Privacy «Вопросов» — главный баг (подтверждён в БД):**
+Система должна оперировать только двумя понятными платёжными сценариями:
 
-- RLS SELECT policy `Users with access can read questions` на `public.live_event_questions`:
-  ```
-  USING (user_has_live_event_access(auth.uid(), live_event_id))
-  ```
-  → **любой** участник с доступом к эфиру читает **все** вопросы всех участников.
-- Клиентский query в `src/components/live/LiveEventQuestions.tsx` (строки 66–71) вытягивает все вопросы без фильтра по `user_id`.
-- В UI висит hint «Анонимные вопросы. Их видят модераторы и ведущий» (строка 230) — это сейчас **ложь**, контракт нарушен.
+1. Разовая оплата.
+2. Подписка bePaid с provider-managed автопродлением.
 
-**B2. Staff badge — отсутствует:**
+Всё, что связано с MIT / server-initiated card charges / verify-recurring / direct-charge по сохранённой карте — выводится из боевого контура.
 
-- В `LiveEventQuestions.tsx` нет счётчика неотвеченных, нет источника для badge на вкладке «Вопросы».
-- В таблице есть `is_answered boolean NOT NULL`, нет `answered_at`, нет `answered_by`.
-- Realtime publication на `live_event_questions` уже включён.
-- Кнопка «Отметить как отвечен» сейчас доступна `isStaff` (admin/superadmin/employee) — это ок, но без serverside guard (UPDATE policy = `has_role_v2(auth.uid(),'admin')` — то есть **employee сейчас не может update**, расхождение UI vs RLS).
+---
 
-**B3. Nickname color на desktop:**
+## БЛОК A. Платежи (P0)
 
-- Компонент чата один и тот же для desktop и mobile (`LiveEventComments.tsx`) — нет двух веток.
-- Поле `author_nickname_color` есть в БД, но **не читается** в SELECT (строка 67) и **не применяется** к `<span>` имени (строки 273–279).
-- На mobile цвет, который видит пользователь, скорее всего идёт из `RoomParticipantsList.tsx` (там `nickname_color` уже применяется через inline style). Значит баг — цвет применяется в **списке участников**, но **не в чате**. После фикса будет применяться в обеих поверхностях идентично.
+### A0. Жёсткие правила исполнения (hard rules)
 
-## 2. Scope
+- НЕ создавать новые edge functions, новые payment handlers, новые checkout flow, новые product-specific ветки и обходные схемы.
+- НЕ вводить новый owner-flow.
+- Переиспользовать ТОЛЬКО уже существующий рабочий канонический flow, который используется в карточке контакта / `admin-create-public-link` / `/pay/:token` (см. `mem://commercial-logic/payments/public-link-writer-standard`, `mem://commercial-logic/payments/public-checkout-architecture`, `mem://architecture/payments/one-time-checkout-unification`).
+- НЕ латать legacy-ветку как самостоятельную финальную реализацию: сначала подчинить её рабочему owner-flow, потом доводить логи/UX.
+- Никаких MIT / recurring API / verify-recurring / direct-charge в рабочих flow.
 
-**DB (миграция):**
+### A1. Diagnose (read-only, до любого кода)
 
-- Заменить SELECT policy `live_event_questions` на privacy-safe (staff видит всё, обычный — только свои).
-- Заменить UPDATE/DELETE policies — расширить с `admin` до staff (`admin/superadmin/employee`), чтобы UI и RLS совпадали.
-- Добавить колонки `answered_at timestamptz`, `answered_by uuid`.
+D
 
-**Клиент:**
+1. **Inventory путей оплаты «с сайта»**:
 
-- `src/components/live/LiveEventQuestions.tsx` — убрать ложный hint / переписать его, добавить badge неотвеченных через `useUnansweredQuestionsCount`, расширить SELECT (`author_nickname_color`, `answered_at`, `answered_by`), записывать `answered_at/by` при toggle, сделать визуальное отделение «Отвеченные/Неотвеченные».
-- `src/components/live/LiveEventComments.tsx` — добавить `author_nickname_color` в SELECT и применять inline `style={{ color }}` к имени автора (как уже сделано в `RoomParticipantsList`).
-- Найти место рендера `Tabs` с триггером «Вопросы» (вероятно `src/pages/LiveEvent.tsx` или `src/components/LiveEvent.tsx`) — добавить badge на `TabsTrigger` для staff.
-- Новый хук `src/hooks/useUnansweredQuestionsCount.ts` — staff-only realtime счётчик `WHERE live_event_id=? AND is_answered=false`. Для не-staff хук no-op.
+- Найти все entrypoints в UI (PaymentDialog, тарифные блоки, кнопки на лендингах, /pay/:token, owner-кабинет), которые ведут к созданию заказа/чек-аута.
+- Для каждого entrypoint зафиксировать backend target: какая edge function вызывается, какой writer для `orders_v2`, какой downstream (`grant-access-for-order`, `bepaid-webhook`).
+- Сравнить с каноном «карточки контакта» (admin-create-public-link → /pay/:token → public-checkout). Любое расхождение = legacy-ветка.
 
-**НЕ трогаем:**
+D
 
-- Auth / reset password.
-- Access rules эфиров.
-- `LiveEventReplies` (отдельный поток ответов).
-- Mobile-ветку (её нет — компонент один).
-- Стили вкладки «Вопросы» как таковой (B1 из предыдущей итерации — отдельный визуальный баг, в этом PATCH не закрываем).
+2. **Inventory MIT/recurring runtime**:
 
-## 3. Решение по пунктам
+- grep/discovery по: `payment-method-verify-recurring`, `verify-recurring`, `direct-charge`, `payment-methods-tokenize`, `payment-methods-webhook`, `payment_method_verify`, упоминания `MIT`, `card.verification`, `recurring_charge`, server-side списания по сохранённой карте.
+- Источники: edge functions registry, cron jobs (`cron.job`), вызовы из UI (`supabase.functions.invoke('payment-method-...')`, `supabase.functions.invoke('direct-charge')`), вызовы из других edge functions.
+- Для каждого entrypoint классифицировать: **orphan / активный-но-должен-быть-отключён / активный-как-сохранение-карты-без-списаний**.
 
-### B1. Privacy «Вопросов» (server-side, не только UI)
+D
 
-**Новая RLS SELECT policy:**
+3. **Конкретный кейс «не удалось продолжить оплату»** (скрин Елены):
 
-```sql
-DROP POLICY "Users with access can read questions" ON public.live_event_questions;
+- Подтвердить, какой именно entrypoint вызывался и какой downstream сработал.
+- Зафиксировать факт: pending-заказы создаются в `orders_v2` или в legacy-таблице.
+- Найти последний реальный response от провайдера в `audit_logs` / `function_edge_logs` (без новых логов — только то, что уже есть).
 
-CREATE POLICY "Staff read all, users read own"
-  ON public.live_event_questions FOR SELECT TO authenticated
-  USING (
-    user_has_live_event_access(auth.uid(), live_event_id)
-    AND (
-      auth.uid() = user_id
-      OR has_role_v2(auth.uid(), 'admin')
-      OR has_role_v2(auth.uid(), 'employee')
-      OR is_live_event_presenter(auth.uid(), live_event_id)
-    )
-  );
-```
+D
 
-- Если функции `is_live_event_presenter` нет — создать её на основе `live_events.metadata->>'presenter_user_id'` в той же миграции.
-- INSERT policy не трогаем (она уже корректна).
+4. **Канонический writer/flow**: подтвердить, что работающий путь — `admin-create-public-link` + `/pay/:token` + общий `public-checkout` — реально создаёт `orders_v2` с правильным `meta.payment_flow`, корректно дергает `bepaid-webhook` → `grant-access-for-order`. Это baseline для подчинения остальных веток.
 
-**UPDATE/DELETE policies — расширить до staff:**
+D
 
-```sql
-DROP POLICY "Admins can update questions" ON public.live_event_questions;
-CREATE POLICY "Staff can update questions"
-  ON public.live_event_questions FOR UPDATE TO authenticated
-  USING (
-    has_role_v2(auth.uid(), 'admin')
-    OR has_role_v2(auth.uid(), 'employee')
-    OR is_live_event_presenter(auth.uid(), live_event_id)
-  );
--- аналогично DELETE
-```
+5. **gc_sync_failed** — посмотреть, мелкий ли это шум (NOT P0). Решение по нему — в follow-up, если не тривиально.
 
-**Клиент:**
+### A2. Решения
 
-- Hint переписать: «Ваш вопрос увидят только модераторы и ведущий».
-- SELECT в `LiveEventQuestions.tsx` оставить как есть — RLS сам отфильтрует. Никаких client-side `eq("user_id", ...)`, чтобы не было утечки контракта.
-- Список вопросов у обычного участника: показываем только его собственные (это естественно вытекает из RLS); если их нет — пусто + форма ввода.
+**S1. Подчинение всех сайтовых кнопок каноническому owner-flow**
 
-### B2. Staff badge + answered-state
+- На основе D1: каждая legacy-ветка переключается на тот же backend path, что и карточка контакта.
+- Никаких новых функций. Только перенаправление вызовов на канонический writer/checkout.
+- UI продолжает использовать `normalizeEdgeFunctionError` (см. `mem://ui/standard/error-normalization-standard`), `paymentFallbackResponse` (HTTP 200 + `fallback:true`).
 
-**Миграция:**
+**S2. Вывод MIT / recurring server-side charges из runtime**
 
-```sql
-ALTER TABLE public.live_event_questions
-  ADD COLUMN IF NOT EXISTS answered_at timestamptz,
-  ADD COLUMN IF NOT EXISTS answered_by uuid;
-```
+- На основе D2: все активные entrypoints, делающие MIT-списания / verify-recurring / direct-charge по сохранённой карте, **отключаются** (cron deactivate, удаление вызовов из UI, отключение webhook-обработчиков, относящихся к MIT).
+- Никаких новых полей `recurring_shop_id` / `recurring_secret_key`. Никаких новых конфигурационных сценариев.
+- Если 401 «Authorization Required» возникает в неиспользуемом MIT path — этот path отключается, credentials НЕ лечатся.
+- Сохранённая карта остаётся только как UX-данные/идентификатор:
+  - можно показать пользователю «карта сохранена»;
+  - можно предложить удобную оплату через канонический bePaid flow;
+  - **никаких автоматических списаний** по ней.
 
-**Хук `useUnansweredQuestionsCount(liveEventId, enabled)`:**
+**S3. Усиление логов checkout — ТОЛЬКО после S1**
 
-- `enabled = isStaff`.
-- Query: `select id from live_event_questions where live_event_id=? and is_answered=false`.
-- Realtime подписка на ту же таблицу, инвалидирует count.
-- Для не-staff возвращает `0` без сетевого запроса.
+- После того как все сайтовые кнопки идут через канонический owner-flow, в этом единственном пути добавить запись в `orders_v2.meta.last_provider_error` (status, message, code, request_id) при не-2xx от bePaid, плюс audit `bepaid.checkout.declined`.
+- UI-сообщение пользователю остаётся нормализованным.
+- Запрещено: усиливать логи в legacy-ветках раньше, чем они подчинены канону, — иначе мы лучше логируем сломанный путь, а не устраняем его.
 
-**Badge на `TabsTrigger`:**
+**S4. Кейс Елены — операционный workaround, НЕ инженерное закрытие P0**
 
-- В компоненте, где собраны Tabs «Чат / Вопросы / Участники», обернуть label «Вопросы» во flex с `<Badge variant="default">{count}</Badge>` (или красная точка) при `count > 0` и `isStaff`.
-- Не показываем badge для текущей активной вкладки (опционально).
+- Создать public-link через `admin-create-public-link` (одноразовая, 14 дней, BUSINESS, 250 BYN, recipient = её user_id).
+- Передать ссылку клиенту.
+- **P0 НЕ закрыт** до тех пор, пока сайтовая кнопка для того же продукта/тарифа не пройдёт оплату через тот же backend owner-path, что и эта ссылка, с одинаковым downstream.
 
-**Mark-as-answered:**
+**S5. Разделение в UI/коде «подписка» vs «сохранённая карта»**
 
-- Кнопка остаётся у staff. При клике пишем `is_answered`, `answered_at = now()`, `answered_by = auth.uid()`.
-- В UI секционировать список: «Неотвеченные» (сверху, обычный стиль) → «Отвеченные» (снизу, `opacity-60` + иконка `CheckCircle2`). Заголовки секций показываем только staff (обычный пользователь видит максимум один-два своих).
+- В коде и в текстах:
+  - **подписка** = автопродление через bePaid subscription provider flow;
+  - **сохранённая карта** = сохранённый платёжный инструмент, без server-side charge.
+- Убрать любые UI/тексты, которые создают впечатление, что сохранённая карта сама участвует в автосписании вне подписочного сценария.
 
-### B3. Desktop nickname color
+### A3. STOP-guards (Платежи)
 
-В `LiveEventComments.tsx`:
+- Если в ходе ревизии обнаружится, что сайтовая кнопка идёт не через канонический working flow, а через legacy-ветку → НЕ латать как самостоятельную финальную реализацию; сначала подчинить рабочему owner-flow, потом доводить логи/UX.
+- Если найден активный runtime path с MIT → его сначала отключить/перевести на подписочный flow, а не «починить» recurring API.
+- НЕ лечить recurring creds, если MIT выключается как ненужный сценарий.
+- НЕ внедрять новые recurring-конфиги и не расширять интеграцию bePaid под MIT.
+- Если выяснится, что какой-то критичный flow реально опирался на MIT (например, продление клуба) — остановиться и согласовать миграцию его на подписочный flow до отключения MIT.
 
-- В SELECT добавить `author_nickname_color`.
-- В рендере имени:
-  ```tsx
-  <span
-    className="..."
-    style={comment.author_nickname_color ? { color: comment.author_nickname_color } : undefined}
-  >
-  ```
-- Никаких эвристик; источник — строго `author_nickname_color` (snapshot в комментарии). Theme комнаты не перебивает (inline style имеет приоритет).
-- Аналогично для `LiveEventQuestions.tsx` (имена авторов вопросов — для staff, который их видит).
+### A4. DoD (Платежи)
 
-## 4. Файлы
+- Для одного и того же продукта/тарифа/offer:
+  - ссылка из карточки контакта — success;
+  - сайтовая кнопка — после фикса тоже success;
+  - обе идут по одному backend owner-path / одному downstream;
+  - создаётся запись в `orders_v2`, а не в legacy `orders`.
+- В рабочих flow больше нет вызовов MIT recurring API.
+- Нет cron/edge/job, которые пытаются автоматически списывать деньги по сохранённой карте.
+- Автопродление работает только через bePaid subscription flow.
+- Сохранённая карта больше не используется как источник server-side charge.
+- 401 по recurring path либо исчезает из runtime, либо остаётся только в отключённом legacy/orphan коде, исключённом из боевого контура.
+- В каноническом checkout-пути появляется `orders_v2.meta.last_provider_error` при отказах bePaid; audit `bepaid.checkout.declined` присутствует.
 
-**Изменяемые:**
+---
 
-- `supabase/migrations/<new>.sql` — RLS + колонки.
-- `src/components/live/LiveEventQuestions.tsx`
-- `src/components/live/LiveEventComments.tsx`
-- `src/hooks/useUnansweredQuestionsCount.ts` (новый)
-- Файл с `Tabs` для комнаты (определю в execute — вероятно `src/pages/LiveEvent.tsx`).
+## БЛОК B. Telegram-напоминания (P1)
 
-**Не изменяемые:**
+### B1. Diagnose (read-only)
 
-- `LiveEventReplies.tsx`, `RoomParticipantsList.tsx`, auth-flow, access-rules.
+- Подтверждено: cron `subscription-renewal-reminders` работает; фильтр `.eq('auto_renew', true)` исключает ~22% активных подписок (`auto_renew=false`).
+- Дополнительно проверить ключи дедупликации `wasReminderSentToday` (по `event_type` и `user_id+window`), чтобы расширение когорты не привело к дублям.
 
-## 5. Порядок execute
+### B2. Решения
 
-1. Миграция: новые RLS-полиси SELECT/UPDATE/DELETE + колонки `answered_at/by`.
-2. Клиент: privacy hint + расширенный select (`author_nickname_color, answered_at, answered_by`) + answered-секции.
-3. Новый хук `useUnansweredQuestionsCount`.
-4. Badge на `TabsTrigger` «Вопросы» (staff-only).
-5. Nickname color в `LiveEventComments` и `LiveEventQuestions`.
-6. Verify по DoD.
+**B-S1. Расширение когорты + правильный текст**
 
-## 6. STOP-guards
+- В `supabase/functions/subscription-renewal-reminders/index.ts` снять `.eq('auto_renew', true)` для окон 7/3/1 дней.
+- Продуктовая логика текста (жёстко):
+  - `auto_renew = true` И активная SBS → текущий текст «продлится автоматически …», без paylink.
+  - `auto_renew = false` (или нет активной SBS) → ДРУГОЙ текст: «Автопродление отключено. Доступ закончится через N дней.» + 2 CTA (one-time + subscription) через `generateRenewalCTAs`.
+  - Запрещено: текст «спишется автоматически» там, где автопродление выключено.
+- Дедупликация: убедиться, что `wasReminderSentToday` корректно покрывает обе ветки и не допускает повторной отправки в один день.
 
-Остановиться и вернуться с мини-планом, если:
+**B-S2. gc_sync_failed**
 
-- Функции `is_live_event_presenter` нет и при создании выяснится, что `presenter_user_id` хранится не в `metadata`, а в отдельной колонке/связи (требует уточнения SoT).
-- В `live_event_questions` есть зависимые view/RPC (например, `get_live_event_thread`), которые ломаются после ужесточения SELECT (нужна сверка).
-- В UI есть второе место, читающее `live_event_questions` для обычного пользователя (CRM `ContactWebinarsTab` — staff-only, ок; `LiveEventExportButtons` — staff-only, ок).
+- Не P0. В этом проходе чиним только если это тривиальный шумовой fix (подавить error-level для `attempt < 3` в `bepaid-webhook`). Иначе — follow-up.
 
-## 7. DoD
+### B3. STOP-guards (Напоминания)
 
-**Privacy:**
+- Если расширение когорты приводит к дублям в один день → остановиться, доработать дедупликацию до execute remaining users.
+- Если для `auto_renew=false` нет валидного product/tariff для CTA-ссылки → остановиться, не отправлять «пустые» кнопки.
 
-- Обычный участник видит во вкладке «Вопросы» только свои вопросы (или пусто) + форму отправки.
-- Staff (admin/superadmin/employee) и presenter видят все вопросы текущего эфира.
-- Защита на RLS, не только в UI.
+### B4. DoD + Verify (Напоминания)
 
-**Badge:**
+Качественный verify (а не только количество SEND_REMINDER):
 
-- Staff видит счётчик неотвеченных на `TabsTrigger` «Вопросы», обновляется в realtime, сбрасывается при mark-as-answered.
-- Обычный участник badge не видит.
+- ≥3 реальных кейса `auto_renew=false`, которые раньше не получали reminder, а после фикса получили — со скринами/SQL-фактом.
+- ≥2 кейса `auto_renew=true` с активной SBS, где поведение не изменилось (текст без paylink).
+- Отсутствие дублей в один день по тем же пользователям (SQL-проверка по `audit_logs` event_type + user_id + date).
+- Тексты соответствуют продуктовой логике (auto_renew on/off — разные формулировки).
 
-**Answered:**
+---
 
-- Staff может отметить вопрос как отвечен; пишутся `is_answered`, `answered_at`, `answered_by`.
-- В списке отвеченные визуально отделены от неотвеченных.
+## Порядок execute (строго)
 
-**Nickname color:**
+1. **Diagnose платежей** (A1: D1–D5) — read-only inventory; результат: список legacy-веток + список MIT runtime entrypoints с классификацией.
+2. **Платежи S2**: отключение MIT runtime (cron deactivate + удаление вызовов в UI/edge). Никаких новых полей.
+3. **Платежи S1**: подчинение всех сайтовых кнопок каноническому owner-flow.
+4. **Платежи S3**: усиление логов в едином каноническом пути.
+5. **Платежи S5**: разделение UI «подписка» vs «сохранённая карта» (правка текстов/состояний, без новых функций).
+6. **Платежи S4**: операционный workaround для Елены — public-link.
+7. **Напоминания B-S1**: расширение когорты + раздельные тексты + дедупликация.
+8. **Напоминания B-S2** (опционально, если тривиально): подавление gc_sync_failed шума.
+9. **Verify**:
+  - Платежи: тестовая оплата сайтовой кнопкой и ссылкой из карточки — оба идут в `orders_v2`, downstream одинаковый.
+  - MIT: SQL-факт, что в audit за сутки нет новых `card.verification.failed` от runtime path.
+  - Напоминания: 3+/2+ кейсов, нет дублей.
 
-- В desktop-чате цвет ника совпадает с тем, что выбран в `RoomEntryDialog` и виден в списке участников.
-- Источник — `author_nickname_color` snapshot.
+---
 
-## 8. Proof
+## Объяснение «как это получилось» (для отчёта пользователю)
 
-1. Скрин: Staff view — все вопросы + badge + mark-as-answered до/после.
-2. Скрин: Regular user view — только свои вопросы + hint про приватность.
-3. SQL-proof: новые RLS-полиси (`pg_policy`) и попытка SELECT под обычным юзером (другого `user_id`) возвращает 0 строк.
-4. Скрин: desktop-чат с разноцветными никами одного эфира.
+- **Платежи**: со временем рядом с каноническим owner-flow (карточка контакта → admin-create-public-link → /pay/:token) развились параллельные сайтовые ветки и MIT-сценарий (server-side списания через verify-recurring / direct-charge). MIT-ветка получает 401 от bePaid (creds/права/конфигурация магазина) и фейлит автосписания. Часть сайтовых кнопок идёт по этим параллельным путям и потому даёт «не удалось продолжить оплату». Лечение — не «починить MIT», а вернуть всё на один канонический owner-flow и убрать MIT из боевого контура. Автопродление остаётся только через bePaid subscription flow.
+- **Напоминания**: cron работал всегда, но фильтр `auto_renew=true` исторически исключал отключивших автоплатёж — именно тех, кому напоминания нужнее всего. Внешне это выглядело как «уведомления исчезли».
 
-## 9. Финальный отчёт (структура)
+## Финальная фраза для исполнителя
 
-Раздельные блоки:
-
-- **Privacy вопросов** — что изменено в RLS и UI.
-- **Staff badge / mark-as-answered** — что добавлено в schema, hook, Tabs.
-- **Desktop nickname color** — что добавлено в SELECT и рендер.
-- **Что не тронуто** — auth, access rules, mobile, стили вкладки.
-- **Open / deferred** — визуальный «тень»-баг вкладки «Вопросы» (B1 предыдущей итерации) и звуковой сигнал — не входят в этот PATCH.
+Цель этого патча — не «улучшить симптомы», а вернуть все сайты на тот же рабочий backend payment path, который уже доказан в карточке контакта, без новых функций и без расхождения downstream после оплаты; и одновременно вывести MIT/recurring server-side charges из боевого контура — оставить только разовую оплату и подписочный bePaid flow.
