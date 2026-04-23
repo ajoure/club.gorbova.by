@@ -316,6 +316,10 @@ export function AdminPaymentLinkDialog({
             description:
               description || `${selectedProduct?.name} — ${selectedTariff?.name}`,
             replacement_of_subscription_v2_id: subV2Id,
+            requested_payment_type: paymentType,
+            resolved_mode: isOverrideMode ? "override" : "canonical",
+            cta_source: "admin_manual",
+            cta_contract_version: 1,
           },
         }
       );
