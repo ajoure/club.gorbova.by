@@ -335,10 +335,9 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
         {user && (
           <div className="room-composer border-t lg:sticky lg:bottom-0 z-10 room-panel-sticky">
             <LiveModerationBanner isMuted={isMuted} isRemoved={isRemoved} />
-            <div
-              className="flex gap-2 items-end p-3 room-panel-input"
-              style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
-            >
+            {/* K1: убран дублирующий env(safe-area-inset-bottom) — safe-area уже учтён
+                на внешнем .room-composer через bottom: max(safe-area, vv-offset). */}
+            <div className="flex gap-2 items-end p-3 room-panel-input">
               <LiveAutoGrowTextarea
                 value={newQuestion}
                 onChange={setNewQuestion}

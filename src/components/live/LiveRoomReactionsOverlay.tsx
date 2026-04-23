@@ -57,11 +57,15 @@ export function LiveRoomReactionsOverlay({
             animationDuration: `${r.ttl}ms`,
             opacity: 0.55,
             filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.35))",
+            // K3: явный pointer-events:none на каждом дочернем span — Safari иногда
+            // нарушает наследование pointer-events на inline-flex, что приводит к
+            // перехвату tap'ов поверх Kinescope iframe (controls/fullscreen).
+            pointerEvents: "none",
           }}
         >
-          <span>{r.emoji}</span>
+          <span style={{ pointerEvents: "none" }}>{r.emoji}</span>
           {r.count > 1 && (
-            <span className="text-[10px] font-semibold opacity-80 ml-0.5">
+            <span className="text-[10px] font-semibold opacity-80 ml-0.5" style={{ pointerEvents: "none" }}>
               ×{r.count}
             </span>
           )}
