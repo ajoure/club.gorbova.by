@@ -34,15 +34,17 @@ Deno.serve(async (req) => {
       return jsonResponse({ status: 'auth_required' }, 401);
     }
 
-    const jwtToken = authHeader.replace('Bearer ', '');
+    const jwtToken = authHeader.replace('Bearer ', '').trim();
     const userClient = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: `Bearer ${jwtToken}` } },
     });
-    const { data: { user }, error: authError } = await userClient.auth.getUser();
+    const { data: claimsData, error: authError } = await userClient.auth.getClaims(jwtToken);
 
-    if (authError || !user) {
+    if (authError || !claimsData?.claims?.sub) {
+      console.error('[live-session-heartbeat] Auth error:', authError);
       return jsonResponse({ status: 'auth_required' }, 401);
     }
+    const user = { id: claimsData.claims.sub as string };
 
     const body = await req.json().catch(() => ({}));
     const session_key: string | undefined = body?.session_key;
