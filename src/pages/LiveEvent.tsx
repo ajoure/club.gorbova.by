@@ -630,7 +630,6 @@ function LiveEventLegacy() {
   const roomTheme: any = (data as any)?.room_theme || {};
   const presenterUserId: string | null = (data as any)?.presenter_user_id || null;
   const isPresenter = !!user?.id && !!presenterUserId && user.id === presenterUserId;
-  const unansweredCount = useUnansweredQuestionsCount(eventId, isStaff || isPresenter);
   const liveBadgeMode: LiveBadgeMode = ((data as any)?.live_badge_mode as LiveBadgeMode) || "auto";
   const themeStyle: React.CSSProperties = {
     ['--room-bg' as string]: roomTheme.background_color || undefined,
