@@ -198,12 +198,39 @@ export function WebinarRoomSettingsCard({ liveEventId }: { liveEventId: string }
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
+          <p className="text-[11px] text-muted-foreground -mt-1">
+            Экран показывается до старта эфира (когда <code className="text-[10px]">scheduled_at</code> ещё не наступил).
+            Загрузка обложки/музыки/галереи автоматически включает этот экран.
+          </p>
+
+          {/* Inline-warning: материалы загружены, но фича выключена вручную */}
+          {!settings.prestart.enabled && (settings.prestart.cover_url || settings.prestart.music_url || settings.prestart.gallery.length > 0 || settings.prestart.title) && (
+            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-700 dark:text-amber-300">
+              Вы загрузили материалы pre-start, но экран ещё не включён — переключите тогл выше.
+            </div>
+          )}
+
+          <div className="flex justify-end">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs gap-1"
+              onClick={() => setPreviewOpen(true)}
+            >
+              <Eye className="h-3 w-3" /> Предпросмотр
+            </Button>
+          </div>
+
           <div>
             <Label className="text-xs">Заголовок</Label>
             <Input
               className="h-8 text-xs"
               value={settings.prestart.title || ""}
-              onChange={(e) => setSettings((p) => patchRoomSettingsSection(p, "prestart", { title: e.target.value }))}
+              onChange={(e) => {
+                const v = e.target.value;
+                setSettings((p) => patchRoomSettingsSection(p, "prestart", { title: v }));
+                if (v.trim().length > 0) ensurePrestartEnabled("заголовок");
+              }}
               placeholder="Скоро начало вебинара"
             />
           </div>
