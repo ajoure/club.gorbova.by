@@ -482,21 +482,21 @@ export default function Auth() {
   );
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden">
+    <div className="relative flex min-h-[100dvh] items-start justify-center overflow-x-hidden overflow-y-auto p-4 py-6 sm:items-center sm:py-4">
       {/* Background gradient */}
       <div 
-        className="absolute inset-0 -z-10"
+        className="pointer-events-none absolute inset-0 -z-10"
         style={{
           background: "linear-gradient(135deg, hsl(217 91% 60% / 0.1), hsl(240 80% 65% / 0.1))",
         }}
       />
       
       {/* Animated background shapes */}
-      <div className="absolute top-1/4 -left-20 w-96 h-96 rounded-full bg-primary/10 blur-3xl animate-pulse" />
-      <div className="absolute bottom-1/4 -right-20 w-96 h-96 rounded-full bg-accent/10 blur-3xl animate-pulse delay-1000" />
+      <div aria-hidden="true" className="pointer-events-none absolute top-1/4 -left-20 -z-10 h-96 w-96 rounded-full bg-primary/10 blur-3xl animate-pulse" />
+      <div aria-hidden="true" className="pointer-events-none absolute bottom-1/4 -right-20 -z-10 h-96 w-96 rounded-full bg-accent/10 blur-3xl animate-pulse delay-1000" />
 
       {/* Glass card */}
-      <div className="w-full max-w-md">
+      <div className="relative z-10 w-full max-w-md">
         <div 
           className="rounded-3xl p-8 shadow-2xl border border-border/50"
           style={{
