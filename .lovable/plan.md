@@ -1,95 +1,151 @@
 да, согласен, с учетом правок:
 
-1. **58svh из плана убери.**  
-Это значение почти наверняка ничего не изменит: текущий video-shell на iPhone уже визуально ниже этого порога.  
-В плане зафиксируй так:  
-**«ограничить mobile top media stack более жёстко, стартовое значение подбирать в диапазоне 36–40svh, а не 58svh»**.
-2. **Ограничение вешать не вслепую на data-video-shell, а на тот wrapper, который реально съедает высоту.**  
-Если data-video-shell = только чёрное видео, а reactions bar идёт отдельным sibling, то budget надо считать **вместе с reactions bar**, иначе composer всё равно может не влезть.
-3. **Acceptance дополни двумя обязательными пунктами:**
-  - в initial high-state **полностью видны** composer и **нижние скругления** chat panel;
-  - последнее сообщение **полностью читается над composer**, без ощущения, что низ панели “обрезан”.
-4. **Proof-пакет зафиксируй отдельно для 4 состояний:**  
+1. Не снимай безусловно guard (state === "room_open_waiting" || isWaiting) для боевого рендера всем пользователям.  
+Правильнее разделить:  
 
-  - Safari initial high-state;
-  - Safari after collapse header;
-  - PWA standalone initial high-state;
-  - PWA standalone after collapse header.  
-  Плюс один desktop regression screenshot.
-5. **Stop-guard явно допиши:**
-  - не трогать текущую логику composer;
-  - не откатывать 100svh;
-  - не возвращать fixed-gap хаки;
-  - менять только высотный budget верхнего media stack.
+  - **runtime pre-start для пользователей** — показывать только в ожидающем состоянии до старта;
+  - **preview для админа** — отдельный явный режим предпросмотра в админке, который не зависит от scheduled_at и lifecycle state.  
+  Иначе можно случайно показать pre-start там, где комната уже не должна его показывать.
+2. В diagnose явно зафиксируй **главную причину бага** как комбинацию условий:
+  - prestart.enabled === false по умолчанию;
+  - пользователь загружает cover/music, но не включает toggle;
+  - runtime-рендер ещё и зависит от scheduled_at > now() и waiting-state.  
+  То есть баг не в upload bucket и не в live-resolve, а в **UX-контракте включения + слишком жёстком условии показа**.
+3. Для музыки обязательно добавь отдельный пункт про **browser autoplay restrictions**.  
+На iOS/Safari и части desktop-браузеров музыка без user gesture часто не стартует.  
+Поэтому DoD должен быть таким:
+  - музыка гарантированно **готова** и управляется;
+  - автозапуск делать только если браузер разрешил;
+  - если не разрешил — показать красивую кнопку Включить музыку, а не считать это багом.  
+  Иначе подрядчик снова скажет «не работает», хотя это ограничение платформы.
+4. В WebinarRoomSettingsCard.tsx не делай авто-включение слишком скрытым.  
+Нужно:
+  - либо **авто-включить и явно показать toast + визуально перевести toggle в on**;
+  - либо при загрузке cover/music/title показать inline-warning:  
+  Вы загрузили материалы pre-start, но экран ещё не включён.  
+  Первый вариант ок, но UX-сигнал обязателен.
+5. Preview в админке должен быть **на тех же данных и тем же компонентом**, но в отдельном admin-only режиме.  
+Добавь явный contract:
+  - preview не зависит от scheduled_at > now();
+  - preview не пишет ничего в runtime state;
+  - preview использует тот же RoomPreStartScreen, а не отдельную копию разметки.
+6. В редизайне pre-start добавь отдельный fallback для случаев:
+  - нет cover;
+  - нет title;
+  - нет music;
+  - scheduled_at отсутствует.  
+  Нельзя допускать пустой/сломанный экран.  
+  Нужны безопасные значения:
+  - дефолтный title;
+  - скрытие countdown при отсутствии даты;
+  - скрытие music pill при отсутствии audio.
+7. В плане verify добавь **минимум 4 proof-сценария**:
+  - cover + title + future scheduled_at + enabled=true → pre-start виден;
+  - cover загружен, но enabled=false → в админке есть явный warning/auto-enable signal;
+  - preview в админке работает независимо от времени;
+  - музыка в Safari/iPhone: либо стартует по user gesture, либо корректно показывает кнопку запуска без ошибок.
+8. Не пиши, что edge/functions не нужны, пока не проверен источник event_timezone и структура room_settings end-to-end на proof.  
+Формулировка должна быть мягче:  
+по текущему discovery миграции и edge-правки не требуются, если verify подтвердит, что room_settings/event_timezone уже проходят end-to-end без потерь.
+9. В DoD добавь отдельный пункт про **обложку именно в runtime-комнате**, а не только в preview:
+  - до старта эфира пользователь видит cover screen;
+  - после старта pre-start исчезает и не перекрывает live player.
+10. В финальном отчёте потребуй явное разделение:
 
 &nbsp;
 
-Итог: сам подход верный, но **ключевая правка — убрать 58svh и заменить на реальный рабочий cap для mobile top stack**. Без этого план может пройти, а визуально не поменяется вообще.
+- что исправлено в логике включения;
+- что исправлено в UX админки;
+- что исправлено в runtime pre-start;
+- что подтверждено только preview;
+- что подтверждено в реальной комнате до старта.
+
+Если хочешь, следующим сообщением я сожму это в готовый короткий блок для вставки в Lovable.
 
 &nbsp;
 
-# План: PATCH K2.1 — chat panel reachability в initial high-state
+# План: починить pre-start screen эфира (обложка + музыка + обратный отсчёт)
 
-## Проблема (точная локализация)
+## Diagnose — что нашёл
 
-`src/pages/LiveEvent.tsx:679` — `data-mobile-sticky-main` на mobile имеет `max-lg:h-[100svh]`. В initial high-state ВНУТРИ этой sticky-области последовательно расположены flex-column'ом:
+**Файлы:**
 
-1. Header-spacer (`Тест Сергей … LIVE … Эфир …`)
-2. `data-video-shell` (video + reactions bar) — `shrink-0`, занимает ~50–55% высоты
-3. Card chat-panel (`flex-1`)
+- Админка: `src/components/admin/live/WebinarRoomSettingsCard.tsx` — корректно загружает файлы в bucket `webinar-prestart` и пишет URL в `metadata.room_settings.prestart.{cover_url, music_url, gallery}`.
+- Хранилище: `live_events.metadata.room_settings.prestart` (SoT).
+- Pass-through: `supabase/functions/live-resolve/index.ts` уже возвращает `room_settings` клиенту.
+- Рендер: `src/components/live/RoomPreStartScreen.tsx` — корректно показывает обложку, таймер, музыку.
+- Подключение: `src/pages/LiveEvent.tsx` стр. 686.
 
-При `100svh` суммарной высоты не хватает: video + reactions + tabs + ~5 сообщений + composer не помещаются. Card получает `flex-1` от остатка → его нижняя часть (composer) уезжает за нижний край viewport. Видны только верхние скругления input — это и есть симптом со скрина IMG_3691.
+**Условие отображения сейчас:**
 
-После collapse header'а sticky-main приклеивается к `top:0` под notch — высоты становится достаточно, всё видно (IMG_3692).
+```ts
+roomSettings.prestart.enabled
+  && data?.scheduled_at
+  && new Date(data.scheduled_at).getTime() > Date.now()
+  && (state === "room_open_waiting" || isWaiting)
+```
 
-## Решение
+**Корневые причины бага «загрузил обложку — ничего не меняется»:**
 
-Card chat-panel должна иметь **гарантированный нижний край внутри viewport** даже в initial high-state. Два варианта:
+1. **Главная.** Отображение завязано на `prestart.enabled === true`. В DEFAULT_ROOM_SETTINGS он `false`. Пользователь грузит cover/music/title, жмёт Save, но если не переключил «Включить pre-start» — экран не появляется. Нет визуальной связки в админке (нет hint/auto-enable).
+2. **Вторая.** Условие требует `scheduled_at > now()`. Для уже идущего/прошедшего эфира pre-start screen не покажется в принципе — даже как preview, и для админа в режиме «room_open_waiting», если `scheduled_at` в прошлом.
+3. **Третья.** В админке нет «Предпросмотра» — нельзя проверить, как выглядит итог, без открытия комнаты в правильном временном окне. Отсюда впечатление «не работает».
+4. **Дизайн.** Текущий заголовок и таймер выглядят бедно: одинарный drop-shadow, нет градиента-вуали под текст, обратный отсчёт без явных «капсул» дн/ч/мин/сек, нет подписи даты/времени.
 
-**Вариант A (минимальный, рекомендуемый):** ограничить высоту video-shell на mobile через `max-height`, чтобы Card chat-panel всегда получала минимум ~40% viewport под себя.
+## Plan — что меняем
 
-- В `LiveEvent.tsx:681` добавить mobile-only style для `data-video-shell`: `max-h-[55svh]` или `max-h-[50svh]`. Видео сжимается пропорционально (aspect-video сохраняется через player), reactions bar остаётся, Card получает оставшуюся высоту — composer виден без скролла.
+### 1. Auto-enable + явный UX-сигнал (админка)
 
-**Вариант B:** дать Card явный `min-height` на mobile, чтобы flex выжимал из video-shell остаток.
+`WebinarRoomSettingsCard.tsx`:
 
-- `min-h-[40svh]` на Card (`LiveEvent.tsx:736`). Менее предсказуемо при разных aspect ratios видео.
+- При успешной загрузке cover/music ИЛИ при заполнении title — если `prestart.enabled === false`, авто-включить тогл и показать toast «Pre-start включён».
+- Под тоглом «Включить pre-start» добавить hint: «Экран показывается до старта эфира (когда `scheduled_at` ещё не наступил)».
+- Добавить кнопку **«Предпросмотр»** — открывает `Dialog` с `<RoomPreStartScreen prestart={settings.prestart} scheduledAt={...через 2 минуты...} />`, чтобы видеть результат сразу.
 
-Выбираю **Вариант A** — он управляет именно той частью, которая «съедает» высоту (video + reactions), и не ломает desktop (правило scoped через `max-lg:`).
+### 2. Условие показа в комнате
 
-## Изменения
+`src/pages/LiveEvent.tsx` стр. 686:
 
-`**src/pages/LiveEvent.tsx:681**` — добавить `max-lg:max-h-[58svh]` к `data-video-shell` className. 58svh = video (aspect-video на 518px ширине ≈ 290px) + reactions bar (50px) + room blocks (если есть). Card получит ≥42svh — этого хватает на tabs + 3-4 сообщения + composer.
+- Оставить требование `prestart.enabled` (это «вкл/выкл фичи»).
+- Снять требование `state === "room_open_waiting" || isWaiting` для случая, когда `scheduled_at > now()` — pre-start логично показывать всегда до начала, независимо от внутреннего lifecycle-состояния (если фича включена и есть будущая дата старта).
+- Если `scheduled_at` пуст или в прошлом — показ pre-start пропускается (нынешнее поведение остаётся).
 
-## Acceptance criteria
+### 3. Редизайн pre-start screen (дорого, аккуратно)
 
-A. iPhone Safari, initial high-state (header виден):
+`src/components/live/RoomPreStartScreen.tsx`:
 
-- Card chat-panel полностью в viewport: видны tabs, последние сообщения, composer и нижние скругления панели.
-- Без скролла страницы.
+- Двойная вуаль: верхний `bg-gradient-to-b from-black/10 via-black/30 to-black/70` поверх обложки → читаемость текста на любом фоне.
+- Заголовок: `text-3xl md:text-5xl font-semibold tracking-tight` + `text-shadow` через `[text-shadow:_0_2px_24px_rgba(0,0,0,0.5)]`.
+- Под заголовком — строка «Старт: 24 апреля, 19:00 (Europe/Minsk)» (из `scheduledAt` + `event_timezone`).
+- Обратный отсчёт — 4 «капсулы» (дни/часы/минуты/секунды) с `backdrop-blur-md bg-white/10 border border-white/15 rounded-2xl`, числа `text-4xl md:text-6xl font-semibold tabular-nums`, подписи мелким caps-стилем.
+- Музыка: компактная пилюля внизу по центру (Play/Pause + mute), `backdrop-blur` + `rounded-full`, без визуального шума.
+- Галерея: переехать внизу в карусель `flex gap-2 overflow-x-auto snap-x` с лёгким fade по краям.
+- Если cover нет — мягкий брендовый градиент `from-primary/30 via-background to-primary/10` вместо плоского muted.
 
-B. iPhone Safari, после collapse header:
+### 4. Передача timezone
 
-- Layout не «прыгает», video не растягивается сверх 58svh, Card получает чуть больше высоты — нормально.
+`live-resolve/index.ts` уже возвращает `event_timezone` (использует `RoomWaitingState`). Передать его в `RoomPreStartScreen` как опциональный проп для красивой строки даты.
 
-C. PWA standalone iPhone: то же поведение, safe-area/notch fix не сломан.
+## Dry run / риски
 
-D. Desktop: без изменений (`max-lg:` префикс).
+- Auto-enable: меняет дефолтное поведение, но только при явных действиях пользователя (загрузка/ввод) → ожидаемое UX-улучшение, безопасно.
+- Снятие условия `state/isWaiting`: возможен крайний случай, когда комната «closed» при будущем `scheduled_at` — pre-start всё равно покажется. Это и есть желаемое поведение (тизер до старта).
+- Bucket `webinar-prestart` — публичный, существующая загрузка работает; миграции БД не требуются.
+- Редизайн: чисто визуальный, контракты пропсов сохраняются.
 
-## Что НЕ трогаем
+## Execute → Verify → DoD
 
-- `useVisualViewportInset`, K1/K2/K3/K4 fixes уже применены.
-- iOS standalone safe-area / notch (`index.css`).
-- Wake Lock, M1.1, M1.2, M2, entry tracking, access logic.
-- Composer flex behavior, `100svh` на sticky-main.
+**Шаги execute (default mode):**
 
-## Файлы к изменению
+1. Патч `WebinarRoomSettingsCard.tsx` (auto-enable, hint, кнопка Preview через Dialog).
+2. Патч `LiveEvent.tsx` стр. 686 (условие + проп `eventTimezone`).
+3. Редизайн `RoomPreStartScreen.tsx` (вуаль, капсулы таймера, строка даты, музыкальная пилюля, галерея-карусель, fallback-градиент).
+4. Smoke-тест: создать эфир с `scheduled_at = now()+10min`, загрузить cover + music + title, открыть страницу эфира → видим красивый pre-start с обратным отсчётом и воспроизведением музыки по клику.
 
-1. `src/pages/LiveEvent.tsx` — одна строка (681): добавить `max-lg:max-h-[58svh]` к `data-video-shell`.
+**DoD:**
 
-## Proof-пакет (после execute)
-
-iPhone Safari + PWA standalone:
-
-1. Initial high-state — chat panel целиком в viewport, нижние скругления видны.
-2. После collapse header — layout стабилен.
-3. Desktop — без регрессии.
+- Загрузка обложки/музыки в админке мгновенно включает pre-start (или явно сообщает об этом).
+- В админке есть кнопка «Предпросмотр», открывающая модал с реальным компонентом.
+- На странице эфира при `scheduled_at > now()` и `prestart.enabled` показан красивый экран с обложкой, заголовком, датой/временем старта, обратным отсчётом-капсулами, кнопкой музыки.
+- Скриншоты приложены (desktop + mobile).
+- Никаких изменений схемы БД и edge-функций (только client-side + UX).
