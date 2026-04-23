@@ -50,7 +50,7 @@ import {
 } from "@/components/ui/collapsible";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DateTimePicker } from "@/components/ui/datetime-picker";
-import { Plus, Edit2, Loader2, Video, ExternalLink, ChevronDown, AlertCircle, CheckCircle2, Users, Link2, PlayCircle, Shield, Radio, Zap, Square, RefreshCw, Send, Copy, Eye, EyeOff, MessageSquare, HelpCircle, Unlink, RotateCcw, AlertTriangle, LayoutGrid, Monitor, ShoppingCart, Trash2, MoreHorizontal, Settings } from "lucide-react";
+import { Plus, Edit2, Loader2, Video, ExternalLink, ChevronDown, AlertCircle, CheckCircle2, Users, Link2, PlayCircle, Shield, Radio, Zap, Square, RefreshCw, Send, Copy, Eye, EyeOff, MessageSquare, HelpCircle, Unlink, RotateCcw, AlertTriangle, LayoutGrid, Monitor, ShoppingCart, Trash2, MoreHorizontal, Settings, Image as ImageIcon, Info } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -2422,6 +2422,21 @@ function LiveStreamControlPanel({
         </CollapsibleContent>
       </Collapsible>
 
+      {/* P2: для нового эфира — callout, где потом искать настройки заставки/музыки. */}
+      {!editingId && (
+        <>
+          <Separator />
+          <div className="flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
+            <Info className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+            <div className="text-xs text-foreground">
+              После сохранения эфира под формой появится вкладка{" "}
+              <span className="font-semibold">«Заставка и комната»</span> — там
+              настраивается обложка, музыка и обратный отсчёт до старта.
+            </div>
+          </div>
+        </>
+      )}
+
       {/* Comments, Questions, Moderation, Scenario tabs */}
       {editingId && (
         <>
@@ -2431,34 +2446,36 @@ function LiveStreamControlPanel({
             <LiveEventExportButtons liveEventId={editingId} eventTitle={form.title || undefined} />
           </div>
           <Tabs defaultValue="comments" className="w-full">
-            <div className="overflow-x-auto -mx-1 px-1">
-              <TabsList className="w-max">
-                <TabsTrigger value="comments" className="gap-1.5 text-xs shrink-0">
-                  <MessageSquare className="h-3 w-3" /> Комментарии
-                </TabsTrigger>
-                <TabsTrigger value="questions" className="gap-1.5 text-xs shrink-0">
-                  <HelpCircle className="h-3 w-3" /> Вопросы
-                </TabsTrigger>
-                <TabsTrigger value="moderation" className="gap-1.5 text-xs shrink-0">
-                  <Shield className="h-3 w-3" /> Модерация
-                </TabsTrigger>
-                <TabsTrigger value="scenario" className="gap-1.5 text-xs shrink-0">
-                  <Video className="h-3 w-3" /> Сценарий
-                </TabsTrigger>
-                <TabsTrigger value="blocks" className="gap-1.5 text-xs shrink-0">
-                  <LayoutGrid className="h-3 w-3" /> Блоки
-                </TabsTrigger>
-                <TabsTrigger value="cta" className="gap-1.5 text-xs shrink-0">
-                  <ShoppingCart className="h-3 w-3" /> CTA
-                </TabsTrigger>
-                <TabsTrigger value="theme" className="gap-1.5 text-xs shrink-0">
-                  <Monitor className="h-3 w-3" /> Тема
-                </TabsTrigger>
-                <TabsTrigger value="room" className="gap-1.5 text-xs shrink-0">
-                  <Settings className="h-3 w-3" /> Комната
-                </TabsTrigger>
-              </TabsList>
-            </div>
+            {/* P2 FIX: убран overflow-x-auto + w-max → flex-wrap, чтобы все 8 вкладок
+                умещались без горизонтального скролла. «Заставка и комната» вынесена
+                второй позицией, чтобы новый пользователь сразу её видел. */}
+            <TabsList className="flex flex-wrap h-auto gap-1 w-full justify-start bg-muted/50 p-1">
+              <TabsTrigger value="comments" className="gap-1.5 text-xs">
+                <MessageSquare className="h-3 w-3" /> Комментарии
+              </TabsTrigger>
+              <TabsTrigger value="room" className="gap-1.5 text-xs">
+                <ImageIcon className="h-3 w-3" /> Заставка и комната
+              </TabsTrigger>
+              <TabsTrigger value="questions" className="gap-1.5 text-xs">
+                <HelpCircle className="h-3 w-3" /> Вопросы
+              </TabsTrigger>
+              <TabsTrigger value="moderation" className="gap-1.5 text-xs">
+                <Shield className="h-3 w-3" /> Модерация
+              </TabsTrigger>
+              <TabsTrigger value="scenario" className="gap-1.5 text-xs">
+                <Video className="h-3 w-3" /> Сценарий
+              </TabsTrigger>
+              <TabsTrigger value="blocks" className="gap-1.5 text-xs">
+                <LayoutGrid className="h-3 w-3" /> Блоки
+              </TabsTrigger>
+              <TabsTrigger value="cta" className="gap-1.5 text-xs">
+                <ShoppingCart className="h-3 w-3" /> CTA
+              </TabsTrigger>
+              <TabsTrigger value="theme" className="gap-1.5 text-xs">
+                <Monitor className="h-3 w-3" /> Тема
+              </TabsTrigger>
+            </TabsList>
+
             <TabsContent value="comments" className="border rounded-lg mt-2 h-[500px] overflow-hidden">
               <LiveEventComments liveEventId={editingId} />
             </TabsContent>

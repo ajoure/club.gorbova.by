@@ -683,26 +683,54 @@ function LiveEventLegacy() {
               задан выше, чтобы tap по Kinescope iframe (controls/fullscreen/quality)
               гарантированно проходил в Safari iOS и в PWA standalone. */}
           <div className="relative" style={{ pointerEvents: "auto" }}>
-            {roomSettings.prestart.enabled && data?.scheduled_at && new Date(data.scheduled_at).getTime() > Date.now() && (state === "room_open_waiting" || isWaiting) ? (
-              <RoomPreStartScreen
-                prestart={roomSettings.prestart}
-                scheduledAt={data?.scheduled_at}
-                eventTimezone={data?.event_timezone}
-              />
-            ) : isWaiting ? (
-              <RoomWaitingState scheduledAt={data?.scheduled_at} eventTimezone={data?.event_timezone} compact={isMobile} />
-            ) : resolvedSource?.resolved_source_kind === 'kinescope_video' && resolvedSource.resolved_embed_url ? (
-              <KinescopePlayerWrapper videoId={data?.kinescope_video_id!} />
-            ) : resolvedSource?.resolved_source_kind === 'kinescope_live_embed' && resolvedSource.resolved_embed_url ? (
-              <LiveEmbedPlayer embedUrl={resolvedSource.resolved_embed_url} />
-            ) : (
-              <div className="relative w-full aspect-video bg-muted rounded-lg overflow-hidden flex items-center justify-center">
-                <div className="text-center p-4">
-                  <AlertTriangle className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
-                  <p className="text-sm text-muted-foreground">Источник видео недоступен</p>
+            {(() => {
+              // P1 FIX (root cause): прежний guard
+              //   prestart.enabled && scheduled_at>now() && (state==='room_open_waiting'||isWaiting)
+              // отрезал pre-start, если: (1) дата старта в прошлом, а админ открыл комнату вручную;
+              // (2) lifecycle ещё не успел перейти в 'room_open_waiting'. Из-за этого админ видел
+              // обычный waiting-state вместо настроенной обложки/таймера.
+              //
+              // Новый контракт (двухрежимный):
+              //  A) countdown mode  — enabled + scheduled_at > now → обложка + countdown;
+              //  B) cover-only mode — enabled + есть cover/title/music + (room opened ИЛИ wait state) → обложка без countdown.
+              // Если pre-start выкл/нет ассетов → старый RoomWaitingState.
+              const ps = roomSettings.prestart;
+              const prestartReady =
+                ps.enabled && (ps.cover_url || (ps.title && ps.title.trim()) || ps.music_url);
+              const futureStart =
+                !!data?.scheduled_at && new Date(data.scheduled_at).getTime() > Date.now();
+              const roomOpenedOrWaiting =
+                state === "room_open_waiting" || isWaiting;
+              const showPreStart =
+                !isReplay && prestartReady && (futureStart || roomOpenedOrWaiting);
+
+              if (showPreStart) {
+                return (
+                  <RoomPreStartScreen
+                    prestart={ps}
+                    scheduledAt={futureStart ? data?.scheduled_at : undefined}
+                    eventTimezone={data?.event_timezone}
+                  />
+                );
+              }
+              if (isWaiting) {
+                return <RoomWaitingState scheduledAt={data?.scheduled_at} eventTimezone={data?.event_timezone} compact={isMobile} />;
+              }
+              if (resolvedSource?.resolved_source_kind === 'kinescope_video' && resolvedSource.resolved_embed_url) {
+                return <KinescopePlayerWrapper videoId={data?.kinescope_video_id!} />;
+              }
+              if (resolvedSource?.resolved_source_kind === 'kinescope_live_embed' && resolvedSource.resolved_embed_url) {
+                return <LiveEmbedPlayer embedUrl={resolvedSource.resolved_embed_url} />;
+              }
+              return (
+                <div className="relative w-full aspect-video bg-muted rounded-lg overflow-hidden flex items-center justify-center">
+                  <div className="text-center p-4">
+                    <AlertTriangle className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
+                    <p className="text-sm text-muted-foreground">Источник видео недоступен</p>
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
             {/* Sprint final: Reactions overlay поверх видео — emoji-only, fade-out ~3s, realtime для всех. */}
             {eventId && roomSettings.reactions.enabled && !isReplay && (
               <LiveRoomReactionsOverlay liveEventId={eventId} enabled={roomSettings.reactions.enabled} />
