@@ -525,75 +525,107 @@ export default function Auth() {
             </p>
           </div>
 
-          {/* Update Password Form */}
+          {/* Update Password Form — only when recovery session is present.
+              If session is missing (invalid/expired/already-used link), show
+              an explicit error screen with «Отправить новую ссылку» CTA. */}
           {mode === "update_password" ? (
-            <form onSubmit={handleUpdatePassword} className="space-y-5">
-              <div className="space-y-2">
-                <Label htmlFor="password" className="text-foreground">
-                  Новый пароль
-                </Label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                  <Input
-                    id="password"
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('password') ? 'border-destructive' : ''}`}
-                    placeholder="••••••••"
-                    required
-                    allowAutofill
-                    autoComplete="new-password"
-                  />
+            !session ? (
+              <div className="space-y-5">
+                <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-center">
+                  <div className="h-12 w-12 rounded-full bg-amber-100 flex items-center justify-center mx-auto mb-3">
+                    <Mail className="h-6 w-6 text-amber-600" />
+                  </div>
+                  <p className="text-sm text-amber-800">
+                    Ссылка для смены пароля недействительна или уже использована.
+                    Запросите новую ссылку, чтобы продолжить.
+                  </p>
                 </div>
-                {getFieldError('password') && (
-                  <p className="text-sm text-destructive">{getFieldError('password')}</p>
-                )}
-                <PasswordRequirements />
+                <Button
+                  type="button"
+                  onClick={() => { setMode("forgot"); setFieldErrors([]); }}
+                  className="w-full h-12 rounded-xl text-base font-medium bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-opacity"
+                >
+                  Отправить новую ссылку
+                  <ArrowRight className="ml-2 h-5 w-5" />
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setMode("login")}
+                  className="w-full flex items-center justify-center gap-2 text-sm text-muted-foreground hover:text-primary transition-colors"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  Вернуться ко входу
+                </button>
               </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="confirmPassword" className="text-foreground">
-                  Повторите пароль
-                </Label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                  <Input
-                    id="confirmPassword"
-                    type="password"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    onBlur={() => handleBlur('confirmPassword')}
-                    className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('confirmPassword') || (touched.confirmPassword && !passwordsMatch && confirmPassword) ? 'border-destructive' : ''}`}
-                    placeholder="••••••••"
-                    required
-                    allowAutofill
-                    autoComplete="new-password"
-                  />
+            ) : (
+              <form onSubmit={handleUpdatePassword} className="space-y-5">
+                <div className="space-y-2">
+                  <Label htmlFor="password" className="text-foreground">
+                    Новый пароль
+                  </Label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                    <Input
+                      id="password"
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('password') ? 'border-destructive' : ''}`}
+                      placeholder="••••••••"
+                      required
+                      allowAutofill
+                      autoComplete="new-password"
+                    />
+                  </div>
+                  {getFieldError('password') && (
+                    <p className="text-sm text-destructive">{getFieldError('password')}</p>
+                  )}
+                  <PasswordRequirements />
                 </div>
-                {getFieldError('confirmPassword') && (
-                  <p className="text-sm text-destructive">{getFieldError('confirmPassword')}</p>
-                )}
-                {touched.confirmPassword && !passwordsMatch && confirmPassword && !getFieldError('confirmPassword') && (
-                  <p className="text-sm text-destructive">Пароли не совпадают</p>
-                )}
-              </div>
 
-              <Button
-                type="submit"
-                disabled={isSubmitting || !session}
-                className="w-full h-12 rounded-xl text-base font-medium bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-opacity"
-              >
-                {isSubmitting ? (
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                ) : (
-                  <>
-                    Сохранить пароль
-                    <ArrowRight className="ml-2 h-5 w-5" />
-                  </>
-                )}
-              </Button>
-            </form>
+                <div className="space-y-2">
+                  <Label htmlFor="confirmPassword" className="text-foreground">
+                    Повторите пароль
+                  </Label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                    <Input
+                      id="confirmPassword"
+                      type="password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      onBlur={() => handleBlur('confirmPassword')}
+                      className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('confirmPassword') || (touched.confirmPassword && !passwordsMatch && confirmPassword) ? 'border-destructive' : ''}`}
+                      placeholder="••••••••"
+                      required
+                      allowAutofill
+                      autoComplete="new-password"
+                    />
+                  </div>
+                  {getFieldError('confirmPassword') && (
+                    <p className="text-sm text-destructive">{getFieldError('confirmPassword')}</p>
+                  )}
+                  {touched.confirmPassword && !passwordsMatch && confirmPassword && !getFieldError('confirmPassword') && (
+                    <p className="text-sm text-destructive">Пароли не совпадают</p>
+                  )}
+                </div>
+
+                <Button
+                  type="submit"
+                  disabled={isSubmitting || !session}
+                  className="w-full h-12 rounded-xl text-base font-medium bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-opacity"
+                >
+                  {isSubmitting ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  ) : (
+                    <>
+                      Сохранить пароль
+                      <ArrowRight className="ml-2 h-5 w-5" />
+                      </>
+                    )}
+                  </Button>
+              </form>
+            )
           ) : mode === "account_exists" ? (
             /* Account Exists - Reset Password Flow */
             <div className="space-y-5">

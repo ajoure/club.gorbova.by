@@ -11,6 +11,35 @@ interface AuthActionsRequest {
   email: string;
 }
 
+/**
+ * Find an auth user by email using admin API.
+ * Source of truth = auth.users (NOT public.profiles).
+ * Uses listUsers with a filter; falls back to scanning the first page.
+ */
+async function findAuthUserByEmail(supabaseAdmin: any, email: string): Promise<{ id: string; email: string } | null> {
+  const normalized = email.toLowerCase().trim();
+  try {
+    // Supabase admin API: listUsers supports pagination but no direct email filter on all versions.
+    // Try first page (default 50 users) — for full coverage we iterate up to a safety cap.
+    const PAGE_SIZE = 1000;
+    const MAX_PAGES = 50; // up to 50k users
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage: PAGE_SIZE });
+      if (error) {
+        console.error(`[findAuthUserByEmail] listUsers page=${page} error:`, error);
+        return null;
+      }
+      const users = data?.users ?? [];
+      const found = users.find((u: any) => (u.email || "").toLowerCase() === normalized);
+      if (found) return { id: found.id, email: found.email };
+      if (users.length < PAGE_SIZE) break; // last page
+    }
+  } catch (err) {
+    console.error("[findAuthUserByEmail] exception:", err);
+  }
+  return null;
+}
+
 Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -38,52 +67,48 @@ Deno.serve(async (req: Request): Promise<Response> => {
       });
     }
 
-    console.log(`Auth action: ${action}, Email: ${email}`);
+    const normalizedEmail = email.toLowerCase().trim();
+    console.log(`[auth-actions] action=${action} email=${normalizedEmail}`);
 
     switch (action) {
       case "reset_password": {
-        // Check if user exists by email in profiles table (more efficient than listing all users)
-        const { data: userData } = await supabaseAdmin
-          .from('profiles')
-          .select('user_id, email')
-          .ilike('email', email)
-          .limit(1)
-          .maybeSingle();
-        
-        const userExists = !!userData?.user_id;
-        
-        if (!userExists) {
-          // Don't reveal if user exists - just pretend it worked
-          console.log("User not found in profiles, returning success anyway for security");
+        // Source of truth: auth.users (NOT profiles).
+        // Profile may be missing for legacy users; reset must still work.
+        const authUser = await findAuthUserByEmail(supabaseAdmin, normalizedEmail);
+
+        if (!authUser) {
+          // Privacy-safe: do not reveal if user exists.
+          // This is the ONLY case where we silently return success.
+          console.log(`[auth-actions] User not found in auth.users — privacy-safe success for ${normalizedEmail}`);
           return new Response(JSON.stringify({ success: true }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
-        
-        console.log("User found, generating reset link for:", email);
 
-        // Generate password reset link - always use production domain
+        console.log(`[auth-actions] Auth user found (id=${authUser.id}), generating recovery link for ${normalizedEmail}`);
+
+        // Generate password recovery link via Supabase admin API.
         const siteUrl = "https://club.gorbova.by";
         const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
           type: "recovery",
-          email: email,
+          email: normalizedEmail,
           options: {
             redirectTo: `${siteUrl}/auth?mode=reset`,
           },
         });
 
         if (linkError || !linkData?.properties?.hashed_token) {
-          console.error("Generate link error:", linkError);
-          return new Response(JSON.stringify({ error: "Failed to generate reset link" }), {
-            status: 500,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
+          // Internal error — surface it (not privacy-safe success).
+          console.error("[auth-actions] generateLink failed:", linkError);
+          return new Response(
+            JSON.stringify({ error: "Failed to generate reset link", code: "link_generation_failed" }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
         }
 
-        // Build reset link
         const resetLink = `${supabaseUrl}/auth/v1/verify?token=${linkData.properties.hashed_token}&type=recovery&redirect_to=${encodeURIComponent(siteUrl + "/auth?mode=reset")}`;
 
-        // Send email via our custom send-email function
+        // Send email via the existing SMTP-backed send-email function.
         try {
           const emailResponse = await fetch(`${supabaseUrl}/functions/v1/send-email`, {
             method: "POST",
@@ -92,7 +117,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
               "Authorization": `Bearer ${supabaseAnonKey}`,
             },
             body: JSON.stringify({
-              to: email,
+              to: normalizedEmail,
               subject: "Сброс пароля",
               html: `
                 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -103,6 +128,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
                     Сбросить пароль
                   </a>
                   <p style="color: #666; font-size: 14px;">Если вы не запрашивали сброс пароля, просто проигнорируйте это письмо.</p>
+                  <p style="color: #999; font-size: 12px;">Ссылка действительна ограниченное время. Если она не сработает — запросите новую на сайте.</p>
                   <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
                   <p style="color: #999; font-size: 12px;">С уважением,<br>Команда Gorbova.by</p>
                 </div>
@@ -112,21 +138,22 @@ Deno.serve(async (req: Request): Promise<Response> => {
           });
 
           if (!emailResponse.ok) {
-            const emailError = await emailResponse.json();
-            console.error("Email send error:", emailError);
-            return new Response(JSON.stringify({ error: "Failed to send email" }), {
-              status: 500,
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
+            const emailError = await emailResponse.json().catch(() => ({}));
+            console.error("[auth-actions] send-email failed:", emailResponse.status, emailError);
+            // Internal failure — must NOT be hidden behind privacy-safe success.
+            return new Response(
+              JSON.stringify({ error: "Failed to send email", code: "email_send_failed" }),
+              { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
           }
 
-          console.log("Password reset email sent to:", email);
+          console.log(`[auth-actions] Recovery email dispatched to ${normalizedEmail}`);
         } catch (emailErr) {
-          console.error("Email send exception:", emailErr);
-          return new Response(JSON.stringify({ error: "Failed to send email" }), {
-            status: 500,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
+          console.error("[auth-actions] send-email exception:", emailErr);
+          return new Response(
+            JSON.stringify({ error: "Failed to send email", code: "email_send_exception" }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
         }
 
         return new Response(JSON.stringify({ success: true }), {
@@ -135,8 +162,6 @@ Deno.serve(async (req: Request): Promise<Response> => {
       }
 
       case "confirm_signup": {
-        // For future use: custom signup confirmation
-        // This would generate a signup confirmation link and send via custom email
         return new Response(JSON.stringify({ error: "Not implemented" }), {
           status: 501,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -150,7 +175,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
         });
     }
   } catch (error: any) {
-    console.error("Auth actions error:", error);
+    console.error("[auth-actions] unexpected error:", error);
     return new Response(JSON.stringify({ error: error?.message || "Internal error" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
