@@ -186,6 +186,34 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // ============================================================================
+    // PATCH: MIT-OFF (2026-04-23)
+    // direct-charge is a server-initiated MIT charge using a saved card token.
+    // MIT runtime is RETIRED. Auto-renewal is handled exclusively by bePaid SBS
+    // (provider-managed subscriptions). Saved cards are UX artifacts only.
+    // To re-enable: remove this block AND coordinate bePaid recurring credentials.
+    // ============================================================================
+    try {
+      await supabase.from('audit_logs').insert({
+        action: 'mit.runtime_disabled.direct_charge_blocked',
+        actor_type: 'system',
+        actor_label: 'direct-charge',
+        meta: {
+          reason: 'MIT runtime path retired. Use provider_managed (bePaid SBS) for auto-renewal.',
+          request_method: req.method,
+        },
+      });
+    } catch (_) { /* non-blocking */ }
+
+    return new Response(JSON.stringify({
+      success: false,
+      disabled: true,
+      error: 'direct-charge (MIT) is disabled. Auto-renewal flows use bePaid provider-managed subscriptions only.',
+    }), {
+      status: 410,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
     
     // PATCH-D: Get bePaid credentials STRICTLY from integration_instances (NO env fallback)
     const credsResult = await getBepaidCredsStrict(supabase);
