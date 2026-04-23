@@ -80,6 +80,7 @@ import { ColumnSettings } from "@/components/admin/ColumnSettings";
 import { LiveEventsTable } from "@/components/admin/live/LiveEventsTable";
 import { useLiveEventsColumns, LIVE_EVENTS_LOCKED_KEYS } from "@/hooks/useLiveEventsColumns";
 import { AutowebModeEditor, type AutowebUserMode as AutowebUserModeT, type AutowebConfig } from "@/components/admin/live/AutowebModeEditor";
+import { RecordingTab } from "@/components/admin/live/RecordingTab";
 
 // Final follow-up sprint PATCH F3: отдельная компактная ячейка count активных участников
 function ActiveParticipantsCell({ eventId }: { eventId: string }) {
@@ -166,6 +167,13 @@ interface LiveEventForm {
   // Sprint A — autowebinar
   autoweb_user_mode: AutowebUserMode;
   autoweb_config: AutowebConfig;
+  // Recording tab (Phase 1) — replay target folder for "Опубликовать запись"
+  replay_menu_section_key: string;
+  replay_parent_module_id: string | null;
+  /** read-only mirror from metadata.replay_lesson_id */
+  replay_lesson_id: string | null;
+  replay_publish_status: "idle" | "published" | "error";
+  replay_publish_error: string | null;
 }
 
 const defaultForm: LiveEventForm = {
@@ -214,6 +222,11 @@ const defaultForm: LiveEventForm = {
       allow_rewatch_before_end: false,
     },
   },
+  replay_menu_section_key: "",
+  replay_parent_module_id: null,
+  replay_lesson_id: null,
+  replay_publish_status: "idle",
+  replay_publish_error: null,
 };
 
 const platformStatusLabels: Record<string, string> = {
