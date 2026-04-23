@@ -173,7 +173,10 @@
   }
 
   .live-room-themed .room-messages-scroll {
-    /* Резерв под fixed composer, чтобы последние сообщения не уезжали под него. */
-    padding-bottom: calc(var(--room-composer-h, 64px) + env(safe-area-inset-bottom, 0px) + 12px);
+    /* M1.6: гарантированный bottom reachability — резерв под fixed composer
+       увеличен, чтобы последний message card был полностью виден И в стартовом
+       высоком состоянии (header ещё не уехал), И после scroll-away header.
+       Учитываем: высоту composer + safe-area + дополнительный gap 32px. */
+    padding-bottom: calc(var(--room-composer-h, 64px) + env(safe-area-inset-bottom, 0px) + 32px);
   }
 }

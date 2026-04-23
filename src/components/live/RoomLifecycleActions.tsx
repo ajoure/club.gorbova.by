@@ -52,8 +52,14 @@ import {
 interface Props {
   eventId: string;
   roomState: RoomState;
-  /** Layout: 'admin' shows all 3 buttons + badge, 'room' shows only Complete (in-room, для staff) */
-  layout?: "admin" | "room";
+  /**
+   * Layout:
+   * - 'admin' — все 3 кнопки + badge (in /admin/live-events).
+   * - 'room' — одна кнопка «Завершить вебинар» (desktop in-room, для staff).
+   * - 'room-mobile' — компактная icon-only кнопка для mobile in-room (M1.5).
+   *   Открывает тот же AlertDialog с confirm — accidental tap исключён.
+   */
+  layout?: "admin" | "room" | "room-mobile";
   invalidateKeys?: string[][];
   onSuccess?: () => void;
 }
@@ -104,23 +110,43 @@ export function RoomLifecycleActions({
     }
   };
 
-  if (layout === "room") {
+  if (layout === "room" || layout === "room-mobile") {
     if (!canPerformAction(roomState, "complete_webinar")) return null;
+    const isMobileLayout = layout === "room-mobile";
     return (
       <AlertDialog>
         <AlertDialogTrigger asChild>
-          <Button
-            variant="outline"
-            className={cn(GLASS_BASE, GLASS_TONE.destructiveRoom, LIFECYCLE_BUTTON_WIDTH_MIN)}
-            disabled={!!pending}
-          >
-            {pending === "complete_webinar" ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Square className="h-4 w-4" />
-            )}
-            Завершить вебинар
-          </Button>
+          {isMobileLayout ? (
+            // M1.5: компактная icon-only кнопка только для mobile in-room.
+            // Размер 32x32, destructive tint, та же gating-логика (canPerformAction),
+            // тот же confirm-диалог — accidental tap невозможен.
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label="Завершить вебинар"
+              className="h-8 w-8 shrink-0 border-destructive/40 text-destructive bg-destructive/10 hover:bg-destructive/20"
+              disabled={!!pending}
+            >
+              {pending === "complete_webinar" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Square className="h-4 w-4" />
+              )}
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              className={cn(GLASS_BASE, GLASS_TONE.destructiveRoom, LIFECYCLE_BUTTON_WIDTH_MIN)}
+              disabled={!!pending}
+            >
+              {pending === "complete_webinar" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Square className="h-4 w-4" />
+              )}
+              Завершить вебинар
+            </Button>
+          )}
         </AlertDialogTrigger>
         <AlertDialogContent>
           <AlertDialogHeader>
