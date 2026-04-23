@@ -149,7 +149,15 @@ function LiveEventLegacy() {
   const hasSidebarCta = useHasActiveCtaBindings(eventIdForCta, "sidebar");
 
   // Room settings + entry prefs (Запуск 2)
-  const roomSettings = useMemo(() => readRoomSettings((data as any)?.room_settings), [data]);
+  // P1 ROOT CAUSE FIX: live-resolve отдаёт уже-распакованный room_settings
+  // (см. supabase/functions/live-resolve/index.ts:335 — `room_settings: metadata.room_settings`).
+  // readRoomSettings ожидает целиком metadata и сам ищет внутри `.room_settings`.
+  // Из-за двойной распаковки stored всегда был {}, prestart.enabled=false по дефолту,
+  // и обложка/таймер НИКОГДА не показывались. Оборачиваем обратно в { room_settings }.
+  const roomSettings = useMemo(
+    () => readRoomSettings({ room_settings: (data as any)?.room_settings }),
+    [data]
+  );
   const { prefs, isLoading: prefsLoading, profileAvatarUrl, profileFullName, upsertPrefs, syncSessionMirror } =
     useRoomEntryPrefs(data?.event_id);
   const [entryDialogOpen, setEntryDialogOpen] = useState(false);
