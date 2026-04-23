@@ -181,19 +181,24 @@
   }
 
   .live-room-themed .room-messages-scroll {
-    /* M1.6 + iOS keyboard gap:
-       Гарантированный bottom reachability — последний message card виден
-       во всех состояниях:
-        - стартовый высокий экран,
-        - после scroll-away header,
-        - при открытой iOS-клавиатуре (composer поднимается на vv-offset,
-          scroll-area получает дополнительный резерв на ту же величину).
-       Итого: composer-h + safe-area + vv-offset + gap 32px. */
+    /* K2 (PATCH): убран var(--room-vv-bottom-offset) из padding-bottom.
+       При открытой клавиатуре композер уже физически поднимается на vv-offset
+       через `.room-composer { bottom: max(safe-area, vv-offset) }`, поэтому
+       scroll-area естественно «уходит» вниз на ту же величину. Дублирование
+       создавало белый хвост ~vv-offset px после последнего сообщения. */
     padding-bottom: calc(
       var(--room-composer-h, 64px)
       + env(safe-area-inset-bottom, 0px)
-      + var(--room-vv-bottom-offset, 0px)
-      + 32px
+      + 24px
     );
+  }
+
+  /* K2: на mobile composer fixed (вне Card), поэтому даём панели физический
+     нижний резерв = высоте composer + safe-area, чтобы её скругления (rounded-lg)
+     были видны и панель визуально заканчивалась ВЫШЕ composer. */
+  .live-room-themed .room-panel {
+    margin-bottom: calc(var(--room-composer-h, 64px) + env(safe-area-inset-bottom, 0px));
+    border-radius: 0.5rem;
+    overflow: hidden;
   }
 }
