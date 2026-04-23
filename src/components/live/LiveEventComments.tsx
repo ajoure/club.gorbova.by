@@ -30,6 +30,7 @@ interface Comment {
   author_display_name: string | null;
   author_role: string | null;
   author_avatar_url: string | null;
+  author_nickname_color: string | null;
   // Legacy fallback: только avatar_url используется (snapshot — SoT для имени).
   profile?: { avatar_url: string | null } | null;
 }
@@ -64,7 +65,7 @@ export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("live_event_comments")
-        .select("id, user_id, content, created_at, author_display_name, author_role, author_avatar_url")
+        .select("id, user_id, content, created_at, author_display_name, author_role, author_avatar_url, author_nickname_color")
         .eq("live_event_id", liveEventId)
         .order("created_at", { ascending: true })
         .limit(200);
@@ -272,6 +273,7 @@ export function LiveEventComments({ liveEventId, presenterUserId, onOpenProfile,
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span
                         className={`text-xs font-medium room-message-text ${canOpenProfile ? "cursor-pointer hover:underline" : ""}`}
+                        style={comment.author_nickname_color ? { color: comment.author_nickname_color } : undefined}
                         onClick={canOpenProfile ? () => onOpenProfile!(comment.user_id) : undefined}
                       >
                         {displayName}

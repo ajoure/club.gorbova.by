@@ -34,6 +34,7 @@ import { readRoomSettings } from "@/lib/roomSettings";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useScreenWakeLock } from "@/hooks/useScreenWakeLock";
 import { useVisualViewportInset } from "@/hooks/useVisualViewportInset";
+import { useUnansweredQuestionsCount } from "@/hooks/useUnansweredQuestionsCount";
 
 interface ResolvedSource {
   resolved_source_kind: 'kinescope_video' | 'kinescope_live_embed' | 'live_pending' | 'none';
@@ -126,7 +127,7 @@ export default function LiveEvent() {
 
 function LiveEventLegacy() {
   const { slug } = useParams<{ slug: string }>();
-  const { session, role } = useAuth();
+  const { session, user, role } = useAuth();
   const [state, setState] = useState<PageState>("loading");
   const [data, setData] = useState<LiveResolveResult | null>(null);
   const { selectedContact, contactSheetOpen, setContactSheetOpen, openContactSheet } = useLiveContactSheet();
@@ -147,6 +148,17 @@ function LiveEventLegacy() {
   const eventIdForCta = data?.event_id || "";
   const hasUnderVideoCta = useHasActiveCtaBindings(eventIdForCta, "under_video");
   const hasSidebarCta = useHasActiveCtaBindings(eventIdForCta, "sidebar");
+  // Staff badge: счётчик неотвеченных вопросов для модераторов / ведущего.
+  // Должен вызываться ДО early returns ниже (Rules of Hooks).
+  // RLS на live_event_questions гарантирует, что non-staff увидят только свои → нет утечки.
+  const presenterUserIdForBadge: string | null =
+    ((data as any)?.presenter_user_id as string | null) || null;
+  const isPresenterForBadge =
+    !!user?.id && !!presenterUserIdForBadge && user.id === presenterUserIdForBadge;
+  const unansweredCount = useUnansweredQuestionsCount(
+    eventIdForCta || null,
+    isStaff || isPresenterForBadge,
+  );
 
   // Room settings + entry prefs (Запуск 2)
   // P1 ROOT CAUSE FIX: live-resolve отдаёт уже-распакованный room_settings
@@ -617,6 +629,7 @@ function LiveEventLegacy() {
   // Strictly local to .live-room-themed scope — never leaks globally.
   const roomTheme: any = (data as any)?.room_theme || {};
   const presenterUserId: string | null = (data as any)?.presenter_user_id || null;
+  const isPresenter = !!user?.id && !!presenterUserId && user.id === presenterUserId;
   const liveBadgeMode: LiveBadgeMode = ((data as any)?.live_badge_mode as LiveBadgeMode) || "auto";
   const themeStyle: React.CSSProperties = {
     ['--room-bg' as string]: roomTheme.background_color || undefined,
@@ -788,6 +801,14 @@ function LiveEventLegacy() {
                         <HelpCircle className="h-3.5 w-3.5" />
                         Вопросы
                         <Lock className="h-3 w-3 opacity-60" />
+                        {(isStaff || isPresenter) && unansweredCount > 0 && (
+                          <Badge
+                            variant="destructive"
+                            className="ml-0.5 h-4 min-w-4 px-1 text-[10px] leading-none rounded-full"
+                          >
+                            {unansweredCount > 99 ? "99+" : unansweredCount}
+                          </Badge>
+                        )}
                       </TabsTrigger>
                       {showParticipantsTab && (
                         <TabsTrigger value="participants" className="room-tab-trigger gap-1.5 text-xs">

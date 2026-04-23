@@ -27,10 +27,13 @@ interface Question {
   user_id: string;
   content: string;
   is_answered: boolean;
+  answered_at: string | null;
+  answered_by: string | null;
   created_at: string;
   author_display_name: string | null;
   author_role: string | null;
   author_avatar_url: string | null;
+  author_nickname_color: string | null;
   // Legacy fallback: только avatar_url (snapshot — SoT для имени).
   profile?: { avatar_url: string | null } | null;
 }
@@ -65,7 +68,7 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
       queryFn: async () => {
         const { data, error } = await supabase
           .from("live_event_questions")
-          .select("id, user_id, content, is_answered, created_at, author_display_name, author_role, author_avatar_url")
+          .select("id, user_id, content, is_answered, answered_at, answered_by, created_at, author_display_name, author_role, author_avatar_url, author_nickname_color")
           .eq("live_event_id", liveEventId)
           .order("created_at", { ascending: true })
           .limit(200);
@@ -197,7 +200,15 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
 
     const toggleAnsweredMutation = useMutation({
       mutationFn: async ({ id, is_answered }: { id: string; is_answered: boolean }) => {
-        const { error } = await supabase.from("live_event_questions").update({ is_answered } as any).eq("id", id);
+        const patch: Record<string, unknown> = { is_answered };
+        if (is_answered) {
+          patch.answered_at = new Date().toISOString();
+          patch.answered_by = user?.id ?? null;
+        } else {
+          patch.answered_at = null;
+          patch.answered_by = null;
+        }
+        const { error } = await supabase.from("live_event_questions").update(patch as any).eq("id", id);
         if (error) throw error;
       },
       onSuccess: () => queryClient.invalidateQueries({ queryKey: ["live-event-questions", liveEventId] }),
@@ -221,101 +232,125 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
       return q.author_role;
     };
 
+    const renderQuestion = (q: Question) => {
+      const display = resolveParticipantDisplay({
+        user_id: q.user_id,
+        author_display_name: q.author_display_name,
+        author_avatar_url: q.author_avatar_url,
+        legacy_avatar_url: q.profile?.avatar_url ?? null,
+        viewerIsStaff: isStaff,
+        staff_real_name: isStaff ? staffNameMap.get(q.user_id) ?? null : null,
+      });
+      const displayName = display.displayName;
+      const avatarUrl = display.avatarUrl;
+      const initials = display.initials;
+      const displayRole = resolveDisplayRole(q);
+      const isOwn = user?.id === q.user_id;
+      const highlight = resolveMessageHighlight({ isOwn, role: displayRole });
+      // SECURITY: onOpenProfile передаётся ТОЛЬКО при isStaff (см. LiveEvent.tsx).
+      // Политика: mem://security/access-control/webinar-staff-action-guards.
+      const canOpenProfile = !!onOpenProfile;
+      return (
+        <div key={q.id}>
+          <div className={`flex gap-2 group rounded-lg p-2 ${q.is_answered ? "opacity-70" : ""} ${highlight}`}>
+            <Avatar
+              className={`h-7 w-7 shrink-0 ${canOpenProfile ? "cursor-pointer" : ""}`}
+              onClick={canOpenProfile ? () => onOpenProfile!(q.user_id) : undefined}
+            >
+              {avatarUrl && <AvatarImage src={avatarUrl} alt={displayName} />}
+              <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
+            </Avatar>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span
+                  className={`text-xs font-medium room-message-text ${canOpenProfile ? "cursor-pointer hover:underline" : ""}`}
+                  style={q.author_nickname_color ? { color: q.author_nickname_color } : undefined}
+                  onClick={canOpenProfile ? () => onOpenProfile!(q.user_id) : undefined}
+                >
+                  {displayName}
+                  {isOwn && <span className="ml-1 text-[10px] text-primary">(вы)</span>}
+                </span>
+                <LiveRoleBadge role={displayRole} />
+                <span className="text-[10px] room-meta-text">{format(new Date(q.created_at), "HH:mm", { locale: ru })}</span>
+                {q.is_answered && <CheckCircle2 className="h-3 w-3 text-primary inline" />}
+                <LiveInlineModeration
+                  liveEventId={liveEventId}
+                  messageId={q.id}
+                  messageUserId={q.user_id}
+                  messageTable="live_event_questions"
+                  onReply={() => setReplyingTo({ id: q.id, userId: q.user_id, name: displayName })}
+                  onOpenProfile={onOpenProfile}
+                />
+              </div>
+              <p className="text-sm room-message-text break-words whitespace-pre-wrap">{normalizeEmoji(q.content, emojiNormalizationEnabled)}</p>
+              {isStaff && (
+                <button
+                  className="text-[10px] room-meta-text hover:text-primary mt-0.5"
+                  onClick={() => toggleAnsweredMutation.mutate({ id: q.id, is_answered: !q.is_answered })}
+                >
+                  {q.is_answered ? "Снять отметку" : "Отметить как отвечен"}
+                </button>
+              )}
+            </div>
+          </div>
+          <LiveEventRepliesList liveEventId={liveEventId} sourceQuestionId={q.id} />
+          {replyingTo?.id === q.id && (
+            <div className="ml-6 mt-1">
+              <LiveEventReplyForm
+                liveEventId={liveEventId}
+                sourceQuestionId={q.id}
+                targetUserId={q.user_id}
+                targetDisplayName={displayName}
+                onClose={() => setReplyingTo(null)}
+              />
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    // Sectioning (только для staff, который видит много чужих вопросов).
+    // Обычный участник видит максимум свои — секции бессмысленны.
+    const unanswered = (questions ?? []).filter((q) => !q.is_answered);
+    const answered = (questions ?? []).filter((q) => q.is_answered);
+
     return (
       <div ref={ref} className="relative flex flex-col h-full min-h-0 room-panel">
         <div ref={scrollRef} data-room-messages-scroll className="room-messages-scroll flex-1 min-h-0 overflow-y-auto space-y-1 p-3 overscroll-contain">
-          {/* Анонимность вопросов: hint всегда сверху */}
+          {/* Privacy hint: точная формулировка контракта (RLS-backed). */}
           <div className="flex items-center gap-1.5 bg-muted/50 rounded-md px-2 py-1.5 text-xs text-muted-foreground mb-2">
             <Lock className="h-3 w-3 shrink-0" />
-            <span>Анонимные вопросы. Их видят модераторы и ведущий.</span>
+            <span>
+              {isStaff
+                ? "Вопросы видны только вам и другим модераторам / ведущему."
+                : "Ваш вопрос увидят только модераторы и ведущий. Чужие вопросы вам не видны."}
+            </span>
           </div>
           {isLoading ? (
             <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
           ) : !questions?.length ? (
             <p className="text-sm room-meta-text text-center py-4">Пока нет вопросов</p>
-          ) : (
-            questions.map((q) => {
-              const display = resolveParticipantDisplay({
-                user_id: q.user_id,
-                author_display_name: q.author_display_name,
-                author_avatar_url: q.author_avatar_url,
-                legacy_avatar_url: q.profile?.avatar_url ?? null,
-                viewerIsStaff: isStaff,
-                staff_real_name: isStaff ? staffNameMap.get(q.user_id) ?? null : null,
-              });
-              const displayName = display.displayName;
-              const avatarUrl = display.avatarUrl;
-              const initials = display.initials;
-              const displayRole = resolveDisplayRole(q);
-              const isOwn = user?.id === q.user_id;
-              const highlight = resolveMessageHighlight({ isOwn, role: displayRole });
-              // SECURITY: onOpenProfile передаётся ТОЛЬКО при isStaff (см. LiveEvent.tsx).
-              // Для non-staff handler === undefined → нет onClick/cursor-pointer/aria-роли.
-              // Политика: mem://security/access-control/webinar-staff-action-guards.
-              const canOpenProfile = !!onOpenProfile;
-              return (
-                <div key={q.id}>
-                  <div className={`flex gap-2 group rounded-lg p-2 ${q.is_answered ? "opacity-70" : ""} ${highlight}`}>
-                    <Avatar
-                      className={`h-7 w-7 shrink-0 ${canOpenProfile ? "cursor-pointer" : ""}`}
-                      onClick={canOpenProfile ? () => onOpenProfile!(q.user_id) : undefined}
-                    >
-                      {avatarUrl && <AvatarImage src={avatarUrl} alt={displayName} />}
-                      <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
-                    </Avatar>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span
-                          className={`text-xs font-medium room-message-text ${canOpenProfile ? "cursor-pointer hover:underline" : ""}`}
-                          onClick={canOpenProfile ? () => onOpenProfile!(q.user_id) : undefined}
-                        >
-                          {displayName}
-                          {isOwn && <span className="ml-1 text-[10px] text-primary">(вы)</span>}
-                        </span>
-                        <LiveRoleBadge role={displayRole} />
-                        <span className="text-[10px] room-meta-text">{format(new Date(q.created_at), "HH:mm", { locale: ru })}</span>
-                        {q.is_answered && <CheckCircle2 className="h-3 w-3 text-primary inline" />}
-                        <LiveInlineModeration
-                          liveEventId={liveEventId}
-                          messageId={q.id}
-                          messageUserId={q.user_id}
-                          messageTable="live_event_questions"
-                          onReply={() => setReplyingTo({ id: q.id, userId: q.user_id, name: displayName })}
-                          onOpenProfile={onOpenProfile}
-                        />
-                      </div>
-                      <p className="text-sm room-message-text break-words whitespace-pre-wrap">{normalizeEmoji(q.content, emojiNormalizationEnabled)}</p>
-                      {/* Admin: toggle answered inline */}
-                      {isStaff && (
-                        <button
-                          className="text-[10px] room-meta-text hover:text-primary mt-0.5"
-                          onClick={() => toggleAnsweredMutation.mutate({ id: q.id, is_answered: !q.is_answered })}
-                        >
-                          {q.is_answered ? "Снять отметку" : "Отметить как отвечен"}
-                        </button>
-                      )}
-                    </div>
+          ) : isStaff ? (
+            <>
+              {unanswered.length > 0 && (
+                <>
+                  <div className="text-[10px] uppercase tracking-wide room-meta-text mt-1 mb-1">
+                    Неотвеченные ({unanswered.length})
                   </div>
-                  {/* Threaded replies */}
-                  <LiveEventRepliesList
-                    liveEventId={liveEventId}
-                    sourceQuestionId={q.id}
-                  />
-                  {/* Inline reply form */}
-                  {replyingTo?.id === q.id && (
-                    <div className="ml-6 mt-1">
-                      <LiveEventReplyForm
-                        liveEventId={liveEventId}
-                        sourceQuestionId={q.id}
-                        targetUserId={q.user_id}
-                        targetDisplayName={displayName}
-                        onClose={() => setReplyingTo(null)}
-                      />
-                    </div>
-                  )}
-                </div>
-              );
-            })
+                  {unanswered.map(renderQuestion)}
+                </>
+              )}
+              {answered.length > 0 && (
+                <>
+                  <div className="text-[10px] uppercase tracking-wide room-meta-text mt-3 mb-1">
+                    Отвеченные ({answered.length})
+                  </div>
+                  {answered.map(renderQuestion)}
+                </>
+              )}
+            </>
+          ) : (
+            questions.map(renderQuestion)
           )}
         </div>
 

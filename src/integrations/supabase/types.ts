@@ -5867,6 +5867,8 @@ export type Database = {
       }
       live_event_questions: {
         Row: {
+          answered_at: string | null
+          answered_by: string | null
           author_avatar_url: string | null
           author_display_name: string | null
           author_nickname_color: string | null
@@ -5881,6 +5883,8 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          answered_at?: string | null
+          answered_by?: string | null
           author_avatar_url?: string | null
           author_display_name?: string | null
           author_nickname_color?: string | null
@@ -5895,6 +5899,8 @@ export type Database = {
           user_id: string
         }
         Update: {
+          answered_at?: string | null
+          answered_by?: string | null
           author_avatar_url?: string | null
           author_display_name?: string | null
           author_nickname_color?: string | null
@@ -13917,6 +13923,10 @@ export type Database = {
         }[]
       }
       inv22_subscription_desync: { Args: { p_limit?: number }; Returns: Json }
+      is_live_event_presenter: {
+        Args: { _live_event_id: string; _user_id: string }
+        Returns: boolean
+      }
       is_room_staff: { Args: { _user_id: string }; Returns: boolean }
       is_staff_reserved_color: { Args: { _color: string }; Returns: boolean }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
