@@ -205,7 +205,7 @@ export function WebinarRoomSettingsCard({ liveEventId }: { liveEventId: string }
 
           {/* Inline-warning: материалы загружены, но фича выключена вручную */}
           {!settings.prestart.enabled && (settings.prestart.cover_url || settings.prestart.music_url || settings.prestart.gallery.length > 0 || settings.prestart.title) && (
-            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-700 dark:text-amber-300">
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2.5 py-2 text-[11px] text-destructive">
               Вы загрузили материалы pre-start, но экран ещё не включён — переключите тогл выше.
             </div>
           )}
