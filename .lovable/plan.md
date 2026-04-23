@@ -1,289 +1,277 @@
 # да, согласен, с учетом правок:
 
-1. Добавить отдельный раздел **«План тестов / Verify matrix»** и не оставлять DoD абстрактным. Разбить тесты на 4 зоны:
-  - **Платежи / canonical flow**
-    - сайтовая кнопка для one-time продукта;
-    - сайтовая кнопка для подписки;
-    - ссылка из карточки контакта на тот же продукт/тариф;
-    - сравнение: одинаковый backend owner-path, одинаковый downstream, `orders_v2`, одинаковый tracking pattern.
-  - **MIT-off / recurring-off**
-    - после execute нет новых runtime-вызовов `verify-recurring` / `direct-charge` / MIT paths;
-    - нет новых runtime `card.verification.failed` от активного боевого сценария;
-    - подписочный flow bePaid продолжает работать.
-  - **Telegram-напоминания**
-    - `auto_renew=false` кейсы начали получать reminder;
-    - `auto_renew=true + SBS` кейсы не получили paylink и сохранили старую логику;
-    - тексты различаются правильно.
-  - **Regression**
-    - клуб не сломан;
-    - one-time checkout не сломан;
-    - `/pay/:token` не сломан;
-    - downstream после оплаты не сломан.
-2. Уточнить **проверку дублей** для reminders. Сейчас фраза общая. Нужно явно зафиксировать:
-  - дедуп-проверка по `user_id + event_type + date(created_at)` минимум;
-  - отдельно проверить, что один и тот же пользователь не получает в один день два сообщения из веток:
-    - `auto_renew=true / SBS`
-    - `auto_renew=false / CTA`
-  - отдельно проверить, что после расширения когорты не возникает дубля при повторном запуске cron в тот же день;
-  - в Verify включить SQL before/after:
-    - список пользователей с >1 reminder в день;
-    - ожидание: **0 дублей**.
-3. Сформировать отдельный **grep / inventory checklist** как deliverable, а не «поиск по коду в целом». Прямо перечислить, что нужно проверить и приложить в отчёт:
-  - `payment-method-verify-recurring`
-  - `verify-recurring`
-  - `direct-charge`
-  - `payment-methods-tokenize`
-  - `payment-methods-webhook`
-  - `card.verification.failed`
-  - `recurring`
-  - `MIT`
-  - `savedCard`
-  - `payment_method_id`
-  - `bepaid-create-token`
-  - `bepaid-create-subscription-checkout`
-  - `admin-create-public-link`
-  - `public-checkout`
-  - `/pay/:token`
-  Для каждого найденного entrypoint в отчёте должна быть таблица:
-  - файл / функция;
-  - runtime active или orphan;
-  - current purpose;
-  - should keep / disable / reroute;
-  - доказательство, что после execute он либо отключён, либо идёт в canonical path.
-4. Отдельно определить **acceptance для Елены** как обязательный бизнес-кейс, а не просто «создать ссылку и посмотреть». Нужно зафиксировать:
-  - создать canonical public-link через рабочий owner-flow;
-  - Елена открывает ссылку и доходит минимум до страницы bePaid без fallback;
-  - создаётся `orders_v2`, не legacy `orders`;
-  - в случае отказа провайдера в `orders_v2.meta.last_provider_error` есть реальная причина;
-  - если canonical public-link проходит, а сайтовая кнопка нет — P0 **не закрыт**;
-  - P0 можно закрыть только если:
-    - **и public-link, и сайтовая кнопка** для того же продукта/тарифа у Елены идут по одному owner-path и ведут к одному корректному checkout result.
-5. Разнести **STOP-guards по зонам**, а не держать их общим списком. Сделать 3 блока:
-  &nbsp;
-  **STOP-GUARDS: Payments**
-  - не создавать новых edge functions / новых checkout flows;
-  - не лечить MIT credentials, если MIT выводится из runtime;
-  - не латать legacy-сайтовую ветку как самостоятельный final path;
-  - не закрывать P0 без runtime-proof сайтовой кнопки.
-  **STOP-GUARDS: Reminders**
-  - не отправлять CTA, если нет валидного product/tariff/link;
-  - не выкатывать execute remaining users, если есть дубли;
-  - не менять текстовую логику SBS/non-SBS без proof.
-  **STOP-GUARDS: Workaround / Elena**
-  - workaround через public-link не считается инженерным закрытием P0;
-  - если public-link работает, а сайтовая кнопка нет — задача остаётся открытой;
-  - если и public-link не работает, обязательно фиксировать provider-error, а не закрывать общим fallback.
-6. В DoD по платежам добавить ещё один обязательный пункт:
+1. Добавить в plan явное правило для **writer-уровня**: `payment_type` — source of truth не только для admin/manual/reminder, но и для **любого CTA source**, который передаёт сценарий создания ссылки. Это нужно зафиксировать в audit-схеме:
   &nbsp;
   &nbsp;
-  - **legacy** `orders` **больше не участвует в рабочем сайтовом checkout path**.  
-  Это нужно прописать явно, а не подразумевать через owner-flow.
-7. В DoD по MIT-off добавить явную проверку:
-  - **сохранённая карта остаётся только UX-артефактом / идентификатором, но не триггерит server-side charge ни в одном рабочем сценарии**.  
-  Это должно быть подтверждено grep-таблицей и runtime-proof.
-8. В разделе порядка execute добавить перед S2 короткий шаг:
-  - **сначала зафиксировать canonical owner map в отчёте одной таблицей**:
+  - `requested_payment_type`
+  - `resolved_offer_id`
+  - `resolved_mode: canonical | override`
+  - `cta_source: admin_manual | reminder | contact_card | telegram_combined`  
+  И в отчёте показать 3–5 реальных записей после фикса.
+2. Усилить F2 backend validation: при override нельзя ограничиваться только `product/tariff/offer/amount`.  
+Нужен ещё явный guard:
+  - `offer` должен быть **active pay_now**;
+  - нельзя использовать archived/inactive offer как источник параметров;
+  - если у тарифа вообще нет ни одного active pay_now offer, override запрещён и writer возвращает controlled error.  
+  Это важно, чтобы не получить one_time ссылку, созданную на основе мёртвого offer.
+3. В `AdminPaymentLinkDialog` добавить отдельный **UI audit для режимов**:
+  - на экране явно показывать бейдж/строку:
+    - `Режим: Точное совпадение`
+    - `Режим: Override`
+  - рядом короткое объяснение, из какого offer берутся параметры.  
+  Иначе support/admin потом не поймут, почему ссылка one_time создана по тарифу с recurring-offer.
+4. В grep-checklist добавить ещё 4 обязательных точки:
+  - `resolveCanonicalOffer(`
+  - `generateRenewalCTAs(`
+  - `payment_link.created`
+  - `payment_link.type_mismatch_blocked` / любые старые mismatch guards  
+  Нужно явно убедиться, что старые блокирующие проверки нигде не остались.
+5. В entrypoints verification table добавить отдельную строку:
+  - **Reminder CTA one_time через override**  
+  потому что это отдельный критичный сценарий, и именно он раньше ломался при привязке к кнопкам.  
+  Сейчас он не должен сливаться с обычным admin manual one_time.
+6. По reminders уточнить дедуп-ключ в плане не только для SQL post-check, но и для runtime-логики.  
+Нужно явно написать, что dedup выполняется по:
+  - `user_id`
+  - `product_id`
+  - `tariff_id`
+  - `payment_type`
+  - `reminder_window` (1d / 3d / 7d)
+  - `calendar_date`  
+  Иначе можно случайно убрать нужную разницу между окнами 7/3/1 или между one_time/subscription CTA.
+7. Добавить **контрольный endpoint / validation step** не как новый endpoint, а как обязательный backend proof:
+  - после create writer должен вернуть пользователю/admin не только link id, но и в логах/ответе должно быть видно:
     &nbsp;
-    - UI entrypoint
-    - edge function
-    - writer
-    - tracking
-    - downstream
-    - status keep/disable/reroute  
-    Без этой таблицы нельзя начинать execute, иначе снова получится «чиним не тот путь».
+    - `payment_type`
+    - `mode`
+    - `offer_id`
+    - `tariff_id`  
+    Чтобы можно было мгновенно проверить, что link создан именно как one_time, а не silently switched.  
+    Новый endpoint не создавать, но proof contract в existing response/audit нужен.
   &nbsp;
-9. В финальный отчёт обязать включить **before/after summary**:
-  - какие active payment paths были до;
-  - какие active payment paths остались после;
-  - какие MIT paths отключены;
-  - сколько пользователей `auto_renew=false` добавилось в reminder cohort;
-  - сколько дублей найдено/осталось;
-  - кейс Елены: before / after / итог.
+8. В Verify matrix добавить отдельную проверку **Telegram combined flow** именно в override-сценарии:
+  - one_time ссылка, созданная через combined flow на тарифе без one_time offer;
+  - payment_links.payment_type = one_time;
+  - combined flow downstream не сломан.  
+  Сейчас у вас regression по combined Telegram-flow упомянут, но не выделен в override-критичном кейсе.
+9. Для кейса Марины добавить acceptance не только на `payment_links.payment_type='one_time'`, но и на **checkout copy/UI**:
+  - bePaid checkout page не должна отображать subscription language / recurring hints;
+  - сумма и тип соответствуют разовому платежу.  
+  Иначе можно создать one_time link, но checkout всё ещё визуально вести как subscription.
+10. Для кейса Елены уточнить acceptance:
 
 &nbsp;
 
+- если обе ссылки доходят до bePaid checkout, но провайдер отказывает одну из них, это не блокирует закрытие именно этого патча **при условии**, что:
+  &nbsp;
+  - type switch отсутствует;
+  - canonical writer корректный;
+  - `last_provider_error` заполнен;
+  - причина отказа уже outside this patch.  
+  Иначе вы привяжете закрытие патча к внешнему банку/антифроду.
+
 &nbsp;
 
-План: восстановление сайтовых платежей + Telegram-напоминаний (v3)
+11. В STOP-guards разнести зоны явно:
 
-## Цель патча
+- **UI guards**
+- **writer guards**
+- **reminder guards**
+- **provider-failure guards**  
+Сейчас они смешаны, а вы просили это разнести. Это упростит проверку выполнения.
 
-Вернуть все сайты и UI-кнопки оплаты на тот же рабочий backend payment path, который уже доказан в карточке контакта (admin-create-public-link / canonical owner-flow), без новых функций и без расхождения downstream после оплаты. Параллельно — устранить «исчезновение» Telegram-напоминаний о продлении.
+12. Добавить в DoD явный пункт:
 
-Система должна оперировать только двумя понятными платёжными сценариями:
+- `overrideMode` используется только как прозрачный способ создания one_time/subscription ссылки при отсутствии exact offer, но не меняет downstream и не создаёт новый checkout path.  
+Это защитит от скрытого появления второй бизнес-логики.
 
-1. Разовая оплата.
-2. Подписка bePaid с provider-managed автопродлением.
+13. По блоку «Версионирование контрактов CTA» — не делать сейчас отдельное полноценное versioning.  
+Лучше зафиксировать минимально:
 
-Всё, что связано с MIT / server-initiated card charges / verify-recurring / direct-charge по сохранённой карте — выводится из боевого контура.
+- `cta_contract_version: 1`
+- писать его в audit/meta для новых reminder/admin links  
+Это достаточно для трассировки и не раздувает scope.
 
----
+14. По пункту «Автогенерация Reminder CTA» уточнить формулировку:
 
-## БЛОК A. Платежи (P0)
+- не “автогенерация” в смысле новых сущностей,
+- а **гарантированная генерация двух canonical links** через уже существующий writer.  
+Иначе исполнитель снова может начать строить отдельный path для reminder links.
 
-### A0. Жёсткие правила исполнения (hard rules)
+В остальном план уже правильный: он сохраняет старый согласованный контракт системы, убирает silent type switch и не ломает сценарий двух ссылок в reminders.
 
-- НЕ создавать новые edge functions, новые payment handlers, новые checkout flow, новые product-specific ветки и обходные схемы.
-- НЕ вводить новый owner-flow.
-- Переиспользовать ТОЛЬКО уже существующий рабочий канонический flow, который используется в карточке контакта / `admin-create-public-link` / `/pay/:token` (см. `mem://commercial-logic/payments/public-link-writer-standard`, `mem://commercial-logic/payments/public-checkout-architecture`, `mem://architecture/payments/one-time-checkout-unification`).
-- НЕ латать legacy-ветку как самостоятельную финальную реализацию: сначала подчинить её рабочему owner-flow, потом доводить логи/UX.
-- Никаких MIT / recurring API / verify-recurring / direct-charge в рабочих flow.
+&nbsp;
 
-### A1. Diagnose (read-only, до любого кода)
+План v2: фикс «one-time → subscription» с поддержкой admin/manual override
 
-D
+## Корневая причина (исправленная формулировка)
 
-1. **Inventory путей оплаты «с сайта»**:
+Проблема НЕ в том, что у тарифа нет one-time offer'а. Проблема в том, что **UI и writer молча подменяют выбор админа** на тип, навязанный найденным offer'ом:
 
-- Найти все entrypoints в UI (PaymentDialog, тарифные блоки, кнопки на лендингах, /pay/:token, owner-кабинет), которые ведут к созданию заказа/чек-аута.
-- Для каждого entrypoint зафиксировать backend target: какая edge function вызывается, какой writer для `orders_v2`, какой downstream (`grant-access-for-order`, `bepaid-webhook`).
-- Сравнить с каноном «карточки контакта» (admin-create-public-link → /pay/:token → public-checkout). Любое расхождение = legacy-ветка.
+1. `resolveCanonicalOffer(allOffers, 'one_time')` при отсутствии exact-match возвращает primary subscription-offer с `mismatchedType: true`.
+2. `effectivePaymentType` (`AdminPaymentLinkDialog.tsx:214-219`) берёт тип **из offer'а**, а не из выбора админа.
+3. В `admin-create-public-link` уходит `payment_type='subscription'`, и в `payment_links` создаётся subscription-ссылка — хотя админ выбрал «Разовый».
 
-D
+Контракт системы (старый, согласованный):
 
-2. **Inventory MIT/recurring runtime**:
+- `payment_type` ссылки = **выбор админа / источника CTA** (source of truth);
+- `offer` = **источник параметров** тарифа (цена, описание, product linkage), а не ограничитель типа ссылки;
+- допустимо создать `one_time` ссылку поверх тарифа, у которого есть только subscription-offer (controlled override с явным предупреждением).
 
-- grep/discovery по: `payment-method-verify-recurring`, `verify-recurring`, `direct-charge`, `payment-methods-tokenize`, `payment-methods-webhook`, `payment_method_verify`, упоминания `MIT`, `card.verification`, `recurring_charge`, server-side списания по сохранённой карте.
-- Источники: edge functions registry, cron jobs (`cron.job`), вызовы из UI (`supabase.functions.invoke('payment-method-...')`, `supabase.functions.invoke('direct-charge')`), вызовы из других edge functions.
-- Для каждого entrypoint классифицировать: **orphan / активный-но-должен-быть-отключён / активный-как-сохранение-карты-без-списаний**.
+## Что чиним
 
-D
+### F1. UI: выбор админа — source of truth, controlled override вместо silent fallback
 
-3. **Конкретный кейс «не удалось продолжить оплату»** (скрин Елены):
+В `src/components/admin/AdminPaymentLinkDialog.tsx`:
 
-- Подтвердить, какой именно entrypoint вызывался и какой downstream сработал.
-- Зафиксировать факт: pending-заказы создаются в `orders_v2` или в legacy-таблице.
-- Найти последний реальный response от провайдера в `audit_logs` / `function_edge_logs` (без новых логов — только то, что уже есть).
+- `effectivePaymentType` всегда равен `paymentType` (выбор ToggleGroup). Никаких derive из `offer.meta.recurring`.
+- `resolveCanonicalOffer(allOffers, desiredType)`:
+  - Если есть exact-match (offer нужного типа) → **Режим A (canonical match)**, возвращаем его.
+  - Если exact-match нет, но есть любой active pay_now offer → **Режим B (admin override)**, возвращаем его как **источник параметров** + флаг `overrideMode: true` + понятное сообщение для UI.
+  - Если нет вообще никакого active pay_now offer / тариф неактивен / нет цены → `ok:false` (только тогда блокируем).
+- UI:
+  - В Режиме A — без предупреждений.
+  - В Режиме B — `Alert` (не destructive, а warning): «У тарифа нет отдельной кнопки разовой оплаты. Будет создана разовая ссылка на основе текущего тарифа (цена, продукт, описание)». Кнопки **активны**.
+  - Disabled — только при `ok:false` (нет цены / тариф неактивен / product invalid).
+- Override через ручной выбор `selectedOfferId` другого типа: оставляем `paymentType` как выбрал админ, offer используем как источник параметров.
 
-D
+### F2. Backend: писатели сохраняют выбор админа, валидируют согласованность, но НЕ блокируют по recurring-flag
 
-4. **Канонический writer/flow**: подтвердить, что работающий путь — `admin-create-public-link` + `/pay/:token` + общий `public-checkout` — реально создаёт `orders_v2` с правильным `meta.payment_flow`, корректно дергает `bepaid-webhook` → `grant-access-for-order`. Это baseline для подчинения остальных веток.
+В `supabase/functions/admin-create-public-link/index.ts` и `admin-create-payment-link/index.ts`:
 
-D
+- УБРАТЬ guard «`payment_type` must match `offer.meta.recurring`» (его в текущем виде вводить нельзя).
+- Валидация, которую добавляем:
+  - product активен;
+  - tariff активен и принадлежит product;
+  - offer (если передан) принадлежит tariff;
+  - `payment_type ∈ {'one_time','subscription'}`;
+  - сумма резолвится корректно (из offer или tariff fallback).
+- `payment_links.payment_type` записывается **строго равным** `payment_type` из тела запроса (= выбору админа / reminder CTA).
+- Audit `payment_link.created` с полями `requested_type`, `offer_is_recurring`, `mode: 'canonical' | 'override'` — для трассировки, без блокировки.
 
-5. **gc_sync_failed** — посмотреть, мелкий ли это шум (NOT P0). Решение по нему — в follow-up, если не тривиально.
+### F3. Reminder CTA contract (восстановление)
 
-### A2. Решения
+В `supabase/functions/subscription-renewal-reminders/index.ts` / `generateRenewalCTAs`:
 
-**S1. Подчинение всех сайтовых кнопок каноническому owner-flow**
+- Для одного и того же тарифа функция обязана уметь сгенерировать **обе** ссылки:
+  - `payment_type='one_time'`;
+  - `payment_type='subscription'`;
+- Через тот же canonical writer (`admin-create-public-link`).
+- Не требовать наличия двух разных offer-type записей в тарифе.
+- Если у тарифа нет one-time offer — используется Режим B (override): one-time ссылка на основе тарифа.
+- Дедупликация ссылок по ключу `(user_id, product_id, tariff_id, payment_type, date)` — переиспользовать ранее созданную ссылку, если она ещё валидна.
 
-- На основе D1: каждая legacy-ветка переключается на тот же backend path, что и карточка контакта.
-- Никаких новых функций. Только перенаправление вызовов на канонический writer/checkout.
-- UI продолжает использовать `normalizeEdgeFunctionError` (см. `mem://ui/standard/error-normalization-standard`), `paymentFallbackResponse` (HTTP 200 + `fallback:true`).
+### F4. Operational case — Марина Колейчик / Елена
 
-**S2. Вывод MIT / recurring server-side charges из runtime**
+- Марина: пересоздать ссылку через исправленный flow с `payment_type='one_time'` → ожидание: ссылка ведёт на разовый платёж 150 BYN на тариф FULL.
+- Елена (контрольный кейс P0):
+  - сгенерировать обе ссылки (one_time + subscription) через canonical writer;
+  - обе должны корректно дойти минимум до bePaid checkout без silent type switch;
+  - при отказе провайдера — `orders_v2.meta.last_provider_error` содержит причину;
+  - **P0 не закрывать**, пока на её кейсе не подтверждены оба сценария.
 
-- На основе D2: все активные entrypoints, делающие MIT-списания / verify-recurring / direct-charge по сохранённой карте, **отключаются** (cron deactivate, удаление вызовов из UI, отключение webhook-обработчиков, относящихся к MIT).
-- Никаких новых полей `recurring_shop_id` / `recurring_secret_key`. Никаких новых конфигурационных сценариев.
-- Если 401 «Authorization Required» возникает в неиспользуемом MIT path — этот path отключается, credentials НЕ лечатся.
-- Сохранённая карта остаётся только как UX-данные/идентификатор:
-  - можно показать пользователю «карта сохранена»;
-  - можно предложить удобную оплату через канонический bePaid flow;
-  - **никаких автоматических списаний** по ней.
+## Файлы
 
-**S3. Усиление логов checkout — ТОЛЬКО после S1**
+- `src/components/admin/AdminPaymentLinkDialog.tsx` — `resolveCanonicalOffer` (Режим A/B), `effectivePaymentType`, Alert вместо block, override-логика.
+- `supabase/functions/admin-create-public-link/index.ts` — убрать recurring-guard, добавить валидацию product/tariff/offer/amount, audit.
+- `supabase/functions/admin-create-payment-link/index.ts` — то же самое.
+- `supabase/functions/subscription-renewal-reminders/index.ts` — `generateRenewalCTAs` гарантированно возвращает 2 ссылки (one_time + subscription) через canonical writer; дедуп по ключу.
 
-- После того как все сайтовые кнопки идут через канонический owner-flow, в этом единственном пути добавить запись в `orders_v2.meta.last_provider_error` (status, message, code, request_id) при не-2xx от bePaid, плюс audit `bepaid.checkout.declined`.
-- UI-сообщение пользователю остаётся нормализованным.
-- Запрещено: усиливать логи в legacy-ветках раньше, чем они подчинены канону, — иначе мы лучше логируем сломанный путь, а не устраняем его.
+DB-миграции: не нужны.
 
-**S4. Кейс Елены — операционный workaround, НЕ инженерное закрытие P0**
+## Grep-checklist (deliverable в отчёте)
 
-- Создать public-link через `admin-create-public-link` (одноразовая, 14 дней, BUSINESS, 250 BYN, recipient = её user_id).
-- Передать ссылку клиенту.
-- **P0 НЕ закрыт** до тех пор, пока сайтовая кнопка для того же продукта/тарифа не пройдёт оплату через тот же backend owner-path, что и эта ссылка, с одинаковым downstream.
+Для каждого entrypoint — таблица `keep / fix / reroute / verify`:
 
-**S5. Разделение в UI/коде «подписка» vs «сохранённая карта»**
+- `admin-create-public-link`
+- `admin-create-payment-link`
+- `generateRenewalCTAs`
+- `subscription-renewal-reminders`
+- `payment_links` (writes)
+- `payment_type` (все присваивания)
+- `resolveCanonicalOffer`
+- `effectivePaymentType`
+- `/pay/:token`
+- `public-checkout`
+- `PaymentDialog`
+- `bepaid-create-token`
 
-- В коде и в текстах:
-  - **подписка** = автопродление через bePaid subscription provider flow;
-  - **сохранённая карта** = сохранённый платёжный инструмент, без server-side charge.
-- Убрать любые UI/тексты, которые создают впечатление, что сохранённая карта сама участвует в автосписании вне подписочного сценария.
+## Entrypoints verification table (deliverable в отчёте)
 
-### A3. STOP-guards (Платежи)
 
-- Если в ходе ревизии обнаружится, что сайтовая кнопка идёт не через канонический working flow, а через legacy-ветку → НЕ латать как самостоятельную финальную реализацию; сначала подчинить рабочему owner-flow, потом доводить логи/UX.
-- Если найден активный runtime path с MIT → его сначала отключить/перевести на подписочный flow, а не «починить» recurring API.
-- НЕ лечить recurring creds, если MIT выключается как ненужный сценарий.
-- НЕ внедрять новые recurring-конфиги и не расширять интеграцию bePaid под MIT.
-- Если выяснится, что какой-то критичный flow реально опирался на MIT (например, продление клуба) — остановиться и согласовать миграцию его на подписочный flow до отключения MIT.
+| Entrypoint                         | Writer                    | payment_links.payment_type | Создаёт orders_v2 | Downstream                    | Статус после фикса |
+| ---------------------------------- | ------------------------- | -------------------------- | ----------------- | ----------------------------- | ------------------ |
+| Ручная ссылка из карточки контакта | admin-create-payment-link | = выбор админа             | да                | bepaid-webhook → grant-access | fix                |
+| Ручная публичная ссылка            | admin-create-public-link  | = выбор админа             | да                | то же                         | fix                |
+| Reminder CTA one_time              | admin-create-public-link  | one_time                   | да                | то же                         | restore            |
+| Reminder CTA subscription          | admin-create-public-link  | subscription               | да                | то же                         | restore            |
+| Сайтовая кнопка тарифа             | canonical checkout        | = тип кнопки               | да                | то же                         | keep               |
+| /pay/:token                        | public-checkout           | (read)                     | да                | то же                         | keep               |
 
-### A4. DoD (Платежи)
 
-- Для одного и того же продукта/тарифа/offer:
-  - ссылка из карточки контакта — success;
-  - сайтовая кнопка — после фикса тоже success;
-  - обе идут по одному backend owner-path / одному downstream;
-  - создаётся запись в `orders_v2`, а не в legacy `orders`.
-- В рабочих flow больше нет вызовов MIT recurring API.
-- Нет cron/edge/job, которые пытаются автоматически списывать деньги по сохранённой карте.
-- Автопродление работает только через bePaid subscription flow.
-- Сохранённая карта больше не используется как источник server-side charge.
-- 401 по recurring path либо исчезает из runtime, либо остаётся только в отключённом legacy/orphan коде, исключённом из боевого контура.
-- В каноническом checkout-пути появляется `orders_v2.meta.last_provider_error` при отказах bePaid; audit `bepaid.checkout.declined` присутствует.
+## Verify matrix
 
----
+**Платежи / canonical flow**
 
-## БЛОК B. Telegram-напоминания (P1)
+1. Тариф FULL (только subscription-offer) + админ выбирает «Разовый» → warning Alert + кнопки активны → создаётся `payment_links.payment_type='one_time'`. Ссылка ведёт на разовый платёж.
+2. Тот же тариф + «Подписка» → Режим A, без warning, subscription-ссылка.
+3. Тариф с one-time offer + «Разовый» → Режим A, без warning, one-time ссылка.
+4. Принудительный POST в writer с произвольной комбинацией `payment_type` и `offer_id` (один тариф) → не блокируется по recurring-flag, `payment_links.payment_type` = из тела запроса.
 
-### B1. Diagnose (read-only)
+**Reminders с двумя CTA**
+5. Пользователь `auto_renew=false` с истекающим доступом → reminder приходит, в сообщении 2 CTA. Первая ссылка реально one_time, вторая реально subscription. Обе ведут в рабочий checkout.
+6. Пользователь `auto_renew=true` + активная SBS → reminder без paylink (старая логика сохранена).
 
-- Подтверждено: cron `subscription-renewal-reminders` работает; фильтр `.eq('auto_renew', true)` исключает ~22% активных подписок (`auto_renew=false`).
-- Дополнительно проверить ключи дедупликации `wasReminderSentToday` (по `event_type` и `user_id+window`), чтобы расширение когорты не привело к дублям.
+**Дедуп reminders (SQL before/after)**
+7. SQL: `SELECT user_id, date(created_at), count(*) FROM audit_logs WHERE event_type LIKE '%reminder%' GROUP BY 1,2 HAVING count(*)>1` → ожидание: 0.
+8. SQL: `SELECT user_id, product_id, tariff_id, payment_type, date(created_at), count(*) FROM payment_links WHERE source='reminder' GROUP BY 1,2,3,4,5 HAVING count(*)>1` → ожидание: 0.
 
-### B2. Решения
+**Контрольный кейс Елены**
+9. Сгенерированы обе ссылки (one_time + subscription) через canonical writer; обе доходят до bePaid checkout без silent type switch; при отказе провайдера в `orders_v2.meta.last_provider_error` есть причина.
 
-**B-S1. Расширение когорты + правильный текст**
+**Regression**
+10. `/pay/:token` для уже существующих ссылок не сломан.
+11. Combined Telegram-flow (writer admin-create-payment-link) не сломан.
+12. Public-mode без user_id не сломан.
 
-- В `supabase/functions/subscription-renewal-reminders/index.ts` снять `.eq('auto_renew', true)` для окон 7/3/1 дней.
-- Продуктовая логика текста (жёстко):
-  - `auto_renew = true` И активная SBS → текущий текст «продлится автоматически …», без paylink.
-  - `auto_renew = false` (или нет активной SBS) → ДРУГОЙ текст: «Автопродление отключено. Доступ закончится через N дней.» + 2 CTA (one-time + subscription) через `generateRenewalCTAs`.
-  - Запрещено: текст «спишется автоматически» там, где автопродление выключено.
-- Дедупликация: убедиться, что `wasReminderSentToday` корректно покрывает обе ветки и не допускает повторной отправки в один день.
+## STOP-guards
 
-**B-S2. gc_sync_failed**
+**Payments**
 
-- Не P0. В этом проходе чиним только если это тривиальный шумовой fix (подавить error-level для `attempt < 3` в `bepaid-webhook`). Иначе — follow-up.
+- Запрещено привязывать возможность создания one-time ссылки к обязательному существованию отдельного one-time offer.
+- Запрещён silent override типа ссылки. Разрешён только explicit override с прозрачным warning и корректным `payment_type` на выходе.
+- Запрещено возвращать 400 в writer'ах только из-за `payment_type ≠ offer.recurring`.
+- Не закрывать P0 без runtime-proof обеих ссылок (one_time + subscription) на кейсе Елены.
 
-### B3. STOP-guards (Напоминания)
+**Reminders**
 
-- Если расширение когорты приводит к дублям в один день → остановиться, доработать дедупликацию до execute remaining users.
-- Если для `auto_renew=false` нет валидного product/tariff для CTA-ссылки → остановиться, не отправлять «пустые» кнопки.
+- Запрещено ломать reminder-flow с двумя ссылками: обе должны генерироваться даже если у тарифа нет one-time offer.
+- Не выкатывать execute remaining users, если SQL-проверки 7/8 показали дубли.
+- CTA не отправляются, если writer не смог создать ссылку (нет цены / тариф неактивен).
 
-### B4. DoD + Verify (Напоминания)
+**Workaround / Elena**
 
-Качественный verify (а не только количество SEND_REMINDER):
+- Public-link workaround не считается инженерным закрытием P0.
+- Если public-link работает, а сайтовая кнопка нет — задача остаётся открытой.
+- При отказе провайдера — фиксируем provider-error, не закрываем общим fallback.
 
-- ≥3 реальных кейса `auto_renew=false`, которые раньше не получали reminder, а после фикса получили — со скринами/SQL-фактом.
-- ≥2 кейса `auto_renew=true` с активной SBS, где поведение не изменилось (текст без paylink).
-- Отсутствие дублей в один день по тем же пользователям (SQL-проверка по `audit_logs` event_type + user_id + date).
-- Тексты соответствуют продуктовой логике (auto_renew on/off — разные формулировки).
+## DoD
 
----
+- `payment_links.payment_type` всегда равен выбору сценария (admin / manual / reminder CTA), **никогда не derived from `offer.meta.recurring**`.
+- В UI для тарифа без one-time offer админ может создать one_time ссылку через Режим B (warning + active button).
+- Backend writer'ы не блокируют создание по причине несовпадения `payment_type` с recurring-flag offer'а.
+- `generateRenewalCTAs` возвращает 2 валидные ссылки для любого тарифа с активным pay_now offer.
+- Кейс Марины Колейчик: новая ссылка с «Разовый» → `payment_links.payment_type='one_time'`, ведёт на разовый платёж.
+- Кейс Елены: обе ссылки (one_time + subscription) корректны, доходят до bePaid без подмены типа.
+- Дедуп-SQL 7 и 8 → 0 строк.
+- Legacy `orders` не участвует в рабочем checkout path; все writer'ы пишут в `orders_v2`.
 
-## Порядок execute (строго)
+## Порядок execute
 
-1. **Diagnose платежей** (A1: D1–D5) — read-only inventory; результат: список legacy-веток + список MIT runtime entrypoints с классификацией.
-2. **Платежи S2**: отключение MIT runtime (cron deactivate + удаление вызовов в UI/edge). Никаких новых полей.
-3. **Платежи S1**: подчинение всех сайтовых кнопок каноническому owner-flow.
-4. **Платежи S3**: усиление логов в едином каноническом пути.
-5. **Платежи S5**: разделение UI «подписка» vs «сохранённая карта» (правка текстов/состояний, без новых функций).
-6. **Платежи S4**: операционный workaround для Елены — public-link.
-7. **Напоминания B-S1**: расширение когорты + раздельные тексты + дедупликация.
-8. **Напоминания B-S2** (опционально, если тривиально): подавление gc_sync_failed шума.
-9. **Verify**:
-  - Платежи: тестовая оплата сайтовой кнопкой и ссылкой из карточки — оба идут в `orders_v2`, downstream одинаковый.
-  - MIT: SQL-факт, что в audit за сутки нет новых `card.verification.failed` от runtime path.
-  - Напоминания: 3+/2+ кейсов, нет дублей.
-
----
-
-## Объяснение «как это получилось» (для отчёта пользователю)
-
-- **Платежи**: со временем рядом с каноническим owner-flow (карточка контакта → admin-create-public-link → /pay/:token) развились параллельные сайтовые ветки и MIT-сценарий (server-side списания через verify-recurring / direct-charge). MIT-ветка получает 401 от bePaid (creds/права/конфигурация магазина) и фейлит автосписания. Часть сайтовых кнопок идёт по этим параллельным путям и потому даёт «не удалось продолжить оплату». Лечение — не «починить MIT», а вернуть всё на один канонический owner-flow и убрать MIT из боевого контура. Автопродление остаётся только через bePaid subscription flow.
-- **Напоминания**: cron работал всегда, но фильтр `auto_renew=true` исторически исключал отключивших автоплатёж — именно тех, кому напоминания нужнее всего. Внешне это выглядело как «уведомления исчезли».
-
-## Финальная фраза для исполнителя
-
-Цель этого патча — не «улучшить симптомы», а вернуть все сайты на тот же рабочий backend payment path, который уже доказан в карточке контакта, без новых функций и без расхождения downstream после оплаты; и одновременно вывести MIT/recurring server-side charges из боевого контура — оставить только разовую оплату и подписочный bePaid flow.
+1. Зафиксировать canonical owner map (таблица entrypoints) и grep-checklist в отчёте — **до** правок.
+2. Backend: убрать ошибочный recurring-guard из `admin-create-public-link` и `admin-create-payment-link`, добавить корректную валидацию product/tariff/offer/amount + audit.
+3. UI: `AdminPaymentLinkDialog` — Режим A/B, `effectivePaymentType` = выбор админа, warning Alert вместо block.
+4. Reminders: `generateRenewalCTAs` — 2 ссылки гарантированно, дедуп по ключу.
+5. Operational: пересоздать ссылку для Марины Колейчик, сгенерировать 2 ссылки для Елены.
+6. Verify по матрице 1–12 + before/after SQL дедупов.
+7. Финальный отчёт: before/after summary, grep-table, entrypoints-table, кейсы Марины и Елены.
