@@ -1,342 +1,284 @@
-да, согласен, с учетом правок:
+План:
 
-1. В план явно добавить правило **одного канонического reset-path**:
+# да, согласен, с учетом правок:
 
-- выбрать один источник истины для recovery;
-- второй путь не оставлять “на всякий случай”;
-- после фикса в кодовой базе должен остаться **ровно один** клиентский способ запуска reset.
-
-2. В `Execute / Шаг 1` зафиксировать целевой вариант:
-
-- **все клиентские точки** (`Auth.tsx`, `PaymentDialog.tsx`, `useInlineAuth.ts`) должны вызывать **один и тот же recovery path**;
-- если остаётся `auth-actions`, то `supabase.auth.resetPasswordForEmail` из клиента убрать;
-- если выбирается прямой Supabase-path, тогда `auth-actions` для reset полностью вывести из эксплуатации, а не держать параллельно.
-
-3. Усилить `Dry-run`:
-
-- кроме поиска callsites reset, обязательно найти **все места чтения** `mode=reset` **/ recovery-session /** `type=recovery` **/** `exchangeCodeForSession` **/** `onAuthStateChange(PASSWORD_RECOVERY)`;
-- отдельно зафиксировать, кто именно переводит UI в `update_password`, чтобы после унификации не сломать вход по ссылке.
-
-4. В root cause добавить ещё одну обязательную проверку:
-
-- выяснить, **как именно** `auth-actions` **сейчас генерирует ссылку**: через Supabase recovery flow или кастомный токен/URL;
-- если там кастомная генерация, её нельзя менять вслепую без проверки совместимости с `/auth?mode=reset`.
-
-5. В `P2` уточнить формулировку:
-
-- backend не должен опираться на `profiles` как на единственный источник пользователя;
-- **источником истины должен быть auth-пользователь**;
-- отсутствие профиля не должно блокировать отправку;
-- но privacy-safe контракт наружу сохранить.
-
-6. В `P3` добавить явный UX-контракт на ошибки:
-
-- `invalid / expired / already used link` → отдельный экран с понятным текстом;
-- обязательная кнопка **«Отправить новую ссылку»**;
-- обязательная кнопка **«Вернуться ко входу»**;
-- не оставлять пользователя в пустом `update_password` состоянии без recovery-session.
-
-7. В `Execute / Шаг 2` добавить обязательную проверку отправки письма:
-
-- success в UI допустим только если backend реально дошёл до стадии отправки;
-- если SMTP / send-email / link-generation упали, это не должно маскироваться под “успех”;
-- privacy-safe нужен только для кейса “пользователь может не существовать”, а не для внутренних ошибок отправки.
-
-8. В `DoD` переформулировать один пункт:
-
-- вместо “UI не показывает ложный success, если письмо не может быть отправлено” лучше разделить:
-  - для несуществующего email — privacy-safe neutral success;
-  - для внутренних ошибок генерации/отправки — явная ошибка и лог.
-
-9. Добавить отдельный **backend-proof block**:
-
-- для кейса `auth user + profile нет` показать:
-  - входной email,
-  - лог `auth-actions`,
-  - факт генерации recovery link,
-  - факт вызова `send-email`,
-  - запись в `email_logs`.
-- без этого primary root cause считается исправленным не полностью.
-
-10. Добавить отдельный **data-diagnostic, но не hotfix**:
-
-- список `auth.users` без `profiles` сохранить как follow-up артефакт;
-- сам hotfix reset не должен зависеть от немедленного backfill profiles;
-- backfill missing profiles оформить отдельным deferred PATCH.
-
-11. В `STOP-guards` добавить ещё один пункт:
-
-- остановить execute, если recovery сейчас завязан на нестандартный redirect / домен / query-параметры, несовместимые с `/auth?mode=reset`, и сначала зафиксировать mapping старый путь → новый путь.
-
-12. В `Proof DoD` добавить ещё 2 обязательных кейса:
-
-- повторный запрос reset дважды подряд на один email;
-- использование старой ссылки после выпуска новой ссылки.  
-Это нужно, потому что у вас уже есть симптомы `invalid or expired` / `One-time token not found`.
-
-13. В `Execute` добавить шаг после hotfix:
-
-- прогнать **сверку всех экранов**, где есть forgot/reset entry point, чтобы текст, тосты и redirect были одинаковыми;
-- сейчас проблема не только в backend, но и в расхождении UX между экранами.
-
-14. В финальном отчёте потребовать отдельное разделение:
-
-- что было primary root cause;
-- что исправлено hotfix;
-- что осталось secondary/deferred (`expired link UX`, `missing profiles backfill`, managed auth emails later).
-
-15. В scope зафиксировать, что **managed auth-email infrastructure сейчас не трогаем**, но в отчёте обязательно указать:
-
-- текущий hotfix остаётся на legacy email-path;
-- переход на managed auth emails возможен только отдельным спринтом после стабилизации reset.
-
-После этих правок план можно запускать в execute без дополнительного discovery.
+1. **Privacy-контракт вопросов зафиксируй жёстко.**  
+Сейчас в плане остаётся двусмысленность: “только свои вопросы (или пусто)”.  
+По тексту интерфейса *«Их видят модераторы и ведущий»* нужно принять один контракт и не размывать его:
+  &nbsp;
+  &nbsp;
+  - обычный участник **не видит список чужих вопросов вообще**;
+  - staff/presenter видит все;
+  - показывать ли автору его собственные вопросы — зафиксируй отдельно как product decision.  
+  Без этого нельзя корректно собрать ни RLS, ни proof.
+2. **Не расширяй** `DELETE policy` **без необходимости.**  
+В этом патче нужен только сценарий `mark-as-answered`.  
+Значит:
+  - `SELECT` — privacy fix;
+  - `UPDATE` — только для staff/presenter;
+  - `DELETE` — не трогать, если нет отдельного требования удалять вопросы.  
+  Иначе лишне расширишь права.
+3. **Для** `mark-as-answered` **лучше не открывать широкий UPDATE на всю таблицу.**  
+Более безопасно:
+  - либо отдельный RPC / edge action `mark_live_question_answered(question_id)`;
+  - либо очень аккуратный UPDATE path, но тогда в отчёте явно указать риск, что staff технически сможет менять и другие поля строки.  
+  Предпочтительно первое.
+4. `Badge новых вопросов` **и** `badge неотвеченных` **— это не одно и то же.**  
+Без отдельного per-staff read cursor / last_seen state ты можешь честно сделать только:
+  - **badge количества неотвеченных**.  
+  Не называй это “новые вопросы”, если не вводится отдельное состояние “последний просмотр staff”. Иначе это будет функциональная ложь.
+5. `is_live_event_presenter(...)` **не придумывать заранее.**  
+Сначала подтвердить реальный SoT:
+  - presenter хранится в `live_events.metadata`;
+  - или в отдельной колонке/связи;
+  - или уже есть общий staff-guard helper.  
+  В плане зафиксируй: использовать **существующий server-side guard**, а не вводить новую функцию, пока не подтверждён источник.
+6. **Realtime-proof должен учитывать RLS, а не только UI.**  
+Обязательно добавь в diagnose/proof:
+  - обычный участник не получает чужие вопросы не только через select, но и через realtime subscription;
+  - staff получает все вопросы и badge обновляется в realtime.  
+  Это ключевой privacy-proof.
+7. **По answered-state добавь индекс/производительность.**  
+Если делаешь badge `WHERE live_event_id = ? AND is_answered = false`, добавь в план:
+  - индекс по `(live_event_id, is_answered)` или эквивалентный частичный индекс.  
+  Иначе на больших эфирах staff-badge будет ненужно дорогим.
+8. **Desktop nickname color сформулируй точнее.**  
+Это не “desktop ветка”, а баг общего chat renderer, где цвет ника в чате не применяется, хотя в participant list применяется.  
+В плане так и напиши:
+  - исправить **chat renderer**;
+  - mobile participant list не трогать;
+  - источник строго `author_nickname_color`.
+9. **Proof regular user view сделай двойным.**  
+Нужно показать:
+  - обычный участник A не видит вопрос участника B;
+  - staff видит оба вопроса.  
+  Одного скрина “вижу только свои” недостаточно.
+10. **В финальном отчёте раздели статусы так:**
 
 &nbsp;
 
-План:
+- privacy вопросов;
+- badge/count;
+- mark-as-answered;
+- nickname color;
+- что не тронуто;
+- что осталось open.  
+И отдельно укажи, что визуальный баг вкладки “Вопросы” в этот PATCH не входит.
+
+11. **Stop-guard дополни:**  
+если для privacy требуется менять не только RLS, но и клиентский UX обычного участника (например, полностью скрывать список и оставлять только форму), это нужно явно зафиксировать до execute, а не решать по ходу.
+12. **DoD уточни формулировкой без двусмысленности:**
+
+- обычный участник не видит чужие вопросы;
+- staff/presenter видит все вопросы;
+- badge показывает количество **неотвеченных**;
+- mark-as-answered сохраняет статус серверно;
+- цвет ника в чате совпадает с выбранным цветом и не зависит от desktop/mobile.
+- &nbsp;
+- PATCH: Privacy «Вопросов» + Staff-badge + Desktop nickname color
+
+## 1. Diagnose (подтверждено tools)
+
+**B1. Privacy «Вопросов» — главный баг (подтверждён в БД):**
+
+- RLS SELECT policy `Users with access can read questions` на `public.live_event_questions`:
+  ```
+  USING (user_has_live_event_access(auth.uid(), live_event_id))
+  ```
+  → **любой** участник с доступом к эфиру читает **все** вопросы всех участников.
+- Клиентский query в `src/components/live/LiveEventQuestions.tsx` (строки 66–71) вытягивает все вопросы без фильтра по `user_id`.
+- В UI висит hint «Анонимные вопросы. Их видят модераторы и ведущий» (строка 230) — это сейчас **ложь**, контракт нарушен.
+
+**B2. Staff badge — отсутствует:**
+
+- В `LiveEventQuestions.tsx` нет счётчика неотвеченных, нет источника для badge на вкладке «Вопросы».
+- В таблице есть `is_answered boolean NOT NULL`, нет `answered_at`, нет `answered_by`.
+- Realtime publication на `live_event_questions` уже включён.
+- Кнопка «Отметить как отвечен» сейчас доступна `isStaff` (admin/superadmin/employee) — это ок, но без serverside guard (UPDATE policy = `has_role_v2(auth.uid(),'admin')` — то есть **employee сейчас не может update**, расхождение UI vs RLS).
 
-1. Проблема
+**B3. Nickname color на desktop:**
 
-У пользователей ломается восстановление пароля: они нажимают «Забыли пароль», UI показывает успех, но письмо части пользователей фактически не уходит. Нужно срочно перепроверить весь auth-flow пошагово, найти точную причину и исправить без создания второго параллельного механизма.
+- Компонент чата один и тот же для desktop и mobile (`LiveEventComments.tsx`) — нет двух веток.
+- Поле `author_nickname_color` есть в БД, но **не читается** в SELECT (строка 67) и **не применяется** к `<span>` имени (строки 273–279).
+- На mobile цвет, который видит пользователь, скорее всего идёт из `RoomParticipantsList.tsx` (там `nickname_color` уже применяется через inline style). Значит баг — цвет применяется в **списке участников**, но **не в чате**. После фикса будет применяться в обеих поверхностях идентично.
 
-2. Диагностика
+## 2. Scope
 
-Подтвержденное текущее состояние по коду и логам:
+**DB (миграция):**
 
-- В проекте сейчас уже есть два разных reset-flow:
-  - `src/pages/Auth.tsx` и `src/components/payment/PaymentDialog.tsx` вызывают кастомную backend-функцию `auth-actions`.
-  - `src/hooks/useInlineAuth.ts` использует прямой `supabase.auth.resetPasswordForEmail(...)`.
-- Это уже архитектурный дефект: два разных пути для одной критической auth-операции.
+- Заменить SELECT policy `live_event_questions` на privacy-safe (staff видит всё, обычный — только свои).
+- Заменить UPDATE/DELETE policies — расширить с `admin` до staff (`admin/superadmin/employee`), чтобы UI и RLS совпадали.
+- Добавить колонки `answered_at timestamptz`, `answered_by uuid`.
 
-Подтвержденный root cause №1:
+**Клиент:**
+
+- `src/components/live/LiveEventQuestions.tsx` — убрать ложный hint / переписать его, добавить badge неотвеченных через `useUnansweredQuestionsCount`, расширить SELECT (`author_nickname_color`, `answered_at`, `answered_by`), записывать `answered_at/by` при toggle, сделать визуальное отделение «Отвеченные/Неотвеченные».
+- `src/components/live/LiveEventComments.tsx` — добавить `author_nickname_color` в SELECT и применять inline `style={{ color }}` к имени автора (как уже сделано в `RoomParticipantsList`).
+- Найти место рендера `Tabs` с триггером «Вопросы» (вероятно `src/pages/LiveEvent.tsx` или `src/components/LiveEvent.tsx`) — добавить badge на `TabsTrigger` для staff.
+- Новый хук `src/hooks/useUnansweredQuestionsCount.ts` — staff-only realtime счётчик `WHERE live_event_id=? AND is_answered=false`. Для не-staff хук no-op.
 
-- `supabase/functions/auth-actions/index.ts` перед отправкой reset-письма ищет пользователя только в `public.profiles`:
-  - `from('profiles').select('user_id,email').ilike('email', email)...`
-- Если профиль не найден, функция возвращает `success: true`, но письмо не отправляет вообще.
-- В базе уже есть разрыв между auth и profiles:
-  - `auth.users` без профиля: `19` записей.
-- Значит для части реальных пользователей reset «успешен» только в UI, а на деле письмо не уходит.
+**НЕ трогаем:**
 
-Подтвержденный root cause №2:
+- Auth / reset password.
+- Access rules эфиров.
+- `LiveEventReplies` (отдельный поток ответов).
+- Mobile-ветку (её нет — компонент один).
+- Стили вкладки «Вопросы» как таковой (B1 из предыдущей итерации — отдельный визуальный баг, в этом PATCH не закрываем).
 
-- Reset-flow дублирован и расходится по поведению:
-  - один путь идет через `auth-actions` + `send-email`,
-  - другой — через `resetPasswordForEmail`.
-- Из-за этого поведение зависит от того, из какого экрана пользователь восстанавливает пароль.
+## 3. Решение по пунктам
 
-Что уже видно по логам:
+### B1. Privacy «Вопросов» (server-side, не только UI)
 
-- Для части адресов письмо реально отправляется:
-  - `auth-actions` логирует `User found, generating reset link`
-  - `send-email` логирует SMTP success / `status='sent'` в `email_logs`
-- Для части кейсов в auth-логах есть:
-  - `403: Email link is invalid or has expired`
-  - `One-time token not found`
-- Это уже вторичный дефект: либо пользователь открывает старую ссылку, либо flow генерации/повтора письма допускает конфликт старых recovery links. Но первичный массовый баг — именно silent success при отсутствии profile.
+**Новая RLS SELECT policy:**
 
-Дополнительный важный факт:
+```sql
+DROP POLICY "Users with access can read questions" ON public.live_event_questions;
 
-- Отдельный новый managed auth-email flow не настроен:
-  - в `supabase/functions` нет `auth-email-hook`
-  - email-домен для managed auth email сейчас в pending (`sent.gorbova.by`)
-- Но это не объясняет текущую массовую поломку, потому что текущий reset работает не через managed auth email, а через legacy `auth-actions` + `send-email`.
+CREATE POLICY "Staff read all, users read own"
+  ON public.live_event_questions FOR SELECT TO authenticated
+  USING (
+    user_has_live_event_access(auth.uid(), live_event_id)
+    AND (
+      auth.uid() = user_id
+      OR has_role_v2(auth.uid(), 'admin')
+      OR has_role_v2(auth.uid(), 'employee')
+      OR is_live_event_presenter(auth.uid(), live_event_id)
+    )
+  );
+```
 
-Пошаговое состояние регистрации / auth UI:
+- Если функции `is_live_event_presenter` нет — создать её на основе `live_events.metadata->>'presenter_user_id'` в той же миграции.
+- INSERT policy не трогаем (она уже корректна).
 
-- `src/pages/Auth.tsx`
-  - login
-  - signup
-  - forgot
-  - update_password
-  - account_exists
-- `signup` идет через `AuthContext.signUp`
-- forgot в `Auth.tsx` идет через `auth-actions`
-- update password делается на `/auth?mode=reset` через `supabase.auth.updateUser({ password })`
-- recovery UI существует, но вход в него зависит от валидной recovery-session после перехода по ссылке.
+**UPDATE/DELETE policies — расширить до staff:**
 
-3. Предлагаемое решение
+```sql
+DROP POLICY "Admins can update questions" ON public.live_event_questions;
+CREATE POLICY "Staff can update questions"
+  ON public.live_event_questions FOR UPDATE TO authenticated
+  USING (
+    has_role_v2(auth.uid(), 'admin')
+    OR has_role_v2(auth.uid(), 'employee')
+    OR is_live_event_presenter(auth.uid(), live_event_id)
+  );
+-- аналогично DELETE
+```
 
-P
+**Клиент:**
 
-1. Убрать дублирование reset-flow и сделать один канонический путь
+- Hint переписать: «Ваш вопрос увидят только модераторы и ведущий».
+- SELECT в `LiveEventQuestions.tsx` оставить как есть — RLS сам отфильтрует. Никаких client-side `eq("user_id", ...)`, чтобы не было утечки контракта.
+- Список вопросов у обычного участника: показываем только его собственные (это естественно вытекает из RLS); если их нет — пусто + форма ввода.
 
-- Все клиентские экраны восстановления пароля перевести на единый механизм.
-- Не держать параллельно `auth-actions` и `resetPasswordForEmail` для одного и того же сценария.
+### B2. Staff badge + answered-state
 
-P
+**Миграция:**
 
-2. Исправить backend-причину silent success
+```sql
+ALTER TABLE public.live_event_questions
+  ADD COLUMN IF NOT EXISTS answered_at timestamptz,
+  ADD COLUMN IF NOT EXISTS answered_by uuid;
+```
 
-- Если legacy backend-path сохраняется, он не должен зависеть от `profiles` как единственному источнику существования пользователя.
-- Проверка существования должна опираться на auth-пользователя, а не на профиль.
-- Если профиль отсутствует, reset всё равно должен отправляться.
-- Если пользователь реально не существует, UI должен оставаться privacy-safe, но система не должна «глотать» существующего auth user из-за отсутствия profile.
+**Хук `useUnansweredQuestionsCount(liveEventId, enabled)`:**
 
-P
+- `enabled = isStaff`.
+- Query: `select id from live_event_questions where live_event_id=? and is_answered=false`.
+- Realtime подписка на ту же таблицу, инвалидирует count.
+- Для не-staff возвращает `0` без сетевого запроса.
 
-3. Определить и зафиксировать целевой контракт reset
+**Badge на `TabsTrigger`:**
 
-Рекомендованный контракт:
+- В компоненте, где собраны Tabs «Чат / Вопросы / Участники», обернуть label «Вопросы» во flex с `<Badge variant="default">{count}</Badge>` (или красная точка) при `count > 0` и `isStaff`.
+- Не показываем badge для текущей активной вкладки (опционально).
 
-- Клиент везде вызывает один и тот же recovery API.
-- Письмо уходит всем существующим auth users, даже если профиль не создан/сломан.
-- Экран `/auth?mode=reset` открывает форму нового пароля только при валидной recovery-session.
-- Повторная/просроченная ссылка дает понятное сообщение и CTA «отправить новую ссылку».
+**Mark-as-answered:**
 
-P
+- Кнопка остаётся у staff. При клике пишем `is_answered`, `answered_at = now()`, `answered_by = auth.uid()`.
+- В UI секционировать список: «Неотвеченные» (сверху, обычный стиль) → «Отвеченные» (снизу, `opacity-60` + иконка `CheckCircle2`). Заголовки секций показываем только staff (обычный пользователь видит максимум один-два своих).
 
-4. Перепроверить регистрацию пошагово и закрыть связанные дыры
+### B3. Desktop nickname color
 
-- signup
-- подтверждение email / первый вход
-- already-registered -> account_exists
-- forgot password
-- open recovery link
-- set new password
-- login with new password
+В `LiveEventComments.tsx`:
 
-4. Изменяемые компоненты
+- В SELECT добавить `author_nickname_color`.
+- В рендере имени:
+  ```tsx
+  <span
+    className="..."
+    style={comment.author_nickname_color ? { color: comment.author_nickname_color } : undefined}
+  >
+  ```
+- Никаких эвристик; источник — строго `author_nickname_color` (snapshot в комментарии). Theme комнаты не перебивает (inline style имеет приоритет).
+- Аналогично для `LiveEventQuestions.tsx` (имена авторов вопросов — для staff, который их видит).
 
-Клиент:
+## 4. Файлы
 
-- `src/pages/Auth.tsx`
-- `src/components/payment/PaymentDialog.tsx`
-- `src/hooks/useInlineAuth.ts`
-- возможно `src/contexts/AuthContext.tsx` только если понадобится унификация redirect/confirmation contract
+**Изменяемые:**
 
-Backend:
+- `supabase/migrations/<new>.sql` — RLS + колонки.
+- `src/components/live/LiveEventQuestions.tsx`
+- `src/components/live/LiveEventComments.tsx`
+- `src/hooks/useUnansweredQuestionsCount.ts` (новый)
+- Файл с `Tabs` для комнаты (определю в execute — вероятно `src/pages/LiveEvent.tsx`).
 
-- `supabase/functions/auth-actions/index.ts`
+**Не изменяемые:**
 
-Диагностика / verify:
+- `LiveEventReplies.tsx`, `RoomParticipantsList.tsx`, auth-flow, access-rules.
 
-- auth logs
-- edge logs `auth-actions`, `send-email`
-- `public.email_logs`
-- запрос на разрыв `auth.users` ↔ `profiles`
+## 5. Порядок execute
 
-Возможный follow-up, только если реально нужен:
+1. Миграция: новые RLS-полиси SELECT/UPDATE/DELETE + колонки `answered_at/by`.
+2. Клиент: privacy hint + расширенный select (`author_nickname_color, answered_at, answered_by`) + answered-секции.
+3. Новый хук `useUnansweredQuestionsCount`.
+4. Badge на `TabsTrigger` «Вопросы» (staff-only).
+5. Nickname color в `LiveEventComments` и `LiveEventQuestions`.
+6. Verify по DoD.
 
-- recovery UX around invalid/expired token
-- опционально backfill missing profiles отдельным PATCH, не смешивая с hotfix reset
+## 6. STOP-guards
 
-5. Что не будет изменено
+Остановиться и вернуться с мини-планом, если:
 
-- roles / access logic
-- платежная логика
-- live / webinar модули
-- schema миграции, если hotfix можно сделать без них
-- managed email infrastructure не переводится автоматически в этом PATCH, если цель — срочно восстановить reset для текущих пользователей
+- Функции `is_live_event_presenter` нет и при создании выяснится, что `presenter_user_id` хранится не в `metadata`, а в отдельной колонке/связи (требует уточнения SoT).
+- В `live_event_questions` есть зависимые view/RPC (например, `get_live_event_thread`), которые ломаются после ужесточения SELECT (нужна сверка).
+- В UI есть второе место, читающее `live_event_questions` для обычного пользователя (CRM `ContactWebinarsTab` — staff-only, ок; `LiveEventExportButtons` — staff-only, ок).
 
-6. Dry-run
+## 7. DoD
 
-Перед execute:
+**Privacy:**
 
-- подтвердить все текущие точки вызова reset в клиенте
-- зафиксировать raw-proof:
-  - `Auth.tsx` -> `auth-actions`
-  - `PaymentDialog.tsx` -> `auth-actions`
-  - `useInlineAuth.ts` -> `resetPasswordForEmail`
-- зафиксировать backend-proof:
-  - `auth-actions` ищет только `profiles`
-  - `auth.users without profile = 19`
-- подготовить тестовую матрицу без миграций:
-  1. существующий auth user + profile есть
-  2. существующий auth user + profile нет
-  3. несуществующий email
-  4. recovery link reuse / expired
+- Обычный участник видит во вкладке «Вопросы» только свои вопросы (или пусто) + форму отправки.
+- Staff (admin/superadmin/employee) и presenter видят все вопросы текущего эфира.
+- Защита на RLS, не только в UI.
 
-7. Execute
+**Badge:**
 
-Шаг 1. Канонизировать reset-flow
+- Staff видит счётчик неотвеченных на `TabsTrigger` «Вопросы», обновляется в realtime, сбрасывается при mark-as-answered.
+- Обычный участник badge не видит.
 
-- Выбрать один путь восстановления пароля и перевести на него:
-  - `Auth.tsx`
-  - `PaymentDialog.tsx`
-  - `InlineAuthForm/useInlineAuth`
-- Убрать расхождение поведения между экранами.
+**Answered:**
 
-Шаг 2. Исправить `auth-actions`
+- Staff может отметить вопрос как отвечен; пишутся `is_answered`, `answered_at`, `answered_by`.
+- В списке отвеченные визуально отделены от неотвеченных.
 
-- Убрать зависимость «reset only if profile exists».
-- Проверять существование пользователя через auth-источник, а не через `profiles`.
-- Сохранить privacy-safe ответ наружу.
+**Nickname color:**
 
-Шаг 3. Усилить recovery UX
+- В desktop-чате цвет ника совпадает с тем, что выбран в `RoomEntryDialog` и виден в списке участников.
+- Источник — `author_nickname_color` snapshot.
 
-- На `/auth?mode=reset` явно обрабатывать:
-  - valid recovery session
-  - invalid/expired link
-  - missing session
-- Добавить понятный экран повторной отправки ссылки вместо тупикового состояния.
+## 8. Proof
 
-Шаг 4. Пройти end-to-end проверки со скринами
+1. Скрин: Staff view — все вопросы + badge + mark-as-answered до/после.
+2. Скрин: Regular user view — только свои вопросы + hint про приватность.
+3. SQL-proof: новые RLS-полиси (`pg_policy`) и попытка SELECT под обычным юзером (другого `user_id`) возвращает 0 строк.
+4. Скрин: desktop-чат с разноцветными никами одного эфира.
 
-- регистрация
-- already-registered
-- forgot password
-- письмо пришло
-- переход по ссылке
-- установка нового пароля
-- вход с новым паролем
+## 9. Финальный отчёт (структура)
 
-8. STOP-guards
+Раздельные блоки:
 
-Остановить execute, если обнаружится хотя бы одно:
-
-- `auth-actions` используется не только для recovery, но и для других критичных auth-сценариев с отличным контрактом
-- backend already relies on external email provider contract, который нельзя безопасно менять hotfix-ом
-- recovery link строится на боевой домен/redirect так, что смена канала ломает существующие ссылки
-- разрыв `auth.users ↔ profiles` требует отдельной data-repair миграции для самого hotfix
-
-9. DoD
-
-Функциональный DoD:
-
-- Любой существующий auth user получает письмо восстановления независимо от наличия записи в `profiles`
-- Во всех местах продукта reset идет одинаково
-- UI не показывает ложный success, если письмо не может быть отправлено
-- Переход по валидной ссылке открывает форму нового пароля
-- После обновления пароля вход новым паролем работает
-
-Proof DoD:
-
-- Скрины по шагам:
-  1. экран входа
-  2. экран «забыли пароль»
-  3. success-state отправки
-  4. письмо в почте
-  5. экран установки нового пароля
-  6. успешный вход с новым паролем
-- Отдельно 4 кейса verify:
-  1. auth user + profile есть
-  2. auth user + profile нет
-  3. email не существует
-  4. expired/used recovery link
-- Backend-proof:
-  - edge logs
-  - auth logs
-  - запись об отправке в `email_logs`
-
-10. Риски и зависимости
-
-Риски:
-
-- Если быстро заменить legacy `auth-actions` на другой путь без выравнивания recovery redirect contract, можно сломать текущую страницу `/auth?mode=reset`
-- В проекте есть вторичная проблема invalid/expired recovery links; её нужно проверить отдельно после primary hotfix
-- Pending email-domain status важен для future managed auth emails, но не должен отвлекать от срочного hotfix текущего legacy reset
-
-Зависимости:
-
-- текущий `send-email` и SMTP сейчас работают
-- основной срочный фикс — в логике auth/reset, а не в SMTP
-
-11. Требуется дополнительная информация
-
-Не требуется для старта hotfix.
-Данных уже достаточно, чтобы идти в execute:
-
-- root cause подтвержден кодом
-- backend symptom подтвержден логами
-- проблема воспроизводится архитектурно, а не только единичным кейсом
+- **Privacy вопросов** — что изменено в RLS и UI.
+- **Staff badge / mark-as-answered** — что добавлено в schema, hook, Tabs.
+- **Desktop nickname color** — что добавлено в SELECT и рендер.
+- **Что не тронуто** — auth, access rules, mobile, стили вкладки.
+- **Open / deferred** — визуальный «тень»-баг вкладки «Вопросы» (B1 предыдущей итерации) и звуковой сигнал — не входят в этот PATCH.
