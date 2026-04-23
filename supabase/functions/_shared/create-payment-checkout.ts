@@ -359,12 +359,43 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     const checkoutResult = await checkoutResponse.json();
 
     if (!checkoutResponse.ok || !checkoutResult.checkout?.redirect_url) {
+      // PATCH PAYMENTS+REMINDERS v3 S3: persist provider decline reason for diagnostics.
+      // UI продолжает показывать нормализованную ошибку; здесь — серверный proof.
+      const providerErrorPayload = {
+        status: checkoutResponse.status,
+        message: checkoutResult?.message ?? null,
+        code: checkoutResult?.code ?? checkoutResult?.errors?.code ?? null,
+        errors: checkoutResult?.errors ?? null,
+        request_id: checkoutResponse.headers.get('x-request-id') || checkoutResult?.request_id || null,
+        captured_at: new Date().toISOString(),
+        flow: 'one_time',
+      };
       console.error('[create-payment-checkout] bePaid checkout error:', {
         status: checkoutResponse.status,
         result: checkoutResult,
       });
-      const { error: failErr1 } = await supabase.from('orders_v2').update({ status: 'failed' }).eq('id', order.id);
+      const { error: failErr1 } = await supabase
+        .from('orders_v2')
+        .update({
+          status: 'failed',
+          meta: { ...oneTimeMetaWithRouting, last_provider_error: providerErrorPayload },
+        })
+        .eq('id', order.id);
       if (failErr1) console.error('[payment_checkout] order status→failed update failed', { order_id: order.id, payment_type: 'one_time', error: failErr1 });
+
+      await supabase.from('audit_logs').insert({
+        action: 'bepaid.checkout.declined',
+        actor_type: 'system',
+        actor_label: 'create-payment-checkout',
+        target_user_id: user_id,
+        meta: {
+          order_id: order.id,
+          payment_type: 'one_time',
+          payment_flow: paymentFlow,
+          provider_error: providerErrorPayload,
+        },
+      });
+
       return {
         success: false,
         error: checkoutResult.message || checkoutResult.errors?.base?.[0] || 'bePaid checkout creation failed',
@@ -691,12 +722,42 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     const bepaidResult = await bepaidResponse.json();
 
     if (!bepaidResponse.ok || bepaidResult.errors) {
+      // PATCH PAYMENTS+REMINDERS v3 S3: persist provider decline reason for diagnostics (subscription branch).
+      const providerErrorPayloadSub = {
+        status: bepaidResponse.status,
+        message: bepaidResult?.message ?? null,
+        code: bepaidResult?.code ?? bepaidResult?.errors?.code ?? null,
+        errors: bepaidResult?.errors ?? null,
+        request_id: bepaidResponse.headers.get('x-request-id') || bepaidResult?.request_id || null,
+        captured_at: new Date().toISOString(),
+        flow: 'subscription',
+      };
       console.error('[create-payment-checkout] bePaid subscription error:', {
         status: bepaidResponse.status,
         errors: bepaidResult.errors || bepaidResult.message,
       });
-      const { error: failErr2 } = await supabase.from('orders_v2').update({ status: 'failed' }).eq('id', order.id);
+      const { error: failErr2 } = await supabase
+        .from('orders_v2')
+        .update({
+          status: 'failed',
+          meta: { ...subMetaWithRouting, last_provider_error: providerErrorPayloadSub },
+        })
+        .eq('id', order.id);
       if (failErr2) console.error('[payment_checkout] order status→failed update failed', { order_id: order.id, payment_type: 'subscription', error: failErr2 });
+
+      await supabase.from('audit_logs').insert({
+        action: 'bepaid.checkout.declined',
+        actor_type: 'system',
+        actor_label: 'create-payment-checkout',
+        target_user_id: user_id,
+        meta: {
+          order_id: order.id,
+          payment_type: 'subscription',
+          payment_flow: paymentFlow,
+          provider_error: providerErrorPayloadSub,
+        },
+      });
+
       return {
         success: false,
         error: bepaidResult.message || bepaidResult.errors?.base?.[0] || 'bePaid subscription creation failed',
