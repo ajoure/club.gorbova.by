@@ -27,10 +27,13 @@ interface Question {
   user_id: string;
   content: string;
   is_answered: boolean;
+  answered_at: string | null;
+  answered_by: string | null;
   created_at: string;
   author_display_name: string | null;
   author_role: string | null;
   author_avatar_url: string | null;
+  author_nickname_color: string | null;
   // Legacy fallback: только avatar_url (snapshot — SoT для имени).
   profile?: { avatar_url: string | null } | null;
 }
@@ -65,7 +68,7 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
       queryFn: async () => {
         const { data, error } = await supabase
           .from("live_event_questions")
-          .select("id, user_id, content, is_answered, created_at, author_display_name, author_role, author_avatar_url")
+          .select("id, user_id, content, is_answered, answered_at, answered_by, created_at, author_display_name, author_role, author_avatar_url, author_nickname_color")
           .eq("live_event_id", liveEventId)
           .order("created_at", { ascending: true })
           .limit(200);
@@ -197,7 +200,15 @@ export const LiveEventQuestions = forwardRef<HTMLDivElement, LiveEventQuestionsP
 
     const toggleAnsweredMutation = useMutation({
       mutationFn: async ({ id, is_answered }: { id: string; is_answered: boolean }) => {
-        const { error } = await supabase.from("live_event_questions").update({ is_answered } as any).eq("id", id);
+        const patch: Record<string, unknown> = { is_answered };
+        if (is_answered) {
+          patch.answered_at = new Date().toISOString();
+          patch.answered_by = user?.id ?? null;
+        } else {
+          patch.answered_at = null;
+          patch.answered_by = null;
+        }
+        const { error } = await supabase.from("live_event_questions").update(patch as any).eq("id", id);
         if (error) throw error;
       },
       onSuccess: () => queryClient.invalidateQueries({ queryKey: ["live-event-questions", liveEventId] }),
