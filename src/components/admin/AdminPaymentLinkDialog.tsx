@@ -877,28 +877,46 @@ export function AdminPaymentLinkDialog({
                         </SelectContent>
                       </Select>
 
-                      {/* Mismatch banner — fallback другого типа */}
-                      {effectiveMismatch && (
+                      {/* Audit-бейдж режима резолва */}
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-medium",
+                            isOverrideMode
+                              ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                              : "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                          )}
+                        >
+                          <Info className="h-3 w-3" />
+                          {isOverrideMode
+                            ? "Режим: Override"
+                            : "Режим: Точное совпадение"}
+                        </span>
+                        <span className="text-muted-foreground">
+                          Параметры берутся из кнопки «{effectiveOffer?.button_label}».
+                        </span>
+                      </div>
+
+                      {/* Override warning — у тарифа нет кнопки нужного типа,
+                          но ссылка всё равно создастся как payment_type выбора админа. */}
+                      {isOverrideMode && (
                         <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-foreground">
                           <Info className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
                           <p>
-                            Для этого тарифа нет кнопки типа{" "}
+                            У тарифа нет отдельной кнопки типа{" "}
                             <strong>
                               {paymentType === "subscription"
                                 ? "«Подписка»"
                                 : "«Разовая оплата»"}
                             </strong>
-                            . Будет использована{" "}
-                            {resolved.ok && resolved.source === "primary"
-                              ? "основная"
-                              : "единственная активная"}{" "}
-                            кнопка типа{" "}
+                            . Будет создана{" "}
                             <strong>
-                              {effectivePaymentType === "subscription"
-                                ? "«Подписка»"
-                                : "«Разовая оплата»"}
-                            </strong>
-                            .
+                              {paymentType === "subscription"
+                                ? "подписочная"
+                                : "разовая"}
+                            </strong>{" "}
+                            ссылка на основе текущего тарифа (цена, продукт,
+                            описание из кнопки «{effectiveOffer?.button_label}»).
                           </p>
                         </div>
                       )}
