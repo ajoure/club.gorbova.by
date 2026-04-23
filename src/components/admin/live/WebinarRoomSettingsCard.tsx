@@ -6,8 +6,10 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Save, Plus, Trash2, Upload, Image as ImageIcon, Music } from "lucide-react";
+import { Loader2, Save, Plus, Trash2, Upload, Image as ImageIcon, Music, Eye } from "lucide-react";
 import { toast } from "sonner";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { RoomPreStartScreen } from "@/components/live/RoomPreStartScreen";
 import {
   type RoomSettings,
   DEFAULT_ROOM_SETTINGS,
