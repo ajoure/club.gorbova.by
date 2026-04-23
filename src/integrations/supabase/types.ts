@@ -13553,6 +13553,47 @@ export type Database = {
       generate_order_number: { Args: never; Returns: string }
       generate_ticket_number: { Args: never; Returns: string }
       generate_ticket_number_atomic: { Args: never; Returns: string }
+      get_admin_payment_links_v1: {
+        Args: { p_limit?: number; p_since?: string }
+        Returns: {
+          amount: number | null
+          created_at: string | null
+          created_by: string | null
+          creator_email: string | null
+          creator_name: string | null
+          currency: string | null
+          current_uses: number | null
+          description: string | null
+          expires_at: string | null
+          id: string | null
+          is_exhausted: boolean | null
+          is_expired: boolean | null
+          is_invalid: boolean | null
+          last_order_id: string | null
+          max_uses: number | null
+          offer_id: string | null
+          offer_title: string | null
+          paid_orders_count: number | null
+          payment_type: string | null
+          product_id: string | null
+          product_name: string | null
+          recipient_email: string | null
+          recipient_name: string | null
+          related_orders_count: number | null
+          status: string | null
+          tariff_id: string | null
+          tariff_name: string | null
+          updated_at: string | null
+          url_token: string | null
+          user_id: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "payment_links_enriched_v"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       get_bepaid_statement_stats: {
         Args: { from_date: string; to_date: string }
         Returns: Json
