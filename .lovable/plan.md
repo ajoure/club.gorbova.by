@@ -1,107 +1,130 @@
-# да, согласен, с учетом правок:
 
-1. В F1 не просто “заменить единственную policy”, а явно сделать safe-recreate:
-  &nbsp;
-  &nbsp;
-  - сначала inventory всех policy на `payment_links`;
-  - затем `DROP POLICY` только legacy-policy с `has_role(auth.uid(), 'admin'::app_role)`;
-  - затем создать отдельно:
-    - `Admins can read payment links`
-    - `Admins can insert payment links`
-    - `Admins can update payment links`
-    - `Admins can delete payment links`
-  - условие везде единое: `has_role(auth.uid(), 'admin'::app_role) OR is_super_admin(auth.uid())`  
-  Это нужно, чтобы не потерять права service-role и не смешивать read/write в одну непрозрачную policy.
-2. В F2 не делать “если найдётся — починить” без явного proof. Добавь жёстко:
-  - сначала SQL-выгрузка всех policy на `payment_links`, `orders_v2`, `payment_links_enriched_v`, `payment_method_verification_jobs`;
-  - отдельно отметить, где проблема реально подтверждена;
-  - менять в этом патче только `payment_links`, а соседние таблицы — только если найден тот же дефект и приложен точный proof.  
-  Иначе патч расползётся.
-3. В Verify добавь обязательный proof не только count=29, но и реальный row visibility:
-  - super_admin видит первые N реальных `id/url_token/payment_type/created_at`;
-  - legacy admin тоже видит строки;
-  - user без admin/super_admin не видит строки.  
-  Count alone недостаточен.
-4. Добавь explicit regression-check для writer/read-path:
-  - `admin-create-public-link` после миграции по-прежнему создаёт ссылку;
-  - новая ссылка сразу появляется в `/admin/payments/links`;
-  - `/pay/:token` открывается как раньше.  
-  Это важнее общей фразы “не сломан”.
-5. В DoD добавь итоговый deliverable:
-  - before/after SQL proof;
-  - список policy после миграции с текстом `USING/WITH CHECK`;
-  - UI-скрин `/admin/payments/links` под super_admin;
-  - negative proof для non-admin.
 
-&nbsp;
+# План: security hardening — финальная версия с правками
 
-&nbsp;
+## Принципы
 
-План: восстановление видимости списка ссылок в /admin/payments/links
+- Add-only / safe-change only. Никаких новых доступов «на будущее».
+- Этап A (critical) и этап B (warn) — две отдельные миграции, не сливать.
+- Все правки только на основании подтверждённого discovery.
+- Отчёт на русском, с before/after pg_policies, SQL proof и повторным scan/linter.
 
-## Корневая причина (доказано)
+## Discovery — итог
 
-- В БД 29 строк в `payment_links`, view `payment_links_enriched_v` тоже возвращает 29.
-- View создан с `security_invoker=on` → применяет RLS базовой таблицы `payment_links` от имени текущего пользователя.
-- Единственная RLS-политика на `payment_links`:
-  ```
-  USING: has_role(auth.uid(), 'admin'::app_role)
-  ```
-  Это проверка по **legacy enum `app_role`** (таблица `user_roles`).
-- Super-админы (включая Сергея Федорчука) сидят в новой системе ролей `user_roles_v2` под кодом `super_admin`. У них **нет** записи в legacy `user_roles` с ролью `admin`.
-- Результат: у super_admin RLS возвращает `false` → view отдаёт 0 строк → UI «Ссылки не найдены».
+**CRITICAL (подтверждено):**
+1. `public.ilex_documents` — SELECT policy `USING (true)` для authenticated. INSERT/UPDATE/DELETE уже scoped по `saved_by`. Admin-read use-case в коде **не подтверждён** — admin override не добавляем.
+2. `storage.objects` policy `System can upload document files` — `roles:{public}` + `WITH CHECK (bucket_id='documents')`. Grep по клиенту: `storage.from('documents')` отсутствует, все upload'ы идут через edge (service_role). Заменяющий authenticated INSERT не вводим.
 
-Это та же самая ошибка модели ролей, которую уже чинили на `payment_method_verification_jobs` (через `is_super_admin`). На `payment_links` её не починили.
+**Contextual / warn:**
+3. `realtime.messages` — проект использует только `postgres_changes` (30 файлов, 0 `private: true`, 0 Broadcast/Presence). DDL не нужен.
+4. Public buckets listing — `owner-photos` listing подтверждён (admin uploader); остальные (`avatars`, `signatures`, `training-content`, `webinar-prestart`, `tariff-media`, `training-assets`) listing не используется.
+5. `trg_site_form_submissions_public_id`, `validate_training_content_rule` — `proconfig=NULL`.
+6. `media_jobs`, `notification_outbox`, `subscription_payment_credentials`, `support_ticket_counters` — service-role only by design.
 
-## Что делаем
+## Этап A — Migration 1: critical fixes
 
-### F1. Миграция RLS на `payment_links`
+Один файл: `supabase/migrations/<ts>_security_critical_ilex_and_documents.sql`
 
-Заменить единственную policy `Admins can manage payment links` на разделённую и корректную модель:
+### A.1. `public.ilex_documents` — сузить SELECT
 
-- `SELECT`: `has_role(auth.uid(),'admin') OR is_super_admin(auth.uid())` — для админов и супер-админов.
-- `INSERT/UPDATE/DELETE`: `has_role(auth.uid(),'admin') OR is_super_admin(auth.uid())` — для писателей.
-- Сохранить отдельную policy `Service role can manage` (если есть) — не трогаем.
-- Сохранить публичный read-доступ по токену через edge-функцию `public-checkout` (она использует service-role и не зависит от user RLS) — не ломаем.
+```sql
+DROP POLICY IF EXISTS "Authenticated users can read all ilex documents"
+  ON public.ilex_documents;
 
-Использовать каноническую функцию `is_super_admin(uuid)` (security definer) — тот же подход, что в свежем фиксе `payment_method_verification_jobs`.
+CREATE POLICY "Users can read own ilex documents"
+  ON public.ilex_documents FOR SELECT TO authenticated
+  USING (auth.uid() = saved_by);
+```
 
-### F2. Audit-проверка соседних таблиц с той же болезнью
+INSERT/UPDATE/DELETE — не трогаем. Admin override — **не добавляем** (нет подтверждённого use-case).
 
-После фикса сделать SQL-обзор политик на смежных таблицах журнала ссылок, чтобы не было повторного «исчезновения»:
+### A.2. `storage.objects` / bucket `documents` — закрыть unsafe INSERT
 
-- `payment_links` — fix
-- `orders_v2` (read-доступ админа) — verify
-- `payment_method_verification_jobs` — already fixed
-- view `payment_links_enriched_v` — security_invoker=on (оставляем)
+```sql
+DROP POLICY IF EXISTS "System can upload document files"
+  ON storage.objects;
+```
 
-Если найдётся ещё одна таблица с `has_role('admin')` без `is_super_admin` — починить тем же паттерном.
+Заменяющий authenticated INSERT **не создаём**: client-side upload в `documents` отсутствует. Service_role обходит RLS — edge продолжит работать. SELECT/UPDATE/DELETE для bucket `documents` не трогаем (уже owner-scoped).
 
-### F3. Verify
+### A.3. Verify (этап A)
 
-- SQL до/после миграции:
-  - `SELECT count(*) FROM payment_links_enriched_v` от имени super_admin'а должен вернуть 29 (а не 0).
-- UI:
-  - страница `/admin/payments/links` для super_admin показывает все 29 ссылок;
-  - для роли `admin` (legacy) — продолжает работать;
-  - фильтры/поиск/пагинация не сломаны;
-  - создание новой ссылки и обновление списка работают.
+- SQL proof: from `user_A` viewpoint `SELECT count(*) FROM ilex_documents` = только свои; от `user_B` записи user_A не видны.
+- Storage proof: anon `INSERT` в `documents` denied; service_role insert через edge работает.
+- UI smoke: страница iLex (`useIlexApi`) у обычного пользователя — список своих документов, без RLS-ошибок.
+
+## Этап B — Migration 2: warn/contextual
+
+Один файл: `supabase/migrations/<ts>_security_warn_search_path_and_buckets.sql`
+
+### B.1. Functions search_path
+
+```sql
+ALTER FUNCTION public.trg_site_form_submissions_public_id() SET search_path = public;
+ALTER FUNCTION public.validate_training_content_rule() SET search_path = public;
+```
+
+Тела не меняем.
+
+### B.2. Public buckets — убрать broad public listing там, где он не нужен
+
+Для каждого bucket: `DROP` текущей broad public SELECT policy. **Заменяющий broad SELECT не создаём.** Прямой доступ к файлам у public buckets идёт через bucket-level `public = true` (Supabase отдаёт публичные URL без RLS на чтение конкретного объекта по URL), поэтому удаление SELECT-policy убивает только `.list()` и cross-file enumeration, не ломая `getPublicUrl`.
+
+Buckets, у которых сносим public SELECT:
+- `avatars`
+- `signatures`
+- `training-content`
+- `webinar-prestart`
+- `tariff-media`
+- `training-assets`
+
+Точные имена policies возьмём из `pg_policies` непосредственно перед написанием миграции (через `DROP POLICY IF EXISTS "<name>" ON storage.objects` для каждой найденной broad public SELECT-policy в этих bucket'ах).
+
+Buckets, которые **не трогаем**:
+- `owner-photos` — listing подтверждён (admin uploader/edge generate-cover) — accepted risk / justified.
+- `documents-templates` — private bucket, не в scope warn.
+
+### B.3. realtime.messages — без DDL
+
+Документируем как **not applicable for current usage** (только `postgres_changes`).
+
+### B.4. 4 service-role-only таблицы — без DDL
+
+Документируем как **closed by design**, fake deny-policy не добавляем.
+
+### B.5. Verify (этап B)
+
+- Linter: `function_search_path_mutable` уходит для двух функций; `public_bucket_allows_listing` уходит для 6 сужённых buckets.
+- Smoke: открытие аватара/подписи/training-content/webinar-prestart/tariff-media/training-assets по прямому public URL — отображается. `.list()` для этих bucket'ов из клиента — пусто/denied (это и нужно).
+- Realtime smoke: подписки tickets/live/instagram/telegram продолжают работать (`postgres_changes` не затронут).
+
+## Регресс-чек (что прогнать после обеих миграций)
+
+1. iLex: «мои документы» отображаются у обычного пользователя.
+2. Edge-функция, генерирующая документы в bucket `documents`, успешно загружает файл (service_role).
+3. Аватары/подписи/training-content отображаются на сайте по прямым URL.
+4. Realtime обновления Kanban / live-комнаты / instagram / telegram приходят без задержки.
+5. `npm run build` проходит, типы supabase не требуют обновления (только policies, без schema).
 
 ## STOP-guards
 
-- Не менять `security_invoker` view'а.
-- Не открывать `payment_links` для роли `user` / `anon` — публичный путь идёт через edge-функцию.
-- Не использовать несуществующий enum `'super_admin'::app_role` — только `is_super_admin(auth.uid())`.
-- Не править writer'ы (`admin-create-public-link`, `admin-create-payment-link`) — они работают через service-role, RLS их не блокирует.
+- Не добавляем admin-read в `ilex_documents` без подтверждённого admin flow.
+- Не добавляем authenticated INSERT в `documents` без подтверждённого client-side upload.
+- Не «чиним listing» через `name <> ''` — это не блокирует listing.
+- Не делаем DDL по `realtime.messages`.
+- Не добавляем декоративные deny-policy на service-role-only таблицы.
+- Не переводим public buckets в private в рамках этого патча.
 
 ## DoD
 
-- Super_admin видит полный журнал ссылок в `/admin/payments/links`.
-- Legacy admin продолжает видеть ссылки.
-- Публичный `/pay/:token` не сломан.
-- В отчёте: SQL-доказательство «29 строк до/после», список policy после миграции, grep-таблица соседних таблиц.
+- 0 critical findings по `ilex_documents` и `documents` bucket.
+- Linter: 0 `function_search_path_mutable`, 0 `public_bucket_allows_listing` для сужённых buckets.
+- Отчёт содержит: список миграций, diff, before/after `pg_policies`, повторный security scan, повторный linter, SQL proof (owner vs other vs anon), runtime smoke (iLex + публичные buckets + realtime), accepted-risk список (`realtime.messages`, `owner-photos`, 4 service-role-only таблицы).
 
 ## Файлы
 
-- Новая миграция: `supabase/migrations/<timestamp>_fix_payment_links_rls_super_admin.sql`.
-- Никаких UI-изменений и edge-функций.
+- `supabase/migrations/<ts>_security_critical_ilex_and_documents.sql` — этап A
+- `supabase/migrations/<ts>_security_warn_search_path_and_buckets.sql` — этап B
+
+UI/edge код не меняется.
+
