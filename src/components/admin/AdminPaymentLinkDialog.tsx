@@ -603,6 +603,10 @@ export function AdminPaymentLinkDialog({
             payment_type: effectivePaymentType,
             description:
               description || `${selectedProduct?.name} — ${selectedTariff?.name}`,
+            requested_payment_type: paymentType,
+            resolved_mode: isOverrideMode ? "override" : "canonical",
+            cta_source: "telegram_combined",
+            cta_contract_version: 1,
           },
         }
       );
