@@ -678,7 +678,7 @@ function LiveEventLegacy() {
           bg-background + z-[1] — чтобы header при уходе вверх не просвечивал и не накладывался по слоям. */}
       <div data-mobile-sticky-main className="max-w-[1600px] w-full mx-auto px-3 md:px-6 pb-3 md:pb-6 flex flex-col lg:flex-1 lg:flex-row lg:items-start gap-3 md:gap-4 min-h-0 max-lg:sticky max-lg:top-0 max-lg:h-[100svh] max-lg:overflow-hidden max-lg:bg-background max-lg:z-[1]">
         {/* Player column — takes most width on desktop */}
-        <div data-video-shell className="lg:flex-[3] flex flex-col gap-2 min-w-0 max-lg:shrink-0" style={{ pointerEvents: "auto", touchAction: "manipulation" }}>
+        <div data-video-shell className="lg:flex-[3] flex flex-col gap-2 min-w-0 max-lg:shrink-0 max-lg:max-h-[40svh] max-lg:overflow-hidden" style={{ pointerEvents: "auto", touchAction: "manipulation" }}>
           {/* K3: relative-обёртка для overlay реакций. pointer-events: auto явно
               задан выше, чтобы tap по Kinescope iframe (controls/fullscreen/quality)
               гарантированно проходил в Safari iOS и в PWA standalone. */}
