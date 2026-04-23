@@ -851,15 +851,17 @@ Deno.serve(async (req) => {
         `)
         .in('status', ['active', 'trial'])
         .gte('access_end_at', windowStart)
-        .lt('access_end_at', windowEnd)
-        .eq('auto_renew', true);
+        .lt('access_end_at', windowEnd);
+        // PATCH PAYMENTS+REMINDERS v3 B-S1: убран фильтр .eq('auto_renew', true).
+        // Когорта расширена: теперь напоминания получают и пользователи с auto_renew=false.
+        // Текстовая ветка различается ниже через hasActiveSBS / generateRenewalCTAs.
 
       if (error) {
         console.error(`Query error for ${daysLeft} days:`, error);
         continue;
       }
 
-      console.log(`Found ${subscriptions?.length || 0} subscriptions expiring in ${daysLeft} days`);
+      console.log(`[v3 B-S1] Found ${subscriptions?.length || 0} subscriptions expiring in ${daysLeft} days (cohort expanded: includes auto_renew=false)`);
 
       for (const sub of subscriptions || []) {
         const userId = sub.user_id;
