@@ -52,34 +52,37 @@ export function LiveRoomReactionsOverlay({
       {items.map((r) => (
         <span
           key={r.key}
-          className="reaction-float inline-flex items-baseline justify-center text-xl md:text-2xl select-none"
+          className="reaction-float inline-flex items-baseline justify-center text-2xl md:text-3xl select-none"
           style={{
             animationDuration: `${r.ttl}ms`,
-            opacity: 0.55,
-            filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.35))",
-            // K3: явный pointer-events:none на каждом дочернем span — Safari иногда
-            // нарушает наследование pointer-events на inline-flex, что приводит к
-            // перехвату tap'ов поверх Kinescope iframe (controls/fullscreen).
+            opacity: 0.95,
+            filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.55)) drop-shadow(0 0 1px rgba(0,0,0,0.4))",
             pointerEvents: "none",
           }}
         >
           <span style={{ pointerEvents: "none" }}>{r.emoji}</span>
           {r.count > 1 && (
-            <span className="text-[10px] font-semibold opacity-80 ml-0.5" style={{ pointerEvents: "none" }}>
+            <span
+              className="text-[11px] font-bold ml-0.5"
+              style={{
+                pointerEvents: "none",
+                color: "#fff",
+                textShadow: "0 1px 2px rgba(0,0,0,0.7)",
+              }}
+            >
               ×{r.count}
             </span>
           )}
         </span>
       ))}
 
-      {/* Локальные keyframes (изоляция в overlay, не глобально). */}
       <style>{`
         @keyframes reaction-float-up {
           0%   { transform: translateY(8px)   scale(0.85); opacity: 0; }
-          12%  { transform: translateY(0)     scale(1);    opacity: 0.55; }
-          45%  { transform: translateY(-50px) scale(1);    opacity: 0.5;  }
-          70%  { transform: translateY(-95px) scale(0.98); opacity: 0.25; }
-          100% { transform: translateY(-140px) scale(0.9); opacity: 0;    }
+          12%  { transform: translateY(0)     scale(1);    opacity: 0.95; }
+          50%  { transform: translateY(-55px) scale(1);    opacity: 0.9;  }
+          75%  { transform: translateY(-100px) scale(0.98); opacity: 0.5; }
+          100% { transform: translateY(-145px) scale(0.9); opacity: 0;    }
         }
         .reaction-float {
           animation-name: reaction-float-up;
