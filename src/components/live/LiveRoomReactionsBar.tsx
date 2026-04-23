@@ -36,8 +36,9 @@ export function LiveRoomReactionsBar({ liveEventId, enabled }: LiveRoomReactions
       await sendReaction.mutateAsync(emoji);
     } catch (err: any) {
       const msg = String(err?.message || "");
-      if (msg.includes("row-level security") || msg.includes("violates")) {
-        toast.error("Реакция временно недоступна");
+      if (msg.includes("row-level security") || msg.includes("violates") || msg.includes("policy")) {
+        // RLS отказ — чаще всего это rate-limit (10 реакций/минуту), реже mute/remove/нет доступа.
+        toast.error("Слишком много реакций. Подождите немного 🙂");
       } else {
         toast.error("Не удалось отправить реакцию");
       }
