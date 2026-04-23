@@ -684,7 +684,11 @@ function LiveEventLegacy() {
               гарантированно проходил в Safari iOS и в PWA standalone. */}
           <div className="relative" style={{ pointerEvents: "auto" }}>
             {roomSettings.prestart.enabled && data?.scheduled_at && new Date(data.scheduled_at).getTime() > Date.now() && (state === "room_open_waiting" || isWaiting) ? (
-              <RoomPreStartScreen prestart={roomSettings.prestart} scheduledAt={data?.scheduled_at} />
+              <RoomPreStartScreen
+                prestart={roomSettings.prestart}
+                scheduledAt={data?.scheduled_at}
+                eventTimezone={data?.event_timezone}
+              />
             ) : isWaiting ? (
               <RoomWaitingState scheduledAt={data?.scheduled_at} eventTimezone={data?.event_timezone} compact={isMobile} />
             ) : resolvedSource?.resolved_source_kind === 'kinescope_video' && resolvedSource.resolved_embed_url ? (

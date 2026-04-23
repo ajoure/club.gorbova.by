@@ -6,8 +6,10 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Save, Plus, Trash2, Upload, Image as ImageIcon, Music } from "lucide-react";
+import { Loader2, Save, Plus, Trash2, Upload, Image as ImageIcon, Music, Eye } from "lucide-react";
 import { toast } from "sonner";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { RoomPreStartScreen } from "@/components/live/RoomPreStartScreen";
 import {
   type RoomSettings,
   DEFAULT_ROOM_SETTINGS,
@@ -25,6 +27,17 @@ export function WebinarRoomSettingsCard({ liveEventId }: { liveEventId: string }
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState<"cover" | "music" | "gallery" | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+
+  // Auto-enable pre-start при первой загрузке материалов / вводе title.
+  // Явный UX-сигнал: toast + Switch визуально переходит в on.
+  const ensurePrestartEnabled = (label: string) => {
+    setSettings((p) => {
+      if (p.prestart.enabled) return p;
+      toast.success(`Pre-start включён автоматически (${label})`);
+      return patchRoomSettingsSection(p, "prestart", { enabled: true });
+    });
+  };
 
   useEffect(() => {
     (async () => {
@@ -86,6 +99,7 @@ export function WebinarRoomSettingsCard({ liveEventId }: { liveEventId: string }
       const url = await uploadFile(file, "cover");
       setSettings((p) => patchRoomSettingsSection(p, "prestart", { cover_url: url }));
       toast.success("Обложка загружена");
+      ensurePrestartEnabled("обложка");
     } catch (err: any) {
       toast.error(err.message || "Не удалось загрузить");
     }
@@ -98,6 +112,7 @@ export function WebinarRoomSettingsCard({ liveEventId }: { liveEventId: string }
       const url = await uploadFile(file, "music");
       setSettings((p) => patchRoomSettingsSection(p, "prestart", { music_url: url }));
       toast.success("Музыка загружена");
+      ensurePrestartEnabled("музыка");
     } catch (err: any) {
       toast.error(err.message || "Не удалось загрузить");
     }
@@ -112,6 +127,7 @@ export function WebinarRoomSettingsCard({ liveEventId }: { liveEventId: string }
         gallery: [...p.prestart.gallery, { url, caption: "" }],
       }));
       toast.success("Изображение добавлено в галерею");
+      ensurePrestartEnabled("галерея");
       e.target.value = "";
     } catch (err: any) {
       toast.error(err.message || "Не удалось загрузить");
@@ -182,12 +198,39 @@ export function WebinarRoomSettingsCard({ liveEventId }: { liveEventId: string }
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
+          <p className="text-[11px] text-muted-foreground -mt-1">
+            Экран показывается до старта эфира (когда <code className="text-[10px]">scheduled_at</code> ещё не наступил).
+            Загрузка обложки/музыки/галереи автоматически включает этот экран.
+          </p>
+
+          {/* Inline-warning: материалы загружены, но фича выключена вручную */}
+          {!settings.prestart.enabled && (settings.prestart.cover_url || settings.prestart.music_url || settings.prestart.gallery.length > 0 || settings.prestart.title) && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2.5 py-2 text-[11px] text-destructive">
+              Вы загрузили материалы pre-start, но экран ещё не включён — переключите тогл выше.
+            </div>
+          )}
+
+          <div className="flex justify-end">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs gap-1"
+              onClick={() => setPreviewOpen(true)}
+            >
+              <Eye className="h-3 w-3" /> Предпросмотр
+            </Button>
+          </div>
+
           <div>
             <Label className="text-xs">Заголовок</Label>
             <Input
               className="h-8 text-xs"
               value={settings.prestart.title || ""}
-              onChange={(e) => setSettings((p) => patchRoomSettingsSection(p, "prestart", { title: e.target.value }))}
+              onChange={(e) => {
+                const v = e.target.value;
+                setSettings((p) => patchRoomSettingsSection(p, "prestart", { title: v }));
+                if (v.trim().length > 0) ensurePrestartEnabled("заголовок");
+              }}
               placeholder="Скоро начало вебинара"
             />
           </div>
@@ -450,6 +493,22 @@ export function WebinarRoomSettingsCard({ liveEventId }: { liveEventId: string }
           Сохранить настройки комнаты
         </Button>
       </div>
+
+      {/* Admin-only preview: НЕ зависит от scheduled_at и lifecycle state, ничего не пишет в runtime. */}
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Предпросмотр pre-start экрана</DialogTitle>
+          </DialogHeader>
+          <RoomPreStartScreen
+            prestart={settings.prestart}
+            scheduledAt={new Date(Date.now() + 2 * 60 * 1000).toISOString()}
+          />
+          <p className="text-[11px] text-muted-foreground">
+            Это предпросмотр. На странице эфира экран будет показан до начала, когда <code>scheduled_at</code> ещё не наступил.
+          </p>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
