@@ -221,7 +221,9 @@ body.impersonation-active .impersonation-offset {
        что естественно сдвигает video-shell под notch без dublirovaniya.
      - Height ограничиваем через calc, чтобы chat scroll area получала реальный
        доступный budget высоты. */
-  [data-mobile-sticky-main] {
+  /* html prefix для специфичности (0,1,1) > Tailwind max-lg:h-[100dvh] (0,1,0).
+     Гарантирует, что наш height calc перекрывает Tailwind h-[100dvh]. */
+  html [data-mobile-sticky-main] {
     top: env(safe-area-inset-top, 0px);
     height: calc(100dvh - env(safe-area-inset-top, 0px));
     /* bg-background уже задан Tailwind-классом на элементе — статус-бар
