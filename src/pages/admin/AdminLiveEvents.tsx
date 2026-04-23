@@ -719,6 +719,12 @@ export default function AdminLiveEvents() {
         mergedMetadata.last_provider_sync_at = new Date().toISOString();
       }
 
+      // Persist replay_target (Phase 1: recording publish target folder)
+      mergedMetadata.replay_target = {
+        menu_section_key: data.replay_menu_section_key || null,
+        parent_module_id: data.replay_parent_module_id || null,
+      };
+
       // Always persist notification_settings
       mergedMetadata.notification_settings = {
         enabled: data.notification_enabled,
@@ -1051,7 +1057,7 @@ export default function AdminLiveEvents() {
 
         {/* --- Create/Edit Dialog --- */}
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogContent className="w-[calc(100vw-1rem)] sm:w-[calc(100vw-2rem)] max-w-2xl max-h-[90vh] overflow-y-auto overflow-x-hidden p-3 sm:p-6">
+          <DialogContent className="w-[calc(100vw-1rem)] sm:w-[calc(100vw-2rem)] max-w-4xl max-h-[90vh] overflow-y-auto overflow-x-hidden p-3 sm:p-6">
             <DialogHeader>
               <DialogTitle>{editingId ? "Редактировать эфир" : "Создать эфир"}</DialogTitle>
             </DialogHeader>
@@ -1509,6 +1515,26 @@ export default function AdminLiveEvents() {
                       ? "Запись станет доступна пользователям только после завершения эфира"
                       : "Пользователи смогут посмотреть запись после завершения эфира"
                   }
+                />
+              </FormSection>
+
+              <Separator />
+
+              {/* Section 5b: Recording → Knowledge Base (Phase 1: manual publish) */}
+              <FormSection title="Запись в Базе знаний">
+                <RecordingTab
+                  eventId={editingId}
+                  replayEnabled={form.replay_enabled}
+                  onReplayEnabledChange={(v) => setForm({ ...form, replay_enabled: v })}
+                  menuSectionKey={form.replay_menu_section_key}
+                  onMenuSectionKeyChange={(v) => setForm({ ...form, replay_menu_section_key: v })}
+                  parentModuleId={form.replay_parent_module_id}
+                  onParentModuleIdChange={(v) => setForm({ ...form, replay_parent_module_id: v })}
+                  replayLessonId={form.replay_lesson_id}
+                  replayPublishStatus={form.replay_publish_status}
+                  replayPublishError={form.replay_publish_error}
+                  title={form.title}
+                  hasKinescopeVideoId={!!form.kinescope_video_id}
                 />
               </FormSection>
 
