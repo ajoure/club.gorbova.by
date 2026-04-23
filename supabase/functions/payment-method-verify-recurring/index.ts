@@ -193,6 +193,34 @@ Deno.serve(async (req) => {
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+  // ============================================================================
+  // PATCH: MIT-OFF (2026-04-23)
+  // MIT/recurring server-side card verification is REMOVED from runtime.
+  // System operates only on two flows: one-time payments + bePaid SBS subscriptions.
+  // Saved cards are UX artifacts only — never used for server-side charges.
+  // This early-return prevents 401-spam from bePaid recurring API and stops
+  // any caller (cron, admin UI, internal) from triggering MIT verification.
+  // To re-enable: remove this block AND coordinate bePaid recurring credentials.
+  // ============================================================================
+  try {
+    await supabase.from('audit_logs').insert({
+      action: 'mit.runtime_disabled.verify_recurring_blocked',
+      actor_type: 'system',
+      actor_label: 'payment-method-verify-recurring',
+      meta: {
+        reason: 'MIT runtime path retired. Use provider_managed (bePaid SBS) for auto-renewal.',
+        build_stamp: BUILD_STAMP,
+        request_method: req.method,
+      },
+    });
+  } catch (_) { /* non-blocking */ }
+
+  return jsonResponse({
+    success: false,
+    disabled: true,
+    error: 'MIT recurring verification is disabled. Auto-renewal flows use bePaid provider-managed subscriptions only.',
+  }, 410);
+
   // === X-Cron-Secret OR Admin JWT Security Gate ===
   const cronSecret = Deno.env.get('CRON_SECRET');
   const providedSecret = req.headers.get('X-Cron-Secret') || req.headers.get('x-cron-secret');
