@@ -1062,18 +1062,7 @@ export default function AdminLiveEvents() {
               <DialogTitle>{editingId ? "Редактировать эфир" : "Создать эфир"}</DialogTitle>
             </DialogHeader>
 
-            <div className="space-y-4 py-2 min-w-0 overflow-x-hidden [&_*]:min-w-0">
-              <Tabs defaultValue="basic" className="w-full">
-                <TabsList className="w-full h-auto flex flex-wrap gap-1 p-1 mb-4 sticky top-0 z-10 bg-background">
-                  <TabsTrigger value="basic" className="text-xs flex-1 min-w-[90px]">Основное</TabsTrigger>
-                  <TabsTrigger value="source" className="text-xs flex-1 min-w-[90px]">Источник</TabsTrigger>
-                  <TabsTrigger value="access" className="text-xs flex-1 min-w-[90px]">Доступ</TabsTrigger>
-                  {isLiveStream && <TabsTrigger value="notifications" className="text-xs flex-1 min-w-[90px]">Уведомления</TabsTrigger>}
-                  <TabsTrigger value="recording" className="text-xs flex-1 min-w-[90px]">Запись</TabsTrigger>
-                  <TabsTrigger value="publish" className="text-xs flex-1 min-w-[90px]">Публикация</TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="basic" className="space-y-6 mt-0">
+            <div className="space-y-6 py-2 min-w-0 overflow-x-hidden [&_*]:min-w-0">
               {/* Step 0: Event type selector (only for new events) */}
 
               {!editingId && (
