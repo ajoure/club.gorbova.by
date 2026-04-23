@@ -736,6 +736,28 @@ function LiveEventLegacy() {
               <LiveRoomReactionsOverlay liveEventId={eventId} enabled={roomSettings.reactions.enabled} />
             )}
           </div>
+          {/* Room blocks — under_video (legacy, only if no product CTA bindings) */}
+          {eventId && !hasUnderVideoCta && (
+            <LiveEventRoomBlocks
+              liveEventId={eventId}
+              displayContext={isReplay ? "replay" : "live"}
+              position="under_video"
+            />
+          )}
+          {/* Product CTA — under_video */}
+          {eventId && (
+            <LiveEventProductCta
+              liveEventId={eventId}
+              position="under_video"
+              displayContext={isReplay ? "replay" : "live"}
+              eventStartedAt={data?.scheduled_at}
+            />
+          )}
+          {/* Sprint final: Live-room reactions bar (room-level emoji reactions). */}
+          {eventId && roomSettings.reactions.enabled && !isReplay && (
+            <LiveRoomReactionsBar liveEventId={eventId} enabled={roomSettings.reactions.enabled} />
+          )}
+        </div>
 
         {/* Chat / Questions sidebar — fixed width on desktop, stack on mobile.
             PATCH 1: Card-чат ВСЕГДА первый элемент DOM-сайдбара на desktop —
