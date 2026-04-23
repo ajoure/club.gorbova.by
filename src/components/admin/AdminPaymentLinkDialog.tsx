@@ -215,16 +215,24 @@ export function AdminPaymentLinkDialog({
     return resolved.offer;
   }, [resolved, selectedOfferId, allOffers]);
 
-  // Effective payment type: всегда от effective offer (источник истины)
-  const effectivePaymentType: PaymentType = useMemo(() => {
+  // КОНТРАКТ: payment_type ссылки = ВСЕГДА выбор админа (ToggleGroup).
+  // Offer используется только как источник параметров (цена/описание/продукт).
+  // Никаких silent derive из offer.meta.recurring — это и было корнем бага
+  // «выбираю one_time → создаётся subscription».
+  const effectivePaymentType: PaymentType = paymentType;
+
+  // Тип выбранного offer'а (для отображения badge / warning).
+  const effectiveOfferType: PaymentType = useMemo(() => {
     if (!effectiveOffer) return paymentType;
     return effectiveOffer.meta?.recurring?.is_recurring
       ? "subscription"
       : "one_time";
   }, [effectiveOffer, paymentType]);
 
-  const effectiveMismatch =
-    !!effectiveOffer && effectivePaymentType !== paymentType;
+  // Override = выбор админа не совпадает с типом offer'а, но ссылка всё равно
+  // создаётся как payment_type выбранный админом (controlled override).
+  const isOverrideMode =
+    !!effectiveOffer && effectiveOfferType !== effectivePaymentType;
 
   // Список всех active pay_now offers (для select override) — без фильтрации по типу
   const activeOffers = useMemo(
