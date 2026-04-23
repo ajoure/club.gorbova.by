@@ -82,14 +82,15 @@ Deno.serve(async (req) => {
     const userClient = createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY')!, {
       global: { headers: { Authorization: `Bearer ${token}` } },
     });
-    const { data: { user }, error: authError } = await userClient.auth.getUser();
+    const { data: claimsData, error: authError } = await userClient.auth.getClaims(token);
 
-    if (authError || !user) {
+    if (authError || !claimsData?.claims?.sub) {
+      console.error('[live-resolve] auth error:', authError);
       await logAudit(supabase, 'live_access_attempt', null, slug, event.id, { reason: 'invalid_token' });
       return jsonRes({ status: 'auth_required' }, 401);
     }
 
-    const userId = user.id;
+    const userId = claimsData.claims.sub;
 
     // 4. Invite mode check — require proof for required_one_time
     if (event.invite_mode === 'required_one_time' && !event.direct_access_allowed) {
