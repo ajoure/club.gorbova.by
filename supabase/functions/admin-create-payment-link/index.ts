@@ -11,6 +11,11 @@ interface CreatePaymentLinkRequest {
   description?: string;
   offer_id?: string;
   replacement_of_subscription_v2_id?: string;
+  // Audit / трассировка контракта (writer не использует для решений, только пробрасывает)
+  requested_payment_type?: 'one_time' | 'subscription';
+  resolved_mode?: 'canonical' | 'override';
+  cta_source?: 'admin_manual' | 'reminder' | 'contact_card' | 'telegram_combined' | string;
+  cta_contract_version?: number;
 }
 
 Deno.serve(async (req) => {
