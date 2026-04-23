@@ -909,6 +909,11 @@ export default function AdminLiveEvents() {
           : "one_time"
       ),
       autoweb_config: ((event as any).autoweb_config as AutowebConfig) ?? defaultForm.autoweb_config,
+      replay_menu_section_key: meta.replay_target?.menu_section_key || "",
+      replay_parent_module_id: meta.replay_target?.parent_module_id || null,
+      replay_lesson_id: meta.replay_lesson_id || null,
+      replay_publish_status: (meta.replay_publish_status as "idle" | "published" | "error") || "idle",
+      replay_publish_error: meta.replay_publish_error || null,
     });
     setDialogOpen(true);
   };
