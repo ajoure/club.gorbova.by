@@ -1,138 +1,95 @@
 да, согласен, с учетом правок:
 
-1. **K1 и K2 делать одним PATCH, но фиксировать отдельно в отчёте.**  
-В отчёте должны быть отдельные статусы:  
+1. **58svh из плана убери.**  
+Это значение почти наверняка ничего не изменит: текущий video-shell на iPhone уже визуально ниже этого порога.  
+В плане зафиксируй так:  
+**«ограничить mobile top media stack более жёстко, стартовое значение подбирать в диапазоне 36–40svh, а не 58svh»**.
+2. **Ограничение вешать не вслепую на data-video-shell, а на тот wrapper, который реально съедает высоту.**  
+Если data-video-shell = только чёрное видео, а reactions bar идёт отдельным sibling, то budget надо считать **вместе с reactions bar**, иначе composer всё равно может не влезть.
+3. **Acceptance дополни двумя обязательными пунктами:**
+  - в initial high-state **полностью видны** composer и **нижние скругления** chat panel;
+  - последнее сообщение **полностью читается над composer**, без ощущения, что низ панели “обрезан”.
+4. **Proof-пакет зафиксируй отдельно для 4 состояний:**  
 
-  - K1 keyboard gap
-  - K2 white tail / rounded bottom  
-  Не смешивать их в один общий “mobile input fix”.
-2. **По K1 сначала убрать двойной резерв, не трогая формулу useVisualViewportInset.**  
-Приоритет такой:
-  - убрать safe-area из внутреннего paddingBottom composer;
-  - убрать vv-offset из padding-bottom у .room-messages-scroll;
-  - только если после этого gap останется — уже пересматривать сам vv-offset baseline.  
-  То есть useVisualViewportInset сейчас не переписывать первым действием.
-3. **По K2 держать решение минимальным.**  
-Сначала:
-  - убрать белый хвост через корректный padding-bottom;
-  - сделать видимые нижние скругления панели;
-  - отделить конец panel от fixed composer визуально.  
-  ::after/декоративные накладки добавлять только если без них нельзя получить чистый вид.
-4. **По K3 в плане зафиксировать не только pointer-events, но и проверку состояний.**  
-Нужно проверить отдельно:
-  - state=live с реальным video source;
-  - нет ли поверх player остаточного waiting/source overlay;
-  - нет ли preventDefault / gesture interception на mobile ancestors;
-  - controls/fullscreen/quality открываются именно по tap в Safari и в PWA standalone.  
-  Если в каком-то состоянии source ещё не готов, это нужно явно отразить в proof, а не считать fail без разведения по state.
-5. **По K4 добавить guard на восстановление caret.**  
-В LiveAutoGrowTextarea восстанавливать selectionStart/selectionEnd только если:
-  - textarea всё ещё в фокусе;
-  - значение не изменилось гонкой;
-  - браузер поддерживает selection API без exception.  
-  Иначе можно получить новый iOS-баг.
-6. **Proof-пакет сделать сразу в двух средах: Safari + PWA standalone.**  
-Для каждой среды отдельно:
-  - keyboard open;
-  - bottom of chat;
-  - tap on video / controls;
-  - keyboard close after input.  
-  Без этого PATCH не считать принятым.
-7. **Wake Lock не смешивать с этим PATCH.**  
-Его статус оставить как:
-  - code patched
-  - device-proof pending  
-  И спринт не закрывать, пока нет:
-  - K1 accepted
-  - K2 accepted
-  - K3 accepted
-  - K4 accepted
-  - Wake Lock device-proof
-8. **T1 отдельно не трогать, но в финальном отчёте дать строку:**  
-T1 checked / no code changes required.
+  - Safari initial high-state;
+  - Safari after collapse header;
+  - PWA standalone initial high-state;
+  - PWA standalone after collapse header.  
+  Плюс один desktop regression screenshot.
+5. **Stop-guard явно допиши:**
+  - не трогать текущую логику composer;
+  - не откатывать 100svh;
+  - не возвращать fixed-gap хаки;
+  - менять только высотный budget верхнего media stack.
 
 &nbsp;
 
-Если присылают уже обновлённый план на этот PATCH, следующий ответ должен идти только как сверка внесения этих правок.
+Итог: сам подход верный, но **ключевая правка — убрать 58svh и заменить на реальный рабочий cap для mobile top stack**. Без этого план может пройти, а визуально не поменяется вообще.
 
 &nbsp;
 
-Правки подтверди сразу скринами  в режиме симуляции все сделай и исправь все баги сразу  
+# План: PATCH K2.1 — chat panel reachability в initial high-state
 
-&nbsp;
+## Проблема (точная локализация)
 
-# План: PATCH K1+K2+K3+K4 — финальное закрытие mobile спринта
+`src/pages/LiveEvent.tsx:679` — `data-mobile-sticky-main` на mobile имеет `max-lg:h-[100svh]`. В initial high-state ВНУТРИ этой sticky-области последовательно расположены flex-column'ом:
 
-## K1 — keyboard gap (двойной safe-area резерв)
+1. Header-spacer (`Тест Сергей … LIVE … Эфир …`)
+2. `data-video-shell` (video + reactions bar) — `shrink-0`, занимает ~50–55% высоты
+3. Card chat-panel (`flex-1`)
 
-**Root cause:** в `LiveEventComments.tsx:335` (и аналогично в `LiveEventQuestions.tsx`) внутренний div composer имеет `paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))'`. При открытой клавиатуре composer уже привязан к visualViewport через CSS `.room-composer { bottom: max(safe-area, vv-offset) }` — этот внешний bottom поднимает composer на высоту клавиатуры. Но внутренний `padding-bottom: env(safe-area-inset-bottom)` (~34px на iPhone X+) добавляется СВЕРХУ → визуальная высота composer растёт, между ним и клавиатурой образуется зазор ~34px (видно как чёрная полоса на IMG_3685).
+При `100svh` суммарной высоты не хватает: video + reactions + tabs + ~5 сообщений + composer не помещаются. Card получает `flex-1` от остатка → его нижняя часть (composer) уезжает за нижний край viewport. Видны только верхние скругления input — это и есть симптом со скрина IMG_3691.
 
-**Fix:**
+После collapse header'а sticky-main приклеивается к `top:0` под notch — высоты становится достаточно, всё видно (IMG_3692).
 
-- В `LiveEventComments.tsx` и `LiveEventQuestions.tsx` заменить `paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))'` на `padding: 0.75rem` без safe-area. Safe-area уже учтён через `.room-composer { bottom: max(env(safe-area-inset-bottom), var(--room-vv-bottom-offset)) }` на внешнем wrapper'е.
+## Решение
 
-## K2 — white tail после последнего сообщения
+Card chat-panel должна иметь **гарантированный нижний край внутри viewport** даже в initial high-state. Два варианта:
 
-**Root cause:** `.room-messages-scroll` `padding-bottom = composer-h + safe-area + vv-offset + 32px`. При открытой клавиатуре vv-offset ≈ 340px → внутри scroll-area образуется белый хвост ~470px. После исчезновения клавиатуры он остаётся пока offset не вернётся в 0. Кроме того, при keyboard open scroll-area уже визуально не «дотягивает» до composer (он fixed по vv-offset), доп. резерв в высоту клавиатуры избыточен.
+**Вариант A (минимальный, рекомендуемый):** ограничить высоту video-shell на mobile через `max-height`, чтобы Card chat-panel всегда получала минимум ~40% viewport под себя.
 
-**Fix в `liveRoomTheme.css`:**
+- В `LiveEvent.tsx:681` добавить mobile-only style для `data-video-shell`: `max-h-[55svh]` или `max-h-[50svh]`. Видео сжимается пропорционально (aspect-video сохраняется через player), reactions bar остаётся, Card получает оставшуюся высоту — composer виден без скролла.
 
-- Убрать `var(--room-vv-bottom-offset)` из `padding-bottom` `.room-messages-scroll`. Композер при keyboard open поднимается, scroll-area сама уже «уходит» под composer на ту же высоту — keyboard область не мешает доскроллу. Остаётся: `padding-bottom: calc(var(--room-composer-h, 64px) + env(safe-area-inset-bottom, 0px) + 24px)`.
-- Добавить `.room-panel` (Card-обёртка): `border-radius: 0.5rem; overflow: hidden;` чтобы скругления видны и сверху и снизу. На mobile, где composer fixed (вне Card), нижняя граница панели визуально совпадает с верхним краем composer — добавить sentinel: `.room-panel::after` с тонкой нижней границей color-mix accent для визуальной завершённости панели.
-- Альтернатива (надёжнее): на mobile дать `.room-panel` явный `margin-bottom: calc(var(--room-composer-h, 64px) + env(safe-area-inset-bottom, 0px))` чтобы Card физически заканчивался ВЫШЕ composer и его `rounded-lg` (нижние скругления) был виден.
+**Вариант B:** дать Card явный `min-height` на mobile, чтобы flex выжимал из video-shell остаток.
 
-## K3 — video surface не кликабелен
+- `min-h-[40svh]` на Card (`LiveEvent.tsx:736`). Менее предсказуемо при разных aspect ratios видео.
 
-**Root cause (наиболее вероятный):** `data-mobile-sticky-main` имеет `max-lg:overflow-hidden` (строка 679). На iOS внутри `position: sticky; overflow: hidden` parent'а cross-origin iframe controls могут не получать первый tap из-за gesture interception. Дополнительно — `LiveRoomReactionsOverlay` имеет `z-20` поверх player, и хотя на root `pointer-events: none`, дочерний `<style>` блок и span'ы с `reaction-float` НЕ имеют явного `pointer-events: none` (наследуют, должно работать) — но Safari иногда нарушает наследование при `display: inline-flex` — добавить явно.
+Выбираю **Вариант A** — он управляет именно той частью, которая «съедает» высоту (video + reactions), и не ломает desktop (правило scoped через `max-lg:`).
 
-**Fix:**
+## Изменения
 
-- `LiveRoomReactionsOverlay.tsx`: добавить явное `pointer-events: none` на каждый `<span class="reaction-float">` через class или style.
-- `LiveEvent.tsx:683` обёртка `<div className="relative">` — убедиться что НЕТ перекрытий. Если в state=live по факту overlay активен — добавить debug: проверить через `browser--observe` после деплоя.
-- Если проблема не в overlay — на mobile у `data-video-shell` добавить `pointer-events: auto; touch-action: manipulation` для гарантии.
-
-## K4 — caret теряется при вводе
-
-**Root cause:** `recalc()` в `LiveAutoGrowTextarea.tsx:32` ставит `el.style.height = "auto"` потом `scrollHeight` → DOM перерисовка во время ввода. При перерасчёте высоты на iOS курсор может «прыгать» на начало или теряться, особенно когда composer одновременно репозиционируется visualViewport.
-
-**Fix:**
-
-- В `recalc()` сохранять `selectionStart/End` ДО ресайза и восстанавливать после.
-- Добавить early-return если новая высота совпадает с текущей — не трогать `style.height` если не нужно.
-
-## Файлы к изменению
-
-1. `src/components/live/liveRoomTheme.css` — убрать vv-offset из messages-scroll padding, добавить .room-panel border-radius + margin-bottom mobile.
-2. `src/components/live/LiveEventComments.tsx:335` — убрать дублирующий safe-area padding-bottom.
-3. `src/components/live/LiveEventQuestions.tsx` — то же.
-4. `src/components/live/LiveRoomReactionsOverlay.tsx` — явные pointer-events:none на детях.
-5. `src/components/live/LiveAutoGrowTextarea.tsx` — сохранять caret position при recalc.
-
-## Что НЕ трогаем
-
-- `useVisualViewportInset.ts` — формула корректна, проблема была в потребителях.
-- iOS standalone safe-area / notch fix в `index.css`.
-- Wake Lock, M1.1, M1.2, M2, entry tracking, access logic, desktop layout.
-- Submit-логика comments/questions.
+`**src/pages/LiveEvent.tsx:681**` — добавить `max-lg:max-h-[58svh]` к `data-video-shell` className. 58svh = video (aspect-video на 518px ширине ≈ 290px) + reactions bar (50px) + room blocks (если есть). Card получит ≥42svh — этого хватает на tabs + 3-4 сообщения + composer.
 
 ## Acceptance criteria
 
-A. Safari iPhone, keyboard open:
+A. iPhone Safari, initial high-state (header виден):
 
-- Composer вплотную над клавиатурой (без чёрной полосы).
-- После последнего сообщения нет белого хвоста.
-- Каретка стабильна при вводе.
-- Tap по video открывает Kinescope controls / fullscreen.
+- Card chat-panel полностью в viewport: видны tabs, последние сообщения, composer и нижние скругления панели.
+- Без скролла страницы.
 
-B. PWA standalone iPhone: те же 4 проверки + safe-area/notch fix не сломан.
+B. iPhone Safari, после collapse header:
 
-C. Keyboard close: composer возвращается к нижнему краю с safe-area, white tail не появляется, layout стабилен.
+- Layout не «прыгает», video не растягивается сверх 58svh, Card получает чуть больше высоты — нормально.
 
-D. Desktop: без регрессии (все правки scoped под `@media (max-width: 1023px)` или нейтральны).
+C. PWA standalone iPhone: то же поведение, safe-area/notch fix не сломан.
+
+D. Desktop: без изменений (`max-lg:` префикс).
+
+## Что НЕ трогаем
+
+- `useVisualViewportInset`, K1/K2/K3/K4 fixes уже применены.
+- iOS standalone safe-area / notch (`index.css`).
+- Wake Lock, M1.1, M1.2, M2, entry tracking, access logic.
+- Composer flex behavior, `100svh` на sticky-main.
+
+## Файлы к изменению
+
+1. `src/pages/LiveEvent.tsx` — одна строка (681): добавить `max-lg:max-h-[58svh]` к `data-video-shell`.
 
 ## Proof-пакет (после execute)
 
-- Safari: 3 скрина (keyboard open / chat bottom / video controls).
-- PWA standalone: те же 3 скрина.
-- Normal state after keyboard close.
-- Финальный отчёт на русском: changed files, diff-summary, что подтверждено в Safari, что в standalone, что не тронуто.
+iPhone Safari + PWA standalone:
+
+1. Initial high-state — chat panel целиком в viewport, нижние скругления видны.
+2. После collapse header — layout стабилен.
+3. Desktop — без регрессии.
