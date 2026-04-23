@@ -141,18 +141,21 @@
   max-width: 100%;
 }
 
-/* ========== M1.2 — Mobile composer pinned to viewport bottom ==========
- * На mobile composer чата/вопросов должен быть всегда у нижнего края
- * экрана, поверх всего, с safe-area-inset-bottom. На desktop —
- * прежнее sticky-поведение внутри Card.
+/* ========== M1.2 — Mobile composer (flex, не fixed) ==========
+ * Решение: data-mobile-sticky-main использует height: 100svh (small
+ * viewport height). svh АВТОМАТИЧЕСКИ сжимается при открытии iOS-
+ * клавиатуры в Safari и в standalone PWA — composer естественно
+ * прижимается к её верхнему краю без VisualViewport-хаков и без fixed
+ * позиционирования. Убрана прежняя `position: fixed` логика, которая
+ * создавала пустые зазоры между панелью чата и composer'ом.
  *
  * Контракт:
- *  - .room-composer — обёртка composer (sticky на desktop, fixed на mobile);
- *  - .room-messages-scroll — скроллируемая область сообщений; на mobile
- *    получает padding-bottom = высоте composer, чтобы последние сообщения
- *    не пряталось за фиксированным полем.
- *  - --room-composer-h — фактическая высота composer (резерв ~120px,
- *    реальный composer авто-grow до этого предела).
+ *  - .room-composer — flex-child внутри Card, sticky bottom-0 на desktop;
+ *  - .room-messages-scroll — скроллируемая область с минимальным
+ *    нижним резервом (composer теперь flex, не fixed, → не нужно
+ *    компенсировать его высоту);
+ *  - .room-panel — Card со скруглениями, overflow:hidden обрезает
+ *    scroll-area по нижним углам для цельного визуального блока.
  */
 :root {
   --room-composer-h: 64px;
@@ -160,44 +163,16 @@
 
 @media (max-width: 1023px) {
   .live-room-themed .room-composer {
-    position: fixed;
-    left: 0;
-    right: 0;
-    /* PATCH iOS keyboard gap:
-       - на iOS (Safari + standalone PWA) layout viewport не уменьшается при
-         открытии клавиатуры, поэтому привязываем composer к Visual Viewport
-         через --room-vv-bottom-offset (см. useVisualViewportInset.ts);
-       - safe-area-inset-bottom учитывается через max(), а не сумму, чтобы
-         не было двойного резерва: когда клавиатура открыта, offset > 0 и
-         перекрывает safe-area; когда закрыта — побеждает safe-area.
-       - padding-bottom оставляем для компенсации home-indicator в spectator-
-         mode (без фокуса), но он работает только когда vv-offset = 0, ибо
-         при открытой клавиатуре композер физически выше home-indicator. */
-    bottom: max(env(safe-area-inset-bottom, 0px), var(--room-vv-bottom-offset, 0px));
-    z-index: 50;
     background-color: var(--room-panel, hsl(var(--card)));
     border-top: 1px solid color-mix(in srgb, var(--room-text, hsl(var(--foreground))) 10%, transparent);
-    transition: bottom 120ms ease-out;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
 
   .live-room-themed .room-messages-scroll {
-    /* K2 (PATCH): убран var(--room-vv-bottom-offset) из padding-bottom.
-       При открытой клавиатуре композер уже физически поднимается на vv-offset
-       через `.room-composer { bottom: max(safe-area, vv-offset) }`, поэтому
-       scroll-area естественно «уходит» вниз на ту же величину. Дублирование
-       создавало белый хвост ~vv-offset px после последнего сообщения. */
-    padding-bottom: calc(
-      var(--room-composer-h, 64px)
-      + env(safe-area-inset-bottom, 0px)
-      + 24px
-    );
+    padding-bottom: 16px;
   }
 
-  /* K2: на mobile composer fixed (вне Card), поэтому даём панели физический
-     нижний резерв = высоте composer + safe-area, чтобы её скругления (rounded-lg)
-     были видны и панель визуально заканчивалась ВЫШЕ composer. */
   .live-room-themed .room-panel {
-    margin-bottom: calc(var(--room-composer-h, 64px) + env(safe-area-inset-bottom, 0px));
     border-radius: 0.5rem;
     overflow: hidden;
   }
