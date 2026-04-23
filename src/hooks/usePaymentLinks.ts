@@ -1,5 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 
 export interface PaymentLinkRow {
   id: string;
@@ -34,18 +35,76 @@ export interface PaymentLinkRow {
   last_order_id: string | null;
 }
 
+const PAYMENT_LINKS_QUERY_KEY = ["payment-links-enriched"] as const;
+const FULL_SYNC_MAX_AGE_MS = 5 * 60 * 1000;
+
+async function fetchAllPaymentLinks(): Promise<PaymentLinkRow[]> {
+  const { data, error } = await supabase
+    .from("payment_links_enriched_v" as never)
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(1000);
+
+  if (error) throw error;
+  return (data as unknown as PaymentLinkRow[]) || [];
+}
+
+async function fetchPaymentLinksDelta(since: string): Promise<PaymentLinkRow[]> {
+  const { data, error } = await supabase
+    .from("payment_links_enriched_v" as never)
+    .select("*")
+    .gt("updated_at", since)
+    .order("created_at", { ascending: false })
+    .limit(1000);
+
+  if (error) throw error;
+  return (data as unknown as PaymentLinkRow[]) || [];
+}
+
+function mergePaymentLinks(current: PaymentLinkRow[], incoming: PaymentLinkRow[]) {
+  if (incoming.length === 0) return current;
+
+  const merged = new Map(current.map((row) => [row.id, row]));
+  incoming.forEach((row) => merged.set(row.id, row));
+
+  return Array.from(merged.values()).sort((a, b) =>
+    new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
+}
+
 export function usePaymentLinks() {
+  const queryClient = useQueryClient();
+  const { user, loading } = useAuth();
+  const queryKey = [...PAYMENT_LINKS_QUERY_KEY, user?.id ?? "guest"] as const;
+
   return useQuery({
-    queryKey: ["payment-links-enriched"],
+    queryKey,
     queryFn: async (): Promise<PaymentLinkRow[]> => {
-      const { data, error } = await supabase
-        .from("payment_links_enriched_v" as never)
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(1000);
-      if (error) throw error;
-      return (data as unknown as PaymentLinkRow[]) || [];
+      const cached = queryClient.getQueryData<PaymentLinkRow[]>(queryKey);
+      const queryState = queryClient.getQueryState<PaymentLinkRow[]>(queryKey);
+
+      const shouldRunFullSync =
+        !cached?.length ||
+        !queryState?.dataUpdatedAt ||
+        Date.now() - queryState.dataUpdatedAt > FULL_SYNC_MAX_AGE_MS;
+
+      if (shouldRunFullSync) {
+        return fetchAllPaymentLinks();
+      }
+
+      const lastUpdatedAt = cached.reduce(
+        (max, row) => (row.updated_at > max ? row.updated_at : max),
+        cached[0]?.updated_at ?? new Date(0).toISOString()
+      );
+
+      const delta = await fetchPaymentLinksDelta(lastUpdatedAt);
+      return mergePaymentLinks(cached, delta);
     },
+    enabled: !loading && !!user,
+    placeholderData: (previousData) => previousData,
+    refetchInterval: !loading && user ? 15_000 : false,
+    refetchOnWindowFocus: false,
+    retry: 1,
     staleTime: 30_000,
   });
 }
