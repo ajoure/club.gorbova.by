@@ -1057,14 +1057,13 @@ export default function AdminLiveEvents() {
 
         {/* --- Create/Edit Dialog --- */}
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogContent className="w-[calc(100vw-1rem)] sm:w-[calc(100vw-2rem)] max-w-5xl max-h-[92vh] overflow-y-auto overflow-x-hidden p-3 sm:p-6">
+          <DialogContent className="w-[calc(100vw-1rem)] sm:w-[calc(100vw-2rem)] max-w-4xl max-h-[90vh] overflow-y-auto overflow-x-hidden p-3 sm:p-6">
             <DialogHeader>
               <DialogTitle>{editingId ? "Редактировать эфир" : "Создать эфир"}</DialogTitle>
             </DialogHeader>
 
             <div className="space-y-6 py-2 min-w-0 overflow-x-hidden [&_*]:min-w-0">
               {/* Step 0: Event type selector (only for new events) */}
-
               {!editingId && (
                 <FormSection title="Тип эфира">
                   <div className="grid grid-cols-2 gap-3">
@@ -1142,7 +1141,7 @@ export default function AdminLiveEvents() {
                     <Label>Статус</Label>
                     <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent className="max-h-[60vh] overflow-y-auto">
+                      <SelectContent>
                         <SelectItem value="draft">Черновик</SelectItem>
                         <SelectItem value="scheduled">Запланирован</SelectItem>
                         <SelectItem value="live">В эфире</SelectItem>
@@ -1193,7 +1192,7 @@ export default function AdminLiveEvents() {
                           ) : kinescopeLiveFolders && kinescopeLiveFolders.length > 0 ? (
                             <Select value={form.kinescope_folder_id} onValueChange={(v) => setForm({ ...form, kinescope_folder_id: v })}>
                               <SelectTrigger><SelectValue placeholder="Выберите папку" /></SelectTrigger>
-                              <SelectContent className="max-h-[60vh] overflow-y-auto">
+                              <SelectContent>
                                 {kinescopeLiveFolders.map((f) => (
                                   <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
                                 ))}
@@ -1215,7 +1214,7 @@ export default function AdminLiveEvents() {
                           ) : (
                             <Select value={form.kinescope_project_id} onValueChange={(v) => setForm({ ...form, kinescope_project_id: v })}>
                               <SelectTrigger><SelectValue placeholder="Выберите проект (для записи)" /></SelectTrigger>
-                              <SelectContent className="max-h-[60vh] overflow-y-auto">
+                              <SelectContent>
                                 {kinescopeProjects?.map((p) => (
                                   <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
                                 ))}
@@ -1279,7 +1278,7 @@ export default function AdminLiveEvents() {
                           ) : (
                             <Select value={form.kinescope_project_id} onValueChange={(v) => setForm({ ...form, kinescope_project_id: v, kinescope_video_id: "" })}>
                               <SelectTrigger><SelectValue placeholder="Выберите проект" /></SelectTrigger>
-                              <SelectContent className="max-h-[60vh] overflow-y-auto">
+                              <SelectContent>
                                 {kinescopeProjects?.map((p) => (
                                   <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
                                 ))}
@@ -1302,7 +1301,7 @@ export default function AdminLiveEvents() {
                             ) : (
                               <Select value={form.kinescope_video_id} onValueChange={(v) => setForm({ ...form, kinescope_video_id: v })}>
                                 <SelectTrigger><SelectValue placeholder="Выберите видео" /></SelectTrigger>
-                                <SelectContent className="max-h-[60vh] overflow-y-auto">
+                                <SelectContent>
                                   {kinescopeVideos?.map((v) => (
                                     <SelectItem key={v.id} value={v.id}>{v.title || v.id}</SelectItem>
                                   ))}
@@ -1361,7 +1360,7 @@ export default function AdminLiveEvents() {
                   }}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent className="max-h-[60vh] overflow-y-auto">
+                  <SelectContent>
                     {Object.entries(inviteModeLabels).map(([value, { label }]) => (
                       <SelectItem key={value} value={value}>{label}</SelectItem>
                     ))}
@@ -1403,7 +1402,7 @@ export default function AdminLiveEvents() {
                             <SelectTrigger className="text-xs">
                               <SelectValue placeholder="Выберите шаблон" />
                             </SelectTrigger>
-                            <SelectContent className="max-h-[60vh] overflow-y-auto">
+                            <SelectContent>
                               {broadcastTemplates?.map((t) => (
                                 <SelectItem key={t.id} value={t.id} className="text-xs">
                                   {t.name} <span className="text-muted-foreground ml-1">({t.template_type})</span>

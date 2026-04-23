@@ -152,7 +152,7 @@ function RuleRow({ rule, index, products, usedProductIds, onUpdateProduct, onUpd
           <SelectTrigger className="h-8 text-sm">
             <SelectValue placeholder="Выберите продукт" />
           </SelectTrigger>
-          <SelectContent className="max-h-[60vh] overflow-y-auto">
+          <SelectContent>
             {availableProducts.map((p) => (
               <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
             ))}
