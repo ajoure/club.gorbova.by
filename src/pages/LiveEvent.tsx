@@ -34,6 +34,7 @@ import { readRoomSettings } from "@/lib/roomSettings";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useScreenWakeLock } from "@/hooks/useScreenWakeLock";
 import { useVisualViewportInset } from "@/hooks/useVisualViewportInset";
+import { useUnansweredQuestionsCount } from "@/hooks/useUnansweredQuestionsCount";
 
 interface ResolvedSource {
   resolved_source_kind: 'kinescope_video' | 'kinescope_live_embed' | 'live_pending' | 'none';
@@ -617,6 +618,10 @@ function LiveEventLegacy() {
   // Strictly local to .live-room-themed scope — never leaks globally.
   const roomTheme: any = (data as any)?.room_theme || {};
   const presenterUserId: string | null = (data as any)?.presenter_user_id || null;
+  // Staff badge: счётчик неотвеченных для модераторов / ведущего.
+  // RLS сама ограничивает не-staff (увидят только свои), но enabled-флаг страхует от лишних запросов.
+  const isPresenter = !!user?.id && !!presenterUserId && user.id === presenterUserId;
+  const unansweredCount = useUnansweredQuestionsCount(eventId, isStaff || isPresenter);
   const liveBadgeMode: LiveBadgeMode = ((data as any)?.live_badge_mode as LiveBadgeMode) || "auto";
   const themeStyle: React.CSSProperties = {
     ['--room-bg' as string]: roomTheme.background_color || undefined,
@@ -788,6 +793,14 @@ function LiveEventLegacy() {
                         <HelpCircle className="h-3.5 w-3.5" />
                         Вопросы
                         <Lock className="h-3 w-3 opacity-60" />
+                        {(isStaff || isPresenter) && unansweredCount > 0 && (
+                          <Badge
+                            variant="destructive"
+                            className="ml-0.5 h-4 min-w-4 px-1 text-[10px] leading-none rounded-full"
+                          >
+                            {unansweredCount > 99 ? "99+" : unansweredCount}
+                          </Badge>
+                        )}
                       </TabsTrigger>
                       {showParticipantsTab && (
                         <TabsTrigger value="participants" className="room-tab-trigger gap-1.5 text-xs">
