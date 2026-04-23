@@ -100,14 +100,24 @@ export function RoomPreStartScreen({
   const showLiveSoon = hasCountdown && remainingMs <= 0;
 
   return (
-    <div className="relative w-full aspect-video rounded-lg overflow-hidden">
-      {/* Cover or branded fallback */}
+    <div className="relative w-full aspect-video rounded-lg overflow-hidden bg-black">
+      {/* Cover: показываем картинку ЦЕЛИКОМ (object-contain), а пустые поля
+          по бокам/сверху-снизу заполняем размытым дублем той же картинки —
+          без обрезки контента и без серых полос. */}
       {prestart.cover_url ? (
-        <img
-          src={prestart.cover_url}
-          alt={title}
-          className="absolute inset-0 w-full h-full object-cover"
-        />
+        <>
+          <img
+            src={prestart.cover_url}
+            alt=""
+            aria-hidden
+            className="absolute inset-0 w-full h-full object-cover scale-110 blur-2xl opacity-70"
+          />
+          <img
+            src={prestart.cover_url}
+            alt={title}
+            className="absolute inset-0 w-full h-full object-contain"
+          />
+        </>
       ) : (
         <div className="absolute inset-0 bg-gradient-to-br from-primary/30 via-background to-primary/10" />
       )}
