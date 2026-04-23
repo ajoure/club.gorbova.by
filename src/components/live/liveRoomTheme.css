@@ -163,20 +163,37 @@
     position: fixed;
     left: 0;
     right: 0;
-    bottom: 0;
+    /* PATCH iOS keyboard gap:
+       - на iOS (Safari + standalone PWA) layout viewport не уменьшается при
+         открытии клавиатуры, поэтому привязываем composer к Visual Viewport
+         через --room-vv-bottom-offset (см. useVisualViewportInset.ts);
+       - safe-area-inset-bottom учитывается через max(), а не сумму, чтобы
+         не было двойного резерва: когда клавиатура открыта, offset > 0 и
+         перекрывает safe-area; когда закрыта — побеждает safe-area.
+       - padding-bottom оставляем для компенсации home-indicator в spectator-
+         mode (без фокуса), но он работает только когда vv-offset = 0, ибо
+         при открытой клавиатуре композер физически выше home-indicator. */
+    bottom: max(env(safe-area-inset-bottom, 0px), var(--room-vv-bottom-offset, 0px));
     z-index: 50;
     background-color: var(--room-panel, hsl(var(--card)));
     border-top: 1px solid color-mix(in srgb, var(--room-text, hsl(var(--foreground))) 10%, transparent);
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-    /* iOS visualViewport: подъём над клавиатурой обеспечивается JS-хуком,
-       но fixed bottom гарантирует, что composer виден всегда. */
+    transition: bottom 120ms ease-out;
   }
 
   .live-room-themed .room-messages-scroll {
-    /* M1.6: гарантированный bottom reachability — резерв под fixed composer
-       увеличен, чтобы последний message card был полностью виден И в стартовом
-       высоком состоянии (header ещё не уехал), И после scroll-away header.
-       Учитываем: высоту composer + safe-area + дополнительный gap 32px. */
-    padding-bottom: calc(var(--room-composer-h, 64px) + env(safe-area-inset-bottom, 0px) + 32px);
+    /* M1.6 + iOS keyboard gap:
+       Гарантированный bottom reachability — последний message card виден
+       во всех состояниях:
+        - стартовый высокий экран,
+        - после scroll-away header,
+        - при открытой iOS-клавиатуре (composer поднимается на vv-offset,
+          scroll-area получает дополнительный резерв на ту же величину).
+       Итого: composer-h + safe-area + vv-offset + gap 32px. */
+    padding-bottom: calc(
+      var(--room-composer-h, 64px)
+      + env(safe-area-inset-bottom, 0px)
+      + var(--room-vv-bottom-offset, 0px)
+      + 32px
+    );
   }
 }

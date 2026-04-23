@@ -33,6 +33,7 @@ import { useRoomEntryPrefs } from "@/hooks/useRoomEntryPrefs";
 import { readRoomSettings } from "@/lib/roomSettings";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useScreenWakeLock } from "@/hooks/useScreenWakeLock";
+import { useVisualViewportInset } from "@/hooks/useVisualViewportInset";
 
 interface ResolvedSource {
   resolved_source_kind: 'kinescope_video' | 'kinescope_live_embed' | 'live_pending' | 'none';
@@ -160,6 +161,10 @@ function LiveEventLegacy() {
   // Хук размещён ДО early returns по Rules of Hooks (всегда вызывается).
   // Привязка только к state комнаты — никаких tabs/chat/reactions/composer.
   useScreenWakeLock(state === "live" || state === "room_open_waiting");
+
+  // PATCH: iOS keyboard gap — привязка composer к Visual Viewport.
+  // Хук безопасен на desktop (offset = 0). См. useVisualViewportInset.ts.
+  useVisualViewportInset();
 
   // Reconnect contract: prefs already exist → silent mirror to session, skip dialog.
   useEffect(() => {
