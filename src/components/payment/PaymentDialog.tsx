@@ -393,7 +393,7 @@ export function PaymentDialog({
         },
       });
 
-      if (error) {
+      if (error || (data && typeof data === "object" && "error" in data)) {
         setLoginError("Ошибка отправки письма. Попробуйте позже.");
       } else {
         toast.success("Письмо для восстановления пароля отправлено на ваш email");
