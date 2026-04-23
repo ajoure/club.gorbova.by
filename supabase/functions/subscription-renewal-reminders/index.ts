@@ -1025,13 +1025,15 @@ Deno.serve(async (req) => {
           products_v2 (id, name)
         )
       `)
-      .eq('auto_renew', true)
+      // PATCH PAYMENTS+REMINDERS v3 B-S1: убран фильтр .eq('auto_renew', true).
+      // Логика "expiring without SBS" уже базируется на hasActiveSBS (ниже), фильтр auto_renew был лишним:
+      // он отрезал именно тех, у кого автопродления нет, — кому напоминание нужно больше всего.
       .in('status', ['active', 'trial'])
       .lte('access_end_at', sevenDaysFromNow.toISOString())
       .gte('access_end_at', now.toISOString())
       .limit(100);
 
-    console.log(`Found ${expiringSubs?.length || 0} subscriptions expiring within 7 days for SBS check`);
+    console.log(`[v3 B-S1] Found ${expiringSubs?.length || 0} subscriptions expiring within 7 days for SBS check (cohort expanded)`);
 
     for (const sub of expiringSubs || []) {
       const userId = sub.user_id;
