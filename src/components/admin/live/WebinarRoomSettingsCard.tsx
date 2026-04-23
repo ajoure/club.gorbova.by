@@ -493,6 +493,22 @@ export function WebinarRoomSettingsCard({ liveEventId }: { liveEventId: string }
           Сохранить настройки комнаты
         </Button>
       </div>
+
+      {/* Admin-only preview: НЕ зависит от scheduled_at и lifecycle state, ничего не пишет в runtime. */}
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Предпросмотр pre-start экрана</DialogTitle>
+          </DialogHeader>
+          <RoomPreStartScreen
+            prestart={settings.prestart}
+            scheduledAt={new Date(Date.now() + 2 * 60 * 1000).toISOString()}
+          />
+          <p className="text-[11px] text-muted-foreground">
+            Это предпросмотр. На странице эфира экран будет показан до начала, когда <code>scheduled_at</code> ещё не наступил.
+          </p>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
