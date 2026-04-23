@@ -37,14 +37,16 @@ export function LiveRoomReactionsOverlay({
     <div
       aria-hidden="true"
       data-overlay="reactions-rail"
-      className="pointer-events-none absolute right-2 md:right-3 bottom-3 md:bottom-4 w-[72px] md:w-[96px] h-[32%] overflow-hidden z-20 flex flex-col-reverse items-center gap-1"
+      className="pointer-events-none absolute right-2 md:right-3 bottom-3 md:bottom-4 w-[72px] md:w-[96px] h-[36%] overflow-hidden z-20 flex flex-col-reverse items-center gap-1"
       style={{
-        // Плавное растворение вверх: снизу полностью видимо,
-        // с ~45% высоты начинается затухание, к ~85% почти прозрачно.
+        // Soft fade-out (PATCH): мягкое растворение вверх без жёсткой невидимой границы.
+        // Затухание начинается уже с 20% высоты rail (а не с 45%), переходит через
+        // полупрозрачные ступени и доходит до 0 на самом верху. Этим устраняется
+        // эффект «упёрлись в потолок» — реакции визуально тают, не обрезаются.
         WebkitMaskImage:
-          "linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 45%, rgba(0,0,0,0.4) 75%, rgba(0,0,0,0) 100%)",
+          "linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,0.95) 20%, rgba(0,0,0,0.7) 45%, rgba(0,0,0,0.35) 70%, rgba(0,0,0,0.1) 90%, rgba(0,0,0,0) 100%)",
         maskImage:
-          "linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 45%, rgba(0,0,0,0.4) 75%, rgba(0,0,0,0) 100%)",
+          "linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,0.95) 20%, rgba(0,0,0,0.7) 45%, rgba(0,0,0,0.35) 70%, rgba(0,0,0,0.1) 90%, rgba(0,0,0,0) 100%)",
       }}
     >
       {items.map((r) => (

@@ -621,10 +621,12 @@ function LiveEventLegacy() {
       className="live-room-themed min-h-[100dvh] lg:min-h-screen lg:flex lg:flex-col"
       style={themeStyle}
     >
-      {/* Header — compact. M1.2: на mobile уезжает вверх при body-scroll (НЕ sticky), на desktop — обычный flow. */}
-      <div data-mobile-header className="max-w-[1600px] w-full mx-auto px-3 md:px-6 pt-3 md:pt-4 pb-2 max-lg:flex-shrink-0">
-        <div className="flex items-center gap-2 md:gap-3 mb-1 flex-wrap">
-          <h1 className="room-title text-lg md:text-2xl font-bold truncate">{data?.title}</h1>
+      {/* Header — compact. M1.2: на mobile уезжает вверх при body-scroll (НЕ sticky), на desktop — обычный flow.
+          M1.4: уменьшены вертикальные отступы и размер заголовка на mobile, чтобы первый экран
+          был плотнее и не было пустого «воздуха» сверху между header и video-shell. */}
+      <div data-mobile-header className="max-w-[1600px] w-full mx-auto px-3 md:px-6 pt-1.5 md:pt-4 pb-1 md:pb-2 max-lg:flex-shrink-0">
+        <div className="flex items-center gap-1.5 md:gap-3 mb-0.5 md:mb-1 flex-wrap">
+          <h1 className="room-title text-sm md:text-2xl font-bold truncate">{data?.title}</h1>
           {/* Sprint 2 PATCH 2.5/2.7: room state badge через единый VM, не локальное вычисление */}
           {isWaiting ? (
             <Badge variant={roomBadgeVM.variant}>{roomBadgeVM.shortLabel}</Badge>
@@ -642,13 +644,15 @@ function LiveEventLegacy() {
               <Users className="h-3 w-3" /> {activeParticipants}
             </Badge>
           )}
-          {/* Sprint 2 PATCH 2.4: «Завершить вебинар» внутри комнаты, только staff в state=live */}
+          {/* Sprint 2 PATCH 2.4 + M1.5: «Завершить вебинар» внутри комнаты, только staff в state=live.
+              Mobile (max-lg) — компактная icon-only кнопка с тем же confirm-диалогом.
+              Desktop — прежняя текстовая кнопка. Гейтинг по правам не меняется. */}
           {isStaff && eventId && roomState === "live" && (
             <div className="ml-auto">
               <RoomLifecycleActions
                 eventId={eventId}
                 roomState={roomState}
-                layout="room"
+                layout={isMobile ? "room-mobile" : "room"}
                 invalidateKeys={[["admin-live-events"]]}
               />
             </div>
