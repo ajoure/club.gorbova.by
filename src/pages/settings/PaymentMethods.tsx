@@ -669,7 +669,7 @@ export default function PaymentMethodsSettings() {
                   Привязанные карты
                 </CardTitle>
                 <CardDescription>
-                  Сохранённые карты
+                  Сохранённые карты для удобной оплаты. Автоматическое списание возможно только в рамках активной подписки bePaid.
                 </CardDescription>
               </div>
               <Button onClick={handleAddCard} className="gap-2">
@@ -677,6 +677,15 @@ export default function PaymentMethodsSettings() {
                 Привязать карту
               </Button>
             </div>
+            {/* PATCH PAYMENTS+REMINDERS v3 S5: явное разделение "сохранённая карта" vs "подписка". */}
+            <Alert className="mt-3 border-muted-foreground/20 bg-muted/30">
+              <Shield className="h-4 w-4" />
+              <AlertDescription className="text-xs text-muted-foreground">
+                Сохранённая карта — это удобство для будущих оплат. Сама по себе она не списывает деньги автоматически.
+                Автопродление работает только через отдельную подписку bePaid (см. раздел «Настройка автопродления» выше или
+                оформите её при следующей оплате).
+              </AlertDescription>
+            </Alert>
           </CardHeader>
           <CardContent>
             {isLoading ? (
