@@ -116,9 +116,12 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     return { success: false, error: 'Tariff not found' };
   }
 
-  const product = productResult.data;
-  const tariff = tariffResult.data;
-  const profile = profileResult.data;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const product = productResult.data as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tariff = tariffResult.data as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const profile = profileResult.data as any;
   const profileId = profile?.id || null;
   const customerEmail = profile?.email || 'unknown@example.com';
 
@@ -140,7 +143,8 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     // === ONE-TIME PAYMENT ===
 
     // PATCH F1: Dedup one_time — strict key: user/product/tariff/amount/flow/currency/3d
-    const { data: existingOrder } = await supabase
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: existingOrder } = await (supabase as any)
       .from('orders_v2')
       .select('id, meta, created_at')
       .eq('user_id', user_id)
@@ -248,7 +252,8 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         });
     const oneTimeMetaWithRouting = { ...orderMeta, crm_routing_snapshot: oneTimeCrmSnapshot };
 
-    const { data: order, error: orderError } = await supabase
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: order, error: orderError } = await (supabase as any)
       .from('orders_v2')
       .insert({
         order_number: orderNumber,
@@ -494,7 +499,8 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     }
 
     // PATCH F3: Dedup subscription — strict key: user/product/tariff/amount/flow/currency/3d
-    const { data: existingSubOrder } = await supabase
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: existingSubOrder } = await (supabase as any)
       .from('orders_v2')
       .select('id, meta, created_at')
       .eq('user_id', user_id)
@@ -612,7 +618,8 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         });
     const subMetaWithRouting = { ...subOrderMeta, crm_routing_snapshot: subCrmSnapshot };
 
-    const { data: order, error: orderError } = await supabase
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: order, error: orderError } = await (supabase as any)
       .from('orders_v2')
       .insert({
         order_number: orderNumber,
