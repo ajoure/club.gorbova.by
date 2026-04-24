@@ -49,13 +49,27 @@ async function telegramUploadMedia(
   return response.json();
 }
 
+interface AudienceRule {
+  product_id?: string;
+  tariff_ids?: string[];
+  mode?: 'purchased' | 'active_access';
+}
+
 interface BroadcastFilters {
+  // Legacy
   hasActiveSubscription?: boolean;
   productId?: string;
   productIds?: string[];
   tariffId?: string;
   tariffIds?: string[];
   clubId?: string;
+  // New schema
+  include?: AudienceRule[];
+  exclude?: AudienceRule[];
+  club_ids?: string[];
+  club_membership?: 'current' | 'ever' | 'any';
+  bot_ids?: string[];
+  channel?: 'telegram' | 'email' | 'any';
 }
 
 /**
@@ -191,14 +205,37 @@ Deno.serve(async (req) => {
 
     console.log('Starting mass broadcast...', { filters, hasMedia: !!mediaBuffer, mediaType, productContextId });
 
-    // Build user query based on filters
-    let query = supabase
+    // Resolve audience via canonical RPC (supports include/exclude/clubs/channel)
+    const useNewSchema = Array.isArray(filters.include) || Array.isArray(filters.exclude) || Array.isArray(filters.club_ids);
+
+    let allowedUserIds: Set<string> | null = null;
+
+    if (useNewSchema) {
+      const rpcFilters = {
+        include: filters.include || [],
+        exclude: filters.exclude || [],
+        club_ids: filters.club_ids || [],
+        club_membership: filters.club_membership || 'any',
+        channel: 'telegram',
+      };
+      const { data: audience, error: rpcErr } = await supabase.rpc('resolve_broadcast_audience_user_ids', { _filters: rpcFilters });
+      if (rpcErr) {
+        console.error('[broadcast] resolve_broadcast_audience_user_ids failed:', rpcErr);
+        return new Response(
+          JSON.stringify({ error: `Audience resolution failed: ${rpcErr.message}` }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      allowedUserIds = new Set((audience || []).filter((r: { has_telegram: boolean }) => r.has_telegram).map((r: { user_id: string }) => r.user_id));
+    }
+
+    // Build user query
+    const { data: allProfiles } = await supabase
       .from('profiles')
       .select('user_id, telegram_user_id, full_name, first_name, last_name, email, phone, telegram_username')
-      .not('telegram_user_id', 'is', null);
+      .not('telegram_user_id', 'is', null)
+      .limit(10000);
 
-    const { data: allProfiles } = await query.limit(1000);
-    
     if (!allProfiles?.length) {
       return new Response(
         JSON.stringify({ error: 'No users with Telegram found', sent: 0, failed: 0 }),
@@ -208,47 +245,45 @@ Deno.serve(async (req) => {
 
     let profiles = allProfiles;
 
-    // Apply filters
-    if (filters.hasActiveSubscription) {
-      const { data: activeSubs } = await supabase
-        .from('subscriptions_v2')
-        .select('user_id')
-        .eq('status', 'active');
-      
-      const activeUserIds = new Set(activeSubs?.map(s => s.user_id) || []);
-      profiles = profiles.filter(p => activeUserIds.has(p.user_id));
-    }
-
-    // Support both legacy single productId and new array productIds
-    const effectiveProductIds = filters.productIds?.length ? filters.productIds : (filters.productId ? [filters.productId] : []);
-    const effectiveTariffIds = filters.tariffIds?.length ? filters.tariffIds : (filters.tariffId ? [filters.tariffId] : []);
-
-    if (effectiveProductIds.length > 0) {
-      let subQuery = supabase
-        .from('subscriptions_v2')
-        .select('user_id')
-        .in('product_id', effectiveProductIds)
-        .eq('status', 'active');
-
-      if (effectiveTariffIds.length > 0) {
-        subQuery = subQuery.in('tariff_id', effectiveTariffIds);
+    if (useNewSchema && allowedUserIds) {
+      profiles = profiles.filter(p => allowedUserIds!.has(p.user_id));
+    } else {
+      // ===== Legacy filter path (kept for backward compat) =====
+      if (filters.hasActiveSubscription) {
+        const { data: activeSubs } = await supabase
+          .from('subscriptions_v2')
+          .select('user_id')
+          .eq('status', 'active');
+        const activeUserIds = new Set(activeSubs?.map(s => s.user_id) || []);
+        profiles = profiles.filter(p => activeUserIds.has(p.user_id));
       }
 
-      const { data: productSubs } = await subQuery;
+      const effectiveProductIds = filters.productIds?.length ? filters.productIds : (filters.productId ? [filters.productId] : []);
+      const effectiveTariffIds = filters.tariffIds?.length ? filters.tariffIds : (filters.tariffId ? [filters.tariffId] : []);
 
-      const productUserIds = new Set(productSubs?.map(s => s.user_id) || []);
-      profiles = profiles.filter(p => productUserIds.has(p.user_id));
-    }
+      if (effectiveProductIds.length > 0) {
+        let subQuery = supabase
+          .from('subscriptions_v2')
+          .select('user_id')
+          .in('product_id', effectiveProductIds)
+          .eq('status', 'active');
+        if (effectiveTariffIds.length > 0) {
+          subQuery = subQuery.in('tariff_id', effectiveTariffIds);
+        }
+        const { data: productSubs } = await subQuery;
+        const productUserIds = new Set(productSubs?.map(s => s.user_id) || []);
+        profiles = profiles.filter(p => productUserIds.has(p.user_id));
+      }
 
-    if (filters.clubId) {
-      const { data: clubAccess } = await supabase
-        .from('telegram_access')
-        .select('user_id')
-        .eq('club_id', filters.clubId)
-        .or('active_until.is.null,active_until.gt.now()');
-
-      const clubUserIds = new Set(clubAccess?.map(a => a.user_id) || []);
-      profiles = profiles.filter(p => clubUserIds.has(p.user_id));
+      if (filters.clubId) {
+        const { data: clubAccess } = await supabase
+          .from('telegram_access')
+          .select('user_id')
+          .eq('club_id', filters.clubId)
+          .or('active_until.is.null,active_until.gt.now()');
+        const clubUserIds = new Set(clubAccess?.map(a => a.user_id) || []);
+        profiles = profiles.filter(p => clubUserIds.has(p.user_id));
+      }
     }
 
     // Always include administrators

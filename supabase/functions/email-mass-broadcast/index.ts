@@ -282,13 +282,35 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Get recipients based on filters
-    let query = supabase
+    // Resolve audience via canonical RPC
+    const useNewSchema = Array.isArray(filters?.include) || Array.isArray(filters?.exclude) || Array.isArray(filters?.club_ids);
+    let allowedUserIds: Set<string> | null = null;
+
+    if (useNewSchema) {
+      const rpcFilters = {
+        include: filters.include || [],
+        exclude: filters.exclude || [],
+        club_ids: filters.club_ids || [],
+        club_membership: filters.club_membership || 'any',
+        channel: 'email',
+      };
+      const { data: audience, error: rpcErr } = await supabase.rpc('resolve_broadcast_audience_user_ids', { _filters: rpcFilters });
+      if (rpcErr) {
+        console.error('[email-broadcast] RPC failed:', rpcErr);
+        return new Response(
+          JSON.stringify({ error: `Audience resolution failed: ${rpcErr.message}` }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      allowedUserIds = new Set((audience || []).filter((r: { has_email: boolean }) => r.has_email).map((r: { user_id: string }) => r.user_id));
+    }
+
+    // Get recipients
+    const { data: profiles } = await supabase
       .from('profiles')
       .select('user_id, email, full_name, phone, telegram_username')
-      .not('email', 'is', null);
-
-    const { data: profiles } = await query.limit(1000);
+      .not('email', 'is', null)
+      .limit(10000);
 
     if (!profiles?.length) {
       return new Response(
@@ -299,36 +321,35 @@ Deno.serve(async (req) => {
 
     let filteredProfiles = profiles;
 
-    // Apply filters
-    if (filters?.hasActiveSubscription) {
-      const { data: activeAccess } = await supabase
-        .from('telegram_access')
-        .select('user_id')
-        .or('active_until.is.null,active_until.gt.now()');
-
-      const activeUserIds = new Set(activeAccess?.map(a => a.user_id) || []);
-      filteredProfiles = filteredProfiles.filter(p => activeUserIds.has(p.user_id));
-    }
-
-    // Support both legacy single productId and new array productIds
-    const effectiveProductIds = filters?.productIds?.length ? filters.productIds : (filters?.productId ? [filters.productId] : []);
-    const effectiveTariffIds = filters?.tariffIds?.length ? filters.tariffIds : (filters?.tariffId ? [filters.tariffId] : []);
-
-    if (effectiveProductIds.length > 0) {
-      let subQuery = supabase
-        .from('subscriptions_v2')
-        .select('user_id')
-        .in('product_id', effectiveProductIds)
-        .eq('status', 'active');
-
-      if (effectiveTariffIds.length > 0) {
-        subQuery = subQuery.in('tariff_id', effectiveTariffIds);
+    if (useNewSchema && allowedUserIds) {
+      filteredProfiles = filteredProfiles.filter(p => allowedUserIds!.has(p.user_id));
+    } else {
+      // ===== Legacy filter path =====
+      if (filters?.hasActiveSubscription) {
+        const { data: activeAccess } = await supabase
+          .from('telegram_access')
+          .select('user_id')
+          .or('active_until.is.null,active_until.gt.now()');
+        const activeUserIds = new Set(activeAccess?.map(a => a.user_id) || []);
+        filteredProfiles = filteredProfiles.filter(p => activeUserIds.has(p.user_id));
       }
 
-      const { data: productSubs } = await subQuery;
+      const effectiveProductIds = filters?.productIds?.length ? filters.productIds : (filters?.productId ? [filters.productId] : []);
+      const effectiveTariffIds = filters?.tariffIds?.length ? filters.tariffIds : (filters?.tariffId ? [filters.tariffId] : []);
 
-      const productUserIds = new Set(productSubs?.map(s => s.user_id) || []);
-      filteredProfiles = filteredProfiles.filter(p => productUserIds.has(p.user_id));
+      if (effectiveProductIds.length > 0) {
+        let subQuery = supabase
+          .from('subscriptions_v2')
+          .select('user_id')
+          .in('product_id', effectiveProductIds)
+          .eq('status', 'active');
+        if (effectiveTariffIds.length > 0) {
+          subQuery = subQuery.in('tariff_id', effectiveTariffIds);
+        }
+        const { data: productSubs } = await subQuery;
+        const productUserIds = new Set(productSubs?.map(s => s.user_id) || []);
+        filteredProfiles = filteredProfiles.filter(p => productUserIds.has(p.user_id));
+      }
     }
 
     console.log(`Sending to ${filteredProfiles.length} recipients`);
