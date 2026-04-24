@@ -10338,6 +10338,185 @@ export type Database = {
           },
         ]
       }
+      system_health_discovery_findings: {
+        Row: {
+          coverage_pct: number | null
+          created_at: string
+          created_by: string | null
+          decided_at: string | null
+          decided_by: string | null
+          decision: string
+          evidence_query: string
+          field: string
+          finding_id: string
+          id: string
+          match_count: number
+          note: string | null
+          snapshot_id: string
+          total_in_finding: number
+          updated_at: string
+          updated_by: string | null
+          value: string
+        }
+        Insert: {
+          coverage_pct?: number | null
+          created_at?: string
+          created_by?: string | null
+          decided_at?: string | null
+          decided_by?: string | null
+          decision?: string
+          evidence_query: string
+          field: string
+          finding_id: string
+          id?: string
+          match_count: number
+          note?: string | null
+          snapshot_id: string
+          total_in_finding: number
+          updated_at?: string
+          updated_by?: string | null
+          value: string
+        }
+        Update: {
+          coverage_pct?: number | null
+          created_at?: string
+          created_by?: string | null
+          decided_at?: string | null
+          decided_by?: string | null
+          decision?: string
+          evidence_query?: string
+          field?: string
+          finding_id?: string
+          id?: string
+          match_count?: number
+          note?: string | null
+          snapshot_id?: string
+          total_in_finding?: number
+          updated_at?: string
+          updated_by?: string | null
+          value?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "system_health_discovery_findings_snapshot_id_fkey"
+            columns: ["snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "system_health_discovery_snapshots"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      system_health_discovery_findings_history: {
+        Row: {
+          changed_at: string
+          changed_by: string | null
+          changed_fields: string[] | null
+          decided_at: string | null
+          decided_by: string | null
+          decision: string
+          evidence_query: string
+          field: string
+          finding_id: string
+          finding_row_id: string
+          history_id: string
+          match_count: number
+          note: string | null
+          op: string
+          row_snapshot: Json
+          snapshot_id: string
+          total_in_finding: number
+          value: string
+        }
+        Insert: {
+          changed_at?: string
+          changed_by?: string | null
+          changed_fields?: string[] | null
+          decided_at?: string | null
+          decided_by?: string | null
+          decision: string
+          evidence_query: string
+          field: string
+          finding_id: string
+          finding_row_id: string
+          history_id?: string
+          match_count: number
+          note?: string | null
+          op: string
+          row_snapshot: Json
+          snapshot_id: string
+          total_in_finding: number
+          value: string
+        }
+        Update: {
+          changed_at?: string
+          changed_by?: string | null
+          changed_fields?: string[] | null
+          decided_at?: string | null
+          decided_by?: string | null
+          decision?: string
+          evidence_query?: string
+          field?: string
+          finding_id?: string
+          finding_row_id?: string
+          history_id?: string
+          match_count?: number
+          note?: string | null
+          op?: string
+          row_snapshot?: Json
+          snapshot_id?: string
+          total_in_finding?: number
+          value?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "system_health_discovery_findings_history_finding_row_id_fkey"
+            columns: ["finding_row_id"]
+            isOneToOne: false
+            referencedRelation: "system_health_discovery_findings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "system_health_discovery_findings_history_snapshot_id_fkey"
+            columns: ["snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "system_health_discovery_snapshots"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      system_health_discovery_snapshots: {
+        Row: {
+          created_at: string
+          finding_id: string
+          id: string
+          note: string | null
+          source_query: string
+          taken_at: string
+          taken_by: string | null
+          total_rows: number
+        }
+        Insert: {
+          created_at?: string
+          finding_id: string
+          id?: string
+          note?: string | null
+          source_query: string
+          taken_at?: string
+          taken_by?: string | null
+          total_rows: number
+        }
+        Update: {
+          created_at?: string
+          finding_id?: string
+          id?: string
+          note?: string | null
+          source_query?: string
+          taken_at?: string
+          taken_by?: string | null
+          total_rows?: number
+        }
+        Relationships: []
+      }
       system_health_ignored_checks: {
         Row: {
           check_key: string
