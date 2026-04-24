@@ -30,7 +30,7 @@ const corsHeaders = {
 
 const InsertFindingSchema = z.object({
   op: z.literal("insert_finding"),
-  finding_id: z.string().regex(/^F[1-9][0-9]*$/, "finding_id must match ^F[1-9][0-9]*$"),
+  finding_id: z.string().regex(/^F[1-9][0-9]*[a-z]?$/, "finding_id must match ^F[1-9][0-9]*[a-z]?$"),
   snapshot_id: z.string().uuid(),
   field: z.string().min(1).max(128),
   value: z.string().min(1).max(512),

@@ -47,7 +47,7 @@ const BodySchema = z.object({
   op: z.literal("create_snapshot"),
   finding_id: z
     .string()
-    .regex(/^F[1-9][0-9]*$/, "finding_id must match /^F[1-9][0-9]*$/"),
+    .regex(/^F[1-9][0-9]*[a-z]?$/, "finding_id must match /^F[1-9][0-9]*[a-z]?$/"),
   source_query: z
     .string()
     .min(1)
