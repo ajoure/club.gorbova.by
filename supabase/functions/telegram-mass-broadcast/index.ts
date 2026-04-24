@@ -49,13 +49,27 @@ async function telegramUploadMedia(
   return response.json();
 }
 
+interface AudienceRule {
+  product_id?: string;
+  tariff_ids?: string[];
+  mode?: 'purchased' | 'active_access';
+}
+
 interface BroadcastFilters {
+  // Legacy
   hasActiveSubscription?: boolean;
   productId?: string;
   productIds?: string[];
   tariffId?: string;
   tariffIds?: string[];
   clubId?: string;
+  // New schema
+  include?: AudienceRule[];
+  exclude?: AudienceRule[];
+  club_ids?: string[];
+  club_membership?: 'current' | 'ever' | 'any';
+  bot_ids?: string[];
+  channel?: 'telegram' | 'email' | 'any';
 }
 
 /**
