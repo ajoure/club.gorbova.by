@@ -462,22 +462,49 @@ Deno.serve(async (req) => {
     const profilesByBot: Record<string, typeof profiles> = {};
     for (const b of targetBots) profilesByBot[b.id] = [];
 
+    // Secondary SoT: telegram_messages.bot_id — реальные взаимодействия пользователя с ботом.
+    // Profile считается «подписчиком» бота, если: telegram_link_bot_id = bot.id ИЛИ есть
+    // хотя бы одно сообщение в telegram_messages между этим юзером и этим ботом.
+    const candidateUserIds = profiles.map((p) => p.user_id);
+    const interactionsByUser = new Map<string, Set<string>>();
+    if (candidateUserIds.length > 0) {
+      const { data: interactions } = await supabase
+        .from('telegram_messages')
+        .select('user_id, bot_id')
+        .in('user_id', candidateUserIds)
+        .in('bot_id', selectedBotIds);
+      for (const row of (interactions || []) as Array<{ user_id: string; bot_id: string }>) {
+        if (!row.user_id || !row.bot_id) continue;
+        let s = interactionsByUser.get(row.user_id);
+        if (!s) { s = new Set(); interactionsByUser.set(row.user_id, s); }
+        s.add(row.bot_id);
+      }
+    }
+
     for (const p of profiles) {
       const linkBotId = p.telegram_link_bot_id as string | null;
+      const interactedBots = interactionsByUser.get(p.user_id) || new Set<string>();
+
+      // 1) Приоритет: link_bot_id, если он среди выбранных
       if (linkBotId && selectedBotIds.includes(linkBotId)) {
-        // User is bound to one of the selected bots → route there
         profilesByBot[linkBotId].push(p);
-      } else if (!linkBotId) {
-        // Unknown link → only via primary, and only if primary is among selected
-        if (includesPrimary) {
-          profilesByBot[primaryBotId].push(p);
-        } else {
-          totalSkippedNoMatchingBot++;
-        }
-      } else {
-        // User bound to a bot that is NOT selected → skip
-        totalSkippedNoMatchingBot++;
+        continue;
       }
+      // 2) Иначе — если есть взаимодействия с одним из выбранных ботов,
+      //    маршрутизируем через первый из выбранных ботов, с которым была переписка
+      //    (в порядке selectedBotIds, чтобы поведение было детерминированным).
+      const matchedByInteraction = selectedBotIds.find((bid) => interactedBots.has(bid));
+      if (matchedByInteraction) {
+        profilesByBot[matchedByInteraction].push(p);
+        continue;
+      }
+      // 3) Fallback: NULL link и не было переписки → только primary (если он выбран)
+      if (!linkBotId && includesPrimary) {
+        profilesByBot[primaryBotId].push(p);
+        continue;
+      }
+      // 4) Иначе — пропускаем
+      totalSkippedNoMatchingBot++;
     }
 
     for (const b of targetBots) {
