@@ -318,31 +318,49 @@ Deno.serve(async (req) => {
 
     console.log(`Found ${profiles.length} matching profiles (including admins)`);
 
-    // Get first available bot token
-    const { data: bots, error: botsError } = await supabase
+    // ===== Resolve target bots (respect filters.bot_ids) =====
+    // Load all active bots (we'll filter below)
+    const { data: allActiveBots, error: botsError } = await supabase
       .from('telegram_bots')
-      .select('bot_token_encrypted')
+      .select('id, bot_username, bot_token_encrypted, is_primary, created_at')
       .eq('status', 'active')
-      .limit(1);
+      .order('created_at', { ascending: true });
 
-    if (botsError || !bots?.length) {
-      console.error('No active bot found');
+    if (botsError || !allActiveBots?.length) {
+      console.error('No active bot found', botsError);
       return new Response(
         JSON.stringify({ error: 'No active bot found' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    const botToken = bots[0].bot_token_encrypted;
-    // Get bot id for telegram_messages logging
-    const { data: botIdRows } = await supabase
-      .from('telegram_bots')
-      .select('id')
-      .eq('status', 'active')
-      .limit(1);
-    const activeBotId = botIdRows?.[0]?.id || null;
+    // Determine primary bot: prefer is_primary, fallback to first by created_at
+    const primaryBot = allActiveBots.find((b) => b.is_primary) || allActiveBots[0];
+    const primaryBotId: string = primaryBot.id;
+
+    // Selected bots: bot_ids non-empty -> use those; empty -> primary only
+    const selectedBotIds: string[] = (filters.bot_ids && filters.bot_ids.length > 0)
+      ? filters.bot_ids
+      : [primaryBotId];
+
+    const targetBots = allActiveBots.filter((b) => selectedBotIds.includes(b.id));
+    if (targetBots.length === 0) {
+      return new Response(
+        JSON.stringify({ error: 'Selected bots are not active', selected_bot_ids: selectedBotIds }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const includesPrimary = targetBots.some((b) => b.id === primaryBotId);
+    console.log('[broadcast] bot routing', {
+      primary_bot_id: primaryBotId,
+      selected_bot_ids: selectedBotIds,
+      target_bots: targetBots.map((b) => ({ id: b.id, username: b.bot_username })),
+      includes_primary: includesPrimary,
+    });
 
     const appUrl = buttonUrl || Deno.env.get('APP_URL') || 'https://app.example.com';
+
 
     let sent = 0;
     let failed = 0;
