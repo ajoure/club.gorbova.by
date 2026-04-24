@@ -407,3 +407,6 @@ verify_jwt = false
 
 [functions.evidence-relay]
 verify_jwt = true
+
+[functions.snapshot-relay]
+verify_jwt = true
