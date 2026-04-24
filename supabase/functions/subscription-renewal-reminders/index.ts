@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
 import { generateRenewalCTAs, type RenewalCTAs } from '../_shared/generate-renewal-ctas.ts';

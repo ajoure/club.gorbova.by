@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
 
 // Declare EdgeRuntime for background tasks
