@@ -18,7 +18,8 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
 export async function consumePaymentLinkForOrder(
-  supabase: ReturnType<typeof createClient>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
   orderId: string,
   callerLabel = 'bepaid-webhook',
 ): Promise<{ status: 'consumed' | 'already_counted' | 'no_payment_link' | 'limit_reached' | 'error'; payment_link_id?: string; error?: string }> {
@@ -58,8 +59,10 @@ export async function consumePaymentLinkForOrder(
     }
 
     // Conditional increment — only if not at limit
-    const newCount = (link.current_uses ?? 0) + 1;
-    const atLimit = link.max_uses != null && (link.current_uses ?? 0) >= link.max_uses;
+    const currentUses = (link.current_uses as number | null) ?? 0;
+    const maxUses = link.max_uses as number | null;
+    const newCount = currentUses + 1;
+    const atLimit = maxUses != null && currentUses >= maxUses;
 
     if (atLimit) {
       await supabase.from('audit_logs').insert({
@@ -82,7 +85,7 @@ export async function consumePaymentLinkForOrder(
       .from('payment_links')
       .update({ current_uses: newCount, updated_at: new Date().toISOString() })
       .eq('id', paymentLinkId)
-      .eq('current_uses', link.current_uses) // optimistic concurrency guard
+      .eq('current_uses', currentUses) // optimistic concurrency guard
       .select('id, current_uses')
       .maybeSingle();
 
