@@ -1161,7 +1161,7 @@ export default function AdminLiveEvents() {
                     <Label>Статус</Label>
                     <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="max-h-[60vh] overflow-y-auto">
                         <SelectItem value="draft">Черновик</SelectItem>
                         <SelectItem value="scheduled">Запланирован</SelectItem>
                         <SelectItem value="live">В эфире</SelectItem>
@@ -1213,7 +1213,7 @@ export default function AdminLiveEvents() {
                           ) : kinescopeLiveFolders && kinescopeLiveFolders.length > 0 ? (
                             <Select value={form.kinescope_folder_id} onValueChange={(v) => setForm({ ...form, kinescope_folder_id: v })}>
                               <SelectTrigger><SelectValue placeholder="Выберите папку" /></SelectTrigger>
-                              <SelectContent>
+                              <SelectContent className="max-h-[60vh] overflow-y-auto">
                                 {kinescopeLiveFolders.map((f) => (
                                   <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
                                 ))}
@@ -1235,7 +1235,7 @@ export default function AdminLiveEvents() {
                           ) : (
                             <Select value={form.kinescope_project_id} onValueChange={(v) => setForm({ ...form, kinescope_project_id: v })}>
                               <SelectTrigger><SelectValue placeholder="Выберите проект (для записи)" /></SelectTrigger>
-                              <SelectContent>
+                              <SelectContent className="max-h-[60vh] overflow-y-auto">
                                 {kinescopeProjects?.map((p) => (
                                   <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
                                 ))}
@@ -1299,7 +1299,7 @@ export default function AdminLiveEvents() {
                           ) : (
                             <Select value={form.kinescope_project_id} onValueChange={(v) => setForm({ ...form, kinescope_project_id: v, kinescope_video_id: "" })}>
                               <SelectTrigger><SelectValue placeholder="Выберите проект" /></SelectTrigger>
-                              <SelectContent>
+                              <SelectContent className="max-h-[60vh] overflow-y-auto">
                                 {kinescopeProjects?.map((p) => (
                                   <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
                                 ))}
@@ -1322,7 +1322,7 @@ export default function AdminLiveEvents() {
                             ) : (
                               <Select value={form.kinescope_video_id} onValueChange={(v) => setForm({ ...form, kinescope_video_id: v })}>
                                 <SelectTrigger><SelectValue placeholder="Выберите видео" /></SelectTrigger>
-                                <SelectContent>
+                                <SelectContent className="max-h-[60vh] overflow-y-auto">
                                   {kinescopeVideos?.map((v) => (
                                     <SelectItem key={v.id} value={v.id}>{v.title || v.id}</SelectItem>
                                   ))}
@@ -1382,7 +1382,7 @@ export default function AdminLiveEvents() {
                   }}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="max-h-[60vh] overflow-y-auto">
                     {Object.entries(inviteModeLabels).map(([value, { label }]) => (
                       <SelectItem key={value} value={value}>{label}</SelectItem>
                     ))}
@@ -1432,7 +1432,7 @@ export default function AdminLiveEvents() {
                             <SelectTrigger className="text-xs">
                               <SelectValue placeholder="Выберите шаблон" />
                             </SelectTrigger>
-                            <SelectContent>
+                            <SelectContent className="max-h-[60vh] overflow-y-auto">
                               {broadcastTemplates?.map((t) => (
                                 <SelectItem key={t.id} value={t.id} className="text-xs">
                                   {t.name} <span className="text-muted-foreground ml-1">({t.template_type})</span>
