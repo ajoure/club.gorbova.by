@@ -376,10 +376,11 @@ Deno.serve(async (req) => {
   if (!isDryRun && list.length > 0) {
     await supabase.from('audit_logs').insert({
       action: 'broadcast_dispatcher_run',
-      entity_type: 'broadcast_template',
-      entity_id: forceTemplateId || null,
       actor_type: 'system',
+      actor_label: 'broadcast-dispatcher',
       meta: {
+        entity_type: 'broadcast_template',
+        entity_id: forceTemplateId || null,
         processed_templates: list.length,
         sent: totalSent,
         failed: totalFailed,
