@@ -1510,9 +1510,17 @@ export default function AdminLiveEvents() {
                   </FormSection>
                 </>
               )}
+                  </TabsContent>
 
-              <Separator />
-
+                  {/* === TAB: Дополнительно === */}
+                  <TabsContent value="extras" className="m-0 space-y-4">
+              {!editingId && (
+                <div className="rounded-lg border border-dashed p-6 text-center">
+                  <p className="text-sm text-muted-foreground">
+                    Дополнительные настройки (комната, комментарии, вопросы, модерация, сценарий, блоки, CTA, тема) станут доступны после первого сохранения эфира.
+                  </p>
+                </div>
+              )}
               {/* Section 5: Publication & Recording */}
               <FormSection title="Публикация и запись">
                 {canPublish ? (
