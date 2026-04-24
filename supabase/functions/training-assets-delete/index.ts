@@ -144,7 +144,7 @@ async function buildDbAllowedSet(
 // ─── Shared asset guard: find paths used by OTHER lessons ───
 
 async function findSharedPaths(
-  adminClient: ReturnType<typeof createClient>,
+  adminClient: any,
   lessonId: string,
   allowedPaths: string[]
 ): Promise<Set<string>> {
