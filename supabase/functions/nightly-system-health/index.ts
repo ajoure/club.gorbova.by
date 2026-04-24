@@ -437,14 +437,20 @@ serve(async (req) => {
       });
     }
 
-    // Finalize run
+    // Finalize run — summary учитывает ignored_checks
     const finalStatus = failedChecks.length > 0 ? 'failed' : 'completed';
+    const effectiveSummary = {
+      total_checks: invariantsResult.summary?.total_checks ?? 0,
+      passed: (invariantsResult.summary?.passed ?? 0) + ignoredFailedCount,
+      failed: failedChecks.length,
+      ignored: ignoredFailedCount,
+    };
     await supabase
       .from('system_health_runs')
       .update({
         finished_at: new Date().toISOString(),
         status: finalStatus,
-        summary: invariantsResult.summary,
+        summary: effectiveSummary,
       })
       .eq('id', runId);
 
