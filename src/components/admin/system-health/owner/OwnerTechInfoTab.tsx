@@ -4,11 +4,11 @@ import { SystemHealthOverview } from "../SystemHealthOverview";
 import { EdgeFunctionsHealth } from "../EdgeFunctionsHealth";
 import { AuditLogViewer } from "../AuditLogViewer";
 import { HealthRunHistory } from "../HealthRunHistory";
-import type { SystemHealthRun, SystemHealthCheckRow } from "@/hooks/useSystemHealthRuns";
+import type { SystemHealthRun, SystemHealthCheck } from "@/hooks/useSystemHealthRuns";
 
 interface Props {
   run: SystemHealthRun | null;
-  checks: SystemHealthCheckRow[];
+  checks: SystemHealthCheck[];
   runs: SystemHealthRun[];
   selectedRunId: string | null;
   onSelectRun: (id: string | null) => void;
