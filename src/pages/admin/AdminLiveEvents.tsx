@@ -1357,9 +1357,10 @@ export default function AdminLiveEvents() {
                   </div>
                 )}
               </FormSection>
+                  </TabsContent>
 
-              <Separator />
-
+                  {/* === TAB: Доступ === */}
+                  <TabsContent value="access" className="m-0 space-y-4">
               {/* Section 3: Access rules */}
               <FormSection>
                 <LiveEventAccessRulesEditor
