@@ -41,7 +41,7 @@ interface BatchTotals {
 interface RowResult {
   row_index: number;
   email?: string;
-  name?: string;
+  name?: string | null;
   action: 'create' | 'update' | 'skip' | 'conflict' | 'filtered' | 'invalid';
   reason?: string;
   profile_id?: string;
