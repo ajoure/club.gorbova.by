@@ -1399,11 +1399,19 @@ export default function AdminLiveEvents() {
                   />
                 )}
               </FormSection>
+                  </TabsContent>
 
+                  {/* === TAB: Уведомления === */}
+                  <TabsContent value="notifications" className="m-0 space-y-4">
               {/* Section 4.5: Notifications (live_stream only) */}
-              {isLiveStream && (
+              {!isLiveStream ? (
+                <div className="rounded-lg border border-dashed p-6 text-center">
+                  <p className="text-sm text-muted-foreground">
+                    Уведомления настраиваются только для живых эфиров.
+                  </p>
+                </div>
+              ) : (
                 <>
-                  <Separator />
                   <FormSection title="Уведомления">
                     <SwitchRow
                       checked={form.notification_enabled}
