@@ -614,19 +614,27 @@ Deno.serve(async (req) => {
       await supabase.from('telegram_messages').insert(messageLogBatch);
     }
 
+    const perBotArr = Object.values(perBotStats);
+    const totalSkipped = totalSkippedNoMatchingBot + totalSkippedDuplicate;
+
     // Log the broadcast action
     await supabase.from('telegram_logs').insert({
       action: 'MASS_NOTIFICATION',
-      target: `${sent}/${sent + failed} users`,
-      status: failed === 0 ? 'ok' : 'partial',
+      target: `${totalSent}/${totalSent + totalFailed} users`,
+      status: totalFailed === 0 ? 'ok' : 'partial',
       message_text: message || null,
       meta: {
-        total_users: sent + failed,
-        sent,
-        failed,
+        total_users: totalSent + totalFailed,
+        sent: totalSent,
+        failed: totalFailed,
+        skipped_no_matching_bot: totalSkippedNoMatchingBot,
+        skipped_duplicate: totalSkippedDuplicate,
         has_media: !!mediaBuffer,
         media_type: mediaType,
         filters,
+        per_bot: perBotArr,
+        primary_bot_id: primaryBotId,
+        selected_bot_ids: selectedBotIds,
       },
     });
 
@@ -635,9 +643,17 @@ Deno.serve(async (req) => {
       actor_user_id: user.id,
       action: 'telegram_mass_broadcast',
       meta: {
-        sent,
-        failed,
-        total: sent + failed,
+        sent: totalSent,
+        failed: totalFailed,
+        total: totalSent + totalFailed,
+        total_sent: totalSent,
+        total_failed: totalFailed,
+        total_skipped: totalSkipped,
+        skipped_no_matching_bot: totalSkippedNoMatchingBot,
+        skipped_duplicate: totalSkippedDuplicate,
+        per_bot: perBotArr,
+        primary_bot_id: primaryBotId,
+        selected_bot_ids: selectedBotIds,
         message_preview: resolveSystemTokens(message, broadcastNow)
           .replace(/[,\s]*\{\{(?:first_name|last_name|full_name|name|email|phone|telegram_username)\}\}[,\s]*/g, ' ')
           .replace(/\{\{cf\.product\.[^}]+\}\}/g, '')
@@ -649,7 +665,6 @@ Deno.serve(async (req) => {
         live_event_id: liveEventId || null,
         include_button: includeButton,
         button_text: includeButton ? (buttonText || 'Открыть платформу') : null,
-        // For webinar_invite, don't store button_url in audit (it's per-recipient)
         button_url: (includeButton && !isWebinarInvite) ? appUrl : null,
         has_media: !!mediaBuffer,
         media_type: mediaType,
@@ -662,10 +677,20 @@ Deno.serve(async (req) => {
       },
     });
 
-    console.log(`Broadcast complete: sent=${sent}, failed=${failed}`);
+    console.log(`Broadcast complete: sent=${totalSent}, failed=${totalFailed}, skipped=${totalSkipped}`);
 
     return new Response(
-      JSON.stringify({ success: true, sent, failed }),
+      JSON.stringify({
+        success: true,
+        sent: totalSent,
+        failed: totalFailed,
+        skipped: totalSkipped,
+        skipped_no_matching_bot: totalSkippedNoMatchingBot,
+        skipped_duplicate: totalSkippedDuplicate,
+        per_bot: perBotArr,
+        primary_bot_id: primaryBotId,
+        selected_bot_ids: selectedBotIds,
+      }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (error) {
