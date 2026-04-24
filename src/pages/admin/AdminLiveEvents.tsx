@@ -1698,9 +1698,79 @@ export default function AdminLiveEvents() {
                   )}
                 </div>
               </div>
-            </div>
 
-            <DialogFooter>
+              {/* Comments, Questions, Moderation, Scenario tabs (level-2) */}
+              {editingId && (
+                <>
+                  <Separator />
+                  <div className="flex items-center justify-between gap-2 py-2">
+                    <span className="text-xs font-medium text-muted-foreground">Экспорт данных:</span>
+                    <LiveEventExportButtons liveEventId={editingId} eventTitle={form.title || undefined} />
+                  </div>
+                  <Tabs value={extrasTab} onValueChange={setExtrasTab} className="w-full">
+                    <div className="overflow-x-auto scrollbar-none">
+                      <TabsList className="inline-flex w-auto whitespace-nowrap bg-transparent h-auto gap-1 p-1">
+                        <TabsTrigger value="room" className="gap-1.5 text-xs sm:text-sm px-2.5 sm:px-3">
+                          <ImageIcon className="h-3 w-3" /> Комната
+                        </TabsTrigger>
+                        <TabsTrigger value="comments" className="gap-1.5 text-xs sm:text-sm px-2.5 sm:px-3">
+                          <MessageSquare className="h-3 w-3" /> Комментарии
+                        </TabsTrigger>
+                        <TabsTrigger value="questions" className="gap-1.5 text-xs sm:text-sm px-2.5 sm:px-3">
+                          <HelpCircle className="h-3 w-3" /> Вопросы
+                        </TabsTrigger>
+                        <TabsTrigger value="moderation" className="gap-1.5 text-xs sm:text-sm px-2.5 sm:px-3">
+                          <Shield className="h-3 w-3" /> Модерация
+                        </TabsTrigger>
+                        <TabsTrigger value="scenario" className="gap-1.5 text-xs sm:text-sm px-2.5 sm:px-3">
+                          <Video className="h-3 w-3" /> Сценарий
+                        </TabsTrigger>
+                        <TabsTrigger value="blocks" className="gap-1.5 text-xs sm:text-sm px-2.5 sm:px-3">
+                          <LayoutGrid className="h-3 w-3" /> Блоки
+                        </TabsTrigger>
+                        <TabsTrigger value="cta" className="gap-1.5 text-xs sm:text-sm px-2.5 sm:px-3">
+                          <ShoppingCart className="h-3 w-3" /> CTA
+                        </TabsTrigger>
+                        <TabsTrigger value="theme" className="gap-1.5 text-xs sm:text-sm px-2.5 sm:px-3">
+                          <Monitor className="h-3 w-3" /> Тема
+                        </TabsTrigger>
+                      </TabsList>
+                    </div>
+                    <TabsContent value="room" className="border rounded-lg mt-2">
+                      <WebinarRoomSettingsCard liveEventId={editingId} />
+                    </TabsContent>
+                    <TabsContent value="comments" className="border rounded-lg mt-2 h-[500px] overflow-hidden">
+                      <LiveEventComments liveEventId={editingId} />
+                    </TabsContent>
+                    <TabsContent value="questions" className="border rounded-lg mt-2 h-[500px] overflow-hidden">
+                      <LiveEventQuestions liveEventId={editingId} />
+                    </TabsContent>
+                    <TabsContent value="moderation" className="border rounded-lg mt-2 h-[500px] overflow-hidden">
+                      <LiveEventModerationPanel liveEventId={editingId} />
+                    </TabsContent>
+                    <TabsContent value="scenario" className="border rounded-lg mt-2">
+                      <LiveEventScenario liveEventId={editingId} />
+                    </TabsContent>
+                    <TabsContent value="blocks" className="border rounded-lg mt-2">
+                      <LiveEventRoomBlocksEditor liveEventId={editingId} />
+                    </TabsContent>
+                    <TabsContent value="cta" className="border rounded-lg mt-2">
+                      <LiveEventProductCtaBindings liveEventId={editingId} />
+                      <LiveEventCtaRuntimePanel liveEventId={editingId} />
+                    </TabsContent>
+                    <TabsContent value="theme" className="border rounded-lg mt-2">
+                      <LiveEventThemeEditor liveEventId={editingId} />
+                    </TabsContent>
+                  </Tabs>
+                </>
+              )}
+                  </TabsContent>
+                </div>
+              </div>
+            </Tabs>
+
+            {/* Sticky footer */}
+            <div className="flex-shrink-0 border-t p-4 flex justify-end gap-2 bg-background">
               <Button variant="outline" onClick={() => setDialogOpen(false)}>Отмена</Button>
               <Button
                 onClick={() => saveMutation.mutate(form)}
@@ -1709,9 +1779,9 @@ export default function AdminLiveEvents() {
                 {saveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                 {editingId ? "Сохранить" : "Создать"}
               </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+            </div>
+          </SheetContent>
+        </Sheet>
       </div>
     </AdminLayout>
   );
