@@ -1030,7 +1030,7 @@ async function scrapeSourceWithFallback(
   if (initialProxyMode !== "enhanced" && shouldRetryWithEnhanced(htmlResult1.errorCode)) {
     console.log(`[monitor-news] ${source.name}: STAGE 3 - retrying with enhanced proxy...`);
     // P0.9.1-2: Pass ilexSession to retry
-    const htmlResult2 = await scrapeUrlWithProxy(source.url, firecrawlKey, effectiveCountry, "enhanced", ilexSession);
+    const htmlResult2 = await scrapeUrlWithProxy(source.url, firecrawlKey!, effectiveCountry, "enhanced", ilexSession);
     
     await logScrapeAttempt(
       supabase, source, "html_enhanced", source.url, "enhanced",
@@ -1061,7 +1061,7 @@ async function scrapeSourceWithFallback(
     
     // Try fallback with enhanced proxy directly
     // P0.9.1-2: Pass ilexSession to fallback
-    const fallbackResult = await scrapeUrlWithProxy(config.fallback_url, firecrawlKey, effectiveCountry, "enhanced", ilexSession);
+    const fallbackResult = await scrapeUrlWithProxy(config.fallback_url, firecrawlKey!, effectiveCountry, "enhanced", ilexSession);
     
     await logScrapeAttempt(
       supabase, source, "fallback", config.fallback_url, "enhanced",
