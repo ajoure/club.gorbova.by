@@ -294,7 +294,12 @@ Deno.serve(async (req) => {
         club_membership: filters.club_membership || 'any',
         channel: 'email',
       };
-      const { data: audience, error: rpcErr } = await supabase.rpc('resolve_broadcast_audience_user_ids', { _filters: rpcFilters });
+      const userClient = createClient(
+        Deno.env.get('SUPABASE_URL')!,
+        Deno.env.get('SUPABASE_ANON_KEY')!,
+        { global: { headers: { Authorization: authHeader } } }
+      );
+      const { data: audience, error: rpcErr } = await userClient.rpc('resolve_broadcast_audience_user_ids', { _filters: rpcFilters });
       if (rpcErr) {
         console.error('[email-broadcast] RPC failed:', rpcErr);
         return new Response(
