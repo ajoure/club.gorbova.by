@@ -1,27 +1,21 @@
 /**
- * evidence-relay (A.1 v2)
+ * evidence-relay (A.1 v3.1 — canonical α: hypothesis-as-filter)
  *
- * Тонкий relay для записи в system_health_discovery_findings
- * под пользовательским JWT-контекстом super_admin.
+ * Тонкий шлюз JWT → SQL для system_health_discovery_findings.
  *
  * A.0 v3.2 policy (locked):
- *   - Writes to system_health_discovery_findings allowed ONLY from super_admin user-context.
+ *   - Writes to findings ONLY from super_admin user-context.
  *   - service_role writes to findings — FORBIDDEN.
  *   - Direct SQL без user JWT — FORBIDDEN.
  *
- * Эта функция НЕ нарушает политику:
- *   - НЕ использует SUPABASE_SERVICE_ROLE_KEY для записи в findings.
- *   - Создаёт supabase client с anon key + Authorization header пользователя.
- *   - Все триггеры (trg_shdf_10/20/90) и RLS-проверки в БД остаются единственным gatekeeper'ом.
- *   - Эта функция — лишь шлюз JWT → SQL, не trusted bypass.
+ * Эта функция:
+ *   - НЕ использует SUPABASE_SERVICE_ROLE_KEY.
+ *   - Создаёт client с anon key + Authorization: Bearer <user_jwt>.
+ *   - Триггеры (trg_shdf_10/20/90) и RLS — единственный gatekeeper.
  *
- * Whitelist операций (A.1):
+ * Whitelist:
  *   - insert_finding (decision принудительно = 'proposed')
- *   - update_decision
- *
- * Любая другая операция → 400.
- *
- * Изменение whitelist'а или добавление обхода — отдельный reviewed patch.
+ *   - update_decision (decision: 'exclude' | 'keep' | 'manual_review')
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
@@ -34,31 +28,27 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-// === Schemas ===
 const InsertFindingSchema = z.object({
   op: z.literal("insert_finding"),
+  finding_id: z.string().regex(/^F[1-9][0-9]*$/, "finding_id must match ^F[1-9][0-9]*$"),
   snapshot_id: z.string().uuid(),
-  invariant_id: z.string().min(1).max(64),
-  invariant_version: z.string().min(1).max(128),
-  subject_type: z.string().min(1).max(64),
-  subject_ref: z.string().min(1).max(256),
-  evidence: z.record(z.unknown()).default({}),
-  // На insert разрешён только 'proposed' (см. policy выше).
-  decision: z.literal("proposed").optional().default("proposed"),
+  field: z.string().min(1).max(128),
+  value: z.string().min(1).max(512),
+  match_count: z.number().int().nonnegative(),
+  total_in_finding: z.number().int().nonnegative(),
+  coverage_pct: z.number().min(0).max(100).optional(),
+  evidence_query: z.string().min(1).max(8000),
   note: z.string().max(2000).nullable().optional(),
 });
 
 const UpdateDecisionSchema = z.object({
   op: z.literal("update_decision"),
-  finding_id: z.string().uuid(),
-  decision: z.enum(["proposed", "exclude", "keep"]),
+  finding_row_id: z.string().uuid(),
+  decision: z.enum(["exclude", "keep", "manual_review"]),
   note: z.string().max(2000).nullable().optional(),
 });
 
-const BodySchema = z.discriminatedUnion("op", [
-  InsertFindingSchema,
-  UpdateDecisionSchema,
-]);
+const BodySchema = z.discriminatedUnion("op", [InsertFindingSchema, UpdateDecisionSchema]);
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -68,15 +58,9 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  if (req.method !== "POST") return jsonResponse({ error: "method_not_allowed" }, 405);
 
-  if (req.method !== "POST") {
-    return jsonResponse({ error: "method_not_allowed" }, 405);
-  }
-
-  // === 1. JWT presence ===
   const authHeader = req.headers.get("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
     return jsonResponse({ error: "unauthorized", reason: "missing_bearer" }, 401);
@@ -86,13 +70,11 @@ Deno.serve(async (req: Request) => {
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
   const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
-  // === 2. user-scoped client (anon + user JWT). NO service_role. ===
   const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: authHeader } },
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  // === 3. Verify JWT claims (defence in depth, не замена RLS) ===
   const { data: claimsData, error: claimsErr } = await supabase.auth.getClaims(jwt);
   if (claimsErr || !claimsData?.claims) {
     return jsonResponse({ error: "unauthorized", reason: "invalid_jwt" }, 401);
@@ -101,18 +83,14 @@ Deno.serve(async (req: Request) => {
   const userId = claims.sub as string | undefined;
   const role = claims.role as string | undefined;
 
-  if (role !== "authenticated") {
-    return jsonResponse({ error: "forbidden", reason: "role_not_authenticated" }, 403);
-  }
-  if (!userId) {
-    return jsonResponse({ error: "unauthorized", reason: "missing_sub" }, 401);
+  if (role !== "authenticated" || !userId) {
+    return jsonResponse({ error: "unauthorized", reason: "bad_claims" }, 401);
   }
 
-  // === 4. Defence in depth: проверяем super_admin до обращения к БД с findings ===
-  // Истинная проверка всё равно произойдёт в trg_shdf_10_enforce_super_admin_*.
+  // Defence in depth — БД-триггер всё равно проверит.
   const { data: hasRoleData, error: hasRoleErr } = await supabase.rpc("has_role_v2", {
     _user_id: userId,
-    _role: "super_admin",
+    _role_code: "super_admin",
   });
   if (hasRoleErr) {
     console.error("[evidence-relay] has_role_v2 failed:", hasRoleErr);
@@ -122,7 +100,6 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: "forbidden", reason: "not_super_admin" }, 403);
   }
 
-  // === 5. Parse body ===
   let rawBody: unknown;
   try {
     rawBody = await req.json();
@@ -138,22 +115,29 @@ Deno.serve(async (req: Request) => {
   }
   const body = parsed.data;
 
-  // === 6. Dispatch ===
   try {
     if (body.op === "insert_finding") {
+      const coverage =
+        body.coverage_pct ??
+        (body.total_in_finding > 0
+          ? Math.round((body.match_count / body.total_in_finding) * 10000) / 100
+          : 0);
+
       const { data, error } = await supabase
         .from("system_health_discovery_findings")
         .insert({
+          finding_id: body.finding_id,
           snapshot_id: body.snapshot_id,
-          invariant_id: body.invariant_id,
-          invariant_version: body.invariant_version,
-          subject_type: body.subject_type,
-          subject_ref: body.subject_ref,
-          evidence: body.evidence,
-          decision: "proposed", // принудительно
+          field: body.field,
+          value: body.value,
+          match_count: body.match_count,
+          total_in_finding: body.total_in_finding,
+          coverage_pct: coverage,
+          decision: "proposed",
+          evidence_query: body.evidence_query,
           note: body.note ?? null,
         })
-        .select("id")
+        .select("id, finding_id, decision, created_by, updated_by, created_at")
         .single();
 
       if (error) {
@@ -163,7 +147,7 @@ Deno.serve(async (req: Request) => {
           400,
         );
       }
-      return jsonResponse({ ok: true, finding_id: data.id });
+      return jsonResponse({ ok: true, ...data });
     }
 
     if (body.op === "update_decision") {
@@ -173,8 +157,8 @@ Deno.serve(async (req: Request) => {
           decision: body.decision,
           note: body.note ?? null,
         })
-        .eq("id", body.finding_id)
-        .select("id, decision, decided_by, decided_at, updated_at")
+        .eq("id", body.finding_row_id)
+        .select("id, finding_id, decision, decided_by, decided_at, updated_by, updated_at")
         .single();
 
       if (error) {
@@ -184,17 +168,9 @@ Deno.serve(async (req: Request) => {
           400,
         );
       }
-      return jsonResponse({
-        ok: true,
-        finding_id: data.id,
-        decision: data.decision,
-        decided_by: data.decided_by,
-        decided_at: data.decided_at,
-        updated_at: data.updated_at,
-      });
+      return jsonResponse({ ok: true, ...data });
     }
 
-    // Должно быть недостижимо благодаря discriminatedUnion.
     return jsonResponse({ error: "bad_request", reason: "unknown_op" }, 400);
   } catch (e) {
     console.error("[evidence-relay] unexpected error:", e);
