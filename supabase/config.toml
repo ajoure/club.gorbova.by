@@ -404,3 +404,6 @@ verify_jwt = false
 
 [functions.qa-reset-passwords]
 verify_jwt = false
+
+[functions.evidence-relay]
+verify_jwt = true
