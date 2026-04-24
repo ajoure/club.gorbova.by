@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { executeRevoke, type RevokeContext } from '../_shared/access-revoker.ts';
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';

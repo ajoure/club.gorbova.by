@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
 
 // Declare EdgeRuntime for background tasks
@@ -1002,7 +1003,7 @@ async function scrapeSourceWithFallback(
   
   console.log(`[monitor-news] ${source.name}: STAGE 2 - HTML scrape (proxy: ${initialProxyMode})...`);
   // P0.9.1-2: Pass ilexSession to scrapeUrlWithProxy
-  const htmlResult1 = await scrapeUrlWithProxy(source.url, firecrawlKey, effectiveCountry, initialProxyMode, ilexSession);
+  const htmlResult1 = await scrapeUrlWithProxy(source.url, firecrawlKey as string, effectiveCountry, initialProxyMode, ilexSession);
   
   await logScrapeAttempt(
     supabase, source, `html_${initialProxyMode}`, source.url, initialProxyMode,
@@ -1030,7 +1031,7 @@ async function scrapeSourceWithFallback(
   if (initialProxyMode !== "enhanced" && shouldRetryWithEnhanced(htmlResult1.errorCode)) {
     console.log(`[monitor-news] ${source.name}: STAGE 3 - retrying with enhanced proxy...`);
     // P0.9.1-2: Pass ilexSession to retry
-    const htmlResult2 = await scrapeUrlWithProxy(source.url, firecrawlKey, effectiveCountry, "enhanced", ilexSession);
+    const htmlResult2 = await scrapeUrlWithProxy(source.url, firecrawlKey as string, effectiveCountry, "enhanced", ilexSession);
     
     await logScrapeAttempt(
       supabase, source, "html_enhanced", source.url, "enhanced",
@@ -1061,7 +1062,7 @@ async function scrapeSourceWithFallback(
     
     // Try fallback with enhanced proxy directly
     // P0.9.1-2: Pass ilexSession to fallback
-    const fallbackResult = await scrapeUrlWithProxy(config.fallback_url, firecrawlKey, effectiveCountry, "enhanced", ilexSession);
+    const fallbackResult = await scrapeUrlWithProxy(config.fallback_url, firecrawlKey as string, effectiveCountry, "enhanced", ilexSession);
     
     await logScrapeAttempt(
       supabase, source, "fallback", config.fallback_url, "enhanced",

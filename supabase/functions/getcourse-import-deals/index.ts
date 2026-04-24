@@ -780,7 +780,7 @@ async function processFileDeals(
   batchContext: {
     batchId: string;
     batchSourceEventKey: string;
-    batchStartResult: { id: string; execution_key: string | null; error: any };
+    batchStartResult: { id: string | null; execution_key: string | null; error: any };
     sourceEventType: string;
   }
 ): Promise<ImportResult> {
@@ -846,7 +846,7 @@ async function processFileDeals(
         result.details.push(`Пропущено: ${deal.user_email} - тариф не определён`);
         // Ledger: skip row (no matching target)
         await writeLedgerEntry(supabase, {
-          source_event_type: sourceEventType,
+          source_event_type: sourceEventType as any,
           source_event_key: rowSourceEventKey,
           source_subject_type: 'import_batch',
           source_subject_ref: rowSubjectRef,
@@ -929,7 +929,7 @@ async function processFileDeals(
         result.orders_skipped++;
         // Ledger: skip row (duplicate order)
         await writeLedgerEntry(supabase, {
-          source_event_type: sourceEventType,
+          source_event_type: sourceEventType as any,
           source_event_key: rowSourceEventKey,
           source_subject_type: 'import_batch',
           source_subject_ref: rowSubjectRef,
@@ -961,7 +961,7 @@ async function processFileDeals(
       // Ledger: grant row
       currentStep = 'ledger_write';
       const rowLedgerResult = await writeLedgerEntry(supabase, {
-        source_event_type: sourceEventType,
+        source_event_type: sourceEventType as any,
         source_event_key: rowSourceEventKey,
         source_subject_type: 'import_batch',
         source_subject_ref: rowSubjectRef,
@@ -1066,7 +1066,7 @@ async function processFileDeals(
       // Ledger: failed row in per-row catch
       try {
         await writeLedgerEntry(supabase, {
-          source_event_type: sourceEventType,
+          source_event_type: sourceEventType as any,
           source_event_key: rowSourceEventKey,
           source_subject_type: 'import_batch',
           source_subject_ref: rowSubjectRef,
@@ -1328,8 +1328,8 @@ Deno.serve(async (req) => {
         : `gc-import:${apiBatchId}:row:hash:${apiCanonicalHash}`;
       const rowSubjectRef = deal.id ? String(deal.id) : `hash:${apiCanonicalHash}`;
 
+      let currentStep = 'row_parse';
       try {
-        let currentStep = 'row_parse';
         // DB SoT: lookup tariff by getcourse_offer_id (no hardcoded mapping)
         currentStep = 'order_lookup';
         const { data: tariffMatch } = await supabase

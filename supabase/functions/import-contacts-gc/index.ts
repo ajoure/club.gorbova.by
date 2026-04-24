@@ -41,7 +41,7 @@ interface BatchTotals {
 interface RowResult {
   row_index: number;
   email?: string;
-  name?: string;
+  name?: string | null;
   action: 'create' | 'update' | 'skip' | 'conflict' | 'filtered' | 'invalid';
   reason?: string;
   profile_id?: string;
@@ -320,7 +320,7 @@ Deno.serve(async (req) => {
       // 3. Validate: need gcId or email or phone
       if (!gcId && !email && !phone) {
         counts.invalid++;
-        results.push({ row_index: i, email: row.email, name: fullName, action: 'invalid', reason: 'no_gc_id_email_phone' });
+        results.push({ row_index: i, email: row.email, name: fullName ?? undefined, action: 'invalid', reason: 'no_gc_id_email_phone' });
         continue;
       }
 
@@ -345,14 +345,14 @@ Deno.serve(async (req) => {
           const phoneMatch = phoneMatches[0];
           if (email && phoneMatch.email && phoneMatch.email.toLowerCase() !== email) {
             counts.conflicts++;
-            results.push({ row_index: i, email: row.email, name: fullName, action: 'conflict', reason: 'phone_email_mismatch' });
+            results.push({ row_index: i, email: row.email, name: fullName ?? undefined, action: 'conflict', reason: 'phone_email_mismatch' });
             continue;
           }
           matched = phoneMatch;
           matchType = 'phone';
         } else if (phoneMatches.length > 1) {
           counts.conflicts++;
-          results.push({ row_index: i, email: row.email, name: fullName, action: 'conflict', reason: 'ambiguous_phone' });
+          results.push({ row_index: i, email: row.email, name: fullName ?? undefined, action: 'conflict', reason: 'ambiguous_phone' });
           continue;
         }
       }

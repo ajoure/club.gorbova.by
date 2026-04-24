@@ -1,4 +1,4 @@
-/// <reference deno.land/x/types/index.d.ts />
+// reference: deno.land/x/types/index.d.ts
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 

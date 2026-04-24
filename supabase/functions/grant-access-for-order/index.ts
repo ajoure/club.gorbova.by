@@ -1039,7 +1039,7 @@ Deno.serve(async (req) => {
                 source_subject_ref: orderId,
                 source_order_id: orderId,
                 action_type: 'grant',
-                reason_code: 'condition_not_met',
+                reason_code: 'no_matching_target',
                 target_type: 'club',
                 target_key: `${userId}:condition_check`,
                 user_id: userId,

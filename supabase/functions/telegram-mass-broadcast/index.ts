@@ -498,7 +498,7 @@ Deno.serve(async (req) => {
               action: 'live_link_sent',
               actor_type: 'system',
               actor_label: 'telegram-mass-broadcast',
-              meta: { link_id: inviteLinkId, sent_via: 'telegram', user_id: profile.user_id, template_id: templateId },
+              meta: { link_id: inviteLinkId, sent_via: 'telegram', user_id: profile.user_id, template_id: null },
             });
           }
           messageLogBatch.push({

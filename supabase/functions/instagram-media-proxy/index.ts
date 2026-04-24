@@ -271,7 +271,7 @@ Deno.serve(async (req) => {
     );
   } catch (e) {
     return new Response(
-      JSON.stringify({ ok: false, error: 'unexpected', detail: String(e?.message ?? e) }),
+      JSON.stringify({ ok: false, error: 'unexpected', detail: String((e as any)?.message ?? e) }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     );
   }
