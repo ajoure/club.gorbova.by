@@ -101,7 +101,7 @@ function extractPathsFromJson(obj: unknown): Set<string> {
 // ─── Build DB-allowed set for a lesson ───
 
 async function buildDbAllowedSet(
-  adminClient: ReturnType<typeof createClient>,
+  adminClient: any,
   lessonId: string
 ): Promise<Set<string>> {
   const allowed = new Set<string>();
