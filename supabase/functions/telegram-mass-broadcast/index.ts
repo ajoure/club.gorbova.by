@@ -304,7 +304,7 @@ Deno.serve(async (req) => {
     
     const { data: adminProfiles } = await supabase
       .from('profiles')
-      .select('user_id, telegram_user_id, full_name, first_name, last_name, email, phone, telegram_username')
+      .select('user_id, telegram_user_id, telegram_link_bot_id, full_name, first_name, last_name, email, phone, telegram_username')
       .not('telegram_user_id', 'is', null)
       .in('user_id', [...adminUserIds]);
     
