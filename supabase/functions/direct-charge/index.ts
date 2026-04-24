@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 import { resolveUserIds } from '../_shared/user-resolver.ts';

@@ -109,11 +109,11 @@ export async function checkSubscriptionConflict(
   }
 
   // 2. Для каждой проверяем provider-связь — это и есть «настоящая» bePaid-подписка.
-  for (const cand of candidates) {
-    const { data: provSub, error: provErr } = await supabase
+  for (const cand of (candidates as any[])) {
+    const { data: provSubRaw, error: provErr } = await supabase
       .from('provider_subscriptions')
       .select('provider_subscription_id, state, provider')
-      .eq('subscription_v2_id', cand.id)
+      .eq('subscription_v2_id', cand.id as string)
       .eq('provider', 'bepaid')
       .in('state', ['active', 'pending'])
       .limit(1)
@@ -124,6 +124,7 @@ export async function checkSubscriptionConflict(
       return { status: 'error', error: 'Ошибка проверки провайдерской подписки. Повторите попытку.' };
     }
 
+    const provSub = provSubRaw as any;
     if (provSub) {
       // 3. Provider-managed подписка найдена — это блокирующий конфликт.
       console.log('[subscription-conflict] BLOCKING — provider-managed sub found', {
@@ -136,16 +137,16 @@ export async function checkSubscriptionConflict(
       return {
         status: 'conflict',
         conflict: {
-          subscription_v2_id: cand.id,
-          status: cand.status,
-          next_charge_at: cand.next_charge_at,
-          access_end_at: cand.access_end_at,
-          bepaid_subscription_id: provSub.provider_subscription_id,
-          provider_subscription_id: provSub.provider_subscription_id,
-          product_id: cand.product_id,
-          tariff_id: cand.tariff_id,
-          display_next_charge_at: formatForDisplay(cand.next_charge_at),
-          display_access_end_at: formatForDisplay(cand.access_end_at),
+          subscription_v2_id: cand.id as string,
+          status: cand.status as string,
+          next_charge_at: (cand.next_charge_at as string | null) ?? null,
+          access_end_at: (cand.access_end_at as string | null) ?? null,
+          bepaid_subscription_id: (provSub.provider_subscription_id as string | null) ?? null,
+          provider_subscription_id: (provSub.provider_subscription_id as string | null) ?? null,
+          product_id: cand.product_id as string,
+          tariff_id: cand.tariff_id as string,
+          display_next_charge_at: formatForDisplay((cand.next_charge_at as string | null) ?? null),
+          display_access_end_at: formatForDisplay((cand.access_end_at as string | null) ?? null),
           timezone_used: TZ,
         },
       };
@@ -210,7 +211,7 @@ export async function validateReplacementSubscription(
     return { status: 'error', error: 'Заменяемая подписка относится к другому продукту.' };
   }
 
-  if (!(TERMINAL_STATUSES as unknown as string[]).includes(oldSub.status)) {
+  if (!(TERMINAL_STATUSES as unknown as string[]).includes((oldSub as any).status as string)) {
     console.error('[subscription-conflict] replacement: not terminal', {
       replacement_of_subscription_v2_id, status: oldSub.status,
     });

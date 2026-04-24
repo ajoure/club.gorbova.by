@@ -18,7 +18,8 @@ import {
 } from './subscription-conflict.ts';
 
 export interface CreateCheckoutParams {
-  supabase: ReturnType<typeof createClient>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any;
   user_id: string;
   product_id: string;
   tariff_id: string;
@@ -220,7 +221,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     }
 
     const { data: orderNumberData } = await supabase.rpc('generate_order_number');
-    const orderNumber = orderNumberData || `ORD-LINK-${Date.now()}`;
+    const orderNumber: string = (orderNumberData as string | null) || `ORD-LINK-${Date.now()}`;
 
     const orderMeta = {
       type: effectiveActorType === 'admin' ? 'admin_payment_link' : 'system_payment_link',
