@@ -537,7 +537,7 @@ serve(async (req) => {
       error_details: [],
     };
 
-    const authString = btoa(`${credentials.shopId}:${credentials.secretKey}`);
+    // authString already computed above from bepaidCreds
 
     for (const payment of payments || []) {
       if (result.checked >= max_payments_to_check) {
@@ -557,7 +557,7 @@ serve(async (req) => {
 
       try {
         const fetched = await fetchTransaction(uid, authString, {
-          shopId: credentials.shopId,
+          shopId: bepaidCreds.shopId,
           paid_at: payment.paid_at,
           amount_byn: Number(payment.amount),
           order_id: payment.order_id,

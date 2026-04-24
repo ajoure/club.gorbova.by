@@ -1,4 +1,4 @@
-/// <reference deno.land/x/types/index.d.ts />
+// edge function: admin-repair-missing-payments
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 
