@@ -88,6 +88,7 @@ ai-generate-corporate-package
 gorbova-ai-chat
 split-multi-module-orders
 live-event-notifications-cron
+process-scheduled-broadcasts
 rules-retroapply
 webinar-activity-consumer
 repair-module-entitlements
