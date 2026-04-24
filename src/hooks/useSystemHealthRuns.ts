@@ -28,6 +28,36 @@ export interface SystemHealthCheck {
   details: Record<string, any> | null;
   duration_ms: number | null;
   created_at: string;
+  is_ignored?: boolean;
+  ignored_reason?: string | null;
+}
+
+async function fetchActiveIgnoredKeys(): Promise<Map<string, string>> {
+  const { data, error } = await supabase
+    .from("system_health_ignored_checks")
+    .select("check_key, reason, expires_at");
+  if (error || !data) return new Map();
+  const now = Date.now();
+  const map = new Map<string, string>();
+  for (const row of data) {
+    const exp = row.expires_at ? new Date(row.expires_at).getTime() : null;
+    if (exp === null || exp > now) {
+      map.set(row.check_key, row.reason || "");
+    }
+  }
+  return map;
+}
+
+function annotateChecks(
+  checks: SystemHealthCheck[],
+  ignoredMap: Map<string, string>
+): SystemHealthCheck[] {
+  return checks.map((c) => {
+    if (c.status === "failed" && ignoredMap.has(c.check_key)) {
+      return { ...c, is_ignored: true, ignored_reason: ignoredMap.get(c.check_key) ?? null };
+    }
+    return c;
+  });
 }
 
 export interface IgnoredCheck {
