@@ -237,10 +237,10 @@ Deno.serve(async (req) => {
       allowedUserIds = new Set((audience || []).filter((r: { has_telegram: boolean }) => r.has_telegram).map((r: { user_id: string }) => r.user_id));
     }
 
-    // Build user query
+    // Build user query (include telegram_link_bot_id for per-bot segmentation)
     const { data: allProfiles } = await supabase
       .from('profiles')
-      .select('user_id, telegram_user_id, full_name, first_name, last_name, email, phone, telegram_username')
+      .select('user_id, telegram_user_id, telegram_link_bot_id, full_name, first_name, last_name, email, phone, telegram_username')
       .not('telegram_user_id', 'is', null)
       .limit(10000);
 
