@@ -75,3 +75,17 @@ UI-only переработка. Backend (`system-health-full-check`, `system-hea
 ## Что НЕ менялось
 - Edge functions, RPC, таблицы, RLS, cron, recurring checks, evidence-layer.
 - Старые компоненты в `src/components/admin/system-health/*` (только переехали внутрь Техинфо).
+
+## Фактический контракт инвариантов P0-1 и P0-4 (Diagnose 2026-04-24)
+Полный proof: `.lovable/proofs/inv_p0_1_p0_4_diagnose.txt`.
+
+| Инвариант | Что ищет код (exact) | Реальность | Статус | Чинить |
+|---|---|---|---|---|
+| `INV-P0-1` | `audit_logs.action='subscription.charged' AND actor_type='system'` за 24ч | Это legacy-MIT writer, последняя запись `2026-02-27 06:00`, MIT отключён. Реальные продления идут через bePaid: 87 событий `bepaid.payment.upsert_from_last_transaction` за 24ч. | **FALSE POSITIVE** | invariant only |
+| `INV-P0-4` | `audit_logs.action='cron.job.triggered' AND actor_type='system'` за 24ч | Writer перестал писать после `2026-04-23 13:05`. Реально cron выполнил 4912 запусков за 24ч (succ 4906, fail 6); соседние writer'ы (`payments_reconcile_cron`, `subscription.charge_cron_completed`) пишутся нормально. | **FALSE POSITIVE** (logger drift) | invariant only |
+
+Вывод владельцу: оба критических алерта на главном экране — ложные. Подписки продлеваются, cron работает. Никакой ремонт автопродлений или перезапуск cron не нужен. Следующий шаг — узкая правка двух критериев в `supabase/functions/system-health-full-check/index.ts`:
+- `INV-P0-1` → проверять `bepaid.payment.upsert_from_last_transaction` за 24ч ИЛИ движение `subscriptions_v2.next_charge_at` за 24ч.
+- `INV-P0-4` → проверять `cron.job_run_details` (`status='succeeded'` за 24ч > 0) как источник истины вместо audit-события.
+
+Не трогать: webhook bePaid, audit writer'ы, cron расписание, thresholds, `system-health-remediate`.
