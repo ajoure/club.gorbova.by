@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
@@ -7,8 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import { Copy, Check, AlertOctagon, AlertTriangle, Settings2, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 
-import { useSystemHealthRuns, useLatestSystemHealth, useTriggerHealthCheck } from "@/hooks/useSystemHealthRuns";
-import { useLatestFullCheck, useSystemHealthReports } from "@/hooks/useSystemHealthFullCheck";
+import { useSystemHealthRuns, useLatestSystemHealth } from "@/hooks/useSystemHealthRuns";
+import { useLatestFullCheck, useSystemHealthReports, useTriggerFullCheck } from "@/hooks/useSystemHealthFullCheck";
 import { useLegacyNoiseBreakdown } from "@/hooks/useLegacyNoiseBreakdown";
 
 import { OwnerStatusHero, type OwnerStatus } from "@/components/admin/system-health/owner/OwnerStatusHero";
@@ -36,12 +37,16 @@ export default function AdminSystemHealth() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [copiedAll, setCopiedAll] = useState(false);
 
+  const queryClient = useQueryClient();
+
   const { data: latestFullCheck, isLoading: fullCheckLoading } = useLatestFullCheck();
   const { data: reports = [] } = useSystemHealthReports();
-  const { data: latestHealth, isLoading: latestLoading, refetch: refetchLatest } = useLatestSystemHealth();
+  // Owner-view (Проблемы / Ручная проверка / Diff) использует ТОЛЬКО full-check контур.
+  // useLatestSystemHealth / useSystemHealthRuns остаются исключительно для вкладки «Техинфо» (nightly).
+  const { data: latestHealth, isLoading: latestLoading } = useLatestSystemHealth();
   const { data: runs = [] } = useSystemHealthRuns();
   const { data: legacyNoise = { total: 0, bySourceInvariant: [] } } = useLegacyNoiseBreakdown();
-  const triggerCheck = useTriggerHealthCheck();
+  const triggerFullCheck = useTriggerFullCheck();
 
   const isLoading = fullCheckLoading || latestLoading;
 
@@ -102,9 +107,14 @@ export default function AdminSystemHealth() {
           problemsCount={classified.criticalFix.length}
           manualReviewCount={classified.manualReview.length}
           lastCheckAt={latestFullCheck?.created_at}
-          onRunCheck={() => triggerCheck.mutate()}
-          onRefresh={() => refetchLatest()}
-          isRunning={triggerCheck.isPending}
+          onRunCheck={() => triggerFullCheck.mutate()}
+          onRefresh={() => {
+            // Точечная invalidation только owner-view контура (full-check).
+            // Nightly system_health_runs не трогаем — это отдельная вкладка «Техинфо».
+            queryClient.invalidateQueries({ queryKey: ["system-health-latest-full"] });
+            queryClient.invalidateQueries({ queryKey: ["system-health-reports"] });
+          }}
+          isRunning={triggerFullCheck.isPending}
         />
 
         <OwnerSummaryStrip
