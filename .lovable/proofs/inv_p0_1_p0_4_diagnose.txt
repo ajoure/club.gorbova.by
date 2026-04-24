@@ -1,0 +1,164 @@
+================================================================================
+DIAGNOSE: INV-P0-1 и INV-P0-4 (read-only, без правок)
+Дата:        2026-04-24 ~18:20 UTC
+Источник:    supabase/functions/system-health-full-check/index.ts:200–327
+Контекст:    MIT-автопродления отключены. Все продления идут через bePaid-подписки.
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+INV-P0-1 — «Автопродления подписок не выполняются»
+────────────────────────────────────────────────────────────────────────────────
+
+ЧТО ИЩЕТ КОД (строка 206–240):
+  audit_logs.action = 'subscription.charged'
+  AND  audit_logs.actor_type = 'system'
+  AND  created_at >= now() - interval '24 hours'
+  Условие алерта: alert if (active subs with auto_renew=true > 0) AND (count = 0)
+
+L1 — РЕАЛЬНЫЕ ПРОДЛЕНИЯ (источник истины):
+  ren_paid_24h               = 0
+  ren_paid_7d                = 0
+  ren_paid_30d               = 0
+  auto_renew_meta_24h        = 0
+  auto_renew_meta_7d         = 0
+  → Заказы с префиксом 'REN-' не создаются вообще. Канал MIT отключён по факту,
+    что подтверждено наличием события 'subscription.charge.mit_disabled' (5 раз
+    за 24ч, последний 2026-04-24 18:00:08). bePaid-подписки реализуют продление
+    на стороне провайдера, не через REN-orders.
+
+L2 — РЕАЛЬНЫЕ RENEWAL-СОБЫТИЯ ОТ BEPAID (за 7 дней):
+  bepaid.payment.upsert_from_last_transaction   = 87  (last 2026-04-24 17:06:27)
+  bepaid.sync.entitlement_extended              = 86  (last 2026-04-24 17:06:27)
+  bepaid.subscription.sync_dates                = 86  (last 2026-04-24 17:06:27)
+  bepaid.subscription.processed                 = 19  (last 2026-04-23 10:03:42)
+  subscription.charge_cron_completed            = 14  (last 2026-04-24 18:00:08)
+  subscription.charge.mit_disabled              =  5  (last 2026-04-24 18:00:08)
+  → Продления идут активно. За сутки минимум 87 фактических продлений
+    (upsert_from_last_transaction) + 86 расширений entitlement.
+  payment_reconcile_queue (за 7д): 41 pending / 27 error / 9 materialized / 1 processing
+  → Webhook-канал bePaid жив, поток входящих платежей есть.
+
+L3 — ПОБОЧНЫЕ ЭФФЕКТЫ В БД (за 24ч):
+  payments_v2 / subscriptions_v2 — обновляются (см. bepaid.subscription.sync_dates × 86)
+  Колонки в subscriptions_v2: next_charge_at, charge_attempts, billing_type,
+                              auto_renew, auto_renew_disabled_at
+  (last_charged_at в схеме НЕТ — это деталь схемы; сам факт продления виден
+   через next_charge_at и audit-события sync_dates.)
+
+L4 — АУДИТ САМОГО ИНВАРИАНТА:
+  audit_logs WHERE action='subscription.charged' AND actor_type='system' AND 24h:
+    exact_24h            = 0
+    any_actor_24h        = 0
+  audit_logs WHERE action='subscription.charged' (за всё время, любой actor):
+    total_ever           = 64
+    first_seen           = 2026-01-26 06:00
+    last_seen            = 2026-02-27 06:00   ← мёртвое событие, не пишется 2 месяца
+  → Событие 'subscription.charged' писалось ТОЛЬКО legacy-MIT writer'ом и
+    перестало писаться 27 февраля 2026, когда MIT-канал был отключён.
+    Инвариант продолжает спрашивать у мёртвого источника.
+
+КЛАСС АЛЕРТА:    FALSE POSITIVE
+ПРИЧИНА:         wrong action / dead writer (инвариант смотрит на legacy-MIT
+                 событие 'subscription.charged', которое больше не пишется,
+                 хотя реальные продления идут через bePaid и пишутся под
+                 другими action — bepaid.payment.upsert_from_last_transaction,
+                 bepaid.sync.entitlement_extended и пр.).
+ЧТО ЧИНИТЬ:      INVARIANT ONLY (переписать критерий на bePaid-сигналы:
+                 наличие audit-события bepaid.payment.upsert_from_last_transaction
+                 за 24ч ИЛИ движение subscriptions_v2.next_charge_at за 24ч).
+                 Не трогать webhook, cron, audit writer, платежи.
+
+────────────────────────────────────────────────────────────────────────────────
+INV-P0-4 — «Фоновые задания (cron) остановились»
+────────────────────────────────────────────────────────────────────────────────
+
+ЧТО ИЩЕТ КОД (строка 303–327):
+  audit_logs.action = 'cron.job.triggered'
+  AND  audit_logs.actor_type = 'system'
+  AND  created_at >= now() - interval '24 hours'
+  Условие алерта: alert if count = 0
+
+L1 — РЕАЛЬНЫЕ ЗАПУСКИ CRON:
+  cron.job_run_details за 24ч:
+    runs_24h        = 4912
+    succ_24h        = 4906
+    failed_24h      =    6
+    runs_7d         = 36049
+  Активных jobs:    21 (telegram-*, payments-reconcile-*, subscriptions-reconcile-*,
+                        subscription-charge-*, bepaid-subscription-audit-daily,
+                        nightly-system-health-hourly, system-health-full-check-daily,
+                        invoke-webinar-activity-consumer × 1440 запусков и пр.)
+  Последние запуски — секунда в секунду к моменту диагностики.
+
+L2 — ВЫЗОВЫ SCHEDULED EDGE-ФУНКЦИЙ:
+  Подтверждено косвенно — все cron активны и success-rate ~99.9%.
+
+L3 — ПОБОЧНЫЕ ЭФФЕКТЫ CRON В БД (за 24ч):
+  payment_reconcile_queue created_24h   = 8
+  telegram_access_queue   created_24h   = 5
+  system_health_runs      runs_24h      = 5  (last 2026-04-24 18:06:25)
+  audit_logs (actor_type='system') 24h  = 610
+  → Cron не просто запускается, а пишет реальные побочные эффекты.
+
+L4 — АУДИТ САМОГО ИНВАРИАНТА:
+  audit_logs WHERE action='cron.job.triggered' AND actor_type='system' AND 24h:
+    cron_exact_24h       = 0
+  audit_logs WHERE action='cron.job.triggered' AND actor_type='system' AND 30d:
+    cron_30d_any_actor   = 8289   ← ПИШЕТСЯ!
+    last_seen            = 2026-04-23 13:05:00
+  → Событие 'cron.job.triggered' активно писалось ещё вчера (8289 раз за 30д,
+    последняя запись 23 апреля в 13:05). За последние 24 часа от текущего момента
+    ровно 0. Это НЕ остановка cron (cron сделал 4912 запусков за те же 24ч),
+    а остановка writer'а 'cron.job.triggered' в audit_logs где-то после
+    2026-04-23 13:05. Параллельно соседние writer'ы продолжают работать:
+       - payments_reconcile_cron        last 2026-04-24 18:00:11
+       - subscription.charge_cron_completed last 2026-04-24 18:00:08
+       - bepaid.erip.reconcile_batch    last 2026-04-24 18:20:03
+       - subscription.grace_reminders_cron_completed last 2026-04-24 05:00:13
+    Значит cron работает, а конкретный writer 'cron.job.triggered' либо был
+    выключен / удалён в недавнем коммите, либо упал в одной конкретной функции.
+
+КЛАСС АЛЕРТА:    FALSE POSITIVE (с привкусом logging-degradation)
+ПРИЧИНА:         wrong action / partial logger outage
+                 (инвариант смотрит на единственный action 'cron.job.triggered',
+                 который перестал писаться ~2026-04-23 13:05, при том что cron
+                 физически выполнил 4912 запусков за последние 24ч и десятки
+                 других cron-related action продолжают писаться нормально).
+ЧТО ЧИНИТЬ:      INVARIANT ONLY (срочно — переписать критерий на источник
+                 истины: COUNT(*) FROM cron.job_run_details WHERE start_time
+                 >= now() - interval '24 hours' AND status='succeeded').
+                 ОПЦИОНАЛЬНО позже: разобраться, какой writer перестал писать
+                 'cron.job.triggered' (это не критично — соседние writer'ы дают
+                 ту же картину) и либо вернуть его, либо официально вывести
+                 событие из эксплуатации. Не перезапускать cron, не править
+                 расписания, не менять thresholds.
+
+────────────────────────────────────────────────────────────────────────────────
+ИТОГОВАЯ ТАБЛИЦА
+────────────────────────────────────────────────────────────────────────────────
+
+Инвариант | Что ищет код                               | Что реально было                                     | Статус         | Что чинить
+----------|--------------------------------------------|------------------------------------------------------|----------------|----------------
+INV-P0-1  | action='subscription.charged'              | 87 продлений/сутки через bePaid-канал, но            | FALSE POSITIVE | invariant only
+          | actor_type='system', 24h window            | искомое событие мёртво с 2026-02-27 (MIT отключён)   |                |
+INV-P0-4  | action='cron.job.triggered'                | 4912 cron-запусков/сутки, 99.9% success;             | FALSE POSITIVE | invariant only
+          | actor_type='system', 24h window            | искомый writer перестал писать ~2026-04-23 13:05     | (logger drift) |
+
+────────────────────────────────────────────────────────────────────────────────
+ВЫВОД ДЛЯ ВЛАДЕЛЬЦА
+────────────────────────────────────────────────────────────────────────────────
+
+Оба критических алерта на главном экране /admin/system-health сейчас — ЛОЖНЫЕ.
+- Подписки продлеваются (87 продлений за сутки через bePaid).
+- Фоновые задания работают (4912 запусков за сутки, 99.9% успех).
+Сломаны сами проверки, а не процессы. Никакой ремонт автопродлений или
+перезапуск cron не нужен и был бы вреден.
+
+Следующий шаг — узкая правка ДВУХ инвариантов в
+supabase/functions/system-health-full-check/index.ts:
+  • INV-P0-1: критерий → bePaid-сигналы (audit bepaid.payment.upsert_from_last_transaction
+              ИЛИ движение subscriptions_v2.next_charge_at за 24ч).
+  • INV-P0-4: критерий → cron.job_run_details (succeeded count за 24ч > 0).
+
+Что НЕ делать: не править webhook, не править audit writer'ы, не трогать cron,
+не менять thresholds, не вызывать system-health-remediate.
