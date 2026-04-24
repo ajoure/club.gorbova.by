@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import {
   Dialog,
@@ -1079,7 +1079,7 @@ export default function AdminLiveEvents() {
               </div>
               <Separator className="mx-4 sm:mx-6" />
 
-              <div className="flex-1 overflow-y-auto">
+              <div className="flex-1 overflow-y-auto bg-muted/30">
                 <div className="px-4 sm:px-6 py-4 pb-8 min-w-0 [&_*]:min-w-0">
                   {/* === TAB: Основное === */}
                   <TabsContent value="basic" className="m-0 space-y-4">
@@ -1790,11 +1790,16 @@ export default function AdminLiveEvents() {
 // --- Sub-components ---
 
 function FormSection({ title, children }: { title?: string; children: React.ReactNode }) {
+  // Mirrors ContactDetailSheet visual pattern: white Card with header on muted background.
   return (
-    <section className="space-y-3">
-      {title && <h3 className="text-sm font-semibold text-foreground/80">{title}</h3>}
-      {children}
-    </section>
+    <Card>
+      {title && (
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm text-muted-foreground">{title}</CardTitle>
+        </CardHeader>
+      )}
+      <CardContent className="space-y-3">{children}</CardContent>
+    </Card>
   );
 }
 
