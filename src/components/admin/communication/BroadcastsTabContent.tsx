@@ -238,7 +238,8 @@ const [includeButton, setIncludeButton] = useState(true);
     queryKey: ["broadcast-audience-rpc", rpcFilters],
     queryFn: async () => {
       const { data, error } = await supabase.rpc("resolve_broadcast_audience", {
-        _filters: rpcFilters as unknown as Record<string, unknown>,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        _filters: rpcFilters as any,
       });
       if (error) {
         console.error("[broadcast] audience rpc error", error);
