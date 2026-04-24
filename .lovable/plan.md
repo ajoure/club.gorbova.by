@@ -1,212 +1,244 @@
-да, согласен, с учетом правок:
 
-1. **Базой для визуала сделать именно карточку контакта.**  
-Не копировать её стили вручную в новую локальную константу. Использовать тот же паттерн/те же классы как основу и только **увеличить размер** карточки эфира поверх этого референса.
-2. **Это только UI-переупаковка существующей карточки эфира.**  
-Никаких новых функций, новых сущностей, новых сценариев работы, новых полей form state, новых payload, новых save-path. Только другое отображение уже существующих секций.
-3. **Не уводить задачу в отдельную новую реализацию.**  
-По возможности делать в **том же AdminLiveEvents.tsx**, без вынесения новой бизнес-логики и без “новой карточки эфира”.  
-Допускается только минимальный локальный UI-рефакторинг, если он не меняет поведение.
-4. **Контейнер менять только если это безопасно.**  
-Цель — визуально и по UX как карточка контакта, но если для этого не нужно переводить всё на новый Sheet, то лучше оставить текущий open/close-контур и просто привести внешний вид к тому же паттерну.  
-Нельзя ломать:
-  - open create / open edit,
-  - Esc,
-  - клик по overlay,
-  - cancel,
-  - delete,
-  - reset формы.
-5. **Под-вкладки реально перенести внутрь “Дополнительно”.**  
-Блоки:  
+# План: расширенный discovery — ночные проверки, инварианты, каналы уведомлений
 
-  - Комната
-  - Комментарии
-  - Вопросы
-  - Модерация
-  - Сценарий
-  - Блоки
-  - CTA
-  - Тема  
-  должны быть внутри карточки эфира, а старый внешний блок под формой нужно **убрать полностью**, чтобы не было дубля.
-6. **Горизонтальный scroll вкладок обязателен.**  
-И для верхнего уровня, и для второго уровня внутри “Дополнительно”.  
-flex-wrap не использовать. Нужен UX **один в один как в карточке контакта**.
-7. **AutowebModeEditor не выносить в отдельную новую логику.**  
-Оставить его в той же бизнес-зоне, где он уже есть, просто визуально поместить в нужную вкладку. Саму логику не менять.
-8. **Gate после первого сохранения сохранить 1:1.**  
-До первого save во вкладке “Дополнительно” показывать только empty-state / подсказку.  
-После первого save — появляются существующие под-вкладки.  
-Это поведение не менять.
-9. **Dropdown / Select / Popover привести к удобному scroll-поведению**, но только визуально:
-  - длинные списки должны скроллиться;
-  - никаких изменений данных, query, handlers.
-10. **DoD усилить регрессионной проверкой:**
+## Режим
 
-&nbsp;
-
-- create работает;
-- edit работает;
-- save работает;
-- delete работает;
-- cancel работает;
-- Esc работает;
-- overlay-close работает;
-- повторное открытие формы не ломает state;
-- payload и validation не изменены.
-
-11. **Proof-пакет обязателен:**
-
-- create mode;
-- edit mode;
-- “Дополнительно” до первого save;
-- “Дополнительно” после save с под-вкладками;
-- длинный Select со scroll;
-- успешный save без регрессий.
-
-Главный смысл: **не создавать ничего нового, не дублировать карточку, не трогать логику эфиров, а только переупаковать существующую карточку в tabs-UX по образцу карточки контакта, но крупнее и удобнее.**
-
-&nbsp;
-
-# План: рефакторинг карточки эфира во вкладки по образцу карточки контакта
+Только read-only. Никаких write-операций, миграций, запусков `admin-bepaid-backfill` / `admin-repair-missing-payments` / repair-функций. Никаких новых edge-функций, новых INV, новых таблиц. Никакой UI-разработки. Карточка эфира — отдельный, незакрытый трек, его не трогаем.
 
 ## Цель
 
-Только UI/UX-патч существующего диалога создания/редактирования эфира в `src/pages/admin/AdminLiveEvents.tsx`. Никакой бизнес-логики, миграций, новых полей, edge-функций, replay/publish/folder/lesson, изменений payload/validation/handlers. Визуал и поведение вкладок — один в один как в `ContactDetailSheet`, но больше по размеру.
+Дать единую доказательную картину «что реально проверяется ночью и какое состояние системы», по которой можно построить отдельный fix-plan. Каждое утверждение — с SQL/файл-пруфом. Никаких выводов «по подмножеству».
 
-## Канонический референс: `ContactDetailSheet`
+## Scope (что входит)
 
-Что копируем 1:1 (структура, не данные):
+1. Карта ночного чека (cron → edge → инварианты → отчёт пользователю).
+2. Источник числа `172/172 OK` — полная цепочка.
+3. 4 текущие ошибки: INV-19B, INV-20, INV-22, INV-SITE-1 — данные + семантика правила.
+4. Канал Telegram-уведомлений: оплаты, public payment_links, напоминания о списании.
+5. Канал Email-уведомлений: транзакционные / auth / reminder / system.
+6. Ночное обновление документации.
+7. Кандидаты на новые ночные INV (только список, без реализации).
 
+Out of scope: правки кода/данных, карточка эфира, новые проверки/feature.
+
+---
+
+## Этапы discovery
+
+### Этап 1. Карта ночного чека (трек A)
+
+Подпункт «карта ночного чека» — таблица:
+
+| cron job | расписание | какую edge-функцию вызывает | какие INV реально исполняются | какие INV только отображаются | где хранится результат прогона | как формируется текст отчёта пользователю |
+|---|---|---|---|---|---|---|
+
+Источники discovery:
+- `SELECT jobname, schedule, command FROM cron.job` — все jobs.
+- `supabase/functions/nightly-system-health/`, `supabase/functions/nightly-payments-invariants/`, `supabase/functions/system-health-full-check/` — индексы и `index.ts` (read).
+- `system_health_runs` / любые таблицы с историей прогонов — `information_schema.tables LIKE '%health%' OR LIKE '%invariant%'`.
+- Telegram-сообщение «🚨 НОЧНАЯ ПРОВЕРКА» — поиск шаблона `НОЧНАЯ ПРОВЕРКА` / `Найдено:` / `INV-` по `supabase/functions/**/index.ts`.
+
+Вывод этапа 1: схема pipeline + явное расхождение «реально проверено» vs «показано в отчёте» (если есть).
+
+### Этап 2. Источник числа «172/172 OK» (расширено)
+
+Полная цепочка, не только «где рендерится»:
+
+| звено | что искать | где искать |
+|---|---|---|
+| константа в коде | `172`, `TOTAL_FUNCTIONS`, `EXPECTED_FUNCTIONS_COUNT` | grep по `src/**`, `supabase/functions/**` |
+| env / config | `EDGE_FUNCTIONS_TOTAL` и т.п. | `compgen -e`, `supabase/config.toml`, `secrets--fetch_secrets` |
+| registry | `supabase/functions.registry.txt`, любые JSON-реестры | wc -l реестра, сверка с runtime |
+| SQL / RPC | view вроде `edge_functions_health_v` | `information_schema.views` |
+| edge response | какой JSON отдаёт `system-health-full-check`/`nightly-system-health` | прочитать функции |
+| UI formatter | `src/components/admin/system-health/EdgeFunctionsHealth.tsx`, `useEdgeFunctionsHealth` | прочитать |
+| runtime-подсчёт | есть ли `supabase.functions.list()` или динамический probe | grep |
+
+Вывод этапа 2:
+- захардкожено / реестр / runtime;
+- кто кому передаёт значение;
+- одно «единственное» число или их несколько и они расходятся;
+- реальное число функций (`wc -l functions.registry.txt`, минус комментарии) vs то, что показывается.
+
+### Этап 3. INV-20 — полная типизация 288 записей (трек B, расширено)
+
+Не «10 примеров и вывод», а:
+
+A. **10 примеров** — для ручного разбора (id, created_at, provider, status, reconcile_source, order_source, meta-префиксы).
+
+B. **Полная агрегация** по 288 — каждая по отдельности, без LIMIT:
+   - `GROUP BY provider`;
+   - `GROUP BY reconcile_source`;
+   - `GROUP BY order_source`;
+   - `GROUP BY status`;
+   - `GROUP BY left(id, 4)` или `meta->>'origin'` для префиксного анализа;
+   - `GROUP BY meta->>'payment_flow'`;
+   - распределение по дате (по месяцам — отделить исторический хвост от текущих).
+
+C. **Классификация всех 288** по корзинам:
+   - `real_paid` — реальный платёж, нужен `payments_v2`;
+   - `migration_backfill` — историческая миграция, `payments_v2` не нужен;
+   - `manual_admin` — ручная выдача (`admin-create-public-link` / `manual_charge`);
+   - `synthetic_rule_engine` — `reconcile_source='rule_engine'` (по memory должен быть исключён);
+   - `test_or_demo` — sandbox/test users.
+
+   На выходе — таблица `bucket → count → recommended_action (fix data / fix invariant / add exclusion / accepted)`.
+
+D. **Семантика самого INV-20**: прочитать SQL правила в `nightly-payments-invariants` — учитывает ли оно `reconcile_source IN ('rule_engine','migration')`, `provider='manual'`, `meta->>'no_payment_required'=true`. Зафиксировать: проблема в данных или в правиле.
+
+### Этап 4. INV-19B и INV-22 — семантика правила (расширено)
+
+Для каждой записи (1+4=5 строк) — три измерения:
+1. **Что в строке** (SQL-выгрузка `subscriptions_v2` + `provider_subscriptions` + `meta`).
+2. **Является ли это data error / rule error / accepted transitional state** (например, `redirecting`, `pending_first_charge`, `cooling_off` после `cancel-trial`).
+3. **Корректность самого инварианта** — учитывает ли он окно «после cancel/replace в течение N часов» (по memory `safe-replacement-flow` / `revoke-race-condition-guard`).
+
+Вывод: для каждой записи — одно из {`data_fix_required`, `invariant_logic_fix_required`, `acceptable_transitional`}.
+
+### Этап 5. INV-SITE-1 — страница 969210bb
+
+- `SELECT id, slug, status, blocks FROM site_pages WHERE id LIKE '969210bb%'` — разобрать какие именно блоки невалидны (нет `id`/`type`/`version`).
+- Зафиксировать: проблема в данных конкретной страницы vs валидаторе (он может быть слишком жёстким для legacy-блоков).
+
+### Этап 6. Telegram — карта канала доставки (расширено)
+
+Полная карта доставки для трёх сценариев: оплата, создание public payment_link, напоминание о списании по подписке. Для каждого — таблица:
+
+| звено | что фиксируем |
+|---|---|
+| trigger | webhook `bepaid-webhook` / cron / `admin-create-public-link` / `subscription-renewal-reminders` |
+| очередь / outbox | есть ли `notification_queue`/`telegram_outbox`/прямой вызов |
+| функция-отправитель | `telegram-send-notification`, `telegram-notify-admins`, `telegram-mass-broadcast` |
+| provider / bot | какой `TELEGRAM_BOT_TOKEN`-secret, какой бот, какой `chat_id` (env vs БД) |
+| последний success | logs за 7 дней — `function_edge_logs` + `telegram_logs` |
+| последний fail | classification: 401/403/timeout/no-chat/secret-missing |
+| pipeline-точка fail | где именно цепочка ломается |
+
+SQL-источники:
+- `telegram_logs`, `telegram_audit`, `domain_events WHERE event_type LIKE 'telegram.%'`;
+- edge-логи `telegram-send-notification` / `telegram-notify-admins` / `bepaid-webhook` за 7 дней;
+- `secrets--fetch_secrets` — наличие `TELEGRAM_BOT_TOKEN`/`TELEGRAM_ADMIN_CHAT_ID`.
+
+### Этап 7. Email — расширенный канал (расширено)
+
+Не только `email_send_log`. Добавить:
+
+A. **email_send_log за 7 дней** — DISTINCT ON (`message_id`), разбивка `template_name × status`. Итог:
+   - `transactional` (контакт/заказ/booking),
+   - `auth` (`auth_emails`),
+   - `reminder` (renewal/grace),
+   - `system` (admin/health).
+
+B. **Backlog очереди**: `pgmq.queue_length('auth_emails')`, `pgmq.queue_length('transactional_emails')`; есть ли `cron.job` `process-email-queue`, дата последнего успешного прогона.
+
+C. **Последние ошибки провайдера**: `email_send_log` `WHERE status IN ('dlq','failed','bounced')` за 7 дней + `error_message` агрегация.
+
+D. **Конфиг**: `email_domain--check_email_domain_status`, наличие `email_queue_service_role_key` в Vault.
+
+E. **Sender-конфиг**: `SENDER_DOMAIN`/`FROM_DOMAIN` в `send-transactional-email`/`auth-email-hook`.
+
+Вывод: «не отправляется вообще» vs «не отправляется только часть шаблонов» vs «отправляется, но не доходит».
+
+### Этап 8. Ночное обновление документации (расширено)
+
+- Найти cron / edge / job, которые пишут changelog за прошлый день: grep по `docs/`, `nightly-docs`, `daily-summary`, `documentation-snapshot`.
+- Зафиксировать:
+  - **куда** пишется (БД-таблица `docs_*`, файл в репо, edge-логи?);
+  - **кто** пишет (jobname/edge);
+  - **что** считается успешным обновлением (наличие записи за date=yesterday?);
+  - **след последнего успеха** и **след последней неудачи** (timestamp + причина);
+- Если такого job нет — явно зафиксировать «отсутствует», не «сломано».
+
+### Этап 9. Кандидаты на новые ночные INV
+
+Только список, без кода:
+- `INV-NOTIF-TG`: 0 fail-доставок Telegram за 24ч.
+- `INV-NOTIF-EMAIL`: `email_send_log` не пуст и доля dlq < X%.
+- `INV-CRON-HEALTH`: все ожидаемые `cron.job` отработали за 24ч.
+- `INV-DOCS-DAILY`: документация обновилась за 24ч.
+- `INV-EDGE-COUNT-DRIFT`: реальное число edge-функций равно прошлому ночному прогону (без хардкода).
+- `INV-EMAIL-QUEUE-DEPTH`: backlog очередей < threshold.
+
+---
+
+## Deliverable (форма отчёта)
+
+### Раздел 1. Карта ночного чека
+Схема pipeline + расхождение «выполнено» vs «показано».
+
+### Раздел 2. Источник «172/172»
+Файл, строка, тип источника (hardcoded/registry/runtime), реальное число функций.
+
+### Раздел 3. По каждому из 4 INV — root vs symptom
+Обязательный раздел: для каждого INV явно разделить:
+- симптом (что показано пользователю);
+- корневая причина — одна из категорий: **data issue / config issue / invariant logic issue / missing monitoring**;
+- доказательство (ссылка на SQL-выгрузку или файл).
+
+### Раздел 4. INV-20 — типизация 288 записей
+Полная таблица bucket→count→action. Без LIMIT.
+
+### Раздел 5. Telegram — карта доставки
+3 pipeline (оплата / public link / renewal reminder) с пометками success/fail-точки.
+
+### Раздел 6. Email — карта доставки
+4 категории шаблонов + backlog + sender-конфиг + конкретные ошибки.
+
+### Раздел 7. Документация — pipeline или его отсутствие
+
+### Раздел 8. Кандидаты на новые INV
+Список, без кода.
+
+### Раздел 9. Единая таблица «finding → root → fix-type»
+
+| объект проверки | ожидаемое поведение | фактическое поведение | источник доказательства | класс проблемы | рекомендуемый тип фикса |
+|---|---|---|---|---|---|
+
+Класс проблемы ∈ {data, config, invariant_logic, missing_monitoring, false_positive}.
+Тип фикса ∈ {data_repair, invariant_patch, exclusion_rule, new_monitoring, accepted_no_action}.
+
+### Раздел 10. Deferred / backlog
+Все некритичные находки, всплывшие по ходу discovery, складываются сюда списком и НЕ становятся scope текущей или следующей задачи без отдельного approve. Никакой незапрошенной разработки.
+
+### Раздел 11. Mapping для следующего fix-plan (add-only)
+Явное правило: следующий fix-plan **не удаляет и не заменяет** discovery-результаты. Он ссылается 1:1:
 ```
-Sheet (right-side) → SheetContent (SHEET_SHELL_CLASS, flex flex-col overflow-hidden)
-├── SheetHeader  (flex-shrink-0, p-4 sm:p-6)
-├── Tabs (flex-1 flex flex-col min-h-0 overflow-hidden, value/onValueChange controlled)
-│   ├── div.flex-shrink-0.overflow-x-auto.scrollbar-none   ← горизонтальный скролл вкладок РАЗРЕШЁН
-│   │   └── TabsList.inline-flex.w-auto.whitespace-nowrap.bg-transparent.h-auto
-│   │       └── TabsTrigger.text-xs sm:text-sm.px-2.5 sm:px-3   (по 5 шт.)
-│   ├── Separator
-│   └── div[ref=scrollContainerRef].flex-1.overflow-y-auto   ← вертикальный скролл ТОЛЬКО внутри активной вкладки
-│       └── div.px-4 sm:px-6.py-4.pb-24
-│           └── TabsContent (m-0 space-y-4)
-└── (футер действий — внизу, sticky)
+finding_id → root_cause_id → proposed_fix_id → proof / DoD
 ```
+Любая правка должна быть привязана к конкретному `finding_id` из раздела 9.
 
-Этот же паттерн применяем к карточке эфира.
-
-## Что меняем в `src/pages/admin/AdminLiveEvents.tsx`
-
-### 1. Шелл диалога
-
-Заменить текущий `<Dialog>/<DialogContent>` (lines 1035-1652) на `<Sheet>/<SheetContent>` с собственным шеллом-классом, аналогичным `SHEET_SHELL_CLASS`, но **больше** по размеру:
-
-- Создать локальную константу `LIVE_EVENT_SHEET_SHELL_CLASS` рядом с компонентом (не трогаем общий `sheetShell.ts`):
-  - ширина: `w-[calc(100%-1rem)] sm:w-[calc(100%-2rem)] sm:max-w-5xl` (vs `max-w-3xl` у контактов);
-  - высота: `!h-[calc(100dvh-1rem)] sm:!h-[calc(100dvh-2rem)] !max-h-[calc(100dvh-2rem)]`;
-  - позиция/радиусы/safe-area — идентично `SHEET_SHELL_CLASS`;
-  - `flex flex-col overflow-hidden p-0`.
-
-Альтернатива (если решим оставить Dialog для минимального дифа): `DialogContent` с `max-w-5xl`, `h-[min(900px,90vh)]`, `flex flex-col overflow-hidden p-0`. Финальный выбор — Sheet, чтобы UX был **полностью** тождественен карточке контакта (правый sheet, не модал по центру).
-
-### 2. Структура вкладок
-
-Внутри `<Sheet>` — один controlled `<Tabs value=... onValueChange=...>` с `useState("basic")`. Сброс на `"basic"` при открытии диалога (`useEffect` по `dialogOpen`/`editingId`).
-
-**Уровень 1 (5 вкладок):**
-
-
-| value           | label         | содержимое (переносим как есть)                                                                                                                                                                                 |
-| --------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `basic`         | Основное      | селектор event_type (если !editingId) + бейдж типа + AutowebModeEditor (для recorded_webinar/autowebinar) + FormSection «Основное» (название/slug/описание/дата/время/TZ) + Summary block + Readiness checklist |
-| `source`        | Источник      | FormSection «Живой эфир Kinescope» / «Источник видео» (lines 1147-1314) + Source Debug Block (lines 1517-1579) + Collapsible «Расширенные настройки» (lines 1582-1609)                                          |
-| `access`        | Доступ        | FormSection с `LiveEventAccessRulesEditor` (lines 1319-1324) + FormSection «Приглашения» (lines 1329-1355) + блок «Публикация» (lines 1463-1495)                                                                |
-| `notifications` | Уведомления   | FormSection «Уведомления» (lines 1361-1456). Для не-`live_stream` — info-empty-state «Доступно для живых эфиров»                                                                                                |
-| `extras`        | Дополнительно | (уровень 2, см. ниже). Если `!editingId` — info-empty-state: «Доступно после первого сохранения» — это сохраняет текущее правило `editingId`-gate.                                                              |
-
-
-**Уровень 2 (внутри `extras`, только при `editingId`):**
-
-Переносим существующий `<Tabs defaultValue="comments">` блок (lines 2440-2506) — целиком, без изменения внутренних компонентов, **из тела страницы внутрь TabsContent value="extras"**. Состав 8 под-вкладок и порядок — как просил пользователь:
-
-1. `room` — Комната (`WebinarRoomSettingsCard`)
-2. `comments` — Комментарии (`LiveEventComments`)
-3. `questions` — Вопросы (`LiveEventQuestions`)
-4. `moderation` — Модерация (`LiveEventModerationPanel`)
-5. `scenario` — Сценарий (`LiveEventScenario`)
-6. `blocks` — Блоки (`LiveEventRoomBlocksEditor`)
-7. `cta` — CTA (`LiveEventProductCtaBindings` + `LiveEventCtaRuntimePanel`)
-8. `theme` — Тема (`LiveEventThemeEditor`)
-
-Под-вкладки тоже стилизуем по паттерну контакта: горизонтальный скролл-контейнер + `TabsList` `inline-flex w-auto whitespace-nowrap bg-transparent h-auto`. **Заменяем** текущий `flex flex-wrap` на горизонтальный скролл — это согласовано пользователем.
-
-Кнопка «Экспорт данных» (lines 2444-2447) — оставить шапкой над под-вкладками внутри `extras` (логика не трогается).
-
-### 3. Скроллы — финальные правила
-
-- **Внешний контейнер** (`SheetContent`): `overflow-hidden`, скролла нет.
-- **Tabs bar (level-1)**: обёртка `overflow-x-auto scrollbar-none` → горизонтальный скролл вкладок разрешён (как в контакте).
-- **Tabs bar (level-2 внутри `extras`)**: то же самое — горизонтальный скролл разрешён.
-- **Контент активной вкладки**: единственный вертикальный скролл — `div.flex-1.overflow-y-auto` под Tabs (один на весь Sheet, как в контакте). Внутри `TabsContent` — `m-0 space-y-4`.
-- **Под-вкладки `comments/questions/moderation**`: оставить текущее `h-[500px] overflow-hidden` (внутренние блоки с собственным скроллом — это уже существующая логика).
-- **Длинной single-page формы больше нет** — секции живут только внутри своих вкладок.
-
-### 4. Dropdown / Select / Popover внутри карточки
-
-Привести к единому стандарту, как в админских карточках (без изменения данных и обработчиков):
-
-- Все `<SelectContent>` внутри диалога эфира — добавить `className="max-h-[60vh] overflow-y-auto"`.
-- Все `<PopoverContent>` (если используются для Kinescope project/video pickers, продуктовых селектов в `LiveEventAccessRulesEditor`) — `max-h-[60vh] overflow-y-auto`.
-- Затронутые места: Kinescope project select (line 1255), Kinescope video select (line 1278), invite_mode Select (line 1330), notification-related селекты, продуктовые селекты внутри `LiveEventAccessRulesEditor` (правка минимальная и только если там сейчас нет max-h — иначе не трогаем).
-
-### 5. Футер действий
-
-В шелле Sheet — sticky-нижний `div.flex-shrink-0.border-t.p-4` с двумя кнопками («Отмена», «Сохранить/Создать»), идентичными текущим (lines 1641-1650). Логика и `disabled`-условия — без изменений.
-
-## Что НЕ трогаем
-
-- `saveMutation`, `form`-state, `handleTitleChange`, `slugExists`, `canPublish`, `blockers`, `isInviteReady`, `publishAttempted`.
-- `AutowebModeEditor`, `LiveEventAccessRulesEditor`, `LiveEventComments`, `LiveEventQuestions`, `LiveEventModerationPanel`, `LiveEventScenario`, `LiveEventRoomBlocksEditor`, `LiveEventProductCtaBindings`, `LiveEventCtaRuntimePanel`, `LiveEventThemeEditor`, `WebinarRoomSettingsCard`, `LiveEventExportButtons` — переиспользуем как есть.
-- Backend, миграции, edge functions, схему `live_events`, RLS, `metadata`, validation, payload, AlertDialog'и (Recreate/Detach), таблицу со списком эфиров.
-- Правило `editingId`-gate для блоков второго уровня (Comments/Room/...): они продолжают появляться только после первого сохранения — теперь как пустое состояние во вкладке «Дополнительно» до сохранения, и наполненный level-2 Tabs после.
-
-## Файлы
-
-- `src/pages/admin/AdminLiveEvents.tsx` — единственный изменяемый файл.
-  - Заменить `<Dialog>` диалог lines 1035-1652 на `<Sheet>` с tabs-структурой.
-  - Перенести блок lines 2440-2506 внутрь TabsContent `extras`. Удалить его из тела страницы.
-  - Добавить локальный `LIVE_EVENT_SHEET_SHELL_CLASS`.
-  - Добавить `useState` для `activeTab` и `extrasTab` + `useEffect` сброса при открытии.
-
-Никаких других файлов.
+---
 
 ## STOP-guards
 
-- Не редактируем `src/lib/sheetShell.ts` (общий шелл).
-- Не меняем internals под-компонентов.
-- Не меняем `saveMutation.mutate(form)` payload.
-- Не уменьшаем `sm:max-w-5xl` ниже `4xl` и не превышаем `6xl` (разумный предел — больше карточки контакта `3xl`, но не во весь экран).
-- Не запрещаем горизонтальный скролл вкладок — он обязателен по обновлённому правилу.
-- Не убираем `editingId`-gate для второго уровня вкладок.
-- Не используем `flex-wrap` для TabsList — только горизонтальный скролл.
+- Никаких write-операций в БД и storage.
+- Никаких запусков repair/backfill/grant/revoke.
+- Никаких изменений в edge-функциях, миграциях, RLS, cron.
+- Не «чинить» страницу 969210bb молча.
+- Не плодить новые edge или INV — только список-кандидат.
+- Не трогать карточку эфира.
+- Никаких выводов «по подмножеству» — INV-20 закрывается только полной агрегацией по всем 288.
+- Не смешивать классы проблем (data ≠ invariant_logic ≠ missing_monitoring).
 
-## Diagnose / Dry run
+---
 
-Compile-чек после правки (`npm run build`), визуальный просмотр в preview:
+## DoD discovery-этапа
 
-- открыть `/admin/live-events` (логин dev `123456`),
-- «Создать эфир» → должно открыться правым sheet'ом, видны 5 вкладок level-1, во вкладке «Дополнительно» — empty-state «Доступно после первого сохранения»,
-- сохранить минимальный draft → переоткрыть → во вкладке «Дополнительно» появились 8 под-вкладок с горизонтальным скроллом,
-- проверить, что вертикальный скролл есть только внутри активной вкладки, а не у всего sheet,
-- открыть Select продукта в «Доступ» → list скроллится в пределах `max-h-[60vh]`,
-- сохранить изменения → save mutation отрабатывает как раньше,
-- AutowebModeEditor виден во вкладке «Основное» при выборе «Видео / Автовебинар».
+- ✅ Карта ночного чека (раздел 1) с явным расхождением «реально/показано», если есть.
+- ✅ Полная цепочка источника `172/172` с указанием файла и строки.
+- ✅ Для каждого из 4 INV: симптом / корневая причина / доказательство / класс проблемы.
+- ✅ INV-20: **полная типизация всех 288 записей** по корзинам с recommended_action на каждую корзину. Не подмножество.
+- ✅ Telegram: 3 pipeline закрыты — где работает, где ломается, на каком звене.
+- ✅ Email: разбивка по 4 категориям + backlog + ошибки провайдера + sender-конфиг.
+- ✅ Документация: цепочка кто→чем→куда→с каким результатом, либо явная фиксация отсутствия job.
+- ✅ Список кандидатов на новые INV.
+- ✅ Сводная таблица finding→root→fix-type (раздел 9).
+- ✅ Deferred-блок (раздел 10) и mapping-блок (раздел 11) присутствуют.
+- ❌ Никаких изменений в коде/БД на этом этапе.
+- 📌 Следующим сообщением — отдельный fix-plan, построенный поверх этого discovery по mapping-правилу из раздела 11.
 
-## DoD
+---
 
-- Карточка эфира — правый Sheet, шелл идентичен карточке контакта, но шире (`sm:max-w-5xl`) и выше (`100dvh-2rem`).
-- 5 верхних вкладок: Основное / Источник / Доступ / Уведомления / Дополнительно — горизонтальный скролл tabs-bar работает.
-- Внутри «Дополнительно» — 8 существующих под-вкладок (Комната / Комментарии / Вопросы / Модерация / Сценарий / Блоки / CTA / Тема), горизонтальный скролл — есть.
-- Длинной одностраничной формы больше нет; вертикальный скролл — только внутри активной вкладки.
-- Все Select/Popover внутри диалога — `max-h-[60vh] overflow-y-auto`.
-- create / edit / cancel / delete / autowebinar / access rules / room/comments/.../theme работают как раньше — payload и handlers не изменены.
-- Под-вкладки доступны только после первого сохранения (правило сохранено).
-- Скрин-proof в preview: открытие Create → 5 вкладок → empty-state «Дополнительно»; открытие Edit существующего → все 8 под-вкладок видны и работают; раскрытый Select продукта со скроллом; успешный Save без ошибок.
+## Формат вывода
+
+Один отчёт. Все SQL-выгрузки в виде таблиц прямо в сообщении. Длинные перечисления — свернуть в агрегаты + 10 примеров. Каждое утверждение — с пруфом (файл:строка / SQL + count).
