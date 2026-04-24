@@ -1046,15 +1046,44 @@ export default function AdminLiveEvents() {
         />
 
 
-        {/* --- Create/Edit Dialog --- */}
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogContent className="w-[calc(100vw-1rem)] sm:w-[calc(100vw-2rem)] max-w-2xl max-h-[90vh] overflow-y-auto overflow-x-hidden p-3 sm:p-6">
-            <DialogHeader>
-              <DialogTitle>{editingId ? "Редактировать эфир" : "Создать эфир"}</DialogTitle>
-            </DialogHeader>
+        {/* --- Create/Edit Sheet (tabs UX, mirrors ContactDetailSheet) --- */}
+        <Sheet open={dialogOpen} onOpenChange={setDialogOpen}>
+          <SheetContent
+            className={[
+              // Size — wider/taller than ContactDetailSheet (max-w-3xl) per plan
+              "w-[calc(100%-1rem)] sm:w-[calc(100%-2rem)] sm:max-w-5xl",
+              "!h-[calc(100dvh-1rem)] sm:!h-[calc(100dvh-2rem)] !max-h-[calc(100dvh-2rem)]",
+              "!top-2 !bottom-2 !right-2 sm:!top-4 sm:!bottom-4 sm:!right-4 !left-auto",
+              "!rounded-2xl",
+              "p-0 pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)]",
+              "flex flex-col overflow-hidden",
+            ].join(" ")}
+          >
+            <SheetHeader className="p-4 sm:p-6 pb-3 sm:pb-4 pr-14 sm:pr-16 flex-shrink-0">
+              <SheetTitle>{editingId ? "Редактировать эфир" : "Создать эфир"}</SheetTitle>
+            </SheetHeader>
 
-            <div className="space-y-6 py-2 min-w-0 overflow-x-hidden [&_*]:min-w-0">
-              {/* Step 0: Event type selector (only for new events) */}
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              {/* Horizontally scrollable tabs bar (mirrors ContactDetailSheet) */}
+              <div
+                className="flex-shrink-0 overflow-x-auto scrollbar-none"
+                style={{ paddingLeft: 'env(safe-area-inset-left, 0px)', paddingRight: 'env(safe-area-inset-right, 0px)' }}
+              >
+                <TabsList className="mx-4 sm:mx-6 my-2 sm:my-3 inline-flex w-auto whitespace-nowrap bg-transparent h-auto">
+                  <TabsTrigger value="basic" className="text-xs sm:text-sm px-2.5 sm:px-3">Основное</TabsTrigger>
+                  <TabsTrigger value="source" className="text-xs sm:text-sm px-2.5 sm:px-3">Источник</TabsTrigger>
+                  <TabsTrigger value="access" className="text-xs sm:text-sm px-2.5 sm:px-3">Доступ</TabsTrigger>
+                  <TabsTrigger value="notifications" className="text-xs sm:text-sm px-2.5 sm:px-3">Уведомления</TabsTrigger>
+                  <TabsTrigger value="extras" className="text-xs sm:text-sm px-2.5 sm:px-3">Дополнительно</TabsTrigger>
+                </TabsList>
+              </div>
+              <Separator className="mx-4 sm:mx-6" />
+
+              <div className="flex-1 overflow-y-auto">
+                <div className="px-4 sm:px-6 py-4 pb-8 min-w-0 [&_*]:min-w-0">
+                  {/* === TAB: Основное === */}
+                  <TabsContent value="basic" className="m-0 space-y-4">
+                    {/* Step 0: Event type selector (only for new events) */}
               {!editingId && (
                 <FormSection title="Тип эфира">
                   <div className="grid grid-cols-2 gap-3">
