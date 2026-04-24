@@ -11,8 +11,10 @@ interface SystemHealthOverviewProps {
 }
 
 export function SystemHealthOverview({ run, checks }: SystemHealthOverviewProps) {
-  const failed = checks.filter(c => c.status === "failed").length;
-  const passed = checks.filter(c => c.status === "passed").length;
+  // Effective: ignored failed-checks не учитываются как проблемы
+  const failed = checks.filter(c => c.status === "failed" && !c.is_ignored).length;
+  const ignored = checks.filter(c => c.status === "failed" && c.is_ignored).length;
+  const passed = checks.filter(c => c.status === "passed").length + ignored;
   const total = checks.length;
 
   const getStatusColor = () => {
