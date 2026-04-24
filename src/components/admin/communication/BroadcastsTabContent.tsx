@@ -255,32 +255,7 @@ const [includeButton, setIncludeButton] = useState(true);
     refetchInterval: false,
   });
 
-  // Fetch broadcast history
-  const { data: history } = useQuery({
-    queryKey: ["broadcast-history"],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("audit_logs")
-        .select("*")
-        .in("action", ["telegram_mass_broadcast", "email_mass_broadcast"])
-        .order("created_at", { ascending: false })
-        .limit(20);
-      return data || [];
-    },
-  });
-  // Fetch broadcast history
-  const { data: history } = useQuery({
-    queryKey: ["broadcast-history"],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("audit_logs")
-        .select("*")
-        .in("action", ["telegram_mass_broadcast", "email_mass_broadcast"])
-        .order("created_at", { ascending: false })
-        .limit(20);
-      return data || [];
-    },
-  });
+  // (history fetched above)
 
   // Handle file selection
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, type: MediaType) => {
