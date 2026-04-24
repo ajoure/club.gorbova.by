@@ -186,7 +186,7 @@ Deno.serve(async (req) => {
           idempotency_key: idemKey,
           audience_count: 0,
           skipped_count: 1,
-          status: 'failed',
+          
           finished_at: new Date().toISOString(),
           error: 'empty_audience',
           audience_snapshot: { telegram_count: tgCount, email_count: emailCount, total_count: 0 },
