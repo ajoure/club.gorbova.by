@@ -2569,73 +2569,8 @@ function LiveStreamControlPanel({
         </>
       )}
 
-      {/* Comments, Questions, Moderation, Scenario tabs */}
-      {editingId && (
-        <>
-          <Separator />
-          <div className="flex items-center justify-between gap-2 py-2">
-            <span className="text-xs font-medium text-muted-foreground">Экспорт данных:</span>
-            <LiveEventExportButtons liveEventId={editingId} eventTitle={form.title || undefined} />
-          </div>
-          <Tabs defaultValue="comments" className="w-full">
-            {/* P2 FIX: убран overflow-x-auto + w-max → flex-wrap, чтобы все 8 вкладок
-                умещались без горизонтального скролла. «Заставка и комната» вынесена
-                второй позицией, чтобы новый пользователь сразу её видел. */}
-            <TabsList className="flex flex-wrap h-auto gap-1 w-full justify-start bg-muted/50 p-1">
-              <TabsTrigger value="comments" className="gap-1.5 text-xs">
-                <MessageSquare className="h-3 w-3" /> Комментарии
-              </TabsTrigger>
-              <TabsTrigger value="room" className="gap-1.5 text-xs">
-                <ImageIcon className="h-3 w-3" /> Заставка и комната
-              </TabsTrigger>
-              <TabsTrigger value="questions" className="gap-1.5 text-xs">
-                <HelpCircle className="h-3 w-3" /> Вопросы
-              </TabsTrigger>
-              <TabsTrigger value="moderation" className="gap-1.5 text-xs">
-                <Shield className="h-3 w-3" /> Модерация
-              </TabsTrigger>
-              <TabsTrigger value="scenario" className="gap-1.5 text-xs">
-                <Video className="h-3 w-3" /> Сценарий
-              </TabsTrigger>
-              <TabsTrigger value="blocks" className="gap-1.5 text-xs">
-                <LayoutGrid className="h-3 w-3" /> Блоки
-              </TabsTrigger>
-              <TabsTrigger value="cta" className="gap-1.5 text-xs">
-                <ShoppingCart className="h-3 w-3" /> CTA
-              </TabsTrigger>
-              <TabsTrigger value="theme" className="gap-1.5 text-xs">
-                <Monitor className="h-3 w-3" /> Тема
-              </TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="comments" className="border rounded-lg mt-2 h-[500px] overflow-hidden">
-              <LiveEventComments liveEventId={editingId} />
-            </TabsContent>
-            <TabsContent value="questions" className="border rounded-lg mt-2 h-[500px] overflow-hidden">
-              <LiveEventQuestions liveEventId={editingId} />
-            </TabsContent>
-            <TabsContent value="moderation" className="border rounded-lg mt-2 h-[500px] overflow-hidden">
-              <LiveEventModerationPanel liveEventId={editingId} />
-            </TabsContent>
-            <TabsContent value="scenario" className="border rounded-lg mt-2">
-              <LiveEventScenario liveEventId={editingId} />
-            </TabsContent>
-            <TabsContent value="blocks" className="border rounded-lg mt-2">
-              <LiveEventRoomBlocksEditor liveEventId={editingId} />
-            </TabsContent>
-            <TabsContent value="cta" className="border rounded-lg mt-2">
-              <LiveEventProductCtaBindings liveEventId={editingId} />
-              <LiveEventCtaRuntimePanel liveEventId={editingId} />
-            </TabsContent>
-            <TabsContent value="theme" className="border rounded-lg mt-2">
-              <LiveEventThemeEditor liveEventId={editingId} />
-            </TabsContent>
-            <TabsContent value="room" className="border rounded-lg mt-2">
-              <WebinarRoomSettingsCard liveEventId={editingId} />
-            </TabsContent>
-          </Tabs>
-        </>
-      )}
+      {/* Level-2 tabs (Комната / Комментарии / ... / Тема) перенесены
+          в карточку эфира → вкладка «Дополнительно». Здесь дубль удалён. */}
     </div>
   );
 }
