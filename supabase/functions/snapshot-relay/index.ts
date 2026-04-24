@@ -102,7 +102,7 @@ Deno.serve(async (req) => {
   // --- AuthZ: super_admin only ---
   const { data: isSuper, error: roleError } = await userClient.rpc(
     "has_role_v2",
-    { _user_id: userId, _role: "super_admin" },
+    { _user_id: userId, _role_code: "super_admin" },
   );
   if (roleError) {
     console.error("snapshot-relay: has_role_v2 error", roleError);
