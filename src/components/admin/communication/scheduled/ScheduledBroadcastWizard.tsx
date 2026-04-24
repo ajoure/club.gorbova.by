@@ -325,11 +325,13 @@ export function ScheduledBroadcastWizard({ open, onOpenChange, templateId, onSav
       if (templateId) {
         const { error } = await supabase
           .from("broadcast_templates")
-          .update(payload)
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .update(payload as any)
           .eq("id", templateId);
         if (error) throw error;
       } else {
-        const { error } = await supabase.from("broadcast_templates").insert(payload);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error } = await supabase.from("broadcast_templates").insert(payload as any);
         if (error) throw error;
       }
     },
