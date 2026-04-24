@@ -557,7 +557,7 @@ serve(async (req) => {
 
       try {
         const fetched = await fetchTransaction(uid, authString, {
-          shopId: bepaidCreds.shopId,
+          shopId: bepaidCreds.shop_id,
           paid_at: payment.paid_at,
           amount_byn: Number(payment.amount),
           order_id: payment.order_id,
