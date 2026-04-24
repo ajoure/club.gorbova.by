@@ -125,18 +125,21 @@ export function useLatestSystemHealth() {
       if (runError) throw runError;
       if (!run) return { run: null, checks: [] };
 
-      // Get checks for this run
-      const { data: checks, error: checksError } = await supabase
-        .from("system_health_checks")
-        .select("*")
-        .eq("run_id", run.id)
-        .order("created_at", { ascending: true });
+      // Get checks for this run + active ignored keys
+      const [{ data: checks, error: checksError }, ignoredMap] = await Promise.all([
+        supabase
+          .from("system_health_checks")
+          .select("*")
+          .eq("run_id", run.id)
+          .order("created_at", { ascending: true }),
+        fetchActiveIgnoredKeys(),
+      ]);
 
       if (checksError) throw checksError;
 
-      return { 
-        run: run as SystemHealthRun, 
-        checks: checks as SystemHealthCheck[] 
+      return {
+        run: run as SystemHealthRun,
+        checks: annotateChecks((checks || []) as SystemHealthCheck[], ignoredMap),
       };
     },
   });
