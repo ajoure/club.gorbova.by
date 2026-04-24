@@ -256,7 +256,19 @@ const [includeButton, setIncludeButton] = useState(true);
     refetchInterval: false,
   });
 
-  // (history fetched above)
+  const { data: historyItems } = useQuery({
+    queryKey: ["broadcast-history"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("audit_logs")
+        .select("*")
+        .in("action", ["telegram_mass_broadcast", "email_mass_broadcast"])
+        .order("created_at", { ascending: false })
+        .limit(20);
+      return data || [];
+    },
+  });
+  const history = historyItems;
 
   // Handle file selection
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, type: MediaType) => {
