@@ -13837,6 +13837,14 @@ export type Database = {
         }[]
       }
       get_contact_tab_counts: { Args: { p_search?: string }; Returns: Json }
+      get_cron_runs_24h_count: {
+        Args: never
+        Returns: {
+          failed_runs_24h: number
+          succ_runs_24h: number
+          total_runs_24h: number
+        }[]
+      }
       get_db_now: { Args: never; Returns: string }
       get_deal_tab_counts: {
         Args: {

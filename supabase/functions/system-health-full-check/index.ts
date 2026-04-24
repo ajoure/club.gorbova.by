@@ -203,35 +203,38 @@ async function checkBusinessInvariants(supabase: any): Promise<InvariantResult[]
   const now = new Date();
   const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   
-  // INV-P0-1: Auto-renewals in 24h (should exist if active auto_renew subscriptions exist)
+  // INV-P0-1: bePaid auto-renewals in 24h (source of truth = bepaid.payment.upsert_from_last_transaction).
+  // MIT-карты отключены, продления идут через bePaid subscription engine + webhook.
+  // Legacy критерий (action='subscription.charged', actor_type='system') давал false-red,
+  // т.к. такие события не пишутся с Feb 2026. Diagnose: .lovable/proofs/inv_p0_1_p0_4_diagnose.txt
+  // actor_type намеренно НЕ фильтруется (diagnose: 100% system, но оставляем устойчивым к будущим service-actor).
   try {
-    const { count: chargedCount } = await supabase
+    const { count: bepaidRenewals24h } = await supabase
       .from("audit_logs")
       .select("*", { count: "exact", head: true })
-      .eq("action", "subscription.charged")
-      .eq("actor_type", "system")
+      .eq("action", "bepaid.payment.upsert_from_last_transaction")
       .gte("created_at", yesterday.toISOString());
-    
+
     const { count: activeSubsCount } = await supabase
       .from("subscriptions_v2")
       .select("*", { count: "exact", head: true })
       .eq("status", "active")
       .eq("auto_renew", true);
-    
+
     const hasActiveAutoRenew = (activeSubsCount || 0) > 0;
-    const hasCharges = (chargedCount || 0) > 0;
-    
+    const hasRenewals = (bepaidRenewals24h || 0) > 0;
+
     results.push({
       code: "INV-P0-1",
-      name: "Автопродления за 24ч",
-      passed: !hasActiveAutoRenew || hasCharges,
-      count: chargedCount || 0,
+      name: "Автопродления за 24ч (bePaid)",
+      passed: !hasActiveAutoRenew || hasRenewals,
+      count: bepaidRenewals24h || 0,
       severity: "CRITICAL",
     });
   } catch (e) {
     results.push({
       code: "INV-P0-1",
-      name: "Автопродления за 24ч",
+      name: "Автопродления за 24ч (bePaid)",
       passed: false,
       count: 0,
       severity: "CRITICAL",
@@ -300,29 +303,35 @@ async function checkBusinessInvariants(supabase: any): Promise<InvariantResult[]
     });
   }
   
-  // INV-P0-4: Cron jobs running
+  // INV-P0-4: Cron jobs running (source of truth = cron.job_run_details, не audit_logs).
+  // Legacy критерий (action='cron.job.triggered') давал false-red — события не пишутся с 2026-04-23.
+  // Diagnose: 4912 runs / 99.9% success в последние 24ч. Proof: .lovable/proofs/inv_p0_1_p0_4_diagnose.txt
+  // RPC get_cron_runs_24h_count — SECURITY DEFINER, service-role only, схема cron не доступна напрямую.
   try {
-    const { count: cronCount } = await supabase
-      .from("audit_logs")
-      .select("*", { count: "exact", head: true })
-      .eq("action", "cron.job.triggered")
-      .eq("actor_type", "system")
-      .gte("created_at", yesterday.toISOString());
-    
+    const { data: cronStats, error: cronErr } = await supabase
+      .rpc("get_cron_runs_24h_count");
+    if (cronErr) throw cronErr;
+
+    const row = Array.isArray(cronStats) ? cronStats[0] : cronStats;
+    const succRuns24h = Number(row?.succ_runs_24h ?? 0);
+    const totalRuns24h = Number(row?.total_runs_24h ?? 0);
+
     results.push({
       code: "INV-P0-4",
-      name: "Cron jobs за 24ч",
-      passed: (cronCount || 0) > 0,
-      count: cronCount || 0,
-      severity: (cronCount || 0) === 0 ? "CRITICAL" : "INFO",
+      name: "Cron jobs за 24ч (pg_cron)",
+      passed: succRuns24h > 0,
+      count: succRuns24h,
+      severity: succRuns24h === 0 ? "CRITICAL" : "INFO",
+      samples: totalRuns24h > 0 ? [{ succ_runs_24h: succRuns24h, total_runs_24h: totalRuns24h }] : undefined,
     });
-  } catch {
+  } catch (e) {
     results.push({
       code: "INV-P0-4",
-      name: "Cron jobs за 24ч",
+      name: "Cron jobs за 24ч (pg_cron)",
       passed: false,
       count: 0,
       severity: "CRITICAL",
+      samples: [{ error: String(e) }],
     });
   }
   
