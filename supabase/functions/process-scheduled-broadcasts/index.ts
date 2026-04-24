@@ -216,13 +216,15 @@ Deno.serve(async (req) => {
           }).eq('id', tpl.id);
         }
 
-        // Audit log: explicit warning so operator sees it
+        // Audit log: explicit warning so operator sees it.
+        // audit_logs schema has no entity_type/entity_id — embed in meta.
         await supabase.from('audit_logs').insert({
           action: 'broadcast_empty_audience_skip',
-          entity_type: 'broadcast_template',
-          entity_id: tpl.id,
           actor_type: 'system',
+          actor_label: 'broadcast-dispatcher',
           meta: {
+            entity_type: 'broadcast_template',
+            entity_id: tpl.id,
             template_name: tpl.name,
             send_mode: tpl.send_mode,
             channels,
