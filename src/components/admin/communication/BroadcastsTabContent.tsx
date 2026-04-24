@@ -71,13 +71,21 @@ import { BroadcastTemplatesSection } from "./BroadcastTemplatesSection";
 
 import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
 
+type AudienceMode = "purchased" | "active_access";
+
+interface AudienceRule {
+  product_id: string;     // "" = любой продукт
+  tariff_ids: string[];   // [] = все тарифы
+  mode: AudienceMode;
+}
+
 interface BroadcastFilters {
-  hasActiveSubscription: boolean;
-  hasTelegram: boolean;
-  hasEmail: boolean;
-  productIds: string[];
-  tariffIds: string[];
-  clubId: string;
+  include: AudienceRule[];
+  exclude: AudienceRule[];
+  club_ids: string[];
+  club_membership: "current" | "ever" | "any";
+  bot_ids: string[];      // [] = primary bot
+  channels?: ("telegram" | "email")[];
 }
 
 interface AudiencePreview {
@@ -93,6 +101,8 @@ interface AudiencePreview {
     has_email: boolean;
   }>;
 }
+
+const EMPTY_RULE: AudienceRule = { product_id: "", tariff_ids: [], mode: "purchased" };
 
 type MediaType = "photo" | "video" | "audio" | "video_note" | null;
 
