@@ -107,9 +107,14 @@ export default function AdminSystemHealth() {
           problemsCount={classified.criticalFix.length}
           manualReviewCount={classified.manualReview.length}
           lastCheckAt={latestFullCheck?.created_at}
-          onRunCheck={() => triggerCheck.mutate()}
-          onRefresh={() => refetchLatest()}
-          isRunning={triggerCheck.isPending}
+          onRunCheck={() => triggerFullCheck.mutate()}
+          onRefresh={() => {
+            // Точечная invalidation только owner-view контура (full-check).
+            // Nightly system_health_runs не трогаем — это отдельная вкладка «Техинфо».
+            queryClient.invalidateQueries({ queryKey: ["system-health-latest-full"] });
+            queryClient.invalidateQueries({ queryKey: ["system-health-reports"] });
+          }}
+          isRunning={triggerFullCheck.isPending}
         />
 
         <OwnerSummaryStrip
