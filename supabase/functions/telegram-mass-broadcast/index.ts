@@ -218,7 +218,15 @@ Deno.serve(async (req) => {
         club_membership: filters.club_membership || 'any',
         channel: 'telegram',
       };
-      const { data: audience, error: rpcErr } = await supabase.rpc('resolve_broadcast_audience_user_ids', { _filters: rpcFilters });
+      // Use a user-scoped client so auth.uid() works inside the SECURITY DEFINER RPC
+      // (which checks has_permission(auth.uid(), 'entitlements.manage')).
+      // Admin permission has already been verified above.
+      const userClient = createClient(
+        Deno.env.get('SUPABASE_URL')!,
+        Deno.env.get('SUPABASE_ANON_KEY')!,
+        { global: { headers: { Authorization: authHeader } } }
+      );
+      const { data: audience, error: rpcErr } = await userClient.rpc('resolve_broadcast_audience_user_ids', { _filters: rpcFilters });
       if (rpcErr) {
         console.error('[broadcast] resolve_broadcast_audience_user_ids failed:', rpcErr);
         return new Response(
