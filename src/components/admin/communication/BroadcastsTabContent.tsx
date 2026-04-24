@@ -130,13 +130,21 @@ const [includeButton, setIncludeButton] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [filters, setFilters] = useState<BroadcastFilters>({
-    hasActiveSubscription: false,
-    hasTelegram: true,
-    hasEmail: false,
-    productIds: [],
-    tariffIds: [],
-    clubId: "",
+    include: [],
+    exclude: [],
+    club_ids: [],
+    club_membership: "current",
+    bot_ids: [],
   });
+
+  // Build RPC payload (channels derived from active tab)
+  const rpcFilters = useMemo(() => ({
+    channels: ["telegram", "email"],
+    include: filters.include,
+    exclude: filters.exclude,
+    club_ids: filters.club_ids,
+    club_membership: filters.club_membership,
+  }), [filters]);
 
   // cf warning: check if message/email contains cf.product tokens
   const hasCfTokens = useMemo(() => {
@@ -144,11 +152,23 @@ const [includeButton, setIncludeButton] = useState(true);
     return allText.includes('{{cf.product.');
   }, [message, emailSubject, emailBody]);
 
+  // Single product context for {{cf.product.*}} resolution:
+  // only when there's exactly one include rule with a concrete product_id
   const productContextId = useMemo(() => {
-    return filters.productIds.length === 1 ? filters.productIds[0] : null;
-  }, [filters.productIds]);
+    const concreteIncludes = filters.include.filter((r) => r.product_id);
+    return concreteIncludes.length === 1 ? concreteIncludes[0].product_id : null;
+  }, [filters.include]);
 
   const showCfWarning = hasCfTokens && !productContextId;
+
+  // All product_ids referenced in include/exclude (for tariff fetch)
+  const referencedProductIds = useMemo(() => {
+    const ids = new Set<string>();
+    [...filters.include, ...filters.exclude].forEach((r) => {
+      if (r.product_id) ids.add(r.product_id);
+    });
+    return Array.from(ids);
+  }, [filters]);
 
   // Fetch products
   const { data: products } = useQuery({
@@ -163,20 +183,20 @@ const [includeButton, setIncludeButton] = useState(true);
     },
   });
 
-  // Fetch tariffs for selected products
+  // Fetch tariffs for any referenced products
   const { data: tariffs } = useQuery({
-    queryKey: ["broadcast-tariffs", filters.productIds],
+    queryKey: ["broadcast-tariffs", referencedProductIds],
     queryFn: async () => {
-      if (filters.productIds.length === 0) return [];
+      if (referencedProductIds.length === 0) return [];
       const { data } = await supabase
         .from("tariffs")
         .select("id, name, product_id")
-        .in("product_id", filters.productIds)
+        .in("product_id", referencedProductIds)
         .eq("is_active", true)
         .order("name");
       return data || [];
     },
-    enabled: filters.productIds.length > 0,
+    enabled: referencedProductIds.length > 0,
   });
 
   // Fetch telegram clubs
@@ -192,82 +212,62 @@ const [includeButton, setIncludeButton] = useState(true);
     },
   });
 
-  // Fetch audience preview based on filters
-  const { data: audience, isLoading: audienceLoading } = useQuery({
-    queryKey: ["broadcast-audience", filters],
+  // Fetch active telegram bots
+  const { data: bots } = useQuery({
+    queryKey: ["broadcast-bots"],
     queryFn: async () => {
-      let query = supabase
-        .from("profiles")
-        .select("id, user_id, full_name, email, telegram_user_id, telegram_username");
+      const { data } = await (supabase as unknown as {
+        from: (t: string) => {
+          select: (s: string) => {
+            eq: (c: string, v: string) => {
+              order: (c: string, o: { ascending: boolean }) => Promise<{ data: Array<{ id: string; bot_name: string; bot_username: string; is_primary: boolean }> | null }>;
+            };
+          };
+        };
+      })
+        .from("telegram_bots")
+        .select("id, bot_name, bot_username, is_primary")
+        .eq("status", "active")
+        .order("bot_name", { ascending: true });
+      return data || [];
+    },
+  });
 
-      if (filters.hasTelegram) {
-        query = query.not("telegram_user_id", "is", null);
+  // Audience preview via RPC (single source of truth, used by edge funcs too)
+  const { data: audience, isLoading: audienceLoading } = useQuery({
+    queryKey: ["broadcast-audience-rpc", rpcFilters],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("resolve_broadcast_audience", {
+        _filters: rpcFilters as unknown as Record<string, unknown>,
+      });
+      if (error) {
+        console.error("[broadcast] audience rpc error", error);
+        return { telegramCount: 0, emailCount: 0, totalCount: 0, users: [] } as AudiencePreview;
       }
-
-      const { data: profiles } = await query.limit(1000);
-
-      if (!profiles) return { telegramCount: 0, emailCount: 0, totalCount: 0, users: [] };
-
-      let filteredProfiles = profiles;
-
-      if (filters.hasActiveSubscription) {
-        const { data: activeSubs } = await supabase
-          .from("subscriptions_v2")
-          .select("user_id")
-          .eq("status", "active");
-
-        const activeUserIds = new Set(activeSubs?.map((a) => a.user_id) || []);
-        filteredProfiles = filteredProfiles.filter((p) => activeUserIds.has(p.user_id));
-      }
-
-      if (filters.productIds.length > 0) {
-        let subQuery = supabase
-          .from("subscriptions_v2")
-          .select("user_id")
-          .in("product_id", filters.productIds)
-          .eq("status", "active");
-
-        if (filters.tariffIds.length > 0) {
-          subQuery = subQuery.in("tariff_id", filters.tariffIds);
-        }
-
-        const { data: productSubs } = await subQuery;
-
-        const productUserIds = new Set(productSubs?.map((s) => s.user_id) || []);
-        filteredProfiles = filteredProfiles.filter((p) => productUserIds.has(p.user_id));
-      }
-
-      if (filters.clubId) {
-        const { data: clubAccess } = await supabase
-          .from("telegram_access")
-          .select("user_id")
-          .eq("club_id", filters.clubId)
-          .or("active_until.is.null,active_until.gt.now()");
-
-        const clubUserIds = new Set(clubAccess?.map((a) => a.user_id) || []);
-        filteredProfiles = filteredProfiles.filter((p) => clubUserIds.has(p.user_id));
-      }
-
-      const telegramCount = filteredProfiles.filter((p) => p.telegram_user_id).length;
-      const emailCount = filteredProfiles.filter((p) => p.email).length;
-
+      const r = (data ?? {}) as Record<string, unknown>;
       return {
-        telegramCount,
-        emailCount,
-        totalCount: filteredProfiles.length,
-        users: filteredProfiles.slice(0, 50).map((p) => ({
-          id: p.id,
-          full_name: p.full_name,
-          email: p.email,
-          telegram_username: p.telegram_username,
-          has_telegram: !!p.telegram_user_id,
-          has_email: !!p.email,
-        })),
-      } as AudiencePreview;
+        telegramCount: Number(r.telegram_count || 0),
+        emailCount: Number(r.email_count || 0),
+        totalCount: Number(r.total_count || 0),
+        users: (r.users as AudiencePreview["users"]) || [],
+      } satisfies AudiencePreview;
     },
     refetchInterval: false,
   });
 
+  // Fetch broadcast history
+  const { data: history } = useQuery({
+    queryKey: ["broadcast-history"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("audit_logs")
+        .select("*")
+        .in("action", ["telegram_mass_broadcast", "email_mass_broadcast"])
+        .order("created_at", { ascending: false })
+        .limit(20);
+      return data || [];
+    },
+  });
   // Fetch broadcast history
   const { data: history } = useQuery({
     queryKey: ["broadcast-history"],
