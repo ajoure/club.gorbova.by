@@ -117,12 +117,7 @@ Deno.serve(async (req: Request) => {
 
   try {
     if (body.op === "insert_finding") {
-      const coverage =
-        body.coverage_pct ??
-        (body.total_in_finding > 0
-          ? Math.round((body.match_count / body.total_in_finding) * 10000) / 100
-          : 0);
-
+      // coverage_pct — generated column, не передаём.
       const { data, error } = await supabase
         .from("system_health_discovery_findings")
         .insert({
@@ -132,12 +127,11 @@ Deno.serve(async (req: Request) => {
           value: body.value,
           match_count: body.match_count,
           total_in_finding: body.total_in_finding,
-          coverage_pct: coverage,
           decision: "proposed",
           evidence_query: body.evidence_query,
           note: body.note ?? null,
         })
-        .select("id, finding_id, decision, created_by, updated_by, created_at")
+        .select("id, finding_id, decision, created_by, updated_by, created_at, coverage_pct")
         .single();
 
       if (error) {
