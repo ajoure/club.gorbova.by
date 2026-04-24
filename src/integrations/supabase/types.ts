@@ -1551,68 +1551,190 @@ export type Database = {
         }
         Relationships: []
       }
+      broadcast_dispatcher_config: {
+        Row: {
+          enabled: boolean
+          id: number
+          production_approved: boolean
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          enabled?: boolean
+          id?: number
+          production_approved?: boolean
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          enabled?: boolean
+          id?: number
+          production_approved?: boolean
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      broadcast_runs: {
+        Row: {
+          audience_count: number | null
+          audience_snapshot: Json | null
+          channel: string
+          created_at: string
+          dispatch_mode: string
+          dry_run: boolean
+          error: string | null
+          failed_count: number
+          finished_at: string | null
+          id: string
+          idempotency_key: string
+          sent_count: number
+          skipped_count: number
+          started_at: string
+          template_id: string
+          triggered_by: string
+        }
+        Insert: {
+          audience_count?: number | null
+          audience_snapshot?: Json | null
+          channel: string
+          created_at?: string
+          dispatch_mode?: string
+          dry_run?: boolean
+          error?: string | null
+          failed_count?: number
+          finished_at?: string | null
+          id?: string
+          idempotency_key: string
+          sent_count?: number
+          skipped_count?: number
+          started_at?: string
+          template_id: string
+          triggered_by: string
+        }
+        Update: {
+          audience_count?: number | null
+          audience_snapshot?: Json | null
+          channel?: string
+          created_at?: string
+          dispatch_mode?: string
+          dry_run?: boolean
+          error?: string | null
+          failed_count?: number
+          finished_at?: string | null
+          id?: string
+          idempotency_key?: string
+          sent_count?: number
+          skipped_count?: number
+          started_at?: string
+          template_id?: string
+          triggered_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "broadcast_runs_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "broadcast_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       broadcast_templates: {
         Row: {
+          audience_filters: Json
           button_text: string | null
           button_url: string | null
           channel: string
+          channels: string[]
           created_at: string | null
           created_by: string | null
           email_body_html: string | null
+          email_only_when_no_telegram: boolean
           email_subject: string | null
           failed_count: number | null
           id: string
+          last_run_at: string | null
           live_event_id: string | null
+          media_file_name: string | null
+          media_storage_path: string | null
+          media_type: string | null
           message_text: string | null
           name: string
+          next_run_at: string | null
+          recurrence_rule: Json | null
           scheduled_for: string | null
+          send_mode: string
           sent_at: string | null
           sent_count: number | null
           status: string
           targeting_tariff_id: string | null
           template_type: string
+          total_runs: number
           updated_at: string | null
         }
         Insert: {
+          audience_filters?: Json
           button_text?: string | null
           button_url?: string | null
           channel?: string
+          channels?: string[]
           created_at?: string | null
           created_by?: string | null
           email_body_html?: string | null
+          email_only_when_no_telegram?: boolean
           email_subject?: string | null
           failed_count?: number | null
           id?: string
+          last_run_at?: string | null
           live_event_id?: string | null
+          media_file_name?: string | null
+          media_storage_path?: string | null
+          media_type?: string | null
           message_text?: string | null
           name: string
+          next_run_at?: string | null
+          recurrence_rule?: Json | null
           scheduled_for?: string | null
+          send_mode?: string
           sent_at?: string | null
           sent_count?: number | null
           status?: string
           targeting_tariff_id?: string | null
           template_type?: string
+          total_runs?: number
           updated_at?: string | null
         }
         Update: {
+          audience_filters?: Json
           button_text?: string | null
           button_url?: string | null
           channel?: string
+          channels?: string[]
           created_at?: string | null
           created_by?: string | null
           email_body_html?: string | null
+          email_only_when_no_telegram?: boolean
           email_subject?: string | null
           failed_count?: number | null
           id?: string
+          last_run_at?: string | null
           live_event_id?: string | null
+          media_file_name?: string | null
+          media_storage_path?: string | null
+          media_type?: string | null
           message_text?: string | null
           name?: string
+          next_run_at?: string | null
+          recurrence_rule?: Json | null
           scheduled_for?: string | null
+          send_mode?: string
           sent_at?: string | null
           sent_count?: number | null
           status?: string
           targeting_tariff_id?: string | null
           template_type?: string
+          total_runs?: number
           updated_at?: string | null
         }
         Relationships: [
@@ -13597,6 +13719,10 @@ export type Database = {
           grant_samples: string[]
           grants_count: number
         }[]
+      }
+      compute_next_broadcast_run: {
+        Args: { from_ts: string; rule: Json }
+        Returns: string
       }
       create_feedback_ticket: {
         Args: {
