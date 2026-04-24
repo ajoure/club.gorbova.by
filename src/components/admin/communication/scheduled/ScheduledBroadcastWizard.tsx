@@ -235,10 +235,9 @@ export function ScheduledBroadcastWizard({ open, onOpenChange, templateId, onSav
     queryFn: async () => {
       const { data } = await supabase
         .from("telegram_bots")
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .select("id, bot_name, is_primary" as any)
+        .select("id, bot_name, is_primary")
         .eq("status", "active");
-      return (data as Array<{ id: string; bot_name: string; is_primary: boolean }>) || [];
+      return (data as unknown as Array<{ id: string; bot_name: string; is_primary: boolean }>) || [];
     },
   });
 
