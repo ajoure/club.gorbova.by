@@ -237,10 +237,10 @@ Deno.serve(async (req) => {
       allowedUserIds = new Set((audience || []).filter((r: { has_telegram: boolean }) => r.has_telegram).map((r: { user_id: string }) => r.user_id));
     }
 
-    // Build user query
+    // Build user query (include telegram_link_bot_id for per-bot segmentation)
     const { data: allProfiles } = await supabase
       .from('profiles')
-      .select('user_id, telegram_user_id, full_name, first_name, last_name, email, phone, telegram_username')
+      .select('user_id, telegram_user_id, telegram_link_bot_id, full_name, first_name, last_name, email, phone, telegram_username')
       .not('telegram_user_id', 'is', null)
       .limit(10000);
 
@@ -304,7 +304,7 @@ Deno.serve(async (req) => {
     
     const { data: adminProfiles } = await supabase
       .from('profiles')
-      .select('user_id, telegram_user_id, full_name, first_name, last_name, email, phone, telegram_username')
+      .select('user_id, telegram_user_id, telegram_link_bot_id, full_name, first_name, last_name, email, phone, telegram_username')
       .not('telegram_user_id', 'is', null)
       .in('user_id', [...adminUserIds]);
     
@@ -318,34 +318,79 @@ Deno.serve(async (req) => {
 
     console.log(`Found ${profiles.length} matching profiles (including admins)`);
 
-    // Get first available bot token
-    const { data: bots, error: botsError } = await supabase
+    // ===== Resolve target bots (respect filters.bot_ids) =====
+    // Load all active bots (we'll filter below)
+    const { data: allActiveBots, error: botsError } = await supabase
       .from('telegram_bots')
-      .select('bot_token_encrypted')
+      .select('id, bot_username, bot_token_encrypted, is_primary, created_at')
       .eq('status', 'active')
-      .limit(1);
+      .order('created_at', { ascending: true });
 
-    if (botsError || !bots?.length) {
-      console.error('No active bot found');
+    if (botsError || !allActiveBots?.length) {
+      console.error('No active bot found', botsError);
       return new Response(
         JSON.stringify({ error: 'No active bot found' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    const botToken = bots[0].bot_token_encrypted;
-    // Get bot id for telegram_messages logging
-    const { data: botIdRows } = await supabase
-      .from('telegram_bots')
-      .select('id')
-      .eq('status', 'active')
-      .limit(1);
-    const activeBotId = botIdRows?.[0]?.id || null;
+    // Determine primary bot: prefer is_primary, fallback to first by created_at
+    const primaryBot = allActiveBots.find((b) => b.is_primary) || allActiveBots[0];
+    const primaryBotId: string = primaryBot.id;
+
+    // Selected bots: bot_ids non-empty -> use those; empty -> primary only
+    const selectedBotIds: string[] = (filters.bot_ids && filters.bot_ids.length > 0)
+      ? filters.bot_ids
+      : [primaryBotId];
+
+    const targetBots = allActiveBots.filter((b) => selectedBotIds.includes(b.id));
+    if (targetBots.length === 0) {
+      return new Response(
+        JSON.stringify({ error: 'Selected bots are not active', selected_bot_ids: selectedBotIds }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const includesPrimary = targetBots.some((b) => b.id === primaryBotId);
+    console.log('[broadcast] bot routing', {
+      primary_bot_id: primaryBotId,
+      selected_bot_ids: selectedBotIds,
+      target_bots: targetBots.map((b) => ({ id: b.id, username: b.bot_username })),
+      includes_primary: includesPrimary,
+    });
 
     const appUrl = buttonUrl || Deno.env.get('APP_URL') || 'https://app.example.com';
 
-    let sent = 0;
-    let failed = 0;
+
+    // Per-bot statistics
+    interface PerBotStat {
+      bot_id: string;
+      bot_username: string;
+      total_candidates: number;
+      sent: number;
+      failed: number;
+      skipped_duplicate: number;
+    }
+    const perBotStats: Record<string, PerBotStat> = {};
+    for (const b of targetBots) {
+      perBotStats[b.id] = {
+        bot_id: b.id,
+        bot_username: b.bot_username,
+        total_candidates: 0,
+        sent: 0,
+        failed: 0,
+        skipped_duplicate: 0,
+      };
+    }
+
+    let totalSent = 0;
+    let totalFailed = 0;
+    let totalSkippedNoMatchingBot = 0;
+    let totalSkippedDuplicate = 0;
+
+    // Dedup: one user_id receives the message at most once per broadcast
+    const sentToUserIds = new Set<string>();
+
     const messageLogBatch: Array<{
       user_id: string;
       telegram_user_id: number;
@@ -374,11 +419,9 @@ Deno.serve(async (req) => {
     const broadcastNow = new Date();
 
     // Resolve cf tokens once (same product for all recipients)
-    // CF tokens are product-scoped, not per-user, so resolve before the loop
     let cfTokensIgnored = false;
     let messageAfterCf = message;
     if (cfFieldIds.length > 0) {
-      // NOTE: supabase is service_role client — required by resolveCustomFieldTokens
       const cfResult = await resolveCustomFieldTokens(message, productContextId, supabase);
       messageAfterCf = cfResult.text;
       cfTokensIgnored = cfResult.cfTokensIgnored;
@@ -414,125 +457,155 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Send messages with token substitution
-    for (const profile of profiles) {
-      // Resolve chain: Contact → System (cf already resolved above)
-      const afterContact = resolveContactTokens(messageAfterCf, profile);
-      const personalizedMessage = resolveSystemTokens(afterContact, broadcastNow);
-      try {
-        // Per-recipient keyboard: generate personal invite link for webinar_invite
-        let keyboard = baseKeyboard;
-        let inviteLinkId: string | null = null;
+    // ===== Audience segmentation by telegram_link_bot_id =====
+    // Map: bot_id -> profiles[] that should receive via THIS bot
+    const profilesByBot: Record<string, typeof profiles> = {};
+    for (const b of targetBots) profilesByBot[b.id] = [];
 
-        if (isWebinarInvite && liveEventId) {
-          const tokenResult = await createInviteToken(profile.user_id, liveEventId);
-          if (tokenResult) {
-            const personalUrl = `${appOrigin}/live-access/${tokenResult.token}`;
-            inviteLinkId = tokenResult.link_id;
-            keyboard = {
-              inline_keyboard: [[
-                { text: buttonText || 'Смотреть эфир', url: personalUrl }
-              ]]
-            };
-          } else {
-            // Token generation failed for this recipient — log and skip
-            failed++;
-            console.error(`[broadcast] Skipping ${profile.user_id}: token generation failed`);
-            continue;
-          }
-        }
-
-        let result;
-        
-        if (mediaBuffer && mediaType && mediaFileName) {
-          let method: string;
-          let mediaField: string;
-          
-          switch (mediaType) {
-            case 'photo':
-              method = 'sendPhoto';
-              mediaField = 'photo';
-              break;
-            case 'video':
-              method = 'sendVideo';
-              mediaField = 'video';
-              break;
-            case 'audio':
-              method = 'sendAudio';
-              mediaField = 'audio';
-              break;
-            case 'video_note':
-              method = 'sendVideoNote';
-              mediaField = 'video_note';
-              break;
-            default:
-              method = 'sendDocument';
-              mediaField = 'document';
-          }
-          
-          result = await telegramUploadMedia(
-            botToken,
-            method,
-            profile.telegram_user_id,
-            mediaField,
-            mediaBuffer,
-            mediaFileName,
-            personalizedMessage || undefined,
-            keyboard
-          );
+    for (const p of profiles) {
+      const linkBotId = p.telegram_link_bot_id as string | null;
+      if (linkBotId && selectedBotIds.includes(linkBotId)) {
+        // User is bound to one of the selected bots → route there
+        profilesByBot[linkBotId].push(p);
+      } else if (!linkBotId) {
+        // Unknown link → only via primary, and only if primary is among selected
+        if (includesPrimary) {
+          profilesByBot[primaryBotId].push(p);
         } else {
-          result = await telegramRequest(botToken, 'sendMessage', {
-            chat_id: profile.telegram_user_id,
-            text: personalizedMessage,
-            parse_mode: 'Markdown',
-            reply_markup: keyboard,
-          });
+          totalSkippedNoMatchingBot++;
+        }
+      } else {
+        // User bound to a bot that is NOT selected → skip
+        totalSkippedNoMatchingBot++;
+      }
+    }
+
+    for (const b of targetBots) {
+      perBotStats[b.id].total_candidates = profilesByBot[b.id].length;
+    }
+
+    console.log('[broadcast] segmentation', {
+      per_bot_candidates: Object.fromEntries(targetBots.map((b) => [b.bot_username, profilesByBot[b.id].length])),
+      skipped_no_matching_bot: totalSkippedNoMatchingBot,
+    });
+
+    // ===== Outer loop: bots; inner loop: profiles =====
+    for (const bot of targetBots) {
+      const botToken = bot.bot_token_encrypted;
+      const botId = bot.id;
+      const botProfiles = profilesByBot[botId];
+
+      for (const profile of botProfiles) {
+        // Dedup guard
+        if (sentToUserIds.has(profile.user_id)) {
+          perBotStats[botId].skipped_duplicate++;
+          totalSkippedDuplicate++;
+          continue;
         }
 
-        if (result.ok) {
-          sent++;
-          const telegramMsgId = result.result?.message_id || null;
-          // Store link_id in meta, NOT raw token/URL
-          const msgMeta: Record<string, unknown> = { broadcast: true };
-          if (inviteLinkId) {
-            msgMeta.link_id = inviteLinkId;
-            msgMeta.live_event_id = liveEventId;
-            // A3: audit live_link_sent + update status (only if still 'created')
-            await supabase.from('live_access_links')
-              .update({ status: 'sent', sent_at: new Date().toISOString() })
-              .eq('id', inviteLinkId)
-              .eq('status', 'created');
-            await supabase.from('audit_logs').insert({
-              action: 'live_link_sent',
-              actor_type: 'system',
-              actor_label: 'telegram-mass-broadcast',
-              meta: { link_id: inviteLinkId, sent_via: 'telegram', user_id: profile.user_id, template_id: null },
+        const afterContact = resolveContactTokens(messageAfterCf, profile);
+        const personalizedMessage = resolveSystemTokens(afterContact, broadcastNow);
+        try {
+          let keyboard = baseKeyboard;
+          let inviteLinkId: string | null = null;
+
+          if (isWebinarInvite && liveEventId) {
+            const tokenResult = await createInviteToken(profile.user_id, liveEventId);
+            if (tokenResult) {
+              const personalUrl = `${appOrigin}/live-access/${tokenResult.token}`;
+              inviteLinkId = tokenResult.link_id;
+              keyboard = {
+                inline_keyboard: [[
+                  { text: buttonText || 'Смотреть эфир', url: personalUrl }
+                ]]
+              };
+            } else {
+              perBotStats[botId].failed++;
+              totalFailed++;
+              console.error(`[broadcast] Skipping ${profile.user_id}: token generation failed`);
+              continue;
+            }
+          }
+
+          let result;
+
+          if (mediaBuffer && mediaType && mediaFileName) {
+            let method: string;
+            let mediaField: string;
+
+            switch (mediaType) {
+              case 'photo': method = 'sendPhoto'; mediaField = 'photo'; break;
+              case 'video': method = 'sendVideo'; mediaField = 'video'; break;
+              case 'audio': method = 'sendAudio'; mediaField = 'audio'; break;
+              case 'video_note': method = 'sendVideoNote'; mediaField = 'video_note'; break;
+              default: method = 'sendDocument'; mediaField = 'document';
+            }
+
+            result = await telegramUploadMedia(
+              botToken,
+              method,
+              profile.telegram_user_id,
+              mediaField,
+              mediaBuffer,
+              mediaFileName,
+              personalizedMessage || undefined,
+              keyboard
+            );
+          } else {
+            result = await telegramRequest(botToken, 'sendMessage', {
+              chat_id: profile.telegram_user_id,
+              text: personalizedMessage,
+              parse_mode: 'Markdown',
+              reply_markup: keyboard,
             });
           }
-          messageLogBatch.push({
-            user_id: profile.user_id,
-            telegram_user_id: profile.telegram_user_id,
-            bot_id: activeBotId,
-            direction: 'outgoing',
-            message_text: personalizedMessage,
-            message_id: telegramMsgId,
-            sent_by_admin: user.id,
-            status: 'sent',
-            meta: msgMeta,
-          });
-          // Batch insert every 50 messages
-          if (messageLogBatch.length >= 50) {
-            await supabase.from('telegram_messages').insert(messageLogBatch.splice(0, 50));
-          }
-        } else {
-          failed++;
-          console.error(`Failed to send to ${profile.user_id}:`, result.description);
-        }
 
-        await new Promise(resolve => setTimeout(resolve, 50));
-      } catch (error) {
-        failed++;
-        console.error(`Error sending to ${profile.user_id}:`, error);
+          if (result.ok) {
+            perBotStats[botId].sent++;
+            totalSent++;
+            sentToUserIds.add(profile.user_id);
+            const telegramMsgId = result.result?.message_id || null;
+            const msgMeta: Record<string, unknown> = { broadcast: true, bot_username: bot.bot_username };
+            if (inviteLinkId) {
+              msgMeta.link_id = inviteLinkId;
+              msgMeta.live_event_id = liveEventId;
+              await supabase.from('live_access_links')
+                .update({ status: 'sent', sent_at: new Date().toISOString() })
+                .eq('id', inviteLinkId)
+                .eq('status', 'created');
+              await supabase.from('audit_logs').insert({
+                action: 'live_link_sent',
+                actor_type: 'system',
+                actor_label: 'telegram-mass-broadcast',
+                meta: { link_id: inviteLinkId, sent_via: 'telegram', user_id: profile.user_id, template_id: null },
+              });
+            }
+            messageLogBatch.push({
+              user_id: profile.user_id,
+              telegram_user_id: profile.telegram_user_id,
+              bot_id: botId,
+              direction: 'outgoing',
+              message_text: personalizedMessage,
+              message_id: telegramMsgId,
+              sent_by_admin: user.id,
+              status: 'sent',
+              meta: msgMeta,
+            });
+            if (messageLogBatch.length >= 50) {
+              await supabase.from('telegram_messages').insert(messageLogBatch.splice(0, 50));
+            }
+          } else {
+            perBotStats[botId].failed++;
+            totalFailed++;
+            console.error(`Failed to send to ${profile.user_id} via ${bot.bot_username}:`, result.description);
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        } catch (error) {
+          perBotStats[botId].failed++;
+          totalFailed++;
+          console.error(`Error sending to ${profile.user_id} via ${bot.bot_username}:`, error);
+        }
       }
     }
 
@@ -541,19 +614,27 @@ Deno.serve(async (req) => {
       await supabase.from('telegram_messages').insert(messageLogBatch);
     }
 
+    const perBotArr = Object.values(perBotStats);
+    const totalSkipped = totalSkippedNoMatchingBot + totalSkippedDuplicate;
+
     // Log the broadcast action
     await supabase.from('telegram_logs').insert({
       action: 'MASS_NOTIFICATION',
-      target: `${sent}/${sent + failed} users`,
-      status: failed === 0 ? 'ok' : 'partial',
+      target: `${totalSent}/${totalSent + totalFailed} users`,
+      status: totalFailed === 0 ? 'ok' : 'partial',
       message_text: message || null,
       meta: {
-        total_users: sent + failed,
-        sent,
-        failed,
+        total_users: totalSent + totalFailed,
+        sent: totalSent,
+        failed: totalFailed,
+        skipped_no_matching_bot: totalSkippedNoMatchingBot,
+        skipped_duplicate: totalSkippedDuplicate,
         has_media: !!mediaBuffer,
         media_type: mediaType,
         filters,
+        per_bot: perBotArr,
+        primary_bot_id: primaryBotId,
+        selected_bot_ids: selectedBotIds,
       },
     });
 
@@ -562,9 +643,17 @@ Deno.serve(async (req) => {
       actor_user_id: user.id,
       action: 'telegram_mass_broadcast',
       meta: {
-        sent,
-        failed,
-        total: sent + failed,
+        sent: totalSent,
+        failed: totalFailed,
+        total: totalSent + totalFailed,
+        total_sent: totalSent,
+        total_failed: totalFailed,
+        total_skipped: totalSkipped,
+        skipped_no_matching_bot: totalSkippedNoMatchingBot,
+        skipped_duplicate: totalSkippedDuplicate,
+        per_bot: perBotArr,
+        primary_bot_id: primaryBotId,
+        selected_bot_ids: selectedBotIds,
         message_preview: resolveSystemTokens(message, broadcastNow)
           .replace(/[,\s]*\{\{(?:first_name|last_name|full_name|name|email|phone|telegram_username)\}\}[,\s]*/g, ' ')
           .replace(/\{\{cf\.product\.[^}]+\}\}/g, '')
@@ -576,7 +665,6 @@ Deno.serve(async (req) => {
         live_event_id: liveEventId || null,
         include_button: includeButton,
         button_text: includeButton ? (buttonText || 'Открыть платформу') : null,
-        // For webinar_invite, don't store button_url in audit (it's per-recipient)
         button_url: (includeButton && !isWebinarInvite) ? appUrl : null,
         has_media: !!mediaBuffer,
         media_type: mediaType,
@@ -589,10 +677,20 @@ Deno.serve(async (req) => {
       },
     });
 
-    console.log(`Broadcast complete: sent=${sent}, failed=${failed}`);
+    console.log(`Broadcast complete: sent=${totalSent}, failed=${totalFailed}, skipped=${totalSkipped}`);
 
     return new Response(
-      JSON.stringify({ success: true, sent, failed }),
+      JSON.stringify({
+        success: true,
+        sent: totalSent,
+        failed: totalFailed,
+        skipped: totalSkipped,
+        skipped_no_matching_bot: totalSkippedNoMatchingBot,
+        skipped_duplicate: totalSkippedDuplicate,
+        per_bot: perBotArr,
+        primary_bot_id: primaryBotId,
+        selected_bot_ids: selectedBotIds,
+      }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (error) {
