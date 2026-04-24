@@ -1,131 +1,123 @@
-да, согласен, с учетом правок:
+## План: Переработка фильтра аудитории быстрой рассылки
 
-1. В Diagnose явно проверь, **какая мутация сейчас реально стоит за** `useTriggerHealthCheck()` и **какая мутация уже есть/отсутствует для full-check**. Не предполагай, что надо “заменить на full-check”, пока не увидишь текущий hook/endpoint и query keys.
-2. В Dry-run добавь явную проверку, **какой именно report берёт** `useLatestFullCheck()`:
-  &nbsp;
-  &nbsp;
-  - по `created_at desc`
-  - по `kind/type`
-  - нет ли фильтра, из-за которого он берёт не тот отчёт.  
-  Иначе можно заменить кнопку, а UI всё равно останется на старом селекторе.
-3. В Execute зафиксируй разделение контуров жёстко:
-  - **owner-view**: только `system_health_reports` / full-check;
-  - **Техинфо**: только `system_health_runs` / nightly.  
-  Никаких общих derived-status между ними.
-4. Для `onRefresh` не просто `refetch`, а **точечная invalidation query keys**:
-  - latest full-check
-  - reports list для diff
-  - и отдельно nightly/runs только для вкладки Техинфо.  
-  Это нужно явно перечислить по именам после Diagnose.
-5. В DoD добавь ещё один пункт:
-  - после нажатия `Запустить проверку` новый report должен быть **новее предыдущего по** `created_at`, и diff должен считаться уже от него, а не от старого cached-объекта.
-6. STOP-guard дополни:
-  - если full-check endpoint не существует как отдельный клиентский hook/mutation, сначала оформить **минимальный фронтовый hook** к уже существующей backend-функции, без изменения backend. Это допустимо и всё ещё UI-only.
-7. В Verify зафиксируй 2 сценария:
-  - `Запустить проверку` → создаётся новый full-check report, owner-view зеленеет;
-  - `Обновить` без запуска → просто подтягивает уже существующий свежий full-check report и тоже убирает false-red без hard reload.
-8. Ничего не меняй в humanize/mapping/карточках owner-view, если Diagnose не покажет, что проблема только в источнике и refresh-flow. Это должен быть чистый fix согласованности данных, без побочных UI-правок.
+### Diagnose — что сейчас не так
 
-&nbsp;
+Файлы: `src/components/admin/communication/BroadcastsTabContent.tsx`, `supabase/functions/telegram-mass-broadcast/index.ts`, `supabase/functions/email-mass-broadcast/index.ts`.
 
-После этих уточнений план можно выполнять.
+Проблемы текущей реализации:
 
-&nbsp;
+1. **Фильтр по продукту работает только через `subscriptions_v2 WHERE status='active'`** — то есть всегда «только активная подписка», даже если переключатель выключен. Поэтому работают только клубные продукты (Gorbova Club, Бухгалтерия как бизнес — единственные с подписочной моделью), а курсы/модули/вебинары не дают аудиторию.
+2. **Нет источника «покупали когда‑либо»** — историю покупок надо брать из `orders_v2` (status='paid'), а не только из `subscriptions_v2`.
+3. **Чекбокс «Только с активной подпиской»** работает как глобальный (любой активный sub), а должен относиться к выбранному продукту: «есть активный доступ именно к продукту А».
+4. **Нет исключающих фильтров** — невозможно сказать «купил ЦБ, но НЕ купил Club».
+5. **Нет выбора бота** — функция всегда берёт первый `is_primary=true` (gorbova support). У нас 4 активных бота (gorbova support, Gorbova Club, Gorbova BOT, GetCourse), и часть аудитории привязана к разным ботам.
+6. **Telegram‑клуб** работает (через `telegram_access`), но логика «сейчас в клубе» — нужно явно разделить «состоит сейчас» / «состоял когда‑либо».
+7. **Превью аудитории на клиенте** делает 4 запроса и фильтрует в JS с лимитом 1000 — для базы в 220+ покупателей это нормально, но логика пересчёта дублируется между UI и edge‑функциями (риск рассинхрона).
 
-План:
+### Решение
 
-## Проблема
+#### 1) Серверный RPC `resolve_broadcast_audience` (единственный источник истины)
 
-На /admin/system-health всё ещё показываются красные INV-P0-1 и INV-P0-4, хотя узкий backend PATCH уже применён и последний `system-health-full-check` в базе зелёный.
+Создаём `SECURITY DEFINER` функцию, которая принимает JSON фильтра и возвращает список `user_id` + счётчики. И UI, и обе edge‑функции будут вызывать только её — без дублирования логики.
 
-## Диагностика
+Схема входа:
+```json
+{
+  "channels": ["telegram", "email"],
+  "include": [
+    { "product_id": "...", "tariff_ids": ["..."], "mode": "purchased" | "active_access" }
+  ],
+  "exclude": [
+    { "product_id": "...", "tariff_ids": ["..."], "mode": "purchased" | "active_access" }
+  ],
+  "club_ids": ["..."],
+  "club_membership": "current" | "ever" | "any",
+  "bot_ids": ["..."]
+}
+```
 
-Фактическое состояние подтверждено read-only:
+Логика:
+- База — `profiles` с `email NOT NULL` (для email‑канала) и/или `telegram_user_id NOT NULL` (для tg).
+- `mode='purchased'` → `EXISTS (SELECT 1 FROM orders_v2 WHERE user_id = p.user_id AND product_id = ? AND status = 'paid' [AND tariff_id IN (...)])`.
+- `mode='active_access'` → `EXISTS (SELECT 1 FROM subscriptions_v2 WHERE user_id = p.user_id AND product_id = ? AND status = 'active' [AND tariff_id IN (...)])`.
+- `include` — пересечение (OR в пределах одной строки include, AND между разными — обсудим в UI: по умолчанию **OR между блоками include** = «купил хотя бы один из»).
+- `exclude` — `NOT EXISTS` для каждой записи.
+- `club_ids + club_membership='current'` → `telegram_access` с активным окном; `'ever'` → без проверки `active_until`.
+- `bot_ids` — фильтр по тому, с каким ботом у пользователя есть переписка (`telegram_messages.bot_id IN (...)` или альтернатива — отправлять копию во все выбранные боты, см. п.3).
 
-- `supabase/functions/system-health-full-check/index.ts` уже содержит новую логику:
-  - `INV-P0-1` → `audit_logs.action='bepaid.payment.upsert_from_last_transaction'`
-  - `INV-P0-4` → RPC `get_cron_runs_24h_count()`
-- В `system_health_reports` уже есть свежий успешный отчёт:
-  - `2026-04-24 18:37:13+00`
-  - `INV-P0-1 = 7, passed=true`
-  - `INV-P0-4 = 4906, passed=true`
-  - общий `status = OK`
-- Но owner-view страницы `/admin/system-health` строится из `useLatestFullCheck()` / `system_health_reports`, а её кнопки сейчас работают не с тем источником:
-  - `Запустить проверку` вызывает `nightly-system-health` через `useTriggerHealthCheck()`
-  - `Обновить` делает только `refetchLatest()` для `system_health_runs`
-- Из-за этого UI «Проблемы сейчас» может продолжать показывать старый full-check report, даже когда backend уже зелёный.
+Возвращает: `{ telegram_count, email_count, total_count, sample (50 строк) }`. Полный список `user_id` отдаётся отдельной функцией `resolve_broadcast_audience_user_ids` для edge (избегаем мегапейлоада в UI).
 
-## Предлагаемое решение
+Permission: проверяем `has_permission('entitlements.manage')`.
 
-Сделать узкую фронтовую правку согласованности источника истины для owner-view:
+#### 2) Переработка UI фильтра в `BroadcastsTabContent.tsx`
 
-1. На `/admin/system-health` привязать верхнюю кнопку `Запустить проверку` к `system-health-full-check`, а не к nightly-check.
-2. Кнопку `Обновить` сделать рефрешем owner-view-источников:
-  - `system_health_reports`
-  - `latestFullCheck`
-  - при необходимости diff-источника последних отчётов
-3. Не менять саму backend-логику инвариантов, cron, bePaid, audit writer’ы и thresholds.
+Новая модель фильтра в state:
 
-## Изменяемые компоненты
+```ts
+type AudienceRule = {
+  product_id: string;          // "" = "Все продукты"
+  tariff_ids: string[];        // [] = все тарифы продукта
+  mode: "purchased" | "active_access"; // что значит "Только с активной подпиской"
+};
 
-Только узкий фронтовый scope:
+type BroadcastFilters = {
+  include: AudienceRule[];     // купил хотя бы один из
+  exclude: AudienceRule[];     // НЕ купил ни один из
+  club_ids: string[];
+  club_membership: "current" | "ever" | "any";
+  bot_ids: string[];           // выбранные боты для отправки
+};
+```
 
-- `src/pages/admin/AdminSystemHealth.tsx`
-- при необходимости минимально:
-  - `src/hooks/useSystemHealthFullCheck.ts`
-  - `src/hooks/useSystemHealthRuns.ts` (только если понадобится явный refetch API для техвкладки)
+UI секции в правом сайдбаре:
 
-## Что не будет изменено
+- **Включить (Купившие/С доступом)** — список карточек правил. Для каждой: продукт (Combobox), тарифы (мультивыбор), переключатель `mode` (`purchased` ↔ `active_access`). Кнопка «+ Добавить условие».
+- **Исключить** — аналогичный список (по умолчанию свёрнут). Бейджи карточек красные.
+- **Telegram‑клуб** — мультивыбор клубов + radio `current` / `ever` / `any`.
+- **Боты** — мультивыбор из `telegram_bots WHERE status='active'` (4 бота). По умолчанию выбраны все. Поясняющий текст: «сообщение уйдёт через каждого выбранного бота тем пользователям, у которых есть с ним диалог».
+- **Аудитория** — счётчики Telegram / Email + кнопка «Просмотр получателей» (берёт `sample` из RPC).
 
-- `supabase/functions/system-health-full-check/index.ts`
-- RPC `public.get_cron_runs_24h_count()`
-- `nightly-system-health`
-- cron/jobs
-- webhook bePaid
-- audit writer’ы
-- thresholds / окна
-- UI-классификация инвариантов и тексты карточек
+Обратная совместимость: старые кнопки «Все продукты / Все клубы» остаются как пустое состояние (нет правил).
 
-## Dry-run
+#### 3) Поведение мульти‑бот в `telegram-mass-broadcast`
 
-Перед выполнением проверить:
+Текущая функция берёт первый primary‑бот. Меняем:
 
-1. какие query keys использует owner-view;
-2. какие именно запросы инвалидируются после ручного запуска full-check;
-3. что верхние карточки действительно рендерятся только из `latestFullCheck.report_json.invariants.results`.
+- Вход: `bot_ids: string[]` (если пусто — primary‑бот, как сейчас).
+- Для каждого получателя пытаемся отправить через **первый бот из `bot_ids`, с которым у пользователя есть диалог** (по `telegram_messages` или `telegram_user_chats`, если есть). Если пересечения нет — пропускаем.
+- Опционально: режим «дублировать во все выбранные боты» (чекбокс в UI). По умолчанию ВЫКЛ (чтобы не спамить).
 
-## Execute
+Каждое отправление логируем в `telegram_messages` с правильным `bot_id` (уже делается).
 
-1. В `AdminSystemHealth.tsx` заменить owner action `onRunCheck` на вызов full-check мутации.
-2. В `AdminSystemHealth.tsx` заменить `onRefresh` на refetch/invalidations для `system-health-latest-full` и `system-health-reports`.
-3. Сохранить `useLatestSystemHealth()` / `useSystemHealthRuns()` только для вкладки «Техинфо».
-4. Не трогать остальную страницу.
+#### 4) Email‑функция
 
-## STOP-guards
+`email-mass-broadcast` принимает тот же `filters`. Вызывает RPC `resolve_broadcast_audience_user_ids` → достаёт email’ы → шлёт. Никаких клубов/ботов для email не учитываем (только продуктовые правила + `email NOT NULL`).
 
-Остановиться, если выяснится хотя бы одно:
+#### 5) Тестирование (Verify)
 
-- owner-view использует ещё один скрытый источник данных помимо `system_health_reports`;
-- есть другой компонент, который перезаписывает статус из `system_health_runs` поверх owner-view;
-- кнопка `Запустить проверку` намеренно должна запускать nightly-flow по бизнес-требованию и это зафиксировано в коде/knowledge.
+- Авто‑вызов RPC с пустым фильтром → должен совпасть с числом профилей с email/telegram.
+- Кейс «купили ЦБ 2.0, нет активного Club» → проверяем выборку через psql и через UI.
+- Кейс «активный Club» (current membership) совпадает с `subscriptions_v2 status=active product='club'`.
+- Превью получателей в UI = реальное число отправок в результате `telegram-mass-broadcast` (минус обнаруженные блок/удаление чата).
+- Регрессия шаблонов рассылок (вкладка «Шаблоны») — они сейчас тоже передают `filters` в ту же edge‑функцию; контракт фильтра расширяем обратносовместимо (старые поля `productId/clubId` мапим в новые `include[]/club_ids[]`).
 
-## DoD
+### Технический бэклог (DoD)
 
-Задача считается выполненной, когда одновременно выполнено всё:
+| # | Артефакт | Действие |
+|---|---|---|
+| 1 | Migration | RPC `resolve_broadcast_audience(jsonb) returns jsonb` + `resolve_broadcast_audience_user_ids(jsonb) returns setof uuid`, SECURITY DEFINER, grant к authenticated с проверкой permission |
+| 2 | Migration | Никаких изменений таблиц — только функции |
+| 3 | `BroadcastsTabContent.tsx` | Новый state, UI правил include/exclude, мультивыбор ботов, RPC вместо клиентских join'ов |
+| 4 | `telegram-mass-broadcast/index.ts` | Принимает новый `filters`, вызывает RPC, поддерживает `bot_ids` (выбор бота по диалогу) |
+| 5 | `email-mass-broadcast/index.ts` | Принимает новый `filters`, вызывает RPC |
+| 6 | Шаблоны рассылок (`BroadcastSendDialog`, `BroadcastTemplateDialog`) | Тот же UI правил, либо адаптер «старый→новый» формат |
+| 7 | Memory | Записать `commercial-logic/broadcasts/audience-filter-standard` со стандартом фильтра |
+| 8 | Verify | Скриншот UI с правилами include/exclude + psql‑проверка одного кейса (купил A не купил B) |
 
-1. После ручного запуска проверки в owner-view создаётся новый `system_health_reports` full-check report.
-2. Верхний hero и вкладка «Проблемы сейчас» переходят в зелёное состояние без ручного hard reload.
-3. Старый false-red исчезает.
-4. Значения берутся из новых источников истины, а не из старого отчёта:
-  - `INV-P0-1 = 7` из bePaid audit signal
-  - `INV-P0-4 = 4906` из pg_cron RPC
-5. Вкладка «Техинфо» продолжает отдельно показывать nightly `system_health_runs` без поломки.
+### Открытые вопросы (чтобы не угадывать)
 
-## Риски и зависимости
+1. **Логика между блоками include**: «купил хотя бы один из перечисленных» (OR) или «купил все перечисленные» (AND)? Предлагаю **OR** — это естественнее для рассылок («все, кто купил ЦБ или Club»).
+2. **Мульти‑бот**: нужен ли чекбокс «дублировать во все выбранные боты» или достаточно «один бот, у которого есть диалог»? Предлагаю **один бот** (без дублирования) + порядок приоритета по выбору в UI.
+3. **`active_access` vs `purchased` для модулей/вебинаров**: для вебинаров «активной подписки» нет — там `mode='purchased'` всегда даёт всех, кто покупал. Это ОК?
 
-- Есть два разных health-контура: `system_health_reports` и `system_health_runs`. Главный риск — снова смешать их в одном экране.
-- Изменение должно быть строго UI-only; backend уже исправлен.
-
-## Требуется дополнительная информация
-
-Не требуется. Read-only диагностика достаточна для перехода в Execute.
+Если по этим трём вопросам у тебя есть конкретные пожелания — отпиши, иначе пойду по дефолтам выше.

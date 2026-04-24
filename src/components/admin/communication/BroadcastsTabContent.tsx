@@ -71,13 +71,21 @@ import { BroadcastTemplatesSection } from "./BroadcastTemplatesSection";
 
 import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
 
+type AudienceMode = "purchased" | "active_access";
+
+interface AudienceRule {
+  product_id: string;     // "" = любой продукт
+  tariff_ids: string[];   // [] = все тарифы
+  mode: AudienceMode;
+}
+
 interface BroadcastFilters {
-  hasActiveSubscription: boolean;
-  hasTelegram: boolean;
-  hasEmail: boolean;
-  productIds: string[];
-  tariffIds: string[];
-  clubId: string;
+  include: AudienceRule[];
+  exclude: AudienceRule[];
+  club_ids: string[];
+  club_membership: "current" | "ever" | "any";
+  bot_ids: string[];      // [] = primary bot
+  channels?: ("telegram" | "email")[];
 }
 
 interface AudiencePreview {
@@ -93,6 +101,8 @@ interface AudiencePreview {
     has_email: boolean;
   }>;
 }
+
+const EMPTY_RULE: AudienceRule = { product_id: "", tariff_ids: [], mode: "purchased" };
 
 type MediaType = "photo" | "video" | "audio" | "video_note" | null;
 
@@ -120,13 +130,21 @@ const [includeButton, setIncludeButton] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [filters, setFilters] = useState<BroadcastFilters>({
-    hasActiveSubscription: false,
-    hasTelegram: true,
-    hasEmail: false,
-    productIds: [],
-    tariffIds: [],
-    clubId: "",
+    include: [],
+    exclude: [],
+    club_ids: [],
+    club_membership: "current",
+    bot_ids: [],
   });
+
+  // Build RPC payload (channels derived from active tab)
+  const rpcFilters = useMemo(() => ({
+    channels: ["telegram", "email"],
+    include: filters.include,
+    exclude: filters.exclude,
+    club_ids: filters.club_ids,
+    club_membership: filters.club_membership,
+  }), [filters]);
 
   // cf warning: check if message/email contains cf.product tokens
   const hasCfTokens = useMemo(() => {
@@ -134,11 +152,23 @@ const [includeButton, setIncludeButton] = useState(true);
     return allText.includes('{{cf.product.');
   }, [message, emailSubject, emailBody]);
 
+  // Single product context for {{cf.product.*}} resolution:
+  // only when there's exactly one include rule with a concrete product_id
   const productContextId = useMemo(() => {
-    return filters.productIds.length === 1 ? filters.productIds[0] : null;
-  }, [filters.productIds]);
+    const concreteIncludes = filters.include.filter((r) => r.product_id);
+    return concreteIncludes.length === 1 ? concreteIncludes[0].product_id : null;
+  }, [filters.include]);
 
   const showCfWarning = hasCfTokens && !productContextId;
+
+  // All product_ids referenced in include/exclude (for tariff fetch)
+  const referencedProductIds = useMemo(() => {
+    const ids = new Set<string>();
+    [...filters.include, ...filters.exclude].forEach((r) => {
+      if (r.product_id) ids.add(r.product_id);
+    });
+    return Array.from(ids);
+  }, [filters]);
 
   // Fetch products
   const { data: products } = useQuery({
@@ -153,20 +183,20 @@ const [includeButton, setIncludeButton] = useState(true);
     },
   });
 
-  // Fetch tariffs for selected products
+  // Fetch tariffs for any referenced products
   const { data: tariffs } = useQuery({
-    queryKey: ["broadcast-tariffs", filters.productIds],
+    queryKey: ["broadcast-tariffs", referencedProductIds],
     queryFn: async () => {
-      if (filters.productIds.length === 0) return [];
+      if (referencedProductIds.length === 0) return [];
       const { data } = await supabase
         .from("tariffs")
         .select("id, name, product_id")
-        .in("product_id", filters.productIds)
+        .in("product_id", referencedProductIds)
         .eq("is_active", true)
         .order("name");
       return data || [];
     },
-    enabled: filters.productIds.length > 0,
+    enabled: referencedProductIds.length > 0,
   });
 
   // Fetch telegram clubs
@@ -182,84 +212,51 @@ const [includeButton, setIncludeButton] = useState(true);
     },
   });
 
-  // Fetch audience preview based on filters
-  const { data: audience, isLoading: audienceLoading } = useQuery({
-    queryKey: ["broadcast-audience", filters],
+  // Fetch active telegram bots
+  const { data: bots } = useQuery({
+    queryKey: ["broadcast-bots"],
     queryFn: async () => {
-      let query = supabase
-        .from("profiles")
-        .select("id, user_id, full_name, email, telegram_user_id, telegram_username");
+      const { data } = await (supabase as unknown as {
+        from: (t: string) => {
+          select: (s: string) => {
+            eq: (c: string, v: string) => {
+              order: (c: string, o: { ascending: boolean }) => Promise<{ data: Array<{ id: string; bot_name: string; bot_username: string; is_primary: boolean }> | null }>;
+            };
+          };
+        };
+      })
+        .from("telegram_bots")
+        .select("id, bot_name, bot_username, is_primary")
+        .eq("status", "active")
+        .order("bot_name", { ascending: true });
+      return data || [];
+    },
+  });
 
-      if (filters.hasTelegram) {
-        query = query.not("telegram_user_id", "is", null);
+  // Audience preview via RPC (single source of truth, used by edge funcs too)
+  const { data: audience, isLoading: audienceLoading } = useQuery({
+    queryKey: ["broadcast-audience-rpc", rpcFilters],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("resolve_broadcast_audience", {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        _filters: rpcFilters as any,
+      });
+      if (error) {
+        console.error("[broadcast] audience rpc error", error);
+        return { telegramCount: 0, emailCount: 0, totalCount: 0, users: [] } as AudiencePreview;
       }
-
-      const { data: profiles } = await query.limit(1000);
-
-      if (!profiles) return { telegramCount: 0, emailCount: 0, totalCount: 0, users: [] };
-
-      let filteredProfiles = profiles;
-
-      if (filters.hasActiveSubscription) {
-        const { data: activeSubs } = await supabase
-          .from("subscriptions_v2")
-          .select("user_id")
-          .eq("status", "active");
-
-        const activeUserIds = new Set(activeSubs?.map((a) => a.user_id) || []);
-        filteredProfiles = filteredProfiles.filter((p) => activeUserIds.has(p.user_id));
-      }
-
-      if (filters.productIds.length > 0) {
-        let subQuery = supabase
-          .from("subscriptions_v2")
-          .select("user_id")
-          .in("product_id", filters.productIds)
-          .eq("status", "active");
-
-        if (filters.tariffIds.length > 0) {
-          subQuery = subQuery.in("tariff_id", filters.tariffIds);
-        }
-
-        const { data: productSubs } = await subQuery;
-
-        const productUserIds = new Set(productSubs?.map((s) => s.user_id) || []);
-        filteredProfiles = filteredProfiles.filter((p) => productUserIds.has(p.user_id));
-      }
-
-      if (filters.clubId) {
-        const { data: clubAccess } = await supabase
-          .from("telegram_access")
-          .select("user_id")
-          .eq("club_id", filters.clubId)
-          .or("active_until.is.null,active_until.gt.now()");
-
-        const clubUserIds = new Set(clubAccess?.map((a) => a.user_id) || []);
-        filteredProfiles = filteredProfiles.filter((p) => clubUserIds.has(p.user_id));
-      }
-
-      const telegramCount = filteredProfiles.filter((p) => p.telegram_user_id).length;
-      const emailCount = filteredProfiles.filter((p) => p.email).length;
-
+      const r = (data ?? {}) as Record<string, unknown>;
       return {
-        telegramCount,
-        emailCount,
-        totalCount: filteredProfiles.length,
-        users: filteredProfiles.slice(0, 50).map((p) => ({
-          id: p.id,
-          full_name: p.full_name,
-          email: p.email,
-          telegram_username: p.telegram_username,
-          has_telegram: !!p.telegram_user_id,
-          has_email: !!p.email,
-        })),
-      } as AudiencePreview;
+        telegramCount: Number(r.telegram_count || 0),
+        emailCount: Number(r.email_count || 0),
+        totalCount: Number(r.total_count || 0),
+        users: (r.users as AudiencePreview["users"]) || [],
+      } satisfies AudiencePreview;
     },
     refetchInterval: false,
   });
 
-  // Fetch broadcast history
-  const { data: history } = useQuery({
+  const { data: historyItems } = useQuery({
     queryKey: ["broadcast-history"],
     queryFn: async () => {
       const { data } = await supabase
@@ -271,6 +268,7 @@ const [includeButton, setIncludeButton] = useState(true);
       return data || [];
     },
   });
+  const history = historyItems;
 
   // Handle file selection
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, type: MediaType) => {
@@ -853,183 +851,122 @@ const [includeButton, setIncludeButton] = useState(true);
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="activeSubscription" className="cursor-pointer text-sm">
-                  Только с активной подпиской
-                </Label>
-                <Switch
-                  id="activeSubscription"
-                  checked={filters.hasActiveSubscription}
-                  onCheckedChange={(v) =>
-                    setFilters((f) => ({ ...f, hasActiveSubscription: v }))
-                  }
-                />
-              </div>
+              {/* Include rules */}
+              <RuleListEditor
+                title="Включить"
+                emptyHint="Все продукты (вся база)"
+                rules={filters.include}
+                products={products || []}
+                tariffs={tariffs || []}
+                onChange={(next) => setFilters((f) => ({ ...f, include: next }))}
+              />
 
               <Separator />
 
+              {/* Exclude rules */}
+              <RuleListEditor
+                title="Исключить"
+                emptyHint="Никого не исключать"
+                rules={filters.exclude}
+                products={products || []}
+                tariffs={tariffs || []}
+                onChange={(next) => setFilters((f) => ({ ...f, exclude: next }))}
+                destructive
+              />
+
+              <Separator />
+
+              {/* Telegram clubs (multi) */}
               <div className="space-y-2">
-                <Label>Продукт</Label>
+                <Label>Telegram-клубы</Label>
                 <Popover>
                   <PopoverTrigger asChild>
                     <Button variant="outline" className="w-full justify-start font-normal">
-                      {filters.productIds.length === 0
-                        ? "Все продукты"
-                        : `Выбрано: ${filters.productIds.length}`}
+                      {filters.club_ids.length === 0
+                        ? "Все клубы / без фильтра"
+                        : `Выбрано: ${filters.club_ids.length}`}
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="w-64 p-3" align="start">
                     <div className="space-y-2">
-                      {products?.map((p) => (
-                        <label key={p.id} className="flex items-center gap-2 cursor-pointer">
+                      {clubs?.map((c) => (
+                        <label key={c.id} className="flex items-center gap-2 cursor-pointer">
                           <Checkbox
-                            checked={filters.productIds.includes(p.id)}
+                            checked={filters.club_ids.includes(c.id)}
                             onCheckedChange={(checked) => {
-                              setFilters((f) => {
-                                const next = checked
-                                  ? [...f.productIds, p.id]
-                                  : f.productIds.filter((id) => id !== p.id);
-                                // Remove tariffs that no longer belong to selected products
-                                const validTariffIds = f.tariffIds.filter((tid) =>
-                                  tariffs?.some((t) => t.id === tid && next.includes(t.product_id))
-                                );
-                                return { ...f, productIds: next, tariffIds: validTariffIds };
-                              });
+                              setFilters((f) => ({
+                                ...f,
+                                club_ids: checked
+                                  ? [...f.club_ids, c.id]
+                                  : f.club_ids.filter((id) => id !== c.id),
+                              }));
                             }}
                           />
-                          <span className="text-sm">{p.name}</span>
+                          <span className="text-sm">{c.club_name}</span>
                         </label>
                       ))}
-                      {(products?.length ?? 0) === 0 && (
-                        <p className="text-sm text-muted-foreground">Нет активных продуктов</p>
-                      )}
                     </div>
                   </PopoverContent>
                 </Popover>
-                {filters.productIds.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {filters.productIds.map((pid) => {
-                      const name = products?.find((p) => p.id === pid)?.name;
-                      return (
-                        <Badge key={pid} variant="secondary" className="text-xs gap-1">
-                          {name}
-                          <button
-                            onClick={() =>
-                              setFilters((f) => ({
-                                ...f,
-                                productIds: f.productIds.filter((id) => id !== pid),
-                                tariffIds: f.tariffIds.filter((tid) =>
-                                  tariffs?.some((t) => t.id === tid && t.product_id !== pid)
-                                ),
-                              }))
-                            }
-                            className="ml-0.5 hover:text-destructive"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </Badge>
-                      );
-                    })}
-                  </div>
+                {filters.club_ids.length > 0 && (
+                  <Select
+                    value={filters.club_membership}
+                    onValueChange={(v) =>
+                      setFilters((f) => ({ ...f, club_membership: v as "current" | "ever" | "any" }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="current">Состоят сейчас</SelectItem>
+                      <SelectItem value="ever">Состояли когда-либо</SelectItem>
+                    </SelectContent>
+                  </Select>
                 )}
               </div>
 
-              {filters.productIds.length > 0 && tariffs && tariffs.length > 0 && (
-                <div className="space-y-2">
-                  <Label>Тариф</Label>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button variant="outline" className="w-full justify-start font-normal">
-                        {filters.tariffIds.length === 0
-                          ? "Все тарифы"
-                          : `Выбрано: ${filters.tariffIds.length}`}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-64 p-3" align="start">
-                      <ScrollArea className="max-h-60">
-                        <div className="space-y-3">
-                          {filters.productIds.map((pid) => {
-                            const productName = products?.find((p) => p.id === pid)?.name;
-                            const productTariffs = tariffs?.filter((t) => t.product_id === pid) || [];
-                            if (productTariffs.length === 0) return null;
-                            return (
-                              <div key={pid}>
-                                {filters.productIds.length > 1 && (
-                                  <p className="text-xs font-medium text-muted-foreground mb-1">
-                                    {productName}
-                                  </p>
-                                )}
-                                <div className="space-y-2">
-                                  {productTariffs.map((t) => (
-                                    <label key={t.id} className="flex items-center gap-2 cursor-pointer">
-                                      <Checkbox
-                                        checked={filters.tariffIds.includes(t.id)}
-                                        onCheckedChange={(checked) => {
-                                          setFilters((f) => ({
-                                            ...f,
-                                            tariffIds: checked
-                                              ? [...f.tariffIds, t.id]
-                                              : f.tariffIds.filter((id) => id !== t.id),
-                                          }));
-                                        }}
-                                      />
-                                      <span className="text-sm">{t.name}</span>
-                                    </label>
-                                  ))}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </ScrollArea>
-                    </PopoverContent>
-                  </Popover>
-                  {filters.tariffIds.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {filters.tariffIds.map((tid) => {
-                        const name = tariffs?.find((t) => t.id === tid)?.name;
-                        return (
-                          <Badge key={tid} variant="outline" className="text-xs gap-1">
-                            {name}
-                            <button
-                              onClick={() =>
-                                setFilters((f) => ({
-                                  ...f,
-                                  tariffIds: f.tariffIds.filter((id) => id !== tid),
-                                }))
-                              }
-                              className="ml-0.5 hover:text-destructive"
-                            >
-                              <X className="h-3 w-3" />
-                            </button>
-                          </Badge>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
+              <Separator />
 
+              {/* Bot selection (multi) */}
               <div className="space-y-2">
-                <Label>Telegram-клуб</Label>
-                <Select
-                  value={filters.clubId || "all"}
-                  onValueChange={(v) =>
-                    setFilters((f) => ({ ...f, clubId: v === "all" ? "" : v }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Все клубы" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Все клубы</SelectItem>
-                    {clubs?.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.club_name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label>Боты для отправки</Label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" className="w-full justify-start font-normal">
+                      {filters.bot_ids.length === 0
+                        ? "Основной бот"
+                        : `Выбрано: ${filters.bot_ids.length}`}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-72 p-3" align="start">
+                    <div className="space-y-2">
+                      {bots?.map((b) => (
+                        <label key={b.id} className="flex items-center gap-2 cursor-pointer">
+                          <Checkbox
+                            checked={filters.bot_ids.includes(b.id)}
+                            onCheckedChange={(checked) => {
+                              setFilters((f) => ({
+                                ...f,
+                                bot_ids: checked
+                                  ? [...f.bot_ids, b.id]
+                                  : f.bot_ids.filter((id) => id !== b.id),
+                              }));
+                            }}
+                          />
+                          <span className="text-sm">
+                            {b.bot_name}
+                            <span className="text-muted-foreground ml-1">@{b.bot_username}</span>
+                            {b.is_primary && <Badge variant="outline" className="ml-2 text-[10px]">основной</Badge>}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+                <p className="text-xs text-muted-foreground">
+                  Сообщение уйдёт через каждый выбранный бот тем пользователям, у которых есть с ним диалог.
+                </p>
               </div>
 
               <Separator />
