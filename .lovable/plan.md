@@ -1,130 +1,212 @@
+да, согласен, с учетом правок:
 
+1. **Базой для визуала сделать именно карточку контакта.**  
+Не копировать её стили вручную в новую локальную константу. Использовать тот же паттерн/те же классы как основу и только **увеличить размер** карточки эфира поверх этого референса.
+2. **Это только UI-переупаковка существующей карточки эфира.**  
+Никаких новых функций, новых сущностей, новых сценариев работы, новых полей form state, новых payload, новых save-path. Только другое отображение уже существующих секций.
+3. **Не уводить задачу в отдельную новую реализацию.**  
+По возможности делать в **том же AdminLiveEvents.tsx**, без вынесения новой бизнес-логики и без “новой карточки эфира”.  
+Допускается только минимальный локальный UI-рефакторинг, если он не меняет поведение.
+4. **Контейнер менять только если это безопасно.**  
+Цель — визуально и по UX как карточка контакта, но если для этого не нужно переводить всё на новый Sheet, то лучше оставить текущий open/close-контур и просто привести внешний вид к тому же паттерну.  
+Нельзя ломать:
+  - open create / open edit,
+  - Esc,
+  - клик по overlay,
+  - cancel,
+  - delete,
+  - reset формы.
+5. **Под-вкладки реально перенести внутрь “Дополнительно”.**  
+Блоки:  
 
-# План: security hardening — финальная версия с правками
+  - Комната
+  - Комментарии
+  - Вопросы
+  - Модерация
+  - Сценарий
+  - Блоки
+  - CTA
+  - Тема  
+  должны быть внутри карточки эфира, а старый внешний блок под формой нужно **убрать полностью**, чтобы не было дубля.
+6. **Горизонтальный scroll вкладок обязателен.**  
+И для верхнего уровня, и для второго уровня внутри “Дополнительно”.  
+flex-wrap не использовать. Нужен UX **один в один как в карточке контакта**.
+7. **AutowebModeEditor не выносить в отдельную новую логику.**  
+Оставить его в той же бизнес-зоне, где он уже есть, просто визуально поместить в нужную вкладку. Саму логику не менять.
+8. **Gate после первого сохранения сохранить 1:1.**  
+До первого save во вкладке “Дополнительно” показывать только empty-state / подсказку.  
+После первого save — появляются существующие под-вкладки.  
+Это поведение не менять.
+9. **Dropdown / Select / Popover привести к удобному scroll-поведению**, но только визуально:
+  - длинные списки должны скроллиться;
+  - никаких изменений данных, query, handlers.
+10. **DoD усилить регрессионной проверкой:**
 
-## Принципы
+&nbsp;
 
-- Add-only / safe-change only. Никаких новых доступов «на будущее».
-- Этап A (critical) и этап B (warn) — две отдельные миграции, не сливать.
-- Все правки только на основании подтверждённого discovery.
-- Отчёт на русском, с before/after pg_policies, SQL proof и повторным scan/linter.
+- create работает;
+- edit работает;
+- save работает;
+- delete работает;
+- cancel работает;
+- Esc работает;
+- overlay-close работает;
+- повторное открытие формы не ломает state;
+- payload и validation не изменены.
 
-## Discovery — итог
+11. **Proof-пакет обязателен:**
 
-**CRITICAL (подтверждено):**
-1. `public.ilex_documents` — SELECT policy `USING (true)` для authenticated. INSERT/UPDATE/DELETE уже scoped по `saved_by`. Admin-read use-case в коде **не подтверждён** — admin override не добавляем.
-2. `storage.objects` policy `System can upload document files` — `roles:{public}` + `WITH CHECK (bucket_id='documents')`. Grep по клиенту: `storage.from('documents')` отсутствует, все upload'ы идут через edge (service_role). Заменяющий authenticated INSERT не вводим.
+- create mode;
+- edit mode;
+- “Дополнительно” до первого save;
+- “Дополнительно” после save с под-вкладками;
+- длинный Select со scroll;
+- успешный save без регрессий.
 
-**Contextual / warn:**
-3. `realtime.messages` — проект использует только `postgres_changes` (30 файлов, 0 `private: true`, 0 Broadcast/Presence). DDL не нужен.
-4. Public buckets listing — `owner-photos` listing подтверждён (admin uploader); остальные (`avatars`, `signatures`, `training-content`, `webinar-prestart`, `tariff-media`, `training-assets`) listing не используется.
-5. `trg_site_form_submissions_public_id`, `validate_training_content_rule` — `proconfig=NULL`.
-6. `media_jobs`, `notification_outbox`, `subscription_payment_credentials`, `support_ticket_counters` — service-role only by design.
+Главный смысл: **не создавать ничего нового, не дублировать карточку, не трогать логику эфиров, а только переупаковать существующую карточку в tabs-UX по образцу карточки контакта, но крупнее и удобнее.**
 
-## Этап A — Migration 1: critical fixes
+&nbsp;
 
-Один файл: `supabase/migrations/<ts>_security_critical_ilex_and_documents.sql`
+# План: рефакторинг карточки эфира во вкладки по образцу карточки контакта
 
-### A.1. `public.ilex_documents` — сузить SELECT
+## Цель
 
-```sql
-DROP POLICY IF EXISTS "Authenticated users can read all ilex documents"
-  ON public.ilex_documents;
+Только UI/UX-патч существующего диалога создания/редактирования эфира в `src/pages/admin/AdminLiveEvents.tsx`. Никакой бизнес-логики, миграций, новых полей, edge-функций, replay/publish/folder/lesson, изменений payload/validation/handlers. Визуал и поведение вкладок — один в один как в `ContactDetailSheet`, но больше по размеру.
 
-CREATE POLICY "Users can read own ilex documents"
-  ON public.ilex_documents FOR SELECT TO authenticated
-  USING (auth.uid() = saved_by);
+## Канонический референс: `ContactDetailSheet`
+
+Что копируем 1:1 (структура, не данные):
+
+```
+Sheet (right-side) → SheetContent (SHEET_SHELL_CLASS, flex flex-col overflow-hidden)
+├── SheetHeader  (flex-shrink-0, p-4 sm:p-6)
+├── Tabs (flex-1 flex flex-col min-h-0 overflow-hidden, value/onValueChange controlled)
+│   ├── div.flex-shrink-0.overflow-x-auto.scrollbar-none   ← горизонтальный скролл вкладок РАЗРЕШЁН
+│   │   └── TabsList.inline-flex.w-auto.whitespace-nowrap.bg-transparent.h-auto
+│   │       └── TabsTrigger.text-xs sm:text-sm.px-2.5 sm:px-3   (по 5 шт.)
+│   ├── Separator
+│   └── div[ref=scrollContainerRef].flex-1.overflow-y-auto   ← вертикальный скролл ТОЛЬКО внутри активной вкладки
+│       └── div.px-4 sm:px-6.py-4.pb-24
+│           └── TabsContent (m-0 space-y-4)
+└── (футер действий — внизу, sticky)
 ```
 
-INSERT/UPDATE/DELETE — не трогаем. Admin override — **не добавляем** (нет подтверждённого use-case).
+Этот же паттерн применяем к карточке эфира.
 
-### A.2. `storage.objects` / bucket `documents` — закрыть unsafe INSERT
+## Что меняем в `src/pages/admin/AdminLiveEvents.tsx`
 
-```sql
-DROP POLICY IF EXISTS "System can upload document files"
-  ON storage.objects;
-```
+### 1. Шелл диалога
 
-Заменяющий authenticated INSERT **не создаём**: client-side upload в `documents` отсутствует. Service_role обходит RLS — edge продолжит работать. SELECT/UPDATE/DELETE для bucket `documents` не трогаем (уже owner-scoped).
+Заменить текущий `<Dialog>/<DialogContent>` (lines 1035-1652) на `<Sheet>/<SheetContent>` с собственным шеллом-классом, аналогичным `SHEET_SHELL_CLASS`, но **больше** по размеру:
 
-### A.3. Verify (этап A)
+- Создать локальную константу `LIVE_EVENT_SHEET_SHELL_CLASS` рядом с компонентом (не трогаем общий `sheetShell.ts`):
+  - ширина: `w-[calc(100%-1rem)] sm:w-[calc(100%-2rem)] sm:max-w-5xl` (vs `max-w-3xl` у контактов);
+  - высота: `!h-[calc(100dvh-1rem)] sm:!h-[calc(100dvh-2rem)] !max-h-[calc(100dvh-2rem)]`;
+  - позиция/радиусы/safe-area — идентично `SHEET_SHELL_CLASS`;
+  - `flex flex-col overflow-hidden p-0`.
 
-- SQL proof: from `user_A` viewpoint `SELECT count(*) FROM ilex_documents` = только свои; от `user_B` записи user_A не видны.
-- Storage proof: anon `INSERT` в `documents` denied; service_role insert через edge работает.
-- UI smoke: страница iLex (`useIlexApi`) у обычного пользователя — список своих документов, без RLS-ошибок.
+Альтернатива (если решим оставить Dialog для минимального дифа): `DialogContent` с `max-w-5xl`, `h-[min(900px,90vh)]`, `flex flex-col overflow-hidden p-0`. Финальный выбор — Sheet, чтобы UX был **полностью** тождественен карточке контакта (правый sheet, не модал по центру).
 
-## Этап B — Migration 2: warn/contextual
+### 2. Структура вкладок
 
-Один файл: `supabase/migrations/<ts>_security_warn_search_path_and_buckets.sql`
+Внутри `<Sheet>` — один controlled `<Tabs value=... onValueChange=...>` с `useState("basic")`. Сброс на `"basic"` при открытии диалога (`useEffect` по `dialogOpen`/`editingId`).
 
-### B.1. Functions search_path
+**Уровень 1 (5 вкладок):**
 
-```sql
-ALTER FUNCTION public.trg_site_form_submissions_public_id() SET search_path = public;
-ALTER FUNCTION public.validate_training_content_rule() SET search_path = public;
-```
 
-Тела не меняем.
+| value           | label         | содержимое (переносим как есть)                                                                                                                                                                                 |
+| --------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `basic`         | Основное      | селектор event_type (если !editingId) + бейдж типа + AutowebModeEditor (для recorded_webinar/autowebinar) + FormSection «Основное» (название/slug/описание/дата/время/TZ) + Summary block + Readiness checklist |
+| `source`        | Источник      | FormSection «Живой эфир Kinescope» / «Источник видео» (lines 1147-1314) + Source Debug Block (lines 1517-1579) + Collapsible «Расширенные настройки» (lines 1582-1609)                                          |
+| `access`        | Доступ        | FormSection с `LiveEventAccessRulesEditor` (lines 1319-1324) + FormSection «Приглашения» (lines 1329-1355) + блок «Публикация» (lines 1463-1495)                                                                |
+| `notifications` | Уведомления   | FormSection «Уведомления» (lines 1361-1456). Для не-`live_stream` — info-empty-state «Доступно для живых эфиров»                                                                                                |
+| `extras`        | Дополнительно | (уровень 2, см. ниже). Если `!editingId` — info-empty-state: «Доступно после первого сохранения» — это сохраняет текущее правило `editingId`-gate.                                                              |
 
-### B.2. Public buckets — убрать broad public listing там, где он не нужен
 
-Для каждого bucket: `DROP` текущей broad public SELECT policy. **Заменяющий broad SELECT не создаём.** Прямой доступ к файлам у public buckets идёт через bucket-level `public = true` (Supabase отдаёт публичные URL без RLS на чтение конкретного объекта по URL), поэтому удаление SELECT-policy убивает только `.list()` и cross-file enumeration, не ломая `getPublicUrl`.
+**Уровень 2 (внутри `extras`, только при `editingId`):**
 
-Buckets, у которых сносим public SELECT:
-- `avatars`
-- `signatures`
-- `training-content`
-- `webinar-prestart`
-- `tariff-media`
-- `training-assets`
+Переносим существующий `<Tabs defaultValue="comments">` блок (lines 2440-2506) — целиком, без изменения внутренних компонентов, **из тела страницы внутрь TabsContent value="extras"**. Состав 8 под-вкладок и порядок — как просил пользователь:
 
-Точные имена policies возьмём из `pg_policies` непосредственно перед написанием миграции (через `DROP POLICY IF EXISTS "<name>" ON storage.objects` для каждой найденной broad public SELECT-policy в этих bucket'ах).
+1. `room` — Комната (`WebinarRoomSettingsCard`)
+2. `comments` — Комментарии (`LiveEventComments`)
+3. `questions` — Вопросы (`LiveEventQuestions`)
+4. `moderation` — Модерация (`LiveEventModerationPanel`)
+5. `scenario` — Сценарий (`LiveEventScenario`)
+6. `blocks` — Блоки (`LiveEventRoomBlocksEditor`)
+7. `cta` — CTA (`LiveEventProductCtaBindings` + `LiveEventCtaRuntimePanel`)
+8. `theme` — Тема (`LiveEventThemeEditor`)
 
-Buckets, которые **не трогаем**:
-- `owner-photos` — listing подтверждён (admin uploader/edge generate-cover) — accepted risk / justified.
-- `documents-templates` — private bucket, не в scope warn.
+Под-вкладки тоже стилизуем по паттерну контакта: горизонтальный скролл-контейнер + `TabsList` `inline-flex w-auto whitespace-nowrap bg-transparent h-auto`. **Заменяем** текущий `flex flex-wrap` на горизонтальный скролл — это согласовано пользователем.
 
-### B.3. realtime.messages — без DDL
+Кнопка «Экспорт данных» (lines 2444-2447) — оставить шапкой над под-вкладками внутри `extras` (логика не трогается).
 
-Документируем как **not applicable for current usage** (только `postgres_changes`).
+### 3. Скроллы — финальные правила
 
-### B.4. 4 service-role-only таблицы — без DDL
+- **Внешний контейнер** (`SheetContent`): `overflow-hidden`, скролла нет.
+- **Tabs bar (level-1)**: обёртка `overflow-x-auto scrollbar-none` → горизонтальный скролл вкладок разрешён (как в контакте).
+- **Tabs bar (level-2 внутри `extras`)**: то же самое — горизонтальный скролл разрешён.
+- **Контент активной вкладки**: единственный вертикальный скролл — `div.flex-1.overflow-y-auto` под Tabs (один на весь Sheet, как в контакте). Внутри `TabsContent` — `m-0 space-y-4`.
+- **Под-вкладки `comments/questions/moderation**`: оставить текущее `h-[500px] overflow-hidden` (внутренние блоки с собственным скроллом — это уже существующая логика).
+- **Длинной single-page формы больше нет** — секции живут только внутри своих вкладок.
 
-Документируем как **closed by design**, fake deny-policy не добавляем.
+### 4. Dropdown / Select / Popover внутри карточки
 
-### B.5. Verify (этап B)
+Привести к единому стандарту, как в админских карточках (без изменения данных и обработчиков):
 
-- Linter: `function_search_path_mutable` уходит для двух функций; `public_bucket_allows_listing` уходит для 6 сужённых buckets.
-- Smoke: открытие аватара/подписи/training-content/webinar-prestart/tariff-media/training-assets по прямому public URL — отображается. `.list()` для этих bucket'ов из клиента — пусто/denied (это и нужно).
-- Realtime smoke: подписки tickets/live/instagram/telegram продолжают работать (`postgres_changes` не затронут).
+- Все `<SelectContent>` внутри диалога эфира — добавить `className="max-h-[60vh] overflow-y-auto"`.
+- Все `<PopoverContent>` (если используются для Kinescope project/video pickers, продуктовых селектов в `LiveEventAccessRulesEditor`) — `max-h-[60vh] overflow-y-auto`.
+- Затронутые места: Kinescope project select (line 1255), Kinescope video select (line 1278), invite_mode Select (line 1330), notification-related селекты, продуктовые селекты внутри `LiveEventAccessRulesEditor` (правка минимальная и только если там сейчас нет max-h — иначе не трогаем).
 
-## Регресс-чек (что прогнать после обеих миграций)
+### 5. Футер действий
 
-1. iLex: «мои документы» отображаются у обычного пользователя.
-2. Edge-функция, генерирующая документы в bucket `documents`, успешно загружает файл (service_role).
-3. Аватары/подписи/training-content отображаются на сайте по прямым URL.
-4. Realtime обновления Kanban / live-комнаты / instagram / telegram приходят без задержки.
-5. `npm run build` проходит, типы supabase не требуют обновления (только policies, без schema).
+В шелле Sheet — sticky-нижний `div.flex-shrink-0.border-t.p-4` с двумя кнопками («Отмена», «Сохранить/Создать»), идентичными текущим (lines 1641-1650). Логика и `disabled`-условия — без изменений.
 
-## STOP-guards
+## Что НЕ трогаем
 
-- Не добавляем admin-read в `ilex_documents` без подтверждённого admin flow.
-- Не добавляем authenticated INSERT в `documents` без подтверждённого client-side upload.
-- Не «чиним listing» через `name <> ''` — это не блокирует listing.
-- Не делаем DDL по `realtime.messages`.
-- Не добавляем декоративные deny-policy на service-role-only таблицы.
-- Не переводим public buckets в private в рамках этого патча.
-
-## DoD
-
-- 0 critical findings по `ilex_documents` и `documents` bucket.
-- Linter: 0 `function_search_path_mutable`, 0 `public_bucket_allows_listing` для сужённых buckets.
-- Отчёт содержит: список миграций, diff, before/after `pg_policies`, повторный security scan, повторный linter, SQL proof (owner vs other vs anon), runtime smoke (iLex + публичные buckets + realtime), accepted-risk список (`realtime.messages`, `owner-photos`, 4 service-role-only таблицы).
+- `saveMutation`, `form`-state, `handleTitleChange`, `slugExists`, `canPublish`, `blockers`, `isInviteReady`, `publishAttempted`.
+- `AutowebModeEditor`, `LiveEventAccessRulesEditor`, `LiveEventComments`, `LiveEventQuestions`, `LiveEventModerationPanel`, `LiveEventScenario`, `LiveEventRoomBlocksEditor`, `LiveEventProductCtaBindings`, `LiveEventCtaRuntimePanel`, `LiveEventThemeEditor`, `WebinarRoomSettingsCard`, `LiveEventExportButtons` — переиспользуем как есть.
+- Backend, миграции, edge functions, схему `live_events`, RLS, `metadata`, validation, payload, AlertDialog'и (Recreate/Detach), таблицу со списком эфиров.
+- Правило `editingId`-gate для блоков второго уровня (Comments/Room/...): они продолжают появляться только после первого сохранения — теперь как пустое состояние во вкладке «Дополнительно» до сохранения, и наполненный level-2 Tabs после.
 
 ## Файлы
 
-- `supabase/migrations/<ts>_security_critical_ilex_and_documents.sql` — этап A
-- `supabase/migrations/<ts>_security_warn_search_path_and_buckets.sql` — этап B
+- `src/pages/admin/AdminLiveEvents.tsx` — единственный изменяемый файл.
+  - Заменить `<Dialog>` диалог lines 1035-1652 на `<Sheet>` с tabs-структурой.
+  - Перенести блок lines 2440-2506 внутрь TabsContent `extras`. Удалить его из тела страницы.
+  - Добавить локальный `LIVE_EVENT_SHEET_SHELL_CLASS`.
+  - Добавить `useState` для `activeTab` и `extrasTab` + `useEffect` сброса при открытии.
 
-UI/edge код не меняется.
+Никаких других файлов.
 
+## STOP-guards
+
+- Не редактируем `src/lib/sheetShell.ts` (общий шелл).
+- Не меняем internals под-компонентов.
+- Не меняем `saveMutation.mutate(form)` payload.
+- Не уменьшаем `sm:max-w-5xl` ниже `4xl` и не превышаем `6xl` (разумный предел — больше карточки контакта `3xl`, но не во весь экран).
+- Не запрещаем горизонтальный скролл вкладок — он обязателен по обновлённому правилу.
+- Не убираем `editingId`-gate для второго уровня вкладок.
+- Не используем `flex-wrap` для TabsList — только горизонтальный скролл.
+
+## Diagnose / Dry run
+
+Compile-чек после правки (`npm run build`), визуальный просмотр в preview:
+
+- открыть `/admin/live-events` (логин dev `123456`),
+- «Создать эфир» → должно открыться правым sheet'ом, видны 5 вкладок level-1, во вкладке «Дополнительно» — empty-state «Доступно после первого сохранения»,
+- сохранить минимальный draft → переоткрыть → во вкладке «Дополнительно» появились 8 под-вкладок с горизонтальным скроллом,
+- проверить, что вертикальный скролл есть только внутри активной вкладки, а не у всего sheet,
+- открыть Select продукта в «Доступ» → list скроллится в пределах `max-h-[60vh]`,
+- сохранить изменения → save mutation отрабатывает как раньше,
+- AutowebModeEditor виден во вкладке «Основное» при выборе «Видео / Автовебинар».
+
+## DoD
+
+- Карточка эфира — правый Sheet, шелл идентичен карточке контакта, но шире (`sm:max-w-5xl`) и выше (`100dvh-2rem`).
+- 5 верхних вкладок: Основное / Источник / Доступ / Уведомления / Дополнительно — горизонтальный скролл tabs-bar работает.
+- Внутри «Дополнительно» — 8 существующих под-вкладок (Комната / Комментарии / Вопросы / Модерация / Сценарий / Блоки / CTA / Тема), горизонтальный скролл — есть.
+- Длинной одностраничной формы больше нет; вертикальный скролл — только внутри активной вкладки.
+- Все Select/Popover внутри диалога — `max-h-[60vh] overflow-y-auto`.
+- create / edit / cancel / delete / autowebinar / access rules / room/comments/.../theme работают как раньше — payload и handlers не изменены.
+- Под-вкладки доступны только после первого сохранения (правило сохранено).
+- Скрин-proof в preview: открытие Create → 5 вкладок → empty-state «Дополнительно»; открытие Edit существующего → все 8 под-вкладок видны и работают; раскрытый Select продукта со скроллом; успешный Save без ошибок.
