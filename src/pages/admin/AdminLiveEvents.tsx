@@ -1079,7 +1079,7 @@ export default function AdminLiveEvents() {
               </div>
               <Separator className="mx-4 sm:mx-6" />
 
-              <div className="flex-1 overflow-y-auto">
+              <div className="flex-1 overflow-y-auto bg-muted/30">
                 <div className="px-4 sm:px-6 py-4 pb-8 min-w-0 [&_*]:min-w-0">
                   {/* === TAB: Основное === */}
                   <TabsContent value="basic" className="m-0 space-y-4">
