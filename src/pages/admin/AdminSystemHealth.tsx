@@ -37,12 +37,16 @@ export default function AdminSystemHealth() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [copiedAll, setCopiedAll] = useState(false);
 
+  const queryClient = useQueryClient();
+
   const { data: latestFullCheck, isLoading: fullCheckLoading } = useLatestFullCheck();
   const { data: reports = [] } = useSystemHealthReports();
-  const { data: latestHealth, isLoading: latestLoading, refetch: refetchLatest } = useLatestSystemHealth();
+  // Owner-view (Проблемы / Ручная проверка / Diff) использует ТОЛЬКО full-check контур.
+  // useLatestSystemHealth / useSystemHealthRuns остаются исключительно для вкладки «Техинфо» (nightly).
+  const { data: latestHealth, isLoading: latestLoading } = useLatestSystemHealth();
   const { data: runs = [] } = useSystemHealthRuns();
   const { data: legacyNoise = { total: 0, bySourceInvariant: [] } } = useLegacyNoiseBreakdown();
-  const triggerCheck = useTriggerHealthCheck();
+  const triggerFullCheck = useTriggerFullCheck();
 
   const isLoading = fullCheckLoading || latestLoading;
 
