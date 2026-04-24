@@ -80,7 +80,6 @@ import { ColumnSettings } from "@/components/admin/ColumnSettings";
 import { LiveEventsTable } from "@/components/admin/live/LiveEventsTable";
 import { useLiveEventsColumns, LIVE_EVENTS_LOCKED_KEYS } from "@/hooks/useLiveEventsColumns";
 import { AutowebModeEditor, type AutowebUserMode as AutowebUserModeT, type AutowebConfig } from "@/components/admin/live/AutowebModeEditor";
-import { RecordingTab } from "@/components/admin/live/RecordingTab";
 
 // Final follow-up sprint PATCH F3: отдельная компактная ячейка count активных участников
 function ActiveParticipantsCell({ eventId }: { eventId: string }) {
@@ -167,13 +166,6 @@ interface LiveEventForm {
   // Sprint A — autowebinar
   autoweb_user_mode: AutowebUserMode;
   autoweb_config: AutowebConfig;
-  // Recording tab (Phase 1) — replay target folder for "Опубликовать запись"
-  replay_menu_section_key: string;
-  replay_parent_module_id: string | null;
-  /** read-only mirror from metadata.replay_lesson_id */
-  replay_lesson_id: string | null;
-  replay_publish_status: "idle" | "published" | "error";
-  replay_publish_error: string | null;
 }
 
 const defaultForm: LiveEventForm = {
@@ -222,11 +214,6 @@ const defaultForm: LiveEventForm = {
       allow_rewatch_before_end: false,
     },
   },
-  replay_menu_section_key: "",
-  replay_parent_module_id: null,
-  replay_lesson_id: null,
-  replay_publish_status: "idle",
-  replay_publish_error: null,
 };
 
 const platformStatusLabels: Record<string, string> = {
@@ -719,12 +706,6 @@ export default function AdminLiveEvents() {
         mergedMetadata.last_provider_sync_at = new Date().toISOString();
       }
 
-      // Persist replay_target (Phase 1: recording publish target folder)
-      mergedMetadata.replay_target = {
-        menu_section_key: data.replay_menu_section_key || null,
-        parent_module_id: data.replay_parent_module_id || null,
-      };
-
       // Always persist notification_settings
       mergedMetadata.notification_settings = {
         enabled: data.notification_enabled,
@@ -915,11 +896,6 @@ export default function AdminLiveEvents() {
           : "one_time"
       ),
       autoweb_config: ((event as any).autoweb_config as AutowebConfig) ?? defaultForm.autoweb_config,
-      replay_menu_section_key: meta.replay_target?.menu_section_key || "",
-      replay_parent_module_id: meta.replay_target?.parent_module_id || null,
-      replay_lesson_id: meta.replay_lesson_id || null,
-      replay_publish_status: (meta.replay_publish_status as "idle" | "published" | "error") || "idle",
-      replay_publish_error: meta.replay_publish_error || null,
     });
     setDialogOpen(true);
   };
@@ -1057,7 +1033,7 @@ export default function AdminLiveEvents() {
 
         {/* --- Create/Edit Dialog --- */}
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogContent className="w-[calc(100vw-1rem)] sm:w-[calc(100vw-2rem)] max-w-4xl max-h-[90vh] overflow-y-auto overflow-x-hidden p-3 sm:p-6">
+          <DialogContent className="w-[calc(100vw-1rem)] sm:w-[calc(100vw-2rem)] max-w-2xl max-h-[90vh] overflow-y-auto overflow-x-hidden p-3 sm:p-6">
             <DialogHeader>
               <DialogTitle>{editingId ? "Редактировать эфир" : "Создать эфир"}</DialogTitle>
             </DialogHeader>
@@ -1515,26 +1491,6 @@ export default function AdminLiveEvents() {
                       ? "Запись станет доступна пользователям только после завершения эфира"
                       : "Пользователи смогут посмотреть запись после завершения эфира"
                   }
-                />
-              </FormSection>
-
-              <Separator />
-
-              {/* Section 5b: Recording → Knowledge Base (Phase 1: manual publish) */}
-              <FormSection title="Запись в Базе знаний">
-                <RecordingTab
-                  eventId={editingId}
-                  replayEnabled={form.replay_enabled}
-                  onReplayEnabledChange={(v) => setForm({ ...form, replay_enabled: v })}
-                  menuSectionKey={form.replay_menu_section_key}
-                  onMenuSectionKeyChange={(v) => setForm({ ...form, replay_menu_section_key: v })}
-                  parentModuleId={form.replay_parent_module_id}
-                  onParentModuleIdChange={(v) => setForm({ ...form, replay_parent_module_id: v })}
-                  replayLessonId={form.replay_lesson_id}
-                  replayPublishStatus={form.replay_publish_status}
-                  replayPublishError={form.replay_publish_error}
-                  title={form.title}
-                  hasKinescopeVideoId={!!form.kinescope_video_id}
                 />
               </FormSection>
 
