@@ -68,6 +68,7 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { BroadcastTemplatesSection } from "./BroadcastTemplatesSection";
+import { ScheduledBroadcastsSection } from "./scheduled/ScheduledBroadcastsSection";
 
 import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
 import { RuleListEditor } from "./RuleListEditor";
@@ -115,7 +116,7 @@ interface MediaFile {
 
 export function BroadcastsTabContent() {
   const queryClient = useQueryClient();
-  const [mainTab, setMainTab] = useState<"templates" | "quick">("templates");
+  const [mainTab, setMainTab] = useState<"templates" | "quick" | "scheduled">("templates");
   const [activeTab, setActiveTab] = useState<"telegram" | "email">("telegram");
   const [message, setMessage] = useState("");
   const [emailSubject, setEmailSubject] = useState("");
@@ -439,14 +440,19 @@ const [includeButton, setIncludeButton] = useState(true);
   return (
     <div className="container max-w-6xl py-6 space-y-6 overflow-auto h-full">
       {/* Main Tabs: Templates vs Quick Send */}
-      <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as "templates" | "quick")}>
+      <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as "templates" | "quick" | "scheduled")}>
         <TabsList>
           <TabsTrigger value="templates">📋 Шаблоны</TabsTrigger>
           <TabsTrigger value="quick">⚡ Быстрая рассылка</TabsTrigger>
+          <TabsTrigger value="scheduled">📅 Запланированные</TabsTrigger>
         </TabsList>
 
         <TabsContent value="templates" className="mt-6">
           <BroadcastTemplatesSection />
+        </TabsContent>
+
+        <TabsContent value="scheduled" className="mt-6">
+          <ScheduledBroadcastsSection />
         </TabsContent>
 
         <TabsContent value="quick" className="mt-6">

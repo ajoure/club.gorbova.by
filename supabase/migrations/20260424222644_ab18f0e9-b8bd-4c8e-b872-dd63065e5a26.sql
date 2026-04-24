@@ -1,0 +1,1 @@
+UPDATE public.broadcast_dispatcher_config SET enabled = false WHERE id = 1;
