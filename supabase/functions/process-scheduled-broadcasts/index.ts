@@ -169,9 +169,12 @@ Deno.serve(async (req) => {
     const totalCount = Number(aud.total_count || 0);
 
     // ===== Anti-empty-audience guard =====
+    // SAFETY: never mark template as 'sent' on empty audience.
+    //  - scheduled  → revert to 'draft', clear next_run_at, requires operator action
+    //  - recurring  → roll forward next_run_at to the next slot (skip cycle), keep status
+    //  - dry_run    → just record skipped run, no template mutation
     if (totalCount === 0) {
       console.warn(`[broadcast-dispatcher] template ${tpl.id} empty audience — skipping send`);
-      // Still record a skipped run so it shows in history
       const epochMin = Math.floor(Date.now() / 60000);
       for (const channel of channels) {
         const idemKey = `tpl:${tpl.id}:${channel}:${epochMin}:${triggeredBy}`;
@@ -183,6 +186,7 @@ Deno.serve(async (req) => {
           idempotency_key: idemKey,
           audience_count: 0,
           skipped_count: 1,
+          status: 'failed',
           finished_at: new Date().toISOString(),
           error: 'empty_audience',
           audience_snapshot: { telegram_count: tgCount, email_count: emailCount, total_count: 0 },
@@ -190,10 +194,45 @@ Deno.serve(async (req) => {
       }
       totalSkipped += 1;
 
-      // For one-shot scheduled: still advance to 'sent' to avoid infinite re-pick
-      // For recurring: roll forward next_run_at so we try next slot
-      await advanceTemplate(supabase, tpl, isDryRun);
-      perTemplateLog.push({ template_id: tpl.id, skipped: 'empty_audience' });
+      if (!isDryRun) {
+        const nowIso2 = new Date().toISOString();
+        if (tpl.send_mode === 'recurring' && tpl.recurrence_rule) {
+          // Skip this cycle — roll forward to next slot. Status stays 'recurring'.
+          const { data: nextTs } = await supabase
+            .rpc('compute_next_broadcast_run', { rule: tpl.recurrence_rule, from_ts: nowIso2 });
+          await supabase.from('broadcast_templates').update({
+            last_run_at: nowIso2,
+            next_run_at: nextTs ?? null,
+            // do NOT increment total_runs/sent_count — nothing was sent
+          }).eq('id', tpl.id);
+        } else {
+          // One-shot scheduled: revert to draft so it does NOT re-pick infinitely,
+          // but is also NOT falsely marked as 'sent'. Operator must re-schedule.
+          await supabase.from('broadcast_templates').update({
+            status: 'draft',
+            send_mode: 'manual',
+            next_run_at: null,
+            last_run_at: nowIso2,
+          }).eq('id', tpl.id);
+        }
+
+        // Audit log: explicit warning so operator sees it
+        await supabase.from('audit_logs').insert({
+          action: 'broadcast_empty_audience_skip',
+          entity_type: 'broadcast_template',
+          entity_id: tpl.id,
+          actor_type: 'system',
+          meta: {
+            template_name: tpl.name,
+            send_mode: tpl.send_mode,
+            channels,
+            audience_filters: tpl.audience_filters,
+            resolution: tpl.send_mode === 'recurring' ? 'cycle_skipped' : 'reverted_to_draft',
+          },
+        });
+      }
+
+      perTemplateLog.push({ template_id: tpl.id, skipped: 'empty_audience', resolution: tpl.send_mode === 'recurring' ? 'cycle_skipped' : 'reverted_to_draft' });
       continue;
     }
 
