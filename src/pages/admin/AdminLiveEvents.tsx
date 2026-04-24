@@ -1184,9 +1184,10 @@ export default function AdminLiveEvents() {
                   </div>
                 </div>
               </FormSection>
+                  </TabsContent>
 
-              <Separator />
-
+                  {/* === TAB: Источник === */}
+                  <TabsContent value="source" className="m-0 space-y-4">
               {/* Section 2: Kinescope source */}
               <FormSection title={isLiveStream ? "Живой эфир Kinescope" : "Источник видео"}>
                 {isLiveStream ? (
