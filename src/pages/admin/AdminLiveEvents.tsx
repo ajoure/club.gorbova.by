@@ -1790,11 +1790,16 @@ export default function AdminLiveEvents() {
 // --- Sub-components ---
 
 function FormSection({ title, children }: { title?: string; children: React.ReactNode }) {
+  // Mirrors ContactDetailSheet visual pattern: white Card with header on muted background.
   return (
-    <section className="space-y-3">
-      {title && <h3 className="text-sm font-semibold text-foreground/80">{title}</h3>}
-      {children}
-    </section>
+    <Card>
+      {title && (
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm text-muted-foreground">{title}</CardTitle>
+        </CardHeader>
+      )}
+      <CardContent className="space-y-3">{children}</CardContent>
+    </Card>
   );
 }
 
