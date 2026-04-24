@@ -192,6 +192,50 @@ Deno.serve(async (req) => {
       productContextId = (rawPcid && rawPcid !== 'all') ? rawPcid : null;
       templateType = body.template_type || null;
       liveEventId = body.live_event_id || null;
+
+      // ===== add-only: support media_url (signed/public URL or storage path) =====
+      // Used by scheduled/recurring dispatcher (process-scheduled-broadcasts)
+      // which stores media in Storage and passes a URL instead of binary.
+      if (body.media_url || body.media_storage_path) {
+        try {
+          mediaType = body.media_type || null;
+          mediaFileName = body.media_file_name || 'media';
+
+          let downloadUrl: string | null = body.media_url || null;
+
+          // If only storage_path provided, sign it via service role
+          if (!downloadUrl && body.media_storage_path) {
+            const sbUrl = Deno.env.get('SUPABASE_URL')!;
+            const sbKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+            const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2.45.0');
+            const admin = createClient(sbUrl, sbKey);
+            const path: string = body.media_storage_path;
+            // Expect path like "telegram-media/<file>" or "<bucket>/<file>"
+            const slash = path.indexOf('/');
+            const bucket = slash > 0 ? path.slice(0, slash) : 'telegram-media';
+            const key = slash > 0 ? path.slice(slash + 1) : path;
+            const { data: signed, error: signErr } = await admin.storage
+              .from(bucket)
+              .createSignedUrl(key, 3600);
+            if (signErr) throw signErr;
+            downloadUrl = signed?.signedUrl || null;
+          }
+
+          if (downloadUrl) {
+            const resp = await fetch(downloadUrl);
+            if (!resp.ok) {
+              throw new Error(`Failed to download media: HTTP ${resp.status}`);
+            }
+            mediaBuffer = await resp.arrayBuffer();
+          }
+        } catch (e) {
+          console.error('[telegram-mass-broadcast] media_url download failed:', e);
+          return new Response(
+            JSON.stringify({ error: `Media download failed: ${(e as Error).message}` }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+      }
     }
 
     const isWebinarInvite = templateType === 'webinar_invite' && !!liveEventId;
