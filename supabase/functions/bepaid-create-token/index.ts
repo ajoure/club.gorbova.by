@@ -727,7 +727,7 @@ Deno.serve(async (req) => {
       const amountKopecks = Math.round(paymentAmount * 100);
       const checkoutResult = await createPaymentCheckout({
         supabase,
-        user_id: userId,
+        user_id: userId as string,
         product_id: productId,
         tariff_id: tariffIdForCheckout,
         amount: amountKopecks,
