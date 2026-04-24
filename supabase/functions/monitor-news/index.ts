@@ -1002,7 +1002,7 @@ async function scrapeSourceWithFallback(
   
   console.log(`[monitor-news] ${source.name}: STAGE 2 - HTML scrape (proxy: ${initialProxyMode})...`);
   // P0.9.1-2: Pass ilexSession to scrapeUrlWithProxy
-  const htmlResult1 = await scrapeUrlWithProxy(source.url, firecrawlKey, effectiveCountry, initialProxyMode, ilexSession);
+  const htmlResult1 = await scrapeUrlWithProxy(source.url, firecrawlKey!, effectiveCountry, initialProxyMode, ilexSession);
   
   await logScrapeAttempt(
     supabase, source, `html_${initialProxyMode}`, source.url, initialProxyMode,
