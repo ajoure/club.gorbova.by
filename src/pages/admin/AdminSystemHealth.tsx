@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
@@ -7,8 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import { Copy, Check, AlertOctagon, AlertTriangle, Settings2, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 
-import { useSystemHealthRuns, useLatestSystemHealth, useTriggerHealthCheck } from "@/hooks/useSystemHealthRuns";
-import { useLatestFullCheck, useSystemHealthReports } from "@/hooks/useSystemHealthFullCheck";
+import { useSystemHealthRuns, useLatestSystemHealth } from "@/hooks/useSystemHealthRuns";
+import { useLatestFullCheck, useSystemHealthReports, useTriggerFullCheck } from "@/hooks/useSystemHealthFullCheck";
 import { useLegacyNoiseBreakdown } from "@/hooks/useLegacyNoiseBreakdown";
 
 import { OwnerStatusHero, type OwnerStatus } from "@/components/admin/system-health/owner/OwnerStatusHero";

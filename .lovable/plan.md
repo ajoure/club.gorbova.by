@@ -1,244 +1,131 @@
+да, согласен, с учетом правок:
 
-# План: расширенный discovery — ночные проверки, инварианты, каналы уведомлений
+1. В Diagnose явно проверь, **какая мутация сейчас реально стоит за** `useTriggerHealthCheck()` и **какая мутация уже есть/отсутствует для full-check**. Не предполагай, что надо “заменить на full-check”, пока не увидишь текущий hook/endpoint и query keys.
+2. В Dry-run добавь явную проверку, **какой именно report берёт** `useLatestFullCheck()`:
+  &nbsp;
+  &nbsp;
+  - по `created_at desc`
+  - по `kind/type`
+  - нет ли фильтра, из-за которого он берёт не тот отчёт.  
+  Иначе можно заменить кнопку, а UI всё равно останется на старом селекторе.
+3. В Execute зафиксируй разделение контуров жёстко:
+  - **owner-view**: только `system_health_reports` / full-check;
+  - **Техинфо**: только `system_health_runs` / nightly.  
+  Никаких общих derived-status между ними.
+4. Для `onRefresh` не просто `refetch`, а **точечная invalidation query keys**:
+  - latest full-check
+  - reports list для diff
+  - и отдельно nightly/runs только для вкладки Техинфо.  
+  Это нужно явно перечислить по именам после Diagnose.
+5. В DoD добавь ещё один пункт:
+  - после нажатия `Запустить проверку` новый report должен быть **новее предыдущего по** `created_at`, и diff должен считаться уже от него, а не от старого cached-объекта.
+6. STOP-guard дополни:
+  - если full-check endpoint не существует как отдельный клиентский hook/mutation, сначала оформить **минимальный фронтовый hook** к уже существующей backend-функции, без изменения backend. Это допустимо и всё ещё UI-only.
+7. В Verify зафиксируй 2 сценария:
+  - `Запустить проверку` → создаётся новый full-check report, owner-view зеленеет;
+  - `Обновить` без запуска → просто подтягивает уже существующий свежий full-check report и тоже убирает false-red без hard reload.
+8. Ничего не меняй в humanize/mapping/карточках owner-view, если Diagnose не покажет, что проблема только в источнике и refresh-flow. Это должен быть чистый fix согласованности данных, без побочных UI-правок.
 
-## Режим
+&nbsp;
 
-Только read-only. Никаких write-операций, миграций, запусков `admin-bepaid-backfill` / `admin-repair-missing-payments` / repair-функций. Никаких новых edge-функций, новых INV, новых таблиц. Никакой UI-разработки. Карточка эфира — отдельный, незакрытый трек, его не трогаем.
+После этих уточнений план можно выполнять.
 
-## Цель
+&nbsp;
 
-Дать единую доказательную картину «что реально проверяется ночью и какое состояние системы», по которой можно построить отдельный fix-plan. Каждое утверждение — с SQL/файл-пруфом. Никаких выводов «по подмножеству».
+План:
 
-## Scope (что входит)
+## Проблема
 
-1. Карта ночного чека (cron → edge → инварианты → отчёт пользователю).
-2. Источник числа `172/172 OK` — полная цепочка.
-3. 4 текущие ошибки: INV-19B, INV-20, INV-22, INV-SITE-1 — данные + семантика правила.
-4. Канал Telegram-уведомлений: оплаты, public payment_links, напоминания о списании.
-5. Канал Email-уведомлений: транзакционные / auth / reminder / system.
-6. Ночное обновление документации.
-7. Кандидаты на новые ночные INV (только список, без реализации).
+На /admin/system-health всё ещё показываются красные INV-P0-1 и INV-P0-4, хотя узкий backend PATCH уже применён и последний `system-health-full-check` в базе зелёный.
 
-Out of scope: правки кода/данных, карточка эфира, новые проверки/feature.
+## Диагностика
 
----
+Фактическое состояние подтверждено read-only:
 
-## Этапы discovery
+- `supabase/functions/system-health-full-check/index.ts` уже содержит новую логику:
+  - `INV-P0-1` → `audit_logs.action='bepaid.payment.upsert_from_last_transaction'`
+  - `INV-P0-4` → RPC `get_cron_runs_24h_count()`
+- В `system_health_reports` уже есть свежий успешный отчёт:
+  - `2026-04-24 18:37:13+00`
+  - `INV-P0-1 = 7, passed=true`
+  - `INV-P0-4 = 4906, passed=true`
+  - общий `status = OK`
+- Но owner-view страницы `/admin/system-health` строится из `useLatestFullCheck()` / `system_health_reports`, а её кнопки сейчас работают не с тем источником:
+  - `Запустить проверку` вызывает `nightly-system-health` через `useTriggerHealthCheck()`
+  - `Обновить` делает только `refetchLatest()` для `system_health_runs`
+- Из-за этого UI «Проблемы сейчас» может продолжать показывать старый full-check report, даже когда backend уже зелёный.
 
-### Этап 1. Карта ночного чека (трек A)
+## Предлагаемое решение
 
-Подпункт «карта ночного чека» — таблица:
+Сделать узкую фронтовую правку согласованности источника истины для owner-view:
 
-| cron job | расписание | какую edge-функцию вызывает | какие INV реально исполняются | какие INV только отображаются | где хранится результат прогона | как формируется текст отчёта пользователю |
-|---|---|---|---|---|---|---|
+1. На `/admin/system-health` привязать верхнюю кнопку `Запустить проверку` к `system-health-full-check`, а не к nightly-check.
+2. Кнопку `Обновить` сделать рефрешем owner-view-источников:
+  - `system_health_reports`
+  - `latestFullCheck`
+  - при необходимости diff-источника последних отчётов
+3. Не менять саму backend-логику инвариантов, cron, bePaid, audit writer’ы и thresholds.
 
-Источники discovery:
-- `SELECT jobname, schedule, command FROM cron.job` — все jobs.
-- `supabase/functions/nightly-system-health/`, `supabase/functions/nightly-payments-invariants/`, `supabase/functions/system-health-full-check/` — индексы и `index.ts` (read).
-- `system_health_runs` / любые таблицы с историей прогонов — `information_schema.tables LIKE '%health%' OR LIKE '%invariant%'`.
-- Telegram-сообщение «🚨 НОЧНАЯ ПРОВЕРКА» — поиск шаблона `НОЧНАЯ ПРОВЕРКА` / `Найдено:` / `INV-` по `supabase/functions/**/index.ts`.
+## Изменяемые компоненты
 
-Вывод этапа 1: схема pipeline + явное расхождение «реально проверено» vs «показано в отчёте» (если есть).
+Только узкий фронтовый scope:
 
-### Этап 2. Источник числа «172/172 OK» (расширено)
+- `src/pages/admin/AdminSystemHealth.tsx`
+- при необходимости минимально:
+  - `src/hooks/useSystemHealthFullCheck.ts`
+  - `src/hooks/useSystemHealthRuns.ts` (только если понадобится явный refetch API для техвкладки)
 
-Полная цепочка, не только «где рендерится»:
+## Что не будет изменено
 
-| звено | что искать | где искать |
-|---|---|---|
-| константа в коде | `172`, `TOTAL_FUNCTIONS`, `EXPECTED_FUNCTIONS_COUNT` | grep по `src/**`, `supabase/functions/**` |
-| env / config | `EDGE_FUNCTIONS_TOTAL` и т.п. | `compgen -e`, `supabase/config.toml`, `secrets--fetch_secrets` |
-| registry | `supabase/functions.registry.txt`, любые JSON-реестры | wc -l реестра, сверка с runtime |
-| SQL / RPC | view вроде `edge_functions_health_v` | `information_schema.views` |
-| edge response | какой JSON отдаёт `system-health-full-check`/`nightly-system-health` | прочитать функции |
-| UI formatter | `src/components/admin/system-health/EdgeFunctionsHealth.tsx`, `useEdgeFunctionsHealth` | прочитать |
-| runtime-подсчёт | есть ли `supabase.functions.list()` или динамический probe | grep |
+- `supabase/functions/system-health-full-check/index.ts`
+- RPC `public.get_cron_runs_24h_count()`
+- `nightly-system-health`
+- cron/jobs
+- webhook bePaid
+- audit writer’ы
+- thresholds / окна
+- UI-классификация инвариантов и тексты карточек
 
-Вывод этапа 2:
-- захардкожено / реестр / runtime;
-- кто кому передаёт значение;
-- одно «единственное» число или их несколько и они расходятся;
-- реальное число функций (`wc -l functions.registry.txt`, минус комментарии) vs то, что показывается.
+## Dry-run
 
-### Этап 3. INV-20 — полная типизация 288 записей (трек B, расширено)
+Перед выполнением проверить:
 
-Не «10 примеров и вывод», а:
+1. какие query keys использует owner-view;
+2. какие именно запросы инвалидируются после ручного запуска full-check;
+3. что верхние карточки действительно рендерятся только из `latestFullCheck.report_json.invariants.results`.
 
-A. **10 примеров** — для ручного разбора (id, created_at, provider, status, reconcile_source, order_source, meta-префиксы).
+## Execute
 
-B. **Полная агрегация** по 288 — каждая по отдельности, без LIMIT:
-   - `GROUP BY provider`;
-   - `GROUP BY reconcile_source`;
-   - `GROUP BY order_source`;
-   - `GROUP BY status`;
-   - `GROUP BY left(id, 4)` или `meta->>'origin'` для префиксного анализа;
-   - `GROUP BY meta->>'payment_flow'`;
-   - распределение по дате (по месяцам — отделить исторический хвост от текущих).
-
-C. **Классификация всех 288** по корзинам:
-   - `real_paid` — реальный платёж, нужен `payments_v2`;
-   - `migration_backfill` — историческая миграция, `payments_v2` не нужен;
-   - `manual_admin` — ручная выдача (`admin-create-public-link` / `manual_charge`);
-   - `synthetic_rule_engine` — `reconcile_source='rule_engine'` (по memory должен быть исключён);
-   - `test_or_demo` — sandbox/test users.
-
-   На выходе — таблица `bucket → count → recommended_action (fix data / fix invariant / add exclusion / accepted)`.
-
-D. **Семантика самого INV-20**: прочитать SQL правила в `nightly-payments-invariants` — учитывает ли оно `reconcile_source IN ('rule_engine','migration')`, `provider='manual'`, `meta->>'no_payment_required'=true`. Зафиксировать: проблема в данных или в правиле.
-
-### Этап 4. INV-19B и INV-22 — семантика правила (расширено)
-
-Для каждой записи (1+4=5 строк) — три измерения:
-1. **Что в строке** (SQL-выгрузка `subscriptions_v2` + `provider_subscriptions` + `meta`).
-2. **Является ли это data error / rule error / accepted transitional state** (например, `redirecting`, `pending_first_charge`, `cooling_off` после `cancel-trial`).
-3. **Корректность самого инварианта** — учитывает ли он окно «после cancel/replace в течение N часов» (по memory `safe-replacement-flow` / `revoke-race-condition-guard`).
-
-Вывод: для каждой записи — одно из {`data_fix_required`, `invariant_logic_fix_required`, `acceptable_transitional`}.
-
-### Этап 5. INV-SITE-1 — страница 969210bb
-
-- `SELECT id, slug, status, blocks FROM site_pages WHERE id LIKE '969210bb%'` — разобрать какие именно блоки невалидны (нет `id`/`type`/`version`).
-- Зафиксировать: проблема в данных конкретной страницы vs валидаторе (он может быть слишком жёстким для legacy-блоков).
-
-### Этап 6. Telegram — карта канала доставки (расширено)
-
-Полная карта доставки для трёх сценариев: оплата, создание public payment_link, напоминание о списании по подписке. Для каждого — таблица:
-
-| звено | что фиксируем |
-|---|---|
-| trigger | webhook `bepaid-webhook` / cron / `admin-create-public-link` / `subscription-renewal-reminders` |
-| очередь / outbox | есть ли `notification_queue`/`telegram_outbox`/прямой вызов |
-| функция-отправитель | `telegram-send-notification`, `telegram-notify-admins`, `telegram-mass-broadcast` |
-| provider / bot | какой `TELEGRAM_BOT_TOKEN`-secret, какой бот, какой `chat_id` (env vs БД) |
-| последний success | logs за 7 дней — `function_edge_logs` + `telegram_logs` |
-| последний fail | classification: 401/403/timeout/no-chat/secret-missing |
-| pipeline-точка fail | где именно цепочка ломается |
-
-SQL-источники:
-- `telegram_logs`, `telegram_audit`, `domain_events WHERE event_type LIKE 'telegram.%'`;
-- edge-логи `telegram-send-notification` / `telegram-notify-admins` / `bepaid-webhook` за 7 дней;
-- `secrets--fetch_secrets` — наличие `TELEGRAM_BOT_TOKEN`/`TELEGRAM_ADMIN_CHAT_ID`.
-
-### Этап 7. Email — расширенный канал (расширено)
-
-Не только `email_send_log`. Добавить:
-
-A. **email_send_log за 7 дней** — DISTINCT ON (`message_id`), разбивка `template_name × status`. Итог:
-   - `transactional` (контакт/заказ/booking),
-   - `auth` (`auth_emails`),
-   - `reminder` (renewal/grace),
-   - `system` (admin/health).
-
-B. **Backlog очереди**: `pgmq.queue_length('auth_emails')`, `pgmq.queue_length('transactional_emails')`; есть ли `cron.job` `process-email-queue`, дата последнего успешного прогона.
-
-C. **Последние ошибки провайдера**: `email_send_log` `WHERE status IN ('dlq','failed','bounced')` за 7 дней + `error_message` агрегация.
-
-D. **Конфиг**: `email_domain--check_email_domain_status`, наличие `email_queue_service_role_key` в Vault.
-
-E. **Sender-конфиг**: `SENDER_DOMAIN`/`FROM_DOMAIN` в `send-transactional-email`/`auth-email-hook`.
-
-Вывод: «не отправляется вообще» vs «не отправляется только часть шаблонов» vs «отправляется, но не доходит».
-
-### Этап 8. Ночное обновление документации (расширено)
-
-- Найти cron / edge / job, которые пишут changelog за прошлый день: grep по `docs/`, `nightly-docs`, `daily-summary`, `documentation-snapshot`.
-- Зафиксировать:
-  - **куда** пишется (БД-таблица `docs_*`, файл в репо, edge-логи?);
-  - **кто** пишет (jobname/edge);
-  - **что** считается успешным обновлением (наличие записи за date=yesterday?);
-  - **след последнего успеха** и **след последней неудачи** (timestamp + причина);
-- Если такого job нет — явно зафиксировать «отсутствует», не «сломано».
-
-### Этап 9. Кандидаты на новые ночные INV
-
-Только список, без кода:
-- `INV-NOTIF-TG`: 0 fail-доставок Telegram за 24ч.
-- `INV-NOTIF-EMAIL`: `email_send_log` не пуст и доля dlq < X%.
-- `INV-CRON-HEALTH`: все ожидаемые `cron.job` отработали за 24ч.
-- `INV-DOCS-DAILY`: документация обновилась за 24ч.
-- `INV-EDGE-COUNT-DRIFT`: реальное число edge-функций равно прошлому ночному прогону (без хардкода).
-- `INV-EMAIL-QUEUE-DEPTH`: backlog очередей < threshold.
-
----
-
-## Deliverable (форма отчёта)
-
-### Раздел 1. Карта ночного чека
-Схема pipeline + расхождение «выполнено» vs «показано».
-
-### Раздел 2. Источник «172/172»
-Файл, строка, тип источника (hardcoded/registry/runtime), реальное число функций.
-
-### Раздел 3. По каждому из 4 INV — root vs symptom
-Обязательный раздел: для каждого INV явно разделить:
-- симптом (что показано пользователю);
-- корневая причина — одна из категорий: **data issue / config issue / invariant logic issue / missing monitoring**;
-- доказательство (ссылка на SQL-выгрузку или файл).
-
-### Раздел 4. INV-20 — типизация 288 записей
-Полная таблица bucket→count→action. Без LIMIT.
-
-### Раздел 5. Telegram — карта доставки
-3 pipeline (оплата / public link / renewal reminder) с пометками success/fail-точки.
-
-### Раздел 6. Email — карта доставки
-4 категории шаблонов + backlog + sender-конфиг + конкретные ошибки.
-
-### Раздел 7. Документация — pipeline или его отсутствие
-
-### Раздел 8. Кандидаты на новые INV
-Список, без кода.
-
-### Раздел 9. Единая таблица «finding → root → fix-type»
-
-| объект проверки | ожидаемое поведение | фактическое поведение | источник доказательства | класс проблемы | рекомендуемый тип фикса |
-|---|---|---|---|---|---|
-
-Класс проблемы ∈ {data, config, invariant_logic, missing_monitoring, false_positive}.
-Тип фикса ∈ {data_repair, invariant_patch, exclusion_rule, new_monitoring, accepted_no_action}.
-
-### Раздел 10. Deferred / backlog
-Все некритичные находки, всплывшие по ходу discovery, складываются сюда списком и НЕ становятся scope текущей или следующей задачи без отдельного approve. Никакой незапрошенной разработки.
-
-### Раздел 11. Mapping для следующего fix-plan (add-only)
-Явное правило: следующий fix-plan **не удаляет и не заменяет** discovery-результаты. Он ссылается 1:1:
-```
-finding_id → root_cause_id → proposed_fix_id → proof / DoD
-```
-Любая правка должна быть привязана к конкретному `finding_id` из раздела 9.
-
----
+1. В `AdminSystemHealth.tsx` заменить owner action `onRunCheck` на вызов full-check мутации.
+2. В `AdminSystemHealth.tsx` заменить `onRefresh` на refetch/invalidations для `system-health-latest-full` и `system-health-reports`.
+3. Сохранить `useLatestSystemHealth()` / `useSystemHealthRuns()` только для вкладки «Техинфо».
+4. Не трогать остальную страницу.
 
 ## STOP-guards
 
-- Никаких write-операций в БД и storage.
-- Никаких запусков repair/backfill/grant/revoke.
-- Никаких изменений в edge-функциях, миграциях, RLS, cron.
-- Не «чинить» страницу 969210bb молча.
-- Не плодить новые edge или INV — только список-кандидат.
-- Не трогать карточку эфира.
-- Никаких выводов «по подмножеству» — INV-20 закрывается только полной агрегацией по всем 288.
-- Не смешивать классы проблем (data ≠ invariant_logic ≠ missing_monitoring).
+Остановиться, если выяснится хотя бы одно:
 
----
+- owner-view использует ещё один скрытый источник данных помимо `system_health_reports`;
+- есть другой компонент, который перезаписывает статус из `system_health_runs` поверх owner-view;
+- кнопка `Запустить проверку` намеренно должна запускать nightly-flow по бизнес-требованию и это зафиксировано в коде/knowledge.
 
-## DoD discovery-этапа
+## DoD
 
-- ✅ Карта ночного чека (раздел 1) с явным расхождением «реально/показано», если есть.
-- ✅ Полная цепочка источника `172/172` с указанием файла и строки.
-- ✅ Для каждого из 4 INV: симптом / корневая причина / доказательство / класс проблемы.
-- ✅ INV-20: **полная типизация всех 288 записей** по корзинам с recommended_action на каждую корзину. Не подмножество.
-- ✅ Telegram: 3 pipeline закрыты — где работает, где ломается, на каком звене.
-- ✅ Email: разбивка по 4 категориям + backlog + ошибки провайдера + sender-конфиг.
-- ✅ Документация: цепочка кто→чем→куда→с каким результатом, либо явная фиксация отсутствия job.
-- ✅ Список кандидатов на новые INV.
-- ✅ Сводная таблица finding→root→fix-type (раздел 9).
-- ✅ Deferred-блок (раздел 10) и mapping-блок (раздел 11) присутствуют.
-- ❌ Никаких изменений в коде/БД на этом этапе.
-- 📌 Следующим сообщением — отдельный fix-plan, построенный поверх этого discovery по mapping-правилу из раздела 11.
+Задача считается выполненной, когда одновременно выполнено всё:
 
----
+1. После ручного запуска проверки в owner-view создаётся новый `system_health_reports` full-check report.
+2. Верхний hero и вкладка «Проблемы сейчас» переходят в зелёное состояние без ручного hard reload.
+3. Старый false-red исчезает.
+4. Значения берутся из новых источников истины, а не из старого отчёта:
+  - `INV-P0-1 = 7` из bePaid audit signal
+  - `INV-P0-4 = 4906` из pg_cron RPC
+5. Вкладка «Техинфо» продолжает отдельно показывать nightly `system_health_runs` без поломки.
 
-## Формат вывода
+## Риски и зависимости
 
-Один отчёт. Все SQL-выгрузки в виде таблиц прямо в сообщении. Длинные перечисления — свернуть в агрегаты + 10 примеров. Каждое утверждение — с пруфом (файл:строка / SQL + count).
+- Есть два разных health-контура: `system_health_reports` и `system_health_runs`. Главный риск — снова смешать их в одном экране.
+- Изменение должно быть строго UI-only; backend уже исправлен.
+
+## Требуется дополнительная информация
+
+Не требуется. Read-only диагностика достаточна для перехода в Execute.
