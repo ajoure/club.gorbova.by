@@ -88,14 +88,16 @@ Deno.serve(async (req) => {
   if (!authHeader.toLowerCase().startsWith("bearer ")) {
     return jsonResponse({ error: "missing_jwt" }, 401);
   }
+  const jwt = authHeader.slice("Bearer ".length);
 
   const userClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: authHeader } },
+    auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  const { data: claimsData, error: claimsError } = await userClient.auth.getClaims();
+  const { data: claimsData, error: claimsError } = await userClient.auth.getClaims(jwt);
   if (claimsError || !claimsData?.claims?.sub) {
-    return jsonResponse({ error: "invalid_jwt" }, 401);
+    return jsonResponse({ error: "invalid_jwt", reason: claimsError?.message ?? "no_sub" }, 401);
   }
   const userId = claimsData.claims.sub as string;
 
