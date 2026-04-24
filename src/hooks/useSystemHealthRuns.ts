@@ -93,14 +93,17 @@ export function useSystemHealthChecks(runId: string | null) {
     queryFn: async () => {
       if (!runId) return [];
       
-      const { data, error } = await supabase
-        .from("system_health_checks")
-        .select("*")
-        .eq("run_id", runId)
-        .order("created_at", { ascending: true });
+      const [{ data, error }, ignoredMap] = await Promise.all([
+        supabase
+          .from("system_health_checks")
+          .select("*")
+          .eq("run_id", runId)
+          .order("created_at", { ascending: true }),
+        fetchActiveIgnoredKeys(),
+      ]);
 
       if (error) throw error;
-      return data as SystemHealthCheck[];
+      return annotateChecks((data || []) as SystemHealthCheck[], ignoredMap);
     },
     enabled: !!runId,
   });
