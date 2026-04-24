@@ -14221,6 +14221,15 @@ export type Database = {
         }[]
       }
       release_backfill_lock: { Args: { p_lock_id: number }; Returns: boolean }
+      resolve_broadcast_audience: { Args: { _filters: Json }; Returns: Json }
+      resolve_broadcast_audience_user_ids: {
+        Args: { _filters: Json }
+        Returns: {
+          has_email: boolean
+          has_telegram: boolean
+          user_id: string
+        }[]
+      }
       resolve_user_id: {
         Args: { input_id: string }
         Returns: {
