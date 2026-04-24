@@ -1355,7 +1355,7 @@ serve(async (req) => {
       await supabase
         .from("integration_instances")
         .update({ last_successful_sync_at: new Date().toISOString() })
-        .eq("id", bepaidInstance.id);
+        .eq("provider", "bepaid");
     }
 
     // Finalize sync log

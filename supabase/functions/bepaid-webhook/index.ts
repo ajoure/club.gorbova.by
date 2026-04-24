@@ -4895,18 +4895,20 @@ ${userName}, к сожалению, не удалось провести опл�
 
       // 3d. Try extracted subscription UID → provider_subscriptions → subscription_v2 → user
       if (!profileId && extractedSubUid) {
-        const { data: provSub } = await supabase
+        const { data: provSubRaw } = await supabase
           .from('provider_subscriptions')
           .select('subscription_v2_id, subscriptions_v2(user_id)')
           .eq('provider_subscription_id', String(extractedSubUid))
           .maybeSingle();
-        if (provSub?.subscriptions_v2?.user_id) {
+        const provSub = provSubRaw as any;
+        const subsV2 = Array.isArray(provSub?.subscriptions_v2) ? provSub?.subscriptions_v2[0] : provSub?.subscriptions_v2;
+        if (subsV2?.user_id) {
           const { data: subProfile } = await supabase
             .from('profiles')
             .select('id')
-            .eq('user_id', provSub.subscriptions_v2.user_id)
+            .eq('user_id', subsV2.user_id)
             .maybeSingle();
-          if (subProfile?.id) { profileId = subProfile.id; matchMethod = 'subscription_uid'; }
+          if ((subProfile as any)?.id) { profileId = (subProfile as any).id; matchMethod = 'subscription_uid'; }
         }
       }
 
