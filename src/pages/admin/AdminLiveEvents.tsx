@@ -256,6 +256,15 @@ export default function AdminLiveEvents() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<LiveEventForm>(defaultForm);
+  // Tabs state — controlled, reset on dialog open
+  const [activeTab, setActiveTab] = useState<string>("basic");
+  const [extrasTab, setExtrasTab] = useState<string>("room");
+  useEffect(() => {
+    if (dialogOpen) {
+      setActiveTab("basic");
+      setExtrasTab("room");
+    }
+  }, [dialogOpen, editingId]);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [slugManuallyEdited, setSlugManuallyEdited] = useState(false);
   const [publishAttempted, setPublishAttempted] = useState(false);
