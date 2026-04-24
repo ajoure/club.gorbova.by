@@ -87,16 +87,16 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: "unauthorized", reason: "bad_claims" }, 401);
   }
 
-  // Defence in depth — БД-триггер всё равно проверит.
-  const { data: hasRoleData, error: hasRoleErr } = await supabase.rpc("has_role_v2", {
+  // Defence in depth — БД-триггер всё равно проверит. Используем is_super_admin(uuid)
+  // — однозначная сигнатура без overload-конфликтов.
+  const { data: isSuperAdmin, error: roleErr } = await supabase.rpc("is_super_admin", {
     _user_id: userId,
-    _role_code: "super_admin",
   });
-  if (hasRoleErr) {
-    console.error("[evidence-relay] has_role_v2 failed:", hasRoleErr);
+  if (roleErr) {
+    console.error("[evidence-relay] is_super_admin failed:", roleErr);
     return jsonResponse({ error: "internal", reason: "role_check_failed" }, 500);
   }
-  if (!hasRoleData) {
+  if (!isSuperAdmin) {
     return jsonResponse({ error: "forbidden", reason: "not_super_admin" }, 403);
   }
 
