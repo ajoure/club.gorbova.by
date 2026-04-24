@@ -1,0 +1,67 @@
+# Verify: PATCH INV-P0-1 + INV-P0-4 — узкая правка критериев
+
+Дата: 2026-04-24T18:37:14Z
+Scope: 1 файл (supabase/functions/system-health-full-check/index.ts) + 1 RPC (public.get_cron_runs_24h_count).
+Метод: live-вызов system-health-full-check после deploy (не кэш report'а).
+
+## Diff (что изменилось)
+
+### INV-P0-1 — было
+- action='subscription.charged' + actor_type='system' (legacy MIT, мёртвый source с Feb 2026)
+- count=0 → false-RED при наличии активных auto_renew подписок
+
+### INV-P0-1 — стало
+- action='bepaid.payment.upsert_from_last_transaction' (без actor_type filter — устойчивость к будущим service-actor)
+- count = bepaidRenewals24h (один источник истины, без смешения с next_charge_at)
+- name → "Автопродления за 24ч (bePaid)"
+
+### INV-P0-4 — было
+- action='cron.job.triggered' в audit_logs (мёртвый source с 2026-04-23)
+- count=0 → false-RED при работающем cron
+
+### INV-P0-4 — стало
+- RPC get_cron_runs_24h_count → cron.job_run_details (источник истины)
+- count = succ_runs_24h
+- name → "Cron jobs за 24ч (pg_cron)"
+
+## Live-результаты после deploy
+
+```json
+{
+  "code": "INV-P0-1",
+  "count": 7,
+  "name": "Автопродления за 24ч (bePaid)",
+  "passed": true,
+  "severity": "CRITICAL"
+}
+{
+  "code": "INV-P0-4",
+  "count": 4906,
+  "name": "Cron jobs за 24ч (pg_cron)",
+  "passed": true,
+  "samples": [{"succ_runs_24h": 4906, "total_runs_24h": 4912}],
+  "severity": "INFO"
+}
+```
+
+## Acceptance criteria
+
+- [x] old false-red исчез: INV-P0-1 и INV-P0-4 теперь passed=true
+- [x] count приходит из новых источников истины:
+      - INV-P0-1: 7 (= bepaid.payment.upsert_from_last_transaction за 24ч)
+      - INV-P0-4: 4906 (= cron.job_run_details succeeded за 24ч)
+- [x] не из кэша старого report: вызов выполнен напрямую через curl_edge_functions, timestamp=2026-04-24T18:37:13.674Z
+- [x] остальные инварианты (P0-2/3/5) не затронуты: passed=true, count неизменны
+- [x] PATCH узкий: 1 edge function (две try-ветки) + 1 RPC (SECURITY DEFINER, service_role only)
+- [x] никаких побочных правок (cron, webhook, audit writer, thresholds, UI) не сделано
+
+## Pre-existing build errors (НЕ связаны с патчем)
+
+В выводе деплоя есть TS-ошибки в чужих edge-функциях (admin-bepaid-*, ban-*, _shared/create-payment-checkout.ts).
+Они существовали до правки и не относятся к scope этой задачи.
+Файл system-health-full-check/index.ts — TypeScript чистый, deploy успешен.
+
+## Артефакты
+- Diagnose: .lovable/proofs/inv_p0_1_p0_4_diagnose.txt
+- Verify: .lovable/proofs/inv_p0_1_p0_4_verify.txt (этот файл)
+- Memory: .lovable/memory/ui/admin/system-health-owner-view.md
