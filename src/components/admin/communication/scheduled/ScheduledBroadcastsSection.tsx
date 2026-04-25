@@ -163,6 +163,11 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
     label: string;
   }>(null);
 
+  // Approve confirm dialog (PATCH-E)
+  const [approveTarget, setApproveTarget] = useState<SchedRow | null>(null);
+  const [approveAudienceCount, setApproveAudienceCount] = useState<number | null>(null);
+  const [approveAudienceLoading, setApproveAudienceLoading] = useState(false);
+
   // History sheet
   const [historyId, setHistoryId] = useState<string | null>(null);
 
