@@ -39,7 +39,15 @@ export function normalizeEdgeFunctionError(
     }
   }
 
-  const message = error instanceof Error ? error.message : String(error);
+  const rawMessage =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : typeof (error as any)?.message === "string"
+          ? (error as any).message
+          : "";
+  const message = rawMessage || String(error);
   const mapped = mapKnown(message);
   if (mapped) return mapped;
 
