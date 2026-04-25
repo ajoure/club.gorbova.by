@@ -675,267 +675,393 @@ export function BroadcastsTabContent() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Main Content */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Channel Tabs */}
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "telegram" | "email")}>
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="telegram" className="gap-2">
-                <MessageCircle className="h-4 w-4" />
-                Telegram
-                {audience && (
-                  <Badge variant="secondary" className="ml-1">
-                    {audience.telegramCount}
-                  </Badge>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="email" className="gap-2">
-                <Mail className="h-4 w-4" />
-                Email
-                {audience && (
-                  <Badge variant="secondary" className="ml-1">
-                    {audience.emailCount}
-                  </Badge>
-                )}
-              </TabsTrigger>
-            </TabsList>
+          {/* Edit-mode banner */}
+          {editTemplateId && (
+            <Alert>
+              <Pencil className="h-4 w-4" />
+              <AlertDescription className="flex items-center justify-between gap-3">
+                <span>
+                  Редактирование запланированной рассылки. Сохранение обновит существующую запись (без дубля).
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setEditTemplateId(null);
+                    setSendMode("now");
+                    setMessage("");
+                    setEmailSubject("");
+                    setEmailBody("");
+                    setScheduledAt(null);
+                    setScheduledName("");
+                    toast.info("Редактирование отменено");
+                  }}
+                >
+                  Отменить
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
 
-            <TabsContent value="telegram" className="space-y-4 mt-4">
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg">Telegram-рассылка</CardTitle>
-                  <CardDescription>
-                    Сообщение будет отправлено всем пользователям с привязанным Telegram
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {/* Media attachment */}
-                  {mediaFile ? (
-                    <div className="relative rounded-lg border p-3 bg-muted/50">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="absolute top-1 right-1 h-6 w-6"
-                        onClick={removeMedia}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                      <div className="flex items-center gap-3">
-                        {mediaFile.type === "photo" && mediaFile.preview && (
-                          <img
-                            src={mediaFile.preview}
-                            alt="Preview"
-                            className="w-20 h-20 object-cover rounded"
-                          />
-                        )}
-                        {mediaFile.type === "video" && (
-                          <div className="w-20 h-20 bg-muted rounded flex items-center justify-center">
-                            <Video className="h-8 w-8 text-muted-foreground" />
-                          </div>
-                        )}
-                        {mediaFile.type === "audio" && (
-                          <div className="w-20 h-20 bg-muted rounded flex items-center justify-center">
-                            <Music className="h-8 w-8 text-muted-foreground" />
-                          </div>
-                        )}
-                        {mediaFile.type === "video_note" && (
-                          <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center">
-                            <Circle className="h-8 w-8 text-muted-foreground" />
-                          </div>
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">{mediaFile.file.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {(mediaFile.file.size / 1024 / 1024).toFixed(2)} МБ
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="file"
-                          ref={fileInputRef}
-                          className="hidden"
-                          accept="image/*,video/*,audio/*"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) {
-                              const type = file.type.startsWith("image/")
-                                ? "photo"
-                                : file.type.startsWith("video/")
-                                ? "video"
-                                : file.type.startsWith("audio/")
-                                ? "audio"
-                                : null;
-                              if (type) {
-                                handleFileSelect(e, type);
-                              }
-                            }
-                          }}
-                        />
-                        <Popover>
-                          <PopoverTrigger asChild>
-                            <Button variant="outline" size="sm" className="gap-2">
-                              <Paperclip className="h-4 w-4" />
-                              Вложение
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-40 p-2" align="start">
-                            <div className="space-y-1">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="w-full justify-start gap-2"
-                                onClick={() => {
-                                  if (fileInputRef.current) {
-                                    fileInputRef.current.accept = "image/*";
-                                    fileInputRef.current.click();
-                                  }
-                                }}
-                              >
-                                <Image className="h-4 w-4" />
-                                Фото
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="w-full justify-start gap-2"
-                                onClick={() => {
-                                  if (fileInputRef.current) {
-                                    fileInputRef.current.accept = "video/*";
-                                    fileInputRef.current.click();
-                                  }
-                                }}
-                              >
-                                <Video className="h-4 w-4" />
-                                Видео
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="w-full justify-start gap-2"
-                                onClick={() => {
-                                  if (fileInputRef.current) {
-                                    fileInputRef.current.accept = "audio/*";
-                                    fileInputRef.current.click();
-                                  }
-                                }}
-                              >
-                                <Music className="h-4 w-4" />
-                                Аудио
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="w-full justify-start gap-2"
-                                onClick={() => {
-                                  if (fileInputRef.current) {
-                                    fileInputRef.current.accept = "video/mp4";
-                                    fileInputRef.current.click();
-                                  }
-                                }}
-                              >
-                                <Circle className="h-4 w-4" />
-                                Кружок
-                              </Button>
-                            </div>
-                          </PopoverContent>
-                        </Popover>
-                        <span className="text-xs text-muted-foreground">
-                          до 10 МБ, видео до 50 МБ
-                        </span>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="space-y-2">
-                    <Label>Текст сообщения {mediaFile && "(подпись)"}</Label>
-                    <TokenizedRichInput
-                      value={message}
-                      onChange={setMessage}
-                      placeholder="Введите текст сообщения для рассылки..."
-                      rows={6}
-                    />
-                    {showCfWarning && (
-                      <Alert variant="destructive">
-                        <AlertTriangle className="h-4 w-4" />
-                        <AlertDescription>
-                          Для подстановки полей продукта выберите конкретный продукт в фильтре справа.
-                        </AlertDescription>
-                      </Alert>
+          {/* Channel toggles */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg">Каналы рассылки</CardTitle>
+              <CardDescription>
+                Можно отправлять одновременно в Telegram и Email
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex items-center justify-between p-3 rounded-lg border">
+                <div className="flex items-center gap-3">
+                  <MessageCircle className="h-5 w-5 text-blue-500" />
+                  <div>
+                    <Label htmlFor="ch-tg" className="cursor-pointer font-medium">
+                      Отправлять в Telegram
+                    </Label>
+                    {audience && (
+                      <p className="text-xs text-muted-foreground">
+                        {audience.telegramCount} получателей
+                      </p>
                     )}
                   </div>
+                </div>
+                <Switch
+                  id="ch-tg"
+                  checked={sendToTelegram}
+                  onCheckedChange={setSendToTelegram}
+                />
+              </div>
+              <div className="flex items-center justify-between p-3 rounded-lg border">
+                <div className="flex items-center gap-3">
+                  <Mail className="h-5 w-5 text-orange-500" />
+                  <div>
+                    <Label htmlFor="ch-email" className="cursor-pointer font-medium">
+                      Отправлять Email
+                    </Label>
+                    {audience && (
+                      <p className="text-xs text-muted-foreground">
+                        {audience.emailCount} получателей
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <Switch
+                  id="ch-email"
+                  checked={sendToEmail}
+                  onCheckedChange={setSendToEmail}
+                />
+              </div>
+            </CardContent>
+          </Card>
 
+          {/* Send mode */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg">Режим отправки</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <RadioGroup
+                value={sendMode}
+                onValueChange={(v) => setSendMode(v as SendMode)}
+                className="grid grid-cols-1 sm:grid-cols-3 gap-2"
+              >
+                <Label
+                  htmlFor="mode-now"
+                  className={cn(
+                    "flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors",
+                    sendMode === "now" && "border-primary bg-primary/5",
+                  )}
+                >
+                  <RadioGroupItem id="mode-now" value="now" />
+                  <Send className="h-4 w-4" />
+                  Отправить сейчас
+                </Label>
+                <Label
+                  htmlFor="mode-scheduled"
+                  className={cn(
+                    "flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors",
+                    sendMode === "scheduled" && "border-primary bg-primary/5",
+                  )}
+                >
+                  <RadioGroupItem id="mode-scheduled" value="scheduled" />
+                  <CalendarIcon className="h-4 w-4" />
+                  Запланировать
+                </Label>
+                <Label
+                  htmlFor="mode-recurring"
+                  className={cn(
+                    "flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors",
+                    sendMode === "recurring" && "border-primary bg-primary/5",
+                  )}
+                >
+                  <RadioGroupItem id="mode-recurring" value="recurring" />
+                  <Repeat className="h-4 w-4" />
+                  Повторять
+                </Label>
+              </RadioGroup>
 
-                  <Separator />
-
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Switch
-                        id="includeButton"
-                        checked={includeButton}
-                        onCheckedChange={setIncludeButton}
+              {/* Scheduled DateTime */}
+              {sendMode === "scheduled" && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                  <div className="space-y-2">
+                    <Label>Дата отправки</Label>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          className={cn(
+                            "w-full justify-start text-left font-normal",
+                            !scheduledAt && "text-muted-foreground",
+                          )}
+                        >
+                          <CalendarIcon className="mr-2 h-4 w-4" />
+                          {scheduledAt
+                            ? format(scheduledAt, "PPP", { locale: ru })
+                            : "Выберите дату"}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={scheduledAt ?? undefined}
+                          onSelect={(d) => setScheduledAt(d ?? null)}
+                          disabled={(d) => d < new Date(new Date().setHours(0, 0, 0, 0))}
+                          initialFocus
+                          className={cn("p-3 pointer-events-auto")}
+                        />
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Время (локальное)</Label>
+                    <div className="relative">
+                      <Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        type="time"
+                        value={scheduledTime}
+                        onChange={(e) => setScheduledTime(e.target.value)}
+                        className="pl-9"
                       />
-                      <Label htmlFor="includeButton" className="cursor-pointer">
-                        Добавить кнопку-ссылку
-                      </Label>
                     </div>
                   </div>
+                </div>
+              )}
 
-                  {includeButton && (
-                    <div className="space-y-3 pl-4 border-l-2 border-muted">
-                      <div className="space-y-2">
-                        <Label>Текст кнопки</Label>
-                        <Input
-                          value={buttonText}
-                          onChange={(e) => setButtonText(e.target.value)}
-                          placeholder="Открыть платформу"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>URL кнопки</Label>
-                        <Input
-                          value={buttonUrl}
-                          onChange={(e) => setButtonUrl(e.target.value)}
-                          placeholder="https://club.gorbova.by/products"
-                        />
+              {/* Recurrence rule */}
+              {sendMode === "recurring" && (
+                <div className="space-y-3 pt-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="space-y-2">
+                      <Label>Частота</Label>
+                      <Select
+                        value={recurrence.frequency}
+                        onValueChange={(v) =>
+                          setRecurrence((r) => ({ ...r, frequency: v as Frequency }))
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="daily">Ежедневно</SelectItem>
+                          <SelectItem value="weekly">Еженедельно</SelectItem>
+                          <SelectItem value="monthly">Ежемесячно</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Каждые</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={30}
+                        value={recurrence.interval}
+                        onChange={(e) =>
+                          setRecurrence((r) => ({
+                            ...r,
+                            interval: Math.max(1, parseInt(e.target.value) || 1),
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Время</Label>
+                      <Input
+                        type="time"
+                        value={recurrence.time_of_day}
+                        onChange={(e) =>
+                          setRecurrence((r) => ({ ...r, time_of_day: e.target.value }))
+                        }
+                      />
+                    </div>
+                  </div>
+                  {recurrence.frequency === "weekly" && (
+                    <div className="space-y-2">
+                      <Label>Дни недели</Label>
+                      <div className="flex gap-2 flex-wrap">
+                        {[
+                          { d: 1, l: "Пн" },
+                          { d: 2, l: "Вт" },
+                          { d: 3, l: "Ср" },
+                          { d: 4, l: "Чт" },
+                          { d: 5, l: "Пт" },
+                          { d: 6, l: "Сб" },
+                          { d: 7, l: "Вс" },
+                        ].map(({ d, l }) => {
+                          const active = (recurrence.by_weekday || []).includes(d);
+                          return (
+                            <Button
+                              key={d}
+                              type="button"
+                              size="sm"
+                              variant={active ? "default" : "outline"}
+                              onClick={() =>
+                                setRecurrence((r) => {
+                                  const cur = r.by_weekday || [];
+                                  return {
+                                    ...r,
+                                    by_weekday: active
+                                      ? cur.filter((x) => x !== d)
+                                      : [...cur, d].sort(),
+                                  };
+                                })
+                              }
+                            >
+                              {l}
+                            </Button>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
-                </CardContent>
-              </Card>
-            </TabsContent>
+                </div>
+              )}
 
-            <TabsContent value="email" className="space-y-4 mt-4">
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg">Email-рассылка</CardTitle>
-                  <CardDescription>
-                    Письмо будет отправлено на указанные email-адреса
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Тема письма</Label>
-                    <TokenizedRichInput
-                      value={emailSubject}
-                      onChange={setEmailSubject}
-                      placeholder="Тема письма..."
-                      singleLine
-                    />
+              {sendMode !== "now" && (
+                <div className="space-y-2 pt-2">
+                  <Label>Название рассылки (для таблицы «Запланированные»)</Label>
+                  <Input
+                    value={scheduledName}
+                    onChange={(e) => setScheduledName(e.target.value)}
+                    placeholder="Например: Анонс эфира 1 мая"
+                  />
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Telegram composer */}
+          {sendToTelegram && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <MessageCircle className="h-5 w-5 text-blue-500" />
+                  Telegram-рассылка
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Media attachment (только для send_now — scheduled/recurring без медиа в фазе 2) */}
+                {sendMode === "now" && (mediaFile ? (
+                  <div className="relative rounded-lg border p-3 bg-muted/50">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="absolute top-1 right-1 h-6 w-6"
+                      onClick={removeMedia}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                    <div className="flex items-center gap-3">
+                      {mediaFile.type === "photo" && mediaFile.preview && (
+                        <img src={mediaFile.preview} alt="Preview" className="w-20 h-20 object-cover rounded" />
+                      )}
+                      {mediaFile.type === "video" && (
+                        <div className="w-20 h-20 bg-muted rounded flex items-center justify-center">
+                          <Video className="h-8 w-8 text-muted-foreground" />
+                        </div>
+                      )}
+                      {mediaFile.type === "audio" && (
+                        <div className="w-20 h-20 bg-muted rounded flex items-center justify-center">
+                          <Music className="h-8 w-8 text-muted-foreground" />
+                        </div>
+                      )}
+                      {mediaFile.type === "video_note" && (
+                        <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center">
+                          <Circle className="h-8 w-8 text-muted-foreground" />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{mediaFile.file.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {(mediaFile.file.size / 1024 / 1024).toFixed(2)} МБ
+                        </p>
+                      </div>
+                    </div>
                   </div>
-
+                ) : (
                   <div className="space-y-2">
-                    <Label>Текст письма (HTML)</Label>
-                    <TokenizedRichInput
-                      value={emailBody}
-                      onChange={setEmailBody}
-                      placeholder="<h1>Заголовок</h1><p>Текст письма...</p>"
-                      rows={8}
-                      allowAlign
-                    />
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        className="hidden"
+                        accept="image/*,video/*,audio/*"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const type = file.type.startsWith("image/")
+                              ? "photo"
+                              : file.type.startsWith("video/")
+                              ? "video"
+                              : file.type.startsWith("audio/")
+                              ? "audio"
+                              : null;
+                            if (type) handleFileSelect(e, type);
+                          }
+                        }}
+                      />
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button variant="outline" size="sm" className="gap-2">
+                            <Paperclip className="h-4 w-4" />
+                            Вложение
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-40 p-2" align="start">
+                          <div className="space-y-1">
+                            <Button variant="ghost" size="sm" className="w-full justify-start gap-2"
+                              onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = "image/*"; fileInputRef.current.click(); } }}>
+                              <Image className="h-4 w-4" /> Фото
+                            </Button>
+                            <Button variant="ghost" size="sm" className="w-full justify-start gap-2"
+                              onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = "video/*"; fileInputRef.current.click(); } }}>
+                              <Video className="h-4 w-4" /> Видео
+                            </Button>
+                            <Button variant="ghost" size="sm" className="w-full justify-start gap-2"
+                              onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = "audio/*"; fileInputRef.current.click(); } }}>
+                              <Music className="h-4 w-4" /> Аудио
+                            </Button>
+                            <Button variant="ghost" size="sm" className="w-full justify-start gap-2"
+                              onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = "video/mp4"; fileInputRef.current.click(); } }}>
+                              <Circle className="h-4 w-4" /> Кружок
+                            </Button>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                      <span className="text-xs text-muted-foreground">до 10 МБ, видео до 50 МБ</span>
+                    </div>
                   </div>
+                ))}
 
+                <div className="space-y-2">
+                  <Label>Текст сообщения {sendMode === "now" && mediaFile && "(подпись)"}</Label>
+                  <TokenizedRichInput
+                    value={message}
+                    onChange={setMessage}
+                    placeholder="Введите текст сообщения для рассылки..."
+                    rows={6}
+                  />
                   {showCfWarning && (
                     <Alert variant="destructive">
                       <AlertTriangle className="h-4 w-4" />
@@ -944,10 +1070,85 @@ export function BroadcastsTabContent() {
                       </AlertDescription>
                     </Alert>
                   )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
+                </div>
+
+                <Separator />
+
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id="includeButton"
+                    checked={includeButton}
+                    onCheckedChange={setIncludeButton}
+                  />
+                  <Label htmlFor="includeButton" className="cursor-pointer">
+                    Добавить кнопку-ссылку
+                  </Label>
+                </div>
+
+                {includeButton && (
+                  <div className="space-y-3 pl-4 border-l-2 border-muted">
+                    <div className="space-y-2">
+                      <Label>Текст кнопки</Label>
+                      <Input
+                        value={buttonText}
+                        onChange={(e) => setButtonText(e.target.value)}
+                        placeholder="Открыть платформу"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>URL кнопки</Label>
+                      <Input
+                        value={buttonUrl}
+                        onChange={(e) => setButtonUrl(e.target.value)}
+                        placeholder="https://club.gorbova.by/products"
+                      />
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Email composer */}
+          {sendToEmail && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Mail className="h-5 w-5 text-orange-500" />
+                  Email-рассылка
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Тема письма</Label>
+                  <TokenizedRichInput
+                    value={emailSubject}
+                    onChange={setEmailSubject}
+                    placeholder="Тема письма..."
+                    singleLine
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Текст письма (HTML)</Label>
+                  <TokenizedRichInput
+                    value={emailBody}
+                    onChange={setEmailBody}
+                    placeholder="<h1>Заголовок</h1><p>Текст письма...</p>"
+                    rows={8}
+                    allowAlign
+                  />
+                </div>
+                {showCfWarning && (
+                  <Alert variant="destructive">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription>
+                      Для подстановки полей продукта выберите конкретный продукт в фильтре справа.
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {/* Send Buttons */}
           <div className="flex gap-2">
