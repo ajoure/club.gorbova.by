@@ -724,6 +724,8 @@ Deno.serve(async (req) => {
     // Log to audit_logs
     await supabase.from('audit_logs').insert({
       actor_user_id: isSystemActor ? null : user!.id,
+      actor_type: isSystemActor ? 'system' : 'user',
+      actor_label: isSystemActor ? 'broadcast-dispatcher' : null,
       action: 'email_mass_broadcast',
       meta: {
         sent,
@@ -733,6 +735,7 @@ Deno.serve(async (req) => {
         actor_type: isSystemActor ? 'system' : 'user',
         actor_label: isSystemActor ? 'broadcast-dispatcher' : undefined,
         source: isSystemActor ? 'scheduled_dispatcher' : undefined,
+        include_archived: (reqBody as Record<string, unknown>)?.include_archived === true,
         tokens_used_contact: tokensInfo.contact,
         tokens_used_system: tokensInfo.system,
         tokens_used_cf_ids: cfFieldIds,
@@ -744,6 +747,7 @@ Deno.serve(async (req) => {
           missing: missingCount,
           duplicates: duplicateCount,
           invalid_emails: invalidEmailCount,
+          archived_included: archivedIncludedCount,
         },
       },
     });
