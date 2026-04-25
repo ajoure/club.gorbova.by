@@ -648,13 +648,16 @@ Deno.serve(async (req) => {
 
     // Log to audit_logs
     await supabase.from('audit_logs').insert({
-      actor_user_id: user.id,
+      actor_user_id: isSystemActor ? null : user!.id,
       action: 'email_mass_broadcast',
       meta: {
         sent,
         failed,
         total: sent + failed,
         subject,
+        actor_type: isSystemActor ? 'system' : 'user',
+        actor_label: isSystemActor ? 'broadcast-dispatcher' : undefined,
+        source: isSystemActor ? 'scheduled_dispatcher' : undefined,
         tokens_used_contact: tokensInfo.contact,
         tokens_used_system: tokensInfo.system,
         tokens_used_cf_ids: cfFieldIds,
