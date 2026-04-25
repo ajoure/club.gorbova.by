@@ -758,13 +758,13 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-12">
+                  <TableCell colSpan={10} className="text-center py-12">
                     <Loader2 className="h-5 w-5 animate-spin inline-block text-muted-foreground" />
                   </TableCell>
                 </TableRow>
               ) : filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-12 text-sm text-muted-foreground">
+                  <TableCell colSpan={10} className="text-center py-12 text-sm text-muted-foreground">
                     <Inbox className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     Запланированных рассылок нет.
                     <br />
