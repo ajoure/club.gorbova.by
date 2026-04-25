@@ -14501,6 +14501,34 @@ export type Database = {
       }
       release_backfill_lock: { Args: { p_lock_id: number }; Returns: boolean }
       resolve_broadcast_audience: { Args: { _filters: Json }; Returns: Json }
+      resolve_broadcast_audience_contacts: {
+        Args: { _filters: Json }
+        Returns: {
+          email: string
+          email_normalized: string
+          full_name: string
+          has_account: boolean
+          has_telegram: boolean
+          is_archived: boolean
+          profile_id: string
+          telegram_username: string
+          user_id: string
+        }[]
+      }
+      resolve_broadcast_audience_contacts_system: {
+        Args: { _filters: Json }
+        Returns: {
+          email: string
+          email_normalized: string
+          full_name: string
+          has_account: boolean
+          has_telegram: boolean
+          is_archived: boolean
+          profile_id: string
+          telegram_username: string
+          user_id: string
+        }[]
+      }
       resolve_broadcast_audience_user_ids: {
         Args: { _filters: Json }
         Returns: {
