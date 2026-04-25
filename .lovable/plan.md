@@ -1,325 +1,536 @@
-дополни план следующей информацией:
+да, согласен, с учетом правок:
 
-1. **Не удалять вкладку «Быстрая рассылка» сразу.**  
-Сначала сделать unified template flow, убедиться, что он полностью заменяет quick-send. После DoD — отдельным cleanup-патчем скрыть/удалить старую вкладку.
-2. **Не создавать** `broadcast_dispatcher_config`**, если уже есть** `live_notification_config`**.**  
-Сначала проверить, можно ли переиспользовать общий config-паттерн. Если нужна отдельная таблица — обосновать, почему `live_notification_config` не подходит.
-3. `live_event_notification_log` **не расширять.**  
-Согласен: не трогать, так как это домен эфиров. Для рассылок лучше отдельный `broadcast_runs`, но добавить обоснование: это не дубль, а execution-level агрегат для broadcast templates.
-4. **Per-recipient TG детализация:**  
-В MVP агрегаты допустимы, но в `broadcast_runs.audience_snapshot` обязательно сохранять:
-  - total candidates;
-  - sent;
-  - failed;
-  - skipped;
-  - per_bot;
-  - per_channel.
-5. **Обязательный anti-empty-audience guard:**  
-Нельзя сохранить или запустить шаблон, если аудитория пустая или фильтры не заданы явно.
-6. **Cron secret / auth:**  
-Не использовать пустой Bearer в SQL. Сразу указать безопасный способ авторизации cron job, с учётом прошлого бага `current_setting(...) = NULL`.
-7. **Статусы** `broadcast_templates`**:**  
-Перед расширением CHECK показать текущие допустимые статусы и backfill-план. Не ломать старые `draft/scheduled/sent/archived`.
-8. **Медиа:**  
-`broadcast-media` bucket создавать только после проверки существующих storage buckets. Если уже есть подходящий bucket — переиспользовать.
-9. **Email/TG дубль-доставка:**  
-По умолчанию оставить дубль-доставку в оба канала, если выбраны оба. Но добавить UI-переключатель:
-  - “отправлять в оба канала”
-  - “email только тем, у кого нет Telegram”
-10. **Спринт разбить на этапы:**
-
-- Sprint A: DB + dispatcher + dry-run без UI-ломки.
-- Sprint B: wizard UI.
-- Sprint C: recurring + cron production enable.
-- Sprint D: cleanup quick-send.
-
-После этих правок план можно согласовывать.
+Добавить в Sprint B rev3 следующие обязательные правки:
 
 &nbsp;
 
-План: Планировщик рассылок на базе broadcast_templates (no-duplicates, дополненный план)
+1. Multi-channel должен быть проверен на backend/disptacher уровне.
 
-## 1. Проблема
+&nbsp;
 
-В `/admin/communication?tab=broadcasts` есть две разорванные секции — «Шаблоны» (без отправки) и «⚡ Быстрая рассылка» (моментальная отправка без сохранения). Нет:
+Проблема:
 
-- единого создания рассылки с медиа + аудиторией + кнопкой;
-- отложенной отправки на дату/время;
-- периодической отправки (раз в N дней/недель/месяцев);
-- автоматической отправки по обоим каналам, если в шаблоне заполнены и Telegram, и Email;
-- обязательного dry-run перед execute.
+В composer теперь можно включить Telegram + Email одной рассылкой. Но нужно доказать, что backend реально обработает `channels[]`, а не только legacy-поле `channel`.
 
-## 2. Диагностика (фактическое состояние)
+&nbsp;
 
-### 2.1. Существующие таблицы (проверено через psql)
+Добавить в Discovery:
+
+- проверить `process-scheduled-broadcasts`;
+
+- проверить, как он читает `broadcast_templates.channel` и `broadcast_templates.channels`;
+
+- проверить, создаёт ли он `broadcast_runs` по каждому каналу;
+
+- проверить, не отправит ли только первый канал из `channels[]`.
+
+&nbsp;
+
+Правило:
+
+- `channels[]` = source of truth;
+
+- legacy `channel` оставить только для обратной совместимости;
+
+- если включены TG+Email, dispatcher должен отправить оба канала;
+
+- не должно быть дублей отправки.
+
+&nbsp;
+
+Если текущий dispatcher не поддерживает `channels[]`, добавить минимальный backend patch:
+
+- iterate по `channels[]`;
+
+- для каждого канала создать отдельный `broadcast_runs` или корректную run-запись с channel;
+
+- сохранить совместимость с legacy `channel`.
+
+&nbsp;
+
+DoD:
+
+- scheduled TG-only отправляется в TG;
+
+- scheduled Email-only отправляется в Email;
+
+- scheduled TG+Email создаёт/обрабатывает оба канала;
+
+- recurring TG+Email тоже корректно рассчитывается и отправляется.
+
+&nbsp;
+
+2. Для `channel = первый из channels[]` добавить комментарий как legacy fallback.
+
+&nbsp;
+
+В INSERT/UPDATE:
+
+- `channels[]` — основной источник истины;
+
+- `channel` — legacy NOT NULL fallback;
+
+- если выбраны TG+Email, `channel` не должен ограничивать отправку только первым каналом.
+
+&nbsp;
+
+3. Audit нельзя писать напрямую в `audit_logs`, пока не проверена RLS/контракт.
+
+&nbsp;
+
+Добавить в Discovery:
+
+- найти существующий способ записи audit_logs в проекте;
+
+- использовать существующий audit helper/RPC/service pattern;
+
+- если прямой INSERT из frontend запрещён RLS — не делать direct insert.
+
+&nbsp;
+
+Audit bulk actions должен быть реализован через существующий канонический механизм платформы.
+
+&nbsp;
+
+DoD:
+
+- bulk enable/disable/unschedule/archive создаёт audit_logs;
+
+- actor_type соответствует существующему формату проекта;
+
+- actor_user_id заполнен;
+
+- meta содержит ids, count, before/after.
+
+&nbsp;
+
+4. `actor_type='admin'` не хардкодить без проверки допустимых значений.
+
+&nbsp;
+
+Добавить:
+
+- проверить фактические значения actor_type в audit_logs;
+
+- использовать существующий стандарт платформы;
+
+- если в проекте используется `user`, `admin`, `system` — применять корректно;
+
+- для системных действий dispatcher оставить `system`;
+
+- для действий из UI использовать текущий admin/user actor pattern.
+
+&nbsp;
+
+5. Миграцию `metadata jsonb` оставить, но сделать безопасно.
+
+&nbsp;
+
+Перед миграцией:
+
+- проверить, нет ли уже `metadata`;
+
+- проверить CHECK constraint по `status`;
+
+- проверить, какие статусы реально используются.
+
+&nbsp;
+
+Миграция:
+
+- `ALTER TABLE broadcast_templates ADD COLUMN IF NOT EXISTS metadata jsonb NOT NULL DEFAULT '{}';`
+
+- если есть CHECK по status — расширить аккуратно, добавив `paused` и `archived`;
+
+- не ломать существующие значения `draft`, `scheduled`, `recurring`, `sent`.
+
+&nbsp;
+
+6. Soft-delete должен скрывать archived по умолчанию.
+
+&nbsp;
+
+В таблице «Запланированные»:
+
+- по умолчанию не показывать `archived`;
+
+- добавить опциональный фильтр/checkbox «Показать архив», только если это быстро и не ломает UI;
+
+- dispatcher обязан игнорировать `archived`.
+
+&nbsp;
+
+7. Canonical table должна повторять не только TableHead, но и UX таблицы контактов.
+
+&nbsp;
+
+В Discovery явно выписать из AdminContacts:
+
+- toolbar layout;
+
+- checkbox selection;
+
+- bulk toolbar;
+
+- row actions;
+
+- loading skeleton;
+
+- empty state;
+
+- pagination/limit;
+
+- resize/sort pattern, если используется.
+
+&nbsp;
+
+Таблица «Запланированные» должна быть визуально и логически максимально такой же.
+
+&nbsp;
+
+8. Client limit 100 — допустимо только как временно, но добавить guard.
+
+&nbsp;
+
+Если записей больше 100:
+
+- показать предупреждение/пагинацию;
+
+- не делать bulk action по всей базе, если выбраны только строки текущей страницы;
+
+- header checkbox = выбрать все на текущей странице, не все записи в базе.
+
+&nbsp;
+
+9. Quick-send now для TG+Email должен иметь понятную error-логику.
+
+&nbsp;
+
+Если включены оба канала и пользователь нажимает «Отправить»:
+
+- отправить Telegram и Email последовательно или через Promise.allSettled;
+
+- если один канал упал, второй не должен считаться неотправленным автоматически;
+
+- показать результат по каждому каналу:
+
+  - Telegram: отправлено / ошибка;
+
+  - Email: отправлено / ошибка.
+
+- не переписывать существующие mutations, а обернуть их в общий handler.
+
+&nbsp;
+
+10. Test-send сохранить отдельно.
+
+&nbsp;
+
+Кнопка «Тест себе» должна:
+
+- учитывать включённые toggles TG/Email;
+
+- либо явно тестировать активный канал, если текущая логика так устроена;
+
+- не исчезнуть после добавления режимов scheduled/recurring.
+
+&nbsp;
+
+11. Delivery Ledger оставить строго в Sprint C.
+
+&nbsp;
+
+В этом Sprint не создавать `broadcast_deliveries`.
+
+Но обязательно:
+
+- не удалять физически шаблоны с `broadcast_runs`;
+
+- сохранить ссылочную историю;
+
+- в финальном отчете отдельной строкой указать: `broadcast_deliveries` отсутствует, Sprint C PATCH зафиксирован.
+
+&nbsp;
+
+12. В DoD добавить proof по multi-channel.
+
+&nbsp;
+
+Добавить SQL/runtime proof:
+
+- создана scheduled TG-only;
+
+- создана scheduled Email-only;
+
+- создана scheduled TG+Email;
+
+- создана recurring TG+Email;
+
+- dispatcher/dry-run видит оба канала;
+
+- `broadcast_runs` показывает обработку каналов без дублей.
+
+&nbsp;
+
+13. В DoD добавить proof по отсутствию лишнего UI.
+
+&nbsp;
+
+Кроме `rg` по удалённым компонентам, добавить скрин:
+
+- во вкладке «Запланированные» нет кнопки «Создать запланированную»;
+
+- нет DispatcherStatusPanel;
+
+- нет Production approve;
+
+- нет cron/system audit UI.
+
+&nbsp;
+
+14. В финальном отчете отдельно указать, что создание и редактирование остались только в «Быстрой рассылке».
+
+&nbsp;
+
+Формула:
+
+- «Быстрая рассылка» = создать / отправить сейчас / запланировать / повторять / редактировать.
+
+- «Запланированные» = таблица управления, массовые действия, история запусков.
+
+После этих правок план можно выполнять.
+
+&nbsp;
+
+План: Sprint B rev3 — Unified Composer + Canonical Table
+
+Ключевая формула: **Создание/редактирование — в «Быстрой рассылке». Управление — в «Запланированных».**
+
+Discovery (выполнено):
+
+- Каноничный паттерн таблиц админки = `src/components/admin/table/SortableResizableTableHead.tsx` + `@/components/ui/table` (используется в `AdminContacts.tsx`). Переиспользуем shell.
+- `broadcast_templates`: уже есть `send_mode`, `status`, `channels[]`, `next_run_at`, `recurrence_rule`, `audience_filters`, `media_*`, `last_run_at`, `total_runs`. Новых колонок не нужно.
+- `broadcast_runs`: агрегатный (audience/sent/failed/skipped). **Per-recipient delivery таблицы нет.** → выносится в отдельный PATCH (Sprint C: delivery ledger).
+
+---
+
+## 1. «Быстрая рассылка» — единый composer Telegram + Email
+
+### 1.1. Убрать «канал = active tab» как source of truth
+
+Текущие табы Telegram/Email в quick-send остаются как UI-навигация (показать/скрыть соответствующий редактор), но **source of truth каналов** — два независимых toggle:
+
+- `telegramEnabled: boolean` (default: true)
+- `emailEnabled: boolean` (default: false)
+
+Toggle отображается в шапке каждого подблока:
+
+- «Отправлять в Telegram» (рядом с TG-табом и в TG-карточке).
+- «Отправлять Email» (рядом с Email-табом и в Email-карточке).
+
+Итоговый `channels[]` строится из включённых toggle-ов. Если оба выключены — кнопка отправки/планирования `disabled`, инлайн-ошибка «Выберите хотя бы один канал отправки».
+
+### 1.2. Блок «Режим отправки» (новый, над кнопкой действия)
+
+`sendMode: "now" | "scheduled" | "recurring"` (default: `"now"`). Радио-группа из 3 опций.
+
+### 1.3. Режим `"now"` — quick-send, без регрессий
+
+- Если `telegramEnabled` и есть текст/медиа → `sendTelegramMutation`.
+- Если `emailEnabled` и есть subject+body → `sendEmailMutation`.
+- Если оба → запускаем последовательно обе мутации, сводный toast.
+- Кнопка «🧪 Тест себе» (Telegram) — сохраняется 1:1.
+- Кнопка действия: **«Отправить»** (одна, вместо текущих «Отправить в Telegram/Email»).
+
+### 1.4. Режим `"scheduled"` — раскрывается:
+
+- Date picker (Shadcn `Calendar` в `Popover`, `pointer-events-auto`).
+- Time picker (`<Input type="time">`).
+- Кнопка: **«Запланировать»**.
+- INSERT в `broadcast_templates`:
+  - `name` = автогенерация `"Запланировано {dd.MM.yyyy HH:mm}"` (можно потом переименовать).
+  - `channel` = первый из `channels[]` (NOT NULL legacy-поле).
+  - `channels` = построенный массив.
+  - `message_text/button_text/button_url` — если TG enabled.
+  - `email_subject/email_body_html` — если Email enabled.
+  - `media_*` — если есть вложение (загрузка в bucket `telegram-media` reused).
+  - `audience_filters` = текущий `filters`.
+  - `send_mode='scheduled'`, `status='scheduled'`, `next_run_at = ISO(date+time)`.
+- Успех: toast «Рассылка запланирована», переключение на под-вкладку «Запланированные», invalidate query.
+
+### 1.5. Режим `"recurring"` — раскрывается:
+
+- `freq` (daily/weekly/monthly), `time`, `byweekday` (multi для weekly), `bymonthday` (для monthly), `ends_at` (опц.).
+- Кнопка: **«Создать повторяющуюся рассылку»**.
+- INSERT с `send_mode='recurring'`, `status='recurring'`, `recurrence_rule={...}`, `next_run_at` через RPC `compute_next_broadcast_run`. Если RPC error — не сохраняем, показываем ошибку.
+
+### 1.6. Edit-mode (предзаполнение из таблицы)
+
+- URL-параметр `?tab=broadcasts&sub=quick&edit=<id>` либо сигнал через query state.
+- При наличии `edit` — загрузить шаблон, гидратировать composer:
+  - `telegramEnabled = channels.includes('telegram')`, аналогично email;
+  - заполнить тексты/медиа/фильтры;
+  - выставить `sendMode` из `send_mode`;
+  - заполнить date/time из `next_run_at` или `recurrence_rule`.
+- Шапка composer: бейдж **«Редактирование запланированной рассылки»** + кнопка «Отменить редактирование» (сбрасывает edit + чистит форму).
+- Кнопка действия: **«Сохранить изменения»** → UPDATE существующей записи (без дубля).
+
+---
+
+## 2. Вкладка «Запланированные» — каноническая таблица
+
+Полностью переписать `ScheduledBroadcastsSection.tsx`:
+
+### 2.1. Убрать
+
+- ❌ `<DispatcherStatusPanel />`
+- ❌ Кнопку «Создать запланированную»
+- ❌ Открытие `<ScheduledBroadcastWizard />`
+- ❌ Tabs scheduled/recurring/sent
+- ❌ Карточный layout
+
+### 2.2. Структура
+
+- **Toolbar сверху:**
+  - Поиск по `name` (debounce 300ms).
+  - Select «Тип»: все / однократные / повторяющиеся.
+  - Select «Статус»: все / активные / выключенные / завершённые / ошибка.
+  - Select «Канал»: все / Telegram / Email.
+- **Bulk action bar** (появляется при `selected.size > 0`): Включить · Выключить · Снять с расписания · Удалить/архивировать. Все деструктивные — через `AlertDialog`.
+- **Таблица** через `@/components/ui/table` + `SortableResizableTableHead`:
 
 
-| Таблица                       | Назначение                                                                                                                                                                                                                                                                                     | Статус для нашей задачи                                                                                                                                                                               |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `broadcast_templates`         | Шаблоны TG/Email рассылок. Колонки: `id, name, channel, message_text, button_text, button_url, email_subject, email_body_html, status('draft','scheduled','sent','archived'), scheduled_for, sent_count, failed_count, sent_at, created_by, template_type, live_event_id, targeting_tariff_id` | **Переиспользуем как SoT шаблонов**. `scheduled_for` уже есть, статус `scheduled` уже есть. Не хватает: `audience_filters`, `media_*`, `channels[]`, `recurrence_rule`, `next_run_at`, `last_run_at`. |
-| `live_event_notification_log` | Per-recipient лог рассылок по эфирам. Колонки: `id, live_event_id (NOT NULL FK), template_id → broadcast_templates, user_id, channel('telegram'                                                                                                                                                | 'email'), notify_offset_minutes (NOT NULL), scheduled_for, sent_at, status('pending'                                                                                                                  |
-| `email_logs`                  | Универсальный лог всех outgoing email (любые каналы отправки).                                                                                                                                                                                                                                 | Уже пишется из `email-mass-broadcast`. **Источник истины для email-аудита**, не дублируем.                                                                                                            |
-| `news_digest_queue`           | Очередь дайджестов **новостей** (FK на `news_content`).                                                                                                                                                                                                                                        | Не подходит по семантике; не переиспользуем.                                                                                                                                                          |
-| `notification_outbox`         | Очередь персональных нотификаций. RLS отсутствует, idempotency_key — single-recipient контракт.                                                                                                                                                                                                | Не подходит для броадкастов; не переиспользуем.                                                                                                                                                       |
-| `live_notification_config`    | Singleton kill-switch для cron эфиров.                                                                                                                                                                                                                                                         | Паттерн копируем (см. п.2.5), но отдельным singleton (см. п.3.4).                                                                                                                                     |
+| Колонка                         | Источник                                              |
+| ------------------------------- | ----------------------------------------------------- |
+| ☐ (header «select all on page») | local Set                                             |
+| Название                        | `name` (clickable → edit в quick)                     |
+| Тип                             | `send_mode` → «Однократная» / «Повторяющаяся» (Badge) |
+| Каналы                          | `channels[]` → бейджи TG/Email                        |
+| Следующая                       | `next_run_at` (formatted)                             |
+| Последняя                       | `last_run_at`                                         |
+| Статус                          | derive (см. 2.4), Badge с цветом                      |
+| Создано                         | `created_at`                                          |
+| Действия                        | DropdownMenu                                          |
 
 
-### 2.2. Существующие RPC
+- **Empty state**: «Запланированных рассылок нет. Создайте новую через «Быстрая рассылка» → «Запланировать»».
+- **Loading**: skeleton rows.
+- Pagination: на этом этапе клиентский limit 100; если потребуется — добавим server-side в будущем PATCH.
 
-- `resolve_broadcast_audience(_filters jsonb)` — возвращает `{telegram_count, email_count, total_count, users[]}`. **Единый SoT аудитории**, используется и UI, и edge funcs. Переиспользуем.
-- `resolve_broadcast_audience_user_ids(_filters jsonb)` — отдаёт только user_ids (для bulk-операций).
+### 2.3. Row actions (dropdown)
 
-### 2.3. Существующие edge functions (по реестру)
+- Изменить → `setMainTab('quick')` + `setEditId(id)`.
+- Включить / Выключить (см. 2.4).
+- Снять с расписания.
+- Дублировать (INSERT копия `name + " (копия)"`, `status='draft'`, `send_mode='manual'`, `next_run_at=null`).
+- История запусков → `Sheet` со списком `broadcast_runs` (read-only, без admin-only данных).
+- Удалить/архивировать (см. 2.5).
 
-- `telegram-mass-broadcast` — принимает `{message, include_button, button_text, button_url, filters, product_context_id}`, поддерживает multipart с File для медиа.
-- `email-mass-broadcast` — принимает `{subject, html, filters, product_context_id}`.
-- `live-event-notifications-cron` — **эталонный dispatcher** с `dry_run` body-параметром, kill-switch, `production_approved` gate, единым cron `* * * * *`.
-- `manage-news-schedule` — управление расписанием новостей (другая семантика, не трогаем).
+### 2.4. Active/Inactive logic
 
-### 2.4. Существующие cron-jobs (cron.job)
+- **Pause** (выключить):
+  - `status = 'paused'`
+  - сохранить исходный режим в `audience_filters._paused_from = <prev_status>` (или отдельное jsonb-поле; колонки `metadata` нет, но `audience_filters` jsonb доступен — добавить служебный ключ под префиксом `_meta`). Альтернатива — отдельная миграция на `metadata jsonb`. **Решение:** мини-миграция: `ALTER TABLE broadcast_templates ADD COLUMN IF NOT EXISTS metadata jsonb NOT NULL DEFAULT '{}'`. Это безопасно и явно. Использовать `metadata.paused_from_status`.
+  - **НЕ обнулять** `next_run_at` и `recurrence_rule`.
+  - Dispatcher в edge-функции уже фильтрует по `status IN ('scheduled','recurring')` — `paused` он не подберёт.
+- **Resume** (включить):
+  - Восстановить `status` из `metadata.paused_from_status` (fallback: `recurring` если есть `recurrence_rule`, иначе `scheduled`).
+  - Если `scheduled` и `next_run_at` в прошлом → toast-ошибка «Дата уже прошла. Откройте «Изменить» и выберите новую».
+  - Если `recurring` → пересчитать `next_run_at` через `compute_next_broadcast_run`.
+- **Снять с расписания**: `status='draft'`, `send_mode='manual'`, `next_run_at=null` (recurrence_rule очищаем).
 
+### 2.5. Удаление / архивирование (safe)
 
-| jobname                    | schedule     | active |
-| -------------------------- | ------------ | ------ |
-| `live-event-notifications` | `* * * * *`  | false  |
-| `monitor-news-morning`     | `0 5 * * *`  | true   |
-| `monitor-news-afternoon`   | `0 12 * * *` | true   |
+- Если у шаблона есть `broadcast_runs` → **soft-delete**: `status='archived'`, `metadata.deleted_at`, `metadata.deleted_by`. Dispatcher в `process-scheduled-broadcasts` уже не подберёт `archived`. Шаблон скрывается из таблицы (фильтр `status != 'archived'` по умолчанию, опц. чек «Показать архив»).
+- Если runs нет → разрешить hard DELETE.
+- Bulk delete делает то же самое per-row с правильным выбором стратегии.
+- Перед массовым деструктивом — confirm modal с числом затронутых.
 
+### 2.6. Audit для bulk
 
-Отдельного cron под broadcast-рассылки нет. **Создаём ровно один общий dispatcher** (см. п.3.5).
+Каждое массовое действие → INSERT в `audit_logs`:
 
-### 2.5. Существующие UI-компоненты рассылок
-
-- `src/components/admin/communication/BroadcastsTabContent.tsx` — корневой контейнер, две вкладки `templates`/`quick`.
-- `BroadcastTemplatesSection.tsx` — список шаблонов + 4 статус-фильтра (Черновики/Запланированные/Отправленные/Архив).
-- `BroadcastTemplateCard.tsx` — карточка шаблона.
-- `BroadcastTemplateDialog.tsx` — создание/редактирование (имя, канал, текст, кнопка, тип).
-- `BroadcastSendDialog.tsx` — выбор аудитории + подтверждение отправки (использует свою упрощённую структуру `BroadcastFilters`).
-- В быстрой рассылке (`BroadcastsTabContent.tsx`) — полная модель `BroadcastFilters` с include/exclude/club_ids/club_membership/bot_ids + `RuleListEditor` + загрузка медиа.
-
-## 3. Предлагаемое решение
-
-### 3.1. Anti-duplication guard (перед каждым шагом)
-
-
-| Сущность                   | Существующее?                                                             | Действие                                                                                                                                                                                                         |
-| -------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Таблица шаблонов           | `broadcast_templates` ✅                                                   | **Переиспользуем**. ALTER add-only.                                                                                                                                                                              |
-| Таблица очереди отложенных | Нет (в эфирах используется `live_event_notification_log` — несовместима)  | Доказательство: dedup-индекс требует `live_event_id NOT NULL` + `notify_offset_minutes NOT NULL`. **Только после этого** добавляем `broadcast_runs` (per-execution лог).                                         |
-| Лог per-recipient          | `live_event_notification_log` (только эфиры), `email_logs` (только email) | **Не дублируем**. Per-recipient детализация по TG для broadcast-рассылок не требуется в MVP — агрегируем `sent/failed` в `broadcast_runs`. Email-детализация автоматически попадает в `email_logs` как и сейчас. |
-| Аудит                      | `audit_logs` ✅                                                            | Переиспользуем (как сейчас telegram-mass-broadcast пишет).                                                                                                                                                       |
-| RPC аудитории              | `resolve_broadcast_audience` ✅                                            | Переиспользуем без изменений.                                                                                                                                                                                    |
-| Telegram broadcast         | `telegram-mass-broadcast` ✅                                               | **Add-only**: расширяем приёмом `media_url` (signed URL из Storage) для отложенных рассылок. Существующий multipart-путь сохраняем.                                                                              |
-| Email broadcast            | `email-mass-broadcast` ✅                                                  | Без изменений.                                                                                                                                                                                                   |
-| Cron dispatcher            | `live-event-notifications-cron` (только эфиры)                            | **Не дублируем под каждый broadcast**. Создаём ровно ОДИН общий cron `process-scheduled-broadcasts` (схема `* * * * *`), который обходит все pending шаблоны.                                                    |
-| Kill-switch                | `live_notification_config` (только эфиры)                                 | Копируем паттерн в `broadcast_dispatcher_config` (singleton id=1) — отдельный, чтобы пауза эфиров не валила broadcast и наоборот.                                                                                |
-
-
-### 3.2. Миграция БД (минимально необходимое, ALTER add-only)
-
-В `broadcast_templates` добавить:
-
-- `audience_filters jsonb` — снапшот фильтров. Структура совпадает с `BroadcastFilters` из `BroadcastsTabContent.tsx` (include/exclude/club_ids/club_membership/bot_ids). Дефолт `'{}'::jsonb`.
-- `channels text[] not null default '{telegram}'` — поддерживает `{telegram}`, `{email}`, `{telegram,email}`. Старая колонка `channel` сохраняется как «primary channel» для обратной совместимости (UI миграция: при чтении — если `channels` пуст, fallback `[channel]`; при записи — синхронизируем `channel = channels[0]`).
-- `media_storage_path text` — путь в существующем bucket (см. п.3.3).
-- `media_type text` — `'photo'|'video'|'audio'|'video_note'`.
-- `media_file_name text`.
-- `send_mode text not null default 'manual' check (send_mode in ('manual','scheduled','recurring'))`.
-- `recurrence_rule jsonb` — `{frequency:'daily'|'weekly'|'monthly', interval:int, by_weekday:int[]?, time_of_day:'HH:MM', timezone:'Europe/Minsk', ends_at:timestamptz?}`.
-- `next_run_at timestamptz` — индексируется частичным индексом `where status in ('scheduled') and next_run_at is not null`.
-- `last_run_at timestamptz`, `total_runs int default 0`.
-- В CHECK на `status` добавить значение `'recurring'` (рассылки с активной периодичностью остаются в этом статусе бесконечно, до архивации).
-
-Новая таблица `broadcast_runs` (per-execution лог, нужна потому что у периодических нет одного `sent_at`):
-
-- `id uuid pk default gen_random_uuid()`
-- `template_id uuid not null references broadcast_templates(id) on delete cascade`
-- `started_at timestamptz not null default now()`
-- `finished_at timestamptz`
-- `channel text not null check (channel in ('telegram','email'))`
-- `audience_count int`, `sent_count int default 0`, `failed_count int default 0`, `skipped_count int default 0`
-- `dry_run boolean not null default false`
-- `audience_snapshot jsonb` — что увидел dispatcher (для расследований)
-- `dispatch_mode text not null default 'production'` (по аналогии с live_event_notification_log)
-- `error text`
-- `triggered_by text not null check (triggered_by in ('manual','scheduled','recurring','dry_run'))`
-- `idempotency_key text unique` — формат `tpl:{template_id}:{channel}:{epoch_minute}` для отложенных, `tpl:{template_id}:{channel}:run:{n}` для recurring. Защита от двойного запуска при пересечении cron-тиков.
-- Индексы: `(template_id, started_at desc)`, `(dispatch_mode, started_at desc)`.
-- RLS: те же `has_permission(auth.uid(), 'entitlements.manage')` + `service_role` full access.
-
-Новый singleton `broadcast_dispatcher_config` (1 row, копия паттерна `live_notification_config`):
-
-- `id int pk check(id=1)`, `enabled boolean not null default false`, `production_approved boolean not null default false`, `updated_at`, `updated_by`. RLS только админам.
-
-Новая SQL-функция `compute_next_broadcast_run(rule jsonb, from_ts timestamptz) returns timestamptz` (PL/pgSQL, immutable=false stable). Возвращает следующую отметку в UTC по правилу. Дублирующая JS-утилита для UI-предпросмотра следующих 3 запусков.
-
-Storage: используем существующий bucket для медиа. Перед миграцией проверю наличие подходящего bucket (`broadcast-media` или общий) через `storage.buckets`. Если нет ни одного подходящего публичного — создаём `broadcast-media` (private, signed URL на 24h при отправке).
-
-### 3.3. Edge functions (add-only)
-
-`**telegram-mass-broadcast**` — расширяем приём:
-
-- Если в body есть `media_url: string` (HTTPS, без `media: File` в multipart) — функция выкачивает файл по signed URL и пересылает в Telegram (добавляется ветка рядом с существующим multipart-приёмом).
-- Существующий multipart-путь и текстовый JSON-путь не трогаем.
-
-**Новая `process-scheduled-broadcasts**` — единственный новый dispatcher. Логика идентична `live-event-notifications-cron`:
-
-1. Принимает body `{ dry_run?: boolean, force_template_id?: uuid }`.
-2. Guard 1: читает `broadcast_dispatcher_config`. Если `enabled=false` → controlled skip с reason.
-3. Guard 2: если `dry_run=false` и `production_approved=false` → controlled skip.
-4. Выбирает шаблоны:
-  - `status='scheduled' AND next_run_at <= now()` (одноразовые отложенные), либо
-  - `status='recurring' AND next_run_at <= now()` (периодические).
-5. Для каждого шаблона:
-  - Резолвит аудиторию через `resolve_broadcast_audience(audience_filters)`.
-  - Для каждого канала из `channels[]`:
-    - Создаёт `broadcast_runs` row со статусом «started», `idempotency_key` (UNIQUE-индекс защищает от двойного выполнения).
-    - Если `dry_run` — фиксирует `audience_count`, не отправляет, ставит `triggered_by='dry_run'`.
-    - Иначе вызывает `telegram-mass-broadcast`/`email-mass-broadcast` с собранным body (для TG — генерит signed URL из `media_storage_path` если есть).
-    - Записывает результат в `broadcast_runs` (`sent_count/failed_count/finished_at/error`).
-  - Для `scheduled`: статус → `'sent'`, `sent_at=now()`.
-  - Для `recurring`: вычисляет новый `next_run_at = compute_next_broadcast_run(...)`. Если он `> ends_at` → статус `'sent'` и `next_run_at=null`. Иначе обновляет `last_run_at`, `total_runs+=1`.
-6. Пишет агрегированную запись в `audit_logs` с `actor_type='system'`, `action='broadcast_dispatcher_run'`, meta = `{dry_run, processed_templates, sent, failed, skipped}`.
-
-Cron создаётся отдельной insert-операцией (не миграцией, т.к. содержит anon key — по schedule-jobs guide):
-
-```sql
-select cron.schedule('process-scheduled-broadcasts', '* * * * *',
-  $$ select net.http_post(
-    url:='https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/process-scheduled-broadcasts',
-    headers:='{"Content-Type":"application/json","Authorization":"Bearer <ANON>"}'::jsonb,
-    body:='{}'::jsonb) $$);
+```
+action: 'broadcast_bulk_enable' | 'broadcast_bulk_disable' | 'broadcast_bulk_unschedule' | 'broadcast_bulk_delete'
+actor_type: 'admin'
+actor_user_id: auth.uid()
+meta: { ids: [...], count: N, before_status: {...}, after_status: '...' }
 ```
 
-### 3.4. UI
+---
 
-**Удаляется** вкладка «⚡ Быстрая рассылка» — её функционал переезжает в расширенный диалог шаблона. На главном экране остаётся одна вкладка «📋 Шаблоны рассылок» с фильтрами:
-`Черновики | Запланированные | Периодические | Отправленные | Архив`.
+## 3. Cleanup
 
-`**BroadcastTemplateDialog**` — переписывается в единый wizard со следующими секциями:
+После реализации, dependency check, затем удалить:
 
-1. **Название** + тип (general / webinar_invite — как сейчас).
-2. **Каналы (мульти-чекбоксы)**: Telegram, Email. Live-подсказка: «Рассылка уйдёт в оба канала. Получателям, у которых есть и Telegram и Email, придут оба сообщения.»
-3. **Контент** (по табам только для активных каналов): TG-секция (текст + медиа + кнопка), Email-секция (тема + HTML).
-4. **Медиа** (TG): upload в Storage сразу при выборе → сохраняется `media_storage_path`.
-5. **Аудитория**: переиспользуем `RuleListEditor` (include/exclude) + клубы + боты — копируем UI из `BroadcastsTabContent.tsx` как отдельный sub-компонент `BroadcastAudienceEditor`. Сразу под ним — счётчики из `resolve_broadcast_audience` (TG: N, Email: M).
-6. **Режим отправки** (radio):
-  - **Сразу** — по «Отправить» открывает обязательный dry-run модал (см. п.3.6).
-  - **Запланировать** — DatePicker (shadcn `pointer-events-auto`) + TimePicker. Сохраняет `send_mode='scheduled'`, `next_run_at=...`, `status='scheduled'`.
-  - **Периодически** — частота (день/неделя/месяц) + интервал + дни недели (для weekly) + время + опц. дата окончания. Под полями — «Следующие 3 запуска: …» (через JS-утилиту `computeNextBroadcastRuns`). Сохраняет `send_mode='recurring'`, `recurrence_rule`, `next_run_at`, `status='recurring'`.
+- `src/components/admin/communication/scheduled/ScheduledBroadcastWizard.tsx` — удалить.
+- `src/components/admin/communication/scheduled/DispatcherStatusPanel.tsx` — удалить.
+- `src/components/admin/communication/scheduled/BroadcastDryRunModal.tsx` — переиспользуем как опциональный «Предпросмотр получателей» в quick-composer (кнопка «Предпросмотреть аудиторию»). Если не приживётся — удалим.
 
-`**BroadcastTemplateCard**` — добавляются:
+---
 
-- иконки активных каналов (TG/Email),
-- индикатор медиа,
-- для `scheduled`: дата/время следующего запуска,
-- для `recurring`: человекочитаемое описание расписания + «Запусков: N · Следующий: …»,
-- кнопки: «Отправить сейчас» (dry-run → confirm), «Пауза/Возобновить» (для recurring: `status` ↔ `draft`), «Редактировать», «Архив».
+## 4. Backend
 
-`**BroadcastSendDialog**` — упрощается до окна dry-run (см. п.3.6) и используется как для «Отправить сейчас», так и для предпросмотра запланированных.
+### 4.1. Миграции
 
-### 3.5. Обязательный dry-run
+1. `ALTER TABLE broadcast_templates ADD COLUMN IF NOT EXISTS metadata jsonb NOT NULL DEFAULT '{}';`
+2. (Опц.) расширить допустимые `status` чтобы включать `'archived','paused'` — проверить, есть ли CHECK constraint. Если есть — заменить через миграцию, без триггеров на reserved-схемы.
+3. Обновить `process-scheduled-broadcasts`: явно `WHERE status IN ('scheduled','recurring') AND next_run_at <= now()`. Проверить — возможно уже так.
 
-Любая отправка (manual «сразу» или ручной trigger «запустить сейчас» для запланированной/периодической) проходит через двухшаговый модал:
+### 4.2. Без новых таблиц/RPC/edge-функций.
 
-1. **Шаг Dry-run**: показывает каналы, размер аудитории по каждому каналу (TG/Email), список ботов (для TG), первые 5 получателей с маркером «есть TG / есть Email», контент-превью. Кнопка «Это превью, ничего не отправлено». Создаётся `broadcast_runs` row с `dry_run=true`, `triggered_by='dry_run'`, `audience_snapshot` со счётчиками.
-2. **Шаг Execute**: разблокирована только после успешного dry-run. Вызывает edge function без `dry_run` флага. Создаётся `broadcast_runs` row с `triggered_by='manual'`.
+Используем `broadcast_templates`, `broadcast_runs`, `compute_next_broadcast_run`, `resolve_broadcast_audience`, `process-scheduled-broadcasts`, `telegram-mass-broadcast`, `email-mass-broadcast`, bucket `telegram-media`.
 
-Cron-исполнение для отложенных/периодических НЕ требует ручного dry-run — оно идёт по уже сохранённому шаблону. Но первый запуск кронa для `production_approved=false` → controlled skip, чтобы оператор сначала включил флаг.
+### 4.3. Dispatcher остаётся внутренним
 
-### 3.6. Логи и аудит
+Никакого UI для `enabled`, `production_approved`, cron, system audit.
 
-- Per-execution: `broadcast_runs`.
-- Per-template-state: `broadcast_templates.last_run_at`, `total_runs`, `sent_count`, `failed_count`.
-- Per-email-recipient: уже пишется в `email_logs` функцией `email-mass-broadcast` (не дублируем).
-- Per-broadcast-system-event: `audit_logs` с `action IN ('telegram_mass_broadcast','email_mass_broadcast','broadcast_dispatcher_run')`, `actor_type='system'` для cron-вызовов.
+---
 
-## 4. Изменяемые компоненты
+## 5. Backlog (отдельный PATCH, **не в этом Sprint**)
 
-### Файлы (UI)
+**Sprint C — Delivery Ledger & Statistics.** Discovery подтвердило: per-recipient delivery таблицы нет. Предлагается отдельный PATCH:
 
-- `src/components/admin/communication/BroadcastsTabContent.tsx` — удалить вкладку «Быстрая рассылка», оставить только `BroadcastTemplatesSection`.
-- `src/components/admin/communication/BroadcastTemplateDialog.tsx` — переписать как единый wizard.
-- `src/components/admin/communication/BroadcastTemplateCard.tsx` — расширить отображение.
-- `src/components/admin/communication/BroadcastSendDialog.tsx` — превратить в dry-run + execute модал.
-- `src/components/admin/communication/BroadcastTemplatesSection.tsx` — добавить статус `recurring` в фильтр.
-- Новые: `BroadcastAudienceEditor.tsx`, `BroadcastScheduleEditor.tsx`, `BroadcastDryRunDialog.tsx`, `src/lib/broadcast/computeNextRun.ts`.
+- Новая таблица `broadcast_deliveries` (run_id, template_id, user_id, channel, recipient_address, status, provider_message_id, sent_at, delivered_at, opened_at, clicked_at, error, payload_snapshot, metadata).
+- INSERT'ы из `telegram-mass-broadcast` / `email-mass-broadcast` / `process-scheduled-broadcasts`.
+- View для агрегации статистики.
+- UI «История запусков» расширяется per-recipient drill-down.
 
-### Edge functions
+В **этом** Sprint:
 
-- `telegram-mass-broadcast` — add-only ветка приёма `media_url`.
-- **Новая** `process-scheduled-broadcasts` — dispatcher.
+- Гарантируем, что `broadcast_runs` пишутся (уже работает).
+- НЕ удаляем шаблоны с историей физически (см. 2.5).
+- Архивные шаблоны сохраняют ссылочную целостность с `broadcast_runs.template_id`.
 
-### БД
+---
 
-- Миграция: ALTER `broadcast_templates` (8 новых колонок + расширение CHECK), CREATE `broadcast_runs`, CREATE `broadcast_dispatcher_config`, CREATE FUNCTION `compute_next_broadcast_run`. RLS на новые таблицы.
-- Insert (не миграция): cron job `process-scheduled-broadcasts`, seed singleton `broadcast_dispatcher_config (1, false, false)`.
+## 6. DoD
 
-### Storage
+- 3 под-вкладки: Шаблоны / Быстрая рассылка / Запланированные.
+- В «Быстрой рассылке» два независимых toggle каналов (TG / Email).
+- Можно отправить только TG, только Email, или оба одной рассылкой.
+- Радио «Режим отправки»: now / scheduled / recurring.
+- Quick-send (now) работает 1:1 как раньше + «🧪 Тест себе».
+- Scheduled и recurring сохраняются в `broadcast_templates`, появляются в таблице.
+- Edit открывает «Быструю рассылку» с предзаполнением, обновляет существующую запись.
+- Вкладка «Запланированные» — каноническая таблица (shell как у контактов), без формы создания, без wizard, без DispatcherStatusPanel.
+- Toolbar: поиск + 3 фильтра (тип/статус/канал).
+- Bulk: select-one/many/page-all + enable/disable/unschedule/delete-or-archive с confirm.
+- Row actions: Изменить / Включить / Выключить / Снять / Дублировать / История / Удалить.
+- Pause не теряет режим и `next_run_at` (хранится в `metadata.paused_from_status`).
+- Шаблоны с `broadcast_runs` → soft-delete (`archived`), без runs → hard delete.
+- Bulk-actions пишут `audit_logs` с `actor_type='admin'`.
+- Удалены `ScheduledBroadcastWizard.tsx` и `DispatcherStatusPanel.tsx` после dependency check; typecheck зелёный.
+- Production approval / cron / system audit UI отсутствует.
+- Зафиксирован отдельный PATCH Sprint C на per-recipient delivery ledger.
 
-- Bucket `broadcast-media` (private), если не существует.
+Финальный отчёт на русском с diff-summary и скринами:
 
-## 5. Что не будет изменено (явно вне scope)
-
-- `live_event_notification_log` и `live-event-notifications-cron` — продолжают обслуживать только эфиры.
-- `news_digest_queue`, `notification_outbox`, `email_logs` — без изменений схемы.
-- `email-mass-broadcast` — не трогаем.
-- `resolve_broadcast_audience` — не трогаем.
-- Bot/MTProto/user-account отправка — не вводим, рассылки идут только через текущие Bot API функции.
-- Per-recipient детализация TG-рассылок (отдельная строка на пользователя) — не вводим в MVP, агрегаты в `broadcast_runs` достаточно.
-
-## 6. Dry-run (на этапе разработки)
-
-- Миграция применяется сначала на staging-snapshot: `EXPLAIN` на новых частичных индексах, проверка что существующие записи `broadcast_templates` с `channel='telegram'` корректно мапятся на дефолт `channels='{telegram}'`.
-- `process-scheduled-broadcasts` — первый запуск с `dry_run=true` через `supabase--curl_edge_functions`, без cron. Проверяем что выбираются правильные шаблоны и audience-counter совпадает с UI-предпросмотром.
-- UI dry-run модал — обязательный gate перед любым execute (см. п.3.5).
-- Cron включается последним шагом, и `broadcast_dispatcher_config.production_approved` стартует в `false` — controlled skip пока оператор явно не включит.
-
-## 7. Execute
-
-1. Миграция БД (ALTER + CREATE).
-2. Insert cron-job + seed singleton.
-3. Деплой `telegram-mass-broadcast` (add-only) и `process-scheduled-broadcasts`.
-4. UI-патч (один PR со всеми компонентами).
-5. Smoke: создать тестовый шаблон → dry-run → ручной send «сразу» → проверить `broadcast_runs` и `audit_logs`.
-6. Smoke: создать `scheduled` шаблон на now()+2min → дождаться cron → проверить переход в `sent`.
-7. Smoke: создать `recurring` daily → проверить два последовательных запуска и пересчёт `next_run_at`.
-8. Включить `broadcast_dispatcher_config.enabled=true, production_approved=true`.
-
-## 8. STOP-guards
-
-- Если миграция выявит, что в `broadcast_templates` уже есть строки со `status='scheduled'` и без `audience_filters` — STOP, обсудить backfill отдельно (сейчас таких быть не должно — проверить SELECT перед миграцией).
-- Если в Storage уже существует bucket с тем же именем но другими политиками — STOP, не перезаписывать.
-- Если `resolve_broadcast_audience` для пустых `audience_filters` возвращает «всех пользователей» — STOP, ввести явный guard «нельзя сохранить шаблон с пустой аудиторией».
-- Если Telegram-функция при `media_url` начнёт ронять существующий multipart-путь — откат расширения (фича-флаг через ENV-переменную `ENABLE_MEDIA_URL`).
-- Если cron-тик начнёт пересекаться сам с собой (выполнение > 60s) — uniqueness `idempotency_key` в `broadcast_runs` предотвратит двойную отправку, dispatcher должен это поймать и логировать.
-
-## 9. DoD
-
-- Discovery подтверждено: новых таблиц/функций-дублей не создано (см. таблицу 3.1).
-- Миграция применена, существующие шаблоны сохраняют работоспособность (`channels` дефолтится из `channel`).
-- Создание шаблона с медиа + аудиторией + режимом «Сразу» проходит обязательный dry-run, потом отправляет. `broadcast_runs` содержит обе записи (dry_run + manual).
-- Шаблон `scheduled`: cron в указанную минуту срабатывает, `status` → `sent`, в `audit_logs` есть запись с `actor_type='system'`.
-- Шаблон `recurring` daily: после двух последовательных запусков `next_run_at` корректно сдвигается, `total_runs=2`, в `broadcast_runs` две записи.
-- Шаблон с обоими каналами: одна и та же рассылка попадает и в TG, и в Email; в `broadcast_runs` две строки (по строке на канал) с одним `template_id`.
-- Существующий `live-event-notifications-cron` и `live_event_notification_log` продолжают работать без регрессий.
-- Удалена вкладка «Быстрая рассылка»; функционал доступен в диалоге шаблона.
-- `broadcast_dispatcher_config.enabled=true` и `production_approved=true` — установлены вручную после verify.
-- Diff-summary изменённых файлов приложен к Отчёту о выполнении.
-
-## 10. Риски и зависимости
-
-- **Риск разрыва обратной совместимости** старых шаблонов без `channels[]` — митигируется дефолтом + UI-fallback.
-- **Риск двойной отправки** при пересечении cron-тиков — митигируется UNIQUE `idempotency_key`.
-- **Риск массовой отправки при первом включении cron** — митигируется `production_approved=false` и controlled skip.
-- **Зависимость от `resolve_broadcast_audience**` — если RPC изменится, broadcast и live-events пострадают одинаково (это уже общий SoT).
-- **Telegram rate limit** — при больших аудиториях (>30 msg/sec) текущая `telegram-mass-broadcast` уже умеет батчинг, не меняем.
-- **Часовые пояса**: все timestamptz хранятся в UTC, ввод/отображение — через `Europe/Minsk` (date-fns-tz уже в проекте). В `recurrence_rule.timezone` явно сохраняем зону, в которой задавал оператор.
-
-## 11. Требуется дополнительная информация
-
-Подтверждение от пользователя:
-
-1. Часовой пояс для расписаний — фиксируем `Europe/Minsk` по умолчанию или нужен выбор?
-2. Per-recipient детализация TG-отправок (отдельная строка на каждого получателя) — в MVP агрегаты, или сразу детально как у эфиров? (Влияет на размер `broadcast_runs` или отдельную таблицу.)
-3. При выборе обоих каналов — отправлять ли email тем, у кого ЕСТЬ Telegram (т.е. дубль-доставка), или только тем, у кого нет TG? (По умолчанию плана — дубль-доставка, как в формулировке задачи.)
+1. Composer с toggles TG/Email.
+2. Радио режима отправки.
+3. Date+time для однократной.
+4. Recurrence для повторяющейся.
+5. Каноническая таблица «Запланированные».
+6. Bulk selection + confirm modal.
+7. Edit через «Быструю рассылку» (бейдж + предзаполнение).
+8. SQL-proof: созданная scheduled, recurring, paused, restored, archived; audit_logs bulk action; импорты удалённых компонентов отсутствуют (`rg` пустой).
