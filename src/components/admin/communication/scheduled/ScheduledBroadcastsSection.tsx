@@ -311,7 +311,7 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
         if (restored === "recurring" && row.recurrence_rule) {
           const { data: nextRunRpc, error: rpcErr } = await supabase.rpc(
             "compute_next_broadcast_run",
-            { _rule: row.recurrence_rule, _from: new Date().toISOString() }
+            { rule: row.recurrence_rule as never, from_ts: new Date().toISOString() }
           );
           if (rpcErr) {
             errors.push(`${row.id}: ${rpcErr.message}`);
@@ -334,7 +334,7 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
 
         const { error } = await supabase
           .from("broadcast_templates")
-          .update({ status: restored, next_run_at: nextRun, metadata: newMeta })
+          .update({ status: restored, next_run_at: nextRun, metadata: newMeta as never })
           .eq("id", row.id);
         if (error) errors.push(`${row.id}: ${error.message}`);
       }
