@@ -100,6 +100,9 @@ interface BroadcastFilters {
 interface AudiencePreview {
   telegramCount: number;
   emailCount: number;
+  emailActiveCount: number;
+  emailArchivedCount: number;
+  emailNoAccountCount: number;
   totalCount: number;
   users: Array<{
     id: string;
@@ -108,6 +111,8 @@ interface AudiencePreview {
     telegram_username: string | null;
     has_telegram: boolean;
     has_email: boolean;
+    has_account?: boolean;
+    is_archived?: boolean;
   }>;
 }
 
@@ -183,6 +188,9 @@ export function BroadcastsTabContent() {
     bot_ids: [],
   });
 
+  // Архивные профили — opt-in. По умолчанию НЕ включаем.
+  const [includeArchived, setIncludeArchived] = useState(false);
+
   // Build RPC payload (channels derived from active tab)
   const rpcFilters = useMemo(() => ({
     channels: ["telegram", "email"],
@@ -190,7 +198,8 @@ export function BroadcastsTabContent() {
     exclude: filters.exclude,
     club_ids: filters.club_ids,
     club_membership: filters.club_membership,
-  }), [filters]);
+    include_archived: includeArchived,
+  }), [filters, includeArchived]);
 
   // cf warning: check if message/email contains cf.product tokens
   const hasCfTokens = useMemo(() => {
@@ -289,12 +298,15 @@ export function BroadcastsTabContent() {
       });
       if (error) {
         console.error("[broadcast] audience rpc error", error);
-        return { telegramCount: 0, emailCount: 0, totalCount: 0, users: [] } as AudiencePreview;
+        return { telegramCount: 0, emailCount: 0, emailActiveCount: 0, emailArchivedCount: 0, emailNoAccountCount: 0, totalCount: 0, users: [] } as AudiencePreview;
       }
       const r = (data ?? {}) as Record<string, unknown>;
       return {
         telegramCount: Number(r.telegram_count || 0),
         emailCount: Number(r.email_count || 0),
+        emailActiveCount: Number(r.email_active_count || 0),
+        emailArchivedCount: Number(r.email_archived_count || 0),
+        emailNoAccountCount: Number(r.email_no_account_count || 0),
         totalCount: Number(r.total_count || 0),
         users: (r.users as AudiencePreview["users"]) || [],
       } satisfies AudiencePreview;
@@ -405,14 +417,30 @@ export function BroadcastsTabContent() {
   // Send Email broadcast
   const sendEmailMutation = useMutation({
     mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke("email-mass-broadcast", {
-        body: {
-          subject: emailSubject.trim(),
-          html: emailBody.trim(),
-          filters,
-          product_context_id: productContextId,
-        },
-      });
+      // Полная база (нет ни include/exclude/club_ids) → требуем явное подтверждение.
+      const isFullBase =
+        (filters.include?.length ?? 0) === 0 &&
+        (filters.exclude?.length ?? 0) === 0 &&
+        (filters.club_ids?.length ?? 0) === 0;
+      const body: Record<string, unknown> = {
+        subject: emailSubject.trim(),
+        html: emailBody.trim(),
+        filters,
+        product_context_id: productContextId,
+        include_archived: includeArchived,
+      };
+      if (isFullBase) {
+        const phrase = `ОТПРАВИТЬ ВСЕМ ${audience?.emailCount ?? 0}`;
+        const typed = window.prompt(
+          `Вы запускаете рассылку по ВСЕЙ базе (${audience?.emailCount ?? 0} получателей).\n\nДля подтверждения введите фразу:\n${phrase}`,
+        );
+        if (typed !== phrase) {
+          throw new Error("Подтверждение не получено — рассылка отменена");
+        }
+        body.allow_full_audience = true;
+        body.confirm_full_audience_text = typed;
+      }
+      const { data, error } = await supabase.functions.invoke("email-mass-broadcast", { body });
       if (error) throw error;
       return data;
     },
@@ -761,7 +789,9 @@ export function BroadcastsTabContent() {
                     </Label>
                     {audience && (
                       <p className="text-xs text-muted-foreground">
-                        {audience.emailCount} получателей
+                        {audience.emailCount} получателей · активных {audience.emailActiveCount}
+                        {audience.emailArchivedCount > 0 ? ` · архивных ${audience.emailArchivedCount}` : ""}
+                        {audience.emailNoAccountCount > 0 ? ` · без аккаунта ${audience.emailNoAccountCount}` : ""}
                       </p>
                     )}
                   </div>
@@ -772,6 +802,26 @@ export function BroadcastsTabContent() {
                   onCheckedChange={setSendToEmail}
                 />
               </div>
+              {sendToEmail && (
+                <div className="flex items-center justify-between p-3 rounded-lg border bg-muted/30">
+                  <div className="flex items-center gap-3">
+                    <div>
+                      <Label htmlFor="ch-include-archived" className="cursor-pointer font-medium">
+                        Включить архивных контактов
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        По умолчанию архивные исключены. Включи, чтобы охватить всю историческую базу
+                        {audience ? ` (+${audience.emailArchivedCount})` : ""}.
+                      </p>
+                    </div>
+                  </div>
+                  <Switch
+                    id="ch-include-archived"
+                    checked={includeArchived}
+                    onCheckedChange={setIncludeArchived}
+                  />
+                </div>
+              )}
             </CardContent>
           </Card>
 
