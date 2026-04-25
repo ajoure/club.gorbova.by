@@ -230,11 +230,19 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
   };
 
   // ===== Audit helper (canonical platform pattern) =====
-  const writeAudit = async (action: string, ids: string[], beforeAfter: Record<string, unknown>) => {
+  // For bulk actions audit is mandatory. We do not block the action itself
+  // (data change has already happened), but we MUST surface failures to the
+  // operator via toast so the gap is visible and can be reconciled.
+  const writeAudit = async (
+    action: string,
+    ids: string[],
+    beforeAfter: Record<string, unknown>,
+  ): Promise<{ success: boolean; error?: string }> => {
     try {
-      const { data: userRes } = await supabase.auth.getUser();
+      const { data: userRes, error: userErr } = await supabase.auth.getUser();
+      if (userErr) throw userErr;
       const uid = userRes?.user?.id ?? null;
-      await supabase.from("audit_logs").insert({
+      const { error } = await supabase.from("audit_logs").insert({
         actor_type: "user",
         actor_user_id: uid,
         actor_label: "admin_bulk_broadcasts",
@@ -245,9 +253,16 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
           ...beforeAfter,
         },
       });
+      if (error) throw error;
+      return { success: true };
     } catch (err) {
-      // Audit failure must not block the action; surface to console only
-      console.warn("[scheduled-broadcasts] audit log failed", err);
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[scheduled-broadcasts] audit log failed", err);
+      toast.warning(
+        `Действие выполнено, но запись в журнал аудита не удалась (${action}). Сообщите администратору.`,
+        { description: message.slice(0, 200) },
+      );
+      return { success: false, error: message };
     }
   };
 
