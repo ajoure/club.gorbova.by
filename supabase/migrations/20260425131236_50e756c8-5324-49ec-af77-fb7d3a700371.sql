@@ -1,0 +1,1 @@
+TRUNCATE TABLE public.rev_7101ed3c_ops;
