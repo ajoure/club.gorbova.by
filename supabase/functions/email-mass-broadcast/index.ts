@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { resolveSystemTokens, extractUsedTokens } from "../_shared/systemTokens.ts";
 import { resolveCustomFieldTokens, extractCustomFieldTokenIds } from "../_shared/customFieldTokens.ts";
+import { evaluateBroadcastGuards, auditBlockedAttempt } from "../_shared/broadcast-guards.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
