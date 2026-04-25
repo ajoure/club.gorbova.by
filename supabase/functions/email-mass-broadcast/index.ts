@@ -470,24 +470,36 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Resolve audience via canonical RPC
+    // ===== Resolve audience via canonical CONTACT-LEVEL RPC =====
+    // Source of truth: profiles + orders_v2 (purchased) / entitlements (active_access).
+    // Returns one row per email-contact (profile_id + email), including ghost / no-account profiles.
     const useNewSchema = Array.isArray(filters?.include) || Array.isArray(filters?.exclude) || Array.isArray(filters?.club_ids);
-    let allowedUserIds: Set<string> | null = null;
+    type ContactRow = {
+      profile_id: string;
+      email: string;
+      email_normalized: string;
+      user_id: string | null;
+      has_account: boolean;
+      is_archived: boolean;
+      has_telegram: boolean;
+      full_name: string | null;
+      telegram_username: string | null;
+    };
+    let audienceContacts: ContactRow[] | null = null;
 
     if (useNewSchema) {
-      const rpcFilters = {
+      const rpcFilters: Record<string, unknown> = {
         include: filters.include || [],
         exclude: filters.exclude || [],
         club_ids: filters.club_ids || [],
         club_membership: filters.club_membership || 'any',
-        channel: 'email',
+        // По умолчанию архивные НЕ включаются. Явный opt-in приходит из UI.
+        include_archived: (reqBody as Record<string, unknown>)?.include_archived === true,
       };
-      let audience: Array<{ user_id: string; has_email: boolean; has_telegram: boolean }> | null = null;
       let rpcErr: { message: string } | null = null;
       if (isSystemActor) {
-        // service_role-only system RPC, no auth.uid() check
-        const r = await supabase.rpc('resolve_broadcast_audience_user_ids_system', { _filters: rpcFilters });
-        audience = r.data as typeof audience;
+        const r = await supabase.rpc('resolve_broadcast_audience_contacts_system', { _filters: rpcFilters });
+        audienceContacts = (r.data as ContactRow[]) || [];
         rpcErr = r.error as typeof rpcErr;
       } else {
         const userClient = createClient(
@@ -495,19 +507,17 @@ Deno.serve(async (req) => {
           Deno.env.get('SUPABASE_ANON_KEY')!,
           { global: { headers: { Authorization: authHeader! } } }
         );
-        const r = await userClient.rpc('resolve_broadcast_audience_user_ids', { _filters: rpcFilters });
-        audience = r.data as typeof audience;
+        const r = await userClient.rpc('resolve_broadcast_audience_contacts', { _filters: rpcFilters });
+        audienceContacts = (r.data as ContactRow[]) || [];
         rpcErr = r.error as typeof rpcErr;
       }
-      const _audienceData = audience;
       if (rpcErr) {
-        console.error('[email-broadcast] RPC failed:', rpcErr);
+        console.error('[email-broadcast] contact RPC failed:', rpcErr);
         return new Response(
           JSON.stringify({ error: `Audience resolution failed: ${rpcErr.message}` }),
           { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-      allowedUserIds = new Set((audience || []).filter((r: { has_email: boolean }) => r.has_email).map((r: { user_id: string }) => r.user_id));
     }
 
     // ===== Diagnostic counters =====
