@@ -117,6 +117,8 @@ interface MediaFile {
 export function BroadcastsTabContent() {
   const queryClient = useQueryClient();
   const [mainTab, setMainTab] = useState<"templates" | "quick" | "scheduled">("templates");
+  // Sprint B rev3 — фаза 2 будет использовать для гидратации composer'а
+  const [editTemplateId, setEditTemplateId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"telegram" | "email">("telegram");
   const [message, setMessage] = useState("");
   const [emailSubject, setEmailSubject] = useState("");
@@ -452,7 +454,14 @@ const [includeButton, setIncludeButton] = useState(true);
         </TabsContent>
 
         <TabsContent value="scheduled" className="mt-6">
-          <ScheduledBroadcastsSection />
+          <ScheduledBroadcastsSection
+            onEdit={(id) => {
+              setEditTemplateId(id);
+              setMainTab("quick");
+              // TODO (Sprint B rev3 — фаза 2): гидратация composer'а из broadcast_templates по editTemplateId
+              toast.info("Открытие редактирования: фаза 2 (гидратация composer'а)");
+            }}
+          />
         </TabsContent>
 
         <TabsContent value="quick" className="mt-6">
