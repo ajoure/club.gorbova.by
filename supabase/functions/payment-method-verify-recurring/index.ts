@@ -203,6 +203,39 @@ Deno.serve(async (req) => {
   // any caller (cron, admin UI, internal) from triggering MIT verification.
   // To re-enable: remove this block AND coordinate bePaid recurring credentials.
   // ============================================================================
+  // Optional cleanup hook: callers may pass { cleanup_jobs: true } to defensively
+  // cancel any orphaned pending verification jobs. Default 410-behavior is preserved.
+  let cleanupRequested = false;
+  let cleanupResult: { cancelled_jobs: number; cleared_pending_methods: number } | null = null;
+  try {
+    if (req.method === 'POST') {
+      const cloned = req.clone();
+      const body = await cloned.json().catch(() => null) as Record<string, unknown> | null;
+      cleanupRequested = body?.cleanup_jobs === true;
+    }
+  } catch (_) { /* non-blocking */ }
+
+  if (cleanupRequested) {
+    try {
+      const { data: cancelled } = await supabase
+        .from('payment_method_verification_jobs')
+        .update({ status: 'cancelled', error: 'mit_disabled', updated_at: new Date().toISOString() })
+        .in('status', ['pending', 'rate_limited'])
+        .select('id');
+      const { data: cleared } = await supabase
+        .from('payment_methods')
+        .update({ verification_status: null })
+        .eq('verification_status', 'pending')
+        .select('id');
+      cleanupResult = {
+        cancelled_jobs: cancelled?.length ?? 0,
+        cleared_pending_methods: cleared?.length ?? 0,
+      };
+    } catch (e) {
+      console.warn('[cleanup] failed', e);
+    }
+  }
+
   try {
     await supabase.from('audit_logs').insert({
       action: 'mit.runtime_disabled.verify_recurring_blocked',
@@ -212,6 +245,8 @@ Deno.serve(async (req) => {
         reason: 'MIT runtime path retired. Use provider_managed (bePaid SBS) for auto-renewal.',
         build_stamp: BUILD_STAMP,
         request_method: req.method,
+        cleanup_requested: cleanupRequested,
+        cleanup_result: cleanupResult,
       },
     });
   } catch (_) { /* non-blocking */ }
@@ -220,7 +255,9 @@ Deno.serve(async (req) => {
     success: false,
     disabled: true,
     error: 'MIT recurring verification is disabled. Auto-renewal flows use bePaid provider-managed subscriptions only.',
+    cleanup: cleanupResult,
   }, 410);
+
 
   // === X-Cron-Secret OR Admin JWT Security Gate ===
   const cronSecret = Deno.env.get('CRON_SECRET');
