@@ -1521,6 +1521,20 @@ export function BroadcastsTabContent() {
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Подсчёт...
                   </div>
+                ) : hasAudienceError ? (
+                  <Alert variant="destructive">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription className="text-xs space-y-1">
+                      <div className="font-medium">Ошибка расчёта</div>
+                      <div className="break-words opacity-90">{audienceError?.message}</div>
+                      <details>
+                        <summary className="cursor-pointer underline">Фильтры</summary>
+                        <pre className="mt-1 p-1.5 bg-background/50 rounded overflow-auto text-[10px] leading-tight">
+                          {JSON.stringify(rpcFilters, null, 2)}
+                        </pre>
+                      </details>
+                    </AlertDescription>
+                  </Alert>
                 ) : (
                   <div className="space-y-2">
                     <div className="flex items-center justify-between text-sm">
