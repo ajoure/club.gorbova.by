@@ -100,6 +100,9 @@ interface BroadcastFilters {
 interface AudiencePreview {
   telegramCount: number;
   emailCount: number;
+  emailActiveCount: number;
+  emailArchivedCount: number;
+  emailNoAccountCount: number;
   totalCount: number;
   users: Array<{
     id: string;
@@ -108,6 +111,8 @@ interface AudiencePreview {
     telegram_username: string | null;
     has_telegram: boolean;
     has_email: boolean;
+    has_account?: boolean;
+    is_archived?: boolean;
   }>;
 }
 
