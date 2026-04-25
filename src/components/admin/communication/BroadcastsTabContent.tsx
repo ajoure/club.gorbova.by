@@ -665,11 +665,19 @@ export function BroadcastsTabContent() {
       );
       // CRITICAL: использовать canonical queryKey таблицы «Запланированные» (Фаза 1).
       queryClient.invalidateQueries({ queryKey: ["scheduled-broadcasts-canonical"] });
-      setEditTemplateId(null);
-      setSendMode("now");
-      setScheduledAt(null);
-      setScheduledName("");
-      setMainTab("scheduled");
+      if (res.mode === "update") {
+        // По решению: остаёмся в редакторе после «Сохранить изменения», не переключаем вкладку,
+        // не сбрасываем editTemplateId — иначе из режима редактирования невозможно «выйти осознанно».
+        // Чтобы экран отражал актуальные значения шаблона, обновим snapshot для guard.
+        snapshotCurrentComposer();
+      } else {
+        // Новая запланированная — выходим из режима создания и переходим во вкладку «Запланированные».
+        setEditTemplateId(null);
+        setSendMode("now");
+        setScheduledAt(null);
+        setScheduledName("");
+        setMainTab("scheduled");
+      }
     },
     onError: (err) => {
       toast.error("Ошибка сохранения: " + (err as Error).message);
