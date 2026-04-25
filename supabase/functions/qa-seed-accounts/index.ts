@@ -4,7 +4,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-qa-secret",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-qa-secret, x-cron-secret",
 };
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -22,7 +22,21 @@ const ROLE_IDS: Record<string,string> = {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-  // Simple gate — only run when caller knows project ref (this is QA tooling)
+
+  const expectedSecret = Deno.env.get("CRON_SECRET");
+  const providedSecret =
+    req.headers.get("x-qa-secret") ||
+    req.headers.get("x-cron-secret") ||
+    req.headers.get("authorization")?.replace("Bearer ", "");
+
+  if (!expectedSecret || providedSecret !== expectedSecret) {
+    console.error("[qa-seed-accounts] Unauthorized: invalid or missing secret");
+    return new Response(JSON.stringify({ error: "unauthorized" }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
   const out: any[] = [];
   for (const a of ACCOUNTS) {
