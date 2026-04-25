@@ -32,7 +32,7 @@ Deno.serve(async (req) => {
 
     // Verify JWT and get caller
     const jwt = authHeader.replace('Bearer ', '');
-    const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(jwt);
+    const { data: claimsData, error: claimsError } = await (supabase.auth as any).getClaims(jwt);
     if (claimsError || !claimsData?.claims) {
       return new Response(JSON.stringify({ ok: false, error: 'Invalid token' }), {
         status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
