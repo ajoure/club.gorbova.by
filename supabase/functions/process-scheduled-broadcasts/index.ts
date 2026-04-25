@@ -25,6 +25,8 @@ const corsHeaders = {
 interface DispatchRequest {
   dry_run?: boolean;
   force_template_id?: string;
+  force_execute?: boolean;
+  force_secret?: string;
 }
 
 interface BroadcastTemplate {
