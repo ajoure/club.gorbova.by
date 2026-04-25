@@ -1,250 +1,83 @@
-да, согласен, с учетом правок:
+План: Корректное поведение режима редактирования запланированной рассылки
 
-1. **Сначала зафиксировать точную причину** `0`
-  - Отдельно проверить:
-    - RPC реально возвращает `0`;
-    - RPC падает с ошибкой, а UI подменяет ошибку на `0`;
-    - UI передаёт не тот `filters`;
-    - `include_archived` не доходит до RPC.
-  - До фикса нельзя считать, что проблема только в UI.
-2. **UI не должен возвращать fake-zero**
-  - В `BroadcastsTabContent.tsx` заменить fallback:
-  ```ts
-  return { telegramCount: 0, emailCount: 0, ... }
-  ```
-  на явное состояние:
-  ```text
-  audienceStatus: "error"
-  audienceError: error.message
-  ```
-  - В интерфейсе показывать:
-3. **Добавить debug-proof входных фильтров**  
-В dry-run отчёте обязательно показать:
-  &nbsp;
-  ```json
-  {
-    "include": [...],
-    "exclude": [],
-    "club_ids": [],
-    "club_membership": "current",
-    "include_archived": true/false
-  }
-  ```
-  Это нужно, чтобы исключить ошибку UI → RPC.
-4. **Проверить тарифный фильтр отдельно от продуктового**  
-Нужны 4 контрольных запроса:
-  &nbsp;
-  ```text
-  product only + active
-  product only + include_archived
-  product + tariff_ids + active
-  product + tariff_ids + include_archived
-  ```
-  Ожидания:
-5. **RPC nesting / permission проверить отдельно**  
-Если `resolve_broadcast_audience()` вызывает `resolve_broadcast_audience_contacts()` и та внутри снова проверяет `auth.uid() / has_permission`, возможен ложный `forbidden`.
-  &nbsp;
-  Правильный вариант:
-  - внешний RPC делает admin-check;
-  - внутренний resolver вызывается через безопасный system/internal path;
-  - обычным пользователям доступ не расширять.
-6. **Не менять** `email-mass-broadcast`**, если preview-only**  
-Edge function трогать только если dry-run покажет расхождение:
-  &nbsp;
-  ```text
-  preview count != email-mass-broadcast dry_run found
-  ```
-  Если execute-path уже корректный — не трогать.
-7. **Добавить machine-check после фикса**  
-После миграции/патча выполнить:
-  &nbsp;
-  ```sql
-  SELECT public.resolve_broadcast_audience('<filters>'::jsonb);
-  ```
-  и отдельно:
-  ```sql
-  SELECT count(*)
-  FROM public.resolve_broadcast_audience_contacts('<filters>'::jsonb);
-  ```
-  Они должны совпадать по email_count.
-8. **DoD расширить**  
-Добавить:
-9. **Audit/debug без засорения production**  
-Если добавляется логирование фильтров, оно должно быть:
-  - только в console/debug response для dry-run;
-  - либо в admin-only diagnostic;
-  - не писать каждый preview в `audit_logs`.
-10. **Не смешивать с PATCH-A runtime audit proof**  
-Этот патч — про preview/counting bug.  
-Хвост `email_mass_broadcast SYSTEM ACTOR proof` остаётся отдельным deferred и не должен блокировать исправление подсчёта.
+## Что не так сейчас (диагноз)
 
-Итог: план правильный, но перед execute обязательно доказать, где именно возникает `0`: в RPC, в permission nesting или в UI fallback.
+Файл: `src/components/admin/communication/BroadcastsTabContent.tsx`.
 
-&nbsp;
+1. Когда из карточки запланированной нажимают «Редактировать», открывается вкладка «⚡ Быстрая рассылка» с гидратацией composer'а из `broadcast_templates` (через `editTemplateId`). Это правильно.
+2. Если в этом режиме поменять `sendMode` на «Сейчас» и нажать «Отправить»:
+  - вызываются `sendTelegramMutation` / `sendEmailMutation` (одноразовая рассылка через edge-функции),
+  - **но** edge-функции `telegram-mass-broadcast` и `email-mass-broadcast` НЕ меняют статус `broadcast_templates` (проверено) — запись остаётся `scheduled` в БД,
+  - на клиенте после успеха `onSuccess` молча чистит `message` / `emailSubject` / `emailBody` / `mediaFile`, но **оставляет `editTemplateId**` и **не выходит** из режима редактирования. Пользователь видит «пустой» composer и думает, что шаблон удалён, хотя он жив на вкладке «📅 Запланированные».
+3. Кнопка «Отменить» в баннере редактирования есть (стр. 749–764), но: а) её легко не заметить на узком экране 518px, б) она частично сбрасывает поля и не предупреждает о несохранённых изменениях.
+4. Когда `sendMode === "scheduled" | "recurring"` в режиме редактирования, после нажатия «Сохранить изменения» вызывается `saveScheduledMutation` → запись обновляется (UPDATE без дубля) → `onSuccess` сбрасывает `editTemplateId` и переключает на вкладку «Запланированные». Это правильное поведение, оставляем как есть.
 
-План:
+## Целевое поведение (со слов пользователя)
 
-1. Проблема
+A. Сохранённый шаблон/рассылка должен оставаться в «Запланированных» **до тех пор, пока пользователь сам не сохранит изменения**. Просто факт «открыли в редактировании» или «отправили из редактирования один раз сейчас» — НЕ должен ломать связь с шаблоном и НЕ должен его «прятать».
 
-В UI рассылок аудитория стала показываться как `0` для фильтра «Ценный бухгалтер | 1 ступень 2.0» с выбранными тарифами. Это опасно, потому что интерфейс сейчас показывает ноль без явного объяснения, хотя backend-данные по покупкам не нулевые.
+B. После одноразовой отправки из режима редактирования (sendMode=now) шаблон должен:
 
-2. Диагностика
+- **остаться** на вкладке «Запланированные» в исходном виде (БД и так его не трогает — это уже выполнено),
+- в composer'е поля **должны остаться заполненными**, чтобы можно было: (а) отправить ещё раз, (б) внести правки и сохранить.
+- НЕ должно быть авто-очистки `message`/`emailSubject`/`emailBody`/`mediaFile` в режиме редактирования.
 
-Фактически проверено сейчас:
+C. Из режима редактирования должен быть очевидный и надёжный выход:
 
-- В `BroadcastsTabContent.tsx` preview вызывает RPC `resolve_broadcast_audience`.
-- Если RPC возвращает ошибку, код на строках 296–303 просто пишет ошибку в console и возвращает:
-  - `telegramCount: 0`
-  - `emailCount: 0`
-  - `users: []`
+- Видимая кнопка «Выйти из редактирования» (или переименовать «Отменить» → «Выйти») рядом с заголовком вкладки и в баннере, доступная на узких экранах (≤520px) — full-width на мобильном.
+- При выходе: полная очистка composer'а (message, email subject/body, media, button*, sendMode→"now", scheduledAt, scheduledTime, recurrence, scheduledName, includeArchived, фильтры → defaults) и `setEditTemplateId(null)`.
+- Если в composer'е есть несохранённые изменения относительно загруженного шаблона — спросить подтверждение через `AlertDialog` («Несохранённые изменения будут потеряны. Выйти?»).
 
-То есть UI может показывать `0 пользователей` не потому, что аудитория реально пустая, а потому что ошибка backend-аудитории замаскирована под нулевой результат.
+D. Создание новой рассылки «с нуля»:
 
-Backend-проверка данных по этому продукту показывает, что аудитория не нулевая:
+- Кнопка «Новая рассылка» в шапке вкладки «⚡ Быстрая рассылка», которая делает то же, что «Выйти» (с тем же подтверждением при изменениях).
+- В режиме создания (нет `editTemplateId`) поведение `onSuccess` для quick-send остаётся как сейчас (очищать `message`/`emailSubject`/`emailBody`/`media`), чтобы можно было сразу написать следующую.
 
-- По продукту `7101ed3c-7839-4a74-ad95-aa0660369b22` без ограничения тарифов:
-  - paid orders: `341`
-  - unique order emails: `214`
-  - contact-level recipients include archived: `215`
-  - active-only: `211`
-  - archived canonical: `4`
-  - no-account contacts: `78`
-- По выбранным на скриншоте 3 тарифам:
-  - paid orders: `238`
-  - unique order emails: `210`
-  - contact-level recipients include archived: `210`
-  - active-only: `206`
-  - archived canonical: `4`
-  - no-account contacts: `77`
+E. Поведение «отправки одноразовой» из редактирования:
 
-Также при прямой проверке `resolve_broadcast_audience(...)` без пользовательского auth-контекста получен `forbidden` из вложенного `resolve_broadcast_audience_contacts(...)`. Это подтверждает класс проблемы: ошибка RPC может превращаться в `0` в UI.
+- Перед `mutate()` показать `AlertDialog`: «Это запланированная рассылка „{name}". Отправить её сейчас вне расписания? Расписание в БД сохранится без изменений.» с кнопками «Отправить сейчас» / «Отмена».
+- После успешной отправки: тост «Отправлено: X, ошибок: Y. Шаблон „{name}" остался в „Запланированных" без изменений.» — и **НЕ** чистить поля composer'а (пользователь остаётся в режиме редактирования).
 
-3. Предлагаемое решение
+F. Режим «Сохранить изменения» (sendMode=scheduled/recurring) в режиме редактирования — без изменений: обновляет запись и выходит на вкладку «Запланированные» (как сейчас).
 
-Срочно исправить это как UI/backend reliability patch:
+## Точечные правки в файле `BroadcastsTabContent.tsx`
 
-A. Не маскировать ошибки preview под ноль
+1. **Ввести `loadedTemplateSnapshot**` (useState/useRef) — снимок гидратации (message/email/button/filters/sendMode/scheduledAt/recurrence/scheduledName/channels), используется для:
+  - детекции «грязности» (`isDirty` через memo сравнения),
+  - кнопки «Сбросить к сохранённой версии» (опционально).
+2. `**exitEditMode(force?: boolean)**` — единый хелпер:
+  - если `editTemplateId` и `isDirty` и не `force` → открыть подтверждающий `AlertDialog`,
+  - иначе очистить все поля composer'а + `setEditTemplateId(null)` + `setMainTab` оставить на «quick» (НЕ переключать).
+3. `**sendTelegramMutation.onSuccess` / `sendEmailMutation.onSuccess**`:
+  - Если `editTemplateId` присутствует — **не очищать** `message`/`emailSubject`/`emailBody`/`mediaFile`. Только тост и инвалидация `broadcast-history`.
+  - Если `editTemplateId === null` — текущее поведение (очистка) сохранить.
+4. **Удалить переключение таба** в `saveScheduledMutation.onSuccess` для случая «обновили существующую» — оставить переключение только при INSERT новой запланированной/повторяющейся. Для UPDATE — оставаться в редакторе или дать пользователю выбор через тост-action «Перейти к запланированным». (Уточни предпочтение, см. вопрос 1.)
+5. **UI**:
+  - В шапке `TabsContent value="quick"` добавить строку с заголовком «Редактирование: «{scheduledName}»» (если `editTemplateId`) и двумя кнопками: «Выйти» и «Новая рассылка».
+  - На мобильном (≤520px) — кнопки full-width, баннер `Alert` остаётся, но кнопка «Отменить» переименована в «Выйти из редактирования» и full-width.
+  - Перед quick-send в режиме редактирования — `AlertDialog` подтверждения.
+6. **Защита от потери шаблона**: ничего дополнительного в БД не нужно (edge-функции не трогают `broadcast_templates`). Достаточно UI-фикса.
 
-- В `BroadcastsTabContent.tsx` заменить fallback `return 0` на явное состояние ошибки.
-- В блоке «Аудитория» показывать красный alert: `Ошибка расчёта аудитории`, с текстом ошибки RPC.
-- Не разрешать отправку, если preview-аудитория не рассчиталась из-за ошибки.
+## Не трогаем
 
-B. Добавить backend-safe preview path
+- Edge-функции `telegram-mass-broadcast`, `email-mass-broadcast` (они корректны).
+- `BroadcastTemplatesSection` (это отдельный flow «Шаблоны», не «быстрая рассылка»).
+- RPC аудитории, `audit_logs`.
 
-- Обновить `resolve_broadcast_audience`, чтобы он не ломался из-за вложенного вызова `resolve_broadcast_audience_contacts` при допустимом caller-е.
-- Внутри `resolve_broadcast_audience` вызывать contact-level resolver в режиме, который не конфликтует с security-definer/nested auth контекстом.
-- При этом не открывать RPC публично: доступ остается только для авторизованных админов через permission guard.
+## DoD
 
-C. Синхронизировать preview и execute
+1. Открыть запланированную → «Редактировать» → composer заполнен → видна кнопка «Выйти из редактирования» (на 518px тоже видна и кликабельна).
+2. В режиме редактирования сменить sendMode на «Сейчас» → нажать «Отправить» → подтверждение → отправка → поля **остаются заполнены**, шаблон **по-прежнему виден** на «📅 Запланированные», тост сообщает «Шаблон остался в Запланированных».
+3. Можно повторно нажать «Отправить» — отправляется ещё раз тому же контингенту.
+4. Можно изменить продукт/фильтры в режиме редактирования и нажать «Отправить» (не «Сохранить») — отправка идёт по новым фильтрам, **шаблон в БД не меняется**, остаётся в «Запланированных» с прежними настройками.
+5. Изменить что-то → нажать «Выйти из редактирования» → появляется `AlertDialog` «Несохранённые изменения…». «Отмена» → остаёмся, «Выйти» → composer пустой, `editTemplateId=null`.
+6. Без изменений → «Выйти» → выходит сразу без диалога.
+7. «Новая рассылка» работает аналогично «Выйти» (с тем же подтверждением).
+8. Сохранение изменений (sendMode=scheduled/recurring) → запись обновлена в БД, без дублей.
+9. Режим создания «с нуля» (без `editTemplateId`): после quick-send поля очищаются — как сейчас.
+10. Hard reload страницы больше не требуется для выхода из редактирования.
 
-- Preview должен считать тем же contact-level контрактом, что и `email-mass-broadcast`.
-- `include_archived` остается явным opt-in.
-- Для скриншотного кейса ожидаемый preview после фикса:
-  - если выбраны 3 тарифа и `include_archived=false`: около `206` email recipients;
-  - если `include_archived=true`: около `210` email recipients.
-- Если выбрать продукт без ограничения тарифов:
-  - `211` active-only;
-  - `215` with archived.
+## Открытые вопросы
 
-D. Добавить runtime dry-run proof
-
-- Вызвать `email-mass-broadcast` в `dry_run=true` для этого же фильтра.
-- Проверить, что dry-run возвращает diagnostic:
-  - `allowed > 0`
-  - `found > 0`
-  - `duplicates`, `invalid_emails`, `archived_included`
-- Dry-run audit не пишет — это нормально.
-
-4. Изменяемые компоненты
-
-- UI:
-  - `src/components/admin/communication/BroadcastsTabContent.tsx`
-- SQL/RPC:
-  - `public.resolve_broadcast_audience`
-  - при необходимости минимально `public.resolve_broadcast_audience_contacts`, без изменения бизнес-логики выборки
-- Edge function:
-  - `supabase/functions/email-mass-broadcast/index.ts` только если dry-run покажет рассинхрон preview/execute; иначе не трогать.
-
-5. Что не будет изменено
-
-- Не трогаю `orders_v2`.
-- Не трогаю CRM-дедуп PATCH-B.
-- Не меняю paid/status/entitlements/documents.
-- Не меняю аудиторию рассылок бизнес-логически: только исправляю отображение ошибки и надежность resolver-а.
-- Не создаю новые таблицы.
-- Не создаю новый source of truth.
-
-6. Dry-run
-
-Перед реальным изменением данных выполнить только read-only проверки:
-
-- Проверить текущий `pg_get_functiondef` для:
-  - `resolve_broadcast_audience`
-  - `resolve_broadcast_audience_contacts`
-  - `resolve_broadcast_audience_contacts_system`
-- Сравнить ручной SQL-count с RPC-count.
-- Проверить текущий UI-контракт: какие поля ожидает `BroadcastsTabContent.tsx`.
-
-После миграции выполнить:
-
-```sql
-select public.resolve_broadcast_audience(
-  '{
-    "include":[{
-      "product_id":"7101ed3c-7839-4a74-ad95-aa0660369b22",
-      "tariff_ids":[
-        "9bc81736-e7e5-48db-9925-b866427a98e1",
-        "adbe94e8-171d-4b49-8338-66c554bb1f0b",
-        "543940b1-99da-47f3-accc-671ad5b11afe"
-      ],
-      "mode":"purchased"
-    }],
-    "exclude":[],
-    "club_ids":[],
-    "club_membership":"current",
-    "include_archived":true
-  }'::jsonb
-);
-```
-
-Ожидание: не `0`, а около `210` email recipients для выбранных тарифов.
-
-7. Execute
-
-- Создать миграцию с исправлением `resolve_broadcast_audience`.
-- Обновить UI, чтобы ошибка RPC не превращалась в `0`.
-- При необходимости задеплоить `email-mass-broadcast` только если потребуется синхронизация dry-run diagnostic.
-
-8. STOP-guards
-
-Остановиться и не деплоить, если:
-
-- ручной SQL-count и RPC-count расходятся больше чем на ожидаемое различие active-only/include-archived;
-- RPC начинает возвращать всю базу при выбранном продукте;
-- `include_archived=false` включает архивных;
-- `include_archived=true` всё равно исключает архивных;
-- preview и dry-run `email-mass-broadcast` дают разные `found/allowed` по одному и тому же фильтру;
-- появляется необходимость менять `orders_v2`, `entitlements`, CRM stages или документы.
-
-9. DoD
-
-Задача считается закрытой, когда:
-
-- UI больше не показывает `0` при ошибке RPC; вместо этого показывает явную ошибку.
-- Для фильтра на скриншоте аудитория показывает не ноль:
-  - active-only около `206` email;
-  - include archived около `210` email.
-- Для продукта без ограничения тарифов:
-  - active-only около `211` email;
-  - include archived около `215` email.
-- `email-mass-broadcast` dry-run возвращает `diagnostic.found > 0` для того же фильтра.
-- Никакие paid orders / entitlements / документы / CRM-стадии не изменены.
-
-10. Риски и зависимости
-
-- Основной риск — permission/RPC nesting: внешний RPC проходит, а вложенный resolver падает `forbidden`. Это нужно исправить без ослабления доступа для обычных пользователей.
-- Второй риск — UI раньше скрывал ошибку, поэтому пользователь видел `0` вместо причины. После фикса ошибка станет видимой, а не тихой.
-
-11. Требуется дополнительная информация
-
-Не требуется. Причина уже локализована достаточно для патча: реальная аудитория в базе не нулевая, а UI сейчас маскирует ошибочный preview как `0`.
+1. После «Сохранить изменения» в режиме редактирования — **переключать на «Запланированные»** (как сейчас) или **оставаться в редакторе** с тостом «Сохранено»? Предлагаю: оставаться в редакторе (соответствует пользовательской логике «правлю, потом ухожу сам»). Подтверди. - переключать в запланированные. 
+2. При quick-send из редактирования — **записывать ли след в `audit_logs**` с пометкой «one-off send from scheduled template id=…», чтобы было видно, что шаблон отправляли вне расписания? Предлагаю: да, в `meta` уже есть `actor_label='telegram-mass-broadcast'`/`'email-mass-broadcast'` — добавить опциональный `template_id` в payload и логирование. Подтверди. Да. Подтверждаю. 
