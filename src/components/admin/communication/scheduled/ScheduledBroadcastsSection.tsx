@@ -507,7 +507,50 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
     onError: (e) => toast.error("Ошибка копирования: " + (e as Error).message),
   });
 
-  // History
+  // APPROVE (PATCH-E) — gated server-side by entitlements.manage via RPC
+  const approveMutation = useMutation({
+    mutationFn: async (templateId: string) => {
+      const { data, error } = await supabase.rpc("approve_broadcast_template", {
+        _template_id: templateId,
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      toast.success("Шаблон одобрен — попадёт в обычный cron");
+      setApproveTarget(null);
+      setApproveAudienceCount(null);
+      qc.invalidateQueries({ queryKey: ["scheduled-broadcasts-canonical"] });
+    },
+    onError: (e) => toast.error("Ошибка approve: " + (e as Error).message),
+  });
+
+  const openApproveConfirm = async (row: SchedRow) => {
+    setApproveTarget(row);
+    setApproveAudienceCount(null);
+    setApproveAudienceLoading(true);
+    try {
+      // Reuse canonical RPC; in client context entitlements.manage is required to call it.
+      // If the user lacks perms, we silently fall back to "—" — RPC failure is not fatal here.
+      const { data, error } = await supabase
+        .from("broadcast_templates")
+        .select("audience_filters")
+        .eq("id", row.id)
+        .single();
+      if (!error && data) {
+        const { data: aud } = await supabase.rpc("resolve_broadcast_audience", {
+          _filters: (data.audience_filters ?? {}) as never,
+        });
+        const totalCount = (aud as Record<string, unknown> | null)?.total_count;
+        setApproveAudienceCount(typeof totalCount === "number" ? totalCount : null);
+      }
+    } catch {
+      setApproveAudienceCount(null);
+    } finally {
+      setApproveAudienceLoading(false);
+    }
+  };
+
   const { data: historyRows, isLoading: historyLoading } = useQuery({
     queryKey: ["broadcast-runs-history", historyId],
     enabled: !!historyId,
