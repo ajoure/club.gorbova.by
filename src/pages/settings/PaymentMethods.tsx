@@ -243,45 +243,21 @@ export default function PaymentMethodsSettings() {
 
   const hasEligibleSubs = eligibleForProviderSub && eligibleForProviderSub.length > 0;
 
-  // Check for rejected cards that need 3DS
-  const hasRejectedCards = paymentMethods?.some(m => m.verification_status === 'rejected');
-
   // Create provider subscription function - per-subscription loading state
   const [creatingSubId, setCreatingSubId] = useState<string | null>(null);
   const handleCreateProviderSubscription = async (subscriptionV2Id: string) => {
     try {
       setCreatingSubId(subscriptionV2Id);
       const { data, error } = await supabase.functions.invoke('bepaid-create-subscription', {
-        body: { 
+        body: {
           subscription_v2_id: subscriptionV2Id,
           return_url: window.location.href,
-          // PATCH-4: Explicit user choice guard
           explicit_user_choice: true,
         }
       });
-      
-      // Handle 409 - already has pending provider subscription
-      // supabase-js returns error for non-2xx, but data may still contain parsed body
-      const errorMessage = error?.message || '';
-      const dataError = data?.error || '';
-      const is409Conflict = errorMessage.includes('409') || 
-                            dataError.includes('Already has active provider subscription') ||
-                            errorMessage.includes('Already has active provider subscription');
-      
-      if (is409Conflict) {
-        const providerSubId = data?.provider_subscription_id;
-        toast.info('Подписка bePaid уже создана', {
-          description: providerSubId 
-            ? `ID: ${providerSubId}. Используйте ссылку из существующей подписки или отмените её.`
-            : 'Проверьте статус подписки или отмените существующую.',
-          duration: 6000,
-        });
-        setCreatingSubId(null);
-        return;
-      }
-      
+
       if (error) throw error;
-      
+
       if (data?.redirect_url) {
         window.location.href = data.redirect_url;
       } else {
@@ -289,20 +265,11 @@ export default function PaymentMethodsSettings() {
         setCreatingSubId(null);
       }
     } catch (error: any) {
-      // Parse error message for 409 case (backup check)
-      const msg = error?.message || '';
-      if (msg.includes('409') || msg.includes('Already has active provider subscription')) {
-        toast.info('Подписка bePaid уже существует', {
-          description: 'Проверьте статус или отмените существующую для создания новой.',
-          duration: 6000,
-        });
-        setCreatingSubId(null);
-        return;
-      }
-      toast.error('Ошибка: ' + msg);
+      toast.error(normalizeEdgeFunctionError(error, error?.context?.body));
       setCreatingSubId(null);
     }
   };
+
 
   const setDefaultMutation = useMutation({
     mutationFn: async (methodId: string) => {
