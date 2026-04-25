@@ -578,6 +578,14 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="z-50 bg-popover">
+        {row.approval_status === "pending_approval" && ["scheduled", "recurring"].includes(row.status) && (
+          <>
+            <DropdownMenuItem onClick={() => openApproveConfirm(row)}>
+              <Play className="h-4 w-4 mr-2 text-emerald-600" /> Одобрить (Approve)
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
         <DropdownMenuItem onClick={() => onEdit?.(row.id)}>
           <Pencil className="h-4 w-4 mr-2" /> Изменить
         </DropdownMenuItem>
