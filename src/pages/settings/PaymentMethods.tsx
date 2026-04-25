@@ -12,10 +12,11 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { CreditCard, Plus, Star, Trash2, AlertTriangle, Check, Loader2, AlertCircle, RefreshCw, Calendar, Shield, Zap, Clock } from "lucide-react";
+import { CreditCard, Plus, Star, Trash2, AlertTriangle, Check, Loader2, RefreshCw, Calendar, Shield, Clock, ShieldCheck } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 
 interface PaymentMethod {
   id: string;
@@ -53,9 +54,7 @@ export default function PaymentMethodsSettings() {
   const location = useLocation();
   const navigate = useNavigate();
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  
-  // PATCH-E: State for polling verification status
-  const [pollingCardId, setPollingCardId] = useState<string | null>(null);
+
 
   // Check for tokenization result in URL params
   useEffect(() => {
@@ -102,99 +101,55 @@ export default function PaymentMethodsSettings() {
       }
       navigate(location.pathname, { replace: true });
     } else if (tokenizeStatus === 'success') {
-      // Card added successfully - start polling for verification status
-      const startPollingAndCheckAutolink = async () => {
+      // Card added — show autolink result if any. No verification polling
+      // (recurring verification is disabled; cards are usable immediately).
+      const handleAutolinkResult = async () => {
         if (!user) return;
-        
-        // Get the newest card
+
         const { data: newestCard } = await supabase
           .from('payment_methods')
-          .select('id, meta, verification_status')
+          .select('id, meta')
           .eq('user_id', user.id)
           .eq('status', 'active')
           .order('created_at', { ascending: false })
           .limit(1)
           .single();
-        
-        // Start polling if card is in pending status
-        if (newestCard?.id && newestCard.verification_status === 'pending') {
-          setPollingCardId(newestCard.id);
-        }
-        
+
         const meta = newestCard?.meta as Record<string, unknown> | null;
-        const autolinkResult = meta?.autolink_result as { 
-          updated_payments?: number; 
-          updated_queue?: number; 
+        const autolinkResult = meta?.autolink_result as {
+          updated_payments?: number;
+          updated_queue?: number;
           status?: string;
           stop_reason?: string;
         } | undefined;
-        
+
         if (autolinkResult) {
           const totalLinked = (autolinkResult.updated_payments || 0) + (autolinkResult.updated_queue || 0);
-          
           if (autolinkResult.status === 'stop') {
             if (autolinkResult.stop_reason === 'card_collision_last4_brand') {
               toast.info('Карта добавлена. Автопривязка транзакций пропущена (карта используется несколькими контактами).', { duration: 6000 });
             } else if (autolinkResult.stop_reason === 'too_many_candidates') {
               toast.info('Карта добавлена. Слишком много совпадений — обратитесь в поддержку.', { duration: 6000 });
+            } else {
+              toast.success('Карта успешно привязана');
             }
           } else if (totalLinked > 0) {
             toast.success(`Карта добавлена. Привязано ${totalLinked} исторических транзакций.`, { duration: 5000 });
           } else {
-            toast.success('Карта добавлена. Проверяем для автоплатежей...', { duration: 3000 });
+            toast.success('Карта успешно привязана');
           }
         } else {
-          toast.success('Карта добавлена. Проверяем для автоплатежей...', { duration: 3000 });
+          toast.success('Карта успешно привязана');
         }
-        
+
         queryClient.invalidateQueries({ queryKey: ['user-payment-methods'] });
       };
-      
-      startPollingAndCheckAutolink();
+
+      handleAutolinkResult();
       navigate(location.pathname, { replace: true });
     }
   }, [location.search, navigate, location.pathname, user, queryClient]);
 
-  // PATCH-E: Polling effect for verification status
-  useEffect(() => {
-    if (!pollingCardId || !user) return;
-    
-    let pollCount = 0;
-    const maxPolls = 15; // 30 seconds max (2s * 15)
-    
-    const interval = setInterval(async () => {
-      pollCount++;
-      
-      const { data } = await supabase
-        .from('payment_methods')
-        .select('verification_status')
-        .eq('id', pollingCardId)
-        .single();
-      
-      const status = data?.verification_status;
-      
-      // Stop polling if status is no longer pending OR max polls reached
-      if (status !== 'pending' || pollCount >= maxPolls) {
-        setPollingCardId(null);
-        queryClient.invalidateQueries({ queryKey: ['user-payment-methods'] });
-        
-        // Show appropriate toast based on final status
-        if (status === 'verified') {
-          toast.success('Карта подтверждена для автоплатежей');
-        } else if (status === 'verified_refund_pending') {
-          toast.success('Карта подтверждена. Возврат 1 BYN в обработке.');
-        } else if (status === 'rejected_3ds_required' || status === 'rejected') {
-          toast.warning('Карта не подходит для автоплатежей (требует 3DS)', { duration: 6000 });
-        } else if (status === 'failed') {
-          toast.error('Не удалось проверить карту');
-        } else if (pollCount >= maxPolls && status === 'pending') {
-          toast.info('Проверка занимает больше времени. Обновите страницу позже.');
-        }
-      }
-    }, 2000);
-    
-    return () => clearInterval(interval);
-  }, [pollingCardId, user, queryClient]);
 
   // Check for pending installments - blocks card deletion
   const { data: pendingInstallments } = useUserPendingInstallments(user?.id);
@@ -288,45 +243,21 @@ export default function PaymentMethodsSettings() {
 
   const hasEligibleSubs = eligibleForProviderSub && eligibleForProviderSub.length > 0;
 
-  // Check for rejected cards that need 3DS
-  const hasRejectedCards = paymentMethods?.some(m => m.verification_status === 'rejected');
-
   // Create provider subscription function - per-subscription loading state
   const [creatingSubId, setCreatingSubId] = useState<string | null>(null);
   const handleCreateProviderSubscription = async (subscriptionV2Id: string) => {
     try {
       setCreatingSubId(subscriptionV2Id);
       const { data, error } = await supabase.functions.invoke('bepaid-create-subscription', {
-        body: { 
+        body: {
           subscription_v2_id: subscriptionV2Id,
           return_url: window.location.href,
-          // PATCH-4: Explicit user choice guard
           explicit_user_choice: true,
         }
       });
-      
-      // Handle 409 - already has pending provider subscription
-      // supabase-js returns error for non-2xx, but data may still contain parsed body
-      const errorMessage = error?.message || '';
-      const dataError = data?.error || '';
-      const is409Conflict = errorMessage.includes('409') || 
-                            dataError.includes('Already has active provider subscription') ||
-                            errorMessage.includes('Already has active provider subscription');
-      
-      if (is409Conflict) {
-        const providerSubId = data?.provider_subscription_id;
-        toast.info('Подписка bePaid уже создана', {
-          description: providerSubId 
-            ? `ID: ${providerSubId}. Используйте ссылку из существующей подписки или отмените её.`
-            : 'Проверьте статус подписки или отмените существующую.',
-          duration: 6000,
-        });
-        setCreatingSubId(null);
-        return;
-      }
-      
+
       if (error) throw error;
-      
+
       if (data?.redirect_url) {
         window.location.href = data.redirect_url;
       } else {
@@ -334,20 +265,11 @@ export default function PaymentMethodsSettings() {
         setCreatingSubId(null);
       }
     } catch (error: any) {
-      // Parse error message for 409 case (backup check)
-      const msg = error?.message || '';
-      if (msg.includes('409') || msg.includes('Already has active provider subscription')) {
-        toast.info('Подписка bePaid уже существует', {
-          description: 'Проверьте статус или отмените существующую для создания новой.',
-          duration: 6000,
-        });
-        setCreatingSubId(null);
-        return;
-      }
-      toast.error('Ошибка: ' + msg);
+      toast.error(normalizeEdgeFunctionError(error, error?.context?.body));
       setCreatingSubId(null);
     }
   };
+
 
   const setDefaultMutation = useMutation({
     mutationFn: async (methodId: string) => {
@@ -371,8 +293,8 @@ export default function PaymentMethodsSettings() {
       queryClient.invalidateQueries({ queryKey: ["user-payment-methods"] });
       toast.success("Карта назначена основной");
     },
-    onError: (error) => {
-      toast.error("Ошибка: " + error.message);
+    onError: (error: any) => {
+      toast.error(normalizeEdgeFunctionError(error, error?.context?.body));
     },
   });
 
@@ -433,58 +355,14 @@ export default function PaymentMethodsSettings() {
       });
       setDeletingId(null);
     },
-    onError: (error) => {
-      toast.error(error.message);
+    onError: (error: any) => {
+      toast.error(normalizeEdgeFunctionError(error, error?.context?.body));
       setDeletingId(null);
     },
   });
 
-  // PATCH D: Re-verify card mutation
-  const reverifyMutation = useMutation({
-    mutationFn: async (methodId: string) => {
-      if (!user) throw new Error("Не авторизован");
-      
-      // Guard: check if there's already an active job for this card
-      const { data: existingJob } = await supabase
-        .from('payment_method_verification_jobs')
-        .select('id, status')
-        .eq('payment_method_id', methodId)
-        .in('status', ['pending', 'processing', 'rate_limited'])
-        .maybeSingle();
-      
-      if (existingJob) {
-        throw new Error("Карта уже в очереди на проверку");
-      }
-      
-      // Create new verification job
-      const idempotencyKey = `reverify_${methodId}_${Date.now()}`;
-      const { error } = await supabase
-        .from('payment_method_verification_jobs')
-        .insert({
-          payment_method_id: methodId,
-          user_id: user.id,
-          status: 'pending',
-          attempt_count: 0,
-          max_attempts: 3,
-          idempotency_key: idempotencyKey,
-        });
-      
-      if (error) throw error;
-      
-      // Update card status to pending
-      await supabase
-        .from('payment_methods')
-        .update({ verification_status: 'pending' })
-        .eq('id', methodId);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['user-payment-methods'] });
-      toast.success('Карта поставлена в очередь на проверку');
-    },
-    onError: (error) => {
-      toast.error(error.message);
-    },
-  });
+  // Re-verify mutation removed: payment-method-verify-recurring is disabled (HTTP 410).
+  // No verification jobs are created from the UI anymore.
 
   // PATCH-7: Cancel provider subscription mutation
   const cancelProviderSubMutation = useMutation({
@@ -499,8 +377,8 @@ export default function PaymentMethodsSettings() {
       queryClient.invalidateQueries({ queryKey: ['user-provider-subscriptions'] });
       toast.success('Подписка отменена');
     },
-    onError: (error: Error) => {
-      toast.error('Ошибка: ' + error.message);
+    onError: (error: any) => {
+      toast.error(normalizeEdgeFunctionError(error, error?.context?.body));
     },
   });
 
@@ -527,7 +405,7 @@ export default function PaymentMethodsSettings() {
         toast.error('Не удалось создать сессию подписки');
       }
     } catch (error: any) {
-      toast.error('Ошибка: ' + error.message);
+      toast.error(normalizeEdgeFunctionError(error, error?.context?.body));
     }
   };
 
@@ -545,7 +423,7 @@ export default function PaymentMethodsSettings() {
         toast.error("Не удалось создать сессию токенизации");
       }
     } catch (error: any) {
-      toast.error("Ошибка: " + error.message);
+      toast.error(normalizeEdgeFunctionError(error, error?.context?.body));
     }
   };
 
@@ -585,7 +463,7 @@ export default function PaymentMethodsSettings() {
       <div className="max-w-2xl mx-auto space-y-6">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Оплата и карты</h1>
-          <p className="text-muted-foreground">Управление способами оплаты</p>
+          <p className="text-muted-foreground">Сохранённые карты для удобной оплаты. Привязка карты не обязательна.</p>
         </div>
 
         {/* Price Protection Alert - original */}
@@ -669,7 +547,7 @@ export default function PaymentMethodsSettings() {
                   Привязанные карты
                 </CardTitle>
                 <CardDescription>
-                  Сохранённые карты для удобной оплаты. Автоматическое списание возможно только в рамках активной подписки bePaid.
+                  Сохранённые карты — добровольная опция для удобства будущих оплат. Вы можете оплачивать и без сохранения карты.
                 </CardDescription>
               </div>
               <Button onClick={handleAddCard} className="gap-2">
@@ -727,63 +605,25 @@ export default function PaymentMethodsSettings() {
                                   Истекла
                                 </Badge>
                               )}
-                              {/* Verification status badges */}
-                              {method.verification_status === 'pending' && (
-                                <Badge variant="outline" className="gap-1 text-amber-600 border-amber-600">
-                                  <Loader2 className="h-3 w-3 animate-spin" />
-                                  Проверяем карту...
-                                </Badge>
-                              )}
-                              {method.verification_status === 'verified' && (
+                              {/* Зелёные бейджи: карта пригодна для оплаты по умолчанию.
+                                  «Готова для подписок» — только при явном positive verified-сигнале. */}
+                              {!expired && (
                                 <Badge variant="outline" className="gap-1 text-green-600 border-green-600">
                                   <Check className="h-3 w-3" />
-                                  Для автоплатежей
+                                  Карта привязана
                                 </Badge>
                               )}
-                              {method.verification_status === 'verified_refund_pending' && (
-                                <TooltipProvider>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Badge variant="outline" className="gap-1 text-green-600 border-green-600">
-                                        <Check className="h-3 w-3" />
-                                        Для автоплатежей
-                                      </Badge>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="top" className="max-w-xs">
-                                      <p>Карта подтверждена. Возврат 1 BYN в обработке.</p>
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
+                              {!expired && (
+                                <Badge variant="outline" className="gap-1 text-green-600 border-green-600">
+                                  <Check className="h-3 w-3" />
+                                  Можно использовать для оплаты
+                                </Badge>
                               )}
-                              {(method.verification_status === 'rejected' || method.verification_status === 'rejected_3ds_required') && (
-                                <TooltipProvider>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Badge variant="destructive" className="gap-1 cursor-help">
-                                        <AlertTriangle className="h-3 w-3" />
-                                        Не для автоплатежей
-                                      </Badge>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="top" className="max-w-xs">
-                                      <p>{method.verification_error || 'Карта требует 3D-Secure на каждую операцию'}</p>
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
-                              )}
-                              {method.verification_status === 'failed' && (
-                                <TooltipProvider>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Badge variant="secondary" className="gap-1 cursor-help">
-                                        <AlertCircle className="h-3 w-3" />
-                                        Не удалось проверить
-                                      </Badge>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="top" className="max-w-xs">
-                                      <p>{method.verification_error || 'Ошибка проверки карты'}</p>
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
+                              {!expired && (method.verification_status === 'verified' || method.verification_status === 'verified_refund_pending') && (
+                                <Badge variant="outline" className="gap-1 text-green-600 border-green-600">
+                                  <ShieldCheck className="h-3 w-3" />
+                                  Готова для подписок
+                                </Badge>
                               )}
                             </div>
                             <p className="text-sm text-muted-foreground">
@@ -793,24 +633,8 @@ export default function PaymentMethodsSettings() {
                         </div>
                         
                         <div className="flex items-center gap-2">
-                          {/* PATCH D: Re-verify button for rejected/failed cards */}
-                          {(method.verification_status === 'rejected' || method.verification_status === 'rejected_3ds_required' || method.verification_status === 'failed') && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => reverifyMutation.mutate(method.id)}
-                              disabled={reverifyMutation.isPending}
-                              className="gap-1"
-                            >
-                              {reverifyMutation.isPending ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : (
-                                <RefreshCw className="h-3 w-3" />
-                              )}
-                              Перепроверить
-                            </Button>
-                          )}
-                          
+                          {/* «Перепроверить» удалено: payment-method-verify-recurring отключена. */}
+
                           {!method.is_default && !expired && (
                             <Button
                               variant="outline"
@@ -859,14 +683,8 @@ export default function PaymentMethodsSettings() {
                         </div>
                       </div>
                       
-                      {/* PATCH-D: Warning only for rejected cards - NO CTA button here */}
-                      {(method.verification_status === 'rejected' || method.verification_status === 'rejected_3ds_required') && (
-                        <div className="mt-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800">
-                          <p className="text-sm text-amber-800 dark:text-amber-200">
-                            ⚠️ Оплата этой картой может требовать 3D-Secure.
-                          </p>
-                        </div>
-                      )}
+                      {/* Жёлтое 3DS-предупреждение убрано: карта пригодна для оплаты,
+                          а возможный запрос 3D-Secure покажется уже при попытке списания. */}
                     </div>
                   );
                 })}
