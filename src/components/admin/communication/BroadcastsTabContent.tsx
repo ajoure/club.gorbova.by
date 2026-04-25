@@ -1,4 +1,14 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -360,6 +370,64 @@ export function BroadcastsTabContent() {
     setMediaFile(null);
   };
 
+  // ===== Edit-mode lifecycle helpers =====
+  // Snapshot загруженного шаблона для определения «грязных» изменений (unsaved guard).
+  const loadedTemplateSnapshotRef = useRef<string | null>(null);
+  const [exitConfirmOpen, setExitConfirmOpen] = useState<null | { kind: "exit" | "new" }>(null);
+
+  const computeComposerSnapshot = useCallback((): string => {
+    return JSON.stringify({
+      sendToTelegram,
+      sendToEmail,
+      sendMode,
+      scheduledName,
+      message,
+      emailSubject,
+      emailBody,
+      includeButton,
+      buttonText,
+      buttonUrl,
+      filters,
+      recurrence,
+      scheduledAt: scheduledAt ? scheduledAt.toISOString() : null,
+      scheduledTime,
+    });
+  }, [
+    sendToTelegram, sendToEmail, sendMode, scheduledName, message, emailSubject,
+    emailBody, includeButton, buttonText, buttonUrl, filters, recurrence,
+    scheduledAt, scheduledTime,
+  ]);
+
+  const snapshotCurrentComposer = useCallback(() => {
+    loadedTemplateSnapshotRef.current = computeComposerSnapshot();
+  }, [computeComposerSnapshot]);
+
+  const isComposerDirty = useCallback((): boolean => {
+    if (!editTemplateId) return false;
+    if (loadedTemplateSnapshotRef.current === null) return false;
+    return computeComposerSnapshot() !== loadedTemplateSnapshotRef.current;
+  }, [editTemplateId, computeComposerSnapshot]);
+
+  const resetComposer = useCallback(() => {
+    setMessage("");
+    setEmailSubject("");
+    setEmailBody("");
+    setScheduledName("");
+    setScheduledAt(null);
+    setSendMode("now");
+    setIncludeButton(true);
+    setButtonText("Открыть платформу");
+    setButtonUrl("https://club.gorbova.by/products");
+    if (mediaFile) removeMedia();
+    setRecurrence(DEFAULT_RECURRENCE);
+  }, [mediaFile]);
+
+  const exitEditMode = useCallback(() => {
+    setEditTemplateId(null);
+    loadedTemplateSnapshotRef.current = null;
+    resetComposer();
+  }, [resetComposer]);
+
   // Send Telegram broadcast
   const sendTelegramMutation = useMutation({
     mutationFn: async () => {
@@ -411,8 +479,12 @@ export function BroadcastsTabContent() {
     },
     onSuccess: (data) => {
       toast.success(`Отправлено: ${data.sent}, ошибок: ${data.failed}`);
-      setMessage("");
-      removeMedia();
+      // В режиме редактирования НЕ очищаем поля — шаблон остаётся загруженным,
+      // чтобы можно было отправить ещё раз / отредактировать / сохранить.
+      if (!editTemplateId) {
+        setMessage("");
+        removeMedia();
+      }
       queryClient.invalidateQueries({ queryKey: ["broadcast-history"] });
     },
     onError: (error) => {
@@ -452,8 +524,11 @@ export function BroadcastsTabContent() {
     },
     onSuccess: (data) => {
       toast.success(`Отправлено: ${data.sent}, ошибок: ${data.failed}`);
-      setEmailSubject("");
-      setEmailBody("");
+      // В режиме редактирования НЕ очищаем — шаблон остаётся загруженным.
+      if (!editTemplateId) {
+        setEmailSubject("");
+        setEmailBody("");
+      }
       queryClient.invalidateQueries({ queryKey: ["broadcast-history"] });
     },
     onError: (error) => {
@@ -564,6 +639,10 @@ export function BroadcastsTabContent() {
         setSendMode("now");
       }
       toast.info(`Загружен шаблон «${tpl.name}» для редактирования`);
+      // Snapshot — после применения всех setState (через micro-task), для guard «грязных» изменений.
+      setTimeout(() => {
+        if (!cancelled) snapshotCurrentComposer();
+      }, 0);
     })();
     return () => {
       cancelled = true;
@@ -648,11 +727,19 @@ export function BroadcastsTabContent() {
       );
       // CRITICAL: использовать canonical queryKey таблицы «Запланированные» (Фаза 1).
       queryClient.invalidateQueries({ queryKey: ["scheduled-broadcasts-canonical"] });
-      setEditTemplateId(null);
-      setSendMode("now");
-      setScheduledAt(null);
-      setScheduledName("");
-      setMainTab("scheduled");
+      if (res.mode === "update") {
+        // По решению: остаёмся в редакторе после «Сохранить изменения», не переключаем вкладку,
+        // не сбрасываем editTemplateId — иначе из режима редактирования невозможно «выйти осознанно».
+        // Чтобы экран отражал актуальные значения шаблона, обновим snapshot для guard.
+        snapshotCurrentComposer();
+      } else {
+        // Новая запланированная — выходим из режима создания и переходим во вкладку «Запланированные».
+        setEditTemplateId(null);
+        setSendMode("now");
+        setScheduledAt(null);
+        setScheduledName("");
+        setMainTab("scheduled");
+      }
     },
     onError: (err) => {
       toast.error("Ошибка сохранения: " + (err as Error).message);
@@ -738,33 +825,84 @@ export function BroadcastsTabContent() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Main Content */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Edit-mode banner */}
-          {editTemplateId && (
+          {/* Edit-mode banner + actions */}
+          {editTemplateId ? (
             <Alert>
               <Pencil className="h-4 w-4" />
-              <AlertDescription className="flex items-center justify-between gap-3">
-                <span>
-                  Редактирование запланированной рассылки. Сохранение обновит существующую запись (без дубля).
+              <AlertDescription className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <span className="text-sm">
+                  Редактирование шаблона. Сохранение обновит существующую запись (без дубля).
                 </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setEditTemplateId(null);
-                    setSendMode("now");
-                    setMessage("");
-                    setEmailSubject("");
-                    setEmailBody("");
-                    setScheduledAt(null);
-                    setScheduledName("");
-                    toast.info("Редактирование отменено");
-                  }}
-                >
-                  Отменить
-                </Button>
+                <div className="flex gap-2 flex-wrap">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      if (isComposerDirty()) {
+                        setExitConfirmOpen({ kind: "exit" });
+                      } else {
+                        exitEditMode();
+                        toast.info("Выход из режима редактирования");
+                      }
+                    }}
+                  >
+                    <X className="h-4 w-4 mr-1" />
+                    Выйти
+                  </Button>
+                </div>
               </AlertDescription>
             </Alert>
+          ) : (
+            <div className="flex justify-end">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  // «Новая рассылка» вне режима редактирования — сброс полей с подтверждением, если есть контент.
+                  const hasContent = !!(message.trim() || emailSubject.trim() || emailBody.trim() || scheduledName.trim() || mediaFile);
+                  if (hasContent) {
+                    setExitConfirmOpen({ kind: "new" });
+                  } else {
+                    resetComposer();
+                  }
+                }}
+              >
+                <X className="h-4 w-4 mr-1" />
+                Новая рассылка
+              </Button>
+            </div>
           )}
+
+          {/* Confirm dialog for exit / new with unsaved changes */}
+          <AlertDialog open={!!exitConfirmOpen} onOpenChange={(o) => !o && setExitConfirmOpen(null)}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Несохранённые изменения</AlertDialogTitle>
+                <AlertDialogDescription>
+                  {exitConfirmOpen?.kind === "exit"
+                    ? "В шаблоне есть несохранённые изменения. Выйти из редактирования и потерять их?"
+                    : "В композере есть введённые данные. Очистить форму и начать новую рассылку?"}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Отмена</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => {
+                    if (exitConfirmOpen?.kind === "exit") {
+                      exitEditMode();
+                      toast.info("Выход из режима редактирования");
+                    } else {
+                      resetComposer();
+                    }
+                    setExitConfirmOpen(null);
+                  }}
+                >
+                  {exitConfirmOpen?.kind === "exit" ? "Выйти без сохранения" : "Очистить"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+
 
           {/* Channel toggles */}
           <Card>
