@@ -14360,6 +14360,14 @@ export type Database = {
           user_id: string
         }[]
       }
+      resolve_broadcast_audience_user_ids_system: {
+        Args: { _filters: Json }
+        Returns: {
+          has_email: boolean
+          has_telegram: boolean
+          user_id: string
+        }[]
+      }
       resolve_user_id: {
         Args: { input_id: string }
         Returns: {

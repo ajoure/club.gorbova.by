@@ -227,36 +227,70 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
-    // Verify admin authorization
+    // ===== Auth path resolution =====
+    // Two paths:
+    //   (A) System actor (scheduled dispatcher): x-system-actor + internal secret.
+    //   (B) User JWT with entitlements.manage permission.
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      return new Response(
-        JSON.stringify({ error: 'Unauthorized' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const systemActor = req.headers.get('x-system-actor');
+    const internalSecretHeader = req.headers.get('x-broadcast-internal-secret');
+    const internalSecretEnv =
+      Deno.env.get('BROADCAST_INTERNAL_SECRET') ||
+      Deno.env.get('BROADCAST_FORCE_SECRET') ||
+      '';
 
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    let isSystemActor = false;
+    let user: { id: string } | null = null;
 
-    if (authError || !user) {
-      return new Response(
-        JSON.stringify({ error: 'Unauthorized' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Check admin permission
-    const { data: hasPermission } = await supabase.rpc('has_permission', {
-      _user_id: user.id,
-      _permission_code: 'entitlements.manage',
-    });
-
-    if (!hasPermission) {
-      return new Response(
-        JSON.stringify({ error: 'Forbidden' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    if (systemActor || internalSecretHeader) {
+      // System bypass attempted — both header pieces required and must match.
+      const bearerSecret = authHeader?.startsWith('Bearer ')
+        ? authHeader.replace('Bearer ', '')
+        : '';
+      const providedSecret = internalSecretHeader || bearerSecret;
+      if (
+        systemActor !== 'broadcast-dispatcher' ||
+        !internalSecretEnv ||
+        providedSecret !== internalSecretEnv
+      ) {
+        // Do NOT log secret values.
+        console.warn('[email-broadcast] system bypass rejected', {
+          actor: systemActor,
+          has_secret: !!providedSecret,
+        });
+        return new Response(
+          JSON.stringify({ error: 'Forbidden' }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      isSystemActor = true;
+    } else {
+      // User JWT path (unchanged).
+      if (!authHeader) {
+        return new Response(
+          JSON.stringify({ error: 'Unauthorized' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      const token = authHeader.replace('Bearer ', '');
+      const { data: { user: authedUser }, error: authError } = await supabase.auth.getUser(token);
+      if (authError || !authedUser) {
+        return new Response(
+          JSON.stringify({ error: 'Unauthorized' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      const { data: hasPermission } = await supabase.rpc('has_permission', {
+        _user_id: authedUser.id,
+        _permission_code: 'entitlements.manage',
+      });
+      if (!hasPermission) {
+        return new Response(
+          JSON.stringify({ error: 'Forbidden' }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      user = { id: authedUser.id };
     }
 
     const { subject, html, filters, product_context_id, dry_run } = await req.json();
@@ -362,12 +396,24 @@ Deno.serve(async (req) => {
         club_membership: filters.club_membership || 'any',
         channel: 'email',
       };
-      const userClient = createClient(
-        Deno.env.get('SUPABASE_URL')!,
-        Deno.env.get('SUPABASE_ANON_KEY')!,
-        { global: { headers: { Authorization: authHeader } } }
-      );
-      const { data: audience, error: rpcErr } = await userClient.rpc('resolve_broadcast_audience_user_ids', { _filters: rpcFilters });
+      let audience: Array<{ user_id: string; has_email: boolean; has_telegram: boolean }> | null = null;
+      let rpcErr: { message: string } | null = null;
+      if (isSystemActor) {
+        // service_role-only system RPC, no auth.uid() check
+        const r = await supabase.rpc('resolve_broadcast_audience_user_ids_system', { _filters: rpcFilters });
+        audience = r.data as typeof audience;
+        rpcErr = r.error as typeof rpcErr;
+      } else {
+        const userClient = createClient(
+          Deno.env.get('SUPABASE_URL')!,
+          Deno.env.get('SUPABASE_ANON_KEY')!,
+          { global: { headers: { Authorization: authHeader! } } }
+        );
+        const r = await userClient.rpc('resolve_broadcast_audience_user_ids', { _filters: rpcFilters });
+        audience = r.data as typeof audience;
+        rpcErr = r.error as typeof rpcErr;
+      }
+      const _audienceData = audience;
       if (rpcErr) {
         console.error('[email-broadcast] RPC failed:', rpcErr);
         return new Response(
@@ -602,13 +648,16 @@ Deno.serve(async (req) => {
 
     // Log to audit_logs
     await supabase.from('audit_logs').insert({
-      actor_user_id: user.id,
+      actor_user_id: isSystemActor ? null : user!.id,
       action: 'email_mass_broadcast',
       meta: {
         sent,
         failed,
         total: sent + failed,
         subject,
+        actor_type: isSystemActor ? 'system' : 'user',
+        actor_label: isSystemActor ? 'broadcast-dispatcher' : undefined,
+        source: isSystemActor ? 'scheduled_dispatcher' : undefined,
         tokens_used_contact: tokensInfo.contact,
         tokens_used_system: tokensInfo.system,
         tokens_used_cf_ids: cfFieldIds,

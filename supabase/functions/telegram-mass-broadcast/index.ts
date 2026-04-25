@@ -109,36 +109,65 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
-    // Verify admin authorization
+    // ===== Auth path resolution =====
+    // (A) System actor (scheduled dispatcher), or (B) User JWT with entitlements.manage.
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      return new Response(
-        JSON.stringify({ error: 'Unauthorized' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const systemActor = req.headers.get('x-system-actor');
+    const internalSecretHeader = req.headers.get('x-broadcast-internal-secret');
+    const internalSecretEnv =
+      Deno.env.get('BROADCAST_INTERNAL_SECRET') ||
+      Deno.env.get('BROADCAST_FORCE_SECRET') ||
+      '';
 
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-    
-    if (authError || !user) {
-      return new Response(
-        JSON.stringify({ error: 'Unauthorized' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    let isSystemActor = false;
+    let user: { id: string } | null = null;
 
-    // Check admin permission
-    const { data: hasPermission } = await supabase.rpc('has_permission', {
-      _user_id: user.id,
-      _permission_code: 'entitlements.manage',
-    });
-
-    if (!hasPermission) {
-      return new Response(
-        JSON.stringify({ error: 'Forbidden' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    if (systemActor || internalSecretHeader) {
+      const bearerSecret = authHeader?.startsWith('Bearer ')
+        ? authHeader.replace('Bearer ', '')
+        : '';
+      const providedSecret = internalSecretHeader || bearerSecret;
+      if (
+        systemActor !== 'broadcast-dispatcher' ||
+        !internalSecretEnv ||
+        providedSecret !== internalSecretEnv
+      ) {
+        console.warn('[telegram-broadcast] system bypass rejected', {
+          actor: systemActor,
+          has_secret: !!providedSecret,
+        });
+        return new Response(
+          JSON.stringify({ error: 'Forbidden' }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      isSystemActor = true;
+    } else {
+      if (!authHeader) {
+        return new Response(
+          JSON.stringify({ error: 'Unauthorized' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      const token = authHeader.replace('Bearer ', '');
+      const { data: { user: authedUser }, error: authError } = await supabase.auth.getUser(token);
+      if (authError || !authedUser) {
+        return new Response(
+          JSON.stringify({ error: 'Unauthorized' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      const { data: hasPermission } = await supabase.rpc('has_permission', {
+        _user_id: authedUser.id,
+        _permission_code: 'entitlements.manage',
+      });
+      if (!hasPermission) {
+        return new Response(
+          JSON.stringify({ error: 'Forbidden' }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      user = { id: authedUser.id };
     }
 
     // Parse request - support both JSON and FormData
@@ -323,19 +352,26 @@ Deno.serve(async (req) => {
         club_membership: filters.club_membership || 'any',
         channel: 'telegram',
       };
-      // Use a user-scoped client so auth.uid() works inside the SECURITY DEFINER RPC
-      // (which checks has_permission(auth.uid(), 'entitlements.manage')).
-      // Admin permission has already been verified above.
-      const userClient = createClient(
-        Deno.env.get('SUPABASE_URL')!,
-        Deno.env.get('SUPABASE_ANON_KEY')!,
-        { global: { headers: { Authorization: authHeader } } }
-      );
-      const { data: audience, error: rpcErr } = await userClient.rpc('resolve_broadcast_audience_user_ids', { _filters: rpcFilters });
-      if (rpcErr) {
-        console.error('[broadcast] resolve_broadcast_audience_user_ids failed:', rpcErr);
+      let audience: Array<{ user_id: string; has_telegram: boolean; has_email: boolean }> | null = null;
+      let rpcErrMsg: string | null = null;
+      if (isSystemActor) {
+        const r = await supabase.rpc('resolve_broadcast_audience_user_ids_system', { _filters: rpcFilters });
+        audience = (r.data as typeof audience) ?? null;
+        rpcErrMsg = r.error ? r.error.message : null;
+      } else {
+        const userClient = createClient(
+          Deno.env.get('SUPABASE_URL')!,
+          Deno.env.get('SUPABASE_ANON_KEY')!,
+          { global: { headers: { Authorization: authHeader! } } }
+        );
+        const r = await userClient.rpc('resolve_broadcast_audience_user_ids', { _filters: rpcFilters });
+        audience = (r.data as typeof audience) ?? null;
+        rpcErrMsg = r.error ? r.error.message : null;
+      }
+      if (rpcErrMsg) {
+        console.error('[broadcast] resolve_broadcast_audience_user_ids failed:', rpcErrMsg);
         return new Response(
-          JSON.stringify({ error: `Audience resolution failed: ${rpcErr.message}` }),
+          JSON.stringify({ error: `Audience resolution failed: ${rpcErrMsg}` }),
           { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
@@ -503,7 +539,7 @@ Deno.serve(async (req) => {
       direction: string;
       message_text: string;
       message_id: number | null;
-      sent_by_admin: string;
+      sent_by_admin: string | null;
       status: string;
       meta: Record<string, unknown>;
     }> = [];
@@ -719,7 +755,7 @@ Deno.serve(async (req) => {
               direction: 'outgoing',
               message_text: personalizedMessage,
               message_id: telegramMsgId,
-              sent_by_admin: user.id,
+              sent_by_admin: user?.id ?? null,
               status: 'sent',
               meta: msgMeta,
             });
@@ -772,9 +808,12 @@ Deno.serve(async (req) => {
 
     // Log to audit_logs
     await supabase.from('audit_logs').insert({
-      actor_user_id: user.id,
+      actor_user_id: isSystemActor ? null : user!.id,
       action: 'telegram_mass_broadcast',
       meta: {
+        actor_type: isSystemActor ? 'system' : 'user',
+        actor_label: isSystemActor ? 'broadcast-dispatcher' : undefined,
+        source: isSystemActor ? 'scheduled_dispatcher' : undefined,
         sent: totalSent,
         failed: totalFailed,
         total: totalSent + totalFailed,
