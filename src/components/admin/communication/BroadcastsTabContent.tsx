@@ -955,6 +955,51 @@ export function BroadcastsTabContent() {
                       </div>
                     </div>
                   )}
+                  {recurrence.frequency === "monthly" && (
+                    <div className="space-y-2">
+                      <Label>День месяца (1–31)</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={31}
+                        value={(recurrence.by_monthday && recurrence.by_monthday[0]) || 1}
+                        onChange={(e) => {
+                          const v = Math.max(1, Math.min(31, parseInt(e.target.value) || 1));
+                          setRecurrence((r) => ({ ...r, by_monthday: [v] }));
+                        }}
+                        className="w-32"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Если в месяце меньше дней — рассылка будет в последний день месяца.
+                      </p>
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    <Label>Дата окончания (опционально)</Label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="date"
+                        value={recurrence.ends_at ? recurrence.ends_at.slice(0, 10) : ""}
+                        onChange={(e) =>
+                          setRecurrence((r) => ({
+                            ...r,
+                            ends_at: e.target.value ? new Date(e.target.value).toISOString() : null,
+                          }))
+                        }
+                        className="w-48"
+                      />
+                      {recurrence.ends_at && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setRecurrence((r) => ({ ...r, ends_at: null }))}
+                        >
+                          Очистить
+                        </Button>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
 
