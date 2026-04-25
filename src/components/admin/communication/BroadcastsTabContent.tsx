@@ -421,8 +421,12 @@ export function BroadcastsTabContent() {
     },
     onSuccess: (data) => {
       toast.success(`Отправлено: ${data.sent}, ошибок: ${data.failed}`);
-      setMessage("");
-      removeMedia();
+      // В режиме редактирования НЕ очищаем поля — шаблон остаётся загруженным,
+      // чтобы можно было отправить ещё раз / отредактировать / сохранить.
+      if (!editTemplateId) {
+        setMessage("");
+        removeMedia();
+      }
       queryClient.invalidateQueries({ queryKey: ["broadcast-history"] });
     },
     onError: (error) => {
