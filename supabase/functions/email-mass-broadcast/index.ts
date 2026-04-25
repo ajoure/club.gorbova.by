@@ -10,6 +10,37 @@ const corsHeaders = {
 };
 
 /**
+ * Sanitize HTML attribute values that were corrupted by markdown-style
+ * link wrapping: src="[https://x/y](https://x/y)" → src="https://x/y".
+ *
+ * This happens when content is pasted from editors (Tilda export, chat apps,
+ * markdown previewers) that auto-linkify URLs inside attribute values.
+ * Browsers and email clients cannot resolve such "URLs", so images and links
+ * silently break.
+ *
+ * Strategy:
+ *   1. For src=, href=, srcset=, background=, action=, poster= and
+ *      data-*-url style attributes: if the value matches the markdown
+ *      pattern [X](Y), replace with Y (the URL inside parens).
+ *   2. Idempotent: a clean URL passes through unchanged.
+ *   3. Quote-style preserved (single or double).
+ */
+function sanitizeMarkdownWrappedAttributes(html: string): string {
+  if (!html || typeof html !== 'string') return html;
+  if (!html.includes('](')) return html; // fast path: no markdown link syntax at all
+
+  const ATTRS = ['src', 'href', 'srcset', 'background', 'action', 'poster', 'cite', 'formaction'];
+  // Matches: attr="[anything](URL)"  or  attr='[anything](URL)'
+  // Group 1: attr name; Group 2: quote char; Group 3: URL inside parens
+  const pattern = new RegExp(
+    `\\b(${ATTRS.join('|')})\\s*=\\s*(["'])\\[[^\\]]*\\]\\(([^)\\s"']+)\\)\\2`,
+    'gi',
+  );
+
+  return html.replace(pattern, (_m, attr, quote, url) => `${attr}=${quote}${url}${quote}`);
+}
+
+/**
  * Resolve standard contact tokens in a template string.
  */
 function resolveContactTokens(
