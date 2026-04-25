@@ -97,14 +97,29 @@ export function CardVerificationControl() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Controls */}
-        <div className="flex flex-wrap items-center gap-4">
+        {/* MIT recurring verification disabled (since 2026-04-23). */}
+        <div className="p-3 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-700 dark:text-amber-300 mt-0.5" />
+            <div className="text-xs text-amber-900 dark:text-amber-100 space-y-1">
+              <p className="font-medium">MIT-проверка карт отключена</p>
+              <p>
+                Edge-функция <code>payment-method-verify-recurring</code> возвращает HTTP 410.
+                Этот инструмент сейчас не выполняет действий и не создаёт новые задания.
+                Для автопродления используйте <code>provider_managed</code> подписки bePaid (SBS).
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Controls (kept for future restoration; disabled by config) */}
+        <div className="flex flex-wrap items-center gap-4 opacity-60">
           <div className="flex items-center gap-2">
             <Switch
               id="dry-run-toggle"
               checked={dryRun}
               onCheckedChange={setDryRun}
-              disabled={isRunning}
+              disabled
             />
             <Label htmlFor="dry-run-toggle" className="text-sm">
               Dry-run (только просмотр)
@@ -113,21 +128,13 @@ export function CardVerificationControl() {
 
           <Button
             onClick={runVerification}
-            disabled={isRunning}
-            variant={dryRun ? "outline" : "default"}
+            disabled
+            variant="outline"
             className="min-w-[180px]"
+            title="Disabled by config — функция возвращает HTTP 410"
           >
-            {isRunning ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Выполняется...
-              </>
-            ) : (
-              <>
-                <Play className="h-4 w-4 mr-2" />
-                {dryRun ? "Проверить (dry-run)" : "Запустить проверку"}
-              </>
-            )}
+            <Play className="h-4 w-4 mr-2" />
+            Disabled by config
           </Button>
         </div>
 
