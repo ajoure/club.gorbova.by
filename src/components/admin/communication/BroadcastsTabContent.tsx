@@ -289,8 +289,10 @@ export function BroadcastsTabContent() {
     },
   });
 
-  // Audience preview via RPC (single source of truth, used by edge funcs too)
-  const { data: audience, isLoading: audienceLoading } = useQuery({
+  // Audience preview via RPC (single source of truth, used by edge funcs too).
+  // ВАЖНО: ошибки RPC НЕ маскируем под нулевую аудиторию — иначе админ видит
+  // «0 получателей» вместо явной причины и думает, что фильтр пустой.
+  const { data: audience, isLoading: audienceLoading, error: audienceError } = useQuery<AudiencePreview, Error>({
     queryKey: ["broadcast-audience-rpc", rpcFilters],
     queryFn: async () => {
       const { data, error } = await supabase.rpc("resolve_broadcast_audience", {
@@ -298,8 +300,9 @@ export function BroadcastsTabContent() {
         _filters: rpcFilters as any,
       });
       if (error) {
-        console.error("[broadcast] audience rpc error", error);
-        return { telegramCount: 0, emailCount: 0, emailActiveCount: 0, emailArchivedCount: 0, emailNoAccountCount: 0, totalCount: 0, users: [] } as AudiencePreview;
+        console.error("[broadcast] audience rpc error", error, "filters:", rpcFilters);
+        // Бросаем — react-query положит в `error`, UI покажет красный alert.
+        throw new Error(error.message || "Ошибка расчёта аудитории");
       }
       const r = (data ?? {}) as Record<string, unknown>;
       return {
@@ -313,7 +316,9 @@ export function BroadcastsTabContent() {
       } satisfies AudiencePreview;
     },
     refetchInterval: false,
+    retry: 1,
   });
+  const hasAudienceError = !!audienceError;
 
   const { data: historyItems } = useQuery({
     queryKey: ["broadcast-history"],
@@ -659,6 +664,12 @@ export function BroadcastsTabContent() {
       toast.error("Выберите хотя бы один канал: Telegram или Email");
       return;
     }
+    if (hasAudienceError) {
+      toast.error("Аудитория не рассчитана", {
+        description: audienceError?.message || "Исправьте фильтры или повторите позже",
+      });
+      return;
+    }
     if (sendToTelegram && !message.trim() && !mediaFile) {
       toast.error("Введите текст сообщения или добавьте медиа для Telegram");
       return;
@@ -691,6 +702,8 @@ export function BroadcastsTabContent() {
 
   const isSendDisabled =
     (!sendToTelegram && !sendToEmail) ||
+    hasAudienceError ||
+    audienceLoading ||
     sendTelegramMutation.isPending ||
     sendEmailMutation.isPending ||
     saveScheduledMutation.isPending;
@@ -762,6 +775,23 @@ export function BroadcastsTabContent() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
+              {hasAudienceError && (
+                <Alert variant="destructive">
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertDescription className="space-y-2">
+                    <div className="font-medium">Ошибка расчёта аудитории</div>
+                    <div className="text-xs opacity-90 break-words">
+                      {audienceError?.message}
+                    </div>
+                    <details className="text-xs">
+                      <summary className="cursor-pointer underline">Показать переданные фильтры</summary>
+                      <pre className="mt-2 p-2 bg-background/50 rounded overflow-auto text-[10px] leading-tight">
+                        {JSON.stringify(rpcFilters, null, 2)}
+                      </pre>
+                    </details>
+                  </AlertDescription>
+                </Alert>
+              )}
               <div className="flex items-center justify-between p-3 rounded-lg border">
                 <div className="flex items-center gap-3">
                   <MessageCircle className="h-5 w-5 text-blue-500" />
@@ -769,7 +799,7 @@ export function BroadcastsTabContent() {
                     <Label htmlFor="ch-tg" className="cursor-pointer font-medium">
                       Отправлять в Telegram
                     </Label>
-                    {audience && (
+                    {!hasAudienceError && audience && (
                       <p className="text-xs text-muted-foreground">
                         {audience.telegramCount} получателей
                       </p>
@@ -789,7 +819,7 @@ export function BroadcastsTabContent() {
                     <Label htmlFor="ch-email" className="cursor-pointer font-medium">
                       Отправлять Email
                     </Label>
-                    {audience && (
+                    {!hasAudienceError && audience && (
                       <p className="text-xs text-muted-foreground">
                         {audience.emailCount} получателей · активных {audience.emailActiveCount}
                         {audience.emailArchivedCount > 0 ? ` · архивных ${audience.emailArchivedCount}` : ""}
@@ -1499,6 +1529,20 @@ export function BroadcastsTabContent() {
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Подсчёт...
                   </div>
+                ) : hasAudienceError ? (
+                  <Alert variant="destructive">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription className="text-xs space-y-1">
+                      <div className="font-medium">Ошибка расчёта</div>
+                      <div className="break-words opacity-90">{audienceError?.message}</div>
+                      <details>
+                        <summary className="cursor-pointer underline">Фильтры</summary>
+                        <pre className="mt-1 p-1.5 bg-background/50 rounded overflow-auto text-[10px] leading-tight">
+                          {JSON.stringify(rpcFilters, null, 2)}
+                        </pre>
+                      </details>
+                    </AlertDescription>
+                  </Alert>
                 ) : (
                   <div className="space-y-2">
                     <div className="flex items-center justify-between text-sm">
