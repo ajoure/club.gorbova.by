@@ -396,12 +396,24 @@ Deno.serve(async (req) => {
         club_membership: filters.club_membership || 'any',
         channel: 'email',
       };
-      const userClient = createClient(
-        Deno.env.get('SUPABASE_URL')!,
-        Deno.env.get('SUPABASE_ANON_KEY')!,
-        { global: { headers: { Authorization: authHeader } } }
-      );
-      const { data: audience, error: rpcErr } = await userClient.rpc('resolve_broadcast_audience_user_ids', { _filters: rpcFilters });
+      let audience: Array<{ user_id: string; has_email: boolean; has_telegram: boolean }> | null = null;
+      let rpcErr: { message: string } | null = null;
+      if (isSystemActor) {
+        // service_role-only system RPC, no auth.uid() check
+        const r = await supabase.rpc('resolve_broadcast_audience_user_ids_system', { _filters: rpcFilters });
+        audience = r.data as typeof audience;
+        rpcErr = r.error as typeof rpcErr;
+      } else {
+        const userClient = createClient(
+          Deno.env.get('SUPABASE_URL')!,
+          Deno.env.get('SUPABASE_ANON_KEY')!,
+          { global: { headers: { Authorization: authHeader! } } }
+        );
+        const r = await userClient.rpc('resolve_broadcast_audience_user_ids', { _filters: rpcFilters });
+        audience = r.data as typeof audience;
+        rpcErr = r.error as typeof rpcErr;
+      }
+      const _audienceData = audience;
       if (rpcErr) {
         console.error('[email-broadcast] RPC failed:', rpcErr);
         return new Response(
