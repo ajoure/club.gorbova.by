@@ -293,8 +293,8 @@ export default function PaymentMethodsSettings() {
       queryClient.invalidateQueries({ queryKey: ["user-payment-methods"] });
       toast.success("Карта назначена основной");
     },
-    onError: (error) => {
-      toast.error("Ошибка: " + error.message);
+    onError: (error: any) => {
+      toast.error(normalizeEdgeFunctionError(error, error?.context?.body));
     },
   });
 
@@ -463,7 +463,7 @@ export default function PaymentMethodsSettings() {
       <div className="max-w-2xl mx-auto space-y-6">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Оплата и карты</h1>
-          <p className="text-muted-foreground">Управление способами оплаты</p>
+          <p className="text-muted-foreground">Сохранённые карты для удобной оплаты. Привязка карты не обязательна.</p>
         </div>
 
         {/* Price Protection Alert - original */}
@@ -547,7 +547,7 @@ export default function PaymentMethodsSettings() {
                   Привязанные карты
                 </CardTitle>
                 <CardDescription>
-                  Сохранённые карты для удобной оплаты. Автоматическое списание возможно только в рамках активной подписки bePaid.
+                  Сохранённые карты — добровольная опция для удобства будущих оплат. Вы можете оплачивать и без сохранения карты.
                 </CardDescription>
               </div>
               <Button onClick={handleAddCard} className="gap-2">
