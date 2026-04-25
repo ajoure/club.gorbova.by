@@ -578,7 +578,8 @@ export function BroadcastsTabContent() {
       }
       const { data, error } = await supabase
         .from("broadcast_templates")
-        .insert(payload)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .insert(payload as any)
         .select("id")
         .single();
       if (error) throw error;
