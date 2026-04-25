@@ -417,14 +417,30 @@ export function BroadcastsTabContent() {
   // Send Email broadcast
   const sendEmailMutation = useMutation({
     mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke("email-mass-broadcast", {
-        body: {
-          subject: emailSubject.trim(),
-          html: emailBody.trim(),
-          filters,
-          product_context_id: productContextId,
-        },
-      });
+      // Полная база (нет ни include/exclude/club_ids) → требуем явное подтверждение.
+      const isFullBase =
+        (filters.include?.length ?? 0) === 0 &&
+        (filters.exclude?.length ?? 0) === 0 &&
+        (filters.club_ids?.length ?? 0) === 0;
+      const body: Record<string, unknown> = {
+        subject: emailSubject.trim(),
+        html: emailBody.trim(),
+        filters,
+        product_context_id: productContextId,
+        include_archived: includeArchived,
+      };
+      if (isFullBase) {
+        const phrase = `ОТПРАВИТЬ ВСЕМ ${audience?.emailCount ?? 0}`;
+        const typed = window.prompt(
+          `Вы запускаете рассылку по ВСЕЙ базе (${audience?.emailCount ?? 0} получателей).\n\nДля подтверждения введите фразу:\n${phrase}`,
+        );
+        if (typed !== phrase) {
+          throw new Error("Подтверждение не получено — рассылка отменена");
+        }
+        body.allow_full_audience = true;
+        body.confirm_full_audience_text = typed;
+      }
+      const { data, error } = await supabase.functions.invoke("email-mass-broadcast", { body });
       if (error) throw error;
       return data;
     },
