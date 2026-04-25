@@ -215,6 +215,12 @@ Deno.serve(async (req) => {
 
       templateType = formData.get('template_type') as string || null;
       liveEventId = formData.get('live_event_id') as string || null;
+
+      isDryRun = formData.get('dry_run') === 'true';
+      isTestSelf = formData.get('test_self') === 'true';
+      allowFullAudience = formData.get('allow_full_audience') === 'true';
+      const cfat = formData.get('confirm_full_audience_text');
+      confirmFullAudienceText = typeof cfat === 'string' ? cfat : null;
     } else {
       const body = await req.json();
       message = body.message || '';
@@ -226,6 +232,10 @@ Deno.serve(async (req) => {
       productContextId = (rawPcid && rawPcid !== 'all') ? rawPcid : null;
       templateType = body.template_type || null;
       liveEventId = body.live_event_id || null;
+      isDryRun = body.dry_run === true;
+      isTestSelf = body.test_self === true;
+      allowFullAudience = body.allow_full_audience === true;
+      confirmFullAudienceText = typeof body.confirm_full_audience_text === 'string' ? body.confirm_full_audience_text : null;
 
       // ===== add-only: support media_url (signed/public URL or storage path) =====
       // Used by scheduled/recurring dispatcher (process-scheduled-broadcasts)
