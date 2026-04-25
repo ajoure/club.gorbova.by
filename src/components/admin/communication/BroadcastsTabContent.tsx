@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useMemo } from "react";
+import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,6 +11,9 @@ import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Calendar } from "@/components/ui/calendar";
+import { cn } from "@/lib/utils";
 import {
   Select,
   SelectContent,
@@ -63,6 +66,10 @@ import {
   AlertTriangle,
   ExternalLink,
   MousePointerClick,
+  Clock,
+  CalendarIcon,
+  Repeat,
+  Pencil,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -114,16 +121,48 @@ interface MediaFile {
   preview?: string;
 }
 
+type SendMode = "now" | "scheduled" | "recurring";
+type Frequency = "daily" | "weekly" | "monthly";
+
+interface RecurrenceRule {
+  frequency: Frequency;
+  interval: number;
+  time_of_day: string; // "HH:MM"
+  by_weekday?: number[]; // 1..7 Mon..Sun, only for weekly
+  ends_at?: string | null;
+  timezone?: string;
+}
+
+const DEFAULT_RECURRENCE: RecurrenceRule = {
+  frequency: "weekly",
+  interval: 1,
+  time_of_day: "10:00",
+  by_weekday: [1],
+  timezone: "Europe/Minsk",
+};
+
 export function BroadcastsTabContent() {
   const queryClient = useQueryClient();
   const [mainTab, setMainTab] = useState<"templates" | "quick" | "scheduled">("templates");
-  // Sprint B rev3 — фаза 2 будет использовать для гидратации composer'а
+  // Sprint B rev3 — фаза 2: id шаблона в режиме редактирования (открывается из «Запланированные»)
   const [editTemplateId, setEditTemplateId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"telegram" | "email">("telegram");
+
+  // Channel toggles — независимые: можно отправить TG-only / Email-only / TG+Email одновременно
+  const [sendToTelegram, setSendToTelegram] = useState(true);
+  const [sendToEmail, setSendToEmail] = useState(false);
+
+  // Send mode
+  const [sendMode, setSendMode] = useState<SendMode>("now");
+  const [scheduledAt, setScheduledAt] = useState<Date | null>(null);
+  const [scheduledTime, setScheduledTime] = useState<string>("10:00");
+  const [recurrence, setRecurrence] = useState<RecurrenceRule>(DEFAULT_RECURRENCE);
+  const [scheduledName, setScheduledName] = useState<string>("");
+
+  // Composer (TG+Email общие поля; для каждого канала — свои контентные поля)
   const [message, setMessage] = useState("");
   const [emailSubject, setEmailSubject] = useState("");
   const [emailBody, setEmailBody] = useState("");
-const [includeButton, setIncludeButton] = useState(true);
+  const [includeButton, setIncludeButton] = useState(true);
   const [buttonText, setButtonText] = useState("Открыть платформу");
   const [buttonUrl, setButtonUrl] = useState("https://club.gorbova.by/products");
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -417,27 +456,195 @@ const [includeButton, setIncludeButton] = useState(true);
     },
   });
 
+  // ===== Sprint B rev3 — Phase 2: scheduled/recurring persistence =====
+  const composeScheduledAt = useCallback((): string | null => {
+    if (!scheduledAt) return null;
+    const [h, m] = scheduledTime.split(":").map((x) => parseInt(x, 10));
+    const d = new Date(scheduledAt);
+    d.setHours(h || 0, m || 0, 0, 0);
+    return d.toISOString();
+  }, [scheduledAt, scheduledTime]);
+
+  const channelsArr = useMemo<("telegram" | "email")[]>(() => {
+    const arr: ("telegram" | "email")[] = [];
+    if (sendToTelegram) arr.push("telegram");
+    if (sendToEmail) arr.push("email");
+    return arr;
+  }, [sendToTelegram, sendToEmail]);
+
+  // Hydrate composer from existing template when editTemplateId is set
+  useEffect(() => {
+    if (!editTemplateId) return;
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from("broadcast_templates")
+        .select("*")
+        .eq("id", editTemplateId)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error || !data) {
+        toast.error("Не удалось загрузить шаблон для редактирования");
+        setEditTemplateId(null);
+        return;
+      }
+      const tpl = data as Record<string, unknown>;
+      const ch = (tpl.channels as string[]) || [];
+      setSendToTelegram(ch.includes("telegram"));
+      setSendToEmail(ch.includes("email"));
+      setScheduledName(String(tpl.name || ""));
+      setMessage(String(tpl.message_text || ""));
+      setEmailSubject(String(tpl.email_subject || ""));
+      setEmailBody(String(tpl.email_body_html || ""));
+      const btnUrl = (tpl.button_url as string) || "";
+      const btnText = (tpl.button_text as string) || "";
+      setIncludeButton(!!btnUrl);
+      if (btnText) setButtonText(btnText);
+      if (btnUrl) setButtonUrl(btnUrl);
+      const af = (tpl.audience_filters as Record<string, unknown>) || {};
+      if (af.include || af.exclude || af.club_ids) {
+        setFilters({
+          include: ((af.include as AudienceRule[]) || []),
+          exclude: ((af.exclude as AudienceRule[]) || []),
+          club_ids: ((af.club_ids as string[]) || []),
+          club_membership: ((af.club_membership as "current" | "ever" | "any") || "current"),
+          bot_ids: ((af.bot_ids as string[]) || []),
+        });
+      }
+      const mode = String(tpl.send_mode || "manual");
+      if (mode === "scheduled") {
+        setSendMode("scheduled");
+        const sf = tpl.scheduled_for ? new Date(tpl.scheduled_for as string) : null;
+        if (sf) {
+          setScheduledAt(sf);
+          setScheduledTime(format(sf, "HH:mm"));
+        }
+      } else if (mode === "recurring") {
+        setSendMode("recurring");
+        const rule = (tpl.recurrence_rule as RecurrenceRule) || DEFAULT_RECURRENCE;
+        setRecurrence({ ...DEFAULT_RECURRENCE, ...rule });
+      } else {
+        setSendMode("now");
+      }
+      toast.info(`Загружен шаблон «${tpl.name}» для редактирования`);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [editTemplateId]);
+
+  // Save scheduled/recurring template (INSERT or UPDATE — без дубля)
+  const saveScheduledMutation = useMutation({
+    mutationFn: async () => {
+      const isRecurring = sendMode === "recurring";
+      const payload: Record<string, unknown> = {
+        name: scheduledName.trim() || `Рассылка ${format(new Date(), "dd.MM.yyyy HH:mm")}`,
+        channel: channelsArr[0] || "telegram",
+        channels: channelsArr,
+        template_type: "general",
+        message_text: sendToTelegram ? message.trim() : null,
+        button_text: sendToTelegram && includeButton ? buttonText : null,
+        button_url: sendToTelegram && includeButton ? buttonUrl : null,
+        email_subject: sendToEmail ? emailSubject.trim() : null,
+        email_body_html: sendToEmail ? emailBody.trim() : null,
+        audience_filters: filters as unknown as Record<string, unknown>,
+        send_mode: isRecurring ? "recurring" : "scheduled",
+        status: "scheduled",
+        recurrence_rule: isRecurring ? (recurrence as unknown as Record<string, unknown>) : null,
+        scheduled_for: isRecurring ? null : composeScheduledAt(),
+      };
+
+      let nextRunAt: string | null = null;
+      if (isRecurring) {
+        const { data: nextTs, error: rpcErr } = await supabase.rpc(
+          "compute_next_broadcast_run",
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          { rule: recurrence as any, from_ts: new Date().toISOString() },
+        );
+        if (rpcErr) throw rpcErr;
+        nextRunAt = (nextTs as string | null) ?? null;
+      } else {
+        nextRunAt = composeScheduledAt();
+      }
+      payload.next_run_at = nextRunAt;
+
+      if (editTemplateId) {
+        const { error } = await supabase
+          .from("broadcast_templates")
+          .update(payload)
+          .eq("id", editTemplateId);
+        if (error) throw error;
+        return { id: editTemplateId, mode: "update" as const };
+      }
+      const { data, error } = await supabase
+        .from("broadcast_templates")
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .insert(payload as any)
+        .select("id")
+        .single();
+      if (error) throw error;
+      return { id: data.id as string, mode: "insert" as const };
+    },
+    onSuccess: (res) => {
+      toast.success(
+        res.mode === "update"
+          ? "Запланированная рассылка обновлена"
+          : sendMode === "recurring"
+          ? "Повторяющаяся рассылка создана"
+          : "Рассылка запланирована",
+      );
+      queryClient.invalidateQueries({ queryKey: ["scheduled-broadcasts"] });
+      setEditTemplateId(null);
+      setSendMode("now");
+      setScheduledAt(null);
+      setScheduledName("");
+      setMainTab("scheduled");
+    },
+    onError: (err) => {
+      toast.error("Ошибка сохранения: " + (err as Error).message);
+    },
+  });
+
   const handleSend = () => {
-    if (activeTab === "telegram") {
-      if (!message.trim() && !mediaFile) {
-        toast.error("Введите текст сообщения или добавьте медиа");
-        return;
-      }
-      sendTelegramMutation.mutate();
-    } else {
-      if (!emailSubject.trim() || !emailBody.trim()) {
-        toast.error("Заполните тему и текст письма");
-        return;
-      }
-      sendEmailMutation.mutate();
+    if (!sendToTelegram && !sendToEmail) {
+      toast.error("Выберите хотя бы один канал: Telegram или Email");
+      return;
     }
+    if (sendToTelegram && !message.trim() && !mediaFile) {
+      toast.error("Введите текст сообщения или добавьте медиа для Telegram");
+      return;
+    }
+    if (sendToEmail && (!emailSubject.trim() || !emailBody.trim())) {
+      toast.error("Заполните тему и текст письма для Email");
+      return;
+    }
+
+    if (sendMode === "now") {
+      // Принцип Фазы 2: НЕ переписываем quick-send mutations, оборачиваем режимом send_now.
+      if (sendToTelegram) sendTelegramMutation.mutate();
+      if (sendToEmail) sendEmailMutation.mutate();
+      return;
+    }
+
+    if (sendMode === "scheduled") {
+      const ts = composeScheduledAt();
+      if (!ts) {
+        toast.error("Выберите дату и время отправки");
+        return;
+      }
+      if (new Date(ts).getTime() <= Date.now()) {
+        toast.error("Дата отправки должна быть в будущем");
+        return;
+      }
+    }
+    saveScheduledMutation.mutate();
   };
 
   const isSendDisabled =
-    (activeTab === "telegram" && !message.trim() && !mediaFile) ||
-    (activeTab === "email" && (!emailSubject.trim() || !emailBody.trim())) ||
+    (!sendToTelegram && !sendToEmail) ||
     sendTelegramMutation.isPending ||
-    sendEmailMutation.isPending;
+    sendEmailMutation.isPending ||
+    saveScheduledMutation.isPending;
 
   return (
     <div className="container max-w-6xl py-6 space-y-6 overflow-auto h-full">
@@ -468,267 +675,393 @@ const [includeButton, setIncludeButton] = useState(true);
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Main Content */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Channel Tabs */}
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "telegram" | "email")}>
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="telegram" className="gap-2">
-                <MessageCircle className="h-4 w-4" />
-                Telegram
-                {audience && (
-                  <Badge variant="secondary" className="ml-1">
-                    {audience.telegramCount}
-                  </Badge>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="email" className="gap-2">
-                <Mail className="h-4 w-4" />
-                Email
-                {audience && (
-                  <Badge variant="secondary" className="ml-1">
-                    {audience.emailCount}
-                  </Badge>
-                )}
-              </TabsTrigger>
-            </TabsList>
+          {/* Edit-mode banner */}
+          {editTemplateId && (
+            <Alert>
+              <Pencil className="h-4 w-4" />
+              <AlertDescription className="flex items-center justify-between gap-3">
+                <span>
+                  Редактирование запланированной рассылки. Сохранение обновит существующую запись (без дубля).
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setEditTemplateId(null);
+                    setSendMode("now");
+                    setMessage("");
+                    setEmailSubject("");
+                    setEmailBody("");
+                    setScheduledAt(null);
+                    setScheduledName("");
+                    toast.info("Редактирование отменено");
+                  }}
+                >
+                  Отменить
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
 
-            <TabsContent value="telegram" className="space-y-4 mt-4">
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg">Telegram-рассылка</CardTitle>
-                  <CardDescription>
-                    Сообщение будет отправлено всем пользователям с привязанным Telegram
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {/* Media attachment */}
-                  {mediaFile ? (
-                    <div className="relative rounded-lg border p-3 bg-muted/50">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="absolute top-1 right-1 h-6 w-6"
-                        onClick={removeMedia}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                      <div className="flex items-center gap-3">
-                        {mediaFile.type === "photo" && mediaFile.preview && (
-                          <img
-                            src={mediaFile.preview}
-                            alt="Preview"
-                            className="w-20 h-20 object-cover rounded"
-                          />
-                        )}
-                        {mediaFile.type === "video" && (
-                          <div className="w-20 h-20 bg-muted rounded flex items-center justify-center">
-                            <Video className="h-8 w-8 text-muted-foreground" />
-                          </div>
-                        )}
-                        {mediaFile.type === "audio" && (
-                          <div className="w-20 h-20 bg-muted rounded flex items-center justify-center">
-                            <Music className="h-8 w-8 text-muted-foreground" />
-                          </div>
-                        )}
-                        {mediaFile.type === "video_note" && (
-                          <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center">
-                            <Circle className="h-8 w-8 text-muted-foreground" />
-                          </div>
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">{mediaFile.file.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {(mediaFile.file.size / 1024 / 1024).toFixed(2)} МБ
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="file"
-                          ref={fileInputRef}
-                          className="hidden"
-                          accept="image/*,video/*,audio/*"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) {
-                              const type = file.type.startsWith("image/")
-                                ? "photo"
-                                : file.type.startsWith("video/")
-                                ? "video"
-                                : file.type.startsWith("audio/")
-                                ? "audio"
-                                : null;
-                              if (type) {
-                                handleFileSelect(e, type);
-                              }
-                            }
-                          }}
-                        />
-                        <Popover>
-                          <PopoverTrigger asChild>
-                            <Button variant="outline" size="sm" className="gap-2">
-                              <Paperclip className="h-4 w-4" />
-                              Вложение
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-40 p-2" align="start">
-                            <div className="space-y-1">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="w-full justify-start gap-2"
-                                onClick={() => {
-                                  if (fileInputRef.current) {
-                                    fileInputRef.current.accept = "image/*";
-                                    fileInputRef.current.click();
-                                  }
-                                }}
-                              >
-                                <Image className="h-4 w-4" />
-                                Фото
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="w-full justify-start gap-2"
-                                onClick={() => {
-                                  if (fileInputRef.current) {
-                                    fileInputRef.current.accept = "video/*";
-                                    fileInputRef.current.click();
-                                  }
-                                }}
-                              >
-                                <Video className="h-4 w-4" />
-                                Видео
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="w-full justify-start gap-2"
-                                onClick={() => {
-                                  if (fileInputRef.current) {
-                                    fileInputRef.current.accept = "audio/*";
-                                    fileInputRef.current.click();
-                                  }
-                                }}
-                              >
-                                <Music className="h-4 w-4" />
-                                Аудио
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="w-full justify-start gap-2"
-                                onClick={() => {
-                                  if (fileInputRef.current) {
-                                    fileInputRef.current.accept = "video/mp4";
-                                    fileInputRef.current.click();
-                                  }
-                                }}
-                              >
-                                <Circle className="h-4 w-4" />
-                                Кружок
-                              </Button>
-                            </div>
-                          </PopoverContent>
-                        </Popover>
-                        <span className="text-xs text-muted-foreground">
-                          до 10 МБ, видео до 50 МБ
-                        </span>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="space-y-2">
-                    <Label>Текст сообщения {mediaFile && "(подпись)"}</Label>
-                    <TokenizedRichInput
-                      value={message}
-                      onChange={setMessage}
-                      placeholder="Введите текст сообщения для рассылки..."
-                      rows={6}
-                    />
-                    {showCfWarning && (
-                      <Alert variant="destructive">
-                        <AlertTriangle className="h-4 w-4" />
-                        <AlertDescription>
-                          Для подстановки полей продукта выберите конкретный продукт в фильтре справа.
-                        </AlertDescription>
-                      </Alert>
+          {/* Channel toggles */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg">Каналы рассылки</CardTitle>
+              <CardDescription>
+                Можно отправлять одновременно в Telegram и Email
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex items-center justify-between p-3 rounded-lg border">
+                <div className="flex items-center gap-3">
+                  <MessageCircle className="h-5 w-5 text-blue-500" />
+                  <div>
+                    <Label htmlFor="ch-tg" className="cursor-pointer font-medium">
+                      Отправлять в Telegram
+                    </Label>
+                    {audience && (
+                      <p className="text-xs text-muted-foreground">
+                        {audience.telegramCount} получателей
+                      </p>
                     )}
                   </div>
+                </div>
+                <Switch
+                  id="ch-tg"
+                  checked={sendToTelegram}
+                  onCheckedChange={setSendToTelegram}
+                />
+              </div>
+              <div className="flex items-center justify-between p-3 rounded-lg border">
+                <div className="flex items-center gap-3">
+                  <Mail className="h-5 w-5 text-orange-500" />
+                  <div>
+                    <Label htmlFor="ch-email" className="cursor-pointer font-medium">
+                      Отправлять Email
+                    </Label>
+                    {audience && (
+                      <p className="text-xs text-muted-foreground">
+                        {audience.emailCount} получателей
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <Switch
+                  id="ch-email"
+                  checked={sendToEmail}
+                  onCheckedChange={setSendToEmail}
+                />
+              </div>
+            </CardContent>
+          </Card>
 
+          {/* Send mode */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg">Режим отправки</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <RadioGroup
+                value={sendMode}
+                onValueChange={(v) => setSendMode(v as SendMode)}
+                className="grid grid-cols-1 sm:grid-cols-3 gap-2"
+              >
+                <Label
+                  htmlFor="mode-now"
+                  className={cn(
+                    "flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors",
+                    sendMode === "now" && "border-primary bg-primary/5",
+                  )}
+                >
+                  <RadioGroupItem id="mode-now" value="now" />
+                  <Send className="h-4 w-4" />
+                  Отправить сейчас
+                </Label>
+                <Label
+                  htmlFor="mode-scheduled"
+                  className={cn(
+                    "flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors",
+                    sendMode === "scheduled" && "border-primary bg-primary/5",
+                  )}
+                >
+                  <RadioGroupItem id="mode-scheduled" value="scheduled" />
+                  <CalendarIcon className="h-4 w-4" />
+                  Запланировать
+                </Label>
+                <Label
+                  htmlFor="mode-recurring"
+                  className={cn(
+                    "flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors",
+                    sendMode === "recurring" && "border-primary bg-primary/5",
+                  )}
+                >
+                  <RadioGroupItem id="mode-recurring" value="recurring" />
+                  <Repeat className="h-4 w-4" />
+                  Повторять
+                </Label>
+              </RadioGroup>
 
-                  <Separator />
-
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Switch
-                        id="includeButton"
-                        checked={includeButton}
-                        onCheckedChange={setIncludeButton}
+              {/* Scheduled DateTime */}
+              {sendMode === "scheduled" && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                  <div className="space-y-2">
+                    <Label>Дата отправки</Label>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          className={cn(
+                            "w-full justify-start text-left font-normal",
+                            !scheduledAt && "text-muted-foreground",
+                          )}
+                        >
+                          <CalendarIcon className="mr-2 h-4 w-4" />
+                          {scheduledAt
+                            ? format(scheduledAt, "PPP", { locale: ru })
+                            : "Выберите дату"}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={scheduledAt ?? undefined}
+                          onSelect={(d) => setScheduledAt(d ?? null)}
+                          disabled={(d) => d < new Date(new Date().setHours(0, 0, 0, 0))}
+                          initialFocus
+                          className={cn("p-3 pointer-events-auto")}
+                        />
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Время (локальное)</Label>
+                    <div className="relative">
+                      <Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        type="time"
+                        value={scheduledTime}
+                        onChange={(e) => setScheduledTime(e.target.value)}
+                        className="pl-9"
                       />
-                      <Label htmlFor="includeButton" className="cursor-pointer">
-                        Добавить кнопку-ссылку
-                      </Label>
                     </div>
                   </div>
+                </div>
+              )}
 
-                  {includeButton && (
-                    <div className="space-y-3 pl-4 border-l-2 border-muted">
-                      <div className="space-y-2">
-                        <Label>Текст кнопки</Label>
-                        <Input
-                          value={buttonText}
-                          onChange={(e) => setButtonText(e.target.value)}
-                          placeholder="Открыть платформу"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>URL кнопки</Label>
-                        <Input
-                          value={buttonUrl}
-                          onChange={(e) => setButtonUrl(e.target.value)}
-                          placeholder="https://club.gorbova.by/products"
-                        />
+              {/* Recurrence rule */}
+              {sendMode === "recurring" && (
+                <div className="space-y-3 pt-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="space-y-2">
+                      <Label>Частота</Label>
+                      <Select
+                        value={recurrence.frequency}
+                        onValueChange={(v) =>
+                          setRecurrence((r) => ({ ...r, frequency: v as Frequency }))
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="daily">Ежедневно</SelectItem>
+                          <SelectItem value="weekly">Еженедельно</SelectItem>
+                          <SelectItem value="monthly">Ежемесячно</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Каждые</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={30}
+                        value={recurrence.interval}
+                        onChange={(e) =>
+                          setRecurrence((r) => ({
+                            ...r,
+                            interval: Math.max(1, parseInt(e.target.value) || 1),
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Время</Label>
+                      <Input
+                        type="time"
+                        value={recurrence.time_of_day}
+                        onChange={(e) =>
+                          setRecurrence((r) => ({ ...r, time_of_day: e.target.value }))
+                        }
+                      />
+                    </div>
+                  </div>
+                  {recurrence.frequency === "weekly" && (
+                    <div className="space-y-2">
+                      <Label>Дни недели</Label>
+                      <div className="flex gap-2 flex-wrap">
+                        {[
+                          { d: 1, l: "Пн" },
+                          { d: 2, l: "Вт" },
+                          { d: 3, l: "Ср" },
+                          { d: 4, l: "Чт" },
+                          { d: 5, l: "Пт" },
+                          { d: 6, l: "Сб" },
+                          { d: 7, l: "Вс" },
+                        ].map(({ d, l }) => {
+                          const active = (recurrence.by_weekday || []).includes(d);
+                          return (
+                            <Button
+                              key={d}
+                              type="button"
+                              size="sm"
+                              variant={active ? "default" : "outline"}
+                              onClick={() =>
+                                setRecurrence((r) => {
+                                  const cur = r.by_weekday || [];
+                                  return {
+                                    ...r,
+                                    by_weekday: active
+                                      ? cur.filter((x) => x !== d)
+                                      : [...cur, d].sort(),
+                                  };
+                                })
+                              }
+                            >
+                              {l}
+                            </Button>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
-                </CardContent>
-              </Card>
-            </TabsContent>
+                </div>
+              )}
 
-            <TabsContent value="email" className="space-y-4 mt-4">
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg">Email-рассылка</CardTitle>
-                  <CardDescription>
-                    Письмо будет отправлено на указанные email-адреса
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Тема письма</Label>
-                    <TokenizedRichInput
-                      value={emailSubject}
-                      onChange={setEmailSubject}
-                      placeholder="Тема письма..."
-                      singleLine
-                    />
+              {sendMode !== "now" && (
+                <div className="space-y-2 pt-2">
+                  <Label>Название рассылки (для таблицы «Запланированные»)</Label>
+                  <Input
+                    value={scheduledName}
+                    onChange={(e) => setScheduledName(e.target.value)}
+                    placeholder="Например: Анонс эфира 1 мая"
+                  />
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Telegram composer */}
+          {sendToTelegram && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <MessageCircle className="h-5 w-5 text-blue-500" />
+                  Telegram-рассылка
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Media attachment (только для send_now — scheduled/recurring без медиа в фазе 2) */}
+                {sendMode === "now" && (mediaFile ? (
+                  <div className="relative rounded-lg border p-3 bg-muted/50">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="absolute top-1 right-1 h-6 w-6"
+                      onClick={removeMedia}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                    <div className="flex items-center gap-3">
+                      {mediaFile.type === "photo" && mediaFile.preview && (
+                        <img src={mediaFile.preview} alt="Preview" className="w-20 h-20 object-cover rounded" />
+                      )}
+                      {mediaFile.type === "video" && (
+                        <div className="w-20 h-20 bg-muted rounded flex items-center justify-center">
+                          <Video className="h-8 w-8 text-muted-foreground" />
+                        </div>
+                      )}
+                      {mediaFile.type === "audio" && (
+                        <div className="w-20 h-20 bg-muted rounded flex items-center justify-center">
+                          <Music className="h-8 w-8 text-muted-foreground" />
+                        </div>
+                      )}
+                      {mediaFile.type === "video_note" && (
+                        <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center">
+                          <Circle className="h-8 w-8 text-muted-foreground" />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{mediaFile.file.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {(mediaFile.file.size / 1024 / 1024).toFixed(2)} МБ
+                        </p>
+                      </div>
+                    </div>
                   </div>
-
+                ) : (
                   <div className="space-y-2">
-                    <Label>Текст письма (HTML)</Label>
-                    <TokenizedRichInput
-                      value={emailBody}
-                      onChange={setEmailBody}
-                      placeholder="<h1>Заголовок</h1><p>Текст письма...</p>"
-                      rows={8}
-                      allowAlign
-                    />
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        className="hidden"
+                        accept="image/*,video/*,audio/*"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const type = file.type.startsWith("image/")
+                              ? "photo"
+                              : file.type.startsWith("video/")
+                              ? "video"
+                              : file.type.startsWith("audio/")
+                              ? "audio"
+                              : null;
+                            if (type) handleFileSelect(e, type);
+                          }
+                        }}
+                      />
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button variant="outline" size="sm" className="gap-2">
+                            <Paperclip className="h-4 w-4" />
+                            Вложение
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-40 p-2" align="start">
+                          <div className="space-y-1">
+                            <Button variant="ghost" size="sm" className="w-full justify-start gap-2"
+                              onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = "image/*"; fileInputRef.current.click(); } }}>
+                              <Image className="h-4 w-4" /> Фото
+                            </Button>
+                            <Button variant="ghost" size="sm" className="w-full justify-start gap-2"
+                              onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = "video/*"; fileInputRef.current.click(); } }}>
+                              <Video className="h-4 w-4" /> Видео
+                            </Button>
+                            <Button variant="ghost" size="sm" className="w-full justify-start gap-2"
+                              onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = "audio/*"; fileInputRef.current.click(); } }}>
+                              <Music className="h-4 w-4" /> Аудио
+                            </Button>
+                            <Button variant="ghost" size="sm" className="w-full justify-start gap-2"
+                              onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = "video/mp4"; fileInputRef.current.click(); } }}>
+                              <Circle className="h-4 w-4" /> Кружок
+                            </Button>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                      <span className="text-xs text-muted-foreground">до 10 МБ, видео до 50 МБ</span>
+                    </div>
                   </div>
+                ))}
 
+                <div className="space-y-2">
+                  <Label>Текст сообщения {sendMode === "now" && mediaFile && "(подпись)"}</Label>
+                  <TokenizedRichInput
+                    value={message}
+                    onChange={setMessage}
+                    placeholder="Введите текст сообщения для рассылки..."
+                    rows={6}
+                  />
                   {showCfWarning && (
                     <Alert variant="destructive">
                       <AlertTriangle className="h-4 w-4" />
@@ -737,14 +1070,89 @@ const [includeButton, setIncludeButton] = useState(true);
                       </AlertDescription>
                     </Alert>
                   )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
+                </div>
+
+                <Separator />
+
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id="includeButton"
+                    checked={includeButton}
+                    onCheckedChange={setIncludeButton}
+                  />
+                  <Label htmlFor="includeButton" className="cursor-pointer">
+                    Добавить кнопку-ссылку
+                  </Label>
+                </div>
+
+                {includeButton && (
+                  <div className="space-y-3 pl-4 border-l-2 border-muted">
+                    <div className="space-y-2">
+                      <Label>Текст кнопки</Label>
+                      <Input
+                        value={buttonText}
+                        onChange={(e) => setButtonText(e.target.value)}
+                        placeholder="Открыть платформу"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>URL кнопки</Label>
+                      <Input
+                        value={buttonUrl}
+                        onChange={(e) => setButtonUrl(e.target.value)}
+                        placeholder="https://club.gorbova.by/products"
+                      />
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Email composer */}
+          {sendToEmail && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Mail className="h-5 w-5 text-orange-500" />
+                  Email-рассылка
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Тема письма</Label>
+                  <TokenizedRichInput
+                    value={emailSubject}
+                    onChange={setEmailSubject}
+                    placeholder="Тема письма..."
+                    singleLine
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Текст письма (HTML)</Label>
+                  <TokenizedRichInput
+                    value={emailBody}
+                    onChange={setEmailBody}
+                    placeholder="<h1>Заголовок</h1><p>Текст письма...</p>"
+                    rows={8}
+                    allowAlign
+                  />
+                </div>
+                {showCfWarning && (
+                  <Alert variant="destructive">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription>
+                      Для подстановки полей продукта выберите конкретный продукт в фильтре справа.
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {/* Send Buttons */}
           <div className="flex gap-2">
-            {activeTab === "telegram" && (
+            {sendToTelegram && sendMode === "now" && (
               <Button
                 variant="outline"
                 onClick={() => sendTestMutation.mutate()}
@@ -764,20 +1172,30 @@ const [includeButton, setIncludeButton] = useState(true);
               onClick={handleSend}
               disabled={isSendDisabled}
             >
-              {(sendTelegramMutation.isPending || sendEmailMutation.isPending) ? (
+              {(sendTelegramMutation.isPending || sendEmailMutation.isPending || saveScheduledMutation.isPending) ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Отправка...
+                  {sendMode === "now" ? "Отправка..." : "Сохранение..."}
+                </>
+              ) : sendMode === "now" ? (
+                <>
+                  <Send className="h-4 w-4" />
+                  Отправить
+                  {channelsArr.length > 0 && (
+                    <Badge variant="secondary" className="ml-2">
+                      {channelsArr.map((c) => (c === "telegram" ? "TG" : "Email")).join(" + ")}
+                    </Badge>
+                  )}
+                </>
+              ) : sendMode === "scheduled" ? (
+                <>
+                  <CalendarIcon className="h-4 w-4" />
+                  {editTemplateId ? "Сохранить изменения" : "Запланировать"}
                 </>
               ) : (
                 <>
-                  <Send className="h-4 w-4" />
-                  Отправить {activeTab === "telegram" ? "в Telegram" : "на Email"}
-                  {audience && (
-                    <Badge variant="secondary" className="ml-2">
-                      {activeTab === "telegram" ? audience.telegramCount : audience.emailCount} получателей
-                    </Badge>
-                  )}
+                  <Repeat className="h-4 w-4" />
+                  {editTemplateId ? "Сохранить изменения" : "Создать повторяющуюся"}
                 </>
               )}
             </Button>
