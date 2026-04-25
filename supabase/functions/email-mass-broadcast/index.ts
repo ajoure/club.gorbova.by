@@ -526,16 +526,23 @@ Deno.serve(async (req) => {
     let missingCount = 0;
     let duplicateCount = 0;
     let invalidEmailCount = 0;
-    const missingSample: string[] = [];
-    const invalidSample: Array<{ user_id: string; email: string | null }> = [];
+    let archivedIncludedCount = 0;
+    const invalidSample: Array<{ profile_id: string; email: string | null }> = [];
 
-    let filteredProfiles: Array<{ user_id: string; email: string; full_name?: string | null; phone?: string | null; telegram_username?: string | null }> = [];
+    let filteredProfiles: Array<{
+      user_id: string | null;
+      profile_id: string;
+      email: string;
+      full_name?: string | null;
+      phone?: string | null;
+      telegram_username?: string | null;
+    }> = [];
 
-    if (useNewSchema && allowedUserIds) {
-      // ===== NEW PATH: targeted fetch via .in('user_id', allowedUserIds) =====
-      allowedCount = allowedUserIds.size;
+    if (useNewSchema && audienceContacts) {
+      // ===== CONTACT-LEVEL PATH =====
+      allowedCount = audienceContacts.length;
+      archivedIncludedCount = audienceContacts.filter(c => c.is_archived).length;
 
-      // P0 GUARD: empty audience — do not call .in() with empty array, do not send
       if (allowedCount === 0) {
         console.warn('[email-broadcast] allowed audience is empty — nothing to send');
         return new Response(
@@ -552,100 +559,72 @@ Deno.serve(async (req) => {
         );
       }
 
-      const idsArray = Array.from(allowedUserIds);
-      const { data: targetedProfiles, error: profErr } = await supabase
-        .from('profiles')
-        .select('user_id, email, full_name, phone, telegram_username')
-        .in('user_id', idsArray);
-
-      if (profErr) {
-        console.error('[email-broadcast] profiles fetch failed:', profErr);
-        return new Response(
-          JSON.stringify({ error: `Profiles fetch failed: ${profErr.message}` }),
-          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      // Dedup by user_id (keep first occurrence)
-      const seenUserIds = new Set<string>();
-      const dedupedByUser = (targetedProfiles || []).filter((p) => {
-        if (seenUserIds.has(p.user_id)) { duplicateCount++; return false; }
-        seenUserIds.add(p.user_id);
-        return true;
-      });
-
-      // Validate emails (non-empty + basic shape)
+      // Anti-duplicate guard: один email = одно письмо в рамках broadcast.
       const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       const seenEmails = new Set<string>();
-      for (const p of dedupedByUser) {
-        const em = (p.email || '').trim().toLowerCase();
+      for (const c of audienceContacts) {
+        const em = (c.email_normalized || c.email || '').trim().toLowerCase();
         if (!em || !emailRe.test(em)) {
           invalidEmailCount++;
-          if (invalidSample.length < 10) invalidSample.push({ user_id: p.user_id, email: p.email });
+          if (invalidSample.length < 10) invalidSample.push({ profile_id: c.profile_id, email: c.email });
           continue;
         }
-        // Dedup by normalized email too
         if (seenEmails.has(em)) { duplicateCount++; continue; }
         seenEmails.add(em);
-        filteredProfiles.push({ ...p, email: em });
+        filteredProfiles.push({
+          user_id: c.user_id,
+          profile_id: c.profile_id,
+          email: em,
+          full_name: c.full_name,
+          telegram_username: c.telegram_username,
+        });
       }
 
       foundCount = filteredProfiles.length;
       missingCount = Math.max(0, allowedCount - (foundCount + invalidEmailCount + duplicateCount));
 
-      // Compute missing user_ids sample (allowed but not in any deduped result)
-      const resolvedUserIds = new Set(dedupedByUser.map(p => p.user_id));
-      for (const uid of idsArray) {
-        if (!resolvedUserIds.has(uid)) {
-          if (missingSample.length < 10) missingSample.push(uid);
-        }
-      }
-
-      console.log(`[email-broadcast] diagnostic: allowed=${allowedCount} found=${foundCount} missing=${missingCount} duplicates=${duplicateCount} invalid_emails=${invalidEmailCount} dry_run=${isDryRun}`);
-      if (missingSample.length > 0) console.log('[email-broadcast] missing user_ids (first 10):', missingSample);
+      console.log(`[email-broadcast] diagnostic: allowed=${allowedCount} found=${foundCount} archived_included=${archivedIncludedCount} duplicates=${duplicateCount} invalid_emails=${invalidEmailCount} dry_run=${isDryRun}`);
       if (invalidSample.length > 0) console.log('[email-broadcast] invalid emails (first 10):', invalidSample);
     } else {
-      // ===== Legacy filter path (UNCHANGED — full-scan profiles) =====
-      const { data: profiles } = await supabase
-        .from('profiles')
-        .select('user_id, email, full_name, phone, telegram_username')
-        .not('email', 'is', null)
-        .limit(10000);
-
-      if (!profiles?.length) {
-        return new Response(
-          JSON.stringify({ success: true, sent: 0, failed: 0, message: 'No recipients found' }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+      // ===== Legacy path: full email base via batch loading (no 10000 cap) =====
+      const PAGE = 1000;
+      const allProfiles: Array<{ id: string; user_id: string | null; email: string | null; full_name: string | null; phone: string | null; telegram_username: string | null; is_archived: boolean | null; status: string }>= [];
+      let from = 0;
+      while (true) {
+        const { data, error: e } = await supabase
+          .from('profiles')
+          .select('id, user_id, email, full_name, phone, telegram_username, is_archived, status')
+          .not('email', 'is', null)
+          .range(from, from + PAGE - 1);
+        if (e) throw e;
+        const batch = (data || []) as typeof allProfiles;
+        allProfiles.push(...batch);
+        if (batch.length < PAGE) break;
+        from += PAGE;
+        if (allProfiles.length > 200000) break; // safety cap
       }
 
-      let legacyFiltered = profiles;
-      if (filters?.hasActiveSubscription) {
-        const { data: activeAccess } = await supabase
-          .from('telegram_access')
-          .select('user_id')
-          .or('active_until.is.null,active_until.gt.now()');
-        const activeUserIds = new Set(activeAccess?.map(a => a.user_id) || []);
-        legacyFiltered = legacyFiltered.filter(p => activeUserIds.has(p.user_id));
-      }
+      const includeArchived = (reqBody as Record<string, unknown>)?.include_archived === true;
+      const baseProfiles = allProfiles.filter(p => includeArchived ? true : !(p.is_archived || p.status === 'archived'));
+      archivedIncludedCount = includeArchived ? allProfiles.filter(p => p.is_archived || p.status === 'archived').length : 0;
 
-      const effectiveProductIds = filters?.productIds?.length ? filters.productIds : (filters?.productId ? [filters.productId] : []);
-      const effectiveTariffIds = filters?.tariffIds?.length ? filters.tariffIds : (filters?.tariffId ? [filters.tariffId] : []);
-
-      if (effectiveProductIds.length > 0) {
-        let subQuery = supabase
-          .from('subscriptions_v2')
-          .select('user_id')
-          .in('product_id', effectiveProductIds)
-          .eq('status', 'active');
-        if (effectiveTariffIds.length > 0) {
-          subQuery = subQuery.in('tariff_id', effectiveTariffIds);
-        }
-        const { data: productSubs } = await subQuery;
-        const productUserIds = new Set(productSubs?.map(s => s.user_id) || []);
-        legacyFiltered = legacyFiltered.filter(p => productUserIds.has(p.user_id));
+      const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      const seen = new Set<string>();
+      for (const p of baseProfiles) {
+        const em = (p.email || '').trim().toLowerCase();
+        if (!em || !emailRe.test(em)) { invalidEmailCount++; continue; }
+        if (seen.has(em)) { duplicateCount++; continue; }
+        seen.add(em);
+        filteredProfiles.push({
+          user_id: p.user_id,
+          profile_id: p.id,
+          email: em,
+          full_name: p.full_name,
+          telegram_username: p.telegram_username,
+        });
       }
-      filteredProfiles = legacyFiltered.filter(p => !!p.email) as any;
+      allowedCount = baseProfiles.length;
+      foundCount = filteredProfiles.length;
     }
 
     console.log(`Sending to ${filteredProfiles.length} recipients (dry_run=${isDryRun})`);
