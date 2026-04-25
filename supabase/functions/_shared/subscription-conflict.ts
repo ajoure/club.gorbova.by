@@ -156,7 +156,7 @@ export async function checkSubscriptionConflict(
   // 4. Все кандидаты — зомби (без provider-связи). Не блокируем.
   console.log('[subscription-conflict] no_conflict — only zombie rows (active without provider linkage)', {
     user_id, product_id, zombie_count: candidates.length,
-    zombie_ids: candidates.map((c) => c.id),
+    zombie_ids: candidates.map((c: any) => c.id),
   });
   return { status: 'no_conflict' };
 }
@@ -184,11 +184,14 @@ export async function validateReplacementSubscription(
 ): Promise<ReplacementValidationResult> {
   const { replacement_of_subscription_v2_id, user_id, product_id, tariff_id } = params;
 
-  const { data: oldSub, error: oldSubErr } = await supabase
+  const { data: oldSubRaw, error: oldSubErr } = await supabase
     .from('subscriptions_v2')
     .select('id, status, user_id, product_id, tariff_id')
     .eq('id', replacement_of_subscription_v2_id)
     .maybeSingle();
+  const oldSub = oldSubRaw as
+    | { id: string; status: string; user_id: string; product_id: string; tariff_id: string | null }
+    | null;
 
   if (oldSubErr || !oldSub) {
     console.error('[subscription-conflict] replacement subscription not found', {
