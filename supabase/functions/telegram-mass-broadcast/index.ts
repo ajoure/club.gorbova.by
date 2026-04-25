@@ -353,11 +353,11 @@ Deno.serve(async (req) => {
         channel: 'telegram',
       };
       let audience: Array<{ user_id: string; has_telegram: boolean; has_email: boolean }> | null = null;
-      let rpcErr: { message: string } | null = null;
+      let rpcErrMsg: string | null = null;
       if (isSystemActor) {
         const r = await supabase.rpc('resolve_broadcast_audience_user_ids_system', { _filters: rpcFilters });
-        audience = r.data as typeof audience;
-        rpcErr = r.error as typeof rpcErr;
+        audience = (r.data as typeof audience) ?? null;
+        rpcErrMsg = r.error ? r.error.message : null;
       } else {
         const userClient = createClient(
           Deno.env.get('SUPABASE_URL')!,
@@ -365,13 +365,13 @@ Deno.serve(async (req) => {
           { global: { headers: { Authorization: authHeader! } } }
         );
         const r = await userClient.rpc('resolve_broadcast_audience_user_ids', { _filters: rpcFilters });
-        audience = r.data as typeof audience;
-        rpcErr = r.error as typeof rpcErr;
+        audience = (r.data as typeof audience) ?? null;
+        rpcErrMsg = r.error ? r.error.message : null;
       }
-      if (rpcErr) {
-        console.error('[broadcast] resolve_broadcast_audience_user_ids failed:', rpcErr);
+      if (rpcErrMsg) {
+        console.error('[broadcast] resolve_broadcast_audience_user_ids failed:', rpcErrMsg);
         return new Response(
-          JSON.stringify({ error: `Audience resolution failed: ${rpcErr.message}` }),
+          JSON.stringify({ error: `Audience resolution failed: ${rpcErrMsg}` }),
           { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
