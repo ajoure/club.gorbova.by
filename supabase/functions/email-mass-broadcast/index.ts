@@ -10,6 +10,37 @@ const corsHeaders = {
 };
 
 /**
+ * Sanitize HTML attribute values that were corrupted by markdown-style
+ * link wrapping: src="[https://x/y](https://x/y)" → src="https://x/y".
+ *
+ * This happens when content is pasted from editors (Tilda export, chat apps,
+ * markdown previewers) that auto-linkify URLs inside attribute values.
+ * Browsers and email clients cannot resolve such "URLs", so images and links
+ * silently break.
+ *
+ * Strategy:
+ *   1. For src=, href=, srcset=, background=, action=, poster= and
+ *      data-*-url style attributes: if the value matches the markdown
+ *      pattern [X](Y), replace with Y (the URL inside parens).
+ *   2. Idempotent: a clean URL passes through unchanged.
+ *   3. Quote-style preserved (single or double).
+ */
+function sanitizeMarkdownWrappedAttributes(html: string): string {
+  if (!html || typeof html !== 'string') return html;
+  if (!html.includes('](')) return html; // fast path: no markdown link syntax at all
+
+  const ATTRS = ['src', 'href', 'srcset', 'background', 'action', 'poster', 'cite', 'formaction'];
+  // Matches: attr="[anything](URL)"  or  attr='[anything](URL)'
+  // Group 1: attr name; Group 2: quote char; Group 3: URL inside parens
+  const pattern = new RegExp(
+    `\\b(${ATTRS.join('|')})\\s*=\\s*(["'])\\[[^\\]]*\\]\\(([^)\\s"']+)\\)\\2`,
+    'gi',
+  );
+
+  return html.replace(pattern, (_m, attr, quote, url) => `${attr}=${quote}${url}${quote}`);
+}
+
+/**
  * Resolve standard contact tokens in a template string.
  */
 function resolveContactTokens(
@@ -320,9 +351,17 @@ Deno.serve(async (req) => {
       );
     }
 
+    // ===== Sanitize markdown-wrapped attribute values =====
+    // Fixes broken images/links from pasted Tilda/markdown HTML where
+    // src="[URL](URL)" replaces a clean URL. Idempotent for clean HTML.
+    const sanitizedHtml = sanitizeMarkdownWrappedAttributes(html);
+    if (sanitizedHtml !== html) {
+      console.log('[email-mass-broadcast] sanitized markdown-wrapped attributes in html');
+    }
+
     // ===== PATCH-GUARD (user-path only): empty filters / short message / full-audience override =====
     if (!isSystemActor) {
-      const guardText = `${subject || ''}\n${(html || '').replace(/<[^>]+>/g, '')}`;
+      const guardText = `${subject || ''}\n${(sanitizedHtml || '').replace(/<[^>]+>/g, '')}`;
       const guard = evaluateBroadcastGuards({
         filters,
         messageText: guardText,
@@ -625,7 +664,7 @@ Deno.serve(async (req) => {
 
 
     // Extract token usage from original templates
-    const combinedTemplate = subject + ' ' + html;
+    const combinedTemplate = subject + ' ' + sanitizedHtml;
     const tokensInfo = extractUsedTokens(combinedTemplate);
     const cfFieldIds = extractCustomFieldTokenIds(combinedTemplate);
     const broadcastNow = new Date();
@@ -633,11 +672,11 @@ Deno.serve(async (req) => {
     // Resolve cf tokens once (product-scoped, not per-user)
     let cfTokensIgnored = false;
     let subjectAfterCf = subject;
-    let htmlAfterCf = html;
+    let htmlAfterCf = sanitizedHtml;
     if (cfFieldIds.length > 0) {
       // NOTE: supabase is service_role client — required by resolveCustomFieldTokens
       const cfSubject = await resolveCustomFieldTokens(subject, productContextId, supabase);
-      const cfHtml = await resolveCustomFieldTokens(html, productContextId, supabase);
+      const cfHtml = await resolveCustomFieldTokens(sanitizedHtml, productContextId, supabase);
       subjectAfterCf = cfSubject.text;
       htmlAfterCf = cfHtml.text;
       cfTokensIgnored = cfSubject.cfTokensIgnored || cfHtml.cfTokensIgnored;
@@ -668,7 +707,7 @@ Deno.serve(async (req) => {
           from_email: emailAccount.from_email || emailAccount.email,
           to_email: profile.email,
           subject,
-          body_html: html,
+          body_html: sanitizedHtml,
           status: 'sent',
           profile_id: profile.user_id,
           template_code: 'mass_broadcast',
@@ -684,7 +723,7 @@ Deno.serve(async (req) => {
           from_email: emailAccount.from_email || emailAccount.email,
           to_email: profile.email,
           subject,
-          body_html: html,
+          body_html: sanitizedHtml,
           status: 'failed',
           error_message: (error as Error).message,
           profile_id: profile.user_id,
