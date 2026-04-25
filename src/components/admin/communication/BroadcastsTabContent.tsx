@@ -789,7 +789,9 @@ export function BroadcastsTabContent() {
                     </Label>
                     {audience && (
                       <p className="text-xs text-muted-foreground">
-                        {audience.emailCount} получателей
+                        {audience.emailCount} получателей · активных {audience.emailActiveCount}
+                        {audience.emailArchivedCount > 0 ? ` · архивных ${audience.emailArchivedCount}` : ""}
+                        {audience.emailNoAccountCount > 0 ? ` · без аккаунта ${audience.emailNoAccountCount}` : ""}
                       </p>
                     )}
                   </div>
@@ -800,6 +802,26 @@ export function BroadcastsTabContent() {
                   onCheckedChange={setSendToEmail}
                 />
               </div>
+              {sendToEmail && (
+                <div className="flex items-center justify-between p-3 rounded-lg border bg-muted/30">
+                  <div className="flex items-center gap-3">
+                    <div>
+                      <Label htmlFor="ch-include-archived" className="cursor-pointer font-medium">
+                        Включить архивных контактов
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        По умолчанию архивные исключены. Включи, чтобы охватить всю историческую базу
+                        {audience ? ` (+${audience.emailArchivedCount})` : ""}.
+                      </p>
+                    </div>
+                  </div>
+                  <Switch
+                    id="ch-include-archived"
+                    checked={includeArchived}
+                    onCheckedChange={setIncludeArchived}
+                  />
+                </div>
+              )}
             </CardContent>
           </Card>
 
