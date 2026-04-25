@@ -13746,6 +13746,7 @@ export type Database = {
         Args: { p_category?: string; p_description: string; p_subject: string }
         Returns: Json
       }
+      diag_broadcast_cron_state: { Args: never; Returns: Json }
       expire_stale_entitlements: {
         Args: { p_batch_limit?: number }
         Returns: Json
