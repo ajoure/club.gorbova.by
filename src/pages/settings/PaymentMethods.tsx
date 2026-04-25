@@ -101,99 +101,55 @@ export default function PaymentMethodsSettings() {
       }
       navigate(location.pathname, { replace: true });
     } else if (tokenizeStatus === 'success') {
-      // Card added successfully - start polling for verification status
-      const startPollingAndCheckAutolink = async () => {
+      // Card added — show autolink result if any. No verification polling
+      // (recurring verification is disabled; cards are usable immediately).
+      const handleAutolinkResult = async () => {
         if (!user) return;
-        
-        // Get the newest card
+
         const { data: newestCard } = await supabase
           .from('payment_methods')
-          .select('id, meta, verification_status')
+          .select('id, meta')
           .eq('user_id', user.id)
           .eq('status', 'active')
           .order('created_at', { ascending: false })
           .limit(1)
           .single();
-        
-        // Start polling if card is in pending status
-        if (newestCard?.id && newestCard.verification_status === 'pending') {
-          setPollingCardId(newestCard.id);
-        }
-        
+
         const meta = newestCard?.meta as Record<string, unknown> | null;
-        const autolinkResult = meta?.autolink_result as { 
-          updated_payments?: number; 
-          updated_queue?: number; 
+        const autolinkResult = meta?.autolink_result as {
+          updated_payments?: number;
+          updated_queue?: number;
           status?: string;
           stop_reason?: string;
         } | undefined;
-        
+
         if (autolinkResult) {
           const totalLinked = (autolinkResult.updated_payments || 0) + (autolinkResult.updated_queue || 0);
-          
           if (autolinkResult.status === 'stop') {
             if (autolinkResult.stop_reason === 'card_collision_last4_brand') {
               toast.info('Карта добавлена. Автопривязка транзакций пропущена (карта используется несколькими контактами).', { duration: 6000 });
             } else if (autolinkResult.stop_reason === 'too_many_candidates') {
               toast.info('Карта добавлена. Слишком много совпадений — обратитесь в поддержку.', { duration: 6000 });
+            } else {
+              toast.success('Карта успешно привязана');
             }
           } else if (totalLinked > 0) {
             toast.success(`Карта добавлена. Привязано ${totalLinked} исторических транзакций.`, { duration: 5000 });
           } else {
-            toast.success('Карта добавлена. Проверяем для автоплатежей...', { duration: 3000 });
+            toast.success('Карта успешно привязана');
           }
         } else {
-          toast.success('Карта добавлена. Проверяем для автоплатежей...', { duration: 3000 });
+          toast.success('Карта успешно привязана');
         }
-        
+
         queryClient.invalidateQueries({ queryKey: ['user-payment-methods'] });
       };
-      
-      startPollingAndCheckAutolink();
+
+      handleAutolinkResult();
       navigate(location.pathname, { replace: true });
     }
   }, [location.search, navigate, location.pathname, user, queryClient]);
 
-  // PATCH-E: Polling effect for verification status
-  useEffect(() => {
-    if (!pollingCardId || !user) return;
-    
-    let pollCount = 0;
-    const maxPolls = 15; // 30 seconds max (2s * 15)
-    
-    const interval = setInterval(async () => {
-      pollCount++;
-      
-      const { data } = await supabase
-        .from('payment_methods')
-        .select('verification_status')
-        .eq('id', pollingCardId)
-        .single();
-      
-      const status = data?.verification_status;
-      
-      // Stop polling if status is no longer pending OR max polls reached
-      if (status !== 'pending' || pollCount >= maxPolls) {
-        setPollingCardId(null);
-        queryClient.invalidateQueries({ queryKey: ['user-payment-methods'] });
-        
-        // Show appropriate toast based on final status
-        if (status === 'verified') {
-          toast.success('Карта подтверждена для автоплатежей');
-        } else if (status === 'verified_refund_pending') {
-          toast.success('Карта подтверждена. Возврат 1 BYN в обработке.');
-        } else if (status === 'rejected_3ds_required' || status === 'rejected') {
-          toast.warning('Карта не подходит для автоплатежей (требует 3DS)', { duration: 6000 });
-        } else if (status === 'failed') {
-          toast.error('Не удалось проверить карту');
-        } else if (pollCount >= maxPolls && status === 'pending') {
-          toast.info('Проверка занимает больше времени. Обновите страницу позже.');
-        }
-      }
-    }, 2000);
-    
-    return () => clearInterval(interval);
-  }, [pollingCardId, user, queryClient]);
 
   // Check for pending installments - blocks card deletion
   const { data: pendingInstallments } = useUserPendingInstallments(user?.id);
