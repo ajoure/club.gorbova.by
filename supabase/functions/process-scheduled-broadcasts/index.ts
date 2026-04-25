@@ -181,8 +181,14 @@ Deno.serve(async (req) => {
       : (tpl.send_mode === 'recurring' ? 'recurring' : 'scheduled');
 
     // Resolve audience once via the canonical RPC (single source of truth)
+    // Dispatcher runs under service_role (no auth.uid()), so we mark the call
+    // as system-bypass so the RPC skips the entitlements.manage check.
+    const audFiltersForRpc = {
+      ...(tpl.audience_filters || {}),
+      __system_bypass: true,
+    };
     const { data: audienceRpc, error: audErr } = await supabase
-      .rpc('resolve_broadcast_audience', { _filters: tpl.audience_filters || {} });
+      .rpc('resolve_broadcast_audience', { _filters: audFiltersForRpc });
 
     if (audErr) {
       console.error(`[broadcast-dispatcher] audience rpc failed for ${tpl.id}:`, audErr);
