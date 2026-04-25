@@ -141,16 +141,20 @@ Deno.serve(async (req) => {
   }
 
   // ===== Pick due templates =====
+  // PATCH-E: regular cron requires approval_status='approved'.
+  // Forced path (force_execute + force_secret) may bypass approval — it is already gated by secret + RBAC at the caller.
   const nowIso = new Date().toISOString();
   let query = supabase
     .from('broadcast_templates')
     .select('*')
     .in('status', ['scheduled', 'recurring'])
+    .eq('approval_status', 'approved')
     .not('next_run_at', 'is', null)
     .lte('next_run_at', nowIso)
     .limit(50);
 
   if (forceTemplateId) {
+    // Forced single-template path — bypasses approval (force_secret already validated).
     query = supabase.from('broadcast_templates').select('*').eq('id', forceTemplateId).limit(1);
   }
 
