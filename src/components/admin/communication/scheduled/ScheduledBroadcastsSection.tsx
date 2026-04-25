@@ -822,6 +822,24 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
                       {fmtDate(row.last_run_at)}
                     </TableCell>
                     <TableCell>{statusBadge(row)}</TableCell>
+                    <TableCell>
+                      {row.approval_status === "approved" ? (
+                        <Badge variant="default" className="bg-emerald-600 hover:bg-emerald-600">Approved</Badge>
+                      ) : row.approval_status === "rejected" ? (
+                        <Badge variant="destructive">Rejected</Badge>
+                      ) : ["scheduled", "recurring"].includes(row.status) ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7"
+                          onClick={() => openApproveConfirm(row)}
+                        >
+                          <Play className="h-3 w-3 mr-1" /> Одобрить
+                        </Button>
+                      ) : (
+                        <Badge variant="outline">Pending</Badge>
+                      )}
+                    </TableCell>
                     <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                       {fmtDate(row.created_at)}
                     </TableCell>
