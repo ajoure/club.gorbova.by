@@ -129,7 +129,8 @@ interface RecurrenceRule {
   interval: number;
   time_of_day: string; // "HH:MM"
   by_weekday?: number[]; // 1..7 Mon..Sun, only for weekly
-  ends_at?: string | null;
+  by_monthday?: number[]; // 1..31, only for monthly
+  ends_at?: string | null; // ISO date or null
   timezone?: string;
 }
 
@@ -138,6 +139,8 @@ const DEFAULT_RECURRENCE: RecurrenceRule = {
   interval: 1,
   time_of_day: "10:00",
   by_weekday: [1],
+  by_monthday: [1],
+  ends_at: null,
   timezone: "Europe/Minsk",
 };
 
@@ -534,9 +537,36 @@ export function BroadcastsTabContent() {
   }, [editTemplateId]);
 
   // Save scheduled/recurring template (INSERT or UPDATE — без дубля)
+  // RPC compute_next_broadcast_run signature: (rule jsonb, from_ts timestamptz) — verified.
   const saveScheduledMutation = useMutation({
     mutationFn: async () => {
       const isRecurring = sendMode === "recurring";
+
+      // Validate recurrence rule shape (monthly requires by_monthday, weekly requires by_weekday)
+      if (isRecurring) {
+        if (recurrence.frequency === "weekly" && !(recurrence.by_weekday && recurrence.by_weekday.length > 0)) {
+          throw new Error("Для еженедельной рассылки выберите хотя бы один день недели");
+        }
+        if (recurrence.frequency === "monthly" && !(recurrence.by_monthday && recurrence.by_monthday.length > 0)) {
+          throw new Error("Для ежемесячной рассылки укажите день месяца (1–31)");
+        }
+      }
+
+      // Compute next_run_at FIRST — if RPC fails for recurring, do not save.
+      let nextRunAt: string | null = null;
+      if (isRecurring) {
+        const { data: nextTs, error: rpcErr } = await supabase.rpc(
+          "compute_next_broadcast_run",
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          { rule: recurrence as any, from_ts: new Date().toISOString() },
+        );
+        if (rpcErr) throw new Error("RPC compute_next_broadcast_run: " + rpcErr.message);
+        nextRunAt = (nextTs as string | null) ?? null;
+        if (!nextRunAt) throw new Error("Не удалось вычислить следующий запуск по правилу повторения");
+      } else {
+        nextRunAt = composeScheduledAt();
+      }
+
       const payload: Record<string, unknown> = {
         name: scheduledName.trim() || `Рассылка ${format(new Date(), "dd.MM.yyyy HH:mm")}`,
         channel: channelsArr[0] || "telegram",
@@ -549,24 +579,13 @@ export function BroadcastsTabContent() {
         email_body_html: sendToEmail ? emailBody.trim() : null,
         audience_filters: filters as unknown as Record<string, unknown>,
         send_mode: isRecurring ? "recurring" : "scheduled",
-        status: "scheduled",
+        // CRITICAL: recurring saved with status='recurring', чтобы pause/resume
+        // корректно восстанавливал metadata.paused_from_status.
+        status: isRecurring ? "recurring" : "scheduled",
         recurrence_rule: isRecurring ? (recurrence as unknown as Record<string, unknown>) : null,
         scheduled_for: isRecurring ? null : composeScheduledAt(),
+        next_run_at: nextRunAt,
       };
-
-      let nextRunAt: string | null = null;
-      if (isRecurring) {
-        const { data: nextTs, error: rpcErr } = await supabase.rpc(
-          "compute_next_broadcast_run",
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          { rule: recurrence as any, from_ts: new Date().toISOString() },
-        );
-        if (rpcErr) throw rpcErr;
-        nextRunAt = (nextTs as string | null) ?? null;
-      } else {
-        nextRunAt = composeScheduledAt();
-      }
-      payload.next_run_at = nextRunAt;
 
       if (editTemplateId) {
         const { error } = await supabase
@@ -593,7 +612,8 @@ export function BroadcastsTabContent() {
           ? "Повторяющаяся рассылка создана"
           : "Рассылка запланирована",
       );
-      queryClient.invalidateQueries({ queryKey: ["scheduled-broadcasts"] });
+      // CRITICAL: использовать canonical queryKey таблицы «Запланированные» (Фаза 1).
+      queryClient.invalidateQueries({ queryKey: ["scheduled-broadcasts-canonical"] });
       setEditTemplateId(null);
       setSendMode("now");
       setScheduledAt(null);
@@ -935,6 +955,51 @@ export function BroadcastsTabContent() {
                       </div>
                     </div>
                   )}
+                  {recurrence.frequency === "monthly" && (
+                    <div className="space-y-2">
+                      <Label>День месяца (1–31)</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={31}
+                        value={(recurrence.by_monthday && recurrence.by_monthday[0]) || 1}
+                        onChange={(e) => {
+                          const v = Math.max(1, Math.min(31, parseInt(e.target.value) || 1));
+                          setRecurrence((r) => ({ ...r, by_monthday: [v] }));
+                        }}
+                        className="w-32"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Если в месяце меньше дней — рассылка будет в последний день месяца.
+                      </p>
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    <Label>Дата окончания (опционально)</Label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="date"
+                        value={recurrence.ends_at ? recurrence.ends_at.slice(0, 10) : ""}
+                        onChange={(e) =>
+                          setRecurrence((r) => ({
+                            ...r,
+                            ends_at: e.target.value ? new Date(e.target.value).toISOString() : null,
+                          }))
+                        }
+                        className="w-48"
+                      />
+                      {recurrence.ends_at && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setRecurrence((r) => ({ ...r, ends_at: null }))}
+                        >
+                          Очистить
+                        </Button>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
 
