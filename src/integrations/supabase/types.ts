@@ -9691,6 +9691,21 @@ export type Database = {
         }
         Relationships: []
       }
+      rev_7101ed3c_ops: {
+        Row: {
+          payload: Json
+          seq: number
+        }
+        Insert: {
+          payload: Json
+          seq?: number
+        }
+        Update: {
+          payload?: Json
+          seq?: number
+        }
+        Relationships: []
+      }
       role_permissions: {
         Row: {
           created_at: string
@@ -13710,6 +13725,7 @@ export type Database = {
           updated_count: number
         }[]
       }
+      apply_rev_7101ed3c: { Args: { _batch_id: string }; Returns: Json }
       approve_broadcast_template: {
         Args: { _template_id: string }
         Returns: Json
