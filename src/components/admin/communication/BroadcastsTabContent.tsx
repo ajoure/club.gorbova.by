@@ -456,27 +456,194 @@ export function BroadcastsTabContent() {
     },
   });
 
+  // ===== Sprint B rev3 — Phase 2: scheduled/recurring persistence =====
+  const composeScheduledAt = useCallback((): string | null => {
+    if (!scheduledAt) return null;
+    const [h, m] = scheduledTime.split(":").map((x) => parseInt(x, 10));
+    const d = new Date(scheduledAt);
+    d.setHours(h || 0, m || 0, 0, 0);
+    return d.toISOString();
+  }, [scheduledAt, scheduledTime]);
+
+  const channelsArr = useMemo<("telegram" | "email")[]>(() => {
+    const arr: ("telegram" | "email")[] = [];
+    if (sendToTelegram) arr.push("telegram");
+    if (sendToEmail) arr.push("email");
+    return arr;
+  }, [sendToTelegram, sendToEmail]);
+
+  // Hydrate composer from existing template when editTemplateId is set
+  useEffect(() => {
+    if (!editTemplateId) return;
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from("broadcast_templates")
+        .select("*")
+        .eq("id", editTemplateId)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error || !data) {
+        toast.error("Не удалось загрузить шаблон для редактирования");
+        setEditTemplateId(null);
+        return;
+      }
+      const tpl = data as Record<string, unknown>;
+      const ch = (tpl.channels as string[]) || [];
+      setSendToTelegram(ch.includes("telegram"));
+      setSendToEmail(ch.includes("email"));
+      setScheduledName(String(tpl.name || ""));
+      setMessage(String(tpl.message_text || ""));
+      setEmailSubject(String(tpl.email_subject || ""));
+      setEmailBody(String(tpl.email_body_html || ""));
+      const btnUrl = (tpl.button_url as string) || "";
+      const btnText = (tpl.button_text as string) || "";
+      setIncludeButton(!!btnUrl);
+      if (btnText) setButtonText(btnText);
+      if (btnUrl) setButtonUrl(btnUrl);
+      const af = (tpl.audience_filters as Record<string, unknown>) || {};
+      if (af.include || af.exclude || af.club_ids) {
+        setFilters({
+          include: ((af.include as AudienceRule[]) || []),
+          exclude: ((af.exclude as AudienceRule[]) || []),
+          club_ids: ((af.club_ids as string[]) || []),
+          club_membership: ((af.club_membership as "current" | "ever" | "any") || "current"),
+          bot_ids: ((af.bot_ids as string[]) || []),
+        });
+      }
+      const mode = String(tpl.send_mode || "manual");
+      if (mode === "scheduled") {
+        setSendMode("scheduled");
+        const sf = tpl.scheduled_for ? new Date(tpl.scheduled_for as string) : null;
+        if (sf) {
+          setScheduledAt(sf);
+          setScheduledTime(format(sf, "HH:mm"));
+        }
+      } else if (mode === "recurring") {
+        setSendMode("recurring");
+        const rule = (tpl.recurrence_rule as RecurrenceRule) || DEFAULT_RECURRENCE;
+        setRecurrence({ ...DEFAULT_RECURRENCE, ...rule });
+      } else {
+        setSendMode("now");
+      }
+      toast.info(`Загружен шаблон «${tpl.name}» для редактирования`);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [editTemplateId]);
+
+  // Save scheduled/recurring template (INSERT or UPDATE — без дубля)
+  const saveScheduledMutation = useMutation({
+    mutationFn: async () => {
+      const isRecurring = sendMode === "recurring";
+      const payload: Record<string, unknown> = {
+        name: scheduledName.trim() || `Рассылка ${format(new Date(), "dd.MM.yyyy HH:mm")}`,
+        channel: channelsArr[0] || "telegram",
+        channels: channelsArr,
+        template_type: "general",
+        message_text: sendToTelegram ? message.trim() : null,
+        button_text: sendToTelegram && includeButton ? buttonText : null,
+        button_url: sendToTelegram && includeButton ? buttonUrl : null,
+        email_subject: sendToEmail ? emailSubject.trim() : null,
+        email_body_html: sendToEmail ? emailBody.trim() : null,
+        audience_filters: filters as unknown as Record<string, unknown>,
+        send_mode: isRecurring ? "recurring" : "scheduled",
+        status: "scheduled",
+        recurrence_rule: isRecurring ? (recurrence as unknown as Record<string, unknown>) : null,
+        scheduled_for: isRecurring ? null : composeScheduledAt(),
+      };
+
+      let nextRunAt: string | null = null;
+      if (isRecurring) {
+        const { data: nextTs, error: rpcErr } = await supabase.rpc(
+          "compute_next_broadcast_run",
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          { rule: recurrence as any, from_ts: new Date().toISOString() },
+        );
+        if (rpcErr) throw rpcErr;
+        nextRunAt = (nextTs as string | null) ?? null;
+      } else {
+        nextRunAt = composeScheduledAt();
+      }
+      payload.next_run_at = nextRunAt;
+
+      if (editTemplateId) {
+        const { error } = await supabase
+          .from("broadcast_templates")
+          .update(payload)
+          .eq("id", editTemplateId);
+        if (error) throw error;
+        return { id: editTemplateId, mode: "update" as const };
+      }
+      const { data, error } = await supabase
+        .from("broadcast_templates")
+        .insert(payload)
+        .select("id")
+        .single();
+      if (error) throw error;
+      return { id: data.id as string, mode: "insert" as const };
+    },
+    onSuccess: (res) => {
+      toast.success(
+        res.mode === "update"
+          ? "Запланированная рассылка обновлена"
+          : sendMode === "recurring"
+          ? "Повторяющаяся рассылка создана"
+          : "Рассылка запланирована",
+      );
+      queryClient.invalidateQueries({ queryKey: ["scheduled-broadcasts"] });
+      setEditTemplateId(null);
+      setSendMode("now");
+      setScheduledAt(null);
+      setScheduledName("");
+      setMainTab("scheduled");
+    },
+    onError: (err) => {
+      toast.error("Ошибка сохранения: " + (err as Error).message);
+    },
+  });
+
   const handleSend = () => {
-    if (activeTab === "telegram") {
-      if (!message.trim() && !mediaFile) {
-        toast.error("Введите текст сообщения или добавьте медиа");
-        return;
-      }
-      sendTelegramMutation.mutate();
-    } else {
-      if (!emailSubject.trim() || !emailBody.trim()) {
-        toast.error("Заполните тему и текст письма");
-        return;
-      }
-      sendEmailMutation.mutate();
+    if (!sendToTelegram && !sendToEmail) {
+      toast.error("Выберите хотя бы один канал: Telegram или Email");
+      return;
     }
+    if (sendToTelegram && !message.trim() && !mediaFile) {
+      toast.error("Введите текст сообщения или добавьте медиа для Telegram");
+      return;
+    }
+    if (sendToEmail && (!emailSubject.trim() || !emailBody.trim())) {
+      toast.error("Заполните тему и текст письма для Email");
+      return;
+    }
+
+    if (sendMode === "now") {
+      // Принцип Фазы 2: НЕ переписываем quick-send mutations, оборачиваем режимом send_now.
+      if (sendToTelegram) sendTelegramMutation.mutate();
+      if (sendToEmail) sendEmailMutation.mutate();
+      return;
+    }
+
+    if (sendMode === "scheduled") {
+      const ts = composeScheduledAt();
+      if (!ts) {
+        toast.error("Выберите дату и время отправки");
+        return;
+      }
+      if (new Date(ts).getTime() <= Date.now()) {
+        toast.error("Дата отправки должна быть в будущем");
+        return;
+      }
+    }
+    saveScheduledMutation.mutate();
   };
 
   const isSendDisabled =
-    (activeTab === "telegram" && !message.trim() && !mediaFile) ||
-    (activeTab === "email" && (!emailSubject.trim() || !emailBody.trim())) ||
+    (!sendToTelegram && !sendToEmail) ||
     sendTelegramMutation.isPending ||
-    sendEmailMutation.isPending;
+    sendEmailMutation.isPending ||
+    saveScheduledMutation.isPending;
 
   return (
     <div className="container max-w-6xl py-6 space-y-6 overflow-auto h-full">
