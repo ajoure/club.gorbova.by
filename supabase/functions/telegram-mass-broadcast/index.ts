@@ -109,36 +109,65 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
-    // Verify admin authorization
+    // ===== Auth path resolution =====
+    // (A) System actor (scheduled dispatcher), or (B) User JWT with entitlements.manage.
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      return new Response(
-        JSON.stringify({ error: 'Unauthorized' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const systemActor = req.headers.get('x-system-actor');
+    const internalSecretHeader = req.headers.get('x-broadcast-internal-secret');
+    const internalSecretEnv =
+      Deno.env.get('BROADCAST_INTERNAL_SECRET') ||
+      Deno.env.get('BROADCAST_FORCE_SECRET') ||
+      '';
 
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-    
-    if (authError || !user) {
-      return new Response(
-        JSON.stringify({ error: 'Unauthorized' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    let isSystemActor = false;
+    let user: { id: string } | null = null;
 
-    // Check admin permission
-    const { data: hasPermission } = await supabase.rpc('has_permission', {
-      _user_id: user.id,
-      _permission_code: 'entitlements.manage',
-    });
-
-    if (!hasPermission) {
-      return new Response(
-        JSON.stringify({ error: 'Forbidden' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    if (systemActor || internalSecretHeader) {
+      const bearerSecret = authHeader?.startsWith('Bearer ')
+        ? authHeader.replace('Bearer ', '')
+        : '';
+      const providedSecret = internalSecretHeader || bearerSecret;
+      if (
+        systemActor !== 'broadcast-dispatcher' ||
+        !internalSecretEnv ||
+        providedSecret !== internalSecretEnv
+      ) {
+        console.warn('[telegram-broadcast] system bypass rejected', {
+          actor: systemActor,
+          has_secret: !!providedSecret,
+        });
+        return new Response(
+          JSON.stringify({ error: 'Forbidden' }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      isSystemActor = true;
+    } else {
+      if (!authHeader) {
+        return new Response(
+          JSON.stringify({ error: 'Unauthorized' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      const token = authHeader.replace('Bearer ', '');
+      const { data: { user: authedUser }, error: authError } = await supabase.auth.getUser(token);
+      if (authError || !authedUser) {
+        return new Response(
+          JSON.stringify({ error: 'Unauthorized' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      const { data: hasPermission } = await supabase.rpc('has_permission', {
+        _user_id: authedUser.id,
+        _permission_code: 'entitlements.manage',
+      });
+      if (!hasPermission) {
+        return new Response(
+          JSON.stringify({ error: 'Forbidden' }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      user = { id: authedUser.id };
     }
 
     // Parse request - support both JSON and FormData
