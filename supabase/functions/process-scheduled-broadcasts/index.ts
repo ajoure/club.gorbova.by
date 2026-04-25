@@ -25,6 +25,8 @@ const corsHeaders = {
 interface DispatchRequest {
   dry_run?: boolean;
   force_template_id?: string;
+  force_execute?: boolean;
+  force_secret?: string;
 }
 
 interface BroadcastTemplate {
@@ -82,6 +84,31 @@ Deno.serve(async (req) => {
 
   const isDryRun = reqBody.dry_run === true;
   const forceTemplateId = reqBody.force_template_id || null;
+  const forceExecute = reqBody.force_execute === true;
+  const providedForceSecret = reqBody.force_secret || null;
+
+  // ===== Force-execute path (PATCH-D lite, Sprint B safety) =====
+  // If force_execute=true + force_template_id + valid force_secret:
+  //   - bypass Guard 1 (kill-switch) AND Guard 2 (production_approved)
+  //   - process EXACTLY one template (force_template_id), never picks other due templates
+  //   - parallel cron tick that runs WITHOUT force_secret stays gated by Guards 1/2 as usual,
+  //     so other due templates (e.g. "Тест 1") cannot leak through
+  let forceAuthorized = false;
+  if (forceExecute) {
+    if (!forceTemplateId) {
+      return jsonRes({ ok: false, error: 'force_execute_requires_template_id' }, { status: 400 });
+    }
+    if (isDryRun) {
+      return jsonRes({ ok: false, error: 'force_execute_incompatible_with_dry_run' }, { status: 400 });
+    }
+    const expectedSecret = Deno.env.get('BROADCAST_FORCE_SECRET');
+    if (!expectedSecret || !providedForceSecret || providedForceSecret !== expectedSecret) {
+      console.warn('[broadcast-dispatcher] force_execute denied: invalid secret');
+      return jsonRes({ ok: false, error: 'invalid_force_secret' }, { status: 403 });
+    }
+    forceAuthorized = true;
+    console.log(`[broadcast-dispatcher] FORCE_EXECUTE authorized for template ${forceTemplateId}`);
+  }
 
   // ===== Guard 1: kill-switch =====
   const { data: config, error: cfgErr } = await supabase
@@ -95,7 +122,7 @@ Deno.serve(async (req) => {
     return jsonRes({ ok: false, error: 'config_read_failed' }, { status: 500 });
   }
 
-  if (!config?.enabled) {
+  if (!config?.enabled && !forceAuthorized) {
     console.log('[broadcast-dispatcher] kill-switch off — controlled skip');
     return jsonRes({
       ok: true, controlled_skip: true, reason: 'dispatcher_disabled',
@@ -104,7 +131,7 @@ Deno.serve(async (req) => {
   }
 
   // ===== Guard 2: production approval =====
-  if (!isDryRun && !config.production_approved) {
+  if (!isDryRun && !config.production_approved && !forceAuthorized) {
     console.log('[broadcast-dispatcher] production not approved — only dry_run allowed');
     return jsonRes({
       ok: true, controlled_skip: true, reason: 'production_not_approved',
@@ -375,12 +402,13 @@ Deno.serve(async (req) => {
   // ===== System-actor audit log =====
   if (!isDryRun && list.length > 0) {
     await supabase.from('audit_logs').insert({
-      action: 'broadcast_dispatcher_run',
+      action: forceAuthorized ? 'broadcast_dispatcher_force_run' : 'broadcast_dispatcher_run',
       actor_type: 'system',
-      actor_label: 'broadcast-dispatcher',
+      actor_label: forceAuthorized ? 'broadcast-dispatcher-force' : 'broadcast-dispatcher',
       meta: {
         entity_type: 'broadcast_template',
         entity_id: forceTemplateId || null,
+        force_authorized: forceAuthorized,
         processed_templates: list.length,
         sent: totalSent,
         failed: totalFailed,
