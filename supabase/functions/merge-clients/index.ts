@@ -40,7 +40,7 @@ serve(async (req) => {
     });
 
     const token = authHeader.replace("Bearer ", "");
-    const { data: claimsData, error: claimsError } = await authClient.auth.getClaims(token);
+    const { data: claimsData, error: claimsError } = await (authClient.auth as any).getClaims(token);
     if (claimsError || !claimsData?.claims) {
       return new Response(JSON.stringify({ error: "Invalid token" }), {
         status: 401,
