@@ -879,6 +879,39 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* PATCH-E: Approve confirm dialog */}
+      <AlertDialog open={!!approveTarget} onOpenChange={(o) => !o && setApproveTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Одобрить рассылку?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm">
+                <div><span className="text-muted-foreground">Имя: </span><b>{approveTarget?.name}</b></div>
+                <div><span className="text-muted-foreground">Дата/время: </span>{fmtDate(approveTarget?.next_run_at ?? null)}</div>
+                <div><span className="text-muted-foreground">Каналы: </span>{(approveTarget?.channels ?? []).join(", ") || "—"}</div>
+                <div>
+                  <span className="text-muted-foreground">Аудитория: </span>
+                  {approveAudienceLoading ? "считаю…" : (approveAudienceCount ?? "—")}
+                </div>
+                <div className="text-xs text-muted-foreground pt-2">
+                  После approval шаблон будет взят обычным cron при наступлении next_run_at.
+                  Глобальный safety gate (production_approved) остаётся выключенным — отправка из обычного cron заблокирована до отдельного решения.
+                </div>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={approveMutation.isPending}
+              onClick={() => approveTarget && approveMutation.mutate(approveTarget.id)}
+            >
+              {approveMutation.isPending ? "Одобряю…" : "Одобрить"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* History sheet */}
       <Sheet open={!!historyId} onOpenChange={(o) => !o && setHistoryId(null)}>
         <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
