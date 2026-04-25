@@ -1,312 +1,250 @@
-&nbsp;
-
-&nbsp;
-
 да, согласен, с учетом правок:
 
-  
-
-
-1. **Разделить PATCH на два независимых блока**
-  - **PATCH-A: Broadcast audience/email delivery** — RPC, edge function, UI-счетчики, лимит 10 000.
-  - **PATCH-B: CRM duplicate deals cleanup for product** `7101ed3c...` — только `orders_v2.pipeline_id/pipeline_stage_id`, без изменения оплат/доступов.
-2. **Зафиксировать source of truth**
-  - Для факта покупки: `orders_v2`.
-  - Для email-получателя: `profiles.id + normalized email`.
-  - Для Telegram: только `profiles.user_id + telegram_user_id`.
-  - Не использовать `user_id` как обязательный ключ для email-аудитории.
-3. **Уточнить противоречие 213 / 214**
-  - В плане одновременно указаны `213` и `214` уникальных email.
-  - Перед execute должен быть один финальный expected number.
-  - STOP, если число отличается от финального dry-run без объяснения.
-4. **Детерминированный выбор канонической сделки**  
-  
-Для каждого normalized email выбрать одну keep-сделку строго по сортировке:
+1. **Сначала зафиксировать точную причину** `0`
+  - Отдельно проверить:
+    - RPC реально возвращает `0`;
+    - RPC падает с ошибкой, а UI подменяет ошибку на `0`;
+    - UI передаёт не тот `filters`;
+    - `include_archived` не доходит до RPC.
+  - До фикса нельзя считать, что проблема только в UI.
+2. **UI не должен возвращать fake-zero**
+  - В `BroadcastsTabContent.tsx` заменить fallback:
+  ```ts
+  return { telegramCount: 0, emailCount: 0, ... }
+  ```
+  на явное состояние:
+  ```text
+  audienceStatus: "error"
+  audienceError: error.message
+  ```
+  - В интерфейсе показывать:
+3. **Добавить debug-proof входных фильтров**  
+В dry-run отчёте обязательно показать:
+  &nbsp;
+  ```json
+  {
+    "include": [...],
+    "exclude": [],
+    "club_ids": [],
+    "club_membership": "current",
+    "include_archived": true/false
+  }
+  ```
+  Это нужно, чтобы исключить ошибку UI → RPC.
+4. **Проверить тарифный фильтр отдельно от продуктового**  
+Нужны 4 контрольных запроса:
   &nbsp;
   ```text
-  deal_date DESC NULLS LAST
-  created_at DESC
-  id ASC
+  product only + active
+  product only + include_archived
+  product + tariff_ids + active
+  product + tariff_ids + include_archived
   ```
-  Если `deal_date` отсутствует — fallback на `created_at DESC, id ASC`.
-5. **Не смешивать** `paid` **и CRM-stage**
-  - `status='paid'` не менять.
-  - Перенос в «Отказ» означает CRM-классификацию дубля, а не отмену оплаты.
-  - В `meta` явно писать причину:
-6. **Для Натальи Кажуро добавить обязательный sample-proof**  
-  
-До и после:
-7. **Email audience RPC должна возвращать не только count**  
-  
-Нужна contact-level RPC с полями:
+  Ожидания:
+5. **RPC nesting / permission проверить отдельно**  
+Если `resolve_broadcast_audience()` вызывает `resolve_broadcast_audience_contacts()` и та внутри снова проверяет `auth.uid() / has_permission`, возможен ложный `forbidden`.
+  &nbsp;
+  Правильный вариант:
+  - внешний RPC делает admin-check;
+  - внутренний resolver вызывается через безопасный system/internal path;
+  - обычным пользователям доступ не расширять.
+6. **Не менять** `email-mass-broadcast`**, если preview-only**  
+Edge function трогать только если dry-run покажет расхождение:
   &nbsp;
   ```text
-  profile_id
-  email
-  normalized_email
-  user_id
-  has_account
-  is_archived
-  source_order_id / source_product_id
+  preview count != email-mass-broadcast dry_run found
   ```
-  Иначе нельзя доказать, кто именно попал в аудиторию.
-8. **Убрать лимит 10 000 не через увеличение лимита**  
-  
-Нельзя просто поставить `limit(20000)`.  
-  
-Нужно:
+  Если execute-path уже корректный — не трогать.
+7. **Добавить machine-check после фикса**  
+После миграции/патча выполнить:
   &nbsp;
-  - либо RPC на стороне БД;
-  - либо cursor/keyset pagination;
-  - либо batch loading до полного exhausted result.  
-    
-  STOP, если результат полной базы ровно `10000`.
-9. **Preview и execute должны использовать один resolver**  
-  
-Нельзя, чтобы preview считал через новую RPC, а отправка брала старый `.in('user_id', ...)`.  
-  
-Один resolver должен обслуживать:
-  - preview counts;
-  - final recipients;
-  - execute send list;
-  - audit snapshot.
-10. **Добавить anti-duplicate guard для email-рассылки**  
-  
-По normalized email отправлять максимум одно письмо в рамках одного broadcast/run:
+  ```sql
+  SELECT public.resolve_broadcast_audience('<filters>'::jsonb);
+  ```
+  и отдельно:
+  ```sql
+  SELECT count(*)
+  FROM public.resolve_broadcast_audience_contacts('<filters>'::jsonb);
+  ```
+  Они должны совпадать по email_count.
+8. **DoD расширить**  
+Добавить:
+9. **Audit/debug без засорения production**  
+Если добавляется логирование фильтров, оно должно быть:
+  - только в console/debug response для dry-run;
+  - либо в admin-only diagnostic;
+  - не писать каждый preview в `audit_logs`.
+10. **Не смешивать с PATCH-A runtime audit proof**  
+Этот патч — про preview/counting bug.  
+Хвост `email_mass_broadcast SYSTEM ACTOR proof` остаётся отдельным deferred и не должен блокировать исправление подсчёта.
 
-&nbsp;
-
-  
-  
-
-
-```text
-unique(normalized_email, broadcast_run_id)
-```
-
-  
-
-
-или runtime dedupe до отправки.
-
-  
-
-
-11. **Архивные профили включать только осознанно**  
-  
-В плане написано “включая архивные”. Нужно добавить UI/guard:
-
-  
-
-
-- checkbox/explicit confirmation: `include_archived_contacts=true`;
-- preview отдельно показывает active / archived;
-- execute требует подтверждения, если archived > 0.
-
-  
-
-
-12. **Audit должен быть не только по сделкам, но и по рассылке**  
-  
-В `audit_logs` фиксировать:
-
-  
-
-
-- кто запустил;
-- фильтр аудитории;
-- email_count;
-- telegram_count;
-- ghost/no-account count;
-- archived count;
-- deduped count;
-- resolver version;
-- dry-run snapshot id / run id.
-
-  
-
-
-13. **SYSTEM ACTOR proof обязателен**  
-  
-Если data patch выполняется системно, в `audit_logs` должна появиться запись:
-
-  
-  
-
-
-```text
-actor_type='system'
-actor_user_id=NULL
-actor_label='PATCH-G-followup / broadcast-audience-contact-level'
-```
-
-  
-
-
-Это соответствует архитектурному стандарту аудируемости критических операций.  
-
-  
-
-
-14. **Добавить rollback plan**  
-  
-Для CRM data patch перед execute сохранить snapshot:
-
-  
-  
-
-
-```text
-order_id
-old_pipeline_id
-old_pipeline_stage_id
-old_meta
-new_pipeline_id
-new_pipeline_stage_id
-patch_id
-```
-
-  
-
-
-Rollback должен уметь вернуть только stage/meta по затронутым строкам.
-
-  
-
-
-15. **DoD дополнить machine-check инвариантами**  
-  
-После execute:
-
-  
-  
-
-
-```text
-COUNT(success distinct normalized_email) = expected_unique_email_count
-COUNT(success rows per normalized_email) <= 1
-COUNT(reject duplicates) = dry_run_duplicate_count
-natasha success count = 1
-natasha reject duplicate count = 5
-full_email_base_count > 10000
-full_email_base_count != 10000
-no email execute path uses only user_id
-```
-
-  
-
-
-16. **Не трогать Telegram edge function без необходимости**  
-  
-`telegram-mass-broadcast` лучше оставить без изменений, если проблема только в email. Максимум — убедиться, что старая `resolve_broadcast_audience_user_ids` остаётся совместимой для Telegram.
-17. **Добавить финальный отчет по измененным файлам**  
-  
-Отчет должен содержать:
-
-  
-
-
-- список SQL/RPC миграций;
-- список edge functions;
-- список UI-файлов;
-- diff-summary;
-- rowcount до/после;
-- proof SQL;
-- audit log id;
-- deferred list, если останутся спорные записи.
-
-  
-
-
-Итог: план правильный по направлению, но до execute нужно обязательно устранить конфликт `213/214`, зафиксировать единый resolver для preview/send, добавить rollback snapshot и SYSTEM ACTOR proof.
-
-  
-  
-  
-
+Итог: план правильный, но перед execute обязательно доказать, где именно возникает `0`: в RPC, в permission nesting или в UI fallback.
 
 &nbsp;
 
 План:
 
-1. **Проблема**
-  - По Наталье Кажуро в CRM сейчас видно 6 одинаковых paid-сделок по продукту `Ценный бухгалтер | 1 ступень 2.0`; должна остаться одна каноническая сделка, остальные должны быть в стадии «Отказ», а не в «Успешно».
-  - Рассылки сейчас считают покупателей через `user_id`, поэтому контакты без аккаунта на платформе исключаются, хотя у них есть email.
-  - Для полной email-базы есть ещё одна проблема: текущий legacy-путь ограничен `limit(10000)`, а профилей с email сейчас около 11 883, значит часть базы потенциально не попадает.
-2. **Диагностика**
-  - Наталья Кажуро есть в `profiles`: `natasha89k@gmail.com`, активный профиль, есть `user_id`.
-  - По этому email найдено 6 paid-заказов по `Ценный бухгалтер | 1 ступень 2.0`, все сейчас в воронке `ЦБ | 1 ступень |`, стадия `Успешно`.
-  - По продукту `7101ed3c-7839-4a74-ad95-aa0660369b22` текущее состояние:
-    - 341 paid-сделка;
-    - 214 уникальных email в заказах;
-    - 223 сделки в «Успешно», но это только 189 уникальных email;
-    - 94 сделки уже в «Отказ»;
-    - 24 сделки без pipeline/stage;
-    - 214 контактов с email существуют в `profiles`, из них 78 без аккаунта (`user_id IS NULL`) — именно они сейчас выпадают из рассылки.
-  - Текущая RPC `resolve_broadcast_audience_user_ids` возвращает только `user_id`, поэтому технически не может вернуть ghost/contact-only профили без аккаунта.
-3. **Предлагаемое решение**
-  - Разделить аудиторию рассылок на два уровня:
-    - Telegram: как и раньше, только профили с `user_id` и `telegram_user_id`.
-    - Email: все контакты с валидным email, включая профили без аккаунта и архивные профили, если они подходят под фильтр покупки/продукта.
-  - Для фильтра «Покупал когда-либо» использовать `orders_v2` как source of truth, но резолвить получателей email по `profile_id/email`, а не только по `user_id`.
-  - В email-отправке перейти с выборки `.in('user_id', ...)` на contact-level выборку по `profile_id/email`.
-  - Для полной базы email убрать лимит 10 000: получать всех email-получателей постранично/через новую RPC, включая архивные контакты.
-  - Для сделок ЦБ выполнить не DELETE, а безопасный перенос:
-    - по каждому normalized email оставить 1 каноническую paid-сделку по продукту ЦБ — самую позднюю по `deal_date`, затем `created_at`;
-    - канонические сделки поставить в `ЦБ | 1 ступень | → Успешно`;
-    - все остальные paid-дубли этого продукта перенести в `ЦБ | 1 ступень | → Отказ`;
-    - статус оплаты `paid` не менять, доступы/документы не удалять.
-4. **Изменяемые компоненты**
-  - База/RPC:
-    - новая или обновленная contact-level RPC для аудитории рассылок;
-    - обновление `resolve_broadcast_audience` для корректного preview: email_count должен считать контакты с email, а не только зарегистрированных пользователей;
-    - возможно оставить `resolve_broadcast_audience_user_ids` для Telegram-совместимости.
-  - Edge functions:
-    - `supabase/functions/email-mass-broadcast/index.ts` — отправка по profile/email, не по user_id; убрать лимит 10 000;
-    - при необходимости `supabase/functions/telegram-mass-broadcast/index.ts` — только совместимость, без расширения Telegram на email-only контакты.
-  - UI:
-    - `src/components/admin/communication/BroadcastsTabContent.tsx` — показать корректные счетчики email/telegram/total;
-    - добавить безопасный режим «Вся email-база»/подтверждение для рассылки всем 11k+ контактам, чтобы guard не блокировал осознанную массовую отправку.
-  - Данные CRM:
-    - `orders_v2.pipeline_id` и `orders_v2.pipeline_stage_id` для сделок продукта ЦБ.
-  - Audit:
-    - запись в `audit_logs` с dry-run итогами и фактическим rowcount переноса сделок.
-5. **Что не будет изменено**
-  - Физического удаления сделок не будет.
-  - Доступы пользователей (`entitlements`) не будут отзывать или пересоздавать.
-  - Документы и платежные статусы не будут удаляться.
-  - Telegram-рассылка не будет пытаться отправлять людям без Telegram ID.
-6. **Dry-run**
-  Перед execute будет выполнен dry-run SQL/diagnostic:
-  - список канонических keep-сделок по одному email;
-  - список сделок, которые будут перенесены в «Отказ»;
-  - отдельная проверка по `natasha89k@gmail.com`: должна остаться 1 success-сделка, остальные CB-дубли уйдут в «Отказ»;
-  - счетчики аудитории по продукту ЦБ:
-    - expected email recipients: около 214 контактов;
-    - Telegram recipients: только те, у кого есть Telegram;
-    - ghost/no-account email recipients: должны быть включены в email_count;
-  - счетчик полной email-базы: около 11 883 email-контактов, без лимита 10 000.
-7. **Execute**
-  После dry-run:
-  - применить миграцию/RPC для contact-level audience;
-  - обновить email edge function и UI;
-  - выполнить data patch по `orders_v2`:
-    - канонические 214 email-сделок → `Успешно`;
-    - неканонические дубли → `Отказ`;
-  - записать audit log.
-8. **STOP-guards**
-  Выполнение остановить, если:
-  - найдено не 213/214 уникальных email по ЦБ без объяснимой причины;
-  - у канонического выбора есть email с несколькими одинаковыми max `deal_date` без детерминированного tie-breaker;
-  - целевая воронка `ЦБ | 1 ступень |` или стадии `Успешно`/`Отказ` не найдены;
-  - rowcount переноса отличается от dry-run;
-  - email-аудитория после патча всё ещё строится только по `user_id`;
-  - полная email-база возвращает ровно 10 000 — это признак оставшегося лимита.
-9. **DoD**
-  - В рассылке по продукту ЦБ email_count показывает всех покупателей с email, включая без аккаунта.
-  - По полной базе email доступны все контакты с email, включая архивные, без ограничения 10 000.
-  - По Наталье Кажуро в «Успешно» остается одна каноническая сделка ЦБ; остальные её CB-дубли находятся в «Отказ».
-  - По продукту ЦБ в «Успешно» — одна сделка на один email; дубли не исчезли, а видны в «Отказ».
-  - Есть backend-proof: SQL rowcount, sample по Наталье, итоговые счетчики аудитории и audit log.
-    &nbsp;
-    &nbsp;
+1. Проблема
+
+В UI рассылок аудитория стала показываться как `0` для фильтра «Ценный бухгалтер | 1 ступень 2.0» с выбранными тарифами. Это опасно, потому что интерфейс сейчас показывает ноль без явного объяснения, хотя backend-данные по покупкам не нулевые.
+
+2. Диагностика
+
+Фактически проверено сейчас:
+
+- В `BroadcastsTabContent.tsx` preview вызывает RPC `resolve_broadcast_audience`.
+- Если RPC возвращает ошибку, код на строках 296–303 просто пишет ошибку в console и возвращает:
+  - `telegramCount: 0`
+  - `emailCount: 0`
+  - `users: []`
+
+То есть UI может показывать `0 пользователей` не потому, что аудитория реально пустая, а потому что ошибка backend-аудитории замаскирована под нулевой результат.
+
+Backend-проверка данных по этому продукту показывает, что аудитория не нулевая:
+
+- По продукту `7101ed3c-7839-4a74-ad95-aa0660369b22` без ограничения тарифов:
+  - paid orders: `341`
+  - unique order emails: `214`
+  - contact-level recipients include archived: `215`
+  - active-only: `211`
+  - archived canonical: `4`
+  - no-account contacts: `78`
+- По выбранным на скриншоте 3 тарифам:
+  - paid orders: `238`
+  - unique order emails: `210`
+  - contact-level recipients include archived: `210`
+  - active-only: `206`
+  - archived canonical: `4`
+  - no-account contacts: `77`
+
+Также при прямой проверке `resolve_broadcast_audience(...)` без пользовательского auth-контекста получен `forbidden` из вложенного `resolve_broadcast_audience_contacts(...)`. Это подтверждает класс проблемы: ошибка RPC может превращаться в `0` в UI.
+
+3. Предлагаемое решение
+
+Срочно исправить это как UI/backend reliability patch:
+
+A. Не маскировать ошибки preview под ноль
+
+- В `BroadcastsTabContent.tsx` заменить fallback `return 0` на явное состояние ошибки.
+- В блоке «Аудитория» показывать красный alert: `Ошибка расчёта аудитории`, с текстом ошибки RPC.
+- Не разрешать отправку, если preview-аудитория не рассчиталась из-за ошибки.
+
+B. Добавить backend-safe preview path
+
+- Обновить `resolve_broadcast_audience`, чтобы он не ломался из-за вложенного вызова `resolve_broadcast_audience_contacts` при допустимом caller-е.
+- Внутри `resolve_broadcast_audience` вызывать contact-level resolver в режиме, который не конфликтует с security-definer/nested auth контекстом.
+- При этом не открывать RPC публично: доступ остается только для авторизованных админов через permission guard.
+
+C. Синхронизировать preview и execute
+
+- Preview должен считать тем же contact-level контрактом, что и `email-mass-broadcast`.
+- `include_archived` остается явным opt-in.
+- Для скриншотного кейса ожидаемый preview после фикса:
+  - если выбраны 3 тарифа и `include_archived=false`: около `206` email recipients;
+  - если `include_archived=true`: около `210` email recipients.
+- Если выбрать продукт без ограничения тарифов:
+  - `211` active-only;
+  - `215` with archived.
+
+D. Добавить runtime dry-run proof
+
+- Вызвать `email-mass-broadcast` в `dry_run=true` для этого же фильтра.
+- Проверить, что dry-run возвращает diagnostic:
+  - `allowed > 0`
+  - `found > 0`
+  - `duplicates`, `invalid_emails`, `archived_included`
+- Dry-run audit не пишет — это нормально.
+
+4. Изменяемые компоненты
+
+- UI:
+  - `src/components/admin/communication/BroadcastsTabContent.tsx`
+- SQL/RPC:
+  - `public.resolve_broadcast_audience`
+  - при необходимости минимально `public.resolve_broadcast_audience_contacts`, без изменения бизнес-логики выборки
+- Edge function:
+  - `supabase/functions/email-mass-broadcast/index.ts` только если dry-run покажет рассинхрон preview/execute; иначе не трогать.
+
+5. Что не будет изменено
+
+- Не трогаю `orders_v2`.
+- Не трогаю CRM-дедуп PATCH-B.
+- Не меняю paid/status/entitlements/documents.
+- Не меняю аудиторию рассылок бизнес-логически: только исправляю отображение ошибки и надежность resolver-а.
+- Не создаю новые таблицы.
+- Не создаю новый source of truth.
+
+6. Dry-run
+
+Перед реальным изменением данных выполнить только read-only проверки:
+
+- Проверить текущий `pg_get_functiondef` для:
+  - `resolve_broadcast_audience`
+  - `resolve_broadcast_audience_contacts`
+  - `resolve_broadcast_audience_contacts_system`
+- Сравнить ручной SQL-count с RPC-count.
+- Проверить текущий UI-контракт: какие поля ожидает `BroadcastsTabContent.tsx`.
+
+После миграции выполнить:
+
+```sql
+select public.resolve_broadcast_audience(
+  '{
+    "include":[{
+      "product_id":"7101ed3c-7839-4a74-ad95-aa0660369b22",
+      "tariff_ids":[
+        "9bc81736-e7e5-48db-9925-b866427a98e1",
+        "adbe94e8-171d-4b49-8338-66c554bb1f0b",
+        "543940b1-99da-47f3-accc-671ad5b11afe"
+      ],
+      "mode":"purchased"
+    }],
+    "exclude":[],
+    "club_ids":[],
+    "club_membership":"current",
+    "include_archived":true
+  }'::jsonb
+);
+```
+
+Ожидание: не `0`, а около `210` email recipients для выбранных тарифов.
+
+7. Execute
+
+- Создать миграцию с исправлением `resolve_broadcast_audience`.
+- Обновить UI, чтобы ошибка RPC не превращалась в `0`.
+- При необходимости задеплоить `email-mass-broadcast` только если потребуется синхронизация dry-run diagnostic.
+
+8. STOP-guards
+
+Остановиться и не деплоить, если:
+
+- ручной SQL-count и RPC-count расходятся больше чем на ожидаемое различие active-only/include-archived;
+- RPC начинает возвращать всю базу при выбранном продукте;
+- `include_archived=false` включает архивных;
+- `include_archived=true` всё равно исключает архивных;
+- preview и dry-run `email-mass-broadcast` дают разные `found/allowed` по одному и тому же фильтру;
+- появляется необходимость менять `orders_v2`, `entitlements`, CRM stages или документы.
+
+9. DoD
+
+Задача считается закрытой, когда:
+
+- UI больше не показывает `0` при ошибке RPC; вместо этого показывает явную ошибку.
+- Для фильтра на скриншоте аудитория показывает не ноль:
+  - active-only около `206` email;
+  - include archived около `210` email.
+- Для продукта без ограничения тарифов:
+  - active-only около `211` email;
+  - include archived около `215` email.
+- `email-mass-broadcast` dry-run возвращает `diagnostic.found > 0` для того же фильтра.
+- Никакие paid orders / entitlements / документы / CRM-стадии не изменены.
+
+10. Риски и зависимости
+
+- Основной риск — permission/RPC nesting: внешний RPC проходит, а вложенный resolver падает `forbidden`. Это нужно исправить без ослабления доступа для обычных пользователей.
+- Второй риск — UI раньше скрывал ошибку, поэтому пользователь видел `0` вместо причины. После фикса ошибка станет видимой, а не тихой.
+
+11. Требуется дополнительная информация
+
+Не требуется. Причина уже локализована достаточно для патча: реальная аудитория в базе не нулевая, а UI сейчас маскирует ошибочный preview как `0`.
