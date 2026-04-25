@@ -298,12 +298,15 @@ export function BroadcastsTabContent() {
       });
       if (error) {
         console.error("[broadcast] audience rpc error", error);
-        return { telegramCount: 0, emailCount: 0, totalCount: 0, users: [] } as AudiencePreview;
+        return { telegramCount: 0, emailCount: 0, emailActiveCount: 0, emailArchivedCount: 0, emailNoAccountCount: 0, totalCount: 0, users: [] } as AudiencePreview;
       }
       const r = (data ?? {}) as Record<string, unknown>;
       return {
         telegramCount: Number(r.telegram_count || 0),
         emailCount: Number(r.email_count || 0),
+        emailActiveCount: Number(r.email_active_count || 0),
+        emailArchivedCount: Number(r.email_archived_count || 0),
+        emailNoAccountCount: Number(r.email_no_account_count || 0),
         totalCount: Number(r.total_count || 0),
         users: (r.users as AudiencePreview["users"]) || [],
       } satisfies AudiencePreview;
