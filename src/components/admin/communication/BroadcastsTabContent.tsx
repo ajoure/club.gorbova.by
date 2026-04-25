@@ -1152,7 +1152,7 @@ export function BroadcastsTabContent() {
 
           {/* Send Buttons */}
           <div className="flex gap-2">
-            {activeTab === "telegram" && (
+            {sendToTelegram && sendMode === "now" && (
               <Button
                 variant="outline"
                 onClick={() => sendTestMutation.mutate()}
@@ -1172,20 +1172,30 @@ export function BroadcastsTabContent() {
               onClick={handleSend}
               disabled={isSendDisabled}
             >
-              {(sendTelegramMutation.isPending || sendEmailMutation.isPending) ? (
+              {(sendTelegramMutation.isPending || sendEmailMutation.isPending || saveScheduledMutation.isPending) ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Отправка...
+                  {sendMode === "now" ? "Отправка..." : "Сохранение..."}
+                </>
+              ) : sendMode === "now" ? (
+                <>
+                  <Send className="h-4 w-4" />
+                  Отправить
+                  {channelsArr.length > 0 && (
+                    <Badge variant="secondary" className="ml-2">
+                      {channelsArr.map((c) => (c === "telegram" ? "TG" : "Email")).join(" + ")}
+                    </Badge>
+                  )}
+                </>
+              ) : sendMode === "scheduled" ? (
+                <>
+                  <CalendarIcon className="h-4 w-4" />
+                  {editTemplateId ? "Сохранить изменения" : "Запланировать"}
                 </>
               ) : (
                 <>
-                  <Send className="h-4 w-4" />
-                  Отправить {activeTab === "telegram" ? "в Telegram" : "на Email"}
-                  {audience && (
-                    <Badge variant="secondary" className="ml-2">
-                      {activeTab === "telegram" ? audience.telegramCount : audience.emailCount} получателей
-                    </Badge>
-                  )}
+                  <Repeat className="h-4 w-4" />
+                  {editTemplateId ? "Сохранить изменения" : "Создать повторяющуюся"}
                 </>
               )}
             </Button>
