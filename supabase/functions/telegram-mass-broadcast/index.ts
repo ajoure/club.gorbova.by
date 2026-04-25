@@ -183,6 +183,10 @@ Deno.serve(async (req) => {
     let productContextId: string | null = null;
     let templateType: string | null = null;
     let liveEventId: string | null = null;
+    let isDryRun = false;
+    let isTestSelf = false;
+    let allowFullAudience = false;
+    let confirmFullAudienceText: string | null = null;
 
     const contentType = req.headers.get('content-type') || '';
     
