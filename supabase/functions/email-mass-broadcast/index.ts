@@ -351,6 +351,14 @@ Deno.serve(async (req) => {
       );
     }
 
+    // ===== Sanitize markdown-wrapped attribute values =====
+    // Fixes broken images/links from pasted Tilda/markdown HTML where
+    // src="[URL](URL)" replaces a clean URL. Idempotent for clean HTML.
+    const sanitizedHtml = sanitizeMarkdownWrappedAttributes(html);
+    if (sanitizedHtml !== html) {
+      console.log('[email-mass-broadcast] sanitized markdown-wrapped attributes in html');
+    }
+
     // ===== PATCH-GUARD (user-path only): empty filters / short message / full-audience override =====
     if (!isSystemActor) {
       const guardText = `${subject || ''}\n${(html || '').replace(/<[^>]+>/g, '')}`;
