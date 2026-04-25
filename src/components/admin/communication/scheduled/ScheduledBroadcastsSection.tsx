@@ -750,6 +750,7 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
                 <TableHead>Следующая</TableHead>
                 <TableHead>Последняя</TableHead>
                 <TableHead>Статус</TableHead>
+                <TableHead>Approve</TableHead>
                 <TableHead>Создано</TableHead>
                 <TableHead className="w-10" />
               </TableRow>
