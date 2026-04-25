@@ -821,50 +821,16 @@ export function BroadcastsTabContent() {
                 </Label>
               </RadioGroup>
 
-              {/* Scheduled DateTime */}
+              {/* Scheduled DateTime — canonical platform DateTimePicker */}
               {sendMode === "scheduled" && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                  <div className="space-y-2">
-                    <Label>Дата отправки</Label>
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="outline"
-                          className={cn(
-                            "w-full justify-start text-left font-normal",
-                            !scheduledAt && "text-muted-foreground",
-                          )}
-                        >
-                          <CalendarIcon className="mr-2 h-4 w-4" />
-                          {scheduledAt
-                            ? format(scheduledAt, "PPP", { locale: ru })
-                            : "Выберите дату"}
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-auto p-0" align="start">
-                        <Calendar
-                          mode="single"
-                          selected={scheduledAt ?? undefined}
-                          onSelect={(d) => setScheduledAt(d ?? null)}
-                          disabled={(d) => d < new Date(new Date().setHours(0, 0, 0, 0))}
-                          initialFocus
-                          className={cn("p-3 pointer-events-auto")}
-                        />
-                      </PopoverContent>
-                    </Popover>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Время (локальное)</Label>
-                    <div className="relative">
-                      <Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        type="time"
-                        value={scheduledTime}
-                        onChange={(e) => setScheduledTime(e.target.value)}
-                        className="pl-9"
-                      />
-                    </div>
-                  </div>
+                <div className="space-y-2 pt-2">
+                  <Label>Дата и время отправки</Label>
+                  <DateTimePicker
+                    date={scheduledAt ?? undefined}
+                    time={scheduledTime}
+                    onDateChange={(d) => setScheduledAt(d ?? null)}
+                    onTimeChange={(t) => setScheduledTime(t)}
+                  />
                 </div>
               )}
 
