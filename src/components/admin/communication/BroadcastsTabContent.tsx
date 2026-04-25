@@ -664,6 +664,12 @@ export function BroadcastsTabContent() {
       toast.error("Выберите хотя бы один канал: Telegram или Email");
       return;
     }
+    if (hasAudienceError) {
+      toast.error("Аудитория не рассчитана", {
+        description: audienceError?.message || "Исправьте фильтры или повторите позже",
+      });
+      return;
+    }
     if (sendToTelegram && !message.trim() && !mediaFile) {
       toast.error("Введите текст сообщения или добавьте медиа для Telegram");
       return;
