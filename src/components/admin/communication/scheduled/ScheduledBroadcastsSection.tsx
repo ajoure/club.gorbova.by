@@ -172,7 +172,7 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
       const { data, error } = await supabase
         .from("broadcast_templates")
         .select(
-          "id, name, status, send_mode, channels, next_run_at, last_run_at, total_runs, created_at, recurrence_rule, metadata"
+          "id, name, status, send_mode, channels, next_run_at, last_run_at, total_runs, created_at, recurrence_rule, metadata, approval_status, approved_at, approved_by"
         )
         .in("status", ["scheduled", "recurring", "paused", "sent", "archived"])
         .order("next_run_at", { ascending: true, nullsFirst: false })
