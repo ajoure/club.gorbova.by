@@ -54,9 +54,7 @@ export default function PaymentMethodsSettings() {
   const location = useLocation();
   const navigate = useNavigate();
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  
-  // PATCH-E: State for polling verification status
-  const [pollingCardId, setPollingCardId] = useState<string | null>(null);
+
 
   // Check for tokenization result in URL params
   useEffect(() => {
