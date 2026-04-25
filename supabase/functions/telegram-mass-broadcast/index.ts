@@ -814,7 +814,6 @@ Deno.serve(async (req) => {
         actor_type: isSystemActor ? 'system' : 'user',
         actor_label: isSystemActor ? 'broadcast-dispatcher' : undefined,
         source: isSystemActor ? 'scheduled_dispatcher' : undefined,
-      meta: {
         sent: totalSent,
         failed: totalFailed,
         total: totalSent + totalFailed,
