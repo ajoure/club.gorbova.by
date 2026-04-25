@@ -605,63 +605,25 @@ export default function PaymentMethodsSettings() {
                                   Истекла
                                 </Badge>
                               )}
-                              {/* Verification status badges */}
-                              {method.verification_status === 'pending' && (
-                                <Badge variant="outline" className="gap-1 text-amber-600 border-amber-600">
-                                  <Loader2 className="h-3 w-3 animate-spin" />
-                                  Проверяем карту...
-                                </Badge>
-                              )}
-                              {method.verification_status === 'verified' && (
+                              {/* Зелёные бейджи: карта пригодна для оплаты по умолчанию.
+                                  «Готова для подписок» — только при явном positive verified-сигнале. */}
+                              {!expired && (
                                 <Badge variant="outline" className="gap-1 text-green-600 border-green-600">
                                   <Check className="h-3 w-3" />
-                                  Для автоплатежей
+                                  Карта привязана
                                 </Badge>
                               )}
-                              {method.verification_status === 'verified_refund_pending' && (
-                                <TooltipProvider>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Badge variant="outline" className="gap-1 text-green-600 border-green-600">
-                                        <Check className="h-3 w-3" />
-                                        Для автоплатежей
-                                      </Badge>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="top" className="max-w-xs">
-                                      <p>Карта подтверждена. Возврат 1 BYN в обработке.</p>
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
+                              {!expired && (
+                                <Badge variant="outline" className="gap-1 text-green-600 border-green-600">
+                                  <Check className="h-3 w-3" />
+                                  Можно использовать для оплаты
+                                </Badge>
                               )}
-                              {(method.verification_status === 'rejected' || method.verification_status === 'rejected_3ds_required') && (
-                                <TooltipProvider>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Badge variant="destructive" className="gap-1 cursor-help">
-                                        <AlertTriangle className="h-3 w-3" />
-                                        Не для автоплатежей
-                                      </Badge>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="top" className="max-w-xs">
-                                      <p>{method.verification_error || 'Карта требует 3D-Secure на каждую операцию'}</p>
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
-                              )}
-                              {method.verification_status === 'failed' && (
-                                <TooltipProvider>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Badge variant="secondary" className="gap-1 cursor-help">
-                                        <AlertCircle className="h-3 w-3" />
-                                        Не удалось проверить
-                                      </Badge>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="top" className="max-w-xs">
-                                      <p>{method.verification_error || 'Ошибка проверки карты'}</p>
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
+                              {!expired && (method.verification_status === 'verified' || method.verification_status === 'verified_refund_pending') && (
+                                <Badge variant="outline" className="gap-1 text-green-600 border-green-600">
+                                  <ShieldCheck className="h-3 w-3" />
+                                  Готова для подписок
+                                </Badge>
                               )}
                             </div>
                             <p className="text-sm text-muted-foreground">
@@ -671,24 +633,8 @@ export default function PaymentMethodsSettings() {
                         </div>
                         
                         <div className="flex items-center gap-2">
-                          {/* PATCH D: Re-verify button for rejected/failed cards */}
-                          {(method.verification_status === 'rejected' || method.verification_status === 'rejected_3ds_required' || method.verification_status === 'failed') && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => reverifyMutation.mutate(method.id)}
-                              disabled={reverifyMutation.isPending}
-                              className="gap-1"
-                            >
-                              {reverifyMutation.isPending ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : (
-                                <RefreshCw className="h-3 w-3" />
-                              )}
-                              Перепроверить
-                            </Button>
-                          )}
-                          
+                          {/* «Перепроверить» удалено: payment-method-verify-recurring отключена. */}
+
                           {!method.is_default && !expired && (
                             <Button
                               variant="outline"
