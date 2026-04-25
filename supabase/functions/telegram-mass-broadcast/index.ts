@@ -247,6 +247,67 @@ Deno.serve(async (req) => {
       );
     }
 
+    // ===== PATCH-C: P0 GUARD — prevent catastrophic full-scan (mirror of email-mass-broadcast PATCH-B) =====
+    const hasIncludeArr = Array.isArray((filters as any)?.include);
+    const hasExcludeArr = Array.isArray((filters as any)?.exclude);
+    const hasClubIdsArr = Array.isArray((filters as any)?.club_ids);
+    const hasNewSchemaShape = hasIncludeArr || hasExcludeArr || hasClubIdsArr;
+    const newSchemaHasContent =
+      (hasIncludeArr && ((filters as any).include as unknown[]).length > 0) ||
+      (hasExcludeArr && ((filters as any).exclude as unknown[]).length > 0) ||
+      (hasClubIdsArr && ((filters as any).club_ids as unknown[]).length > 0);
+
+    // Rule 1: targeted broadcast (product_context_id given) MUST have audience filters.
+    if (productContextId && !newSchemaHasContent) {
+      console.error('[telegram-broadcast] GUARD: product_context_id without audience filters', {
+        productContextId, hasNewSchemaShape, newSchemaHasContent,
+      });
+      return new Response(
+        JSON.stringify({
+          error: 'missing_audience_filters',
+          message: 'product_context_id requires non-empty filters.include/exclude/club_ids to prevent catastrophic full-scan',
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Rule 2: new-schema shape present but all empty => caller forgot to fill targeting.
+    if (hasNewSchemaShape && !newSchemaHasContent) {
+      console.error('[telegram-broadcast] GUARD: new-schema filters present but all empty');
+      return new Response(
+        JSON.stringify({
+          error: 'missing_audience_filters',
+          message: 'filters.include/exclude/club_ids present but all empty — refusing to broadcast to entire base',
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Rule 3: every include/exclude rule must have product_id (string) OR non-empty tariff_ids[].
+    if (hasIncludeArr || hasExcludeArr) {
+      const allRules: any[] = [
+        ...(((filters as any)?.include as any[]) || []),
+        ...(((filters as any)?.exclude as any[]) || []),
+      ];
+      const badRule = allRules.find((r) => {
+        const pid = typeof r?.product_id === 'string' ? r.product_id.trim() : '';
+        const hasTariffIds = Array.isArray(r?.tariff_ids) && r.tariff_ids.length > 0;
+        return pid.length === 0 && !hasTariffIds;
+      });
+      if (badRule) {
+        console.error('[telegram-broadcast] GUARD: include/exclude rule lacks product_id and tariff_ids', { badRule });
+        return new Response(
+          JSON.stringify({
+            error: 'invalid_audience_rule',
+            message: 'Each include/exclude rule must contain product_id (string) or non-empty tariff_ids[]',
+            offending_rule: badRule,
+          }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+    // ===== END PATCH-C =====
+
     console.log('Starting mass broadcast...', { filters, hasMedia: !!mediaBuffer, mediaType, productContextId });
 
     // Resolve audience via canonical RPC (supports include/exclude/clubs/channel)
