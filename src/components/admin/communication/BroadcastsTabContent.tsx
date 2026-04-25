@@ -188,6 +188,9 @@ export function BroadcastsTabContent() {
     bot_ids: [],
   });
 
+  // Архивные профили — opt-in. По умолчанию НЕ включаем.
+  const [includeArchived, setIncludeArchived] = useState(false);
+
   // Build RPC payload (channels derived from active tab)
   const rpcFilters = useMemo(() => ({
     channels: ["telegram", "email"],
@@ -195,7 +198,8 @@ export function BroadcastsTabContent() {
     exclude: filters.exclude,
     club_ids: filters.club_ids,
     club_membership: filters.club_membership,
-  }), [filters]);
+    include_archived: includeArchived,
+  }), [filters, includeArchived]);
 
   // cf warning: check if message/email contains cf.product tokens
   const hasCfTokens = useMemo(() => {
