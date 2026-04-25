@@ -76,6 +76,7 @@ import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { BroadcastTemplatesSection } from "./BroadcastTemplatesSection";
 import { ScheduledBroadcastsSection } from "./scheduled/ScheduledBroadcastsSection";
+import { BroadcastAuditProofCard } from "./BroadcastAuditProofCard";
 
 import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
 import { RuleListEditor } from "./RuleListEditor";
@@ -708,7 +709,8 @@ export function BroadcastsTabContent() {
           <BroadcastTemplatesSection />
         </TabsContent>
 
-        <TabsContent value="scheduled" className="mt-6">
+        <TabsContent value="scheduled" className="mt-6 space-y-6">
+          <BroadcastAuditProofCard />
           <ScheduledBroadcastsSection
             onEdit={(id) => {
               setEditTemplateId(id);
