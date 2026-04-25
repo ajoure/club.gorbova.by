@@ -355,58 +355,14 @@ export default function PaymentMethodsSettings() {
       });
       setDeletingId(null);
     },
-    onError: (error) => {
-      toast.error(error.message);
+    onError: (error: any) => {
+      toast.error(normalizeEdgeFunctionError(error, error?.context?.body));
       setDeletingId(null);
     },
   });
 
-  // PATCH D: Re-verify card mutation
-  const reverifyMutation = useMutation({
-    mutationFn: async (methodId: string) => {
-      if (!user) throw new Error("Не авторизован");
-      
-      // Guard: check if there's already an active job for this card
-      const { data: existingJob } = await supabase
-        .from('payment_method_verification_jobs')
-        .select('id, status')
-        .eq('payment_method_id', methodId)
-        .in('status', ['pending', 'processing', 'rate_limited'])
-        .maybeSingle();
-      
-      if (existingJob) {
-        throw new Error("Карта уже в очереди на проверку");
-      }
-      
-      // Create new verification job
-      const idempotencyKey = `reverify_${methodId}_${Date.now()}`;
-      const { error } = await supabase
-        .from('payment_method_verification_jobs')
-        .insert({
-          payment_method_id: methodId,
-          user_id: user.id,
-          status: 'pending',
-          attempt_count: 0,
-          max_attempts: 3,
-          idempotency_key: idempotencyKey,
-        });
-      
-      if (error) throw error;
-      
-      // Update card status to pending
-      await supabase
-        .from('payment_methods')
-        .update({ verification_status: 'pending' })
-        .eq('id', methodId);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['user-payment-methods'] });
-      toast.success('Карта поставлена в очередь на проверку');
-    },
-    onError: (error) => {
-      toast.error(error.message);
-    },
-  });
+  // Re-verify mutation removed: payment-method-verify-recurring is disabled (HTTP 410).
+  // No verification jobs are created from the UI anymore.
 
   // PATCH-7: Cancel provider subscription mutation
   const cancelProviderSubMutation = useMutation({
@@ -421,8 +377,8 @@ export default function PaymentMethodsSettings() {
       queryClient.invalidateQueries({ queryKey: ['user-provider-subscriptions'] });
       toast.success('Подписка отменена');
     },
-    onError: (error: Error) => {
-      toast.error('Ошибка: ' + error.message);
+    onError: (error: any) => {
+      toast.error(normalizeEdgeFunctionError(error, error?.context?.body));
     },
   });
 
