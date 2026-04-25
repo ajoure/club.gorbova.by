@@ -1660,6 +1660,7 @@ export type Database = {
           media_storage_path: string | null
           media_type: string | null
           message_text: string | null
+          metadata: Json
           name: string
           next_run_at: string | null
           recurrence_rule: Json | null
@@ -1692,6 +1693,7 @@ export type Database = {
           media_storage_path?: string | null
           media_type?: string | null
           message_text?: string | null
+          metadata?: Json
           name: string
           next_run_at?: string | null
           recurrence_rule?: Json | null
@@ -1724,6 +1726,7 @@ export type Database = {
           media_storage_path?: string | null
           media_type?: string | null
           message_text?: string | null
+          metadata?: Json
           name?: string
           next_run_at?: string | null
           recurrence_rule?: Json | null
