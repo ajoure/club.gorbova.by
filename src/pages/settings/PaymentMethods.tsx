@@ -683,14 +683,8 @@ export default function PaymentMethodsSettings() {
                         </div>
                       </div>
                       
-                      {/* PATCH-D: Warning only for rejected cards - NO CTA button here */}
-                      {(method.verification_status === 'rejected' || method.verification_status === 'rejected_3ds_required') && (
-                        <div className="mt-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800">
-                          <p className="text-sm text-amber-800 dark:text-amber-200">
-                            ⚠️ Оплата этой картой может требовать 3D-Secure.
-                          </p>
-                        </div>
-                      )}
+                      {/* Жёлтое 3DS-предупреждение убрано: карта пригодна для оплаты,
+                          а возможный запрос 3D-Secure покажется уже при попытке списания. */}
                     </div>
                   );
                 })}
