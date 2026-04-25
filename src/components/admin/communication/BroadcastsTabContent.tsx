@@ -129,7 +129,8 @@ interface RecurrenceRule {
   interval: number;
   time_of_day: string; // "HH:MM"
   by_weekday?: number[]; // 1..7 Mon..Sun, only for weekly
-  ends_at?: string | null;
+  by_monthday?: number[]; // 1..31, only for monthly
+  ends_at?: string | null; // ISO date or null
   timezone?: string;
 }
 
@@ -138,6 +139,8 @@ const DEFAULT_RECURRENCE: RecurrenceRule = {
   interval: 1,
   time_of_day: "10:00",
   by_weekday: [1],
+  by_monthday: [1],
+  ends_at: null,
   timezone: "Europe/Minsk",
 };
 
