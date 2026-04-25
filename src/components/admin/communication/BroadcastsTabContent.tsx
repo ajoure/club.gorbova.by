@@ -121,16 +121,48 @@ interface MediaFile {
   preview?: string;
 }
 
+type SendMode = "now" | "scheduled" | "recurring";
+type Frequency = "daily" | "weekly" | "monthly";
+
+interface RecurrenceRule {
+  frequency: Frequency;
+  interval: number;
+  time_of_day: string; // "HH:MM"
+  by_weekday?: number[]; // 1..7 Mon..Sun, only for weekly
+  ends_at?: string | null;
+  timezone?: string;
+}
+
+const DEFAULT_RECURRENCE: RecurrenceRule = {
+  frequency: "weekly",
+  interval: 1,
+  time_of_day: "10:00",
+  by_weekday: [1],
+  timezone: "Europe/Minsk",
+};
+
 export function BroadcastsTabContent() {
   const queryClient = useQueryClient();
   const [mainTab, setMainTab] = useState<"templates" | "quick" | "scheduled">("templates");
-  // Sprint B rev3 — фаза 2 будет использовать для гидратации composer'а
+  // Sprint B rev3 — фаза 2: id шаблона в режиме редактирования (открывается из «Запланированные»)
   const [editTemplateId, setEditTemplateId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"telegram" | "email">("telegram");
+
+  // Channel toggles — независимые: можно отправить TG-only / Email-only / TG+Email одновременно
+  const [sendToTelegram, setSendToTelegram] = useState(true);
+  const [sendToEmail, setSendToEmail] = useState(false);
+
+  // Send mode
+  const [sendMode, setSendMode] = useState<SendMode>("now");
+  const [scheduledAt, setScheduledAt] = useState<Date | null>(null);
+  const [scheduledTime, setScheduledTime] = useState<string>("10:00");
+  const [recurrence, setRecurrence] = useState<RecurrenceRule>(DEFAULT_RECURRENCE);
+  const [scheduledName, setScheduledName] = useState<string>("");
+
+  // Composer (TG+Email общие поля; для каждого канала — свои контентные поля)
   const [message, setMessage] = useState("");
   const [emailSubject, setEmailSubject] = useState("");
   const [emailBody, setEmailBody] = useState("");
-const [includeButton, setIncludeButton] = useState(true);
+  const [includeButton, setIncludeButton] = useState(true);
   const [buttonText, setButtonText] = useState("Открыть платформу");
   const [buttonUrl, setButtonUrl] = useState("https://club.gorbova.by/products");
   const [previewOpen, setPreviewOpen] = useState(false);
