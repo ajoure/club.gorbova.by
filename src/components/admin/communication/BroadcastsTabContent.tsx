@@ -466,8 +466,11 @@ export function BroadcastsTabContent() {
     },
     onSuccess: (data) => {
       toast.success(`Отправлено: ${data.sent}, ошибок: ${data.failed}`);
-      setEmailSubject("");
-      setEmailBody("");
+      // В режиме редактирования НЕ очищаем — шаблон остаётся загруженным.
+      if (!editTemplateId) {
+        setEmailSubject("");
+        setEmailBody("");
+      }
       queryClient.invalidateQueries({ queryKey: ["broadcast-history"] });
     },
     onError: (error) => {
