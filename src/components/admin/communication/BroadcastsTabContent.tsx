@@ -825,33 +825,84 @@ export function BroadcastsTabContent() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Main Content */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Edit-mode banner */}
-          {editTemplateId && (
+          {/* Edit-mode banner + actions */}
+          {editTemplateId ? (
             <Alert>
               <Pencil className="h-4 w-4" />
-              <AlertDescription className="flex items-center justify-between gap-3">
-                <span>
-                  Редактирование запланированной рассылки. Сохранение обновит существующую запись (без дубля).
+              <AlertDescription className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <span className="text-sm">
+                  Редактирование шаблона. Сохранение обновит существующую запись (без дубля).
                 </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setEditTemplateId(null);
-                    setSendMode("now");
-                    setMessage("");
-                    setEmailSubject("");
-                    setEmailBody("");
-                    setScheduledAt(null);
-                    setScheduledName("");
-                    toast.info("Редактирование отменено");
-                  }}
-                >
-                  Отменить
-                </Button>
+                <div className="flex gap-2 flex-wrap">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      if (isComposerDirty()) {
+                        setExitConfirmOpen({ kind: "exit" });
+                      } else {
+                        exitEditMode();
+                        toast.info("Выход из режима редактирования");
+                      }
+                    }}
+                  >
+                    <X className="h-4 w-4 mr-1" />
+                    Выйти
+                  </Button>
+                </div>
               </AlertDescription>
             </Alert>
+          ) : (
+            <div className="flex justify-end">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  // «Новая рассылка» вне режима редактирования — сброс полей с подтверждением, если есть контент.
+                  const hasContent = !!(message.trim() || emailSubject.trim() || emailBody.trim() || scheduledName.trim() || mediaFile);
+                  if (hasContent) {
+                    setExitConfirmOpen({ kind: "new" });
+                  } else {
+                    resetComposer();
+                  }
+                }}
+              >
+                <X className="h-4 w-4 mr-1" />
+                Новая рассылка
+              </Button>
+            </div>
           )}
+
+          {/* Confirm dialog for exit / new with unsaved changes */}
+          <AlertDialog open={!!exitConfirmOpen} onOpenChange={(o) => !o && setExitConfirmOpen(null)}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Несохранённые изменения</AlertDialogTitle>
+                <AlertDialogDescription>
+                  {exitConfirmOpen?.kind === "exit"
+                    ? "В шаблоне есть несохранённые изменения. Выйти из редактирования и потерять их?"
+                    : "В композере есть введённые данные. Очистить форму и начать новую рассылку?"}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Отмена</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => {
+                    if (exitConfirmOpen?.kind === "exit") {
+                      exitEditMode();
+                      toast.info("Выход из режима редактирования");
+                    } else {
+                      resetComposer();
+                    }
+                    setExitConfirmOpen(null);
+                  }}
+                >
+                  {exitConfirmOpen?.kind === "exit" ? "Выйти без сохранения" : "Очистить"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+
 
           {/* Channel toggles */}
           <Card>
