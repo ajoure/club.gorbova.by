@@ -402,12 +402,13 @@ Deno.serve(async (req) => {
   // ===== System-actor audit log =====
   if (!isDryRun && list.length > 0) {
     await supabase.from('audit_logs').insert({
-      action: 'broadcast_dispatcher_run',
+      action: forceAuthorized ? 'broadcast_dispatcher_force_run' : 'broadcast_dispatcher_run',
       actor_type: 'system',
-      actor_label: 'broadcast-dispatcher',
+      actor_label: forceAuthorized ? 'broadcast-dispatcher-force' : 'broadcast-dispatcher',
       meta: {
         entity_type: 'broadcast_template',
         entity_id: forceTemplateId || null,
+        force_authorized: forceAuthorized,
         processed_templates: list.length,
         sent: totalSent,
         failed: totalFailed,
