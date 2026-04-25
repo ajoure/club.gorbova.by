@@ -259,10 +259,11 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { subject, html, filters, product_context_id } = await req.json();
+    const { subject, html, filters, product_context_id, dry_run } = await req.json();
 
     // Normalize product_context_id
     const productContextId = (product_context_id && product_context_id !== 'all') ? product_context_id : null;
+    const isDryRun = dry_run === true;
 
     if (!subject || !html) {
       return new Response(
@@ -310,33 +311,113 @@ Deno.serve(async (req) => {
       allowedUserIds = new Set((audience || []).filter((r: { has_email: boolean }) => r.has_email).map((r: { user_id: string }) => r.user_id));
     }
 
-    // Get recipients
-    const { data: profiles } = await supabase
-      .from('profiles')
-      .select('user_id, email, full_name, phone, telegram_username')
-      .not('email', 'is', null)
-      .limit(10000);
+    // ===== Diagnostic counters =====
+    let allowedCount = 0;
+    let foundCount = 0;
+    let missingCount = 0;
+    let duplicateCount = 0;
+    let invalidEmailCount = 0;
+    const missingSample: string[] = [];
+    const invalidSample: Array<{ user_id: string; email: string | null }> = [];
 
-    if (!profiles?.length) {
-      return new Response(
-        JSON.stringify({ success: true, sent: 0, failed: 0, message: 'No recipients found' }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    let filteredProfiles = profiles;
+    let filteredProfiles: Array<{ user_id: string; email: string; full_name?: string | null; phone?: string | null; telegram_username?: string | null }> = [];
 
     if (useNewSchema && allowedUserIds) {
-      filteredProfiles = filteredProfiles.filter(p => allowedUserIds!.has(p.user_id));
+      // ===== NEW PATH: targeted fetch via .in('user_id', allowedUserIds) =====
+      allowedCount = allowedUserIds.size;
+
+      // P0 GUARD: empty audience — do not call .in() with empty array, do not send
+      if (allowedCount === 0) {
+        console.warn('[email-broadcast] allowed audience is empty — nothing to send');
+        return new Response(
+          JSON.stringify({
+            success: true,
+            sent: 0,
+            failed: 0,
+            skipped: true,
+            reason: 'empty_audience',
+            dry_run: isDryRun,
+            diagnostic: { allowed: 0, found: 0, missing: 0, duplicates: 0, invalid_emails: 0 },
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const idsArray = Array.from(allowedUserIds);
+      const { data: targetedProfiles, error: profErr } = await supabase
+        .from('profiles')
+        .select('user_id, email, full_name, phone, telegram_username')
+        .in('user_id', idsArray);
+
+      if (profErr) {
+        console.error('[email-broadcast] profiles fetch failed:', profErr);
+        return new Response(
+          JSON.stringify({ error: `Profiles fetch failed: ${profErr.message}` }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Dedup by user_id (keep first occurrence)
+      const seenUserIds = new Set<string>();
+      const dedupedByUser = (targetedProfiles || []).filter((p) => {
+        if (seenUserIds.has(p.user_id)) { duplicateCount++; return false; }
+        seenUserIds.add(p.user_id);
+        return true;
+      });
+
+      // Validate emails (non-empty + basic shape)
+      const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      const seenEmails = new Set<string>();
+      for (const p of dedupedByUser) {
+        const em = (p.email || '').trim().toLowerCase();
+        if (!em || !emailRe.test(em)) {
+          invalidEmailCount++;
+          if (invalidSample.length < 10) invalidSample.push({ user_id: p.user_id, email: p.email });
+          continue;
+        }
+        // Dedup by normalized email too
+        if (seenEmails.has(em)) { duplicateCount++; continue; }
+        seenEmails.add(em);
+        filteredProfiles.push({ ...p, email: em });
+      }
+
+      foundCount = filteredProfiles.length;
+      missingCount = Math.max(0, allowedCount - (foundCount + invalidEmailCount + duplicateCount));
+
+      // Compute missing user_ids sample (allowed but not in any deduped result)
+      const resolvedUserIds = new Set(dedupedByUser.map(p => p.user_id));
+      for (const uid of idsArray) {
+        if (!resolvedUserIds.has(uid)) {
+          if (missingSample.length < 10) missingSample.push(uid);
+        }
+      }
+
+      console.log(`[email-broadcast] diagnostic: allowed=${allowedCount} found=${foundCount} missing=${missingCount} duplicates=${duplicateCount} invalid_emails=${invalidEmailCount} dry_run=${isDryRun}`);
+      if (missingSample.length > 0) console.log('[email-broadcast] missing user_ids (first 10):', missingSample);
+      if (invalidSample.length > 0) console.log('[email-broadcast] invalid emails (first 10):', invalidSample);
     } else {
-      // ===== Legacy filter path =====
+      // ===== Legacy filter path (UNCHANGED — full-scan profiles) =====
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('user_id, email, full_name, phone, telegram_username')
+        .not('email', 'is', null)
+        .limit(10000);
+
+      if (!profiles?.length) {
+        return new Response(
+          JSON.stringify({ success: true, sent: 0, failed: 0, message: 'No recipients found' }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      let legacyFiltered = profiles;
       if (filters?.hasActiveSubscription) {
         const { data: activeAccess } = await supabase
           .from('telegram_access')
           .select('user_id')
           .or('active_until.is.null,active_until.gt.now()');
         const activeUserIds = new Set(activeAccess?.map(a => a.user_id) || []);
-        filteredProfiles = filteredProfiles.filter(p => activeUserIds.has(p.user_id));
+        legacyFiltered = legacyFiltered.filter(p => activeUserIds.has(p.user_id));
       }
 
       const effectiveProductIds = filters?.productIds?.length ? filters.productIds : (filters?.productId ? [filters.productId] : []);
@@ -353,11 +434,35 @@ Deno.serve(async (req) => {
         }
         const { data: productSubs } = await subQuery;
         const productUserIds = new Set(productSubs?.map(s => s.user_id) || []);
-        filteredProfiles = filteredProfiles.filter(p => productUserIds.has(p.user_id));
+        legacyFiltered = legacyFiltered.filter(p => productUserIds.has(p.user_id));
       }
+      filteredProfiles = legacyFiltered.filter(p => !!p.email) as any;
     }
 
-    console.log(`Sending to ${filteredProfiles.length} recipients`);
+    console.log(`Sending to ${filteredProfiles.length} recipients (dry_run=${isDryRun})`);
+
+    // ===== DRY-RUN short-circuit: do NOT send, return diagnostic + recipient list =====
+    if (isDryRun) {
+      return new Response(
+        JSON.stringify({
+          success: true,
+          dry_run: true,
+          would_send: filteredProfiles.length,
+          diagnostic: {
+            allowed: allowedCount,
+            found: foundCount,
+            missing: missingCount,
+            duplicates: duplicateCount,
+            invalid_emails: invalidEmailCount,
+            missing_user_ids_sample: missingSample,
+            invalid_sample: invalidSample,
+          },
+          recipients: filteredProfiles.map(p => ({ user_id: p.user_id, email: p.email })),
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
 
     // Extract token usage from original templates
     const combinedTemplate = subject + ' ' + html;
@@ -442,13 +547,31 @@ Deno.serve(async (req) => {
         tokens_used_cf_ids: cfFieldIds,
         cf_product_id: productContextId,
         cf_tokens_ignored: cfTokensIgnored,
+        diagnostic: {
+          allowed: allowedCount,
+          found: foundCount,
+          missing: missingCount,
+          duplicates: duplicateCount,
+          invalid_emails: invalidEmailCount,
+        },
       },
     });
 
     console.log(`Email broadcast complete: sent=${sent}, failed=${failed}`);
 
     return new Response(
-      JSON.stringify({ success: true, sent, failed }),
+      JSON.stringify({
+        success: true,
+        sent,
+        failed,
+        diagnostic: {
+          allowed: allowedCount,
+          found: foundCount,
+          missing: missingCount,
+          duplicates: duplicateCount,
+          invalid_emails: invalidEmailCount,
+        },
+      }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (error) {
