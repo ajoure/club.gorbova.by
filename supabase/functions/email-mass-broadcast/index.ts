@@ -642,10 +642,10 @@ Deno.serve(async (req) => {
             missing: missingCount,
             duplicates: duplicateCount,
             invalid_emails: invalidEmailCount,
-            missing_user_ids_sample: missingSample,
+            archived_included: archivedIncludedCount,
             invalid_sample: invalidSample,
           },
-          recipients: filteredProfiles.map(p => ({ user_id: p.user_id, email: p.email })),
+          recipients: filteredProfiles.map(p => ({ profile_id: p.profile_id, user_id: p.user_id, email: p.email })),
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
