@@ -314,12 +314,25 @@ Deno.serve(async (req) => {
       }
 
       // ===== Real send: invoke existing broadcast edge function =====
+      // System-actor bypass: dispatcher authenticates via x-broadcast-internal-secret.
+      // No user JWT involved — the broadcast functions accept this only when the
+      // matching env secret is present (BROADCAST_INTERNAL_SECRET / BROADCAST_FORCE_SECRET).
+      const internalSecret =
+        Deno.env.get('BROADCAST_INTERNAL_SECRET') ||
+        Deno.env.get('BROADCAST_FORCE_SECRET') ||
+        '';
+      const systemHeaders: Record<string, string> = {
+        'x-system-actor': 'broadcast-dispatcher',
+        'x-broadcast-internal-secret': internalSecret,
+      };
+
       try {
         let result: BroadcastFunctionResult;
         if (channel === 'telegram') {
           // Build audience_filters with email_only_when_no_telegram is irrelevant for TG
           const tgFilters = tpl.audience_filters || {};
           const { data, error } = await supabase.functions.invoke('telegram-mass-broadcast', {
+            headers: systemHeaders,
             body: {
               message: tpl.message_text || '',
               include_button: !!tpl.button_url,
@@ -342,6 +355,7 @@ Deno.serve(async (req) => {
             emailFilters = { ...emailFilters, only_no_telegram: true };
           }
           const { data, error } = await supabase.functions.invoke('email-mass-broadcast', {
+            headers: systemHeaders,
             body: {
               subject: tpl.email_subject || '',
               html: tpl.email_body_html || '',
