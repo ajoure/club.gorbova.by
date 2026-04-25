@@ -272,7 +272,74 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log('Starting email broadcast...', { productContextId });
+    // ===== P0 GUARD: prevent catastrophic full-scan =====
+    // Detect "new schema" presence (any of include/exclude/club_ids supplied as arrays).
+    const hasIncludeArr = Array.isArray(filters?.include);
+    const hasExcludeArr = Array.isArray(filters?.exclude);
+    const hasClubIdsArr = Array.isArray(filters?.club_ids);
+    const hasNewSchemaShape = hasIncludeArr || hasExcludeArr || hasClubIdsArr;
+    const newSchemaHasContent =
+      (hasIncludeArr && (filters!.include as unknown[]).length > 0) ||
+      (hasExcludeArr && (filters!.exclude as unknown[]).length > 0) ||
+      (hasClubIdsArr && (filters!.club_ids as unknown[]).length > 0);
+
+    // Rule 1: targeted broadcast (product_context_id given) MUST have audience filters.
+    if (productContextId && !newSchemaHasContent) {
+      console.error('[email-broadcast] GUARD: product_context_id without audience filters', {
+        productContextId, hasNewSchemaShape, newSchemaHasContent,
+      });
+      return new Response(
+        JSON.stringify({
+          error: 'missing_audience_filters',
+          message: 'product_context_id requires non-empty filters.include/exclude/club_ids to prevent catastrophic full-scan',
+          dry_run: isDryRun,
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Rule 2: if new-schema shape is present at all, it must contain content.
+    // (Empty include/exclude/club_ids arrays => caller intended targeting but forgot to fill it.)
+    if (hasNewSchemaShape && !newSchemaHasContent) {
+      console.error('[email-broadcast] GUARD: new-schema filters present but all empty');
+      return new Response(
+        JSON.stringify({
+          error: 'missing_audience_filters',
+          message: 'filters.include/exclude/club_ids present but all empty — refusing to broadcast to entire base',
+          dry_run: isDryRun,
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Rule 3: validate include[]/exclude[] entries — every rule MUST contain a usable
+    // product_id (non-empty string). This catches contract drift like {id:...} instead of {product_id:...}.
+    if (hasIncludeArr || hasExcludeArr) {
+      const allRules: any[] = [
+        ...((filters?.include as any[]) || []),
+        ...((filters?.exclude as any[]) || []),
+      ];
+      const badRule = allRules.find((r) => {
+        const pid = typeof r?.product_id === 'string' ? r.product_id.trim() : '';
+        // product_id may legitimately be empty IF tariff_ids non-empty (any product, specific tariffs)
+        const hasTariffIds = Array.isArray(r?.tariff_ids) && r.tariff_ids.length > 0;
+        return pid.length === 0 && !hasTariffIds;
+      });
+      if (badRule) {
+        console.error('[email-broadcast] GUARD: include/exclude rule lacks product_id and tariff_ids', { badRule });
+        return new Response(
+          JSON.stringify({
+            error: 'invalid_audience_rule',
+            message: 'Each include/exclude rule must contain product_id (string) or non-empty tariff_ids[]',
+            offending_rule: badRule,
+            dry_run: isDryRun,
+          }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
+    console.log('Starting email broadcast...', { productContextId, hasNewSchemaShape, newSchemaHasContent });
 
     // Get email account
     const emailAccount = await getEmailAccount(supabase);
