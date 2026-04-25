@@ -93,6 +93,9 @@ interface SchedRow {
   created_at: string;
   recurrence_rule: Record<string, unknown> | null;
   metadata: Record<string, unknown> | null;
+  approval_status: string;
+  approved_at: string | null;
+  approved_by: string | null;
 }
 
 interface BroadcastRunRow {
@@ -160,6 +163,11 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
     label: string;
   }>(null);
 
+  // Approve confirm dialog (PATCH-E)
+  const [approveTarget, setApproveTarget] = useState<SchedRow | null>(null);
+  const [approveAudienceCount, setApproveAudienceCount] = useState<number | null>(null);
+  const [approveAudienceLoading, setApproveAudienceLoading] = useState(false);
+
   // History sheet
   const [historyId, setHistoryId] = useState<string | null>(null);
 
@@ -169,7 +177,7 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
       const { data, error } = await supabase
         .from("broadcast_templates")
         .select(
-          "id, name, status, send_mode, channels, next_run_at, last_run_at, total_runs, created_at, recurrence_rule, metadata"
+          "id, name, status, send_mode, channels, next_run_at, last_run_at, total_runs, created_at, recurrence_rule, metadata, approval_status, approved_at, approved_by"
         )
         .in("status", ["scheduled", "recurring", "paused", "sent", "archived"])
         .order("next_run_at", { ascending: true, nullsFirst: false })
@@ -499,7 +507,50 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
     onError: (e) => toast.error("Ошибка копирования: " + (e as Error).message),
   });
 
-  // History
+  // APPROVE (PATCH-E) — gated server-side by entitlements.manage via RPC
+  const approveMutation = useMutation({
+    mutationFn: async (templateId: string) => {
+      const { data, error } = await supabase.rpc("approve_broadcast_template", {
+        _template_id: templateId,
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      toast.success("Шаблон одобрен — попадёт в обычный cron");
+      setApproveTarget(null);
+      setApproveAudienceCount(null);
+      qc.invalidateQueries({ queryKey: ["scheduled-broadcasts-canonical"] });
+    },
+    onError: (e) => toast.error("Ошибка approve: " + (e as Error).message),
+  });
+
+  const openApproveConfirm = async (row: SchedRow) => {
+    setApproveTarget(row);
+    setApproveAudienceCount(null);
+    setApproveAudienceLoading(true);
+    try {
+      // Reuse canonical RPC; in client context entitlements.manage is required to call it.
+      // If the user lacks perms, we silently fall back to "—" — RPC failure is not fatal here.
+      const { data, error } = await supabase
+        .from("broadcast_templates")
+        .select("audience_filters")
+        .eq("id", row.id)
+        .single();
+      if (!error && data) {
+        const { data: aud } = await supabase.rpc("resolve_broadcast_audience", {
+          _filters: (data.audience_filters ?? {}) as never,
+        });
+        const totalCount = (aud as Record<string, unknown> | null)?.total_count;
+        setApproveAudienceCount(typeof totalCount === "number" ? totalCount : null);
+      }
+    } catch {
+      setApproveAudienceCount(null);
+    } finally {
+      setApproveAudienceLoading(false);
+    }
+  };
+
   const { data: historyRows, isLoading: historyLoading } = useQuery({
     queryKey: ["broadcast-runs-history", historyId],
     enabled: !!historyId,
@@ -527,6 +578,14 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="z-50 bg-popover">
+        {row.approval_status === "pending_approval" && ["scheduled", "recurring"].includes(row.status) && (
+          <>
+            <DropdownMenuItem onClick={() => openApproveConfirm(row)}>
+              <Play className="h-4 w-4 mr-2 text-emerald-600" /> Одобрить (Approve)
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
         <DropdownMenuItem onClick={() => onEdit?.(row.id)}>
           <Pencil className="h-4 w-4 mr-2" /> Изменить
         </DropdownMenuItem>
@@ -691,6 +750,7 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
                 <TableHead>Следующая</TableHead>
                 <TableHead>Последняя</TableHead>
                 <TableHead>Статус</TableHead>
+                <TableHead>Approve</TableHead>
                 <TableHead>Создано</TableHead>
                 <TableHead className="w-10" />
               </TableRow>
@@ -698,13 +758,13 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-12">
+                  <TableCell colSpan={10} className="text-center py-12">
                     <Loader2 className="h-5 w-5 animate-spin inline-block text-muted-foreground" />
                   </TableCell>
                 </TableRow>
               ) : filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-12 text-sm text-muted-foreground">
+                  <TableCell colSpan={10} className="text-center py-12 text-sm text-muted-foreground">
                     <Inbox className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     Запланированных рассылок нет.
                     <br />
@@ -762,6 +822,24 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
                       {fmtDate(row.last_run_at)}
                     </TableCell>
                     <TableCell>{statusBadge(row)}</TableCell>
+                    <TableCell>
+                      {row.approval_status === "approved" ? (
+                        <Badge variant="default" className="bg-emerald-600 hover:bg-emerald-600">Approved</Badge>
+                      ) : row.approval_status === "rejected" ? (
+                        <Badge variant="destructive">Rejected</Badge>
+                      ) : ["scheduled", "recurring"].includes(row.status) ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7"
+                          onClick={() => openApproveConfirm(row)}
+                        >
+                          <Play className="h-3 w-3 mr-1" /> Одобрить
+                        </Button>
+                      ) : (
+                        <Badge variant="outline">Pending</Badge>
+                      )}
+                    </TableCell>
                     <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                       {fmtDate(row.created_at)}
                     </TableCell>
@@ -796,6 +874,39 @@ export function ScheduledBroadcastsSection({ onEdit }: Props) {
               }}
             >
               Подтвердить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* PATCH-E: Approve confirm dialog */}
+      <AlertDialog open={!!approveTarget} onOpenChange={(o) => !o && setApproveTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Одобрить рассылку?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm">
+                <div><span className="text-muted-foreground">Имя: </span><b>{approveTarget?.name}</b></div>
+                <div><span className="text-muted-foreground">Дата/время: </span>{fmtDate(approveTarget?.next_run_at ?? null)}</div>
+                <div><span className="text-muted-foreground">Каналы: </span>{(approveTarget?.channels ?? []).join(", ") || "—"}</div>
+                <div>
+                  <span className="text-muted-foreground">Аудитория: </span>
+                  {approveAudienceLoading ? "считаю…" : (approveAudienceCount ?? "—")}
+                </div>
+                <div className="text-xs text-muted-foreground pt-2">
+                  После approval шаблон будет взят обычным cron при наступлении next_run_at.
+                  Глобальный safety gate (production_approved) остаётся выключенным — отправка из обычного cron заблокирована до отдельного решения.
+                </div>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={approveMutation.isPending}
+              onClick={() => approveTarget && approveMutation.mutate(approveTarget.id)}
+            >
+              {approveMutation.isPending ? "Одобряю…" : "Одобрить"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

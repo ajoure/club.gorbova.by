@@ -1642,6 +1642,9 @@ export type Database = {
       }
       broadcast_templates: {
         Row: {
+          approval_status: string
+          approved_at: string | null
+          approved_by: string | null
           audience_filters: Json
           button_text: string | null
           button_url: string | null
@@ -1664,6 +1667,7 @@ export type Database = {
           name: string
           next_run_at: string | null
           recurrence_rule: Json | null
+          rejected_reason: string | null
           scheduled_for: string | null
           send_mode: string
           sent_at: string | null
@@ -1675,6 +1679,9 @@ export type Database = {
           updated_at: string | null
         }
         Insert: {
+          approval_status?: string
+          approved_at?: string | null
+          approved_by?: string | null
           audience_filters?: Json
           button_text?: string | null
           button_url?: string | null
@@ -1697,6 +1704,7 @@ export type Database = {
           name: string
           next_run_at?: string | null
           recurrence_rule?: Json | null
+          rejected_reason?: string | null
           scheduled_for?: string | null
           send_mode?: string
           sent_at?: string | null
@@ -1708,6 +1716,9 @@ export type Database = {
           updated_at?: string | null
         }
         Update: {
+          approval_status?: string
+          approved_at?: string | null
+          approved_by?: string | null
           audience_filters?: Json
           button_text?: string | null
           button_url?: string | null
@@ -1730,6 +1741,7 @@ export type Database = {
           name?: string
           next_run_at?: string | null
           recurrence_rule?: Json | null
+          rejected_reason?: string | null
           scheduled_for?: string | null
           send_mode?: string
           sent_at?: string | null
@@ -13580,6 +13592,10 @@ export type Database = {
           sample_ids: string[]
           updated_count: number
         }[]
+      }
+      approve_broadcast_template: {
+        Args: { _template_id: string }
+        Returns: Json
       }
       backfill_card_stamps_from_queue: { Args: never; Returns: Json }
       backfill_payments_by_card: {
