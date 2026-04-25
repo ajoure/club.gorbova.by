@@ -370,6 +370,64 @@ export function BroadcastsTabContent() {
     setMediaFile(null);
   };
 
+  // ===== Edit-mode lifecycle helpers =====
+  // Snapshot загруженного шаблона для определения «грязных» изменений (unsaved guard).
+  const loadedTemplateSnapshotRef = useRef<string | null>(null);
+  const [exitConfirmOpen, setExitConfirmOpen] = useState<null | { kind: "exit" | "new" }>(null);
+
+  const computeComposerSnapshot = useCallback((): string => {
+    return JSON.stringify({
+      sendToTelegram,
+      sendToEmail,
+      sendMode,
+      scheduledName,
+      message,
+      emailSubject,
+      emailBody,
+      includeButton,
+      buttonText,
+      buttonUrl,
+      filters,
+      recurrence,
+      scheduledAt: scheduledAt ? scheduledAt.toISOString() : null,
+      scheduledTime,
+    });
+  }, [
+    sendToTelegram, sendToEmail, sendMode, scheduledName, message, emailSubject,
+    emailBody, includeButton, buttonText, buttonUrl, filters, recurrence,
+    scheduledAt, scheduledTime,
+  ]);
+
+  const snapshotCurrentComposer = useCallback(() => {
+    loadedTemplateSnapshotRef.current = computeComposerSnapshot();
+  }, [computeComposerSnapshot]);
+
+  const isComposerDirty = useCallback((): boolean => {
+    if (!editTemplateId) return false;
+    if (loadedTemplateSnapshotRef.current === null) return false;
+    return computeComposerSnapshot() !== loadedTemplateSnapshotRef.current;
+  }, [editTemplateId, computeComposerSnapshot]);
+
+  const resetComposer = useCallback(() => {
+    setMessage("");
+    setEmailSubject("");
+    setEmailBody("");
+    setScheduledName("");
+    setScheduledAt(null);
+    setSendMode("now");
+    setIncludeButton(true);
+    setButtonText("Открыть платформу");
+    setButtonUrl("https://club.gorbova.by/products");
+    if (mediaFile) removeMedia();
+    setRecurrence(DEFAULT_RECURRENCE);
+  }, [mediaFile]);
+
+  const exitEditMode = useCallback(() => {
+    setEditTemplateId(null);
+    loadedTemplateSnapshotRef.current = null;
+    resetComposer();
+  }, [resetComposer]);
+
   // Send Telegram broadcast
   const sendTelegramMutation = useMutation({
     mutationFn: async () => {
