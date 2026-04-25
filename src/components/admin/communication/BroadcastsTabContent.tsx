@@ -696,6 +696,8 @@ export function BroadcastsTabContent() {
 
   const isSendDisabled =
     (!sendToTelegram && !sendToEmail) ||
+    hasAudienceError ||
+    audienceLoading ||
     sendTelegramMutation.isPending ||
     sendEmailMutation.isPending ||
     saveScheduledMutation.isPending;
