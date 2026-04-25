@@ -291,7 +291,44 @@ Deno.serve(async (req) => {
       );
     }
 
-    // ===== PATCH-C: P0 GUARD — prevent catastrophic full-scan (mirror of email-mass-broadcast PATCH-B) =====
+    // ===== PATCH-GUARD (user-path only): empty filters / short message / full-audience override =====
+    if (!isSystemActor) {
+      const guard = evaluateBroadcastGuards({
+        filters,
+        messageText: message,
+        isDryRun,
+        isTestSelf,
+        allowFullAudience,
+        confirmFullAudienceText,
+      });
+      if (guard.blocked) {
+        await auditBlockedAttempt({
+          supabase,
+          channel: 'telegram',
+          actorUserId: user?.id ?? null,
+          isSystemActor: false,
+          reason: guard.reason,
+          filters,
+          messageText: message,
+          extraMeta: {
+            template_type: templateType,
+            has_media: !!mediaBuffer,
+            dry_run: isDryRun,
+            test_self: isTestSelf,
+            ...guard.meta,
+          },
+        });
+        return new Response(
+          JSON.stringify({
+            error: guard.reason,
+            message: guard.message,
+            dry_run: isDryRun,
+          }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
     const hasIncludeArr = Array.isArray((filters as any)?.include);
     const hasExcludeArr = Array.isArray((filters as any)?.exclude);
     const hasClubIdsArr = Array.isArray((filters as any)?.club_ids);
