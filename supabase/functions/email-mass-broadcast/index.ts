@@ -361,7 +361,7 @@ Deno.serve(async (req) => {
 
     // ===== PATCH-GUARD (user-path only): empty filters / short message / full-audience override =====
     if (!isSystemActor) {
-      const guardText = `${subject || ''}\n${(html || '').replace(/<[^>]+>/g, '')}`;
+      const guardText = `${subject || ''}\n${(sanitizedHtml || '').replace(/<[^>]+>/g, '')}`;
       const guard = evaluateBroadcastGuards({
         filters,
         messageText: guardText,
@@ -664,7 +664,7 @@ Deno.serve(async (req) => {
 
 
     // Extract token usage from original templates
-    const combinedTemplate = subject + ' ' + html;
+    const combinedTemplate = subject + ' ' + sanitizedHtml;
     const tokensInfo = extractUsedTokens(combinedTemplate);
     const cfFieldIds = extractCustomFieldTokenIds(combinedTemplate);
     const broadcastNow = new Date();
@@ -672,11 +672,11 @@ Deno.serve(async (req) => {
     // Resolve cf tokens once (product-scoped, not per-user)
     let cfTokensIgnored = false;
     let subjectAfterCf = subject;
-    let htmlAfterCf = html;
+    let htmlAfterCf = sanitizedHtml;
     if (cfFieldIds.length > 0) {
       // NOTE: supabase is service_role client — required by resolveCustomFieldTokens
       const cfSubject = await resolveCustomFieldTokens(subject, productContextId, supabase);
-      const cfHtml = await resolveCustomFieldTokens(html, productContextId, supabase);
+      const cfHtml = await resolveCustomFieldTokens(sanitizedHtml, productContextId, supabase);
       subjectAfterCf = cfSubject.text;
       htmlAfterCf = cfHtml.text;
       cfTokensIgnored = cfSubject.cfTokensIgnored || cfHtml.cfTokensIgnored;
@@ -707,7 +707,7 @@ Deno.serve(async (req) => {
           from_email: emailAccount.from_email || emailAccount.email,
           to_email: profile.email,
           subject,
-          body_html: html,
+          body_html: sanitizedHtml,
           status: 'sent',
           profile_id: profile.user_id,
           template_code: 'mass_broadcast',
@@ -723,7 +723,7 @@ Deno.serve(async (req) => {
           from_email: emailAccount.from_email || emailAccount.email,
           to_email: profile.email,
           subject,
-          body_html: html,
+          body_html: sanitizedHtml,
           status: 'failed',
           error_message: (error as Error).message,
           profile_id: profile.user_id,
