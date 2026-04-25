@@ -755,7 +755,7 @@ Deno.serve(async (req) => {
               direction: 'outgoing',
               message_text: personalizedMessage,
               message_id: telegramMsgId,
-              sent_by_admin: user.id,
+              sent_by_admin: user?.id ?? null,
               status: 'sent',
               meta: msgMeta,
             });
