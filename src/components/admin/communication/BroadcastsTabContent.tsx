@@ -289,8 +289,10 @@ export function BroadcastsTabContent() {
     },
   });
 
-  // Audience preview via RPC (single source of truth, used by edge funcs too)
-  const { data: audience, isLoading: audienceLoading } = useQuery({
+  // Audience preview via RPC (single source of truth, used by edge funcs too).
+  // ВАЖНО: ошибки RPC НЕ маскируем под нулевую аудиторию — иначе админ видит
+  // «0 получателей» вместо явной причины и думает, что фильтр пустой.
+  const { data: audience, isLoading: audienceLoading, error: audienceError } = useQuery<AudiencePreview, Error>({
     queryKey: ["broadcast-audience-rpc", rpcFilters],
     queryFn: async () => {
       const { data, error } = await supabase.rpc("resolve_broadcast_audience", {
@@ -298,8 +300,9 @@ export function BroadcastsTabContent() {
         _filters: rpcFilters as any,
       });
       if (error) {
-        console.error("[broadcast] audience rpc error", error);
-        return { telegramCount: 0, emailCount: 0, emailActiveCount: 0, emailArchivedCount: 0, emailNoAccountCount: 0, totalCount: 0, users: [] } as AudiencePreview;
+        console.error("[broadcast] audience rpc error", error, "filters:", rpcFilters);
+        // Бросаем — react-query положит в `error`, UI покажет красный alert.
+        throw new Error(error.message || "Ошибка расчёта аудитории");
       }
       const r = (data ?? {}) as Record<string, unknown>;
       return {
@@ -313,7 +316,9 @@ export function BroadcastsTabContent() {
       } satisfies AudiencePreview;
     },
     refetchInterval: false,
+    retry: 1,
   });
+  const hasAudienceError = !!audienceError;
 
   const { data: historyItems } = useQuery({
     queryKey: ["broadcast-history"],
