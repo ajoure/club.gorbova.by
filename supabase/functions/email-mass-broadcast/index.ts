@@ -547,13 +547,31 @@ Deno.serve(async (req) => {
         tokens_used_cf_ids: cfFieldIds,
         cf_product_id: productContextId,
         cf_tokens_ignored: cfTokensIgnored,
+        diagnostic: {
+          allowed: allowedCount,
+          found: foundCount,
+          missing: missingCount,
+          duplicates: duplicateCount,
+          invalid_emails: invalidEmailCount,
+        },
       },
     });
 
     console.log(`Email broadcast complete: sent=${sent}, failed=${failed}`);
 
     return new Response(
-      JSON.stringify({ success: true, sent, failed }),
+      JSON.stringify({
+        success: true,
+        sent,
+        failed,
+        diagnostic: {
+          allowed: allowedCount,
+          found: foundCount,
+          missing: missingCount,
+          duplicates: duplicateCount,
+          invalid_emails: invalidEmailCount,
+        },
+      }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (error) {
