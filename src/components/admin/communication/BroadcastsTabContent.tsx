@@ -639,6 +639,10 @@ export function BroadcastsTabContent() {
         setSendMode("now");
       }
       toast.info(`Загружен шаблон «${tpl.name}» для редактирования`);
+      // Snapshot — после применения всех setState (через micro-task), для guard «грязных» изменений.
+      setTimeout(() => {
+        if (!cancelled) snapshotCurrentComposer();
+      }, 0);
     })();
     return () => {
       cancelled = true;
