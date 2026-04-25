@@ -259,10 +259,11 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { subject, html, filters, product_context_id } = await req.json();
+    const { subject, html, filters, product_context_id, dry_run } = await req.json();
 
     // Normalize product_context_id
     const productContextId = (product_context_id && product_context_id !== 'all') ? product_context_id : null;
+    const isDryRun = dry_run === true;
 
     if (!subject || !html) {
       return new Response(
