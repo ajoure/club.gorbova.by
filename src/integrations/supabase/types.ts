@@ -14161,6 +14161,20 @@ export type Database = {
         Args: { p_account_id: string }
         Returns: Json
       }
+      get_last_broadcast_audit_proof: {
+        Args: never
+        Returns: {
+          action: string
+          actor_label: string
+          actor_type: string
+          actor_user_id: string
+          created_at: string
+          diagnostic: Json
+          failed: number
+          meta: Json
+          sent: number
+        }[]
+      }
       get_live_event_scenario: {
         Args: {
           _entry_type?: string
