@@ -405,7 +405,7 @@ export default function PaymentMethodsSettings() {
         toast.error('Не удалось создать сессию подписки');
       }
     } catch (error: any) {
-      toast.error('Ошибка: ' + error.message);
+      toast.error(normalizeEdgeFunctionError(error, error?.context?.body));
     }
   };
 
@@ -423,7 +423,7 @@ export default function PaymentMethodsSettings() {
         toast.error("Не удалось создать сессию токенизации");
       }
     } catch (error: any) {
-      toast.error("Ошибка: " + error.message);
+      toast.error(normalizeEdgeFunctionError(error, error?.context?.body));
     }
   };
 
