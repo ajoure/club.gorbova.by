@@ -1,6 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolveSystemTokens, extractUsedTokens } from '../_shared/systemTokens.ts';
 import { resolveCustomFieldTokens, extractCustomFieldTokenIds } from '../_shared/customFieldTokens.ts';
+import { evaluateBroadcastGuards, auditBlockedAttempt } from '../_shared/broadcast-guards.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -182,6 +183,10 @@ Deno.serve(async (req) => {
     let productContextId: string | null = null;
     let templateType: string | null = null;
     let liveEventId: string | null = null;
+    let isDryRun = false;
+    let isTestSelf = false;
+    let allowFullAudience = false;
+    let confirmFullAudienceText: string | null = null;
 
     const contentType = req.headers.get('content-type') || '';
     
@@ -210,6 +215,12 @@ Deno.serve(async (req) => {
 
       templateType = formData.get('template_type') as string || null;
       liveEventId = formData.get('live_event_id') as string || null;
+
+      isDryRun = formData.get('dry_run') === 'true';
+      isTestSelf = formData.get('test_self') === 'true';
+      allowFullAudience = formData.get('allow_full_audience') === 'true';
+      const cfat = formData.get('confirm_full_audience_text');
+      confirmFullAudienceText = typeof cfat === 'string' ? cfat : null;
     } else {
       const body = await req.json();
       message = body.message || '';
@@ -221,6 +232,10 @@ Deno.serve(async (req) => {
       productContextId = (rawPcid && rawPcid !== 'all') ? rawPcid : null;
       templateType = body.template_type || null;
       liveEventId = body.live_event_id || null;
+      isDryRun = body.dry_run === true;
+      isTestSelf = body.test_self === true;
+      allowFullAudience = body.allow_full_audience === true;
+      confirmFullAudienceText = typeof body.confirm_full_audience_text === 'string' ? body.confirm_full_audience_text : null;
 
       // ===== add-only: support media_url (signed/public URL or storage path) =====
       // Used by scheduled/recurring dispatcher (process-scheduled-broadcasts)
@@ -276,7 +291,44 @@ Deno.serve(async (req) => {
       );
     }
 
-    // ===== PATCH-C: P0 GUARD — prevent catastrophic full-scan (mirror of email-mass-broadcast PATCH-B) =====
+    // ===== PATCH-GUARD (user-path only): empty filters / short message / full-audience override =====
+    if (!isSystemActor) {
+      const guard = evaluateBroadcastGuards({
+        filters,
+        messageText: message,
+        isDryRun,
+        isTestSelf,
+        allowFullAudience,
+        confirmFullAudienceText,
+      });
+      if (guard.blocked) {
+        await auditBlockedAttempt({
+          supabase,
+          channel: 'telegram',
+          actorUserId: user?.id ?? null,
+          isSystemActor: false,
+          reason: guard.reason,
+          filters,
+          messageText: message,
+          extraMeta: {
+            template_type: templateType,
+            has_media: !!mediaBuffer,
+            dry_run: isDryRun,
+            test_self: isTestSelf,
+            ...guard.meta,
+          },
+        });
+        return new Response(
+          JSON.stringify({
+            error: guard.reason,
+            message: guard.message,
+            dry_run: isDryRun,
+          }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
     const hasIncludeArr = Array.isArray((filters as any)?.include);
     const hasExcludeArr = Array.isArray((filters as any)?.exclude);
     const hasClubIdsArr = Array.isArray((filters as any)?.club_ids);

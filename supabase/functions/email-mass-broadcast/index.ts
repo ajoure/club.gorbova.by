@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { resolveSystemTokens, extractUsedTokens } from "../_shared/systemTokens.ts";
 import { resolveCustomFieldTokens, extractCustomFieldTokenIds } from "../_shared/customFieldTokens.ts";
+import { evaluateBroadcastGuards, auditBlockedAttempt } from "../_shared/broadcast-guards.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -293,17 +294,63 @@ Deno.serve(async (req) => {
       user = { id: authedUser.id };
     }
 
-    const { subject, html, filters, product_context_id, dry_run } = await req.json();
+    const reqBody = await req.json();
+    const {
+      subject,
+      html,
+      filters,
+      product_context_id,
+      dry_run,
+      test_self,
+      allow_full_audience,
+      confirm_full_audience_text,
+    } = reqBody;
 
     // Normalize product_context_id
     const productContextId = (product_context_id && product_context_id !== 'all') ? product_context_id : null;
     const isDryRun = dry_run === true;
+    const isTestSelf = test_self === true;
+    const allowFullAudience = allow_full_audience === true;
+    const confirmFullAudienceText = typeof confirm_full_audience_text === 'string' ? confirm_full_audience_text : null;
 
     if (!subject || !html) {
       return new Response(
         JSON.stringify({ error: 'Subject and HTML are required' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+
+    // ===== PATCH-GUARD (user-path only): empty filters / short message / full-audience override =====
+    if (!isSystemActor) {
+      const guardText = `${subject || ''}\n${(html || '').replace(/<[^>]+>/g, '')}`;
+      const guard = evaluateBroadcastGuards({
+        filters,
+        messageText: guardText,
+        isDryRun,
+        isTestSelf,
+        allowFullAudience,
+        confirmFullAudienceText,
+      });
+      if (guard.blocked) {
+        await auditBlockedAttempt({
+          supabase,
+          channel: 'email',
+          actorUserId: user?.id ?? null,
+          isSystemActor: false,
+          reason: guard.reason,
+          filters,
+          messageText: guardText,
+          extraMeta: { subject, dry_run: isDryRun, test_self: isTestSelf, ...guard.meta },
+        });
+        return new Response(
+          JSON.stringify({
+            error: guard.reason,
+            message: guard.message,
+            dry_run: isDryRun,
+          }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
     }
 
     // ===== P0 GUARD: prevent catastrophic full-scan =====
