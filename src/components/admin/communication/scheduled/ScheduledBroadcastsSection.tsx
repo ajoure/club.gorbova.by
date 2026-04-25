@@ -93,6 +93,9 @@ interface SchedRow {
   created_at: string;
   recurrence_rule: Record<string, unknown> | null;
   metadata: Record<string, unknown> | null;
+  approval_status: string;
+  approved_at: string | null;
+  approved_by: string | null;
 }
 
 interface BroadcastRunRow {
