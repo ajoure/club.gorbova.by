@@ -261,3 +261,20 @@ function resolveRoleDescription(resp: Record<string, unknown>): ResolvedValue {
   const label = typeof role === "string" ? ROLE_LABELS[role] || role : String(role);
   return { hasResponse: true, summary: label };
 }
+
+function resolveExternalProductWorkshop(resp: Record<string, unknown>): ResolvedValue {
+  const state = (resp.state as Record<string, unknown>) || resp;
+  const types = (state.client_types as unknown[]) || [];
+  const portfolio = (state.portfolio_pricing as unknown[]) || [];
+  const completed = !!(resp.is_submitted || state.completed_at);
+  const filledTypes = (types as Record<string, unknown>[]).filter(
+    (t) => typeof t.name === "string" && t.name.trim().length > 0
+  ).length;
+  if (filledTypes === 0 && portfolio.length === 0) {
+    return { hasResponse: false, summary: "—" };
+  }
+  return {
+    hasResponse: true,
+    summary: `${completed ? "✓ " : ""}Типов: ${filledTypes} · Клиентов: ${portfolio.length}`,
+  };
+}
