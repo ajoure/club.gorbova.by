@@ -375,3 +375,178 @@ meta           = {
 1. PATCH-UI-A (минимальный риск, изолированный UI).
 2. PATCH-UI-B (визуальный refactor + мобайл-QA).
 3. PATCH-PAY-C — только после C.1 compatibility check, отдельным сообщением «План → Dry run → Execute → Verify».
+---
+
+## PATCH-PAY-C. Дополнения после Step 1 (Compatibility report принят)
+
+Step 1 принят как полезный report, но **execute PAY-C запрещён**. До execute обязателен **Step 2 — Dry-run plan with canonical fulfillment comparison**.
+
+### C.0. Ответы на open questions (зафиксировано)
+
+**1. Idempotency (server-side, до вызова bePaid).**
+
+Контракт первого релиза — без unique index, через `meta.idempotency_key` + guard-запрос:
+
+- Frontend генерирует `idempotency_key = crypto.randomUUID()` один раз на mount компонента (хранится в `useRef`), уходит с каждым кликом одинаковым.
+- Server (`public-charge-saved-card`) ДО вызова bePaid делает SELECT по совокупности:
+  - `user_id`
+  - `link_token` / `payment_link_id`
+  - `payment_method_id`
+  - `amount`
+  - `currency`
+  - `meta->>'idempotency_key'`
+  - `created_at >= now() - interval '10 minutes'`
+  - `status IN ('pending','processing','succeeded')`
+- Если найден существующий `payments_v2`/`orders_v2`:
+  - НЕ создавать новый order/payment;
+  - НЕ делать второй gateway call;
+  - вернуть `409` либо текущий processing-state с тем же `tracking_id` / `redirect_url` (если есть).
+- Unique index на `meta.idempotency_key` НЕ добавляем в первом патче — сначала подтверждаем структуру `orders_v2`/`payments_v2` в Step 2.
+
+**2. Замена подписки (replacement_of_subscription_v2_id).**
+
+Saved-card flow ДОЛЖЕН поддержать тот же replacement-flow, что и обычный `/pay/:token` checkout, если контекст ссылки/тарифа подразумевает замену. В Step 2 обязательно зафиксировать:
+
+- где сейчас хранится `replacement_of_subscription_v2_id` (поле в `orders_v2`, или `meta`, или отдельная связь);
+- как `public-checkout` его передаёт в `orders_v2` / `payments_v2`;
+- как `bepaid-webhook` / `grant-access-for-order` понимают, что это замена, и какие действия делают со старой подпиской (cancel у провайдера, статус, entitlement).
+
+Если этот контракт не повторить 1:1 — saved-card платёж даст другой бизнес-результат после успешной оплаты. Это STOP.
+
+**3. Кто видит кнопку «Оплатить сохранённой картой».**
+
+Кнопка показывается ТОЛЬКО при выполнении ВСЕХ условий:
+
+- `auth.uid()` существует (гостям не показывать никогда);
+- существует `payment_methods` с:
+  - `user_id = auth.uid()`,
+  - `status = 'active'`,
+  - `provider = 'bepaid'`,
+  - `provider_token IS NOT NULL` — проверка ТОЛЬКО на сервере, во frontend это поле не отдавать;
+  - срок действия не истёк (`expiry_year/expiry_month` > текущего месяца);
+- ссылка пригодна для пользователя:
+  - `payment_links.user_id IS NULL` (публичная), ИЛИ
+  - `payment_links.user_id = auth.uid()` (персональная для него).
+
+На фронт уходит только `{ id, brand, last4, is_default, expiry_month, expiry_year }`. `provider_token` — никогда.
+
+**4. `status='incomplete' + redirect_url`.**
+
+Подтверждено: это нормальный сценарий 3DS. Логика:
+
+- bePaid вернул `status='incomplete'` + `redirect_url` → server возвращает `{ status: 'redirect', redirect_url }`;
+- frontend: `window.location.href = redirect_url` (full-page redirect, не iframe);
+- UI-подсказка под кнопкой: «Банк может запросить подтверждение 3D-Secure».
+
+---
+
+### C.0.1. Canonical fulfillment check (НОВЫЙ обязательный блок Step 2)
+
+**Цель.** Saved-card payment после успешного webhook ДОЛЖЕН давать ровно тот же результат, что и обычная оплата по ссылке. Никаких параллельных fulfillment-путей.
+
+Канонический pipeline (общий для всех успешных оплат):
+
+```
+payment(success) → order(paid) → deal/sale state → entitlement/access grant
+                → Telegram notification → payment_link.current_uses++ → audit/logs
+```
+
+**Что обязательно проверить в Step 2 ДО execute:**
+
+1. **Как обычный `/pay/:token` создаёт order/payment** (`public-checkout`):
+   - какие поля заполняются в `orders_v2` (включая `meta.payment_link_id`, `meta.source`);
+   - какие поля заполняются в `payments_v2`;
+   - какой `tracking_id` уходит в bePaid (`payments_v2.id` как UUID) и как он привязывается обратно.
+2. **Как `bepaid-webhook` закрывает оплату:**
+   - находит `payments_v2` по `tracking_id`;
+   - переводит payment → `succeeded`, order → `paid`;
+   - вызывает `grant-access-for-order` (canonical fulfillment);
+   - вызывает `consumePaymentLinkForOrder` (инкремент `current_uses` ровно по `meta.payment_link_id`);
+   - триггерит Telegram-нотификацию через тот же путь, что и обычный checkout;
+   - пишет `audit_logs`.
+3. **Saved-card flow обязан создавать ИДЕНТИЧНЫЕ сущности:**
+   - `orders_v2` и `payments_v2` со структурой 1:1 как у `public-checkout`, кроме:
+     - `orders_v2.meta.source = 'saved_card_public_pay'` (новый маркер ИСКЛЮЧИТЕЛЬНО для аналитики/аудита);
+     - `payments_v2.meta.payment_method_id = <id>`;
+     - `payments_v2.meta.idempotency_key = <key>`;
+   - Все остальные поля (product_id, tariff_id, offer_id, user_id/profile_id, amount, final_price, currency, initial status, meta.payment_link_id, replacement_of_subscription_v2_id) — БИТОВО совпадают с обычным checkout.
+
+**Запрещено в `public-charge-saved-card` (STOP):**
+
+- напрямую выдавать доступ / entitlement;
+- напрямую слать Telegram-нотификацию;
+- напрямую инкрементить `payment_links.current_uses`;
+- напрямую менять `subscriptions_v2`;
+- напрямую вызывать `grant-access-for-order` (это делает webhook).
+
+Всё это — ответственность существующего `bepaid-webhook` + canonical pipeline. Saved-card edge function умеет только: валидация → resolve данных ссылки/тарифа/карты → idempotency check → запись `orders_v2`+`payments_v2` → вызов bePaid `/transactions` → запись `tracking_id` / `redirect_url` → audit → ответ.
+
+---
+
+### C.0.2. Webhook compatibility proof (обязательный артефакт Step 2)
+
+В Step 2 предъявить как proof:
+
+1. **Tracking ID:** показать в коде `bepaid-webhook`, что путь `tracking_id (uuid) → payments_v2.id` отрабатывает корректно для нашего нового payment-record (как минимум grep по `tracking_id` + `payments_v2`).
+2. **Order closure:** строки кода, где webhook переводит order в `paid`, и подтверждение, что для нашего order'а это сработает без условных веток на `meta.source`.
+3. **Grant-access:** строки кода, где webhook вызывает `grant-access-for-order`, и что это произойдёт независимо от `meta.source`.
+4. **Payment link consume:** строки кода `consumePaymentLinkForOrder`, что инкремент берёт `meta.payment_link_id` из order и НЕ зависит от `meta.source`.
+5. **Telegram notification:** путь нотификации в webhook не привязан к `meta.source = 'public_checkout'`.
+
+---
+
+### C.0.3. Divergence-таблица (обязательно в Step 2 dry-run)
+
+Сравнить три сценария по каждой строке. Колонка «must match» = yes означает: значения в A и C обязаны быть идентичными (с поправкой на маркер source).
+
+| Entity / field | A. `/pay/:token` (public-checkout) | B. direct-charge / admin-manual-charge | C. saved-card public pay (новый) | must match A=C |
+|---|---|---|---|---|
+| `orders_v2.product_id` | ? | ? | ? | yes |
+| `orders_v2.tariff_id` | ? | ? | ? | yes |
+| `orders_v2.offer_id` | ? | ? | ? | yes |
+| `orders_v2.user_id` / `profile_id` | ? | ? | ? | yes |
+| `orders_v2.amount` / `final_price` | ? | ? | ? | yes |
+| `orders_v2.currency` | ? | ? | ? | yes |
+| `orders_v2.status` initial | ? | ? | ? | yes |
+| `orders_v2.meta.payment_link_id` | ? | ? | ? | yes |
+| `orders_v2.meta.source` | `public_checkout` | `admin_manual_charge` / `direct_charge` | `saved_card_public_pay` | NO (только маркер) |
+| `orders_v2.replacement_of_subscription_v2_id` | ? | ? | ? | yes |
+| `payments_v2.order_id` | ? | ? | ? | yes |
+| `payments_v2.status` initial | ? | ? | ? | yes |
+| `payments_v2.provider` | `bepaid` | `bepaid` | `bepaid` | yes |
+| `payments_v2.provider_payment_id` / `gateway_uid` | ? | ? | ? | yes |
+| `tracking_id` отправляемый в bePaid | `payments_v2.id` (uuid) | `payments_v2.id` (uuid) | `payments_v2.id` (uuid) | yes |
+| `payment_links.current_uses` update point | webhook (`consumePaymentLinkForOrder`) | n/a | webhook (`consumePaymentLinkForOrder`) | yes |
+| entitlement grant trigger | webhook → `grant-access-for-order` | webhook → `grant-access-for-order` | webhook → `grant-access-for-order` | yes |
+| Telegram notification source | webhook | webhook | webhook | yes |
+
+В Step 2 заполнить `?` фактическими значениями из кода (не предположениями) с line-references.
+
+---
+
+### C.0.4. STOP-guards перед execute PAY-C
+
+Execute PAY-C запрещён, если выполняется хоть одно:
+
+- **STOP-1:** saved-card flow требует прямого `grant-access-for-order` вне webhook.
+- **STOP-2:** webhook не сможет найти order по `tracking_id` нового payment'а (например, `tracking_id` имеет другой формат).
+- **STOP-3:** saved-card создаёт `orders_v2` / `payments_v2` со структурно отличной формой от `public-checkout` (поля из таблицы C.0.3 не совпадают там, где `must match = yes`).
+- **STOP-4:** `meta.payment_link_id` не попадает в order, и `consumePaymentLinkForOrder` не инкрементит `current_uses`.
+- **STOP-5:** Telegram / access / notification зашиты на `meta.source = 'public_checkout'` и игнорируют `saved_card_public_pay`. В этом случае: либо рефакторим webhook на source-agnostic путь (предпочтительно), либо вносим `saved_card_public_pay` в whitelist — решение фиксируется в Step 2.
+- **STOP-6:** replacement-subscription flow в saved-card отличается от обычного checkout (контракт `replacement_of_subscription_v2_id` не совпадает).
+- **STOP-7:** idempotency guard не покрывает повтор клика в течение 10 минут (двойной order/payment).
+- **STOP-8:** `provider_token` утекает во frontend response/log.
+
+---
+
+### C.0.5. Что Step 2 (Dry-run) обязан показать перед execute
+
+1. **Exact order/payment fields** — заполненная таблица C.0.3 без `?`.
+2. **Exact gateway payload** — итоговый JSON для `POST https://gateway.bepaid.by/transactions`, со всеми полями (`amount`, `currency`, `description`, `tracking_id`, `payment_method.credit_card.token`, `customer`, `additional_data.contract`, `return_url`).
+3. **Exact tracking_id path** — формат + откуда берётся + где webhook его читает (line-refs).
+4. **Exact webhook closure path** — последовательность вызовов в `bepaid-webhook` для нашего payment'а (line-refs).
+5. **Proof единого fulfillment** — пункт C.0.2 заполнен ссылками на код.
+6. **Idempotency behavior** — sequence diagram (текстом) для двойного клика: первый клик / второй клик в окне 10 мин / клик после 10 мин.
+7. **Replacement subscription behavior** — описание поля + тест-сценарий: «есть active subscription X у user'а, saved-card payment по ссылке с тем же продуктом → ожидаемый результат».
+
+Только после прохождения всех пунктов C.0.1–C.0.5 без открытых `?` и без активных STOP-guards — переходим к **Execute PAY-C**.
