@@ -328,21 +328,21 @@ export default function Purchases() {
 
   return (
     <DashboardLayout>
-      <div className="max-w-4xl mx-auto space-y-6">
+      <div className="max-w-4xl mx-auto space-y-4 sm:space-y-6 px-3 sm:px-0">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Мои покупки</h1>
-          <p className="text-muted-foreground">Управление подписками и история платежей</p>
+          <h1 className="text-xl sm:text-2xl font-bold text-foreground">Мои покупки</h1>
+          <p className="text-sm sm:text-base text-muted-foreground">Управление подписками и история платежей</p>
         </div>
 
         {/* Active Subscriptions */}
         <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <CreditCard className="h-5 w-5" />
+          <CardHeader className="pb-3 px-4 sm:px-6">
+            <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+              <CreditCard className="h-5 w-5 shrink-0" />
               Активные подписки
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-3 sm:px-6">
             {subscriptionsLoading ? (
               <div className="space-y-3">
                 <Skeleton className="h-20 w-full" />
@@ -385,18 +385,21 @@ export default function Purchases() {
 
         {/* History Section with Tabs */}
         <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <History className="h-5 w-5" />
+          <CardHeader className="pb-3 px-4 sm:px-6">
+            <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+              <History className="h-5 w-5 shrink-0" />
               История
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-3 sm:px-6">
             <Tabs defaultValue="orders" className="w-full">
-              <TabsList className="grid w-full grid-cols-3 mb-4">
-                <TabsTrigger value="orders">Платежи</TabsTrigger>
-                <TabsTrigger value="subscriptions">Прошлые подписки</TabsTrigger>
-                <TabsTrigger value="preregistrations">Предзаписи</TabsTrigger>
+              <TabsList className="grid w-full grid-cols-3 mb-4 h-auto">
+                <TabsTrigger value="orders" className="text-xs sm:text-sm py-2 px-1 sm:px-3">Платежи</TabsTrigger>
+                <TabsTrigger value="subscriptions" className="text-xs sm:text-sm py-2 px-1 sm:px-3">
+                  <span className="sm:hidden">Подписки</span>
+                  <span className="hidden sm:inline">Прошлые подписки</span>
+                </TabsTrigger>
+                <TabsTrigger value="preregistrations" className="text-xs sm:text-sm py-2 px-1 sm:px-3">Предзаписи</TabsTrigger>
               </TabsList>
 
               <TabsContent value="orders">
@@ -409,8 +412,8 @@ export default function Purchases() {
                 ) : orders && orders.length > 0 ? (
                   <div className="space-y-3">
                     {orders.map((order) => (
-                      <div key={order.id} className="flex items-center gap-2">
-                        <div className="flex-1">
+                      <div key={order.id} className="flex items-center gap-1 sm:gap-2 min-w-0">
+                        <div className="flex-1 min-w-0">
                           <OrderListItem
                             order={order}
                             onDownloadReceipt={downloadReceipt}
@@ -422,6 +425,7 @@ export default function Purchases() {
                           size="icon"
                           onClick={() => setDocumentsOrderId(order.id)}
                           title="Документы"
+                          className="shrink-0 h-8 w-8 sm:h-10 sm:w-10"
                         >
                           <FileText className="h-4 w-4" />
                         </Button>
