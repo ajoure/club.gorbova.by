@@ -51,6 +51,16 @@ interface PaymentLinkInfo {
   payment_type: string;
   has_target_user: boolean;
   requires_identity_input: boolean;
+  link_user_id: string | null;
+}
+
+interface SavedCard {
+  id: string;
+  brand: string | null;
+  last4: string | null;
+  exp_month: number | null;
+  exp_year: number | null;
+  is_default: boolean;
 }
 
 export default function PublicPayPage() {
