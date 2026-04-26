@@ -127,35 +127,46 @@ export async function loadPortfolioFromPreviousLesson(opts: {
     };
   }
 
-  // 4. Ответы пользователя по этим блокам
+  // 4. Ответы пользователя.
+  // Источник 1 (приоритет — kvest-уроки, как Шаг 2): lesson_progress_state.state_json.pointA_v2_rows / pointA_rows
+  // Источник 2 (manual-уроки): user_lesson_progress.response.rows для блока diagnostic_table
   const blockIds = blocks.map((b) => b.id);
-  const { data: progress } = await supabase
-    .from("user_lesson_progress")
-    .select("block_id, response, updated_at")
+  let rawRows: Record<string, unknown>[] = [];
+  let usedBlockId: string | null = blocks[0].id;
+
+  const { data: kvestState } = await supabase
+    .from("lesson_progress_state")
+    .select("state_json")
     .eq("user_id", userId)
     .eq("lesson_id", candidateLessonId)
-    .in("block_id", blockIds)
-    .order("updated_at", { ascending: false });
+    .maybeSingle();
 
-  if (!progress?.length) {
-    return {
-      rows: [],
-      source_lesson_id: candidateLessonId,
-      source_lesson_title: candidateLessonTitle,
-      source_block_id: blocks[0].id,
-      empty_reason: "no_user_response",
-    };
+  if (kvestState?.state_json) {
+    const sj = kvestState.state_json as Record<string, unknown>;
+    const v2 = sj["pointA_v2_rows"];
+    const v1 = sj["pointA_rows"];
+    if (Array.isArray(v2) && v2.length) rawRows = v2 as Record<string, unknown>[];
+    else if (Array.isArray(v1) && v1.length) rawRows = v1 as Record<string, unknown>[];
   }
 
-  // 5. Берём самый "богатый" ответ (с rows)
-  let rawRows: Record<string, unknown>[] = [];
-  let usedBlockId: string | null = null;
-  for (const p of progress) {
-    const r = (p.response as { rows?: unknown[] } | null)?.rows;
-    if (Array.isArray(r) && r.length) {
-      rawRows = r as Record<string, unknown>[];
-      usedBlockId = p.block_id;
-      break;
+  if (!rawRows.length) {
+    const { data: progress } = await supabase
+      .from("user_lesson_progress")
+      .select("block_id, response, updated_at")
+      .eq("user_id", userId)
+      .eq("lesson_id", candidateLessonId)
+      .in("block_id", blockIds)
+      .order("updated_at", { ascending: false });
+
+    if (progress?.length) {
+      for (const p of progress) {
+        const r = (p.response as { rows?: unknown[] } | null)?.rows;
+        if (Array.isArray(r) && r.length) {
+          rawRows = r as Record<string, unknown>[];
+          usedBlockId = p.block_id;
+          break;
+        }
+      }
     }
   }
 
