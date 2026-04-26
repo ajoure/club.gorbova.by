@@ -51,6 +51,16 @@ interface PaymentLinkInfo {
   payment_type: string;
   has_target_user: boolean;
   requires_identity_input: boolean;
+  link_user_id: string | null;
+}
+
+interface SavedCard {
+  id: string;
+  brand: string | null;
+  last4: string | null;
+  exp_month: number | null;
+  exp_year: number | null;
+  is_default: boolean;
 }
 
 export default function PublicPayPage() {
@@ -65,6 +75,8 @@ export default function PublicPayPage() {
 
   const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
   const functionUrl = `https://${projectId}.supabase.co/functions/v1/public-checkout`;
+  const savedCardFunctionUrl = `https://${projectId}.supabase.co/functions/v1/public-charge-saved-card`;
+  const [savedCardProcessing, setSavedCardProcessing] = useState(false);
 
   const { data: linkInfo, isLoading, error: loadError } = useQuery({
     queryKey: ['public-pay', token],
@@ -79,6 +91,24 @@ export default function PublicPayPage() {
       return res.json();
     },
     enabled: !!token,
+    retry: false,
+  });
+
+  // PAY-C: load user's active saved cards (NEVER select provider_token).
+  const { data: savedCards } = useQuery({
+    queryKey: ['public-pay-saved-cards', user?.id],
+    queryFn: async (): Promise<SavedCard[]> => {
+      const { data, error } = await supabase
+        .from('payment_methods')
+        .select('id, brand, last4, exp_month, exp_year, is_default')
+        .eq('user_id', user!.id)
+        .eq('status', 'active')
+        .order('is_default', { ascending: false })
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data || []) as SavedCard[];
+    },
+    enabled: !!user?.id,
     retry: false,
   });
 
@@ -159,6 +189,51 @@ export default function PublicPayPage() {
     await initiatePayment(email);
   };
 
+  // PAY-C: pay with a saved card (MIT). Server enforces ownership and idempotency.
+  const handlePayWithSavedCard = async (paymentMethodId: string) => {
+    if (!token) return;
+    setSavedCardProcessing(true);
+    setError(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        throw new Error('Войдите в аккаунт, чтобы использовать сохранённую карту.');
+      }
+      const idempotency_key = `${paymentMethodId}:${token}:${Math.floor(Date.now() / 1000)}`;
+      const res = await fetch(savedCardFunctionUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          url_token: token,
+          payment_method_id: paymentMethodId,
+          idempotency_key,
+        }),
+      });
+      const data = await res.json();
+      if (res.status === 409) {
+        // Existing active attempt — DO NOT auto-retry, DO NOT follow stale redirect_url.
+        setError(data?.message || 'Платёж уже создан. Завершите подтверждение или попробуйте позже.');
+        return;
+      }
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.message || data?.error || 'Не удалось списать сохранённую карту');
+      }
+      // Issuer may require additional bank confirmation → follow redirect when present.
+      if (data.redirect_url) {
+        window.location.href = data.redirect_url;
+        return;
+      }
+      window.location.href = `/purchases?order=${data.order_id}&payment=processing`;
+    } catch (err) {
+      setError(normalizeEdgeFunctionError(err));
+    } finally {
+      setSavedCardProcessing(false);
+    }
+  };
+
   const formatPrice = (kopecks: number, currency: string) =>
     `${(kopecks / 100).toFixed(2)} ${currency}`;
 
@@ -236,6 +311,17 @@ export default function PublicPayPage() {
   const priceFormatted = formatPrice(linkInfo.amount, linkInfo.currency);
   const needsIdentity = linkInfo.requires_identity_input && !user;
   const isSubscription = linkInfo.payment_type === 'subscription';
+
+  // PAY-C visibility: NULL OR equal — public link OR personal link of current user.
+  const ownsOrPublic =
+    !!user &&
+    (linkInfo.link_user_id === null || linkInfo.link_user_id === user.id);
+  const showSavedCard =
+    ownsOrPublic &&
+    !isSubscription &&
+    Array.isArray(savedCards) &&
+    savedCards.length > 0;
+  const showSubscriptionFallbackHint = ownsOrPublic && isSubscription;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-muted/30 to-background">
@@ -330,6 +416,51 @@ export default function PublicPayPage() {
                   <><CreditCard className="mr-2 h-5 w-5" /> Оплатить {priceFormatted}</>
                 )}
               </Button>
+            )}
+
+            {/* PAY-C: Saved card quick-pay (one_time only, ownership-aware) */}
+            {!needsIdentity && showSavedCard && (
+              <div className="mt-4 space-y-2">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground text-center">
+                  или сохранённой картой
+                </div>
+                {savedCards!.map((card) => (
+                  <Button
+                    key={card.id}
+                    type="button"
+                    variant="outline"
+                    size="lg"
+                    className="w-full justify-between"
+                    disabled={savedCardProcessing || isProcessing}
+                    onClick={() => handlePayWithSavedCard(card.id)}
+                  >
+                    <span className="flex items-center gap-2">
+                      <CreditCard className="h-4 w-4" />
+                      {(card.brand || 'CARD').toUpperCase()} ••••{card.last4 || '****'}
+                      {card.is_default && (
+                        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                          основная
+                        </span>
+                      )}
+                    </span>
+                    {savedCardProcessing ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <span className="text-xs text-muted-foreground">оплатить</span>
+                    )}
+                  </Button>
+                ))}
+                <p className="text-[11px] text-center text-muted-foreground">
+                  Подтверждение банка может потребоваться при первой оплате этой картой.
+                </p>
+              </div>
+            )}
+
+            {/* PAY-C: subscription fallback hint — saved-card not supported in v1 */}
+            {!needsIdentity && showSubscriptionFallbackHint && (
+              <p className="mt-3 text-xs text-center text-muted-foreground">
+                Для подписки используйте стандартную оплату через bePaid.
+              </p>
             )}
 
             {/* State 3: guest + no target user → shared inline auth (email/login/signup/forgot) */}
