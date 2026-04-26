@@ -19,7 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { FileText, Upload, MessageSquare, ChevronDown, Download, CheckCircle2, AlertTriangle } from "lucide-react";
+import { FileText, MessageSquare, ChevronDown, Download } from "lucide-react";
 import { FeedbackDrawer } from "@/components/training-feedback/FeedbackDrawer";
 import { getFileTypeIcon } from "@/components/admin/lesson-editor/blocks/fileTypeIcons";
 import { format } from "date-fns";
@@ -728,7 +728,12 @@ export function StudentProgressModal({
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="text-lg font-semibold">Прогресс ученика</DialogTitle>
+          <DialogTitle className="flex items-center justify-between gap-3 text-lg font-semibold">
+            <span>Прогресс ученика</span>
+            <Button variant="outline" size="sm" onClick={exportFullResponse}>
+              <Download className="h-4 w-4 mr-1.5" /> Экспорт ответа
+            </Button>
+          </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-6">
