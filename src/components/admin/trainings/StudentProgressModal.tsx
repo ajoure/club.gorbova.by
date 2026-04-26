@@ -694,6 +694,28 @@ export function StudentProgressModal({
     return null;
   };
 
+  const exportFullResponse = () => {
+    const payload = {
+      exported_at: new Date().toISOString(),
+      student: { user_id: record.user_id, name: displayName, email: profile?.email || null },
+      lesson: { id: lessonId || record.lesson_id, title: lessonTitle || null, module_id: moduleId || null },
+      completed_at: record.completed_at,
+      blocks: interactive.map((block) => ({
+        block_id: block.id,
+        block_type: block.block_type,
+        label: getBlockLabel(block),
+        response: getResponse(block),
+      })),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `lesson-response-${record.user_id}-${lessonId || record.lesson_id}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   // Resolve display name: priority chain
   const displayName = studentName || profile?.full_name || profile?.email || "Неизвестный ученик";
   const initials = displayName
