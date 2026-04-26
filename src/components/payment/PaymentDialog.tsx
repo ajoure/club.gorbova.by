@@ -149,8 +149,11 @@ export function PaymentDialog({
   const [existingUserId, setExistingUserId] = useState<string | null>(null);
   const [emailCheckResult, setEmailCheckResult] = useState<EmailCheckResult | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
-  const [savedCard, setSavedCard] = useState<{ id: string; brand: string; last4: string } | null>(null);
+  // PAY-I: список сохранённых карт; всегда disabled в PaymentDialog (см. mem://ui/payments/saved-card-client-policy).
+  const [savedCards, setSavedCards] = useState<Array<{ id: string; brand: string; last4: string; exp_month: number | null; exp_year: number | null; is_default: boolean }>>([]);
   const [isLoadingCard, setIsLoadingCard] = useState(false);
+  // Backwards-compatible alias for legacy error-message branch (handlePayment не меняется).
+  const savedCard = savedCards[0] ?? null;
   const [privacyConsent, setPrivacyConsent] = useState(false);
   const [telegramDeepLink, setTelegramDeepLink] = useState<string | null>(null);
   const [showTrialUsedModal, setShowTrialUsedModal] = useState(false);
