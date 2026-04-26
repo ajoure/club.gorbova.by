@@ -328,14 +328,14 @@ export default function Purchases() {
 
   return (
     <DashboardLayout>
-      <div className="max-w-4xl mx-auto space-y-4 sm:space-y-6 px-3 sm:px-0">
+      <div className="max-w-4xl mx-auto w-full min-w-0 space-y-4 sm:space-y-6 px-3 sm:px-0">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-foreground">Мои покупки</h1>
           <p className="text-sm sm:text-base text-muted-foreground">Управление подписками и история платежей</p>
         </div>
 
         {/* Active Subscriptions */}
-        <Card>
+        <Card className="overflow-hidden">
           <CardHeader className="pb-3 px-4 sm:px-6">
             <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
               <CreditCard className="h-5 w-5 shrink-0" />
@@ -384,7 +384,7 @@ export default function Purchases() {
         </Card>
 
         {/* History Section with Tabs */}
-        <Card>
+        <Card className="overflow-hidden">
           <CardHeader className="pb-3 px-4 sm:px-6">
             <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
               <History className="h-5 w-5 shrink-0" />
