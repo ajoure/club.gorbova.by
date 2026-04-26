@@ -55,6 +55,7 @@ interface OrderV2 {
     provider_payment_id: string | null;
     card_brand: string | null;
     card_last4: string | null;
+    receipt_url: string | null;
     provider_response: {
       transaction?: {
         receipt_url?: string;
@@ -101,6 +102,7 @@ interface SubscriptionV2 {
       provider_payment_id: string | null;
       card_brand: string | null;
       card_last4: string | null;
+      receipt_url: string | null;
       provider_response: {
         transaction?: {
           receipt_url?: string;
@@ -145,7 +147,7 @@ export default function Purchases() {
           customer_email, created_at, meta, purchase_snapshot,
           products_v2(name, code),
           tariffs(name, code),
-          payments_v2(id, status, provider_payment_id, card_brand, card_last4, provider_response)
+          payments_v2(id, status, provider_payment_id, card_brand, card_last4, receipt_url, provider_response)
         `)
         .eq("user_id", user.id)
         .order("created_at", { ascending: false });
@@ -170,7 +172,7 @@ export default function Purchases() {
           payment_methods(brand, last4),
           orders_v2!subscriptions_v2_order_id_fkey(
             id, order_number, final_price, currency, created_at,
-            payments_v2(id, status, provider_payment_id, card_brand, card_last4, provider_response)
+            payments_v2(id, status, provider_payment_id, card_brand, card_last4, receipt_url, provider_response)
           )
         `)
         .eq("user_id", user.id)
@@ -279,13 +281,13 @@ export default function Purchases() {
     await generateSubscriptionReceipt(sub);
   };
 
-  // Filter active subscriptions (current ones, not expired and not canceled)
-  // Show only the latest subscription per product
+  // STRICT active filter: only real active access (status active/trial/trialing) AND not expired.
+  // past_due / unpaid / incomplete / pending — НЕ активные подписки, уезжают в историю.
+  const ACTIVE_STATUSES = new Set(["active", "trial", "trialing"]);
   const activeSubscriptions = subscriptions?.filter(s => {
     const isExpired = s.access_end_at && new Date(s.access_end_at) < new Date();
-    const isCanceled = s.canceled_at !== null;
-    // Show subscription if not expired, OR if canceled but still has access
-    return !isExpired;
+    const statusOk = ACTIVE_STATUSES.has(String(s.status).toLowerCase());
+    return statusOk && !isExpired;
   }) || [];
 
   // Deduplicate: keep only the subscription with the latest access_end_at per product
@@ -296,19 +298,14 @@ export default function Purchases() {
     if (!existing) {
       acc.push(sub);
     } else {
-      // Prioritize non-canceled subscriptions
       const existingCanceled = existing.canceled_at !== null;
       const currentCanceled = sub.canceled_at !== null;
-      
       if (existingCanceled && !currentCanceled) {
-        // Current is not canceled, prefer it
         const idx = acc.indexOf(existing);
         acc[idx] = sub;
       } else if (!existingCanceled && currentCanceled) {
-        // Existing is not canceled, keep it
-        // Do nothing
+        // keep existing
       } else {
-        // Both have same canceled status - keep the one with later access_end_at
         const existingEnd = existing.access_end_at ? new Date(existing.access_end_at).getTime() : 0;
         const currentEnd = sub.access_end_at ? new Date(sub.access_end_at).getTime() : 0;
         if (currentEnd > existingEnd) {
@@ -320,10 +317,18 @@ export default function Purchases() {
     return acc;
   }, [] as SubscriptionV2[]);
 
-  // History: expired subscriptions
-  const expiredSubscriptions = subscriptions?.filter(s => {
-    const isExpired = s.access_end_at && new Date(s.access_end_at) < new Date();
-    return isExpired;
+  // History: subscriptions that are NOT in active set (expired OR non-active status like past_due/unpaid/incomplete/canceled-finished)
+  const activeIds = new Set(uniqueActiveSubscriptions.map(s => s.id));
+  const historySubscriptions = subscriptions?.filter(s => !activeIds.has(s.id)) || [];
+
+  // Payments tab: hide pure "in-progress" noise — only paid/failed/refunded matter to the user.
+  // pending/processing/created — это шум без действий, не показываем.
+  const VISIBLE_ORDER_STATUSES = new Set(["paid", "failed", "refunded"]);
+  const VISIBLE_PAYMENT_STATUSES = new Set(["succeeded", "failed", "refunded"]);
+  const visibleOrders = orders?.filter(o => {
+    const orderOk = VISIBLE_ORDER_STATUSES.has(String(o.status).toLowerCase());
+    const payOk = o.payments_v2?.some(p => VISIBLE_PAYMENT_STATUSES.has(String(p.status).toLowerCase()));
+    return orderOk || payOk;
   }) || [];
 
   return (
@@ -409,28 +414,34 @@ export default function Purchases() {
                     <Skeleton className="h-16 w-full" />
                     <Skeleton className="h-16 w-full" />
                   </div>
-                ) : orders && orders.length > 0 ? (
+                ) : visibleOrders && visibleOrders.length > 0 ? (
                   <div className="space-y-3">
-                    {orders.map((order) => (
-                      <div key={order.id} className="flex items-center gap-1 sm:gap-2 min-w-0">
-                        <div className="flex-1 min-w-0">
-                          <OrderListItem
-                            order={order}
-                            onDownloadReceipt={downloadReceipt}
-                            onOpenBePaidReceipt={(url) => window.open(url, '_blank')}
-                          />
+                    {visibleOrders.map((order) => {
+                      const payment = order.payments_v2?.[0];
+                      const receiptUrl = (payment as any)?.receipt_url || payment?.provider_response?.transaction?.receipt_url;
+                      return (
+                        <div key={order.id} className="flex items-center gap-1 sm:gap-2 min-w-0">
+                          <div className="flex-1 min-w-0">
+                            <OrderListItem
+                              order={order}
+                              onDownloadReceipt={downloadReceipt}
+                              onOpenBePaidReceipt={(url) => window.open(url, '_blank')}
+                            />
+                          </div>
+                          {receiptUrl && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => window.open(receiptUrl, '_blank')}
+                              title="Чек bePaid"
+                              className="shrink-0 h-8 w-8 sm:h-10 sm:w-10"
+                            >
+                              <FileText className="h-4 w-4" />
+                            </Button>
+                          )}
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => setDocumentsOrderId(order.id)}
-                          title="Документы"
-                          className="shrink-0 h-8 w-8 sm:h-10 sm:w-10"
-                        >
-                          <FileText className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="text-center py-8 text-muted-foreground">
@@ -446,9 +457,9 @@ export default function Purchases() {
                     <Skeleton className="h-16 w-full" />
                     <Skeleton className="h-16 w-full" />
                   </div>
-                ) : expiredSubscriptions.length > 0 ? (
+                ) : historySubscriptions.length > 0 ? (
                   <div className="space-y-3">
-                    {expiredSubscriptions.map((sub) => (
+                    {historySubscriptions.map((sub) => (
                       <SubscriptionListItem
                         key={sub.id}
                         subscription={sub}
@@ -499,7 +510,10 @@ export default function Purchases() {
         onCancel={openCancelDialog}
         onResume={handleResumeSubscription}
         onDownloadReceipt={downloadSubscriptionReceipt}
-        receiptUrl={selectedSubscription?.orders_v2?.payments_v2?.[0]?.provider_response?.transaction?.receipt_url}
+        receiptUrl={(() => {
+          const p = selectedSubscription?.orders_v2?.payments_v2?.[0] as any;
+          return p?.receipt_url || p?.provider_response?.transaction?.receipt_url || null;
+        })()}
         isProcessing={isProcessing}
       />
 

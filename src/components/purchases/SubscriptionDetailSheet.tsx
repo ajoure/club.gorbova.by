@@ -1,7 +1,7 @@
 import { format } from "date-fns";
 import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { ru } from "date-fns/locale";
-import { CreditCard, Download, Ban, RotateCcw, CheckCircle, XCircle, Clock, FileText, ChevronRight } from "lucide-react";
+import { CreditCard, Download, Ban, RotateCcw, CheckCircle, XCircle, Clock, FileText, ChevronRight, ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -238,68 +238,71 @@ export function SubscriptionDetailSheet({
             </>
           )}
 
-          {/* Payments history */}
-          {subscription.payments && subscription.payments.length > 0 && (
+          {/* Payments history — скрываем pending/processing, оставляем только succeeded и failed */}
+          {subscription.payments && subscription.payments.filter(p => p.status === 'succeeded' || p.status === 'failed').length > 0 && (
             <div>
               <h4 className="text-sm font-medium mb-3">История платежей</h4>
               <div className="space-y-2">
-                {subscription.payments.map((payment) => {
-                  const paymentReceiptUrl = payment.provider_response?.transaction?.receipt_url;
-                  return (
-                    <div
-                      key={payment.id}
-                      className="flex items-center justify-between py-2 px-3 rounded-md bg-muted/50"
-                    >
-                      <div className="flex flex-col">
-                        <span className="text-sm font-medium">
-                          {payment.amount.toFixed(2)} {payment.currency}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          {formatShortDate(payment.created_at)}
-                        </span>
+                {subscription.payments
+                  .filter(p => p.status === 'succeeded' || p.status === 'failed')
+                  .map((payment) => {
+                    const paymentReceiptUrl = (payment as any).receipt_url || payment.provider_response?.transaction?.receipt_url;
+                    return (
+                      <div
+                        key={payment.id}
+                        className="flex items-center justify-between gap-3 py-2.5 px-3 rounded-lg bg-muted/40 border border-border/40"
+                      >
+                        <div className="flex flex-col min-w-0">
+                          <span className="text-sm font-medium">
+                            {payment.amount.toFixed(2)} {payment.currency}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {formatShortDate(payment.created_at)}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {/* Чек bePaid: и для succeeded и для failed */}
+                          {paymentReceiptUrl && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2"
+                              title={payment.status === 'succeeded' ? 'Чек bePaid' : 'Чек ошибки bePaid'}
+                              onClick={() => window.open(paymentReceiptUrl, '_blank')}
+                            >
+                              <Download className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                          {getPaymentStatusBadge(payment.status)}
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        {paymentReceiptUrl && payment.status === "succeeded" && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 px-2"
-                            onClick={() => window.open(paymentReceiptUrl, '_blank')}
-                          >
-                            <Download className="h-3.5 w-3.5" />
-                          </Button>
-                        )}
-                        {getPaymentStatusBadge(payment.status)}
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
               </div>
             </div>
           )}
 
           {/* Actions */}
           <div className="space-y-2 pt-4">
-            {/* Download receipt - prioritize real bePaid receipt */}
-            {receiptUrl ? (
-              <Button 
-                variant="default" 
+            {/* Две независимые кнопки: bePaid (если есть) + наш PDF — обе доступны одновременно */}
+            {receiptUrl && (
+              <Button
+                variant="default"
                 className="w-full gap-2"
                 onClick={() => window.open(receiptUrl, '_blank')}
               >
-                <Download className="h-4 w-4" />
-                Скачать чек
-              </Button>
-            ) : (
-              <Button 
-                variant="outline" 
-                className="w-full gap-2"
-                onClick={() => onDownloadReceipt(subscription)}
-              >
-                <Download className="h-4 w-4" />
-                Скачать квитанцию
+                <ExternalLink className="h-4 w-4" />
+                Чек bePaid
               </Button>
             )}
+            <Button
+              variant={receiptUrl ? "outline" : "default"}
+              className="w-full gap-2"
+              onClick={() => onDownloadReceipt(subscription)}
+            >
+              <Download className="h-4 w-4" />
+              Скачать квитанцию
+            </Button>
 
           {/* Renew subscription — visible when expiring soon or expired */}
             {(isExpired || isCanceled || (subscription.access_end_at && 
