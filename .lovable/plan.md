@@ -1,360 +1,272 @@
-дополни план следующей информацией:
+да, согласен, с учетом правок:
 
-1. **Явно указать найденную корневую проблему**
-  - payment-method-verify-recurring отключена и возвращает 410;
-  - UI всё ещё показывает/порождает сценарий «перепроверки»;
-  - из-за этого пользователь видит техническую ошибку или вечный pending.
-2. **Добавить точный список файлов для проверки**
-3. **Убрать принудительную формулировку в PaymentDialog.tsx**  
-Заменить:  
-Для активации пробного периода необходимо привязать банковскую карту  
-на:  
-Для пробного периода можно добровольно привязать карту, чтобы после окончания пробного периода удобно продолжить оплату подписки. Оплата и доступ не зависят от обязательного сохранения карты.  
-Если бизнес-логика trial реально требует карту для будущего автосписания — писать честно:
-4. **Добавить отдельный блок “карта не обязательна”**  
-Проверить все registration/onboarding/payment screens и зафиксировать:
-  - карта не требуется для регистрации;
-  - карта не требуется для входа;
-  - карта не требуется для обычной оплаты без сохранения;
-  - карта нужна только добровольно для удобства или подписки/автопродления, если пользователь выбирает такой сценарий.
-5. **Кнопку “Перепроверить” убрать или сделать disabled**  
-Если recurring verification отключён:
-  - не вызывать payment-method-verify-recurring;
-  - не создавать payment_method_verification_jobs;
-  - не ставить карту в verification_status='pending'.
-6. Вместо кнопки показать:
-7. **Проверить существующие pending jobs**  
-Перед изменениями выполнить dry-run:  
-SELECT verification_status, count(*)
-8. FROM payment_methods
-9. GROUP BY verification_status;
-10. &nbsp;
-11. SELECT status, count(*)
-12. FROM payment_method_verification_jobs
-13. GROUP BY status;  
-Если есть старые pending без рабочего обработчика — отдельный safe patch:
-  - не удалять;
-  - пометить как canceled/unsupported;
-  - добавить meta/reason;
-  - audit_logs обязателен.
-14. **Зеленые бейджи по картам**  
-Добавить состояния:  
-Карта привязана
-15. Основная карта
-16. Можно использовать для оплаты
-17. Можно использовать для подписки
-18. Требуется 3D-Secure
-19. Проверка недоступна  
-Зеленый бейдж — только если карта реально usable.
-20. **Ошибки Edge Functions**  
-В PaymentMethods.tsx и PaymentDialog.tsx нельзя показывать:  
-Edge Function returned a non-2xx status code  
-Нужно извлекать нормальное сообщение из body/error payload через normalizeEdgeFunctionError.
-21. **3D Secure**  
-Не открывать 3DS/checkout в маленьком modal/drawer/iframe.  
-Для мобильного:
-  - full-page redirect;
-  - после возврата — статус оплаты;
-  - не пытаться визуально “втиснуть” bank checkout.
-22. **STOP-guards**  
-Запретить в этом патче:
+1. **Не использовать request origin вообще для клиентских payment links**
+  - Для ссылок, которые уходят клиенту, источник должен быть только:
+  - req.headers.origin можно использовать только для internal return_url, но не для публичной ссылки /pay/:token.
+2. **public_url в БД — правильный вариант**
+  - Добавить payment_links.public_url.
+  - Новые ссылки сохранять уже с каноническим URL.
+  - Старые ссылки backfill:
+3. **Обязательная валидация домена**  
+Перед сохранением:
+  - запретить [lovable.dev](http://lovable.dev);
+  - запретить [lovable.app](http://lovable.app);
+  - запретить [lovableproject.com](http://lovableproject.com);
+  - запретить localhost;
+  - запретить пустой/битый host;
+  - нормализовать без trailing slash.
+4. **primary_domain проверять строго**  
+Если product.primary_domain есть, он должен быть валидным host, например:  
+[club.gorbova.by](http://club.gorbova.by)
+5. [gorbova.by](http://gorbova.by)  
+Не принимать:
+6. **Frontend больше не должен собирать /pay через window.location.origin**  
+Заменить в активном коде:
+  - LinksTabContent.tsx
+  - LinkDetailsDrawer.tsx
+  - clipboardUtils.ts
+7. Архивный src/archive/... можно не трогать, но grep-proof должен исключать archive.
+8. **AdminPaymentLinkDialog должен брать URL из ответа edge function**  
+Не пересобирать URL на фронте после создания. Источник истины — public_url, возвращённый admin-create-public-link.
+9. **Return URL для bePaid — отдельный subpatch**  
+Можно включить превентивно, но не смешивать с public payment links:
+  - public link: /pay/:token на canonical domain;
+  - bePaid return_url: callback/return после оплаты, тоже не должен быть preview-domain.
+10. **Audit**  
+В audit_logs.meta добавить:
+11. **STOP-guards**  
+Остановиться, если:
+  - новая ссылка содержит lovable;
+  - public_url NULL после backfill;
+  - frontend всё ещё использует window.location.origin + /pay;
+  - edge function возвращает URL без https://;
+  - product primary domain невалиден;
+  - меняется логика public-checkout / оплаты / webhook.
+12. **DoD дополнить**
 
-- менять orders_v2;
-- менять payments_v2;
-- менять entitlements;
-- удалять карты;
-- менять bePaid webhook;
-- делать карту обязательной;
-- отключать оплату без сохранения карты.
+- новая ссылка из preview-админки возвращает [https://club.gorbova.by/pay/](https://club.gorbova.by/pay/)...
 
-11. **DoD**  
-Добавить proof:
+- SQL: payment_links.public_url ILIKE '%lovable%' = 0
 
-- grep не находит обязательных формулировок про карту;
+- SQL: payment_links.public_url IS NULL = 0
 
-- регистрация проходит без карты;
+- grep: нет window.location.origin для /pay в активном коде
 
-- обычная оплата без сохранения карты доступна;
+- drawer/table/copy используют public_url
 
-- привязанная карта показывает зеленый бейдж;
+- audit_logs содержит origin_source
 
-- основная карта отображается;
-
-- “Перепроверить” не вызывает 410-функцию;
-
-- pending jobs больше не создаются;
-
-- edge errors нормализованы;
-
-- 3DS mobile-safe;
-
-- финальный отчет: changed files + diff-summary + screenshots/proof.
+- bePaid return_url не уходит на Lovable preview
 
 Готовый блок для Lovable:
 
-Дополни план обязательными правками:
+Дополни план следующими обязательными правками:
 
 &nbsp;
 
-1. Зафиксировать root cause: `payment-method-verify-recurring` отключена и возвращает 410, но UI всё ещё показывает сценарий “Перепроверить” / создаёт verification jobs.
+1. Для публичных payment links запретить использование `window.location.origin`, `req.headers.origin` и любых preview/editor-доменов Lovable как источника публичного URL.
 
 &nbsp;
 
-2. Проверить и изменить файлы:
+2. Источник публичного URL:
 
-- `src/components/payment/PaymentDialog.tsx`
+   - `product.primary_domain`, если валиден;
 
-- `src/pages/settings/PaymentMethods.tsx`
-
-- `src/utils/normalizeEdgeFunctionError.ts`
-
-- `src/components/onboarding/WelcomeOnboardingModal.tsx`
-
-- `src/components/auth/InlineAuthForm.tsx`
-
-- `supabase/functions/payment-method-verify-recurring/index.ts`
-
-- `supabase/functions/bepaid-create-subscription/index.ts`
-
-- `supabase/functions/create-subscription-checkout/index.ts`
+   - иначе canonical fallback `https://club.gorbova.by`.
 
 &nbsp;
 
-3. Убрать принудительные формулировки о карте. Карта не обязательна для регистрации, входа и обычной оплаты. Карта — добровольная опция для удобства будущих оплат / подписок / автосписаний, если пользователь выбирает такой сценарий.
+3. Добавить колонку `payment_links.public_url text`.
 
 &nbsp;
 
-4. В `PaymentDialog.tsx` заменить текст “Для активации пробного периода необходимо привязать банковскую карту” на добровольную формулировку без давления.
+4. Новые payment links создавать и сохранять сразу с `public_url`.
 
 &nbsp;
 
-5. Если recurring verification отключён:
+5. Сделать idempotent backfill:
 
-- убрать активную кнопку “Перепроверить”;
+   `public_url = 'https://club.gorbova.by/pay/' || url_token`
 
-- не вызывать `payment-method-verify-recurring`;
-
-- не создавать `payment_method_verification_jobs`;
-
-- не переводить карту в вечный `pending`.
+   для всех старых строк, где `public_url IS NULL`.
 
 &nbsp;
 
-6. Перед изменениями выполнить dry-run по старым pending jobs:
+6. Добавить строгую валидацию домена:
 
-```sql
+   - запретить `lovable.dev`;
 
-SELECT verification_status, count(*)
+   - запретить `lovable.app`;
 
-FROM payment_methods
+   - запретить `lovableproject.com`;
 
-GROUP BY verification_status;
+   - запретить `localhost`;
+
+   - запретить пустой/битый host;
+
+   - нормализовать host без trailing slash.
 
 &nbsp;
 
-SELECT status, count(*)
+7. Обновить:
 
-FROM payment_method_verification_jobs
+   - `supabase/functions/admin-create-public-link/index.ts`
 
-GROUP BY status;
+   - `src/components/admin/payments/links/LinksTabContent.tsx`
 
-7. Если есть старые pending jobs без рабочего обработчика — отдельный safe patch: не удалять, а пометить canceled/unsupported с meta/reason и audit_logs.
-8. Добавить зеленые бейджи:
+   - `src/components/admin/payments/links/LinkDetailsDrawer.tsx`
 
-- “Карта привязана”
-- “Основная карта”
-- “Можно использовать для оплаты”
-- “Можно использовать для подписки”
-- “Требуется 3D-Secure”
-- “Проверка недоступна”
+   - `src/utils/clipboardUtils.ts`
 
-9. Починить обработку ошибок edge-функций: вместо “Edge Function returned a non-2xx status code” показывать понятную причину из body/error payload через normalizeEdgeFunctionError.
-10. Для 3D Secure использовать mobile-safe/full-page redirect, не открывать checkout в маленьком modal/drawer/iframe.
+   - `AdminPaymentLinkDialog`, если он пересобирает URL на фронте.
+
+&nbsp;
+
+8. Frontend должен показывать и копировать `payment_links.public_url`, а не собирать ссылку сам.
+
+&nbsp;
+
+9. В `audit_logs.meta` для создания ссылки добавить:
+
+   - `public_url`;
+
+   - `origin_source`;
+
+   - `request_origin`;
+
+   - `request_origin_ignored`.
+
+&nbsp;
+
+10. Отдельно проверить edge functions, где формируется bePaid `return_url`, и заблокировать Lovable preview-origin для return_url.
+
+&nbsp;
+
 11. STOP-guards:
 
-- не менять orders_v2;
-- не менять payments_v2;
-- не менять entitlements;
-- не удалять карты;
-- не менять bePaid webhook;
-- не делать карту обязательной;
-- не отключать оплату без сохранения карты.
+   - не менять public-checkout бизнес-логику;
+
+   - не менять webhook bePaid;
+
+   - не менять платежные статусы;
+
+   - не менять `/pay/:token` routing;
+
+   - не трогать archive-код;
+
+   - остановиться, если новая ссылка содержит Lovable-домен.
+
+&nbsp;
 
 12. DoD:
 
-- grep не находит обязательных формулировок про карту;
-- регистрация проходит без карты;
-- обычная оплата без сохранения карты доступна;
-- привязанная карта показывает зеленый бейдж;
-- основная карта отображается;
-- “Перепроверить” не вызывает 410-функцию;
-- pending jobs больше не создаются;
-- edge errors нормализованы;
-- 3DS mobile-safe;
-- финальный отчет содержит changed files, diff-summary и proof по каждому платёжному сценарию.
+   - новая ссылка из preview-админки ведет на `https://club.gorbova.by/pay/...` или валидный `primary_domain`;
+
+   - `SELECT count(*) FROM payment_links WHERE public_url ILIKE '%lovable%'` = 0;
+
+   - `SELECT count(*) FROM payment_links WHERE public_url IS NULL` = 0;
+
+   - grep не находит `window.location.origin` для `/pay` в активном коде;
+
+   - table/drawer/copy используют `public_url`;
+
+   - audit_logs содержит `origin_source`;
+
+   - bePaid return_url не указывает на Lovable preview;
+
+   - финальный отчет содержит diff-summary, SQL-proof и пример созданной ссылки.
 
 &nbsp;
 
-План: Аудит и исправление платёжных потоков (с расширенным UX-патчем по добровольной привязке карты)
+# План: канонический домен для платёжных ссылок
 
-## Чек-лист всех платёжных путей (что проверено)
+## Проблема
 
+Клиент получил ссылку вида `https://lovable.dev/auth-bridge?project_id=...` → "Access denied". Причина: ссылка `/pay/:token` была сгенерирована из preview-окружения админки (`id-preview--*.lovable.app` или редактор `lovable.dev`), и URL сшивался от текущего origin.
 
-| #   | Точка входа                                                          | Edge-функция                                                        | Текущий статус                                                                                                                               | Действие                                          |
-| --- | -------------------------------------------------------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| 1   | `/pay/:token` (публичная ссылка)                                     | `public-checkout` (GET+POST) → `_shared/create-payment-checkout.ts` | ✅ Работает                                                                                                                                   | Не трогаем                                        |
-| 2   | `/pay?product=…` → `PaymentDialog`                                   | `bepaid-create-token` / `bepaid-create-subscription-checkout`       | ⚠️ В диалоге фраза «необходимо привязать банковскую карту»                                                                                   | Заменить формулировку                             |
-| 3   | `OrderPayment.tsx` (повтор оплаты)                                   | `bepaid-create-token`                                               | ✅                                                                                                                                            | Не трогаем                                        |
-| 4   | `/settings/payment-methods` → «Привязать карту»                      | `payment-methods-tokenize`                                          | ✅ Корректно (tokenization, amount=0)                                                                                                         | Не трогаем серверную часть                        |
-| 5   | `/settings/payment-methods` → «Подключить bePaid» / «Изменить карту» | `bepaid-create-subscription`                                        | ⚠️ 4xx/409 → пользователь видит «Edge Function returned a non-2xx status code»                                                               | Парсить тело ошибки + нормализовать               |
-| 6   | `/settings/payment-methods` → «Отменить подписку»                    | `bepaid-cancel-subscriptions`                                       | ✅                                                                                                                                            | Только нормализация ошибок                        |
-| 7   | `/settings/payment-methods` → «Перепроверить» карту                  | `payment-method-verify-recurring`                                   | ❌ Функция возвращает HTTP 410 (MIT-режим выведен 2026-04-23). UI создаёт job в БД, который никем не обрабатывается. Карта вечно в `pending`. | **Полностью убрать кнопку и логику создания job** |
-| 8   | `/settings/payment-methods` → «Отвязать карту»                       | прямой UPDATE `payment_methods.status='revoked'`                    | ✅                                                                                                                                            | Не трогаем                                        |
-| 9   | Регистрация / `InlineAuthForm`                                       | —                                                                   | ✅ Карту не требует                                                                                                                           | Не трогаем                                        |
-| 10  | Онбординг / `WelcomeOnboardingModal`                                 | —                                                                   | ✅ Карту не требует                                                                                                                           | Не трогаем                                        |
-| 11  | Webhook bePaid                                                       | `bepaid-webhook`                                                    | ✅                                                                                                                                            | **STOP-guard: НЕ трогаем**                        |
+### Корневые места (Diagnose)
 
+1. **Edge `supabase/functions/admin-create-public-link/index.ts:165-168**` — единственный канонический writer публичных ссылок. Берёт `req.headers.get('origin')` → если админ работает из preview, `origin = https://id-preview--*.lovable.app` → возвращает ссылку на preview Lovable. Открытие preview-домена непавторизованным пользователем → редирект на `lovable.dev/auth-bridge` → Access denied (скрин клиента).
+2. **Frontend `src/components/admin/payments/links/LinksTabContent.tsx:97**` и `**LinkDetailsDrawer.tsx:59**` — для отображения и копирования URL в админке используют `${window.location.origin}/pay/${token}`. Если ссылка была создана давно с правильным origin, но админ открывает её сейчас из preview — в UI отобразится preview-URL, и админ скопирует его клиенту.
+3. `**src/utils/clipboardUtils.ts:38**` — функция копирования `/pay?product=...` тоже зависит от `window.location.origin`.
 
-## Корневые причины
+## Решение
 
-### A. «Edge Function returned a non-2xx status code»
+Ввести единый канонический origin для всех публичных платёжных ссылок. Приоритет:
 
-`supabase.functions.invoke()` при HTTP 4xx/5xx выкидывает `FunctionsHttpError` с сырым сообщением, а `data` становится `null`. Поэтому проверки `data?.error.includes('409')` в `handleCreateProviderSubscription` никогда не срабатывают. Утилита `normalizeEdgeFunctionError` сейчас прячет всё за фразой «Функция временно недоступна», теряя реальную причину.
+1. `product.primary_domain` (если у продукта задан домен — берём его, например `business-training.gorbova.by`).
+2. Фолбэк-константа `https://club.gorbova.by`.
 
-### B. Кнопка «Перепроверить» бесполезна
+`window.location.origin` и `req.headers.origin` использовать **только** для случаев, когда хост гарантированно не Lovable preview (т.е. как дополнительный сигнал, но не как источник истины).
 
-Edge-функция намеренно возвращает HTTP 410 (см. `payment-method-verify-recurring/index.ts` строки 197–223). UI создаёт `payment_method_verification_jobs` и ставит карту в `verification_status='pending'` навсегда. Job не обрабатывается. Пользователь видит «Проверяем карту…» бесконечно.
+### Изменения
 
-### C. Алярмистские бейджи «Не для автоплатежей»
+**1. `supabase/functions/admin-create-public-link/index.ts**`
 
-Для legacy-карт со статусом `rejected` отображается красный бейдж и пугающее предупреждение. Это **неверно**: разовая оплата с этой же карты прекрасно проходит через bePaid-checkout с 3DS. Бейджи MIT-режима больше не отражают реальность системы.
-
-### D. Принудительная формулировка про карту
-
-В `PaymentDialog.tsx:1121` написано: *«Для активации пробного периода необходимо привязать банковскую карту»* — нарушает принцип добровольности.
-
-### E. 3D-Secure окно
-
-3DS уже открывается через full-page `window.location.href = redirect_url` (не в iframe). Обрезание — особенность hosted-checkout bePaid на стороне банка-эквайера. Решить полностью на нашей стороне нельзя. Можем только убедиться, что нигде не обернули checkout в drawer/modal/iframe (проверил — нет, везде full-page redirect).
-
-## Изменения
-
-### 1. `src/utils/normalizeEdgeFunctionError.ts` — улучшение нормализации
-
-Расширить сигнатуру: `normalizeEdgeFunctionError(error, fallbackData?)`.
-
-- Сначала пытаться достать `error.context.body` (Supabase JS v2.95+ кладёт сырой Response туда) — распарсить JSON, взять `error`/`message`/`details`.
-- Если есть `fallbackData?.error` — использовать его.
-- Маппинг частых кодов → русские тексты:
-  - `Already has active provider subscription` → «У вас уже есть активная подписка bePaid. Проверьте её статус ниже или отмените, чтобы создать новую.»
-  - `MISSING_EXPLICIT_CHOICE` → «Действие требует подтверждения. Обновите страницу.»
-  - `BEPAID_CREDS_MISSING` → «Платёжная система временно недоступна. Попробуйте через минуту.»
-  - `identity_required` → «Не удалось подтвердить аккаунт. Войдите или укажите email.»
-  - `Could not determine subscription amount` → «Не удалось определить сумму подписки. Свяжитесь с поддержкой.»
-  - `Access denied` → «Действие не разрешено для вашего аккаунта.»
-  - HTTP 410 / `disabled: true` → «Эта операция временно отключена.»
-- Только если ничего не извлеклось — fallback «Функция временно недоступна. Попробуйте через 10 секунд.»
-
-### 2. `src/pages/settings/PaymentMethods.tsx` — главный рефактор
-
-**Удалить:**
-
-- Кнопку «Перепроверить» (строки ~797–812) и мутацию `reverifyMutation` (строки 442–487).
-- Поллинг `useEffect` для `pollingCardId` + state `pollingCardId` (строки 57–58, 158–197).
-- Все legacy-бейджи на основе `verification_status`: `pending`/`verified`/`verified_refund_pending`/`rejected`/`rejected_3ds_required`/`failed` (строки 731–787).
-- Жёлтый блок-предупреждение «⚠️ Оплата этой картой может требовать 3D-Secure» (строки 862–869).
-- Старые пугающие тосты «Проверяем для автоплатежей…» / «Карта не подходит для автоплатежей» (строки 144, 147, 183, 187).
-
-**Заменить на новый UX:**
-
-- На каждой привязанной карте по умолчанию показывать зелёные бейджи:
-  - 🟢 **«Карта привязана»** (всегда, если status='active' и не expired)
-  - 🟢 **«Можно использовать для оплаты»** (всегда)
-  - 🟢 **«Основная карта»** (если `is_default`)
-  - 🟢 **«Готова для подписок»** — показывать **только** если `verification_status === 'verified'` или `'verified_refund_pending'` (явный позитивный сигнал). Для всех остальных статусов — **не показываем никаких красных/жёлтых бейджей**, просто опускаем «Готова для подписок».
-- Под списком карт добавить нейтральную инфо-плашку: *«Привязка карты — добровольная опция для удобства будущих оплат. Вы всегда можете оплачивать без сохранения карты. Если карта потребует 3D-Secure при подписке, мы предложим оплатить заново.»*
-- Заголовок страницы оставить, описание сделать мягче: *«Сохранённые карты для удобной оплаты. Привязка карты не обязательна.»*
-
-**Корректная обработка ошибок:**
-
-- В `handleCreateProviderSubscription`, `handleChangeProviderCard`, `cancelProviderSubMutation.onError`, `deleteMutation.onError`, `setDefaultMutation.onError`, `handleAddCard` catch:
+- Добавить выборку `primary_domain` из `products_v2` по `product_id` (запрос уже идёт в этой функции для валидации продукта — расширить SELECT).
+- Заменить блок выбора origin (строки 164-168):
   ```ts
-  } catch (error: any) {
-    toast.error(normalizeEdgeFunctionError(error, error?.context?.body));
+  const PROD_FALLBACK = 'https://club.gorbova.by';
+  const isLovablePreview = (host: string) =>
+    host.includes('lovable.dev') ||
+    host.includes('lovable.app') ||
+    host.includes('lovableproject.com');
+
+  let origin = product?.primary_domain
+    ? `https://${product.primary_domain}`
+    : PROD_FALLBACK;
+
+  // Только если запрос пришёл с настоящего публичного домена клиента — уважим его.
+  const reqOrigin = req.headers.get('origin');
+  if (!product?.primary_domain && reqOrigin && !isLovablePreview(new URL(reqOrigin).hostname)) {
+    origin = reqOrigin;
   }
   ```
-- Удалить кустарные проверки `msg.includes('409')` — теперь делает `normalizeEdgeFunctionError`.
+- Добавить `origin_source` (`'product_primary_domain' | 'fallback' | 'request_origin'`) в `audit_logs.meta` для трассируемости.
 
-### 3. `src/components/payment/PaymentDialog.tsx`
+**2. Новый утиль `src/utils/buildPublicPaymentUrl.ts**`
 
-Заменить строку 1121 *«Для активации пробного периода необходимо привязать банковскую карту»* на:
-*«Для активации пробного периода понадобится карта — она будет использована для автоматического продления после окончания триала. Без триала можно оплатить полную стоимость сразу.»*
+- Экспортирует:
+  - `CANONICAL_PUBLIC_HOST = 'https://club.gorbova.by'`
+  - `isLovablePreviewHost(host: string): boolean`
+  - `buildPublicPayUrl(token: string, productPrimaryDomain?: string | null): string`
+  - `buildProductPayUrl(productId: string, productPrimaryDomain?: string | null): string`
+- Логика та же: primary_domain → preview-aware origin → fallback.
 
-Также пробежаться по всем сопроводительным текстам в этом файле и убрать любые «обязательно/нужно/необходимо привязать» — заменить на нейтральные формулировки.
+**3. `src/components/admin/payments/links/LinksTabContent.tsx**`
 
-### 4. `src/components/admin/cards/CardVerificationControl.tsx` (админ-панель)
+- `PaymentLinkRow` уже содержит `product_id`/`product_name`, но не `primary_domain`. Расширить RPC `get_admin_payment_links_v1` либо добавить join в селекторе. **Минимальный путь без миграции**: использовать сохранённый `public_url` из `audit_logs.meta` или просто хранить канонический URL непосредственно в `payment_links` (новая колонка `public_url text`).
+- Принятый вариант: добавить колонку `payment_links.public_url text` (миграция), заполняемую writer'ом `admin-create-public-link` уже с правильным origin. Frontend показывает её как есть, не пересобирая.
+- Backfill миграцией: для существующих строк `UPDATE payment_links SET public_url = 'https://club.gorbova.by/pay/' || url_token WHERE public_url IS NULL`.
+- В `LinksTabContent.tsx` и `LinkDetailsDrawer.tsx` заменить `buildPublicUrl(token)` на `link.public_url ?? buildPublicPayUrl(token)` (фолбэк на утиль).
 
-Это admin-only тулза для ручного запуска проверки карт. Так как функция возвращает 410 — добавить плашку:
-*«⚠️ MIT-проверка карт отключена с 2026-04-23. Этот инструмент сейчас не выполняет действий. Для автопродления используйте `provider_managed` (bePaid SBS) подписки.»*
-Кнопку оставить (для будущего восстановления), но пометить «Disabled by config».
+**4. `src/utils/clipboardUtils.ts**`
 
-### 5. `supabase/functions/payment-method-verify-recurring/index.ts` (defensive cleanup)
+- `getProductLink(productId)`: использовать `buildProductPayUrl(productId)` (без primary_domain — простой путь `/pay?product=`). Клиент-сайд не имеет информации о домене конкретного продукта здесь, поэтому идёт на `CANONICAL_PUBLIC_HOST`.
 
-Перед `return jsonResponse(..., 410)` добавить (если в payload есть `cleanup_jobs: true`):
+**5. `src/archive/pages/AdminProducts.tsx:354**` — архивный код, не трогаем.
 
-- UPDATE `payment_method_verification_jobs SET status='cancelled', error='mit_disabled' WHERE status IN ('pending','rate_limited')`
-- UPDATE `payment_methods SET verification_status=NULL WHERE verification_status='pending'`
+### Edge-функции, которые тоже строят URL для оплаты (вне scope, отдельно отмечу в отчёте)
 
-Это разовая защита — если кто-то всё-таки создаст job в обход (старый клиент в кэше), он не зависнет.
+`admin-manual-charge`, `public-checkout`, `direct-charge`, `bepaid-create-subscription` — все строят `return_url` для bePaid checkout, а не публичную ссылку, отправляемую клиенту в Telegram. Они уже имеют фолбэк `https://club.gorbova.by`, но в них тоже есть зависимость от `req.headers.origin`. Включаю в этот же патч превентивную защиту: если origin — Lovable preview, игнорируем и используем фолбэк. Это не источник текущего инцидента, но защитит `return_url` после оплаты от того же класса ошибок.
 
-**Не меняем** базовое 410-поведение (оно намеренное, согласовано). Только добавляем опциональный cleanup-хук.
+## Definition of Done
 
-### 6. Проверить отсутствие принудительных формулировок в других местах
+1. **Writer (edge `admin-create-public-link`)**: при любом origin запроса возвращает `public_url` на канонический домен (primary_domain продукта или `club.gorbova.by`). Никогда не возвращает `*.lovable.app` / `lovable.dev` / `*.lovableproject.com`.
+2. **БД**: `payment_links.public_url` заполнено для всех существующих и новых строк, без preview-доменов.
+3. **UI админки**: вкладка `/admin/payments/links` и drawer показывают `public_url` из БД (или фолбэк), копирование даёт канонический URL даже при работе из preview.
+4. `**AdminPaymentLinkDialog**`: после создания ссылки `generatedUrl` = канонический URL.
+5. **Edge `admin-manual-charge`, `public-checkout`, `direct-charge`, `bepaid-create-subscription**`: `return_url` никогда не указывает на Lovable preview — preview-origin отбрасывается, используется фолбэк/primary_domain.
+6. **Audit**: в `audit_logs` для `payment_link.created` добавлено поле `meta.origin_source`.
+7. **Proof**:
+  - `grep` подтверждает: нет `${window.location.origin}/pay` в активном коде (кроме архива).
+  - SQL-проверка: `SELECT count(*) FROM payment_links WHERE public_url ILIKE '%lovable%'` = 0.
+  - Симуляция: создать ссылку из preview-окружения, проверить, что возвращённый `public_url` начинается с `https://club.gorbova.by/pay/` или primary_domain продукта.
+  - Скрин админки с корректным URL в drawer/таблице.
 
-- `WelcomeOnboardingModal.tsx` — карту не требует ✅
-- `InlineAuthForm.tsx` — карту не требует ✅
-- Регистрация (`/auth`) — карту не требует ✅
+## Что НЕ делаем (явные out-of-scope)
 
-## STOP-guards (НЕ трогаем)
-
-- ❌ `orders_v2`, `payments_v2`, `entitlements`, `subscriptions_v2` — без миграций.
-- ❌ `bepaid-webhook` и любая webhook-логика — без правок.
-- ❌ Существующие платёжные ссылки `/pay/:token`, `/pay?product=…` — UX и контракты не меняются.
-- ❌ Удаление чужих карт пользователей — нет.
-- ❌ Контракт `payment-method-verify-recurring` (410-ответ) сохраняется.
-- ❌ RLS-политики не меняем.
-- ❌ Никаких изменений в обязательности оплаты — оплата без сохранения карты остаётся доступной (через `bepaid-create-token`).
-
-## DoD — критерии готовности
-
-1. ✅ Регистрация / онбординг не требуют привязки карты (уже так, подтверждено аудитом).
-2. ✅ В ЛК карта описана как добровольная опция (новый текст).
-3. ✅ Привязанная карта имеет зелёные бейджи: «Карта привязана», «Можно использовать для оплаты», «Основная карта», «Готова для подписок» (только если действительно verified).
-4. ✅ Основная карта по-прежнему отображается отдельно (бейдж `Star + «Основная»`).
-5. ✅ Кнопка «Перепроверить» удалена; функция 410 не вызывается из UI.
-6. ✅ Новые `payment_method_verification_jobs` из UI не создаются.
-7. ✅ Ошибки edge-функций показываются понятным русским текстом через расширенный `normalizeEdgeFunctionError`.
-8. ✅ 3DS открывается full-page redirect (уже так, не в iframe/modal).
-9. ✅ Оплата без сохранения карты остаётся доступной (через checkout по ссылкам и `Pay.tsx`).
-10. ✅ Финальный отчёт включает diff-summary по файлам и proof-скриншоты:
-  - `/settings/payment-methods` без «Перепроверить» и с зелёными бейджами;
-    - тост ошибки с человеко-читаемым текстом (симуляция дубликата подписки);
-    - `PaymentDialog` без формулировки «необходимо привязать».
-
-## Файлы к изменению
-
-
-| Файл                                                          | Тип правки                                                                                 |
-| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `src/utils/normalizeEdgeFunctionError.ts`                     | Расширение сигнатуры + маппинг ошибок                                                      |
-| `src/pages/settings/PaymentMethods.tsx`                       | Удаление reverify UX, новые зелёные бейджи, нормализация ошибок, добровольная формулировка |
-| `src/components/payment/PaymentDialog.tsx`                    | Замена принудительной формулировки про триал                                               |
-| `src/components/admin/cards/CardVerificationControl.tsx`      | Disabled-плашка для админа                                                                 |
-| `supabase/functions/payment-method-verify-recurring/index.ts` | Опциональный cleanup-хук (не меняет 410-поведение)                                         |
-
-
-## Файлы НЕ трогаем
-
-- `supabase/functions/public-checkout/*`, `bepaid-create-subscription/*`, `bepaid-cancel-subscriptions/*`, `bepaid-webhook/*`, `payment-methods-tokenize/*`, `_shared/create-payment-checkout.ts` — серверная логика оплаты корректна.
-- `src/pages/PublicPayPage.tsx`, `src/pages/Pay.tsx`, `src/pages/OrderPayment.tsx` — пользовательские потоки оплаты работают.
-- БД-миграции не требуются.
+- Не меняем формат `/pay/:token` и логику public-checkout.
+- Не меняем routing/SPA-fallback.
+- Не трогаем archive/.
+- Не запускаем cleanup/массовые операции, кроме backfill `public_url` (idempotent UPDATE).

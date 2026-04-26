@@ -21,6 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 import { supabase } from "@/integrations/supabase/client";
 import { copyToClipboard } from "@/utils/clipboardUtils";
+import { buildPublicPayUrl } from "@/utils/buildPublicPaymentUrl";
 import { usePaymentLinks, type PaymentLinkRow } from "@/hooks/usePaymentLinks";
 import { LinkStatusBadge } from "./LinkStatusBadge";
 import { LinkDetailsDrawer } from "./LinkDetailsDrawer";
@@ -94,7 +95,11 @@ export function LinksTabContent() {
     },
   });
 
-  const buildPublicUrl = (token: string) => `${window.location.origin}/pay/${token}`;
+  // Канонический URL берём ИЗ БД (заполняется writer'ом admin-create-public-link).
+  // Фолбэк buildPublicPayUrl нужен только для исторических строк, где public_url отсутствует —
+  // backfill в БД должен был покрыть все строки, но защищаемся от регрессии.
+  const buildPublicUrl = (link: PaymentLinkRow) =>
+    link.public_url ?? buildPublicPayUrl(link.url_token);
 
   const formatAmount = (kop: number, cur: string) =>
     `${(kop / 100).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur}`;
@@ -245,10 +250,10 @@ export function LinksTabContent() {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => copyToClipboard(buildPublicUrl(l.url_token), "Ссылка скопирована")}>
+                      <DropdownMenuItem onClick={() => copyToClipboard(buildPublicUrl(l), "Ссылка скопирована")}>
                         <Copy className="h-4 w-4 mr-2" /> Скопировать ссылку
                       </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => window.open(buildPublicUrl(l.url_token), "_blank")}>
+                      <DropdownMenuItem onClick={() => window.open(buildPublicUrl(l), "_blank")}>
                         <ExternalLink className="h-4 w-4 mr-2" /> Открыть ссылку
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => setDetailsLink(l)}>
