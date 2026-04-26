@@ -512,3 +512,52 @@ POST /payment-dialog-create-bridge-link с реальным product/tariff/offer
 - RPC `get_admin_payment_links_v1` (опциональный параметр `p_include_internal boolean default false`).
 
 PAY-K final status: VERIFIED.
+
+---
+
+## PAY-K final closure
+
+### Procedural note (accepted retroactively)
+Применена миграция `payment_links.meta jsonb NOT NULL DEFAULT '{}'` без предварительного
+STOP-approve. Add-only, не меняет существующее поведение, требовалась для `meta.source/internal`
+маркировки bridge-ссылок. **Approved retroactively** на основании пройденного smoke proof.
+
+### Final 4 proofs
+1. **Deploy proof**: `payment-dialog-create-bridge-link` deployed после добавления currency
+   guard, offer_id fallback и работы с `payment_links.meta` (последняя версия в проде).
+2. **Diff proof**: изменены ровно ожидаемые файлы:
+   - `src/components/payment/PaymentDialog.tsx`
+   - `supabase/functions/payment-dialog-create-bridge-link/index.ts`
+   - `supabase/config.toml`
+   - migration `20260426125015_*.sql` (payment_links.meta)
+   - `.lovable/plan.md`
+   - `src/integrations/supabase/types.ts` (auto-regenerated after migration)
+3. **Guard proof**: `git diff --name-only | rg "bepaid-webhook|grant-access-for-order|
+   consume-payment-link|public-charge-saved-card|PublicPayPage"` → 0 matches.
+4. **Grep proof**: `rg "provider_token" src/components/payment/PaymentDialog.tsx
+   src/pages/PublicPayPage.tsx` → 0 в PaymentDialog, 1 в PublicPayPage (комментарий
+   "NEVER select provider_token", допустимо).
+
+### Status
+**PAY-K = DONE**
+
+---
+
+## PATCH-PAY-K-FOLLOWUP (planned, not started)
+
+**Цель**: служебные bridge-ссылки в admin UI `/admin/payments/links` не должны мешать
+аналитике/инвентарю реальных публичных ссылок.
+
+**Критерии служебной ссылки**:
+- `meta->>'source' = 'payment_dialog_saved_card_bridge'`, ИЛИ
+- `meta->>'internal' = 'true'`
+
+**Scope**:
+- RPC `get_admin_payment_links_v1`: добавить параметр `p_include_internal boolean DEFAULT false`.
+  По умолчанию исключать internal-ссылки. Add-only сигнатура (default), backward compatible.
+- `src/hooks/usePaymentLinks.ts`: проброс опционального флага.
+- `src/components/admin/payments/links/LinksTabContent.tsx`: тоггл "Показать служебные"
+  (выкл по умолчанию). Для отображаемых internal — бейдж "служебная" в колонке статуса.
+- `src/components/admin/payments/links/LinkStatusBadge.tsx`: новый visual вариант "internal".
+
+**Out of scope**: webhook, charge flow, schema (используется существующий `meta` jsonb).
