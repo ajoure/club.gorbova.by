@@ -226,6 +226,8 @@ export function PaymentDialog({
 
       setSavedCards([]);
       setIsLoadingCard(false);
+      setSelectedMethod('new_card');
+      savedCardIdempotencyKeyRef.current = crypto.randomUUID();
       setTelegramDeepLink(null);
       setShowTrialUsedModal(false);
       setPaymentError(null);
