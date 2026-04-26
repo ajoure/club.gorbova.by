@@ -328,7 +328,7 @@ export default function Purchases() {
 
   return (
     <DashboardLayout>
-      <div className="max-w-4xl mx-auto space-y-4 sm:space-y-6 px-3 sm:px-0">
+      <div className="max-w-4xl mx-auto w-full min-w-0 space-y-4 sm:space-y-6 px-3 sm:px-0">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-foreground">Мои покупки</h1>
           <p className="text-sm sm:text-base text-muted-foreground">Управление подписками и история платежей</p>
