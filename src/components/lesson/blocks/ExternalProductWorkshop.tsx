@@ -430,6 +430,7 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
     }
     return null;
   }, [state.client_types, state.portfolio_pricing.length]);
+  const isCompleted = !!state.completed_at && !completionValidation;
 
   const handleComplete = async () => {
     if (completionValidation) {
@@ -758,8 +759,8 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
             />
             <ProofTile
               title="UI proof ученика"
-              ok={!!state.completed_at}
-              text={state.completed_at ? "Блок отмечен завершённым" : "Блок в процессе"}
+              ok={isCompleted}
+              text={isCompleted ? "Блок отмечен завершённым" : "Блок в процессе"}
             />
             <ProofTile
               title="UI proof преподавателя"
@@ -787,7 +788,7 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
             Если ваши текущие клиенты не вписываются в продукт — проблема не в клиентах,
             проблема в модели. Продукт — эталон, клиенты — проверка.
           </div>
-          {state.completed_at ? (
+          {isCompleted ? (
             <div className="flex items-center gap-3">
               <Badge className="gap-1.5 bg-green-600 hover:bg-green-600">
                 <CheckCircle2 className="h-3.5 w-3.5" /> Шаг завершён
