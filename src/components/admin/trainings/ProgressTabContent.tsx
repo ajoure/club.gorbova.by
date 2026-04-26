@@ -317,11 +317,11 @@ export function ProgressTabContent({ modules }: ProgressTabContentProps) {
   };
 
   const handleLessonClick = (lesson: LessonWithProgress) => {
-    if (lesson.completion_mode === "kvest") {
-      navigate(`/admin/training-lessons/${lesson.module_id}/progress/${lesson.id}`);
-    } else {
-      setViewerModal({ lessonId: lesson.id, title: lesson.title });
-    }
+    // Канонический экран прогресса урока — единый для всех completion_mode
+    // (kvest и manual). AdminLessonProgress сам мерджит lesson_progress_state +
+    // user_lesson_progress, показывает статусы, аналитику портфеля, связь,
+    // CSV-экспорт и StudentProgressModal с полными ответами учеников.
+    navigate(`/admin/training-lessons/${lesson.module_id}/progress/${lesson.id}`);
   };
 
   if (isLoading) {
