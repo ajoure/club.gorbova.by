@@ -574,6 +574,7 @@ export function PaymentDialog({
     }
     setIsLoading(true);
     setPaymentError(null);
+    setProcessingStage('creating_order');
     setStep('processing');
     try {
       // 1. Bridge: create internal one-time payment_link.
@@ -599,6 +600,7 @@ export function PaymentDialog({
       }
 
       // 2. Charge saved card via existing public-charge-saved-card.
+      setProcessingStage('charging_card');
       const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
       const chargeUrl = `https://${projectId}.supabase.co/functions/v1/public-charge-saved-card`;
       const idempotency_key = savedCardIdempotencyKeyRef.current;
@@ -626,6 +628,7 @@ export function PaymentDialog({
       }
       // Issuer 3DS may require extra confirmation.
       if (data.redirect_url) {
+        setProcessingStage('redirecting_3ds');
         window.location.href = data.redirect_url;
         return;
       }
