@@ -91,6 +91,7 @@ const BLOCK_TYPE_LABELS: Record<string, string> = {
   rating: "Оценка",
   table_input: "Таблица",
   role_description: "Выбор роли",
+  external_product_workshop: "Воркшоп: внешний продукт",
 };
 
 export function blockTypeLabel(blockType: string): string {
