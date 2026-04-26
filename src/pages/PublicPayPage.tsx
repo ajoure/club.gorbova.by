@@ -75,6 +75,8 @@ export default function PublicPayPage() {
 
   const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
   const functionUrl = `https://${projectId}.supabase.co/functions/v1/public-checkout`;
+  const savedCardFunctionUrl = `https://${projectId}.supabase.co/functions/v1/public-charge-saved-card`;
+  const [savedCardProcessing, setSavedCardProcessing] = useState(false);
 
   const { data: linkInfo, isLoading, error: loadError } = useQuery({
     queryKey: ['public-pay', token],
@@ -89,6 +91,24 @@ export default function PublicPayPage() {
       return res.json();
     },
     enabled: !!token,
+    retry: false,
+  });
+
+  // PAY-C: load user's active saved cards (NEVER select provider_token).
+  const { data: savedCards } = useQuery({
+    queryKey: ['public-pay-saved-cards', user?.id],
+    queryFn: async (): Promise<SavedCard[]> => {
+      const { data, error } = await supabase
+        .from('payment_methods')
+        .select('id, brand, last4, exp_month, exp_year, is_default')
+        .eq('user_id', user!.id)
+        .eq('status', 'active')
+        .order('is_default', { ascending: false })
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data || []) as SavedCard[];
+    },
+    enabled: !!user?.id,
     retry: false,
   });
 
