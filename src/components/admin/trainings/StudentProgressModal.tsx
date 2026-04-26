@@ -616,28 +616,30 @@ function DiagnosticTableV2Detail({ rows }: { rows: DiagnosticTableV2Row[] }) {
 
   return (
     <>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Клиент</TableHead>
-            <TableHead>Тип</TableHead>
-            <TableHead className="text-right">Доход</TableHead>
-            <TableHead className="text-right">Часы</TableHead>
-            <TableHead></TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {rows.map((row, idx) => (
-            <TableRow key={idx}>
-              <TableCell>{row.client || "—"}</TableCell>
-              <TableCell><Badge variant="outline" className="text-xs">{row.source_type || "—"}</Badge></TableCell>
-              <TableCell className="text-right">{row.monthly_income || 0} BYN</TableCell>
-              <TableCell className="text-right">{(Number(row.direct_hours) || 0) + (Number(row.mental_hours) || 0)} ч</TableCell>
-              <TableCell><V2ClientRowDetails row={row} allRows={rows} /></TableCell>
+      <div className="overflow-x-auto -mx-2 sm:mx-0 rounded-md border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="min-w-[140px]">Клиент</TableHead>
+              <TableHead className="min-w-[90px]">Тип</TableHead>
+              <TableHead className="text-right whitespace-nowrap min-w-[100px]">Доход</TableHead>
+              <TableHead className="text-right whitespace-nowrap min-w-[80px]">Часы</TableHead>
+              <TableHead className="min-w-[90px]"></TableHead>
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {rows.map((row, idx) => (
+              <TableRow key={idx}>
+                <TableCell>{row.client || "—"}</TableCell>
+                <TableCell><Badge variant="outline" className="text-xs whitespace-nowrap">{row.source_type || "—"}</Badge></TableCell>
+                <TableCell className="text-right whitespace-nowrap">{row.monthly_income || 0} BYN</TableCell>
+                <TableCell className="text-right whitespace-nowrap">{(Number(row.direct_hours) || 0) + (Number(row.mental_hours) || 0)} ч</TableCell>
+                <TableCell><V2ClientRowDetails row={row} allRows={rows} /></TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
       <Separator className="my-3" />
       <div className="grid grid-cols-3 gap-3 text-sm">
         <div><Label className="text-muted-foreground">Доход</Label><p className="font-semibold">{totalIncome} BYN</p></div>
