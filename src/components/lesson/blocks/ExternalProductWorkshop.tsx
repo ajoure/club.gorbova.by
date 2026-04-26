@@ -585,7 +585,7 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
         icon={<Users className="h-5 w-5" />}
         index={1}
         title="Тип клиента"
-        subtitle="Определите типовой контур клиента, для которого вы собираете продукт"
+        subtitle="Определите типовой контур клиента"
       >
         <div className="space-y-3">
           {state.client_types.map((row, idx) => (
@@ -612,7 +612,6 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
                 <Field label="Название типа">
                   <Input
                     value={row.name}
-                    placeholder="Напр.: ИП услуги без сотрудников"
                     onChange={(e) => updClientType(row.id, { name: e.target.value })}
                   />
                 </Field>
@@ -631,7 +630,6 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
                 <Textarea
                   value={row.description}
                   rows={2}
-                  placeholder="Как работает бизнес, какие операции, особенности"
                   onChange={(e) => updClientType(row.id, { description: e.target.value })}
                 />
               </Field>
@@ -639,7 +637,6 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
                 <Textarea
                   value={row.conclusion}
                   rows={2}
-                  placeholder="Стандартный / сложный / нестабильный"
                   onChange={(e) => updClientType(row.id, { conclusion: e.target.value })}
                 />
               </Field>
