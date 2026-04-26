@@ -844,7 +844,7 @@ export function PaymentDialog({
               </p>
             </div>
 
-            <div className="rounded-lg bg-muted/50 p-3 text-sm">
+            <div className="rounded-xl bg-card/60 backdrop-blur-sm border border-border/40 p-3 text-sm">
               <p className="flex items-center gap-2">
                 <CheckCircle className="h-4 w-4 text-primary" />
                 Email: {formData.email}
@@ -911,14 +911,14 @@ export function PaymentDialog({
       case "additional_info":
         return (
           <form onSubmit={handleAdditionalInfoSubmit} className="space-y-5">
-            <div className="rounded-lg bg-muted/50 p-3 text-sm">
+            <div className="rounded-xl bg-card/60 backdrop-blur-sm border border-border/40 p-3 text-sm">
               <p className="flex items-center gap-2">
                 <Mail className="h-4 w-4 text-primary" />
                 Email: {formData.email}
               </p>
             </div>
 
-            <div className="rounded-lg bg-muted/30 p-3 space-y-1.5">
+            <div className="rounded-xl bg-card/50 backdrop-blur-sm border border-border/30 p-3 space-y-1.5">
               <p className="text-sm font-medium text-foreground flex items-center gap-1.5">
                 <Info className="h-4 w-4 text-primary" />
                 Зачем эти данные?
@@ -992,12 +992,12 @@ export function PaymentDialog({
               )}
             </div>
 
-            <div className="rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">
+            <div className="rounded-xl bg-card/60 backdrop-blur-sm border border-border/40 p-3 text-sm text-muted-foreground">
               <p>После оплаты мы создадим для вас личный кабинет и отправим данные для входа на указанный email.</p>
             </div>
 
             {/* Privacy consent checkbox */}
-            <div className="flex items-start gap-3 p-4 rounded-xl bg-muted/50 border border-border/50">
+            <div className="flex items-start gap-3 p-4 rounded-xl bg-card/60 backdrop-blur-sm border border-border/40">
               <Checkbox
                 id="payment-privacy-consent"
                 checked={privacyConsent}
@@ -1048,7 +1048,7 @@ export function PaymentDialog({
             </div>
 
             {telegramDeepLink ? (
-              <div className="rounded-lg bg-muted/50 p-4 space-y-3">
+              <div className="rounded-xl bg-card/60 backdrop-blur-sm border border-border/40 p-4 space-y-3">
                 <p className="text-sm text-muted-foreground">
                   Бот открыт в новой вкладке. Нажмите "Start" в Telegram, затем вернитесь сюда.
                 </p>
@@ -1112,7 +1112,7 @@ export function PaymentDialog({
         return (
           <div className="space-y-4">
             {isTrial && (
-              <Alert className="bg-muted/50">
+              <Alert className="bg-card/60 backdrop-blur-sm border-border/40">
                 <Info className="h-4 w-4" />
                 <AlertTitle>Важное о пробном периоде</AlertTitle>
                 <AlertDescription>
@@ -1189,7 +1189,7 @@ export function PaymentDialog({
               </Alert>
             )}
 
-            <div className="rounded-lg bg-muted/50 p-4 space-y-2">
+            <div className="rounded-xl bg-card/60 backdrop-blur-sm border border-border/40 p-4 space-y-2">
               <div className="flex items-center gap-2 text-sm">
                 <CheckCircle className="h-4 w-4 text-primary" />
                 <span>Email: {formData.email}</span>
@@ -1268,7 +1268,7 @@ export function PaymentDialog({
             )}
 
             {isSubscription && !isTrial && (
-              <div className="rounded-lg bg-muted/40 border border-border p-3 text-sm text-muted-foreground">
+              <div className="rounded-xl bg-card/60 backdrop-blur-sm border border-border/40 p-3 text-sm text-muted-foreground">
                 При оформлении подписки bePaid может показать экран с формулировкой «привязка карты для автоплатежей». Это штатный экран подписки: карта используется для регулярного продления, а списание выполняется по условиям выбранного тарифа.
               </div>
             )}
