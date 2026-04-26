@@ -384,28 +384,30 @@ function BlockResponseDetail({ block, response, lessonBlocks }: {
         const f = filled(items);
         if (!f.length) return <p className="text-xs text-muted-foreground italic">Не заполнено</p>;
         return (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Название</TableHead>
-                <TableHead className="text-right">Коэф.</TableHead>
-                <TableHead className="text-right">Доплата, $</TableHead>
-                <TableHead>Описание</TableHead>
-                <TableHead>Вывод</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {f.map((r, i) => (
-                <TableRow key={i}>
-                  <TableCell className="font-medium">{String(r.name)}</TableCell>
-                  <TableCell className="text-right">×{fmtNum(r.coefficient)}</TableCell>
-                  <TableCell className="text-right">+{fmtNum(r.price)}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground whitespace-pre-wrap">{String(r.description ?? "")}</TableCell>
-                  <TableCell className="text-xs whitespace-pre-wrap">{String(r.conclusion ?? "")}</TableCell>
+          <div className="overflow-x-auto -mx-2 sm:mx-0 rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="min-w-[120px]">Название</TableHead>
+                  <TableHead className="text-right whitespace-nowrap min-w-[80px]">Коэф.</TableHead>
+                  <TableHead className="text-right whitespace-nowrap min-w-[100px]">Доплата, $</TableHead>
+                  <TableHead className="min-w-[160px]">Описание</TableHead>
+                  <TableHead className="min-w-[140px]">Вывод</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {f.map((r, i) => (
+                  <TableRow key={i}>
+                    <TableCell className="font-medium">{String(r.name)}</TableCell>
+                    <TableCell className="text-right whitespace-nowrap">×{fmtNum(r.coefficient)}</TableCell>
+                    <TableCell className="text-right whitespace-nowrap">+{fmtNum(r.price)}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground whitespace-pre-wrap">{String(r.description ?? "")}</TableCell>
+                    <TableCell className="text-xs whitespace-pre-wrap">{String(r.conclusion ?? "")}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
         );
       };
 
