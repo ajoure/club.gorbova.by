@@ -1287,6 +1287,11 @@ export function PaymentDialog({
               </Button>
             </div>
 
+            <p className="text-[11px] text-muted-foreground/80 flex items-center gap-1 justify-center">
+              <ShieldCheck className="h-3 w-3" />
+              Защищённая оплата на стороне bePaid.
+            </p>
+
             {/* Admin test payment button - SECURITY: only super_admin */}
             {isSuperAdmin() && (
               <div className="border-t pt-4 mt-4">
