@@ -15,7 +15,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ArrowLeft, ChevronRight, Eye, Users, MessageSquare } from "lucide-react";
+import { ArrowLeft, ChevronRight, Eye, Users, MessageSquare, Download } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { StudentProgressModal } from "@/components/admin/trainings/StudentProgressModal";
@@ -27,6 +27,8 @@ import {
   resolveProgressValue,
   type BlockMeta,
 } from "@/lib/blockProgressResolver";
+import { logTrainingEvent } from "@/lib/auditTrainingActions";
+import { toast } from "sonner";
 
 type LessonProgressRecord = ModalRecord;
 type LessonBlock = ModalBlock;
