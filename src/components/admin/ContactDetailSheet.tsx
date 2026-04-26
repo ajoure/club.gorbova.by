@@ -133,7 +133,7 @@ import { LoyaltyPulse } from "./LoyaltyPulse";
 import { ContactLoyaltyTab } from "./ContactLoyaltyTab";
 import { ContactArtifactsTab } from "./contact/ContactArtifactsTab";
 import { ContactPaymentsTab } from "./ContactPaymentsTab";
-import { LinkedCardItem } from "./cards/LinkedCardItem";
+
 import { usePermissions } from "@/hooks/usePermissions";
 import { useAdminUsers } from "@/hooks/useAdminUsers";
 import { WebinarActivitySection } from "./contact/WebinarActivitySection";
@@ -729,41 +729,6 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       return data;
     },
     enabled: !!contact?.user_id,
-  });
-
-  // Batch fetch latest verification jobs for all payment methods (no N+1)
-  const methodIds = paymentMethods?.map(m => m.id) || [];
-  const { data: verificationJobsMap } = useQuery({
-    queryKey: ["card-jobs-batch", contact?.user_id, methodIds.join(",")],
-    queryFn: async () => {
-      if (methodIds.length === 0) return {};
-      
-      // Get jobs for all methods, ordered by updated_at desc
-      const { data, error } = await supabase
-        .from("payment_method_verification_jobs")
-        .select("id, payment_method_id, status, attempt_count, last_error, updated_at")
-        .in("payment_method_id", methodIds)
-        .order("updated_at", { ascending: false });
-      
-      if (error) throw error;
-      
-      // Build map: payment_method_id → latest job (first occurrence per method)
-      const jobMap: Record<string, {
-        id: string;
-        payment_method_id: string;
-        status: string;
-        attempt_count: number;
-        last_error: string | null;
-        updated_at: string;
-      }> = {};
-      for (const job of data || []) {
-        if (!jobMap[job.payment_method_id]) {
-          jobMap[job.payment_method_id] = job;
-        }
-      }
-      return jobMap;
-    },
-    enabled: methodIds.length > 0,
   });
 
   // PATCH-7: Fetch provider-managed subscriptions for contact
@@ -1884,18 +1849,41 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                     {cardsLoading ? (
                       <Skeleton className="h-12 w-full" />
                     ) : paymentMethods && paymentMethods.length > 0 ? (
-                      <>
-                        {paymentMethods.map((method) => (
-                          <LinkedCardItem
-                            key={method.id}
-                            method={method}
-                            userId={contact.user_id!}
-                            contactId={contact.id}
-                            canReverify={hasPermission('admin.payments.write') || isSuperAdmin()}
-                            latestJob={verificationJobsMap?.[method.id] || null}
-                          />
-                        ))}
-                      </>
+                      <div className="space-y-2">
+                        {paymentMethods.map((method) => {
+                          const brand = (method.brand || "CARD").toUpperCase();
+                          const last4 = method.last4 || "••••";
+                          const mm = method.exp_month ? String(method.exp_month).padStart(2, "0") : null;
+                          const yy = method.exp_year ? String(method.exp_year).slice(-2) : null;
+                          const expiry = mm && yy ? `${mm}/${yy}` : null;
+                          const isExpired = !!(method.exp_month && method.exp_year) &&
+                            (new Date(method.exp_year, method.exp_month, 0) < new Date());
+                          return (
+                            <div
+                              key={method.id}
+                              className="flex items-center justify-between gap-3 rounded-md border bg-card px-3 py-2"
+                            >
+                              <div className="flex items-center gap-3 min-w-0">
+                                <CreditCard className="w-4 h-4 text-muted-foreground shrink-0" />
+                                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
+                                  <span className="font-medium text-sm">
+                                    {brand} ••••{last4}
+                                  </span>
+                                  {expiry && (
+                                    <span className="text-xs text-muted-foreground">{expiry}</span>
+                                  )}
+                                  {method.is_default && (
+                                    <Badge variant="secondary" className="text-[10px] h-5">Основная</Badge>
+                                  )}
+                                  {isExpired && (
+                                    <Badge variant="destructive" className="text-[10px] h-5">Истекла</Badge>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     ) : (
                       <div className="text-center py-4 text-muted-foreground">
                         <CreditCard className="w-8 h-8 mx-auto mb-2 opacity-30" />
