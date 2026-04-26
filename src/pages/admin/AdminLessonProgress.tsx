@@ -103,13 +103,16 @@ export default function AdminLessonProgress() {
         const existing = byUser.get(row.user_id);
         const completedAt = row.completed_at || null;
         if (existing) {
+          const manualNewer = new Date(row.updated_at) > new Date(existing.updated_at);
+          // «Свежее по updated_at побеждает» — снятие завершения в manual-блоке
+          // не должно оставлять старый completed_at от kvest-прогресса.
+          const nextCompletedAt = manualNewer
+            ? completedAt
+            : (existing.completed_at || completedAt);
           byUser.set(row.user_id, {
             ...existing,
-            updated_at:
-              new Date(row.updated_at) > new Date(existing.updated_at)
-                ? row.updated_at
-                : existing.updated_at,
-            completed_at: existing.completed_at || completedAt,
+            updated_at: manualNewer ? row.updated_at : existing.updated_at,
+            completed_at: nextCompletedAt,
             progress_sources: Array.from(
               new Set([...(existing.progress_sources || []), "user_lesson_progress"])
             ),
