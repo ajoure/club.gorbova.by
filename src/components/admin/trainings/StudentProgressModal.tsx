@@ -19,7 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { FileText, Upload, MessageSquare, ChevronDown } from "lucide-react";
+import { FileText, MessageSquare, ChevronDown, Download } from "lucide-react";
 import { FeedbackDrawer } from "@/components/training-feedback/FeedbackDrawer";
 import { getFileTypeIcon } from "@/components/admin/lesson-editor/blocks/fileTypeIcons";
 import { format } from "date-fns";
@@ -339,6 +339,7 @@ function BlockResponseDetail({ block, response, lessonBlocks }: {
       const sv = (state.service_levels as Array<Record<string, unknown>>) || [];
       const rs = (state.responsibility as Array<Record<string, unknown>>) || [];
       const portfolio = (state.portfolio_pricing as Array<Record<string, unknown>>) || [];
+      const importMeta = (state.import_meta as Record<string, unknown> | null) || null;
       const completed = !!(resp.is_submitted || state.completed_at);
       const filled = (arr: Array<Record<string, unknown>>) =>
         arr.filter((r) => typeof r.name === "string" && (r.name as string).trim().length > 0);
@@ -496,6 +497,28 @@ function BlockResponseDetail({ block, response, lessonBlocks }: {
           <Badge variant={completed ? "default" : "outline"}>
             {completed ? "Завершён" : "В работе"}
           </Badge>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+            <div className="rounded border p-2">
+              <div className="text-muted-foreground">Источник импорта</div>
+              <div className="font-medium">{String(importMeta?.source_lesson_title || "Шаг 2")}</div>
+            </div>
+            <div className="rounded border p-2">
+              <div className="text-muted-foreground">Импортировано клиентов</div>
+              <div className="font-medium">{String(importMeta?.imported_count ?? portfolio.length)}</div>
+            </div>
+            <div className="rounded border p-2">
+              <div className="text-muted-foreground">Дата/время импорта</div>
+              <div className="font-medium">
+                {importMeta?.imported_at ? new Date(String(importMeta.imported_at)).toLocaleString("ru-RU") : "—"}
+              </div>
+            </div>
+          </div>
+          {importMeta?.empty_reason && portfolio.length === 0 && (
+            <div className="rounded border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive">
+              Портфель пустой: {String(importMeta.empty_reason)}
+            </div>
+          )}
 
           <div className="space-y-1">
             <Label className="text-sm font-semibold">1. Типы клиентов</Label>
@@ -671,6 +694,28 @@ export function StudentProgressModal({
     return null;
   };
 
+  const exportFullResponse = () => {
+    const payload = {
+      exported_at: new Date().toISOString(),
+      student: { user_id: record.user_id, name: displayName, email: profile?.email || null },
+      lesson: { id: lessonId || record.lesson_id, title: lessonTitle || null, module_id: moduleId || null },
+      completed_at: record.completed_at,
+      blocks: interactive.map((block) => ({
+        block_id: block.id,
+        block_type: block.block_type,
+        label: getBlockLabel(block),
+        response: getResponse(block),
+      })),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `lesson-response-${record.user_id}-${lessonId || record.lesson_id}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   // Resolve display name: priority chain
   const displayName = studentName || profile?.full_name || profile?.email || "Неизвестный ученик";
   const initials = displayName
@@ -683,7 +728,12 @@ export function StudentProgressModal({
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="text-lg font-semibold">Прогресс ученика</DialogTitle>
+          <DialogTitle className="flex items-center justify-between gap-3 text-lg font-semibold">
+            <span>Прогресс ученика</span>
+            <Button variant="outline" size="sm" onClick={exportFullResponse}>
+              <Download className="h-4 w-4 mr-1.5" /> Экспорт ответа
+            </Button>
+          </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-6">

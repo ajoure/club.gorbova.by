@@ -76,12 +76,22 @@ export interface PortfolioPricingRow {
   conclusion: string;
 }
 
+export interface ImportMeta {
+  source_lesson_id: string | null;
+  source_lesson_title: string | null;
+  source_block_id: string | null;
+  imported_count: number;
+  imported_at: string | null;
+  empty_reason?: "no_previous_lesson" | "no_user_response" | "no_rows";
+}
+
 export interface ExternalProductState {
   client_types: ClientTypeRow[];
   complexity: CoeffRow[];
   service_levels: CoeffRow[];
   responsibility: CoeffRow[];
   portfolio_pricing: PortfolioPricingRow[];
+  import_meta: ImportMeta | null;
   completed_at: string | null;
 }
 
@@ -141,6 +151,7 @@ const DEFAULT_STATE: ExternalProductState = {
     { id: uid(), name: "Полная", description: "", conclusion: "", coefficient: 1.8, price: 0 },
   ],
   portfolio_pricing: [],
+  import_meta: null,
   completed_at: null,
 };
 
@@ -160,6 +171,7 @@ const mergeState = (raw: unknown): ExternalProductState => {
       ? r.responsibility
       : DEFAULT_STATE.responsibility.map((x) => ({ ...x, id: uid() })),
     portfolio_pricing: Array.isArray(r.portfolio_pricing) ? r.portfolio_pricing : [],
+    import_meta: r.import_meta && typeof r.import_meta === "object" ? r.import_meta as ImportMeta : null,
     completed_at: typeof r.completed_at === "string" ? r.completed_at : null,
   };
 };
@@ -172,6 +184,15 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
   const [importing, setImporting] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [completionError, setCompletionError] = useState<string | null>(null);
+  const [restoredFromSaved, setRestoredFromSaved] = useState(false);
+  const [progressProof, setProgressProof] = useState<{
+    checked_at: string;
+    row_exists: boolean;
+    block_completed: boolean;
+    admin_source_ready: boolean;
+    response_has_portfolio: boolean;
+  } | null>(null);
   const skipNextSave = useRef(true);
 
   /* загрузка пользователя и state */
@@ -188,7 +209,7 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
       }
       const { data: row } = await supabase
         .from("user_lesson_progress")
-        .select("response")
+        .select("response, completed_at")
         .eq("user_id", uid_)
         .eq("lesson_id", lessonId)
         .eq("block_id", blockId)
@@ -197,6 +218,14 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
       if (row?.response) {
         const merged = mergeState((row.response as { state?: unknown }).state ?? row.response);
         setState(merged);
+        setRestoredFromSaved(true);
+        setProgressProof({
+          checked_at: new Date().toISOString(),
+          row_exists: true,
+          block_completed: !!row.completed_at,
+          admin_source_ready: true,
+          response_has_portfolio: merged.portfolio_pricing.length > 0,
+        });
       }
       setLoading(false);
     })();
@@ -216,11 +245,15 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
     let cancelled = false;
     (async () => {
       setSaveStatus("saving");
+      const canPersistAsSubmitted =
+        !!debouncedState.completed_at &&
+        debouncedState.portfolio_pricing.length > 0 &&
+        debouncedState.client_types.some((r) => r.name.trim().length > 0);
       const payload = {
         type: "external_product_workshop",
         state: debouncedState,
-        is_submitted: !!debouncedState.completed_at,
-        submitted_at: debouncedState.completed_at,
+        is_submitted: canPersistAsSubmitted,
+        submitted_at: canPersistAsSubmitted ? debouncedState.completed_at : null,
         saved_at: new Date().toISOString(),
       };
       const { error } = await supabase
@@ -232,7 +265,7 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
               lesson_id: lessonId,
               block_id: blockId,
               response: payload as never,
-              completed_at: debouncedState.completed_at,
+              completed_at: canPersistAsSubmitted ? debouncedState.completed_at : null,
             },
           ],
           { onConflict: "user_id,lesson_id,block_id" }
@@ -288,7 +321,19 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
         userId,
         overrideSourceLessonId: sourceLessonId ?? undefined,
       });
+      const importedAt = new Date().toISOString();
       if (!result.rows.length) {
+        setState((s) => ({
+          ...s,
+          import_meta: {
+            source_lesson_id: result.source_lesson_id,
+            source_lesson_title: result.source_lesson_title,
+            source_block_id: result.source_block_id,
+            imported_count: 0,
+            imported_at: importedAt,
+            empty_reason: result.empty_reason,
+          },
+        }));
         const reason =
           result.empty_reason === "no_previous_lesson"
             ? "Не найден предыдущий урок с портфелем клиентов."
@@ -311,13 +356,24 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
             conclusion: prev?.conclusion ?? "",
           };
         });
-        return { ...s, portfolio_pricing: next };
+        return {
+          ...s,
+          portfolio_pricing: next,
+          import_meta: {
+            source_lesson_id: result.source_lesson_id,
+            source_lesson_title: result.source_lesson_title,
+            source_block_id: result.source_block_id,
+            imported_count: result.rows.length,
+            imported_at: importedAt,
+          },
+        };
       });
+      setCompletionError(null);
       toast.success(`Импортировано клиентов: ${result.rows.length}`);
     } finally {
       setImporting(false);
     }
-  }, [lessonId, userId]);
+  }, [lessonId, sourceLessonId, userId]);
 
   /* Расчёт по строке портфеля */
   const computed = useMemo(() => {
@@ -372,21 +428,56 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
     return { avgCoeff, avgAddons, avgCurrent, underpriced };
   }, [computed]);
 
+  const completionValidation = useMemo(() => {
+    if (state.portfolio_pricing.length === 0) {
+      return "Нельзя завершить шаг без импортированного портфеля из Шага 2.";
+    }
+    if (!state.client_types.some((r) => r.name.trim().length > 0)) {
+      return "Заполните хотя бы 1 тип клиента в Блоке 1.";
+    }
+    return null;
+  }, [state.client_types, state.portfolio_pricing.length]);
+  const isCompleted = !!state.completed_at && !completionValidation;
+
   const handleComplete = async () => {
+    if (completionValidation) {
+      setCompletionError(completionValidation);
+      toast.warning(completionValidation);
+      return;
+    }
     const completedAt = new Date().toISOString();
+    const nextState = { ...state, completed_at: completedAt };
     setState((s) => ({ ...s, completed_at: completedAt }));
     // Канонический путь — обновляет useUserProgress в реальном времени и
     // гарантирует засчитывание блока в общей системе прогресса урока.
     if (onCanonicalSave) {
       const payload = {
         type: "external_product_workshop",
-        state: { ...state, completed_at: completedAt },
+        state: nextState,
         is_submitted: true,
         submitted_at: completedAt,
         saved_at: completedAt,
       };
       await onCanonicalSave(payload, true);
     }
+    if (userId) {
+      const { data: proofRow } = await supabase
+        .from("user_lesson_progress")
+        .select("completed_at, response")
+        .eq("user_id", userId)
+        .eq("lesson_id", lessonId)
+        .eq("block_id", blockId)
+        .maybeSingle();
+      const proofResponse = (proofRow?.response as { state?: ExternalProductState } | null)?.state;
+      setProgressProof({
+        checked_at: new Date().toISOString(),
+        row_exists: !!proofRow,
+        block_completed: !!proofRow?.completed_at,
+        admin_source_ready: !!proofRow,
+        response_has_portfolio: Array.isArray(proofResponse?.portfolio_pricing) && proofResponse.portfolio_pricing.length > 0,
+      });
+    }
+    setCompletionError(null);
     toast.success("Шаг 3 завершён");
   };
   const handleReopen = async () => {
@@ -573,6 +664,38 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
           </Button>
         }
       >
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+          <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+            <div className="text-xs text-muted-foreground">Источник импорта</div>
+            <div className="font-medium">{state.import_meta?.source_lesson_title || "Шаг 2"}</div>
+            {state.import_meta?.source_lesson_id && (
+              <div className="text-[11px] text-muted-foreground truncate mt-1">{state.import_meta.source_lesson_id}</div>
+            )}
+          </div>
+          <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+            <div className="text-xs text-muted-foreground">Импортировано клиентов</div>
+            <div className="font-medium">{state.import_meta?.imported_count ?? state.portfolio_pricing.length}</div>
+          </div>
+          <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+            <div className="text-xs text-muted-foreground">Дата/время импорта</div>
+            <div className="font-medium">
+              {state.import_meta?.imported_at
+                ? new Date(state.import_meta.imported_at).toLocaleString("ru-RU")
+                : "—"}
+            </div>
+          </div>
+        </div>
+
+        {state.import_meta?.empty_reason && state.portfolio_pricing.length === 0 && (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>Портфель пустой</AlertTitle>
+            <AlertDescription>
+              Источник найден, но клиенты не импортированы. Проверьте заполнение Шага 2 и повторите импорт.
+            </AlertDescription>
+          </Alert>
+        )}
+
         {state.portfolio_pricing.length === 0 ? (
           <Alert>
             <AlertTriangle className="h-4 w-4" />
@@ -619,6 +742,52 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
         )}
       </SectionCard>
 
+      {/* Proof-панели */}
+      <Card className="border-border/60">
+        <CardContent className="p-5 sm:p-6 space-y-4">
+          <div>
+            <h3 className="text-lg font-semibold leading-tight">Проверка прогресса и сохранения</h3>
+            <p className="text-sm text-muted-foreground mt-1">
+              Эти статусы подтверждают, что ответ сохранён в общей системе прогресса урока.
+            </p>
+          </div>
+          {(completionError || completionValidation) && (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Шаг пока нельзя завершить</AlertTitle>
+              <AlertDescription>{completionError || completionValidation}</AlertDescription>
+            </Alert>
+          )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
+            <ProofTile
+              title="SQL proof"
+              ok={!!progressProof?.row_exists}
+              text={progressProof?.row_exists ? "user_lesson_progress найден" : "Появится после завершения"}
+            />
+            <ProofTile
+              title="UI proof ученика"
+              ok={isCompleted}
+              text={isCompleted ? "Блок отмечен завершённым" : "Блок в процессе"}
+            />
+            <ProofTile
+              title="UI proof преподавателя"
+              ok={!!progressProof?.admin_source_ready}
+              text={progressProof?.admin_source_ready ? "Источник для admin progress готов" : "Будет виден после сохранения"}
+            />
+            <ProofTile
+              title="Reload proof"
+              ok={restoredFromSaved}
+              text={restoredFromSaved ? "Данные восстановлены из сохранения" : "Новая форма или ещё не перезагружалась"}
+            />
+          </div>
+          {progressProof && (
+            <div className="rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground">
+              Автопроверка: ученик завершил блок — {progressProof.block_completed ? "да" : "нет"}; блок засчитан — {progressProof.block_completed ? "да" : "нет"}; ученик появится в admin progress — {progressProof.admin_source_ready ? "да" : "нет"}; ответ содержит портфель — {progressProof.response_has_portfolio ? "да" : "нет"}. Проверено: {new Date(progressProof.checked_at).toLocaleString("ru-RU")}.
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Footer */}
       <Card className="border-border/60 bg-gradient-to-br from-muted/40 to-transparent">
         <CardContent className="py-5 px-5 sm:px-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -626,7 +795,7 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
             Если ваши текущие клиенты не вписываются в продукт — проблема не в клиентах,
             проблема в модели. Продукт — эталон, клиенты — проверка.
           </div>
-          {state.completed_at ? (
+          {isCompleted ? (
             <div className="flex items-center gap-3">
               <Badge className="gap-1.5 bg-green-600 hover:bg-green-600">
                 <CheckCircle2 className="h-3.5 w-3.5" /> Шаг завершён
@@ -706,6 +875,18 @@ function Stat({ label, value, suffix }: { label: string; value: string; suffix?:
       <div className="text-lg font-semibold tracking-tight">
         {value} <span className="text-sm font-normal text-muted-foreground">{suffix}</span>
       </div>
+    </div>
+  );
+}
+
+function ProofTile({ title, ok, text }: { title: string; ok: boolean; text: string }) {
+  return (
+    <div className="rounded-lg border border-border/60 bg-card p-3">
+      <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+        {ok ? <CheckCircle2 className="h-3.5 w-3.5 text-green-600" /> : <AlertTriangle className="h-3.5 w-3.5 text-muted-foreground" />}
+        {title}
+      </div>
+      <div className="mt-1 text-sm font-medium">{text}</div>
     </div>
   );
 }

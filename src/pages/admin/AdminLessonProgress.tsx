@@ -68,21 +68,75 @@ export default function AdminLessonProgress() {
     enabled: !!lessonId,
   });
 
-  // Fetch all progress records (batch, single query)
+  // Fetch all progress records (batch, single query).
+  // Compatibility layer: kvest lessons write lesson_progress_state, manual lessons write user_lesson_progress.
   const { data: progressRecords, isLoading: progressLoading } = useQuery({
     queryKey: ["lesson-progress-admin", lessonId],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data: stateRows, error: stateError } = await supabase
         .from("lesson_progress_state")
         .select("*")
         .eq("lesson_id", lessonId)
         .order("updated_at", { ascending: false });
 
-      if (error) throw error;
+      if (stateError) throw stateError;
+
+      const { data: manualRows, error: manualError } = await supabase
+        .from("user_lesson_progress")
+        .select("id, user_id, lesson_id, response, completed_at, created_at, updated_at")
+        .eq("lesson_id", lessonId)
+        .not("response", "is", null)
+        .order("updated_at", { ascending: false });
+
+      if (manualError) throw manualError;
+
+      const byUser = new Map<string, LessonProgressRecord & { progress_sources?: string[] }>();
+
+      (stateRows || []).forEach((record: any) => {
+        byUser.set(record.user_id, {
+          ...record,
+          progress_sources: ["lesson_progress_state"],
+        });
+      });
+
+      (manualRows || []).forEach((row: any) => {
+        const existing = byUser.get(row.user_id);
+        const completedAt = row.completed_at || null;
+        if (existing) {
+          byUser.set(row.user_id, {
+            ...existing,
+            updated_at:
+              new Date(row.updated_at) > new Date(existing.updated_at)
+                ? row.updated_at
+                : existing.updated_at,
+            completed_at: existing.completed_at || completedAt,
+            progress_sources: Array.from(
+              new Set([...(existing.progress_sources || []), "user_lesson_progress"])
+            ),
+          });
+          return;
+        }
+
+        byUser.set(row.user_id, {
+          id: `manual:${row.lesson_id}:${row.user_id}`,
+          user_id: row.user_id,
+          lesson_id: row.lesson_id,
+          state_json: {},
+          completed_at: completedAt,
+          created_at: row.created_at,
+          updated_at: row.updated_at,
+          profiles: null,
+          progress_sources: ["user_lesson_progress"],
+        } as LessonProgressRecord & { progress_sources?: string[] });
+      });
+
+      const merged = Array.from(byUser.values()).sort(
+        (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+      );
       
-      const userIds = data.map(r => r.user_id);
+      const userIds = merged.map(r => r.user_id);
       if (userIds.length === 0) {
-        return data.map(record => ({ ...record, profiles: null })) as LessonProgressRecord[];
+        return [] as LessonProgressRecord[];
       }
       
       // Batch fetch profiles
@@ -93,7 +147,7 @@ export default function AdminLessonProgress() {
       
       const profileMap = new Map(profiles?.map(p => [p.user_id, p]) || []);
       
-      return data.map(record => ({
+      return merged.map(record => ({
         ...record,
         profiles: profileMap.get(record.user_id) || null,
       })) as LessonProgressRecord[];
@@ -186,6 +240,9 @@ export default function AdminLessonProgress() {
   const totalStudents = progressRecords?.length || 0;
   const completedStudents = progressRecords?.filter(r => r.completed_at).length || 0;
   const totalInteractive = interactiveBlocks.length;
+  const hasExternalProductWorkshop = interactiveBlocks.some((b) => b.block_type === "external_product_workshop");
+  const manualStudents = progressRecords?.filter((r) => ((r as any).progress_sources || []).includes("user_lesson_progress")).length || 0;
+  const savedResponseUsers = Object.keys(blockResponsesMap || {}).length;
   const answeredCounts = progressRecords?.map(r => {
     let count = 0;
     for (const block of interactiveBlocks) {
@@ -289,6 +346,32 @@ export default function AdminLessonProgress() {
           </Card>
         </div>
 
+        {hasExternalProductWorkshop && (
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle className="text-base">Proof-панели по manual-прогрессу</CardTitle>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
+              <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+                <div className="text-xs text-muted-foreground">SQL proof</div>
+                <div className="font-semibold">{manualStudents} из user_lesson_progress</div>
+              </div>
+              <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+                <div className="text-xs text-muted-foreground">UI proof ученика</div>
+                <div className="font-semibold">{completedStudents} завершили</div>
+              </div>
+              <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+                <div className="text-xs text-muted-foreground">UI proof преподавателя</div>
+                <div className="font-semibold">{totalStudents} видны в таблице</div>
+              </div>
+              <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+                <div className="text-xs text-muted-foreground">Reload proof</div>
+                <div className="font-semibold">{savedResponseUsers} ответов загружено</div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Progress Table — dynamic columns with horizontal scroll */}
         <Card>
           <CardHeader>
@@ -333,6 +416,7 @@ export default function AdminLessonProgress() {
                     {progressRecords.map(record => {
                       const profile = record.profiles as any;
                       const feedback = feedbackMap?.[record.user_id];
+                      const sources = ((record as any).progress_sources || []) as string[];
                       
                       return (
                         <TableRow key={record.id}>
@@ -370,6 +454,11 @@ export default function AdminLessonProgress() {
                               <p className="text-xs text-muted-foreground truncate max-w-[160px]">
                                 {profile?.email}
                               </p>
+                              {sources.includes("user_lesson_progress") && (
+                                <Badge variant="outline" className="mt-1 text-[10px]">
+                                  manual
+                                </Badge>
+                              )}
                             </div>
                           </TableCell>
 
