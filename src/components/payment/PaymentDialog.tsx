@@ -247,7 +247,7 @@ export function PaymentDialog({
         }
         
         // Check for saved payment method
-        loadSavedCard(user.id);
+        loadSavedCards(user.id);
       } else {
         // User is not authenticated - start with email step
         setFormData({ email: "", firstName: "", lastName: "", phone: "+375", password: "" });
