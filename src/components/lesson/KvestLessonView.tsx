@@ -503,6 +503,17 @@ export function KvestLessonView({
           </div>
         );
       }
+
+      case 'video': {
+        // Regular video stays interactive in ALL states — user can play/rewatch
+        // anytime regardless of completion status. NEVER apply pointer-events-none.
+        const stableKey = `${blockId}-video`;
+        return (
+          <div key={stableKey}>
+            <LessonBlockRenderer {...commonProps} />
+          </div>
+        );
+      }
       
       case 'diagnostic_table': {
         if (isDiagnosticV2(block.content)) {
