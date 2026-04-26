@@ -30,6 +30,7 @@ const INTERACTIVE_BLOCK_TYPES = new Set([
   "quiz_multiple",
   "quiz_true_false",
   "role_description",
+  "external_product_workshop",
 ]);
 
 export function isInteractiveBlock(blockType: string): boolean {
