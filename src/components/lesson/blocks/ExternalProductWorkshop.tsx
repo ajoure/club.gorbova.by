@@ -76,12 +76,22 @@ export interface PortfolioPricingRow {
   conclusion: string;
 }
 
+export interface ImportMeta {
+  source_lesson_id: string | null;
+  source_lesson_title: string | null;
+  source_block_id: string | null;
+  imported_count: number;
+  imported_at: string | null;
+  empty_reason?: "no_previous_lesson" | "no_user_response" | "no_rows";
+}
+
 export interface ExternalProductState {
   client_types: ClientTypeRow[];
   complexity: CoeffRow[];
   service_levels: CoeffRow[];
   responsibility: CoeffRow[];
   portfolio_pricing: PortfolioPricingRow[];
+  import_meta: ImportMeta | null;
   completed_at: string | null;
 }
 
@@ -141,6 +151,7 @@ const DEFAULT_STATE: ExternalProductState = {
     { id: uid(), name: "Полная", description: "", conclusion: "", coefficient: 1.8, price: 0 },
   ],
   portfolio_pricing: [],
+  import_meta: null,
   completed_at: null,
 };
 
@@ -160,6 +171,7 @@ const mergeState = (raw: unknown): ExternalProductState => {
       ? r.responsibility
       : DEFAULT_STATE.responsibility.map((x) => ({ ...x, id: uid() })),
     portfolio_pricing: Array.isArray(r.portfolio_pricing) ? r.portfolio_pricing : [],
+    import_meta: r.import_meta && typeof r.import_meta === "object" ? r.import_meta as ImportMeta : null,
     completed_at: typeof r.completed_at === "string" ? r.completed_at : null,
   };
 };
