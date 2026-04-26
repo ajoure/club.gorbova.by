@@ -185,6 +185,7 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
   const [userId, setUserId] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [completionError, setCompletionError] = useState<string | null>(null);
+  const [restoredFromSaved, setRestoredFromSaved] = useState(false);
   const [progressProof, setProgressProof] = useState<{
     checked_at: string;
     row_exists: boolean;
@@ -217,6 +218,7 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
       if (row?.response) {
         const merged = mergeState((row.response as { state?: unknown }).state ?? row.response);
         setState(merged);
+        setRestoredFromSaved(true);
       }
       setLoading(false);
     })();
