@@ -353,6 +353,12 @@ export default function PublicPayPage() {
     !isSubscription &&
     Array.isArray(savedCards) &&
     savedCards.length > 0;
+  // PAY-E-LITE: для subscription показываем сохранённые карты в disabled-режиме + уведомление.
+  const showSubscriptionDisabledCards =
+    ownsOrPublic &&
+    isSubscription &&
+    Array.isArray(savedCards) &&
+    savedCards.length > 0;
   const showSubscriptionFallbackHint = ownsOrPublic && isSubscription;
 
   return (
