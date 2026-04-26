@@ -1,282 +1,458 @@
-да, согласен
+да, согласен, с учетом правок:
 
-Можно выполнять **PAY-AUDIT** строго как read-only.
+**1. Bridge function не должна доверять**
 
-**Контрольный scope**
+**amount**
 
-READ-ONLY ONLY
+**с фронта**
 
-**Разрешено**
+В body не передавать amount как источник истины.
 
-- читать файлы;
+Правильно:
 
-- читать .lovable/[plan.md](http://plan.md);
+Frontend передаёт product_id / tariff_id или offer_id.
 
-- читать memory/docs;
+Backend сам резолвит canonical price/currency/product/tariff/offer.
 
-- SELECT из БД;
+Допустимо передать expected_amount только как guard:
 
-- читать edge function logs;
+expected_amount используется только для сравнения.
 
-- rg/grep/git show/git diff;
+Если expected_amount != canonical amount → 400 price_mismatch.
 
-- составить таблицу покрытия;
+**2. Учесть**
 
-- дать прямые ответы на 7 вопросов.
+**payment_links.public_url**
 
-**Запрещено**
+У нас уже есть обязательное поле:
 
-- менять UI;
+payment_links.public_url NOT NULL
 
-- менять backend;
+Bridge insert обязан заполнить:
 
-- менять edge functions;
+public_url = [https://club.gorbova.by/pay/{url_token}](https://club.gorbova.by/pay/{url_token})
 
-- делать deploy;
+И не использовать window.location.origin.
 
-- делать миграции;
+**3. Bridge link должен быть служебным**
 
-- писать в БД;
+В meta добавить:
 
-- обновлять memory;
+{
 
-- “по-быстрому фиксить” найденные баги.
+  "source": "payment_dialog_saved_card_bridge",
 
-**Ключевой ожидаемый вывод**
+  "internal": true,
 
-Нужен честный факт:
+  "created_for_user": "<auth.uid>",
 
-Где реально работает saved-card charge:
+  "expires_reason": "saved_card_bridge_15min"
 
-- /pay/:token one_time?
+}
 
-- PaymentDialog one_time?
+Нужно проверить, не показываются ли такие ссылки в админке Payment Links. Если показываются — в рамках PAY-K можно не скрывать, но в отчёте отметить как follow-up.
 
-- purchases?
+**4. Body bridge function**
 
-- subscription?
+Рекомендуемый контракт:
+
+{
+
+  "product_id": "uuid",
+
+  "tariff_id": "uuid",
+
+  "offer_id": "uuid | null",
+
+  "expected_amount": 10000,
+
+  "currency": "BYN",
+
+  "description": "string | null"
+
+}
+
+Лучше использовать tariff_id, а не tariff_code, если PaymentDialog уже его знает. Если знает только tariff_code — backend должен резолвить строго один тариф.
+
+**5. Anti-duplicate**
+
+Guard за 60 секунд оставить, но искать по:
+
+user_id
+
+product_id
+
+tariff_id
+
+offer_id
+
+amount
+
+currency
+
+meta.source = payment_dialog_saved_card_bridge
+
+status = active
+
+expires_at > now()
+
+current_uses = 0
+
+Если найден — вернуть существующий url_token.
+
+**6. INSERT обязательные поля payment_links**
+
+Перед execute обязательно dry-run по схеме payment_links.
+
+В insert должны быть покрыты минимум:
+
+url_token
+
+public_url
+
+product_id
+
+tariff_id
+
+offer_id
+
+user_id
+
+amount
+
+currency
+
+payment_type = one_time
+
+status = active
+
+max_uses = 1
+
+current_uses = 0
+
+expires_at
+
+created_by
+
+meta
+
+Названия сверить по реальной схеме.
+
+**7. PaymentDialog: saved cards selector**
+
+Для one_time:
+
+RadioGroup активен:
+
+- saved cards
+
+- Новая карта
+
+Для subscription/trial:
+
+карты disabled, PAY-I behavior сохраняется
+
+**8. Обработчик saved-card в PaymentDialog**
+
+Последовательность:
+
+1. payment-dialog-create-bridge-link
+
+2. public-charge-saved-card с url_token + payment_method_id + idempotency_key
+
+3. если redirect_url → window.location.href
+
+4. если 409 → показать “Платёж уже создан…”
+
+5. если failed → нормализованная ошибка
+
+handlePayment для новой карты не менять.
+
+**9. Grep-proof поправить**
+
+Требование:
+
+rg "provider_token" src/ → 0
+
+может быть слишком широким, потому что в проекте могут быть легитимные server/admin места или комментарии.
+
+Лучше:
+
+rg "provider_token" src/components/payment/PaymentDialog.tsx src/pages/PublicPayPage.tsx
+
+→ 0 или только существующий комментарий NEVER select provider_token
 
 И отдельно:
 
-Почему в предыдущих отчётах звучало “реализовано”, если фактически это могло быть реализовано только для /pay/:token.
+rg "provider_token" supabase/functions/payment-dialog-create-bridge-link supabase/functions/public-charge-saved-card
 
-**Обязательная таблица**
+→ provider_token только server-side, без console.log и response
 
-| Entry point | UI file | Edge function(s) | Saved card visible | Saved card selectable | Saved card charge works | one_time | subscription | status |
+**10. Не менять**
 
-Покрыть минимум:
+**public-charge-saved-card**
 
-- /pay/:token one_time
+Согласен: public-charge-saved-card/index.ts diff должен быть пустой.
 
-- /pay/:token subscription
+Bridge function должна создавать link такого shape, чтобы существующая функция приняла его без изменений.
 
-- PaymentDialog one_time
+**11. STOP-guards добавить**
 
-- PaymentDialog subscription
+STOP, если bridge link не проходит текущие guards public-charge-saved-card.
 
-- PaymentDialog trial
+STOP, если для bridge нужно менять public-charge-saved-card.
 
-- Purchases / SubscriptionDetailSheet
+STOP, если payment_links.public_url невозможно заполнить без новой миграции.
 
-**В конце отчёта**
+STOP, если PaymentDialog не имеет однозначного product_id/tariff_id/offer_id.
 
-Нужны прямые ответы:
+STOP, если amount на backend не совпадает с amount в UI.
 
-1. Да/нет: реализована ли saved-card оплата из PaymentDialog.
+STOP, если internal bridge links ломают admin Payment Links list.
 
-2. Где именно реализована saved-card оплата.
+**Готовый блок для Lovable**
 
-3. Почему PaymentDialog остался disabled/info-only.
-
-4. Какие патчи реально что меняли.
-
-5. Подходит ли public-charge-saved-card для PaymentDialog без link_token.
-
-6. Какие ограничения у public-charge-saved-card.
-
-7. Какие варианты унификации есть без второго workflow.
-
-**DoD**
-
-- git diff --name-only → пустой
-
-- ни одной записи в БД не изменено
-
-- ни одной edge function не задеплоено
-
-- отчет содержит таблицу покрытия и 7 прямых ответов
-
-После PAY-AUDIT уже принимать решение по следующему патчу.
+План PAY-K согласован, но внести обязательные правки перед execute:
 
 &nbsp;
 
-План:
+1. Не доверять amount с frontend. Frontend передаёт product_id/tariff_id/offer_id и optional expected_amount. Backend сам резолвит canonical amount/currency/product/tariff/offer. Если expected_amount не совпал — 400 price_mismatch.
 
-# PAY-AUDIT — Read-only инвентаризация saved-card flow
+&nbsp;
 
-## 1. Проблема
+2. Учесть обязательное поле payment_links.public_url. Bridge insert обязан заполнить:
 
-Ранее было заявлено требование: «выбор и оплата сохранённой картой везде». По факту тестов в PaymentDialog на сайте сохранённые карты только отображаются disabled и не используются для оплаты. Нужно остановить execute и провести честный read-only аудит фактического покрытия и предыдущих PAY-патчей.
+   public_url = [https://club.gorbova.by/pay/{url_token}](https://club.gorbova.by/pay/{url_token})
 
-## 2. Scope
+   Никакого window.location.origin.
 
-**STOP — никаких правок.** Только чтение кода, БД, edge function logs и git diff. На выходе — отчёт с таблицей и прямыми ответами.
+&nbsp;
 
-Запрещено в рамках этого аудита:
+3. Bridge link должен быть служебным:
 
-- менять UI;
-- менять backend / edge functions;
-- менять webhook;
-- менять БД, RLS, миграции;
-- ставить новые «исправляющие» PAY-патчи;
-- предлагать новый код до того, как отчёт принят.
+   meta.source = 'payment_dialog_saved_card_bridge'
 
-## 3. Что аудитим
+   meta.internal = true
 
-### A. `/pay/:token`
+   meta.created_for_user = auth.uid()
 
-- `src/pages/PublicPayPage.tsx`
-  - есть ли selector сохранённых карт;
-  - какие карты грузятся (поля, фильтры);
-  - какой backend вызывается при выбранной карте;
-  - что происходит для one_time vs subscription;
-  - что происходит для guest vs auth user;
-  - где включается disabled-режим карт.
+   meta.expires_reason = 'saved_card_bridge_15min'
 
-### B. PaymentDialog на сайте
+&nbsp;
 
-- `src/components/payment/PaymentDialog.tsx`
-  - все entry points (`rg "<PaymentDialog"`): `Landing`, `ProductLanding`, `UniversalPricingSection`, `TariffPricing`, `Pay`, `BusinessTraining`, `BusinessTrainingContent`, `LiveEventProductCta`, `AdminProductDetailV2`;
-  - какие props приходят, особенно `isSubscription`, `isTrial`, `offerId`, `tariffCode`;
-  - какие edge functions вызывает (`bepaid-create-token`, `bepaid-create-subscription-checkout`, `test-payment-complete`);
-  - есть ли вообще ветка вызова `public-charge-saved-card` или иного saved-card backend;
-  - в каком состоянии блок «Сохранённые карты»: visible / selectable / disabled;
-  - что говорит текущий текст пользователю.
+4. Рекомендуемый body payment-dialog-create-bridge-link:
 
-### C. Личный кабинет / Мои покупки
+   {
 
-- `src/pages/Purchases.tsx`
-- `src/components/purchases/SubscriptionListItem.tsx`
-- `src/components/purchases/OrderListItem.tsx`
-- `src/components/purchases/SubscriptionDetailSheet.tsx`
-- наличие/отсутствие действий «оплатить сохранённой картой», «повторить оплату»;
-- что показывается из `payment_methods` (только инфо или selector).
+     product_id,
 
-### D. Edge functions inventory
+     tariff_id,
 
-Для каждой собрать единым списком: вызыватели, сценарии, поддержка saved card, требование `payment_link`, что создаёт, tracking_id, через какой webhook закрывается:
+     offer_id,
 
-- `public-charge-saved-card`
-- `public-checkout`
-- `bepaid-create-token`
-- `bepaid-create-subscription-checkout`
-- `direct-charge` (известно: отключён 410)
-- `admin-manual-charge`
-- `_shared/create-payment-checkout.ts` (helper, не entry point, но критичен)
-- `bepaid-webhook` (как closer)
+     expected_amount,
 
-Источники истины для проверки:
+     currency,
 
-- код `supabase/functions/<name>/index.ts`;
-- `supabase/functions.registry.txt`;
-- `supabase--edge_function_logs` для подтверждения реальных вызовов;
-- `payments_v2` / `orders_v2` через `supabase--read_query`: фактические `meta.source`, `tracking_id`, последние записи.
+     description
 
-### E. История PAY-патчей
+   }
 
-По текущему коду + `.lovable/plan.md` собрать таблицу патчей: PAY-C, PAY-D, PAY-E-LITE, PAY-G, PAY-H, PAY-I. Для каждого:
+   Если PaymentDialog не имеет tariff_id, backend может принять tariff_code, но обязан резолвить строго один тариф.
 
-- что было заявлено;
-- какие файлы реально затронуты сейчас;
-- какие ограничения зафиксированы;
-- что осталось disabled / отложено;
-- где именно остался разрыв «сайт vs ссылка».
+&nbsp;
 
-Дополнительные источники:
+5. Anti-duplicate за 60 секунд искать по:
 
-- `mem://ui/payments/saved-card-client-policy`;
-- `mem://architecture/payments/one-time-checkout-unification`;
-- `mem://commercial-logic/payments/public-checkout-architecture.md`;
-- `docs/PAYMENT_LINKS_AUDIT.md`.
+   user_id, product_id, tariff_id, offer_id, amount, currency,
 
-## 4. Обязательный артефакт — таблица покрытия
+   meta.source='payment_dialog_saved_card_bridge',
 
-Отчёт обязан содержать таблицу следующего формата (одна строка = один реальный entry point):
+   status='active',
 
+   expires_at > now(),
 
-| Entry point | UI file | Edge function(s) | Saved card visible | Saved card selectable | Saved card charge works | one_time | subscription | status |
-| ----------- | ------- | ---------------- | ------------------ | --------------------- | ----------------------- | -------- | ------------ | ------ |
+   current_uses = 0.
 
+   Если найден — вернуть существующий url_token.
 
-Покрыть минимум:
+&nbsp;
 
-- `/pay/:token` one_time;
-- `/pay/:token` subscription;
-- PaymentDialog one_time (consultation, разовый продукт);
-- PaymentDialog subscription;
-- PaymentDialog trial;
-- Purchases / SubscriptionDetailSheet (renew / repay).
+6. Перед execute сделать dry-run схемы payment_links и убедиться, что insert покрывает:
 
-## 5. Обязательные прямые ответы
+   url_token, public_url, product_id, tariff_id, offer_id, user_id,
 
-В конце отчёта — без размытых формулировок:
+   amount, currency, payment_type='one_time', status='active',
 
-1. Реализована ли уже оплата сохранённой картой из PaymentDialog (да / нет, со ссылкой на код)?
-2. Если нет — почему в предыдущих отчётах звучало, что «оплата привязанной картой реализована»? Какой именно патч это утверждал и какие файлы он реально менял?
-3. Где сейчас фактически работает saved-card charge (entry point + edge function + последний реальный лог/запись из БД)?
-4. Что минимально нужно доделать, чтобы PaymentDialog one_time тоже использовал сохранённую карту?
-5. Нужно ли для этого менять backend, или существующий `public-charge-saved-card` уже подходит?
-6. Если `public-charge-saved-card` требует `url_token`, почему он не подходит для PaymentDialog без payment link, и какие у него ещё ограничения (scope guard, ownership, idempotency)?
-7. Какой самый безопасный единый путь, чтобы не плодить второй payment workflow (расширение существующей function vs тонкий wrapper над `_shared/create-payment-checkout.ts` + отдельный saved-card path vs новый endpoint)? Указать риски каждого варианта, без выбора решения.
+   max_uses=1, current_uses=0, expires_at, created_by, meta.
 
-## 6. Изменяемые компоненты
+&nbsp;
 
-Никакие. Аудит read-only.
+7. В PaymentDialog:
 
-## 7. Что НЕ будет изменено
+   - one_time: RadioGroup активен (saved cards + Новая карта);
 
-Ничего. Ни UI, ни edge functions, ни webhook, ни БД, ни RLS, ни memory.
+   - saved card → bridge function → public-charge-saved-card;
 
-## 8. Dry-run
+   - new card → старый handlePayment / bepaid-create-token;
 
-Сам аудит и есть dry-run. Никаких фактических операций, кроме SELECT и чтения файлов.
+   - subscription/trial → карты disabled, PAY-I behavior без изменений.
 
-## 9. Execute
+&nbsp;
 
-1. Прочитать перечисленные UI файлы и зафиксировать поведение по каждому entry point.
-2. Прочитать перечисленные edge functions, выписать их контракты.
-3. Прогнать `rg` по `provider_token`, `public-charge-saved-card`, `direct-charge`, `useMitTokenization`, `paymentFlowType` — зафиксировать, где они встречаются.
-4. Через `supabase--read_query` посмотреть свежие записи в `payments_v2` / `orders_v2` с `meta->>source = 'saved_card_public_pay'` и без — подтвердить, какие entry points реально доходили до БД.
-5. Через `supabase--edge_function_logs` подтвердить реальные вызовы `public-charge-saved-card`, `bepaid-create-token`, `public-checkout`.
-6. Сложить всё в таблицу покрытия.
-7. Дать прямые ответы на 7 вопросов.
-8. Никаких правок.
+8. public-charge-saved-card НЕ менять. Bridge должен создавать payment_link такого shape, чтобы текущая функция приняла его без изменений.
 
-## 10. STOP-guards
+&nbsp;
 
-- STOP, если в ходе аудита возникает соблазн «по-быстрому пофиксить» — фиксить запрещено.
-- STOP, если данные в коде и в логах противоречат друг другу — это и есть результат аудита, фиксируем расхождение, не «дорисовываем» интерпретацию.
-- STOP, если нужны дополнительные права/доступы для проверки — указать это в отчёте, не обходить.
-- STOP, если очередной PAY-патч обнаружится частично откатанным — зафиксировать факт, не «восстанавливать».
+9. STOP-guards:
 
-## 11. DoD
+   - STOP, если нужно менять public-charge-saved-card;
 
-- Аудит-отчёт содержит:
-  - заполненную таблицу покрытия по всем entry points;
-  - прямые ответы на 7 вопросов;
-  - явный вывод: «оплата сохранённой картой реализована только в /pay/:token one_time» (или иной фактический вывод, подтверждённый кодом и логами);
-  - перечень ограничений `public-charge-saved-card` (auth, scope=one_time, ownership NULL-or-equal, idempotency) с цитатами строк;
-  - раздел «варианты унификации без второго workflow» с рисками, без выбора решения;
-- ни один файл проекта не изменён;
-- ни одна edge function не задеплоена;
-- ни одна запись в БД не изменена;
-- `git diff --name-only` пустой.
+   - STOP, если нужно менять webhook/grant/consume;
 
-## 12. Риски и зависимости
+   - STOP, если payment_links.public_url нельзя заполнить;
 
-- Часть данных требует чтения логов edge functions и SELECT по `payments_v2` — если доступ ограничен, явно отметить это в отчёте.
-- Если в PaymentDialog обнаружатся скрытые ветки, которые я не учёл, — внести их в таблицу как отдельные entry points, а не «склеивать».
+   - STOP, если PaymentDialog не имеет однозначного product_id/tariff_id/offer_id;
 
-## 13. Требуется дополнительная информация
+   - STOP, если canonical amount не совпадает с UI amount;
 
-Дополнительная информация не требуется. Требуется approval на выполнение PAY-AUDIT именно как read-only аудита, без правок.
+   - STOP, если provider_token попадает во frontend;
+
+   - STOP, если subscription/trial становятся кликабельными;
+
+   - STOP, если internal bridge links ломают admin Payment Links list.
+
+&nbsp;
+
+10. DoD:
+
+   - PaymentDialog one_time + saved cards: карты кликабельны.
+
+   - Выбор saved card создаёт internal payment_link и вызывает public-charge-saved-card.
+
+   - New card path не изменён.
+
+   - Subscription/trial cards disabled.
+
+   - public-charge-saved-card diff пустой.
+
+   - webhook/grant/consume diff пустой.
+
+   - PublicPayPage diff пустой.
+
+   - tsc clean.
+
+   - grep provider_token по PaymentDialog/PublicPayPage — без утечки.
+
+   - bridge link в payment_links: source='payment_dialog_saved_card_bridge', public_url заполнен, max_uses=1, expires_at≈15min.
+
+После этих правок можно выполнять PAY-K.
+
+&nbsp;
+
+План: PAY-K — PaymentDialog saved-card via internal one-time payment_link
+
+## Контекст и обоснование
+
+PAY-AUDIT подтвердил:
+
+- Saved-card charge работает только в `/pay/:token` one_time через `PublicPayPage.tsx → public-charge-saved-card`.
+- В `PaymentDialog` saved-card charge НЕ реализован (PAY-I оставил карты только disabled/info-only).
+- В `Purchases` saved-card charge НЕ реализован.
+- `public-charge-saved-card` требует `url_token` + `payment_link` + `payment_type='one_time'` + ownership `link.user_id NULL-or-equal`.
+
+PaymentDialog работает без `payment_link`, поэтому функция напрямую неприменима.
+
+## Выбранный архитектурный вариант: C (bridge через internal payment_link)
+
+Для one_time PaymentDialog при выборе сохранённой карты:
+
+1. Backend создаёт короткоживущую internal `payment_link` (max_uses=1, expires_at=now()+15min).
+2. Frontend вызывает существующий `public-charge-saved-card` с этим `url_token` + `payment_method_id`.
+3. Webhook закрывает оплату по уже работающему `link:order:{order_id}` path.
+4. `grant-access-for-order` и `consumePaymentLinkForOrder` не меняются.
+
+Преимущества: не дублируем charge workflow, не трогаем webhook/grant/consume, переиспользуем рабочий backend `/pay/:token`.
+
+## Scope
+
+### Frontend
+
+- `src/components/payment/PaymentDialog.tsx`:
+  - Для `!isSubscription && !isTrial` (one_time) — активировать `RadioGroup` выбора saved card vs new card.
+  - При выборе saved card → вызвать новый bridge edge function → получить `url_token` → вызвать `public-charge-saved-card({ url_token, payment_method_id, idempotency_key })` → отрисовать результат как в `PublicPayPage`.
+  - Для new card — оставить текущий `bepaid-create-token` flow.
+  - Для subscription/trial — карты остаются `disabled` (PAY-I behavior).
+
+### Backend (новый helper)
+
+- Новая edge function: `supabase/functions/payment-dialog-create-bridge-link/index.ts`
+  - Auth required (JWT).
+  - Body: `{ product_id?, tariff_code?, offer_id?, amount, currency, description? }`.
+  - Server-side валидация: amount/currency должны совпадать с canonical резолвом product/tariff/offer (защита от tampering).
+  - INSERT в `payment_links`:
+    - `user_id = auth.uid()`
+    - `payment_type = 'one_time'`
+    - `max_uses = 1`
+    - `expires_at = now() + interval '15 minutes'`
+    - `meta = { source: 'payment_dialog_saved_card_bridge', created_for_user: auth.uid() }`
+    - `created_by = auth.uid()`
+  - Anti-duplicate: если у пользователя за последние 60 секунд уже есть active bridge link с теми же product/tariff/offer/amount — вернуть существующий.
+  - Response: `{ url_token }`. Никакого `provider_token`, никаких чувствительных данных.
+
+### НЕ трогаем
+
+- `bepaid-webhook` — без изменений.
+- `grant-access-for-order` — без изменений.
+- `consume-payment-link` — без изменений.
+- `PublicPayPage.tsx` — без изменений.
+- `public-charge-saved-card` — без изменений (используем как есть).
+- Subscription/trial saved-card flow — остаётся disabled.
+- `direct-charge` — не воскрешаем.
+- БД schema/RLS/enum — без изменений (RLS на `payment_links` уже допускает INSERT владельцем).
+
+## Dry-run перед execute
+
+1. Прочитать схему `payment_links` и убедиться, что все обязательные поля покрываются bridge INSERT.
+2. Подтвердить, что `public-charge-saved-card` принимает url_token из bridge link (тот же shape: payment_type='one_time', user_id=auth.uid()).
+3. Подтвердить, что `consumePaymentLinkForOrder` инкрементирует `current_uses` для bridge link идентично обычным.
+4. Подтвердить, что `max_uses=1 + expires_at=15min` исключают повторное использование.
+5. Подтвердить однозначное вычисление amount/currency/product/tariff/offer из props PaymentDialog.
+6. Подтвердить, что `idempotency_key` генерируется на клиенте и передаётся в `public-charge-saved-card`.
+7. Проверить RLS: пользователь должен иметь право INSERT в `payment_links` со своим user_id (или INSERT идёт через service role в edge function — предпочтительно service role).
+
+## STOP-guards
+
+- STOP, если требуется изменить webhook.
+- STOP, если требуется изменить grant/consume.
+- STOP, если требуется миграция БД/RLS/enum.
+- STOP, если bridge link нельзя безопасно создать (RLS/ownership конфликт).
+- STOP, если price/offer/tariff не вычисляется однозначно из PaymentDialog props.
+- STOP, если provider_token попадает на frontend.
+- STOP, если затрагивается subscription/trial.
+- STOP, если в bridge link появляется дубль uses (race condition).
+
+## Definition of Done
+
+- PaymentDialog one_time: при наличии saved cards — карты кликабельны через `RadioGroup`.
+- Выбор saved card → bridge link → `public-charge-saved-card` → bePaid → webhook → grant.
+- New card path не изменён.
+- Subscription и trial: карты остаются disabled (PAY-I behavior).
+- `bepaid-webhook`, `grant-access-for-order`, `consume-payment-link` — diff пустой.
+- `PublicPayPage.tsx` — diff пустой.
+- `public-charge-saved-card/index.ts` — diff пустой.
+- `provider_token` не появляется во frontend bundle (`rg "provider_token" src/` → 0).
+- `tsc --noEmit` clean.
+- Bridge link виден в `payment_links` с `meta.source='payment_dialog_saved_card_bridge'`, `max_uses=1`, `expires_at` ~15 минут.
+- После успешной оплаты bridge link имеет `current_uses=1` (consumed).
+
+## Изменённые файлы
+
+- `src/components/payment/PaymentDialog.tsx` — активация saved-card RadioGroup для one_time + bridge flow.
+- `supabase/functions/payment-dialog-create-bridge-link/index.ts` — новый.
+- `supabase/config.toml` — регистрация новой функции (если требуется).
+
+## Out of scope (отдельные патчи)
+
+- Mobile UI оптимизация Purchases — отложено до отдельного патча PAY-MOBILE.
+- Saved-card charge для subscription/trial — требует другого backend подхода (bePaid recurring), не покрывается PAY-K.

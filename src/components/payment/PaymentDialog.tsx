@@ -160,6 +160,11 @@ export function PaymentDialog({
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [paymentFlowType, setPaymentFlowType] = useState<PaymentFlowType>('provider_managed');
 
+  // PAY-K: one_time saved-card selector. 'new_card' or payment_method_id (uuid).
+  // Для subscription/trial карты остаются disabled (PAY-I behavior).
+  const [selectedMethod, setSelectedMethod] = useState<string>('new_card');
+  const savedCardIdempotencyKeyRef = useRef<string>(crypto.randomUUID());
+
   // Same-pair subscription conflict (existing active subscription on same product+tariff)
   const [conflictData, setConflictData] = useState<SubscriptionConflictInfo | null>(null);
   const [replaceStep, setReplaceStep] = useState<'idle' | 'cancelling' | 'creating'>('idle');
@@ -221,6 +226,8 @@ export function PaymentDialog({
 
       setSavedCards([]);
       setIsLoadingCard(false);
+      setSelectedMethod('new_card');
+      savedCardIdempotencyKeyRef.current = crypto.randomUUID();
       setTelegramDeepLink(null);
       setShowTrialUsedModal(false);
       setPaymentError(null);
@@ -264,6 +271,20 @@ export function PaymentDialog({
       setPaymentError(null);
     }
   }, [open, user, session, isClubProduct, isTelegramLinked, isTelegramStatusLoading]);
+
+  // PAY-K: для one_time — выставить дефолтную сохранённую карту, иначе 'new_card'.
+  // Для subscription/trial — всегда 'new_card' (карты disabled, PAY-I behavior).
+  const isOneTimeFlow = !isSubscription && !isTrial;
+  useEffect(() => {
+    if (!isOneTimeFlow || savedCards.length === 0) {
+      if (selectedMethod !== 'new_card') setSelectedMethod('new_card');
+      return;
+    }
+    if (selectedMethod !== 'new_card' && savedCards.some((c) => c.id === selectedMethod)) return;
+    const def = savedCards.find((c) => c.is_default) || savedCards[0];
+    setSelectedMethod(def?.id || 'new_card');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOneTimeFlow, savedCards]);
 
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -526,7 +547,105 @@ export function PaymentDialog({
     }
   };
 
+  // PAY-K: parse `price` ("100 BYN" / "100.00 BYN") to kopecks for expected_amount guard.
+  const parsePriceToKopecks = (raw: string): number | null => {
+    if (!raw) return null;
+    const m = raw.replace(',', '.').match(/(\d+(?:\.\d+)?)/);
+    if (!m) return null;
+    const byn = parseFloat(m[1]);
+    if (!Number.isFinite(byn) || byn <= 0) return null;
+    return Math.round(byn * 100);
+  };
+
+  // PAY-K: одноразовая оплата сохранённой картой через bridge → public-charge-saved-card.
+  const handlePayWithSavedCardOneTime = async (paymentMethodId: string) => {
+    if (!user || !session) {
+      setPaymentError('Войдите в аккаунт, чтобы использовать сохранённую карту.');
+      setStep('ready');
+      return;
+    }
+    const expected_amount = parsePriceToKopecks(price);
+    if (!expected_amount) {
+      setPaymentError('Не удалось определить сумму платежа.');
+      setStep('ready');
+      return;
+    }
+    setIsLoading(true);
+    setPaymentError(null);
+    setStep('processing');
+    try {
+      // 1. Bridge: create internal one-time payment_link.
+      const { data: bridgeData, error: bridgeError } = await supabase.functions.invoke(
+        'payment-dialog-create-bridge-link',
+        {
+          body: {
+            product_id: productId,
+            tariff_code: tariffCode || null,
+            offer_id: offerId || null,
+            expected_amount,
+            currency: 'BYN',
+            description: productName,
+          },
+        }
+      );
+      if (bridgeError || !bridgeData?.success || !bridgeData?.url_token) {
+        const msg = bridgeData?.error || bridgeError?.message || 'Не удалось подготовить оплату';
+        if (msg === 'price_mismatch') {
+          throw new Error('Стоимость изменилась. Обновите страницу и попробуйте снова.');
+        }
+        throw new Error(msg);
+      }
+
+      // 2. Charge saved card via existing public-charge-saved-card.
+      const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
+      const chargeUrl = `https://${projectId}.supabase.co/functions/v1/public-charge-saved-card`;
+      const idempotency_key = savedCardIdempotencyKeyRef.current;
+      const res = await fetch(chargeUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          url_token: bridgeData.url_token,
+          payment_method_id: paymentMethodId,
+          idempotency_key,
+        }),
+      });
+      const data = await res.json();
+      if (res.status === 409) {
+        setPaymentError(data?.message || 'Платёж уже создан. Завершите подтверждение или попробуйте позже.');
+        setStep('ready');
+        return;
+      }
+      if (!res.ok || !data?.success) {
+        const errMsg = data?.message || data?.error || 'Не удалось списать сохранённую карту';
+        throw new Error(translatePaymentError(String(errMsg)));
+      }
+      // Issuer 3DS may require extra confirmation.
+      if (data.redirect_url) {
+        window.location.href = data.redirect_url;
+        return;
+      }
+      window.location.href = `/purchases?order=${data.order_id}&payment=processing`;
+    } catch (err) {
+      console.error('[PaymentDialog] saved-card one-time charge failed:', err);
+      const message = err instanceof Error ? err.message : normalizeEdgeFunctionError(err);
+      setPaymentError(message);
+      toast.error(message);
+      setStep('ready');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handlePayment = async () => {
+    // PAY-K: для one_time + saved card → bridge flow; new_card продолжает обычный путь.
+    if (!isSubscription && !isTrial && selectedMethod !== 'new_card') {
+      await handlePayWithSavedCardOneTime(selectedMethod);
+      return;
+    }
+
     setIsLoading(true);
     setPaymentError(null);
     setConflictData(null);
@@ -534,7 +653,7 @@ export function PaymentDialog({
     setShowReplaceConfirm(false);
     setStep("processing");
 
-    console.log("handlePayment called", { savedCard, tariffCode, user: !!user, productId, paymentFlowType });
+    console.log("handlePayment called", { savedCard, tariffCode, user: !!user, productId, paymentFlowType, selectedMethod });
 
     try {
       // PATCH-3: If user selected provider_managed flow - no savedCard restriction
@@ -1234,8 +1353,50 @@ export function PaymentDialog({
               </div>
             )}
 
-            {/* PAY-I: сохранённые карты — всегда disabled в PaymentDialog */}
-            {savedCards.length > 0 && (
+            {/* PAY-K: сохранённые карты.
+                 - one_time: активный RadioGroup (saved cards + новая карта).
+                 - subscription/trial: остаются disabled (PAY-I behavior). */}
+            {savedCards.length > 0 && isOneTimeFlow && (
+              <div className="rounded-lg border border-border/40 bg-card/40 p-3 space-y-2">
+                <p className="text-xs font-medium text-muted-foreground">Способ оплаты</p>
+                <RadioGroup
+                  value={selectedMethod}
+                  onValueChange={setSelectedMethod}
+                  className="space-y-1.5"
+                  disabled={isLoading || isTestPaymentLoading}
+                >
+                  {savedCards.map((c) => (
+                    <label
+                      key={c.id}
+                      htmlFor={`pm-${c.id}`}
+                      className="flex items-center gap-2 text-sm cursor-pointer rounded-md px-1.5 py-1 hover:bg-muted/40"
+                    >
+                      <RadioGroupItem value={c.id} id={`pm-${c.id}`} />
+                      <CreditCard className="h-4 w-4 text-muted-foreground" />
+                      <span className="uppercase">{c.brand || "CARD"}</span>
+                      <span>•••• {c.last4}</span>
+                      {c.is_default && (
+                        <span className="text-[10px] text-muted-foreground border border-border/50 rounded px-1 py-0.5">по умолчанию</span>
+                      )}
+                    </label>
+                  ))}
+                  <label
+                    htmlFor="pm-new_card"
+                    className="flex items-center gap-2 text-sm cursor-pointer rounded-md px-1.5 py-1 hover:bg-muted/40"
+                  >
+                    <RadioGroupItem value="new_card" id="pm-new_card" />
+                    <CreditCard className="h-4 w-4 text-muted-foreground" />
+                    <span>Новая карта</span>
+                  </label>
+                </RadioGroup>
+                <p className="text-xs text-muted-foreground">
+                  Оплата сохранённой картой выполняется через защищённую сессию bePaid (может потребоваться 3-D Secure).
+                </p>
+              </div>
+            )}
+
+            {/* PAY-I: сохранённые карты при subscription/trial — disabled, info-only */}
+            {savedCards.length > 0 && !isOneTimeFlow && (
               <div className="rounded-lg border border-border/40 bg-card/40 p-3 space-y-2">
                 <p className="text-xs font-medium text-muted-foreground">Сохранённые карты</p>
                 <div className="space-y-1.5 opacity-60 pointer-events-none select-none" aria-disabled="true">
@@ -1251,9 +1412,7 @@ export function PaymentDialog({
                   ))}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  {isSubscription || isTrial
-                    ? "Сохранённые карты нельзя выбрать для оформления подписки. Вас перенаправит на защищённую страницу bePaid, где нужно будет выбрать или ввести карту для подписки."
-                    : "Эти карты показаны для справки. Разовый платёж откроется на защищённой странице bePaid — там можно оплатить любой картой."}
+                  Сохранённые карты нельзя выбрать для оформления подписки. Вас перенаправит на защищённую страницу bePaid, где нужно будет выбрать или ввести карту для подписки.
                 </p>
               </div>
             )}
