@@ -581,6 +581,34 @@ Deno.serve(async (req) => {
 
 // ---------- helpers ----------
 
+/** Best-effort audit insert — never throws / never blocks main flow. */
+async function safeAudit(
+  supabase: any,
+  p: {
+    action: string;
+    actor_user_id: string;
+    target_user_id: string;
+    meta: Record<string, any>;
+  },
+): Promise<void> {
+  try {
+    const { error } = await supabase.from('audit_logs').insert({
+      action: p.action,
+      actor_type: 'user',
+      actor_user_id: p.actor_user_id,
+      actor_label: 'public-charge-saved-card',
+      target_user_id: p.target_user_id,
+      meta: p.meta,
+    });
+    if (error) {
+      console.error('[public-charge-saved-card] audit failed', { action: p.action, error });
+    }
+  } catch (e) {
+    console.error('[public-charge-saved-card] audit threw', { action: p.action, e });
+  }
+}
+
+
 function inProgressResponse(p: { order_id: string | null; payment_id: string; tracking_id: string | null }): Response {
   return new Response(
     JSON.stringify({
