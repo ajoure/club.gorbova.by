@@ -37,7 +37,9 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { cancelOldSubscriptionForReplacement, type SubscriptionConflictInfo } from '@/lib/subscriptionReplacement';
-import { CreditCard, CheckCircle, Clock, Shield, AlertCircle, Loader2, Repeat } from 'lucide-react';
+import { CreditCard, CheckCircle, Clock, Shield, AlertCircle, Loader2, Repeat, Plus } from 'lucide-react';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Label } from '@/components/ui/label';
 
 interface PaymentLinkInfo {
   product_name: string;
