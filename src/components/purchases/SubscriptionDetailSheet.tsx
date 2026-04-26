@@ -155,195 +155,182 @@ export function SubscriptionDetailSheet({
     return <Badge variant="outline">{status}</Badge>;
   };
 
+  const showRenew = isExpired || isCanceled || (subscription.access_end_at &&
+    new Date(subscription.access_end_at).getTime() - Date.now() < 14 * 24 * 60 * 60 * 1000);
+
+  const visiblePayments = subscription.payments?.filter(p => p.status === 'succeeded' || p.status === 'failed') ?? [];
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className={SHEET_SHELL_CLASS}>
-        <SheetHeader className="pr-10">
-          <SheetTitle className="text-left break-words">
-            {subscription.products_v2?.name || subscription.products_v2?.code} — {subscription.tariffs?.name}
-          </SheetTitle>
-          <SheetDescription className="text-left">
-            {subscription.is_trial ? "Пробный период" : "Подписка"}
-          </SheetDescription>
-        </SheetHeader>
-
-        <div className="mt-6 space-y-6">
-          {/* Status */}
+        {/* Header — компактный, с цветным фоном и статусом в одной строке */}
+        <SheetHeader className="px-5 sm:px-6 pt-6 pb-5 bg-gradient-to-br from-muted/40 to-muted/10 border-b border-border/40 space-y-2">
+          <div className="flex items-start justify-between gap-3 pr-8">
+            <SheetTitle className="text-left text-lg sm:text-xl break-words leading-tight">
+              {subscription.products_v2?.name || subscription.products_v2?.code} — {subscription.tariffs?.name}
+            </SheetTitle>
+          </div>
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <span className="text-sm text-muted-foreground">Статус</span>
+            <SheetDescription className="text-left text-xs sm:text-sm m-0">
+              {subscription.is_trial ? "Пробный период" : "Подписка"}
+            </SheetDescription>
             {getStatusBadge()}
           </div>
+        </SheetHeader>
 
-          <Separator />
-
-          {/* Dates */}
-          <div className="space-y-3">
-            <div className="flex justify-between gap-3 text-sm">
-              <span className="text-muted-foreground shrink-0">Активирована</span>
-              <span className="font-medium text-right break-words">{formatDate(subscription.access_start_at)}</span>
+        {/* Body — scrollable */}
+        <div className="flex-1 overflow-y-auto px-5 sm:px-6 py-5 space-y-4">
+          {/* Dates card */}
+          <div className="rounded-xl border border-border/50 bg-card divide-y divide-border/40">
+            <div className="flex items-center justify-between gap-3 px-4 py-3">
+              <span className="text-xs sm:text-sm text-muted-foreground shrink-0">Активирована</span>
+              <span className="text-sm font-medium text-right break-words">{formatDate(subscription.access_start_at)}</span>
             </div>
 
             {subscription.access_end_at && (
-              <div className="flex justify-between gap-3 text-sm">
-                <span className="text-muted-foreground shrink-0">Действует до</span>
-                <span className={`font-medium text-right break-words ${isExpired ? "text-destructive" : isCanceled ? "text-amber-600" : ""}`}>
+              <div className="flex items-center justify-between gap-3 px-4 py-3">
+                <span className="text-xs sm:text-sm text-muted-foreground shrink-0">Действует до</span>
+                <span className={`text-sm font-medium text-right break-words ${isExpired ? "text-destructive" : isCanceled ? "text-amber-600" : ""}`}>
                   {formatDate(subscription.access_end_at)}
                 </span>
               </div>
             )}
 
             {subscription.next_charge_at && !isCanceled && isActive && (
-              <div className="flex justify-between gap-3 text-sm">
-                <span className="text-muted-foreground shrink-0">Следующее списание</span>
-                <span className="font-medium text-right break-words">{formatShortDate(subscription.next_charge_at)}</span>
+              <div className="flex items-center justify-between gap-3 px-4 py-3">
+                <span className="text-xs sm:text-sm text-muted-foreground shrink-0">Следующее списание</span>
+                <span className="text-sm font-medium text-right break-words">{formatShortDate(subscription.next_charge_at)}</span>
               </div>
             )}
 
             {isCanceled && subscription.cancel_at && (
-              <div className="flex justify-between gap-3 text-sm">
-                <span className="text-muted-foreground shrink-0">Доступ до</span>
-                <span className="font-medium text-right break-words text-amber-600">{formatDate(subscription.cancel_at)}</span>
+              <div className="flex items-center justify-between gap-3 px-4 py-3">
+                <span className="text-xs sm:text-sm text-muted-foreground shrink-0">Доступ до</span>
+                <span className="text-sm font-medium text-right break-words text-amber-600">{formatDate(subscription.cancel_at)}</span>
               </div>
             )}
 
-            {/* PATCH 13+: Auto-renew disabled indicator */}
             {subscription.auto_renew === false && subscription.auto_renew_disabled_by && (
-              <div className="flex justify-between gap-3 text-sm">
-                <span className="text-muted-foreground shrink-0">Автопродление</span>
-                <span className="font-medium text-right break-words text-amber-600">
-                  Отключено {subscription.auto_renew_disabled_by === 'admin' ? 'администратором' : 'вами'}
+              <div className="flex items-center justify-between gap-3 px-4 py-3">
+                <span className="text-xs sm:text-sm text-muted-foreground shrink-0">Автопродление</span>
+                <span className="text-sm font-medium text-right break-words text-amber-600">
+                  Отключено {subscription.auto_renew_disabled_by === 'admin' ? 'админом' : 'вами'}
                   {subscription.auto_renew_disabled_at && (
-                    <span className="text-xs ml-1">
+                    <span className="text-xs ml-1 text-muted-foreground">
                       ({formatShortDate(subscription.auto_renew_disabled_at)})
                     </span>
                   )}
                 </span>
               </div>
             )}
-          </div>
 
-          <Separator />
-
-          {/* Payment method */}
-          {subscription.payment_methods?.brand && subscription.payment_methods?.last4 && (
-            <>
-              <div className="flex items-center justify-between gap-3 flex-wrap">
-                <span className="text-sm text-muted-foreground shrink-0">Способ оплаты</span>
+            {subscription.payment_methods?.brand && subscription.payment_methods?.last4 && (
+              <div className="flex items-center justify-between gap-3 px-4 py-3">
+                <span className="text-xs sm:text-sm text-muted-foreground shrink-0">Способ оплаты</span>
                 <div className="flex items-center gap-2 text-sm font-medium">
                   <CreditCard className="h-4 w-4 text-muted-foreground" />
                   {subscription.payment_methods.brand.toUpperCase()} **** {subscription.payment_methods.last4}
                 </div>
               </div>
-              <Separator />
-            </>
-          )}
+            )}
+          </div>
 
-          {/* Payments history — скрываем pending/processing, оставляем только succeeded и failed */}
-          {subscription.payments && subscription.payments.filter(p => p.status === 'succeeded' || p.status === 'failed').length > 0 && (
-            <div>
-              <h4 className="text-sm font-medium mb-3">История платежей</h4>
-              <div className="space-y-2">
-                {subscription.payments
-                  .filter(p => p.status === 'succeeded' || p.status === 'failed')
-                  .map((payment) => {
-                    const paymentReceiptUrl = (payment as any).receipt_url || payment.provider_response?.transaction?.receipt_url;
-                    return (
-                      <div
-                        key={payment.id}
-                        className="flex items-center justify-between gap-3 py-2.5 px-3 rounded-lg bg-muted/40 border border-border/40"
-                      >
-                        <div className="flex flex-col min-w-0">
-                          <span className="text-sm font-medium">
-                            {payment.amount.toFixed(2)} {payment.currency}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            {formatShortDate(payment.created_at)}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          {/* Чек bePaid: и для succeeded и для failed */}
-                          {paymentReceiptUrl && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 px-2"
-                              title={payment.status === 'succeeded' ? 'Чек bePaid' : 'Чек ошибки bePaid'}
-                              onClick={() => window.open(paymentReceiptUrl, '_blank')}
-                            >
-                              <Download className="h-3.5 w-3.5" />
-                            </Button>
-                          )}
-                          {getPaymentStatusBadge(payment.status)}
-                        </div>
+          {/* Payments history card */}
+          {visiblePayments.length > 0 && (
+            <div className="rounded-xl border border-border/50 bg-card overflow-hidden">
+              <h4 className="text-xs sm:text-sm font-medium px-4 py-3 bg-muted/30 border-b border-border/40">
+                История платежей
+              </h4>
+              <div className="divide-y divide-border/40">
+                {visiblePayments.map((payment) => {
+                  const paymentReceiptUrl = (payment as any).receipt_url || payment.provider_response?.transaction?.receipt_url;
+                  return (
+                    <div key={payment.id} className="flex items-center justify-between gap-3 px-4 py-3">
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-sm font-medium">
+                          {payment.amount.toFixed(2)} {payment.currency}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {formatShortDate(payment.created_at)}
+                        </span>
                       </div>
-                    );
-                  })}
+                      <div className="flex items-center gap-2 shrink-0">
+                        {paymentReceiptUrl && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2"
+                            title={payment.status === 'succeeded' ? 'Чек bePaid' : 'Чек ошибки bePaid'}
+                            onClick={() => window.open(paymentReceiptUrl, '_blank')}
+                          >
+                            <Download className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        {getPaymentStatusBadge(payment.status)}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
+        </div>
 
-          {/* Actions */}
-          <div className="space-y-2 pt-4">
-            {/* Две независимые кнопки: bePaid (если есть) + наш PDF — обе доступны одновременно */}
-            {receiptUrl && (
-              <Button
-                variant="default"
-                className="w-full gap-2"
-                onClick={() => window.open(receiptUrl, '_blank')}
-              >
-                <ExternalLink className="h-4 w-4" />
-                Чек bePaid
-              </Button>
-            )}
+        {/* Sticky footer with actions */}
+        <div className="border-t border-border/50 bg-background/95 backdrop-blur px-5 sm:px-6 py-4 space-y-2">
+          {receiptUrl && (
             <Button
-              variant={receiptUrl ? "outline" : "default"}
+              variant="default"
               className="w-full gap-2"
-              onClick={() => onDownloadReceipt(subscription)}
+              onClick={() => window.open(receiptUrl, '_blank')}
             >
-              <Download className="h-4 w-4" />
-              Скачать квитанцию
+              <ExternalLink className="h-4 w-4" />
+              Чек bePaid
             </Button>
+          )}
+          <Button
+            variant={receiptUrl ? "outline" : "default"}
+            className="w-full gap-2"
+            onClick={() => onDownloadReceipt(subscription)}
+          >
+            <Download className="h-4 w-4" />
+            Скачать квитанцию
+          </Button>
 
-          {/* Renew subscription — visible when expiring soon or expired */}
-            {(isExpired || isCanceled || (subscription.access_end_at && 
-              new Date(subscription.access_end_at).getTime() - Date.now() < 14 * 24 * 60 * 60 * 1000)) && (
-              <Button
-                variant="default"
-                className="w-full gap-2"
-                onClick={() => {
-                  window.location.href = '/#pricing';
-                }}
-              >
-                <RotateCcw className="h-4 w-4" />
-                Продлить подписку
-              </Button>
-            )}
+          {showRenew && (
+            <Button
+              variant="secondary"
+              className="w-full gap-2"
+              onClick={() => { window.location.href = '/#pricing'; }}
+            >
+              <RotateCcw className="h-4 w-4" />
+              Продлить подписку
+            </Button>
+          )}
 
-            {/* Cancel or Resume */}
-            {isActive && !isCanceled && (
-              <Button
-                variant="ghost"
-                className="w-full gap-2 text-destructive hover:text-destructive hover:bg-destructive/10"
-                onClick={() => onCancel(subscription)}
-                disabled={isProcessing}
-              >
-                <Ban className="h-4 w-4" />
-                Отменить подписку
-              </Button>
-            )}
+          {isActive && !isCanceled && (
+            <Button
+              variant="ghost"
+              className="w-full gap-2 text-destructive hover:text-destructive hover:bg-destructive/10"
+              onClick={() => onCancel(subscription)}
+              disabled={isProcessing}
+            >
+              <Ban className="h-4 w-4" />
+              Отменить подписку
+            </Button>
+          )}
 
-            {isCanceled && isActive && (
-              <Button
-                variant="outline"
-                className="w-full gap-2"
-                onClick={() => onResume(subscription)}
-                disabled={isProcessing}
-              >
-                <RotateCcw className="h-4 w-4" />
-                Возобновить подписку
-              </Button>
-            )}
-          </div>
+          {isCanceled && isActive && (
+            <Button
+              variant="outline"
+              className="w-full gap-2"
+              onClick={() => onResume(subscription)}
+              disabled={isProcessing}
+            >
+              <RotateCcw className="h-4 w-4" />
+              Возобновить подписку
+            </Button>
+          )}
         </div>
       </SheetContent>
     </Sheet>
