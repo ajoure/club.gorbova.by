@@ -88,6 +88,14 @@ export interface ExternalProductState {
 interface Props {
   blockId: string;
   lessonId: string;
+  /** ID урока-источника портфеля (Шаг 2). Берётся из lesson_blocks.content.source_lesson_id */
+  sourceLessonId?: string | null;
+  /**
+   * Опциональный callback для канонической записи через useUserProgress.saveBlockResponse.
+   * Вызывается ПОСЛЕ прямого upsert (он остаётся для дебаунс-автосейва), чтобы локальный
+   * progress-state в LessonBlockRenderer/useUserProgress инвалидировался корректно.
+   */
+  onCanonicalSave?: (payload: Record<string, unknown>, completed: boolean) => Promise<boolean> | void;
 }
 
 /* ──────────────────────────── Хелперы ──────────────────────────── */
@@ -158,7 +166,7 @@ const mergeState = (raw: unknown): ExternalProductState => {
 
 /* ──────────────────────────── Компонент ──────────────────────────── */
 
-export function ExternalProductWorkshop({ blockId, lessonId }: Props) {
+export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = null, onCanonicalSave }: Props) {
   const [state, setState] = useState<ExternalProductState>(DEFAULT_STATE);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
@@ -278,6 +286,7 @@ export function ExternalProductWorkshop({ blockId, lessonId }: Props) {
       const result = await loadPortfolioFromPreviousLesson({
         currentLessonId: lessonId,
         userId,
+        overrideSourceLessonId: sourceLessonId ?? undefined,
       });
       if (!result.rows.length) {
         const reason =
@@ -363,12 +372,35 @@ export function ExternalProductWorkshop({ blockId, lessonId }: Props) {
     return { avgCoeff, avgAddons, avgCurrent, underpriced };
   }, [computed]);
 
-  const handleComplete = () => {
-    setState((s) => ({ ...s, completed_at: new Date().toISOString() }));
+  const handleComplete = async () => {
+    const completedAt = new Date().toISOString();
+    setState((s) => ({ ...s, completed_at: completedAt }));
+    // Канонический путь — обновляет useUserProgress в реальном времени и
+    // гарантирует засчитывание блока в общей системе прогресса урока.
+    if (onCanonicalSave) {
+      const payload = {
+        type: "external_product_workshop",
+        state: { ...state, completed_at: completedAt },
+        is_submitted: true,
+        submitted_at: completedAt,
+        saved_at: completedAt,
+      };
+      await onCanonicalSave(payload, true);
+    }
     toast.success("Шаг 3 завершён");
   };
-  const handleReopen = () => {
+  const handleReopen = async () => {
     setState((s) => ({ ...s, completed_at: null }));
+    if (onCanonicalSave) {
+      const payload = {
+        type: "external_product_workshop",
+        state: { ...state, completed_at: null },
+        is_submitted: false,
+        submitted_at: null,
+        saved_at: new Date().toISOString(),
+      };
+      await onCanonicalSave(payload, false);
+    }
     toast("Можете редактировать данные");
   };
 
