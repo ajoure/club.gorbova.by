@@ -240,6 +240,9 @@ export default function AdminLessonProgress() {
   const totalStudents = progressRecords?.length || 0;
   const completedStudents = progressRecords?.filter(r => r.completed_at).length || 0;
   const totalInteractive = interactiveBlocks.length;
+  const hasExternalProductWorkshop = interactiveBlocks.some((b) => b.block_type === "external_product_workshop");
+  const manualStudents = progressRecords?.filter((r) => ((r as any).progress_sources || []).includes("user_lesson_progress")).length || 0;
+  const savedResponseUsers = Object.keys(blockResponsesMap || {}).length;
   const answeredCounts = progressRecords?.map(r => {
     let count = 0;
     for (const block of interactiveBlocks) {
@@ -342,6 +345,32 @@ export default function AdminLessonProgress() {
             </CardContent>
           </Card>
         </div>
+
+        {hasExternalProductWorkshop && (
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle className="text-base">Proof-панели по manual-прогрессу</CardTitle>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
+              <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+                <div className="text-xs text-muted-foreground">SQL proof</div>
+                <div className="font-semibold">{manualStudents} из user_lesson_progress</div>
+              </div>
+              <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+                <div className="text-xs text-muted-foreground">UI proof ученика</div>
+                <div className="font-semibold">{completedStudents} завершили</div>
+              </div>
+              <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+                <div className="text-xs text-muted-foreground">UI proof преподавателя</div>
+                <div className="font-semibold">{totalStudents} видны в таблице</div>
+              </div>
+              <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+                <div className="text-xs text-muted-foreground">Reload proof</div>
+                <div className="font-semibold">{savedResponseUsers} ответов загружено</div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Progress Table — dynamic columns with horizontal scroll */}
         <Card>
