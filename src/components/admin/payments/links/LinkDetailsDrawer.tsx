@@ -56,7 +56,9 @@ export function LinkDetailsDrawer({
 
   if (!link) return null;
 
-  const publicUrl = `${window.location.origin}/pay/${link.url_token}`;
+  // Канонический URL — ИЗ БД (writer admin-create-public-link сохраняет уже правильный).
+  // Фолбэк нужен только для legacy-строк без public_url; backfill их покрыл.
+  const publicUrl = link.public_url ?? buildPublicPayUrl(link.url_token);
   const fmtMoney = (kop: number | null | undefined, cur: string) =>
     kop == null ? "—" : `${(kop / 100).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur}`;
 

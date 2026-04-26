@@ -35,5 +35,7 @@ export function getDealUrl(dealId: string) {
 }
 
 export function getProductPayUrl(productId: string) {
-  return `${window.location.origin}/pay?product=${productId}`;
+  // Канонический host — НЕ window.location.origin, чтобы из preview Lovable
+  // не уехала ссылка на lovable.dev (Access denied у клиента).
+  return buildProductPayUrl(productId);
 }

@@ -94,7 +94,11 @@ export function LinksTabContent() {
     },
   });
 
-  const buildPublicUrl = (token: string) => `${window.location.origin}/pay/${token}`;
+  // Канонический URL берём ИЗ БД (заполняется writer'ом admin-create-public-link).
+  // Фолбэк buildPublicPayUrl нужен только для исторических строк, где public_url отсутствует —
+  // backfill в БД должен был покрыть все строки, но защищаемся от регрессии.
+  const buildPublicUrl = (link: PaymentLinkRow) =>
+    link.public_url ?? buildPublicPayUrl(link.url_token);
 
   const formatAmount = (kop: number, cur: string) =>
     `${(kop / 100).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur}`;

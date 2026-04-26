@@ -33,6 +33,7 @@ export interface PaymentLinkRow {
   related_orders_count: number;
   paid_orders_count: number;
   last_order_id: string | null;
+  public_url: string | null;
 }
 
 const PAYMENT_LINKS_QUERY_KEY = ["payment-links-enriched"] as const;
