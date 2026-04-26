@@ -149,8 +149,11 @@ export function PaymentDialog({
   const [existingUserId, setExistingUserId] = useState<string | null>(null);
   const [emailCheckResult, setEmailCheckResult] = useState<EmailCheckResult | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
-  const [savedCard, setSavedCard] = useState<{ id: string; brand: string; last4: string } | null>(null);
+  // PAY-I: список сохранённых карт; всегда disabled в PaymentDialog (см. mem://ui/payments/saved-card-client-policy).
+  const [savedCards, setSavedCards] = useState<Array<{ id: string; brand: string; last4: string; exp_month: number | null; exp_year: number | null; is_default: boolean }>>([]);
   const [isLoadingCard, setIsLoadingCard] = useState(false);
+  // Backwards-compatible alias for legacy error-message branch (handlePayment не меняется).
+  const savedCard = savedCards[0] ?? null;
   const [privacyConsent, setPrivacyConsent] = useState(false);
   const [telegramDeepLink, setTelegramDeepLink] = useState<string | null>(null);
   const [showTrialUsedModal, setShowTrialUsedModal] = useState(false);
@@ -171,25 +174,35 @@ export function PaymentDialog({
   // Ref to prevent useEffect from resetting state after inline auth
   const authInProgressRef = useRef(false);
 
-  // Load saved payment card — safe, non-blocking
-  const loadSavedCard = async (userId: string) => {
+  // PAY-I: грузим список активных bePaid-карт. Селектим только нечувствительные поля.
+  const loadSavedCards = async (userId: string) => {
     setIsLoadingCard(true);
     try {
       const { data, error } = await supabase
         .from("payment_methods")
-        .select("id, brand, last4")
+        .select("id, brand, last4, exp_month, exp_year, is_default")
         .eq("user_id", userId)
         .eq("status", "active")
-        .eq("is_default", true)
-        .maybeSingle();
-      
-      console.log("Payment methods query result:", { data, error });
-      if (data) {
-        setSavedCard({ id: data.id, brand: data.brand || "", last4: data.last4 || "" });
+        .eq("provider", "bepaid")
+        .order("is_default", { ascending: false })
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("[PaymentDialog] loadSavedCards failed:", error);
+        return;
       }
+      setSavedCards(
+        (data ?? []).map((c) => ({
+          id: c.id,
+          brand: c.brand || "",
+          last4: c.last4 || "",
+          exp_month: c.exp_month ?? null,
+          exp_year: c.exp_year ?? null,
+          is_default: !!c.is_default,
+        }))
+      );
     } catch (err) {
-      console.error("Error loading payment method:", err);
-      // Non-fatal — don't block checkout
+      console.error("[PaymentDialog] loadSavedCards exception:", err);
     } finally {
       setIsLoadingCard(false);
     }
@@ -202,11 +215,11 @@ export function PaymentDialog({
       if (authInProgressRef.current && user && session) {
         authInProgressRef.current = false;
         setExistingUserId(user.id);
-        loadSavedCard(user.id);
+        loadSavedCards(user.id);
         return; // Skip full reset — keep formData, step, selectedOffer intact
       }
 
-      setSavedCard(null);
+      setSavedCards([]);
       setIsLoadingCard(false);
       setTelegramDeepLink(null);
       setShowTrialUsedModal(false);
@@ -234,7 +247,7 @@ export function PaymentDialog({
         }
         
         // Check for saved payment method
-        loadSavedCard(user.id);
+        loadSavedCards(user.id);
       } else {
         // User is not authenticated - start with email step
         setFormData({ email: "", firstName: "", lastName: "", phone: "+375", password: "" });
@@ -1189,89 +1202,62 @@ export function PaymentDialog({
               </Alert>
             )}
 
-            <div className="rounded-xl bg-card/60 backdrop-blur-sm border border-border/40 p-4 space-y-2">
-              <div className="flex items-center gap-2 text-sm">
-                <CheckCircle className="h-4 w-4 text-primary" />
-                <span>Email: {formData.email}</span>
-              </div>
-              {formData.firstName && (
-                <div className="flex items-center gap-2 text-sm">
-                  <CheckCircle className="h-4 w-4 text-primary" />
-                  <span>Имя: {formData.firstName} {formData.lastName}</span>
-                </div>
-              )}
-              {formData.phone && (
-                <div className="flex items-center gap-2 text-sm">
-                  <CheckCircle className="h-4 w-4 text-primary" />
-                  <span>Телефон: {formData.phone}</span>
-                </div>
-              )}
+            {/* PAY-I: компактный профиль одной строкой */}
+            <div className="rounded-lg bg-card/60 backdrop-blur-sm border border-border/40 px-3 py-2 text-xs text-muted-foreground flex items-center gap-1.5">
+              <CheckCircle className="h-3.5 w-3.5 text-primary shrink-0" />
+              <span className="truncate">
+                {[formData.email, [formData.firstName, formData.lastName].filter(Boolean).join(" "), formData.phone].filter(Boolean).join(" · ")}
+              </span>
             </div>
 
-            <div className="rounded-lg bg-primary/10 p-3 text-sm flex items-start gap-2">
-              <ShieldCheck className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-              <p>После нажатия кнопки вы будете перенаправлены на защищённую страницу оплаты bePaid.</p>
-            </div>
-            
-            {/* Subscription info - dynamic based on product type */}
+            {/* PAY-I: subscription-info — 2 короткие строки + штатное упоминание bePaid */}
             {(isSubscription || isTrial) && (
-              <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 text-sm space-y-1.5">
+              <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 text-sm space-y-1">
                 <p className="font-medium text-foreground">
                   {subscriptionMessage?.title || (isClubProduct ? "Подписка на Клуб" : "Ежемесячная подписка")}
                 </p>
-                
-                {isClubProduct ? (
-                  // Для Club продуктов
-                  <>
-                    <p className="text-muted-foreground">
-                      Сегодня вы оплачиваете месяц доступа к Клубу ({price}).
-                    </p>
-                    <p className="text-muted-foreground">
-                      Вы получаете мгновенный доступ ко всем материалам клуба.
-                    </p>
-                    <p className="text-muted-foreground">
-                      Следующее автоматическое списание произойдёт через месяц.
-                    </p>
-                  </>
-                ) : subscriptionMessage?.startDate ? (
-                  // Для курсов с отложенным стартом
-                  <>
-                    <p className="text-muted-foreground">
-                      Сегодня вы оплачиваете первый месяц обучения ({price}).
-                    </p>
-                    <p className="text-muted-foreground">
-                      Это даёт вам мгновенный доступ к материалам после старта {subscriptionMessage.startDate}.
-                    </p>
-                    <p className="text-muted-foreground whitespace-pre-line">
-                      {subscriptionMessage.nextChargeInfo || "Следующее автоматическое списание произойдёт через месяц."}
-                    </p>
-                  </>
-                ) : (
-                  // Для обычных подписок
-                  <>
-                    <p className="text-muted-foreground">
-                      Сегодня вы оплачиваете месяц подписки ({price}).
-                    </p>
-                    <p className="text-muted-foreground">
-                      Вы получаете мгновенный доступ к материалам.
-                    </p>
-                    <p className="text-muted-foreground">
-                      Следующее автоматическое списание произойдёт через месяц.
-                    </p>
-                  </>
-                )}
-                
                 <p className="text-muted-foreground">
-                  Управление подпиской доступно в вашем профиле 24/7.
+                  {isClubProduct
+                    ? `Сегодня: доступ к Клубу — ${price}.`
+                    : subscriptionMessage?.startDate
+                      ? `Сегодня: первый месяц обучения — ${price}. Старт ${subscriptionMessage.startDate}.`
+                      : `Сегодня: подписка — ${price}.`}
+                </p>
+                <p className="text-muted-foreground">
+                  Далее автосписание раз в месяц. Управление в личном кабинете.
+                </p>
+                {isSubscription && !isTrial && (
+                  <p className="text-xs text-muted-foreground/80 pt-1">
+                    bePaid может показать экран «привязка карты для автоплатежей» — это штатный экран оформления подписки.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* PAY-I: сохранённые карты — всегда disabled в PaymentDialog */}
+            {savedCards.length > 0 && (
+              <div className="rounded-lg border border-border/40 bg-card/40 p-3 space-y-2">
+                <p className="text-xs font-medium text-muted-foreground">Сохранённые карты</p>
+                <div className="space-y-1.5 opacity-60 pointer-events-none select-none" aria-disabled="true">
+                  {savedCards.map((c) => (
+                    <div key={c.id} className="flex items-center gap-2 text-sm">
+                      <CreditCard className="h-4 w-4 text-muted-foreground" />
+                      <span className="uppercase">{c.brand || "CARD"}</span>
+                      <span>•••• {c.last4}</span>
+                      {c.is_default && (
+                        <span className="text-[10px] text-muted-foreground border border-border/50 rounded px-1 py-0.5">по умолчанию</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {isSubscription || isTrial
+                    ? "Сохранённые карты нельзя выбрать для оформления подписки. Вас перенаправит на защищённую страницу bePaid, где нужно будет выбрать или ввести карту для подписки."
+                    : "Оплата сохранённой картой в этом окне пока недоступна. Используйте стандартную оплату bePaid."}
                 </p>
               </div>
             )}
 
-            {isSubscription && !isTrial && (
-              <div className="rounded-xl bg-card/60 backdrop-blur-sm border border-border/40 p-3 text-sm text-muted-foreground">
-                При оформлении подписки bePaid может показать экран с формулировкой «привязка карты для автоплатежей». Это штатный экран подписки: карта используется для регулярного продления, а списание выполняется по условиям выбранного тарифа.
-              </div>
-            )}
 
             {/* MIT vs SBS choice removed — subscriptions always use provider_managed (SBS) */}
 
@@ -1300,6 +1286,11 @@ export function PaymentDialog({
                 {isTrial ? "Активировать триал" : `Оплатить ${price}`}
               </Button>
             </div>
+
+            <p className="text-[11px] text-muted-foreground/80 flex items-center gap-1 justify-center">
+              <ShieldCheck className="h-3 w-3" />
+              Защищённая оплата на стороне bePaid.
+            </p>
 
             {/* Admin test payment button - SECURITY: only super_admin */}
             {isSuperAdmin() && (
