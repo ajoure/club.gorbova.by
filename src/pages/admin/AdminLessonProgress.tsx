@@ -246,8 +246,7 @@ export default function AdminLessonProgress() {
   const completedStudents = progressRecords?.filter(r => r.completed_at).length || 0;
   const totalInteractive = interactiveBlocks.length;
   const hasExternalProductWorkshop = interactiveBlocks.some((b) => b.block_type === "external_product_workshop");
-  const manualStudents = progressRecords?.filter((r) => ((r as any).progress_sources || []).includes("user_lesson_progress")).length || 0;
-  const savedResponseUsers = Object.keys(blockResponsesMap || {}).length;
+  void hasExternalProductWorkshop; // зарезервировано: спец-сводка по воркшопу при необходимости
   const answeredCounts = progressRecords?.map(r => {
     let count = 0;
     for (const block of interactiveBlocks) {
