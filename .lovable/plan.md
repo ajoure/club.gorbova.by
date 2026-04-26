@@ -1,150 +1,282 @@
 да, согласен
 
-Можно выполнять **PAY-I**.
+Можно выполнять **PAY-AUDIT** строго как read-only.
 
 **Контрольный scope**
 
-Только src/components/payment/PaymentDialog.tsx
+READ-ONLY ONLY
 
-**Ключевые условия**
+**Разрешено**
 
-1. Карты показываются только disabled.
+- читать файлы;
 
-2. Никаких saved-card оплат из PaymentDialog.
+- читать .lovable/[plan.md](http://plan.md);
 
-3. Никакого public-charge-saved-card.
+- читать memory/docs;
 
-4. provider_token не селектить.
+- SELECT из БД;
 
-5. handlePayment / trial / conflict-flow не трогать.
+- читать edge function logs;
 
-6. PublicPayPage не трогать.
+- rg/grep/git show/git diff;
 
-**Особое замечание**
+- составить таблицу покрытия;
 
-Сокращение ready-шага делать осторожно:
+- дать прямые ответы на 7 вопросов.
 
-- не менять условия рендера;
+**Запрещено**
 
-- не менять step-machine;
+- менять UI;
 
-- не менять обработчики;
+- менять backend;
 
-- менять только визуальный layout и тексты.
+- менять edge functions;
 
-**DoD принимается**
+- делать deploy;
 
-rg "provider_token|public-charge-saved-card|payment_method_verification_jobs|supports_recurring|recurring_verified" src/components/payment/PaymentDialog.tsx
+- делать миграции;
 
-→ 0 совпадений
+- писать в БД;
 
-git diff --name-only
+- обновлять memory;
 
-→ только src/components/payment/PaymentDialog.tsx
+- “по-быстрому фиксить” найденные баги.
 
-После выполнения нужен короткий отчёт:
+**Ключевой ожидаемый вывод**
 
-- что изменено;
-- grep proof;
-- tsc proof;
-- подтверждение, что PublicPayPage и edge functions не тронуты.
+Нужен честный факт:
+
+Где реально работает saved-card charge:
+
+- /pay/:token one_time?
+
+- PaymentDialog one_time?
+
+- purchases?
+
+- subscription?
+
+И отдельно:
+
+Почему в предыдущих отчётах звучало “реализовано”, если фактически это могло быть реализовано только для /pay/:token.
+
+**Обязательная таблица**
+
+| Entry point | UI file | Edge function(s) | Saved card visible | Saved card selectable | Saved card charge works | one_time | subscription | status |
+
+Покрыть минимум:
+
+- /pay/:token one_time
+
+- /pay/:token subscription
+
+- PaymentDialog one_time
+
+- PaymentDialog subscription
+
+- PaymentDialog trial
+
+- Purchases / SubscriptionDetailSheet
+
+**В конце отчёта**
+
+Нужны прямые ответы:
+
+1. Да/нет: реализована ли saved-card оплата из PaymentDialog.
+
+2. Где именно реализована saved-card оплата.
+
+3. Почему PaymentDialog остался disabled/info-only.
+
+4. Какие патчи реально что меняли.
+
+5. Подходит ли public-charge-saved-card для PaymentDialog без link_token.
+
+6. Какие ограничения у public-charge-saved-card.
+
+7. Какие варианты унификации есть без второго workflow.
+
+**DoD**
+
+- git diff --name-only → пустой
+
+- ни одной записи в БД не изменено
+
+- ни одной edge function не задеплоено
+
+- отчет содержит таблицу покрытия и 7 прямых ответов
+
+После PAY-AUDIT уже принимать решение по следующему патчу.
 
 &nbsp;
 
-План: PAY-I — Compact PaymentDialog ready-step + disabled saved cards
+План:
 
-## Диагноз
+# PAY-AUDIT — Read-only инвентаризация saved-card flow
 
-На скриншотах открыт компонент `src/components/payment/PaymentDialog.tsx` (модалка с тарифного блока на сайтах, кнопка «Выбрать тариф»), а не `PublicPayPage.tsx`. На `/pay/:token` UX корректный (PAY-E-LITE).
+## 1. Проблема
 
-Две проблемы в `PaymentDialog`:
+Ранее было заявлено требование: «выбор и оплата сохранённой картой везде». По факту тестов в PaymentDialog на сайте сохранённые карты только отображаются disabled и не используются для оплаты. Нужно остановить execute и провести честный read-only аудит фактического покрытия и предыдущих PAY-патчей.
 
-1. **Привязанные карты не показываются.** `loadSavedCard` грузит только дефолтную карту через `.eq("is_default", true).maybeSingle()` и пишет в `savedCard` (один объект). В рендере шага `ready` UI отображения `savedCard` отсутствует. Карты невидимы и для подписки, и для one_time.
-2. **Шаг `ready` перегружен.** Блок профиля → ShieldCheck-плашка → длинный subscription-info (5 абзацев) → отдельный длинный блок «При оформлении подписки bePaid…» → кнопки → admin-test. Кнопки уезжают за второй экран.
+## 2. Scope
 
-## Scope
+**STOP — никаких правок.** Только чтение кода, БД, edge function logs и git diff. На выходе — отчёт с таблицей и прямыми ответами.
 
-Только `src/components/payment/PaymentDialog.tsx`.
+Запрещено в рамках этого аудита:
 
-## Что сделать
+- менять UI;
+- менять backend / edge functions;
+- менять webhook;
+- менять БД, RLS, миграции;
+- ставить новые «исправляющие» PAY-патчи;
+- предлагать новый код до того, как отчёт принят.
 
-### 1. Загрузка карт — список вместо одной
+## 3. Что аудитим
 
-Заменить `loadSavedCard` на `loadSavedCards`:
+### A. `/pay/:token`
 
-```
-.from("payment_methods")
-.select("id, brand, last4, exp_month, exp_year, is_default")
-.eq("user_id", user.id)
-.eq("status", "active")
-.eq("provider", "bepaid")
-.order("is_default", { ascending: false })
-.order("created_at", { ascending: false })
-```
+- `src/pages/PublicPayPage.tsx`
+  - есть ли selector сохранённых карт;
+  - какие карты грузятся (поля, фильтры);
+  - какой backend вызывается при выбранной карте;
+  - что происходит для one_time vs subscription;
+  - что происходит для guest vs auth user;
+  - где включается disabled-режим карт.
 
-Состояние: `savedCards: Array<{...}>` вместо одиночного `savedCard`.
+### B. PaymentDialog на сайте
 
-**НЕ селектить**: `provider_token`, `verification_status`, `supports_recurring`, `recurring_verified`, и не трогать `payment_method_verification_jobs`.
+- `src/components/payment/PaymentDialog.tsx`
+  - все entry points (`rg "<PaymentDialog"`): `Landing`, `ProductLanding`, `UniversalPricingSection`, `TariffPricing`, `Pay`, `BusinessTraining`, `BusinessTrainingContent`, `LiveEventProductCta`, `AdminProductDetailV2`;
+  - какие props приходят, особенно `isSubscription`, `isTrial`, `offerId`, `tariffCode`;
+  - какие edge functions вызывает (`bepaid-create-token`, `bepaid-create-subscription-checkout`, `test-payment-complete`);
+  - есть ли вообще ветка вызова `public-charge-saved-card` или иного saved-card backend;
+  - в каком состоянии блок «Сохранённые карты»: visible / selectable / disabled;
+  - что говорит текущий текст пользователю.
 
-### 2. UI карт в шаге `ready` — всегда disabled
+### C. Личный кабинет / Мои покупки
 
-Если `savedCards.length > 0`, показать компактный блок «Сохранённые карты» в виде:
+- `src/pages/Purchases.tsx`
+- `src/components/purchases/SubscriptionListItem.tsx`
+- `src/components/purchases/OrderListItem.tsx`
+- `src/components/purchases/SubscriptionDetailSheet.tsx`
+- наличие/отсутствие действий «оплатить сохранённой картой», «повторить оплату»;
+- что показывается из `payment_methods` (только инфо или selector).
 
-```
-[CARD] VISA ••••1234   [по умолчанию]
-```
+### D. Edge functions inventory
 
-с `opacity-60 pointer-events-none select-none aria-disabled="true"`.
+Для каждой собрать единым списком: вызыватели, сценарии, поддержка saved card, требование `payment_link`, что создаёт, tracking_id, через какой webhook закрывается:
 
-Подпись под списком:
+- `public-charge-saved-card`
+- `public-checkout`
+- `bepaid-create-token`
+- `bepaid-create-subscription-checkout`
+- `direct-charge` (известно: отключён 410)
+- `admin-manual-charge`
+- `_shared/create-payment-checkout.ts` (helper, не entry point, но критичен)
+- `bepaid-webhook` (как closer)
 
-- **subscription**: «Сохранённые карты нельзя выбрать для оформления подписки. Вас перенаправит на защищённую страницу bePaid, где нужно будет выбрать или ввести карту для подписки.»
-- **one_time**: «Оплата сохранённой картой в этом окне пока недоступна. Используйте стандартную оплату bePaid.»
+Источники истины для проверки:
 
-Если `savedCards.length === 0` — блок не рендерим.
+- код `supabase/functions/<name>/index.ts`;
+- `supabase/functions.registry.txt`;
+- `supabase--edge_function_logs` для подтверждения реальных вызовов;
+- `payments_v2` / `orders_v2` через `supabase--read_query`: фактические `meta.source`, `tracking_id`, последние записи.
 
-### 3. Сокращение шага `ready`
+### E. История PAY-патчей
 
-- **Профиль** (Email/Имя/Телефон) → одна компактная строка вида `{email} · {имя} · {телефон}` в одной плашке.
-- **ShieldCheck-блок** «После нажатия кнопки вы будете перенаправлены…» → удалить как отдельную плашку, оставить короткой строкой мелким шрифтом под кнопками.
-- **subscription-info** — две короткие строки:
-  - «Сегодня: доступ к Клубу — {price}.» (и аналогичные краткие варианты для курсов / обычных подписок)
-  - «Далее автосписание раз в месяц. Управление в личном кабинете.»
-- **PAY-G длинный блок** «При оформлении подписки bePaid…» — удалить как отдельную карточку, оставить **внутри** subscription-info короткой строкой:
-«bePaid может показать экран «привязка карты для автоплатежей» — это штатный экран оформления подписки.»
+По текущему коду + `.lovable/plan.md` собрать таблицу патчей: PAY-C, PAY-D, PAY-E-LITE, PAY-G, PAY-H, PAY-I. Для каждого:
 
-### 4. CTA
+- что было заявлено;
+- какие файлы реально затронуты сейчас;
+- какие ограничения зафиксированы;
+- что осталось disabled / отложено;
+- где именно остался разрыв «сайт vs ссылка».
 
-Оставить текущие кнопки и обработчики:
+Дополнительные источники:
 
-- Главная: `Оплатить {price}` → `handlePayment` (логика не меняется).
-- Вторичная: `Отмена`.
+- `mem://ui/payments/saved-card-client-policy`;
+- `mem://architecture/payments/one-time-checkout-unification`;
+- `mem://commercial-logic/payments/public-checkout-architecture.md`;
+- `docs/PAYMENT_LINKS_AUDIT.md`.
 
-`handlePayment`, `handleReplaceSubscription`, `handleTestPayment`, conflict-flow, trial-flow — не трогать.
+## 4. Обязательный артефакт — таблица покрытия
 
-## STOP-guards
+Отчёт обязан содержать таблицу следующего формата (одна строка = один реальный entry point):
 
-- STOP, если карты становятся кликабельными.
-- STOP, если PaymentDialog вызывает `public-charge-saved-card`.
-- STOP, если меняется `handlePayment`, `handleReplaceSubscription`, `handleTestPayment`.
-- STOP, если меняется bePaid payload.
-- STOP, если `provider_token` появляется во frontend.
-- STOP, если меняется `PublicPayPage.tsx`.
-- STOP, если добавляется MIT/saved-card payment-flow в PaymentDialog.
-- STOP, если меняются edge functions.
-- STOP, если меняется `LandingPricing` / `UniversalPricingSection` / тарифные блоки.
 
-## DoD
+| Entry point | UI file | Edge function(s) | Saved card visible | Saved card selectable | Saved card charge works | one_time | subscription | status |
+| ----------- | ------- | ---------------- | ------------------ | --------------------- | ----------------------- | -------- | ------------ | ------ |
 
-1. На viewport **518×788** CTA-кнопки «Отмена» и «Оплатить {price}» видны без прокрутки в типовом сценарии: subscription + авторизованный пользователь + 1–2 сохранённые карты. При 5+ картах или длинных данных профиля небольшой скролл допустим.
-2. Если у пользователя есть сохранённые карты — они отображаются **disabled** с соответствующим текстом для subscription / one_time.
-3. Если карт нет — блок карт отсутствует, ничего не ломается.
-4. one_time PaymentDialog не показывает кликабельные карты (политика `mem://ui/payments/saved-card-client-policy` сохраняется).
-5. `PublicPayPage.tsx` не изменён.
-6. `tsc --noEmit` чистый.
-7. `rg "provider_token|public-charge-saved-card|payment_method_verification_jobs|supports_recurring|recurring_verified" src/components/payment/PaymentDialog.tsx` → **0 совпадений**.
-8. `git diff --name-only` → только `src/components/payment/PaymentDialog.tsx`.
 
-## Затронутые файлы
+Покрыть минимум:
 
-- `src/components/payment/PaymentDialog.tsx` — единственный файл изменений.
+- `/pay/:token` one_time;
+- `/pay/:token` subscription;
+- PaymentDialog one_time (consultation, разовый продукт);
+- PaymentDialog subscription;
+- PaymentDialog trial;
+- Purchases / SubscriptionDetailSheet (renew / repay).
+
+## 5. Обязательные прямые ответы
+
+В конце отчёта — без размытых формулировок:
+
+1. Реализована ли уже оплата сохранённой картой из PaymentDialog (да / нет, со ссылкой на код)?
+2. Если нет — почему в предыдущих отчётах звучало, что «оплата привязанной картой реализована»? Какой именно патч это утверждал и какие файлы он реально менял?
+3. Где сейчас фактически работает saved-card charge (entry point + edge function + последний реальный лог/запись из БД)?
+4. Что минимально нужно доделать, чтобы PaymentDialog one_time тоже использовал сохранённую карту?
+5. Нужно ли для этого менять backend, или существующий `public-charge-saved-card` уже подходит?
+6. Если `public-charge-saved-card` требует `url_token`, почему он не подходит для PaymentDialog без payment link, и какие у него ещё ограничения (scope guard, ownership, idempotency)?
+7. Какой самый безопасный единый путь, чтобы не плодить второй payment workflow (расширение существующей function vs тонкий wrapper над `_shared/create-payment-checkout.ts` + отдельный saved-card path vs новый endpoint)? Указать риски каждого варианта, без выбора решения.
+
+## 6. Изменяемые компоненты
+
+Никакие. Аудит read-only.
+
+## 7. Что НЕ будет изменено
+
+Ничего. Ни UI, ни edge functions, ни webhook, ни БД, ни RLS, ни memory.
+
+## 8. Dry-run
+
+Сам аудит и есть dry-run. Никаких фактических операций, кроме SELECT и чтения файлов.
+
+## 9. Execute
+
+1. Прочитать перечисленные UI файлы и зафиксировать поведение по каждому entry point.
+2. Прочитать перечисленные edge functions, выписать их контракты.
+3. Прогнать `rg` по `provider_token`, `public-charge-saved-card`, `direct-charge`, `useMitTokenization`, `paymentFlowType` — зафиксировать, где они встречаются.
+4. Через `supabase--read_query` посмотреть свежие записи в `payments_v2` / `orders_v2` с `meta->>source = 'saved_card_public_pay'` и без — подтвердить, какие entry points реально доходили до БД.
+5. Через `supabase--edge_function_logs` подтвердить реальные вызовы `public-charge-saved-card`, `bepaid-create-token`, `public-checkout`.
+6. Сложить всё в таблицу покрытия.
+7. Дать прямые ответы на 7 вопросов.
+8. Никаких правок.
+
+## 10. STOP-guards
+
+- STOP, если в ходе аудита возникает соблазн «по-быстрому пофиксить» — фиксить запрещено.
+- STOP, если данные в коде и в логах противоречат друг другу — это и есть результат аудита, фиксируем расхождение, не «дорисовываем» интерпретацию.
+- STOP, если нужны дополнительные права/доступы для проверки — указать это в отчёте, не обходить.
+- STOP, если очередной PAY-патч обнаружится частично откатанным — зафиксировать факт, не «восстанавливать».
+
+## 11. DoD
+
+- Аудит-отчёт содержит:
+  - заполненную таблицу покрытия по всем entry points;
+  - прямые ответы на 7 вопросов;
+  - явный вывод: «оплата сохранённой картой реализована только в /pay/:token one_time» (или иной фактический вывод, подтверждённый кодом и логами);
+  - перечень ограничений `public-charge-saved-card` (auth, scope=one_time, ownership NULL-or-equal, idempotency) с цитатами строк;
+  - раздел «варианты унификации без второго workflow» с рисками, без выбора решения;
+- ни один файл проекта не изменён;
+- ни одна edge function не задеплоена;
+- ни одна запись в БД не изменена;
+- `git diff --name-only` пустой.
+
+## 12. Риски и зависимости
+
+- Часть данных требует чтения логов edge functions и SELECT по `payments_v2` — если доступ ограничен, явно отметить это в отчёте.
+- Если в PaymentDialog обнаружатся скрытые ветки, которые я не учёл, — внести их в таблицу как отдельные entry points, а не «склеивать».
+
+## 13. Требуется дополнительная информация
+
+Дополнительная информация не требуется. Требуется approval на выполнение PAY-AUDIT именно как read-only аудита, без правок.
