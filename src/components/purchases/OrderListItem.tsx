@@ -258,91 +258,94 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
 
   return (
     <>
-      <div className="flex items-center justify-between p-4 rounded-lg border bg-card">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="font-medium text-foreground truncate">{getProductName()}</h3>
-            {getStatusBadge()}
+      <div className="group flex items-start justify-between gap-3 p-4 sm:p-5 rounded-xl border border-border/60 bg-card hover:border-primary/30 hover:shadow-sm transition-all min-w-0 overflow-hidden">
+        <div className="flex-1 min-w-0 space-y-2">
+          <div className="flex items-start justify-between gap-2">
+            <h3 className="font-medium text-foreground text-sm sm:text-base break-words leading-snug min-w-0">
+              {getProductName()}
+            </h3>
+            <div className="shrink-0">{getStatusBadge()}</div>
           </div>
-          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 mt-1 text-sm text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs sm:text-sm text-muted-foreground">
             <span>{formatShortDate(order.created_at)}</span>
-            <span className="font-medium text-foreground">
+            <span className="font-semibold text-foreground">
               {order.final_price.toFixed(2)} {order.currency}
             </span>
             <span className="flex items-center gap-1">
-              <CreditCard className="h-3 w-3" />
+              <CreditCard className="h-3.5 w-3.5" />
               {getPaymentMethod()}
             </span>
           </div>
         </div>
-        {isPaid && (
-          <div className="flex items-center gap-1 ml-2 flex-shrink-0">
-            {/* BePaid receipt button */}
+        {(isPaid || isFailed) && (
+          <div className="flex items-center gap-1 shrink-0">
+            {/* BePaid receipt button — для оплаченных и для ошибок (bePaid возвращает URL и для failed) */}
             {receiptUrl && (
-              <Button 
-                variant="ghost" 
-                size="sm" 
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => onOpenBePaidReceipt(receiptUrl)}
-                title="Чек bePaid"
+                title={isPaid ? "Чек bePaid" : "Чек ошибки bePaid"}
               >
-                <Download className="h-4 w-4" />
+                <ExternalLink className="h-4 w-4" />
                 <span className="hidden sm:inline ml-1">Чек</span>
               </Button>
             )}
-            
-            {/* Document actions dropdown */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" disabled={isGenerating || isSending}>
-                  {isGenerating || isSending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <FileText className="h-4 w-4" />
+
+            {/* Document actions dropdown — только для оплаченных */}
+            {isPaid && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" disabled={isGenerating || isSending}>
+                    {isGenerating || isSending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <FileText className="h-4 w-4" />
+                    )}
+                    <span className="hidden sm:inline ml-1">Документы</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuItem onClick={openPreview}>
+                    <Eye className="h-4 w-4 mr-2" />
+                    Просмотр и скачивание PDF
+                  </DropdownMenuItem>
+
+                  <DropdownMenuSeparator />
+
+                  <DropdownMenuItem onClick={() => sendDocument(true, false)}>
+                    <Mail className="h-4 w-4 mr-2" />
+                    Отправить на почту
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => sendDocument(false, true)}>
+                    <Send className="h-4 w-4 mr-2" />
+                    Отправить в Telegram
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => sendDocument(true, true)}>
+                    <Send className="h-4 w-4 mr-2" />
+                    Отправить везде
+                  </DropdownMenuItem>
+
+                  {generatedDocs.length > 0 && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuLabel className="text-xs text-muted-foreground">
+                        Сгенерированные документы
+                      </DropdownMenuLabel>
+                      {generatedDocs.map((doc) => (
+                        <DropdownMenuItem
+                          key={doc.id}
+                          onClick={() => downloadGeneratedDoc(doc.file_path, doc.document_number)}
+                        >
+                          <FileDown className="h-4 w-4 mr-2" />
+                          {doc.document_number}
+                        </DropdownMenuItem>
+                      ))}
+                    </>
                   )}
-                  <span className="hidden sm:inline ml-1">Документы</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuItem onClick={openPreview}>
-                  <Eye className="h-4 w-4 mr-2" />
-                  Просмотр и скачивание PDF
-                </DropdownMenuItem>
-                
-                <DropdownMenuSeparator />
-                
-                <DropdownMenuItem onClick={() => sendDocument(true, false)}>
-                  <Mail className="h-4 w-4 mr-2" />
-                  Отправить на почту
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => sendDocument(false, true)}>
-                  <Send className="h-4 w-4 mr-2" />
-                  Отправить в Telegram
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => sendDocument(true, true)}>
-                  <Send className="h-4 w-4 mr-2" />
-                  Отправить везде
-                </DropdownMenuItem>
-                
-                {/* Generated documents from templates */}
-                {generatedDocs.length > 0 && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuLabel className="text-xs text-muted-foreground">
-                      Сгенерированные документы
-                    </DropdownMenuLabel>
-                    {generatedDocs.map((doc) => (
-                      <DropdownMenuItem 
-                        key={doc.id}
-                        onClick={() => downloadGeneratedDoc(doc.file_path, doc.document_number)}
-                      >
-                        <FileDown className="h-4 w-4 mr-2" />
-                        {doc.document_number}
-                      </DropdownMenuItem>
-                    ))}
-                  </>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </div>
         )}
       </div>
