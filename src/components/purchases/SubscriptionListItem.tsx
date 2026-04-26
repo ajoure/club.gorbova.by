@@ -80,11 +80,11 @@ export function SubscriptionListItem({ subscription, onClick }: SubscriptionList
   return (
     <button
       onClick={onClick}
-      className="w-full flex items-center justify-between p-4 rounded-lg border bg-card hover:bg-accent/50 transition-colors text-left"
+      className="w-full flex items-center justify-between gap-2 p-3 sm:p-4 rounded-lg border bg-card hover:bg-accent/50 transition-colors text-left min-w-0"
     >
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <h3 className="font-medium text-foreground truncate">
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 min-w-0">
+          <h3 className="font-medium text-foreground text-sm sm:text-base break-words min-w-0 flex-1">
             {subscription.products_v2?.name || subscription.products_v2?.code} — {subscription.tariffs?.name}
           </h3>
           {/* PATCH 13+: Показывать метку если автопродление отключено */}

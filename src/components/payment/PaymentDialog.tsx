@@ -136,6 +136,8 @@ export function PaymentDialog({
   const { user, session } = useAuth();
   const { isSuperAdmin, isAdmin } = usePermissions();
   const [step, setStep] = useState<Step>("email");
+  // PAY-K UX: granular processing stage for clearer feedback during saved-card flow.
+  const [processingStage, setProcessingStage] = useState<'preparing' | 'creating_order' | 'charging_card' | 'redirecting_3ds'>('preparing');
   const [isTestPaymentLoading, setIsTestPaymentLoading] = useState(false);
   const [formData, setFormData] = useState<UserFormData>({
     email: "",
@@ -572,6 +574,7 @@ export function PaymentDialog({
     }
     setIsLoading(true);
     setPaymentError(null);
+    setProcessingStage('creating_order');
     setStep('processing');
     try {
       // 1. Bridge: create internal one-time payment_link.
@@ -597,6 +600,7 @@ export function PaymentDialog({
       }
 
       // 2. Charge saved card via existing public-charge-saved-card.
+      setProcessingStage('charging_card');
       const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
       const chargeUrl = `https://${projectId}.supabase.co/functions/v1/public-charge-saved-card`;
       const idempotency_key = savedCardIdempotencyKeyRef.current;
@@ -624,6 +628,7 @@ export function PaymentDialog({
       }
       // Issuer 3DS may require extra confirmation.
       if (data.redirect_url) {
+        setProcessingStage('redirecting_3ds');
         window.location.href = data.redirect_url;
         return;
       }
@@ -1476,13 +1481,22 @@ export function PaymentDialog({
           </div>
         );
 
-      case "processing":
+      case "processing": {
+        const stageText: Record<typeof processingStage, { primary: string; hint: string }> = {
+          preparing: { primary: 'Подготовка платежа…', hint: 'Это займёт несколько секунд' },
+          creating_order: { primary: 'Создаём заказ…', hint: 'Подготавливаем платёжную ссылку' },
+          charging_card: { primary: 'Списываем карту…', hint: 'Отправляем запрос в банк' },
+          redirecting_3ds: { primary: 'Переход на 3D-Secure…', hint: 'Сейчас откроется страница банка для подтверждения' },
+        };
+        const current = stageText[processingStage];
         return (
-          <div className="text-center py-8">
+          <div className="text-center py-8 px-4">
             <Loader2 className="h-12 w-12 animate-spin mx-auto text-primary mb-4" />
-            <p className="text-muted-foreground">Подготовка платежа...</p>
+            <p className="text-foreground font-medium">{current.primary}</p>
+            <p className="text-sm text-muted-foreground mt-1">{current.hint}</p>
           </div>
         );
+      }
     }
   };
 
