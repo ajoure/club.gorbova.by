@@ -353,6 +353,12 @@ export default function PublicPayPage() {
     !isSubscription &&
     Array.isArray(savedCards) &&
     savedCards.length > 0;
+  // PAY-E-LITE: для subscription показываем сохранённые карты в disabled-режиме + уведомление.
+  const showSubscriptionDisabledCards =
+    ownsOrPublic &&
+    isSubscription &&
+    Array.isArray(savedCards) &&
+    savedCards.length > 0;
   const showSubscriptionFallbackHint = ownsOrPublic && isSubscription;
 
   return (
@@ -505,10 +511,39 @@ export default function PublicPayPage() {
               </p>
             )}
 
-            {/* PAY-D: subscription — saved-card flow вынесен в PAY-E */}
+            {/* PAY-E-LITE: для subscription показываем сохранённые карты disabled + уведомление.
+                Логика checkout не меняется — CTA уходит в стандартный bePaid subscription flow. */}
+            {!needsIdentity && showSubscriptionDisabledCards && (
+              <div className="mt-4 mb-2">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2">
+                  Сохранённые карты
+                </div>
+                <div className="space-y-2 opacity-60 pointer-events-none select-none" aria-disabled="true">
+                  {savedCards!.map((card) => (
+                    <div
+                      key={card.id}
+                      className="flex items-center gap-3 p-3 rounded-md border border-border"
+                    >
+                      <CreditCard className="h-4 w-4 text-muted-foreground" />
+                      <span className="flex-1 text-sm">
+                        {(card.brand || 'CARD').toUpperCase()} ••••{card.last4 || '****'}
+                      </span>
+                      {card.is_default && (
+                        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                          по умолчанию
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {!needsIdentity && showSubscriptionFallbackHint && (
-              <p className="mt-3 text-xs text-center text-muted-foreground">
-                Для подписки используйте стандартную оплату через bePaid.
+              <p className="mt-3 text-xs text-center text-muted-foreground leading-relaxed">
+                Эта ссылка оформляет подписку bePaid. Сохранённые карты нельзя выбрать для оформления
+                подписки. Вас перенаправит на защищённую страницу bePaid, где нужно будет ввести карту
+                для подписки.
               </p>
             )}
 
