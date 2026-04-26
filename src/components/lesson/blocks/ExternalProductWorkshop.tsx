@@ -141,16 +141,8 @@ const emptyCoeff = (): CoeffRow => ({
 const DEFAULT_STATE: ExternalProductState = {
   client_types: [emptyClientType()],
   complexity: [emptyCoeff()],
-  service_levels: [
-    { id: uid(), name: "База", description: "", conclusion: "", coefficient: 1.0, price: 0 },
-    { id: uid(), name: "Стандарт", description: "", conclusion: "", coefficient: 1.3, price: 0 },
-    { id: uid(), name: "Премиум", description: "", conclusion: "", coefficient: 1.6, price: 0 },
-  ],
-  responsibility: [
-    { id: uid(), name: "Ограниченная", description: "", conclusion: "", coefficient: 1.0, price: 0 },
-    { id: uid(), name: "Расширенная", description: "", conclusion: "", coefficient: 1.4, price: 0 },
-    { id: uid(), name: "Полная", description: "", conclusion: "", coefficient: 1.8, price: 0 },
-  ],
+  service_levels: [emptyCoeff()],
+  responsibility: [emptyCoeff()],
   portfolio_pricing: [],
   import_meta: null,
   completed_at: null,
@@ -429,15 +421,25 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
     return { avgCoeff, avgAddons, avgCurrent, underpriced };
   }, [computed]);
 
+  const dictsFilled = useMemo(() => {
+    const has = (rows: { name: string }[]) => rows.some((r) => r.name.trim().length > 0);
+    return (
+      has(state.client_types) &&
+      has(state.complexity) &&
+      has(state.service_levels) &&
+      has(state.responsibility)
+    );
+  }, [state.client_types, state.complexity, state.service_levels, state.responsibility]);
+
   const completionValidation = useMemo(() => {
-    if (state.portfolio_pricing.length === 0) {
-      return "Нельзя завершить шаг без импортированного портфеля из Шага 2.";
+    if (!dictsFilled) {
+      return "Заполните хотя бы одну строку в каждом из блоков 1–4.";
     }
-    if (!state.client_types.some((r) => r.name.trim().length > 0)) {
-      return "Заполните хотя бы 1 тип клиента в Блоке 1.";
+    if (state.portfolio_pricing.length === 0) {
+      return "Загрузите портфель из Шага 2, чтобы завершить шаг.";
     }
     return null;
-  }, [state.client_types, state.portfolio_pricing.length]);
+  }, [dictsFilled, state.portfolio_pricing.length]);
   const isCompleted = !!state.completed_at && !completionValidation;
 
   const refetchProof = useCallback(async () => {
@@ -583,7 +585,7 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
         icon={<Users className="h-5 w-5" />}
         index={1}
         title="Тип клиента"
-        subtitle="Определите типовой контур клиента, для которого вы собираете продукт"
+        subtitle="Определите типовой контур клиента"
       >
         <div className="space-y-3">
           {state.client_types.map((row, idx) => (
@@ -610,7 +612,6 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
                 <Field label="Название типа">
                   <Input
                     value={row.name}
-                    placeholder="Напр.: ИП услуги без сотрудников"
                     onChange={(e) => updClientType(row.id, { name: e.target.value })}
                   />
                 </Field>
@@ -629,7 +630,6 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
                 <Textarea
                   value={row.description}
                   rows={2}
-                  placeholder="Как работает бизнес, какие операции, особенности"
                   onChange={(e) => updClientType(row.id, { description: e.target.value })}
                 />
               </Field>
@@ -637,7 +637,6 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
                 <Textarea
                   value={row.conclusion}
                   rows={2}
-                  placeholder="Стандартный / сложный / нестабильный"
                   onChange={(e) => updClientType(row.id, { conclusion: e.target.value })}
                 />
               </Field>
@@ -654,138 +653,147 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
         icon={<Layers className="h-5 w-5" />}
         index={2}
         title="Сложность"
-        subtitle="Контуры, которые увеличивают цену: склад, сотрудники, валютные операции и т.д."
+        subtitle="Определите контур сложности"
         rows={state.complexity}
         onAdd={() => addCoeff("complexity")}
         onUpdate={(id, p) => updCoeff("complexity", id, p)}
         onDelete={(id) => delCoeff("complexity", id)}
-        coeffHints="1.0 — нет влияния · 1.2 — небольшое · 1.5 — среднее · 2.0 — сильное"
         nameLabel="Название участка"
-        namePlaceholder="Напр.: склад, сотрудники, ОС"
       />
 
       <CoeffSection
         icon={<Headphones className="h-5 w-5" />}
         index={3}
         title="Сервис"
-        subtitle="Уровень включённости и взаимодействия с клиентом"
+        subtitle="Определите уровень включённости и взаимодействия"
         rows={state.service_levels}
         onAdd={() => addCoeff("service_levels")}
         onUpdate={(id, p) => updCoeff("service_levels", id, p)}
         onDelete={(id) => delCoeff("service_levels", id)}
-        coeffHints="База 1.0 · Стандарт 1.3 · Премиум 1.6"
         nameLabel="Название уровня"
-        namePlaceholder="База / Стандарт / Премиум"
       />
 
       <CoeffSection
         icon={<ShieldCheck className="h-5 w-5" />}
         index={4}
         title="Ответственность"
-        subtitle="За что вы отвечаете, а за что — нет"
+        subtitle="Определите границы ответственности"
         rows={state.responsibility}
         onAdd={() => addCoeff("responsibility")}
         onUpdate={(id, p) => updCoeff("responsibility", id, p)}
         onDelete={(id) => delCoeff("responsibility", id)}
-        coeffHints="Ограниченная 1.0 · Расширенная 1.4 · Полная 1.8 · Сверх 2.2"
         nameLabel="Название уровня"
-        namePlaceholder="Ограниченная / Расширенная / Полная"
       />
 
       {/* ─── Блок 5. Калькулятор по портфелю ─── */}
-      <SectionCard
-        icon={<Calculator className="h-5 w-5" />}
-        index={5}
-        title="Проверка цен по портфелю клиентов"
-        subtitle="Импортируем ваш портфель из Шага 2 и считаем цену двумя способами — по коэффициентам и по надбавкам"
-        action={
-          <Button onClick={handleImportPortfolio} disabled={importing} variant="default" size="sm">
-            {importing ? (
-              <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
-            ) : (
-              <Download className="h-4 w-4 mr-1.5" />
-            )}
-            {state.portfolio_pricing.length ? "Обновить из Шага 2" : "Импортировать портфель"}
-          </Button>
-        }
-      >
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
-          <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
-            <div className="text-xs text-muted-foreground">Источник импорта</div>
-            <div className="font-medium">{state.import_meta?.source_lesson_title || "Шаг 2"}</div>
-            {state.import_meta?.source_lesson_id && (
-              <div className="text-[11px] text-muted-foreground truncate mt-1">{state.import_meta.source_lesson_id}</div>
-            )}
-          </div>
-          <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
-            <div className="text-xs text-muted-foreground">Импортировано клиентов</div>
-            <div className="font-medium">{state.import_meta?.imported_count ?? state.portfolio_pricing.length}</div>
-          </div>
-          <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
-            <div className="text-xs text-muted-foreground">Дата/время импорта</div>
-            <div className="font-medium">
-              {state.import_meta?.imported_at
-                ? new Date(state.import_meta.imported_at).toLocaleString("ru-RU")
-                : "—"}
-            </div>
-          </div>
-        </div>
-
-        {state.import_meta?.empty_reason && state.portfolio_pricing.length === 0 && (
-          <Alert variant="destructive">
-            <AlertTriangle className="h-4 w-4" />
-            <AlertTitle>Портфель пустой</AlertTitle>
-            <AlertDescription>
-              Источник найден, но клиенты не импортированы. Проверьте заполнение Шага 2 и повторите импорт.
-            </AlertDescription>
-          </Alert>
-        )}
-
-        {state.portfolio_pricing.length === 0 ? (
+      {!dictsFilled ? (
+        <SectionCard
+          icon={<Calculator className="h-5 w-5" />}
+          index={5}
+          title="Проверка цен по портфелю клиентов"
+          subtitle="Доступно после заполнения блоков 1–4"
+        >
           <Alert>
             <AlertTriangle className="h-4 w-4" />
-            <AlertTitle>Портфель пока не загружен</AlertTitle>
+            <AlertTitle>Сначала заполните блоки 1–4</AlertTitle>
             <AlertDescription>
-              Нажмите «Импортировать портфель» — мы подтянем ваших клиентов из Шага 2 «Анализ
-              портфеля». Если их там пока нет — сначала заполните Шаг 2.
+              После того как вы заполните типы клиентов, сложность, сервис и ответственность —
+              здесь появится возможность загрузить портфель из Шага 2 и проверить цены.
             </AlertDescription>
           </Alert>
-        ) : (
-          <div className="space-y-4">
-            {computed.map((row) => (
-              <PortfolioRowCard
-                key={row.client_row_id}
-                row={row}
-                clientTypes={state.client_types}
-                complexity={state.complexity}
-                services={state.service_levels}
-                responsibility={state.responsibility}
-                onChange={(patch) =>
-                  setState((s) => ({
-                    ...s,
-                    portfolio_pricing: s.portfolio_pricing.map((r) =>
-                      r.client_row_id === row.client_row_id ? { ...r, ...patch } : r
-                    ),
-                  }))
-                }
-              />
-            ))}
-
-            {stats && (
-              <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 sm:p-5 grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <Stat label="Средняя текущая" value={fmt(stats.avgCurrent)} suffix="$" />
-                <Stat label="Средняя по коэф." value={fmt(stats.avgCoeff)} suffix="$" />
-                <Stat label="Средняя по надб." value={fmt(stats.avgAddons)} suffix="$" />
-                <Stat
-                  label="Сильно недооценённых"
-                  value={String(stats.underpriced)}
-                  suffix={`из ${computed.length}`}
-                />
+        </SectionCard>
+      ) : (
+        <SectionCard
+          icon={<Calculator className="h-5 w-5" />}
+          index={5}
+          title="Проверка цен по портфелю клиентов"
+          subtitle="Загрузите портфель из Шага 2 и проверьте логику цены"
+          action={
+            <Button onClick={handleImportPortfolio} disabled={importing} variant="default" size="sm">
+              {importing ? (
+                <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4 mr-1.5" />
+              )}
+              Загрузить портфель из Шага 2
+            </Button>
+          }
+        >
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+            <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+              <div className="text-xs text-muted-foreground">Источник</div>
+              <div className="font-medium">{state.import_meta?.source_lesson_title || "Шаг 2"}</div>
+            </div>
+            <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+              <div className="text-xs text-muted-foreground">Загружено клиентов</div>
+              <div className="font-medium">{state.import_meta?.imported_count ?? state.portfolio_pricing.length}</div>
+            </div>
+            <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+              <div className="text-xs text-muted-foreground">Дата загрузки</div>
+              <div className="font-medium">
+                {state.import_meta?.imported_at
+                  ? new Date(state.import_meta.imported_at).toLocaleString("ru-RU")
+                  : "—"}
               </div>
-            )}
+            </div>
           </div>
-        )}
-      </SectionCard>
+
+          {state.import_meta?.empty_reason && state.portfolio_pricing.length === 0 && (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Портфель пустой</AlertTitle>
+              <AlertDescription>
+                Источник найден, но клиенты не загружены. Проверьте заполнение Шага 2 и повторите загрузку.
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {state.portfolio_pricing.length === 0 ? (
+            <Alert>
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Портфель пока не загружен</AlertTitle>
+              <AlertDescription>
+                Нажмите «Загрузить портфель из Шага 2» — мы подтянем ваших клиентов из урока «Анализ
+                портфеля». Если их там пока нет — сначала заполните Шаг 2.
+              </AlertDescription>
+            </Alert>
+          ) : (
+            <div className="space-y-4">
+              {computed.map((row) => (
+                <PortfolioRowCard
+                  key={row.client_row_id}
+                  row={row}
+                  clientTypes={state.client_types}
+                  complexity={state.complexity}
+                  services={state.service_levels}
+                  responsibility={state.responsibility}
+                  onChange={(patch) =>
+                    setState((s) => ({
+                      ...s,
+                      portfolio_pricing: s.portfolio_pricing.map((r) =>
+                        r.client_row_id === row.client_row_id ? { ...r, ...patch } : r
+                      ),
+                    }))
+                  }
+                />
+              ))}
+
+              {stats && (
+                <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 sm:p-5 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <Stat label="Средняя текущая" value={fmt(stats.avgCurrent)} suffix="$" />
+                  <Stat label="Средняя по коэф." value={fmt(stats.avgCoeff)} suffix="$" />
+                  <Stat label="Средняя по надб." value={fmt(stats.avgAddons)} suffix="$" />
+                  <Stat
+                    label="Сильно недооценённых"
+                    value={String(stats.underpriced)}
+                    suffix={`из ${computed.length}`}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+        </SectionCard>
+      )}
 
       {/* Proof-панели */}
       <Card className="border-border/60">
@@ -843,11 +851,7 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
 
       {/* Footer */}
       <Card className="border-border/60 bg-gradient-to-br from-muted/40 to-transparent">
-        <CardContent className="py-5 px-5 sm:px-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="text-sm text-muted-foreground max-w-xl">
-            Если ваши текущие клиенты не вписываются в продукт — проблема не в клиентах,
-            проблема в модели. Продукт — эталон, клиенты — проверка.
-          </div>
+        <CardContent className="py-5 px-5 sm:px-6 flex flex-col sm:flex-row sm:items-center justify-end gap-4">
           {isCompleted ? (
             <div className="flex items-center gap-3">
               <Badge className="gap-1.5 bg-green-600 hover:bg-green-600">
@@ -953,9 +957,7 @@ function CoeffSection({
   onAdd,
   onUpdate,
   onDelete,
-  coeffHints,
   nameLabel,
-  namePlaceholder,
 }: {
   icon: React.ReactNode;
   index: number;
@@ -965,13 +967,10 @@ function CoeffSection({
   onAdd: () => void;
   onUpdate: (id: string, patch: Partial<CoeffRow>) => void;
   onDelete: (id: string) => void;
-  coeffHints: string;
   nameLabel: string;
-  namePlaceholder: string;
 }) {
   return (
     <SectionCard icon={icon} index={index} title={title} subtitle={subtitle}>
-      <div className="text-xs text-muted-foreground -mt-2">{coeffHints}</div>
       <div className="space-y-3">
         {rows.map((row, idx) => (
           <div
@@ -993,39 +992,16 @@ function CoeffSection({
                 </Button>
               )}
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <Field label={nameLabel}>
-                <Input
-                  value={row.name}
-                  placeholder={namePlaceholder}
-                  onChange={(e) => onUpdate(row.id, { name: e.target.value })}
-                />
-              </Field>
-              <Field label="Коэффициент">
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  step="0.1"
-                  value={row.coefficient ?? ""}
-                  onChange={(e) =>
-                    onUpdate(row.id, { coefficient: parseFloat(e.target.value) || 0 })
-                  }
-                />
-              </Field>
-              <Field label="Доплата, $">
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  value={row.price ?? ""}
-                  onChange={(e) => onUpdate(row.id, { price: parseFloat(e.target.value) || 0 })}
-                />
-              </Field>
-            </div>
+            <Field label={nameLabel}>
+              <Input
+                value={row.name}
+                onChange={(e) => onUpdate(row.id, { name: e.target.value })}
+              />
+            </Field>
             <Field label="Описание">
               <Textarea
                 rows={2}
                 value={row.description}
-                placeholder="Что именно происходит, как часто, какие особенности"
                 onChange={(e) => onUpdate(row.id, { description: e.target.value })}
               />
             </Field>
@@ -1033,8 +1009,18 @@ function CoeffSection({
               <Textarea
                 rows={2}
                 value={row.conclusion}
-                placeholder="Влияет на время / риск / контроль"
                 onChange={(e) => onUpdate(row.id, { conclusion: e.target.value })}
+              />
+            </Field>
+            <Field label="Коэффициент доплаты">
+              <Input
+                type="number"
+                inputMode="decimal"
+                step="0.1"
+                value={row.coefficient ?? ""}
+                onChange={(e) =>
+                  onUpdate(row.id, { coefficient: parseFloat(e.target.value) || 0 })
+                }
               />
             </Field>
           </div>
