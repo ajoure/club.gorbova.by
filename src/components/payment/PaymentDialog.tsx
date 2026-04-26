@@ -1424,7 +1424,7 @@ export function PaymentDialog({
 
       {/* Replace subscription confirmation */}
       <Dialog open={showReplaceConfirm} onOpenChange={setShowReplaceConfirm}>
-        <DialogContent className="w-[calc(100vw-24px)] sm:max-w-md">
+        <DialogContent className="w-[calc(100vw-24px)] sm:max-w-md bg-background/70 backdrop-blur-2xl border-white/10 shadow-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Repeat className="h-5 w-5 text-amber-600" />
