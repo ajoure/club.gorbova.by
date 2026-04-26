@@ -5,6 +5,7 @@ import { CreditCard, Download, Ban, RotateCcw, CheckCircle, XCircle, Clock, File
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { getSubscriptionStatusLabel } from "@/lib/subscriptionStatusLabels";
 import {
   Sheet,
   SheetContent,
