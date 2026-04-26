@@ -159,7 +159,7 @@ export function SubscriptionDetailSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className={SHEET_SHELL_CLASS}>
         <SheetHeader className="pr-10">
-          <SheetTitle className="text-left truncate">
+          <SheetTitle className="text-left break-words">
             {subscription.products_v2?.name || subscription.products_v2?.code} — {subscription.tariffs?.name}
           </SheetTitle>
           <SheetDescription className="text-left">
