@@ -162,15 +162,14 @@ Deno.serve(async (req) => {
     }
 
     // ── INSERT row in payment_links ──
-    // url_token / status='active' / current_uses=0 заполняются server-side defaults.
-    // КОНТРАКТ: payment_links.payment_type = строго равен payment_type из body
-    //           (= выбору админа / источника CTA), без silent derive из offer.recurring.
-    // public_url сохраняется в БД ИЗ канонического origin — single source of truth.
-    // url_token генерируется server-side default; INSERT возвращает его в RETURNING.
-    // Для public_url нужен url_token, поэтому делаем 2 шага:
-    //   1) INSERT без public_url (получаем url_token)
-    //   2) UPDATE public_url = canonical
-    // (DB CHECK constraint на public_url не позволит сохранить preview-домен.)
+    // public_url NOT NULL → генерируем url_token client-side, чтобы построить
+    // canonical public_url до INSERT (single source of truth для домена).
+    // DB CHECK constraint на public_url отвергнет preview-домен.
+    const tokenBytes = new Uint8Array(16);
+    crypto.getRandomValues(tokenBytes);
+    const url_token = Array.from(tokenBytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+    const public_url = `${canonicalOrigin}/pay/${url_token}`;
+
     const { data: link, error: insertErr } = await supabase
       .from('payment_links')
       .insert({
@@ -185,6 +184,8 @@ Deno.serve(async (req) => {
         expires_at,
         user_id,
         created_by: user.id,
+        url_token,
+        public_url,
       })
       .select('id, url_token, status, current_uses, max_uses, expires_at, amount, currency, payment_type, product_id, tariff_id, offer_id, created_by')
       .single();
@@ -192,18 +193,6 @@ Deno.serve(async (req) => {
     if (insertErr || !link) {
       console.error('[admin-create-public-link] INSERT failed:', insertErr);
       return errorResponse(`Failed to create payment link: ${insertErr?.message}`, 500);
-    }
-
-    const public_url = `${canonicalOrigin}/pay/${link.url_token}`;
-
-    const { error: updateErr } = await supabase
-      .from('payment_links')
-      .update({ public_url })
-      .eq('id', link.id);
-
-    if (updateErr) {
-      console.error('[admin-create-public-link] public_url UPDATE failed:', updateErr);
-      return errorResponse(`Failed to persist public_url: ${updateErr.message}`, 500);
     }
 
     // ── Audit (proof contract: payment_type / mode / offer_id / tariff_id / cta_source) ──
