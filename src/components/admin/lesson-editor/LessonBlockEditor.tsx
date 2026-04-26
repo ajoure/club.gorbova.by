@@ -266,6 +266,8 @@ function getDefaultContent(blockType: BlockType): LessonBlock['content'] {
       return { html: '', title: '' };
     case 'checklist':
       return { title: 'Чек-лист', description: '', groups: [] };
+    case 'external_product_workshop':
+      return { version: 'v1' };
     case 'divider':
     default:
       return {};
