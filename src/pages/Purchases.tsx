@@ -510,7 +510,10 @@ export default function Purchases() {
         onCancel={openCancelDialog}
         onResume={handleResumeSubscription}
         onDownloadReceipt={downloadSubscriptionReceipt}
-        receiptUrl={selectedSubscription?.orders_v2?.payments_v2?.[0]?.provider_response?.transaction?.receipt_url}
+        receiptUrl={(() => {
+          const p = selectedSubscription?.orders_v2?.payments_v2?.[0] as any;
+          return p?.receipt_url || p?.provider_response?.transaction?.receipt_url || null;
+        })()}
         isProcessing={isProcessing}
       />
 
