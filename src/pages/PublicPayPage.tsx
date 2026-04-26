@@ -312,6 +312,17 @@ export default function PublicPayPage() {
   const needsIdentity = linkInfo.requires_identity_input && !user;
   const isSubscription = linkInfo.payment_type === 'subscription';
 
+  // PAY-C visibility: NULL OR equal — public link OR personal link of current user.
+  const ownsOrPublic =
+    !!user &&
+    (linkInfo.link_user_id === null || linkInfo.link_user_id === user.id);
+  const showSavedCard =
+    ownsOrPublic &&
+    !isSubscription &&
+    Array.isArray(savedCards) &&
+    savedCards.length > 0;
+  const showSubscriptionFallbackHint = ownsOrPublic && isSubscription;
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-muted/30 to-background">
       <LandingHeader />
