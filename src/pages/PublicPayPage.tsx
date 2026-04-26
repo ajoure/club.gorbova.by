@@ -118,6 +118,31 @@ export default function PublicPayPage() {
     retry: false,
   });
 
+  // PAY-D: pick default saved-card selection once cards are loaded.
+  // HOTFIX: must be ABOVE all early returns to satisfy Rules of Hooks.
+  // Recomputed null-safe — linkInfo may still be undefined here.
+  const _isSubscriptionEarly = linkInfo?.payment_type === 'subscription';
+  const _ownsOrPublicEarly =
+    !!user &&
+    !!linkInfo &&
+    (linkInfo.link_user_id === null || linkInfo.link_user_id === user.id);
+  const _showSavedCardSelectorEarly =
+    _ownsOrPublicEarly &&
+    !_isSubscriptionEarly &&
+    Array.isArray(savedCards) &&
+    savedCards.length > 0;
+
+  useEffect(() => {
+    if (!_showSavedCardSelectorEarly) {
+      if (selectedMethod !== 'new_card') setSelectedMethod('new_card');
+      return;
+    }
+    if (selectedMethod !== 'new_card' && savedCards!.some((c) => c.id === selectedMethod)) return;
+    const def = savedCards!.find((c) => c.is_default) || savedCards![0];
+    setSelectedMethod(def?.id || 'new_card');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [_showSavedCardSelectorEarly, savedCards]);
+
   const initiatePayment = async (payerEmail?: string, replacementId?: string) => {
     if (!token) return;
     setIsProcessing(true);
@@ -329,19 +354,6 @@ export default function PublicPayPage() {
     Array.isArray(savedCards) &&
     savedCards.length > 0;
   const showSubscriptionFallbackHint = ownsOrPublic && isSubscription;
-
-  // PAY-D: pick default selection once cards are loaded.
-  // Priority: is_default → first card → 'new_card'.
-  useEffect(() => {
-    if (!showSavedCardSelector) {
-      if (selectedMethod !== 'new_card') setSelectedMethod('new_card');
-      return;
-    }
-    if (selectedMethod !== 'new_card' && savedCards!.some((c) => c.id === selectedMethod)) return;
-    const def = savedCards!.find((c) => c.is_default) || savedCards![0];
-    setSelectedMethod(def?.id || 'new_card');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showSavedCardSelector, savedCards]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-muted/30 to-background">
