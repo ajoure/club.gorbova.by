@@ -79,6 +79,8 @@ export default function PublicPayPage() {
   const functionUrl = `https://${projectId}.supabase.co/functions/v1/public-checkout`;
   const savedCardFunctionUrl = `https://${projectId}.supabase.co/functions/v1/public-charge-saved-card`;
   const [savedCardProcessing, setSavedCardProcessing] = useState(false);
+  // PAY-D: unified payment method selector. 'new_card' or payment_method_id (uuid).
+  const [selectedMethod, setSelectedMethod] = useState<string>('new_card');
   // Stable per-mount idempotency key — survives multiple clicks within the same /pay/:token visit.
   const savedCardIdempotencyKeyRef = useRef<string>(crypto.randomUUID());
 
