@@ -1351,8 +1351,50 @@ export function PaymentDialog({
               </div>
             )}
 
-            {/* PAY-I: сохранённые карты — всегда disabled в PaymentDialog */}
-            {savedCards.length > 0 && (
+            {/* PAY-K: сохранённые карты.
+                 - one_time: активный RadioGroup (saved cards + новая карта).
+                 - subscription/trial: остаются disabled (PAY-I behavior). */}
+            {savedCards.length > 0 && isOneTimeFlow && (
+              <div className="rounded-lg border border-border/40 bg-card/40 p-3 space-y-2">
+                <p className="text-xs font-medium text-muted-foreground">Способ оплаты</p>
+                <RadioGroup
+                  value={selectedMethod}
+                  onValueChange={setSelectedMethod}
+                  className="space-y-1.5"
+                  disabled={isLoading || isTestPaymentLoading}
+                >
+                  {savedCards.map((c) => (
+                    <label
+                      key={c.id}
+                      htmlFor={`pm-${c.id}`}
+                      className="flex items-center gap-2 text-sm cursor-pointer rounded-md px-1.5 py-1 hover:bg-muted/40"
+                    >
+                      <RadioGroupItem value={c.id} id={`pm-${c.id}`} />
+                      <CreditCard className="h-4 w-4 text-muted-foreground" />
+                      <span className="uppercase">{c.brand || "CARD"}</span>
+                      <span>•••• {c.last4}</span>
+                      {c.is_default && (
+                        <span className="text-[10px] text-muted-foreground border border-border/50 rounded px-1 py-0.5">по умолчанию</span>
+                      )}
+                    </label>
+                  ))}
+                  <label
+                    htmlFor="pm-new_card"
+                    className="flex items-center gap-2 text-sm cursor-pointer rounded-md px-1.5 py-1 hover:bg-muted/40"
+                  >
+                    <RadioGroupItem value="new_card" id="pm-new_card" />
+                    <CreditCard className="h-4 w-4 text-muted-foreground" />
+                    <span>Новая карта</span>
+                  </label>
+                </RadioGroup>
+                <p className="text-xs text-muted-foreground">
+                  Оплата сохранённой картой выполняется через защищённую сессию bePaid (может потребоваться 3-D Secure).
+                </p>
+              </div>
+            )}
+
+            {/* PAY-I: сохранённые карты при subscription/trial — disabled, info-only */}
+            {savedCards.length > 0 && !isOneTimeFlow && (
               <div className="rounded-lg border border-border/40 bg-card/40 p-3 space-y-2">
                 <p className="text-xs font-medium text-muted-foreground">Сохранённые карты</p>
                 <div className="space-y-1.5 opacity-60 pointer-events-none select-none" aria-disabled="true">
@@ -1368,9 +1410,7 @@ export function PaymentDialog({
                   ))}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  {isSubscription || isTrial
-                    ? "Сохранённые карты нельзя выбрать для оформления подписки. Вас перенаправит на защищённую страницу bePaid, где нужно будет выбрать или ввести карту для подписки."
-                    : "Эти карты показаны для справки. Разовый платёж откроется на защищённой странице bePaid — там можно оплатить любой картой."}
+                  Сохранённые карты нельзя выбрать для оформления подписки. Вас перенаправит на защищённую страницу bePaid, где нужно будет выбрать или ввести карту для подписки.
                 </p>
               </div>
             )}
