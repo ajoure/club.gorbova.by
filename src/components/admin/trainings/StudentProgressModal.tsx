@@ -733,13 +733,17 @@ export function StudentProgressModal({
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-[calc(100vw-1rem)] sm:w-[calc(100vw-2rem)] max-w-4xl max-h-[90vh] overflow-y-auto p-4 sm:p-6">
         <DialogHeader>
-          <DialogTitle className="flex items-center justify-between gap-3 text-lg font-semibold">
-            <span>Прогресс ученика</span>
-            <Button variant="outline" size="sm" onClick={exportFullResponse}>
-              <Download className="h-4 w-4 mr-1.5" /> Экспорт ответа
-            </Button>
+          <DialogTitle className="text-base sm:text-lg font-semibold pr-8">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <span>Прогресс ученика</span>
+              <Button variant="outline" size="sm" onClick={exportFullResponse} className="h-8">
+                <Download className="h-4 w-4 mr-1.5" />
+                <span className="hidden sm:inline">Экспорт ответа</span>
+                <span className="sm:hidden">Экспорт</span>
+              </Button>
+            </div>
           </DialogTitle>
         </DialogHeader>
 
