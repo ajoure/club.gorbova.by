@@ -189,6 +189,51 @@ export default function PublicPayPage() {
     await initiatePayment(email);
   };
 
+  // PAY-C: pay with a saved card (MIT). Server enforces ownership and idempotency.
+  const handlePayWithSavedCard = async (paymentMethodId: string) => {
+    if (!token) return;
+    setSavedCardProcessing(true);
+    setError(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        throw new Error('Войдите в аккаунт, чтобы использовать сохранённую карту.');
+      }
+      const idempotency_key = `${paymentMethodId}:${token}:${Math.floor(Date.now() / 1000)}`;
+      const res = await fetch(savedCardFunctionUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          url_token: token,
+          payment_method_id: paymentMethodId,
+          idempotency_key,
+        }),
+      });
+      const data = await res.json();
+      if (res.status === 409) {
+        // Existing active attempt — DO NOT auto-retry, DO NOT follow stale redirect_url.
+        setError(data?.message || 'Платёж уже создан. Завершите подтверждение или попробуйте позже.');
+        return;
+      }
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.message || data?.error || 'Не удалось списать сохранённую карту');
+      }
+      // Issuer may require additional bank confirmation → follow redirect when present.
+      if (data.redirect_url) {
+        window.location.href = data.redirect_url;
+        return;
+      }
+      window.location.href = `/purchases?order=${data.order_id}&payment=processing`;
+    } catch (err) {
+      setError(normalizeEdgeFunctionError(err));
+    } finally {
+      setSavedCardProcessing(false);
+    }
+  };
+
   const formatPrice = (kopecks: number, currency: string) =>
     `${(kopecks / 100).toFixed(2)} ${currency}`;
 
