@@ -78,7 +78,7 @@ Deno.serve(async (req) => {
 
     // ── Validate referential integrity ──
     const { data: product } = await supabase
-      .from('products_v2').select('id, is_active').eq('id', product_id).maybeSingle();
+      .from('products_v2').select('id, is_active, primary_domain').eq('id', product_id).maybeSingle();
     if (!product) return errorResponse('Product not found', 400);
     if (product.is_active === false) return errorResponse('Product is not active', 400);
 
@@ -134,10 +134,43 @@ Deno.serve(async (req) => {
     const auditContractVersion =
       typeof cta_contract_version === 'number' ? cta_contract_version : 1;
 
+    // ── Canonical public URL host resolution ──
+    // ИСТОЧНИК ИСТИНЫ: product.primary_domain → fallback CANONICAL_PUBLIC_HOST.
+    // request origin / referer ИСПОЛЬЗОВАТЬ НЕЛЬЗЯ — админ может работать
+    // из Lovable preview, и ссылка для клиента не должна указывать на preview.
+    const CANONICAL_PUBLIC_HOST = 'https://club.gorbova.by';
+    const FORBIDDEN_HOST_RE = /(lovable\.dev|lovable\.app|lovableproject\.com|localhost|127\.0\.0\.1)/i;
+    const VALID_DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
+
+    const rawPrimaryDomain: string | null = (product as { primary_domain?: string | null })?.primary_domain ?? null;
+    const primaryDomain = rawPrimaryDomain ? rawPrimaryDomain.trim().toLowerCase() : null;
+    const primaryDomainValid =
+      !!primaryDomain &&
+      VALID_DOMAIN_RE.test(primaryDomain) &&
+      !FORBIDDEN_HOST_RE.test(primaryDomain);
+
+    const canonicalOrigin = primaryDomainValid
+      ? `https://${primaryDomain}`
+      : CANONICAL_PUBLIC_HOST;
+    const originSource: 'product_primary_domain' | 'fallback_canonical' =
+      primaryDomainValid ? 'product_primary_domain' : 'fallback_canonical';
+
+    // STOP-guard: defence in depth (DB CHECK уже это enforce-ит, но явная ошибка лучше 500-ки).
+    if (!/^https:\/\//.test(canonicalOrigin) || FORBIDDEN_HOST_RE.test(canonicalOrigin)) {
+      console.error('[admin-create-public-link] Canonical origin rejected:', canonicalOrigin);
+      return errorResponse('Internal: invalid canonical origin', 500);
+    }
+
     // ── INSERT row in payment_links ──
     // url_token / status='active' / current_uses=0 заполняются server-side defaults.
     // КОНТРАКТ: payment_links.payment_type = строго равен payment_type из body
     //           (= выбору админа / источника CTA), без silent derive из offer.recurring.
+    // public_url сохраняется в БД ИЗ канонического origin — single source of truth.
+    // url_token генерируется server-side default; INSERT возвращает его в RETURNING.
+    // Для public_url нужен url_token, поэтому делаем 2 шага:
+    //   1) INSERT без public_url (получаем url_token)
+    //   2) UPDATE public_url = canonical
+    // (DB CHECK constraint на public_url не позволит сохранить preview-домен.)
     const { data: link, error: insertErr } = await supabase
       .from('payment_links')
       .insert({
@@ -161,11 +194,17 @@ Deno.serve(async (req) => {
       return errorResponse(`Failed to create payment link: ${insertErr?.message}`, 500);
     }
 
-    // ── Origin for public URL ──
-    const reqOrigin = req.headers.get('origin');
-    const reqReferer = req.headers.get('referer');
-    const origin = reqOrigin || (reqReferer ? new URL(reqReferer).origin : null) || 'https://club.gorbova.by';
-    const public_url = `${origin}/pay/${link.url_token}`;
+    const public_url = `${canonicalOrigin}/pay/${link.url_token}`;
+
+    const { error: updateErr } = await supabase
+      .from('payment_links')
+      .update({ public_url })
+      .eq('id', link.id);
+
+    if (updateErr) {
+      console.error('[admin-create-public-link] public_url UPDATE failed:', updateErr);
+      return errorResponse(`Failed to persist public_url: ${updateErr.message}`, 500);
+    }
 
     // ── Audit (proof contract: payment_type / mode / offer_id / tariff_id / cta_source) ──
     await supabase.from('audit_logs').insert({
@@ -188,6 +227,8 @@ Deno.serve(async (req) => {
         max_uses, expires_at,
         target_user_id: user_id,
         public_url,
+        origin_source: originSource,
+        primary_domain: primaryDomainValid ? primaryDomain : null,
       },
     });
 
