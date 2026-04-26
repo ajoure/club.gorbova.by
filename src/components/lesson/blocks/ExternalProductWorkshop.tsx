@@ -218,13 +218,15 @@ export function ExternalProductWorkshop({ blockId, lessonId }: Props) {
       const { error } = await supabase
         .from("user_lesson_progress")
         .upsert(
-          {
-            user_id: userId,
-            lesson_id: lessonId,
-            block_id: blockId,
-            response: payload,
-            completed_at: debouncedState.completed_at,
-          },
+          [
+            {
+              user_id: userId,
+              lesson_id: lessonId,
+              block_id: blockId,
+              response: payload as never,
+              completed_at: debouncedState.completed_at,
+            },
+          ],
           { onConflict: "user_id,lesson_id,block_id" }
         );
       if (cancelled) return;
