@@ -387,6 +387,7 @@ export default function AdminLessonProgress() {
                     {progressRecords.map(record => {
                       const profile = record.profiles as any;
                       const feedback = feedbackMap?.[record.user_id];
+                      const sources = ((record as any).progress_sources || []) as string[];
                       
                       return (
                         <TableRow key={record.id}>
@@ -424,6 +425,11 @@ export default function AdminLessonProgress() {
                               <p className="text-xs text-muted-foreground truncate max-w-[160px]">
                                 {profile?.email}
                               </p>
+                              {sources.includes("user_lesson_progress") && (
+                                <Badge variant="outline" className="mt-1 text-[10px]">
+                                  manual
+                                </Badge>
+                              )}
                             </div>
                           </TableCell>
 
