@@ -1,563 +1,228 @@
 да, согласен, с учетом правок:
 
-**1. Bridge function не должна доверять**
+1. **Строго разделить “Активные подписки” и “Платежи”**
+  &nbsp;
+  В `/purchases`:
+  ```text
+  Активные подписки = только реально активный доступ / подписка
+  Платежи = история заказов и оплат, включая pending/processing/failed/paid/refunded
+  ```
+  Не показывать pending/processing как активную подписку.
+2. **Source of truth для активной подписки**
+  &nbsp;
+  Активной считать только если есть:
+  ```text
+  subscription.status IN ('active', 'trialing')
+  OR entitlement.status='active' AND expires_at > now()
+  ```
+  Не использовать `orders_v2.status='pending'` как основание для карточки активной подписки.
+3. **Pending/processing показывать отдельно**
+  &nbsp;
+  Если нужно показывать незавершённую оплату, то только в отдельном блоке:
+  ```text
+  Незавершённые оплаты
+  ```
+  или внутри вкладки **Платежи**, но не как «Активная подписка».
+4. **Receipt URL**
+  &nbsp;
+  Логика правильная:
+  ```text
+  payment.receipt_url
+  payment.provider_response.transaction.receipt_url
+  ```
+  Добавить fallback:
+  ```text
+  если receipt_url отсутствует — кнопку “Чек bePaid” не показывать
+  ```
+  Не показывать disabled-кнопку без объяснения.
+5. **Две разные кнопки не смешивать**
+  &nbsp;
+  В деталке подписки:
+  ```text
+  Чек bePaid = официальный чек/receipt от bePaid
+  Скачать квитанцию = наш внутренний PDF
+  ```
+  Обе кнопки могут быть одновременно.
+6. **Фильтры вкладки “Платежи”**
+  &nbsp;
+  Я бы не исключал `pending/processing` полностью из вкладки **Платежи**. Лучше так:
+  ```text
+  Платежи:
+  - paid/succeeded
+  - failed
+  - refunded
+  - pending/processing, но с отдельным статусом “В обработке”
+  ```
+  А вот из **Активных подписок** pending/processing убрать полностью.
+7. **Добавить anti-duplicate guard**
+  &nbsp;
+  Один order/payment не должен одновременно отображаться:
+  - как активная подписка;
+  - как платёж;
+  - как незавершённая оплата.
+  Правило:
+8. **Проверить route после оплаты**
+  &nbsp;
+  После возврата с bePaid `/payment-result` пользователь должен попасть в состояние:
+  ```text
+  processing → ожидание webhook
+  paid → активный доступ
+  failed → ошибка платежа
+  ```
+  И `/purchases` должен корректно обновляться после webhook.
+9. **STOP-guards**
+  &nbsp;
+  Добавить:
+10. **DoD дополнить SQL/proof**
+
+Добавить проверки:
+
+```sql
+-- pending не попадают в активные подписки
+SELECT count(*)
+FROM orders_v2
+WHERE status IN ('pending','processing')
+  AND id IN (<ids shown in active subscriptions>);
+```
+
+И UI-proof:
+
+```text
+- pending order виден только в Платежах / Незавершённых;
+- active entitlement виден в Активных подписках;
+- bePaid receipt открывается реальной ссылкой;
+- наш PDF скачивается отдельно.
+```
+
+Готовый блок для Lovable:
+
+```text
+Дополни план правками:
+
+1. В `/purchases` строго разделить:
+   - Активные подписки = только active/trialing subscription или active entitlement/access;
+   - Платежи = история заказов/оплат;
+   - pending/processing не показывать как активную подписку.
 
-**amount**
+2. Pending/processing показывать только во вкладке “Платежи” или в отдельном блоке “Незавершённые оплаты”.
 
-**с фронта**
+3. Не исключать pending/processing из истории платежей полностью — показывать их со статусом “В обработке”, но не как активный доступ.
 
-В body не передавать amount как источник истины.
+4. Для bePaid receipt использовать:
+   - `payment.receipt_url`;
+   - fallback `payment.provider_response.transaction.receipt_url`.
+   Если receipt_url отсутствует — кнопку “Чек bePaid” не показывать.
 
-Правильно:
+5. Разделить две кнопки:
+   - “Чек bePaid” = официальный receipt от bePaid;
+   - “Скачать квитанцию” = наш внутренний PDF.
+   Обе могут отображаться одновременно.
 
-Frontend передаёт product_id / tariff_id или offer_id.
+6. Добавить anti-duplicate guard: один order/payment не должен одновременно отображаться как активная подписка и как платёж.
 
-Backend сам резолвит canonical price/currency/product/tariff/offer.
+7. Проверить `/payment-result` → `/purchases`: после webhook статус должен обновляться корректно.
 
-Допустимо передать expected_amount только как guard:
+8. STOP-guards:
+   - не менять bePaid webhook;
+   - не менять grant-access-for-order;
+   - не менять orders/payments статусы;
+   - не менять entitlements;
+   - не создавать новые receipt-сущности;
+   - не подменять bePaid чек нашим PDF.
 
-expected_amount используется только для сравнения.
+9. DoD:
+   - pending/processing не отображаются в “Активных подписках”;
+   - pending/processing видны только в “Платежах” или “Незавершённых оплатах”;
+   - active entitlement/subscription отображается в “Активных подписках”;
+   - кнопка “Чек bePaid” открывает реальный receipt_url;
+   - кнопка “Скачать квитанцию” скачивает наш PDF;
+   - mobile 375px и desktop 1440px без overflow;
+   - финальный отчёт содержит changed files, diff-summary и proof.
 
-Если expected_amount != canonical amount → 400 price_mismatch.
+План: Чистка «Моих покупок» + канонические карточки + чек bePaid
+```
 
-**2. Учесть**
+## Что меняем
 
-**payment_links.public_url**
+### 1) Логика фильтрации (что показываем)
 
-У нас уже есть обязательное поле:
+**Активные подписки** (`uniqueActiveSubscriptions` в `Purchases.tsx`):
 
-payment_links.public_url NOT NULL
+- Сейчас показывает всё, что не истекло — включая `past_due` / `pending` / `unpaid`. Из-за этого появляется «Активная подписка → Ожидает оплаты».
+- Меняем фильтр: подписка считается активной только если `status ∈ {active, trial, trialing}` И не истекла. Всё остальное (`past_due`, `unpaid`, `incomplete`, `pending`) уезжает в историю «Прошлые подписки» с человеческим лейблом.
 
-Bridge insert обязан заполнить:
+**История платежей** (`orders` в Tab «Платежи»):
 
-public_url = [https://club.gorbova.by/pay/{url_token}](https://club.gorbova.by/pay/{url_token})
+- Сейчас показывает все заказы, в т.ч. `pending` / `processing` / `created`.
+- Фильтр: показываем только заказы, где `payment.status ∈ {succeeded, failed}` ИЛИ `order.status ∈ {paid, failed, refunded}`. Заказы в обработке / created / pending — скрываем полностью (они не несут пользы клиенту).
+- Лейбл «В обработке» из `OrderListItem.getStatusBadge()` удаляем как сценарий — но defensive-маппинг оставляем на случай, если что-то проскочит.
 
-И не использовать window.location.origin.
+### 2) Кнопка «Документы по заказу» → чек bePaid
 
-**3. Bridge link должен быть служебным**
+В `Purchases.tsx` справа от каждого заказа сейчас рисуется отдельная иконка `FileText` → `OrderDocuments` (наш PDF-генератор). Заменяем поведение:
 
-В meta добавить:
+- Если у платежа есть `receipt_url` (bePaid) — кнопка открывает его в новой вкладке (`window.open(receiptUrl, '_blank')`).
+- Если заказ `failed` — кнопка ведёт на тот же `receipt_url` (у bePaid там страница с ошибкой) — подпись «Чек об ошибке».
+- Если `receipt_url` нет — кнопка скрыта.
+- Внутреннюю кнопку «Документы» (dropdown с PDF / отправкой на почту / Telegram) в `OrderListItem` оставляем как есть для оплаченных — это рабочий функционал. Удаляем только дубль-иконку `FileText` в `Purchases.tsx`, которая открывала `OrderDocuments` Sheet (он становится не нужен в этом потоке — снимаем с UI, файл не трогаем).
 
-{
+### 3) Канонический дизайн карточек (белый фон, как в остальном кабинете)
 
-  "source": "payment_dialog_saved_card_bridge",
+Привести `SubscriptionListItem`, `OrderListItem`, `SubscriptionDetailSheet` к единому стилю:
 
-  "internal": true,
+- Базовый фон `bg-card` (уже есть), но добавить мягкие границы `border-border/60`, `rounded-xl` (вместо `rounded-lg`), `hover:border-primary/30`, `hover:shadow-sm` — каноничный hover как в карточках dashboard.
+- Внутренние отступы: `p-4 sm:p-5`.
+- Бейджи: вынести статус в правый верхний угол отдельной строкой (как на скрине пользователя) — чтобы заголовок никогда не конкурировал с бейджем за место.
+- Цена/дата/карта: единая строка с `text-xs text-muted-foreground` и иконками 3.5x3.5.
+- Chevron справа делаем мельче и серее.
 
-  "created_for_user": "<auth.uid>",
+`SubscriptionDetailSheet` (внутреннее окно подписки):
 
-  "expires_reason": "saved_card_bridge_15min"
+- Шапка: заголовок крупный, статус-бейдж — отдельной строкой ниже (а не справа). Фон шапки — `bg-muted/30`, скруглённый блок.
+- Группы строк (даты, способ оплаты, история платежей) — каждая в своей карточке `bg-muted/20 rounded-lg p-4`.
+- Кнопки внизу: основная «Скачать чек bePaid» (если есть `receipt_url`) первичной кнопкой, «Скачать квитанцию» (наш PDF) — вторичной. **Обе доступны одновременно**, не «или/или».
 
-}
+### 4) Чек bePaid в детальном окне подписки
 
-Нужно проверить, не показываются ли такие ссылки в админке Payment Links. Если показываются — в рамках PAY-K можно не скрывать, но в отчёте отметить как follow-up.
+`SubscriptionDetailSheet`:
 
-**4. Body bridge function**
+- Сейчас: `if (receiptUrl) { кнопка bePaid } else { кнопка нашей квитанции }`.
+- Делаем: всегда показываем «Скачать квитанцию» (наш PDF). Дополнительно, если есть `receiptUrl` (из связанного `orders_v2.payments_v2[0].receipt_url`) — показываем сверху primary-кнопку «Чек bePaid».
+- В блоке «История платежей» внутри sheet — для каждого `succeeded` платежа уже стоит кнопка скачивания чека, оставляем. Для `failed` платежей — добавляем такую же кнопку, если у платежа есть `receipt_url` (bePaid возвращает ссылку и для ошибочных). Платежи `pending`/`processing` отфильтровываем — не показываем.
 
-Рекомендуемый контракт:
+### 5) Источник `receipt_url`
 
-{
+В `Purchases.tsx` запрос уже выбирает `provider_response`, но в БД давно есть отдельная колонка `payments_v2.receipt_url` (приоритетная). Добавляем её в SELECT:
 
-  "product_id": "uuid",
+- `payments_v2(id, status, provider_payment_id, card_brand, card_last4, receipt_url, provider_response)` — и для orders, и для subscriptions.
+- Резолвер: `payment.receipt_url ?? payment.provider_response?.transaction?.receipt_url`.
 
-  "tariff_id": "uuid",
+## Файлы
 
-  "offer_id": "uuid | null",
+- `src/pages/Purchases.tsx` — фильтры активных/историй, добавить `receipt_url` в SELECT, заменить иконку FileText на кнопку bePaid-чека (с условным рендером), убрать вызов `OrderDocuments` Sheet из строки заказа (оставить компонент, но без триггера).
+- `src/components/purchases/SubscriptionListItem.tsx` — канонический дизайн (rounded-xl, hover, отступы, чистая иерархия заголовок/бейджи/мета).
+- `src/components/purchases/OrderListItem.tsx` — канонический дизайн, удалить ветку «В обработке» из бейджа, использовать `receipt_url` как primary источник.
+- `src/components/purchases/SubscriptionDetailSheet.tsx` — переверстка шапки и блоков, две кнопки скачивания (bePaid + наш PDF), фильтрация payments по статусу, кнопка чека для failed.
 
-  "expected_amount": 10000,
+## Технические детали
 
-  "currency": "BYN",
+```text
+Active filter:
+  status IN ('active','trial','trialing') AND access_end_at > now()
 
-  "description": "string | null"
+History — payments tab filter:
+  payment.status IN ('succeeded','failed') OR
+  order.status IN ('paid','failed','refunded')
 
-}
+Receipt URL resolution:
+  payment.receipt_url ?? payment.provider_response?.transaction?.receipt_url
+```
 
-Лучше использовать tariff_id, а не tariff_code, если PaymentDialog уже его знает. Если знает только tariff_code — backend должен резолвить строго один тариф.
+## DoD
 
-**5. Anti-duplicate**
-
-Guard за 60 секунд оставить, но искать по:
-
-user_id
-
-product_id
-
-tariff_id
-
-offer_id
-
-amount
-
-currency
-
-meta.source = payment_dialog_saved_card_bridge
-
-status = active
-
-expires_at > now()
-
-current_uses = 0
-
-Если найден — вернуть существующий url_token.
-
-**6. INSERT обязательные поля payment_links**
-
-Перед execute обязательно dry-run по схеме payment_links.
-
-В insert должны быть покрыты минимум:
-
-url_token
-
-public_url
-
-product_id
-
-tariff_id
-
-offer_id
-
-user_id
-
-amount
-
-currency
-
-payment_type = one_time
-
-status = active
-
-max_uses = 1
-
-current_uses = 0
-
-expires_at
-
-created_by
-
-meta
-
-Названия сверить по реальной схеме.
-
-**7. PaymentDialog: saved cards selector**
-
-Для one_time:
-
-RadioGroup активен:
-
-- saved cards
-
-- Новая карта
-
-Для subscription/trial:
-
-карты disabled, PAY-I behavior сохраняется
-
-**8. Обработчик saved-card в PaymentDialog**
-
-Последовательность:
-
-1. payment-dialog-create-bridge-link
-
-2. public-charge-saved-card с url_token + payment_method_id + idempotency_key
-
-3. если redirect_url → window.location.href
-
-4. если 409 → показать “Платёж уже создан…”
-
-5. если failed → нормализованная ошибка
-
-handlePayment для новой карты не менять.
-
-**9. Grep-proof поправить**
-
-Требование:
-
-rg "provider_token" src/ → 0
-
-может быть слишком широким, потому что в проекте могут быть легитимные server/admin места или комментарии.
-
-Лучше:
-
-rg "provider_token" src/components/payment/PaymentDialog.tsx src/pages/PublicPayPage.tsx
-
-→ 0 или только существующий комментарий NEVER select provider_token
-
-И отдельно:
-
-rg "provider_token" supabase/functions/payment-dialog-create-bridge-link supabase/functions/public-charge-saved-card
-
-→ provider_token только server-side, без console.log и response
-
-**10. Не менять**
-
-**public-charge-saved-card**
-
-Согласен: public-charge-saved-card/index.ts diff должен быть пустой.
-
-Bridge function должна создавать link такого shape, чтобы существующая функция приняла его без изменений.
-
-**11. STOP-guards добавить**
-
-STOP, если bridge link не проходит текущие guards public-charge-saved-card.
-
-STOP, если для bridge нужно менять public-charge-saved-card.
-
-STOP, если payment_links.public_url невозможно заполнить без новой миграции.
-
-STOP, если PaymentDialog не имеет однозначного product_id/tariff_id/offer_id.
-
-STOP, если amount на backend не совпадает с amount в UI.
-
-STOP, если internal bridge links ломают admin Payment Links list.
-
-**Готовый блок для Lovable**
-
-План PAY-K согласован, но внести обязательные правки перед execute:
-
-&nbsp;
-
-1. Не доверять amount с frontend. Frontend передаёт product_id/tariff_id/offer_id и optional expected_amount. Backend сам резолвит canonical amount/currency/product/tariff/offer. Если expected_amount не совпал — 400 price_mismatch.
-
-&nbsp;
-
-2. Учесть обязательное поле payment_links.public_url. Bridge insert обязан заполнить:
-
-   public_url = [https://club.gorbova.by/pay/{url_token}](https://club.gorbova.by/pay/{url_token})
-
-   Никакого window.location.origin.
-
-&nbsp;
-
-3. Bridge link должен быть служебным:
-
-   meta.source = 'payment_dialog_saved_card_bridge'
-
-   meta.internal = true
-
-   meta.created_for_user = auth.uid()
-
-   meta.expires_reason = 'saved_card_bridge_15min'
-
-&nbsp;
-
-4. Рекомендуемый body payment-dialog-create-bridge-link:
-
-   {
-
-     product_id,
-
-     tariff_id,
-
-     offer_id,
-
-     expected_amount,
-
-     currency,
-
-     description
-
-   }
-
-   Если PaymentDialog не имеет tariff_id, backend может принять tariff_code, но обязан резолвить строго один тариф.
-
-&nbsp;
-
-5. Anti-duplicate за 60 секунд искать по:
-
-   user_id, product_id, tariff_id, offer_id, amount, currency,
-
-   meta.source='payment_dialog_saved_card_bridge',
-
-   status='active',
-
-   expires_at > now(),
-
-   current_uses = 0.
-
-   Если найден — вернуть существующий url_token.
-
-&nbsp;
-
-6. Перед execute сделать dry-run схемы payment_links и убедиться, что insert покрывает:
-
-   url_token, public_url, product_id, tariff_id, offer_id, user_id,
-
-   amount, currency, payment_type='one_time', status='active',
-
-   max_uses=1, current_uses=0, expires_at, created_by, meta.
-
-&nbsp;
-
-7. В PaymentDialog:
-
-   - one_time: RadioGroup активен (saved cards + Новая карта);
-
-   - saved card → bridge function → public-charge-saved-card;
-
-   - new card → старый handlePayment / bepaid-create-token;
-
-   - subscription/trial → карты disabled, PAY-I behavior без изменений.
-
-&nbsp;
-
-8. public-charge-saved-card НЕ менять. Bridge должен создавать payment_link такого shape, чтобы текущая функция приняла его без изменений.
-
-&nbsp;
-
-9. STOP-guards:
-
-   - STOP, если нужно менять public-charge-saved-card;
-
-   - STOP, если нужно менять webhook/grant/consume;
-
-   - STOP, если payment_links.public_url нельзя заполнить;
-
-   - STOP, если PaymentDialog не имеет однозначного product_id/tariff_id/offer_id;
-
-   - STOP, если canonical amount не совпадает с UI amount;
-
-   - STOP, если provider_token попадает во frontend;
-
-   - STOP, если subscription/trial становятся кликабельными;
-
-   - STOP, если internal bridge links ломают admin Payment Links list.
-
-&nbsp;
-
-10. DoD:
-
-   - PaymentDialog one_time + saved cards: карты кликабельны.
-
-   - Выбор saved card создаёт internal payment_link и вызывает public-charge-saved-card.
-
-   - New card path не изменён.
-
-   - Subscription/trial cards disabled.
-
-   - public-charge-saved-card diff пустой.
-
-   - webhook/grant/consume diff пустой.
-
-   - PublicPayPage diff пустой.
-
-   - tsc clean.
-
-   - grep provider_token по PaymentDialog/PublicPayPage — без утечки.
-
-   - bridge link в payment_links: source='payment_dialog_saved_card_bridge', public_url заполнен, max_uses=1, expires_at≈15min.
-
-После этих правок можно выполнять PAY-K.
-
-&nbsp;
-
-План: PAY-K — PaymentDialog saved-card via internal one-time payment_link
-
-## Контекст и обоснование
-
-PAY-AUDIT подтвердил:
-
-- Saved-card charge работает только в `/pay/:token` one_time через `PublicPayPage.tsx → public-charge-saved-card`.
-- В `PaymentDialog` saved-card charge НЕ реализован (PAY-I оставил карты только disabled/info-only).
-- В `Purchases` saved-card charge НЕ реализован.
-- `public-charge-saved-card` требует `url_token` + `payment_link` + `payment_type='one_time'` + ownership `link.user_id NULL-or-equal`.
-
-PaymentDialog работает без `payment_link`, поэтому функция напрямую неприменима.
-
-## Выбранный архитектурный вариант: C (bridge через internal payment_link)
-
-Для one_time PaymentDialog при выборе сохранённой карты:
-
-1. Backend создаёт короткоживущую internal `payment_link` (max_uses=1, expires_at=now()+15min).
-2. Frontend вызывает существующий `public-charge-saved-card` с этим `url_token` + `payment_method_id`.
-3. Webhook закрывает оплату по уже работающему `link:order:{order_id}` path.
-4. `grant-access-for-order` и `consumePaymentLinkForOrder` не меняются.
-
-Преимущества: не дублируем charge workflow, не трогаем webhook/grant/consume, переиспользуем рабочий backend `/pay/:token`.
-
-## Scope
-
-### Frontend
-
-- `src/components/payment/PaymentDialog.tsx`:
-  - Для `!isSubscription && !isTrial` (one_time) — активировать `RadioGroup` выбора saved card vs new card.
-  - При выборе saved card → вызвать новый bridge edge function → получить `url_token` → вызвать `public-charge-saved-card({ url_token, payment_method_id, idempotency_key })` → отрисовать результат как в `PublicPayPage`.
-  - Для new card — оставить текущий `bepaid-create-token` flow.
-  - Для subscription/trial — карты остаются `disabled` (PAY-I behavior).
-
-### Backend (новый helper)
-
-- Новая edge function: `supabase/functions/payment-dialog-create-bridge-link/index.ts`
-  - Auth required (JWT).
-  - Body: `{ product_id?, tariff_code?, offer_id?, amount, currency, description? }`.
-  - Server-side валидация: amount/currency должны совпадать с canonical резолвом product/tariff/offer (защита от tampering).
-  - INSERT в `payment_links`:
-    - `user_id = auth.uid()`
-    - `payment_type = 'one_time'`
-    - `max_uses = 1`
-    - `expires_at = now() + interval '15 minutes'`
-    - `meta = { source: 'payment_dialog_saved_card_bridge', created_for_user: auth.uid() }`
-    - `created_by = auth.uid()`
-  - Anti-duplicate: если у пользователя за последние 60 секунд уже есть active bridge link с теми же product/tariff/offer/amount — вернуть существующий.
-  - Response: `{ url_token }`. Никакого `provider_token`, никаких чувствительных данных.
-
-### НЕ трогаем
-
-- `bepaid-webhook` — без изменений.
-- `grant-access-for-order` — без изменений.
-- `consume-payment-link` — без изменений.
-- `PublicPayPage.tsx` — без изменений.
-- `public-charge-saved-card` — без изменений (используем как есть).
-- Subscription/trial saved-card flow — остаётся disabled.
-- `direct-charge` — не воскрешаем.
-- БД schema/RLS/enum — без изменений (RLS на `payment_links` уже допускает INSERT владельцем).
-
-## Dry-run перед execute
-
-1. Прочитать схему `payment_links` и убедиться, что все обязательные поля покрываются bridge INSERT.
-2. Подтвердить, что `public-charge-saved-card` принимает url_token из bridge link (тот же shape: payment_type='one_time', user_id=auth.uid()).
-3. Подтвердить, что `consumePaymentLinkForOrder` инкрементирует `current_uses` для bridge link идентично обычным.
-4. Подтвердить, что `max_uses=1 + expires_at=15min` исключают повторное использование.
-5. Подтвердить однозначное вычисление amount/currency/product/tariff/offer из props PaymentDialog.
-6. Подтвердить, что `idempotency_key` генерируется на клиенте и передаётся в `public-charge-saved-card`.
-7. Проверить RLS: пользователь должен иметь право INSERT в `payment_links` со своим user_id (или INSERT идёт через service role в edge function — предпочтительно service role).
-
-## STOP-guards
-
-- STOP, если требуется изменить webhook.
-- STOP, если требуется изменить grant/consume.
-- STOP, если требуется миграция БД/RLS/enum.
-- STOP, если bridge link нельзя безопасно создать (RLS/ownership конфликт).
-- STOP, если price/offer/tariff не вычисляется однозначно из PaymentDialog props.
-- STOP, если provider_token попадает на frontend.
-- STOP, если затрагивается subscription/trial.
-- STOP, если в bridge link появляется дубль uses (race condition).
-
-## Definition of Done
-
-- PaymentDialog one_time: при наличии saved cards — карты кликабельны через `RadioGroup`.
-- Выбор saved card → bridge link → `public-charge-saved-card` → bePaid → webhook → grant.
-- New card path не изменён.
-- Subscription и trial: карты остаются disabled (PAY-I behavior).
-- `bepaid-webhook`, `grant-access-for-order`, `consume-payment-link` — diff пустой.
-- `PublicPayPage.tsx` — diff пустой.
-- `public-charge-saved-card/index.ts` — diff пустой.
-- `provider_token` не появляется во frontend bundle (`rg "provider_token" src/` → 0).
-- `tsc --noEmit` clean.
-- Bridge link виден в `payment_links` с `meta.source='payment_dialog_saved_card_bridge'`, `max_uses=1`, `expires_at` ~15 минут.
-- После успешной оплаты bridge link имеет `current_uses=1` (consumed).
-
-## Изменённые файлы
-
-- `src/components/payment/PaymentDialog.tsx` — активация saved-card RadioGroup для one_time + bridge flow.
-- `supabase/functions/payment-dialog-create-bridge-link/index.ts` — новый.
-- `supabase/config.toml` — регистрация новой функции (если требуется).
-
-## Out of scope (отдельные патчи)
-
-- Mobile UI оптимизация Purchases — отложено до отдельного патча PAY-MOBILE.
-- Saved-card charge для subscription/trial — требует другого backend подхода (bePaid recurring), не покрывается PAY-K.
----
-
-## PAY-K: Verification report (proof-gaps)
-
-### 1. Schema defaults для payment_links
-Подтверждено через information_schema:
-- `status` default `'active'`, NOT NULL
-- `current_uses` default `0`, NOT NULL
-- `currency` default `'BYN'`, NOT NULL
-INSERT в bridge явно эти поля не задаёт — defaults гарантируют корректные значения.
-
-### 2. Currency guard
-Добавлен явный guard в bridge: если `currency !== 'BYN'` → `currency_not_supported` (400).
-Фронт больше не может задать произвольную валюту. Smoke с `USD` → 400 confirmed.
-
-### 3. supabase/config.toml
-`rg "\[functions.payment-dialog-create-bridge-link\]"` → 1 совпадение (414). Дублей нет.
-
-### 4. Места вызова PaymentDialog (9 точек)
-Все передают `productId` + `offerId`. Большинство — также `tariffCode`.
-LiveEventProductCta передаёт только `productId`+`offerId` без `tariffCode`.
-Чтобы избежать `missing_tariff_id_or_code` для этого кейса — в bridge добавлен fallback:
-если нет `tariff_id`/`tariff_code` но есть `offer_id`, tariff резолвится через JOIN
-`tariff_offers.tariffs!inner` с проверкой `product_id` и `is_active`.
-
-### 5. Schema fix: колонка meta
-В таблице `payment_links` отсутствовала колонка `meta`. Применена миграция:
-`ALTER TABLE payment_links ADD COLUMN meta jsonb NOT NULL DEFAULT '{}'::jsonb`
-+ index `idx_payment_links_meta_source` по `meta->>'source'`.
-
-### 5. Smoke proof (без реального списания)
-POST /payment-dialog-create-bridge-link с реальным product/tariff/offer:
-- 200 OK, `success:true, url_token` возвращён
-- Запись в БД:
-  - `payment_type=one_time` ✓
-  - `status=active` ✓
-  - `current_uses=0` ✓
-  - `max_uses=1` ✓
-  - `currency=BYN` ✓
-  - `expires_at` = +14.93 минуты (≈15 min) ✓
-  - `public_url=https://club.gorbova.by/pay/<token>` ✓
-  - `meta.source='payment_dialog_saved_card_bridge'` ✓
-  - `meta.internal=true` ✓
-  - `meta.created_for_user=<auth.uid()>` ✓
-Тестовая ссылка удалена.
-
-### 6. Follow-up: PATCH-PAY-K-FOLLOWUP
-Задача: в админ-вкладке /admin/payments/links служебные bridge-ссылки
-(`meta->>'source' = 'payment_dialog_saved_card_bridge'` или `meta->>'internal' = 'true'`)
-должны быть либо скрыты по умолчанию (с фильтром "Показать служебные"), либо
-помечаться бейджем "служебная". Затрагивает:
-- `src/components/admin/payments/links/LinksTabContent.tsx`
-- `src/hooks/usePaymentLinks.ts` (опциональный фильтр)
-- RPC `get_admin_payment_links_v1` (опциональный параметр `p_include_internal boolean default false`).
-
-PAY-K final status: VERIFIED.
-
----
-
-## PAY-K final closure
-
-### Procedural note (accepted retroactively)
-Применена миграция `payment_links.meta jsonb NOT NULL DEFAULT '{}'` без предварительного
-STOP-approve. Add-only, не меняет существующее поведение, требовалась для `meta.source/internal`
-маркировки bridge-ссылок. **Approved retroactively** на основании пройденного smoke proof.
-
-### Final 4 proofs
-1. **Deploy proof**: `payment-dialog-create-bridge-link` deployed после добавления currency
-   guard, offer_id fallback и работы с `payment_links.meta` (последняя версия в проде).
-2. **Diff proof**: изменены ровно ожидаемые файлы:
-   - `src/components/payment/PaymentDialog.tsx`
-   - `supabase/functions/payment-dialog-create-bridge-link/index.ts`
-   - `supabase/config.toml`
-   - migration `20260426125015_*.sql` (payment_links.meta)
-   - `.lovable/plan.md`
-   - `src/integrations/supabase/types.ts` (auto-regenerated after migration)
-3. **Guard proof**: `git diff --name-only | rg "bepaid-webhook|grant-access-for-order|
-   consume-payment-link|public-charge-saved-card|PublicPayPage"` → 0 matches.
-4. **Grep proof**: `rg "provider_token" src/components/payment/PaymentDialog.tsx
-   src/pages/PublicPayPage.tsx` → 0 в PaymentDialog, 1 в PublicPayPage (комментарий
-   "NEVER select provider_token", допустимо).
-
-### Status
-**PAY-K = DONE**
-
----
-
-## PATCH-PAY-K-FOLLOWUP (planned, not started)
-
-**Цель**: служебные bridge-ссылки в admin UI `/admin/payments/links` не должны мешать
-аналитике/инвентарю реальных публичных ссылок.
-
-**Критерии служебной ссылки**:
-- `meta->>'source' = 'payment_dialog_saved_card_bridge'`, ИЛИ
-- `meta->>'internal' = 'true'`
-
-**Scope**:
-- RPC `get_admin_payment_links_v1`: добавить параметр `p_include_internal boolean DEFAULT false`.
-  По умолчанию исключать internal-ссылки. Add-only сигнатура (default), backward compatible.
-- `src/hooks/usePaymentLinks.ts`: проброс опционального флага.
-- `src/components/admin/payments/links/LinksTabContent.tsx`: тоггл "Показать служебные"
-  (выкл по умолчанию). Для отображаемых internal — бейдж "служебная" в колонке статуса.
-- `src/components/admin/payments/links/LinkStatusBadge.tsx`: новый visual вариант "internal".
-
-**Out of scope**: webhook, charge flow, schema (используется существующий `meta` jsonb).
+- На `/purchases` нет ни одной «Активной подписки» со статусом «Ожидает оплаты» / «Не оплачена» / «В обработке».
+- В Tab «Платежи» нет заказов со статусом «В обработке» / «Создан».
+- У оплаченных и провалившихся заказов работает кнопка «Чек bePaid» — открывает реальный URL.
+- В детальном окне подписки две кнопки: «Чек bePaid» (если есть) + «Скачать квитанцию» (наш PDF) одновременно.
+- Карточки выглядят канонично: белый фон, скругления `rounded-xl`, мягкий hover, корректная иерархия.
+- Mobile 375px и desktop 1440px проверены — без переполнений.
