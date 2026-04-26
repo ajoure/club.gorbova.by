@@ -791,30 +791,32 @@ export function StudentProgressModal({
             return (
               <Card key={block.id}>
                 <CardHeader className="pb-2">
-                  <CardTitle className="flex items-center justify-between text-base">
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline" className="text-xs shrink-0">
-                        {blockTypeLabel(block.block_type)}
-                      </Badge>
-                      <span>{label}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {resolved.hasResponse ? (
-                        <Badge variant="default" className="text-xs">✓</Badge>
-                      ) : (
-                        <Badge variant="secondary" className="text-xs">Нет ответа</Badge>
-                      )}
-                      {lessonId && record && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 text-xs"
-                          onClick={() => setFeedbackTarget({ blockId: block.id, blockTitle: label })}
-                        >
-                          <MessageSquare className="h-3 w-3 mr-1" />
-                          Связь
-                        </Button>
-                      )}
+                  <CardTitle className="text-sm sm:text-base">
+                    <div className="flex items-start justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2 min-w-0 flex-1 flex-wrap">
+                        <Badge variant="outline" className="text-xs shrink-0">
+                          {blockTypeLabel(block.block_type)}
+                        </Badge>
+                        <span className="break-words">{label}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {resolved.hasResponse ? (
+                          <Badge variant="default" className="text-xs">✓</Badge>
+                        ) : (
+                          <Badge variant="secondary" className="text-xs">Нет ответа</Badge>
+                        )}
+                        {lessonId && record && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs px-2"
+                            onClick={() => setFeedbackTarget({ blockId: block.id, blockTitle: label })}
+                          >
+                            <MessageSquare className="h-3 w-3 sm:mr-1" />
+                            <span className="hidden sm:inline">Связь</span>
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   </CardTitle>
                 </CardHeader>
