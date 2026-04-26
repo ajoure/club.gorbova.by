@@ -567,26 +567,28 @@ function DiagnosticTableV1Detail({ rows }: { rows: PointARow[] }) {
 
   return (
     <>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Источник</TableHead>
-            <TableHead className="text-right">Доход</TableHead>
-            <TableHead className="text-right">Часы задач</TableHead>
-            <TableHead className="text-right">Часы переписки</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {rows.map((row, idx) => (
-            <TableRow key={idx}>
-              <TableCell>{row.source || "—"}</TableCell>
-              <TableCell className="text-right">{row.income || 0} BYN</TableCell>
-              <TableCell className="text-right">{row.work_hours || 0} ч</TableCell>
-              <TableCell className="text-right">{row.overhead_hours || 0} ч</TableCell>
+      <div className="overflow-x-auto -mx-2 sm:mx-0 rounded-md border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="min-w-[140px]">Источник</TableHead>
+              <TableHead className="text-right whitespace-nowrap min-w-[100px]">Доход</TableHead>
+              <TableHead className="text-right whitespace-nowrap min-w-[100px]">Часы задач</TableHead>
+              <TableHead className="text-right whitespace-nowrap min-w-[120px]">Часы переписки</TableHead>
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {rows.map((row, idx) => (
+              <TableRow key={idx}>
+                <TableCell>{row.source || "—"}</TableCell>
+                <TableCell className="text-right whitespace-nowrap">{row.income || 0} BYN</TableCell>
+                <TableCell className="text-right whitespace-nowrap">{row.work_hours || 0} ч</TableCell>
+                <TableCell className="text-right whitespace-nowrap">{row.overhead_hours || 0} ч</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
       <Separator className="my-3" />
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
         <div><Label className="text-muted-foreground">Доход</Label><p className="font-semibold">{totalIncome} BYN</p></div>
