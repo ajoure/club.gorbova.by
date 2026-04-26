@@ -179,21 +179,10 @@ Deno.serve(async (req) => {
     }
 
     // (b) natural-key (always runs, regardless of idempotency_key)
+    // (b) natural-key (always runs, regardless of idempotency_key).
+    // payments_v2 has NO payment_method_id column — match via meta.payment_method_id
+    // and via the joined order's meta.payment_link_id.
     const { data: byNatural } = await (supabase as any)
-      .from('payments_v2')
-      .select('id, order_id, status, orders_v2!inner(meta, user_id)')
-      .eq('user_id', authUser.id)
-      .eq('payment_method_id', payment_method_id) // legacy column name; falls back below if missing
-      .eq('amount', link.amount / 100)
-      .eq('currency', link.currency)
-      .in('status', ACTIVE_PAYMENT_STATUSES as unknown as string[])
-      .gte('created_at', new Date(Date.now() - 2 * 60 * 1000).toISOString())
-      .order('created_at', { ascending: false })
-      .limit(5);
-
-    // payments_v2 has no payment_method_id column — fallback: filter via meta.payment_method_id
-    // OR via order.meta.payment_link_id match. Run a meta-based query as authoritative natural-key:
-    const { data: byNatural2 } = await (supabase as any)
       .from('payments_v2')
       .select('id, order_id, status, meta, amount, currency, orders_v2!inner(id, user_id, meta)')
       .eq('user_id', authUser.id)
@@ -204,7 +193,7 @@ Deno.serve(async (req) => {
       .order('created_at', { ascending: false })
       .limit(20);
 
-    const naturalHit = (byNatural2 || []).find((p: any) =>
+    const naturalHit = (byNatural || []).find((p: any) =>
       p?.meta?.payment_method_id === payment_method_id &&
       p?.orders_v2?.meta?.payment_link_id === link.id,
     );
@@ -226,8 +215,6 @@ Deno.serve(async (req) => {
         tracking_id: naturalHit.order_id ? `link:order:${naturalHit.order_id}` : null,
       });
     }
-    // Suppress unused warning for diagnostic helper
-    void byNatural;
 
     // --- 8. bePaid creds --------------------------------------------------
     const credsResult = await getBepaidCredsStrict(supabase);
