@@ -88,6 +88,14 @@ export interface ExternalProductState {
 interface Props {
   blockId: string;
   lessonId: string;
+  /** ID урока-источника портфеля (Шаг 2). Берётся из lesson_blocks.content.source_lesson_id */
+  sourceLessonId?: string | null;
+  /**
+   * Опциональный callback для канонической записи через useUserProgress.saveBlockResponse.
+   * Вызывается ПОСЛЕ прямого upsert (он остаётся для дебаунс-автосейва), чтобы локальный
+   * progress-state в LessonBlockRenderer/useUserProgress инвалидировался корректно.
+   */
+  onCanonicalSave?: (payload: Record<string, unknown>, completed: boolean) => Promise<boolean> | void;
 }
 
 /* ──────────────────────────── Хелперы ──────────────────────────── */
@@ -158,7 +166,7 @@ const mergeState = (raw: unknown): ExternalProductState => {
 
 /* ──────────────────────────── Компонент ──────────────────────────── */
 
-export function ExternalProductWorkshop({ blockId, lessonId }: Props) {
+export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = null, onCanonicalSave }: Props) {
   const [state, setState] = useState<ExternalProductState>(DEFAULT_STATE);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
