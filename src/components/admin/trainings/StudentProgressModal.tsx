@@ -342,54 +342,186 @@ function BlockResponseDetail({ block, response, lessonBlocks }: {
       const completed = !!(resp.is_submitted || state.completed_at);
       const filled = (arr: Array<Record<string, unknown>>) =>
         arr.filter((r) => typeof r.name === "string" && (r.name as string).trim().length > 0);
-      const Section = ({ label, items }: { label: string; items: Array<Record<string, unknown>> }) => {
-        const f = filled(items);
-        if (!f.length) return null;
+      const fmtNum = (n: unknown) => {
+        const v = typeof n === "number" ? n : parseFloat(String(n ?? ""));
+        return Number.isFinite(v) ? new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(v) : "—";
+      };
+
+      // Полный справочник «Тип клиента» (с базовой ценой, описанием, выводом)
+      const TypesTable = () => {
+        const f = filled(types);
+        if (!f.length) return <p className="text-xs text-muted-foreground italic">Не заполнено</p>;
         return (
-          <div>
-            <Label className="text-xs text-muted-foreground">{label}</Label>
-            <div className="flex flex-wrap gap-1.5 mt-1">
-              {f.map((it, i) => (
-                <Badge key={i} variant="outline" className="text-xs">
-                  {String(it.name)}
-                  {typeof it.coefficient === "number" && it.coefficient !== 1 && ` ×${it.coefficient}`}
-                  {typeof it.price === "number" && it.price > 0 && ` +$${it.price}`}
-                  {typeof it.base_price === "number" && it.base_price > 0 && ` $${it.base_price}`}
-                </Badge>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Название</TableHead>
+                <TableHead className="text-right">База, $</TableHead>
+                <TableHead>Описание</TableHead>
+                <TableHead>Вывод</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {f.map((r, i) => (
+                <TableRow key={i}>
+                  <TableCell className="font-medium">{String(r.name)}</TableCell>
+                  <TableCell className="text-right">{fmtNum(r.base_price)}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground whitespace-pre-wrap">{String(r.description ?? "")}</TableCell>
+                  <TableCell className="text-xs whitespace-pre-wrap">{String(r.conclusion ?? "")}</TableCell>
+                </TableRow>
               ))}
-            </div>
+            </TableBody>
+          </Table>
+        );
+      };
+
+      // Полный справочник коэффициентов (сложность / сервис / ответственность)
+      const CoeffTable = ({ items }: { items: Array<Record<string, unknown>> }) => {
+        const f = filled(items);
+        if (!f.length) return <p className="text-xs text-muted-foreground italic">Не заполнено</p>;
+        return (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Название</TableHead>
+                <TableHead className="text-right">Коэф.</TableHead>
+                <TableHead className="text-right">Доплата, $</TableHead>
+                <TableHead>Описание</TableHead>
+                <TableHead>Вывод</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {f.map((r, i) => (
+                <TableRow key={i}>
+                  <TableCell className="font-medium">{String(r.name)}</TableCell>
+                  <TableCell className="text-right">×{fmtNum(r.coefficient)}</TableCell>
+                  <TableCell className="text-right">+{fmtNum(r.price)}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground whitespace-pre-wrap">{String(r.description ?? "")}</TableCell>
+                  <TableCell className="text-xs whitespace-pre-wrap">{String(r.conclusion ?? "")}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        );
+      };
+
+      // Индексы для пересчёта по строкам портфеля
+      const idxBy = (arr: Array<Record<string, unknown>>) =>
+        new Map(arr.map((r) => [String(r.id), r]));
+      const ctIdx = idxBy(types);
+      const cxIdx = idxBy(cx);
+      const svIdx = idxBy(sv);
+      const rsIdx = idxBy(rs);
+
+      const PortfolioFull = () => {
+        if (!portfolio.length) return <p className="text-xs text-muted-foreground italic">Портфель не импортирован</p>;
+        return (
+          <div className="space-y-3">
+            {portfolio.map((p, i) => {
+              const ct = p.client_type_id ? ctIdx.get(String(p.client_type_id)) : undefined;
+              const base = typeof ct?.base_price === "number" ? (ct!.base_price as number) : 0;
+              const cxIds = (p.complexity_ids as string[]) || [];
+              const rsIds = (p.responsibility_ids as string[]) || [];
+              const svRow = p.service_id ? svIdx.get(String(p.service_id)) : undefined;
+              const cxRows = cxIds.map((id) => cxIdx.get(String(id))).filter(Boolean) as Array<Record<string, unknown>>;
+              const rsRows = rsIds.map((id) => rsIdx.get(String(id))).filter(Boolean) as Array<Record<string, unknown>>;
+              const all = [...cxRows, ...(svRow ? [svRow] : []), ...rsRows];
+              const coeffProduct = all.reduce((acc, r) => acc * ((r.coefficient as number) || 1), 1);
+              const addonsSum = all.reduce((acc, r) => acc + ((r.price as number) || 0), 0);
+              const priceCoeff = base * coeffProduct;
+              const priceAddons = base + addonsSum;
+              const cur = (p.current_price as number) || 0;
+              const dCoeff = priceCoeff - cur;
+              const dAddons = priceAddons - cur;
+              const pctCoeff = cur > 0 ? (dCoeff / cur) * 100 : 0;
+              const pctAddons = cur > 0 ? (dAddons / cur) * 100 : 0;
+              return (
+                <div key={i} className="rounded-lg border p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="font-medium text-sm">{String(p.client || "—")}</div>
+                    <div className="text-xs text-muted-foreground">
+                      Тип: <span className="font-medium text-foreground">{String(ct?.name ?? "—")}</span>
+                      {" · "}База: ${fmtNum(base)}
+                      {" · "}Текущая: ${fmtNum(cur)}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {cxRows.map((r, j) => (
+                      <Badge key={`cx-${j}`} variant="outline" className="text-xs">
+                        Сложность: {String(r.name)} ×{fmtNum(r.coefficient)} +${fmtNum(r.price)}
+                      </Badge>
+                    ))}
+                    {svRow && (
+                      <Badge variant="outline" className="text-xs">
+                        Сервис: {String(svRow.name)} ×{fmtNum(svRow.coefficient)} +${fmtNum(svRow.price)}
+                      </Badge>
+                    )}
+                    {rsRows.map((r, j) => (
+                      <Badge key={`rs-${j}`} variant="outline" className="text-xs">
+                        Отв.: {String(r.name)} ×{fmtNum(r.coefficient)} +${fmtNum(r.price)}
+                      </Badge>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="rounded border p-2">
+                      <div className="text-muted-foreground">По коэффициентам</div>
+                      <div className="font-semibold text-sm">${fmtNum(priceCoeff)}</div>
+                      <div className={dCoeff >= 0 ? "text-green-600" : "text-destructive"}>
+                        {dCoeff >= 0 ? "+" : ""}{fmtNum(dCoeff)} $ · {dCoeff >= 0 ? "+" : ""}{fmtNum(pctCoeff)}%
+                      </div>
+                    </div>
+                    <div className="rounded border p-2">
+                      <div className="text-muted-foreground">По надбавкам</div>
+                      <div className="font-semibold text-sm">${fmtNum(priceAddons)}</div>
+                      <div className={dAddons >= 0 ? "text-green-600" : "text-destructive"}>
+                        {dAddons >= 0 ? "+" : ""}{fmtNum(dAddons)} $ · {dAddons >= 0 ? "+" : ""}{fmtNum(pctAddons)}%
+                      </div>
+                    </div>
+                  </div>
+                  {p.conclusion ? (
+                    <div className="text-xs">
+                      <Label className="text-xs text-muted-foreground">Вывод ученика</Label>
+                      <p className="italic whitespace-pre-wrap">«{String(p.conclusion)}»</p>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         );
       };
+
       return (
-        <div className="space-y-3">
+        <div className="space-y-4">
           <Badge variant={completed ? "default" : "outline"}>
             {completed ? "Завершён" : "В работе"}
           </Badge>
-          <Section label="Типы клиентов" items={types} />
-          <Section label="Сложность" items={cx} />
-          <Section label="Сервис" items={sv} />
-          <Section label="Ответственность" items={rs} />
-          {portfolio.length > 0 && (
-            <div>
-              <Label className="text-xs text-muted-foreground">
-                Калькулятор по портфелю · {portfolio.length} клиент(ов)
-              </Label>
-              <div className="mt-1 space-y-1">
-                {portfolio.slice(0, 20).map((p, i) => (
-                  <div key={i} className="text-xs flex flex-wrap gap-x-2 gap-y-0.5 border-b pb-1">
-                    <span className="font-medium">{String(p.client || "—")}</span>
-                    <span className="text-muted-foreground">
-                      текущая ${String(p.current_price ?? "—")}
-                    </span>
-                    {p.conclusion ? (
-                      <span className="italic text-muted-foreground">«{String(p.conclusion)}»</span>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+
+          <div className="space-y-1">
+            <Label className="text-sm font-semibold">1. Типы клиентов</Label>
+            <TypesTable />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-sm font-semibold">2. Сложность</Label>
+            <CoeffTable items={cx} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-sm font-semibold">3. Сервис</Label>
+            <CoeffTable items={sv} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-sm font-semibold">4. Ответственность</Label>
+            <CoeffTable items={rs} />
+          </div>
+
+          <Separator />
+
+          <div className="space-y-2">
+            <Label className="text-sm font-semibold">
+              Калькулятор по портфелю · {portfolio.length} клиент(ов)
+            </Label>
+            <PortfolioFull />
+          </div>
         </div>
       );
     }
