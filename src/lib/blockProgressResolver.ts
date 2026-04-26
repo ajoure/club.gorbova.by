@@ -147,6 +147,8 @@ export function resolveProgressValue(
       return resolveTableInput(resp);
     case "role_description":
       return resolveRoleDescription(resp);
+    case "external_product_workshop":
+      return resolveExternalProductWorkshop(resp);
     default:
       // Fallback for unsupported interactive types
       return { hasResponse: true, summary: "✓ есть ответ" };
