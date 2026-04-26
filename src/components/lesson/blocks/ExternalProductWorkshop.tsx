@@ -730,6 +730,52 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
         )}
       </SectionCard>
 
+      {/* Proof-панели */}
+      <Card className="border-border/60">
+        <CardContent className="p-5 sm:p-6 space-y-4">
+          <div>
+            <h3 className="text-lg font-semibold leading-tight">Проверка прогресса и сохранения</h3>
+            <p className="text-sm text-muted-foreground mt-1">
+              Эти статусы подтверждают, что ответ сохранён в общей системе прогресса урока.
+            </p>
+          </div>
+          {(completionError || completionValidation) && (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Шаг пока нельзя завершить</AlertTitle>
+              <AlertDescription>{completionError || completionValidation}</AlertDescription>
+            </Alert>
+          )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
+            <ProofTile
+              title="SQL proof"
+              ok={!!progressProof?.row_exists}
+              text={progressProof?.row_exists ? "user_lesson_progress найден" : "Появится после завершения"}
+            />
+            <ProofTile
+              title="UI proof ученика"
+              ok={!!state.completed_at}
+              text={state.completed_at ? "Блок отмечен завершённым" : "Блок в процессе"}
+            />
+            <ProofTile
+              title="UI proof преподавателя"
+              ok={!!progressProof?.admin_source_ready}
+              text={progressProof?.admin_source_ready ? "Источник для admin progress готов" : "Будет виден после сохранения"}
+            />
+            <ProofTile
+              title="Reload proof"
+              ok={restoredFromSaved}
+              text={restoredFromSaved ? "Данные восстановлены из сохранения" : "Новая форма или ещё не перезагружалась"}
+            />
+          </div>
+          {progressProof && (
+            <div className="rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground">
+              Автопроверка: ученик завершил блок — {progressProof.block_completed ? "да" : "нет"}; блок засчитан — {progressProof.block_completed ? "да" : "нет"}; ученик появится в admin progress — {progressProof.admin_source_ready ? "да" : "нет"}; ответ содержит портфель — {progressProof.response_has_portfolio ? "да" : "нет"}. Проверено: {new Date(progressProof.checked_at).toLocaleString("ru-RU")}.
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Footer */}
       <Card className="border-border/60 bg-gradient-to-br from-muted/40 to-transparent">
         <CardContent className="py-5 px-5 sm:px-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
