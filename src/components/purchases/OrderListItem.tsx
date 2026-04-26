@@ -35,6 +35,7 @@ interface Order {
     provider_payment_id: string | null;
     card_brand: string | null;
     card_last4: string | null;
+    receipt_url?: string | null;
     provider_response: {
       transaction?: {
         receipt_url?: string;
@@ -59,8 +60,9 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
   
   const payment = order.payments_v2?.[0];
   const isPaid = order.status === "paid" || payment?.status === "succeeded";
-  // Priority: new receipt_url column > fallback to provider_response
-  const receiptUrl = (payment as any)?.receipt_url || payment?.provider_response?.transaction?.receipt_url;
+  const isFailed = order.status === "failed" || payment?.status === "failed";
+  // Priority: receipt_url column > provider_response. bePaid даёт URL и для failed.
+  const receiptUrl = payment?.receipt_url || payment?.provider_response?.transaction?.receipt_url;
 
   // Fetch the most recent generated document for this order (only one)
   useEffect(() => {
