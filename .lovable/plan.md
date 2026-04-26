@@ -1,204 +1,152 @@
 да, согласен
 
-Можно выполнять **PAY-G**.
+Можно выполнять **PATCH-LANDING-PRICING-RESILIENCE**.
 
 **Контрольный scope**
 
-Только src/components/payment/PaymentDialog.tsx
+1. src/components/landing/LandingPricing.tsx
 
-**Что добавить**
+2. src/hooks/usePublicProduct.tsx
 
-Пояснительный info-блок только при условии:
+**Не трогать**
 
-isSubscription && !isTrial && step === 'ready'
-
-Текст строго:
-
-При оформлении подписки bePaid может показать экран с формулировкой «привязка карты для автоплатежей». Это штатный экран подписки: карта используется для регулярного продления, а списание выполняется по условиям выбранного тарифа.
-
-**Что не трогать**
-
-- edge functions
-
-- bePaid payload
-
-- webhook / grant / consume
-
-- handlePayment
-
-- handleReplaceSubscription
-
-- handleTestPayment
-
-- trial flow
-
-- step-machine
+- PaymentDialog.tsx
 
 - PublicPayPage.tsx
 
-- БД / RPC / миграции
+- public-charge-saved-card
+
+- public-checkout
+
+- bepaid-* edge functions
+
+- bepaid-webhook
+
+- grant-access
+
+- public-product backend
+
+- UniversalPricingSection props/contract
+
+**Ключевое требование**
+
+Секция тарифов не должна молча исчезать.
+
+Состояния:
+
+loading → skeleton / loading-state
+
+error → error-state + “Повторить загрузку”
+
+empty success → “Тарифы временно недоступны.”
+
+success with data → текущий UniversalPricingSection
+
+**Важно**
+
+Оборачивать все состояния в тот же section с id="tariffs", чтобы CTA «Выбрать тариф» продолжал скроллить к секции даже при ошибке.
 
 **DoD**
 
-1. tsc clean.
+1. public-product 200 + tariffs → тарифы видны.
 
-2. git diff затрагивает только PaymentDialog.tsx.
+2. public-product error → виден error-state, не пустое место.
 
-3. git diff supabase/functions/ пустой.
+3. Retry вызывает refetch.
 
-4. Блок виден только для subscription && !isTrial && step === 'ready'.
+4. #tariffs работает.
 
-5. Для trial и one_time блок не виден.
+5. PAY-патчи не затронуты.
 
-6. Запрещённых формулировок нет.
-
-После PAY-G отдельным сообщением запускать **PAY-H**.
+6. tsc clean.
 
 &nbsp;
 
-План: разделить на два патча — PAY-G (пояснительный блок) сейчас, PAY-H (glass redesign) отдельно после.
+План: PATCH-LANDING-PRICING-RESILIENCE
 
----
+## Диагноз
 
-## Статус ранее открытых пунктов
+Блок тарифов пропал **не из-за PAY-G/H/E-LITE напрямую**.
 
+Последние PAY-патчи трогали только:
 
-| Тег                           | Что было                                      | Статус                                                     |
-| ----------------------------- | --------------------------------------------- | ---------------------------------------------------------- |
-| PAY-D                         | Unified selector в `/pay/:token`              | DONE                                                       |
-| PAY-HOTFIX                    | React #310 в PublicPayPage (hooks order)      | DONE (опубликовано, проверено в production)                |
-| Битые ссылки из CRM-контактов | Тот же регресс PublicPayPage hooks order      | АВТОМАТИЧЕСКИ ЗАКРЫТО hotfix'ом — нужен только smoke-check |
-| PAY-G                         | Пояснительный блок про bePaid subscription UI | СЛЕДУЮЩИЙ (этот патч)                                      |
-| PAY-H                         | Glass redesign PaymentDialog                  | ОТЛОЖЕН — отдельным execute после PAY-G                    |
-| PAY-E                         | Saved-card для subscription                   | ОТЛОЖЕН (вне плана)                                        |
+- `src/pages/PublicPayPage.tsx`
+- `src/components/payment/PaymentDialog.tsx`
+- `supabase/functions/public-charge-saved-card/index.ts`
 
+Блок тарифов зависит от другой ветки кода:
 
----
+- `src/pages/Landing.tsx`
+- `src/components/landing/LandingPricing.tsx`
+- `src/hooks/usePublicProduct.tsx`
+- `src/components/landing/UniversalPricingSection.tsx`
+- `supabase/functions/public-product/index.ts`
 
-## PAY-G — Пояснительный блок про bePaid subscription UI
+Эти файлы **не менялись** за последние 3 дня (подтверждено `git log`).
 
-### Diagnose (read-only, выполнено)
+## Первопричина
 
-Прочитаны:
+`LandingPricing.tsx` молча скрывает секцию при любом отсутствии данных:
 
-- `src/components/payment/PaymentDialog.tsx` (1461 строка)
-- `supabase/functions/bepaid-create-subscription-checkout/index.ts`
-- `supabase/functions/bepaid-create-token/index.ts`
+```tsx
+if (!productData?.product || !productData.tariffs?.length) return null;
+```
 
-Факты:
+То есть любая ошибка fetch / CORS / транзиентный сетевой сбой / 500 → блок просто исчезает. Пользователь видит лендинг без тарифов и не понимает, что произошло.
 
-1. Для `isSubscription && !isTrial` клиент вызывает `bepaid-create-subscription-checkout`, который делает POST `https://api.bepaid.by/subscriptions` с payload `{ plan: { title, description, plan: { amount, interval } }, customer, settings: { language: 'ru' } }`.
-2. На итоговой странице bePaid пользователь видит заголовок «Привязка карты для автоплатежей …» — это штатный UI bePaid Subscriptions API.
-3. **В текущем bePaid Subscriptions API в нашем коде не найдено управляемого поля, которое меняет этот заголовок.** Поэтому в рамках PAY-G не меняем provider payload, а добавляем пояснение до редиректа.
+Сейчас (в свежих network-логах) `public-product` отвечает **200 OK** и возвращает 3 тарифа корректно — значит блок снова виден. Но архитектурная уязвимость остаётся: при любом следующем сбое блок снова исчезнет.
 
-### Scope (PAY-G)
+## Scope патча
 
-Менять только: `src/components/payment/PaymentDialog.tsx`.
+- `src/components/landing/LandingPricing.tsx`
+- `src/hooks/usePublicProduct.tsx`
 
-### Что добавить
+Никаких других файлов.
 
-Пояснительный info-блок на шаге `ready`, **только если** выполнены условия:
+## Что сделать
 
-- `isSubscription === true`
-- `isTrial === false`
-- `step === 'ready'`
+### 1. `usePublicProduct.tsx`
 
-Размещение: после блока `subscriptionMessage` (~строка 1268), до кнопок «Отмена / Оплатить».
+- Включить `retry: 2` (вместо текущего `retry: false`) для устойчивости к транзиентным сетевым ошибкам.
+- При ошибке fetch писать `console.error('[usePublicProduct] public-product fetch failed', { url, status, error })` — для диагностики в превью.
+- Контракт хука и `queryKey` не меняются, чтобы не сломать остальных потребителей.
 
-### Точный текст блока
+### 2. `LandingPricing.tsx`
 
-> При оформлении подписки bePaid может показать экран с формулировкой «привязка карты для автоплатежей». Это штатный экран подписки: карта используется для регулярного продления, а списание выполняется по условиям выбранного тарифа.
+Получить из хука `error` и `refetch`. Заменить `return null` при ошибке/пустых данных на видимые состояния:
 
-### Запрещённые формулировки
+- **loading** → существующий `UniversalPricingSkeleton` (без изменений).
+- **error** → секция-заглушка с текстом:
+  > «Не удалось загрузить тарифы. Обновите страницу или попробуйте позже.»
+  - кнопка «Повторить загрузку» → вызывает `refetch()`.
+- **success, но пусто** (нет product или tariffs пустой) → секция-заглушка с текстом:
+  > «Тарифы временно недоступны.»
+- **success с данными** → текущий рендер `UniversalPricingSection` (без изменений).
 
-НЕ писать:
+Заглушки оборачиваем в тот же `<section id="tariffs">`, чтобы якорь `#tariffs` (на который ведёт CTA «Выбрать тариф» из Hero) продолжал работать в любом состоянии.
 
-- «проверочное первое списание»
-- «сумма реальная, не блокировка»
-- «изменить невозможно»
+## STOP-guards
 
-### Что в PAY-G НЕ трогаем
+- STOP, если патч трогает `PaymentDialog.tsx`.
+- STOP, если патч трогает `PublicPayPage.tsx`.
+- STOP, если патч трогает любые payment edge-функции (`bepaid-*`, `public-charge-saved-card`, `public-checkout`, webhook, grant-access).
+- STOP, если патч меняет backend `public-product` (контракт, payload, CORS) — это отдельная диагностика.
+- STOP, если меняется контракт `usePublicProduct` или `UniversalPricingSection` (props, типы).
+- Не вводить новый источник данных тарифов — единый путь `usePublicProduct → public-product EF`.
 
-- edge functions (`bepaid-*`, `public-checkout`, `public-charge-saved-card`, `bepaid-webhook`, `grant-access-for-order`, `verify-recurring`, `admin-create-public-link`)
-- bePaid payload
-- webhook / grant / consume
-- `handlePayment`, `handleReplaceSubscription`, `handleTestPayment`
-- trial flow (`isTrial` ветки и блок Alert про триал)
-- step-машину
-- `PublicPayPage.tsx`
-- БД, RPC, миграции
+## DoD
 
-### Dry-run (PAY-G)
+1. Успешный ответ `public-product` → тарифы отображаются как сейчас.
+2. Ошибка `public-product` (network/CORS/500) → виден error-state с кнопкой повтора, а не пустое место.
+3. Кнопка «Повторить загрузку» вызывает `refetch` и при успехе блок переключается на нормальный рендер.
+4. Якорь `#tariffs` продолжает работать (Hero CTA «Выбрать тариф» скроллит на секцию в любом состоянии).
+5. PAY-патчи (G/H/E-LITE) и связанные с ними flow не затронуты.
+6. `tsc --noEmit` clean.
+7. Архитектурная гарантия: единая логика «fetch продукта → render тарифов» сохраняется для всех потребителей `usePublicProduct` (Landing, ProductPricing, site-renderer PricingSection — они автоматически выигрывают от retry+console.error в хуке).
 
-1. Открыть `/` в preview, выбрать подписочный тариф (Gorbova Club — BUSINESS).
-2. На шаге `ready` убедиться что новый info-блок виден, текст совпадает.
-3. Открыть продукт с `isTrial=true` — блок НЕ должен показываться.
-4. Открыть one-time продукт (консультация) — блок НЕ должен показываться.
-5. На viewport 390×844 убедиться что блок не ломает скролл.
+## Что НЕ входит в этот патч (отдельные планы при необходимости)
 
-### STOP-guards (PAY-G)
+- Усиление `PricingSection.tsx` в site-renderer и `ProductPricing.tsx` тем же error-state — сделать отдельным патчем `PATCH-PUBLIC-PRICING-RESILIENCE`, если потребуется единообразие UI на всех страницах.
+- Диагностика и расширение CORS у `public-product` — отдельный патч при появлении воспроизводимой ошибки сети.
 
-- STOP, если PAY-G меняет edge function.
-- STOP, если PAY-G меняет payload bePaid.
-- STOP, если PAY-G меняет `handlePayment`.
-- STOP, если PAY-G меняет trial flow.
-- STOP, если PAY-G трогает `PublicPayPage.tsx`.
-
-### DoD (PAY-G)
-
-1. `tsc` чистый.
-2. `git diff` затрагивает только `src/components/payment/PaymentDialog.tsx`.
-3. `git diff supabase/functions/` — пусто.
-4. На preview блок появляется только при `isSubscription && !isTrial` на шаге `ready`.
-5. Текст ровно соответствует утверждённой формулировке.
-
----
-
-## Smoke-check ссылок из CRM-контактов (не отдельный патч)
-
-Битые ссылки из CRM-контактов были тем же регрессом `PublicPayPage` hooks order. После publish hotfix отдельный фикс не нужен.
-
-Шаги smoke-check (выполнить после PAY-G):
-
-1. Открыть `/admin/contacts`, выбрать любой контакт → `ContactDetailSheet`.
-2. Создать новую платёжную ссылку через диалог (или взять существующую).
-3. Убедиться что URL имеет вид `https://club.gorbova.by/pay/<token>`.
-4. Открыть URL в новой вкладке.
-5. Страница оплаты должна отрендериться (не пустой экран).
-
-Если smoke-check падает — это уже не PAY-G, а отдельный регресс `PublicPayPage`, поднимать новым тикетом.
-
----
-
-## PAY-H — Glass redesign PaymentDialog (ОТЛОЖЕН)
-
-**Не начинать до закрытия PAY-G.** После закрытия PAY-G — отдельным сообщением запускаю PAY-H.
-
-### Scope (PAY-H, на будущее)
-
-- Только `src/components/payment/PaymentDialog.tsx`.
-- При необходимости — токены в `src/index.css` / `tailwind.config.ts`.
-- Использовать существующий `src/components/ui/GlassCard.tsx` как референс стиля (background `linear-gradient(135deg, hsl(var(--card)/0.6), hsl(var(--card)/0.3))` + `backdrop-filter: blur(24px)`).
-
-Цели:
-
-- glass style для `DialogContent` и внутренних info-карточек;
-- mobile QA на 390×844;
-- без изменений бизнес-логики;
-- без edge functions;
-- БЕЗ объяснения про bePaid (оно уже закрыто PAY-G).
-
-### STOP-guards (PAY-H)
-
-- PAY-H не начинать до закрытия PAY-G.
-- PAY-H не трогает edge functions, payloads, step-машину, `handlePayment`, `PublicPayPage`.
-- Если редизайн ломает адаптив на 390×844 — откат.
-
----
-
-## Подтверждение по диагностическому вопросу
-
-Подтверждено пользователем:
-
-- В рамках PAY-G достаточно нашего пояснительного блока перед редиректом на bePaid.
-- Полный отказ от Subscriptions API / переписывание subscription flow — не делаем.
+После одобрения плана я перейду в default mode и применю патч строго в указанном scope.

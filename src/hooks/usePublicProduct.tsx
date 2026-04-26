@@ -173,25 +173,32 @@ export function usePublicProduct(lookup: ProductLookup, userId?: string | null) 
         fetchUrl += `&user_id=${encodeURIComponent(userId)}`;
       }
 
-      const response = await fetch(fetchUrl, {
-        headers: {
-          "apikey": import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-          "Content-Type": "application/json",
-        },
-      });
+      let response: Response;
+      try {
+        response = await fetch(fetchUrl, {
+          headers: {
+            "apikey": import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+            "Content-Type": "application/json",
+          },
+        });
+      } catch (err) {
+        console.error("[usePublicProduct] public-product fetch failed", { url: fetchUrl, error: err });
+        throw err;
+      }
 
       if (!response.ok) {
         if (response.status === 404) {
           return null;
         }
-        throw new Error("Failed to fetch product");
+        console.error("[usePublicProduct] public-product fetch failed", { url: fetchUrl, status: response.status });
+        throw new Error(`Failed to fetch product (status ${response.status})`);
       }
 
       return response.json();
     },
     enabled: !!resolved,
     staleTime: 1000 * 60 * 5,
-    retry: false,
+    retry: 2,
   });
 }
 
