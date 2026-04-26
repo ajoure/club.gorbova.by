@@ -68,21 +68,75 @@ export default function AdminLessonProgress() {
     enabled: !!lessonId,
   });
 
-  // Fetch all progress records (batch, single query)
+  // Fetch all progress records (batch, single query).
+  // Compatibility layer: kvest lessons write lesson_progress_state, manual lessons write user_lesson_progress.
   const { data: progressRecords, isLoading: progressLoading } = useQuery({
     queryKey: ["lesson-progress-admin", lessonId],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data: stateRows, error: stateError } = await supabase
         .from("lesson_progress_state")
         .select("*")
         .eq("lesson_id", lessonId)
         .order("updated_at", { ascending: false });
 
-      if (error) throw error;
+      if (stateError) throw stateError;
+
+      const { data: manualRows, error: manualError } = await supabase
+        .from("user_lesson_progress")
+        .select("id, user_id, lesson_id, response, completed_at, created_at, updated_at")
+        .eq("lesson_id", lessonId)
+        .not("response", "is", null)
+        .order("updated_at", { ascending: false });
+
+      if (manualError) throw manualError;
+
+      const byUser = new Map<string, LessonProgressRecord & { progress_sources?: string[] }>();
+
+      (stateRows || []).forEach((record: any) => {
+        byUser.set(record.user_id, {
+          ...record,
+          progress_sources: ["lesson_progress_state"],
+        });
+      });
+
+      (manualRows || []).forEach((row: any) => {
+        const existing = byUser.get(row.user_id);
+        const completedAt = row.completed_at || null;
+        if (existing) {
+          byUser.set(row.user_id, {
+            ...existing,
+            updated_at:
+              new Date(row.updated_at) > new Date(existing.updated_at)
+                ? row.updated_at
+                : existing.updated_at,
+            completed_at: existing.completed_at || completedAt,
+            progress_sources: Array.from(
+              new Set([...(existing.progress_sources || []), "user_lesson_progress"])
+            ),
+          });
+          return;
+        }
+
+        byUser.set(row.user_id, {
+          id: `manual:${row.lesson_id}:${row.user_id}`,
+          user_id: row.user_id,
+          lesson_id: row.lesson_id,
+          state_json: {},
+          completed_at: completedAt,
+          created_at: row.created_at,
+          updated_at: row.updated_at,
+          profiles: null,
+          progress_sources: ["user_lesson_progress"],
+        } as LessonProgressRecord & { progress_sources?: string[] });
+      });
+
+      const merged = Array.from(byUser.values()).sort(
+        (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+      );
       
-      const userIds = data.map(r => r.user_id);
+      const userIds = merged.map(r => r.user_id);
       if (userIds.length === 0) {
-        return data.map(record => ({ ...record, profiles: null })) as LessonProgressRecord[];
+        return [] as LessonProgressRecord[];
       }
       
       // Batch fetch profiles
@@ -93,7 +147,7 @@ export default function AdminLessonProgress() {
       
       const profileMap = new Map(profiles?.map(p => [p.user_id, p]) || []);
       
-      return data.map(record => ({
+      return merged.map(record => ({
         ...record,
         profiles: profileMap.get(record.user_id) || null,
       })) as LessonProgressRecord[];
