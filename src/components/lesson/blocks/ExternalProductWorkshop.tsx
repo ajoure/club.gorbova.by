@@ -238,11 +238,15 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
     let cancelled = false;
     (async () => {
       setSaveStatus("saving");
+      const canPersistAsSubmitted =
+        !!debouncedState.completed_at &&
+        debouncedState.portfolio_pricing.length > 0 &&
+        debouncedState.client_types.some((r) => r.name.trim().length > 0);
       const payload = {
         type: "external_product_workshop",
         state: debouncedState,
-        is_submitted: !!debouncedState.completed_at,
-        submitted_at: debouncedState.completed_at,
+        is_submitted: canPersistAsSubmitted,
+        submitted_at: canPersistAsSubmitted ? debouncedState.completed_at : null,
         saved_at: new Date().toISOString(),
       };
       const { error } = await supabase
@@ -254,7 +258,7 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
               lesson_id: lessonId,
               block_id: blockId,
               response: payload as never,
-              completed_at: debouncedState.completed_at,
+              completed_at: canPersistAsSubmitted ? debouncedState.completed_at : null,
             },
           ],
           { onConflict: "user_id,lesson_id,block_id" }
