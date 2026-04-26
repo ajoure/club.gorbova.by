@@ -335,7 +335,7 @@ export default function Purchases() {
         </div>
 
         {/* Active Subscriptions */}
-        <Card>
+        <Card className="overflow-hidden">
           <CardHeader className="pb-3 px-4 sm:px-6">
             <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
               <CreditCard className="h-5 w-5 shrink-0" />
