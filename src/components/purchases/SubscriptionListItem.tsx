@@ -2,6 +2,7 @@ import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { ChevronRight, CheckCircle, XCircle, Clock, CreditCard } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { getSubscriptionStatusLabel } from "@/lib/subscriptionStatusLabels";
 
 interface Subscription {
   id: string;
