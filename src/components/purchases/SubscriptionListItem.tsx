@@ -80,13 +80,13 @@ export function SubscriptionListItem({ subscription, onClick }: SubscriptionList
   return (
     <button
       onClick={onClick}
-      className="w-full flex items-center justify-between gap-2 p-3 sm:p-4 rounded-lg border bg-card hover:bg-accent/50 transition-colors text-left min-w-0"
+      className="w-full flex items-start justify-between gap-2 p-3 sm:p-4 rounded-lg border bg-card hover:bg-accent/50 transition-colors text-left min-w-0 overflow-hidden"
     >
-      <div className="flex-1 min-w-0">
-        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 min-w-0">
-          <h3 className="font-medium text-foreground text-sm sm:text-base break-words min-w-0 flex-1">
-            {subscription.products_v2?.name || subscription.products_v2?.code} — {subscription.tariffs?.name}
-          </h3>
+      <div className="flex-1 min-w-0 space-y-1.5">
+        <h3 className="font-medium text-foreground text-sm sm:text-base break-words">
+          {subscription.products_v2?.name || subscription.products_v2?.code} — {subscription.tariffs?.name}
+        </h3>
+        <div className="flex flex-wrap items-center gap-1.5">
           {/* PATCH 13+: Показывать метку если автопродление отключено */}
           {subscription.auto_renew === false && subscription.auto_renew_disabled_by && (
             <Badge variant="outline" className="text-xs text-amber-600 border-amber-300">
