@@ -7409,6 +7409,7 @@ export type Database = {
           offer_id: string | null
           payment_type: string
           product_id: string
+          public_url: string
           status: string
           tariff_id: string
           updated_at: string
@@ -7428,6 +7429,7 @@ export type Database = {
           offer_id?: string | null
           payment_type?: string
           product_id: string
+          public_url: string
           status?: string
           tariff_id: string
           updated_at?: string
@@ -7447,6 +7449,7 @@ export type Database = {
           offer_id?: string | null
           payment_type?: string
           product_id?: string
+          public_url?: string
           status?: string
           tariff_id?: string
           updated_at?: string
