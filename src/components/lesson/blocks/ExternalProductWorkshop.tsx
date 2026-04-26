@@ -415,21 +415,55 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
     return { avgCoeff, avgAddons, avgCurrent, underpriced };
   }, [computed]);
 
+  const completionValidation = useMemo(() => {
+    if (state.portfolio_pricing.length === 0) {
+      return "Нельзя завершить шаг без импортированного портфеля из Шага 2.";
+    }
+    if (!state.client_types.some((r) => r.name.trim().length > 0)) {
+      return "Заполните хотя бы 1 тип клиента в Блоке 1.";
+    }
+    return null;
+  }, [state.client_types, state.portfolio_pricing.length]);
+
   const handleComplete = async () => {
+    if (completionValidation) {
+      setCompletionError(completionValidation);
+      toast.warning(completionValidation);
+      return;
+    }
     const completedAt = new Date().toISOString();
+    const nextState = { ...state, completed_at: completedAt };
     setState((s) => ({ ...s, completed_at: completedAt }));
     // Канонический путь — обновляет useUserProgress в реальном времени и
     // гарантирует засчитывание блока в общей системе прогресса урока.
     if (onCanonicalSave) {
       const payload = {
         type: "external_product_workshop",
-        state: { ...state, completed_at: completedAt },
+        state: nextState,
         is_submitted: true,
         submitted_at: completedAt,
         saved_at: completedAt,
       };
       await onCanonicalSave(payload, true);
     }
+    if (userId) {
+      const { data: proofRow } = await supabase
+        .from("user_lesson_progress")
+        .select("completed_at, response")
+        .eq("user_id", userId)
+        .eq("lesson_id", lessonId)
+        .eq("block_id", blockId)
+        .maybeSingle();
+      const proofResponse = (proofRow?.response as { state?: ExternalProductState } | null)?.state;
+      setProgressProof({
+        checked_at: new Date().toISOString(),
+        row_exists: !!proofRow,
+        block_completed: !!proofRow?.completed_at,
+        admin_source_ready: !!proofRow,
+        response_has_portfolio: Array.isArray(proofResponse?.portfolio_pricing) && proofResponse.portfolio_pricing.length > 0,
+      });
+    }
+    setCompletionError(null);
     toast.success("Шаг 3 завершён");
   };
   const handleReopen = async () => {
