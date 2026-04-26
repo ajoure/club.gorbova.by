@@ -13,7 +13,7 @@
  *                                        link-context preserved on same /pay/:token
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useQuery } from '@tanstack/react-query';
@@ -77,6 +77,8 @@ export default function PublicPayPage() {
   const functionUrl = `https://${projectId}.supabase.co/functions/v1/public-checkout`;
   const savedCardFunctionUrl = `https://${projectId}.supabase.co/functions/v1/public-charge-saved-card`;
   const [savedCardProcessing, setSavedCardProcessing] = useState(false);
+  // Stable per-mount idempotency key — survives multiple clicks within the same /pay/:token visit.
+  const savedCardIdempotencyKeyRef = useRef<string>(crypto.randomUUID());
 
   const { data: linkInfo, isLoading, error: loadError } = useQuery({
     queryKey: ['public-pay', token],
@@ -199,7 +201,7 @@ export default function PublicPayPage() {
       if (!session?.access_token) {
         throw new Error('Войдите в аккаунт, чтобы использовать сохранённую карту.');
       }
-      const idempotency_key = `${paymentMethodId}:${token}:${Math.floor(Date.now() / 1000)}`;
+      const idempotency_key = savedCardIdempotencyKeyRef.current;
       const res = await fetch(savedCardFunctionUrl, {
         method: 'POST',
         headers: {

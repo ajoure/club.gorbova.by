@@ -179,21 +179,10 @@ Deno.serve(async (req) => {
     }
 
     // (b) natural-key (always runs, regardless of idempotency_key)
+    // (b) natural-key (always runs, regardless of idempotency_key).
+    // payments_v2 has NO payment_method_id column — match via meta.payment_method_id
+    // and via the joined order's meta.payment_link_id.
     const { data: byNatural } = await (supabase as any)
-      .from('payments_v2')
-      .select('id, order_id, status, orders_v2!inner(meta, user_id)')
-      .eq('user_id', authUser.id)
-      .eq('payment_method_id', payment_method_id) // legacy column name; falls back below if missing
-      .eq('amount', link.amount / 100)
-      .eq('currency', link.currency)
-      .in('status', ACTIVE_PAYMENT_STATUSES as unknown as string[])
-      .gte('created_at', new Date(Date.now() - 2 * 60 * 1000).toISOString())
-      .order('created_at', { ascending: false })
-      .limit(5);
-
-    // payments_v2 has no payment_method_id column — fallback: filter via meta.payment_method_id
-    // OR via order.meta.payment_link_id match. Run a meta-based query as authoritative natural-key:
-    const { data: byNatural2 } = await (supabase as any)
       .from('payments_v2')
       .select('id, order_id, status, meta, amount, currency, orders_v2!inner(id, user_id, meta)')
       .eq('user_id', authUser.id)
@@ -204,7 +193,7 @@ Deno.serve(async (req) => {
       .order('created_at', { ascending: false })
       .limit(20);
 
-    const naturalHit = (byNatural2 || []).find((p: any) =>
+    const naturalHit = (byNatural || []).find((p: any) =>
       p?.meta?.payment_method_id === payment_method_id &&
       p?.orders_v2?.meta?.payment_link_id === link.id,
     );
@@ -226,8 +215,6 @@ Deno.serve(async (req) => {
         tracking_id: naturalHit.order_id ? `link:order:${naturalHit.order_id}` : null,
       });
     }
-    // Suppress unused warning for diagnostic helper
-    void byNatural;
 
     // --- 8. bePaid creds --------------------------------------------------
     const credsResult = await getBepaidCredsStrict(supabase);
@@ -239,7 +226,7 @@ Deno.serve(async (req) => {
 
     // --- 9. Load product / tariff / profile (canonical 1:1 with public-checkout) ---
     const [productRes, tariffRes, profileRes] = await Promise.all([
-      supabase.from('products_v2').select('id, name, code, public_id').eq('id', link.product_id).maybeSingle(),
+      supabase.from('products_v2').select('id, name, code, public_id, primary_domain').eq('id', link.product_id).maybeSingle(),
       supabase.from('tariffs').select('id, name, code, access_days, public_id').eq('id', link.tariff_id).maybeSingle(),
       supabase.from('profiles').select('id, email, full_name').eq('user_id', targetUserId).maybeSingle(),
     ]);
@@ -369,7 +356,9 @@ Deno.serve(async (req) => {
         card_brand: paymentMethod.brand || null,
         card_last4: paymentMethod.last4 || null,
         is_recurring: false,
-        transaction_type: 'mit_saved_card',
+        // 'payment' aligns with existing payments_v2.transaction_type values
+        // ('payment','refund','tokenization','void'). Saved-card marker lives in meta.source.
+        transaction_type: 'payment',
         origin: 'public_link',
         meta: paymentMeta,
       })
@@ -381,15 +370,49 @@ Deno.serve(async (req) => {
       return errorResponse('payment_create_failed', 500);
     }
 
+    // Audit: requested (post-validation, post-insert, pre-gateway).
+    await safeAudit(supabase, {
+      action: 'payment.saved_card_charge.requested',
+      actor_user_id: authUser.id,
+      target_user_id: targetUserId,
+      meta: {
+        order_id: order.id,
+        payment_id: payment.id,
+        payment_link_id: link.id,
+        payment_method_id,
+        amount: amountKopecks,
+        currency: link.currency,
+      },
+    });
+
     // --- 13. bePaid Gateway charge --------------------------------------
     const trackingId = `link:order:${order.id}`;
-    const reqOrigin = req.headers.get('origin');
-    const reqReferer = req.headers.get('referer');
-    const origin = reqOrigin
-      || (reqReferer ? new URL(reqReferer).origin : null)
-      || 'https://club.gorbova.by';
+
+    // CANONICAL RETURN_URL — never req.headers.origin/referer.
+    // Source of truth: products_v2.primary_domain → fallback CANONICAL_PUBLIC_HOST.
+    // Same forbidden-host policy as admin-create-public-link.
+    const CANONICAL_PUBLIC_HOST = 'https://club.gorbova.by';
+    const FORBIDDEN_HOST_RE = /(lovable\.dev|lovable\.app|lovableproject\.com|localhost|127\.0\.0\.1)/i;
+    const VALID_DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
+    const rawPrimaryDomain: string | null =
+      typeof product.primary_domain === 'string' ? product.primary_domain : null;
+    const primaryDomain = rawPrimaryDomain ? rawPrimaryDomain.trim().toLowerCase() : null;
+    const primaryDomainValid =
+      !!primaryDomain &&
+      VALID_DOMAIN_RE.test(primaryDomain) &&
+      !FORBIDDEN_HOST_RE.test(primaryDomain);
+    const canonicalOrigin = primaryDomainValid
+      ? `https://${primaryDomain}`
+      : CANONICAL_PUBLIC_HOST;
+    if (!/^https:\/\//.test(canonicalOrigin) || FORBIDDEN_HOST_RE.test(canonicalOrigin)) {
+      console.error('[public-charge-saved-card] canonical origin rejected:', canonicalOrigin);
+      return errorResponse('internal_invalid_canonical_origin', 500);
+    }
+    const originSource: 'product_primary_domain' | 'fallback_canonical' =
+      primaryDomainValid ? 'product_primary_domain' : 'fallback_canonical';
+
     const notificationUrl = `${supabaseUrl}/functions/v1/bepaid-webhook`;
-    const returnUrl = `${origin}/purchases?order=${order.id}&payment=processing`;
+    const returnUrl = `${canonicalOrigin}/purchases?order=${order.id}&payment=processing`;
 
     const chargePayload = {
       request: {
@@ -400,7 +423,6 @@ Deno.serve(async (req) => {
         test: bepaidCreds.test_mode,
         return_url: returnUrl,
         notification_url: notificationUrl,
-        // 3DS may still be required by issuer; UI handles redirect_url path.
         skip_three_d_secure_verification: true,
         credit_card: {
           token: paymentMethod.provider_token,
@@ -426,6 +448,24 @@ Deno.serve(async (req) => {
       currency: link.currency,
       pm_brand: paymentMethod.brand,
       pm_last4: paymentMethod.last4,
+      origin_source: originSource,
+      return_url: returnUrl,
+    });
+
+    // Audit: gateway_called (just before POST).
+    await safeAudit(supabase, {
+      action: 'payment.saved_card_charge.gateway_called',
+      actor_user_id: authUser.id,
+      target_user_id: targetUserId,
+      meta: {
+        order_id: order.id,
+        payment_id: payment.id,
+        tracking_id: trackingId,
+        amount: amountKopecks,
+        currency: link.currency,
+        origin_source: originSource,
+        return_url: returnUrl,
+      },
     });
 
     const bepaidAuth = createBepaidAuthHeader(bepaidCreds);
@@ -448,7 +488,6 @@ Deno.serve(async (req) => {
         order_id: order.id,
         message: errMsg,
       });
-      // Sanitize provider_response (do not store provider_token)
       await supabase
         .from('payments_v2')
         .update({
@@ -458,6 +497,18 @@ Deno.serve(async (req) => {
         })
         .eq('id', payment.id);
       await supabase.from('orders_v2').update({ status: 'failed' }).eq('id', order.id);
+
+      await safeAudit(supabase, {
+        action: 'payment.saved_card_charge.failed',
+        actor_user_id: authUser.id,
+        target_user_id: targetUserId,
+        meta: {
+          order_id: order.id,
+          payment_id: payment.id,
+          gateway_status: chargeResp.status,
+          error_message: errMsg,
+        },
+      });
 
       return jsonResponse(
         { success: false, error: 'payment_declined', message: errMsg, order_id: order.id },
@@ -469,22 +520,20 @@ Deno.serve(async (req) => {
     const txUid = chargeResult?.transaction?.uid;
     const redirectUrl = chargeResult?.transaction?.redirect_url || null;
 
-    // Persist tx uid + sanitized response
+    // Persist tx uid + sanitized response (status remains 'processing' — webhook closes it).
     await supabase
       .from('payments_v2')
       .update({
         provider_payment_id: txUid || null,
         provider_response: sanitizeProviderResponse(chargeResult),
-        status: txStatus === 'successful' ? 'processing' /* keep processing — webhook closes */ : 'processing',
+        status: 'processing',
       })
       .eq('id', payment.id);
 
-    // Audit creation (separate from idempotency_hit)
-    await supabase.from('audit_logs').insert({
+    // Audit: created (always).
+    await safeAudit(supabase, {
       action: 'payment.saved_card_charge.created',
-      actor_type: 'user',
       actor_user_id: authUser.id,
-      actor_label: 'public-charge-saved-card',
       target_user_id: targetUserId,
       meta: {
         order_id: order.id,
@@ -497,6 +546,21 @@ Deno.serve(async (req) => {
       },
     });
 
+    // Audit: redirect_issued (only when bank confirmation page must be shown).
+    if (redirectUrl) {
+      await safeAudit(supabase, {
+        action: 'payment.saved_card_charge.redirect_issued',
+        actor_user_id: authUser.id,
+        target_user_id: targetUserId,
+        meta: {
+          order_id: order.id,
+          payment_id: payment.id,
+          tx_uid: txUid || null,
+          tx_status: txStatus || null,
+        },
+      });
+    }
+
     // Response: never includes provider_token.
     return jsonResponse({
       success: true,
@@ -504,7 +568,6 @@ Deno.serve(async (req) => {
       order_id: order.id,
       payment_id: payment.id,
       tracking_id: trackingId,
-      // Issuer may require 3DS challenge — UI follows redirect when present.
       redirect_url: redirectUrl,
       message: redirectUrl
         ? 'Требуется подтверждение банка. Сейчас откроется страница подтверждения.'
@@ -517,6 +580,34 @@ Deno.serve(async (req) => {
 });
 
 // ---------- helpers ----------
+
+/** Best-effort audit insert — never throws / never blocks main flow. */
+async function safeAudit(
+  supabase: any,
+  p: {
+    action: string;
+    actor_user_id: string;
+    target_user_id: string;
+    meta: Record<string, any>;
+  },
+): Promise<void> {
+  try {
+    const { error } = await supabase.from('audit_logs').insert({
+      action: p.action,
+      actor_type: 'user',
+      actor_user_id: p.actor_user_id,
+      actor_label: 'public-charge-saved-card',
+      target_user_id: p.target_user_id,
+      meta: p.meta,
+    });
+    if (error) {
+      console.error('[public-charge-saved-card] audit failed', { action: p.action, error });
+    }
+  } catch (e) {
+    console.error('[public-charge-saved-card] audit threw', { action: p.action, e });
+  }
+}
+
 
 function inProgressResponse(p: { order_id: string | null; payment_id: string; tracking_id: string | null }): Response {
   return new Response(
