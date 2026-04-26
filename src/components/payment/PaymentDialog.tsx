@@ -160,6 +160,11 @@ export function PaymentDialog({
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [paymentFlowType, setPaymentFlowType] = useState<PaymentFlowType>('provider_managed');
 
+  // PAY-K: one_time saved-card selector. 'new_card' or payment_method_id (uuid).
+  // Для subscription/trial карты остаются disabled (PAY-I behavior).
+  const [selectedMethod, setSelectedMethod] = useState<string>('new_card');
+  const savedCardIdempotencyKeyRef = useRef<string>(crypto.randomUUID());
+
   // Same-pair subscription conflict (existing active subscription on same product+tariff)
   const [conflictData, setConflictData] = useState<SubscriptionConflictInfo | null>(null);
   const [replaceStep, setReplaceStep] = useState<'idle' | 'cancelling' | 'creating'>('idle');
