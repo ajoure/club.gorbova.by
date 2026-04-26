@@ -226,7 +226,7 @@ Deno.serve(async (req) => {
 
     // --- 9. Load product / tariff / profile (canonical 1:1 with public-checkout) ---
     const [productRes, tariffRes, profileRes] = await Promise.all([
-      supabase.from('products_v2').select('id, name, code, public_id').eq('id', link.product_id).maybeSingle(),
+      supabase.from('products_v2').select('id, name, code, public_id, primary_domain').eq('id', link.product_id).maybeSingle(),
       supabase.from('tariffs').select('id, name, code, access_days, public_id').eq('id', link.tariff_id).maybeSingle(),
       supabase.from('profiles').select('id, email, full_name').eq('user_id', targetUserId).maybeSingle(),
     ]);
