@@ -13317,6 +13317,7 @@ export type Database = {
           payment_type: string | null
           product_id: string | null
           product_name: string | null
+          public_url: string | null
           recipient_email: string | null
           recipient_name: string | null
           related_orders_count: number | null
@@ -13620,47 +13621,6 @@ export type Database = {
       admin_get_payments_stats_v1: {
         Args: { p_from: string; p_provider?: string; p_to: string }
         Returns: Json
-      }
-      admin_list_payment_links_enriched: {
-        Args: never
-        Returns: {
-          amount: number | null
-          created_at: string | null
-          created_by: string | null
-          creator_email: string | null
-          creator_name: string | null
-          currency: string | null
-          current_uses: number | null
-          description: string | null
-          expires_at: string | null
-          id: string | null
-          is_exhausted: boolean | null
-          is_expired: boolean | null
-          is_invalid: boolean | null
-          last_order_id: string | null
-          max_uses: number | null
-          offer_id: string | null
-          offer_title: string | null
-          paid_orders_count: number | null
-          payment_type: string | null
-          product_id: string | null
-          product_name: string | null
-          recipient_email: string | null
-          recipient_name: string | null
-          related_orders_count: number | null
-          status: string | null
-          tariff_id: string | null
-          tariff_name: string | null
-          updated_at: string | null
-          url_token: string | null
-          user_id: string | null
-        }[]
-        SetofOptions: {
-          from: "*"
-          to: "payment_links_enriched_v"
-          isOneToOne: false
-          isSetofReturn: true
-        }
       }
       admin_reconcile_bepaid_legacy_subscriptions: {
         Args: {
@@ -14038,6 +13998,7 @@ export type Database = {
           payment_type: string | null
           product_id: string | null
           product_name: string | null
+          public_url: string | null
           recipient_email: string | null
           recipient_name: string | null
           related_orders_count: number | null
