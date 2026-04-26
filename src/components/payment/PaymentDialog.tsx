@@ -1355,8 +1355,8 @@ export function PaymentDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="w-[calc(100vw-24px)] sm:max-w-md max-h-[calc(100dvh-24px)] overflow-hidden flex flex-col p-0">
-          <div className="p-6 pb-3 border-b shrink-0">
+        <DialogContent className="w-[calc(100vw-24px)] sm:max-w-md max-h-[calc(100dvh-24px)] overflow-hidden flex flex-col p-0 bg-background/70 backdrop-blur-2xl border-white/10 shadow-2xl">
+          <div className="p-6 pb-3 border-b border-white/10 shrink-0">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <CreditCard className="h-5 w-5" />
