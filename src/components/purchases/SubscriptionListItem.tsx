@@ -2,6 +2,7 @@ import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { ChevronRight, CheckCircle, XCircle, Clock, CreditCard } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { getSubscriptionStatusLabel } from "@/lib/subscriptionStatusLabels";
 
 interface Subscription {
   id: string;
@@ -74,7 +75,14 @@ export function SubscriptionListItem({ subscription, onClick }: SubscriptionList
         </Badge>
       );
     }
-    return <Badge variant="outline" className="text-xs">{subscription.status}</Badge>;
+    const fallback = getSubscriptionStatusLabel(subscription.status);
+    const cls =
+      fallback.kind === "warning"
+        ? "text-amber-700 border-amber-300 bg-amber-50 dark:bg-amber-900/20"
+        : fallback.kind === "danger"
+        ? "text-red-700 border-red-300 bg-red-50 dark:bg-red-900/20"
+        : "";
+    return <Badge variant="outline" className={`text-xs ${cls}`}>{fallback.label}</Badge>;
   };
 
   return (

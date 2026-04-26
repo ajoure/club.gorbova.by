@@ -220,7 +220,19 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
         </Badge>
       );
     }
-    return <Badge variant="outline" className="text-xs">{order.status}</Badge>;
+    const orderStatusMap: Record<string, string> = {
+      created: "Создан",
+      pending: "В обработке",
+      processing: "В обработке",
+      paid: "Оплачено",
+      failed: "Ошибка",
+      canceled: "Отменён",
+      cancelled: "Отменён",
+      refunded: "Возврат",
+      expired: "Истёк",
+    };
+    const label = orderStatusMap[String(order.status).toLowerCase()] ?? "Неизвестно";
+    return <Badge variant="outline" className="text-xs">{label}</Badge>;
   };
 
   const getProductName = (): string => {

@@ -5,6 +5,7 @@ import { CreditCard, Download, Ban, RotateCcw, CheckCircle, XCircle, Clock, File
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { getSubscriptionStatusLabel } from "@/lib/subscriptionStatusLabels";
 import {
   Sheet,
   SheetContent,
@@ -127,7 +128,14 @@ export function SubscriptionDetailSheet({
         </Badge>
       );
     }
-    return <Badge variant="outline">{subscription.status}</Badge>;
+    const fallback = getSubscriptionStatusLabel(subscription.status);
+    const cls =
+      fallback.kind === "warning"
+        ? "text-amber-700 border-amber-300 bg-amber-50 dark:bg-amber-900/20"
+        : fallback.kind === "danger"
+        ? "text-red-700 border-red-300 bg-red-50 dark:bg-red-900/20"
+        : "";
+    return <Badge variant="outline" className={cls}>{fallback.label}</Badge>;
   };
 
   const getPaymentStatusBadge = (status: string) => {
@@ -151,7 +159,7 @@ export function SubscriptionDetailSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className={SHEET_SHELL_CLASS}>
         <SheetHeader className="pr-10">
-          <SheetTitle className="text-left truncate">
+          <SheetTitle className="text-left break-words">
             {subscription.products_v2?.name || subscription.products_v2?.code} — {subscription.tariffs?.name}
           </SheetTitle>
           <SheetDescription className="text-left">
@@ -161,7 +169,7 @@ export function SubscriptionDetailSheet({
 
         <div className="mt-6 space-y-6">
           {/* Status */}
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
             <span className="text-sm text-muted-foreground">Статус</span>
             {getStatusBadge()}
           </div>
@@ -170,39 +178,39 @@ export function SubscriptionDetailSheet({
 
           {/* Dates */}
           <div className="space-y-3">
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Активирована</span>
-              <span className="font-medium">{formatDate(subscription.access_start_at)}</span>
+            <div className="flex justify-between gap-3 text-sm">
+              <span className="text-muted-foreground shrink-0">Активирована</span>
+              <span className="font-medium text-right break-words">{formatDate(subscription.access_start_at)}</span>
             </div>
 
             {subscription.access_end_at && (
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Действует до</span>
-                <span className={`font-medium ${isExpired ? "text-destructive" : isCanceled ? "text-amber-600" : ""}`}>
+              <div className="flex justify-between gap-3 text-sm">
+                <span className="text-muted-foreground shrink-0">Действует до</span>
+                <span className={`font-medium text-right break-words ${isExpired ? "text-destructive" : isCanceled ? "text-amber-600" : ""}`}>
                   {formatDate(subscription.access_end_at)}
                 </span>
               </div>
             )}
 
             {subscription.next_charge_at && !isCanceled && isActive && (
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Следующее списание</span>
-                <span className="font-medium">{formatShortDate(subscription.next_charge_at)}</span>
+              <div className="flex justify-between gap-3 text-sm">
+                <span className="text-muted-foreground shrink-0">Следующее списание</span>
+                <span className="font-medium text-right break-words">{formatShortDate(subscription.next_charge_at)}</span>
               </div>
             )}
 
             {isCanceled && subscription.cancel_at && (
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Доступ до</span>
-                <span className="font-medium text-amber-600">{formatDate(subscription.cancel_at)}</span>
+              <div className="flex justify-between gap-3 text-sm">
+                <span className="text-muted-foreground shrink-0">Доступ до</span>
+                <span className="font-medium text-right break-words text-amber-600">{formatDate(subscription.cancel_at)}</span>
               </div>
             )}
 
             {/* PATCH 13+: Auto-renew disabled indicator */}
             {subscription.auto_renew === false && subscription.auto_renew_disabled_by && (
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Автопродление</span>
-                <span className="font-medium text-amber-600">
+              <div className="flex justify-between gap-3 text-sm">
+                <span className="text-muted-foreground shrink-0">Автопродление</span>
+                <span className="font-medium text-right break-words text-amber-600">
                   Отключено {subscription.auto_renew_disabled_by === 'admin' ? 'администратором' : 'вами'}
                   {subscription.auto_renew_disabled_at && (
                     <span className="text-xs ml-1">
@@ -219,8 +227,8 @@ export function SubscriptionDetailSheet({
           {/* Payment method */}
           {subscription.payment_methods?.brand && subscription.payment_methods?.last4 && (
             <>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Способ оплаты</span>
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <span className="text-sm text-muted-foreground shrink-0">Способ оплаты</span>
                 <div className="flex items-center gap-2 text-sm font-medium">
                   <CreditCard className="h-4 w-4 text-muted-foreground" />
                   {subscription.payment_methods.brand.toUpperCase()} **** {subscription.payment_methods.last4}
