@@ -686,99 +686,114 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
       />
 
       {/* ─── Блок 5. Калькулятор по портфелю ─── */}
-      <SectionCard
-        icon={<Calculator className="h-5 w-5" />}
-        index={5}
-        title="Проверка цен по портфелю клиентов"
-        subtitle="Импортируем ваш портфель из Шага 2 и считаем цену двумя способами — по коэффициентам и по надбавкам"
-        action={
-          <Button onClick={handleImportPortfolio} disabled={importing} variant="default" size="sm">
-            {importing ? (
-              <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
-            ) : (
-              <Download className="h-4 w-4 mr-1.5" />
-            )}
-            {state.portfolio_pricing.length ? "Обновить из Шага 2" : "Импортировать портфель"}
-          </Button>
-        }
-      >
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
-          <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
-            <div className="text-xs text-muted-foreground">Источник импорта</div>
-            <div className="font-medium">{state.import_meta?.source_lesson_title || "Шаг 2"}</div>
-            {state.import_meta?.source_lesson_id && (
-              <div className="text-[11px] text-muted-foreground truncate mt-1">{state.import_meta.source_lesson_id}</div>
-            )}
-          </div>
-          <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
-            <div className="text-xs text-muted-foreground">Импортировано клиентов</div>
-            <div className="font-medium">{state.import_meta?.imported_count ?? state.portfolio_pricing.length}</div>
-          </div>
-          <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
-            <div className="text-xs text-muted-foreground">Дата/время импорта</div>
-            <div className="font-medium">
-              {state.import_meta?.imported_at
-                ? new Date(state.import_meta.imported_at).toLocaleString("ru-RU")
-                : "—"}
-            </div>
-          </div>
-        </div>
-
-        {state.import_meta?.empty_reason && state.portfolio_pricing.length === 0 && (
-          <Alert variant="destructive">
-            <AlertTriangle className="h-4 w-4" />
-            <AlertTitle>Портфель пустой</AlertTitle>
-            <AlertDescription>
-              Источник найден, но клиенты не импортированы. Проверьте заполнение Шага 2 и повторите импорт.
-            </AlertDescription>
-          </Alert>
-        )}
-
-        {state.portfolio_pricing.length === 0 ? (
+      {!dictsFilled ? (
+        <SectionCard
+          icon={<Calculator className="h-5 w-5" />}
+          index={5}
+          title="Проверка цен по портфелю клиентов"
+          subtitle="Доступно после заполнения блоков 1–4"
+        >
           <Alert>
             <AlertTriangle className="h-4 w-4" />
-            <AlertTitle>Портфель пока не загружен</AlertTitle>
+            <AlertTitle>Сначала заполните блоки 1–4</AlertTitle>
             <AlertDescription>
-              Нажмите «Импортировать портфель» — мы подтянем ваших клиентов из Шага 2 «Анализ
-              портфеля». Если их там пока нет — сначала заполните Шаг 2.
+              После того как вы заполните типы клиентов, сложность, сервис и ответственность —
+              здесь появится возможность загрузить портфель из Шага 2 и проверить цены.
             </AlertDescription>
           </Alert>
-        ) : (
-          <div className="space-y-4">
-            {computed.map((row) => (
-              <PortfolioRowCard
-                key={row.client_row_id}
-                row={row}
-                clientTypes={state.client_types}
-                complexity={state.complexity}
-                services={state.service_levels}
-                responsibility={state.responsibility}
-                onChange={(patch) =>
-                  setState((s) => ({
-                    ...s,
-                    portfolio_pricing: s.portfolio_pricing.map((r) =>
-                      r.client_row_id === row.client_row_id ? { ...r, ...patch } : r
-                    ),
-                  }))
-                }
-              />
-            ))}
-
-            {stats && (
-              <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 sm:p-5 grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <Stat label="Средняя текущая" value={fmt(stats.avgCurrent)} suffix="$" />
-                <Stat label="Средняя по коэф." value={fmt(stats.avgCoeff)} suffix="$" />
-                <Stat label="Средняя по надб." value={fmt(stats.avgAddons)} suffix="$" />
-                <Stat
-                  label="Сильно недооценённых"
-                  value={String(stats.underpriced)}
-                  suffix={`из ${computed.length}`}
-                />
+        </SectionCard>
+      ) : (
+        <SectionCard
+          icon={<Calculator className="h-5 w-5" />}
+          index={5}
+          title="Проверка цен по портфелю клиентов"
+          subtitle="Загрузите портфель из Шага 2 и проверьте логику цены"
+          action={
+            <Button onClick={handleImportPortfolio} disabled={importing} variant="default" size="sm">
+              {importing ? (
+                <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4 mr-1.5" />
+              )}
+              Загрузить портфель из Шага 2
+            </Button>
+          }
+        >
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+            <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+              <div className="text-xs text-muted-foreground">Источник</div>
+              <div className="font-medium">{state.import_meta?.source_lesson_title || "Шаг 2"}</div>
+            </div>
+            <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+              <div className="text-xs text-muted-foreground">Загружено клиентов</div>
+              <div className="font-medium">{state.import_meta?.imported_count ?? state.portfolio_pricing.length}</div>
+            </div>
+            <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+              <div className="text-xs text-muted-foreground">Дата загрузки</div>
+              <div className="font-medium">
+                {state.import_meta?.imported_at
+                  ? new Date(state.import_meta.imported_at).toLocaleString("ru-RU")
+                  : "—"}
               </div>
-            )}
+            </div>
           </div>
-        )}
-      </SectionCard>
+
+          {state.import_meta?.empty_reason && state.portfolio_pricing.length === 0 && (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Портфель пустой</AlertTitle>
+              <AlertDescription>
+                Источник найден, но клиенты не загружены. Проверьте заполнение Шага 2 и повторите загрузку.
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {state.portfolio_pricing.length === 0 ? (
+            <Alert>
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Портфель пока не загружен</AlertTitle>
+              <AlertDescription>
+                Нажмите «Загрузить портфель из Шага 2» — мы подтянем ваших клиентов из урока «Анализ
+                портфеля». Если их там пока нет — сначала заполните Шаг 2.
+              </AlertDescription>
+            </Alert>
+          ) : (
+            <div className="space-y-4">
+              {computed.map((row) => (
+                <PortfolioRowCard
+                  key={row.client_row_id}
+                  row={row}
+                  clientTypes={state.client_types}
+                  complexity={state.complexity}
+                  services={state.service_levels}
+                  responsibility={state.responsibility}
+                  onChange={(patch) =>
+                    setState((s) => ({
+                      ...s,
+                      portfolio_pricing: s.portfolio_pricing.map((r) =>
+                        r.client_row_id === row.client_row_id ? { ...r, ...patch } : r
+                      ),
+                    }))
+                  }
+                />
+              ))}
+
+              {stats && (
+                <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 sm:p-5 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <Stat label="Средняя текущая" value={fmt(stats.avgCurrent)} suffix="$" />
+                  <Stat label="Средняя по коэф." value={fmt(stats.avgCoeff)} suffix="$" />
+                  <Stat label="Средняя по надб." value={fmt(stats.avgAddons)} suffix="$" />
+                  <Stat
+                    label="Сильно недооценённых"
+                    value={String(stats.underpriced)}
+                    suffix={`из ${computed.length}`}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+        </SectionCard>
+      )}
 
       {/* Proof-панели */}
       <Card className="border-border/60">
