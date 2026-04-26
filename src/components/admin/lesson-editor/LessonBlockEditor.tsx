@@ -76,6 +76,7 @@ import {
   LayoutGrid,
   ClipboardList,
   User,
+  Sparkles,
 } from "lucide-react";
 import { LessonBlock, BlockType, useLessonBlocks } from "@/hooks/useLessonBlocks";
 import { extractStoragePathFromPublicUrl, deleteTrainingAssets } from "./blocks/uploadToTrainingAssets";
