@@ -369,6 +369,16 @@ function SortableBlockItem({ block, onUpdate, onDelete, lessonId }: SortableBloc
         return <HtmlRawBlock content={block.content as any} onChange={onUpdate} />;
       case 'checklist':
         return <ChecklistBlock content={block.content as any} onChange={onUpdate} />;
+      case 'external_product_workshop':
+        return (
+          <div className="rounded-lg border border-dashed p-6 text-center space-y-2 bg-violet-500/5">
+            <Sparkles className="h-8 w-8 mx-auto text-violet-600" />
+            <div className="font-semibold">Воркшоп: Внешний продукт</div>
+            <p className="text-xs text-muted-foreground max-w-md mx-auto">
+              Хардкод-блок: интерактивный конструктор внешнего продукта (4 справочника + калькулятор по портфелю клиентов из Шага 2). Контент зашит в коде, редактирование через UI недоступно.
+            </p>
+          </div>
+        );
       default:
         return (
           <div className="text-center py-8 text-muted-foreground">
