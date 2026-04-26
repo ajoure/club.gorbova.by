@@ -47,6 +47,7 @@ import {
   loadPortfolioFromPreviousLesson,
   type PortfolioRow,
 } from "@/lib/loadPortfolioFromPreviousLesson";
+import { logTrainingEvent } from "@/lib/auditTrainingActions";
 
 /* ──────────────────────────── Типы данных ──────────────────────────── */
 
