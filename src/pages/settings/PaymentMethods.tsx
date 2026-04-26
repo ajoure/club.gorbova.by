@@ -460,10 +460,12 @@ export default function PaymentMethodsSettings() {
 
   return (
     <DashboardLayout>
-      <div className="max-w-2xl mx-auto space-y-6">
+      <div className="max-w-4xl mx-auto space-y-6">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Оплата и карты</h1>
-          <p className="text-muted-foreground">Сохранённые карты для удобной оплаты. Привязка карты не обязательна.</p>
+          <p className="text-muted-foreground">
+            Привязка карты — добровольная опция для быстрой оплаты. Автосписаний без вашего действия нет.
+          </p>
         </div>
 
         {/* Price Protection Alert - original */}
@@ -540,14 +542,14 @@ export default function PaymentMethodsSettings() {
 
         <Card>
           <CardHeader>
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
               <div>
                 <CardTitle className="flex items-center gap-2">
                   <CreditCard className="h-5 w-5" />
                   Привязанные карты
                 </CardTitle>
                 <CardDescription>
-                  Сохранённые карты — добровольная опция для удобства будущих оплат. Вы можете оплачивать и без сохранения карты.
+                  Сохранённые карты — добровольная опция для удобства будущих оплат.
                 </CardDescription>
               </div>
               <Button onClick={handleAddCard} className="gap-2">
@@ -555,136 +557,131 @@ export default function PaymentMethodsSettings() {
                 Привязать карту
               </Button>
             </div>
-            {/* PATCH PAYMENTS+REMINDERS v3 S5: явное разделение "сохранённая карта" vs "подписка". */}
-            <Alert className="mt-3 border-muted-foreground/20 bg-muted/30">
-              <Shield className="h-4 w-4" />
-              <AlertDescription className="text-xs text-muted-foreground">
-                Сохранённая карта — это удобство для будущих оплат. Сама по себе она не списывает деньги автоматически.
-                Автопродление работает только через отдельную подписку bePaid (см. раздел «Настройка автопродления» выше или
-                оформите её при следующей оплате).
-              </AlertDescription>
-            </Alert>
           </CardHeader>
           <CardContent>
             {isLoading ? (
-              <div className="space-y-4">
-                <Skeleton className="h-20 w-full" />
-                <Skeleton className="h-20 w-full" />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Skeleton className="h-44 w-full rounded-2xl" />
+                <Skeleton className="h-44 w-full rounded-2xl" />
               </div>
             ) : paymentMethods && paymentMethods.length > 0 ? (
-              <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {paymentMethods.map((method) => {
                   const expired = isExpired(method.exp_month, method.exp_year);
-                  
+                  const brand = (method.brand || "CARD").toUpperCase();
+                  const last4 = method.last4 || "••••";
+
+                  // Brand-based gradient (semantic tokens fallback)
+                  const gradientByBrand: Record<string, string> = {
+                    VISA: "from-[hsl(220_70%_30%)] via-[hsl(220_70%_22%)] to-[hsl(220_70%_15%)]",
+                    MASTERCARD: "from-[hsl(15_75%_35%)] via-[hsl(0_70%_28%)] to-[hsl(280_60%_25%)]",
+                    MIR: "from-[hsl(140_55%_28%)] via-[hsl(150_60%_22%)] to-[hsl(160_60%_16%)]",
+                    BELKART: "from-[hsl(200_70%_30%)] via-[hsl(210_70%_22%)] to-[hsl(220_70%_16%)]",
+                  };
+                  const gradient =
+                    gradientByBrand[brand] ||
+                    "from-[hsl(220_15%_25%)] via-[hsl(220_15%_18%)] to-[hsl(220_15%_12%)]";
+
                   return (
                     <div
                       key={method.id}
-                      className={`p-4 rounded-lg border ${
-                        expired ? "bg-destructive/5 border-destructive/30" : "bg-muted/30"
+                      className={`relative overflow-hidden rounded-2xl border shadow-sm ${
+                        expired ? "border-destructive/40" : "border-border/60"
                       }`}
                     >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                          <div className="text-muted-foreground">
-                            {getCardIcon(method.brand)}
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="font-medium">
-                                {method.brand?.toUpperCase() || "Карта"} •••• {method.last4 || "****"}
-                              </span>
-                              {method.is_default && (
-                                <Badge variant="secondary" className="gap-1">
-                                  <Star className="h-3 w-3" />
-                                  Основная
-                                </Badge>
-                              )}
-                              {expired && (
-                                <Badge variant="destructive" className="gap-1">
-                                  <AlertTriangle className="h-3 w-3" />
-                                  Истекла
-                                </Badge>
-                              )}
-                              {/* Зелёные бейджи: карта пригодна для оплаты по умолчанию.
-                                  «Готова для подписок» — только при явном positive verified-сигнале. */}
-                              {!expired && (
-                                <Badge variant="outline" className="gap-1 text-green-600 border-green-600">
-                                  <Check className="h-3 w-3" />
-                                  Карта привязана
-                                </Badge>
-                              )}
-                              {!expired && (
-                                <Badge variant="outline" className="gap-1 text-green-600 border-green-600">
-                                  <Check className="h-3 w-3" />
-                                  Можно использовать для оплаты
-                                </Badge>
-                              )}
-                              {!expired && (method.verification_status === 'verified' || method.verification_status === 'verified_refund_pending') && (
-                                <Badge variant="outline" className="gap-1 text-green-600 border-green-600">
-                                  <ShieldCheck className="h-3 w-3" />
-                                  Готова для подписок
-                                </Badge>
-                              )}
-                            </div>
-                            <p className="text-sm text-muted-foreground">
-                              Действует до: {formatExpiry(method.exp_month, method.exp_year)}
-                            </p>
-                          </div>
-                        </div>
-                        
-                        <div className="flex items-center gap-2">
-                          {/* «Перепроверить» удалено: payment-method-verify-recurring отключена. */}
+                      {/* Visual card */}
+                      <div
+                        className={`relative bg-gradient-to-br ${gradient} text-white p-5 aspect-[1.586/1] flex flex-col justify-between`}
+                      >
+                        {/* Glare */}
+                        <div className="pointer-events-none absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_top_left,white,transparent_55%)]" />
 
-                          {!method.is_default && !expired && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setDefaultMutation.mutate(method.id)}
-                              disabled={setDefaultMutation.isPending}
-                            >
-                              Сделать основной
-                            </Button>
-                          )}
-                          
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                disabled={!canDelete(method.id)}
-                                title={!canDelete(method.id) ? "Нельзя удалить единственную карту при активных подписках" : "Отвязать карту"}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Отвязать карту?</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  Карта {method.brand?.toUpperCase()} •••• {method.last4} будет отвязана от вашего аккаунта.
-                                  {method.is_default && paymentMethods.length > 1 && (
-                                    <span className="block mt-2 text-amber-600">
-                                      Другая карта будет назначена основной.
-                                    </span>
-                                  )}
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Отмена</AlertDialogCancel>
-                                <AlertDialogAction
-                                  onClick={() => deleteMutation.mutate(method.id)}
-                                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                >
-                                  Отвязать
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
+                        <div className="relative flex items-start justify-between">
+                          <div className="flex flex-col gap-1">
+                            {method.is_default && (
+                              <Badge className="bg-white/15 hover:bg-white/15 text-white border-white/30 backdrop-blur w-fit gap-1">
+                                <Star className="h-3 w-3" />
+                                Основная
+                              </Badge>
+                            )}
+                            {expired && (
+                              <Badge variant="destructive" className="w-fit gap-1">
+                                <AlertTriangle className="h-3 w-3" />
+                                Истекла
+                              </Badge>
+                            )}
+                          </div>
+                          <CreditCard className="h-7 w-7 opacity-80" />
+                        </div>
+
+                        <div className="relative space-y-3">
+                          <div className="font-mono text-lg sm:text-xl tracking-[0.2em]">
+                            •••• •••• •••• {last4}
+                          </div>
+                          <div className="flex items-end justify-between text-xs uppercase tracking-wider">
+                            <div>
+                              <div className="opacity-60 text-[10px]">Срок</div>
+                              <div className="font-medium tracking-widest">
+                                {formatExpiry(method.exp_month, method.exp_year)}
+                              </div>
+                            </div>
+                            <div className="font-semibold text-sm tracking-widest">{brand}</div>
+                          </div>
                         </div>
                       </div>
-                      
-                      {/* Жёлтое 3DS-предупреждение убрано: карта пригодна для оплаты,
-                          а возможный запрос 3D-Secure покажется уже при попытке списания. */}
+
+                      {/* Actions */}
+                      <div className="flex items-center justify-end gap-2 bg-card px-4 py-3">
+                        {!method.is_default && !expired && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setDefaultMutation.mutate(method.id)}
+                            disabled={setDefaultMutation.isPending}
+                          >
+                            Сделать основной
+                          </Button>
+                        )}
+
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              disabled={!canDelete(method.id)}
+                              title={
+                                !canDelete(method.id)
+                                  ? "Нельзя удалить единственную карту при активных подписках"
+                                  : "Отвязать карту"
+                              }
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Отвязать карту?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Карта {brand} •••• {last4} будет отвязана от вашего аккаунта.
+                                {method.is_default && paymentMethods.length > 1 && (
+                                  <span className="block mt-2 text-amber-600">
+                                    Другая карта будет назначена основной.
+                                  </span>
+                                )}
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Отмена</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => deleteMutation.mutate(method.id)}
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                              >
+                                Отвязать
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
                     </div>
                   );
                 })}
