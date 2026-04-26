@@ -1,152 +1,150 @@
 да, согласен
 
-Можно выполнять **PATCH-LANDING-PRICING-RESILIENCE**.
+Можно выполнять **PAY-I**.
 
 **Контрольный scope**
 
-1. src/components/landing/LandingPricing.tsx
+Только src/components/payment/PaymentDialog.tsx
 
-2. src/hooks/usePublicProduct.tsx
+**Ключевые условия**
 
-**Не трогать**
+1. Карты показываются только disabled.
 
-- PaymentDialog.tsx
+2. Никаких saved-card оплат из PaymentDialog.
 
-- PublicPayPage.tsx
+3. Никакого public-charge-saved-card.
 
-- public-charge-saved-card
+4. provider_token не селектить.
 
-- public-checkout
+5. handlePayment / trial / conflict-flow не трогать.
 
-- bepaid-* edge functions
+6. PublicPayPage не трогать.
 
-- bepaid-webhook
+**Особое замечание**
 
-- grant-access
+Сокращение ready-шага делать осторожно:
 
-- public-product backend
+- не менять условия рендера;
 
-- UniversalPricingSection props/contract
+- не менять step-machine;
 
-**Ключевое требование**
+- не менять обработчики;
 
-Секция тарифов не должна молча исчезать.
+- менять только визуальный layout и тексты.
 
-Состояния:
+**DoD принимается**
 
-loading → skeleton / loading-state
+rg "provider_token|public-charge-saved-card|payment_method_verification_jobs|supports_recurring|recurring_verified" src/components/payment/PaymentDialog.tsx
 
-error → error-state + “Повторить загрузку”
+→ 0 совпадений
 
-empty success → “Тарифы временно недоступны.”
+git diff --name-only
 
-success with data → текущий UniversalPricingSection
+→ только src/components/payment/PaymentDialog.tsx
 
-**Важно**
+После выполнения нужен короткий отчёт:
 
-Оборачивать все состояния в тот же section с id="tariffs", чтобы CTA «Выбрать тариф» продолжал скроллить к секции даже при ошибке.
-
-**DoD**
-
-1. public-product 200 + tariffs → тарифы видны.
-
-2. public-product error → виден error-state, не пустое место.
-
-3. Retry вызывает refetch.
-
-4. #tariffs работает.
-
-5. PAY-патчи не затронуты.
-
-6. tsc clean.
+- что изменено;
+- grep proof;
+- tsc proof;
+- подтверждение, что PublicPayPage и edge functions не тронуты.
 
 &nbsp;
 
-План: PATCH-LANDING-PRICING-RESILIENCE
+План: PAY-I — Compact PaymentDialog ready-step + disabled saved cards
 
 ## Диагноз
 
-Блок тарифов пропал **не из-за PAY-G/H/E-LITE напрямую**.
+На скриншотах открыт компонент `src/components/payment/PaymentDialog.tsx` (модалка с тарифного блока на сайтах, кнопка «Выбрать тариф»), а не `PublicPayPage.tsx`. На `/pay/:token` UX корректный (PAY-E-LITE).
 
-Последние PAY-патчи трогали только:
+Две проблемы в `PaymentDialog`:
 
-- `src/pages/PublicPayPage.tsx`
-- `src/components/payment/PaymentDialog.tsx`
-- `supabase/functions/public-charge-saved-card/index.ts`
+1. **Привязанные карты не показываются.** `loadSavedCard` грузит только дефолтную карту через `.eq("is_default", true).maybeSingle()` и пишет в `savedCard` (один объект). В рендере шага `ready` UI отображения `savedCard` отсутствует. Карты невидимы и для подписки, и для one_time.
+2. **Шаг `ready` перегружен.** Блок профиля → ShieldCheck-плашка → длинный subscription-info (5 абзацев) → отдельный длинный блок «При оформлении подписки bePaid…» → кнопки → admin-test. Кнопки уезжают за второй экран.
 
-Блок тарифов зависит от другой ветки кода:
+## Scope
 
-- `src/pages/Landing.tsx`
-- `src/components/landing/LandingPricing.tsx`
-- `src/hooks/usePublicProduct.tsx`
-- `src/components/landing/UniversalPricingSection.tsx`
-- `supabase/functions/public-product/index.ts`
-
-Эти файлы **не менялись** за последние 3 дня (подтверждено `git log`).
-
-## Первопричина
-
-`LandingPricing.tsx` молча скрывает секцию при любом отсутствии данных:
-
-```tsx
-if (!productData?.product || !productData.tariffs?.length) return null;
-```
-
-То есть любая ошибка fetch / CORS / транзиентный сетевой сбой / 500 → блок просто исчезает. Пользователь видит лендинг без тарифов и не понимает, что произошло.
-
-Сейчас (в свежих network-логах) `public-product` отвечает **200 OK** и возвращает 3 тарифа корректно — значит блок снова виден. Но архитектурная уязвимость остаётся: при любом следующем сбое блок снова исчезнет.
-
-## Scope патча
-
-- `src/components/landing/LandingPricing.tsx`
-- `src/hooks/usePublicProduct.tsx`
-
-Никаких других файлов.
+Только `src/components/payment/PaymentDialog.tsx`.
 
 ## Что сделать
 
-### 1. `usePublicProduct.tsx`
+### 1. Загрузка карт — список вместо одной
 
-- Включить `retry: 2` (вместо текущего `retry: false`) для устойчивости к транзиентным сетевым ошибкам.
-- При ошибке fetch писать `console.error('[usePublicProduct] public-product fetch failed', { url, status, error })` — для диагностики в превью.
-- Контракт хука и `queryKey` не меняются, чтобы не сломать остальных потребителей.
+Заменить `loadSavedCard` на `loadSavedCards`:
 
-### 2. `LandingPricing.tsx`
+```
+.from("payment_methods")
+.select("id, brand, last4, exp_month, exp_year, is_default")
+.eq("user_id", user.id)
+.eq("status", "active")
+.eq("provider", "bepaid")
+.order("is_default", { ascending: false })
+.order("created_at", { ascending: false })
+```
 
-Получить из хука `error` и `refetch`. Заменить `return null` при ошибке/пустых данных на видимые состояния:
+Состояние: `savedCards: Array<{...}>` вместо одиночного `savedCard`.
 
-- **loading** → существующий `UniversalPricingSkeleton` (без изменений).
-- **error** → секция-заглушка с текстом:
-  > «Не удалось загрузить тарифы. Обновите страницу или попробуйте позже.»
-  - кнопка «Повторить загрузку» → вызывает `refetch()`.
-- **success, но пусто** (нет product или tariffs пустой) → секция-заглушка с текстом:
-  > «Тарифы временно недоступны.»
-- **success с данными** → текущий рендер `UniversalPricingSection` (без изменений).
+**НЕ селектить**: `provider_token`, `verification_status`, `supports_recurring`, `recurring_verified`, и не трогать `payment_method_verification_jobs`.
 
-Заглушки оборачиваем в тот же `<section id="tariffs">`, чтобы якорь `#tariffs` (на который ведёт CTA «Выбрать тариф» из Hero) продолжал работать в любом состоянии.
+### 2. UI карт в шаге `ready` — всегда disabled
+
+Если `savedCards.length > 0`, показать компактный блок «Сохранённые карты» в виде:
+
+```
+[CARD] VISA ••••1234   [по умолчанию]
+```
+
+с `opacity-60 pointer-events-none select-none aria-disabled="true"`.
+
+Подпись под списком:
+
+- **subscription**: «Сохранённые карты нельзя выбрать для оформления подписки. Вас перенаправит на защищённую страницу bePaid, где нужно будет выбрать или ввести карту для подписки.»
+- **one_time**: «Оплата сохранённой картой в этом окне пока недоступна. Используйте стандартную оплату bePaid.»
+
+Если `savedCards.length === 0` — блок не рендерим.
+
+### 3. Сокращение шага `ready`
+
+- **Профиль** (Email/Имя/Телефон) → одна компактная строка вида `{email} · {имя} · {телефон}` в одной плашке.
+- **ShieldCheck-блок** «После нажатия кнопки вы будете перенаправлены…» → удалить как отдельную плашку, оставить короткой строкой мелким шрифтом под кнопками.
+- **subscription-info** — две короткие строки:
+  - «Сегодня: доступ к Клубу — {price}.» (и аналогичные краткие варианты для курсов / обычных подписок)
+  - «Далее автосписание раз в месяц. Управление в личном кабинете.»
+- **PAY-G длинный блок** «При оформлении подписки bePaid…» — удалить как отдельную карточку, оставить **внутри** subscription-info короткой строкой:
+«bePaid может показать экран «привязка карты для автоплатежей» — это штатный экран оформления подписки.»
+
+### 4. CTA
+
+Оставить текущие кнопки и обработчики:
+
+- Главная: `Оплатить {price}` → `handlePayment` (логика не меняется).
+- Вторичная: `Отмена`.
+
+`handlePayment`, `handleReplaceSubscription`, `handleTestPayment`, conflict-flow, trial-flow — не трогать.
 
 ## STOP-guards
 
-- STOP, если патч трогает `PaymentDialog.tsx`.
-- STOP, если патч трогает `PublicPayPage.tsx`.
-- STOP, если патч трогает любые payment edge-функции (`bepaid-*`, `public-charge-saved-card`, `public-checkout`, webhook, grant-access).
-- STOP, если патч меняет backend `public-product` (контракт, payload, CORS) — это отдельная диагностика.
-- STOP, если меняется контракт `usePublicProduct` или `UniversalPricingSection` (props, типы).
-- Не вводить новый источник данных тарифов — единый путь `usePublicProduct → public-product EF`.
+- STOP, если карты становятся кликабельными.
+- STOP, если PaymentDialog вызывает `public-charge-saved-card`.
+- STOP, если меняется `handlePayment`, `handleReplaceSubscription`, `handleTestPayment`.
+- STOP, если меняется bePaid payload.
+- STOP, если `provider_token` появляется во frontend.
+- STOP, если меняется `PublicPayPage.tsx`.
+- STOP, если добавляется MIT/saved-card payment-flow в PaymentDialog.
+- STOP, если меняются edge functions.
+- STOP, если меняется `LandingPricing` / `UniversalPricingSection` / тарифные блоки.
 
 ## DoD
 
-1. Успешный ответ `public-product` → тарифы отображаются как сейчас.
-2. Ошибка `public-product` (network/CORS/500) → виден error-state с кнопкой повтора, а не пустое место.
-3. Кнопка «Повторить загрузку» вызывает `refetch` и при успехе блок переключается на нормальный рендер.
-4. Якорь `#tariffs` продолжает работать (Hero CTA «Выбрать тариф» скроллит на секцию в любом состоянии).
-5. PAY-патчи (G/H/E-LITE) и связанные с ними flow не затронуты.
-6. `tsc --noEmit` clean.
-7. Архитектурная гарантия: единая логика «fetch продукта → render тарифов» сохраняется для всех потребителей `usePublicProduct` (Landing, ProductPricing, site-renderer PricingSection — они автоматически выигрывают от retry+console.error в хуке).
+1. На viewport **518×788** CTA-кнопки «Отмена» и «Оплатить {price}» видны без прокрутки в типовом сценарии: subscription + авторизованный пользователь + 1–2 сохранённые карты. При 5+ картах или длинных данных профиля небольшой скролл допустим.
+2. Если у пользователя есть сохранённые карты — они отображаются **disabled** с соответствующим текстом для subscription / one_time.
+3. Если карт нет — блок карт отсутствует, ничего не ломается.
+4. one_time PaymentDialog не показывает кликабельные карты (политика `mem://ui/payments/saved-card-client-policy` сохраняется).
+5. `PublicPayPage.tsx` не изменён.
+6. `tsc --noEmit` чистый.
+7. `rg "provider_token|public-charge-saved-card|payment_method_verification_jobs|supports_recurring|recurring_verified" src/components/payment/PaymentDialog.tsx` → **0 совпадений**.
+8. `git diff --name-only` → только `src/components/payment/PaymentDialog.tsx`.
 
-## Что НЕ входит в этот патч (отдельные планы при необходимости)
+## Затронутые файлы
 
-- Усиление `PricingSection.tsx` в site-renderer и `ProductPricing.tsx` тем же error-state — сделать отдельным патчем `PATCH-PUBLIC-PRICING-RESILIENCE`, если потребуется единообразие UI на всех страницах.
-- Диагностика и расширение CORS у `public-product` — отдельный патч при появлении воспроизводимой ошибки сети.
-
-После одобрения плана я перейду в default mode и применю патч строго в указанном scope.
+- `src/components/payment/PaymentDialog.tsx` — единственный файл изменений.
