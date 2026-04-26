@@ -77,6 +77,8 @@ export default function PublicPayPage() {
   const functionUrl = `https://${projectId}.supabase.co/functions/v1/public-checkout`;
   const savedCardFunctionUrl = `https://${projectId}.supabase.co/functions/v1/public-charge-saved-card`;
   const [savedCardProcessing, setSavedCardProcessing] = useState(false);
+  // Stable per-mount idempotency key — survives multiple clicks within the same /pay/:token visit.
+  const savedCardIdempotencyKeyRef = useRef<string>(crypto.randomUUID());
 
   const { data: linkInfo, isLoading, error: loadError } = useQuery({
     queryKey: ['public-pay', token],
