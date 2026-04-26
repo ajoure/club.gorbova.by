@@ -456,7 +456,7 @@ export function LessonBlockRenderer({
             lessonId={lessonId || ''}
             sourceLessonId={epwContent.source_lesson_id ?? null}
             onCanonicalSave={(payload, completed) =>
-              saveBlockResponse(block.id, payload, null, completed ? 1 : 0, 1)
+              saveBlockResponse(block.id, payload, completed ? true : null, completed ? 1 : 0, 1)
             }
           />
         );
