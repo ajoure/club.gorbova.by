@@ -844,7 +844,7 @@ export function PaymentDialog({
               </p>
             </div>
 
-            <div className="rounded-lg bg-muted/50 p-3 text-sm">
+            <div className="rounded-xl bg-card/60 backdrop-blur-sm border border-border/40 p-3 text-sm">
               <p className="flex items-center gap-2">
                 <CheckCircle className="h-4 w-4 text-primary" />
                 Email: {formData.email}
@@ -911,14 +911,14 @@ export function PaymentDialog({
       case "additional_info":
         return (
           <form onSubmit={handleAdditionalInfoSubmit} className="space-y-5">
-            <div className="rounded-lg bg-muted/50 p-3 text-sm">
+            <div className="rounded-xl bg-card/60 backdrop-blur-sm border border-border/40 p-3 text-sm">
               <p className="flex items-center gap-2">
                 <Mail className="h-4 w-4 text-primary" />
                 Email: {formData.email}
               </p>
             </div>
 
-            <div className="rounded-lg bg-muted/30 p-3 space-y-1.5">
+            <div className="rounded-xl bg-card/50 backdrop-blur-sm border border-border/30 p-3 space-y-1.5">
               <p className="text-sm font-medium text-foreground flex items-center gap-1.5">
                 <Info className="h-4 w-4 text-primary" />
                 Зачем эти данные?
@@ -992,12 +992,12 @@ export function PaymentDialog({
               )}
             </div>
 
-            <div className="rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">
+            <div className="rounded-xl bg-card/60 backdrop-blur-sm border border-border/40 p-3 text-sm text-muted-foreground">
               <p>После оплаты мы создадим для вас личный кабинет и отправим данные для входа на указанный email.</p>
             </div>
 
             {/* Privacy consent checkbox */}
-            <div className="flex items-start gap-3 p-4 rounded-xl bg-muted/50 border border-border/50">
+            <div className="flex items-start gap-3 p-4 rounded-xl bg-card/60 backdrop-blur-sm border border-border/40">
               <Checkbox
                 id="payment-privacy-consent"
                 checked={privacyConsent}
@@ -1048,7 +1048,7 @@ export function PaymentDialog({
             </div>
 
             {telegramDeepLink ? (
-              <div className="rounded-lg bg-muted/50 p-4 space-y-3">
+              <div className="rounded-xl bg-card/60 backdrop-blur-sm border border-border/40 p-4 space-y-3">
                 <p className="text-sm text-muted-foreground">
                   Бот открыт в новой вкладке. Нажмите "Start" в Telegram, затем вернитесь сюда.
                 </p>
@@ -1112,7 +1112,7 @@ export function PaymentDialog({
         return (
           <div className="space-y-4">
             {isTrial && (
-              <Alert className="bg-muted/50">
+              <Alert className="bg-card/60 backdrop-blur-sm border-border/40">
                 <Info className="h-4 w-4" />
                 <AlertTitle>Важное о пробном периоде</AlertTitle>
                 <AlertDescription>
@@ -1189,7 +1189,7 @@ export function PaymentDialog({
               </Alert>
             )}
 
-            <div className="rounded-lg bg-muted/50 p-4 space-y-2">
+            <div className="rounded-xl bg-card/60 backdrop-blur-sm border border-border/40 p-4 space-y-2">
               <div className="flex items-center gap-2 text-sm">
                 <CheckCircle className="h-4 w-4 text-primary" />
                 <span>Email: {formData.email}</span>
@@ -1268,7 +1268,7 @@ export function PaymentDialog({
             )}
 
             {isSubscription && !isTrial && (
-              <div className="rounded-lg bg-muted/40 border border-border p-3 text-sm text-muted-foreground">
+              <div className="rounded-xl bg-card/60 backdrop-blur-sm border border-border/40 p-3 text-sm text-muted-foreground">
                 При оформлении подписки bePaid может показать экран с формулировкой «привязка карты для автоплатежей». Это штатный экран подписки: карта используется для регулярного продления, а списание выполняется по условиям выбранного тарифа.
               </div>
             )}
@@ -1355,8 +1355,8 @@ export function PaymentDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="w-[calc(100vw-24px)] sm:max-w-md max-h-[calc(100dvh-24px)] overflow-hidden flex flex-col p-0">
-          <div className="p-6 pb-3 border-b shrink-0">
+        <DialogContent className="w-[calc(100vw-24px)] sm:max-w-md max-h-[calc(100dvh-24px)] overflow-hidden flex flex-col p-0 bg-background/70 backdrop-blur-2xl border-white/10 shadow-2xl">
+          <div className="p-6 pb-3 border-b border-white/10 shrink-0">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <CreditCard className="h-5 w-5" />
@@ -1376,7 +1376,7 @@ export function PaymentDialog({
 
       {/* Trial Already Used Modal */}
       <Dialog open={showTrialUsedModal} onOpenChange={setShowTrialUsedModal}>
-        <DialogContent className="w-[calc(100vw-24px)] sm:max-w-md max-h-[calc(100dvh-24px)] overflow-hidden flex flex-col">
+        <DialogContent className="w-[calc(100vw-24px)] sm:max-w-md max-h-[calc(100dvh-24px)] overflow-hidden flex flex-col bg-background/70 backdrop-blur-2xl border-white/10 shadow-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
               <AlertTriangle className="h-5 w-5" />
@@ -1424,7 +1424,7 @@ export function PaymentDialog({
 
       {/* Replace subscription confirmation */}
       <Dialog open={showReplaceConfirm} onOpenChange={setShowReplaceConfirm}>
-        <DialogContent className="w-[calc(100vw-24px)] sm:max-w-md">
+        <DialogContent className="w-[calc(100vw-24px)] sm:max-w-md bg-background/70 backdrop-blur-2xl border-white/10 shadow-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Repeat className="h-5 w-5 text-amber-600" />
