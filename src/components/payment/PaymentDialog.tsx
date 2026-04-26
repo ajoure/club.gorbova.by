@@ -1267,6 +1267,12 @@ export function PaymentDialog({
               </div>
             )}
 
+            {isSubscription && !isTrial && (
+              <div className="rounded-lg bg-muted/40 border border-border p-3 text-sm text-muted-foreground">
+                При оформлении подписки bePaid может показать экран с формулировкой «привязка карты для автоплатежей». Это штатный экран подписки: карта используется для регулярного продления, а списание выполняется по условиям выбранного тарифа.
+              </div>
+            )}
+
             {/* MIT vs SBS choice removed — subscriptions always use provider_managed (SBS) */}
 
             <div className="flex gap-2">
