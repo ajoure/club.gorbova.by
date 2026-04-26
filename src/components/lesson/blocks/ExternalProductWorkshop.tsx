@@ -946,9 +946,7 @@ function CoeffSection({
   onAdd,
   onUpdate,
   onDelete,
-  coeffHints,
   nameLabel,
-  namePlaceholder,
 }: {
   icon: React.ReactNode;
   index: number;
@@ -958,13 +956,10 @@ function CoeffSection({
   onAdd: () => void;
   onUpdate: (id: string, patch: Partial<CoeffRow>) => void;
   onDelete: (id: string) => void;
-  coeffHints: string;
   nameLabel: string;
-  namePlaceholder: string;
 }) {
   return (
     <SectionCard icon={icon} index={index} title={title} subtitle={subtitle}>
-      <div className="text-xs text-muted-foreground -mt-2">{coeffHints}</div>
       <div className="space-y-3">
         {rows.map((row, idx) => (
           <div
@@ -986,39 +981,16 @@ function CoeffSection({
                 </Button>
               )}
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <Field label={nameLabel}>
-                <Input
-                  value={row.name}
-                  placeholder={namePlaceholder}
-                  onChange={(e) => onUpdate(row.id, { name: e.target.value })}
-                />
-              </Field>
-              <Field label="Коэффициент">
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  step="0.1"
-                  value={row.coefficient ?? ""}
-                  onChange={(e) =>
-                    onUpdate(row.id, { coefficient: parseFloat(e.target.value) || 0 })
-                  }
-                />
-              </Field>
-              <Field label="Доплата, $">
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  value={row.price ?? ""}
-                  onChange={(e) => onUpdate(row.id, { price: parseFloat(e.target.value) || 0 })}
-                />
-              </Field>
-            </div>
+            <Field label={nameLabel}>
+              <Input
+                value={row.name}
+                onChange={(e) => onUpdate(row.id, { name: e.target.value })}
+              />
+            </Field>
             <Field label="Описание">
               <Textarea
                 rows={2}
                 value={row.description}
-                placeholder="Что именно происходит, как часто, какие особенности"
                 onChange={(e) => onUpdate(row.id, { description: e.target.value })}
               />
             </Field>
@@ -1026,8 +998,18 @@ function CoeffSection({
               <Textarea
                 rows={2}
                 value={row.conclusion}
-                placeholder="Влияет на время / риск / контроль"
                 onChange={(e) => onUpdate(row.id, { conclusion: e.target.value })}
+              />
+            </Field>
+            <Field label="Коэффициент доплаты">
+              <Input
+                type="number"
+                inputMode="decimal"
+                step="0.1"
+                value={row.coefficient ?? ""}
+                onChange={(e) =>
+                  onUpdate(row.id, { coefficient: parseFloat(e.target.value) || 0 })
+                }
               />
             </Field>
           </div>
