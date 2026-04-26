@@ -456,3 +456,59 @@ PaymentDialog работает без `payment_link`, поэтому функц�
 
 - Mobile UI оптимизация Purchases — отложено до отдельного патча PAY-MOBILE.
 - Saved-card charge для subscription/trial — требует другого backend подхода (bePaid recurring), не покрывается PAY-K.
+---
+
+## PAY-K: Verification report (proof-gaps)
+
+### 1. Schema defaults для payment_links
+Подтверждено через information_schema:
+- `status` default `'active'`, NOT NULL
+- `current_uses` default `0`, NOT NULL
+- `currency` default `'BYN'`, NOT NULL
+INSERT в bridge явно эти поля не задаёт — defaults гарантируют корректные значения.
+
+### 2. Currency guard
+Добавлен явный guard в bridge: если `currency !== 'BYN'` → `currency_not_supported` (400).
+Фронт больше не может задать произвольную валюту. Smoke с `USD` → 400 confirmed.
+
+### 3. supabase/config.toml
+`rg "\[functions.payment-dialog-create-bridge-link\]"` → 1 совпадение (414). Дублей нет.
+
+### 4. Места вызова PaymentDialog (9 точек)
+Все передают `productId` + `offerId`. Большинство — также `tariffCode`.
+LiveEventProductCta передаёт только `productId`+`offerId` без `tariffCode`.
+Чтобы избежать `missing_tariff_id_or_code` для этого кейса — в bridge добавлен fallback:
+если нет `tariff_id`/`tariff_code` но есть `offer_id`, tariff резолвится через JOIN
+`tariff_offers.tariffs!inner` с проверкой `product_id` и `is_active`.
+
+### 5. Schema fix: колонка meta
+В таблице `payment_links` отсутствовала колонка `meta`. Применена миграция:
+`ALTER TABLE payment_links ADD COLUMN meta jsonb NOT NULL DEFAULT '{}'::jsonb`
++ index `idx_payment_links_meta_source` по `meta->>'source'`.
+
+### 5. Smoke proof (без реального списания)
+POST /payment-dialog-create-bridge-link с реальным product/tariff/offer:
+- 200 OK, `success:true, url_token` возвращён
+- Запись в БД:
+  - `payment_type=one_time` ✓
+  - `status=active` ✓
+  - `current_uses=0` ✓
+  - `max_uses=1` ✓
+  - `currency=BYN` ✓
+  - `expires_at` = +14.93 минуты (≈15 min) ✓
+  - `public_url=https://club.gorbova.by/pay/<token>` ✓
+  - `meta.source='payment_dialog_saved_card_bridge'` ✓
+  - `meta.internal=true` ✓
+  - `meta.created_for_user=<auth.uid()>` ✓
+Тестовая ссылка удалена.
+
+### 6. Follow-up: PATCH-PAY-K-FOLLOWUP
+Задача: в админ-вкладке /admin/payments/links служебные bridge-ссылки
+(`meta->>'source' = 'payment_dialog_saved_card_bridge'` или `meta->>'internal' = 'true'`)
+должны быть либо скрыты по умолчанию (с фильтром "Показать служебные"), либо
+помечаться бейджем "служебная". Затрагивает:
+- `src/components/admin/payments/links/LinksTabContent.tsx`
+- `src/hooks/usePaymentLinks.ts` (опциональный фильтр)
+- RPC `get_admin_payment_links_v1` (опциональный параметр `p_include_internal boolean default false`).
+
+PAY-K final status: VERIFIED.
