@@ -778,3 +778,164 @@ Unique index на `meta.idempotency_key` в первом релизе НЕ до�
 - `provider_token` остаётся server-only.
 
 **Ожидаю подтверждения для перехода к Execute PAY-C** (PATCH PAY-C по плану выше с правкой `tracking_id` на canonical формат и ограничением scope `payment_type='one_time'`).
+
+---
+
+## Step 2.bis — Final Pre-Execute Corrections (BLOCKING)
+
+Перед началом Execute PAY-C обязательно зафиксированы следующие уточнения. До их применения в коде статус — **NOT READY FOR EXECUTE**. После применения — **READY FOR EXECUTE PAY-C**.
+
+### S2bis.1 — Условие показа кнопки saved-card (CRITICAL FIX)
+
+**Было (слишком жёстко):**
+```
+auth.uid() === link.user_id
+```
+
+**Стало (canonical):**
+```
+link.user_id IS NULL OR link.user_id = auth.uid()
+```
+
+Логика видимости кнопки «Оплатить сохранённой картой» на `/pay/:token`:
+
+| Тип ссылки | `link.user_id` | Пользователь | Кнопка saved-card |
+|---|---|---|---|
+| Персональная | UUID (X) | auth.uid() = X | ✅ показать (если есть карта) |
+| Персональная | UUID (X) | auth.uid() ≠ X | ❌ скрыть |
+| Публичная | NULL | любой авторизованный | ✅ показать (если есть карта) |
+| Публичная/Персональная | любой | guest (не авторизован) | ❌ скрыть, только bePaid checkout |
+
+Это соответствует canonical архитектуре публичных payment_links (`mem://commercial-logic/payments/public-checkout-architecture`).
+
+Edge function `public-charge-saved-card` обязана дублировать ту же проверку server-side:
+```ts
+if (link.user_id !== null && link.user_id !== auth_user.id) {
+  return 403 forbidden_link_owner_mismatch
+}
+```
+
+### S2bis.2 — Server-side idempotency guard БЕЗ зависимости от idempotency_key (CRITICAL FIX)
+
+`idempotency_key` остаётся как primary fast-path, но НЕ единственным условием.
+
+**Дополнительный guard (выполняется ВСЕГДА, до создания order/payment и до вызова bePaid):**
+
+```sql
+SELECT p.id, p.order_id, p.tracking_id, p.status
+FROM payments_v2 p
+JOIN orders_v2 o ON o.id = p.order_id
+WHERE o.user_id = :auth_user_id
+  AND o.meta->>'payment_link_id' = :link_id
+  AND p.payment_method_id = :payment_method_id
+  AND p.amount = :amount
+  AND p.currency = :currency
+  AND p.created_at >= now() - interval '2 minutes'
+  AND p.status IN (<active_statuses>)
+LIMIT 1;
+```
+
+Если найден active attempt → НЕ создавать новый order/payment, НЕ вызывать gateway, вернуть 409 (см. S2bis.4).
+
+Порядок проверок в edge function:
+1. Auth + link resolution + ownership (S2bis.1)
+2. Fast-path: lookup по `meta.idempotency_key` (если передан)
+3. Slow-path: lookup по (user_id, link_id, payment_method_id, amount, currency, 2-min window, active status)
+4. Только если оба guard прошли → INSERT order + payment + POST bePaid
+
+### S2bis.3 — Уточнение `payments_v2.status` enum (DATA AUDIT REQUIRED)
+
+В Step 2 использовались `processing` / `succeeded` без верификации. Перед execute обязательно:
+
+```sql
+-- Выполнить read-only при старте Execute:
+SELECT DISTINCT status FROM payments_v2 ORDER BY status;
+-- ИЛИ если status — enum:
+SELECT enum_range(NULL::payment_v2_status);
+```
+
+В код guard'а S2bis.2 включить **только реально существующие** "активные" статусы (то, что НЕ финальные `failed`/`canceled` и НЕ `succeeded`/`paid`). Если фактический набор отличается от `('processing','pending')` — взять реальные значения из БД. Не хардкодить статусы, которых нет.
+
+DoD: первый шаг Execute — read_query по фактическому enum + правка constants в edge function.
+
+### S2bis.4 — Response при existing active attempt (409, без redirect_url)
+
+НЕ возвращать старый bePaid `redirect_url` — он может быть one-shot и уже использован.
+
+```ts
+return new Response(JSON.stringify({
+  status: "in_progress",
+  code: "payment_already_processing",
+  order_id,
+  payment_id,
+  tracking_id,
+  message: "Платёж уже создан. Завершите подтверждение или попробуйте позже."
+}), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+```
+
+Frontend на `/pay/:token` при 409:
+- показать toast «Платёж уже создан…»,
+- НЕ делать автоматический retry,
+- предложить пользователю обновить страницу через 1–2 минуты.
+
+### S2bis.5 — Subscription fallback UX
+
+`payment_type='subscription'` в PAY-C v1 не поддерживается. UI на `/pay/:token` для таких ссылок:
+- кнопка «Оплатить сохранённой картой» **скрыта** (а не disabled),
+- под блоком оплаты показывается явный fallback-текст:
+  > «Для подписки используйте стандартную оплату через bePaid.»
+- стандартный bePaid-checkout остаётся единственным путём.
+
+Никаких упоминаний "saved card недоступен" — только нейтральная подсказка.
+
+### S2bis.6 — `skip_three_d_secure_verification` policy
+
+Поле `skip_three_d_secure_verification: true` оставляем в payload (1:1 с `direct-charge` / `admin-manual-charge`), НО:
+- в коде/комментариях НЕ писать «3DS будет пропущен»;
+- UI обязан считать, что 3DS **может** потребоваться (банк-эмитент может форсировать challenge);
+- frontend корректно обрабатывает ответ bePaid со `status='incomplete'` + `redirect_url` (3DS challenge flow) точно так же, как в обычном `/pay/:token` flow.
+
+### S2bis.7 — Audit event для idempotency hit
+
+Добавить отдельное audit-событие в `audit_logs` при срабатывании guard'а (S2bis.2), без gateway-call:
+
+```ts
+await supabase.from('audit_logs').insert({
+  action: 'payment.saved_card_charge.idempotency_hit',
+  actor_id: auth_user.id,
+  target_type: 'payment_link',
+  target_id: link.id,
+  meta: {
+    matched_by: 'idempotency_key' | 'natural_key', // какой guard сработал
+    existing_order_id,
+    existing_payment_id,
+    payment_method_id,
+    amount,
+    currency,
+  }
+})
+```
+
+Это даёт наблюдаемость: видно, что повторный клик/двойной submit был заблокирован без обращения к bePaid.
+
+### S2bis — Updated STOP-guards
+
+Добавлены к 8 ранее закрытым guard'ам:
+
+| # | Guard | Status |
+|---|---|---|
+| 9 | Visibility uses `link.user_id IS NULL OR =auth.uid()` (не строгое `=`) | ⏳ to enforce in code |
+| 10 | Idempotency guard работает без `idempotency_key` (natural-key fallback) | ⏳ to enforce in code |
+| 11 | `payments_v2.status` constants взяты из реального enum | ⏳ verify at execute start |
+| 12 | 409 response не возвращает `redirect_url` существующей попытки | ⏳ to enforce in code |
+| 13 | Subscription UI показывает fallback-текст, не disabled-кнопку | ⏳ to enforce in code |
+| 14 | Нет упоминаний «3DS пропущен» в коде/UI | ⏳ to enforce in code |
+| 15 | Audit `payment.saved_card_charge.idempotency_hit` пишется при hit | ⏳ to enforce in code |
+
+### Final status
+
+После применения S2bis.1–S2bis.7 в коде Execute:
+**READY FOR EXECUTE PAY-C**
+
+До применения S2bis.1 и S2bis.2 (CRITICAL):
+**EXECUTE BLOCKED**
