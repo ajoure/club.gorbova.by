@@ -1481,13 +1481,22 @@ export function PaymentDialog({
           </div>
         );
 
-      case "processing":
+      case "processing": {
+        const stageText: Record<typeof processingStage, { primary: string; hint: string }> = {
+          preparing: { primary: 'Подготовка платежа…', hint: 'Это займёт несколько секунд' },
+          creating_order: { primary: 'Создаём заказ…', hint: 'Подготавливаем платёжную ссылку' },
+          charging_card: { primary: 'Списываем карту…', hint: 'Отправляем запрос в банк' },
+          redirecting_3ds: { primary: 'Переход на 3D-Secure…', hint: 'Сейчас откроется страница банка для подтверждения' },
+        };
+        const current = stageText[processingStage];
         return (
-          <div className="text-center py-8">
+          <div className="text-center py-8 px-4">
             <Loader2 className="h-12 w-12 animate-spin mx-auto text-primary mb-4" />
-            <p className="text-muted-foreground">Подготовка платежа...</p>
+            <p className="text-foreground font-medium">{current.primary}</p>
+            <p className="text-sm text-muted-foreground mt-1">{current.hint}</p>
           </div>
         );
+      }
     }
   };
 
