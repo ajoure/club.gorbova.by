@@ -414,28 +414,34 @@ export default function Purchases() {
                     <Skeleton className="h-16 w-full" />
                     <Skeleton className="h-16 w-full" />
                   </div>
-                ) : orders && orders.length > 0 ? (
+                ) : visibleOrders && visibleOrders.length > 0 ? (
                   <div className="space-y-3">
-                    {orders.map((order) => (
-                      <div key={order.id} className="flex items-center gap-1 sm:gap-2 min-w-0">
-                        <div className="flex-1 min-w-0">
-                          <OrderListItem
-                            order={order}
-                            onDownloadReceipt={downloadReceipt}
-                            onOpenBePaidReceipt={(url) => window.open(url, '_blank')}
-                          />
+                    {visibleOrders.map((order) => {
+                      const payment = order.payments_v2?.[0];
+                      const receiptUrl = (payment as any)?.receipt_url || payment?.provider_response?.transaction?.receipt_url;
+                      return (
+                        <div key={order.id} className="flex items-center gap-1 sm:gap-2 min-w-0">
+                          <div className="flex-1 min-w-0">
+                            <OrderListItem
+                              order={order}
+                              onDownloadReceipt={downloadReceipt}
+                              onOpenBePaidReceipt={(url) => window.open(url, '_blank')}
+                            />
+                          </div>
+                          {receiptUrl && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => window.open(receiptUrl, '_blank')}
+                              title="Чек bePaid"
+                              className="shrink-0 h-8 w-8 sm:h-10 sm:w-10"
+                            >
+                              <FileText className="h-4 w-4" />
+                            </Button>
+                          )}
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => setDocumentsOrderId(order.id)}
-                          title="Документы"
-                          className="shrink-0 h-8 w-8 sm:h-10 sm:w-10"
-                        >
-                          <FileText className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="text-center py-8 text-muted-foreground">
@@ -451,9 +457,9 @@ export default function Purchases() {
                     <Skeleton className="h-16 w-full" />
                     <Skeleton className="h-16 w-full" />
                   </div>
-                ) : expiredSubscriptions.length > 0 ? (
+                ) : historySubscriptions.length > 0 ? (
                   <div className="space-y-3">
-                    {expiredSubscriptions.map((sub) => (
+                    {historySubscriptions.map((sub) => (
                       <SubscriptionListItem
                         key={sub.id}
                         subscription={sub}
