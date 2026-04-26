@@ -55,6 +55,7 @@ interface OrderV2 {
     provider_payment_id: string | null;
     card_brand: string | null;
     card_last4: string | null;
+    receipt_url: string | null;
     provider_response: {
       transaction?: {
         receipt_url?: string;
@@ -101,6 +102,7 @@ interface SubscriptionV2 {
       provider_payment_id: string | null;
       card_brand: string | null;
       card_last4: string | null;
+      receipt_url: string | null;
       provider_response: {
         transaction?: {
           receipt_url?: string;
