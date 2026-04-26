@@ -174,6 +174,7 @@ const blockTypeConfig: Record<BlockType, BlockConfig> = {
   sequential_form: { icon: List, label: "Пошаговая форма", color: "bg-indigo-500/10 text-indigo-600", category: 'input' },
   role_description: { icon: User, label: "Описание роли", color: "bg-amber-500/10 text-amber-600", category: 'text' },
   html_raw: { icon: Code, label: "HTML код", color: "bg-indigo-500/10 text-indigo-600", category: 'text' },
+  external_product_workshop: { icon: Sparkles, label: "Воркшоп: Внешний продукт", color: "bg-violet-500/10 text-violet-600", category: 'interactive' },
 };
 
 const categoryConfig = {
