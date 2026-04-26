@@ -545,7 +545,105 @@ export function PaymentDialog({
     }
   };
 
+  // PAY-K: parse `price` ("100 BYN" / "100.00 BYN") to kopecks for expected_amount guard.
+  const parsePriceToKopecks = (raw: string): number | null => {
+    if (!raw) return null;
+    const m = raw.replace(',', '.').match(/(\d+(?:\.\d+)?)/);
+    if (!m) return null;
+    const byn = parseFloat(m[1]);
+    if (!Number.isFinite(byn) || byn <= 0) return null;
+    return Math.round(byn * 100);
+  };
+
+  // PAY-K: одноразовая оплата сохранённой картой через bridge → public-charge-saved-card.
+  const handlePayWithSavedCardOneTime = async (paymentMethodId: string) => {
+    if (!user || !session) {
+      setPaymentError('Войдите в аккаунт, чтобы использовать сохранённую карту.');
+      setStep('ready');
+      return;
+    }
+    const expected_amount = parsePriceToKopecks(price);
+    if (!expected_amount) {
+      setPaymentError('Не удалось определить сумму платежа.');
+      setStep('ready');
+      return;
+    }
+    setIsLoading(true);
+    setPaymentError(null);
+    setStep('processing');
+    try {
+      // 1. Bridge: create internal one-time payment_link.
+      const { data: bridgeData, error: bridgeError } = await supabase.functions.invoke(
+        'payment-dialog-create-bridge-link',
+        {
+          body: {
+            product_id: productId,
+            tariff_code: tariffCode || null,
+            offer_id: offerId || null,
+            expected_amount,
+            currency: 'BYN',
+            description: productName,
+          },
+        }
+      );
+      if (bridgeError || !bridgeData?.success || !bridgeData?.url_token) {
+        const msg = bridgeData?.error || bridgeError?.message || 'Не удалось подготовить оплату';
+        if (msg === 'price_mismatch') {
+          throw new Error('Стоимость изменилась. Обновите страницу и попробуйте снова.');
+        }
+        throw new Error(msg);
+      }
+
+      // 2. Charge saved card via existing public-charge-saved-card.
+      const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
+      const chargeUrl = `https://${projectId}.supabase.co/functions/v1/public-charge-saved-card`;
+      const idempotency_key = savedCardIdempotencyKeyRef.current;
+      const res = await fetch(chargeUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          url_token: bridgeData.url_token,
+          payment_method_id: paymentMethodId,
+          idempotency_key,
+        }),
+      });
+      const data = await res.json();
+      if (res.status === 409) {
+        setPaymentError(data?.message || 'Платёж уже создан. Завершите подтверждение или попробуйте позже.');
+        setStep('ready');
+        return;
+      }
+      if (!res.ok || !data?.success) {
+        const errMsg = data?.message || data?.error || 'Не удалось списать сохранённую карту';
+        throw new Error(translatePaymentError(String(errMsg)));
+      }
+      // Issuer 3DS may require extra confirmation.
+      if (data.redirect_url) {
+        window.location.href = data.redirect_url;
+        return;
+      }
+      window.location.href = `/purchases?order=${data.order_id}&payment=processing`;
+    } catch (err) {
+      console.error('[PaymentDialog] saved-card one-time charge failed:', err);
+      const message = err instanceof Error ? err.message : normalizeEdgeFunctionError(err);
+      setPaymentError(message);
+      toast.error(message);
+      setStep('ready');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handlePayment = async () => {
+    // PAY-K: для one_time + saved card → bridge flow; new_card продолжает обычный путь.
+    if (!isSubscription && !isTrial && selectedMethod !== 'new_card') {
+      await handlePayWithSavedCardOneTime(selectedMethod);
+      return;
+    }
+
     setIsLoading(true);
     setPaymentError(null);
     setConflictData(null);
@@ -553,7 +651,7 @@ export function PaymentDialog({
     setShowReplaceConfirm(false);
     setStep("processing");
 
-    console.log("handlePayment called", { savedCard, tariffCode, user: !!user, productId, paymentFlowType });
+    console.log("handlePayment called", { savedCard, tariffCode, user: !!user, productId, paymentFlowType, selectedMethod });
 
     try {
       // PATCH-3: If user selected provider_managed flow - no savedCard restriction
