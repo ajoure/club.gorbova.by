@@ -12,6 +12,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 
 import { supabase } from "@/integrations/supabase/client";
 import { copyToClipboard } from "@/utils/clipboardUtils";
+import { buildPublicPayUrl } from "@/utils/buildPublicPaymentUrl";
 import type { PaymentLinkRow } from "@/hooks/usePaymentLinks";
 import { LinkStatusBadge } from "./LinkStatusBadge";
 

@@ -1,4 +1,5 @@
 import { toast } from "sonner";
+import { buildProductPayUrl } from "@/utils/buildPublicPaymentUrl";
 
 export async function copyToClipboard(text: string, successMessage = "Ссылка скопирована") {
   try {
