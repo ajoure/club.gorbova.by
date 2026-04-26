@@ -201,7 +201,7 @@ export default function PublicPayPage() {
       if (!session?.access_token) {
         throw new Error('Войдите в аккаунт, чтобы использовать сохранённую карту.');
       }
-      const idempotency_key = `${paymentMethodId}:${token}:${Math.floor(Date.now() / 1000)}`;
+      const idempotency_key = savedCardIdempotencyKeyRef.current;
       const res = await fetch(savedCardFunctionUrl, {
         method: 'POST',
         headers: {
