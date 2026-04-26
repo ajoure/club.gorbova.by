@@ -174,7 +174,7 @@ export function PaymentDialog({
   // Ref to prevent useEffect from resetting state after inline auth
   const authInProgressRef = useRef(false);
 
-  // PAY-I: грузим список активных bePaid-карт. Не селектим provider_token / verification fields.
+  // PAY-I: грузим список активных bePaid-карт. Селектим только нечувствительные поля.
   const loadSavedCards = async (userId: string) => {
     setIsLoadingCard(true);
     try {
