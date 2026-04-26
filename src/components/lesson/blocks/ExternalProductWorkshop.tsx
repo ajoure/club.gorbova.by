@@ -421,15 +421,25 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
     return { avgCoeff, avgAddons, avgCurrent, underpriced };
   }, [computed]);
 
+  const dictsFilled = useMemo(() => {
+    const has = (rows: { name: string }[]) => rows.some((r) => r.name.trim().length > 0);
+    return (
+      has(state.client_types) &&
+      has(state.complexity) &&
+      has(state.service_levels) &&
+      has(state.responsibility)
+    );
+  }, [state.client_types, state.complexity, state.service_levels, state.responsibility]);
+
   const completionValidation = useMemo(() => {
-    if (state.portfolio_pricing.length === 0) {
-      return "Нельзя завершить шаг без импортированного портфеля из Шага 2.";
+    if (!dictsFilled) {
+      return "Заполните хотя бы одну строку в каждом из блоков 1–4.";
     }
-    if (!state.client_types.some((r) => r.name.trim().length > 0)) {
-      return "Заполните хотя бы 1 тип клиента в Блоке 1.";
+    if (state.portfolio_pricing.length === 0) {
+      return "Загрузите портфель из Шага 2, чтобы завершить шаг.";
     }
     return null;
-  }, [state.client_types, state.portfolio_pricing.length]);
+  }, [dictsFilled, state.portfolio_pricing.length]);
   const isCompleted = !!state.completed_at && !completionValidation;
 
   const refetchProof = useCallback(async () => {
