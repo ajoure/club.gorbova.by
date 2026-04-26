@@ -418,6 +418,51 @@ export default function PublicPayPage() {
               </Button>
             )}
 
+            {/* PAY-C: Saved card quick-pay (one_time only, ownership-aware) */}
+            {!needsIdentity && showSavedCard && (
+              <div className="mt-4 space-y-2">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground text-center">
+                  или сохранённой картой
+                </div>
+                {savedCards!.map((card) => (
+                  <Button
+                    key={card.id}
+                    type="button"
+                    variant="outline"
+                    size="lg"
+                    className="w-full justify-between"
+                    disabled={savedCardProcessing || isProcessing}
+                    onClick={() => handlePayWithSavedCard(card.id)}
+                  >
+                    <span className="flex items-center gap-2">
+                      <CreditCard className="h-4 w-4" />
+                      {(card.brand || 'CARD').toUpperCase()} ••••{card.last4 || '****'}
+                      {card.is_default && (
+                        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                          основная
+                        </span>
+                      )}
+                    </span>
+                    {savedCardProcessing ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <span className="text-xs text-muted-foreground">оплатить</span>
+                    )}
+                  </Button>
+                ))}
+                <p className="text-[11px] text-center text-muted-foreground">
+                  Подтверждение банка может потребоваться при первой оплате этой картой.
+                </p>
+              </div>
+            )}
+
+            {/* PAY-C: subscription fallback hint — saved-card not supported in v1 */}
+            {!needsIdentity && showSubscriptionFallbackHint && (
+              <p className="mt-3 text-xs text-center text-muted-foreground">
+                Для подписки используйте стандартную оплату через bePaid.
+              </p>
+            )}
+
             {/* State 3: guest + no target user → shared inline auth (email/login/signup/forgot) */}
             {needsIdentity && (
               <>
