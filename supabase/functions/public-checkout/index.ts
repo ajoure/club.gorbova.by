@@ -75,6 +75,10 @@ Deno.serve(async (req) => {
         // UI uses these flags to decide whether to ask for email / show inline auth.
         has_target_user: !!link.user_id,
         requires_identity_input: !link.user_id,
+        // Saved-card flow ownership hint (PAY-C):
+        //   null → public link, any authenticated user can pay with their own saved card.
+        //   uuid → personal link, only owner sees the saved-card button.
+        link_user_id: link.user_id,
       });
     }
 
