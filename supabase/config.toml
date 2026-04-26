@@ -410,3 +410,6 @@ verify_jwt = true
 
 [functions.snapshot-relay]
 verify_jwt = true
+
+[functions.payment-dialog-create-bridge-link]
+verify_jwt = false
