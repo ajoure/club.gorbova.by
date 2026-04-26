@@ -830,6 +830,14 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
               Автопроверка: ученик завершил блок — {progressProof.block_completed ? "да" : "нет"}; блок засчитан — {progressProof.block_completed ? "да" : "нет"}; ученик появится в admin progress — {progressProof.admin_source_ready ? "да" : "нет"}; ответ содержит портфель — {progressProof.response_has_portfolio ? "да" : "нет"}. Проверено: {new Date(progressProof.checked_at).toLocaleString("ru-RU")}.
             </div>
           )}
+          <div className="flex flex-wrap gap-2 pt-1">
+            <Button variant="outline" size="sm" onClick={refetchProof} disabled={!userId}>
+              <RefreshCw className="h-4 w-4 mr-1.5" /> Обновить proof
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleSelfExport} disabled={!userId}>
+              <Download className="h-4 w-4 mr-1.5" /> Скачать мой ответ
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
