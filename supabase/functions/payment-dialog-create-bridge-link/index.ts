@@ -78,6 +78,11 @@ Deno.serve(async (req) => {
     if (!Number.isFinite(expected_amount) || expected_amount < 100) {
       return errorResponse('invalid_expected_amount', 400);
     }
+    // ── Currency guard: BYN-only (frontend is NOT source of truth) ──
+    if (currency !== 'BYN') {
+      console.warn('[bridge-link] currency_not_supported', { currency, user: authUser.id });
+      return errorResponse('currency_not_supported', 400);
+    }
 
     // ── Resolve product ──
     const { data: product } = await supabase
