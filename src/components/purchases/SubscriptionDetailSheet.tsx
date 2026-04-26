@@ -1,7 +1,7 @@
 import { format } from "date-fns";
 import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { ru } from "date-fns/locale";
-import { CreditCard, Download, Ban, RotateCcw, CheckCircle, XCircle, Clock, FileText, ChevronRight } from "lucide-react";
+import { CreditCard, Download, Ban, RotateCcw, CheckCircle, XCircle, Clock, FileText, ChevronRight, ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
