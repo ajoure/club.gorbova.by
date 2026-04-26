@@ -1,153 +1,152 @@
-## План: урок «Шаг 3. Внешний продукт» — хардкод-блок «Конструктор внешнего продукта»
-
-### Контекст (что уже есть)
-
-- Урок `1f69f658-0040-4a2d-a573-457eeb4b1b56` («Шаг 3: Внешний продукт») в модуле «Бухгалтерия как бизнес». Уже содержит один блок типа `video` (Kinescope), к нему ничего больше добавлять руками не надо.
-- Шаг 2 (`6fb911a0-...`) содержит блок `diagnostic_table` v2 «Аналитика портфеля клиентов» с колонками: `client`, `monthly_income`, `direct_hours`, `mental_hours`, `business_type`, `client_category` (вычисляемая) и т.д. Это и есть «портфель клиентов», который нужно переиспользовать.
-- В системе уже есть:
-  - `lesson_blocks` (jsonb content) + `LessonBlockRenderer` (switch по `block_type`) + `LessonBlockEditor`.
-  - `user_lesson_progress` — хранит ответ ученика на каждый блок (`response: jsonb`), с автосохранением через `useLessonProgressState`.
-  - `findV1DiagnosticSource` / паттерн чтения предыдущих блоков того же модуля по `sort_order` — основа для подтягивания портфеля.
-  - `StudentProgressModal` + `blockProgressResolver` — преподаватель видит ответ по каждому интерактивному блоку. Достаточно добавить новый `block_type` в реестр интерактивных + правило отображения.
-  - Система оценок преподавателя (`training_feedback` через `FeedbackDrawer`) — работает на уровне урока, нашему блоку ничего отдельно делать не надо.
-
-### Что делаем
-
-Создаём один новый хардкод-блок `external_product_workshop` — большой интерактивный «лендинг-урок», который собирает в себе всё ТЗ Катерины (4 справочника + калькулятор по портфелю). Не делаем из него универсальный конструктор: контент компонента зашит в код, в БД лежит только пользовательский state. Это даёт нам красивую визуальную подачу как самостоятельный «сайт-урок» внутри лекции.
-
-### Архитектура блока
-
-В `lesson_blocks` для урока Шага 3 добавим одну запись:
-```
-block_type: 'external_product_workshop'
-content:    { version: 'v1', source_lesson_id: '6fb911a0-...' }   // ссылка на Шаг 2
-sort_order: 1
-```
-
-Весь UI и вся логика — в новом React-компоненте. В `content` ничего динамического не храним.
-
-State пользователя сохраняется в `user_lesson_progress.response` по `block_id` (как у `diagnostic_table`):
-
-```ts
-{
-  client_types:     [{ id, name, description, conclusion, base_price }],
-  complexity:       [{ id, name, description, conclusion, coefficient, price }],
-  service_levels:   [{ id, name, description, conclusion, coefficient, price }],
-  responsibility:   [{ id, name, description, conclusion, coefficient, price }],
-  portfolio_pricing: [
-    { client_row_id, client_type_id, complexity_ids: [], service_id, responsibility_ids: [],
-      price_by_coeff: number, price_by_addons: number,
-      current_price: number, diff: number, diff_pct: number,
-      conclusion: string }
-  ],
-  completed_at: string | null
-}
-```
-
-### Компонент `ExternalProductWorkshop`
-
-Файл: `src/components/lesson/blocks/ExternalProductWorkshop.tsx`. Внутри — 6 визуальных секций «как сайт»:
-
-1. **Шапка-интро** — заголовок «Формирование внешнего продукта», цель, фраза «вы собираете систему, за которую можно стабильно брать деньги». Стиль — карточки `rounded-2xl`, градиентный header, согласованный с дизайном тренингов.
-
-2. **Блок 1. Тип клиента** — таблица с колонками: Название, Описание, Вывод, Базовая цена, кнопка «+». На мобильном — карточный режим.
-
-3. **Блок 2. Сложность** — таблица: Участок, Описание, Вывод, Коэффициент, Цена. Подсказки коэффициентов 1.0 / 1.2 / 1.5 / 2.0.
-
-4. **Блок 3. Сервис** — Название, Описание, Вывод, Коэффициент, Цена. Пресеты «База / Стандарт / Премиум».
-
-5. **Блок 4. Ответственность** — Название, Описание, Вывод, Коэффициент, Цена. Пресеты «Ограниченная / Расширенная / Полная».
-
-6. **Блок 5. Проверка по портфелю клиентов** (ключевой):
-   - Кнопка «Импортировать портфель из Шага 2» (а также авто-подтяжка при первом открытии).
-   - Источник: `lesson_blocks` Шага 2 (block_type=`diagnostic_table`) → `user_lesson_progress.response.rows` текущего пользователя для этого блока. Колонки берём по ID: `client`, `monthly_income`, `total_hours`, `hourly_income`, `client_category`.
-   - Каждая строка = один клиент. К каждому клиенту добавляются поля:
-     - Тип клиента (Select из Блока 1).
-     - Сложность (MultiSelect из Блока 2).
-     - Сервис (Select из Блока 3).
-     - Ответственность (MultiSelect из Блока 4).
-   - Авторасчёт по строке (живой, без сабмита):
-     - `price_by_coeff = base_price(тип) × ∏ coefficient(выбранных)`
-     - `price_by_addons = base_price(тип) + Σ price(выбранных)`
-     - `current_price` = `monthly_income` из портфеля
-     - `diff` и `diff_pct` к `current_price`
-   - Поле «Вывод» (textarea) на каждого клиента.
-   - Сводка снизу: средняя цена по двум методам, кол-во клиентов с отрицательной маржой, топ-5 «недооценённых».
-
-7. **Footer** — кнопка «Завершить шаг 3» → `onComplete()` (через стандартный `useLessonProgressState`).
-
-### Интеграция с подтяжкой данных Шага 2
-
-Новый утилитарный хелпер `src/lib/loadPortfolioFromPreviousLesson.ts`:
-
-1. Берём `module_id` и `sort_order` текущего урока.
-2. Ищем в том же модуле предыдущий урок с `block_type='diagnostic_table'` (паттерн уже реализован в `findV1DiagnosticSource`, обобщаем — без требования v1).
-3. Грузим `user_lesson_progress.response` для найденного `block_id` и текущего `user_id`.
-4. Если ответа нет → показываем алерт «Сначала заполните Шаг 2: Анализ портфеля» с deeplink на тот урок.
-5. Маппим строки портфеля в `portfolio_pricing[]`, сохраняя `client_row_id` для идемпотентного ре-импорта (повторный импорт обновляет данные, но не теряет уже выбранный тип/сервис/вывод).
-
-### Регистрация блока в системе
-
-1. **`LessonBlockRenderer.tsx`** — новый `case 'external_product_workshop'` → рендер `<ExternalProductWorkshop ... />` c `state`, `onChange`, `onComplete`, `isReadOnly`. Не блокировать `pointer-events` при `isCompleted` (возможность редактировать после завершения — как в видео-баге, который мы только что чинили).
-
-2. **`LessonBlockEditor.tsx`** — добавить тип в реестр (для админки): отображать карточку «Воркшоп: Внешний продукт (хардкод)» с пометкой «Контент зашит в код, редактирование недоступно». Сам редактор не нужен — только превью и кнопка «удалить».
-
-3. **`blockProgressResolver.ts`**:
-   - Добавить `'external_product_workshop'` в `INTERACTIVE_BLOCK_TYPES`.
-   - В `BLOCK_TYPE_LABELS`: «Воркшоп: внешний продукт».
-   - В `resolveProgressValue`: возвращать сводку «Типов клиентов: N · Клиентов в калькуляторе: M · Завершён: да/нет».
-
-4. **`StudentProgressModal.tsx`** — добавить case рендера ответа ученика: компактные таблицы 4 справочников + таблица «портфель × цены» с подсветкой расхождений, как видит сам ученик. Это даёт преподавателю полную картину для оценки.
-
-### База данных
-
-Миграций не требуется. Используем существующие `lesson_blocks` и `user_lesson_progress`. Единственное действие в БД — INSERT одной строки `lesson_blocks` для урока Шага 3 (через миграцию, чтобы воспроизводилось):
-
-```sql
-insert into lesson_blocks (lesson_id, block_type, content, sort_order)
-values (
-  '1f69f658-0040-4a2d-a573-457eeb4b1b56',
-  'external_product_workshop',
-  '{"version":"v1","source_lesson_id":"6fb911a0-eb41-43a7-9935-abd68237e465"}'::jsonb,
-  10
-);
-```
-
-(`sort_order=10` чтобы стоял ниже видео `sort_order=0`, с запасом на будущее).
-
-### UX-детали (по требованиям проекта)
-
-- Все тексты — на русском, без английских терминов.
-- Карточки `rounded-xl` / `rounded-2xl`, `border-border/60`, `hover:shadow-sm` — по тем же стандартам, что и в недавнем рефакторинге Подписок.
-- Мобильная адаптивность: таблицы 4 справочников переключаются в карточный вид < 640 px (`min-w-0`, `break-words`); калькулятор по портфелю — горизонтальный скролл с залипшей колонкой «Клиент».
-- Sonner-уведомления (по стандарту `mem://ui/notifications/sonner-visual-standard`) — компактные, правый-нижний угол.
-- Автосохранение через дебаунс 800 мс, индикатор «Сохранено».
-
-### План разработки (последовательность)
+## Да, согласен, с учетом правок:
 
 ```text
-1. Утилита loadPortfolioFromPreviousLesson.ts
-2. Компонент ExternalProductWorkshop.tsx (UI + логика)
-3. Регистрация case в LessonBlockRenderer / LessonBlockEditor
-4. Расширение blockProgressResolver + StudentProgressModal
-5. Миграция: INSERT lesson_blocks для Шага 3
-6. Симуляция в браузере: открыть урок учеником, проверить
-   - подтяжку портфеля,
-   - заполнение 4 справочников,
-   - живой расчёт по двум методам,
-   - сохранение/восстановление при перезагрузке,
-   - вид завершённого урока (без блокировки видео и без блокировки калькулятора),
-   - мобильную верстку (375 × 667).
-7. Скрин «Преподаватель видит ответ» через StudentProgressModal.
+План принимаю add-only. Ничего из предыдущего ТЗ не удалять и не заменять.
+
+Добавь в план обязательные правила:
+
+1. Это отчет/план по доработке, а не закрытие задачи. Закрытие только после proof: UI + SQL + audit_logs.
+
+2. Audit logs:
+   - если клиентский INSERT в audit_logs не проходит из-за RLS, НЕ считать задачу выполненной;
+   - тогда сделать безопасный backend/RPC/edge путь записи audit_logs;
+   - в финальном отчете приложить SQL proof записей audit_logs.
+
+3. CSV export:
+   - экспорт CSV должен включать все dynamic columns по interactive blocks;
+   - для external_product_workshop обязательно вывести: client_types_count, portfolio_count, completed, import_source, updated_at;
+   - CSV export не должен ломать текущий JSON export из StudentProgressModal.
+
+4. Consistency proof:
+   - totalStudents должен равняться фактической длине таблицы;
+   - completedStudents должен равняться количеству строк со статусом “Завершён”;
+   - один user_id = одна строка, даже если есть lesson_progress_state + user_lesson_progress.
+
+5. Toggle completion:
+   - проверить оба направления:
+     a) “Завершить Шаг 3” → admin progress показывает “Завершён”;
+     b) “Редактировать”/reopen → admin progress больше не показывает “Завершён”;
+   - без reload-магии, через invalidate/refetch.
+
+6. Proof-панели:
+   - не писать “SQL proof”, если данные не прочитаны из БД;
+   - панели должны показывать live-данные из user_lesson_progress, а не локальный state.
+
+7. Финальный отчет:
+   - не писать “готово” без 6 скринов и 2 SQL-выгрузок;
+   - отдельно указать, что именно проверено вручную в UI.
 ```
+
+Можно выполнять.
+
+&nbsp;
+
+План: Финальный proof-пакет для «Шаг 3: Внешний продукт»
+
+Все изменения — **add-only**, ничего из уже реализованного не удаляется. Цель — закрыть DoD: SQL proof + UI proof ученика + UI proof преподавателя + reload proof + export proof + audit_logs proof.
+
+---
+
+### 1. Синхронизация завершения блока (фикс рассинхрона UI ↔ admin)
+
+**Файл:** `src/components/lesson/blocks/ExternalProductWorkshop.tsx`
+
+- При нажатии «Редактировать / Снять завершение» сейчас локально сбрасывается флаг, но в `user_lesson_progress` `completed_at` может остаться. Добавить в canonical-save путь явный сброс: при `completed=false` вызывать `saveBlockResponse(block.id, payload, null, 0, 1)` — это занулит `completed_at` (см. `useUserProgress.saveBlockResponse`: `completed_at: isCorrect !== null ? ... : null`).
+- При `completed=true` — `saveBlockResponse(..., true, 1, 1)` (как сейчас).
+- Принудительный `refetch` после canonical-save, чтобы proof-панель в UI ученика и admin progress показывали одинаковый `completed_at`.
+
+**Файл:** `src/pages/admin/AdminLessonProgress.tsx`
+
+- Сейчас при merge stateRows + manualRows `completed_at` берётся как `existing.completed_at || completedAt`. Заменить на «свежее по updated_at побеждает», чтобы снятие завершения в manual-блоке не оставляло старый `completed_at` от kvest-прогресса.
+- В `getUserBlockResponse` и счётчике `answeredCounts` дополнительно проверять, что для блока `external_product_workshop` есть запись в `user_lesson_progress` с `completed_at != null` — иначе ученик не считается завершившим блок.
+
+---
+
+### 2. Проверки консистентности таблицы прогресса
+
+**Файл:** `src/pages/admin/AdminLessonProgress.tsx`
+
+- Дедупликация уже есть через `byUser: Map<user_id, ...>` — добавить инвариант-assert в dev-режиме: `console.assert(progressRecords.length === new Set(progressRecords.map(r=>r.user_id)).size)`.
+- Добавить ConsistencyBadge в шапке таблицы:
+  - `totalStudents = rows.length`
+  - `completedStudents = rows.filter(completed_at).length`
+  - источник прогресса (`progress_sources`) показывать как маленький значок в строке: `K` (kvest) / `M` (manual) / `K+M`.
+- Кнопка «Просмотр» уже передаёт `record.user_id` в `StudentProgressModal`, который сам тянет свежие `user_lesson_progress` — дополнительно прокинуть `key={record.user_id + record.updated_at}` чтобы при reopen всегда был свежий ответ.
+
+---
+
+### 3. Экспорт CSV по уроку
+
+**Файл:** `src/pages/admin/AdminLessonProgress.tsx`
+
+Добавить кнопку «Экспорт CSV» рядом с заголовком таблицы. Колонки:
+
+```
+student_name, email, status, updated_at, progress_source,
+<для каждого interactive блока>: <короткое значение>
+```
+
+Короткое значение через уже существующий `resolveProgressValue(block_type, response, content)` → `summary`. Для `external_product_workshop` — счётчики из payload (`client_types: N, portfolio: M, completed: yes/no`).
+
+Использовать `Blob` + `URL.createObjectURL` (паттерн как в `exportFullResponse`). UTF-8 BOM в начале для Excel.
+
+---
+
+### 4. Audit log действий
+
+**Новый helper:** `src/lib/auditTrainingActions.ts` (тонкая обёртка над `supabase.from("audit_logs").insert`).
+
+**События:**
+
+1. `training.external_product_workshop.completed` — вызывается из `ExternalProductWorkshop.tsx` при canonical-save с `completed=true`. Meta: `{ lesson_id, block_id, student_user_id: user.id, source: "student", client_types_count, portfolio_count }`.
+2. `training.external_product_workshop.reopened` — при `completed=false`. Meta аналогично, `source: "student"`.
+3. `training.student_response.exported` — вызывается в `StudentProgressModal.exportFullResponse` и в новом CSV-экспорте. Meta: `{ lesson_id, block_id: null|block.id, student_user_id, actor_user_id, source: "teacher", format: "json"|"csv" }`.
+
+`actor_user_id` берём из `useAuth().user.id`. Запись best-effort (try/catch без блокировки UI).
+
+---
+
+### 5. UI proof-панели (доработка существующих)
+
+**Файл:** `src/components/lesson/blocks/ExternalProductWorkshop.tsx`
+
+Дополнить уже существующую proof-панель тремя строками + кнопками копирования:
+
+- `SQL proof`: показывает `last_saved_at` и `completed_at` из `user_lesson_progress` (read live из `useUserProgress.getBlockProgress(block.id)`).
+- `Reload proof`: считаем «pass», если после mount данные восстановились из БД (а не из локального стейта по умолчанию).
+- `Export proof`: кнопка «Скачать мой ответ» (JSON), пишет audit `training.student_response.exported` с `source: "student_self"`.
+
+Это даёт runtime-доказательство, которое легко скриншотить.
+
+---
+
+### 6. Скриншоты для финального DoD
+
+После реализации сгенерируем proof-набор:
+
+1. `/admin/training-lessons/<id>/progress` — таблица со студентом, источниками K/M, кнопками «Экспорт CSV» и «Просмотр».
+2. Открытый `StudentProgressModal` с полным блоком `external_product_workshop` (4 справочника + калькулятор).
+3. Кнопка «Экспорт ответа» в модалке + сам JSON.
+4. Урок ученика с заполненным блоком и proof-панелями (SQL/UI/Reload/Export).
+5. SQL: `SELECT user_id, completed_at, response->'meta' FROM user_lesson_progress WHERE lesson_id='<step3>' AND block_id='<epw>'`.
+6. SQL: `SELECT action, meta, created_at FROM audit_logs WHERE action LIKE 'training.external_product_workshop.%' OR action='training.student_response.exported' ORDER BY created_at DESC LIMIT 20`.
+
+Все скрины и SQL-выводы прикладываем в финальный отчёт.
+
+---
+
+### Технические детали
+
+- Все правки add-only, без миграций (audit_logs уже существует).
+- `audit_logs.insert` идёт под клиентским `supabase`-клиентом — RLS должен позволять `INSERT` авторизованным; используется тот же путь, что в `useProductTrainings`, `useGrpRefresh`, `useFormsBulkDelete` — паттерн рабочий.
+- CSV: разделитель `,`, кавычки `"`, экранирование `""`, перевод строк `\r\n`, имя файла `lesson-progress-<lessonId>-<YYYYMMDD>.csv`.
+- Никаких изменений в схеме БД, edge-функциях, миграциях.
 
 ### DoD
 
-- В уроке «Шаг 3: Внешний продукт» под видео виден интерактивный «сайт-воркшоп».
-- Кнопка «+» работает в каждом из 4 справочников; данные сохраняются автоматически.
-- Импорт портфеля из Шага 2 подтягивает реальные строки текущего ученика; пустой портфель даёт понятный алерт со ссылкой на Шаг 2.
-- Калькулятор по каждому клиенту показывает цену двумя методами + разницу с текущей ценой.
-- Завершение урока пишется в `lesson_progress_state` через стандартный механизм.
-- В админке (страница прогресса студента / `StudentProgressModal`) преподаватель видит весь ответ ученика и может оставить feedback через существующий `FeedbackDrawer`.
-- Видео остаётся кликабельным после завершения (поведение из последнего фикса сохранено).
-- Десктоп и мобильный — обе верстки подтверждены скринами.
+- `completed_at` синхронен между UI ученика и admin progress (toggle проверен в обе стороны).
+- Дедупликация: один пользователь — одна строка, даже если есть и kvest, и manual прогресс.
+- CSV экспортируется и открывается в Excel/Numbers.
+- `audit_logs` содержит записи completed / reopened / exported с правильным meta.
+- Proof-панели в уроке ученика показывают live SQL/Reload/Export статус.
+- Финальный отчёт содержит 6 скринов + 2 SQL-выгрузки.
