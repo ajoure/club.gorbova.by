@@ -653,42 +653,36 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
         icon={<Layers className="h-5 w-5" />}
         index={2}
         title="Сложность"
-        subtitle="Контуры, которые увеличивают цену: склад, сотрудники, валютные операции и т.д."
+        subtitle="Определите контур сложности"
         rows={state.complexity}
         onAdd={() => addCoeff("complexity")}
         onUpdate={(id, p) => updCoeff("complexity", id, p)}
         onDelete={(id) => delCoeff("complexity", id)}
-        coeffHints="1.0 — нет влияния · 1.2 — небольшое · 1.5 — среднее · 2.0 — сильное"
         nameLabel="Название участка"
-        namePlaceholder="Напр.: склад, сотрудники, ОС"
       />
 
       <CoeffSection
         icon={<Headphones className="h-5 w-5" />}
         index={3}
         title="Сервис"
-        subtitle="Уровень включённости и взаимодействия с клиентом"
+        subtitle="Определите уровень включённости и взаимодействия"
         rows={state.service_levels}
         onAdd={() => addCoeff("service_levels")}
         onUpdate={(id, p) => updCoeff("service_levels", id, p)}
         onDelete={(id) => delCoeff("service_levels", id)}
-        coeffHints="База 1.0 · Стандарт 1.3 · Премиум 1.6"
         nameLabel="Название уровня"
-        namePlaceholder="База / Стандарт / Премиум"
       />
 
       <CoeffSection
         icon={<ShieldCheck className="h-5 w-5" />}
         index={4}
         title="Ответственность"
-        subtitle="За что вы отвечаете, а за что — нет"
+        subtitle="Определите границы ответственности"
         rows={state.responsibility}
         onAdd={() => addCoeff("responsibility")}
         onUpdate={(id, p) => updCoeff("responsibility", id, p)}
         onDelete={(id) => delCoeff("responsibility", id)}
-        coeffHints="Ограниченная 1.0 · Расширенная 1.4 · Полная 1.8 · Сверх 2.2"
         nameLabel="Название уровня"
-        namePlaceholder="Ограниченная / Расширенная / Полная"
       />
 
       {/* ─── Блок 5. Калькулятор по портфелю ─── */}
