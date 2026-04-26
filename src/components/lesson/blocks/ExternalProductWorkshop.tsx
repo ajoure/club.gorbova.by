@@ -286,6 +286,7 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
       const result = await loadPortfolioFromPreviousLesson({
         currentLessonId: lessonId,
         userId,
+        overrideSourceLessonId: sourceLessonId ?? undefined,
       });
       if (!result.rows.length) {
         const reason =
@@ -371,12 +372,35 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
     return { avgCoeff, avgAddons, avgCurrent, underpriced };
   }, [computed]);
 
-  const handleComplete = () => {
-    setState((s) => ({ ...s, completed_at: new Date().toISOString() }));
+  const handleComplete = async () => {
+    const completedAt = new Date().toISOString();
+    setState((s) => ({ ...s, completed_at: completedAt }));
+    // Канонический путь — обновляет useUserProgress в реальном времени и
+    // гарантирует засчитывание блока в общей системе прогресса урока.
+    if (onCanonicalSave) {
+      const payload = {
+        type: "external_product_workshop",
+        state: { ...state, completed_at: completedAt },
+        is_submitted: true,
+        submitted_at: completedAt,
+        saved_at: completedAt,
+      };
+      await onCanonicalSave(payload, true);
+    }
     toast.success("Шаг 3 завершён");
   };
-  const handleReopen = () => {
+  const handleReopen = async () => {
     setState((s) => ({ ...s, completed_at: null }));
+    if (onCanonicalSave) {
+      const payload = {
+        type: "external_product_workshop",
+        state: { ...state, completed_at: null },
+        is_submitted: false,
+        submitted_at: null,
+        saved_at: new Date().toISOString(),
+      };
+      await onCanonicalSave(payload, false);
+    }
     toast("Можете редактировать данные");
   };
 
