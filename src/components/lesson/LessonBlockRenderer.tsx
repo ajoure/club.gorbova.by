@@ -448,13 +448,19 @@ export function LessonBlockRenderer({
             }}
           />
         );
-      case 'external_product_workshop':
+      case 'external_product_workshop': {
+        const epwContent = (block.content || {}) as { source_lesson_id?: string | null };
         return (
           <ExternalProductWorkshop
             blockId={block.id}
             lessonId={lessonId || ''}
+            sourceLessonId={epwContent.source_lesson_id ?? null}
+            onCanonicalSave={(payload, completed) =>
+              saveBlockResponse(block.id, payload, null, completed ? 1 : 0, 1)
+            }
           />
         );
+      }
       default:
         return null;
     }
