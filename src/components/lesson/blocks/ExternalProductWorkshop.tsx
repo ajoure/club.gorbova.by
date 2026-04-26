@@ -650,6 +650,38 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
           </Button>
         }
       >
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+          <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+            <div className="text-xs text-muted-foreground">Источник импорта</div>
+            <div className="font-medium">{state.import_meta?.source_lesson_title || "Шаг 2"}</div>
+            {state.import_meta?.source_lesson_id && (
+              <div className="text-[11px] text-muted-foreground truncate mt-1">{state.import_meta.source_lesson_id}</div>
+            )}
+          </div>
+          <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+            <div className="text-xs text-muted-foreground">Импортировано клиентов</div>
+            <div className="font-medium">{state.import_meta?.imported_count ?? state.portfolio_pricing.length}</div>
+          </div>
+          <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+            <div className="text-xs text-muted-foreground">Дата/время импорта</div>
+            <div className="font-medium">
+              {state.import_meta?.imported_at
+                ? new Date(state.import_meta.imported_at).toLocaleString("ru-RU")
+                : "—"}
+            </div>
+          </div>
+        </div>
+
+        {state.import_meta?.empty_reason && state.portfolio_pricing.length === 0 && (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>Портфель пустой</AlertTitle>
+            <AlertDescription>
+              Источник найден, но клиенты не импортированы. Проверьте заполнение Шага 2 и повторите импорт.
+            </AlertDescription>
+          </Alert>
+        )}
+
         {state.portfolio_pricing.length === 0 ? (
           <Alert>
             <AlertTriangle className="h-4 w-4" />
