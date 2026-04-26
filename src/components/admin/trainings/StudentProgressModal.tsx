@@ -332,6 +332,67 @@ function BlockResponseDetail({ block, response, lessonBlocks }: {
       }
       return <p className="text-sm">📋 {rows.length} строк заполнено</p>;
     }
+    case "external_product_workshop": {
+      const state = ((resp.state as Record<string, unknown>) || resp) as Record<string, unknown>;
+      const types = (state.client_types as Array<Record<string, unknown>>) || [];
+      const cx = (state.complexity as Array<Record<string, unknown>>) || [];
+      const sv = (state.service_levels as Array<Record<string, unknown>>) || [];
+      const rs = (state.responsibility as Array<Record<string, unknown>>) || [];
+      const portfolio = (state.portfolio_pricing as Array<Record<string, unknown>>) || [];
+      const completed = !!(resp.is_submitted || state.completed_at);
+      const filled = (arr: Array<Record<string, unknown>>) =>
+        arr.filter((r) => typeof r.name === "string" && (r.name as string).trim().length > 0);
+      const Section = ({ label, items }: { label: string; items: Array<Record<string, unknown>> }) => {
+        const f = filled(items);
+        if (!f.length) return null;
+        return (
+          <div>
+            <Label className="text-xs text-muted-foreground">{label}</Label>
+            <div className="flex flex-wrap gap-1.5 mt-1">
+              {f.map((it, i) => (
+                <Badge key={i} variant="outline" className="text-xs">
+                  {String(it.name)}
+                  {typeof it.coefficient === "number" && it.coefficient !== 1 && ` ×${it.coefficient}`}
+                  {typeof it.price === "number" && it.price > 0 && ` +$${it.price}`}
+                  {typeof it.base_price === "number" && it.base_price > 0 && ` $${it.base_price}`}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        );
+      };
+      return (
+        <div className="space-y-3">
+          <Badge variant={completed ? "default" : "outline"}>
+            {completed ? "Завершён" : "В работе"}
+          </Badge>
+          <Section label="Типы клиентов" items={types} />
+          <Section label="Сложность" items={cx} />
+          <Section label="Сервис" items={sv} />
+          <Section label="Ответственность" items={rs} />
+          {portfolio.length > 0 && (
+            <div>
+              <Label className="text-xs text-muted-foreground">
+                Калькулятор по портфелю · {portfolio.length} клиент(ов)
+              </Label>
+              <div className="mt-1 space-y-1">
+                {portfolio.slice(0, 20).map((p, i) => (
+                  <div key={i} className="text-xs flex flex-wrap gap-x-2 gap-y-0.5 border-b pb-1">
+                    <span className="font-medium">{String(p.client || "—")}</span>
+                    <span className="text-muted-foreground">
+                      текущая ${String(p.current_price ?? "—")}
+                    </span>
+                    {p.conclusion ? (
+                      <span className="italic text-muted-foreground">«{String(p.conclusion)}»</span>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
     default:
       return <p className="text-sm text-muted-foreground">Ответ получен (тип: {block.block_type})</p>;
   }
