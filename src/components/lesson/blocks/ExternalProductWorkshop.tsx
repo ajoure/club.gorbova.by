@@ -851,11 +851,7 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
 
       {/* Footer */}
       <Card className="border-border/60 bg-gradient-to-br from-muted/40 to-transparent">
-        <CardContent className="py-5 px-5 sm:px-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="text-sm text-muted-foreground max-w-xl">
-            Если ваши текущие клиенты не вписываются в продукт — проблема не в клиентах,
-            проблема в модели. Продукт — эталон, клиенты — проверка.
-          </div>
+        <CardContent className="py-5 px-5 sm:px-6 flex flex-col sm:flex-row sm:items-center justify-end gap-4">
           {isCompleted ? (
             <div className="flex items-center gap-3">
               <Badge className="gap-1.5 bg-green-600 hover:bg-green-600">
