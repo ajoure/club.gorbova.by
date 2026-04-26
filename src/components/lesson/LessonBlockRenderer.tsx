@@ -448,6 +448,13 @@ export function LessonBlockRenderer({
             }}
           />
         );
+      case 'external_product_workshop':
+        return (
+          <ExternalProductWorkshop
+            blockId={block.id}
+            lessonId={lessonId || ''}
+          />
+        );
       default:
         return null;
     }
