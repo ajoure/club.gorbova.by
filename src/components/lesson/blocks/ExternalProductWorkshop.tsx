@@ -209,7 +209,7 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
       }
       const { data: row } = await supabase
         .from("user_lesson_progress")
-        .select("response")
+        .select("response, completed_at")
         .eq("user_id", uid_)
         .eq("lesson_id", lessonId)
         .eq("block_id", blockId)
@@ -219,6 +219,13 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
         const merged = mergeState((row.response as { state?: unknown }).state ?? row.response);
         setState(merged);
         setRestoredFromSaved(true);
+        setProgressProof({
+          checked_at: new Date().toISOString(),
+          row_exists: true,
+          block_completed: !!row.completed_at,
+          admin_source_ready: true,
+          response_has_portfolio: merged.portfolio_pricing.length > 0,
+        });
       }
       setLoading(false);
     })();
