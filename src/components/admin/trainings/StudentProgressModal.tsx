@@ -715,6 +715,12 @@ export function StudentProgressModal({
     a.download = `lesson-response-${record.user_id}-${lessonId || record.lesson_id}.json`;
     a.click();
     URL.revokeObjectURL(url);
+    void logTrainingEvent("training.student_response.exported", record.user_id, {
+      lesson_id: lessonId || record.lesson_id || null,
+      student_user_id: record.user_id,
+      source: "teacher",
+      format: "json",
+    });
   };
 
   // Resolve display name: priority chain
