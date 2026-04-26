@@ -76,6 +76,7 @@ import {
   LayoutGrid,
   ClipboardList,
   User,
+  Sparkles,
 } from "lucide-react";
 import { LessonBlock, BlockType, useLessonBlocks } from "@/hooks/useLessonBlocks";
 import { extractStoragePathFromPublicUrl, deleteTrainingAssets } from "./blocks/uploadToTrainingAssets";
@@ -174,6 +175,7 @@ const blockTypeConfig: Record<BlockType, BlockConfig> = {
   sequential_form: { icon: List, label: "Пошаговая форма", color: "bg-indigo-500/10 text-indigo-600", category: 'input' },
   role_description: { icon: User, label: "Описание роли", color: "bg-amber-500/10 text-amber-600", category: 'text' },
   html_raw: { icon: Code, label: "HTML код", color: "bg-indigo-500/10 text-indigo-600", category: 'text' },
+  external_product_workshop: { icon: Sparkles, label: "Воркшоп: Внешний продукт", color: "bg-violet-500/10 text-violet-600", category: 'interactive' },
 };
 
 const categoryConfig = {
@@ -264,6 +266,8 @@ function getDefaultContent(blockType: BlockType): LessonBlock['content'] {
       return { html: '', title: '' };
     case 'checklist':
       return { title: 'Чек-лист', description: '', groups: [] };
+    case 'external_product_workshop':
+      return { version: 'v1' };
     case 'divider':
     default:
       return {};
@@ -365,6 +369,16 @@ function SortableBlockItem({ block, onUpdate, onDelete, lessonId }: SortableBloc
         return <HtmlRawBlock content={block.content as any} onChange={onUpdate} />;
       case 'checklist':
         return <ChecklistBlock content={block.content as any} onChange={onUpdate} />;
+      case 'external_product_workshop':
+        return (
+          <div className="rounded-lg border border-dashed p-6 text-center space-y-2 bg-violet-500/5">
+            <Sparkles className="h-8 w-8 mx-auto text-violet-600" />
+            <div className="font-semibold">Воркшоп: Внешний продукт</div>
+            <p className="text-xs text-muted-foreground max-w-md mx-auto">
+              Хардкод-блок: интерактивный конструктор внешнего продукта (4 справочника + калькулятор по портфелю клиентов из Шага 2). Контент зашит в коде, редактирование через UI недоступно.
+            </p>
+          </div>
+        );
       default:
         return (
           <div className="text-center py-8 text-muted-foreground">

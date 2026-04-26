@@ -23,7 +23,9 @@ export type BlockType =
   // Role description block
   | 'role_description'
   // HTML raw block
-  | 'html_raw';
+  | 'html_raw'
+  // Hardcoded workshop blocks
+  | 'external_product_workshop';
 
 export interface HeadingContent {
   text: string;

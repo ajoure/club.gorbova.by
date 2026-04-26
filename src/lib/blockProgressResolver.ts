@@ -30,6 +30,7 @@ const INTERACTIVE_BLOCK_TYPES = new Set([
   "quiz_multiple",
   "quiz_true_false",
   "role_description",
+  "external_product_workshop",
 ]);
 
 export function isInteractiveBlock(blockType: string): boolean {
@@ -90,6 +91,7 @@ const BLOCK_TYPE_LABELS: Record<string, string> = {
   rating: "Оценка",
   table_input: "Таблица",
   role_description: "Выбор роли",
+  external_product_workshop: "Воркшоп: внешний продукт",
 };
 
 export function blockTypeLabel(blockType: string): string {
@@ -145,6 +147,8 @@ export function resolveProgressValue(
       return resolveTableInput(resp);
     case "role_description":
       return resolveRoleDescription(resp);
+    case "external_product_workshop":
+      return resolveExternalProductWorkshop(resp);
     default:
       // Fallback for unsupported interactive types
       return { hasResponse: true, summary: "✓ есть ответ" };
@@ -256,4 +260,21 @@ function resolveRoleDescription(resp: Record<string, unknown>): ResolvedValue {
   };
   const label = typeof role === "string" ? ROLE_LABELS[role] || role : String(role);
   return { hasResponse: true, summary: label };
+}
+
+function resolveExternalProductWorkshop(resp: Record<string, unknown>): ResolvedValue {
+  const state = (resp.state as Record<string, unknown>) || resp;
+  const types = (state.client_types as unknown[]) || [];
+  const portfolio = (state.portfolio_pricing as unknown[]) || [];
+  const completed = !!(resp.is_submitted || state.completed_at);
+  const filledTypes = (types as Record<string, unknown>[]).filter(
+    (t) => typeof t.name === "string" && t.name.trim().length > 0
+  ).length;
+  if (filledTypes === 0 && portfolio.length === 0) {
+    return { hasResponse: false, summary: "—" };
+  }
+  return {
+    hasResponse: true,
+    summary: `${completed ? "✓ " : ""}Типов: ${filledTypes} · Клиентов: ${portfolio.length}`,
+  };
 }

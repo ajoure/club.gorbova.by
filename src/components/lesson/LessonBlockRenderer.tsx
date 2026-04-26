@@ -33,6 +33,7 @@ import { StudentNoteBlock } from "@/components/admin/lesson-editor/blocks/Studen
 import { StudentUploadBlock } from "@/components/admin/lesson-editor/blocks/StudentUploadBlock";
 import { HtmlRawBlock } from "@/components/admin/lesson-editor/blocks/HtmlRawBlock";
 import { ChecklistBlock } from "@/components/admin/lesson-editor/blocks/ChecklistBlock";
+import { ExternalProductWorkshop } from "@/components/lesson/blocks/ExternalProductWorkshop";
 
 // Kvest-specific props passed from KvestLessonView
 export interface KvestBlockProps {
@@ -445,6 +446,13 @@ export function LessonBlockRenderer({
                 null, 0, 0
               );
             }}
+          />
+        );
+      case 'external_product_workshop':
+        return (
+          <ExternalProductWorkshop
+            blockId={block.id}
+            lessonId={lessonId || ''}
           />
         );
       default:
