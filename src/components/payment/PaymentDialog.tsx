@@ -270,6 +270,20 @@ export function PaymentDialog({
     }
   }, [open, user, session, isClubProduct, isTelegramLinked, isTelegramStatusLoading]);
 
+  // PAY-K: для one_time — выставить дефолтную сохранённую карту, иначе 'new_card'.
+  // Для subscription/trial — всегда 'new_card' (карты disabled, PAY-I behavior).
+  const isOneTimeFlow = !isSubscription && !isTrial;
+  useEffect(() => {
+    if (!isOneTimeFlow || savedCards.length === 0) {
+      if (selectedMethod !== 'new_card') setSelectedMethod('new_card');
+      return;
+    }
+    if (selectedMethod !== 'new_card' && savedCards.some((c) => c.id === selectedMethod)) return;
+    const def = savedCards.find((c) => c.is_default) || savedCards[0];
+    setSelectedMethod(def?.id || 'new_card');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOneTimeFlow, savedCards]);
+
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrors({});
