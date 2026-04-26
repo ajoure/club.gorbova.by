@@ -174,25 +174,35 @@ export function PaymentDialog({
   // Ref to prevent useEffect from resetting state after inline auth
   const authInProgressRef = useRef(false);
 
-  // Load saved payment card — safe, non-blocking
-  const loadSavedCard = async (userId: string) => {
+  // PAY-I: грузим список активных bePaid-карт. Не селектим provider_token / verification fields.
+  const loadSavedCards = async (userId: string) => {
     setIsLoadingCard(true);
     try {
       const { data, error } = await supabase
         .from("payment_methods")
-        .select("id, brand, last4")
+        .select("id, brand, last4, exp_month, exp_year, is_default")
         .eq("user_id", userId)
         .eq("status", "active")
-        .eq("is_default", true)
-        .maybeSingle();
-      
-      console.log("Payment methods query result:", { data, error });
-      if (data) {
-        setSavedCard({ id: data.id, brand: data.brand || "", last4: data.last4 || "" });
+        .eq("provider", "bepaid")
+        .order("is_default", { ascending: false })
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("[PaymentDialog] loadSavedCards failed:", error);
+        return;
       }
+      setSavedCards(
+        (data ?? []).map((c) => ({
+          id: c.id,
+          brand: c.brand || "",
+          last4: c.last4 || "",
+          exp_month: c.exp_month ?? null,
+          exp_year: c.exp_year ?? null,
+          is_default: !!c.is_default,
+        }))
+      );
     } catch (err) {
-      console.error("Error loading payment method:", err);
-      // Non-fatal — don't block checkout
+      console.error("[PaymentDialog] loadSavedCards exception:", err);
     } finally {
       setIsLoadingCard(false);
     }
