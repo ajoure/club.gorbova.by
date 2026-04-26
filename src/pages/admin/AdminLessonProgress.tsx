@@ -462,8 +462,16 @@ export default function AdminLessonProgress() {
 
         {/* Progress Table — dynamic columns with horizontal scroll */}
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
             <CardTitle>Список учеников</CardTitle>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={exportProgressCsv}
+              disabled={!progressRecords?.length}
+            >
+              <Download className="h-4 w-4 mr-1.5" /> Экспорт CSV
+            </Button>
           </CardHeader>
           <CardContent>
             {progressLoading ? (
