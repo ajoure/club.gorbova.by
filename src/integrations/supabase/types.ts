@@ -7406,6 +7406,7 @@ export type Database = {
           expires_at: string | null
           id: string
           max_uses: number | null
+          meta: Json
           offer_id: string | null
           payment_type: string
           product_id: string
@@ -7426,6 +7427,7 @@ export type Database = {
           expires_at?: string | null
           id?: string
           max_uses?: number | null
+          meta?: Json
           offer_id?: string | null
           payment_type?: string
           product_id: string
@@ -7446,6 +7448,7 @@ export type Database = {
           expires_at?: string | null
           id?: string
           max_uses?: number | null
+          meta?: Json
           offer_id?: string | null
           payment_type?: string
           product_id?: string

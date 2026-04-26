@@ -78,6 +78,11 @@ Deno.serve(async (req) => {
     if (!Number.isFinite(expected_amount) || expected_amount < 100) {
       return errorResponse('invalid_expected_amount', 400);
     }
+    // ── Currency guard: BYN-only (frontend is NOT source of truth) ──
+    if (currency !== 'BYN') {
+      console.warn('[bridge-link] currency_not_supported', { currency, user: authUser.id });
+      return errorResponse('currency_not_supported', 400);
+    }
 
     // ── Resolve product ──
     const { data: product } = await supabase
@@ -89,8 +94,21 @@ Deno.serve(async (req) => {
     if (product.is_active === false) return errorResponse('product_inactive', 400);
 
     // ── Resolve tariff ──
+    // Приоритет: tariff_id → tariff_code → fallback резолв из offer_id (для caller'ов
+    // которые передают только offerId, напр. LiveEventProductCta).
     let tariff_id: string | null = tariffIdInput || null;
-    if (!tariff_id) {
+    if (!tariff_id && !tariff_code && offer_id) {
+      const { data: offerForTariff } = await supabase
+        .from('tariff_offers')
+        .select('tariff_id, tariffs!inner(id, product_id, is_active)')
+        .eq('id', offer_id)
+        .maybeSingle();
+      const t = (offerForTariff as { tariffs?: { id: string; product_id: string; is_active: boolean } } | null)?.tariffs;
+      if (!t) return errorResponse('tariff_not_found', 404);
+      if (t.product_id !== product_id) return errorResponse('tariff_product_mismatch', 400);
+      if (t.is_active === false) return errorResponse('tariff_inactive', 400);
+      tariff_id = t.id;
+    } else if (!tariff_id) {
       if (!tariff_code) {
         return errorResponse('missing_tariff_id_or_code', 400);
       }
