@@ -213,17 +213,9 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
         </Badge>
       );
     }
-    if (order.status === "pending" || order.status === "processing") {
-      return (
-        <Badge variant="secondary" className="text-xs">
-          В обработке
-        </Badge>
-      );
-    }
+    // pending/processing/created — это шум, не показываем как полноценный статус.
+    // visibleOrders в Purchases уже их фильтрует, но на всякий случай — neutral бейдж.
     const orderStatusMap: Record<string, string> = {
-      created: "Создан",
-      pending: "В обработке",
-      processing: "В обработке",
       paid: "Оплачено",
       failed: "Ошибка",
       canceled: "Отменён",
@@ -231,7 +223,7 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
       refunded: "Возврат",
       expired: "Истёк",
     };
-    const label = orderStatusMap[String(order.status).toLowerCase()] ?? "Неизвестно";
+    const label = orderStatusMap[String(order.status).toLowerCase()] ?? "Завершён";
     return <Badge variant="outline" className="text-xs">{label}</Badge>;
   };
 
