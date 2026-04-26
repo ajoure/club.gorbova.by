@@ -1,228 +1,153 @@
-да, согласен, с учетом правок:
+## План: урок «Шаг 3. Внешний продукт» — хардкод-блок «Конструктор внешнего продукта»
 
-1. **Строго разделить “Активные подписки” и “Платежи”**
-  &nbsp;
-  В `/purchases`:
-  ```text
-  Активные подписки = только реально активный доступ / подписка
-  Платежи = история заказов и оплат, включая pending/processing/failed/paid/refunded
-  ```
-  Не показывать pending/processing как активную подписку.
-2. **Source of truth для активной подписки**
-  &nbsp;
-  Активной считать только если есть:
-  ```text
-  subscription.status IN ('active', 'trialing')
-  OR entitlement.status='active' AND expires_at > now()
-  ```
-  Не использовать `orders_v2.status='pending'` как основание для карточки активной подписки.
-3. **Pending/processing показывать отдельно**
-  &nbsp;
-  Если нужно показывать незавершённую оплату, то только в отдельном блоке:
-  ```text
-  Незавершённые оплаты
-  ```
-  или внутри вкладки **Платежи**, но не как «Активная подписка».
-4. **Receipt URL**
-  &nbsp;
-  Логика правильная:
-  ```text
-  payment.receipt_url
-  payment.provider_response.transaction.receipt_url
-  ```
-  Добавить fallback:
-  ```text
-  если receipt_url отсутствует — кнопку “Чек bePaid” не показывать
-  ```
-  Не показывать disabled-кнопку без объяснения.
-5. **Две разные кнопки не смешивать**
-  &nbsp;
-  В деталке подписки:
-  ```text
-  Чек bePaid = официальный чек/receipt от bePaid
-  Скачать квитанцию = наш внутренний PDF
-  ```
-  Обе кнопки могут быть одновременно.
-6. **Фильтры вкладки “Платежи”**
-  &nbsp;
-  Я бы не исключал `pending/processing` полностью из вкладки **Платежи**. Лучше так:
-  ```text
-  Платежи:
-  - paid/succeeded
-  - failed
-  - refunded
-  - pending/processing, но с отдельным статусом “В обработке”
-  ```
-  А вот из **Активных подписок** pending/processing убрать полностью.
-7. **Добавить anti-duplicate guard**
-  &nbsp;
-  Один order/payment не должен одновременно отображаться:
-  - как активная подписка;
-  - как платёж;
-  - как незавершённая оплата.
-  Правило:
-8. **Проверить route после оплаты**
-  &nbsp;
-  После возврата с bePaid `/payment-result` пользователь должен попасть в состояние:
-  ```text
-  processing → ожидание webhook
-  paid → активный доступ
-  failed → ошибка платежа
-  ```
-  И `/purchases` должен корректно обновляться после webhook.
-9. **STOP-guards**
-  &nbsp;
-  Добавить:
-10. **DoD дополнить SQL/proof**
+### Контекст (что уже есть)
 
-Добавить проверки:
+- Урок `1f69f658-0040-4a2d-a573-457eeb4b1b56` («Шаг 3: Внешний продукт») в модуле «Бухгалтерия как бизнес». Уже содержит один блок типа `video` (Kinescope), к нему ничего больше добавлять руками не надо.
+- Шаг 2 (`6fb911a0-...`) содержит блок `diagnostic_table` v2 «Аналитика портфеля клиентов» с колонками: `client`, `monthly_income`, `direct_hours`, `mental_hours`, `business_type`, `client_category` (вычисляемая) и т.д. Это и есть «портфель клиентов», который нужно переиспользовать.
+- В системе уже есть:
+  - `lesson_blocks` (jsonb content) + `LessonBlockRenderer` (switch по `block_type`) + `LessonBlockEditor`.
+  - `user_lesson_progress` — хранит ответ ученика на каждый блок (`response: jsonb`), с автосохранением через `useLessonProgressState`.
+  - `findV1DiagnosticSource` / паттерн чтения предыдущих блоков того же модуля по `sort_order` — основа для подтягивания портфеля.
+  - `StudentProgressModal` + `blockProgressResolver` — преподаватель видит ответ по каждому интерактивному блоку. Достаточно добавить новый `block_type` в реестр интерактивных + правило отображения.
+  - Система оценок преподавателя (`training_feedback` через `FeedbackDrawer`) — работает на уровне урока, нашему блоку ничего отдельно делать не надо.
+
+### Что делаем
+
+Создаём один новый хардкод-блок `external_product_workshop` — большой интерактивный «лендинг-урок», который собирает в себе всё ТЗ Катерины (4 справочника + калькулятор по портфелю). Не делаем из него универсальный конструктор: контент компонента зашит в код, в БД лежит только пользовательский state. Это даёт нам красивую визуальную подачу как самостоятельный «сайт-урок» внутри лекции.
+
+### Архитектура блока
+
+В `lesson_blocks` для урока Шага 3 добавим одну запись:
+```
+block_type: 'external_product_workshop'
+content:    { version: 'v1', source_lesson_id: '6fb911a0-...' }   // ссылка на Шаг 2
+sort_order: 1
+```
+
+Весь UI и вся логика — в новом React-компоненте. В `content` ничего динамического не храним.
+
+State пользователя сохраняется в `user_lesson_progress.response` по `block_id` (как у `diagnostic_table`):
+
+```ts
+{
+  client_types:     [{ id, name, description, conclusion, base_price }],
+  complexity:       [{ id, name, description, conclusion, coefficient, price }],
+  service_levels:   [{ id, name, description, conclusion, coefficient, price }],
+  responsibility:   [{ id, name, description, conclusion, coefficient, price }],
+  portfolio_pricing: [
+    { client_row_id, client_type_id, complexity_ids: [], service_id, responsibility_ids: [],
+      price_by_coeff: number, price_by_addons: number,
+      current_price: number, diff: number, diff_pct: number,
+      conclusion: string }
+  ],
+  completed_at: string | null
+}
+```
+
+### Компонент `ExternalProductWorkshop`
+
+Файл: `src/components/lesson/blocks/ExternalProductWorkshop.tsx`. Внутри — 6 визуальных секций «как сайт»:
+
+1. **Шапка-интро** — заголовок «Формирование внешнего продукта», цель, фраза «вы собираете систему, за которую можно стабильно брать деньги». Стиль — карточки `rounded-2xl`, градиентный header, согласованный с дизайном тренингов.
+
+2. **Блок 1. Тип клиента** — таблица с колонками: Название, Описание, Вывод, Базовая цена, кнопка «+». На мобильном — карточный режим.
+
+3. **Блок 2. Сложность** — таблица: Участок, Описание, Вывод, Коэффициент, Цена. Подсказки коэффициентов 1.0 / 1.2 / 1.5 / 2.0.
+
+4. **Блок 3. Сервис** — Название, Описание, Вывод, Коэффициент, Цена. Пресеты «База / Стандарт / Премиум».
+
+5. **Блок 4. Ответственность** — Название, Описание, Вывод, Коэффициент, Цена. Пресеты «Ограниченная / Расширенная / Полная».
+
+6. **Блок 5. Проверка по портфелю клиентов** (ключевой):
+   - Кнопка «Импортировать портфель из Шага 2» (а также авто-подтяжка при первом открытии).
+   - Источник: `lesson_blocks` Шага 2 (block_type=`diagnostic_table`) → `user_lesson_progress.response.rows` текущего пользователя для этого блока. Колонки берём по ID: `client`, `monthly_income`, `total_hours`, `hourly_income`, `client_category`.
+   - Каждая строка = один клиент. К каждому клиенту добавляются поля:
+     - Тип клиента (Select из Блока 1).
+     - Сложность (MultiSelect из Блока 2).
+     - Сервис (Select из Блока 3).
+     - Ответственность (MultiSelect из Блока 4).
+   - Авторасчёт по строке (живой, без сабмита):
+     - `price_by_coeff = base_price(тип) × ∏ coefficient(выбранных)`
+     - `price_by_addons = base_price(тип) + Σ price(выбранных)`
+     - `current_price` = `monthly_income` из портфеля
+     - `diff` и `diff_pct` к `current_price`
+   - Поле «Вывод» (textarea) на каждого клиента.
+   - Сводка снизу: средняя цена по двум методам, кол-во клиентов с отрицательной маржой, топ-5 «недооценённых».
+
+7. **Footer** — кнопка «Завершить шаг 3» → `onComplete()` (через стандартный `useLessonProgressState`).
+
+### Интеграция с подтяжкой данных Шага 2
+
+Новый утилитарный хелпер `src/lib/loadPortfolioFromPreviousLesson.ts`:
+
+1. Берём `module_id` и `sort_order` текущего урока.
+2. Ищем в том же модуле предыдущий урок с `block_type='diagnostic_table'` (паттерн уже реализован в `findV1DiagnosticSource`, обобщаем — без требования v1).
+3. Грузим `user_lesson_progress.response` для найденного `block_id` и текущего `user_id`.
+4. Если ответа нет → показываем алерт «Сначала заполните Шаг 2: Анализ портфеля» с deeplink на тот урок.
+5. Маппим строки портфеля в `portfolio_pricing[]`, сохраняя `client_row_id` для идемпотентного ре-импорта (повторный импорт обновляет данные, но не теряет уже выбранный тип/сервис/вывод).
+
+### Регистрация блока в системе
+
+1. **`LessonBlockRenderer.tsx`** — новый `case 'external_product_workshop'` → рендер `<ExternalProductWorkshop ... />` c `state`, `onChange`, `onComplete`, `isReadOnly`. Не блокировать `pointer-events` при `isCompleted` (возможность редактировать после завершения — как в видео-баге, который мы только что чинили).
+
+2. **`LessonBlockEditor.tsx`** — добавить тип в реестр (для админки): отображать карточку «Воркшоп: Внешний продукт (хардкод)» с пометкой «Контент зашит в код, редактирование недоступно». Сам редактор не нужен — только превью и кнопка «удалить».
+
+3. **`blockProgressResolver.ts`**:
+   - Добавить `'external_product_workshop'` в `INTERACTIVE_BLOCK_TYPES`.
+   - В `BLOCK_TYPE_LABELS`: «Воркшоп: внешний продукт».
+   - В `resolveProgressValue`: возвращать сводку «Типов клиентов: N · Клиентов в калькуляторе: M · Завершён: да/нет».
+
+4. **`StudentProgressModal.tsx`** — добавить case рендера ответа ученика: компактные таблицы 4 справочников + таблица «портфель × цены» с подсветкой расхождений, как видит сам ученик. Это даёт преподавателю полную картину для оценки.
+
+### База данных
+
+Миграций не требуется. Используем существующие `lesson_blocks` и `user_lesson_progress`. Единственное действие в БД — INSERT одной строки `lesson_blocks` для урока Шага 3 (через миграцию, чтобы воспроизводилось):
 
 ```sql
--- pending не попадают в активные подписки
-SELECT count(*)
-FROM orders_v2
-WHERE status IN ('pending','processing')
-  AND id IN (<ids shown in active subscriptions>);
+insert into lesson_blocks (lesson_id, block_type, content, sort_order)
+values (
+  '1f69f658-0040-4a2d-a573-457eeb4b1b56',
+  'external_product_workshop',
+  '{"version":"v1","source_lesson_id":"6fb911a0-eb41-43a7-9935-abd68237e465"}'::jsonb,
+  10
+);
 ```
 
-И UI-proof:
+(`sort_order=10` чтобы стоял ниже видео `sort_order=0`, с запасом на будущее).
+
+### UX-детали (по требованиям проекта)
+
+- Все тексты — на русском, без английских терминов.
+- Карточки `rounded-xl` / `rounded-2xl`, `border-border/60`, `hover:shadow-sm` — по тем же стандартам, что и в недавнем рефакторинге Подписок.
+- Мобильная адаптивность: таблицы 4 справочников переключаются в карточный вид < 640 px (`min-w-0`, `break-words`); калькулятор по портфелю — горизонтальный скролл с залипшей колонкой «Клиент».
+- Sonner-уведомления (по стандарту `mem://ui/notifications/sonner-visual-standard`) — компактные, правый-нижний угол.
+- Автосохранение через дебаунс 800 мс, индикатор «Сохранено».
+
+### План разработки (последовательность)
 
 ```text
-- pending order виден только в Платежах / Незавершённых;
-- active entitlement виден в Активных подписках;
-- bePaid receipt открывается реальной ссылкой;
-- наш PDF скачивается отдельно.
+1. Утилита loadPortfolioFromPreviousLesson.ts
+2. Компонент ExternalProductWorkshop.tsx (UI + логика)
+3. Регистрация case в LessonBlockRenderer / LessonBlockEditor
+4. Расширение blockProgressResolver + StudentProgressModal
+5. Миграция: INSERT lesson_blocks для Шага 3
+6. Симуляция в браузере: открыть урок учеником, проверить
+   - подтяжку портфеля,
+   - заполнение 4 справочников,
+   - живой расчёт по двум методам,
+   - сохранение/восстановление при перезагрузке,
+   - вид завершённого урока (без блокировки видео и без блокировки калькулятора),
+   - мобильную верстку (375 × 667).
+7. Скрин «Преподаватель видит ответ» через StudentProgressModal.
 ```
 
-Готовый блок для Lovable:
+### DoD
 
-```text
-Дополни план правками:
-
-1. В `/purchases` строго разделить:
-   - Активные подписки = только active/trialing subscription или active entitlement/access;
-   - Платежи = история заказов/оплат;
-   - pending/processing не показывать как активную подписку.
-
-2. Pending/processing показывать только во вкладке “Платежи” или в отдельном блоке “Незавершённые оплаты”.
-
-3. Не исключать pending/processing из истории платежей полностью — показывать их со статусом “В обработке”, но не как активный доступ.
-
-4. Для bePaid receipt использовать:
-   - `payment.receipt_url`;
-   - fallback `payment.provider_response.transaction.receipt_url`.
-   Если receipt_url отсутствует — кнопку “Чек bePaid” не показывать.
-
-5. Разделить две кнопки:
-   - “Чек bePaid” = официальный receipt от bePaid;
-   - “Скачать квитанцию” = наш внутренний PDF.
-   Обе могут отображаться одновременно.
-
-6. Добавить anti-duplicate guard: один order/payment не должен одновременно отображаться как активная подписка и как платёж.
-
-7. Проверить `/payment-result` → `/purchases`: после webhook статус должен обновляться корректно.
-
-8. STOP-guards:
-   - не менять bePaid webhook;
-   - не менять grant-access-for-order;
-   - не менять orders/payments статусы;
-   - не менять entitlements;
-   - не создавать новые receipt-сущности;
-   - не подменять bePaid чек нашим PDF.
-
-9. DoD:
-   - pending/processing не отображаются в “Активных подписках”;
-   - pending/processing видны только в “Платежах” или “Незавершённых оплатах”;
-   - active entitlement/subscription отображается в “Активных подписках”;
-   - кнопка “Чек bePaid” открывает реальный receipt_url;
-   - кнопка “Скачать квитанцию” скачивает наш PDF;
-   - mobile 375px и desktop 1440px без overflow;
-   - финальный отчёт содержит changed files, diff-summary и proof.
-
-План: Чистка «Моих покупок» + канонические карточки + чек bePaid
-```
-
-## Что меняем
-
-### 1) Логика фильтрации (что показываем)
-
-**Активные подписки** (`uniqueActiveSubscriptions` в `Purchases.tsx`):
-
-- Сейчас показывает всё, что не истекло — включая `past_due` / `pending` / `unpaid`. Из-за этого появляется «Активная подписка → Ожидает оплаты».
-- Меняем фильтр: подписка считается активной только если `status ∈ {active, trial, trialing}` И не истекла. Всё остальное (`past_due`, `unpaid`, `incomplete`, `pending`) уезжает в историю «Прошлые подписки» с человеческим лейблом.
-
-**История платежей** (`orders` в Tab «Платежи»):
-
-- Сейчас показывает все заказы, в т.ч. `pending` / `processing` / `created`.
-- Фильтр: показываем только заказы, где `payment.status ∈ {succeeded, failed}` ИЛИ `order.status ∈ {paid, failed, refunded}`. Заказы в обработке / created / pending — скрываем полностью (они не несут пользы клиенту).
-- Лейбл «В обработке» из `OrderListItem.getStatusBadge()` удаляем как сценарий — но defensive-маппинг оставляем на случай, если что-то проскочит.
-
-### 2) Кнопка «Документы по заказу» → чек bePaid
-
-В `Purchases.tsx` справа от каждого заказа сейчас рисуется отдельная иконка `FileText` → `OrderDocuments` (наш PDF-генератор). Заменяем поведение:
-
-- Если у платежа есть `receipt_url` (bePaid) — кнопка открывает его в новой вкладке (`window.open(receiptUrl, '_blank')`).
-- Если заказ `failed` — кнопка ведёт на тот же `receipt_url` (у bePaid там страница с ошибкой) — подпись «Чек об ошибке».
-- Если `receipt_url` нет — кнопка скрыта.
-- Внутреннюю кнопку «Документы» (dropdown с PDF / отправкой на почту / Telegram) в `OrderListItem` оставляем как есть для оплаченных — это рабочий функционал. Удаляем только дубль-иконку `FileText` в `Purchases.tsx`, которая открывала `OrderDocuments` Sheet (он становится не нужен в этом потоке — снимаем с UI, файл не трогаем).
-
-### 3) Канонический дизайн карточек (белый фон, как в остальном кабинете)
-
-Привести `SubscriptionListItem`, `OrderListItem`, `SubscriptionDetailSheet` к единому стилю:
-
-- Базовый фон `bg-card` (уже есть), но добавить мягкие границы `border-border/60`, `rounded-xl` (вместо `rounded-lg`), `hover:border-primary/30`, `hover:shadow-sm` — каноничный hover как в карточках dashboard.
-- Внутренние отступы: `p-4 sm:p-5`.
-- Бейджи: вынести статус в правый верхний угол отдельной строкой (как на скрине пользователя) — чтобы заголовок никогда не конкурировал с бейджем за место.
-- Цена/дата/карта: единая строка с `text-xs text-muted-foreground` и иконками 3.5x3.5.
-- Chevron справа делаем мельче и серее.
-
-`SubscriptionDetailSheet` (внутреннее окно подписки):
-
-- Шапка: заголовок крупный, статус-бейдж — отдельной строкой ниже (а не справа). Фон шапки — `bg-muted/30`, скруглённый блок.
-- Группы строк (даты, способ оплаты, история платежей) — каждая в своей карточке `bg-muted/20 rounded-lg p-4`.
-- Кнопки внизу: основная «Скачать чек bePaid» (если есть `receipt_url`) первичной кнопкой, «Скачать квитанцию» (наш PDF) — вторичной. **Обе доступны одновременно**, не «или/или».
-
-### 4) Чек bePaid в детальном окне подписки
-
-`SubscriptionDetailSheet`:
-
-- Сейчас: `if (receiptUrl) { кнопка bePaid } else { кнопка нашей квитанции }`.
-- Делаем: всегда показываем «Скачать квитанцию» (наш PDF). Дополнительно, если есть `receiptUrl` (из связанного `orders_v2.payments_v2[0].receipt_url`) — показываем сверху primary-кнопку «Чек bePaid».
-- В блоке «История платежей» внутри sheet — для каждого `succeeded` платежа уже стоит кнопка скачивания чека, оставляем. Для `failed` платежей — добавляем такую же кнопку, если у платежа есть `receipt_url` (bePaid возвращает ссылку и для ошибочных). Платежи `pending`/`processing` отфильтровываем — не показываем.
-
-### 5) Источник `receipt_url`
-
-В `Purchases.tsx` запрос уже выбирает `provider_response`, но в БД давно есть отдельная колонка `payments_v2.receipt_url` (приоритетная). Добавляем её в SELECT:
-
-- `payments_v2(id, status, provider_payment_id, card_brand, card_last4, receipt_url, provider_response)` — и для orders, и для subscriptions.
-- Резолвер: `payment.receipt_url ?? payment.provider_response?.transaction?.receipt_url`.
-
-## Файлы
-
-- `src/pages/Purchases.tsx` — фильтры активных/историй, добавить `receipt_url` в SELECT, заменить иконку FileText на кнопку bePaid-чека (с условным рендером), убрать вызов `OrderDocuments` Sheet из строки заказа (оставить компонент, но без триггера).
-- `src/components/purchases/SubscriptionListItem.tsx` — канонический дизайн (rounded-xl, hover, отступы, чистая иерархия заголовок/бейджи/мета).
-- `src/components/purchases/OrderListItem.tsx` — канонический дизайн, удалить ветку «В обработке» из бейджа, использовать `receipt_url` как primary источник.
-- `src/components/purchases/SubscriptionDetailSheet.tsx` — переверстка шапки и блоков, две кнопки скачивания (bePaid + наш PDF), фильтрация payments по статусу, кнопка чека для failed.
-
-## Технические детали
-
-```text
-Active filter:
-  status IN ('active','trial','trialing') AND access_end_at > now()
-
-History — payments tab filter:
-  payment.status IN ('succeeded','failed') OR
-  order.status IN ('paid','failed','refunded')
-
-Receipt URL resolution:
-  payment.receipt_url ?? payment.provider_response?.transaction?.receipt_url
-```
-
-## DoD
-
-- На `/purchases` нет ни одной «Активной подписки» со статусом «Ожидает оплаты» / «Не оплачена» / «В обработке».
-- В Tab «Платежи» нет заказов со статусом «В обработке» / «Создан».
-- У оплаченных и провалившихся заказов работает кнопка «Чек bePaid» — открывает реальный URL.
-- В детальном окне подписки две кнопки: «Чек bePaid» (если есть) + «Скачать квитанцию» (наш PDF) одновременно.
-- Карточки выглядят канонично: белый фон, скругления `rounded-xl`, мягкий hover, корректная иерархия.
-- Mobile 375px и desktop 1440px проверены — без переполнений.
+- В уроке «Шаг 3: Внешний продукт» под видео виден интерактивный «сайт-воркшоп».
+- Кнопка «+» работает в каждом из 4 справочников; данные сохраняются автоматически.
+- Импорт портфеля из Шага 2 подтягивает реальные строки текущего ученика; пустой портфель даёт понятный алерт со ссылкой на Шаг 2.
+- Калькулятор по каждому клиенту показывает цену двумя методами + разницу с текущей ценой.
+- Завершение урока пишется в `lesson_progress_state` через стандартный механизм.
+- В админке (страница прогресса студента / `StudentProgressModal`) преподаватель видит весь ответ ученика и может оставить feedback через существующий `FeedbackDrawer`.
+- Видео остаётся кликабельным после завершения (поведение из последнего фикса сохранено).
+- Десктоп и мобильный — обе верстки подтверждены скринами.
