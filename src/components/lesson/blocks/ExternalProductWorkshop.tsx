@@ -184,6 +184,14 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
   const [importing, setImporting] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [completionError, setCompletionError] = useState<string | null>(null);
+  const [progressProof, setProgressProof] = useState<{
+    checked_at: string;
+    row_exists: boolean;
+    block_completed: boolean;
+    admin_source_ready: boolean;
+    response_has_portfolio: boolean;
+  } | null>(null);
   const skipNextSave = useRef(true);
 
   /* загрузка пользователя и state */
@@ -300,7 +308,19 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
         userId,
         overrideSourceLessonId: sourceLessonId ?? undefined,
       });
+      const importedAt = new Date().toISOString();
       if (!result.rows.length) {
+        setState((s) => ({
+          ...s,
+          import_meta: {
+            source_lesson_id: result.source_lesson_id,
+            source_lesson_title: result.source_lesson_title,
+            source_block_id: result.source_block_id,
+            imported_count: 0,
+            imported_at: importedAt,
+            empty_reason: result.empty_reason,
+          },
+        }));
         const reason =
           result.empty_reason === "no_previous_lesson"
             ? "Не найден предыдущий урок с портфелем клиентов."
@@ -323,13 +343,24 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
             conclusion: prev?.conclusion ?? "",
           };
         });
-        return { ...s, portfolio_pricing: next };
+        return {
+          ...s,
+          portfolio_pricing: next,
+          import_meta: {
+            source_lesson_id: result.source_lesson_id,
+            source_lesson_title: result.source_lesson_title,
+            source_block_id: result.source_block_id,
+            imported_count: result.rows.length,
+            imported_at: importedAt,
+          },
+        };
       });
+      setCompletionError(null);
       toast.success(`Импортировано клиентов: ${result.rows.length}`);
     } finally {
       setImporting(false);
     }
-  }, [lessonId, userId]);
+  }, [lessonId, sourceLessonId, userId]);
 
   /* Расчёт по строке портфеля */
   const computed = useMemo(() => {
