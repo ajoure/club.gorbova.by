@@ -548,8 +548,11 @@ export default function AdminLessonProgress() {
                                 {profile?.email}
                               </p>
                               {sources.includes("user_lesson_progress") && (
-                                <Badge variant="outline" className="mt-1 text-[10px]">
-                                  manual
+                                <Badge
+                                  variant="outline"
+                                  className="mt-1.5 text-[10px] border-violet-500/40 bg-violet-500/10 text-violet-600 dark:text-violet-300"
+                                >
+                                  Ручной режим
                                 </Badge>
                               )}
                             </div>
