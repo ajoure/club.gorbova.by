@@ -25,6 +25,7 @@ import { getFileTypeIcon } from "@/components/admin/lesson-editor/blocks/fileTyp
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
+import { logTrainingEvent } from "@/lib/auditTrainingActions";
 import {
   calculateV2Computed,
   CATEGORY_COLORS,
