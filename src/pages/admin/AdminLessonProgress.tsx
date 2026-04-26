@@ -389,16 +389,18 @@ export default function AdminLessonProgress() {
         </div>
 
         {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2">
-              <Users className="h-6 w-6" />
-              Прогресс учеников
-            </h1>
-            <p className="text-muted-foreground">Урок: {lesson.title}</p>
+        <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
+          <div className="flex items-start gap-3">
+            <div className="rounded-xl bg-gradient-to-br from-primary/20 to-primary/5 border border-primary/20 p-2.5 shadow-sm">
+              <Users className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">Прогресс учеников</h1>
+              <p className="text-sm text-muted-foreground mt-0.5">Урок: {lesson.title}</p>
+            </div>
           </div>
-          <Button 
-            variant="outline" 
+          <Button
+            variant="outline"
             onClick={() => navigate(`/admin/training-modules/${moduleId}/lessons`)}
           >
             <ArrowLeft className="mr-2 h-4 w-4" />
@@ -406,59 +408,49 @@ export default function AdminLessonProgress() {
           </Button>
         </div>
 
-        {/* Stats summary — dynamic */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <Card>
-            <CardContent className="pt-4">
-              <div className="text-2xl font-bold">{totalStudents}</div>
-              <p className="text-sm text-muted-foreground">Всего учеников</p>
+        {/* Stats summary — единый стиль платформы, мягкие градиенты */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+          <Card className="relative overflow-hidden border-border/60 bg-gradient-to-br from-card to-muted/30">
+            <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 via-transparent to-transparent pointer-events-none" />
+            <CardContent className="pt-4 relative">
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-xs text-muted-foreground font-medium">Всего учеников</p>
+                <Users className="h-4 w-4 text-blue-500/70" />
+              </div>
+              <div className="text-3xl font-bold text-foreground">{totalStudents}</div>
             </CardContent>
           </Card>
-          <Card>
-            <CardContent className="pt-4">
-              <div className="text-2xl font-bold text-primary">{completedStudents}</div>
-              <p className="text-sm text-muted-foreground">Завершили</p>
+          <Card className="relative overflow-hidden border-border/60 bg-gradient-to-br from-card to-muted/30">
+            <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 via-transparent to-transparent pointer-events-none" />
+            <CardContent className="pt-4 relative">
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-xs text-muted-foreground font-medium">Завершили</p>
+                <CheckCircle2 className="h-4 w-4 text-emerald-500/80" />
+              </div>
+              <div className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">{completedStudents}</div>
             </CardContent>
           </Card>
-          <Card>
-            <CardContent className="pt-4">
-              <div className="text-2xl font-bold text-primary/80">{totalInteractive}</div>
-              <p className="text-sm text-muted-foreground">Интерактивных блоков</p>
+          <Card className="relative overflow-hidden border-border/60 bg-gradient-to-br from-card to-muted/30">
+            <div className="absolute inset-0 bg-gradient-to-br from-violet-500/5 via-transparent to-transparent pointer-events-none" />
+            <CardContent className="pt-4 relative">
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-xs text-muted-foreground font-medium">Интерактивных блоков</p>
+                <Layers className="h-4 w-4 text-violet-500/70" />
+              </div>
+              <div className="text-3xl font-bold text-foreground">{totalInteractive}</div>
             </CardContent>
           </Card>
-          <Card>
-            <CardContent className="pt-4">
-              <div className="text-2xl font-bold text-primary/60">{avgAnswered}</div>
-              <p className="text-sm text-muted-foreground">Ответов (в среднем)</p>
+          <Card className="relative overflow-hidden border-border/60 bg-gradient-to-br from-card to-muted/30">
+            <div className="absolute inset-0 bg-gradient-to-br from-amber-500/5 via-transparent to-transparent pointer-events-none" />
+            <CardContent className="pt-4 relative">
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-xs text-muted-foreground font-medium">Ответов в среднем</p>
+                <BarChart3 className="h-4 w-4 text-amber-500/70" />
+              </div>
+              <div className="text-3xl font-bold text-foreground">{avgAnswered}</div>
             </CardContent>
           </Card>
         </div>
-
-        {hasExternalProductWorkshop && (
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle className="text-base">Proof-панели по manual-прогрессу</CardTitle>
-            </CardHeader>
-            <CardContent className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
-              <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
-                <div className="text-xs text-muted-foreground">SQL proof</div>
-                <div className="font-semibold">{manualStudents} из user_lesson_progress</div>
-              </div>
-              <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
-                <div className="text-xs text-muted-foreground">UI proof ученика</div>
-                <div className="font-semibold">{completedStudents} завершили</div>
-              </div>
-              <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
-                <div className="text-xs text-muted-foreground">UI proof преподавателя</div>
-                <div className="font-semibold">{totalStudents} видны в таблице</div>
-              </div>
-              <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
-                <div className="text-xs text-muted-foreground">Reload proof</div>
-                <div className="font-semibold">{savedResponseUsers} ответов загружено</div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
 
         {/* Progress Table — dynamic columns with horizontal scroll */}
         <Card>
