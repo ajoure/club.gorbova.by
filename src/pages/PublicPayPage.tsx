@@ -37,7 +37,9 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { cancelOldSubscriptionForReplacement, type SubscriptionConflictInfo } from '@/lib/subscriptionReplacement';
-import { CreditCard, CheckCircle, Clock, Shield, AlertCircle, Loader2, Repeat } from 'lucide-react';
+import { CreditCard, CheckCircle, Clock, Shield, AlertCircle, Loader2, Repeat, Plus } from 'lucide-react';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Label } from '@/components/ui/label';
 
 interface PaymentLinkInfo {
   product_name: string;
@@ -77,6 +79,8 @@ export default function PublicPayPage() {
   const functionUrl = `https://${projectId}.supabase.co/functions/v1/public-checkout`;
   const savedCardFunctionUrl = `https://${projectId}.supabase.co/functions/v1/public-charge-saved-card`;
   const [savedCardProcessing, setSavedCardProcessing] = useState(false);
+  // PAY-D: unified payment method selector. 'new_card' or payment_method_id (uuid).
+  const [selectedMethod, setSelectedMethod] = useState<string>('new_card');
   // Stable per-mount idempotency key — survives multiple clicks within the same /pay/:token visit.
   const savedCardIdempotencyKeyRef = useRef<string>(crypto.randomUUID());
 
@@ -314,16 +318,30 @@ export default function PublicPayPage() {
   const needsIdentity = linkInfo.requires_identity_input && !user;
   const isSubscription = linkInfo.payment_type === 'subscription';
 
-  // PAY-C visibility: NULL OR equal — public link OR personal link of current user.
+  // PAY-D visibility: NULL OR equal — public link OR personal link of current user.
   const ownsOrPublic =
     !!user &&
     (linkInfo.link_user_id === null || linkInfo.link_user_id === user.id);
-  const showSavedCard =
+  // PAY-D: saved-card selector — one_time only (subscription handled by PAY-E).
+  const showSavedCardSelector =
     ownsOrPublic &&
     !isSubscription &&
     Array.isArray(savedCards) &&
     savedCards.length > 0;
   const showSubscriptionFallbackHint = ownsOrPublic && isSubscription;
+
+  // PAY-D: pick default selection once cards are loaded.
+  // Priority: is_default → first card → 'new_card'.
+  useEffect(() => {
+    if (!showSavedCardSelector) {
+      if (selectedMethod !== 'new_card') setSelectedMethod('new_card');
+      return;
+    }
+    if (selectedMethod !== 'new_card' && savedCards!.some((c) => c.id === selectedMethod)) return;
+    const def = savedCards!.find((c) => c.is_default) || savedCards![0];
+    setSelectedMethod(def?.id || 'new_card');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showSavedCardSelector, savedCards]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-muted/30 to-background">
@@ -403,16 +421,65 @@ export default function PublicPayPage() {
               </Alert>
             )}
 
-            {/* States 1 & 2: pre-bound target user OR session user → just pay
-                Hard guard: if has_target_user, NEVER mount InlineAuthForm. */}
+            {/* PAY-D: Unified payment method selector (one_time + auth + cards),
+                otherwise single CTA. Subscription always goes through standard bePaid checkout. */}
+            {!needsIdentity && showSavedCardSelector && (
+              <div className="mb-4">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2">
+                  Способ оплаты
+                </div>
+                <RadioGroup
+                  value={selectedMethod}
+                  onValueChange={setSelectedMethod}
+                  className="space-y-2"
+                  disabled={isProcessing || savedCardProcessing}
+                >
+                  {savedCards!.map((card) => (
+                    <Label
+                      key={card.id}
+                      htmlFor={`pm-${card.id}`}
+                      className="flex items-center gap-3 p-3 rounded-md border border-border hover:bg-accent/50 cursor-pointer transition-colors"
+                    >
+                      <RadioGroupItem id={`pm-${card.id}`} value={card.id} />
+                      <CreditCard className="h-4 w-4 text-muted-foreground" />
+                      <span className="flex-1 text-sm">
+                        {(card.brand || 'CARD').toUpperCase()} ••••{card.last4 || '****'}
+                      </span>
+                      {card.is_default && (
+                        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                          по умолчанию
+                        </span>
+                      )}
+                    </Label>
+                  ))}
+                  <Label
+                    htmlFor="pm-new"
+                    className="flex items-center gap-3 p-3 rounded-md border border-dashed border-border hover:bg-accent/50 cursor-pointer transition-colors"
+                  >
+                    <RadioGroupItem id="pm-new" value="new_card" />
+                    <Plus className="h-4 w-4 text-muted-foreground" />
+                    <span className="flex-1 text-sm">Новая карта</span>
+                  </Label>
+                </RadioGroup>
+              </div>
+            )}
+
             {!needsIdentity && (
               <Button
                 size="lg"
                 className="w-full"
-                onClick={linkInfo.has_target_user ? handlePayWithTarget : handlePayWithSession}
-                disabled={isProcessing}
+                onClick={() => {
+                  if (showSavedCardSelector && selectedMethod !== 'new_card') {
+                    handlePayWithSavedCard(selectedMethod);
+                  } else if (linkInfo.has_target_user) {
+                    handlePayWithTarget();
+                  } else {
+                    handlePayWithSession();
+                  }
+                }}
+                disabled={isProcessing || savedCardProcessing}
               >
-                {isProcessing ? (
+                {(isProcessing || savedCardProcessing) ? (
                   <><Loader2 className="mr-2 h-5 w-5 animate-spin" /> Обработка...</>
                 ) : (
                   <><CreditCard className="mr-2 h-5 w-5" /> Оплатить {priceFormatted}</>
@@ -420,45 +487,13 @@ export default function PublicPayPage() {
               </Button>
             )}
 
-            {/* PAY-C: Saved card quick-pay (one_time only, ownership-aware) */}
-            {!needsIdentity && showSavedCard && (
-              <div className="mt-4 space-y-2">
-                <div className="text-xs uppercase tracking-wide text-muted-foreground text-center">
-                  или сохранённой картой
-                </div>
-                {savedCards!.map((card) => (
-                  <Button
-                    key={card.id}
-                    type="button"
-                    variant="outline"
-                    size="lg"
-                    className="w-full justify-between"
-                    disabled={savedCardProcessing || isProcessing}
-                    onClick={() => handlePayWithSavedCard(card.id)}
-                  >
-                    <span className="flex items-center gap-2">
-                      <CreditCard className="h-4 w-4" />
-                      {(card.brand || 'CARD').toUpperCase()} ••••{card.last4 || '****'}
-                      {card.is_default && (
-                        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                          основная
-                        </span>
-                      )}
-                    </span>
-                    {savedCardProcessing ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <span className="text-xs text-muted-foreground">оплатить</span>
-                    )}
-                  </Button>
-                ))}
-                <p className="text-[11px] text-center text-muted-foreground">
-                  Подтверждение банка может потребоваться при первой оплате этой картой.
-                </p>
-              </div>
+            {!needsIdentity && showSavedCardSelector && selectedMethod !== 'new_card' && (
+              <p className="mt-2 text-[11px] text-center text-muted-foreground">
+                Подтверждение банка может потребоваться при первой оплате этой картой.
+              </p>
             )}
 
-            {/* PAY-C: subscription fallback hint — saved-card not supported in v1 */}
+            {/* PAY-D: subscription — saved-card flow вынесен в PAY-E */}
             {!needsIdentity && showSubscriptionFallbackHint && (
               <p className="mt-3 text-xs text-center text-muted-foreground">
                 Для подписки используйте стандартную оплату через bePaid.
