@@ -751,24 +751,24 @@ export function StudentProgressModal({
           {/* Student Info — enhanced header */}
           <Card className="border-l-4 border-l-indigo-400">
             <CardContent className="pt-4">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
                   <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-sm font-semibold shrink-0">
                     {initials}
                   </div>
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <p className="font-semibold text-base truncate">{displayName}</p>
                     {profile?.email && displayName !== profile.email && (
                       <p className="text-sm text-muted-foreground truncate">{profile.email}</p>
                     )}
-                    <div className="flex items-center gap-2 flex-wrap mt-1">
+                    <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
                       {productTitle && (
-                        <Badge variant="secondary" className="text-[11px] bg-indigo-50 text-indigo-700 border-indigo-200">
+                        <Badge variant="secondary" className="text-[11px] bg-indigo-50 text-indigo-700 border-indigo-200 max-w-full truncate">
                           {productTitle}
                         </Badge>
                       )}
                       {lessonTitle && (
-                        <Badge variant="outline" className="text-[11px]">
+                        <Badge variant="outline" className="text-[11px] max-w-full truncate">
                           {lessonTitle}
                         </Badge>
                       )}
