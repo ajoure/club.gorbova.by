@@ -354,26 +354,28 @@ function BlockResponseDetail({ block, response, lessonBlocks }: {
         const f = filled(types);
         if (!f.length) return <p className="text-xs text-muted-foreground italic">Не заполнено</p>;
         return (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Название</TableHead>
-                <TableHead className="text-right">База, $</TableHead>
-                <TableHead>Описание</TableHead>
-                <TableHead>Вывод</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {f.map((r, i) => (
-                <TableRow key={i}>
-                  <TableCell className="font-medium">{String(r.name)}</TableCell>
-                  <TableCell className="text-right">{fmtNum(r.base_price)}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground whitespace-pre-wrap">{String(r.description ?? "")}</TableCell>
-                  <TableCell className="text-xs whitespace-pre-wrap">{String(r.conclusion ?? "")}</TableCell>
+          <div className="overflow-x-auto -mx-2 sm:mx-0 rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="min-w-[120px]">Название</TableHead>
+                  <TableHead className="text-right whitespace-nowrap min-w-[90px]">База, $</TableHead>
+                  <TableHead className="min-w-[160px]">Описание</TableHead>
+                  <TableHead className="min-w-[140px]">Вывод</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {f.map((r, i) => (
+                  <TableRow key={i}>
+                    <TableCell className="font-medium">{String(r.name)}</TableCell>
+                    <TableCell className="text-right whitespace-nowrap">{fmtNum(r.base_price)}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground whitespace-pre-wrap">{String(r.description ?? "")}</TableCell>
+                    <TableCell className="text-xs whitespace-pre-wrap">{String(r.conclusion ?? "")}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
         );
       };
 
@@ -382,28 +384,30 @@ function BlockResponseDetail({ block, response, lessonBlocks }: {
         const f = filled(items);
         if (!f.length) return <p className="text-xs text-muted-foreground italic">Не заполнено</p>;
         return (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Название</TableHead>
-                <TableHead className="text-right">Коэф.</TableHead>
-                <TableHead className="text-right">Доплата, $</TableHead>
-                <TableHead>Описание</TableHead>
-                <TableHead>Вывод</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {f.map((r, i) => (
-                <TableRow key={i}>
-                  <TableCell className="font-medium">{String(r.name)}</TableCell>
-                  <TableCell className="text-right">×{fmtNum(r.coefficient)}</TableCell>
-                  <TableCell className="text-right">+{fmtNum(r.price)}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground whitespace-pre-wrap">{String(r.description ?? "")}</TableCell>
-                  <TableCell className="text-xs whitespace-pre-wrap">{String(r.conclusion ?? "")}</TableCell>
+          <div className="overflow-x-auto -mx-2 sm:mx-0 rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="min-w-[120px]">Название</TableHead>
+                  <TableHead className="text-right whitespace-nowrap min-w-[80px]">Коэф.</TableHead>
+                  <TableHead className="text-right whitespace-nowrap min-w-[100px]">Доплата, $</TableHead>
+                  <TableHead className="min-w-[160px]">Описание</TableHead>
+                  <TableHead className="min-w-[140px]">Вывод</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {f.map((r, i) => (
+                  <TableRow key={i}>
+                    <TableCell className="font-medium">{String(r.name)}</TableCell>
+                    <TableCell className="text-right whitespace-nowrap">×{fmtNum(r.coefficient)}</TableCell>
+                    <TableCell className="text-right whitespace-nowrap">+{fmtNum(r.price)}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground whitespace-pre-wrap">{String(r.description ?? "")}</TableCell>
+                    <TableCell className="text-xs whitespace-pre-wrap">{String(r.conclusion ?? "")}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
         );
       };
 
@@ -563,26 +567,28 @@ function DiagnosticTableV1Detail({ rows }: { rows: PointARow[] }) {
 
   return (
     <>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Источник</TableHead>
-            <TableHead className="text-right">Доход</TableHead>
-            <TableHead className="text-right">Часы задач</TableHead>
-            <TableHead className="text-right">Часы переписки</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {rows.map((row, idx) => (
-            <TableRow key={idx}>
-              <TableCell>{row.source || "—"}</TableCell>
-              <TableCell className="text-right">{row.income || 0} BYN</TableCell>
-              <TableCell className="text-right">{row.work_hours || 0} ч</TableCell>
-              <TableCell className="text-right">{row.overhead_hours || 0} ч</TableCell>
+      <div className="overflow-x-auto -mx-2 sm:mx-0 rounded-md border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="min-w-[140px]">Источник</TableHead>
+              <TableHead className="text-right whitespace-nowrap min-w-[100px]">Доход</TableHead>
+              <TableHead className="text-right whitespace-nowrap min-w-[100px]">Часы задач</TableHead>
+              <TableHead className="text-right whitespace-nowrap min-w-[120px]">Часы переписки</TableHead>
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {rows.map((row, idx) => (
+              <TableRow key={idx}>
+                <TableCell>{row.source || "—"}</TableCell>
+                <TableCell className="text-right whitespace-nowrap">{row.income || 0} BYN</TableCell>
+                <TableCell className="text-right whitespace-nowrap">{row.work_hours || 0} ч</TableCell>
+                <TableCell className="text-right whitespace-nowrap">{row.overhead_hours || 0} ч</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
       <Separator className="my-3" />
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
         <div><Label className="text-muted-foreground">Доход</Label><p className="font-semibold">{totalIncome} BYN</p></div>
@@ -610,28 +616,30 @@ function DiagnosticTableV2Detail({ rows }: { rows: DiagnosticTableV2Row[] }) {
 
   return (
     <>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Клиент</TableHead>
-            <TableHead>Тип</TableHead>
-            <TableHead className="text-right">Доход</TableHead>
-            <TableHead className="text-right">Часы</TableHead>
-            <TableHead></TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {rows.map((row, idx) => (
-            <TableRow key={idx}>
-              <TableCell>{row.client || "—"}</TableCell>
-              <TableCell><Badge variant="outline" className="text-xs">{row.source_type || "—"}</Badge></TableCell>
-              <TableCell className="text-right">{row.monthly_income || 0} BYN</TableCell>
-              <TableCell className="text-right">{(Number(row.direct_hours) || 0) + (Number(row.mental_hours) || 0)} ч</TableCell>
-              <TableCell><V2ClientRowDetails row={row} allRows={rows} /></TableCell>
+      <div className="overflow-x-auto -mx-2 sm:mx-0 rounded-md border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="min-w-[140px]">Клиент</TableHead>
+              <TableHead className="min-w-[90px]">Тип</TableHead>
+              <TableHead className="text-right whitespace-nowrap min-w-[100px]">Доход</TableHead>
+              <TableHead className="text-right whitespace-nowrap min-w-[80px]">Часы</TableHead>
+              <TableHead className="min-w-[90px]"></TableHead>
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {rows.map((row, idx) => (
+              <TableRow key={idx}>
+                <TableCell>{row.client || "—"}</TableCell>
+                <TableCell><Badge variant="outline" className="text-xs whitespace-nowrap">{row.source_type || "—"}</Badge></TableCell>
+                <TableCell className="text-right whitespace-nowrap">{row.monthly_income || 0} BYN</TableCell>
+                <TableCell className="text-right whitespace-nowrap">{(Number(row.direct_hours) || 0) + (Number(row.mental_hours) || 0)} ч</TableCell>
+                <TableCell><V2ClientRowDetails row={row} allRows={rows} /></TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
       <Separator className="my-3" />
       <div className="grid grid-cols-3 gap-3 text-sm">
         <div><Label className="text-muted-foreground">Доход</Label><p className="font-semibold">{totalIncome} BYN</p></div>
@@ -733,13 +741,17 @@ export function StudentProgressModal({
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-[calc(100vw-1rem)] sm:w-[calc(100vw-2rem)] max-w-4xl max-h-[90vh] overflow-y-auto p-4 sm:p-6">
         <DialogHeader>
-          <DialogTitle className="flex items-center justify-between gap-3 text-lg font-semibold">
-            <span>Прогресс ученика</span>
-            <Button variant="outline" size="sm" onClick={exportFullResponse}>
-              <Download className="h-4 w-4 mr-1.5" /> Экспорт ответа
-            </Button>
+          <DialogTitle className="text-base sm:text-lg font-semibold pr-8">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <span>Прогресс ученика</span>
+              <Button variant="outline" size="sm" onClick={exportFullResponse} className="h-8">
+                <Download className="h-4 w-4 mr-1.5" />
+                <span className="hidden sm:inline">Экспорт ответа</span>
+                <span className="sm:hidden">Экспорт</span>
+              </Button>
+            </div>
           </DialogTitle>
         </DialogHeader>
 
@@ -747,24 +759,24 @@ export function StudentProgressModal({
           {/* Student Info — enhanced header */}
           <Card className="border-l-4 border-l-indigo-400">
             <CardContent className="pt-4">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
                   <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-sm font-semibold shrink-0">
                     {initials}
                   </div>
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <p className="font-semibold text-base truncate">{displayName}</p>
                     {profile?.email && displayName !== profile.email && (
                       <p className="text-sm text-muted-foreground truncate">{profile.email}</p>
                     )}
-                    <div className="flex items-center gap-2 flex-wrap mt-1">
+                    <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
                       {productTitle && (
-                        <Badge variant="secondary" className="text-[11px] bg-indigo-50 text-indigo-700 border-indigo-200">
+                        <Badge variant="secondary" className="text-[11px] bg-indigo-50 text-indigo-700 border-indigo-200 max-w-full truncate">
                           {productTitle}
                         </Badge>
                       )}
                       {lessonTitle && (
-                        <Badge variant="outline" className="text-[11px]">
+                        <Badge variant="outline" className="text-[11px] max-w-full truncate">
                           {lessonTitle}
                         </Badge>
                       )}
@@ -787,30 +799,32 @@ export function StudentProgressModal({
             return (
               <Card key={block.id}>
                 <CardHeader className="pb-2">
-                  <CardTitle className="flex items-center justify-between text-base">
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline" className="text-xs shrink-0">
-                        {blockTypeLabel(block.block_type)}
-                      </Badge>
-                      <span>{label}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {resolved.hasResponse ? (
-                        <Badge variant="default" className="text-xs">✓</Badge>
-                      ) : (
-                        <Badge variant="secondary" className="text-xs">Нет ответа</Badge>
-                      )}
-                      {lessonId && record && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 text-xs"
-                          onClick={() => setFeedbackTarget({ blockId: block.id, blockTitle: label })}
-                        >
-                          <MessageSquare className="h-3 w-3 mr-1" />
-                          Связь
-                        </Button>
-                      )}
+                  <CardTitle className="text-sm sm:text-base">
+                    <div className="flex items-start justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2 min-w-0 flex-1 flex-wrap">
+                        <Badge variant="outline" className="text-xs shrink-0">
+                          {blockTypeLabel(block.block_type)}
+                        </Badge>
+                        <span className="break-words">{label}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {resolved.hasResponse ? (
+                          <Badge variant="default" className="text-xs">✓</Badge>
+                        ) : (
+                          <Badge variant="secondary" className="text-xs">Нет ответа</Badge>
+                        )}
+                        {lessonId && record && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs px-2"
+                            onClick={() => setFeedbackTarget({ blockId: block.id, blockTitle: label })}
+                          >
+                            <MessageSquare className="h-3 w-3 sm:mr-1" />
+                            <span className="hidden sm:inline">Связь</span>
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   </CardTitle>
                 </CardHeader>
