@@ -141,16 +141,8 @@ const emptyCoeff = (): CoeffRow => ({
 const DEFAULT_STATE: ExternalProductState = {
   client_types: [emptyClientType()],
   complexity: [emptyCoeff()],
-  service_levels: [
-    { id: uid(), name: "База", description: "", conclusion: "", coefficient: 1.0, price: 0 },
-    { id: uid(), name: "Стандарт", description: "", conclusion: "", coefficient: 1.3, price: 0 },
-    { id: uid(), name: "Премиум", description: "", conclusion: "", coefficient: 1.6, price: 0 },
-  ],
-  responsibility: [
-    { id: uid(), name: "Ограниченная", description: "", conclusion: "", coefficient: 1.0, price: 0 },
-    { id: uid(), name: "Расширенная", description: "", conclusion: "", coefficient: 1.4, price: 0 },
-    { id: uid(), name: "Полная", description: "", conclusion: "", coefficient: 1.8, price: 0 },
-  ],
+  service_levels: [emptyCoeff()],
+  responsibility: [emptyCoeff()],
   portfolio_pricing: [],
   import_meta: null,
   completed_at: null,
