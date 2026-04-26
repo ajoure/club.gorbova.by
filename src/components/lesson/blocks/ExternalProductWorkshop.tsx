@@ -867,6 +867,18 @@ function Stat({ label, value, suffix }: { label: string; value: string; suffix?:
   );
 }
 
+function ProofTile({ title, ok, text }: { title: string; ok: boolean; text: string }) {
+  return (
+    <div className="rounded-lg border border-border/60 bg-card p-3">
+      <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+        {ok ? <CheckCircle2 className="h-3.5 w-3.5 text-green-600" /> : <AlertTriangle className="h-3.5 w-3.5 text-muted-foreground" />}
+        {title}
+      </div>
+      <div className="mt-1 text-sm font-medium">{text}</div>
+    </div>
+  );
+}
+
 function CoeffSection({
   icon,
   index,
