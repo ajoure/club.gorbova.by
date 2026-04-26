@@ -318,16 +318,30 @@ export default function PublicPayPage() {
   const needsIdentity = linkInfo.requires_identity_input && !user;
   const isSubscription = linkInfo.payment_type === 'subscription';
 
-  // PAY-C visibility: NULL OR equal — public link OR personal link of current user.
+  // PAY-D visibility: NULL OR equal — public link OR personal link of current user.
   const ownsOrPublic =
     !!user &&
     (linkInfo.link_user_id === null || linkInfo.link_user_id === user.id);
-  const showSavedCard =
+  // PAY-D: saved-card selector — one_time only (subscription handled by PAY-E).
+  const showSavedCardSelector =
     ownsOrPublic &&
     !isSubscription &&
     Array.isArray(savedCards) &&
     savedCards.length > 0;
   const showSubscriptionFallbackHint = ownsOrPublic && isSubscription;
+
+  // PAY-D: pick default selection once cards are loaded.
+  // Priority: is_default → first card → 'new_card'.
+  useEffect(() => {
+    if (!showSavedCardSelector) {
+      if (selectedMethod !== 'new_card') setSelectedMethod('new_card');
+      return;
+    }
+    if (selectedMethod !== 'new_card' && savedCards!.some((c) => c.id === selectedMethod)) return;
+    const def = savedCards!.find((c) => c.is_default) || savedCards![0];
+    setSelectedMethod(def?.id || 'new_card');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showSavedCardSelector, savedCards]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-muted/30 to-background">
