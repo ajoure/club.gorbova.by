@@ -215,11 +215,11 @@ export function PaymentDialog({
       if (authInProgressRef.current && user && session) {
         authInProgressRef.current = false;
         setExistingUserId(user.id);
-        loadSavedCard(user.id);
+        loadSavedCards(user.id);
         return; // Skip full reset — keep formData, step, selectedOffer intact
       }
 
-      setSavedCard(null);
+      setSavedCards([]);
       setIsLoadingCard(false);
       setTelegramDeepLink(null);
       setShowTrialUsedModal(false);
