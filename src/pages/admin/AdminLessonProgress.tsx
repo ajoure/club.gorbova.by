@@ -494,10 +494,15 @@ export default function AdminLessonProgress() {
                           </span>
                         </TableHead>
                       ))}
-                      <TableHead className="text-center min-w-[100px]">💬 Связь</TableHead>
-                      <TableHead className="min-w-[90px]">Статус</TableHead>
-                      <TableHead className="min-w-[130px]">Обновлено</TableHead>
-                      <TableHead className="min-w-[90px]"></TableHead>
+                      <TableHead className="text-center min-w-[110px]">
+                        <span className="inline-flex items-center gap-1.5">
+                          <MessageCircle className="h-3.5 w-3.5" />
+                          Связь
+                        </span>
+                      </TableHead>
+                      <TableHead className="min-w-[110px]">Статус</TableHead>
+                      <TableHead className="min-w-[140px]">Обновлено</TableHead>
+                      <TableHead className="min-w-[100px] text-right">Действия</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
