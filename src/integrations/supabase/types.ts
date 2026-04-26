@@ -14427,6 +14427,10 @@ export type Database = {
         Args: { _live_event_id: string; _user_id: string }
         Returns: boolean
       }
+      log_training_event: {
+        Args: { _action: string; _meta?: Json; _target_user_id: string }
+        Returns: string
+      }
       manage_news_cron: {
         Args: {
           p_afternoon_utc_hour: number

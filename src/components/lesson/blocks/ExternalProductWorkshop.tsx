@@ -47,6 +47,7 @@ import {
   loadPortfolioFromPreviousLesson,
   type PortfolioRow,
 } from "@/lib/loadPortfolioFromPreviousLesson";
+import { logTrainingEvent } from "@/lib/auditTrainingActions";
 
 /* ──────────────────────────── Типы данных ──────────────────────────── */
 
@@ -439,6 +440,25 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
   }, [state.client_types, state.portfolio_pricing.length]);
   const isCompleted = !!state.completed_at && !completionValidation;
 
+  const refetchProof = useCallback(async () => {
+    if (!userId) return;
+    const { data: proofRow } = await supabase
+      .from("user_lesson_progress")
+      .select("completed_at, response, updated_at")
+      .eq("user_id", userId)
+      .eq("lesson_id", lessonId)
+      .eq("block_id", blockId)
+      .maybeSingle();
+    const proofResponse = (proofRow?.response as { state?: ExternalProductState } | null)?.state;
+    setProgressProof({
+      checked_at: new Date().toISOString(),
+      row_exists: !!proofRow,
+      block_completed: !!proofRow?.completed_at,
+      admin_source_ready: !!proofRow,
+      response_has_portfolio: Array.isArray(proofResponse?.portfolio_pricing) && proofResponse.portfolio_pricing.length > 0,
+    });
+  }, [userId, lessonId, blockId]);
+
   const handleComplete = async () => {
     if (completionValidation) {
       setCompletionError(completionValidation);
@@ -448,8 +468,6 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
     const completedAt = new Date().toISOString();
     const nextState = { ...state, completed_at: completedAt };
     setState((s) => ({ ...s, completed_at: completedAt }));
-    // Канонический путь — обновляет useUserProgress в реальном времени и
-    // гарантирует засчитывание блока в общей системе прогресса урока.
     if (onCanonicalSave) {
       const payload = {
         type: "external_product_workshop",
@@ -460,23 +478,17 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
       };
       await onCanonicalSave(payload, true);
     }
-    if (userId) {
-      const { data: proofRow } = await supabase
-        .from("user_lesson_progress")
-        .select("completed_at, response")
-        .eq("user_id", userId)
-        .eq("lesson_id", lessonId)
-        .eq("block_id", blockId)
-        .maybeSingle();
-      const proofResponse = (proofRow?.response as { state?: ExternalProductState } | null)?.state;
-      setProgressProof({
-        checked_at: new Date().toISOString(),
-        row_exists: !!proofRow,
-        block_completed: !!proofRow?.completed_at,
-        admin_source_ready: !!proofRow,
-        response_has_portfolio: Array.isArray(proofResponse?.portfolio_pricing) && proofResponse.portfolio_pricing.length > 0,
-      });
-    }
+    await refetchProof();
+    // Audit log — best-effort
+    void logTrainingEvent("training.external_product_workshop.completed", userId, {
+      lesson_id: lessonId,
+      block_id: blockId,
+      student_user_id: userId,
+      source: "student",
+      client_types_count: nextState.client_types.filter((r) => r.name.trim()).length,
+      portfolio_count: nextState.portfolio_pricing.length,
+      completed: true,
+    });
     setCompletionError(null);
     toast.success("Шаг 3 завершён");
   };
@@ -492,7 +504,40 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
       };
       await onCanonicalSave(payload, false);
     }
+    await refetchProof();
+    void logTrainingEvent("training.external_product_workshop.reopened", userId, {
+      lesson_id: lessonId,
+      block_id: blockId,
+      student_user_id: userId,
+      source: "student",
+      completed: false,
+    });
     toast("Можете редактировать данные");
+  };
+
+  const handleSelfExport = () => {
+    const payload = {
+      exported_at: new Date().toISOString(),
+      lesson_id: lessonId,
+      block_id: blockId,
+      user_id: userId,
+      state,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `external-product-${userId ?? "anon"}-${blockId}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    void logTrainingEvent("training.student_response.exported", userId, {
+      lesson_id: lessonId,
+      block_id: blockId,
+      student_user_id: userId,
+      source: "student_self",
+      format: "json",
+    });
+    toast.success("Ответ скачан");
   };
 
   if (loading) {
@@ -785,6 +830,14 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
               Автопроверка: ученик завершил блок — {progressProof.block_completed ? "да" : "нет"}; блок засчитан — {progressProof.block_completed ? "да" : "нет"}; ученик появится в admin progress — {progressProof.admin_source_ready ? "да" : "нет"}; ответ содержит портфель — {progressProof.response_has_portfolio ? "да" : "нет"}. Проверено: {new Date(progressProof.checked_at).toLocaleString("ru-RU")}.
             </div>
           )}
+          <div className="flex flex-wrap gap-2 pt-1">
+            <Button variant="outline" size="sm" onClick={refetchProof} disabled={!userId}>
+              <RefreshCw className="h-4 w-4 mr-1.5" /> Обновить proof
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleSelfExport} disabled={!userId}>
+              <Download className="h-4 w-4 mr-1.5" /> Скачать мой ответ
+            </Button>
+          </div>
         </CardContent>
       </Card>
 

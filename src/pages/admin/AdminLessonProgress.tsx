@@ -15,7 +15,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ArrowLeft, ChevronRight, Eye, Users, MessageSquare } from "lucide-react";
+import { ArrowLeft, ChevronRight, Eye, Users, MessageSquare, Download } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { StudentProgressModal } from "@/components/admin/trainings/StudentProgressModal";
@@ -27,6 +27,8 @@ import {
   resolveProgressValue,
   type BlockMeta,
 } from "@/lib/blockProgressResolver";
+import { logTrainingEvent } from "@/lib/auditTrainingActions";
+import { toast } from "sonner";
 
 type LessonProgressRecord = ModalRecord;
 type LessonBlock = ModalBlock;
@@ -103,13 +105,16 @@ export default function AdminLessonProgress() {
         const existing = byUser.get(row.user_id);
         const completedAt = row.completed_at || null;
         if (existing) {
+          const manualNewer = new Date(row.updated_at) > new Date(existing.updated_at);
+          // «Свежее по updated_at побеждает» — снятие завершения в manual-блоке
+          // не должно оставлять старый completed_at от kvest-прогресса.
+          const nextCompletedAt = manualNewer
+            ? completedAt
+            : (existing.completed_at || completedAt);
           byUser.set(row.user_id, {
             ...existing,
-            updated_at:
-              new Date(row.updated_at) > new Date(existing.updated_at)
-                ? row.updated_at
-                : existing.updated_at,
-            completed_at: existing.completed_at || completedAt,
+            updated_at: manualNewer ? row.updated_at : existing.updated_at,
+            completed_at: nextCompletedAt,
             progress_sources: Array.from(
               new Set([...(existing.progress_sources || []), "user_lesson_progress"])
             ),
@@ -256,6 +261,89 @@ export default function AdminLessonProgress() {
     ? Math.round(answeredCounts.reduce((s, c) => s + c, 0) / totalStudents)
     : 0;
 
+  // Dev-only invariant: один user_id = одна строка
+  if (typeof window !== "undefined" && progressRecords) {
+    const uniq = new Set(progressRecords.map((r) => r.user_id));
+    if (uniq.size !== progressRecords.length) {
+      console.warn("[AdminLessonProgress] duplicate user rows detected", {
+        rows: progressRecords.length,
+        unique: uniq.size,
+      });
+    }
+  }
+
+  const csvEscape = (v: unknown) => {
+    if (v === null || v === undefined) return "";
+    const s = String(v);
+    if (/[",\r\n;]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  };
+
+  const exportProgressCsv = () => {
+    if (!progressRecords?.length) {
+      toast.warning("Нет данных для экспорта");
+      return;
+    }
+    const headers = [
+      "student_name",
+      "email",
+      "status",
+      "updated_at",
+      "progress_source",
+      ...interactiveBlocks.map((b) => getBlockLabel(b)),
+    ];
+    const lines: string[] = [headers.map(csvEscape).join(",")];
+    for (const record of progressRecords) {
+      const profile = (record as any).profiles as any;
+      const sources = ((record as any).progress_sources || []) as string[];
+      const status = record.completed_at ? "Завершён" : "В процессе";
+      const row: string[] = [
+        csvEscape(profile?.full_name || ""),
+        csvEscape(profile?.email || ""),
+        csvEscape(status),
+        csvEscape(record.updated_at),
+        csvEscape(sources.join("+")),
+      ];
+      for (const block of interactiveBlocks) {
+        const resp = getUserBlockResponse(record, block);
+        const resolved = resolveProgressValue(block.block_type, resp, block.content);
+        if (block.block_type === "external_product_workshop") {
+          const r = (resp as any) || {};
+          const st = r.state || r;
+          const ct = Array.isArray(st?.client_types) ? st.client_types.filter((x: any) => x?.name?.trim()).length : 0;
+          const pf = Array.isArray(st?.portfolio_pricing) ? st.portfolio_pricing.length : 0;
+          const completed = !!st?.completed_at;
+          const importSrc = st?.import_meta?.source_lesson_id || "";
+          row.push(
+            csvEscape(
+              `client_types=${ct}; portfolio=${pf}; completed=${completed ? "yes" : "no"}; import_source=${importSrc}`
+            )
+          );
+        } else {
+          row.push(csvEscape(resolved.summary || ""));
+        }
+      }
+      lines.push(row.join(","));
+    }
+    // UTF-8 BOM for Excel
+    const csv = "\uFEFF" + lines.join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    a.href = url;
+    a.download = `lesson-progress-${lessonId}-${stamp}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    void logTrainingEvent("training.lesson_progress.exported", null, {
+      lesson_id: lessonId || null,
+      source: "teacher",
+      format: "csv",
+      rows: progressRecords.length,
+    });
+    toast.success("CSV скачан");
+  };
+
   if (lessonLoading) {
     return (
       <AdminLayout>
@@ -374,8 +462,16 @@ export default function AdminLessonProgress() {
 
         {/* Progress Table — dynamic columns with horizontal scroll */}
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
             <CardTitle>Список учеников</CardTitle>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={exportProgressCsv}
+              disabled={!progressRecords?.length}
+            >
+              <Download className="h-4 w-4 mr-1.5" /> Экспорт CSV
+            </Button>
           </CardHeader>
           <CardContent>
             {progressLoading ? (
