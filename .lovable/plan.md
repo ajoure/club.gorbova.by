@@ -155,4 +155,43 @@ Audit пишется ДО возврата ответа функции; при �
 - ✅ Все audit записи содержат `tg_id, club_id, reason, final_status, requested_by, source_function`.
 - ✅ Итоговый отчёт сгенерирован автоматически и приложен.
 
+---
+
+### Дополнение v5.2 — Персональные invite-ссылки: переиспользование, без дублирования
+
+**Жёсткое правило (add-only, не отменяет ничего из v5/v5.1):**
+
+1. **Запрещено создавать новую edge function / новый RPC / новый writer** для персональных Telegram invite-ссылок под БкБ. Любая такая работа = нарушение архитектурного контракта.
+
+2. **Единственный допустимый путь** — существующий канонический flow выдачи персональных ссылок:
+   - Edge function: `telegram-grant-access` (см. `mem://architecture/telegram/access-grant-integrity-v1`).
+   - Таблица: `telegram_invite_links`.
+   - Движок: `mem://architecture/telegram/unified-club-engine-v3` — параметризация по `club_id` + `resource_mode`.
+   - Контракт ссылки: персональная, с полями
+     `club_id, user_id, telegram_user_id (expected_tg_id), invite_code, member_limit=1, expire_date=now()+24h`.
+
+3. **Шаг 0 раздела J (обязательно ДО любых действий по БкБ):**
+   Сделать **mapping-документ** `buh_business_invite_flow_mapping.md`:
+   - какой code path использует Gorbova Club (далее GC) для выдачи персональной ссылки (функция, таблица, поля, аудит-события);
+   - какой code path сейчас использует БкБ;
+   - дельта между ними (что отличается: писатель ссылки, источник `expected_tg_id`, `member_limit`, `expire_date`, привязка `club_id`, аудит).
+   - **Если flow совпадает** → подтвердить и зафиксировать.
+   - **Если flow отличается** → привести БкБ к GC-пути через параметризацию `club_id`, БЕЗ создания новой функции и БЕЗ ветвления «if club = bkb».
+
+4. **Параметризация:**
+   - Любое поведение должно управляться `club_id` (и при необходимости `clubs.resource_mode` / конфигом клуба в БД), а не хардкодом названия клуба или email-исключениями.
+   - Запрещены любые `if (club_slug === 'buh-business')` и аналогичные брэнч-конструкции в коде ссылок/доступа.
+
+5. **Anti-duplication guard:**
+   - Перед любым PR/патчем — `rg` поиск по проекту на предмет существующих writer'ов `telegram_invite_links` и вызовов `createChatInviteLink` / эквивалента в gateway. Если найдено ≥1 — переиспользовать, не плодить.
+   - Любая «вторая» точка создания ссылки = блок-стопер, патч не выпускается.
+
+6. **DoD v5.2 (добавляется к DoD v5.1):**
+   - ✅ Mapping GC ↔ БкБ зафиксирован в `buh_business_invite_flow_mapping.md` и приложен к отчёту.
+   - ✅ В репозитории остаётся **ровно один** code path создания персональной Telegram invite-ссылки.
+   - ✅ Поведение для БкБ управляется только `club_id` (и конфигом клуба), без хардкода.
+   - ✅ Новых edge functions/RPC/таблиц для персональных ссылок не создано (подтверждается diff'ом миграций и `supabase/functions.registry.txt`).
+   - ✅ Все выданные в рамках задачи ссылки имеют `member_limit=1`, `expire_date ≤ now()+24h`, `expected_tg_id` совпадает с целевым `tg_id`, `club_id` = БкБ.
+   - ✅ Аудит-события создания ссылки содержат `club_id, user_id, expected_tg_id, invite_code, source_function='telegram-grant-access'`.
+
 Готов выполнять по утверждении.
