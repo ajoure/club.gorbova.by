@@ -261,6 +261,7 @@ const App = () => {
               <Route path="/admin/integrations/telegram/product-mappings" element={<ProtectedRoute><LazyRoute><ProductClubMappings /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/integrations/telegram/analytics" element={<ProtectedRoute><LazyRoute><AdminLayout><TelegramChatAnalytics /></AdminLayout></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/telegram-diagnostics" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminTelegramDiagnostics /></AdminLayout></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/telegram/invite-audit" element={<ProtectedRoute><LazyRoute><AdminTelegramInviteAudit /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/fields" element={<ProtectedRoute><LazyRoute><AdminFieldRegistry /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/system/audit" element={<ProtectedRoute><LazyRoute><AdminSystemAudit /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/system-health" element={<ProtectedRoute><LazyRoute><AdminSystemHealth /></LazyRoute></ProtectedRoute>} />
