@@ -352,3 +352,70 @@ Self-test (insert синтетических audit-записей) считае�
 - ✅ В отчёте явно указаны 5 пунктов из секции «Финальный отчёт».
 
 Готов выполнять по утверждении.
+
+---
+
+### Дополнение v5.5 (add-only к v5.1–v5.4, ничего не удаляется и не заменяется)
+
+Все требования v5.1, v5.2, v5.3 и v5.4 остаются в силе. Ниже — только уточнения и дополнения.
+
+#### 1. Уточнение «read-only» для `telegram-bot-rights-check`
+
+Функция read-only **по invite/access-данным** (не пишет в `telegram_invite_links`, `entitlements`, `subscriptions`, `telegram_*_members` и т.п.).
+**Запись в `telegram_access_audit` события `BOT_RIGHTS_INSUFFICIENT` разрешена** как служебный лог — это не нарушение read-only-контракта, аудит трактуется как side-channel логирование, а не как writer бизнес-данных.
+
+Meta для `BOT_RIGHTS_INSUFFICIENT` (обязательно):
+`club_id, chat_id, bot_id, missing[], source_function='telegram-bot-rights-check', decision='blocked', reason='bot_rights_insufficient', test=false`.
+
+#### 2. Уточнение требуемых прав бота (Telegram ChatMember)
+
+Обновлённый минимум для включения `join_request_mode=true`:
+
+| Право | Зачем | Требуется |
+|---|---|---|
+| `can_invite_users` | создавать invite links **и** approve/decline join requests | ✅ да |
+| `can_restrict_members` | ban / unban участников | ✅ да |
+| `can_promote_members` | повышение прав других | ❌ **не требуется**, явно фиксируем |
+
+Любые другие булевы поля `ChatMemberAdministrator` не проверяем в рамках этого pre-check.
+
+#### 3. `bot_id` — только через `getMe()`
+
+`bot_id` для `getChatMember(chat_id, bot_id)` **запрещено хардкодить** в коде, env-переменных или конфиге клуба.
+Перед каждым pre-check: вызов `getMe()` через connector gateway, кэш на время одного запроса (не персистентный). Если `getMe()` падает → STOP, audit `BOT_RIGHTS_INSUFFICIENT` с `reason='getme_failed'`, `join_request_mode` не включается.
+
+#### 4. Self-test audit — обязательная маркировка
+
+Synthetic / self-test записи в `telegram_access_audit` запрещено писать в production без явных маркеров. Контракт:
+
+- `meta.test = true` (boolean, обязательно);
+- `source_function = 'self_test'` (строго это значение, не реальное имя edge function);
+- В UI `/admin/telegram/invite-audit` по умолчанию **скрывать** записи с `meta.test=true` (toggle «Показать тестовые», off by default);
+- Runtime-tests из v5.4 (раздел 4) пишутся **без** `meta.test=true` — это реальные события на test-user, они должны выглядеть как production-события.
+
+#### 5. Навигация админки
+
+Маршрут `/admin/telegram/invite-audit` добавляется в админ-сайдбар (раздел Telegram), видимость — только для `isAdmin || isSuperAdmin`, иконка — нейтральная (например, `ScrollText` / `ShieldCheck`), без write-кнопок ни в карточке навигации, ни на самой странице.
+
+В `routeToTitle` (`AdminLayout.tsx`) добавить: `'/admin/telegram/invite-audit': 'Telegram invite audit'`.
+В `routeToHelpAnchor` — указать `'telegram-clubs'` (используем существующий якорь, новых не создаём).
+
+#### 6. Add-only гарантия
+
+v5.5 **только дополняет** требования v5.1–v5.4. Запрещено:
+- удалять или ослаблять любое требование из v5.1, v5.2, v5.3, v5.4;
+- заменять список audit-событий, контракт meta, состав writer'ов, DoD-пункты;
+- переименовывать события/поля задним числом.
+
+При конфликте трактовок — приоритет имеет более строгое требование из любой версии (v5.1–v5.5).
+
+#### DoD v5.5 (добавляется к DoD v5.1/v5.2/v5.3/v5.4)
+
+- ✅ `telegram-bot-rights-check` явно read-only по invite/access; единственная допустимая запись — `BOT_RIGHTS_INSUFFICIENT` в `telegram_access_audit`.
+- ✅ Pre-check проверяет ровно `can_invite_users` + `can_restrict_members`; `can_promote_members` исключён.
+- ✅ `bot_id` получается через `getMe()` на каждый pre-check, не хардкодится.
+- ✅ Все self-test записи имеют `meta.test=true` и `source_function='self_test'`; UI скрывает их по умолчанию.
+- ✅ Маршрут `/admin/telegram/invite-audit` присутствует в сайдбаре под RBAC-гардом, без write-кнопок.
+- ✅ Все требования v5.1–v5.4 сохранены без изменений (add-only подтверждено).
+
+Готов выполнять.
