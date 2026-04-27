@@ -45,6 +45,7 @@ import {
   ChevronDown,
   Activity,
   BookOpen,
+  ShieldCheck,
 } from "lucide-react";
 
 export function AdminSidebar() {
@@ -377,6 +378,12 @@ export function AdminSidebar() {
                 <DropdownMenuItem onClick={() => navigate("/admin/docs")} className="gap-2">
                   <BookOpen className="h-4 w-4" />
                   Документация системы
+                </DropdownMenuItem>
+              )}
+              {isSuperAdmin && (
+                <DropdownMenuItem onClick={() => navigate("/admin/telegram/audit-shape-runs")} className="gap-2">
+                  <ShieldCheck className="h-4 w-4" />
+                  Telegram audit-shape runs
                 </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />
