@@ -1,205 +1,158 @@
-## да, согласен, с учетом правок:
+## План v5.1 (финальный, add-only) — «Бухгалтерия как бизнес»
 
-```text
-1. Убрать из плана bulk-revoke 7 аккаунтов. Они не нарушители: link_check=match.
+Все разделы v5 сохраняются. Ниже — дополнения v5.1 (приняты к утверждению).
 
-2. Зафиксировать новый факт:
-   - в чате 35 человек;
-   - 33 платных;
-   - 1 админ;
-   - 1 Ирина Гаринова — персонал/админ по бизнес-правилу;
-   - unauthorized/mismatch = 0.
+---
 
-3. Основной фокус перенести с банов на:
-   - исправление UI-счётчиков 28/38/35;
-   - единый SoT по club_id;
-   - корректное разделение paid / admin / personnel / removed / channel-state.
+### Раздел G (новый). CSV schema validation (фейл-клоуз)
 
-4. Ирина Гаринова:
-   - добавить отдельный whitelist/role-механизм как staff/manual admin access, а не считать нарушителем.
-   - в UI показывать «Персонал» или «Администратор», не «без доступа».
+Перед запуском любого dry-run/kick этапа резолвер обязан валидировать заголовок CSV против эталона.
 
-5. join_request_mode оставить в плане, но только как защита на будущее:
-   - сначала проверить права бота;
-   - включать после dry-run;
-   - не использовать как повод для кика текущих участников.
-
-6. CSV/dry-run оставить обязательными:
-   - полный tg_id список;
-   - paid/access/chat/admin/personnel classification;
-   - источники, откуда UI берёт 38.
-
-7. DoD обновить:
-   - UI «в чате» показывает 35;
-   - paid и staff/admin считаются отдельно;
-   - unauthorized = 0;
-   - removed/in_channel/stale записи не попадают в счётчик живого чата;
-   - все цифры сходятся с SQL snapshot на одном timestamp.
-
-План v3 (add-only) — «Бухгалтерия как бизнес»: ревизия + ужесточение Telegram-инвайтов
+Эталонный набор колонок (порядок зафиксирован):
+```
+email, full_name, telegram_username, tg_id_in_profile, tg_id_in_chat,
+link_check, entitlement_status, subscription_status, manual_access,
+staff_role, final_status, reason, club_id, telegram_chat_id
 ```
 
-**Важная корректировка после повторной проверки:**
-Я был неправ в v2, когда называл 7 username «вторыми аккаунтами». Перепроверка по join `telegram_club_members.telegram_user_id ↔ profiles.telegram_user_id` через `profile_id` показала:
+Правила:
+- Отсутствует хотя бы одна колонка → STOP, файл не используется, audit `CSV_SCHEMA_MISSING_COLUMN`.
+- Есть лишняя колонка → STOP, audit `CSV_SCHEMA_UNEXPECTED_COLUMN`.
+- Порядок колонок не совпадает → STOP, audit `CSV_SCHEMA_ORDER_MISMATCH`.
+- Любой STOP — без частичной обработки строк.
 
-
-| Метрика                                                                    | Значение |
-| -------------------------------------------------------------------------- | -------- |
-| Всего в чате (`in_chat=true`)                                              | **35**   |
-| Из них с активным entitlement по БкБ (`link_check=match`)                  | **33**   |
-| Админ (Сергей Федорчук)                                                    | **1**    |
-| Персонал без entitlement (Ирина Гаринова, по вашему подтверждению — админ) | **1**    |
-| MISMATCH (tg_id в чате ≠ привязанному в профиле)                           | **0**    |
-| no_profile_link / profile_no_tg                                            | **0**    |
-
-
-**Нелегитимных в чате нет.** Все 7 «подозреваемых» из v2 (`Iris_Fess`, `fs_by`, `MariyaBuhgalterGomel`, `anastasiya_hzarko`, `Karina_chernoglazova`, `Irina_Garinova`, `MaiyaAD`) — это реальные привязанные профили с активным правом доступа (или персонал). Бан-лист отменяется.
-
-**Цифра «38» в UI** не сходится с фактом 35. Это баг отображения (скорее всего считает `in_chat OR in_channel` или включает `access_status='removed'`). Это правится только в UI, БД-данные корректны.
+Реализация: общая утилита `validateCsvSchema(filePath, expectedHeader[])`, используется и в edge-функции, и в локальных скриптах генерации CSV (чтобы CSV не мог быть выпущен с другим набором).
 
 ---
 
-### Принятые add-only правила
+### Раздел H (новый). UI «Проверка доступа» (новый таб в «Участники клуба»)
 
-План полностью встраивается в существующие стандарты — ничего не сносим:
+В странице клуба добавляется таб **«Проверка доступа»** с фильтрами по `final_status`:
 
-- TG-доступы: `architecture/telegram/access-grant-integrity-v1`
-- Club-as-SoT: `architecture/access-control/club-product-sot`
-- Save≠Grant: `architecture/fulfillment/canonical-write-path-standard`
-- Revoke/queue guards: `infrastructure/access/revoke-race-condition-guard`
-- Audit standard: `architecture/access-control/audit-actor-standard`
+- `verified_paid`
+- `verified_staff`
+- `pending_review`
+- `no_valid_access`
+- `mismatch`
+- `duplicate_tg`
 
----
+Колонки таблицы: username, full_name, email, tg_id_in_chat, tg_id_in_profile, link_check, ent_status, sub_status, manual_access, staff_role, **final_status (бейдж)**, **reason (текст)**.
 
-### Часть 0. Когорта оттока (без изменений из v2)
-
-
-| Месяц | Уник. оплативших |
-| ----- | ---------------- |
-| Янв   | 4 · Фев          |
-
-
-«Отвалившихся» по факту 1 человек (Екатерина Юролайть, expired 07.03). Ещё 5 — `active` подписки с датой следующего списания 28–30 апреля (списание ещё впереди, не отток).
-
----
-
-### Часть 1. Read-only аудиты (Diagnose) — ВЫПОЛНЯЕТСЯ ПЕРВЫМ, БЕЗ ЛЮБЫХ МУТАЦИЙ
-
-CSV-экспорт в `/mnt/documents/`:
-
-**A. `buh_business_chat_roster.csv**` — полный список всех `in_chat=true` в чате БкБ:
-`telegram_user_id, telegram_username, tg_display_name, profile_email, profile_full_name, profile_tg_id, link_check, ent_status, ent_expires, sub_status, sub_end, app_roles, joined_chat_at`.
-Это и есть «список tg-аккаунтов с разрешённым доступом» для ручной сверки.
-
-**B. `buh_business_payments_cohort.csv**` — все, кто когда-либо платил (с jan/feb/mar/apr флагами, last_paid, статусом подписки и entitlement).
-
-**C. `buh_business_funnel_anomalies.csv**` — 1 paid order без `pipeline_stage_id` + pending без стадии.
-
-**D. `buh_business_dryrun_revoke.csv**` — кандидаты на revoke (только expired/superseded, чей профиль до сих пор `in_chat=true`). На текущий момент по живой проверке таких **нет** — файл будет пустой. Это ожидаемо.
-
-**STOP**: после генерации CSV показываю вам, никаких UPDATE/ban/revoke без вашего явного «ок».
+Функции:
+- Поиск по email / username / tg_id / full_name.
+- Фильтр-чипы по `final_status` (мульти-выбор).
+- Бейджи окрашены: paid/staff — зелёный, pending — жёлтый, no_valid/mismatch/duplicate — красный.
+- Тултип на бейдже: текст из `reason` + ссылка на audit_log этой записи.
+- Действие «kick» в строке доступно ТОЛЬКО если `final_status ∈ {no_valid_access, mismatch, duplicate_tg}`. Для verified_*/pending — кнопка disabled с подсказкой «заблокировано guard'ом».
+- Источник данных: тот же RPC, что использует safe-mode auto-kick (единый резолвер из раздела 0a). Никаких параллельных вычислений.
 
 ---
 
-### Часть 2. CRM (минорное, после CSV-подтверждения)
+### Раздел I (новый). Audit блокировок (расширение C)
 
-1. UPDATE 1 paid order → стадия «Успешно» (по вашему подтверждению из CSV-C).
-2. Tooltip в шапке Kanban: «Сделки = подписки. Платежи = списания (включая повторные)». Объясняет «27 vs 11».
-3. Опц. переключатель «Все в стадии / Новые за период» в Summary Strip.
+Все блокировки kick/revoke пишутся в `audit_logs` с одним из event_type:
 
----
+- `KICK_BLOCKED_VERIFIED` — попытка kick по `verified_paid` или `verified_staff`.
+- `KICK_BLOCKED_PENDING_REVIEW` — попытка kick по `pending_review`.
+- `KICK_BLOCKED_CROSS_CLUB` — несовпадение club_id/chat_id (см. раздел J).
+- `KICK_BLOCKED_INVALID_REASON` — `reason` вне разрешённого enum.
 
-### Часть 3. Ужесточение инвайт-политики (превентивно, на будущее)
+Обязательный `meta` для каждого:
+```json
+{
+  "tg_id": <bigint>,
+  "club_id": "<uuid>",
+  "reason": "<input reason>",
+  "final_status": "<computed by resolver>",
+  "requested_by": "<actor uuid or 'system'>",
+  "source_function": "<edge function name>"
+}
+```
 
-Текущее состояние (проверено в коде):
+Дополнительно для `KICK_BLOCKED_CROSS_CLUB` в meta: `member_club_id`, `request_club_id`, `chat_id_in_club`, `chat_id_in_request`, `invite_club_id` (если применимо).
 
-- `member_limit:1` + `expire_date:24h` уже стоят. ✓
-- При `join_request_mode=true` — строгая проверка tg_id в `chat_join_request`. ✓
-- У БкБ-клуба `join_request_mode=false` → ссылка работает напрямую. **Дыра.**
-- В webhook на mismatch (`telegram-webhook/index.ts:1199–1247`) только лог `INVITE_MISMATCH`, без ban.
-
-#### 3.1. Включить `join_request_mode=true` для клуба БкБ — С ПРЕДВАРИТЕЛЬНОЙ ПРОВЕРКОЙ
-
-Перед UPDATE: вызвать `getChatMember` для бота → проверить, что бот **админ** в чате с правами `can_invite_users` + `can_restrict_members`. Если прав нет → **STOP**, выдать ошибку «Дайте боту права администратора с can_invite_users и can_restrict_members, затем повторите». Не включать режим без прав.
-
-#### 3.2. Авто-кик при `INVITE_MISMATCH` (доработка `telegram-webhook/index.ts`)
-
-В блоке обработки `chat_member` при mismatch добавить:
-
-1. `revokeChatInviteLink` (одноразовость уже стояла, но дополнительно убиваем).
-2. `banChatMember` **только** в `club.telegram_chat_id` (никаких `channel_id`, никакой cross-club логики).
-3. Если у клуба `channel_id` не задан — channel state не трогаем.
-4. Audit `AUTO_KICK_MISMATCH` с `meta = { invite_code, invite_link_id, expected_tg_id, actual_tg_id, club_id, decision: 'ban' }`. `club_id` обязателен в каждой записи.
-5. DM нарушителю «Эта ссылка персональная для другого Telegram-аккаунта». DM-ошибка **не блокирует** ban; в audit фиксируем `dm_sent=true|false` + `dm_error`.
-
-#### 3.3. Decline в `chat_join_request` — обогатить audit
-
-При decline (нет активного доступа) дополнительно сохранять `expected_tg_id` (если invite_code присутствует в payload `chat_join_request.invite_link.invite_link`). Поведение не меняется, только аудит детальнее.
-
-#### 3.4. Bulk-revoke — отменён
-
-Перепроверка показала, что нелегитимных нет. Никаких массовых kick/ban. Никаких action на `Iris_Fess`, `fs_by`, `MariyaBuhgalterGomel`, `anastasiya_hzarko`, `Karina_chernoglazova`, `Irina_Garinova`, `MaiyaAD` не делаем — они все легитимны.
-
-#### 3.5. Если в CSV-A после ручной сверки вы укажете лишних — отдельный шаг
-
-Только тогда вызовем существующий `telegram-revoke-access` (по одному, с подтверждением каждого), `reason='manual_review_unauthorized'`, audit `MANUAL_KICK_REVIEWED`, `club_id` обязателен.
+Audit пишется ДО возврата ответа функции; при ошибке записи audit — функция возвращает 500 без выполнения kick (фейл-клоуз).
 
 ---
 
-### Часть 4. UI
+### Раздел J (новый). Cross-club guard
 
-#### 4.1. Страница «Участники клуба» — починить расхождение 38 vs 35
+Любая функция, выполняющая kick/revoke/invite, перед действием обязана проверить ВСЕ три условия:
 
-Сейчас UI показывает 38, фактически в чате 35. Исправить SQL/агрегацию счётчика, чтобы:
+1. `telegram_club_members.club_id = request.club_id` (член относится к указанному клубу).
+2. `telegram_clubs.telegram_chat_id (по request.club_id) = telegram_chat_id, на который выполняется API-вызов`.
+3. Если в запросе используется `invite_link_id` или `invite_code` — `telegram_invite_links.club_id = request.club_id`.
 
-- «В чате»: `COUNT(in_chat=true)`.
-- «С активным правом по продукту»: использовать **тот же SoT, что в Club-as-SoT** — `has_valid_access_for_club(profile.user_id, club_id)` через `product_club_mappings`. Никакой отдельной логики только для БкБ.
-- Если числа расходятся — янтарный бейдж.
-- Кнопка «Сверить с Telegram» — запускает существующий `telegram-check-expired`.
+Несовпадение любого условия → STOP + `KICK_BLOCKED_CROSS_CLUB` + 409. Никакого «ближайшего совпадения», никакого автоматического резолва клуба по чату.
 
-#### 4.2. CRM tooltip — см. п.2.
-
----
-
-### Часть 5. Verify (DoD)
-
-После всех правок показать **5 чисел отдельно**, не смешивая:
-
-a) **active paid rights** (`subscriptions_v2.status='active'` по продукту БкБ);
-b) **active entitlements** (`entitlements.status='active'` по продукту БкБ);
-c) **telegram_access ok** (`telegram_club_members.access_status='ok'`);
-d) **фактически in_chat** (`telegram_club_members.in_chat=true`);
-e) **админы/персонал отдельно** (по `user_roles` + ручной список Гариновой/Федорчука).
-
-a == b == (c минус админы) == (d минус админы) — целевое равенство.
+Применяется к:
+- `telegram-revoke-access`
+- `telegram-grant-access` (выдача инвайта)
+- safe-mode auto-kick в `telegram-webhook`
+- любым ручным action из UI «Проверка доступа» и «Участники клуба»
 
 ---
 
-### Часть 6. Финальный отчёт (артефакты)
+### Раздел K (новый). Итоговый отчёт (auto-generated)
 
-- SQL-снимки до/после каждого UPDATE.
-- 4 CSV-файла (A/B/C/D) в `/mnt/documents/`.
-- Список audit_logs за период по `event_type IN ('AUTO_KICK_MISMATCH','MANUAL_KICK_REVIEWED','JOIN_DECLINED','JOIN_APPROVED')` с `club_id` фильтром.
-- Скрин страницы «Участники клуба» (числа сошлись).
-- Скрин CRM с tooltip.
-- Список изменённых файлов и diff-summary:
-  - `supabase/functions/telegram-webhook/index.ts` (auto-kick + revoke + DM на mismatch)
-  - `supabase/functions/telegram-grant-access/index.ts` (если потребуется доп. поле для audit)
-  - UI компонент страницы участников клуба (новая метрика)
-  - UI воронки CRM (tooltip)
-  - 1 миграция: UPDATE 1 paid order на стадию «Успешно» (после подтверждения по CSV-C)
-  - 1 insert через supabase tool: UPDATE `telegram_clubs.join_request_mode=true` (после проверки прав бота)
+После выполнения шагов 4–9 порядка из v5 — автоматическая генерация отчёта `buh_business_report_<timestamp>.md` с разделами:
+
+1. **CSV counts** — таблица: `final_status → count` по каждому из 6 статусов (на основе `access_revision.csv`).
+2. **Контрольные числа:**
+   - verified_paid: N
+   - verified_staff: N
+   - pending_review: N
+   - kick-eligible (no_valid_access + mismatch + duplicate_tg): N
+   - in_chat total: N (= сумма)
+3. **Guard-блокировки** за период работы: count по каждому event_type из раздела I.
+4. **Audit events** — список всех записей с event_type ∈ {AUTO_KICK_INTENT, AUTO_KICK_RESULT, KICK_BLOCKED_*, MANUAL_KICK_SECONDARY, STAFF_BYPASS, MANUAL_ACCESS_GRANTED} за период, с `tg_id, club_id, reason, final_status, actor`.
+5. **UI screenshots:** «Участники клуба» (5 метрик), «Проверка доступа» (по каждому фильтру), CRM tooltip.
+6. **SQL before/after:**
+   - до: те же 5 метрик + распределение по `final_status` (на момент старта работ);
+   - после: те же запросы (на момент завершения).
+7. **Артефакты:** ссылки на все CSV (A, B, C, D, access_revision, double_logins_dryrun, kick_candidates_dryrun).
+
+Отчёт сохраняется в `/mnt/documents/` и прикладывается к ответу.
 
 ---
 
-### Порядок выполнения (строго последовательно)
+### Сводный порядок выполнения v5.1
 
-1. **Read-only**: сгенерировать CSV A/B/C/D → `/mnt/documents/` → показать пользователю → **STOP**.
-2. По вашему подтверждению CSV-A: список tg-аккаунтов с доступом (для ручной сверки).
-3. По вашему подтверждению CSV-C: UPDATE 1 paid order в воронку «Успешно».
-4. Проверка прав бота в чате БкБ (`getChatMember`). Если ОК → UPDATE `join_request_mode=true`. Если нет — **STOP** и инструкция.
-5. Доработка `telegram-webhook/index.ts` (auto-kick on mismatch, расширенный audit, DM-noblock).
-6. Деплой edge-функции, тест через `supabase--test_edge_functions`.
-7. UI-правки (метрика участников + tooltip CRM).
-8. Verify-блок (5 чисел отдельно). Скрины.
-9. Финальный отчёт.
+1. ✅ CSV A/B/C/D из v3 (готовы).
+2. **Сейчас (read-only) с обязательной валидацией схемы (G):**
+   - `buh_business_access_revision.csv`,
+   - `buh_business_double_logins_dryrun.csv`,
+   - `buh_business_kick_candidates_dryrun.csv` (ожидаемо 0 kick-eligible).
+3. STOP → ваш просмотр трёх CSV.
+4. По «ок»: `manual_access` для Гариновой и Федорчука (раздел D).
+5. UI «Участники клуба»: 5 метрик + бейдж «Персонал» + починка счётчика.
+6. UI «Проверка доступа» (раздел H) — новый таб.
+7. UI CRM: tooltip «Платежи / Сделки / Pending».
+8. RPC `is_verified_club_member` + резолвер `final_status` (единый источник для UI/CSV/edge).
+9. Проверка прав бота → `join_request_mode=true` (только если права ок).
+10. Доработка `telegram-webhook/index.ts`:
+    - safe-mode auto-kick (контракт раздела 0c v5),
+    - whitelist-guard через RPC,
+    - cross-club guard (раздел J),
+    - audit INTENT/RESULT/BLOCKED (раздел I),
+    - CSV schema validation (раздел G) на любых импортных путях.
+11. Деплой + `supabase--test_edge_functions` (Deno-тесты на резолвер, schema validator, cross-club guard, whitelist guard).
+12. Verify + автогенерация отчёта (раздел K).
+13. Финальная отправка отчёта.
+
+---
+
+### DoD v5.1 (полный)
+
+- ✅ Все 7 verified tg_id никогда не появляются в kick-candidates (whitelist раздела 0).
+- ✅ Любой kick-вызов с username вместо tg_id отклоняется на уровне сигнатуры.
+- ✅ Любая попытка kick по `verified_*` или `pending_review` пишет соответствующий `KICK_BLOCKED_*` и возвращает 409.
+- ✅ Cross-club kick/revoke/invite физически невозможен (раздел J).
+- ✅ CSV без эталонной схемы не используется (раздел G).
+- ✅ Таб «Проверка доступа» показывает 6 final_status с фильтрами и поиском.
+- ✅ Гаринова и Федорчук — через `manual_access`, не email-whitelist.
+- ✅ `GIFT-26-MOEMX59I` не перемещён без отдельного «ок».
+- ✅ Все audit записи содержат `tg_id, club_id, reason, final_status, requested_by, source_function`.
+- ✅ Итоговый отчёт сгенерирован автоматически и приложен.
+
+Готов выполнять по утверждении.
