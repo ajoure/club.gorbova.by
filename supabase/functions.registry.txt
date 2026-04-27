@@ -17,6 +17,7 @@ telegram-grant-access
 telegram-process-access-queue
 telegram-revoke-access
 telegram-webhook
+telegram-audit-shape-runner
 telegram-ai-support
 telegram-ai-analyze-prompt
 autoweb-resolve-sessions
