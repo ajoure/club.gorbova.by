@@ -39,6 +39,11 @@ const REASON_LABELS: Record<string, string> = {
   email_missing: 'Email отсутствует',
   send_failed: 'Ошибка отправки',
   log_insert_failed: 'Ошибка записи лога',
+  email_queued: 'Письмо передано в очередь',
+  already_sent_today: 'Уже отправлено сегодня',
+  subscription_changed: 'Подписка изменилась — пропуск',
+  active_sbs_provider_will_charge: 'Автопродление активно — без paylink',
+  one_time_product_no_renewal: 'Разовый продукт — без продления',
 };
 
 function normalizeStatus(raw: string | null | undefined): 'success' | 'skipped' | 'failed' | 'pending' {
