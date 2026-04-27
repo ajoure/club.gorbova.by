@@ -13838,6 +13838,30 @@ export type Database = {
           grants_count: number
         }[]
       }
+      compute_club_member_final_status: {
+        Args: { _club_id: string; _tg_id: number }
+        Returns: {
+          access_status: string
+          club_id: string
+          email: string
+          entitlement_status: string
+          final_status: Database["public"]["Enums"]["club_member_final_status"]
+          full_name: string
+          in_chat: boolean
+          link_check: string
+          manual_access: boolean
+          product_id: string
+          profile_id: string
+          reason: string
+          staff_role: string
+          subscription_status: string
+          telegram_chat_id: number
+          telegram_username: string
+          tg_id_in_chat: number
+          tg_id_in_profile: number
+          user_id: string
+        }[]
+      }
       compute_next_broadcast_run: {
         Args: { from_ts: string; rule: Json }
         Returns: string
@@ -14427,6 +14451,10 @@ export type Database = {
         Args: { _live_event_id: string; _user_id: string }
         Returns: boolean
       }
+      is_verified_club_member: {
+        Args: { _club_id: string; _tg_id: number }
+        Returns: boolean
+      }
       log_training_event: {
         Args: { _action: string; _meta?: Json; _target_user_id: string }
         Returns: string
@@ -14666,6 +14694,15 @@ export type Database = {
     }
     Enums: {
       app_role: "user" | "admin" | "superadmin"
+      club_member_final_status:
+        | "verified_paid"
+        | "verified_staff"
+        | "pending_review"
+        | "no_valid_access"
+        | "mismatch"
+        | "duplicate_tg"
+        | "orphan"
+        | "removed"
       field_data_type:
         | "string"
         | "number"
@@ -14852,6 +14889,16 @@ export const Constants = {
   public: {
     Enums: {
       app_role: ["user", "admin", "superadmin"],
+      club_member_final_status: [
+        "verified_paid",
+        "verified_staff",
+        "pending_review",
+        "no_valid_access",
+        "mismatch",
+        "duplicate_tg",
+        "orphan",
+        "removed",
+      ],
       field_data_type: [
         "string",
         "number",
