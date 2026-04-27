@@ -101,17 +101,22 @@ export function InlineAuthForm({
       )}
 
       {auth.step === "email" && (
-        <form onSubmit={handleEmail} className="space-y-3">
+        <form onSubmit={handleEmail} method="post" action="#" className="space-y-3">
           <div>
             <Label htmlFor="iaf-email">Email</Label>
             <Input
               id="iaf-email"
+              name="email"
               type="email"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
-              autoComplete="email"
+              autoComplete="username"
+              inputMode="email"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
             />
           </div>
           <Button type="submit" size="lg" className="w-full" disabled={isBusy}>
@@ -125,14 +130,24 @@ export function InlineAuthForm({
       )}
 
       {auth.step === "login" && (
-        <form onSubmit={handleLogin} className="space-y-3">
+        <form onSubmit={handleLogin} method="post" action="#" className="space-y-3">
           <p className="text-sm text-muted-foreground">
             Аккаунт <strong>{email}</strong> найден. Введите пароль, чтобы продолжить.
           </p>
+          {/* Hidden username field — критично для iOS Keychain / автозаполнения пароля в PWA */}
+          <input
+            type="email"
+            name="email"
+            autoComplete="username"
+            value={email}
+            readOnly
+            hidden
+          />
           <div>
             <Label htmlFor="iaf-password">Пароль</Label>
             <Input
               id="iaf-password"
+              name="password"
               type="password"
               required
               value={password}
@@ -169,28 +184,38 @@ export function InlineAuthForm({
       )}
 
       {auth.step === "signup" && (
-        <form onSubmit={handleSignup} className="space-y-3">
+        <form onSubmit={handleSignup} method="post" action="#" className="space-y-3">
           <p className="text-sm text-muted-foreground">
             Создайте аккаунт для <strong>{email}</strong>, чтобы продолжить.
           </p>
+          {/* Hidden username — iOS Keychain привяжет новый пароль к этому email */}
+          <input
+            type="email"
+            name="email"
+            autoComplete="username"
+            value={email}
+            readOnly
+            hidden
+          />
           <div className="grid grid-cols-2 gap-2">
             <div>
               <Label htmlFor="iaf-first">Имя</Label>
-              <Input id="iaf-first" value={firstName} onChange={(e) => setFirstName(e.target.value)} required />
+              <Input id="iaf-first" name="given-name" autoComplete="given-name" value={firstName} onChange={(e) => setFirstName(e.target.value)} required />
             </div>
             <div>
               <Label htmlFor="iaf-last">Фамилия</Label>
-              <Input id="iaf-last" value={lastName} onChange={(e) => setLastName(e.target.value)} />
+              <Input id="iaf-last" name="family-name" autoComplete="family-name" value={lastName} onChange={(e) => setLastName(e.target.value)} />
             </div>
           </div>
           <div>
             <Label htmlFor="iaf-phone">Телефон</Label>
-            <Input id="iaf-phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
+            <Input id="iaf-phone" name="tel" type="tel" autoComplete="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
           </div>
           <div>
             <Label htmlFor="iaf-pw-new">Пароль</Label>
             <Input
               id="iaf-pw-new"
+              name="new-password"
               type="password"
               required
               minLength={6}
