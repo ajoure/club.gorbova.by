@@ -704,11 +704,34 @@ Deno.serve(async (req) => {
         if (inviteRecord) {
           inviteTrackingUpdate.last_invite_id = inviteRecord.id;
         }
+
+        // v5.3: INVITE_CREATED audit (chat)
+        await logAudit(supabase, {
+          club_id: club.id,
+          user_id: profile.id,
+          telegram_user_id: telegramUserId,
+          event_type: 'INVITE_CREATED',
+          actor_type: is_manual ? 'admin' : 'system',
+          reason: inviteSource,
+          meta: {
+            club_id: club.id,
+            tg_id: telegramUserId,
+            expected_tg_id: telegramUserId,
+            invite_link_id: inviteRecord?.id || null,
+            invite_code: code,
+            target_type: 'chat',
+            target_chat_id: club.chat_id,
+            member_limit: 1,
+            expires_at: now24h,
+            source_function: 'telegram-grant-access',
+            decision: 'created',
+          },
+        });
       }
 
       if (channelInviteLink && club.channel_id) {
         const code = extractInviteCode(channelInviteLink);
-        await supabase.from('telegram_invite_links').insert({
+        const { data: chInviteRecord } = await supabase.from('telegram_invite_links').insert({
           club_id: club.id,
           profile_id: profile.id,
           telegram_user_id: telegramUserId,
@@ -722,6 +745,29 @@ Deno.serve(async (req) => {
           member_limit: 1,
           source: inviteSource,
           source_id: source_id || null,
+        }).select('id').maybeSingle();
+
+        // v5.3: INVITE_CREATED audit (channel)
+        await logAudit(supabase, {
+          club_id: club.id,
+          user_id: profile.id,
+          telegram_user_id: telegramUserId,
+          event_type: 'INVITE_CREATED',
+          actor_type: is_manual ? 'admin' : 'system',
+          reason: inviteSource,
+          meta: {
+            club_id: club.id,
+            tg_id: telegramUserId,
+            expected_tg_id: telegramUserId,
+            invite_link_id: chInviteRecord?.id || null,
+            invite_code: code,
+            target_type: 'channel',
+            target_chat_id: club.channel_id,
+            member_limit: 1,
+            expires_at: now24h,
+            source_function: 'telegram-grant-access',
+            decision: 'created',
+          },
         });
       }
       
