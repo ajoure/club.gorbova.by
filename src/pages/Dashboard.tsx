@@ -60,9 +60,9 @@ export default function Dashboard() {
       
       <div className="max-w-4xl mx-auto space-y-6 md:space-y-8">
         {/* Block 1: Welcome */}
-        <div className="space-y-1">
-          <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-foreground break-words leading-tight">
-            Добро пожаловать, {displayName}!
+        <div className="space-y-1 min-w-0">
+          <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-foreground break-words leading-tight hyphens-auto">
+            Добро пожаловать,<br className="sm:hidden" /> <span className="sm:inline">{displayName}!</span>
           </h1>
           {isStaff && effectiveRole && (
             <p className="text-sm text-muted-foreground">
