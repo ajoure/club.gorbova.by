@@ -101,17 +101,22 @@ export function InlineAuthForm({
       )}
 
       {auth.step === "email" && (
-        <form onSubmit={handleEmail} className="space-y-3">
+        <form onSubmit={handleEmail} method="post" action="#" className="space-y-3">
           <div>
             <Label htmlFor="iaf-email">Email</Label>
             <Input
               id="iaf-email"
+              name="email"
               type="email"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
-              autoComplete="email"
+              autoComplete="username"
+              inputMode="email"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
             />
           </div>
           <Button type="submit" size="lg" className="w-full" disabled={isBusy}>
