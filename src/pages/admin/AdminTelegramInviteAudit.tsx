@@ -140,9 +140,10 @@ export default function AdminTelegramInviteAudit() {
 
       const { data, error } = await q;
       if (error) throw error;
-      const filtered = (data || []).filter((r) =>
-        showTest ? true : !(r.meta && r.meta.test === true),
-      );
+      const filtered = (data || []).filter((r) => {
+        const m: any = r.meta;
+        return showTest ? true : !(m && typeof m === "object" && m.test === true);
+      });
       return filtered as AuditRow[];
     },
     enabled: isAdmin || isSuperAdmin,
