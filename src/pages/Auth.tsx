@@ -72,11 +72,48 @@ interface FieldError {
 // State for account_exists mode
 
 
+/**
+ * Synchronously detect a password-recovery flow from the current URL.
+ *
+ * Recovery is signalled either by:
+ *   - `?mode=reset` query param (set by our `auth-actions` edge function), or
+ *   - URL hash containing `type=recovery` (Supabase default after /auth/v1/verify).
+ *
+ * Computed BEFORE any React state initialisation to avoid the race where the
+ * redirect-guard fires on first render with stale `mode` and pushes a
+ * recovery-session user straight to /dashboard without a password change.
+ */
+function detectRecoveryFlow(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const search = new URLSearchParams(window.location.search);
+    if (search.get("mode") === "reset") return true;
+    const hash = (window.location.hash || "").replace(/^#/, "");
+    if (hash) {
+      const hashParams = new URLSearchParams(hash);
+      if (hashParams.get("type") === "recovery") return true;
+    }
+  } catch { /* ignore */ }
+  return false;
+}
+
 export default function Auth() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { user, session, signIn, signUp, loading } = useAuth();
-  const [mode, setMode] = useState<AuthMode>("login");
+
+  // Compute recovery-flow ONCE, synchronously, before any state init.
+  // Used as the single source of truth for both initial mode and the
+  // post-login redirect-guard, eliminating the first-render race.
+  const isRecoveryFlow = useMemo(() => detectRecoveryFlow(), []);
+
+  const [mode, setMode] = useState<AuthMode>(() => {
+    if (isRecoveryFlow) return "update_password";
+    return "login";
+  });
+  // Set to true ONLY after supabase.auth.updateUser({ password }) succeeds.
+  // Until then, recovery sessions are NOT allowed to navigate to /dashboard.
+  const [passwordUpdated, setPasswordUpdated] = useState(false);
   const [email, setEmail] = useState(() => {
     try {
       return localStorage.getItem("last_login_email") || "";
