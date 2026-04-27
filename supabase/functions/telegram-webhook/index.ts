@@ -68,7 +68,145 @@ const MESSAGES = {
   error: `⚠️ <b>Что-то пошло не так</b>\n\nПопробуйте чуть позже или напишите администратору 💬`,
 };
 
+// ============================================================
+// AUDIT-SHAPE MODE (add-only, fail-closed)
+// ----------------------------------------------------------------
+// Activated ONLY when ALL three conditions are true:
+//   1) Request header `x-audit-shape-secret` equals env AUDIT_SHAPE_SECRET (non-empty)
+//   2) Request body contains object field `_audit_shape_meta`
+//   3) AUDIT_SHAPE_SECRET env is set
+// While active:
+//   - All Telegram HTTP calls (api.telegram.org, helpers, anywhere) become no-ops
+//     returning { ok: true, result: { audit_shape: true, method, params } }.
+//   - All Supabase mutations (insert/update/upsert/delete/storage/rpc) become no-ops
+//     EXCEPT inserts into the canonical audit table `telegram_access_audit`.
+//   - Audit inserts are forced to carry meta.test=true, meta.dry_run=true,
+//     meta.source='audit_shape_runtime'.
+// Without a valid mode, behaviour is byte-for-byte identical to before.
+// ============================================================
+const AUDIT_SHAPE_ALLOWED_AUDIT_TABLE = 'telegram_access_audit';
+let __AUDIT_SHAPE_ACTIVE = false;
+let __AUDIT_SHAPE_META: Record<string, unknown> | null = null;
+const __auditShapeBlockedCalls: Array<{ kind: string; detail: unknown }> = [];
+
+function isAuditShapeActive(): boolean {
+  return __AUDIT_SHAPE_ACTIVE === true;
+}
+
+function recordAuditShapeBlock(kind: string, detail: unknown) {
+  if (__auditShapeBlockedCalls.length < 200) {
+    __auditShapeBlockedCalls.push({ kind, detail });
+  }
+}
+
+function makeAuditShapeTelegramResponse(method: string, params: unknown) {
+  return {
+    ok: true,
+    result: {
+      audit_shape: true,
+      method,
+      params,
+      message: 'audit_shape_runtime: telegram call suppressed',
+    },
+  };
+}
+
+// Wrapped Supabase client. All read paths are unchanged; write paths are gated.
+function wrapSupabaseForAuditShape(realClient: any) {
+  const blockChain = (table: string, op: string) => {
+    recordAuditShapeBlock('supabase_mutation', { table, op });
+    return Promise.resolve({ data: null, error: null, status: 200, statusText: 'audit_shape_noop', count: null });
+  };
+  const makeNoopBuilder = (table: string, op: string) => {
+    const builder: any = {};
+    const chainable = ['select', 'eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'in', 'is', 'or', 'match', 'order', 'limit', 'single', 'maybeSingle', 'returns'];
+    for (const m of chainable) builder[m] = () => builder;
+    builder.then = (resolve: any) => resolve({ data: null, error: null, status: 200, statusText: 'audit_shape_noop', count: null });
+    builder.__auditShapeNoop = true;
+    // Terminal awaits resolve via .then
+    return builder;
+  };
+
+  return new Proxy(realClient, {
+    get(target, prop, receiver) {
+      if (prop === 'from') {
+        return (table: string) => {
+          const realQb = target.from(table);
+          if (table === AUDIT_SHAPE_ALLOWED_AUDIT_TABLE) {
+            // Allow audit writes, but force meta fields on insert
+            return new Proxy(realQb, {
+              get(qbTarget, qbProp, qbRecv) {
+                if (qbProp === 'insert') {
+                  return (rows: any) => {
+                    const stamp = (row: any) => {
+                      const meta = (row && typeof row === 'object' && row.meta && typeof row.meta === 'object') ? row.meta : {};
+                      return {
+                        ...row,
+                        meta: { ...meta, test: true, dry_run: true, source: 'audit_shape_runtime' },
+                      };
+                    };
+                    const stamped = Array.isArray(rows) ? rows.map(stamp) : stamp(rows);
+                    return qbTarget.insert(stamped);
+                  };
+                }
+                return Reflect.get(qbTarget, qbProp, qbRecv);
+              },
+            });
+          }
+          // Non-audit table: wrap mutators as no-ops, leave reads intact
+          return new Proxy(realQb, {
+            get(qbTarget, qbProp, qbRecv) {
+              if (qbProp === 'insert' || qbProp === 'update' || qbProp === 'upsert' || qbProp === 'delete') {
+                return (..._args: any[]) => {
+                  recordAuditShapeBlock('supabase_mutation', { table, op: String(qbProp) });
+                  return makeNoopBuilder(table, String(qbProp));
+                };
+              }
+              return Reflect.get(qbTarget, qbProp, qbRecv);
+            },
+          });
+        };
+      }
+      if (prop === 'rpc') {
+        return (fn: string, args: any) => {
+          recordAuditShapeBlock('supabase_rpc', { fn, args });
+          return Promise.resolve({ data: null, error: null, status: 200, statusText: 'audit_shape_noop' });
+        };
+      }
+      if (prop === 'storage') {
+        const realStorage = target.storage;
+        return new Proxy(realStorage, {
+          get(stTarget, stProp) {
+            if (stProp === 'from') {
+              return (bucket: string) => {
+                const realBucket = stTarget.from(bucket);
+                return new Proxy(realBucket, {
+                  get(bkTarget, bkProp) {
+                    if (bkProp === 'upload' || bkProp === 'remove' || bkProp === 'move' || bkProp === 'copy' || bkProp === 'createSignedUrl') {
+                      return (..._args: any[]) => {
+                        recordAuditShapeBlock('storage_mutation', { bucket, op: String(bkProp) });
+                        return Promise.resolve({ data: null, error: null });
+                      };
+                    }
+                    return Reflect.get(bkTarget, bkProp);
+                  },
+                });
+              };
+            }
+            return Reflect.get(stTarget, stProp);
+          },
+        });
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+}
+
 async function telegramRequest(botToken: string, method: string, params: Record<string, unknown>) {
+  if (isAuditShapeActive()) {
+    recordAuditShapeBlock('telegram_api', { method, params });
+    return makeAuditShapeTelegramResponse(method, params);
+  }
   const url = `https://api.telegram.org/bot${botToken}/${method}`;
   const response = await fetch(url, {
     method: 'POST',
@@ -76,6 +214,16 @@ async function telegramRequest(botToken: string, method: string, params: Record<
     body: JSON.stringify(params),
   });
   return response.json();
+}
+
+// Audit-shape aware fetch for direct api.telegram.org calls (photos, getFile, file/).
+async function telegramFetch(input: string, init?: RequestInit): Promise<Response> {
+  if (isAuditShapeActive() && /api\.telegram\.org/.test(input)) {
+    recordAuditShapeBlock('telegram_fetch', { url: input });
+    const body = JSON.stringify({ ok: true, result: { audit_shape: true, url: input } });
+    return new Response(body, { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+  return fetch(input, init);
 }
 
 async function sendMessage(botToken: string, chatId: number, text: string, replyMarkup?: object) {
