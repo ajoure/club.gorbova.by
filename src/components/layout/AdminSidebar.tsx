@@ -379,6 +379,12 @@ export function AdminSidebar() {
                   Документация системы
                 </DropdownMenuItem>
               )}
+              {isSuperAdmin && (
+                <DropdownMenuItem onClick={() => navigate("/admin/telegram/audit-shape-runs")} className="gap-2">
+                  <ShieldCheck className="h-4 w-4" />
+                  Telegram audit-shape runs
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleSignOut} className="gap-2 text-destructive focus:text-destructive">
                 <LogOut className="h-4 w-4" />
