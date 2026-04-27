@@ -68,7 +68,145 @@ const MESSAGES = {
   error: `⚠️ <b>Что-то пошло не так</b>\n\nПопробуйте чуть позже или напишите администратору 💬`,
 };
 
+// ============================================================
+// AUDIT-SHAPE MODE (add-only, fail-closed)
+// ----------------------------------------------------------------
+// Activated ONLY when ALL three conditions are true:
+//   1) Request header `x-audit-shape-secret` equals env AUDIT_SHAPE_SECRET (non-empty)
+//   2) Request body contains object field `_audit_shape_meta`
+//   3) AUDIT_SHAPE_SECRET env is set
+// While active:
+//   - All Telegram HTTP calls (api.telegram.org, helpers, anywhere) become no-ops
+//     returning { ok: true, result: { audit_shape: true, method, params } }.
+//   - All Supabase mutations (insert/update/upsert/delete/storage/rpc) become no-ops
+//     EXCEPT inserts into the canonical audit table `telegram_access_audit`.
+//   - Audit inserts are forced to carry meta.test=true, meta.dry_run=true,
+//     meta.source='audit_shape_runtime'.
+// Without a valid mode, behaviour is byte-for-byte identical to before.
+// ============================================================
+const AUDIT_SHAPE_ALLOWED_AUDIT_TABLE = 'telegram_access_audit';
+let __AUDIT_SHAPE_ACTIVE = false;
+let __AUDIT_SHAPE_META: Record<string, unknown> | null = null;
+const __auditShapeBlockedCalls: Array<{ kind: string; detail: unknown }> = [];
+
+function isAuditShapeActive(): boolean {
+  return __AUDIT_SHAPE_ACTIVE === true;
+}
+
+function recordAuditShapeBlock(kind: string, detail: unknown) {
+  if (__auditShapeBlockedCalls.length < 200) {
+    __auditShapeBlockedCalls.push({ kind, detail });
+  }
+}
+
+function makeAuditShapeTelegramResponse(method: string, params: unknown) {
+  return {
+    ok: true,
+    result: {
+      audit_shape: true,
+      method,
+      params,
+      message: 'audit_shape_runtime: telegram call suppressed',
+    },
+  };
+}
+
+// Wrapped Supabase client. All read paths are unchanged; write paths are gated.
+function wrapSupabaseForAuditShape(realClient: any) {
+  const blockChain = (table: string, op: string) => {
+    recordAuditShapeBlock('supabase_mutation', { table, op });
+    return Promise.resolve({ data: null, error: null, status: 200, statusText: 'audit_shape_noop', count: null });
+  };
+  const makeNoopBuilder = (table: string, op: string) => {
+    const builder: any = {};
+    const chainable = ['select', 'eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'in', 'is', 'or', 'match', 'order', 'limit', 'single', 'maybeSingle', 'returns'];
+    for (const m of chainable) builder[m] = () => builder;
+    builder.then = (resolve: any) => resolve({ data: null, error: null, status: 200, statusText: 'audit_shape_noop', count: null });
+    builder.__auditShapeNoop = true;
+    // Terminal awaits resolve via .then
+    return builder;
+  };
+
+  return new Proxy(realClient, {
+    get(target, prop, receiver) {
+      if (prop === 'from') {
+        return (table: string) => {
+          const realQb = target.from(table);
+          if (table === AUDIT_SHAPE_ALLOWED_AUDIT_TABLE) {
+            // Allow audit writes, but force meta fields on insert
+            return new Proxy(realQb, {
+              get(qbTarget, qbProp, qbRecv) {
+                if (qbProp === 'insert') {
+                  return (rows: any) => {
+                    const stamp = (row: any) => {
+                      const meta = (row && typeof row === 'object' && row.meta && typeof row.meta === 'object') ? row.meta : {};
+                      return {
+                        ...row,
+                        meta: { ...meta, test: true, dry_run: true, source: 'audit_shape_runtime' },
+                      };
+                    };
+                    const stamped = Array.isArray(rows) ? rows.map(stamp) : stamp(rows);
+                    return qbTarget.insert(stamped);
+                  };
+                }
+                return Reflect.get(qbTarget, qbProp, qbRecv);
+              },
+            });
+          }
+          // Non-audit table: wrap mutators as no-ops, leave reads intact
+          return new Proxy(realQb, {
+            get(qbTarget, qbProp, qbRecv) {
+              if (qbProp === 'insert' || qbProp === 'update' || qbProp === 'upsert' || qbProp === 'delete') {
+                return (..._args: any[]) => {
+                  recordAuditShapeBlock('supabase_mutation', { table, op: String(qbProp) });
+                  return makeNoopBuilder(table, String(qbProp));
+                };
+              }
+              return Reflect.get(qbTarget, qbProp, qbRecv);
+            },
+          });
+        };
+      }
+      if (prop === 'rpc') {
+        return (fn: string, args: any) => {
+          recordAuditShapeBlock('supabase_rpc', { fn, args });
+          return Promise.resolve({ data: null, error: null, status: 200, statusText: 'audit_shape_noop' });
+        };
+      }
+      if (prop === 'storage') {
+        const realStorage = target.storage;
+        return new Proxy(realStorage, {
+          get(stTarget, stProp) {
+            if (stProp === 'from') {
+              return (bucket: string) => {
+                const realBucket = stTarget.from(bucket);
+                return new Proxy(realBucket, {
+                  get(bkTarget, bkProp) {
+                    if (bkProp === 'upload' || bkProp === 'remove' || bkProp === 'move' || bkProp === 'copy' || bkProp === 'createSignedUrl') {
+                      return (..._args: any[]) => {
+                        recordAuditShapeBlock('storage_mutation', { bucket, op: String(bkProp) });
+                        return Promise.resolve({ data: null, error: null });
+                      };
+                    }
+                    return Reflect.get(bkTarget, bkProp);
+                  },
+                });
+              };
+            }
+            return Reflect.get(stTarget, stProp);
+          },
+        });
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+}
+
 async function telegramRequest(botToken: string, method: string, params: Record<string, unknown>) {
+  if (isAuditShapeActive()) {
+    recordAuditShapeBlock('telegram_api', { method, params });
+    return makeAuditShapeTelegramResponse(method, params);
+  }
   const url = `https://api.telegram.org/bot${botToken}/${method}`;
   const response = await fetch(url, {
     method: 'POST',
@@ -76,6 +214,16 @@ async function telegramRequest(botToken: string, method: string, params: Record<
     body: JSON.stringify(params),
   });
   return response.json();
+}
+
+// Audit-shape aware fetch for direct api.telegram.org calls (photos, getFile, file/).
+async function telegramFetch(input: string, init?: RequestInit): Promise<Response> {
+  if (isAuditShapeActive() && /api\.telegram\.org/.test(input)) {
+    recordAuditShapeBlock('telegram_fetch', { url: input });
+    const body = JSON.stringify({ ok: true, result: { audit_shape: true, url: input } });
+    return new Response(body, { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+  return fetch(input, init);
 }
 
 async function sendMessage(botToken: string, chatId: number, text: string, replyMarkup?: object) {
@@ -108,7 +256,7 @@ async function fetchAndSaveTelegramPhoto(
   userId: string
 ): Promise<string | null> {
   try {
-    const photosResponse = await fetch(
+    const photosResponse = await telegramFetch(
       `https://api.telegram.org/bot${botToken}/getUserProfilePhotos?user_id=${telegramUserId}&limit=1`
     );
     const photosData = await photosResponse.json();
@@ -121,7 +269,7 @@ async function fetchAndSaveTelegramPhoto(
     const photo = photosData.result.photos[0][0];
     const fileId = photo.file_id;
 
-    const fileResponse = await fetch(
+    const fileResponse = await telegramFetch(
       `https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`
     );
     const fileData = await fileResponse.json();
@@ -132,7 +280,7 @@ async function fetchAndSaveTelegramPhoto(
     }
 
     const photoUrl = `https://api.telegram.org/file/bot${botToken}/${fileData.result.file_path}`;
-    const photoResponse = await fetch(photoUrl);
+    const photoResponse = await telegramFetch(photoUrl);
     const photoBlob = await photoResponse.arrayBuffer();
 
     const fileName = `avatars/${userId}_telegram_${Date.now()}.jpg`;
@@ -334,19 +482,80 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  // Reset audit-shape state per invocation (fail-closed)
+  __AUDIT_SHAPE_ACTIVE = false;
+  __AUDIT_SHAPE_META = null;
+  __auditShapeBlockedCalls.length = 0;
+
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const realSupabase = createClient(supabaseUrl, supabaseServiceKey);
+    let supabase: any = realSupabase;
 
     const url = new URL(req.url);
     const botId = url.searchParams.get('bot_id');
-    
+
+    // Read body ONCE (audit-shape detection needs body, classic flow needs body)
+    const rawBody: any = await req.json().catch(() => null);
+
+    // -------- Audit-shape detection (fail-closed) --------
+    const auditShapeSecretEnv = Deno.env.get('AUDIT_SHAPE_SECRET') || '';
+    const auditShapeHeader = req.headers.get('x-audit-shape-secret') || '';
+    const hasAuditMeta = !!(rawBody && typeof rawBody === 'object' && rawBody._audit_shape_meta && typeof rawBody._audit_shape_meta === 'object');
+    const headerProvided = auditShapeHeader.length > 0;
+    const requestedAuditShape = hasAuditMeta || headerProvided;
+    let auditShapeRunId: string | null = null;
+
+    if (requestedAuditShape) {
+      const secretOk = auditShapeSecretEnv.length > 0 && auditShapeHeader === auditShapeSecretEnv;
+      const allOk = secretOk && hasAuditMeta;
+      const meta = (rawBody && rawBody._audit_shape_meta) || {};
+      const scenario = typeof meta?.scenario === 'string' ? meta.scenario : null;
+      const actorUserId = typeof meta?.actor_user_id === 'string' ? meta.actor_user_id : null;
+
+      // Log run attempt via REAL (unwrapped) client — even on denial.
+      try {
+        const { data: runRow } = await realSupabase
+          .from('telegram_audit_shape_runs')
+          .insert({
+            actor_user_id: actorUserId || '00000000-0000-0000-0000-000000000000',
+            scenario: scenario || 'INVITE_USED', // CHECK constraint allows only known scenarios
+            status: allOk ? 'ok' : 'denied',
+            meta: {
+              reason: allOk ? 'accepted' : (secretOk ? 'missing_audit_meta' : 'bad_or_missing_secret'),
+              had_header: headerProvided,
+              had_audit_meta: hasAuditMeta,
+              bot_id: botId,
+              raw_meta: meta,
+            },
+          })
+          .select('id')
+          .single();
+        auditShapeRunId = runRow?.id || null;
+      } catch (logErr) {
+        console.error('[audit-shape] failed to record run', logErr);
+      }
+
+      if (!allOk) {
+        return new Response(JSON.stringify({
+          ok: false,
+          error: 'audit_shape_denied',
+          reason: secretOk ? 'missing_audit_meta' : 'bad_or_missing_secret',
+          run_id: auditShapeRunId,
+        }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      __AUDIT_SHAPE_ACTIVE = true;
+      __AUDIT_SHAPE_META = meta;
+      supabase = wrapSupabaseForAuditShape(realSupabase);
+      console.log('[audit-shape] ACTIVE', { scenario, actorUserId, runId: auditShapeRunId });
+    }
+    // -----------------------------------------------------
+
     if (!botId) {
       // Healthcheck / monitoring pings may call webhook without bot_id.
-      // This must not be treated as an error, otherwise it can break the admin UI checks.
-      const body = await req.json().catch(() => null) as any;
-      if (body && typeof body === 'object' && body.ping === true) {
+      if (rawBody && typeof rawBody === 'object' && rawBody.ping === true) {
         return new Response(JSON.stringify({ ok: true, pong: true }), {
           status: 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -382,8 +591,8 @@ Deno.serve(async (req) => {
     }
 
     const botToken = bot.bot_token_encrypted;
-    const update: TelegramUpdate = await req.json();
-    
+    const update: TelegramUpdate = rawBody as TelegramUpdate;
+
     console.log('Telegram update:', JSON.stringify(update, null, 2));
 
     // ==========================================
