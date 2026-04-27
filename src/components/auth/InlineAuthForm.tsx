@@ -130,14 +130,24 @@ export function InlineAuthForm({
       )}
 
       {auth.step === "login" && (
-        <form onSubmit={handleLogin} className="space-y-3">
+        <form onSubmit={handleLogin} method="post" action="#" className="space-y-3">
           <p className="text-sm text-muted-foreground">
             Аккаунт <strong>{email}</strong> найден. Введите пароль, чтобы продолжить.
           </p>
+          {/* Hidden username field — критично для iOS Keychain / автозаполнения пароля в PWA */}
+          <input
+            type="email"
+            name="email"
+            autoComplete="username"
+            value={email}
+            readOnly
+            hidden
+          />
           <div>
             <Label htmlFor="iaf-password">Пароль</Label>
             <Input
               id="iaf-password"
+              name="password"
               type="password"
               required
               value={password}
