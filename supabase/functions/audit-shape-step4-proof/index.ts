@@ -31,7 +31,7 @@ async function mintAccessToken(supabaseUrl: string, anonKey: string, admin: Retu
   const verifyResp = await fetch(`${supabaseUrl}/auth/v1/verify`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', apikey: anonKey },
-    body: JSON.stringify({ type: 'magiclink', token_hash: tokenHash, email }),
+    body: JSON.stringify({ type: 'magiclink', token_hash: tokenHash }),
   });
   const verifyJson = await verifyResp.json().catch(() => null);
   if (!verifyResp.ok) throw new Error(`verify(${email}) ${verifyResp.status}: ${JSON.stringify(verifyJson)}`);
