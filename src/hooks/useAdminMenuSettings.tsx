@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import {
   Users,
   Shield,
+  ShieldCheck,
   ScrollText,
   Settings,
   FileText,
@@ -59,6 +60,7 @@ export type MenuSettings = MenuGroup[];
 export const MENU_ICONS: Record<string, LucideIcon> = {
   Users,
   Shield,
+  ShieldCheck,
   ScrollText,
   Settings,
   FileText,
