@@ -309,12 +309,13 @@ Deno.serve(async (req) => {
           // Save to telegram_invite_links
           const now24h = new Date(Date.now() + 86400 * 1000).toISOString();
           if (chatLink && club.chat_id) {
-            await supabase.from('telegram_invite_links').insert({
+            const chatCode = extractInviteCode(chatLink);
+            const { data: chatInv } = await supabase.from('telegram_invite_links').insert({
               club_id: club.id,
               profile_id: ghost.profile_id,
               telegram_user_id: ghost.telegram_user_id,
               invite_link: chatLink,
-              invite_code: extractInviteCode(chatLink),
+              invite_code: chatCode,
               target_type: 'chat',
               target_chat_id: club.chat_id,
               status: 'sent',
@@ -322,15 +323,38 @@ Deno.serve(async (req) => {
               expires_at: now24h,
               member_limit: 1,
               source: 'cron_reinvite',
+            }).select('id').maybeSingle();
+
+            // v5.3: INVITE_CREATED audit (chat / reinvite)
+            await supabase.from('telegram_access_audit').insert({
+              club_id: club.id,
+              telegram_user_id: ghost.telegram_user_id,
+              event_type: 'INVITE_CREATED',
+              actor_type: 'system',
+              reason: 'cron_reinvite',
+              meta: {
+                club_id: club.id,
+                tg_id: ghost.telegram_user_id,
+                expected_tg_id: ghost.telegram_user_id,
+                invite_link_id: chatInv?.id || null,
+                invite_code: chatCode,
+                target_type: 'chat',
+                target_chat_id: club.chat_id,
+                member_limit: 1,
+                expires_at: now24h,
+                source_function: 'telegram-reinvite-ghosts',
+                decision: 'created',
+              },
             });
           }
           if (channelLink && club.channel_id) {
-            await supabase.from('telegram_invite_links').insert({
+            const chCode = extractInviteCode(channelLink);
+            const { data: chInv } = await supabase.from('telegram_invite_links').insert({
               club_id: club.id,
               profile_id: ghost.profile_id,
               telegram_user_id: ghost.telegram_user_id,
               invite_link: channelLink,
-              invite_code: extractInviteCode(channelLink),
+              invite_code: chCode,
               target_type: 'channel',
               target_chat_id: club.channel_id,
               status: 'sent',
@@ -338,6 +362,28 @@ Deno.serve(async (req) => {
               expires_at: now24h,
               member_limit: 1,
               source: 'cron_reinvite',
+            }).select('id').maybeSingle();
+
+            // v5.3: INVITE_CREATED audit (channel / reinvite)
+            await supabase.from('telegram_access_audit').insert({
+              club_id: club.id,
+              telegram_user_id: ghost.telegram_user_id,
+              event_type: 'INVITE_CREATED',
+              actor_type: 'system',
+              reason: 'cron_reinvite',
+              meta: {
+                club_id: club.id,
+                tg_id: ghost.telegram_user_id,
+                expected_tg_id: ghost.telegram_user_id,
+                invite_link_id: chInv?.id || null,
+                invite_code: chCode,
+                target_type: 'channel',
+                target_chat_id: club.channel_id,
+                member_limit: 1,
+                expires_at: now24h,
+                source_function: 'telegram-reinvite-ghosts',
+                decision: 'created',
+              },
             });
           }
 
@@ -348,13 +394,19 @@ Deno.serve(async (req) => {
             updated_at: new Date().toISOString(),
           }).eq('id', ghost.id);
 
-          // Audit
+          // Audit (legacy CRON_REINVITE summary per ghost — kept for compatibility)
           await supabase.from('telegram_access_audit').insert({
             club_id: club.id,
             telegram_user_id: ghost.telegram_user_id,
             event_type: 'CRON_REINVITE',
             actor_type: 'system',
-            meta: { chat_link: !!chatLink, channel_link: !!channelLink, dm_sent: dmResult.ok },
+            reason: 'cron_reinvite',
+            meta: {
+              chat_link: !!chatLink,
+              channel_link: !!channelLink,
+              dm_sent: dmResult.ok,
+              source_function: 'telegram-reinvite-ghosts',
+            },
           });
 
           totalReinvited++;
