@@ -120,6 +120,7 @@ const AdminAI = lazy(() => import("./pages/admin/AdminAI"));
 const AdminMarketingInsights = lazy(() => import("./pages/admin/AdminMarketingInsights"));
 const AdminPaymentDiagnostics = lazy(() => import("./pages/admin/AdminPaymentDiagnostics"));
 const AdminTelegramDiagnostics = lazy(() => import("./pages/admin/AdminTelegramDiagnostics"));
+const AdminTelegramInviteAudit = lazy(() => import("./pages/admin/AdminTelegramInviteAudit"));
 const AdminSections = lazy(() => import("./pages/admin/AdminSections"));
 const AdminKbImport = lazy(() => import("./pages/admin/AdminKbImport"));
 const AdminSiteBuilder = lazy(() => import("./pages/admin/AdminSiteBuilder"));
