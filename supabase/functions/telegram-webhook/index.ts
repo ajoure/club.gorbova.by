@@ -519,8 +519,8 @@ Deno.serve(async (req) => {
         const { data: runRow } = await realSupabase
           .from('telegram_audit_shape_runs')
           .insert({
-            actor_user_id: actorUserId,
-            scenario: scenario || 'INVITE_USED', // CHECK constraint allows only known scenarios; deny path uses meta.error
+            actor_user_id: actorUserId || '00000000-0000-0000-0000-000000000000',
+            scenario: scenario || 'INVITE_USED', // CHECK constraint allows only known scenarios
             status: allOk ? 'ok' : 'denied',
             meta: {
               reason: allOk ? 'accepted' : (secretOk ? 'missing_audit_meta' : 'bad_or_missing_secret'),
