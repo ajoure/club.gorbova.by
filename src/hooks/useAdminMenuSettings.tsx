@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import {
   Users,
   Shield,
+  ShieldCheck,
   ScrollText,
   Settings,
   FileText,
@@ -59,6 +60,7 @@ export type MenuSettings = MenuGroup[];
 export const MENU_ICONS: Record<string, LucideIcon> = {
   Users,
   Shield,
+  ShieldCheck,
   ScrollText,
   Settings,
   FileText,
@@ -123,6 +125,7 @@ export const DEFAULT_MENU: MenuSettings = [
       { id: "consents", label: "Согласия", path: "/admin/consents", icon: "ClipboardCheck", order: 6, permission: "users.view" },
       { id: "sites", label: "Конструктор сайтов", path: "/admin/sites", icon: "PanelTop", order: 7, permission: "content.edit" },
       { id: "club-members", label: "Участники клуба", path: "/admin/integrations/telegram", icon: "MessageCircle", order: 8 },
+      { id: "telegram-invite-audit", label: "Telegram invite audit", path: "/admin/telegram/invite-audit", icon: "ShieldCheck", order: 13, permission: "telegram.clubs.manage" },
       { id: "ilex", label: "iLex", path: "/admin/ilex", icon: "Library", order: 9, permission: "news.view" },
       { id: "ai", label: "Нейросеть", path: "/admin/ai", icon: "Bot", order: 10, permission: "roles.view" },
       { id: "live-events", label: "Эфиры", path: "/admin/live-events", icon: "Video", order: 11, permission: "content.edit" },
