@@ -668,6 +668,7 @@ ${safeUserName}, это последнее напоминание. Подпис�
 }
 
 // PATCH RENEWAL+PAYMENTS.1 B4: Send email reminder — 2 buttons for non-SBS
+// PATCH ONE-TIME v1: isOneTime=true → info-only HTML without renewal CTAs
 async function sendEmailReminder(
   supabase: any,
   userId: string,
@@ -684,7 +685,8 @@ async function sendEmailReminder(
   subscriptionUrl: string | null,
   subscriptionId: string,
   orderId: string | null,
-  tariffId: string | null
+  tariffId: string | null,
+  isOneTime: boolean = false
 ): Promise<boolean> {
   try {
     const formattedDate = expiryDate.toLocaleDateString('ru-RU', { 
