@@ -374,6 +374,7 @@ async function tryGeneratePaymentLink(
 }
 
 // Send Telegram reminder — PATCH RENEWAL+PAYMENTS.1 B3: 2 buttons for non-SBS
+// PATCH ONE-TIME v1: isOneTime=true → info-only text without renewal CTAs
 async function sendTelegramReminder(
   supabase: any,
   botToken: string | null,
@@ -390,7 +391,8 @@ async function sendTelegramReminder(
   subscriptionId: string,
   orderId: string | null,
   tariffId: string | null,
-  productId?: string | null
+  productId?: string | null,
+  isOneTime: boolean = false
 ): Promise<{ 
   sent: boolean; 
   logged: boolean; 
