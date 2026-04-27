@@ -281,7 +281,33 @@ Deno.serve(async (req) => {
     },
   });
 
-  const webhookUrl = `${supabaseUrl}/functions/v1/telegram-webhook?bot_id=audit-shape`;
+  // Resolve a real active bot_id (UUID required by the webhook). Audit-shape
+  // mode prevents any DB mutation regardless of bot, so picking any active bot
+  // is safe and side-effect-free.
+  const { data: anyBot, error: botErr } = await admin
+    .from('telegram_bots')
+    .select('id')
+    .eq('status', 'active')
+    .limit(1)
+    .maybeSingle();
+  if (botErr || !anyBot?.id) {
+    await recordRun(admin, {
+      actor_user_id: actorUserId,
+      scenario: scenario as Scenario,
+      status: 'error',
+      meta: {
+        reason: 'no_active_bot_for_audit_shape',
+        runner_run_id: runId,
+        err: botErr?.message || null,
+      },
+    });
+    return json(
+      { ok: false, error: 'internal', reason: 'no_active_bot_for_audit_shape' },
+      500,
+    );
+  }
+
+  const webhookUrl = `${supabaseUrl}/functions/v1/telegram-webhook?bot_id=${anyBot.id}`;
   const auditMeta = {
     scenario,
     actor_user_id: actorUserId,
