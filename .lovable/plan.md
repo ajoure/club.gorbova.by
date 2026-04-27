@@ -268,3 +268,87 @@ Audit пишется ДО возврата ответа функции; при �
 - Фактические сценарии (mismatch / reused / normal) для test-user будут проверены на реальном next-grant без массовых действий.
 
 **Деплой:** telegram-grant-access, telegram-reinvite-ghosts, telegram-webhook — успешно.
+
+---
+
+### Дополнение v5.4 — Invite Audit UI, runtime-tests и Bot Rights Pre-check (add-only)
+
+#### 1. UI: тест-страница `/admin/telegram/invite-audit` (admin/superadmin only)
+
+Доступ: `useRbac().isAdmin || useRbac().isSuperAdmin`. Любой другой пользователь → redirect `/`.
+
+**Источник данных:** `telegram_access_audit` (read-only).
+
+**Фильтры:**
+- `club_id` (select из `telegram_clubs`);
+- `event_type` (multiselect: INVITE_CREATED, INVITE_USED, INVITE_REVOKED, INVITE_MISMATCH, INVITE_BLOCKED_VERIFIED, INVITE_BLOCKED_CROSS_CLUB, INVITE_EXPIRED_OR_REUSED);
+- `tg_id` (число, поиск по `meta->>tg_id` и `meta->>expected_tg_id`);
+- `invite_code` (строка, поиск по `meta->>invite_code`);
+- период (`created_at` from/to, по умолчанию last 7 days);
+- быстрые preset-фильтры (chip-кнопки): **mismatch / reused / cross-club / created / used**.
+
+**Колонки таблицы:** `created_at`, `event_type`, `club_id`, `tg_id`, `expected_tg_id`, `invite_code`, `source_function`, `decision`, `reason`.
+Пагинация 50 на страницу. Экспорт CSV (тот же контракт колонок).
+
+**Запрещено в этой UI:** любые write-действия (revoke, kick, retry-grant). Страница read-only.
+
+#### 2. UI: матрица invite-flow (на той же странице, секция сверху)
+
+Визуализирует state-machine для конкретного `invite_code` (по умолчанию — последний по выбранному `tg_id`). Поддерживаемые цепочки:
+
+1. `INVITE_CREATED → (sent) → INVITE_USED` — happy path;
+2. `INVITE_CREATED → INVITE_MISMATCH → blocked` — попытка чужим tg_id;
+3. `INVITE_CREATED → INVITE_EXPIRED_OR_REUSED → blocked` — повторное / просроченное использование;
+4. `INVITE_CREATED (old) → INVITE_REVOKED → INVITE_CREATED (new)` — replace flow;
+5. `INVITE_CREATED → INVITE_BLOCKED_CROSS_CLUB` — вход с invite другого клуба;
+6. `auto_grant → INVITE_BLOCKED_VERIFIED` — попытка выдать verified-участнику.
+
+Каждый узел подсвечивается, если в `telegram_access_audit` найдено совпадение по `invite_code` (или паре `club_id+tg_id` для blocked-без-кода). Узлы без событий — серые.
+
+#### 3. Bot Rights Pre-check (блокирующий, до включения `join_request_mode=true`)
+
+До любого включения режима join-request на чате клуба — отдельный шаг проверки прав бота через `getChatMember(chat_id, bot_id)` (Telegram API через connector gateway).
+
+Минимально необходимый набор (`status='administrator'` и булевы поля):
+- `can_invite_users` (create/revoke invite link);
+- `can_restrict_members` (ban/unban / approve/decline join requests требует этого права);
+- `can_promote_members` — **не требуется**, явно фиксируем как not-required.
+
+**Контракт:**
+- Edge function `telegram-bot-rights-check` (read-only, **не** writer для invite-таблиц — никаких новых invite-writer'ов не создаётся);
+- Возвращает `{ ok: boolean, missing: string[], raw: ChatMember }`;
+- Если `ok=false` → STOP. `join_request_mode` **не включается**. Audit: `BOT_RIGHTS_INSUFFICIENT` в `telegram_access_audit` с meta `{club_id, chat_id, missing}`.
+
+#### 4. Runtime-tests (self-test audit ≠ финальный proof)
+
+Self-test (insert синтетических audit-записей) считается только smoke-проверкой схемы. Для DoD требуется **runtime-test для одного реального test-user**, без массовых действий:
+
+| Сценарий | Ожидаемые audit-события |
+|---|---|
+| normal invite | `INVITE_CREATED` → `INVITE_USED` |
+| mismatch invite | `INVITE_CREATED` → `INVITE_MISMATCH` (join отклонён) |
+| reused / expired invite | `INVITE_CREATED` → `INVITE_USED` → `INVITE_EXPIRED_OR_REUSED` (повторная попытка) |
+| cross-club guard | `INVITE_BLOCKED_CROSS_CLUB` (вход по invite другого клуба) |
+| revoke + new | `INVITE_CREATED(old)` → `INVITE_REVOKED` → `INVITE_CREATED(new)` |
+
+Все сценарии выполняются на одном test-user, по одному за раз. Никаких bulk-revoke / bulk-kick.
+
+#### 5. Финальный отчёт — обязательные явные пункты
+
+В итоговом отчёте по задаче БкБ отдельной секцией зафиксировать:
+
+- ✅ **Новых writer'ов в `telegram_invite_links` не создано.** Подтверждение — diff миграций + grep по `insert into telegram_invite_links` / `.from('telegram_invite_links').insert(`.
+- ✅ **GC и БкБ используют один invite-flow** (`telegram-grant-access` + `telegram-reinvite-ghosts`), параметризация — только `club_id`. Хардкоды по slug отсутствуют.
+- ✅ **Все INVITE_\*-события пишутся в `telegram_access_audit`.** `audit_logs` для INVITE_* как основной источник **не используется** (допустим только как legacy-копия, помеченная к удалению).
+- ✅ Runtime-test для test-user выполнен по всем 5 сценариям; ссылки на конкретные `audit_id` приложены.
+- ✅ Bot rights pre-check выполнен; `join_request_mode` включён только при `ok=true`.
+
+#### DoD v5.4 (добавляется к v5.1/v5.2/v5.3)
+
+- ✅ Страница `/admin/telegram/invite-audit` доступна только admin/superadmin, read-only, с фильтрами и preset-чипами.
+- ✅ Invite-flow матрица отображает все 6 цепочек по выбранному `invite_code`/`tg_id`.
+- ✅ `telegram-bot-rights-check` создан (read-only, не writer); `join_request_mode` блокируется при недостатке прав.
+- ✅ Runtime-tests на реальном test-user пройдены и приложены в отчёте.
+- ✅ В отчёте явно указаны 5 пунктов из секции «Финальный отчёт».
+
+Готов выполнять по утверждении.
