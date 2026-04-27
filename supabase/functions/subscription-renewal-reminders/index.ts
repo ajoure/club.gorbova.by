@@ -699,8 +699,17 @@ async function sendEmailReminder(
     let bodyHtml = '';
 
     // PATCH RENEWAL+PAYMENTS.1 B4: Build CTA section — SBS vs 2 buttons
+    // PATCH ONE-TIME v1: one-time products get info-only block (no payment CTA)
     let ctaHtml = '';
-    if (hasSBS) {
+    if (isOneTime) {
+      ctaHtml = `
+        <p style="color: #6b7280; margin: 16px 0;">Это разовый продукт — продление не предусмотрено.</p>
+        <p style="margin-top: 24px;">
+          <a href="https://club.gorbova.by/purchases" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500;">
+            📋 Управление в кабинете
+          </a>
+        </p>`;
+    } else if (hasSBS) {
       ctaHtml = `
         <p style="color: #059669; margin: 16px 0;">✅ Автопродление активно. Подписка продлится автоматически. Отключить можно в кабинете.</p>
         <p style="margin-top: 24px;">
