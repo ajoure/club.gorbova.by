@@ -194,4 +194,42 @@ Audit пишется ДО возврата ответа функции; при �
    - ✅ Все выданные в рамках задачи ссылки имеют `member_limit=1`, `expire_date ≤ now()+24h`, `expected_tg_id` совпадает с целевым `tg_id`, `club_id` = БкБ.
    - ✅ Аудит-события создания ссылки содержат `club_id, user_id, expected_tg_id, invite_code, source_function='telegram-grant-access'`.
 
+---
+
+### Дополнение v5.3 — Mapping-first и обязательный аудит инвайтов (add-only)
+
+**Шаг 0 (блокирующий, до любых действий по БкБ):**
+Сформировать `buh_business_invite_flow_mapping.md` со столбцами:
+- club: GC | БкБ;
+- writer entry point (UI/RPC/edge function);
+- edge function name (например `telegram-grant-access`);
+- какие таблицы пишутся (`telegram_invite_links`, `telegram_club_members`, `audit_logs`, …);
+- поле, где хранится `expected_tg_id`;
+- где проверяется `member_limit = 1`;
+- где проверяется `expire_date ≤ now() + 24h`;
+- какие audit-события эмитируются.
+
+**Правила по mapping:**
+- Если у БкБ обнаружится **отдельный** путь создания инвайта — он **не чинится отдельно**. БкБ переводится на тот же общий code path, что используется для GC, через параметризацию `club_id` (см. v5.2).
+- Любая попытка создать **новый writer** для `telegram_invite_links` (новая edge function / RPC / прямой insert из другого места) — **запрещена без отдельного approve пользователя**. До approve — STOP.
+
+**Обязательный аудит (новые / уточнённые события в `audit_logs`):**
+Каждое событие должно содержать `club_id, user_id, expected_tg_id, invite_code, requested_by, source_function`.
+
+| Событие | Когда эмитится | Дополнительные поля |
+|---|---|---|
+| `INVITE_CREATED` | После успешного создания персональной ссылки | `member_limit`, `expire_date` |
+| `INVITE_USED` | Когда `expected_tg_id` фактически вступил по ссылке | `actual_tg_id` (= expected) |
+| `INVITE_MISMATCH` | По ссылке пытается войти `tg_id ≠ expected_tg_id` → join отклонён | `actual_tg_id`, `expected_tg_id` |
+| `INVITE_REVOKED` | Ссылка отозвана (revoke / expire / replace) | `revoke_reason` |
+| `KICK_BLOCKED_VERIFIED` | Попытка kick verified члена | `final_status` |
+| `KICK_BLOCKED_USER_MISMATCH` | tg_id в чате не совпадает с tg_id профиля | `tg_id_in_chat`, `tg_id_in_profile` |
+| `KICK_BLOCKED_CROSS_CLUB` | Запрос с `club_id`, не совпадающим с `telegram_chat_id`/`invite_link.club_id` | `request_club_id`, `member_club_id` |
+
+**DoD v5.3 (добавляется к v5.1/v5.2):**
+- ✅ Файл `buh_business_invite_flow_mapping.md` создан и приложен **до** любых изменений по БкБ.
+- ✅ В репозитории нет двух writer'ов `telegram_invite_links`; БкБ использует тот же путь, что и GC.
+- ✅ Все 7 событий из таблицы выше реально пишутся в `audit_logs` и проверены на тестовом сценарии.
+- ✅ Любой новый writer инвайтов без отдельного approve = блок.
+
 Готов выполнять по утверждении.
