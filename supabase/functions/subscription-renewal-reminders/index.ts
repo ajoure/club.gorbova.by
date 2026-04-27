@@ -1333,11 +1333,6 @@ Deno.serve(async (req) => {
     for (const sub of expiringSubs || []) {
       const userId = sub.user_id;
 
-      // Check if already sent today (reuse event type for backward compat)
-      if (await wasReminderSentToday(supabase, userId, 'subscription_no_card_warning', todayWindow)) {
-        continue;
-      }
-
       const tariff = sub.tariffs as any;
       const product = tariff?.products_v2 as any;
       const productId = product?.id || tariff?.product_id || null;
@@ -1349,16 +1344,36 @@ Deno.serve(async (req) => {
       const noCardReminderDays = [7, 3, 1];
       if (!noCardReminderDays.includes(daysLeft)) continue;
 
+      const eventType = `subscription_reminder_${daysLeft}d`;
+
+      // PATCH OUTCOME-PARITY v1: skip second-block if main loop already produced TG outcome today
+      if (await hasSuccessOutcomeToday(supabase, 'telegram', sub.id, eventType, todayWindow)) {
+        console.log(`[second-block] Subscription ${sub.id} already has TG success today, skipping duplicate`);
+        continue;
+      }
+
+      // Legacy lock kept for backward compat
+      if (await wasReminderSentToday(supabase, userId, 'subscription_no_card_warning', todayWindow)) {
+        continue;
+      }
+
+      // PATCH ONE-TIME v1: classify in second block too
+      const classify = await isOneTimeProduct(supabase, sub.tariff_id, userId, productId);
+      const productIsOneTime = classify.oneTime;
+
       // Only send if user does NOT have active SBS
       const userHasSBS = await hasActiveSBS(supabase, userId, productId);
-      if (userHasSBS) {
+      if (userHasSBS && !productIsOneTime) {
         console.log(`User ${userId} has active SBS, skipping expiring-without-SBS warning`);
-        // PATCH C2b: audit paylink CTA suppressed by SBS (second block)
         await supabase.from('audit_logs').insert({
           action: 'reminders.paylink_cta_suppressed_sbs',
           actor_type: 'system',
           actor_label: 'subscription-renewal-reminders',
           meta: { user_id: userId, product_id: productId, subscription_id: sub.id },
+        });
+        // PATCH SKIP-LOG v1: write canonical skip outcome (so UI shows green for SBS users)
+        await logTelegramSkip(supabase, userId, sub.id, eventType, 'active_sbs_provider_will_charge', {
+          days_left: daysLeft, source_block: 'expiring_without_sbs',
         });
         continue;
       }
@@ -1380,10 +1395,10 @@ Deno.serve(async (req) => {
         }
       }
 
-      // PATCH RENEWAL+PAYMENTS.1 B5: Generate 2 CTA links
+      // PATCH RENEWAL+PAYMENTS.1 B5: Generate 2 CTA links — only for recurring products
       let ncOneTimeUrl: string | null = null;
       let ncSubscriptionUrl: string | null = null;
-      if (productId && sub.tariff_id && amount > 0) {
+      if (!productIsOneTime && productId && sub.tariff_id && amount > 0) {
         const ctas = await generateRenewalCTAs({
           supabase, userId, productId, tariffId: sub.tariff_id,
           amount, currency, actorType: 'system',
@@ -1391,7 +1406,6 @@ Deno.serve(async (req) => {
         ncOneTimeUrl = ctas.oneTimeUrl;
         ncSubscriptionUrl = ctas.subscriptionUrl;
 
-        // PATCH C1b: audit paylink CTA generated (second block)
         if (ncOneTimeUrl || ncSubscriptionUrl) {
           await supabase.from('audit_logs').insert({
             action: 'reminders.paylink_cta_generated',
@@ -1406,13 +1420,13 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Send via the unified sendTelegramReminder (with hasSBS=false)
+      // Send via the unified sendTelegramReminder (with hasSBS=false, isOneTime from classify)
       const telegramResult = await sendTelegramReminder(
         supabase, botToken, userId,
         productName, tariff?.name || 'Стандартный',
         accessEndAt, daysLeft, amount, currency,
         false, ncOneTimeUrl, ncSubscriptionUrl,
-        sub.id, sub.order_id, sub.tariff_id
+        sub.id, sub.order_id, sub.tariff_id, productId, productIsOneTime
       );
 
       results.push({
