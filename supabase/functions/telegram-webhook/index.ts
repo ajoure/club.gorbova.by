@@ -482,19 +482,80 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  // Reset audit-shape state per invocation (fail-closed)
+  __AUDIT_SHAPE_ACTIVE = false;
+  __AUDIT_SHAPE_META = null;
+  __auditShapeBlockedCalls.length = 0;
+
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const realSupabase = createClient(supabaseUrl, supabaseServiceKey);
+    let supabase: any = realSupabase;
 
     const url = new URL(req.url);
     const botId = url.searchParams.get('bot_id');
-    
+
+    // Read body ONCE (audit-shape detection needs body, classic flow needs body)
+    const rawBody: any = await req.json().catch(() => null);
+
+    // -------- Audit-shape detection (fail-closed) --------
+    const auditShapeSecretEnv = Deno.env.get('AUDIT_SHAPE_SECRET') || '';
+    const auditShapeHeader = req.headers.get('x-audit-shape-secret') || '';
+    const hasAuditMeta = !!(rawBody && typeof rawBody === 'object' && rawBody._audit_shape_meta && typeof rawBody._audit_shape_meta === 'object');
+    const headerProvided = auditShapeHeader.length > 0;
+    const requestedAuditShape = hasAuditMeta || headerProvided;
+    let auditShapeRunId: string | null = null;
+
+    if (requestedAuditShape) {
+      const secretOk = auditShapeSecretEnv.length > 0 && auditShapeHeader === auditShapeSecretEnv;
+      const allOk = secretOk && hasAuditMeta;
+      const meta = (rawBody && rawBody._audit_shape_meta) || {};
+      const scenario = typeof meta?.scenario === 'string' ? meta.scenario : null;
+      const actorUserId = typeof meta?.actor_user_id === 'string' ? meta.actor_user_id : null;
+
+      // Log run attempt via REAL (unwrapped) client — even on denial.
+      try {
+        const { data: runRow } = await realSupabase
+          .from('telegram_audit_shape_runs')
+          .insert({
+            actor_user_id: actorUserId,
+            scenario: scenario || 'INVITE_USED', // CHECK constraint allows only known scenarios; deny path uses meta.error
+            status: allOk ? 'ok' : 'denied',
+            meta: {
+              reason: allOk ? 'accepted' : (secretOk ? 'missing_audit_meta' : 'bad_or_missing_secret'),
+              had_header: headerProvided,
+              had_audit_meta: hasAuditMeta,
+              bot_id: botId,
+              raw_meta: meta,
+            },
+          })
+          .select('id')
+          .single();
+        auditShapeRunId = runRow?.id || null;
+      } catch (logErr) {
+        console.error('[audit-shape] failed to record run', logErr);
+      }
+
+      if (!allOk) {
+        return new Response(JSON.stringify({
+          ok: false,
+          error: 'audit_shape_denied',
+          reason: secretOk ? 'missing_audit_meta' : 'bad_or_missing_secret',
+          run_id: auditShapeRunId,
+        }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      __AUDIT_SHAPE_ACTIVE = true;
+      __AUDIT_SHAPE_META = meta;
+      supabase = wrapSupabaseForAuditShape(realSupabase);
+      console.log('[audit-shape] ACTIVE', { scenario, actorUserId, runId: auditShapeRunId });
+    }
+    // -----------------------------------------------------
+
     if (!botId) {
       // Healthcheck / monitoring pings may call webhook without bot_id.
-      // This must not be treated as an error, otherwise it can break the admin UI checks.
-      const body = await req.json().catch(() => null) as any;
-      if (body && typeof body === 'object' && body.ping === true) {
+      if (rawBody && typeof rawBody === 'object' && rawBody.ping === true) {
         return new Response(JSON.stringify({ ok: true, pong: true }), {
           status: 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -530,8 +591,8 @@ Deno.serve(async (req) => {
     }
 
     const botToken = bot.bot_token_encrypted;
-    const update: TelegramUpdate = await req.json();
-    
+    const update: TelegramUpdate = rawBody as TelegramUpdate;
+
     console.log('Telegram update:', JSON.stringify(update, null, 2));
 
     // ==========================================
