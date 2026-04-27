@@ -479,8 +479,30 @@ async function sendTelegramReminder(
     const safeProductName = escapeMd(productName);
     const safeTariffName = escapeMd(tariffName);
 
+    // PATCH ONE-TIME v1: info-only text for one-time products (no renewal CTA)
+    if (isOneTime) {
+      if (daysLeft === 7) {
+        message = `📅 *Доступ скоро заканчивается*
+
+${safeUserName}, ваш доступ к *${safeProductName}* заканчивается ${formattedDate}.
+
+Это разовый продукт — продление не предусмотрено.`;
+      } else if (daysLeft === 3) {
+        message = `⏰ *Доступ заканчивается через 3 дня*
+
+${safeUserName}, ваш доступ к *${safeProductName}* заканчивается ${formattedDate}.
+
+Это разовый продукт — продление не предусмотрено.`;
+      } else if (daysLeft === 1) {
+        message = `🔔 *Доступ заканчивается завтра*
+
+${safeUserName}, это последнее напоминание. Доступ к *${safeProductName}* заканчивается ${formattedDate}.
+
+Это разовый продукт — продление не предусмотрено.`;
+      }
+    }
     // PATCH RENEWAL+PAYMENTS.1 B3: Unified texts — SBS vs non-SBS (2 buttons)
-    if (daysLeft === 7) {
+    else if (daysLeft === 7) {
       if (hasSBS) {
         message = `📅 *Напоминание о подписке*
 
@@ -529,9 +551,13 @@ ${safeUserName}, это последнее напоминание. Подпис�
 
     if (!message) return { sent: false, logged: false, logError: 'Invalid daysLeft', skipReason: null, failReason: null };
 
-    // PATCH RENEWAL+PAYMENTS.1 B3: Build reply_markup — SBS: manage only; non-SBS: 2 CTA buttons
+    // PATCH ONE-TIME v1: replyMarkup — one-time gets only "Manage in cabinet" (no paylink CTAs)
     let replyMarkup: any;
-    if (hasSBS) {
+    if (isOneTime) {
+      replyMarkup = {
+        inline_keyboard: [[{ text: '📋 Управление в кабинете', url: 'https://club.gorbova.by/purchases' }]],
+      };
+    } else if (hasSBS) {
       replyMarkup = {
         inline_keyboard: [[{ text: '📋 Управление подпиской', url: 'https://club.gorbova.by/purchases' }]],
       };
