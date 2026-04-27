@@ -124,6 +124,201 @@ async function hasActiveSBS(supabase: any, userId: string, productId: string | n
 }
 
 /**
+ * PATCH ONE-TIME-CLASSIFIER v1: ID-first detection of one-time products.
+ * Returns true ONLY when:
+ *  1) tariff_id has at least one active offer, AND
+ *  2) NO active offer has offer_type='subscription', AND
+ *  3) user has NO active provider_managed subscription for this product.
+ * requires_card_tokenization is used as a SECONDARY signal (logged in meta only),
+ * never as sole source of truth.
+ * Conservative: any error / missing data returns false (treat as recurring).
+ */
+async function isOneTimeProduct(
+  supabase: any,
+  tariffId: string | null,
+  userId: string,
+  productId: string | null,
+): Promise<{ oneTime: boolean; signals: Record<string, any> }> {
+  const signals: Record<string, any> = {
+    tariff_id: tariffId,
+    product_id: productId,
+    has_subscription_offer: null,
+    active_offers_count: null,
+    has_active_pm_sub: null,
+    any_offer_requires_tokenization: null,
+  };
+  if (!tariffId) return { oneTime: false, signals };
+  try {
+    const { data: offers, error: offersErr } = await supabase
+      .from('tariff_offers')
+      .select('offer_type, requires_card_tokenization, is_active')
+      .eq('tariff_id', tariffId)
+      .eq('is_active', true);
+    if (offersErr) {
+      console.warn('[one-time-classifier] offers query error:', offersErr);
+      return { oneTime: false, signals };
+    }
+    signals.active_offers_count = offers?.length || 0;
+    if (!offers || offers.length === 0) {
+      // No active offers — cannot classify, conservative false
+      return { oneTime: false, signals };
+    }
+    signals.has_subscription_offer = offers.some((o: any) => o.offer_type === 'subscription');
+    signals.any_offer_requires_tokenization = offers.some((o: any) => o.requires_card_tokenization === true);
+    if (signals.has_subscription_offer) {
+      return { oneTime: false, signals };
+    }
+    // Check provider_managed active sub for this user+product
+    if (productId) {
+      const { count, error: subErr } = await supabase
+        .from('subscriptions_v2')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .eq('product_id', productId)
+        .eq('billing_type', 'provider_managed')
+        .in('status', ['active', 'trial']);
+      if (subErr) {
+        console.warn('[one-time-classifier] sub query error:', subErr);
+        return { oneTime: false, signals };
+      }
+      signals.has_active_pm_sub = (count || 0) > 0;
+      if (signals.has_active_pm_sub) {
+        return { oneTime: false, signals };
+      }
+    }
+    return { oneTime: true, signals };
+  } catch (err) {
+    console.warn('[one-time-classifier] exception:', err);
+    return { oneTime: false, signals };
+  }
+}
+
+/**
+ * PATCH OUTCOME-PARITY v1: Channel-aware idempotency check.
+ * Returns true if a SUCCESS outcome already exists for this (subscription, event_type, channel) today.
+ * Skip-records (status='skipped') do NOT block re-attempts.
+ */
+async function hasSuccessOutcomeToday(
+  supabase: any,
+  channel: 'telegram' | 'email',
+  subscriptionId: string,
+  eventType: string,
+  todayWindow: { start: string; end: string },
+): Promise<boolean> {
+  try {
+    const table = channel === 'telegram' ? 'telegram_logs' : 'email_logs';
+    let query = supabase
+      .from(table)
+      .select('id')
+      .eq('status', 'success')
+      .gte('created_at', todayWindow.start)
+      .lt('created_at', todayWindow.end)
+      .limit(1);
+    if (channel === 'telegram') {
+      query = query.eq('event_type', eventType).eq('action', 'SEND_REMINDER');
+    }
+    // For email_logs we can only filter by created_at + status; subscription_id lives in meta — filter client-side
+    const { data, error } = await query;
+    if (error) {
+      console.warn(`[idempotency] ${channel} query error:`, error);
+      return false;
+    }
+    if (!data || data.length === 0) return false;
+    if (channel === 'telegram') {
+      // event_type filter applied; still need subscription_id from meta — re-query targeted
+      const { data: targeted } = await supabase
+        .from('telegram_logs')
+        .select('id, meta')
+        .eq('action', 'SEND_REMINDER')
+        .eq('event_type', eventType)
+        .eq('status', 'success')
+        .gte('created_at', todayWindow.start)
+        .lt('created_at', todayWindow.end);
+      return (targeted || []).some((r: any) => (r.meta as any)?.subscription_id === subscriptionId);
+    } else {
+      const { data: targeted } = await supabase
+        .from('email_logs')
+        .select('id, meta')
+        .eq('direction', 'outgoing')
+        .eq('status', 'sent')
+        .gte('created_at', todayWindow.start)
+        .lt('created_at', todayWindow.end);
+      return (targeted || []).some((r: any) => {
+        const m = r.meta as any;
+        return m?.subscription_id === subscriptionId && m?.event_type === eventType;
+      });
+    }
+  } catch (err) {
+    console.warn(`[idempotency] ${channel} exception:`, err);
+    return false;
+  }
+}
+
+/**
+ * PATCH SKIP-LOG v1: Insert canonical skip/fail outcome into telegram_logs.
+ */
+async function logTelegramSkip(
+  supabase: any,
+  userId: string,
+  subscriptionId: string,
+  eventType: string,
+  reason: string,
+  extraMeta: Record<string, any> = {},
+): Promise<void> {
+  try {
+    await supabase.from('telegram_logs').insert({
+      action: 'SEND_REMINDER',
+      event_type: eventType,
+      user_id: userId,
+      status: 'skipped',
+      message_text: null,
+      error_message: null,
+      meta: { reason, subscription_id: subscriptionId, ...extraMeta },
+    });
+  } catch (err) {
+    console.warn('[skip-log] telegram insert failed:', err);
+  }
+}
+
+/**
+ * PATCH SKIP-LOG v1: Insert canonical skip/fail outcome into email_logs.
+ */
+async function logEmailOutcome(
+  supabase: any,
+  userId: string,
+  profileId: string | null,
+  toEmail: string | null,
+  subscriptionId: string,
+  eventType: string,
+  status: 'success' | 'skipped' | 'failed',
+  reason: string | null,
+  errorMessage: string | null = null,
+  extraMeta: Record<string, any> = {},
+): Promise<void> {
+  try {
+    await supabase.from('email_logs').insert({
+      user_id: userId,
+      profile_id: profileId,
+      direction: 'outgoing',
+      from_email: 'system',
+      to_email: toEmail || 'unknown',
+      subject: null,
+      status: status === 'success' ? 'sent' : status,
+      error_message: errorMessage,
+      meta: {
+        event_type: eventType,
+        subscription_id: subscriptionId,
+        reason,
+        source: 'subscription-renewal-reminders',
+        ...extraMeta,
+      },
+    });
+  } catch (err) {
+    console.warn('[email-outcome-log] insert failed:', err);
+  }
+}
+
+/**
  * Try to generate a payment link for renewal via shared helper.
  * Returns redirect_url or null if generation failed (STOP-guard).
  */
