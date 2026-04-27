@@ -11610,6 +11610,36 @@ export type Database = {
           },
         ]
       }
+      telegram_audit_shape_runs: {
+        Row: {
+          actor_user_id: string
+          audit_id: string | null
+          created_at: string
+          id: string
+          meta: Json
+          scenario: string
+          status: string
+        }
+        Insert: {
+          actor_user_id: string
+          audit_id?: string | null
+          created_at?: string
+          id?: string
+          meta?: Json
+          scenario: string
+          status: string
+        }
+        Update: {
+          actor_user_id?: string
+          audit_id?: string | null
+          created_at?: string
+          id?: string
+          meta?: Json
+          scenario?: string
+          status?: string
+        }
+        Relationships: []
+      }
       telegram_bots: {
         Row: {
           bot_id: number | null
