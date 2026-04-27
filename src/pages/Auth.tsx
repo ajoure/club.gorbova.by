@@ -72,11 +72,48 @@ interface FieldError {
 // State for account_exists mode
 
 
+/**
+ * Synchronously detect a password-recovery flow from the current URL.
+ *
+ * Recovery is signalled either by:
+ *   - `?mode=reset` query param (set by our `auth-actions` edge function), or
+ *   - URL hash containing `type=recovery` (Supabase default after /auth/v1/verify).
+ *
+ * Computed BEFORE any React state initialisation to avoid the race where the
+ * redirect-guard fires on first render with stale `mode` and pushes a
+ * recovery-session user straight to /dashboard without a password change.
+ */
+function detectRecoveryFlow(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const search = new URLSearchParams(window.location.search);
+    if (search.get("mode") === "reset") return true;
+    const hash = (window.location.hash || "").replace(/^#/, "");
+    if (hash) {
+      const hashParams = new URLSearchParams(hash);
+      if (hashParams.get("type") === "recovery") return true;
+    }
+  } catch { /* ignore */ }
+  return false;
+}
+
 export default function Auth() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { user, session, signIn, signUp, loading } = useAuth();
-  const [mode, setMode] = useState<AuthMode>("login");
+
+  // Compute recovery-flow ONCE, synchronously, before any state init.
+  // Used as the single source of truth for both initial mode and the
+  // post-login redirect-guard, eliminating the first-render race.
+  const isRecoveryFlow = useMemo(() => detectRecoveryFlow(), []);
+
+  const [mode, setMode] = useState<AuthMode>(() => {
+    if (isRecoveryFlow) return "update_password";
+    return "login";
+  });
+  // Set to true ONLY after supabase.auth.updateUser({ password }) succeeds.
+  // Until then, recovery sessions are NOT allowed to navigate to /dashboard.
+  const [passwordUpdated, setPasswordUpdated] = useState(false);
   const [email, setEmail] = useState(() => {
     try {
       return localStorage.getItem("last_login_email") || "";
@@ -102,36 +139,37 @@ export default function Auth() {
   const passwordValidation = useMemo(() => validatePassword(password), [password]);
   const passwordsMatch = password === confirmPassword;
 
-  // Set initial mode from URL param
+  // Set initial mode from URL param (signup-only — recovery is handled
+  // synchronously via `isRecoveryFlow` at component init).
   useEffect(() => {
     const modeParam = searchParams.get("mode");
     if (modeParam === "signup") {
       setMode("signup");
-    } else if (modeParam === "reset") {
-      setMode("update_password");
     }
   }, [searchParams]);
 
-  // Detect recovery flow from URL or session event
+  // Recovery flow: keep `mode` pinned to update_password when Supabase emits
+  // SIGNED_IN / PASSWORD_RECOVERY after /auth/v1/verify. We do NOT rely on
+  // the URL `mode=reset` param alone because the bare verify-redirect can
+  // arrive without it (hash-only flow).
   useEffect(() => {
-    const modeParam = searchParams.get("mode");
-
-    // If the user came from a recovery link, show the new password form immediately
-    if (modeParam === "reset") {
-      setMode("update_password");
-    }
-
-    // Supabase usually emits SIGNED_IN after /auth/v1/verify redirects back
+    if (!isRecoveryFlow) return;
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (modeParam === "reset" && (event === "SIGNED_IN" || event === "PASSWORD_RECOVERY")) {
+      if (event === "SIGNED_IN" || event === "PASSWORD_RECOVERY") {
         setMode("update_password");
       }
     });
-
     return () => subscription.unsubscribe();
-  }, [searchParams]);
+  }, [isRecoveryFlow]);
 
   useEffect(() => {
+    // Recovery-flow guard: as long as the user opened a recovery link and
+    // hasn't actually changed their password yet, we MUST NOT redirect them
+    // anywhere — otherwise the recovery session silently logs them in.
+    if (isRecoveryFlow && !passwordUpdated) {
+      return;
+    }
+
     // Only redirect if user is logged in AND not in password update mode
     if (user && mode !== "update_password") {
       // Сначала проверяем redirectTo из URL
@@ -166,7 +204,7 @@ export default function Auth() {
       // По умолчанию — на дашборд
       navigate('/dashboard');
     }
-  }, [user, mode, navigate, searchParams]);
+  }, [user, mode, navigate, searchParams, isRecoveryFlow, passwordUpdated]);
 
   const getFieldError = (field: string) => {
     return fieldErrors.find(e => e.field === field)?.message;
@@ -217,11 +255,15 @@ export default function Auth() {
         variant: "destructive",
       });
     } else {
+      // Mark recovery flow as completed BEFORE navigating, so the
+      // redirect-guard releases its hold on the recovery session and the
+      // user is treated as a normal authenticated user from now on.
+      setPasswordUpdated(true);
       toast({
         title: "Пароль обновлён",
         description: "Ваш пароль успешно изменён",
       });
-      navigate("/");
+      navigate("/dashboard");
     }
   };
 
