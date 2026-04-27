@@ -124,6 +124,201 @@ async function hasActiveSBS(supabase: any, userId: string, productId: string | n
 }
 
 /**
+ * PATCH ONE-TIME-CLASSIFIER v1: ID-first detection of one-time products.
+ * Returns true ONLY when:
+ *  1) tariff_id has at least one active offer, AND
+ *  2) NO active offer has offer_type='subscription', AND
+ *  3) user has NO active provider_managed subscription for this product.
+ * requires_card_tokenization is used as a SECONDARY signal (logged in meta only),
+ * never as sole source of truth.
+ * Conservative: any error / missing data returns false (treat as recurring).
+ */
+async function isOneTimeProduct(
+  supabase: any,
+  tariffId: string | null,
+  userId: string,
+  productId: string | null,
+): Promise<{ oneTime: boolean; signals: Record<string, any> }> {
+  const signals: Record<string, any> = {
+    tariff_id: tariffId,
+    product_id: productId,
+    has_subscription_offer: null,
+    active_offers_count: null,
+    has_active_pm_sub: null,
+    any_offer_requires_tokenization: null,
+  };
+  if (!tariffId) return { oneTime: false, signals };
+  try {
+    const { data: offers, error: offersErr } = await supabase
+      .from('tariff_offers')
+      .select('offer_type, requires_card_tokenization, is_active')
+      .eq('tariff_id', tariffId)
+      .eq('is_active', true);
+    if (offersErr) {
+      console.warn('[one-time-classifier] offers query error:', offersErr);
+      return { oneTime: false, signals };
+    }
+    signals.active_offers_count = offers?.length || 0;
+    if (!offers || offers.length === 0) {
+      // No active offers — cannot classify, conservative false
+      return { oneTime: false, signals };
+    }
+    signals.has_subscription_offer = offers.some((o: any) => o.offer_type === 'subscription');
+    signals.any_offer_requires_tokenization = offers.some((o: any) => o.requires_card_tokenization === true);
+    if (signals.has_subscription_offer) {
+      return { oneTime: false, signals };
+    }
+    // Check provider_managed active sub for this user+product
+    if (productId) {
+      const { count, error: subErr } = await supabase
+        .from('subscriptions_v2')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .eq('product_id', productId)
+        .eq('billing_type', 'provider_managed')
+        .in('status', ['active', 'trial']);
+      if (subErr) {
+        console.warn('[one-time-classifier] sub query error:', subErr);
+        return { oneTime: false, signals };
+      }
+      signals.has_active_pm_sub = (count || 0) > 0;
+      if (signals.has_active_pm_sub) {
+        return { oneTime: false, signals };
+      }
+    }
+    return { oneTime: true, signals };
+  } catch (err) {
+    console.warn('[one-time-classifier] exception:', err);
+    return { oneTime: false, signals };
+  }
+}
+
+/**
+ * PATCH OUTCOME-PARITY v1: Channel-aware idempotency check.
+ * Returns true if a SUCCESS outcome already exists for this (subscription, event_type, channel) today.
+ * Skip-records (status='skipped') do NOT block re-attempts.
+ */
+async function hasSuccessOutcomeToday(
+  supabase: any,
+  channel: 'telegram' | 'email',
+  subscriptionId: string,
+  eventType: string,
+  todayWindow: { start: string; end: string },
+): Promise<boolean> {
+  try {
+    const table = channel === 'telegram' ? 'telegram_logs' : 'email_logs';
+    let query = supabase
+      .from(table)
+      .select('id')
+      .eq('status', 'success')
+      .gte('created_at', todayWindow.start)
+      .lt('created_at', todayWindow.end)
+      .limit(1);
+    if (channel === 'telegram') {
+      query = query.eq('event_type', eventType).eq('action', 'SEND_REMINDER');
+    }
+    // For email_logs we can only filter by created_at + status; subscription_id lives in meta — filter client-side
+    const { data, error } = await query;
+    if (error) {
+      console.warn(`[idempotency] ${channel} query error:`, error);
+      return false;
+    }
+    if (!data || data.length === 0) return false;
+    if (channel === 'telegram') {
+      // event_type filter applied; still need subscription_id from meta — re-query targeted
+      const { data: targeted } = await supabase
+        .from('telegram_logs')
+        .select('id, meta')
+        .eq('action', 'SEND_REMINDER')
+        .eq('event_type', eventType)
+        .eq('status', 'success')
+        .gte('created_at', todayWindow.start)
+        .lt('created_at', todayWindow.end);
+      return (targeted || []).some((r: any) => (r.meta as any)?.subscription_id === subscriptionId);
+    } else {
+      const { data: targeted } = await supabase
+        .from('email_logs')
+        .select('id, meta')
+        .eq('direction', 'outgoing')
+        .eq('status', 'sent')
+        .gte('created_at', todayWindow.start)
+        .lt('created_at', todayWindow.end);
+      return (targeted || []).some((r: any) => {
+        const m = r.meta as any;
+        return m?.subscription_id === subscriptionId && m?.event_type === eventType;
+      });
+    }
+  } catch (err) {
+    console.warn(`[idempotency] ${channel} exception:`, err);
+    return false;
+  }
+}
+
+/**
+ * PATCH SKIP-LOG v1: Insert canonical skip/fail outcome into telegram_logs.
+ */
+async function logTelegramSkip(
+  supabase: any,
+  userId: string,
+  subscriptionId: string,
+  eventType: string,
+  reason: string,
+  extraMeta: Record<string, any> = {},
+): Promise<void> {
+  try {
+    await supabase.from('telegram_logs').insert({
+      action: 'SEND_REMINDER',
+      event_type: eventType,
+      user_id: userId,
+      status: 'skipped',
+      message_text: null,
+      error_message: null,
+      meta: { reason, subscription_id: subscriptionId, ...extraMeta },
+    });
+  } catch (err) {
+    console.warn('[skip-log] telegram insert failed:', err);
+  }
+}
+
+/**
+ * PATCH SKIP-LOG v1: Insert canonical skip/fail outcome into email_logs.
+ */
+async function logEmailOutcome(
+  supabase: any,
+  userId: string,
+  profileId: string | null,
+  toEmail: string | null,
+  subscriptionId: string,
+  eventType: string,
+  status: 'success' | 'skipped' | 'failed',
+  reason: string | null,
+  errorMessage: string | null = null,
+  extraMeta: Record<string, any> = {},
+): Promise<void> {
+  try {
+    await supabase.from('email_logs').insert({
+      user_id: userId,
+      profile_id: profileId,
+      direction: 'outgoing',
+      from_email: 'system',
+      to_email: toEmail || 'unknown',
+      subject: null,
+      status: status === 'success' ? 'sent' : status,
+      error_message: errorMessage,
+      meta: {
+        event_type: eventType,
+        subscription_id: subscriptionId,
+        reason,
+        source: 'subscription-renewal-reminders',
+        ...extraMeta,
+      },
+    });
+  } catch (err) {
+    console.warn('[email-outcome-log] insert failed:', err);
+  }
+}
+
+/**
  * Try to generate a payment link for renewal via shared helper.
  * Returns redirect_url or null if generation failed (STOP-guard).
  */
@@ -179,6 +374,7 @@ async function tryGeneratePaymentLink(
 }
 
 // Send Telegram reminder — PATCH RENEWAL+PAYMENTS.1 B3: 2 buttons for non-SBS
+// PATCH ONE-TIME v1: isOneTime=true → info-only text without renewal CTAs
 async function sendTelegramReminder(
   supabase: any,
   botToken: string | null,
@@ -195,7 +391,8 @@ async function sendTelegramReminder(
   subscriptionId: string,
   orderId: string | null,
   tariffId: string | null,
-  productId?: string | null
+  productId?: string | null,
+  isOneTime: boolean = false
 ): Promise<{ 
   sent: boolean; 
   logged: boolean; 
@@ -282,8 +479,30 @@ async function sendTelegramReminder(
     const safeProductName = escapeMd(productName);
     const safeTariffName = escapeMd(tariffName);
 
+    // PATCH ONE-TIME v1: info-only text for one-time products (no renewal CTA)
+    if (isOneTime) {
+      if (daysLeft === 7) {
+        message = `📅 *Доступ скоро заканчивается*
+
+${safeUserName}, ваш доступ к *${safeProductName}* заканчивается ${formattedDate}.
+
+Это разовый продукт — продление не предусмотрено.`;
+      } else if (daysLeft === 3) {
+        message = `⏰ *Доступ заканчивается через 3 дня*
+
+${safeUserName}, ваш доступ к *${safeProductName}* заканчивается ${formattedDate}.
+
+Это разовый продукт — продление не предусмотрено.`;
+      } else if (daysLeft === 1) {
+        message = `🔔 *Доступ заканчивается завтра*
+
+${safeUserName}, это последнее напоминание. Доступ к *${safeProductName}* заканчивается ${formattedDate}.
+
+Это разовый продукт — продление не предусмотрено.`;
+      }
+    }
     // PATCH RENEWAL+PAYMENTS.1 B3: Unified texts — SBS vs non-SBS (2 buttons)
-    if (daysLeft === 7) {
+    else if (daysLeft === 7) {
       if (hasSBS) {
         message = `📅 *Напоминание о подписке*
 
@@ -332,9 +551,13 @@ ${safeUserName}, это последнее напоминание. Подпис�
 
     if (!message) return { sent: false, logged: false, logError: 'Invalid daysLeft', skipReason: null, failReason: null };
 
-    // PATCH RENEWAL+PAYMENTS.1 B3: Build reply_markup — SBS: manage only; non-SBS: 2 CTA buttons
+    // PATCH ONE-TIME v1: replyMarkup — one-time gets only "Manage in cabinet" (no paylink CTAs)
     let replyMarkup: any;
-    if (hasSBS) {
+    if (isOneTime) {
+      replyMarkup = {
+        inline_keyboard: [[{ text: '📋 Управление в кабинете', url: 'https://club.gorbova.by/purchases' }]],
+      };
+    } else if (hasSBS) {
       replyMarkup = {
         inline_keyboard: [[{ text: '📋 Управление подпиской', url: 'https://club.gorbova.by/purchases' }]],
       };
@@ -445,6 +668,7 @@ ${safeUserName}, это последнее напоминание. Подпис�
 }
 
 // PATCH RENEWAL+PAYMENTS.1 B4: Send email reminder — 2 buttons for non-SBS
+// PATCH ONE-TIME v1: isOneTime=true → info-only HTML without renewal CTAs
 async function sendEmailReminder(
   supabase: any,
   userId: string,
@@ -461,7 +685,8 @@ async function sendEmailReminder(
   subscriptionUrl: string | null,
   subscriptionId: string,
   orderId: string | null,
-  tariffId: string | null
+  tariffId: string | null,
+  isOneTime: boolean = false
 ): Promise<boolean> {
   try {
     const formattedDate = expiryDate.toLocaleDateString('ru-RU', { 
@@ -474,8 +699,17 @@ async function sendEmailReminder(
     let bodyHtml = '';
 
     // PATCH RENEWAL+PAYMENTS.1 B4: Build CTA section — SBS vs 2 buttons
+    // PATCH ONE-TIME v1: one-time products get info-only block (no payment CTA)
     let ctaHtml = '';
-    if (hasSBS) {
+    if (isOneTime) {
+      ctaHtml = `
+        <p style="color: #6b7280; margin: 16px 0;">Это разовый продукт — продление не предусмотрено.</p>
+        <p style="margin-top: 24px;">
+          <a href="https://club.gorbova.by/purchases" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500;">
+            📋 Управление в кабинете
+          </a>
+        </p>`;
+    } else if (hasSBS) {
       ctaHtml = `
         <p style="color: #059669; margin: 16px 0;">✅ Автопродление активно. Подписка продлится автоматически. Отключить можно в кабинете.</p>
         <p style="margin-top: 24px;">
@@ -874,15 +1108,20 @@ Deno.serve(async (req) => {
           .eq('id', sub.id)
           .maybeSingle();
 
+        const eventType = `subscription_reminder_${daysLeft}d`;
+
         if (freshSub && (freshSub.status !== sub.status || new Date(freshSub.access_end_at) > new Date(windowEnd))) {
           console.log(`[anti-stale] Subscription ${sub.id} changed (status=${freshSub.status}, access_end_at=${freshSub.access_end_at}), skipping reminder`);
+          // PATCH SKIP-LOG v1: log skip outcome (TG only — email skip logged later when needed)
+          await logTelegramSkip(supabase, userId, sub.id, eventType, 'subscription_changed', {
+            days_left: daysLeft, fresh_status: freshSub.status, fresh_access_end_at: freshSub.access_end_at,
+          });
           continue;
         }
-        
-        if (await wasReminderSentToday(supabase, userId, `subscription_reminder_${daysLeft}d`, todayWindow)) {
-          console.log(`Reminder already sent today for user ${userId}, skipping`);
-          continue;
-        }
+
+        // PATCH OUTCOME-PARITY v1: separate TG/Email locks (channel-aware)
+        const tgAlreadySuccess = await hasSuccessOutcomeToday(supabase, 'telegram', sub.id, eventType, todayWindow);
+        const emailAlreadySuccess = await hasSuccessOutcomeToday(supabase, 'email', sub.id, eventType, todayWindow);
 
         // Get user profile and email
         const { data: profile } = await supabase
@@ -922,13 +1161,28 @@ Deno.serve(async (req) => {
         const tariffName = tariff?.name || 'Стандартный';
         const expiryDate = new Date(sub.access_end_at);
 
+        // PATCH ONE-TIME v1: classify product (ID-first)
+        const classify = await isOneTimeProduct(supabase, sub.tariff_id, userId, productId);
+        const productIsOneTime = classify.oneTime;
+        if (productIsOneTime) {
+          await supabase.from('audit_logs').insert({
+            action: 'reminders.one_time_product_detected',
+            actor_type: 'system',
+            actor_label: 'subscription-renewal-reminders',
+            meta: {
+              user_id: userId, product_id: productId, subscription_id: sub.id,
+              tariff_id: sub.tariff_id, days_left: daysLeft, signals: classify.signals,
+            },
+          });
+        }
+
         // Check if user has active SBS for this product
         const userHasSBS = await hasActiveSBS(supabase, userId, productId);
 
-        // PATCH RENEWAL+PAYMENTS.1 B5: Generate 2 CTA links for non-SBS
+        // PATCH RENEWAL+PAYMENTS.1 B5: Generate 2 CTA links for non-SBS, non-one-time
         let oneTimeUrl: string | null = null;
         let subscriptionUrl: string | null = null;
-        if (!userHasSBS && productId && sub.tariff_id && amount > 0) {
+        if (!productIsOneTime && !userHasSBS && productId && sub.tariff_id && amount > 0) {
           const ctas = await generateRenewalCTAs({
             supabase, userId, productId, tariffId: sub.tariff_id,
             amount, currency, actorType: 'system',
@@ -936,7 +1190,6 @@ Deno.serve(async (req) => {
           oneTimeUrl = ctas.oneTimeUrl;
           subscriptionUrl = ctas.subscriptionUrl;
 
-          // PATCH C1: audit paylink CTA generated
           if (oneTimeUrl || subscriptionUrl) {
             await supabase.from('audit_logs').insert({
               action: 'reminders.paylink_cta_generated',
@@ -948,8 +1201,7 @@ Deno.serve(async (req) => {
               },
             });
           }
-        } else if (userHasSBS) {
-          // PATCH C2: audit paylink CTA suppressed by SBS
+        } else if (userHasSBS && !productIsOneTime) {
           await supabase.from('audit_logs').insert({
             action: 'reminders.paylink_cta_suppressed_sbs',
             actor_type: 'system',
@@ -971,35 +1223,77 @@ Deno.serve(async (req) => {
           reminder_type: 'expiry_reminder',
         };
 
-        // Send Telegram reminder
-        const telegramResult = await sendTelegramReminder(
-          supabase, botToken, userId,
-          productName, tariffName, expiryDate, daysLeft,
-          amount, currency, userHasSBS, oneTimeUrl, subscriptionUrl,
-          sub.id, sub.order_id, sub.tariff_id, productId
-        );
-
-        result.telegram_sent = telegramResult.sent;
-        result.telegram_logged = telegramResult.logged;
-        result.telegram_log_error = telegramResult.logError;
-        result.skip_reason = telegramResult.skipReason;
-        result.fail_reason = telegramResult.failReason;
-        result.error_stage = telegramResult.errorStage;
-        result.telegram_api_error = telegramResult.telegramApiError;
-        result.duplicate_suppressed = telegramResult.duplicateSuppressed;
-
-        // Send email reminder
-        if (userEmail) {
-          result.email_sent = await sendEmailReminder(
-            supabase, userId, profile?.id || null, userEmail,
+        // ===== TELEGRAM channel =====
+        if (tgAlreadySuccess) {
+          console.log(`[idempotency-tg] Subscription ${sub.id} already has TG success today, skipping TG attempt`);
+          // No additional skip-record (success already covers UI indicator)
+          result.telegram_sent = true;
+          result.telegram_logged = true;
+        } else {
+          const telegramResult = await sendTelegramReminder(
+            supabase, botToken, userId,
             productName, tariffName, expiryDate, daysLeft,
             amount, currency, userHasSBS, oneTimeUrl, subscriptionUrl,
-            sub.id, sub.order_id, sub.tariff_id
+            sub.id, sub.order_id, sub.tariff_id, productId, productIsOneTime
           );
+          result.telegram_sent = telegramResult.sent;
+          result.telegram_logged = telegramResult.logged;
+          result.telegram_log_error = telegramResult.logError;
+          result.skip_reason = telegramResult.skipReason;
+          result.fail_reason = telegramResult.failReason;
+          result.error_stage = telegramResult.errorStage;
+          result.telegram_api_error = telegramResult.telegramApiError;
+          result.duplicate_suppressed = telegramResult.duplicateSuppressed;
+        }
+
+        // ===== EMAIL channel (independent of TG) =====
+        if (emailAlreadySuccess) {
+          console.log(`[idempotency-email] Subscription ${sub.id} already has Email success today, skipping Email attempt`);
+          result.email_sent = true;
+        } else if (!userEmail) {
+          // PATCH SKIP-LOG v1: write canonical email_missing skip-record
+          await logEmailOutcome(
+            supabase, userId, profile?.id || null, null, sub.id, eventType,
+            'skipped', 'email_missing', null,
+            { days_left: daysLeft, product_id: productId, is_one_time: productIsOneTime },
+          );
+        } else {
+          try {
+            const emailOk = await sendEmailReminder(
+              supabase, userId, profile?.id || null, userEmail,
+              productName, tariffName, expiryDate, daysLeft,
+              amount, currency, userHasSBS, oneTimeUrl, subscriptionUrl,
+              sub.id, sub.order_id, sub.tariff_id, productIsOneTime
+            );
+            // PATCH OUTCOME-PARITY v1: write canonical email outcome.
+            // send-email writes its OWN row with status='sent' on actual SMTP accept.
+            // We write a parallel "queued" row so UI shows green even if send-email log race-loses.
+            // Note: status='success' here means "invoke returned ok, queued for delivery"
+            if (emailOk) {
+              await logEmailOutcome(
+                supabase, userId, profile?.id || null, userEmail, sub.id, eventType,
+                'success', 'email_queued', null,
+                { days_left: daysLeft, product_id: productId, is_one_time: productIsOneTime },
+              );
+              result.email_sent = true;
+            } else {
+              await logEmailOutcome(
+                supabase, userId, profile?.id || null, userEmail, sub.id, eventType,
+                'failed', 'send_failed', 'send-email invoke returned false',
+                { days_left: daysLeft, product_id: productId, is_one_time: productIsOneTime },
+              );
+            }
+          } catch (emailErr) {
+            await logEmailOutcome(
+              supabase, userId, profile?.id || null, userEmail, sub.id, eventType,
+              'failed', 'send_failed', emailErr instanceof Error ? emailErr.message : 'unknown',
+              { days_left: daysLeft, product_id: productId, is_one_time: productIsOneTime },
+            );
+          }
         }
 
         results.push(result);
-        console.log(`Processed reminder for user ${userId}: TG sent=${result.telegram_sent}, SBS=${userHasSBS}, oneTime=${!!oneTimeUrl}, sub=${!!subscriptionUrl}, Email=${result.email_sent}`);
+        console.log(`Processed reminder for user ${userId}: TG sent=${result.telegram_sent}, SBS=${userHasSBS}, oneTime=${productIsOneTime}, paylink_oneTime=${!!oneTimeUrl}, paylink_sub=${!!subscriptionUrl}, Email=${result.email_sent}`);
       }
     }
 
@@ -1039,11 +1333,6 @@ Deno.serve(async (req) => {
     for (const sub of expiringSubs || []) {
       const userId = sub.user_id;
 
-      // Check if already sent today (reuse event type for backward compat)
-      if (await wasReminderSentToday(supabase, userId, 'subscription_no_card_warning', todayWindow)) {
-        continue;
-      }
-
       const tariff = sub.tariffs as any;
       const product = tariff?.products_v2 as any;
       const productId = product?.id || tariff?.product_id || null;
@@ -1055,16 +1344,36 @@ Deno.serve(async (req) => {
       const noCardReminderDays = [7, 3, 1];
       if (!noCardReminderDays.includes(daysLeft)) continue;
 
+      const eventType = `subscription_reminder_${daysLeft}d`;
+
+      // PATCH OUTCOME-PARITY v1: skip second-block if main loop already produced TG outcome today
+      if (await hasSuccessOutcomeToday(supabase, 'telegram', sub.id, eventType, todayWindow)) {
+        console.log(`[second-block] Subscription ${sub.id} already has TG success today, skipping duplicate`);
+        continue;
+      }
+
+      // Legacy lock kept for backward compat
+      if (await wasReminderSentToday(supabase, userId, 'subscription_no_card_warning', todayWindow)) {
+        continue;
+      }
+
+      // PATCH ONE-TIME v1: classify in second block too
+      const classify = await isOneTimeProduct(supabase, sub.tariff_id, userId, productId);
+      const productIsOneTime = classify.oneTime;
+
       // Only send if user does NOT have active SBS
       const userHasSBS = await hasActiveSBS(supabase, userId, productId);
-      if (userHasSBS) {
+      if (userHasSBS && !productIsOneTime) {
         console.log(`User ${userId} has active SBS, skipping expiring-without-SBS warning`);
-        // PATCH C2b: audit paylink CTA suppressed by SBS (second block)
         await supabase.from('audit_logs').insert({
           action: 'reminders.paylink_cta_suppressed_sbs',
           actor_type: 'system',
           actor_label: 'subscription-renewal-reminders',
           meta: { user_id: userId, product_id: productId, subscription_id: sub.id },
+        });
+        // PATCH SKIP-LOG v1: write canonical skip outcome (so UI shows green for SBS users)
+        await logTelegramSkip(supabase, userId, sub.id, eventType, 'active_sbs_provider_will_charge', {
+          days_left: daysLeft, source_block: 'expiring_without_sbs',
         });
         continue;
       }
@@ -1086,10 +1395,10 @@ Deno.serve(async (req) => {
         }
       }
 
-      // PATCH RENEWAL+PAYMENTS.1 B5: Generate 2 CTA links
+      // PATCH RENEWAL+PAYMENTS.1 B5: Generate 2 CTA links — only for recurring products
       let ncOneTimeUrl: string | null = null;
       let ncSubscriptionUrl: string | null = null;
-      if (productId && sub.tariff_id && amount > 0) {
+      if (!productIsOneTime && productId && sub.tariff_id && amount > 0) {
         const ctas = await generateRenewalCTAs({
           supabase, userId, productId, tariffId: sub.tariff_id,
           amount, currency, actorType: 'system',
@@ -1097,7 +1406,6 @@ Deno.serve(async (req) => {
         ncOneTimeUrl = ctas.oneTimeUrl;
         ncSubscriptionUrl = ctas.subscriptionUrl;
 
-        // PATCH C1b: audit paylink CTA generated (second block)
         if (ncOneTimeUrl || ncSubscriptionUrl) {
           await supabase.from('audit_logs').insert({
             action: 'reminders.paylink_cta_generated',
@@ -1112,13 +1420,13 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Send via the unified sendTelegramReminder (with hasSBS=false)
+      // Send via the unified sendTelegramReminder (with hasSBS=false, isOneTime from classify)
       const telegramResult = await sendTelegramReminder(
         supabase, botToken, userId,
         productName, tariff?.name || 'Стандартный',
         accessEndAt, daysLeft, amount, currency,
         false, ncOneTimeUrl, ncSubscriptionUrl,
-        sub.id, sub.order_id, sub.tariff_id
+        sub.id, sub.order_id, sub.tariff_id, productId, productIsOneTime
       );
 
       results.push({
