@@ -683,6 +683,71 @@ Deno.serve(async (req) => {
       const inviteSource = is_manual ? 'manual_grant' : 'auto_grant';
       const now24h = new Date(Date.now() + 86400 * 1000).toISOString();
 
+      // v5.3: BLOCKED_VERIFIED guard — if user already verified in this club, audit but allow manual re-issue
+      try {
+        const { data: verifiedRow } = await supabase.rpc('is_verified_club_member', {
+          _club_id: club.id,
+          _tg_id: telegramUserId,
+        });
+        if (verifiedRow === true && !is_manual) {
+          await logAudit(supabase, {
+            club_id: club.id,
+            user_id: profile.id,
+            telegram_user_id: telegramUserId,
+            event_type: 'INVITE_BLOCKED_VERIFIED',
+            actor_type: 'system',
+            reason: 'already_verified_member',
+            meta: {
+              club_id: club.id,
+              tg_id: telegramUserId,
+              expected_tg_id: telegramUserId,
+              invite_link_id: null,
+              invite_code: null,
+              source_function: 'telegram-grant-access',
+              decision: 'blocked',
+            },
+          });
+        }
+      } catch (_e) {
+        // RPC absent → degrade silently, do not block grant
+      }
+
+      // v5.3: Revoke previous active personal links before issuing a new one
+      const { data: prevActive } = await supabase
+        .from('telegram_invite_links')
+        .select('id, invite_code, target_type')
+        .eq('club_id', club.id)
+        .eq('telegram_user_id', telegramUserId)
+        .in('status', ['created', 'sent']);
+
+      if (prevActive && prevActive.length > 0) {
+        const prevIds = prevActive.map((p: any) => p.id);
+        await supabase.from('telegram_invite_links')
+          .update({ status: 'revoked', updated_at: new Date().toISOString() })
+          .in('id', prevIds);
+
+        for (const p of prevActive) {
+          await logAudit(supabase, {
+            club_id: club.id,
+            user_id: profile.id,
+            telegram_user_id: telegramUserId,
+            event_type: 'INVITE_REVOKED',
+            actor_type: is_manual ? 'admin' : 'system',
+            reason: 'replaced_by_new_invite',
+            meta: {
+              club_id: club.id,
+              tg_id: telegramUserId,
+              expected_tg_id: telegramUserId,
+              invite_link_id: p.id,
+              invite_code: p.invite_code,
+              target_type: p.target_type,
+              source_function: 'telegram-grant-access',
+              decision: 'revoked',
+            },
+          });
+        }
+      }
+
       if (chatInviteLink && club.chat_id) {
         const code = extractInviteCode(chatInviteLink);
         const { data: inviteRecord } = await supabase.from('telegram_invite_links').insert({
