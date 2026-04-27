@@ -35,6 +35,7 @@ const routeToTitle: Record<string, string> = {
   '/admin/telegram/bots': 'Telegram боты',
   '/admin/telegram/clubs': 'Telegram клубы',
   '/admin/telegram/invite-audit': 'Telegram invite audit',
+  '/admin/telegram/audit-shape-runs': 'Telegram audit-shape runs',
   '/admin/email': 'Email',
   '/admin/content': 'Контент',
   '/admin/fields': 'Поля',

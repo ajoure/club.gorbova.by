@@ -121,6 +121,7 @@ const AdminMarketingInsights = lazy(() => import("./pages/admin/AdminMarketingIn
 const AdminPaymentDiagnostics = lazy(() => import("./pages/admin/AdminPaymentDiagnostics"));
 const AdminTelegramDiagnostics = lazy(() => import("./pages/admin/AdminTelegramDiagnostics"));
 const AdminTelegramInviteAudit = lazy(() => import("./pages/admin/AdminTelegramInviteAudit"));
+const AdminTelegramAuditShapeRuns = lazy(() => import("./pages/admin/AdminTelegramAuditShapeRuns"));
 const AdminSections = lazy(() => import("./pages/admin/AdminSections"));
 const AdminKbImport = lazy(() => import("./pages/admin/AdminKbImport"));
 const AdminSiteBuilder = lazy(() => import("./pages/admin/AdminSiteBuilder"));
@@ -262,6 +263,7 @@ const App = () => {
               <Route path="/admin/integrations/telegram/analytics" element={<ProtectedRoute><LazyRoute><AdminLayout><TelegramChatAnalytics /></AdminLayout></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/telegram-diagnostics" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminTelegramDiagnostics /></AdminLayout></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/telegram/invite-audit" element={<ProtectedRoute><LazyRoute><AdminTelegramInviteAudit /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/telegram/audit-shape-runs" element={<ProtectedRoute><LazyRoute><AdminTelegramAuditShapeRuns /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/fields" element={<ProtectedRoute><LazyRoute><AdminFieldRegistry /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/system/audit" element={<ProtectedRoute><LazyRoute><AdminSystemAudit /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/system-health" element={<ProtectedRoute><LazyRoute><AdminSystemHealth /></LazyRoute></ProtectedRoute>} />
