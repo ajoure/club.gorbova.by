@@ -45,6 +45,7 @@ import {
   ChevronDown,
   Activity,
   BookOpen,
+  ShieldCheck,
 } from "lucide-react";
 
 export function AdminSidebar() {
