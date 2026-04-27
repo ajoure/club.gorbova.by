@@ -1189,32 +1189,73 @@ Deno.serve(async (req) => {
             const inviteCode = plusMatch?.[1] || joinMatch?.[1] || null;
 
             if (inviteCode) {
-              const { data: inviteRecord } = await supabase
+              // v5.3: select all matching codes (any status) to detect cross-club + reuse
+              const { data: anyByCode } = await supabase
                 .from('telegram_invite_links')
-                .select('id, telegram_user_id, profile_id')
+                .select('id, telegram_user_id, profile_id, club_id, status, target_chat_id, expires_at')
                 .eq('invite_code', inviteCode)
-                .in('status', ['created', 'sent'])
+                .order('created_at', { ascending: false })
+                .limit(1)
                 .maybeSingle();
 
-              if (inviteRecord) {
-                // MISMATCH check
-                if (inviteRecord.telegram_user_id && inviteRecord.telegram_user_id !== telegramUserId) {
+              if (anyByCode) {
+                const baseMeta = {
+                  club_id: club.id,
+                  tg_id: telegramUserId,
+                  expected_tg_id: anyByCode.telegram_user_id,
+                  invite_link_id: anyByCode.id,
+                  invite_code: inviteCode,
+                  source_function: 'telegram-webhook',
+                };
+
+                // CROSS-CLUB guard: invite belongs to a different club
+                if (anyByCode.club_id && anyByCode.club_id !== club.id) {
+                  await logAudit(supabase, {
+                    club_id: club.id,
+                    telegram_user_id: telegramUserId,
+                    event_type: 'INVITE_BLOCKED_CROSS_CLUB',
+                    actor_type: 'system',
+                    reason: 'invite_club_mismatch',
+                    meta: { ...baseMeta, invite_club_id: anyByCode.club_id, decision: 'blocked' },
+                  });
+                } else if (anyByCode.status && !['created', 'sent'].includes(anyByCode.status)) {
+                  // EXPIRED or REUSED — link not in active state
+                  await logAudit(supabase, {
+                    club_id: club.id,
+                    telegram_user_id: telegramUserId,
+                    event_type: 'INVITE_EXPIRED_OR_REUSED',
+                    actor_type: 'system',
+                    reason: `invite_status_${anyByCode.status}`,
+                    meta: { ...baseMeta, prev_status: anyByCode.status, decision: 'blocked' },
+                  });
+                } else if (anyByCode.telegram_user_id && anyByCode.telegram_user_id !== telegramUserId) {
+                  // MISMATCH: wrong tg_id used the personal link
                   await supabase.from('telegram_invite_links')
                     .update({ status: 'mismatch', used_at: new Date().toISOString(), used_by_telegram_user_id: telegramUserId })
-                    .eq('id', inviteRecord.id);
+                    .eq('id', anyByCode.id);
 
                   await logAudit(supabase, {
                     club_id: club.id,
                     telegram_user_id: telegramUserId,
                     event_type: 'INVITE_MISMATCH',
                     actor_type: 'system',
-                    meta: { invite_id: inviteRecord.id, expected_tg_id: inviteRecord.telegram_user_id, actual_tg_id: telegramUserId },
+                    reason: 'expected_tg_id_mismatch',
+                    meta: { ...baseMeta, actual_tg_id: telegramUserId, decision: 'mismatch' },
                   });
                 } else {
-                  // Successful match
+                  // Successful match → INVITE_USED
                   await supabase.from('telegram_invite_links')
                     .update({ status: 'used', used_at: new Date().toISOString(), used_by_telegram_user_id: telegramUserId })
-                    .eq('id', inviteRecord.id);
+                    .eq('id', anyByCode.id);
+
+                  await logAudit(supabase, {
+                    club_id: club.id,
+                    telegram_user_id: telegramUserId,
+                    event_type: 'INVITE_USED',
+                    actor_type: 'system',
+                    reason: 'expected_tg_id_match',
+                    meta: { ...baseMeta, decision: 'used' },
+                  });
                 }
               }
             }

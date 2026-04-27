@@ -233,3 +233,38 @@ Audit пишется ДО возврата ответа функции; при �
 - ✅ Любой новый writer инвайтов без отдельного approve = блок.
 
 Готов выполнять по утверждении.
+
+---
+
+## v5.3 — Audit-события invite-flow (выполнено 2026-04-27)
+
+**Proof:** `/mnt/documents/buh_business_v51/buh_business_invite_writers_proof.md`
+
+**Writer'ы (без новых):**
+- `telegram-grant-access` — основной (manual_grant / auto_grant)
+- `telegram-reinvite-ghosts` — cron re-invite
+- `telegram-webhook` — обновление статусов (used/mismatch/revoked)
+
+**Контракт invite-link:** member_limit=1, expire_date=now+24h, expected_tg_id=telegram_user_id колонка. Один code path для GC и БкБ (нет хардкодов по slug). Параметризация через `club_id` → `telegram_clubs`.
+
+**Audit destination:** все INVITE_* события унифицированы в `telegram_access_audit` (raninvite-ghosts переведён с `audit_logs`).
+
+**Добавленные события (event_type):**
+| Event | Где пишется | Когда |
+|---|---|---|
+| INVITE_CREATED | grant-access, reinvite-ghosts | После успешного INSERT в telegram_invite_links |
+| INVITE_USED | webhook | tg_id == expected_tg_id зашёл по ссылке |
+| INVITE_REVOKED | grant-access | При выдаче новой ссылки старая активная ссылка помечается revoked |
+| INVITE_MISMATCH | webhook (existing, обогащён meta) | tg_id != expected_tg_id попытался войти |
+| INVITE_BLOCKED_VERIFIED | grant-access | Auto-grant пытался выдать verified-участнику |
+| INVITE_BLOCKED_CROSS_CLUB | webhook | invite_code из другого клуба |
+| INVITE_EXPIRED_OR_REUSED | webhook | invite в статусе ≠ created/sent (used/revoked/expired) |
+
+**Обязательное meta для всех INVITE_* событий:**
+`club_id, tg_id, expected_tg_id, invite_link_id, invite_code, source_function, decision, reason`
+
+**Тест выполнен:**
+- Self-test 3 синтетических audit-записей (INVITE_USED, INVITE_MISMATCH, INVITE_EXPIRED_OR_REUSED) — приняты таблицей, meta-контракт валиден.
+- Фактические сценарии (mismatch / reused / normal) для test-user будут проверены на реальном next-grant без массовых действий.
+
+**Деплой:** telegram-grant-access, telegram-reinvite-ghosts, telegram-webhook — успешно.
