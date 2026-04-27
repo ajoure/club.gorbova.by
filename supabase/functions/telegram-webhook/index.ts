@@ -256,7 +256,7 @@ async function fetchAndSaveTelegramPhoto(
   userId: string
 ): Promise<string | null> {
   try {
-    const photosResponse = await fetch(
+    const photosResponse = await telegramFetch(
       `https://api.telegram.org/bot${botToken}/getUserProfilePhotos?user_id=${telegramUserId}&limit=1`
     );
     const photosData = await photosResponse.json();
@@ -269,7 +269,7 @@ async function fetchAndSaveTelegramPhoto(
     const photo = photosData.result.photos[0][0];
     const fileId = photo.file_id;
 
-    const fileResponse = await fetch(
+    const fileResponse = await telegramFetch(
       `https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`
     );
     const fileData = await fileResponse.json();
@@ -280,7 +280,7 @@ async function fetchAndSaveTelegramPhoto(
     }
 
     const photoUrl = `https://api.telegram.org/file/bot${botToken}/${fileData.result.file_path}`;
-    const photoResponse = await fetch(photoUrl);
+    const photoResponse = await telegramFetch(photoUrl);
     const photoBlob = await photoResponse.arrayBuffer();
 
     const fileName = `avatars/${userId}_telegram_${Date.now()}.jpg`;
