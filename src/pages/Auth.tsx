@@ -255,11 +255,15 @@ export default function Auth() {
         variant: "destructive",
       });
     } else {
+      // Mark recovery flow as completed BEFORE navigating, so the
+      // redirect-guard releases its hold on the recovery session and the
+      // user is treated as a normal authenticated user from now on.
+      setPasswordUpdated(true);
       toast({
         title: "Пароль обновлён",
         description: "Ваш пароль успешно изменён",
       });
-      navigate("/");
+      navigate("/dashboard");
     }
   };
 
