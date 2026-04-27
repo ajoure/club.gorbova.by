@@ -61,7 +61,7 @@ export default function Dashboard() {
       <div className="max-w-4xl mx-auto space-y-6 md:space-y-8">
         {/* Block 1: Welcome */}
         <div className="space-y-1">
-          <h1 className="text-2xl sm:text-3xl font-bold text-foreground">
+          <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-foreground break-words leading-tight">
             Добро пожаловать, {displayName}!
           </h1>
           {isStaff && effectiveRole && (
