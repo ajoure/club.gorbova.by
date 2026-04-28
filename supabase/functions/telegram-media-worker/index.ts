@@ -130,6 +130,7 @@ Deno.serve(async (req) => {
   const body = req.method === "POST" ? await req.json().catch(() => ({})) : {};
   const limit = Math.min(Math.max(Number(body.limit || 10), 1), 50);
   const userIdFilter: string | null = body.user_id || null;
+  const messageDbIdFilter: string | null = body.message_db_id || null;
 
   // Unlock stuck jobs (best-effort)
   try {
@@ -138,11 +139,27 @@ Deno.serve(async (req) => {
     console.error("[WORKER] unlock_stuck failed:", e);
   }
 
-  // Claim jobs atomically via RPC
-  const { data: jobs, error: claimErr } = await supabase.rpc("claim_media_jobs", {
-    p_limit: limit,
-    p_user_id: userIdFilter,
-  });
+  // Claim the freshly inserted media first when webhook passes message_db_id.
+  // This prevents an older pending job for the same user from delaying the visible media.
+  const claimSpecificJob = async () => {
+    if (!messageDbIdFilter) return { data: null, error: null };
+    return await supabase
+      .from("media_jobs")
+      .update({ status: "processing", locked_at: new Date().toISOString(), attempts: 1 })
+      .eq("message_db_id", messageDbIdFilter)
+      .eq("status", "pending")
+      .lt("attempts", 3)
+      .select("*")
+      .limit(1);
+  };
+
+  const specificClaim = await claimSpecificJob();
+  const { data: jobs, error: claimErr } = specificClaim.data?.length
+    ? specificClaim
+    : await supabase.rpc("claim_media_jobs", {
+        p_limit: limit,
+        p_user_id: userIdFilter,
+      });
 
   if (claimErr) {
     return new Response(JSON.stringify({ ok: false, error: claimErr.message }), {

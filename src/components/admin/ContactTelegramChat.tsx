@@ -143,17 +143,16 @@ interface TelegramEvent {
 
 type ChatItem = TelegramMessage | TelegramEvent;
 
-function arrayBufferToBase64(buffer: ArrayBuffer) {
-  const bytes = new Uint8Array(buffer);
-  const chunkSize = 0x8000;
-  let binary = "";
-
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, i + chunkSize);
-    binary += String.fromCharCode.apply(null, Array.from(chunk) as any);
-  }
-
-  return btoa(binary);
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      resolve(result.includes(",") ? result.split(",")[1] : result);
+    };
+    reader.onerror = () => reject(reader.error || new Error("file_read_failed"));
+    reader.readAsDataURL(file);
+  });
 }
 
 // Only Telegram-supported reaction emojis (whitelist)
@@ -276,12 +275,17 @@ export function ContactTelegramChat({
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const prevMessageCountRef = useRef<number>(0);
+  const localMediaUrlsRef = useRef<string[]>([]);
+  const stickyScrollUntilRef = useRef(0);
+  const shouldStickToBottomRef = useRef(true);
+  const mediaUrlRequestsRef = useRef<Set<string>>(new Set());
+  const STICKY_THRESHOLD = 260;
 
   // === AUTO-REFRESH FOR PENDING MEDIA ===
   const pendingAutoRefreshRef = useRef<number | null>(null);
   const pendingRefreshCountRef = useRef(0);
-  const MAX_PENDING_REFRESH_ATTEMPTS = 12; // 2 minutes at 10s interval
-  const PENDING_REFRESH_INTERVAL = 10000; // 10 seconds
+  const MAX_PENDING_REFRESH_ATTEMPTS = 30; // 1 minute at 2s interval
+  const PENDING_REFRESH_INTERVAL = 2000; // 2 seconds
 
   function mergeByIdPreferEnriched(prev: TelegramMessage[], next: TelegramMessage[]) {
     const map = new Map<string, TelegramMessage>();
@@ -533,6 +537,47 @@ export function ContactTelegramChat({
     refetchBilling();
   }, [refetchMessages, refetchEvents, refetchBilling]);
 
+  const getScrollViewport = useCallback((): HTMLElement | null => {
+    return (scrollRef.current?.querySelector(
+      "[data-radix-scroll-area-viewport]"
+    ) as HTMLElement | null) ?? null;
+  }, []);
+
+  const isNearBottom = useCallback((threshold = STICKY_THRESHOLD) => {
+    const vp = getScrollViewport();
+    if (!vp) return true;
+    return vp.scrollHeight - vp.scrollTop - vp.clientHeight < threshold;
+  }, [getScrollViewport]);
+
+  const pinToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
+    const vp = getScrollViewport();
+    if (!vp) return;
+    vp.scrollTo({ top: vp.scrollHeight, behavior });
+    bottomRef.current?.scrollIntoView({ block: "end", behavior });
+  }, [getScrollViewport]);
+
+  const startStickyScroll = useCallback((durationMs = 1800) => {
+    shouldStickToBottomRef.current = true;
+    stickyScrollUntilRef.current = performance.now() + durationMs;
+
+    const tick = () => {
+      if (!shouldStickToBottomRef.current) return;
+      pinToBottom("auto");
+      if (performance.now() < stickyScrollUntilRef.current) {
+        requestAnimationFrame(tick);
+      }
+    };
+
+    requestAnimationFrame(() => requestAnimationFrame(tick));
+  }, [pinToBottom]);
+
+  useEffect(() => {
+    return () => {
+      localMediaUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      localMediaUrlsRef.current = [];
+    };
+  }, []);
+
   // Debounced refetch to prevent parallel requests on mobile
   const refetchTimerRef = useRef<number | null>(null);
   const isRefetchingRef = useRef(false);
@@ -595,30 +640,13 @@ export function ContactTelegramChat({
             }
           );
 
-          // Auto-scroll: outgoing always; incoming — only if user near bottom.
+          // Auto-scroll: outgoing always; incoming — only if user was near bottom before render.
           // Otherwise increment unread badge so admin can jump down via FAB.
           const isFromAdmin = newMsg?.direction === "outgoing";
-          const _root = scrollRef.current;
-          const _viewport = _root?.querySelector(
-            "[data-radix-scroll-area-viewport]"
-          ) as HTMLElement | null;
-          const _nearBottom = _viewport
-            ? _viewport.scrollHeight - _viewport.scrollTop - _viewport.clientHeight < 200
-            : true;
+          const _nearBottom = isNearBottom();
 
           if (isFromAdmin || _nearBottom) {
-            // Двойной rAF — ждём, пока React докоммитит DOM нового сообщения.
-            requestAnimationFrame(() => {
-              requestAnimationFrame(() => {
-                const vp = scrollRef.current?.querySelector(
-                  "[data-radix-scroll-area-viewport]"
-                ) as HTMLElement | null;
-                if (vp) {
-                  vp.scrollTo({ top: vp.scrollHeight, behavior: "smooth" });
-                }
-                bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
-              });
-            });
+            startStickyScroll(2600);
           } else {
             setUnreadCount((c) => c + 1);
           }
@@ -634,6 +662,7 @@ export function ContactTelegramChat({
         },
         (payload) => {
           const updated = payload.new as any;
+          const shouldPin = isNearBottom();
           // Patch cache point-by-point: replace row by id (preserves order)
           queryClient.setQueryData(
             ["telegram-messages", userId],
@@ -656,6 +685,7 @@ export function ContactTelegramChat({
               return next;
             }
           );
+          if (shouldPin) startStickyScroll(2600);
         }
       )
       .subscribe();
@@ -666,7 +696,37 @@ export function ContactTelegramChat({
       }
       supabase.removeChannel(channel);
     };
-  }, [userId, queryClient]);
+  }, [userId, queryClient, isNearBottom, startStickyScroll]);
+
+  const mediaIdsNeedingUrls = useMemo(() => {
+    return (messages || [])
+      .filter((m: TelegramMessage) => {
+        const meta: any = m.meta || {};
+        return meta.storage_bucket && meta.storage_path && !meta.file_url && meta.upload_status === "ok";
+      })
+      .map((m) => m.id);
+  }, [messages]);
+
+  useEffect(() => {
+    const ids = mediaIdsNeedingUrls.filter((id) => !mediaUrlRequestsRef.current.has(id));
+    if (!ids.length) return;
+    ids.forEach((id) => mediaUrlRequestsRef.current.add(id));
+
+    supabase.functions.invoke("telegram-admin-chat", {
+      body: { action: "get_media_urls", message_ids: ids },
+    }).then(({ data, error }) => {
+      if (error || !data?.urls) return;
+      queryClient.setQueryData(["telegram-messages", userId], (old: TelegramMessage[] | undefined) => {
+        if (!old) return old;
+        return old.map((m) => {
+          const url = data.urls[m.id];
+          if (!url) return m;
+          return { ...m, meta: { ...(m.meta || {}), file_url: url } } as TelegramMessage;
+        });
+      });
+      if (isNearBottom()) startStickyScroll(2600);
+    });
+  }, [mediaIdsNeedingUrls, queryClient, userId, isNearBottom, startStickyScroll]);
 
   // === AUTO-REFRESH EFFECT FOR PENDING MEDIA ===
   // Polls every 10s if there are pending uploads, stops after 12 attempts (2 min)
@@ -827,8 +887,7 @@ export function ContactTelegramChat({
 
         let base64: string;
         try {
-          const buffer = await file.arrayBuffer();
-          base64 = arrayBufferToBase64(buffer);
+          base64 = await fileToBase64(file);
         } catch (e) {
           console.error("Failed to encode file to base64", e);
           throw new Error("Не удалось подготовить файл для отправки");
@@ -861,6 +920,8 @@ export function ContactTelegramChat({
     },
     onMutate: () => {
       // Optimistically add message to UI immediately
+      const localUrl = selectedFile ? URL.createObjectURL(selectedFile) : null;
+      if (localUrl) localMediaUrlsRef.current.push(localUrl);
       const tempMessage: TelegramMessage = {
         id: `temp-${Date.now()}`,
         type: "message",
@@ -872,10 +933,19 @@ export function ContactTelegramChat({
         bot_id: selectedBotId,
         bot_username: selectedBotId ? botsMap.get(selectedBotId)?.bot_username || null : null,
         bot_name: selectedBotId ? botsMap.get(selectedBotId)?.bot_name || null : null,
+        meta: selectedFile ? {
+          file_type: selectedFileType,
+          file_name: selectedFile.name,
+          mime_type: selectedFile.type || null,
+          file_url: localUrl,
+          upload_status: "ok",
+          source: "local_preview",
+        } : null,
       };
       queryClient.setQueryData(["telegram-messages", userId], (old: TelegramMessage[] | undefined) => 
         [...(old || []), tempMessage]
       );
+      startStickyScroll(2200);
     },
     onSuccess: () => {
       // FIX B: Remove all temp messages BEFORE refetch to prevent duplicates
@@ -889,6 +959,7 @@ export function ContactTelegramChat({
       setIsUploading(false);
       setReplyingTo(null);
       refetch();
+      startStickyScroll(2200);
       onMessageSent?.();
     },
     onError: (error) => {
