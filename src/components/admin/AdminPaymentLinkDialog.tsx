@@ -1241,12 +1241,12 @@ ${amountLine}
                 На очень узких экранах flex-wrap аккуратно перенесёт нижнюю кнопку,
                 сохраняя выравнивание правее, а не схлопывая всё в вертикальную стопку.
               */}
-              <DialogFooter className="!flex-row !flex-wrap !justify-end !space-x-0 gap-2 pt-2">
+              <DialogFooter className="!flex-row !flex-wrap !justify-end !space-x-0 gap-2 pt-2 [&>*]:w-auto [&>*]:flex-none">
                 <Button
                   type="button"
                   variant="outline"
                   onClick={() => onOpenChange(false)}
-                  className="h-10 px-4"
+                  className="h-10 px-4 w-auto"
                 >
                   Отмена
                 </Button>
@@ -1259,7 +1259,7 @@ ${amountLine}
                   variant={effectiveTelegramUserId ? "outline" : "default"}
                   disabled={isCreateDisabled || combinedPending}
                   onClick={() => createPublicLinkMutation.mutate()}
-                  className="h-10 px-4 min-w-0"
+                  className="h-10 px-4 w-auto"
                 >
                   {createPublicLinkMutation.isPending ? (
                     <Loader2 className="h-4 w-4 animate-spin mr-2 shrink-0" />
@@ -1273,7 +1273,7 @@ ${amountLine}
                     type="button"
                     disabled={isCreateDisabled || combinedPending}
                     onClick={handleCreateAndSendTelegram}
-                    className="h-10 px-4 min-w-0"
+                    className="h-10 px-4 w-auto"
                   >
                     {combinedPending ? (
                       <Loader2 className="h-4 w-4 animate-spin mr-2 shrink-0" />
