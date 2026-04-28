@@ -5,6 +5,7 @@ import { buildAdminNotifyMessage, maskEmail } from '../_shared/admin-notify-mess
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 import { applyCrmStageOnTerminal } from '../_shared/crm-routing.ts';
 import { consumePaymentLinkForOrder } from '../_shared/consume-payment-link.ts';
+import { generateInstallmentSchedule } from '../_shared/installment-schedule.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
