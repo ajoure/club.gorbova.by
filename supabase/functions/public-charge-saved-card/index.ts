@@ -115,6 +115,19 @@ Deno.serve(async (req) => {
       );
     }
 
+    const linkInstallment = (link.meta && typeof link.meta === 'object')
+      ? (link.meta as Record<string, any>).installment
+      : null;
+    if (linkInstallment && Number(linkInstallment.selected_installment_months ?? 0) >= 2) {
+      return jsonResponse(
+        {
+          error: 'unsupported_installment_saved_card',
+          message: 'Рассрочка оформляется только через стандартную страницу bePaid с новой картой.',
+        },
+        422,
+      );
+    }
+
     // The recipient of the order is always the authenticated user (the payer is also the recipient
     // for saved-card MIT — using someone else's saved card is impossible).
     const targetUserId = authUser.id;

@@ -135,6 +135,9 @@ export default function PublicPayPage() {
   // HOTFIX: must be ABOVE all early returns to satisfy Rules of Hooks.
   // Recomputed null-safe — linkInfo may still be undefined here.
   const _isSubscriptionEarly = linkInfo?.payment_type === 'subscription';
+  const _isInstallmentEarly =
+    !!linkInfo?.installment &&
+    Number(linkInfo.installment.selected_installment_months ?? 0) >= 2;
   const _ownsOrPublicEarly =
     !!user &&
     !!linkInfo &&
@@ -142,6 +145,7 @@ export default function PublicPayPage() {
   const _showSavedCardSelectorEarly =
     _ownsOrPublicEarly &&
     !_isSubscriptionEarly &&
+    !_isInstallmentEarly &&
     Array.isArray(savedCards) &&
     savedCards.length > 0;
 
@@ -366,6 +370,7 @@ export default function PublicPayPage() {
   const showSavedCardSelector =
     ownsOrPublic &&
     !isSubscription &&
+    !isInstallment &&
     Array.isArray(savedCards) &&
     savedCards.length > 0;
   // PAY-E-LITE: для subscription показываем сохранённые карты в disabled-режиме + уведомление.
