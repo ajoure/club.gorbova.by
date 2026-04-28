@@ -65,10 +65,12 @@ Deno.serve(async (req) => {
     const {
       product_id, tariff_id, offer_id, amount,
       currency = 'BYN',
-      payment_type = 'one_time',
+      payment_type: rawPaymentType = 'one_time',
       description = null, max_uses = null, expires_at = null, user_id = null,
       requested_payment_type, resolved_mode, cta_source, cta_contract_version,
+      installment_offer = false, selected_installment_months,
     } = body;
+    let payment_type: 'one_time' | 'subscription' = rawPaymentType;
 
     // ── Validate required ──
     if (!product_id || !tariff_id || !amount) {
