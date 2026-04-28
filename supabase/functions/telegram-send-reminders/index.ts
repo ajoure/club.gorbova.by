@@ -311,11 +311,13 @@ Deno.serve(async (req) => {
       }
 
 
-      const sendResult = await telegramRequest(botToken, 'sendMessage', {
+      const sendPayload: Record<string, unknown> = {
         chat_id: profile.telegram_user_id,
         text: message,
-        reply_markup: keyboard,
-      });
+      };
+      if (keyboard) sendPayload.reply_markup = keyboard;
+
+      const sendResult = await telegramRequest(botToken, 'sendMessage', sendPayload);
 
       // If button send failed, try fallback with plain text
       if (!sendResult.ok) {
@@ -336,9 +338,12 @@ Deno.serve(async (req) => {
             expires_at: access.active_until,
             days_until_expiry: 3,
             has_sbs: hasSBS,
+            product_renewable: productRenewable,
+            installment_mode: installmentMode,
             delivery_method: 'fallback_text',
+            original_delivery: deliveryMethod,
             button_error: sendResult.description,
-          }
+          },
         });
 
         results.push({
@@ -347,34 +352,36 @@ Deno.serve(async (req) => {
           sent: fallbackResult.ok,
           delivery: 'fallback_text',
           has_sbs: hasSBS,
+          product_renewable: productRenewable,
           error: fallbackResult.ok ? null : fallbackResult.description,
         });
         continue;
       }
 
       // Log the reminder
-      await supabase
-        .from('telegram_logs')
-        .insert({
-          user_id: access.user_id,
-          club_id: access.club_id,
-          action: 'reminder_sent',
-          target: 'user',
-          status: 'success',
-          meta: {
-            expires_at: access.active_until,
-            days_until_expiry: 3,
-            has_sbs: hasSBS,
-            delivery_method: hasSBS ? 'sbs_info' : 'dual_cta_buttons',
-          }
-        });
+      await supabase.from('telegram_logs').insert({
+        user_id: access.user_id,
+        club_id: access.club_id,
+        action: 'reminder_sent',
+        target: 'user',
+        status: 'success',
+        meta: {
+          expires_at: access.active_until,
+          days_until_expiry: 3,
+          has_sbs: hasSBS,
+          product_renewable: productRenewable,
+          installment_mode: installmentMode,
+          delivery_method: deliveryMethod,
+        },
+      });
 
       results.push({
         user_id: access.user_id,
         club_id: access.club_id,
         sent: true,
-        delivery: hasSBS ? 'sbs_info' : 'dual_cta_buttons',
+        delivery: deliveryMethod,
         has_sbs: hasSBS,
+        product_renewable: productRenewable,
       });
     }
 
