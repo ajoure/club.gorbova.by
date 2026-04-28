@@ -228,13 +228,19 @@ Deno.serve(async (req) => {
     const url_token = Array.from(tokenBytes).map((b) => b.toString(16).padStart(2, '0')).join('');
     const public_url = `${canonicalOrigin}/pay/${url_token}`;
 
+    // Для installment ссылка хранит per_payment в amount; полная сумма — в meta.installment.
+    const linkAmountKopecks =
+      installmentLinkAmountKopecks !== null ? installmentLinkAmountKopecks : amount;
+    const linkMeta: Record<string, unknown> = {};
+    if (installmentBlock) linkMeta.installment = installmentBlock;
+
     const { data: link, error: insertErr } = await supabase
       .from('payment_links')
       .insert({
         product_id,
         tariff_id,
         offer_id: offer_id || null,
-        amount,
+        amount: linkAmountKopecks,
         currency,
         payment_type,
         description,
@@ -244,8 +250,9 @@ Deno.serve(async (req) => {
         created_by: user.id,
         url_token,
         public_url,
+        meta: Object.keys(linkMeta).length > 0 ? linkMeta : null,
       })
-      .select('id, url_token, status, current_uses, max_uses, expires_at, amount, currency, payment_type, product_id, tariff_id, offer_id, created_by')
+      .select('id, url_token, status, current_uses, max_uses, expires_at, amount, currency, payment_type, product_id, tariff_id, offer_id, created_by, meta')
       .single();
 
     if (insertErr || !link) {
