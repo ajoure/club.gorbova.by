@@ -1756,8 +1756,13 @@ export default function AdminProductDetailV2() {
                     <Label>Сумма (BYN) *</Label>
                     <Input
                       type="number"
-                      value={offerForm.amount}
-                      onChange={(e) => setOfferForm({ ...offerForm, amount: parseFloat(e.target.value) || 0 })}
+                      min={0}
+                      placeholder="Например: 390"
+                      value={offerForm.amount === 0 ? "" : offerForm.amount}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        setOfferForm({ ...offerForm, amount: raw === "" ? 0 : Number(raw) || 0 });
+                      }}
                     />
                   </div>
                 </div>
@@ -2573,9 +2578,16 @@ export default function AdminProductDetailV2() {
           productName={`${product.name} – ${selectedOfferForPayment.tariff.name}`}
           offerId={selectedOfferForPayment.offer.id}
           price={String(selectedOfferForPayment.offer.amount)}
+          tariffCode={selectedOfferForPayment.tariff.code}
           isTrial={selectedOfferForPayment.offer.offer_type === "trial"}
           trialDays={selectedOfferForPayment.offer.trial_days}
           isClubProduct={!!(product as any).telegram_club_id}
+          isSubscription={
+            !!selectedOfferForPayment.offer.requires_card_tokenization &&
+            selectedOfferForPayment.offer.payment_method !== "internal_installment"
+          }
+          paymentMethod={selectedOfferForPayment.offer.payment_method}
+          installmentCount={selectedOfferForPayment.offer.installment_count ?? null}
         />
       )}
     </AdminLayout>
