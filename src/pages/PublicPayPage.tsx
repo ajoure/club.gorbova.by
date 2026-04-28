@@ -417,11 +417,29 @@ export default function PublicPayPage() {
             </div>
 
             <div className="text-center mb-6">
-              <div className="text-4xl font-bold text-primary mb-1">{priceFormatted}</div>
-              {isSubscription && linkInfo.access_days ? (
-                <p className="text-sm text-muted-foreground">за {linkInfo.access_days} дней</p>
+              {isInstallment && linkInfo.installment ? (
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">Рассрочка</p>
+                  <div className="text-4xl font-bold text-primary">
+                    {linkInfo.installment.selected_installment_months} × {linkInfo.installment.per_payment_amount} {linkInfo.currency}
+                  </div>
+                  <p className="text-base font-medium">
+                    Итого: {linkInfo.installment.total_installment_amount} {linkInfo.currency}
+                  </p>
+                  <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                    Сумма платежа округлена до целых {linkInfo.currency}. Итог рассрочки рассчитан с учётом выбранного срока и может отличаться от полной цены ({linkInfo.installment.total_amount} {linkInfo.currency}).
+                    Списание происходит каждые {linkInfo.installment.interval_days ?? 30} дней. Сегодня вы оплачиваете первый платёж — {priceFormatted}.
+                  </p>
+                </div>
               ) : (
-                <p className="text-sm text-muted-foreground">разовый платёж</p>
+                <>
+                  <div className="text-4xl font-bold text-primary mb-1">{priceFormatted}</div>
+                  {isSubscription && linkInfo.access_days ? (
+                    <p className="text-sm text-muted-foreground">за {linkInfo.access_days} дней</p>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">разовый платёж</p>
+                  )}
+                </>
               )}
             </div>
 
