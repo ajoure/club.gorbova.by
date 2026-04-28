@@ -539,6 +539,14 @@ const handler = async (req: Request): Promise<Response> => {
           { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders } }
         );
 
+      case "completion":
+        if (!installment_id) throw new Error("installment_id is required for completion action");
+        await sendCompletionNotification(installment_id);
+        return new Response(
+          JSON.stringify({ success: true, message: "Completion notification sent" }),
+          { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders } }
+        );
+
       default:
         throw new Error(`Unknown action: ${action}`);
     }
