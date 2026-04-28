@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { format, isToday, isYesterday, isSameDay } from "date-fns";
@@ -213,6 +213,63 @@ const EVENT_ICONS: Record<string, React.ReactNode> = {
   "system.trigger_fix_telegram_status": <Settings className="w-3 h-3 text-muted-foreground" />,
   "telegram.backfill_grant": <RefreshCcw className="w-3 h-3 text-blue-500" />,
 };
+
+const TELEGRAM_HTML_TAG_PATTERN = /<\/?(b|strong|i|em|u|s|strike|del|code|pre|a|tg-spoiler|br)\b/i;
+
+function getTelegramPlainText(text: string | null | undefined): string {
+  const value = text || "";
+  if (!TELEGRAM_HTML_TAG_PATTERN.test(value) || typeof DOMParser === "undefined") return value;
+  const doc = new DOMParser().parseFromString(`<div>${value}</div>`, "text/html");
+  return doc.body.textContent || "";
+}
+
+function renderTelegramFormattedText(text: string): ReactNode {
+  if (!TELEGRAM_HTML_TAG_PATTERN.test(text) || typeof DOMParser === "undefined") return text;
+
+  const doc = new DOMParser().parseFromString(`<div>${text}</div>`, "text/html");
+  const root = doc.body.firstElementChild;
+  if (!root) return text;
+
+  const safeHref = (href: string | null) => {
+    if (!href) return null;
+    try {
+      const url = new URL(href);
+      return ["http:", "https:"].includes(url.protocol) ? url.toString() : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const walk = (node: ChildNode, key: string): ReactNode => {
+    if (node.nodeType === 3) return node.textContent;
+    if (node.nodeType !== 1) return null;
+
+    const el = node as Element;
+    const tag = el.tagName.toLowerCase();
+    if (tag === "br") return "\n";
+
+    const children = Array.from(el.childNodes).map((child, index) => walk(child, `${key}-${index}`));
+
+    if (tag === "b" || tag === "strong") return <strong key={key} className="font-semibold">{children}</strong>;
+    if (tag === "i" || tag === "em") return <em key={key}>{children}</em>;
+    if (tag === "u") return <span key={key} className="underline underline-offset-2">{children}</span>;
+    if (tag === "s" || tag === "strike" || tag === "del") return <span key={key} className="line-through">{children}</span>;
+    if (tag === "code" || tag === "pre") return <code key={key} className="rounded bg-background/20 px-1 py-0.5 font-mono text-[0.92em]">{children}</code>;
+    if (tag === "tg-spoiler") return <span key={key} className="rounded bg-foreground/15 px-1">{children}</span>;
+    if (tag === "a") {
+      const href = safeHref(el.getAttribute("href"));
+      return href ? (
+        <a key={key} href={href} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
+          {children}
+        </a>
+      ) : <span key={key}>{children}</span>;
+    }
+
+    return <span key={key}>{children}</span>;
+  };
+
+  return Array.from(root.childNodes).map((node, index) => walk(node, `tg-html-${index}`));
+}
 
 // PATCH 13.6+: Используется централизованный словарь EVENT_LABELS из @/lib/eventLabels
 
@@ -482,7 +539,7 @@ export function ContactTelegramChat({
     if (fileType === "audio") return "🎵 Аудио";
     if (fileType === "document") return `📎 ${meta.file_name || "Документ"}`;
     if (fileType === "sticker") return "🌟 Стикер";
-    const text = (m.message_text || "").trim();
+    const text = getTelegramPlainText(m.message_text).trim();
     return text.length > 80 ? text.slice(0, 80) + "…" : text || "Сообщение";
   }, []);
 
@@ -1311,7 +1368,7 @@ export function ContactTelegramChat({
             {hasMessageText && (
               <div className="w-full px-4 py-2 bg-muted/50 rounded-lg text-xs text-muted-foreground border border-border/30">
                 <div className="whitespace-pre-wrap break-words max-h-32 overflow-y-auto">
-                  {event.message_text}
+                  {renderTelegramFormattedText(event.message_text || "")}
                 </div>
               </div>
             )}
@@ -1473,7 +1530,7 @@ export function ContactTelegramChat({
                 )}
                 
                 {msg.message_text && (
-                  <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
+                  <p className="text-sm whitespace-pre-wrap break-words">{renderTelegramFormattedText(msg.message_text)}</p>
                 )}
 
                 {/* Inline keyboard mirror — рендер как нативные Telegram-кнопки.
