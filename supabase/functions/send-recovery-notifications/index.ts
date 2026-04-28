@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { greetSuffix } from '../_shared/recipient-name.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -69,19 +70,19 @@ Deno.serve(async (req) => {
         userEmail = authUser?.user?.email;
       }
 
-      const userName = profile?.full_name?.split(' ')[0] || 'Клиент';
+      const greet = greetSuffix(profile); // ", Имя" либо ""
 
-      // Telegram message with price protection emphasis
-      const telegramMessage = `👋 Привет, ${userName}!
+      // Telegram message with price protection emphasis (обращение на «Вы»)
+      const telegramMessage = `👋 Здравствуйте${greet}!
 
 Мы обновили систему безопасности платежей, и теперь для автоматического продления подписки нужна привязанная карта.
 
-🔒 Это повышает защиту ваших данных.
+🔒 Это повышает защиту Ваших данных.
 
 📌 *Почему это важно:*
-Сейчас за вами закреплена *выгодная цена* на "${productName}"${tariffName ? ` (${tariffName})` : ''}.
+Сейчас за Вами закреплена *выгодная цена* на "${productName}"${tariffName ? ` (${tariffName})` : ''}.
 
-⚠️ Если подписка прервется, повторный вход будет по новым, более высоким тарифам.
+⚠️ Если подписка прервётся, повторный вход будет по новым, более высоким тарифам.
 
 🔗 [Привязать карту и сохранить цену](https://club.gorbova.by/settings/payment-methods)
 
@@ -120,15 +121,15 @@ Deno.serve(async (req) => {
             <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
               <h1 style="color: #1f2937; font-size: 24px; margin-bottom: 20px;">Сохраните вашу стоимость участия в клубе 💜</h1>
               
-              <p>Здравствуйте, ${userName}!</p>
+              <p>Здравствуйте${greet}!</p>
               
               <p>Мы обновили систему безопасности платежей, и теперь для автоматического продления подписки нужна привязанная карта.</p>
               
               <div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 16px; margin: 20px 0;">
                 <p style="margin: 0; font-weight: 600; color: #92400e;">⚠️ Почему это важно:</p>
                 <p style="margin: 8px 0 0 0; color: #78350f;">
-                  Сейчас за вами закреплена <strong>выгодная цена</strong> на "${productName}". 
-                  Если подписка прервется, повторный вход будет по новым, более высоким тарифам.
+                  Сейчас за Вами закреплена <strong>выгодная цена</strong> на "${productName}". 
+                  Если подписка прервётся, повторный вход будет по новым, более высоким тарифам.
                 </p>
               </div>
               
