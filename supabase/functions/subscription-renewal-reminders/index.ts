@@ -4,6 +4,7 @@ import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
 import { generateRenewalCTAs, type RenewalCTAs } from '../_shared/generate-renewal-ctas.ts';
 import { resolveProductRenewability } from '../_shared/renewal-offer-resolver.ts';
 import { greetPrefix, extractFirstName } from '../_shared/recipient-name.ts';
+import { logAutomatedTelegramMessage } from '../_shared/log-automated-telegram.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -371,7 +372,8 @@ async function sendTelegramReminder(
   orderId: string | null,
   tariffId: string | null,
   productId?: string | null,
-  isOneTime: boolean = false
+  isOneTime: boolean = false,
+  botId?: string | null,
 ): Promise<{ 
   sent: boolean; 
   logged: boolean; 
@@ -1247,7 +1249,8 @@ Deno.serve(async (req) => {
             supabase, botToken, userId,
             productName, tariffName, expiryDate, daysLeft,
             amount, currency, userHasSBS, oneTimeUrl, subscriptionUrl,
-            sub.id, sub.order_id, sub.tariff_id, productId, productIsOneTime
+            sub.id, sub.order_id, sub.tariff_id, productId, productIsOneTime,
+            linkBot?.id ?? null,
           );
           result.telegram_sent = telegramResult.sent;
           result.telegram_logged = telegramResult.logged;
@@ -1439,7 +1442,8 @@ Deno.serve(async (req) => {
         productName, tariff?.name || 'Стандартный',
         accessEndAt, daysLeft, amount, currency,
         false, ncOneTimeUrl, ncSubscriptionUrl,
-        sub.id, sub.order_id, sub.tariff_id, productId, productIsOneTime
+        sub.id, sub.order_id, sub.tariff_id, productId, productIsOneTime,
+        linkBot?.id ?? null,
       );
 
       results.push({
