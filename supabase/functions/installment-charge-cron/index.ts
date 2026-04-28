@@ -203,10 +203,53 @@ Deno.serve(async (req) => {
       results.processed++;
       const subscription = installment.subscriptions_v2;
 
-      // Stage 1: единый helper для получения токена (priority chain)
-      // payment_methods → subscription_payment_credentials → subscriptions_v2.payment_token
+      // Stage 3: пропуск завершённых/отменённых подписок (canceled/expired/superseded)
       if (!subscription?.id) {
-        console.log(`Skipping installment ${installment.id}: no subscription linked`);
+        console.log(`Пропуск платежа ${installment.id}: подписка не привязана`);
+        results.skipped++;
+        continue;
+      }
+
+      const subStatus = subscription.status;
+      if (subStatus === 'canceled' || subStatus === 'expired' || subStatus === 'superseded') {
+        console.log(`Пропуск платежа ${installment.id}: подписка в статусе ${subStatus}`);
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_label: 'installment-charge-cron',
+          action: 'installment.skipped_subscription_inactive',
+          meta: { installment_id: installment.id, subscription_id: subscription.id, subscription_status: subStatus },
+        });
+        results.skipped++;
+        continue;
+      }
+
+      // Stage 3: guard — payment_number не должен превышать total_payments
+      if (installment.payment_number > installment.total_payments) {
+        console.error(`Пропуск платежа ${installment.id}: payment_number ${installment.payment_number} > total_payments ${installment.total_payments}`);
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_label: 'installment-charge-cron',
+          action: 'installment.guard_payment_number_overflow',
+          meta: { installment_id: installment.id, payment_number: installment.payment_number, total_payments: installment.total_payments },
+        });
+        results.skipped++;
+        continue;
+      }
+
+      // Stage 3: атомарный lock pending → processing (защита от параллельных cron)
+      const { data: lockedRows, error: lockError } = await supabase
+        .from('installment_payments')
+        .update({
+          status: 'processing',
+          last_attempt_at: new Date().toISOString(),
+          charge_attempts: (installment.charge_attempts || 0) + 1,
+        })
+        .eq('id', installment.id)
+        .eq('status', 'pending')
+        .select('id');
+
+      if (lockError || !lockedRows || lockedRows.length === 0) {
+        console.log(`Пропуск платежа ${installment.id}: не удалось захватить lock (уже обработан другим процессом)`);
         results.skipped++;
         continue;
       }
