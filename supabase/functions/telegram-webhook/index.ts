@@ -1143,11 +1143,33 @@ Deno.serve(async (req) => {
                 .eq("id", dbMessageId);
                 
               console.log(`[WEBHOOK] Media job queued for ${dbMessageId}`);
+
+              // FAST-MEDIA: fire-and-forget invoke of media worker, чтобы не ждать
+              // следующего тика cron (1 минута). Worker идемпотентен через media_jobs.
+              try {
+                const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+                const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+                const workerPromise = fetch(`${supabaseUrl}/functions/v1/telegram-media-worker`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${supabaseServiceKey}`,
+                  },
+                  body: JSON.stringify({ trigger: 'webhook', message_db_id: dbMessageId }),
+                }).catch((e) => console.error('[WEBHOOK] media-worker invoke failed:', e));
+                // @ts-ignore — Deno EdgeRuntime API
+                if (typeof EdgeRuntime !== 'undefined' && (EdgeRuntime as any).waitUntil) {
+                  // @ts-ignore
+                  (EdgeRuntime as any).waitUntil(workerPromise);
+                }
+              } catch (invokeErr) {
+                console.error('[WEBHOOK] media-worker invoke error:', invokeErr);
+              }
             } catch (qErr) {
               console.error("[WEBHOOK] queue media_jobs failed:", qErr);
             }
           }
-          
+
           // ========== SUPPORT TICKET BRIDGE (TG → Ticket) ==========
           // If user has an active bridged ticket, create a ticket_message
           try {
