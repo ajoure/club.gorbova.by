@@ -141,7 +141,8 @@ async function telegramSendFile(
   botToken: string,
   chatId: number,
   file: FileData,
-  caption?: string
+  caption?: string,
+  replyToMessageId?: number | null,
 ) {
   // Convert base64 to bytes
   const binaryString = atob(file.base64);
@@ -173,6 +174,12 @@ async function telegramSendFile(
   const formData = new FormData();
   formData.append("chat_id", chatId.toString());
   if (caption) formData.append("caption", caption);
+  if (replyToMessageId) {
+    formData.append("reply_parameters", JSON.stringify({
+      message_id: replyToMessageId,
+      allow_sending_without_reply: true,
+    }));
+  }
 
   // Determine the method and field name based on file type
   let method: string;
@@ -326,6 +333,7 @@ Deno.serve(async (req) => {
     switch (action) {
       case "send_message": {
         const { user_id, message, file, bot_id } = payload;
+        const replyToMessageId = (payload as any).reply_to_message_id as number | null | undefined;
 
         if (!user_id || (!message && !file)) {
           return new Response(JSON.stringify({ error: "user_id and (message or file) required" }), {
@@ -436,18 +444,26 @@ Deno.serve(async (req) => {
         if (file) {
           // Send file
           sendResult = await telegramSendFile(
-            botToken, 
-            profile.telegram_user_id, 
-            file, 
-            message || undefined
+            botToken,
+            profile.telegram_user_id,
+            file,
+            message || undefined,
+            replyToMessageId ?? null,
           );
         } else {
           // Send text message
-          sendResult = await telegramRequest(botToken, "sendMessage", {
+          const sendBody: Record<string, unknown> = {
             chat_id: profile.telegram_user_id,
             text: message,
             parse_mode: "HTML",
-          });
+          };
+          if (replyToMessageId) {
+            sendBody.reply_parameters = {
+              message_id: replyToMessageId,
+              allow_sending_without_reply: true,
+            };
+          }
+          sendResult = await telegramRequest(botToken, "sendMessage", sendBody);
         }
 
         // If file was sent successfully, download from Telegram and upload to Storage
@@ -558,6 +574,7 @@ Deno.serve(async (req) => {
           direction: "outgoing",
           message_text: message || null,
           message_id: sendResult.ok ? sendResult.result.message_id : null,
+          reply_to_message_id: replyToMessageId ?? null,
           sent_by_admin: user.id,
           status: sendResult.ok ? "sent" : "failed",
           error_message: sendResult.ok ? null : sendResult.description,

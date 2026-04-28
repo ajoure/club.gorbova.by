@@ -69,6 +69,8 @@ import {
   Settings,
   Trash2,
   MoreVertical,
+  Reply,
+  CornerUpLeft,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -97,6 +99,7 @@ interface TelegramMessage {
   direction: "outgoing" | "incoming";
   message_text: string | null;
   message_id: number | null;
+  reply_to_message_id?: number | null;
   status: string;
   created_at: string;
   sent_by_admin?: string | null;
@@ -233,6 +236,8 @@ export function ContactTelegramChat({
   const [editingMessage, setEditingMessage] = useState<TelegramMessage | null>(null);
   const [editText, setEditText] = useState("");
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
+  const [replyingTo, setReplyingTo] = useState<TelegramMessage | null>(null);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
 
   // Fetch available bots
   const { data: telegramBots = [] } = useQuery({
@@ -440,6 +445,40 @@ export function ContactTelegramChat({
 
   const isLoading = messagesLoading || eventsLoading || billingLoading;
 
+  // Map: Telegram message_id -> message (для рендера quote/reply)
+  const messagesByTgId = useMemo(() => {
+    const m = new Map<number, TelegramMessage>();
+    (messages || []).forEach((msg) => {
+      if (msg.message_id) m.set(msg.message_id, msg);
+    });
+    return m;
+  }, [messages]);
+
+  // Скролл к сообщению по DB id + подсветка
+  const scrollToMessage = useCallback((dbId: string) => {
+    const el = document.getElementById(`tg-msg-${dbId}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightedId(dbId);
+    setTimeout(() => setHighlightedId(null), 1500);
+  }, []);
+
+  // Превью текста для quote-блока
+  const previewForQuote = useCallback((m: TelegramMessage): string => {
+    const meta: any = m.meta || {};
+    const fileType = meta.file_type;
+    if (fileType === "photo") return "📷 Фото";
+    if (fileType === "video") return "🎬 Видео";
+    if (fileType === "video_note") return "⭕ Видео-кружок";
+    if (fileType === "voice") return "🎤 Голосовое";
+    if (fileType === "audio") return "🎵 Аудио";
+    if (fileType === "document") return `📎 ${meta.file_name || "Документ"}`;
+    if (fileType === "sticker") return "🌟 Стикер";
+    const text = (m.message_text || "").trim();
+    return text.length > 80 ? text.slice(0, 80) + "…" : text || "Сообщение";
+  }, []);
+
+
   // --- Telegram reactions ---
   const telegramMessageIds = useMemo(
     () => (messages || []).map((m: TelegramMessage) => m.id).filter(Boolean),
@@ -509,7 +548,7 @@ export function ContactTelegramChat({
     }, 1000);
   }, [refetchMessages]);
 
-  // Subscribe to realtime messages for this user
+  // Subscribe to realtime messages for this user — INSERT (new) + UPDATE (media enrichment)
   useEffect(() => {
     if (!userId) return;
 
@@ -517,63 +556,90 @@ export function ContactTelegramChat({
       .channel(`chat-messages-${userId}`)
       .on(
         "postgres_changes",
-        { 
-          event: "INSERT", 
-          schema: "public", 
+        {
+          event: "INSERT",
+          schema: "public",
           table: "telegram_messages",
           filter: `user_id=eq.${userId}`
         },
         (payload) => {
-          console.log("New message received:", payload);
-          
-          // FIX B: Remove temp messages that match the incoming real message
           const newMsg = payload.new as any;
           const msgText = (newMsg?.message_text || "").trim();
           const msgTime = new Date(newMsg?.created_at || Date.now()).getTime();
-          
-          queryClient.setQueryData(["telegram-messages", userId], (old: TelegramMessage[] | undefined) => {
-            if (!old) return old;
-            
-            // Filter out temp messages that match the new real message
-            return old.filter(m => {
-              // Keep all non-temp messages
-              if (!m.id.startsWith('temp-')) return true;
-              
-              // For temp messages: remove if text matches AND within 10s window
-              const tempText = (m.message_text || "").trim();
-              const tempTime = new Date(m.created_at).getTime();
-              const textMatches = tempText === msgText || (tempText.startsWith("📎") && msgText === "");
-              const timeClose = Math.abs(tempTime - msgTime) < 10000; // 10s window
-              
-              if (textMatches && timeClose) {
-                console.log("[DEDUP] Removing temp message:", m.id, "replaced by real:", newMsg.id);
-                return false; // Remove temp
-              }
-              return true;
-            });
-          });
-          
-          // Single debounced refetch
-          debouncedRefetch();
-          
+
+          // Patch cache: merge incoming row directly, drop matching temp row
+          queryClient.setQueryData(
+            ["telegram-messages", userId],
+            (old: TelegramMessage[] | undefined) => {
+              const list = old ? [...old] : [];
+              // already exists?
+              if (list.some((m) => m.id === newMsg.id)) return list;
+              // drop matching temp
+              const filtered = list.filter((m) => {
+                if (!m.id.startsWith("temp-")) return true;
+                const tempText = (m.message_text || "").trim();
+                const tempTime = new Date(m.created_at).getTime();
+                const textMatches = tempText === msgText || (tempText.startsWith("📎") && msgText === "");
+                const timeClose = Math.abs(tempTime - msgTime) < 10000;
+                return !(textMatches && timeClose);
+              });
+              filtered.push({ ...newMsg, type: "message" });
+              filtered.sort(
+                (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+              );
+              return filtered;
+            }
+          );
+
           // Auto-scroll only if user is at bottom OR it's an outgoing message
           const isFromAdmin = newMsg?.direction === "outgoing";
-          
           setTimeout(() => {
             const root = scrollRef.current;
             const viewport = root?.querySelector(
               "[data-radix-scroll-area-viewport]"
             ) as HTMLElement | null;
-            
             if (viewport) {
-              const isAtBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 100;
-              
-              // Scroll only if at bottom OR it's our own message
+              const isAtBottom =
+                viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 100;
               if (isAtBottom || isFromAdmin) {
                 viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
               }
             }
-          }, 100);
+          }, 50);
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "telegram_messages",
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload) => {
+          const updated = payload.new as any;
+          // Patch cache point-by-point: replace row by id (preserves order)
+          queryClient.setQueryData(
+            ["telegram-messages", userId],
+            (old: TelegramMessage[] | undefined) => {
+              if (!old) return old;
+              let found = false;
+              const next = old.map((m) => {
+                if (m.id === updated.id) {
+                  found = true;
+                  return { ...m, ...updated, type: "message" } as TelegramMessage;
+                }
+                return m;
+              });
+              if (!found) {
+                next.push({ ...updated, type: "message" } as TelegramMessage);
+                next.sort(
+                  (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+                );
+              }
+              return next;
+            }
+          );
         }
       )
       .subscribe();
@@ -584,7 +650,7 @@ export function ContactTelegramChat({
       }
       supabase.removeChannel(channel);
     };
-  }, [userId, debouncedRefetch]);
+  }, [userId, queryClient]);
 
   // === AUTO-REFRESH EFFECT FOR PENDING MEDIA ===
   // Polls every 10s if there are pending uploads, stops after 12 attempts (2 min)
@@ -727,9 +793,19 @@ export function ContactTelegramChat({
 
   // Send message mutation
   const sendMutation = useMutation({
-    mutationFn: async ({ text, file, fileType }: { text?: string; file?: File; fileType?: string }) => {
+    mutationFn: async ({
+      text,
+      file,
+      fileType,
+      replyToMessageId,
+    }: {
+      text?: string;
+      file?: File;
+      fileType?: string;
+      replyToMessageId?: number | null;
+    }) => {
       let fileData: { type: string; name: string; base64: string } | undefined;
-      
+
       if (file) {
         setIsUploading(true);
 
@@ -741,7 +817,7 @@ export function ContactTelegramChat({
           console.error("Failed to encode file to base64", e);
           throw new Error("Не удалось подготовить файл для отправки");
         }
-        
+
         // Use provided fileType or auto-detect
         let type = fileType || "document";
         if (!fileType) {
@@ -749,17 +825,18 @@ export function ContactTelegramChat({
           else if (file.type.startsWith("video/")) type = "video";
           else if (file.type.startsWith("audio/")) type = "audio";
         }
-        
+
         fileData = { type, name: file.name, base64 };
       }
 
       const { data, error } = await supabase.functions.invoke("telegram-admin-chat", {
-        body: { 
-          action: "send_message", 
-          user_id: userId, 
+        body: {
+          action: "send_message",
+          user_id: userId,
           message: text || "",
           file: fileData,
           bot_id: selectedBotId || undefined,
+          reply_to_message_id: replyToMessageId ?? undefined,
         },
       });
       if (error) throw error;
@@ -794,6 +871,7 @@ export function ContactTelegramChat({
       setSelectedFile(null);
       setSelectedFileType(null);
       setIsUploading(false);
+      setReplyingTo(null);
       refetch();
       onMessageSent?.();
     },
@@ -947,7 +1025,12 @@ export function ContactTelegramChat({
   const handleSend = () => {
     const trimmed = message.trim();
     if (!trimmed && !selectedFile) return;
-    sendMutation.mutate({ text: trimmed, file: selectedFile || undefined, fileType: selectedFileType || undefined });
+    sendMutation.mutate({
+      text: trimmed,
+      file: selectedFile || undefined,
+      fileType: selectedFileType || undefined,
+      replyToMessageId: replyingTo?.message_id ?? undefined,
+    });
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -1125,7 +1208,12 @@ export function ContactTelegramChat({
     return (
       <div
         key={msg.id}
-        className={`flex w-full min-w-0 ${msg.direction === "outgoing" ? "justify-end pr-1" : "justify-start"} group`}
+        id={`tg-msg-${msg.id}`}
+        className={cn(
+          "flex w-full min-w-0 group transition-colors duration-700 rounded-lg",
+          msg.direction === "outgoing" ? "justify-end pr-1" : "justify-start",
+          highlightedId === msg.id && "bg-yellow-200/40"
+        )}
       >
         <div className={`relative max-w-[80%] min-w-0 ${msg.direction === "outgoing" ? "mr-1" : ""}`}>
           <div className="flex flex-col w-full min-w-0">
@@ -1157,6 +1245,45 @@ export function ContactTelegramChat({
                       : (clientName || "Клиент")}
                   </span>
                 </div>
+
+                {/* Quote-блок (если это reply) */}
+                {msg.reply_to_message_id ? (() => {
+                  const quoted = messagesByTgId.get(msg.reply_to_message_id);
+                  const isOutgoing = msg.direction === "outgoing";
+                  const authorLabel = quoted
+                    ? (quoted.direction === "outgoing"
+                        ? (quoted.admin_profile?.full_name || "Администратор")
+                        : (clientName || "Клиент"))
+                    : "Сообщение";
+                  const previewText = quoted ? previewForQuote(quoted) : "Недоступно (не загружено)";
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => quoted && scrollToMessage(quoted.id)}
+                      disabled={!quoted}
+                      className={cn(
+                        "block w-full text-left mb-2 pl-2 border-l-2 rounded-sm py-1 px-2 -mx-1 transition-colors",
+                        isOutgoing
+                          ? "border-primary-foreground/60 bg-primary-foreground/10 hover:bg-primary-foreground/20"
+                          : "border-primary/60 bg-primary/5 hover:bg-primary/10",
+                        !quoted && "opacity-60 cursor-default"
+                      )}
+                    >
+                      <div className={cn(
+                        "text-[11px] font-semibold truncate",
+                        isOutgoing ? "text-primary-foreground/90" : "text-primary"
+                      )}>
+                        {authorLabel}
+                      </div>
+                      <div className={cn(
+                        "text-xs truncate",
+                        isOutgoing ? "text-primary-foreground/80" : "text-muted-foreground"
+                      )}>
+                        {previewText}
+                      </div>
+                    </button>
+                  );
+                })() : null}
                 
                 {/* Media preview with lightbox support - render if isMediaLike (not just fileType) */}
                 {isMediaLike && (
@@ -1258,36 +1385,48 @@ export function ContactTelegramChat({
                 </div>
               </div>
 
-              {/* Emoji reaction picker — hover trigger */}
-              <Popover>
-                <PopoverTrigger asChild>
-                  <button
-                    className={cn(
-                      "absolute -bottom-2 opacity-0 group-hover:opacity-100 transition-opacity",
-                      "h-6 w-6 rounded-full bg-card border border-border shadow-sm flex items-center justify-center hover:bg-accent",
-                      msg.direction === "outgoing" ? "left-0" : "right-0"
-                    )}
-                  >
-                    <SmilePlus className="h-3.5 w-3.5 text-muted-foreground" />
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent className="w-64 p-2" side="top" align="center">
-                  <div className="grid grid-cols-10 gap-1">
-                    {EMOJI_LIST.map((emoji) => (
-                      <button
-                        key={emoji}
-                        onClick={() => toggleTelegramReaction.mutate({ messageId: msg.id, emoji })}
-                        className="h-7 w-7 flex items-center justify-center rounded hover:bg-accent text-sm transition-colors"
-                      >
-                        {emoji}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="text-[10px] text-muted-foreground mt-1.5 text-center leading-tight">
-                    В Telegram отображается только 1 реакция от бота (лимит Telegram API)
-                  </p>
-                </PopoverContent>
-              </Popover>
+              {/* Reply + Emoji controls — hover */}
+              <div
+                className={cn(
+                  "absolute -bottom-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity",
+                  msg.direction === "outgoing" ? "left-0" : "right-0"
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={() => setReplyingTo(msg)}
+                  title="Ответить"
+                  className="h-6 w-6 rounded-full bg-card border border-border shadow-sm flex items-center justify-center hover:bg-accent"
+                >
+                  <Reply className="h-3.5 w-3.5 text-muted-foreground" />
+                </button>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <button
+                      className="h-6 w-6 rounded-full bg-card border border-border shadow-sm flex items-center justify-center hover:bg-accent"
+                      title="Реакция"
+                    >
+                      <SmilePlus className="h-3.5 w-3.5 text-muted-foreground" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-64 p-2" side="top" align="center">
+                    <div className="grid grid-cols-10 gap-1">
+                      {EMOJI_LIST.map((emoji) => (
+                        <button
+                          key={emoji}
+                          onClick={() => toggleTelegramReaction.mutate({ messageId: msg.id, emoji })}
+                          className="h-7 w-7 flex items-center justify-center rounded hover:bg-accent text-sm transition-colors"
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-1.5 text-center leading-tight">
+                      В Telegram отображается только 1 реакция от бота (лимит Telegram API)
+                    </p>
+                  </PopoverContent>
+                </Popover>
+              </div>
             </div>
 
             {/* Reactions display */}
@@ -1465,6 +1604,30 @@ export function ContactTelegramChat({
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+          )}
+          {replyingTo && (
+            <div className="flex items-start gap-2 mb-2 p-2 rounded-md bg-muted border-l-2 border-primary">
+              <CornerUpLeft className="w-3.5 h-3.5 text-primary mt-0.5 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-[11px] font-semibold text-primary truncate">
+                  Ответ:{" "}
+                  {replyingTo.direction === "outgoing"
+                    ? (replyingTo.admin_profile?.full_name || "Администратор")
+                    : (clientName || "Клиент")}
+                </div>
+                <div className="text-xs text-muted-foreground truncate">
+                  {previewForQuote(replyingTo)}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReplyingTo(null)}
+                className="p-0.5 rounded hover:bg-accent"
+                title="Отменить ответ"
+              >
+                <X className="w-3.5 h-3.5 text-muted-foreground" />
+              </button>
             </div>
           )}
           <div className="flex gap-2">
