@@ -364,7 +364,13 @@ Deno.serve(async (req) => {
     const autoChargeAmount = offer?.auto_charge_amount ?? tariff.original_price ?? 0;
     const autoChargeOfferId = offer?.auto_charge_offer_id ?? null; // Reference to pay_now offer for auto-charge
     const autoChargeAfterTrial = offer?.auto_charge_after_trial ?? tariff.trial_auto_charge ?? true;
-    const isRecurringSubscription = offer?.requires_card_tokenization ?? false;
+    // PATCH PRODUCT-TYPE-SOT (2026-04-28):
+    // Source of truth = tariff_offers.meta.recurring.is_recurring (UI-чекбокс «Подписка (автопродление)»).
+    // Installment-офферы тоже recurring по природе (создают subscriptions_v2 с billing_type='installment').
+    // Trial → создаёт subscription, если auto_charge_after_trial=true (классическое поведение тестового периода).
+    // requires_card_tokenization больше НЕ классификатор — это биллинг-сигнал bePaid.
+    const offerMetaRecurring = !!(offer?.meta?.recurring?.is_recurring);
+    const isRecurringSubscription = offerMetaRecurring || isInternalInstallment || (isTrial && autoChargeAfterTrial);
     
     console.log(`Installment mode: ${isInternalInstallment}, count: ${installmentCount}, first payment: ${amount} ${product.currency}`);
 
