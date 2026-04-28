@@ -171,14 +171,41 @@ export async function uploadToTrainingAssets(
       ? new File([await file.arrayBuffer()], file.name, { type: resolvedContentType })
       : file;
 
-  const { error: uploadError } = await supabase.storage
-    .from("training-assets")
-    .upload(filePath, uploadBody, { upsert: false, contentType: resolvedContentType });
+  // Большие файлы идут через TUS resumable upload (обходит ~50 MB limit на стандартном PUT)
+  if (file.size > TUS_THRESHOLD_BYTES) {
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      if (!token) {
+        toast.error("Сессия истекла. Войдите снова и повторите загрузку.");
+        return null;
+      }
+      const projectRef = import.meta.env.VITE_SUPABASE_PROJECT_ID;
+      await uploadViaTus({
+        file: uploadBody,
+        fileName: file.name,
+        bucket: "training-assets",
+        filePath,
+        contentType: resolvedContentType,
+        token,
+        projectRef,
+      });
+    } catch (err: unknown) {
+      console.error("TUS upload error:", err);
+      const msg = err instanceof Error ? err.message : "Неизвестная ошибка";
+      toast.error(`Ошибка загрузки: ${msg}`);
+      return null;
+    }
+  } else {
+    const { error: uploadError } = await supabase.storage
+      .from("training-assets")
+      .upload(filePath, uploadBody, { upsert: false, contentType: resolvedContentType });
 
-  if (uploadError) {
-    console.error("Upload error:", uploadError);
-    toast.error(`Ошибка загрузки: ${uploadError.message}`);
-    return null;
+    if (uploadError) {
+      console.error("Upload error:", uploadError);
+      toast.error(`Ошибка загрузки: ${uploadError.message}`);
+      return null;
+    }
   }
 
   const { data: urlData } = supabase.storage
