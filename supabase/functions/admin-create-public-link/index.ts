@@ -112,16 +112,69 @@ Deno.serve(async (req) => {
 
     // ── Если передан offer_id — он должен быть active pay_now этого тарифа.
     let offerIsRecurring: boolean | null = null;
+    let offerPaymentMethod: string | null = null;
+    let offerInstallmentMaxMonths: number | null = null;
+    let offerInstallmentCountLegacy: number | null = null;
     if (offer_id) {
       const { data: offer } = await supabase
         .from('tariff_offers')
-        .select('id, tariff_id, is_active, offer_type, meta')
+        .select('id, tariff_id, is_active, offer_type, payment_method, installment_count, meta')
         .eq('id', offer_id).maybeSingle();
       if (!offer) return errorResponse('Offer not found', 400);
       if (offer.tariff_id !== tariff_id) return errorResponse('Offer does not belong to tariff', 400);
       if (!offer.is_active) return errorResponse('Offer is not active', 400);
       if (offer.offer_type !== 'pay_now') return errorResponse('Offer is not a pay_now offer', 400);
       offerIsRecurring = !!(offer as any).meta?.recurring?.is_recurring;
+      offerPaymentMethod = (offer as any).payment_method ?? null;
+      offerInstallmentCountLegacy = Number((offer as any).installment_count ?? 0) || null;
+      const metaMax = Number((offer as any).meta?.installment?.max_months ?? 0);
+      offerInstallmentMaxMonths =
+        metaMax >= 2 ? metaMax : (offerInstallmentCountLegacy && offerInstallmentCountLegacy >= 2 ? offerInstallmentCountLegacy : null);
+    }
+
+    // ── Stage L: installment validation + расчёт сумм ──
+    // Контракт:
+    //   • installment_offer=true ↔ offer.payment_method='internal_installment'.
+    //   • selected_installment_months: integer, 2..max_months.
+    //   • payment_type ссылки ВСЕГДА 'one_time' (первый платёж = bePaid checkout).
+    //   • amount ссылки = per_payment_kopecks; total — в meta.installment.
+    let installmentBlock: Record<string, unknown> | null = null;
+    let installmentLinkAmountKopecks: number | null = null;
+    if (installment_offer || offerPaymentMethod === 'internal_installment') {
+      if (offerPaymentMethod !== 'internal_installment') {
+        return errorResponse('Offer is not an installment offer', 400);
+      }
+      if (!offerInstallmentMaxMonths || offerInstallmentMaxMonths < 2) {
+        return errorResponse('Installment offer has no valid max_months', 400);
+      }
+      const sel = Number(selected_installment_months);
+      if (!Number.isInteger(sel) || sel < 2 || sel > offerInstallmentMaxMonths) {
+        return errorResponse('invalid_installment_months', 400);
+      }
+      // amount приходит в копейках = ПОЛНАЯ стоимость (UI всегда шлёт total).
+      const totalByn = amount / 100;
+      // round half-up до целых BYN (Math.round в JS — half away from zero для положительных = round half-up).
+      const perPaymentByn = Math.round(totalByn / sel);
+      if (perPaymentByn < 1) {
+        return errorResponse('per_payment_too_small', 400);
+      }
+      const perPaymentKopecks = perPaymentByn * 100;
+      const totalInstallmentByn = perPaymentByn * sel;
+
+      installmentLinkAmountKopecks = perPaymentKopecks;
+      installmentBlock = {
+        payment_method: 'internal_installment',
+        max_installment_months: offerInstallmentMaxMonths,
+        selected_installment_months: sel,
+        interval_days: 30,
+        first_payment_delay_days: 0,
+        total_amount: totalByn,
+        per_payment_amount: perPaymentByn,
+        total_installment_amount: totalInstallmentByn,
+        rounding_mode: 'round_half_up_byn',
+      };
+      // Force one_time — installment-link это серия one-time платежей.
+      payment_type = 'one_time';
     }
 
     // Финальная нормализация audit-полей.
