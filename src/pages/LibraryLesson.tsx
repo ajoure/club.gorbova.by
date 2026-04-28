@@ -283,7 +283,7 @@ export default function LibraryLesson() {
 
   return (
     <DashboardLayout>
-      <div className="container mx-auto px-4 py-6 max-w-4xl relative">
+      <div className="container mx-auto px-4 py-6 pb-32 max-w-4xl relative">
         {/* Decorative background blobs */}
         <div className="absolute top-0 right-0 w-80 h-80 bg-primary/5 rounded-full blur-3xl pointer-events-none -z-10" />
         <div className="absolute bottom-1/3 left-0 w-64 h-64 bg-accent/5 rounded-full blur-3xl pointer-events-none -z-10" />
