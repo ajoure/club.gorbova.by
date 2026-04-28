@@ -144,18 +144,6 @@ interface TelegramEvent {
 
 type ChatItem = TelegramMessage | TelegramEvent;
 
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = String(reader.result || "");
-      resolve(result.includes(",") ? result.split(",")[1] : result);
-    };
-    reader.onerror = () => reject(reader.error || new Error("file_read_failed"));
-    reader.readAsDataURL(file);
-  });
-}
-
 // Only Telegram-supported reaction emojis (whitelist)
 const EMOJI_LIST = [
   "👍", "👎", "❤️", "🔥", "🥰", "👏", "😁", "🤔", "🤯", "😱",
