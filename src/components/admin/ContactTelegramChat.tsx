@@ -391,9 +391,27 @@ export function ContactTelegramChat({
   });
 
   // Combine and sort messages + telegram events + billing events
+  // PATCH: Hide event-pills for SEND_REMINDER/manual_notification when a real
+  // telegram_messages bubble already mirrors the same notification (±2 min window).
+  const mirroredAt: number[] = (messages || [])
+    .filter((m: any) => m.direction === 'outgoing' && (m.meta?.automated === true || m.meta?.source))
+    .map((m: any) => new Date(m.created_at).getTime());
+
+  const isMirroredEvent = (e: TelegramEvent): boolean => {
+    const action = e.action || '';
+    const isReminderLike =
+      action === 'SEND_REMINDER' ||
+      action === 'manual_notification' ||
+      action === 'MANUAL_NOTIFICATION';
+    if (!isReminderLike) return false;
+    if (e.status !== 'success') return false; // skipped/failed остаются как pill
+    const t = new Date(e.created_at).getTime();
+    return mirroredAt.some((mt) => Math.abs(mt - t) <= 120_000);
+  };
+
   const chatItems: ChatItem[] = [
-    ...(messages || []), 
-    ...(events || []),
+    ...(messages || []),
+    ...((events || []).filter((e) => !isMirroredEvent(e as TelegramEvent))),
     ...(billingEvents || []),
   ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
