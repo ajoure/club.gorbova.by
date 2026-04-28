@@ -190,6 +190,8 @@ export function AdminPaymentLinkDialog({
     "idle" | "cancelling" | "creating" | "error"
   >("idle");
   const [combinedPending, setCombinedPending] = useState(false);
+  // Stage L: выбранный срок рассрочки (только для installment-офферов)
+  const [selectedInstallmentMonths, setSelectedInstallmentMonths] = useState<number | null>(null);
 
   const { data: products, isLoading: productsLoading } = useProductsV2();
   const { data: tariffs, isLoading: tariffsLoading } = useTariffs(selectedProductId);
@@ -233,6 +235,21 @@ export function AdminPaymentLinkDialog({
   // создаётся как payment_type выбранный админом (controlled override).
   const isOverrideMode =
     !!effectiveOffer && effectiveOfferType !== effectivePaymentType;
+
+  // ── Stage L: installment offer detection ──
+  // offerKind: 'installment' | 'subscription' | 'one_time'.
+  // Источник: payment_method='internal_installment' → installment.
+  const isInstallmentOffer =
+    !!effectiveOffer && (effectiveOffer as any).payment_method === "internal_installment";
+  const installmentMaxMonths = useMemo(() => {
+    if (!isInstallmentOffer || !effectiveOffer) return null;
+    const metaMax = Number((effectiveOffer as any).meta?.installment?.max_months ?? 0);
+    if (metaMax >= 2) return Math.min(12, metaMax);
+    const legacy = Number((effectiveOffer as any).installment_count ?? 0);
+    if (legacy >= 2) return Math.min(12, legacy);
+    return null;
+  }, [isInstallmentOffer, effectiveOffer]);
+  // per_payment для installment считается inline в JSX (там, где amount уже доступен).
 
   // Список всех active pay_now offers (для select override) — без фильтрации по типу
   const activeOffers = useMemo(
@@ -376,13 +393,23 @@ export function AdminPaymentLinkDialog({
     if (effectiveOffer) {
       setCustomAmount(String(Number(effectiveOffer.amount)));
       setGeneratedUrl(null);
+      // Stage L: если оффер installment — выставляем default = max_months и форсим one_time.
+      if ((effectiveOffer as any).payment_method === "internal_installment") {
+        const metaMax = Number((effectiveOffer as any).meta?.installment?.max_months ?? 0);
+        const legacy = Number((effectiveOffer as any).installment_count ?? 0);
+        const max = Math.min(12, metaMax >= 2 ? metaMax : (legacy >= 2 ? legacy : 0));
+        setSelectedInstallmentMonths(max >= 2 ? max : null);
+        if (paymentType !== "one_time") setPaymentType("one_time");
+      } else {
+        setSelectedInstallmentMonths(null);
+      }
     } else if (
       !resolved.ok &&
       tariffPrices?.price &&
       !customAmount
     ) {
-      // Только если резолвер заблокирован и есть legacy price
       setCustomAmount(String(tariffPrices.price));
+      setSelectedInstallmentMonths(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveOffer?.id]);
@@ -400,6 +427,7 @@ export function AdminPaymentLinkDialog({
       setShowCancelConfirm(false);
       setConflictData(null);
       setReplaceStep("idle");
+      setSelectedInstallmentMonths(null);
     }
   }, [open]);
 
@@ -430,6 +458,11 @@ export function AdminPaymentLinkDialog({
       }
       if (amount <= 0) {
         throw new Error("Введите корректную сумму");
+      }
+      // Stage L: installment-офферы не поддерживаются writer'ом admin-create-payment-link.
+      // Используйте «Создать ссылку» (admin-create-public-link) — там реализован полный installment-flow.
+      if (isInstallmentOffer) {
+        throw new Error("Для рассрочки используйте кнопку «Создать ссылку» (публичную). Прямая оплата через карточку контакта не поддерживает рассрочку.");
       }
 
       const { data, error } = await supabase.functions.invoke(
@@ -518,6 +551,13 @@ export function AdminPaymentLinkDialog({
             resolved_mode: isOverrideMode ? "override" : "canonical",
             cta_source: "admin_manual",
             cta_contract_version: 1,
+            // Stage L: installment payload (writer ignore-ит, если поля null/false).
+            ...(isInstallmentOffer && selectedInstallmentMonths
+              ? {
+                  installment_offer: true,
+                  selected_installment_months: selectedInstallmentMonths,
+                }
+              : {}),
           },
         }
       );
@@ -607,6 +647,12 @@ export function AdminPaymentLinkDialog({
             resolved_mode: isOverrideMode ? "override" : "canonical",
             cta_source: "telegram_combined",
             cta_contract_version: 1,
+            ...(isInstallmentOffer && selectedInstallmentMonths
+              ? {
+                  installment_offer: true,
+                  selected_installment_months: selectedInstallmentMonths,
+                }
+              : {}),
           },
         }
       );
@@ -670,6 +716,14 @@ export function AdminPaymentLinkDialog({
 
   const activeProducts = products?.filter((p) => p.is_active) || [];
 
+  // Stage L: для installment селект срока ОБЯЗАТЕЛЕН.
+  const installmentInvalid =
+    isInstallmentOffer &&
+    (!selectedInstallmentMonths ||
+      !installmentMaxMonths ||
+      selectedInstallmentMonths < 2 ||
+      selectedInstallmentMonths > installmentMaxMonths);
+
   const isCreateDisabled =
     createLinkMutation.isPending ||
     createPublicLinkMutation.isPending ||
@@ -677,7 +731,8 @@ export function AdminPaymentLinkDialog({
     !selectedTariffId ||
     !effectiveOffer ||
     amount <= 0 ||
-    isCurrentConflict;
+    isCurrentConflict ||
+    installmentInvalid;
 
   return (
     <>
@@ -814,8 +869,9 @@ export function AdminPaymentLinkDialog({
                 </div>
               )}
 
-              {/* Тип оплаты — крупные сегменты */}
-              {selectedTariffId && (
+              {/* Тип оплаты — крупные сегменты. Скрыто для installment-офферов
+                  (срок рассрочки = свой селект ниже, payment_type форсится one_time). */}
+              {selectedTariffId && !isInstallmentOffer && (
                 <div className="rounded-lg border bg-card p-4 space-y-3">
                   <Label>Тип оплаты</Label>
                   <div className="grid grid-cols-2 gap-3">
@@ -854,6 +910,19 @@ export function AdminPaymentLinkDialog({
                   </div>
                   <p className="text-xs text-muted-foreground">
                     Предпочтение пользователя. Если в тарифе нет кнопки нужного типа, будет использована основная кнопка тарифа.
+                  </p>
+                </div>
+              )}
+
+              {/* Stage L: read-only бейдж для installment-оффера */}
+              {selectedTariffId && isInstallmentOffer && (
+                <div className="rounded-lg border bg-amber-500/5 border-amber-500/40 p-4 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <RefreshCw className="h-4 w-4 text-amber-600" />
+                    <span className="font-medium text-sm">Тип оплаты: Рассрочка</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Серия из {selectedInstallmentMonths ?? "—"} ежемесячных платежей. Сегодня клиент оплачивает первый платёж, остальные списываются с карты автоматически каждые 30 дней.
                   </p>
                 </div>
               )}
@@ -967,10 +1036,57 @@ export function AdminPaymentLinkDialog({
                       Цена тарифа: {tariffPrices.price} BYN
                     </p>
                   )}
+                  {isInstallmentOffer && (
+                    <p className="text-xs text-muted-foreground">
+                      Это полная стоимость продукта. Сумма каждого платежа рассчитывается автоматически по выбранному сроку рассрочки ниже.
+                    </p>
+                  )}
                 </div>
               )}
 
-              {/* Conflict (PATCH E) */}
+              {/* Stage L: Селектор срока рассрочки + блок суммы */}
+              {selectedTariffId && isInstallmentOffer && installmentMaxMonths && installmentMaxMonths >= 2 && (
+                <div className="rounded-lg border bg-card p-4 space-y-3">
+                  <Label>Срок рассрочки</Label>
+                  <Select
+                    value={selectedInstallmentMonths ? String(selectedInstallmentMonths) : ""}
+                    onValueChange={(v) => setSelectedInstallmentMonths(Number(v))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Выберите срок…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Array.from({ length: installmentMaxMonths - 1 }, (_, i) => i + 2).map((n) => (
+                        <SelectItem key={n} value={String(n)}>
+                          {n} {n === 1 ? "месяц" : n < 5 ? "месяца" : "месяцев"}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Выберите, на сколько месяцев создать рассрочку для клиента. Доступны варианты 2–{installmentMaxMonths} (зависит от настроек кнопки в тарифе).
+                  </p>
+
+                  {selectedInstallmentMonths && amount > 0 && (() => {
+                    const N = selectedInstallmentMonths;
+                    const perPayment = Math.round(amount / N);
+                    const totalInstallment = perPayment * N;
+                    const diff = totalInstallment - amount;
+                    return (
+                      <div className="rounded-md border border-primary/30 bg-primary/5 p-3 space-y-1">
+                        <p className="text-base font-semibold">
+                          {N} платеж{N === 1 ? "" : N < 5 ? "а" : "ей"} × {perPayment} BYN = ИТОГО {totalInstallment} BYN
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Сумма платежа округлена до целых BYN. Итог рассрочки рассчитан с учётом выбранного срока и может отличаться от полной цены ({amount} BYN
+                          {diff !== 0 ? `, разница: ${diff > 0 ? "+" : ""}${diff} BYN` : ""}).
+                          Списание происходит каждые 30 дней. Первый платёж — сегодня.
+                        </p>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
               {isCurrentConflict && conflictData && (
                 <div className="p-3 rounded-lg border border-destructive/50 bg-destructive/5 space-y-2">
                   <div className="flex items-center gap-2 text-destructive">
@@ -1059,12 +1175,21 @@ export function AdminPaymentLinkDialog({
                   <p className="text-sm text-muted-foreground">
                     {selectedProduct.name} — {selectedTariff.name}
                   </p>
-                  <p className="text-lg font-bold">{amount} BYN</p>
-                  <p className="text-xs text-muted-foreground">
-                    {effectivePaymentType === "subscription"
-                      ? "Подписка (ежемесячно)"
-                      : "Разовая оплата"}
-                  </p>
+                  {isInstallmentOffer && selectedInstallmentMonths ? (
+                    <>
+                      <p className="text-lg font-bold">
+                        {selectedInstallmentMonths} × {Math.round(amount / selectedInstallmentMonths)} BYN = ИТОГО {Math.round(amount / selectedInstallmentMonths) * selectedInstallmentMonths} BYN
+                      </p>
+                      <p className="text-xs text-muted-foreground">Рассрочка · первый платёж сегодня, далее каждые 30 дней</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-lg font-bold">{amount} BYN</p>
+                      <p className="text-xs text-muted-foreground">
+                        {effectivePaymentType === "subscription" ? "Подписка (ежемесячно)" : "Разовая оплата"}
+                      </p>
+                    </>
+                  )}
                 </div>
               )}
 

@@ -41,19 +41,32 @@ import { CreditCard, CheckCircle, Clock, Shield, AlertCircle, Loader2, Repeat, P
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
 
+interface InstallmentInfo {
+  payment_method?: string;
+  max_installment_months?: number;
+  selected_installment_months?: number;
+  interval_days?: number;
+  first_payment_delay_days?: number;
+  total_amount?: number;            // BYN
+  per_payment_amount?: number;      // BYN
+  total_installment_amount?: number; // BYN
+  rounding_mode?: string;
+}
+
 interface PaymentLinkInfo {
   product_name: string;
   product_description: string | null;
   product_category: string | null;
   tariff_name: string | null;
   access_days: number | null;
-  amount: number; // kopecks
+  amount: number; // kopecks (для installment — per_payment_kopecks)
   currency: string;
   description: string | null;
   payment_type: string;
   has_target_user: boolean;
   requires_identity_input: boolean;
   link_user_id: string | null;
+  installment?: InstallmentInfo | null;
 }
 
 interface SavedCard {
@@ -339,6 +352,8 @@ export default function PublicPayPage() {
     );
   }
 
+  const isInstallment = !!linkInfo.installment && (linkInfo.installment.selected_installment_months ?? 0) >= 2;
+  // Для installment платёжная сумма в bePaid checkout = per_payment (link.amount уже = per_payment_kopecks).
   const priceFormatted = formatPrice(linkInfo.amount, linkInfo.currency);
   const needsIdentity = linkInfo.requires_identity_input && !user;
   const isSubscription = linkInfo.payment_type === 'subscription';
@@ -402,11 +417,29 @@ export default function PublicPayPage() {
             </div>
 
             <div className="text-center mb-6">
-              <div className="text-4xl font-bold text-primary mb-1">{priceFormatted}</div>
-              {isSubscription && linkInfo.access_days ? (
-                <p className="text-sm text-muted-foreground">за {linkInfo.access_days} дней</p>
+              {isInstallment && linkInfo.installment ? (
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">Рассрочка</p>
+                  <div className="text-4xl font-bold text-primary">
+                    {linkInfo.installment.selected_installment_months} × {linkInfo.installment.per_payment_amount} {linkInfo.currency}
+                  </div>
+                  <p className="text-base font-medium">
+                    Итого: {linkInfo.installment.total_installment_amount} {linkInfo.currency}
+                  </p>
+                  <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                    Сумма платежа округлена до целых {linkInfo.currency}. Итог рассрочки рассчитан с учётом выбранного срока и может отличаться от полной цены ({linkInfo.installment.total_amount} {linkInfo.currency}).
+                    Списание происходит каждые {linkInfo.installment.interval_days ?? 30} дней. Сегодня вы оплачиваете первый платёж — {priceFormatted}.
+                  </p>
+                </div>
               ) : (
-                <p className="text-sm text-muted-foreground">разовый платёж</p>
+                <>
+                  <div className="text-4xl font-bold text-primary mb-1">{priceFormatted}</div>
+                  {isSubscription && linkInfo.access_days ? (
+                    <p className="text-sm text-muted-foreground">за {linkInfo.access_days} дней</p>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">разовый платёж</p>
+                  )}
+                </>
               )}
             </div>
 

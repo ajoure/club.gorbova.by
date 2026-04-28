@@ -22,7 +22,7 @@ interface CreatePublicLinkRequest {
   product_id: string;
   tariff_id: string;
   offer_id?: string | null;
-  amount: number; // BYN kopecks
+  amount: number; // BYN kopecks (полная стоимость, для installment — total)
   currency?: string;
   payment_type?: 'one_time' | 'subscription';
   description?: string | null;
@@ -34,6 +34,9 @@ interface CreatePublicLinkRequest {
   resolved_mode?: 'canonical' | 'override';
   cta_source?: 'admin_manual' | 'reminder' | 'contact_card' | 'telegram_combined' | string;
   cta_contract_version?: number;
+  // Stage L: installment
+  installment_offer?: boolean;
+  selected_installment_months?: number;
 }
 
 Deno.serve(async (req) => {
@@ -62,10 +65,12 @@ Deno.serve(async (req) => {
     const {
       product_id, tariff_id, offer_id, amount,
       currency = 'BYN',
-      payment_type = 'one_time',
+      payment_type: rawPaymentType = 'one_time',
       description = null, max_uses = null, expires_at = null, user_id = null,
       requested_payment_type, resolved_mode, cta_source, cta_contract_version,
+      installment_offer = false, selected_installment_months,
     } = body;
+    let payment_type: 'one_time' | 'subscription' = rawPaymentType;
 
     // ── Validate required ──
     if (!product_id || !tariff_id || !amount) {
@@ -107,16 +112,69 @@ Deno.serve(async (req) => {
 
     // ── Если передан offer_id — он должен быть active pay_now этого тарифа.
     let offerIsRecurring: boolean | null = null;
+    let offerPaymentMethod: string | null = null;
+    let offerInstallmentMaxMonths: number | null = null;
+    let offerInstallmentCountLegacy: number | null = null;
     if (offer_id) {
       const { data: offer } = await supabase
         .from('tariff_offers')
-        .select('id, tariff_id, is_active, offer_type, meta')
+        .select('id, tariff_id, is_active, offer_type, payment_method, installment_count, meta')
         .eq('id', offer_id).maybeSingle();
       if (!offer) return errorResponse('Offer not found', 400);
       if (offer.tariff_id !== tariff_id) return errorResponse('Offer does not belong to tariff', 400);
       if (!offer.is_active) return errorResponse('Offer is not active', 400);
       if (offer.offer_type !== 'pay_now') return errorResponse('Offer is not a pay_now offer', 400);
       offerIsRecurring = !!(offer as any).meta?.recurring?.is_recurring;
+      offerPaymentMethod = (offer as any).payment_method ?? null;
+      offerInstallmentCountLegacy = Number((offer as any).installment_count ?? 0) || null;
+      const metaMax = Number((offer as any).meta?.installment?.max_months ?? 0);
+      offerInstallmentMaxMonths =
+        metaMax >= 2 ? metaMax : (offerInstallmentCountLegacy && offerInstallmentCountLegacy >= 2 ? offerInstallmentCountLegacy : null);
+    }
+
+    // ── Stage L: installment validation + расчёт сумм ──
+    // Контракт:
+    //   • installment_offer=true ↔ offer.payment_method='internal_installment'.
+    //   • selected_installment_months: integer, 2..max_months.
+    //   • payment_type ссылки ВСЕГДА 'one_time' (первый платёж = bePaid checkout).
+    //   • amount ссылки = per_payment_kopecks; total — в meta.installment.
+    let installmentBlock: Record<string, unknown> | null = null;
+    let installmentLinkAmountKopecks: number | null = null;
+    if (installment_offer || offerPaymentMethod === 'internal_installment') {
+      if (offerPaymentMethod !== 'internal_installment') {
+        return errorResponse('Offer is not an installment offer', 400);
+      }
+      if (!offerInstallmentMaxMonths || offerInstallmentMaxMonths < 2) {
+        return errorResponse('Installment offer has no valid max_months', 400);
+      }
+      const sel = Number(selected_installment_months);
+      if (!Number.isInteger(sel) || sel < 2 || sel > offerInstallmentMaxMonths) {
+        return errorResponse('invalid_installment_months', 400);
+      }
+      // amount приходит в копейках = ПОЛНАЯ стоимость (UI всегда шлёт total).
+      const totalByn = amount / 100;
+      // round half-up до целых BYN (Math.round в JS — half away from zero для положительных = round half-up).
+      const perPaymentByn = Math.round(totalByn / sel);
+      if (perPaymentByn < 1) {
+        return errorResponse('per_payment_too_small', 400);
+      }
+      const perPaymentKopecks = perPaymentByn * 100;
+      const totalInstallmentByn = perPaymentByn * sel;
+
+      installmentLinkAmountKopecks = perPaymentKopecks;
+      installmentBlock = {
+        payment_method: 'internal_installment',
+        max_installment_months: offerInstallmentMaxMonths,
+        selected_installment_months: sel,
+        interval_days: 30,
+        first_payment_delay_days: 0,
+        total_amount: totalByn,
+        per_payment_amount: perPaymentByn,
+        total_installment_amount: totalInstallmentByn,
+        rounding_mode: 'round_half_up_byn',
+      };
+      // Force one_time — installment-link это серия one-time платежей.
+      payment_type = 'one_time';
     }
 
     // Финальная нормализация audit-полей.
@@ -170,13 +228,19 @@ Deno.serve(async (req) => {
     const url_token = Array.from(tokenBytes).map((b) => b.toString(16).padStart(2, '0')).join('');
     const public_url = `${canonicalOrigin}/pay/${url_token}`;
 
+    // Для installment ссылка хранит per_payment в amount; полная сумма — в meta.installment.
+    const linkAmountKopecks =
+      installmentLinkAmountKopecks !== null ? installmentLinkAmountKopecks : amount;
+    const linkMeta: Record<string, unknown> = {};
+    if (installmentBlock) linkMeta.installment = installmentBlock;
+
     const { data: link, error: insertErr } = await supabase
       .from('payment_links')
       .insert({
         product_id,
         tariff_id,
         offer_id: offer_id || null,
-        amount,
+        amount: linkAmountKopecks,
         currency,
         payment_type,
         description,
@@ -186,8 +250,9 @@ Deno.serve(async (req) => {
         created_by: user.id,
         url_token,
         public_url,
+        meta: Object.keys(linkMeta).length > 0 ? linkMeta : null,
       })
-      .select('id, url_token, status, current_uses, max_uses, expires_at, amount, currency, payment_type, product_id, tariff_id, offer_id, created_by')
+      .select('id, url_token, status, current_uses, max_uses, expires_at, amount, currency, payment_type, product_id, tariff_id, offer_id, created_by, meta')
       .single();
 
     if (insertErr || !link) {
@@ -205,7 +270,9 @@ Deno.serve(async (req) => {
         payment_link_id: link.id,
         url_token: link.url_token,
         product_id, tariff_id, offer_id: offer_id || null,
-        amount, currency,
+        amount_input: amount,                 // что пришло с фронта (для installment — total kopecks)
+        link_amount: linkAmountKopecks,       // что фактически записано в payment_links.amount
+        currency,
         payment_type,                         // фактический payment_type ссылки
         requested_payment_type: auditRequestedType, // что просил источник CTA
         resolved_offer_id: offer_id || null,
@@ -218,6 +285,15 @@ Deno.serve(async (req) => {
         public_url,
         origin_source: originSource,
         primary_domain: primaryDomainValid ? primaryDomain : null,
+        // Stage L: installment proof
+        installment: installmentBlock
+          ? {
+              selected_installment_months: installmentBlock.selected_installment_months,
+              max_installment_months: installmentBlock.max_installment_months,
+              per_payment_amount: installmentBlock.per_payment_amount,
+              total_installment_amount: installmentBlock.total_installment_amount,
+            }
+          : null,
       },
     });
 
@@ -232,6 +308,7 @@ Deno.serve(async (req) => {
       offer_id: link.offer_id,
       tariff_id: link.tariff_id,
       cta_source: auditCtaSource,
+      installment: installmentBlock,
       row: link,
     });
   } catch (e) {
