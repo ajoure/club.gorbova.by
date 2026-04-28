@@ -517,7 +517,7 @@ Deno.serve(async (req) => {
             if (fileId) {
               // Upload the already selected local file bytes immediately.
               // Do not download it back from Telegram: that added seconds of visible delay.
-              const localBytes = base64ToBytes(file.base64);
+              const localBytes = await loadFileBytes(supabase, file);
 
               // Sanitize filename for Supabase Storage (no cyrillic, spaces, special chars)
                 const sanitizeOutboundFileName = (name: string): string => {
