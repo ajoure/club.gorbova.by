@@ -4088,7 +4088,7 @@ Deno.serve(async (req) => {
           const offerType = orderV2.is_trial ? 'trial' : 'pay_now';
           const { data: offer } = await supabase
             .from('tariff_offers')
-            .select('requires_card_tokenization, auto_charge_after_trial, getcourse_offer_id')
+            .select('requires_card_tokenization, auto_charge_after_trial, getcourse_offer_id, payment_method, installment_count, meta')
             .eq('tariff_id', orderV2.tariff_id)
             .eq('offer_type', offerType)
             .eq('is_active', true)
@@ -4096,9 +4096,15 @@ Deno.serve(async (req) => {
             .limit(1)
             .maybeSingle();
 
-          // Determine if this should be a recurring subscription
-          const isRecurringSubscription = offer?.requires_card_tokenization ?? false;
+          // PATCH PRODUCT-TYPE-SOT (2026-04-28):
+          // Source of truth для типа продукта — tariff_offers.meta.recurring.is_recurring
+          // (UI-чекбокс «Подписка (автопродление)»). Installment тоже recurring по природе.
+          // Trial всегда создаёт subscriptions_v2 (это и есть подписка на пробный период).
+          // requires_card_tokenization больше НЕ используется как классификатор.
+          const offerIsInstallment = offer?.payment_method === 'internal_installment' && (offer?.installment_count ?? 0) > 1;
+          const offerMetaRecurring = !!(offer?.meta?.recurring?.is_recurring);
           const autoChargeAfterTrial = offer?.auto_charge_after_trial ?? true;
+          const isRecurringSubscription = offerMetaRecurring || offerIsInstallment || (offerType === 'trial' && autoChargeAfterTrial);
 
           if (productV2 && tariff) {
             // PATCH-A1: Guard — do NOT create subscription if order is not paid
