@@ -3,6 +3,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { hasValidAccess } from '../_shared/accessValidation.ts';
 import { writeLedgerEntry, type LedgerEntry } from '../_shared/fulfillment-executor.ts';
 import { greetPrefix } from '../_shared/recipient-name.ts';
+import { logAutomatedTelegramMessage } from '../_shared/log-automated-telegram.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -882,6 +883,25 @@ Deno.serve(async (req) => {
         dmSent = result.ok;
         if (!result.ok) dmError = result.description;
 
+        // Mirror to admin chat (Contact Center)
+        if (result?.ok && result?.result?.message_id) {
+          await logAutomatedTelegramMessage({
+            supabase,
+            user_id,
+            telegram_user_id: telegramUserId,
+            bot_id: bot?.id ?? null,
+            text: dmText,
+            telegram_message_id: result.result.message_id,
+            reply_markup: keyboard,
+            source: 'telegram-grant-access',
+            extra_meta: {
+              club_id: club.id,
+              source_id: source_id ?? null,
+              event: 'access_granted_dm',
+            },
+          });
+        }
+
         // Update can_dm status
         const canDm = !result.description?.includes('bot was blocked') && !result.description?.includes("can't initiate");
         await supabase.from('telegram_club_members').update({
@@ -962,7 +982,15 @@ Deno.serve(async (req) => {
                         url: offerWelcomeMessage.button.url,
                       }]]
                     } : undefined;
-                    await sendMessage(botToken, telegramUserId, offerWelcomeMessage.text, keyboard);
+                    const wRes = await sendMessage(botToken, telegramUserId, offerWelcomeMessage.text, keyboard);
+                    if (keyboard && wRes?.ok && wRes?.result?.message_id) {
+                      await logAutomatedTelegramMessage({
+                        supabase, user_id, telegram_user_id: telegramUserId, bot_id: bot?.id ?? null,
+                        text: offerWelcomeMessage.text, telegram_message_id: wRes.result.message_id,
+                        reply_markup: keyboard, source: 'telegram-grant-access',
+                        extra_meta: { club_id: club.id, source_id: source_id ?? null, event: 'offer_welcome' },
+                      });
+                    }
                   }
                   welcomeSent = true;
                   welcomeType = 'offer';
@@ -982,7 +1010,15 @@ Deno.serve(async (req) => {
                       url: welcomeMessage.button.url,
                     }]]
                   } : undefined;
-                  await sendMessage(botToken, telegramUserId, welcomeMessage.text, keyboard);
+                  const wRes = await sendMessage(botToken, telegramUserId, welcomeMessage.text, keyboard);
+                  if (keyboard && wRes?.ok && wRes?.result?.message_id) {
+                    await logAutomatedTelegramMessage({
+                      supabase, user_id, telegram_user_id: telegramUserId, bot_id: bot?.id ?? null,
+                      text: welcomeMessage.text, telegram_message_id: wRes.result.message_id,
+                      reply_markup: keyboard, source: 'telegram-grant-access',
+                      extra_meta: { club_id: club.id, source_id: source_id ?? null, event: 'tariff_welcome' },
+                    });
+                  }
                 }
                 welcomeSent = true;
                 welcomeType = 'tariff';

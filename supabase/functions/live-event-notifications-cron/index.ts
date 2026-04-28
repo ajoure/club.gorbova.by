@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolveEffectiveProductAccess } from '../_shared/resolve-effective-access.ts';
+import { logAutomatedTelegramMessage } from '../_shared/log-automated-telegram.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -372,6 +373,23 @@ Deno.serve(async (req) => {
 
                   const result = await response.json();
                   if (result.ok) {
+                    // Mirror to admin chat (Contact Center)
+                    if (keyboard && result?.result?.message_id) {
+                      await logAutomatedTelegramMessage({
+                        supabase,
+                        user_id: userId,
+                        telegram_user_id: profile.telegram_user_id,
+                        bot_id: club?.botId ?? null,
+                        text: renderedText,
+                        telegram_message_id: result.result.message_id,
+                        reply_markup: keyboard,
+                        source: 'live-event-notifications-cron',
+                        extra_meta: {
+                          live_event_id: event.id,
+                          notify_offset_minutes: offset.minutes,
+                        },
+                      });
+                    }
                     await updateLogStatusFull(supabase, event.id, userId, channel, offset.minutes, 'sent', null, 
                       String(result.result?.message_id || ''), result);
                     totalSent++;
@@ -455,16 +473,17 @@ Deno.serve(async (req) => {
   }
 });
 
-async function getActiveBot(supabase: any): Promise<{ botToken: string } | null> {
+async function getActiveBot(supabase: any): Promise<{ botToken: string; botId: string | null } | null> {
   const { data: club } = await supabase
     .from('telegram_clubs')
-    .select('telegram_bots(bot_token_encrypted)')
+    .select('bot_id, telegram_bots(bot_token_encrypted)')
     .eq('is_active', true)
     .limit(1)
     .maybeSingle();
 
   const botToken = (club as any)?.telegram_bots?.bot_token_encrypted;
-  return botToken ? { botToken } : null;
+  const botId = (club as any)?.bot_id ?? null;
+  return botToken ? { botToken, botId } : null;
 }
 
 async function updateLogStatus(

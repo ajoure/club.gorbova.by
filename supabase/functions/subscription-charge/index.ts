@@ -6,6 +6,8 @@ import { hasValidAccess } from '../_shared/accessValidation.ts';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 import { isCalendarMonthProduct, calcCalendarMonthEnd } from '../_shared/resolve-access-window.ts';
 import { syncEntitlement } from '../_shared/entitlement-sync.ts';
+import { logAutomatedTelegramMessage } from '../_shared/log-automated-telegram.ts';
+import { greetPrefix } from '../_shared/recipient-name.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -338,7 +340,7 @@ async function sendRenewalSuccessTelegram(
 
     const { data: linkBot } = await supabase
       .from('telegram_bots')
-      .select('token')
+      .select('id, token')
       .eq('is_link_bot', true)
       .eq('is_active', true)
       .limit(1)
@@ -357,7 +359,7 @@ async function sendRenewalSuccessTelegram(
       if (product?.name) realProductName = product.name;
     }
 
-    const userName = profile.full_name?.split(' ')[0] || 'Клиент';
+    const namePrefix = greetPrefix(profile);
 
     // Get club invite links and per-club access dates via shared helpers
     let clubBlock = '';
@@ -408,7 +410,7 @@ async function sendRenewalSuccessTelegram(
 
     const message = `✅ *Подписка успешно продлена!*
 
-${userName}, ваша подписка была автоматически продлена.
+${namePrefix}ваша подписка была автоматически продлена.
 
 📦 *Продукт:* ${realProductName}
 🎯 *Тариф:* ${tariffName}
@@ -417,20 +419,36 @@ ${userName}, ваша подписка была автоматически пр�
 ${clubBlock}
 Спасибо, что остаётесь с нами! 🎉`;
 
+    const replyMarkup = inlineKeyboard.length > 0 ? { inline_keyboard: inlineKeyboard } : undefined;
     const body: any = {
       chat_id: profile.telegram_user_id,
       text: message,
       parse_mode: 'Markdown',
     };
-    if (inlineKeyboard.length > 0) {
-      body.reply_markup = JSON.stringify({ inline_keyboard: inlineKeyboard });
-    }
+    if (replyMarkup) body.reply_markup = JSON.stringify(replyMarkup);
 
-    await fetch(`https://api.telegram.org/bot${linkBot.token}/sendMessage`, {
+    const sendResp = await fetch(`https://api.telegram.org/bot${linkBot.token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
+    let sendJson: any = null;
+    try { sendJson = await sendResp.json(); } catch { /* ignore */ }
+
+    // Mirror to admin chat (Contact Center)
+    if (replyMarkup && sendJson?.ok && sendJson?.result?.message_id) {
+      await logAutomatedTelegramMessage({
+        supabase,
+        user_id: userId,
+        telegram_user_id: profile.telegram_user_id,
+        bot_id: (linkBot as any)?.id ?? null,
+        text: message,
+        telegram_message_id: sendJson.result.message_id,
+        reply_markup: replyMarkup,
+        source: 'subscription-charge',
+        extra_meta: { event: 'renewal_success', product_id: productId ?? null },
+      });
+    }
     console.log(`Sent renewal success notification to user ${userId} via Telegram`);
   } catch (err) {
     console.error('Failed to send renewal success notification:', err);

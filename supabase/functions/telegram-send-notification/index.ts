@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { greetPrefix, greetSuffix } from '../_shared/recipient-name.ts';
+import { logAutomatedTelegramMessage } from '../_shared/log-automated-telegram.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -390,19 +391,23 @@ Deno.serve(async (req) => {
 
     // Find a bot token to use
     let botToken: string | null = null;
+    let botId: string | null = null;
     let clubName = 'клубе';
+    let clubId: string | null = null;
 
     if (access?.telegram_clubs) {
       const club = access.telegram_clubs as any;
       botToken = club.telegram_bots?.bot_token_encrypted;
+      botId = club.bot_id ?? null;
       clubName = club.club_name || 'клубе';
+      clubId = (access as any).club_id ?? null;
     }
 
     // If no access record, try to find any active bot
     if (!botToken) {
       const { data: anyClub } = await supabase
         .from('telegram_clubs')
-        .select('club_name, telegram_bots(bot_token_encrypted)')
+        .select('id, club_name, bot_id, telegram_bots(bot_token_encrypted)')
         .eq('is_active', true)
         .limit(1)
         .maybeSingle();
@@ -410,7 +415,9 @@ Deno.serve(async (req) => {
       if (anyClub) {
         const club = anyClub as any;
         botToken = club.telegram_bots?.bot_token_encrypted;
+        botId = club.bot_id ?? null;
         clubName = club.club_name || 'клубе';
+        clubId = club.id ?? null;
       }
     }
 
@@ -550,6 +557,25 @@ ${namePrefix}мы попытались проверить ${cardDisplay} для 
       text: message,
       reply_markup: keyboard,
     });
+
+    // Mirror to admin chat (Contact Center) — only if buttons exist & message accepted by Telegram
+    if (sendResult?.ok && sendResult?.result?.message_id && keyboard) {
+      await logAutomatedTelegramMessage({
+        supabase,
+        user_id,
+        telegram_user_id: profile.telegram_user_id,
+        bot_id: botId,
+        text: message,
+        telegram_message_id: sendResult.result.message_id,
+        reply_markup: keyboard,
+        source: 'telegram-send-notification',
+        extra_meta: {
+          message_type,
+          club_id: clubId,
+          idempotency_key: idempotencyKey,
+        },
+      });
+    }
 
     // Update notification_outbox status
     const outboxStatus = sendResult.ok ? 'sent' : 'failed';

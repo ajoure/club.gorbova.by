@@ -118,6 +118,11 @@ interface TelegramMessage {
     file_url?: string | null;
     edited?: boolean;
     deleted?: boolean;
+    automated?: boolean;
+    source?: string;
+    reply_markup?: {
+      inline_keyboard?: Array<Array<{ text?: string; url?: string; callback_data?: string }>>;
+    } | null;
     [key: string]: unknown;
   } | null;
 }
@@ -1054,8 +1059,51 @@ export function ContactTelegramChat({
                 {msg.message_text && (
                   <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
                 )}
-                
+
+                {/* Inline keyboard mirror — ONLY url buttons (callback_data is intentionally hidden) */}
+                {(() => {
+                  const rm = (msg.meta as any)?.reply_markup;
+                  const rows: Array<Array<{ text?: string; url?: string }>> = Array.isArray(rm?.inline_keyboard) ? rm.inline_keyboard : [];
+                  const urlRows = rows
+                    .map((row) => row.filter((b) => b && typeof b.url === "string" && b.url.trim().length > 0))
+                    .filter((row) => row.length > 0);
+                  if (urlRows.length === 0) return null;
+                  return (
+                    <div className="mt-2 flex flex-col gap-1">
+                      {urlRows.map((row, ri) => (
+                        <div key={ri} className="flex flex-wrap gap-1">
+                          {row.map((btn, bi) => (
+                            <a
+                              key={bi}
+                              href={btn.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className={cn(
+                                "inline-flex items-center px-2 py-1 rounded-md text-xs border transition-colors",
+                                msg.direction === "outgoing"
+                                  ? "bg-primary-foreground/10 border-primary-foreground/30 text-primary-foreground hover:bg-primary-foreground/20"
+                                  : "bg-background border-border hover:bg-accent",
+                              )}
+                            >
+                              {btn.text || btn.url}
+                            </a>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+
                 <div className="flex items-center justify-end gap-1 mt-1">
+                  {/* Авто badge — automated outgoing messages without admin author */}
+                  {msg.direction === "outgoing" && !msg.sent_by_admin && (msg.meta as any)?.automated && (
+                    <span
+                      className="text-[10px] opacity-80 mr-1 px-1 rounded bg-primary-foreground/20"
+                      title={(msg.meta as any)?.source ? `Автоматическое сообщение · ${(msg.meta as any).source}` : "Автоматическое сообщение"}
+                    >
+                      Авто
+                    </span>
+                  )}
                   {/* Bot badge — приоритет bot_name, fallback @username, иначе null */}
                   {(() => {
                     const joined = msg.telegram_bots;
