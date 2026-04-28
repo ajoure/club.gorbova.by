@@ -35,11 +35,12 @@ export function MediaLightbox({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent 
         className={cn(
-          "p-0 border-none overflow-hidden",
+          "p-0 border-none overflow-visible shadow-none",
           isPdf || isDocument 
             ? "max-w-4xl max-h-[90vh] bg-background" 
-            : "max-w-[90vw] max-h-[90vh] bg-black/95"
+            : "w-fit max-w-[92vw] max-h-[92vh] bg-transparent"
         )}
+        showCloseButton={false}
         onPointerDownOutside={() => onOpenChange(false)}
         onEscapeKeyDown={() => onOpenChange(false)}
       >
@@ -89,7 +90,10 @@ export function MediaLightbox({
         </div>
 
         {/* Content */}
-        <div className="flex items-center justify-center w-full h-full min-h-[300px] max-h-[85vh] p-4">
+        <div className={cn(
+          "flex items-center justify-center w-fit max-w-[92vw] max-h-[88vh]",
+          isPdf || isDocument ? "min-h-[300px] p-4" : "p-0"
+        )}>
           {isPdf ? (
             <iframe
               src={url}
@@ -132,7 +136,7 @@ export function MediaLightbox({
             <img
               src={url}
               alt={fileName || "Image"}
-              className="max-w-full max-h-[80vh] object-contain rounded-lg"
+              className="block max-w-[92vw] max-h-[88vh] object-contain rounded-lg bg-transparent"
             />
           )}
         </div>
