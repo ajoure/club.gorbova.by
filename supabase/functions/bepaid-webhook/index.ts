@@ -5,6 +5,7 @@ import { buildAdminNotifyMessage, maskEmail } from '../_shared/admin-notify-mess
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 import { applyCrmStageOnTerminal } from '../_shared/crm-routing.ts';
 import { consumePaymentLinkForOrder } from '../_shared/consume-payment-link.ts';
+import { generateInstallmentSchedule } from '../_shared/installment-schedule.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -2245,6 +2246,9 @@ Deno.serve(async (req) => {
       }
 
       const existingMeta = (linkOrder.meta && typeof linkOrder.meta === 'object') ? linkOrder.meta : {};
+      // STAGE L3: признак installment-order вычисляется здесь, чтобы guard'ы ниже могли его использовать.
+      const installmentCountFromOrderMeta = Number((existingMeta as Record<string, any>).installment_count ?? 0);
+      const isInstallmentOrder = Number.isFinite(installmentCountFromOrderMeta) && installmentCountFromOrderMeta >= 2;
       // F12 P1: fill-only provider_payment_id on order
       const orderUpdatePayload: Record<string, any> = {
         status: 'paid',
@@ -2568,14 +2572,19 @@ Deno.serve(async (req) => {
 
           if (existingSubV2) {
             const existingMeta = (existingSubV2.meta as Record<string, any>) || {};
+            const v2UpdatePayload: Record<string, any> = {
+              meta: { ...existingMeta, bepaid_subscription_id: String(subscriptionId) },
+            };
+            // STAGE L3 GUARD: для рассрочки billing_type должен оставаться установленным grant'ом
+            // (или 'internal_installment' для fallback). НЕ перезаписываем на 'provider_managed'.
+            if (!isInstallmentOrder) {
+              v2UpdatePayload.billing_type = 'provider_managed';
+            }
             await supabase
               .from('subscriptions_v2')
-              .update({
-                billing_type: 'provider_managed',
-                meta: { ...existingMeta, bepaid_subscription_id: String(subscriptionId) },
-              })
+              .update(v2UpdatePayload)
               .eq('id', grantedSubscriptionV2Id);
-            console.log('[WEBHOOK-LINK-ORDER] subscriptions_v2 updated: billing_type=provider_managed, bepaid_sub_id=', subscriptionId);
+            console.log('[WEBHOOK-LINK-ORDER] subscriptions_v2 updated: isInstallment=', isInstallmentOrder, 'bepaid_sub_id=', subscriptionId);
           }
         } catch (v2UpdateErr) {
           console.error('[WEBHOOK-LINK-ORDER] subscriptions_v2 billing_type update error (non-fatal):', v2UpdateErr);
@@ -2583,7 +2592,95 @@ Deno.serve(async (req) => {
       }
 
       // =====================================================================
-      // PATCH-LINK-INLINE: Inline update of access dates (parity with subv2 handler)
+      // STAGE L3: INSTALLMENT MATERIALIZATION (public link рассрочка)
+      // Триггер: linkOrder.meta.installment_count >= 2 (записан public-checkout из payment_links.meta).
+      // Источник графика: order.meta (NOT offer). Per-payment взят AS-IS (round-half-up-byn done by writer L2).
+      // Idempotency: pre-check + UNIQUE(order_id, payment_number) внутри generateInstallmentSchedule.
+      // НЕ ставим auto_renew=true: рассрочка идёт через installment_payments + installment-charge-cron.
+      // =====================================================================
+      // STAGE L3: isInstallmentOrder + installmentCountFromOrderMeta объявлены выше (строка 2250).
+      const linkOrderMetaForInstallment = (linkOrder.meta || {}) as Record<string, any>;
+
+      if (isInstallmentOrder && linkOrder.user_id) {
+        try {
+          // 1) Найти/создать subscriptions_v2 для рассрочки.
+          //    Правило: если grant-access-for-order уже создал sub (grantedSubscriptionV2Id) — используем её,
+          //    НЕ перезаписывая billing_type, который мог быть установлен grant'ом.
+          //    Только если sub отсутствует (fallback) — создаём новую с billing_type='internal_installment'.
+          let installmentSubV2Id: string | null = grantedSubscriptionV2Id;
+
+          if (!installmentSubV2Id) {
+            // Доказанное отсутствие — создаём fallback subscription.
+            const { data: createdSub, error: createSubErr } = await supabase
+              .from('subscriptions_v2')
+              .insert({
+                user_id: linkOrder.user_id,
+                product_id: linkOrder.product_id,
+                tariff_id: linkOrder.tariff_id,
+                status: 'active',
+                billing_type: 'internal_installment',
+                auto_renew: false,
+                meta: {
+                  source: 'bepaid_link_order_installment_fallback',
+                  order_id: linkOrder.id,
+                  installment_count: installmentCountFromOrderMeta,
+                },
+              })
+              .select('id')
+              .single();
+            if (createSubErr) {
+              console.error('[WEBHOOK-LINK-ORDER][INSTALLMENT] fallback subscription create FAILED:', createSubErr);
+              await supabase.from('audit_logs').insert({
+                actor_type: 'system',
+                actor_label: 'bepaid-webhook',
+                action: 'bepaid.webhook.installment_subscription_create_failed',
+                meta: { order_id: linkOrder.id, error: createSubErr.message },
+              });
+            } else {
+              installmentSubV2Id = createdSub.id;
+              console.log('[WEBHOOK-LINK-ORDER][INSTALLMENT] fallback subscription created:', installmentSubV2Id);
+            }
+          }
+
+          // 2) Материализуем график через canonical helper (scheduleSource='order_meta').
+          if (installmentSubV2Id) {
+            const firstPaymentId = (payUpsertResult as any)?.id ?? null;
+            const scheduleResult = await generateInstallmentSchedule({
+              supabase,
+              offer: null, // в order_meta-режиме offer не нужен
+              order: { id: linkOrder.id, meta: linkOrderMetaForInstallment },
+              subscription: { id: installmentSubV2Id },
+              user: { id: linkOrder.user_id },
+              totalAmount: Number(linkOrderMetaForInstallment.installment_total_amount_byn ?? 0),
+              currency: linkOrder.currency || 'BYN',
+              firstPayment: { paymentId: firstPaymentId },
+              scheduleSource: 'order_meta',
+            });
+
+            console.log('[WEBHOOK-LINK-ORDER][INSTALLMENT] generateInstallmentSchedule result:', scheduleResult);
+
+            if (!('ok' in scheduleResult) || !scheduleResult.ok) {
+              await supabase.from('audit_logs').insert({
+                actor_type: 'system',
+                actor_label: 'bepaid-webhook',
+                action: 'bepaid.webhook.installment_schedule_failed',
+                meta: {
+                  order_id: linkOrder.id,
+                  subscription_id: installmentSubV2Id,
+                  error: (scheduleResult as any)?.error,
+                  details: (scheduleResult as any)?.details,
+                  severity: 'CRITICAL',
+                },
+              });
+            }
+          }
+        } catch (instErr) {
+          console.error('[WEBHOOK-LINK-ORDER][INSTALLMENT] unexpected error (non-fatal):', instErr);
+        }
+      }
+
+      // =====================================================================
+
       // Without this, renewals rely on delayed sync to update access_end_at/expires_at
       // =====================================================================
       if (grantedSubscriptionV2Id) {
@@ -2620,23 +2717,29 @@ Deno.serve(async (req) => {
             const renewAt = bepaidRenewAt ? new Date(bepaidRenewAt) : accessEndAt;
 
             // 1. Update subscriptions_v2
+            // STAGE L3 GUARD: для рассрочки (linkOrder.meta.installment_count >= 2) НЕ перезаписываем
+            // billing_type на 'provider_managed' и НЕ ставим auto_renew=true — рассрочка идёт через
+            // installment_payments + installment-charge-cron, а billing_type='internal_installment'.
             const existingSubMeta = (linkSubV2.meta as Record<string, any>) || {};
+            const subUpdatePayload: Record<string, any> = {
+              status: 'active',
+              access_end_at: accessEndAt.toISOString(),
+              next_charge_at: renewAt.toISOString(),
+              meta: {
+                ...existingSubMeta,
+                bepaid_subscription_id: String(subscriptionId),
+                bepaid_activated_at: now.toISOString(),
+              },
+            };
+            if (!isInstallmentOrder) {
+              subUpdatePayload.billing_type = 'provider_managed';
+              subUpdatePayload.auto_renew = true;
+            }
             await supabase
               .from('subscriptions_v2')
-              .update({
-                status: 'active',
-                billing_type: 'provider_managed',
-                access_end_at: accessEndAt.toISOString(),
-                next_charge_at: renewAt.toISOString(),
-                auto_renew: true,
-                meta: {
-                  ...existingSubMeta,
-                  bepaid_subscription_id: String(subscriptionId),
-                  bepaid_activated_at: now.toISOString(),
-                },
-              })
+              .update(subUpdatePayload)
               .eq('id', grantedSubscriptionV2Id);
-            console.log('[WEBHOOK-LINK-ORDER] INLINE: subscriptions_v2 access_end_at updated to', accessEndAt.toISOString());
+            console.log('[WEBHOOK-LINK-ORDER] INLINE: subscriptions_v2 access_end_at updated to', accessEndAt.toISOString(), 'isInstallment=', isInstallmentOrder);
 
             // 2. Update entitlements (GREATEST logic)
             const productCode = (linkSubV2.products_v2 as any)?.code;

@@ -184,6 +184,26 @@ Deno.serve(async (req) => {
     // (никаких post-insert UPDATE на стороне public-checkout).
     // Счётчик payment_links.current_uses ИНКРЕМЕНТИРУЕТСЯ ТОЛЬКО webhook'ом по факту paid order
     // (через _shared/consume-payment-link.ts). Здесь мы счётчик не двигаем.
+    //
+    // Stage L3: пробрасываем installment-meta из payment_links.meta.installment в orders_v2.meta.
+    // Webhook bepaid (LINK-ORDER) использует эти поля для материализации installment_payments.
+    const linkMeta = (link.meta || {}) as Record<string, any>;
+    const linkInstallment = (linkMeta.installment || null) as Record<string, any> | null;
+    const installmentMetaExtra = linkInstallment && Number(linkInstallment.selected_installment_months) >= 2
+      ? {
+          installment_count: Number(linkInstallment.selected_installment_months),
+          installment_per_payment_amount_byn: Number(linkInstallment.per_payment_amount_byn),
+          installment_total_amount_byn: Number(linkInstallment.per_payment_amount_byn) * Number(linkInstallment.selected_installment_months),
+          installment: {
+            interval_days: Number(linkInstallment.interval_days ?? 30),
+            first_payment_delay_days: Number(linkInstallment.first_payment_delay_days ?? 0),
+            rounding_mode: String(linkInstallment.rounding_mode ?? 'round_half_up_byn'),
+            max_installment_months: Number(linkInstallment.max_installment_months ?? linkInstallment.selected_installment_months),
+            source: 'payment_link',
+          },
+        }
+      : {};
+
     const result = await createPaymentCheckout({
       supabase,
       user_id: userId,
@@ -196,7 +216,7 @@ Deno.serve(async (req) => {
       origin,
       actor_type: 'system',
       replacement_of_subscription_v2_id: replacement_of_subscription_v2_id || undefined,
-      meta_extra: { payment_link_id: link.id },
+      meta_extra: { payment_link_id: link.id, ...installmentMetaExtra },
     });
 
     if (!result.success) {

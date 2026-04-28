@@ -1,0 +1,59 @@
+## Stage L3 — execute proof
+
+### Pre-execute enum proof (правка про billing_type)
+- subscriptions_v2.billing_type = TEXT (не enum) → миграция не нужна.
+- В живых данных: billing_type IN ('mit', 'provider_managed').
+- 'internal_installment' добавляется как новое допустимое значение для fallback-create.
+- max_charges колонка отсутствует в subscriptions_v2 → НЕ используется (рассрочка управляется installment_payments).
+
+### L3.1 — _shared/installment-schedule.ts (RECONFIGURED, backward compat)
+- Default scheduleSource='offer' (без изменений для direct-charge).
+- Новый режим scheduleSource='order_meta':
+  - читает installment_count из order.meta.installment_count
+  - per_payment AS-IS из order.meta.installment_per_payment_amount_byn (round-half-up-byn уже выполнен writer'ом L2)
+  - interval_days/first_payment_delay_days из order.meta.installment.* (defaults 30/0)
+- Idempotency: pre-check + UNIQUE(order_id, payment_number) constraint.
+- Audit: 'installment_started' + 'installment_schedule_already_exists' с полем schedule_source.
+
+### L3.2 — public-checkout/index.ts
+- POST: читает link.meta.installment, формирует installmentMetaExtra и передаёт в meta_extra:
+  - installment_count, installment_per_payment_amount_byn, installment_total_amount_byn
+  - installment.{interval_days, first_payment_delay_days, rounding_mode, max_installment_months, source='payment_link'}
+- create-payment-checkout помечает orders_v2.meta этими полями (existing extraMeta passthrough на строке 233).
+
+### L3.3 — bepaid-webhook/index.ts (LINK-ORDER ветка)
+1. Признак рассрочки isInstallmentOrder вычислен в начале ветки (строка 2250) из linkOrder.meta.installment_count.
+2. P2.8 блок (billing_type override) — guard: НЕ перезаписывает billing_type на 'provider_managed', если isInstallmentOrder.
+3. PATCH-LINK-INLINE — guard: НЕ устанавливает auto_renew=true и НЕ перезаписывает billing_type для рассрочки.
+4. Новый блок INSTALLMENT MATERIALIZATION (после P2.8):
+   - Использует grantedSubscriptionV2Id, если grant-access уже создал sub (НЕ перезаписывает).
+   - Fallback-create только при доказанном отсутствии (с billing_type='internal_installment', auto_renew=false).
+   - Вызывает generateInstallmentSchedule(scheduleSource='order_meta'), firstPayment.paymentId = payments_v2.id из upsert.
+5. Idempotency: повторный webhook → existing UNIQUE сработает → audit 'installment_schedule_already_exists', НЕТ дубля платежей.
+
+### L3.4 — Verification (запускается после первой реальной оплаты по installment-ссылке)
+SQL:
+```
+SELECT
+  o.id as order_id,
+  o.meta->>'installment_count' as meta_count,
+  o.meta->>'installment_per_payment_amount_byn' as meta_per_payment,
+  o.meta->>'installment_total_amount_byn' as meta_total,
+  COUNT(ip.*) as actual_count,
+  SUM(ip.amount) as actual_sum,
+  MIN(ip.amount) as min_amt,
+  MAX(ip.amount) as max_amt
+FROM orders_v2 o
+LEFT JOIN installment_payments ip ON ip.order_id = o.id
+WHERE (o.meta->>'installment_count')::int >= 2
+GROUP BY o.id, o.meta
+ORDER BY o.created_at DESC
+LIMIT 5;
+```
+Контракт пройден, если:
+- meta_count = actual_count
+- meta_per_payment = min_amt = max_amt
+- meta_total = actual_sum
+
+### Deployment
+- Deployed: bepaid-webhook, public-checkout (OK)
