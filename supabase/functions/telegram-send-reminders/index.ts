@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { generateRenewalCTAs } from '../_shared/generate-renewal-ctas.ts';
 import { resolveProductRenewability } from '../_shared/renewal-offer-resolver.ts';
+import { greetPrefix } from '../_shared/recipient-name.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -257,9 +258,12 @@ Deno.serve(async (req) => {
       let keyboard: any;
       let deliveryMethod: string;
 
+      // PATCH NAME-V: безопасное обращение по имени.
+      const namePrefix = greetPrefix(profile);
+
       if (hasSBS) {
         // Авто-продление активно
-        message = `⏰ Небольшое напоминание\n\nВаша подписка в ${clubName} продлится автоматически ${formattedDate}.\n\nАвтопродление активно — отключить его можно в личном кабинете 💙`;
+        message = `⏰ Небольшое напоминание\n\n${namePrefix}ваша подписка в ${clubName} продлится автоматически ${formattedDate}.\n\nАвтопродление активно — отключить его можно в личном кабинете 💙`;
         const siteUrl = Deno.env.get('SITE_URL') || 'https://club.gorbova.by';
         keyboard = {
           inline_keyboard: [[{ text: '📋 Управление подпиской', url: `${siteUrl}/dashboard` }]],
@@ -268,8 +272,8 @@ Deno.serve(async (req) => {
       } else if (productRenewable && resolved) {
         // Продукт продлеваемый — генерируем CTA даже если у юзера нет подписки в БД
         const intro = installmentMode
-          ? `⏰ Небольшое напоминание\n\nВаш доступ в ${clubName} заканчивается ${formattedDate}.\n\nЧтобы продолжить — оплатите следующий платёж рассрочки или оформите полный доступ 💙`
-          : `⏰ Небольшое напоминание\n\nВаша подписка в ${clubName} заканчивается ${formattedDate}.\n\nЧтобы не потерять доступ к чату и материалам, просто продлите её заранее 💙`;
+          ? `⏰ Небольшое напоминание\n\n${namePrefix}ваш доступ в ${clubName} заканчивается ${formattedDate}.\n\nЧтобы продолжить — оплатите следующий платёж рассрочки или оформите полный доступ 💙`
+          : `⏰ Небольшое напоминание\n\n${namePrefix}ваша подписка в ${clubName} заканчивается ${formattedDate}.\n\nЧтобы не потерять доступ к чату и материалам, просто продлите её заранее 💙`;
         message = intro;
 
         const ctas = await generateRenewalCTAs({
@@ -305,7 +309,7 @@ Deno.serve(async (req) => {
         }
       } else {
         // Продукт действительно разовый — продление не предусмотрено
-        message = `⏰ Небольшое напоминание\n\nВаш доступ в ${clubName} заканчивается ${formattedDate}.\n\nЭто разовая покупка — продление не предусмотрено. Спасибо, что были с нами! 💙`;
+        message = `⏰ Небольшое напоминание\n\n${namePrefix}ваш доступ в ${clubName} заканчивается ${formattedDate}.\n\nЭто разовая покупка — продление не предусмотрено. Спасибо, что были с нами! 💙`;
         keyboard = undefined;
         deliveryMethod = 'one_time_info';
       }
