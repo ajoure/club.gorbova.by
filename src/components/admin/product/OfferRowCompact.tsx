@@ -110,7 +110,7 @@ export function OfferRowCompact({
           {isInstallment && (
             <Badge variant="outline" className="shrink-0 border-amber-500 text-amber-600 gap-1">
               <CreditCard className="h-3 w-3" />
-              Рассрочка
+              {installmentInfo ? `Рассрочка до ${installmentInfo.maxMonths} мес.` : "Рассрочка"}
             </Badge>
           )}
           {isBankInstallment && (
