@@ -467,6 +467,7 @@ Deno.serve(async (req) => {
         if (file) {
           // Send file
           sendResult = await telegramSendFile(
+            supabase,
             botToken,
             profile.telegram_user_id,
             file,
