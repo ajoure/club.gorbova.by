@@ -1867,16 +1867,14 @@ export default function AdminProductDetailV2() {
               </Card>
             )}
 
-            {offerForm.offer_type === "pay_now" && offerForm.payment_method !== "internal_installment" && (
+            {offerForm.offer_type === "pay_now" && offerForm.payment_method === "full_payment" && (
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm text-muted-foreground">Подписка</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-
-
                   {/* Subscription toggle - only for full payment */}
-                  {offerForm.payment_method === "full_payment" && (
+                  {true && (
                     <>
                       <Separator />
                       <div>
