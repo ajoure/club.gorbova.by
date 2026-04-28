@@ -1175,12 +1175,21 @@ export function AdminPaymentLinkDialog({
                   <p className="text-sm text-muted-foreground">
                     {selectedProduct.name} — {selectedTariff.name}
                   </p>
-                  <p className="text-lg font-bold">{amount} BYN</p>
-                  <p className="text-xs text-muted-foreground">
-                    {effectivePaymentType === "subscription"
-                      ? "Подписка (ежемесячно)"
-                      : "Разовая оплата"}
-                  </p>
+                  {isInstallmentOffer && selectedInstallmentMonths ? (
+                    <>
+                      <p className="text-lg font-bold">
+                        {selectedInstallmentMonths} × {Math.round(amount / selectedInstallmentMonths)} BYN = ИТОГО {Math.round(amount / selectedInstallmentMonths) * selectedInstallmentMonths} BYN
+                      </p>
+                      <p className="text-xs text-muted-foreground">Рассрочка · первый платёж сегодня, далее каждые 30 дней</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-lg font-bold">{amount} BYN</p>
+                      <p className="text-xs text-muted-foreground">
+                        {effectivePaymentType === "subscription" ? "Подписка (ежемесячно)" : "Разовая оплата"}
+                      </p>
+                    </>
+                  )}
                 </div>
               )}
 
