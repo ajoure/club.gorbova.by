@@ -169,7 +169,7 @@ export function OfferRowCompact({
                 )}
                 {installmentInfo && (
                   <span className="text-amber-600">
-                    {" "}• {installmentInfo.count}×{installmentInfo.perPayment} BYN / {installmentInfo.intervalDays} дн.
+                    {" "}• до {installmentInfo.maxMonths} мес. × {installmentInfo.perPayment} BYN = {installmentInfo.totalInstallment} BYN
                   </span>
                 )}
               </div>
