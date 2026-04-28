@@ -444,18 +444,26 @@ Deno.serve(async (req) => {
         if (file) {
           // Send file
           sendResult = await telegramSendFile(
-            botToken, 
-            profile.telegram_user_id, 
-            file, 
-            message || undefined
+            botToken,
+            profile.telegram_user_id,
+            file,
+            message || undefined,
+            replyToMessageId ?? null,
           );
         } else {
           // Send text message
-          sendResult = await telegramRequest(botToken, "sendMessage", {
+          const sendBody: Record<string, unknown> = {
             chat_id: profile.telegram_user_id,
             text: message,
             parse_mode: "HTML",
-          });
+          };
+          if (replyToMessageId) {
+            sendBody.reply_parameters = {
+              message_id: replyToMessageId,
+              allow_sending_without_reply: true,
+            };
+          }
+          sendResult = await telegramRequest(botToken, "sendMessage", sendBody);
         }
 
         // If file was sent successfully, download from Telegram and upload to Storage
