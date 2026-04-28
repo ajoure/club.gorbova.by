@@ -1,135 +1,120 @@
-## да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. Для auth-писем сначала **проверить реальный контракт hook**: какие поля приходят (`token_hash`, `redirect_to`, `email_action_type`, `confirmation_url`) и не вставлять `confirmation_url` напрямую, если он содержит `supabase.co`.
-2. `auth/callback` должен принимать:
-  - `token_hash`
-  - `type`
-  - `next`
-  - fallback для старых ссылок
-3. В DoD добавить grep:
-
-```bash
-rg "hdjgkjceownmmnrqqtuz|supabase\.co|lovable\.app|lovable\.dev" src index.html supabase/functions
-```
-
-4. Исключения должны быть явно закомментированы `admin-only` / `server-to-server`, иначе не засчитывать.
-5. `supabase.functions.invoke` скрывает URL из исходника, но в Network он всё равно пойдёт на Supabase endpoint. Это нормально; цель — убрать из публичного HTML/текстов/коммуникаций.
+1. `REPLICA IDENTITY FULL` — сначала проверить, включён ли realtime publication для `telegram_messages`; миграцию делать только если нужна для UPDATE payload.
+2. `waitUntil(fetch worker)` — добавить STOP-guard: если worker недоступен, webhook не падает, только audit/log.
+3. Для inbox слева лучше не `staleTime=0` как единственный механизм, а optimistic cache update + invalidate fallback.
+4. Reply сохранять по Telegram `message_id`, не по DB `id`.
+5. Для `send_file` проверить отдельно `sendPhoto/sendDocument`: `reply_parameters` поддерживается обоими, но payload отличается.
 
 Можно выполнять.
 
 &nbsp;
 
-Цель
+План: устранить три бага контакт-центра Telegram-чата.
 
-В клиентских коммуникациях (письма, Telegram, публичный UI, HTML главной страницы) НИГДЕ не должен светиться `https://hdjgkjceownmmnrqqtuz.supabase.co`. Все ссылки — на `https://gorbova.by` (или его поддомены).
+## Контекст (что нашёл в коде)
 
-Скриншот клиента (письмо «Сброс пароля») подтверждает главный источник проблемы: дефолтные auth-письма Supabase с ссылкой `*.supabase.co/auth/v1/verify?...`.
-
-## Диагностика (выполнена через rg)
-
-Источники утечки:
-
-**A. Auth-письма (КРИТИЧНО, сценарий со скриншота)**
-
-- `supabase/functions/auth-email-hook/` отсутствует.
-- GoTrue шлёт дефолтные шаблоны со ссылкой на `*.supabase.co/auth/v1/...`.
-
-**B. Edge functions — fallback-домены**
-
-- `supabase/functions/telegram-mass-broadcast/index.ts:555,606` — fallback `gorbova.lovable.app`, склейка из `SUPABASE_URL.replace('.supabase.co','')`.
-- `supabase/functions/telegram-admin-chat/index.ts:1829` — fallback `gorbova.lovable.app`.
-
-**C. Frontend хардкоды `${projectId}.supabase.co/functions/v1/...**` (видны в исходнике страницы и в DevTools/Network):
-
-- `index.html` — `<link rel="preconnect">` и `<link rel="preload" href="...supabase.co/functions/v1/public-product?domain=club.gorbova.by">`.
-- `src/components/payment/PaymentDialog.tsx:611`
-- `src/pages/PublicPayPage.tsx:92-93`
-- `src/components/site-renderer/blocks/FormSection.tsx:176`
-- `src/pages/admin/AdminAmoCRM.tsx` (4 fetch + 2 текстовых вывода webhook URL)
-- `src/components/admin/lesson-editor/blocks/uploadToTrainingAssets.ts:269`
-- `src/components/admin/forms/FormsDetailOpener.tsx:134`
-- `src/archive/pages/AdminPayments.tsx:321` (архив)
-
-Платёжные `return_url`/`success_url`/`fail_url` в edge-функциях уже идут через `gorbova.by` (`CANONICAL_PUBLIC_HOST` или `effectiveOrigin`). Серверный `notification_url = ${SUPABASE_URL}/functions/v1/bepaid-webhook` остаётся — это server-to-server, клиент его не видит.
-
-## Что делаем
-
-### Шаг 1. Auth-письма (решает скриншот)
-
-1. Проверить статус email-домена; если sender-домен (например `notify.gorbova.by`) ещё не настроен — показать диалог настройки.
-2. Scaffold `auth-email-hook` + 6 React-Email шаблонов (signup, recovery, magic-link, invite, email-change, reauthentication).
-3. Стилизовать шаблоны под бренд: цвета из `src/index.css`, белый body, лого, русский язык. Все ссылки строятся через `confirmationUrl` из site_url. В HTML писем НИКОГДА нет `*.supabase.co`.
-4. Deploy `auth-email-hook`.
-5. Проверить frontend `/auth/callback`: корректная обработка `token_hash` + `type` через `supabase.auth.verifyOtp` для recovery/signup/email_change. Если страницы нет — создать.
-6. Сообщить пользователю: после верификации DNS sender-домена в Cloud → Emails письма пойдут с `gorbova.by`. **Дополнительно** попросить пользователя в Lovable Cloud → Auth убедиться, что `Site URL = https://gorbova.by` и в Redirect URLs нет `*.supabase.co` / `*.lovable.app` (эта настройка управляется через Cloud UI).
-
-### Шаг 2. Frontend — заменить хардкоды URL функций на `supabase.functions.invoke`
-
-Все вызовы `fetch(\`https://${projectId}.supabase.co/functions/v1/...)`→`supabase.functions.invoke('&nbsp;', { body, headers })`. Поведение сохраняется, исходник перестаёт раскрывать ref проекта.
-
-Файлы:
-
-- `PaymentDialog.tsx` (`public-charge-saved-card`)
-- `PublicPayPage.tsx` (`public-checkout`, `public-charge-saved-card`)
-- `FormSection.tsx` (`site-form-upload`)
-- `AdminAmoCRM.tsx` — 4 fetch на `amocrm-sync`. Текстовые webhook-URL для копирования в внешние панели amoCRM/bePaid (admin-only) **оставить** с пометкой `// admin-only display`.
-- `uploadToTrainingAssets.ts` (`training-assets-delete`)
-- `FormsDetailOpener.tsx` (`training-assets-download`) — если используется как `<a href>`, перевести на invoke с blob или signed-URL из storage.
-- `archive/pages/AdminPayments.tsx` — оставить в архиве с пометкой или удалить отображаемый URL.
-
-### Шаг 3. `index.html`
-
-- Удалить `<link rel="preload" href="https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/public-product?...">`.
-- Удалить `<link rel="preconnect" href="https://hdjgkjceownmmnrqqtuz.supabase.co">`.
-- Перформанс-выигрыш мизерный по сравнению с раскрытием ref в любом исходнике страницы.
-
-### Шаг 4. Edge functions — fallback-домены
-
-- `telegram-mass-broadcast/index.ts:555,606` — fallback `gorbova.lovable.app` → `https://gorbova.by`. Убрать сборку из `SUPABASE_URL.replace('.supabase.co','')`.
-- `telegram-admin-chat/index.ts:1829` — fallback `gorbova.lovable.app` → `https://gorbova.by`.
-
-### Шаг 5. Memory + правило
-
-Создать `mem://security/communications/no-supabase-url-leakage`:
-
-> Клиентские коммуникации (email, Telegram, SMS, публичный UI, HTML главной страницы) НИКОГДА не содержат `*.supabase.co` и `*.lovable.app`. Канон: `https://gorbova.by`. `SUPABASE_URL` используется только для серверных вызовов (включая bePaid `notification_url`). Frontend дёргает edge functions через `supabase.functions.invoke`, не строит URL руками. Auth emails идут через кастомный `auth-email-hook` со ссылками на `gorbova.by/auth/callback`. Исключения с пометкой: admin-only displayed webhook URLs (для копирования в внешние панели), `system-health-full-check` (диагностика).
-
-Добавить Core-строку.
+1. **Realtime подписка слабая.** `src/components/admin/ContactTelegramChat.tsx` (строки 512-587) подписан только на `INSERT` `telegram_messages` с фильтром `user_id=eq.<active>`. Нет `UPDATE` (медиа-enrichment, статус прочтения). При активном чате другого контакта новые входящие НЕ обновляют список диалогов слева — `InboxTabContent.tsx` подписан, но `staleTime: 30s` + redux-инвалидаций нет. На скрине у пользователя `[photo]` 22:06 в списке, но не двигается в топ.
+2. **Медиа загружается долго.** Поток: webhook → INSERT с `upload_status: pending` → enqueue в `media_jobs` → cron `telegram-media-worker-cron` раз в минуту. Итог: 0-60 сек висит «Загружается». Проверил: текущий pending `media_jobs` — задача от 22:06, всё ещё `pending` в БД. Worker не вызывается мгновенно.
+3. **Reply отсутствует в UI.** Колонка `telegram_messages.reply_to_message_id` есть и заполняется в `telegram-webhook` (строки 1099, 1338), но в админке UI её НЕ читает и НЕ рисует quoted-блок. Кнопки «ответить» в `LiveInlineModeration` используются только для webinar-комнат, не для Telegram-чата. Исходящих reply из админки тоже нет — `telegram-admin-chat` не передаёт `reply_to_message_id` в `sendMessage`/`sendDocument`.
 
 ## DoD
 
-- `rg "supabase\.co" supabase/functions/ src/ index.html` возвращает только: серверные `${SUPABASE_URL}/functions/v1/bepaid-webhook` (notification_url), `system-health-full-check` (админ-диагностика), admin-only displayed webhook URL в `AdminAmoCRM` (с пометкой). НИЧЕГО клиентского.
-- `rg "lovable\.app" supabase/functions/` пусто.
-- `supabase/functions/auth-email-hook/` существует и задеплоен; шаблоны со ссылками `gorbova.by`.
-- Тестовое письмо «Сброс пароля» приходит со ссылкой на `gorbova.by` и корректно завершает recovery-flow.
-- `index.html` без preload/preconnect на supabase.co.
-- Memory обновлена; добавлена Core-строка.
+- Новые входящие/исходящие сообщения появляются в открытом чате за <1 сек без перезагрузки.
+- Список диалогов слева переставляет контакт в топ и обновляет превью моментально (через realtime, без поллинга).
+- Медиа-сообщение становится «готовым» (preview/скачивание) в среднем за 2-5 сек после прихода (а не 30-60 сек).
+- В UI чата виден quoted-блок над сообщением, если оно — ответ; работает в обе стороны (клиент → нам, мы → клиенту).
+- Админ может выделить сообщение → «Ответить» → отправить с `reply_to_message_id`; Telegram отрисует quote у клиента.
+
+## Изменения
+
+### 1. Realtime: расширить подписки и добавить UPDATE
+
+**ContactTelegramChat.tsx** (`chat-messages-${userId}`):
+
+- Добавить второй `.on('postgres_changes', { event: 'UPDATE', table: 'telegram_messages', filter: 'user_id=eq.<id>' })` — нужен для подхвата `meta.upload_status: pending → ok` и `file_url` после работы media-worker. Сейчас при UPDATE realtime молчит, поэтому фото и висит.
+- На UPDATE — патчить кэш `["telegram-messages", userId]` точечно (merge новой строки в массив по id), без debounced refetch.
+- На INSERT — добавлять сообщение в кэш сразу (без полного refetch); refetch остаётся только как фолбэк через 3 сек если строка не пришла.
+
+**InboxTabContent.tsx** (`inbox-messages-realtime`):
+
+- Заменить `staleTime: 30000` для query списка контактов на `0` + invalidate `["inbox-contacts"]` на каждый INSERT/UPDATE `telegram_messages`. Так контакт мгновенно прыгает наверх.
+- Добавить лёгкий звук + badge unread сразу через optimistic update в кэше (без круговой перезагрузки сети).
+
+**Миграция БД:**
+
+- `ALTER TABLE public.telegram_messages REPLICA IDENTITY FULL;` — чтобы UPDATE-event содержал `OLD` row и фильтр по `user_id` корректно работал даже при изменении `meta`.
+
+### 2. Быстрая загрузка медиа
+
+**supabase/functions/telegram-webhook/index.ts** (строки 1127-1147, после `media_jobs.insert`):
+
+- После постановки задачи делать `EdgeRuntime.waitUntil(fetch('telegram-media-worker', {limit:1, message_db_id: <id>}))` — fire-and-forget без ожидания. Worker отрабатывает за 1-3 сек, обновляет `meta.file_url + upload_status=ok`, realtime UPDATE доставляет в UI. Cron остаётся как safety net для падений.
+
+**supabase/functions/telegram-media-worker/index.ts:**
+
+- Принимать опциональный `message_db_id` в body — если задан, обрабатывать сразу эту задачу (skip lock window), иначе батч как сейчас.
+- Усилить timeout download с потенциальным retry (1 быстрый ретрай при network error до возврата `error`).
+
+**ChatMediaMessage.tsx:**
+
+- Показывать инлайновый preview сразу при `upload_status=pending` если в `meta` уже есть `mime_type=image/*` (placeholder с blur) — UX как в Telegram.
+
+### 3. Reply (в обе стороны)
+
+**UI — ContactTelegramChat.tsx:**
+
+- Добавить hover-кнопку «Ответить» на каждом message-bubble (по аналогии с `LiveInlineModeration`).
+- Состояние `replyingTo: TelegramMessage | null` в компоненте; над input показывать quote-блок с превью (имя + первые 60 символов / `[photo]`) и крестиком отмены.
+- При отправке передавать `reply_to_message_id: replyingTo.message_id` в edge function.
+- При рендере bubble — если `m.reply_to_message_id` есть: найти исходное сообщение в `messages` по `message_id` и нарисовать quote-блок сверху bubble (как в Telegram, с цветной полосой). Клик по quote — scroll-to-message + flash-highlight.
+
+**Edge — supabase/functions/telegram-admin-chat/index.ts:**
+
+- В action `send_message` / `send_file` принять `reply_to_message_id?: number` из body.
+- Передать в Telegram API: `sendMessage` / `sendDocument` / `sendPhoto` принимают параметр `reply_parameters: { message_id }` (новый API) или legacy `reply_to_message_id`. Использовать `reply_parameters` с `allow_sending_without_reply: true`.
+- Сохранить значение в `telegram_messages.reply_to_message_id` при INSERT исходящего сообщения.
+
+**Webhook — telegram-webhook:**
+
+- Уже сохраняет `reply_to_message_id` (строки 1099, 1338) — оставить как есть. Убедиться, что для всех типов (text/media) оно записывается одинаково. На скриншоте кода вижу две точки сохранения; проверю единообразие при имплементации.
 
 ## Технические детали
 
 ```text
-client → fetch hardcode  → https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/X
-                            (виден в исходнике страницы и в Network)
-
-         ↓ заменяем на
-
-client → supabase.functions.invoke('X', {body})
-                            (URL не присутствует в коде, JS-клиент строит его внутри)
+Webhook (incoming media)              UI (admin chat)
+  │                                     │
+  ├─ INSERT telegram_messages           │
+  │    (upload_status=pending)          │── realtime INSERT ─► add to cache (placeholder)
+  │                                     │
+  ├─ INSERT media_jobs (pending)        │
+  │                                     │
+  └─ waitUntil(fetch worker, msg_id) ─► worker
+                                         │
+                                         ├─ download from Telegram
+                                         ├─ upload to storage
+                                         └─ UPDATE telegram_messages
+                                              (meta.file_url, upload_status=ok)
+                                                            │
+                                                            └── realtime UPDATE ─► patch bubble (preview)
 ```
 
-```text
-GoTrue (default) → email link: https://hdjgkjceownmmnrqqtuz.supabase.co/auth/v1/verify?token=...
+Для reply Telegram отдаёт в webhook `update.message.reply_to_message.message_id` (уже парсится). В исходящих — отправляем `reply_parameters: { message_id: <tg_message_id> }`.
 
-         ↓ через auth-email-hook + scaffolded templates
+## Файлы
 
-GoTrue → auth-email-hook → React Email template:
-                            link: https://gorbova.by/auth/callback?token_hash=...&type=recovery
-```
+- `src/components/admin/ContactTelegramChat.tsx` — realtime UPDATE, reply UI, рендер quote
+- `src/components/admin/communication/InboxTabContent.tsx` — invalidate на realtime
+- `src/components/admin/chat/ChatMediaMessage.tsx` — placeholder для pending
+- `supabase/functions/telegram-webhook/index.ts` — fire-and-forget worker invoke
+- `supabase/functions/telegram-media-worker/index.ts` — direct `message_db_id` mode
+- `supabase/functions/telegram-admin-chat/index.ts` — `reply_to_message_id` в send_message/send_file
+- Миграция: `REPLICA IDENTITY FULL` для `telegram_messages`
 
-## Что НЕ трогаем
+## Верификация после деплоя
 
-- Серверный `notification_url` для bePaid (внутренний webhook, клиент не видит).
-- `supabase/functions/system-health-full-check/` (админ-диагностика).
-- Custom API domain (`api.gorbova.by` → Supabase) — отдельная задача, пока не требуется (по решению пользователя).
-- Admin-only displayed webhook URLs в `AdminAmoCRM` для копирования в внешние панели.
-- Уже отправленные письма — их не переписать; фикс применяется к будущим коммуникациям.
+1. Открыть чат → отправить с другого Telegram-аккаунта текст → появляется <1 сек без перезагрузки.
+2. Прислать фото → placeholder сразу, превью через 2-5 сек.
+3. В Telegram свайпнуть «Reply» на нашем сообщении → quote виден в админке.
+4. В админке выделить сообщение → «Ответить» → у клиента в Telegram приходит с quote.
+5. В списке контактов слева — новый контакт прыгает в топ моментально.
