@@ -427,6 +427,48 @@ Deno.serve(async (req) => {
           console.log(`Installment ${installment.id} charged successfully`);
           results.successful++;
 
+          // Stage 3: completion после последнего платежа рассрочки
+          if (installment.payment_number >= installment.total_payments) {
+            console.log(`Рассрочка завершена: подписка ${subscription.id}, платёж ${installment.payment_number}/${installment.total_payments}`);
+
+            const { data: currentSub } = await supabase
+              .from('subscriptions_v2')
+              .select('meta, status')
+              .eq('id', subscription.id)
+              .single();
+
+            const updatedMeta = {
+              ...(currentSub?.meta || {}),
+              installment_completed_at: new Date().toISOString(),
+              installment_completed_payments: installment.total_payments,
+            };
+
+            // Используем 'expired' (статус 'completed' отсутствует в enum subscriptions_v2.status)
+            await supabase
+              .from('subscriptions_v2')
+              .update({
+                status: 'expired',
+                next_charge_at: null,
+                meta: updatedMeta,
+              })
+              .eq('id', subscription.id);
+
+            await supabase.from('audit_logs').insert({
+              actor_user_id: installment.user_id,
+              actor_type: 'system',
+              actor_label: 'installment-charge-cron',
+              action: 'installment.completed',
+              meta: {
+                subscription_id: subscription.id,
+                order_id: installment.order_id,
+                total_payments: installment.total_payments,
+                last_installment_id: installment.id,
+                previous_status: currentSub?.status || null,
+                new_status: 'expired',
+              },
+            });
+          }
+
           // Send success notification
           try {
             await fetch(`${supabaseUrl}/functions/v1/installment-notifications`, {
