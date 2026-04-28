@@ -2353,10 +2353,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             </TabsContent>
 
             {/* Telegram Chat Tab */}
-            <TabsContent value="telegram" className="m-0 space-y-4">
+            <TabsContent value="telegram" className="m-0 h-full flex flex-col gap-3 px-4 sm:px-6 pb-3 overflow-hidden data-[state=inactive]:hidden">
               {/* Telegram Profile Info Card */}
               {resolvedTelegramUserId ? (
-                <Card>
+                <Card className="shrink-0">
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between">
                       <div className="space-y-2">
@@ -2480,7 +2480,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                   </CardContent>
                 </Card>
               ) : (
-                <Card>
+                <Card className="shrink-0">
                   <CardContent className="p-4 text-center text-muted-foreground">
                     <MessageCircle className="w-8 h-8 mx-auto mb-2 opacity-50" />
                     <p className="text-sm">Telegram не привязан</p>
