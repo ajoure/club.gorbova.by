@@ -73,6 +73,7 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { getEventLabel } from "@/lib/eventLabels";
+import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 import { VideoNoteRecorder } from "./VideoNoteRecorder";
 import { OutboundMediaPreview } from "./chat/OutboundMediaPreview";
 import { ChatMediaMessage } from "./chat/ChatMediaMessage";
