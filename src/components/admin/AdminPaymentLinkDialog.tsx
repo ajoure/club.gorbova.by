@@ -236,6 +236,25 @@ export function AdminPaymentLinkDialog({
   const isOverrideMode =
     !!effectiveOffer && effectiveOfferType !== effectivePaymentType;
 
+  // ── Stage L: installment offer detection ──
+  // offerKind: 'installment' | 'subscription' | 'one_time'.
+  // Источник: payment_method='internal_installment' → installment.
+  const isInstallmentOffer =
+    !!effectiveOffer && (effectiveOffer as any).payment_method === "internal_installment";
+  const installmentMaxMonths = useMemo(() => {
+    if (!isInstallmentOffer || !effectiveOffer) return null;
+    const metaMax = Number((effectiveOffer as any).meta?.installment?.max_months ?? 0);
+    if (metaMax >= 2) return Math.min(12, metaMax);
+    const legacy = Number((effectiveOffer as any).installment_count ?? 0);
+    if (legacy >= 2) return Math.min(12, legacy);
+    return null;
+  }, [isInstallmentOffer, effectiveOffer]);
+  // Round half-up до целых BYN.
+  const installmentPerPayment = useMemo(() => {
+    if (!isInstallmentOffer || !selectedInstallmentMonths || amountSafeForInstallment <= 0) return null;
+    return Math.round(amountSafeForInstallment / selectedInstallmentMonths);
+  }, [isInstallmentOffer, selectedInstallmentMonths, /* placeholder */]);
+
   // Список всех active pay_now offers (для select override) — без фильтрации по типу
   const activeOffers = useMemo(
     () => (allOffers || []).filter((o) => o.is_active && o.offer_type === "pay_now"),
