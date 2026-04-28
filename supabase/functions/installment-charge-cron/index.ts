@@ -281,15 +281,7 @@ Deno.serve(async (req) => {
 
 
       try {
-        // Update installment status to processing
-        await supabase
-          .from('installment_payments')
-          .update({ 
-            status: 'processing',
-            last_attempt_at: new Date().toISOString(),
-            charge_attempts: (installment.charge_attempts || 0) + 1,
-          })
-          .eq('id', installment.id);
+        // Stage 3: lock уже захвачен выше через атомарный update pending → processing
 
         // Create payment record
         const { data: payment, error: paymentError } = await supabase
