@@ -286,3 +286,18 @@ DoD L4 (примеры):
 - **PAY-installment-notify-TG** — Telegram-уведомления о платежах рассрочки. Priority: medium.
 - **PAY-installment-email-unification** — перевод `installment-notifications` на общий `send-transactional-email` для единого proof/logging. Priority: **high** (без него нет единого email-логирования).
 - **Stage 4 runtime-proof** — открыт до первого реального cron-запуска `installment-charge-cron`. Технически принят, runtime-proof отдельно.
+- **PAY-installment-landing-badge** — бейдж «Рассрочка до N мес.» на landing tariff card (публичная страница продукта). В админ-редакторе (`OfferRowCompact`) бейдж уже есть; на публичной карточке тарифа нужно проверить рендер и при отсутствии — добавить, читая `tariff_offers.payment_method='internal_installment'` + `meta.installment.max_months`. Priority: medium. Не блокирует L.
+
+---
+
+## Pre-L1+L2 proof (Stage L pre-flight) — ✅ PASSED 2026-04-28
+
+Read-only verification перед стартом L1 (UI выбора срока) и L2 (writer).
+
+| Проверка | Результат |
+|---|---|
+| `meta.recurring` отсутствует у всех `payment_method='internal_installment'` офферов | ✅ 5/5 офферов: `has_recurring_key=false` |
+| `meta.installment.max_months` заполнен | ✅ 5/5: значения 2, 2, 2, 3, 4; `interval_days=30`; `first_payment_delay_days=0`; `rounding_mode='round_half_up_byn'` |
+| Save-path редактора пишет legacy-зеркало для новых офферов | ✅ `AdminProductDetailV2.tsx`: `meta.installment.max_months` (стр. 633–635) + `installment_count = max_months` (стр. 665); при выборе типа кнопки «Рассрочка» (стр. 1701+) `meta.recurring` не выставляется, `requires_card_tokenization=true` |
+
+**Вывод:** L0a/L0b закреплены, контракт офферов соответствует SoT. Можно стартовать L1+L2.
