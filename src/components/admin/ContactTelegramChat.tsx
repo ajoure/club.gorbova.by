@@ -1070,6 +1070,16 @@ export function ContactTelegramChat({
     setUnreadCount(0);
   }, []);
 
+  // Autofocus input when user picks a message to reply to.
+  useEffect(() => {
+    if (replyingTo) {
+      // rAF чтобы дождаться mount блока reply-preview и не словить scroll-jump.
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+      });
+    }
+  }, [replyingTo]);
+
   const handleSend = () => {
     const trimmed = message.trim();
     if (!trimmed && !selectedFile) return;
