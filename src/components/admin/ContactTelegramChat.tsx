@@ -941,26 +941,13 @@ export function ContactTelegramChat({
           else if (file.type.startsWith("audio/")) type = "audio";
         }
 
-        // Файлы > 5 МБ грузим в storage (TUS), чтобы обойти лимит JSON-тела edge function.
-        // Маленькие — отправляем base64 (быстрее, не плодим объекты в bucket).
-        const STORAGE_THRESHOLD = 1 * 1024 * 1024;
-        if (file.size > STORAGE_THRESHOLD) {
-          try {
-            const { bucket, path } = await uploadToTelegramMedia(file, userId);
-            fileData = { type, name: file.name, storage_path: path, storage_bucket: bucket };
-          } catch (e) {
-            console.error("Failed to upload file to storage", e);
-            throw new Error("Не удалось загрузить файл в хранилище");
-          }
-        } else {
-          let base64: string;
-          try {
-            base64 = await fileToBase64(file);
-          } catch (e) {
-            console.error("Failed to encode file to base64", e);
-            throw new Error("Не удалось подготовить файл для отправки");
-          }
-          fileData = { type, name: file.name, base64 };
+        // Все файлы отправляем через storage_path: это исключает падения edge function на base64.
+        try {
+          const { bucket, path } = await uploadToTelegramMedia(file, userId);
+          fileData = { type, name: file.name, storage_path: path, storage_bucket: bucket };
+        } catch (e) {
+          console.error("Failed to upload file to storage", e);
+          throw new Error("Не удалось загрузить файл в хранилище");
         }
       }
 
