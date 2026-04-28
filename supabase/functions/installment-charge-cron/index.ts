@@ -526,21 +526,36 @@ Deno.serve(async (req) => {
                 new_status: 'expired',
               },
             });
+
+            // Stage 4: best-effort completion email — отдельная тема «🎉 Рассрочка полностью оплачена»
+            await notifyWithAudit(
+              supabase,
+              supabaseUrl,
+              supabaseServiceKey,
+              'completion',
+              installment.id,
+              {
+                subscription_id: subscription.id,
+                order_id: installment.order_id,
+                payment_number: installment.payment_number,
+                total_payments: installment.total_payments,
+              },
+            );
           }
 
-          // Send success notification
-          try {
-            await fetch(`${supabaseUrl}/functions/v1/installment-notifications`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${supabaseServiceKey}`,
-              },
-              body: JSON.stringify({ action: 'success', installment_id: installment.id }),
-            });
-          } catch (notifErr) {
-            console.error('Failed to send success notification:', notifErr);
-          }
+          // Stage 4: best-effort success email с обязательным аудитом
+          await notifyWithAudit(
+            supabase,
+            supabaseUrl,
+            supabaseServiceKey,
+            'success',
+            installment.id,
+            {
+              subscription_id: subscription.id,
+              payment_number: installment.payment_number,
+              total_payments: installment.total_payments,
+            },
+          );
         } else {
           // Payment failed
           const errorMessage = chargeResult.transaction?.message || chargeResult.errors?.base?.[0] || 'Payment failed';
