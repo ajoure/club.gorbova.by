@@ -813,34 +813,34 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
           )}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
             <ProofTile
-              title="SQL proof"
+              title="Сохранение в системе"
               ok={!!progressProof?.row_exists}
-              text={progressProof?.row_exists ? "user_lesson_progress найден" : "Появится после завершения"}
+              text={progressProof?.row_exists ? "Ответ сохранён" : "Появится после завершения шага"}
             />
             <ProofTile
-              title="UI proof ученика"
+              title="Статус шага"
               ok={isCompleted}
-              text={isCompleted ? "Блок отмечен завершённым" : "Блок в процессе"}
+              text={isCompleted ? "Шаг отмечен как завершённый" : "Шаг в процессе выполнения"}
             />
             <ProofTile
-              title="UI proof преподавателя"
+              title="Виден преподавателю"
               ok={!!progressProof?.admin_source_ready}
-              text={progressProof?.admin_source_ready ? "Источник для admin progress готов" : "Будет виден после сохранения"}
+              text={progressProof?.admin_source_ready ? "Преподаватель видит ваш ответ" : "Появится у преподавателя после сохранения"}
             />
             <ProofTile
-              title="Reload proof"
+              title="Восстановление при перезагрузке"
               ok={restoredFromSaved}
-              text={restoredFromSaved ? "Данные восстановлены из сохранения" : "Новая форма или ещё не перезагружалась"}
+              text={restoredFromSaved ? "Данные восстановлены из сохранения" : "Новая форма или страница ещё не перезагружалась"}
             />
           </div>
           {progressProof && (
             <div className="rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground">
-              Автопроверка: ученик завершил блок — {progressProof.block_completed ? "да" : "нет"}; блок засчитан — {progressProof.block_completed ? "да" : "нет"}; ученик появится в admin progress — {progressProof.admin_source_ready ? "да" : "нет"}; ответ содержит портфель — {progressProof.response_has_portfolio ? "да" : "нет"}. Проверено: {new Date(progressProof.checked_at).toLocaleString("ru-RU")}.
+              Автопроверка: шаг завершён — {progressProof.block_completed ? "да" : "нет"}; шаг засчитан — {progressProof.block_completed ? "да" : "нет"}; виден преподавателю — {progressProof.admin_source_ready ? "да" : "нет"}; ответ содержит портфель — {progressProof.response_has_portfolio ? "да" : "нет"}. Проверено: {new Date(progressProof.checked_at).toLocaleString("ru-RU")}.
             </div>
           )}
           <div className="flex flex-wrap gap-2 pt-1">
             <Button variant="outline" size="sm" onClick={refetchProof} disabled={!userId}>
-              <RefreshCw className="h-4 w-4 mr-1.5" /> Обновить proof
+              <RefreshCw className="h-4 w-4 mr-1.5" /> Обновить статусы
             </Button>
             <Button variant="outline" size="sm" onClick={handleSelfExport} disabled={!userId}>
               <Download className="h-4 w-4 mr-1.5" /> Скачать мой ответ
