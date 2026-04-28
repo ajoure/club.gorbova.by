@@ -459,6 +459,11 @@ export function AdminPaymentLinkDialog({
       if (amount <= 0) {
         throw new Error("Введите корректную сумму");
       }
+      // Stage L: installment-офферы не поддерживаются writer'ом admin-create-payment-link.
+      // Используйте «Создать ссылку» (admin-create-public-link) — там реализован полный installment-flow.
+      if (isInstallmentOffer) {
+        throw new Error("Для рассрочки используйте кнопку «Создать ссылку» (публичную). Прямая оплата через карточку контакта не поддерживает рассрочку.");
+      }
 
       const { data, error } = await supabase.functions.invoke(
         "admin-create-payment-link",
