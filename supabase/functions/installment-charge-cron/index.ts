@@ -117,6 +117,65 @@ ${userName}, к сожалению, не удалось провести опл�
   }
 }
 
+// Best-effort вызов installment-notifications с обязательным аудитом.
+// Никогда не блокирует основной flow списания — даже при HTTP-ошибке.
+async function notifyWithAudit(
+  supabase: any,
+  supabaseUrl: string,
+  serviceKey: string,
+  action: 'success' | 'failed' | 'completion',
+  installmentId: string,
+  context: Record<string, any>,
+): Promise<void> {
+  const auditAction =
+    action === 'success' ? 'installment.notification_success_requested' :
+    action === 'failed' ? 'installment.notification_failed_requested' :
+    'installment.notification_completion_requested';
+
+  try {
+    const resp = await fetch(`${supabaseUrl}/functions/v1/installment-notifications`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${serviceKey}`,
+      },
+      body: JSON.stringify({ action, installment_id: installmentId }),
+    });
+
+    const ok = resp.ok;
+    const respText = ok ? null : await resp.text().catch(() => null);
+
+    await supabase.from('audit_logs').insert({
+      actor_type: 'system',
+      actor_label: 'installment-charge-cron',
+      action: ok ? auditAction : 'installment.notification_request_failed',
+      meta: {
+        installment_id: installmentId,
+        notification_action: action,
+        http_status: resp.status,
+        http_ok: ok,
+        response_excerpt: respText ? String(respText).slice(0, 500) : null,
+        ...context,
+      },
+    });
+  } catch (notifErr) {
+    console.error(`Notification ${action} request failed:`, notifErr);
+    try {
+      await supabase.from('audit_logs').insert({
+        actor_type: 'system',
+        actor_label: 'installment-charge-cron',
+        action: 'installment.notification_request_failed',
+        meta: {
+          installment_id: installmentId,
+          notification_action: action,
+          error: notifErr instanceof Error ? notifErr.message : String(notifErr),
+          ...context,
+        },
+      });
+    } catch (_) { /* ignore audit failure */ }
+  }
+}
+
 // This function should be called by a cron job daily
 // It processes pending installment payments that are due
 
