@@ -404,11 +404,10 @@ export function ChatMediaMessage({
   if (isAudio) {
     if (hasFile) {
       return (
-        <audio
-          src={fileUrl}
-          controls
-          className="w-full max-w-[250px]"
-          controlsList="nodownload noplaybackrate"
+        <AudioPlayer
+          url={fileUrl!}
+          isVoice={canonicalType === "voice"}
+          isOutgoing={isOutgoing}
         />
       );
     }
