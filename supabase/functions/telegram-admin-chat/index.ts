@@ -141,7 +141,8 @@ async function telegramSendFile(
   botToken: string,
   chatId: number,
   file: FileData,
-  caption?: string
+  caption?: string,
+  replyToMessageId?: number | null,
 ) {
   // Convert base64 to bytes
   const binaryString = atob(file.base64);
