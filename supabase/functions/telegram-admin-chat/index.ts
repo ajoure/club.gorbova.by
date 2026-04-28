@@ -333,6 +333,7 @@ Deno.serve(async (req) => {
     switch (action) {
       case "send_message": {
         const { user_id, message, file, bot_id } = payload;
+        const replyToMessageId = (payload as any).reply_to_message_id as number | null | undefined;
 
         if (!user_id || (!message && !file)) {
           return new Response(JSON.stringify({ error: "user_id and (message or file) required" }), {
