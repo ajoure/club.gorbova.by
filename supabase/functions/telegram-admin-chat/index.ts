@@ -574,6 +574,7 @@ Deno.serve(async (req) => {
           direction: "outgoing",
           message_text: message || null,
           message_id: sendResult.ok ? sendResult.result.message_id : null,
+          reply_to_message_id: replyToMessageId ?? null,
           sent_by_admin: user.id,
           status: sendResult.ok ? "sent" : "failed",
           error_message: sendResult.ok ? null : sendResult.description,
