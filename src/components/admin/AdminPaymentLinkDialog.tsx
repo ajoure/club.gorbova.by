@@ -586,8 +586,10 @@ export function AdminPaymentLinkDialog({
         : effectivePaymentType === "subscription"
           ? "Подписка (ежемесячно)"
           : "Разовая оплата";
+      const perPayment = Math.round(amount / (selectedInstallmentMonths || 1));
+      const totalAmount = perPayment * (selectedInstallmentMonths || 1);
       const amountLine = isInstallmentMsg
-        ? `💰 Стоимость: ${selectedInstallmentMonths} × ${effectiveOffer?.meta?.installment?.per_payment_amount_byn ?? Math.round(amount / (selectedInstallmentMonths || 1))} BYN (итого ${effectiveOffer?.meta?.installment?.total_amount ?? amount} BYN)`
+        ? `💰 Стоимость: ${selectedInstallmentMonths} × ${perPayment} BYN (итого ${totalAmount} BYN)`
         : `💰 Стоимость: ${amount} BYN`;
       const telegramMessage = `💳 *Оплата ${isInstallmentMsg ? "в рассрочку" : "подписки"}*
 
