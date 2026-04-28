@@ -2598,9 +2598,8 @@ Deno.serve(async (req) => {
       // Idempotency: pre-check + UNIQUE(order_id, payment_number) внутри generateInstallmentSchedule.
       // НЕ ставим auto_renew=true: рассрочка идёт через installment_payments + installment-charge-cron.
       // =====================================================================
-      const linkOrderMeta = (linkOrder.meta || {}) as Record<string, any>;
-      const installmentCountFromMeta = Number(linkOrderMeta.installment_count ?? 0);
-      const isInstallmentOrder = Number.isFinite(installmentCountFromMeta) && installmentCountFromMeta >= 2;
+      // STAGE L3: isInstallmentOrder + installmentCountFromOrderMeta объявлены выше (строка 2250).
+      const linkOrderMetaForInstallment = (linkOrder.meta || {}) as Record<string, any>;
 
       if (isInstallmentOrder && linkOrder.user_id) {
         try {
