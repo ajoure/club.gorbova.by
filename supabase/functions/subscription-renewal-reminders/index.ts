@@ -658,6 +658,10 @@ ${safeNamePrefix}это последнее напоминание. Подпис�
         currency: currency || null,
         pricing_mode: 'regular_renewal',
         source: 'renewal_reminder',
+        reply_markup: replyMarkup,
+        payment_url: oneTimeUrl || subscriptionUrl || null,
+        telegram_message_id: result?.result?.message_id ?? null,
+        mirrored_to_telegram_messages: true,
       },
     });
     const isDuplicate = insertError?.code === '23505';
