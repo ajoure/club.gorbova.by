@@ -172,6 +172,15 @@ interface InboxTabContentProps {
 
 const PANEL_SIZE_KEY = "communication-panel-sizes";
 
+const TELEGRAM_HTML_TAG_PATTERN = /<\/?(b|strong|i|em|u|s|strike|del|code|pre|a|tg-spoiler|br)\b/i;
+
+function getTelegramPlainText(text: string | null | undefined): string {
+  const value = text || "";
+  if (!TELEGRAM_HTML_TAG_PATTERN.test(value) || typeof DOMParser === "undefined") return value;
+  const doc = new DOMParser().parseFromString(`<div>${value}</div>`, "text/html");
+  return doc.body.textContent || "";
+}
+
 export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContentProps) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -348,7 +357,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
       // Map RPC result to Dialog interface
       const result: Dialog[] = rpcDialogs.map((d: any) => ({
         user_id: d.user_id,
-        last_message: d.last_message_text || (d.last_message_type ? `[${d.last_message_type}]` : ""),
+        last_message: getTelegramPlainText(d.last_message_text) || (d.last_message_type ? `[${d.last_message_type}]` : ""),
         last_message_at: d.last_message_at,
         unread_count: Number(d.unread_count) || 0,
         profile: profileMap.get(d.user_id) || null,
