@@ -1831,6 +1831,7 @@ export function ContactTelegramChat({
           </div>
           
           <Textarea
+            ref={inputRef}
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={handleKeyPress}
