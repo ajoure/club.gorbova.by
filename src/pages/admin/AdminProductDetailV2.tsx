@@ -636,9 +636,9 @@ export default function AdminProductDetailV2() {
         interval_days: 30,
         first_payment_delay_days: 0,
         rounding_mode: 'round_half_up_byn',
-      } as any;
+      };
     } else {
-      delete (metaToSave as any).installment;
+      delete metaToSave.installment;
     }
     
     const data: TariffOfferInsert = {
