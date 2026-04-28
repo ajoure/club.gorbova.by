@@ -118,6 +118,11 @@ interface TelegramMessage {
     file_url?: string | null;
     edited?: boolean;
     deleted?: boolean;
+    automated?: boolean;
+    source?: string;
+    reply_markup?: {
+      inline_keyboard?: Array<Array<{ text?: string; url?: string; callback_data?: string }>>;
+    } | null;
     [key: string]: unknown;
   } | null;
 }
