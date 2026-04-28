@@ -470,35 +470,39 @@ async function sendTelegramReminder(
     }
 
     const userName = profile.full_name?.split(' ')[0] || 'Клиент';
-    const formattedDate = expiryDate.toLocaleDateString('ru-RU', { 
-      day: 'numeric', 
-      month: 'long' 
+    // PATCH ONE-TIME v2: точное время Минск (день + месяц + HH:mm)
+    const dateFmt = new Intl.DateTimeFormat('ru-RU', {
+      day: 'numeric', month: 'long', timeZone: 'Europe/Minsk'
     });
+    const timeFmt = new Intl.DateTimeFormat('ru-RU', {
+      hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Minsk'
+    });
+    const formattedDate = `${dateFmt.format(expiryDate)} в ${timeFmt.format(expiryDate)} (Минск)`;
 
     const safeUserName = escapeMd(userName);
     const safeProductName = escapeMd(productName);
     const safeTariffName = escapeMd(tariffName);
 
-    // PATCH ONE-TIME v1: info-only text for one-time products (no renewal CTA)
+    // PATCH ONE-TIME v2: тёплые тексты с эмодзи, точное время, нейтральный CTA (ЛК)
     if (isOneTime) {
       if (daysLeft === 7) {
         message = `📅 *Доступ скоро заканчивается*
 
-${safeUserName}, ваш доступ к *${safeProductName}* заканчивается ${formattedDate}.
+${safeUserName}, напоминаем: доступ к *${safeProductName}* заканчивается *${formattedDate}*.
 
-Это разовый продукт — продление не предусмотрено.`;
+Это разовая покупка — продление не требуется. ✅ Спасибо, что были с нами!`;
       } else if (daysLeft === 3) {
-        message = `⏰ *Доступ заканчивается через 3 дня*
+        message = `⏰ *Осталось 3 дня доступа*
 
-${safeUserName}, ваш доступ к *${safeProductName}* заканчивается ${formattedDate}.
+${safeUserName}, доступ к *${safeProductName}* заканчивается *${formattedDate}*.
 
-Это разовый продукт — продление не предусмотрено.`;
+Это разовая покупка — продление не требуется. ✅`;
       } else if (daysLeft === 1) {
-        message = `🔔 *Доступ заканчивается завтра*
+        message = `🔔 *Завтра заканчивается доступ*
 
-${safeUserName}, это последнее напоминание. Доступ к *${safeProductName}* заканчивается ${formattedDate}.
+${safeUserName}, это последнее напоминание: доступ к *${safeProductName}* заканчивается *${formattedDate}*.
 
-Это разовый продукт — продление не предусмотрено.`;
+Это разовая покупка — продление не требуется. ✅ Благодарим за доверие!`;
       }
     }
     // PATCH RENEWAL+PAYMENTS.1 B3: Unified texts — SBS vs non-SBS (2 buttons)
