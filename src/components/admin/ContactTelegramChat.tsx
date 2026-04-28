@@ -594,21 +594,33 @@ export function ContactTelegramChat({
             }
           );
 
-          // Auto-scroll only if user is at bottom OR it's an outgoing message
+          // Auto-scroll: outgoing always; incoming — only if user near bottom.
+          // Otherwise increment unread badge so admin can jump down via FAB.
           const isFromAdmin = newMsg?.direction === "outgoing";
-          setTimeout(() => {
-            const root = scrollRef.current;
-            const viewport = root?.querySelector(
-              "[data-radix-scroll-area-viewport]"
-            ) as HTMLElement | null;
-            if (viewport) {
-              const isAtBottom =
-                viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 100;
-              if (isAtBottom || isFromAdmin) {
-                viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
-              }
-            }
-          }, 50);
+          const _root = scrollRef.current;
+          const _viewport = _root?.querySelector(
+            "[data-radix-scroll-area-viewport]"
+          ) as HTMLElement | null;
+          const _nearBottom = _viewport
+            ? _viewport.scrollHeight - _viewport.scrollTop - _viewport.clientHeight < 200
+            : true;
+
+          if (isFromAdmin || _nearBottom) {
+            // Двойной rAF — ждём, пока React докоммитит DOM нового сообщения.
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => {
+                const vp = scrollRef.current?.querySelector(
+                  "[data-radix-scroll-area-viewport]"
+                ) as HTMLElement | null;
+                if (vp) {
+                  vp.scrollTo({ top: vp.scrollHeight, behavior: "smooth" });
+                }
+                bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+              });
+            });
+          } else {
+            setUnreadCount((c) => c + 1);
+          }
         }
       )
       .on(
