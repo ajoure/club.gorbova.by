@@ -1614,127 +1614,169 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             {/* Telegram Profile Info Card */}
             {resolvedTelegramUserId ? (
               <Card className="shrink-0">
-                <CardContent className="p-4">
-                  <div className="flex items-start justify-between">
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 text-sm">
-                        <span className="text-muted-foreground">ID:</span>
-                        <span className="font-mono">{resolvedTelegramUserId}</span>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6"
-                          onClick={() => {
-                            navigator.clipboard.writeText(String(resolvedTelegramUserId));
-                            toast.success("ID скопирован");
-                          }}
-                        >
-                          <Copy className="h-3 w-3" />
-                        </Button>
-                      </div>
-                      {resolvedTelegramUsername && (
+                {/* Свёрнутый header: всегда виден, кликом раскрывается */}
+                <button
+                  type="button"
+                  onClick={() => setTgInfoExpanded((v) => !v)}
+                  className="w-full flex items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-muted/40 transition-colors rounded-t-lg"
+                  aria-expanded={tgInfoExpanded}
+                  aria-controls="tg-info-body"
+                >
+                  <div className="flex items-center gap-2 min-w-0 flex-wrap text-sm">
+                    <span className="font-mono text-xs text-muted-foreground">ID {resolvedTelegramUserId}</span>
+                    {resolvedTelegramUsername && (
+                      <span className="text-primary truncate">@{resolvedTelegramUsername}</span>
+                    )}
+                    {profileData?.telegram_link_status && (
+                      <Badge
+                        variant={profileData.telegram_link_status === "active" ? "default" : "secondary"}
+                        className="text-[10px] py-0 h-5"
+                      >
+                        {profileData.telegram_link_status === "active" ? "Активен" : profileData.telegram_link_status}
+                      </Badge>
+                    )}
+                    {clubMembership && (clubMembership.in_chat === true || clubMembership.in_channel === true) && (
+                      <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20 text-[10px] py-0 h-5">
+                        В клубе
+                      </Badge>
+                    )}
+                    {clubMembership && !(clubMembership.in_chat === true || clubMembership.in_channel === true) && clubMembership.access_status === 'ok' && (
+                      <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/20 text-[10px] py-0 h-5">
+                        Ожидает входа
+                      </Badge>
+                    )}
+                  </div>
+                  <ChevronDown
+                    className={cn(
+                      "w-4 h-4 shrink-0 text-muted-foreground transition-transform",
+                      tgInfoExpanded && "rotate-180"
+                    )}
+                  />
+                </button>
+
+                {tgInfoExpanded && (
+                  <CardContent id="tg-info-body" className="p-4 pt-0 border-t">
+                    <div className="flex items-start justify-between pt-3">
+                      <div className="space-y-2">
                         <div className="flex items-center gap-2 text-sm">
-                          <span className="text-muted-foreground">Username:</span>
-                          <a
-                            href={`https://t.me/${resolvedTelegramUsername}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-primary hover:underline flex items-center gap-1"
+                          <span className="text-muted-foreground">ID:</span>
+                          <span className="font-mono">{resolvedTelegramUserId}</span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            onClick={() => {
+                              navigator.clipboard.writeText(String(resolvedTelegramUserId));
+                              toast.success("ID скопирован");
+                            }}
                           >
-                            @{resolvedTelegramUsername}
-                            <ExternalLink className="h-3 w-3" />
-                          </a>
+                            <Copy className="h-3 w-3" />
+                          </Button>
                         </div>
-                      )}
-                      {profileData?.telegram_linked_at && (
-                        <div className="flex items-center gap-2 text-sm">
-                          <span className="text-muted-foreground">Привязан:</span>
-                          <span>{format(new Date(profileData.telegram_linked_at), "dd.MM.yyyy HH:mm", { locale: ru })}</span>
+                        {resolvedTelegramUsername && (
+                          <div className="flex items-center gap-2 text-sm">
+                            <span className="text-muted-foreground">Username:</span>
+                            <a
+                              href={`https://t.me/${resolvedTelegramUsername}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-primary hover:underline flex items-center gap-1"
+                            >
+                              @{resolvedTelegramUsername}
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          </div>
+                        )}
+                        {profileData?.telegram_linked_at && (
+                          <div className="flex items-center gap-2 text-sm">
+                            <span className="text-muted-foreground">Привязан:</span>
+                            <span>{format(new Date(profileData.telegram_linked_at), "dd.MM.yyyy HH:mm", { locale: ru })}</span>
+                          </div>
+                        )}
+                        {profileData?.telegram_link_status && (
+                          <div className="flex items-center gap-2 text-sm">
+                            <span className="text-muted-foreground">Статус:</span>
+                            <Badge variant={profileData.telegram_link_status === "active" ? "default" : "secondary"}>
+                              {profileData.telegram_link_status === "active" ? "Активен" : profileData.telegram_link_status}
+                            </Badge>
+                          </div>
+                        )}
+                        {/* Club membership status */}
+                        <div className="flex items-center gap-2 text-sm flex-wrap">
+                          <span className="text-muted-foreground">Клуб:</span>
+                          {clubMembership ? (
+                            <>
+                              {(clubMembership.in_chat === true || clubMembership.in_channel === true) ? (
+                                <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">
+                                  <CheckCircle className="w-3 h-3 mr-1" />
+                                  В клубе
+                                </Badge>
+                              ) : clubMembership.access_status === 'ok' ? (
+                                <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/20">
+                                  <Clock className="w-3 h-3 mr-1" />
+                                  Ожидает входа
+                                </Badge>
+                              ) : ['removed', 'kicked', 'expired', 'no_access'].includes(clubMembership.access_status || '') ? (
+                                <Badge className="bg-red-500/10 text-red-600 border-red-500/20">
+                                  <XCircle className="w-3 h-3 mr-1" />
+                                  Удалён
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline">
+                                  {clubMembership.access_status || '—'}
+                                </Badge>
+                              )}
+                              {(clubMembership as any).club_name && (
+                                <span className="text-xs text-muted-foreground">
+                                  ({(clubMembership as any).club_name})
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">нет данных</span>
+                          )}
+                          <button
+                            onClick={() => refetchClubMembership()}
+                            className="text-muted-foreground hover:text-foreground transition-colors"
+                            title="Обновить статус клуба"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+                          </button>
                         </div>
-                      )}
-                      {profileData?.telegram_link_status && (
-                        <div className="flex items-center gap-2 text-sm">
-                          <span className="text-muted-foreground">Статус:</span>
-                          <Badge variant={profileData.telegram_link_status === "active" ? "default" : "secondary"}>
-                            {profileData.telegram_link_status === "active" ? "Активен" : profileData.telegram_link_status}
-                          </Badge>
-                        </div>
-                      )}
-                      {/* Club membership status */}
-                      <div className="flex items-center gap-2 text-sm flex-wrap">
-                        <span className="text-muted-foreground">Клуб:</span>
-                        {clubMembership ? (
+                        {telegramUserInfo && (
                           <>
-                            {(clubMembership.in_chat === true || clubMembership.in_channel === true) ? (
-                              <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">
-                                <CheckCircle className="w-3 h-3 mr-1" />
-                                В клубе
-                              </Badge>
-                            ) : clubMembership.access_status === 'ok' ? (
-                              <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/20">
-                                <Clock className="w-3 h-3 mr-1" />
-                                Ожидает входа
-                              </Badge>
-                            ) : ['removed', 'kicked', 'expired', 'no_access'].includes(clubMembership.access_status || '') ? (
-                              <Badge className="bg-red-500/10 text-red-600 border-red-500/20">
-                                <XCircle className="w-3 h-3 mr-1" />
-                                Удалён
-                              </Badge>
-                            ) : (
-                              <Badge variant="outline">
-                                {clubMembership.access_status || '—'}
-                              </Badge>
+                            {telegramUserInfo.first_name && (
+                              <div className="flex items-center gap-2 text-sm">
+                                <span className="text-muted-foreground">Имя в TG:</span>
+                                <span>{[telegramUserInfo.first_name, telegramUserInfo.last_name].filter(Boolean).join(" ")}</span>
+                              </div>
                             )}
-                            {(clubMembership as any).club_name && (
-                              <span className="text-xs text-muted-foreground">
-                                ({(clubMembership as any).club_name})
-                              </span>
+                            {telegramUserInfo.bio && (
+                              <div className="text-sm">
+                                <span className="text-muted-foreground">Bio:</span>
+                                <p className="text-xs mt-1 italic text-muted-foreground">{telegramUserInfo.bio}</p>
+                              </div>
                             )}
                           </>
-                        ) : (
-                          <span className="text-muted-foreground text-xs">нет данных</span>
                         )}
-                        <button
-                          onClick={() => refetchClubMembership()}
-                          className="text-muted-foreground hover:text-foreground transition-colors"
-                          title="Обновить статус клуба"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
-                        </button>
                       </div>
-                      {telegramUserInfo && (
-                        <>
-                          {telegramUserInfo.first_name && (
-                            <div className="flex items-center gap-2 text-sm">
-                              <span className="text-muted-foreground">Имя в TG:</span>
-                              <span>{[telegramUserInfo.first_name, telegramUserInfo.last_name].filter(Boolean).join(" ")}</span>
-                            </div>
-                          )}
-                          {telegramUserInfo.bio && (
-                            <div className="text-sm">
-                              <span className="text-muted-foreground">Bio:</span>
-                              <p className="text-xs mt-1 italic text-muted-foreground">{telegramUserInfo.bio}</p>
-                            </div>
-                          )}
-                        </>
-                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={fetchPhotoFromTelegram}
+                        disabled={isFetchingPhoto}
+                        className="gap-1"
+                      >
+                        {isFetchingPhoto ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Download className="h-4 w-4" />
+                        )}
+                        Загрузить фото
+                      </Button>
                     </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={fetchPhotoFromTelegram}
-                      disabled={isFetchingPhoto}
-                      className="gap-1"
-                    >
-                      {isFetchingPhoto ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Download className="h-4 w-4" />
-                      )}
-                      Загрузить фото
-                    </Button>
-                  </div>
-                </CardContent>
+                  </CardContent>
+                )}
               </Card>
             ) : (
               <Card className="shrink-0">
