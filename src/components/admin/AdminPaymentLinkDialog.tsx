@@ -586,7 +586,8 @@ export function AdminPaymentLinkDialog({
         : effectivePaymentType === "subscription"
           ? "Подписка (ежемесячно)"
           : "Разовая оплата";
-      const perPayment = Math.round(amount / (selectedInstallmentMonths || 1));
+      // Для installment-оффера amount уже = per-payment (offer.amount хранит per-payment).
+      const perPayment = amount;
       const totalAmount = perPayment * (selectedInstallmentMonths || 1);
       const amountLine = isInstallmentMsg
         ? `💰 Стоимость: ${selectedInstallmentMonths} × ${perPayment} BYN (итого ${totalAmount} BYN)`
