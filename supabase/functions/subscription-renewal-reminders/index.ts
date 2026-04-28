@@ -559,7 +559,7 @@ ${safeUserName}, это последнее напоминание. Подпис�
     let replyMarkup: any;
     if (isOneTime) {
       replyMarkup = {
-        inline_keyboard: [[{ text: '📋 Управление в кабинете', url: 'https://club.gorbova.by/purchases' }]],
+        inline_keyboard: [[{ text: '👤 Открыть личный кабинет', url: 'https://club.gorbova.by/purchases' }]],
       };
     } else if (hasSBS) {
       replyMarkup = {
