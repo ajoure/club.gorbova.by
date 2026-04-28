@@ -1025,7 +1025,12 @@ export function ContactTelegramChat({
   const handleSend = () => {
     const trimmed = message.trim();
     if (!trimmed && !selectedFile) return;
-    sendMutation.mutate({ text: trimmed, file: selectedFile || undefined, fileType: selectedFileType || undefined });
+    sendMutation.mutate({
+      text: trimmed,
+      file: selectedFile || undefined,
+      fileType: selectedFileType || undefined,
+      replyToMessageId: replyingTo?.message_id ?? undefined,
+    });
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
