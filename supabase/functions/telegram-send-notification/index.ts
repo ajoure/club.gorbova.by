@@ -551,22 +551,28 @@ ${namePrefix}мы попытались проверить ${cardDisplay} для 
         ? { inline_keyboard: [[{ text: '💳 Продлить подписку', url: pricingUrl }]] }
         : undefined;
 
-    // Send message — Markdown by default for bold/italic in admin templates.
-    // If Telegram rejects entities (rare special chars), retry as plain text so
-    // the message is never lost.
+    // Send message — авто-детект формата:
+    //  • если в тексте есть HTML-теги (`<b>`, `<i>`, `<u>`, `<s>`, `<code>`,
+    //    `<pre>`, `<a href=>`) — отправляем с parse_mode='HTML' (надёжнее всего,
+    //    не зависит от соседства с эмодзи);
+    //  • иначе — legacy Markdown как раньше (для обратной совместимости с
+    //    шаблонами, использующими `*bold*` / `_italic_`).
+    // При отказе Telegram ретраим plain text, чтобы сообщение никогда не терялось.
+    const hasHtmlEntities = /<\/?(b|i|u|s|code|pre|a|tg-spoiler)\b/i.test(message);
+    const initialParseMode: 'HTML' | 'Markdown' = hasHtmlEntities ? 'HTML' : 'Markdown';
     const sendPayload = {
       chat_id: profile.telegram_user_id,
       text: message,
       reply_markup: keyboard,
     };
-    let usedParseMode: 'Markdown' | null = 'Markdown';
+    let usedParseMode: 'HTML' | 'Markdown' | null = initialParseMode;
     let sendResult = await telegramRequest(botToken, 'sendMessage', {
       ...sendPayload,
-      parse_mode: 'Markdown',
+      parse_mode: initialParseMode,
     });
     if (!sendResult?.ok && typeof sendResult?.description === 'string' &&
-        /can't parse entities|can't find end/i.test(sendResult.description)) {
-      console.warn('[telegram-send-notification] Markdown parse failed, retrying as plain text:', sendResult.description);
+        /can't parse entities|can't find end|unsupported start tag/i.test(sendResult.description)) {
+      console.warn(`[telegram-send-notification] ${initialParseMode} parse failed, retrying as plain text:`, sendResult.description);
       usedParseMode = null;
       sendResult = await telegramRequest(botToken, 'sendMessage', sendPayload);
     }
