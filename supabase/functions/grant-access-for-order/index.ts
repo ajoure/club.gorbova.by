@@ -274,7 +274,7 @@ Deno.serve(async (req) => {
       // PATCH: Added auto_renew to select for fallback guard in extend branch
       const { data: activeSub } = await supabase
         .from("subscriptions_v2")
-        .select("id, access_end_at, status, tariff_id, auto_renew")
+        .select("id, access_end_at, status, tariff_id, product_id, auto_renew")
         .eq("user_id", userId)
         .eq("product_id", productId)
         .eq("status", "active")
