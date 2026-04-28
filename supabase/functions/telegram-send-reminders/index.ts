@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { generateRenewalCTAs } from '../_shared/generate-renewal-ctas.ts';
 import { resolveProductRenewability } from '../_shared/renewal-offer-resolver.ts';
 import { greetPrefix } from '../_shared/recipient-name.ts';
+import { logAutomatedTelegramMessage } from '../_shared/log-automated-telegram.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -360,6 +361,25 @@ Deno.serve(async (req) => {
           error: fallbackResult.ok ? null : fallbackResult.description,
         });
         continue;
+      }
+
+      // Mirror to admin chat (Contact Center)
+      if (sendResult?.result?.message_id) {
+        await logAutomatedTelegramMessage({
+          supabase,
+          user_id: access.user_id,
+          telegram_user_id: profile.telegram_user_id,
+          bot_id: club?.bot_id ?? null,
+          text: message,
+          telegram_message_id: sendResult.result.message_id,
+          reply_markup: keyboard,
+          source: 'telegram-send-reminders',
+          extra_meta: {
+            club_id: access.club_id,
+            days_until_expiry: 3,
+            delivery_method: deliveryMethod,
+          },
+        });
       }
 
       // Log the reminder
