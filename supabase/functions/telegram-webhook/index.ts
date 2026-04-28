@@ -1146,21 +1146,31 @@ Deno.serve(async (req) => {
 
               // FAST-MEDIA: fire-and-forget invoke of media worker, чтобы не ждать
               // следующего тика cron (1 минута). Worker идемпотентен через media_jobs.
+              // ВАЖНО: worker требует X-Worker-Token (не service key).
               try {
                 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-                const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-                const workerPromise = fetch(`${supabaseUrl}/functions/v1/telegram-media-worker`, {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${supabaseServiceKey}`,
-                  },
-                  body: JSON.stringify({ trigger: 'webhook', message_db_id: dbMessageId }),
-                }).catch((e) => console.error('[WEBHOOK] media-worker invoke failed:', e));
-                // @ts-ignore — Deno EdgeRuntime API
-                if (typeof EdgeRuntime !== 'undefined' && (EdgeRuntime as any).waitUntil) {
-                  // @ts-ignore
-                  (EdgeRuntime as any).waitUntil(workerPromise);
+                const workerToken = Deno.env.get('TELEGRAM_MEDIA_WORKER_TOKEN') || '';
+                if (!workerToken) {
+                  console.warn('[WEBHOOK] TELEGRAM_MEDIA_WORKER_TOKEN missing — fast-media skip, cron will pick up');
+                } else {
+                  const workerPromise = fetch(`${supabaseUrl}/functions/v1/telegram-media-worker`, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'x-worker-token': workerToken,
+                    },
+                    body: JSON.stringify({
+                      trigger: 'webhook',
+                      message_db_id: dbMessageId,
+                      user_id: profile.user_id,
+                      limit: 5,
+                    }),
+                  }).catch((e) => console.error('[WEBHOOK] media-worker invoke failed:', e));
+                  // @ts-ignore — Deno EdgeRuntime API
+                  if (typeof EdgeRuntime !== 'undefined' && (EdgeRuntime as any).waitUntil) {
+                    // @ts-ignore
+                    (EdgeRuntime as any).waitUntil(workerPromise);
+                  }
                 }
               } catch (invokeErr) {
                 console.error('[WEBHOOK] media-worker invoke error:', invokeErr);
