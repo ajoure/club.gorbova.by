@@ -174,6 +174,12 @@ async function telegramSendFile(
   const formData = new FormData();
   formData.append("chat_id", chatId.toString());
   if (caption) formData.append("caption", caption);
+  if (replyToMessageId) {
+    formData.append("reply_parameters", JSON.stringify({
+      message_id: replyToMessageId,
+      allow_sending_without_reply: true,
+    }));
+  }
 
   // Determine the method and field name based on file type
   let method: string;
