@@ -81,8 +81,7 @@ export function ChatMediaMessage({
   if (uploadStatus === 'pending') {
     return (
       <div className={cn(
-        "flex items-center gap-2 p-3 rounded-lg",
-        isOutgoing ? "bg-primary/20" : "bg-muted"
+        "flex items-center gap-2 p-2 rounded-lg border border-border/30 bg-muted/40 w-fit max-w-[220px]"
       )}>
         <RefreshCw className="w-4 h-4 animate-spin" />
         <div className="flex-1 min-w-0">
@@ -217,13 +216,15 @@ export function ChatMediaMessage({
       return (
         <>
           <div 
-            className="cursor-pointer hover:opacity-90 transition-opacity rounded overflow-hidden"
+            className="cursor-pointer hover:opacity-90 transition-opacity rounded overflow-hidden w-fit max-w-full bg-transparent"
             onClick={() => setLightboxOpen(true)}
           >
             <img
               src={fileUrl}
               alt={fileName || "Photo"}
-              className="max-w-full max-h-48 rounded object-cover"
+              className="block max-w-full max-h-64 rounded object-contain bg-transparent"
+              loading="eager"
+              decoding="async"
               onError={() => setImageError(true)}
             />
           </div>
@@ -348,12 +349,12 @@ export function ChatMediaMessage({
       return (
         <>
           <div 
-            className="relative cursor-pointer hover:opacity-90 transition-opacity max-w-full rounded overflow-hidden"
+            className="relative cursor-pointer hover:opacity-90 transition-opacity max-w-full rounded overflow-hidden bg-transparent"
             onClick={() => setLightboxOpen(true)}
           >
             <video
               src={fileUrl}
-              className="max-h-48 max-w-full rounded"
+              className="block max-h-64 max-w-full rounded bg-transparent"
               muted
               preload="metadata"
             />
