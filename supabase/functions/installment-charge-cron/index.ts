@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
+import { getSubscriptionToken, isSkip } from '../_shared/token-resolver.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
