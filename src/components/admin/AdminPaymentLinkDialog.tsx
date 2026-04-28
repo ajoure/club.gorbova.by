@@ -256,6 +256,10 @@ export function AdminPaymentLinkDialog({
   // Источники истины: isInstallmentOffer (payment_method='internal_installment'),
   // effectivePaymentType ('subscription' | 'one_time'), selectedInstallmentMonths.
   const buildTelegramMessage = (productName: string, tariffName: string) => {
+    // Markdown v1: экранируем спецсимволы в подстановках, чтобы Telegram точно
+    // распарсил `*Оплата ...*` как жирный, даже если в имени продукта/тарифа
+    // встретятся `_` `*` `[` `` ` ``.
+    const escapeMd = (t: string) => (t || "").replace(/([_*`\[])/g, "\\$1");
     const isInstallmentMsg =
       isInstallmentOffer && (selectedInstallmentMonths ?? 0) >= 2;
     const isSubscriptionMsg =
@@ -287,8 +291,8 @@ export function AdminPaymentLinkDialog({
 
     return `💳 *Оплата ${headerKind}*
 
-📦 Продукт: ${productName}
-📋 Тариф: ${tariffName}
+📦 Продукт: ${escapeMd(productName)}
+📋 Тариф: ${escapeMd(tariffName)}
 ${amountLine}
 📅 Тип: ${typeLabel}`;
   };
