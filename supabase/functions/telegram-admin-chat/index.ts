@@ -1185,13 +1185,47 @@ Deno.serve(async (req) => {
         });
 
         if (deleteResult.ok && db_message_id) {
-          // Mark message as deleted in database
+          // 1) Fetch message to find attached storage object (if any)
+          const { data: msgRow } = await supabase
+            .from("telegram_messages")
+            .select("meta, file_url, file_name, file_type")
+            .eq("id", db_message_id)
+            .maybeSingle();
+
+          const meta: any = (msgRow?.meta as any) || {};
+          const bucket: string | null =
+            meta.storage_bucket || meta.storageBucket || null;
+          const path: string | null =
+            meta.storage_path || meta.storagePath || null;
+
+          // 2) Remove the storage object so it no longer takes space
+          if (bucket && path) {
+            try {
+              const { error: rmErr } = await supabase.storage
+                .from(bucket)
+                .remove([path]);
+              if (rmErr) {
+                console.warn("[delete_message] storage remove failed", rmErr);
+              }
+            } catch (e) {
+              console.warn("[delete_message] storage remove threw", e);
+            }
+          }
+
+          // 3) Hard-delete reactions tied to the message (defensive)
+          try {
+            await supabase
+              .from("telegram_reactions")
+              .delete()
+              .eq("message_db_id", db_message_id);
+          } catch (e) {
+            // table may not exist in some envs — ignore
+          }
+
+          // 4) Hard-delete the message row itself
           await supabase
             .from("telegram_messages")
-            .update({ 
-              status: "deleted",
-              meta: { deleted: true, deleted_at: new Date().toISOString() }
-            })
+            .delete()
             .eq("id", db_message_id);
         }
 
