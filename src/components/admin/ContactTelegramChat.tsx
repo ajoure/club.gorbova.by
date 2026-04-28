@@ -537,6 +537,47 @@ export function ContactTelegramChat({
     refetchBilling();
   }, [refetchMessages, refetchEvents, refetchBilling]);
 
+  const getScrollViewport = useCallback((): HTMLElement | null => {
+    return (scrollRef.current?.querySelector(
+      "[data-radix-scroll-area-viewport]"
+    ) as HTMLElement | null) ?? null;
+  }, []);
+
+  const isNearBottom = useCallback((threshold = STICKY_THRESHOLD) => {
+    const vp = getScrollViewport();
+    if (!vp) return true;
+    return vp.scrollHeight - vp.scrollTop - vp.clientHeight < threshold;
+  }, [getScrollViewport]);
+
+  const pinToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
+    const vp = getScrollViewport();
+    if (!vp) return;
+    vp.scrollTo({ top: vp.scrollHeight, behavior });
+    bottomRef.current?.scrollIntoView({ block: "end", behavior });
+  }, [getScrollViewport]);
+
+  const startStickyScroll = useCallback((durationMs = 1800) => {
+    shouldStickToBottomRef.current = true;
+    stickyScrollUntilRef.current = performance.now() + durationMs;
+
+    const tick = () => {
+      if (!shouldStickToBottomRef.current) return;
+      pinToBottom("auto");
+      if (performance.now() < stickyScrollUntilRef.current) {
+        requestAnimationFrame(tick);
+      }
+    };
+
+    requestAnimationFrame(() => requestAnimationFrame(tick));
+  }, [pinToBottom]);
+
+  useEffect(() => {
+    return () => {
+      localMediaUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      localMediaUrlsRef.current = [];
+    };
+  }, []);
+
   // Debounced refetch to prevent parallel requests on mobile
   const refetchTimerRef = useRef<number | null>(null);
   const isRefetchingRef = useRef(false);
