@@ -217,12 +217,27 @@ async function handleWebhook(req: Request): Promise<Response> {
     )
   }
 
+  // Rewrite host of confirmationUrl to gorbova.by so clients NEVER see *.supabase.co
+  // in their inbox. The path and query (/auth/v1/verify?token=...&redirect_to=...) are preserved.
+  // Frontend route /auth/v1/verify (in src/pages/AuthVerifyProxy.tsx) transparently
+  // redirects to the original Supabase verify endpoint, preserving the query string.
+  // See mem://security/communications/no-supabase-url-leakage
+  let confirmationUrl = payload.data.url
+  try {
+    const u = new URL(payload.data.url)
+    u.protocol = 'https:'
+    u.host = ROOT_DOMAIN
+    confirmationUrl = u.toString()
+  } catch (_e) {
+    console.warn('Failed to rewrite confirmationUrl host', { url: payload.data.url, run_id })
+  }
+
   // Build template props from payload.data (HookData structure)
   const templateProps = {
     siteName: SITE_NAME,
     siteUrl: `https://${ROOT_DOMAIN}`,
     recipient: payload.data.email,
-    confirmationUrl: payload.data.url,
+    confirmationUrl,
     token: payload.data.token,
     email: payload.data.email,
     newEmail: payload.data.new_email,
