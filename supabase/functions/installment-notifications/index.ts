@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { encode } from "https://deno.land/std@0.190.0/encoding/base64.ts";
+import { greetSuffix } from "../_shared/recipient-name.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
