@@ -1754,8 +1754,13 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             </div>
           </TabsContent>
 
-          {/* Все остальные вкладки — во внешнем скролле как раньше */}
-          <div ref={scrollContainerRef} className="flex-1 overflow-y-auto data-[telegram-active=true]:hidden" data-telegram-active={activeTab === "telegram"}>
+          {/* Все остальные вкладки — во внешнем скролле как раньше.
+              При активной Telegram-вкладке прячем этот контейнер,
+              чтобы не было двойного скролла и pb-24 не съедал высоту. */}
+          <div
+            ref={scrollContainerRef}
+            className={cn("flex-1 overflow-y-auto", activeTab === "telegram" && "hidden")}
+          >
             <div className="px-4 sm:px-6 py-4 pb-24">
             <TabsContent value="profile" className="m-0 space-y-4">
               <Card>
