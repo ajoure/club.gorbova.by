@@ -445,6 +445,40 @@ export function ContactTelegramChat({
 
   const isLoading = messagesLoading || eventsLoading || billingLoading;
 
+  // Map: Telegram message_id -> message (для рендера quote/reply)
+  const messagesByTgId = useMemo(() => {
+    const m = new Map<number, TelegramMessage>();
+    (messages || []).forEach((msg) => {
+      if (msg.message_id) m.set(msg.message_id, msg);
+    });
+    return m;
+  }, [messages]);
+
+  // Скролл к сообщению по DB id + подсветка
+  const scrollToMessage = useCallback((dbId: string) => {
+    const el = document.getElementById(`tg-msg-${dbId}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightedId(dbId);
+    setTimeout(() => setHighlightedId(null), 1500);
+  }, []);
+
+  // Превью текста для quote-блока
+  const previewForQuote = useCallback((m: TelegramMessage): string => {
+    const meta: any = m.meta || {};
+    const fileType = meta.file_type;
+    if (fileType === "photo") return "📷 Фото";
+    if (fileType === "video") return "🎬 Видео";
+    if (fileType === "video_note") return "⭕ Видео-кружок";
+    if (fileType === "voice") return "🎤 Голосовое";
+    if (fileType === "audio") return "🎵 Аудио";
+    if (fileType === "document") return `📎 ${meta.file_name || "Документ"}`;
+    if (fileType === "sticker") return "🌟 Стикер";
+    const text = (m.message_text || "").trim();
+    return text.length > 80 ? text.slice(0, 80) + "…" : text || "Сообщение";
+  }, []);
+
+
   // --- Telegram reactions ---
   const telegramMessageIds = useMemo(
     () => (messages || []).map((m: TelegramMessage) => m.id).filter(Boolean),
