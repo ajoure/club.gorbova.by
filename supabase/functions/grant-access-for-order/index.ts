@@ -281,12 +281,60 @@ Deno.serve(async (req) => {
         .order("access_end_at", { ascending: false })
         .limit(1)
         .maybeSingle();
-      
+
       if (activeSub?.access_end_at && new Date(activeSub.access_end_at) > now) {
-        // Extend from end of current access
-        accessStartAt = new Date(activeSub.access_end_at);
-        existingProductSub = activeSub;
-        console.log(`Extending from existing access end: ${activeSub.access_end_at}`);
+        // ── TARIFF-MATCH GUARD ──────────────────────────────────────────
+        // Extend существующей подписки разрешён ТОЛЬКО при совпадении tariff_id.
+        // Покупка другого тарифа того же продукта = новая подписка от даты оплаты,
+        // без суммирования остатка дней. Замена тарифа — только через explicit
+        // cancel → supersede администратором (safe-replacement-flow).
+        const canExtendExistingSub =
+          activeSub.product_id === productId &&
+          activeSub.tariff_id != null &&
+          tariffId != null &&
+          activeSub.tariff_id === tariffId;
+
+        if (canExtendExistingSub) {
+          // Extend from end of current access
+          accessStartAt = new Date(activeSub.access_end_at);
+          existingProductSub = activeSub;
+          console.log(`[grant-access-for-order] Extending from existing access end: ${activeSub.access_end_at} (tariff match: ${tariffId})`);
+        } else {
+          // Tariff mismatch (или одна из сторон без tariff_id) → НЕ extend.
+          // Создаём новую подписку от baseStartDate. Старая подписка остаётся как есть.
+          const skipReason =
+            activeSub.tariff_id == null || tariffId == null
+              ? "skip_extend_missing_tariff"
+              : "skip_extend_tariff_mismatch";
+
+          console.log(
+            `[grant-access-for-order] ${skipReason}: active sub ${activeSub.id} ` +
+            `(tariff=${activeSub.tariff_id}) != order tariff=${tariffId}. ` +
+            `Создаю новую подписку от ${baseStartDate.toISOString()} вместо extend.`
+          );
+
+          await supabase.from("audit_logs").insert({
+            action: `grant-access-for-order.${skipReason}`,
+            actor_type: "system",
+            actor_user_id: null,
+            actor_label: "grant-access-for-order",
+            target_user_id: userId,
+            meta: {
+              order_id: orderId,
+              product_id: productId,
+              active_subscription_id: activeSub.id,
+              active_subscription_access_end_at: activeSub.access_end_at,
+              active_subscription_tariff_id: activeSub.tariff_id,
+              new_order_tariff_id: tariffId,
+              new_access_start_at: baseStartDate.toISOString(),
+              reason:
+                skipReason === "skip_extend_tariff_mismatch"
+                  ? "Different tariff_id — new subscription instead of extending existing one"
+                  : "Missing tariff_id on either side — defaulting to safe new subscription",
+            },
+          });
+          // existingProductSub остаётся null, accessStartAt = baseStartDate
+        }
       }
     }
     
