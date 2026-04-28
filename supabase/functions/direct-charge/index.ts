@@ -1055,42 +1055,30 @@ Deno.serve(async (req) => {
       }
 
       // Create installment payments schedule for internal installment offers
+      // Delegated to shared helper: validation, idempotency, audit are centralized.
       if (isInternalInstallment && subscription && installmentCount > 1) {
-        console.log(`Creating installment schedule: ${installmentCount} payments, interval ${installmentIntervalDays} days`);
-        
-        const installmentPayments = [];
-        const perPaymentAmount = Math.round((totalAmount / installmentCount) * 100) / 100;
-        
-        for (let i = 0; i < installmentCount; i++) {
-          const delayDays = firstPaymentDelayDays + (i * installmentIntervalDays);
-          const dueDate = new Date(Date.now() + delayDays * 24 * 60 * 60 * 1000);
-          
-          installmentPayments.push({
-            subscription_id: subscription.id,
-            order_id: order.id,
-            user_id: user.id,
-            payment_number: i + 1,
-            total_payments: installmentCount,
-            amount: perPaymentAmount,
-            currency: product.currency,
-            due_date: dueDate.toISOString(),
-            status: i === 0 ? 'succeeded' : 'pending', // First payment just completed
-            paid_at: i === 0 ? new Date().toISOString() : null,
-            payment_id: i === 0 ? payment.id : null,
-          });
-        }
-        
-        const { error: instError } = await supabase
-          .from('installment_payments')
-          .insert(installmentPayments);
-        
-        if (instError) {
-          console.error('Installment payments creation error:', instError);
+        const { generateInstallmentSchedule } = await import('../_shared/installment-schedule.ts');
+        const scheduleResult = await generateInstallmentSchedule({
+          supabase,
+          offer,
+          order,
+          subscription,
+          user,
+          totalAmount,
+          currency: product.currency,
+          firstPayment: { paymentId: payment.id },
+        });
+
+        if (!scheduleResult.ok) {
+          console.error('[direct-charge] Installment schedule generation failed:', scheduleResult.error, scheduleResult.details);
+        } else if (scheduleResult.created) {
+          console.log(`[direct-charge] Installment schedule created: ${scheduleResult.count} payments`);
         } else {
-          console.log(`Created ${installmentCount} installment payment records`);
+          console.log(`[direct-charge] Installment schedule already existed (${scheduleResult.existing_count} rows) — no-op`);
         }
-        
+
         // Update order to show only first payment as paid
+        const perPaymentAmount = Math.round((totalAmount / installmentCount) * 100) / 100;
         await supabase
           .from('orders_v2')
           .update({
