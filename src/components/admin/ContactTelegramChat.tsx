@@ -872,8 +872,7 @@ export function ContactTelegramChat({
 
         let base64: string;
         try {
-          const buffer = await file.arrayBuffer();
-          base64 = arrayBufferToBase64(buffer);
+          base64 = await fileToBase64(file);
         } catch (e) {
           console.error("Failed to encode file to base64", e);
           throw new Error("Не удалось подготовить файл для отправки");
@@ -906,6 +905,8 @@ export function ContactTelegramChat({
     },
     onMutate: () => {
       // Optimistically add message to UI immediately
+      const localUrl = selectedFile ? URL.createObjectURL(selectedFile) : null;
+      if (localUrl) localMediaUrlsRef.current.push(localUrl);
       const tempMessage: TelegramMessage = {
         id: `temp-${Date.now()}`,
         type: "message",
@@ -917,10 +918,19 @@ export function ContactTelegramChat({
         bot_id: selectedBotId,
         bot_username: selectedBotId ? botsMap.get(selectedBotId)?.bot_username || null : null,
         bot_name: selectedBotId ? botsMap.get(selectedBotId)?.bot_name || null : null,
+        meta: selectedFile ? {
+          file_type: selectedFileType,
+          file_name: selectedFile.name,
+          mime_type: selectedFile.type || null,
+          file_url: localUrl,
+          upload_status: "ok",
+          source: "local_preview",
+        } : null,
       };
       queryClient.setQueryData(["telegram-messages", userId], (old: TelegramMessage[] | undefined) => 
         [...(old || []), tempMessage]
       );
+      startStickyScroll(2200);
     },
     onSuccess: () => {
       // FIX B: Remove all temp messages BEFORE refetch to prevent duplicates
@@ -934,6 +944,7 @@ export function ContactTelegramChat({
       setIsUploading(false);
       setReplyingTo(null);
       refetch();
+      startStickyScroll(2200);
       onMessageSent?.();
     },
     onError: (error) => {
