@@ -390,23 +390,46 @@ export function ContactTelegramChat({
     refetchOnWindowFocus: false,
   });
 
-  // Combine and sort messages + telegram events + billing events
-  // PATCH: Hide event-pills for SEND_REMINDER/manual_notification when a real
-  // telegram_messages bubble already mirrors the same notification (±2 min window).
-  const mirroredAt: number[] = (messages || [])
-    .filter((m: any) => m.direction === 'outgoing' && (m.meta?.automated === true || m.meta?.source))
-    .map((m: any) => new Date(m.created_at).getTime());
+  // Combine and sort messages + telegram events + billing events.
+  // PATCH: Hide event-pills that mirror a real outgoing telegram_messages bubble.
+  // Rules:
+  //   - status must be 'success' (failed/skipped stay visible as diagnostic pills);
+  //   - whitelist of admin/notification actions that are normally mirrored to chat;
+  //   - either bubble exists in ±5min window (heuristic) OR meta marks it as mirrored,
+  //     OR text is empty (no value to show as pill).
+  const normalizeText = (t?: string | null) =>
+    (t || "").replace(/\s+/g, " ").trim().toLowerCase();
+  const outgoingMirrored = (messages || []).filter(
+    (m: any) => m.direction === 'outgoing' && (m.meta?.automated === true || m.meta?.source)
+  );
+  const mirroredAt: number[] = outgoingMirrored.map((m: any) => new Date(m.created_at).getTime());
+  const mirroredTexts = new Set(outgoingMirrored.map((m: any) => normalizeText(m.message_text)));
+
+  const MIRRORABLE_ACTIONS = new Set<string>([
+    'SEND_REMINDER',
+    'manual_notification',
+    'MANUAL_NOTIFICATION',
+    'custom',
+    'telegram.notification.sent',
+    // subscription_reminder_*d are matched via prefix below
+  ]);
 
   const isMirroredEvent = (e: TelegramEvent): boolean => {
     const action = e.action || '';
-    const isReminderLike =
-      action === 'SEND_REMINDER' ||
-      action === 'manual_notification' ||
-      action === 'MANUAL_NOTIFICATION';
-    if (!isReminderLike) return false;
-    if (e.status !== 'success') return false; // skipped/failed остаются как pill
+    const isMirrorable =
+      MIRRORABLE_ACTIONS.has(action) ||
+      action.startsWith('subscription_reminder_');
+    if (!isMirrorable) return false;
+    if (e.status !== 'success') return false;
+    // Backend hint: explicit flag in meta wins.
+    if ((e.meta as any)?.mirrored_to_telegram_messages === true) return true;
+    // No payload to render as pill — always hide.
+    if (!e.message_text || !e.message_text.trim()) return true;
+    // Exact text match with any mirrored bubble.
+    if (mirroredTexts.has(normalizeText(e.message_text))) return true;
+    // Time-window fallback (±5 min) for legacy rows without explicit flag.
     const t = new Date(e.created_at).getTime();
-    return mirroredAt.some((mt) => Math.abs(mt - t) <= 120_000);
+    return mirroredAt.some((mt) => Math.abs(mt - t) <= 300_000);
   };
 
   const chatItems: ChatItem[] = [
