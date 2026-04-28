@@ -270,7 +270,9 @@ Deno.serve(async (req) => {
         payment_link_id: link.id,
         url_token: link.url_token,
         product_id, tariff_id, offer_id: offer_id || null,
-        amount, currency,
+        amount_input: amount,                 // что пришло с фронта (для installment — total kopecks)
+        link_amount: linkAmountKopecks,       // что фактически записано в payment_links.amount
+        currency,
         payment_type,                         // фактический payment_type ссылки
         requested_payment_type: auditRequestedType, // что просил источник CTA
         resolved_offer_id: offer_id || null,
@@ -283,6 +285,15 @@ Deno.serve(async (req) => {
         public_url,
         origin_source: originSource,
         primary_domain: primaryDomainValid ? primaryDomain : null,
+        // Stage L: installment proof
+        installment: installmentBlock
+          ? {
+              selected_installment_months: installmentBlock.selected_installment_months,
+              max_installment_months: installmentBlock.max_installment_months,
+              per_payment_amount: installmentBlock.per_payment_amount,
+              total_installment_amount: installmentBlock.total_installment_amount,
+            }
+          : null,
       },
     });
 
@@ -297,6 +308,7 @@ Deno.serve(async (req) => {
       offer_id: link.offer_id,
       tariff_id: link.tariff_id,
       cta_source: auditCtaSource,
+      installment: installmentBlock,
       row: link,
     });
   } catch (e) {
