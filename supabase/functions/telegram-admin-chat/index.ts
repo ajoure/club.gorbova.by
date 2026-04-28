@@ -10,7 +10,10 @@ const corsHeaders = {
 interface FileData {
   type: "photo" | "video" | "audio" | "video_note" | "document";
   name: string;
-  base64: string;
+  // Either base64 (small files) OR storage_path (large files via storage upload).
+  base64?: string;
+  storage_path?: string;
+  storage_bucket?: string;
 }
 
 interface ChatAction {
@@ -146,15 +149,30 @@ function guessMimeType(fileName: string, kind: FileData["type"]) {
   return "application/octet-stream";
 }
 
+async function loadFileBytes(supabase: any, file: FileData): Promise<Uint8Array> {
+  if (file.storage_path) {
+    const bucket = file.storage_bucket || "telegram-media";
+    const { data, error } = await supabase.storage.from(bucket).download(file.storage_path);
+    if (error || !data) {
+      throw new Error(`Failed to load file from storage: ${error?.message || "no data"}`);
+    }
+    const ab = await data.arrayBuffer();
+    return new Uint8Array(ab);
+  }
+  if (!file.base64) throw new Error("File has neither base64 nor storage_path");
+  return base64ToBytes(file.base64);
+}
+
 async function telegramSendFile(
+  supabase: any,
   botToken: string,
   chatId: number,
   file: FileData,
   caption?: string,
   replyToMessageId?: number | null,
 ) {
-  // Convert base64 to bytes
-  const bytes = base64ToBytes(file.base64);
+  // Load bytes from base64 (small files) or storage (large files)
+  const bytes = await loadFileBytes(supabase, file);
 
   let contentType = guessMimeType(file.name, file.type);
   let fileName = file.name;
@@ -449,6 +467,7 @@ Deno.serve(async (req) => {
         if (file) {
           // Send file
           sendResult = await telegramSendFile(
+            supabase,
             botToken,
             profile.telegram_user_id,
             file,
@@ -496,11 +515,16 @@ Deno.serve(async (req) => {
             }
             
             if (fileId) {
-              // Upload the already selected local file bytes immediately.
-              // Do not download it back from Telegram: that added seconds of visible delay.
-              const localBytes = base64ToBytes(file.base64);
+              // If file was already uploaded via storage_path, reuse it directly.
+              if (file.storage_path) {
+                storageBucket = file.storage_bucket || 'telegram-media';
+                storagePath = file.storage_path;
+                console.log(`[OUTBOUND] Reusing storage path: bucket=${storageBucket} path=${storagePath}`);
+              } else {
+                // Small files came via base64: upload them now for UI preview.
+                const localBytes = await loadFileBytes(supabase, file);
 
-              // Sanitize filename for Supabase Storage (no cyrillic, spaces, special chars)
+                // Sanitize filename for Supabase Storage (no cyrillic, spaces, special chars)
                 const sanitizeOutboundFileName = (name: string): string => {
                   if (!name) return 'file';
                   const lastDot = name.lastIndexOf('.');
@@ -530,7 +554,6 @@ Deno.serve(async (req) => {
                 
                 const safeOutboundName = sanitizeOutboundFileName(file.name);
                 
-                // Upload to Storage for instant UI preview after the real Telegram send succeeds.
                 storageBucket = 'telegram-media';
                 storagePath = `outbound/${user_id}/${Date.now()}_${safeOutboundName}`;
                 const { data: uploadData, error: uploadError } = await supabase.storage
@@ -544,7 +567,6 @@ Deno.serve(async (req) => {
                   console.log(`[OUTBOUND] Upload OK: bucket=${storageBucket} path=${storagePath} bytes=${localBytes.byteLength}`);
                 } else {
                   console.error(`[OUTBOUND] Upload FAILED: path=${storagePath}`, uploadError);
-                  // Log to audit_logs
                   await supabase.from('audit_logs').insert({
                     actor_type: 'system',
                     actor_label: 'telegram-admin-chat',
@@ -554,6 +576,7 @@ Deno.serve(async (req) => {
                   storageBucket = null;
                   storagePath = null;
                 }
+              }
             }
           } catch (uploadErr) {
             console.error("Failed to upload file to storage:", uploadErr);
