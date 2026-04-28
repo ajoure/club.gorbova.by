@@ -212,6 +212,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   const [chargeDialogOpen, setChargeDialogOpen] = useState(false);
   const [paymentLinkDialogOpen, setPaymentLinkDialogOpen] = useState(false);
   const [isImpersonating, setIsImpersonating] = useState(false);
+  // TG info card свёрнут по умолчанию — чтобы не отъедал высоту у ленты сообщений.
+  const [tgInfoExpanded, setTgInfoExpanded] = useState(false);
   const [isResettingPassword, setIsResettingPassword] = useState(false);
   const [isFetchingPhoto, setIsFetchingPhoto] = useState(false);
   const [activeTab, setActiveTab] = useState("profile");
