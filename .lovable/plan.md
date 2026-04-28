@@ -1,87 +1,80 @@
 да, согласен, с учетом правок:
 
-1. Не трогать остальные вкладки. Правка должна быть условной только для `TabsContent value="telegram"`.
-2. В `ContactTelegramChat.tsx` лучше убрать `sticky bottom-0` и оставить composer как `shrink-0` в flex-layout.
-3. После патча проверить, что внешний `pb-24` не применяется к Telegram-вкладке.
-4. Автоскролл сделать без `window.scrollTo`: только Radix viewport + `bottomRef`.
+1. В audit добавить не только `old_tariff_id/new_tariff_id`, но и:
+  - `order_id`
+  - `product_id`
+  - `active_subscription_id`
+  - `active_subscription_access_end_at`
+  - `new_access_start_at`
+2. В коде явно зафиксировать правило:
+
+```ts
+canExtendExistingSub =
+  activeSub.product_id === order.product_id &&
+  activeSub.tariff_id === order.tariff_id
+```
+
+3. Если `activeSub.tariff_id IS NULL` — не extend, а safe fallback: создать новую подписку и записать audit `skip_extend_missing_tariff`.
+4. В DoD добавить grep/code-proof: поиск active subscription больше не считается только по `product_id`.
 
 Можно выполнять.
 
 &nbsp;
 
-План:
+План: исправить ошибочное продление чужого тарифа в `grant-access-for-order`
 
-1. **Проблема**
-  - При открытии контакта на вкладке Telegram карточка чата не показывает последние сообщения и поле ввода сразу.
-  - Текущий патч оказался недостаточным: внешний контейнер карточки контакта всё еще скроллится целиком, поэтому `sticky bottom-0` внутри чата не гарантирует видимость композера.
-2. **Диагностика**
-  - Проверены правила `docs/ENGINEERING_RULES.md`.
-  - Проверены существующие UI-компоненты, новые компоненты создавать не нужно.
-  - Основная причина в `src/components/admin/ContactDetailSheet.tsx`:
-    - все вкладки обернуты во внешний контейнер `div ref={scrollContainerRef} className="flex-1 overflow-y-auto"`;
-    - внутри него есть общий wrapper `px-4 sm:px-6 py-4 pb-24`;
-    - Telegram-вкладка размещена внутри этого общего скролла и не получает настоящую фиксированную высоту viewport-карточки;
-    - из-за этого `ContactTelegramChat` может расширяться по содержимому, а не занимать остаток высоты, и поле ввода уезжает вниз вместе с внешним скроллом.
-  - Дополнительная причина в `src/components/admin/ContactTelegramChat.tsx`:
-    - автоскролл ищет viewport Radix ScrollArea и выставляет `scrollTop`, но при внешнем скролле родителя это не решает проблему;
-    - эффект зависит от `chatItems.length`, но при поздней догрузке высоты/контента возможен момент, когда контейнер еще не имеет финальной высоты.
-  - Браузерная проверка через preview не дала полезного UI-снимка: тестовая сессия открылась пустым белым экраном, поэтому опираюсь на кодовую диагностику и предоставленный скрин.
-3. **Предлагаемое решение**
-  - Разделить поведение вкладки Telegram и остальных вкладок:
-    - обычные вкладки оставить во внешнем скролле как сейчас;
-    - Telegram-вкладку вывести в режим `flex-1 min-h-0 overflow-hidden`, чтобы скроллилась только область сообщений внутри чата, а не вся карточка контакта.
-  - В `ContactDetailSheet.tsx` убрать для Telegram общий wrapper с `pb-24`, который искусственно добавляет нижний отступ и ломает расчет высоты.
-  - Для Telegram сделать отдельный контейнер:
-    - `flex-1 min-h-0 overflow-hidden px-4 sm:px-6 py-3`;
-    - профильная Telegram-карточка сверху — `shrink-0`;
-    - сам чат — `flex-1 min-h-0 overflow-hidden`.
-  - В `ContactTelegramChat.tsx` усилить внутреннюю геометрию:
-    - корень оставить `h-full min-h-0 flex flex-col`;
-    - ScrollArea сообщений сделать единственным скроллящимся блоком;
-    - композер сделать обычным `shrink-0` внизу flex-контейнера, без reliance на `sticky`, потому что sticky не нужен, когда родитель правильно ограничен по высоте;
-    - добавить безопасный нижний отступ для safe-area без увеличения высоты всего чата.
-  - Усилить автоскролл:
-    - при смене `userId` и при первом завершении загрузки выполнять прокрутку Radix viewport к низу;
-    - дополнительно использовать `bottomRef.current?.scrollIntoView({ block: "end" })` как fallback;
-    - повторить один короткий deferred-scroll после layout paint, чтобы поймать позднюю отрисовку сообщений.
-4. **Изменяемые компоненты**
-  - `src/components/admin/ContactDetailSheet.tsx`
-    - изменить layout оберток вокруг `TabsContent`, особенно для `value="telegram"`.
-  - `src/components/admin/ContactTelegramChat.tsx`
-    - изменить layout ScrollArea/композера и fallback автоскролла.
-  - Таблицы, RPC, backend functions, cron/jobs, enum не меняются.
-5. **Что не будет изменено**
-  - Не меняю отправку Telegram-сообщений.
-  - Не меняю дедупликацию сообщений.
-  - Не меняю Telegram API / backend functions.
-  - Не создаю новые UI-компоненты.
-  - Не трогаю бизнес-логику контактов, событий, оплат или доступов.
-6. **Dry-run**
-  - До патча проверить только структуру классов и текущие scroll-containers:
-    - внешний scroll `scrollContainerRef`;
-    - Telegram `TabsContent`;
-    - `ContactTelegramChat` root;
-    - `ScrollArea` viewport;
-    - composer block.
-  - Убедиться, что исправление не затронет остальные вкладки карточки контакта.
-7. **Execute**
-  - Внести минимальный UI-патч в 2 файла.
-  - Перевести Telegram-вкладку из общего document-like scroll в bounded flex layout.
-  - Убрать зависимость видимости поля ввода от внешней прокрутки.
-  - Усилить scroll-to-bottom на первом открытии и после догрузки сообщений.
-8. **STOP-guards**
-  - Остановиться, если окажется, что `ContactDetailSheet` используется в другом месте с другим layout-контрактом и изменение ломает другие сценарии.
-  - Не менять backend и данные, если проблема подтверждается как чисто UI/layout.
-  - Не добавлять новый scroll wrapper, если можно исправить существующую структуру.
-  - Не использовать глобальный `window.scrollTo` как основное решение: проблема внутри Sheet/ScrollArea, не на уровне страницы.
-9. **DoD**
-  - При открытии контакта и переходе на вкладку Telegram поле ввода видно сразу внизу карточки.
-  - Последние сообщения видны сразу без ручного скролла вниз.
-  - Скролл колесом/трекпадом работает только в области сообщений чата, а не уводит композер за пределы карточки.
-  - Профильная Telegram-информация остается сверху, чат занимает оставшуюся высоту.
-  - Остальные вкладки контакта продолжают скроллиться как раньше.
-10. **Риски и зависимости**
-  - Если высота окна очень маленькая, профильная Telegram-карточка может занимать много места; тогда сообщения останутся скроллируемыми, а композер все равно должен быть видим.
-  - Если данные приходят асинхронно несколькими волнами, нужен повторный scroll-to-bottom после финальной отрисовки — это будет учтено fallback-скроллом.
-11. **Требуется дополнительная информация**
-  - Дополнительная информация от пользователя не требуется. Проблема локализована в layout Telegram-вкладки и внутреннем ScrollArea.
+## Контекст и диагностика
+
+Кейс Гузаревич (`irkaguzarevich@mail.ru`, продукт Gorbova Club):
+
+- 07.04.26 куплен тариф FULL (`b276d8a5…`) → подписка `0bd8a9fc…`, access_end_at = 07.05.26.
+- 28.04.26 куплен другой тариф — BUSINESS (`7c748940…`), order `603dd348…`, `payment_flow=renewal_one_time`.
+- Webhook вызвал `grant-access-for-order` без `extendFromCurrent: false`.
+- В функции (`supabase/functions/grant-access-for-order/index.ts`, строки 273-291) extend-логика ищет активную подписку **только по `product_id**`, без сравнения `tariff_id`. Нашла подписку FULL, продлила её от 07.05 на месяц → 07.06.26 и записала order `603dd348…` в `meta.extended_by_orders`.
+
+Это нарушает текущие memory-правила:
+
+- «Renewal exact match, no 1-month math» (entitlement-renewal-alignment) — продление допустимо только при совпадении тарифа.
+- «Replace requires explicit cancel → supersede» (safe-replacement-flow) — смена тарифа должна идти отдельным путём, а не молчаливым extend.
+- «Default-Deny» — extend сейчас работает «по умолчанию», что небезопасно.
+
+## Цель
+
+При оплате нового заказа на тот же продукт, но **другой тариф**, чем у уже активной подписки:
+
+- НЕ продлевать существующую подписку,
+- НЕ суммировать остаток дней,
+- создать новую подписку на 30 дней (или `tariff.access_days`) от даты оплаты,
+- старую активную подписку оставить как есть (отдельная запись со своим access_end_at) — её ручное закрытие/supersede остаётся прерогативой администратора.
+
+Если же тариф **совпадает** с активной подпиской — поведение не меняется (это легитимное продление того же тарифа).
+
+## Что меняем в коде
+
+Файл: `supabase/functions/grant-access-for-order/index.ts`
+
+1. В блоке поиска `activeSub` (строки 273-291) дополнительно сравнивать `tariff_id`:
+  - если `activeSub.tariff_id` задан и не равен `order.tariff_id` → НЕ использовать его как базу extend, оставить `existingProductSub = null`, `accessStartAt = baseStartDate` (дата оплаты).
+  - записать в логи и audit (`actor_type: 'system'`, action `grant-access-for-order.skip_extend_tariff_mismatch`) факт отказа от продления с указанием обоих tariff_id и subscription.id.
+2. Логика для club-продукта (calendar month, строки 299-316) и entitlement merge (GREATEST) остаётся, но т.к. `existingProductSub = null`, новая подписка получит свой собственный access-window от даты оплаты.
+3. Entitlement-merge (GREATEST) для одного `product_code` сохраняется — это правильно: пользователь не теряет доступ к продукту, пока активна старая подписка.
+
+Вызовы `grant-access-for-order` из webhook и admin-функций НЕ меняем — поведение по `extendFromCurrent=true` по умолчанию остаётся, но теперь оно безопасно ограничено совпадением тарифа.
+
+## Что НЕ трогаем
+
+- `bepaid-webhook`, `admin-manual-charge`, `public-charge-saved-card` и прочие точки вызова.
+- Логику calendar-month, entitlement GREATEST, idempotency guard.
+- Поведение admin-операций (ручные продления администратора через свои edge functions проходят отдельным путём).
+- Существующие подписки в БД (никаких миграций данных по кейсу Гузаревич — администратор поправит руками или отдельной задачей).
+
+## Проверка (DoD)
+
+- Новый заказ с tariff_id ≠ активной подписки → создаётся новая подписка с `access_start_at = order.created_at` (или now), `access_end_at = start + access_days` (или calendar-month), `extended_by_orders` старой подписки НЕ обновляется.
+- Новый заказ с тем же tariff_id → продление работает по-старому (extend).
+- В audit_logs появляется запись `grant-access-for-order.skip_extend_tariff_mismatch` с обоими tariff_id.
+- Idempotency guard продолжает корректно отрабатывать для повторного webhook одного и того же order.
+
+## Что обновим в memory
+
+После выполнения добавить правило в `mem://commercial-logic/access/extend-tariff-match-required` и упомянуть в Core: «Extend существующей подписки в `grant-access-for-order` допустим ТОЛЬКО при совпадении `tariff_id`. Покупка другого тарифа того же продукта = новая подписка от даты оплаты, без суммирования остатка дней. Замена тарифа — только через explicit cancel → supersede администратором.»
