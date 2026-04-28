@@ -871,6 +871,7 @@ export function ContactTelegramChat({
       setSelectedFile(null);
       setSelectedFileType(null);
       setIsUploading(false);
+      setReplyingTo(null);
       refetch();
       onMessageSent?.();
     },
