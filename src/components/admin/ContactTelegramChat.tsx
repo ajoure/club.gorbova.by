@@ -640,30 +640,13 @@ export function ContactTelegramChat({
             }
           );
 
-          // Auto-scroll: outgoing always; incoming — only if user near bottom.
+          // Auto-scroll: outgoing always; incoming — only if user was near bottom before render.
           // Otherwise increment unread badge so admin can jump down via FAB.
           const isFromAdmin = newMsg?.direction === "outgoing";
-          const _root = scrollRef.current;
-          const _viewport = _root?.querySelector(
-            "[data-radix-scroll-area-viewport]"
-          ) as HTMLElement | null;
-          const _nearBottom = _viewport
-            ? _viewport.scrollHeight - _viewport.scrollTop - _viewport.clientHeight < 200
-            : true;
+          const _nearBottom = isNearBottom();
 
           if (isFromAdmin || _nearBottom) {
-            // Двойной rAF — ждём, пока React докоммитит DOM нового сообщения.
-            requestAnimationFrame(() => {
-              requestAnimationFrame(() => {
-                const vp = scrollRef.current?.querySelector(
-                  "[data-radix-scroll-area-viewport]"
-                ) as HTMLElement | null;
-                if (vp) {
-                  vp.scrollTo({ top: vp.scrollHeight, behavior: "smooth" });
-                }
-                bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
-              });
-            });
+            startStickyScroll(2600);
           } else {
             setUnreadCount((c) => c + 1);
           }
@@ -679,6 +662,7 @@ export function ContactTelegramChat({
         },
         (payload) => {
           const updated = payload.new as any;
+          const shouldPin = isNearBottom();
           // Patch cache point-by-point: replace row by id (preserves order)
           queryClient.setQueryData(
             ["telegram-messages", userId],
@@ -701,6 +685,7 @@ export function ContactTelegramChat({
               return next;
             }
           );
+          if (shouldPin) startStickyScroll(2600);
         }
       )
       .subscribe();
@@ -711,7 +696,37 @@ export function ContactTelegramChat({
       }
       supabase.removeChannel(channel);
     };
-  }, [userId, queryClient]);
+  }, [userId, queryClient, isNearBottom, startStickyScroll]);
+
+  const mediaIdsNeedingUrls = useMemo(() => {
+    return (messages || [])
+      .filter((m: TelegramMessage) => {
+        const meta: any = m.meta || {};
+        return meta.storage_bucket && meta.storage_path && !meta.file_url && meta.upload_status === "ok";
+      })
+      .map((m) => m.id);
+  }, [messages]);
+
+  useEffect(() => {
+    const ids = mediaIdsNeedingUrls.filter((id) => !mediaUrlRequestsRef.current.has(id));
+    if (!ids.length) return;
+    ids.forEach((id) => mediaUrlRequestsRef.current.add(id));
+
+    supabase.functions.invoke("telegram-admin-chat", {
+      body: { action: "get_media_urls", message_ids: ids },
+    }).then(({ data, error }) => {
+      if (error || !data?.urls) return;
+      queryClient.setQueryData(["telegram-messages", userId], (old: TelegramMessage[] | undefined) => {
+        if (!old) return old;
+        return old.map((m) => {
+          const url = data.urls[m.id];
+          if (!url) return m;
+          return { ...m, meta: { ...(m.meta || {}), file_url: url } } as TelegramMessage;
+        });
+      });
+      if (isNearBottom()) startStickyScroll(2600);
+    });
+  }, [mediaIdsNeedingUrls, queryClient, userId, isNearBottom, startStickyScroll]);
 
   // === AUTO-REFRESH EFFECT FOR PENDING MEDIA ===
   // Polls every 10s if there are pending uploads, stops after 12 attempts (2 min)
