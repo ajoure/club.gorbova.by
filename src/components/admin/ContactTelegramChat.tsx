@@ -1378,12 +1378,24 @@ export function ContactTelegramChat({
         <div className={`relative max-w-[80%] min-w-0 ${msg.direction === "outgoing" ? "mr-1" : ""}`}>
           <div className="flex flex-col w-full min-w-0">
             <div className="relative">
+              {(() => {
+                const isPureVideoNote =
+                  fileType === "video_note" &&
+                  !msg.message_text &&
+                  !msg.reply_to_message_id;
+                return (
               <div
-                className={`rounded-lg p-3 break-words overflow-hidden ${
-                  msg.direction === "outgoing"
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted"
-                }`}
+                className={cn(
+                  "break-words overflow-hidden",
+                  isPureVideoNote
+                    ? "p-0 bg-transparent rounded-full"
+                    : cn(
+                        "rounded-lg p-3",
+                        msg.direction === "outgoing"
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-muted"
+                      )
+                )}
               >
                 <div className="flex items-center gap-1.5 mb-1">
                   {msg.direction === "outgoing" ? (
@@ -1544,6 +1556,8 @@ export function ContactTelegramChat({
                   )}
                 </div>
               </div>
+                );
+              })()}
 
               {/* Reply + Emoji controls — hover */}
               <div
