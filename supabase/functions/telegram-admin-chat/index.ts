@@ -149,15 +149,30 @@ function guessMimeType(fileName: string, kind: FileData["type"]) {
   return "application/octet-stream";
 }
 
+async function loadFileBytes(supabase: any, file: FileData): Promise<Uint8Array> {
+  if (file.storage_path) {
+    const bucket = file.storage_bucket || "telegram-media";
+    const { data, error } = await supabase.storage.from(bucket).download(file.storage_path);
+    if (error || !data) {
+      throw new Error(`Failed to load file from storage: ${error?.message || "no data"}`);
+    }
+    const ab = await data.arrayBuffer();
+    return new Uint8Array(ab);
+  }
+  if (!file.base64) throw new Error("File has neither base64 nor storage_path");
+  return base64ToBytes(file.base64);
+}
+
 async function telegramSendFile(
+  supabase: any,
   botToken: string,
   chatId: number,
   file: FileData,
   caption?: string,
   replyToMessageId?: number | null,
 ) {
-  // Convert base64 to bytes
-  const bytes = base64ToBytes(file.base64);
+  // Load bytes from base64 (small files) or storage (large files)
+  const bytes = await loadFileBytes(supabase, file);
 
   let contentType = guessMimeType(file.name, file.type);
   let fileName = file.name;
