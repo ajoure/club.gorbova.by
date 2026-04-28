@@ -711,6 +711,14 @@ export function AdminPaymentLinkDialog({
 
   const activeProducts = products?.filter((p) => p.is_active) || [];
 
+  // Stage L: для installment селект срока ОБЯЗАТЕЛЕН.
+  const installmentInvalid =
+    isInstallmentOffer &&
+    (!selectedInstallmentMonths ||
+      !installmentMaxMonths ||
+      selectedInstallmentMonths < 2 ||
+      selectedInstallmentMonths > installmentMaxMonths);
+
   const isCreateDisabled =
     createLinkMutation.isPending ||
     createPublicLinkMutation.isPending ||
@@ -718,7 +726,8 @@ export function AdminPaymentLinkDialog({
     !selectedTariffId ||
     !effectiveOffer ||
     amount <= 0 ||
-    isCurrentConflict;
+    isCurrentConflict ||
+    installmentInvalid;
 
   return (
     <>
