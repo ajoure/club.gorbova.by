@@ -1771,7 +1771,7 @@ export default function AdminProductDetailV2() {
               </CardContent>
             </Card>
 
-            {offerForm.offer_type === "pay_now" && (
+            {offerForm.offer_type === "pay_now" && offerForm.payment_method !== "internal_installment" && (
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm text-muted-foreground">Способ оплаты</CardTitle>
@@ -1789,16 +1789,6 @@ export default function AdminProductDetailV2() {
                         <div className="text-xs text-muted-foreground">Полная оплата сразу</div>
                       </Label>
                     </div>
-                    <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
-                      <RadioGroupItem value="internal_installment" id="internal_installment" />
-                      <Label htmlFor="internal_installment" className="cursor-pointer flex-1">
-                        <div className="font-medium flex items-center gap-2">
-                          <CreditCard className="h-4 w-4" />
-                          Внутренняя рассрочка
-                        </div>
-                        <div className="text-xs text-muted-foreground">Автоматические списания по графику</div>
-                      </Label>
-                    </div>
                     <div className="flex items-center space-x-3 p-3 rounded-lg border bg-muted/30 opacity-70">
                       <RadioGroupItem value="bank_installment" id="bank_installment" />
                       <Label htmlFor="bank_installment" className="cursor-pointer flex-1">
@@ -1807,88 +1797,83 @@ export default function AdminProductDetailV2() {
                       </Label>
                     </div>
                   </RadioGroup>
+                </CardContent>
+              </Card>
+            )}
 
-                  {/* Installment settings */}
-                  {offerForm.payment_method === "internal_installment" && (
-                    <Card>
-                      <CardHeader className="pb-2">
-                        <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
-                          <CreditCard className="h-4 w-4" />
-                          Настройка рассрочки
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <Label>Количество платежей</Label>
-                            <Input
-                              type="number"
-                              min={2}
-                              max={24}
-                              value={offerForm.installment_count === 0 ? "" : offerForm.installment_count}
-                              onChange={(e) => setOfferForm({ ...offerForm, installment_count: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
-                              onBlur={() => { if (offerForm.installment_count < 2) setOfferForm({ ...offerForm, installment_count: 2 }); }}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label>Интервал (дней)</Label>
-                            <Input
-                              type="number"
-                              min={7}
-                              max={90}
-                              value={offerForm.installment_interval_days === 0 ? "" : offerForm.installment_interval_days}
-                              onChange={(e) => setOfferForm({ ...offerForm, installment_interval_days: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
-                              onBlur={() => { if (offerForm.installment_interval_days < 7) setOfferForm({ ...offerForm, installment_interval_days: 7 }); }}
-                            />
-                          </div>
-                        </div>
+            {offerForm.offer_type === "pay_now" && offerForm.payment_method === "internal_installment" && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
+                    <CreditCard className="h-4 w-4" />
+                    Настройка рассрочки
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Максимальный срок рассрочки, мес</Label>
+                    <Input
+                      type="number"
+                      min={2}
+                      max={12}
+                      value={offerForm.installment_count === 0 ? "" : offerForm.installment_count}
+                      onChange={(e) => {
+                        const raw = e.target.value === "" ? 0 : parseInt(e.target.value) || 0;
+                        setOfferForm({ ...offerForm, installment_count: raw });
+                      }}
+                      onBlur={() => {
+                        const clamped = Math.max(2, Math.min(12, offerForm.installment_count || 6));
+                        if (clamped !== offerForm.installment_count) {
+                          setOfferForm({ ...offerForm, installment_count: clamped });
+                        }
+                      }}
+                      className="w-32"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Допустимо 2..12. Это верхний лимит. Реальное число платежей выберет клиент или администратор при оплате (от 2 до выбранного максимума).
+                    </p>
+                  </div>
 
-                        <div className="space-y-2">
-                          <Label>Первый платёж через (дней)</Label>
-                          <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-4">
-                            <Input
-                              type="number"
-                              min={0}
-                              max={30}
-                              value={offerForm.first_payment_delay_days}
-                              onChange={(e) => setOfferForm({ ...offerForm, first_payment_delay_days: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
-                              className="w-24"
-                            />
-                            <span className="text-sm text-muted-foreground">
-                              {offerForm.first_payment_delay_days === 0 ? "Сразу при покупке" : `Через ${offerForm.first_payment_delay_days} дней`}
-                            </span>
-                          </div>
-                        </div>
+                  <div className="text-xs text-muted-foreground border rounded-md p-3 bg-muted/30 space-y-1">
+                    <div>Интервал между платежами: <span className="font-medium text-foreground">30 дней</span> (фиксировано)</div>
+                    <div>Первый платёж: <span className="font-medium text-foreground">сразу при покупке</span> (фиксировано)</div>
+                  </div>
 
-                        {/* Payment schedule preview */}
-                        {offerForm.amount > 0 && offerForm.installment_count > 1 && (
-                          <div className="pt-3 border-t">
-                            <Label className="text-xs text-muted-foreground">График платежей:</Label>
-                            <div className="mt-2 space-y-1.5 max-h-32 overflow-y-auto">
-                              {Array.from({ length: offerForm.installment_count }, (_, i) => {
-                                const perPayment = offerForm.amount / offerForm.installment_count;
-                                const delay = offerForm.first_payment_delay_days + (i * offerForm.installment_interval_days);
-                                return (
-                                  <div key={i} className="flex justify-between text-sm">
-                                    <span className="text-muted-foreground">
-                                      {i + 1}. {delay === 0 ? "При покупке" : `Через ${delay} дн.`}
-                                    </span>
-                                    <span className="font-medium">
-                                      {perPayment.toFixed(2)} BYN
-                                    </span>
-                                  </div>
-                                );
-                              })}
+                  {offerForm.amount > 0 && offerForm.installment_count > 1 && (
+                    <div className="pt-3 border-t">
+                      <Label className="text-xs text-muted-foreground">
+                        Пример при максимальном сроке ({offerForm.installment_count} мес):
+                      </Label>
+                      {(() => {
+                        const N = offerForm.installment_count;
+                        const total = offerForm.amount;
+                        const perPayment = Math.round(total / N);
+                        const totalInstallment = perPayment * N;
+                        return (
+                          <div className="mt-2 space-y-1.5 text-sm">
+                            <div className="flex justify-between">
+                              <span className="text-muted-foreground">{N} платежей × {perPayment} BYN</span>
+                              <span className="font-medium">= ИТОГО {totalInstallment} BYN</span>
                             </div>
-                            <div className="mt-2 pt-2 border-t flex justify-between text-sm font-medium">
-                              <span className="text-muted-foreground">Итого:</span>
-                              <span>{offerForm.amount} BYN</span>
+                            <div className="text-xs text-muted-foreground pt-1">
+                              Сумма платежа округлена до целых BYN. Итог рассрочки рассчитан с учётом срока и может отличаться от полной цены ({total} BYN).
                             </div>
                           </div>
-                        )}
-                      </CardContent>
-                    </Card>
+                        );
+                      })()}
+                    </div>
                   )}
+                </CardContent>
+              </Card>
+            )}
+
+            {offerForm.offer_type === "pay_now" && offerForm.payment_method !== "internal_installment" && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">Подписка</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+
 
                   {/* Subscription toggle - only for full payment */}
                   {offerForm.payment_method === "full_payment" && (
