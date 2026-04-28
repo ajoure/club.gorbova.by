@@ -236,6 +236,8 @@ export function ContactTelegramChat({
   const [editingMessage, setEditingMessage] = useState<TelegramMessage | null>(null);
   const [editText, setEditText] = useState("");
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
+  const [replyingTo, setReplyingTo] = useState<TelegramMessage | null>(null);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
 
   // Fetch available bots
   const { data: telegramBots = [] } = useQuery({
