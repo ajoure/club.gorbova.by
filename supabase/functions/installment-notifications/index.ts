@@ -258,7 +258,7 @@ async function sendUpcomingPaymentNotification(installmentId: string): Promise<v
       </div>
       
       <p style="color: #6b7280;">
-        Убедитесь, что на вашей карте достаточно средств для списания.
+        Убедитесь, что на Вашей карте достаточно средств для списания.
       </p>
       
       <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
@@ -469,7 +469,7 @@ async function sendCompletionNotification(installmentId: string): Promise<void> 
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <h1 style="color: #10b981;">🎉 Рассрочка полностью оплачена</h1>
       <p>Здравствуйте${profile.full_name ? `, ${profile.full_name}` : ""}!</p>
-      <p>Поздравляем — вы полностью завершили оплату по рассрочке.</p>
+      <p>Поздравляем — Вы полностью завершили оплату по рассрочке.</p>
 
       <div style="background: #d1fae5; padding: 15px; border-radius: 8px; margin: 20px 0;">
         <p style="margin: 0;"><strong>Продукт:</strong> ${productName}</p>
