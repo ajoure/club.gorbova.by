@@ -2623,7 +2623,7 @@ Deno.serve(async (req) => {
                 meta: {
                   source: 'bepaid_link_order_installment_fallback',
                   order_id: linkOrder.id,
-                  installment_count: installmentCountFromMeta,
+                  installment_count: installmentCountFromOrderMeta,
                 },
               })
               .select('id')
@@ -2648,10 +2648,10 @@ Deno.serve(async (req) => {
             const scheduleResult = await generateInstallmentSchedule({
               supabase,
               offer: null, // в order_meta-режиме offer не нужен
-              order: { id: linkOrder.id, meta: linkOrderMeta },
+              order: { id: linkOrder.id, meta: linkOrderMetaForInstallment },
               subscription: { id: installmentSubV2Id },
               user: { id: linkOrder.user_id },
-              totalAmount: Number(linkOrderMeta.installment_total_amount_byn ?? 0),
+              totalAmount: Number(linkOrderMetaForInstallment.installment_total_amount_byn ?? 0),
               currency: linkOrder.currency || 'BYN',
               firstPayment: { paymentId: firstPaymentId },
               scheduleSource: 'order_meta',
