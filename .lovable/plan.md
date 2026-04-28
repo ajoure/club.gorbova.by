@@ -285,3 +285,32 @@ Source of truth конфигурации рассрочки — кнопка т�
 - Уведомления уходят.
 - Существующие subscription/payment-потоки не изменены (diff минимальный).
 - Создан backlog-документ по legacy `payment_token` — без исполнения.
+---
+
+## 10. Stage 3 — Cron lock + completion + audit (выполнено)
+
+### Read-only проверка enum subscriptions_v2.status
+
+- Фактические значения в БД: `active`, `trial`, `past_due`, `canceled`, `expired`, `superseded`.
+- `completed` отсутствует → используем `expired` + `meta.installment_completed_at`.
+- Стиль: `subscriptions_v2.status` = `canceled` (одно l), `installment_payments.status` = `cancelled` (два l).
+- CHECK constraint по `installment_payments.status` НЕ добавляется в этом спринте (вынесен в отдельный cleanup-патч).
+
+### Что сделано в `installment-charge-cron`
+
+1. **Атомарный lock pending → processing**: единый `update().eq('status','pending').select('id')`. Если 0 строк — параллельный cron уже захватил, skip.
+2. **Skip завершённых/отменённых подписок**: пропуск, если `subscriptions_v2.status ∈ {canceled, expired, superseded}` + audit `installment.skipped_subscription_inactive`.
+3. **Guard payment_number > total_payments**: skip + audit `installment.guard_payment_number_overflow`.
+4. **Completion после последнего платежа**: при `payment_number >= total_payments` подписка переводится в `expired`, `next_charge_at = NULL`, в `meta` пишется `installment_completed_at` и `installment_completed_payments`.
+5. **Audit `installment.completed`** с `subscription_id`, `order_id`, `total_payments`, `previous_status`, `new_status`.
+6. Удалён дублирующий update `status='processing'` внутри try (lock уже выполнен снаружи).
+7. Все логи и комментарии русифицированы там, где их видит человек.
+
+### DoD Stage 3 — выполнено
+
+- Атомарный lock защищает от двойного списания при параллельном cron. ✅
+- Guard блокирует overflow по payment_number. ✅
+- После последнего платежа подписка → `expired`, `next_charge_at=NULL`. ✅
+- `audit_logs.action = 'installment.completed'` пишется. ✅
+- Завершённые/отменённые подписки не списываются. ✅
+- CHECK constraint вынесен в отдельный cleanup-патч (не в scope). 📌
