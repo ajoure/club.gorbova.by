@@ -927,7 +927,7 @@ export function ContactTelegramChat({
       replyToMessageId?: number | null;
     }) => {
       let fileData:
-        | { type: string; name: string; base64?: string; storage_path?: string; storage_bucket?: string }
+        | { type: string; name: string; storage_path: string; storage_bucket: string }
         | undefined;
 
       if (file) {
