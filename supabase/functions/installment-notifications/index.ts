@@ -247,7 +247,7 @@ async function sendUpcomingPaymentNotification(installmentId: string): Promise<v
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <h1 style="color: #f59e0b;">📅 Напоминание о платеже</h1>
-      <p>Здравствуйте${profile.full_name ? `, ${profile.full_name}` : ""}!</p>
+      <p>Здравствуйте${greetSuffix(profile)}!</p>
       <p>Напоминаем, что через 3 дня будет списан очередной платёж по рассрочке.</p>
       
       <div style="background: #fef3c7; padding: 15px; border-radius: 8px; margin: 20px 0;">
@@ -306,7 +306,7 @@ async function sendSuccessNotification(installmentId: string): Promise<void> {
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <h1 style="color: #10b981;">✅ Платёж прошёл успешно</h1>
-      <p>Здравствуйте${profile.full_name ? `, ${profile.full_name}` : ""}!</p>
+      <p>Здравствуйте${greetSuffix(profile)}!</p>
       <p>Платёж по рассрочке успешно списан.</p>
       
       <div style="background: #d1fae5; padding: 15px; border-radius: 8px; margin: 20px 0;">
@@ -363,7 +363,7 @@ async function sendFailedNotification(installmentId: string): Promise<void> {
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <h1 style="color: #ef4444;">❌ Ошибка при списании</h1>
-      <p>Здравствуйте${profile.full_name ? `, ${profile.full_name}` : ""}!</p>
+      <p>Здравствуйте${greetSuffix(profile)}!</p>
       <p>К сожалению, не удалось списать платёж по рассрочке.</p>
       
       <div style="background: #fee2e2; padding: 15px; border-radius: 8px; margin: 20px 0;">
@@ -468,7 +468,7 @@ async function sendCompletionNotification(installmentId: string): Promise<void> 
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <h1 style="color: #10b981;">🎉 Рассрочка полностью оплачена</h1>
-      <p>Здравствуйте${profile.full_name ? `, ${profile.full_name}` : ""}!</p>
+      <p>Здравствуйте${greetSuffix(profile)}!</p>
       <p>Поздравляем — Вы полностью завершили оплату по рассрочке.</p>
 
       <div style="background: #d1fae5; padding: 15px; border-radius: 8px; margin: 20px 0;">
