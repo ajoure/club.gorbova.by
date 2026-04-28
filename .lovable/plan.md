@@ -1,96 +1,87 @@
-## да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. Для `telegram-send-notification` включить `parse_mode='Markdown'`, но перед этим убедиться, что шаблоны не содержат конфликтных символов, которые сломают Markdown. Если риск есть — использовать `MarkdownV2` только после escape-helper, иначе оставить обычный `Markdown`.
-2. `telegram_logs` для `custom/manual_notification` не должны дублировать полный `message_text`, если сообщение уже зеркалится в `telegram_messages`.
-3. Дедуп в UI расширить:
-  &nbsp;
-  - `custom`
-  - `manual_notification`
-  - `telegram.notification.sent`
-  - `SEND_REMINDER`  
-  только для `status='success'`.
-4. `skipped/failed` события не скрывать.
-5. Inline-кнопки в bubble стилизовать как нормальные кнопки под сообщением, не как технические бейджи.
-
-&nbsp;
+1. Не трогать остальные вкладки. Правка должна быть условной только для `TabsContent value="telegram"`.
+2. В `ContactTelegramChat.tsx` лучше убрать `sticky bottom-0` и оставить composer как `shrink-0` в flex-layout.
+3. После патча проверить, что внешний `pb-24` не применяется к Telegram-вкладке.
+4. Автоскролл сделать без `window.scrollTo`: только Radix viewport + `bottomRef`.
 
 Можно выполнять.
 
 &nbsp;
 
-План: Чистый ТГ-чат админа — без дублей, с жирным и нативными кнопками
+План:
 
-### Diagnose (что реально показывается на скрине)
-
-- **Bubble «💼 *Оплата подписки*…» + pill «custom 28.04 20:55» с тем же текстом** — это один и тот же исходящий админ-месседж, но записанный в **двух** таблицах:
-  - `telegram_messages` (источник bubble) — пишется через `logAutomatedTelegramMessage` в `telegram-send-notification`.
-  - `telegram_logs` (источник pill) — там же ниже пишется ряд с `action = message_type = 'custom'` и `message_text = тот же текст`.
-  - В UI `ContactTelegramChat.isMirroredEvent` дедуплицирует только `SEND_REMINDER` / `manual_notification` / `MANUAL_NOTIFICATION`, поэтому `custom` остаётся как pill → визуальный дубль.
-  - `'custom'` отсутствует в `EVENT_LABELS`, поэтому показывается сырой ключ вместо человеческого названия.
-- `***Оплата подписки*` отображается со звёздочками вместо жирного** — `telegram-send-notification` отправляет `sendMessage` **без `parse_mode**`. Шаблон в `AdminPaymentLinkDialog.buildTelegramMessage` написан под Markdown — его не парсит ни клиент, ни админ-зеркало.
-- **Кнопка "Ссылка на оплату" выглядит как маленький pill, а не как нативная Telegram-кнопка под пузырём** — в `ContactTelegramChat` inline-кнопки рендерятся как тонкие `px-2 py-1 rounded-md` бэйджи, а не как блок-кнопки во всю ширину пузыря в стиле Telegram.
-- **«Часто 2 разных сообщения с одним смыслом»** — для напоминаний `SEND_REMINDER` мирор-дедупликатор работает только в окне ±120 с. Если запись `telegram_logs` создаётся раньше/позже bubble (а в `subscription-renewal-reminders` именно так — сначала sendMessage, потом `logAutomatedTelegramMessage`, потом `telegram_logs.insert`), окна может не хватить → админ видит и pill, и bubble.
-
-### Fix
-
-#### 1. Markdown-жирный для админских ссылок (источник «звёздочек у клиента»)
-
-`supabase/functions/telegram-send-notification/index.ts`: в `sendMessage` добавить `parse_mode: 'Markdown'` и аккуратное падение на plain-text при ошибке `400 can't parse entities` (повторный send без `parse_mode`). Это закрывает все админские шаблоны (Payment-Link Dialog, ручные уведомления и др.) без правок UI.
-
-Дополнительно — в `_shared/log-automated-telegram.ts` сохранять `meta.parse_mode = 'Markdown'`, чтобы зеркало в админке знало, как рендерить.
-
-#### 2. Убрать дубль pill «custom …» для админских отправок ссылок
-
-В `ContactTelegramChat.tsx` `isMirroredEvent`:
-
-- Расширить условие зеркалирования: pill скрывается, если соответствующая bubble есть в `telegram_messages` в окне **±5 мин** для **любого** события, у которого:
-  - `status === 'success'` И
-  - есть `message_text`, который буквально совпадает с `message_text` существующей bubble (нормализуем — trim + collapse whitespace).
-- Это закрывает `custom`, `manual_notification`, `SEND_REMINDER` и любые будущие admin-message-type без поддержки в whitelist.
-
-В `src/lib/eventLabels.ts` добавить русские лейблы для оставшихся технических кодов (`custom → "Сообщение от админа"`, `telegram.notification.sent`, `telegram.notification.failed`, `telegram.notification.blocked`) — чтобы при failed/skipped pill всё-таки оставался читаемым.
-
-#### 3. Не писать дубль `telegram_logs` для уже зеркалированной bubble
-
-В `telegram-send-notification` после успешной записи в `telegram_messages` (через `logAutomatedTelegramMessage`) **не** писать также ряд в `telegram_logs` с `action = message_type` для админских ручных типов (`custom`, `manual_notification`). Аудит остаётся в `audit_logs.telegram.notification.sent` (уже пишется выше) — так SOT не размазывается по двум таблицам.
-
-Поведение для service_role / шаблонных уведомлений (`access_revoked`, `reminder_*`, `card_*`) **не трогаем** — для них pill в админке нужен как «системное событие».
-
-#### 4. Нативный Telegram-вид inline-кнопок в bubble
-
-`ContactTelegramChat.tsx` — рендер `urlRows`:
-
-- Кнопки вытянуть на всю ширину пузыря (`w-full justify-center`), увеличить высоту (`h-8`), скруглить как в TG (`rounded-lg`), тонкая разделительная линия сверху от текста (`border-t pt-2 mt-2`).
-- В `outgoing` (синий пузырь) — белая полупрозрачная заливка с белым текстом, в `incoming` — `bg-background` с акцентным текстом (как в TG: ссылочные кнопки выделены цветом, не серые).
-
-#### 5. Запретить «два разных сообщения с одним смыслом» от cron-напоминаний
-
-`subscription-renewal-reminders/index.ts`:
-
-- Добавить `parse_mode: 'Markdown'` в `sendMessage` уже стоит — оставить.
-- Перенести запись `telegram_logs` для `success` **под флаг** `mirrored_to_telegram_messages = true` (в `meta` уже пишется), но без вставки нового ряда — единственным следом останется bubble + audit. Pill будет создаваться **только** для `skipped`/`failed` (диагностика для админа).
-- Это исключает гонку «pill раньше bubble на >2 мин» по построению.
-
-### DoD
-
-- В чате контакта Telegram при отправке ссылки админом видно **ровно один** пузырь от gorbova_support: жирный заголовок, продукт/тариф/стоимость/тип, и под ним — нативная кнопка «💳 Ссылка на оплату» во всю ширину. Никаких pill «custom …» рядом.
-- При получении того же сообщения у клиента в Telegram `*Оплата подписки*` рендерится жирным, без литеральных звёздочек.
-- Cron-напоминание (`subscription_reminder_*d`): в админке один пузырь с inline-кнопками, без дублирующего pill «SEND_REMINDER».
-- Failed/skipped-события напоминаний остаются как pill (с пояснением `· не отправлено` / `· ошибка отправки`) — диагностика не теряется.
-- Все технические коды (`custom`, `telegram.notification.*`) при необходимости отображаются по-русски через `EVENT_LABELS`, без сырых строк.
-
-### Verify (после деплоя)
-
-1. `AdminPaymentLinkDialog` → выбрать тариф Gorbova Club → «Создать и отправить в Telegram» → проверить:
-  - Bubble: жирный заголовок, кнопка во всю ширину снизу.
-  - Нет pill «custom».
-  - У клиента в Telegram заголовок жирный.
-2. Дождаться cron `subscription-renewal-reminders` (или ручной trigger) → в чате реального подписчика — один пузырь, без `SEND_REMINDER` pill.
-3. SQL-проверка после смоука:
-  ```sql
-   SELECT created_at, action, status, message_text IS NOT NULL AS has_text
-   FROM telegram_logs
-   WHERE user_id = :uid AND created_at > now() - interval '1 hour'
-   ORDER BY created_at DESC LIMIT 20;
-  ```
-   Не должно быть рядов с `action='custom'` и тем же `message_text`, что и в `telegram_messages`. Должны остаться только success-логи без `message_text` либо failed/skipped с `message_text`.
+1. **Проблема**
+  - При открытии контакта на вкладке Telegram карточка чата не показывает последние сообщения и поле ввода сразу.
+  - Текущий патч оказался недостаточным: внешний контейнер карточки контакта всё еще скроллится целиком, поэтому `sticky bottom-0` внутри чата не гарантирует видимость композера.
+2. **Диагностика**
+  - Проверены правила `docs/ENGINEERING_RULES.md`.
+  - Проверены существующие UI-компоненты, новые компоненты создавать не нужно.
+  - Основная причина в `src/components/admin/ContactDetailSheet.tsx`:
+    - все вкладки обернуты во внешний контейнер `div ref={scrollContainerRef} className="flex-1 overflow-y-auto"`;
+    - внутри него есть общий wrapper `px-4 sm:px-6 py-4 pb-24`;
+    - Telegram-вкладка размещена внутри этого общего скролла и не получает настоящую фиксированную высоту viewport-карточки;
+    - из-за этого `ContactTelegramChat` может расширяться по содержимому, а не занимать остаток высоты, и поле ввода уезжает вниз вместе с внешним скроллом.
+  - Дополнительная причина в `src/components/admin/ContactTelegramChat.tsx`:
+    - автоскролл ищет viewport Radix ScrollArea и выставляет `scrollTop`, но при внешнем скролле родителя это не решает проблему;
+    - эффект зависит от `chatItems.length`, но при поздней догрузке высоты/контента возможен момент, когда контейнер еще не имеет финальной высоты.
+  - Браузерная проверка через preview не дала полезного UI-снимка: тестовая сессия открылась пустым белым экраном, поэтому опираюсь на кодовую диагностику и предоставленный скрин.
+3. **Предлагаемое решение**
+  - Разделить поведение вкладки Telegram и остальных вкладок:
+    - обычные вкладки оставить во внешнем скролле как сейчас;
+    - Telegram-вкладку вывести в режим `flex-1 min-h-0 overflow-hidden`, чтобы скроллилась только область сообщений внутри чата, а не вся карточка контакта.
+  - В `ContactDetailSheet.tsx` убрать для Telegram общий wrapper с `pb-24`, который искусственно добавляет нижний отступ и ломает расчет высоты.
+  - Для Telegram сделать отдельный контейнер:
+    - `flex-1 min-h-0 overflow-hidden px-4 sm:px-6 py-3`;
+    - профильная Telegram-карточка сверху — `shrink-0`;
+    - сам чат — `flex-1 min-h-0 overflow-hidden`.
+  - В `ContactTelegramChat.tsx` усилить внутреннюю геометрию:
+    - корень оставить `h-full min-h-0 flex flex-col`;
+    - ScrollArea сообщений сделать единственным скроллящимся блоком;
+    - композер сделать обычным `shrink-0` внизу flex-контейнера, без reliance на `sticky`, потому что sticky не нужен, когда родитель правильно ограничен по высоте;
+    - добавить безопасный нижний отступ для safe-area без увеличения высоты всего чата.
+  - Усилить автоскролл:
+    - при смене `userId` и при первом завершении загрузки выполнять прокрутку Radix viewport к низу;
+    - дополнительно использовать `bottomRef.current?.scrollIntoView({ block: "end" })` как fallback;
+    - повторить один короткий deferred-scroll после layout paint, чтобы поймать позднюю отрисовку сообщений.
+4. **Изменяемые компоненты**
+  - `src/components/admin/ContactDetailSheet.tsx`
+    - изменить layout оберток вокруг `TabsContent`, особенно для `value="telegram"`.
+  - `src/components/admin/ContactTelegramChat.tsx`
+    - изменить layout ScrollArea/композера и fallback автоскролла.
+  - Таблицы, RPC, backend functions, cron/jobs, enum не меняются.
+5. **Что не будет изменено**
+  - Не меняю отправку Telegram-сообщений.
+  - Не меняю дедупликацию сообщений.
+  - Не меняю Telegram API / backend functions.
+  - Не создаю новые UI-компоненты.
+  - Не трогаю бизнес-логику контактов, событий, оплат или доступов.
+6. **Dry-run**
+  - До патча проверить только структуру классов и текущие scroll-containers:
+    - внешний scroll `scrollContainerRef`;
+    - Telegram `TabsContent`;
+    - `ContactTelegramChat` root;
+    - `ScrollArea` viewport;
+    - composer block.
+  - Убедиться, что исправление не затронет остальные вкладки карточки контакта.
+7. **Execute**
+  - Внести минимальный UI-патч в 2 файла.
+  - Перевести Telegram-вкладку из общего document-like scroll в bounded flex layout.
+  - Убрать зависимость видимости поля ввода от внешней прокрутки.
+  - Усилить scroll-to-bottom на первом открытии и после догрузки сообщений.
+8. **STOP-guards**
+  - Остановиться, если окажется, что `ContactDetailSheet` используется в другом месте с другим layout-контрактом и изменение ломает другие сценарии.
+  - Не менять backend и данные, если проблема подтверждается как чисто UI/layout.
+  - Не добавлять новый scroll wrapper, если можно исправить существующую структуру.
+  - Не использовать глобальный `window.scrollTo` как основное решение: проблема внутри Sheet/ScrollArea, не на уровне страницы.
+9. **DoD**
+  - При открытии контакта и переходе на вкладку Telegram поле ввода видно сразу внизу карточки.
+  - Последние сообщения видны сразу без ручного скролла вниз.
+  - Скролл колесом/трекпадом работает только в области сообщений чата, а не уводит композер за пределы карточки.
+  - Профильная Telegram-информация остается сверху, чат занимает оставшуюся высоту.
+  - Остальные вкладки контакта продолжают скроллиться как раньше.
+10. **Риски и зависимости**
+  - Если высота окна очень маленькая, профильная Telegram-карточка может занимать много места; тогда сообщения останутся скроллируемыми, а композер все равно должен быть видим.
+  - Если данные приходят асинхронно несколькими волнами, нужен повторный scroll-to-bottom после финальной отрисовки — это будет учтено fallback-скроллом.
+11. **Требуется дополнительная информация**
+  - Дополнительная информация от пользователя не требуется. Проблема локализована в layout Telegram-вкладки и внутреннем ScrollArea.
