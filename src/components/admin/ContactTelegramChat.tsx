@@ -1437,11 +1437,18 @@ export function ContactTelegramChat({
             <div className="relative">
               {(() => {
                 const isVideoNoteMsg = fileType === "video_note";
+                // Прозрачный пузырь для чисто-медиа сообщений (фото/видео/аудио/голос/кружок)
+                // без текста и без цитаты — как у видео-кружков
+                const isPureMediaMsg =
+                  isMediaLike &&
+                  !msg.message_text &&
+                  !msg.reply_to_message_id;
+                const transparentBubble = isVideoNoteMsg || isPureMediaMsg;
                 return (
               <div
                 className={cn(
                   "break-words overflow-hidden",
-                  isVideoNoteMsg
+                  transparentBubble
                     ? "p-0 bg-transparent rounded-none"
                     : cn(
                         "rounded-lg p-3",
