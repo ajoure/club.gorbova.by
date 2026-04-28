@@ -143,17 +143,16 @@ interface TelegramEvent {
 
 type ChatItem = TelegramMessage | TelegramEvent;
 
-function arrayBufferToBase64(buffer: ArrayBuffer) {
-  const bytes = new Uint8Array(buffer);
-  const chunkSize = 0x8000;
-  let binary = "";
-
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, i + chunkSize);
-    binary += String.fromCharCode.apply(null, Array.from(chunk) as any);
-  }
-
-  return btoa(binary);
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      resolve(result.includes(",") ? result.split(",")[1] : result);
+    };
+    reader.onerror = () => reject(reader.error || new Error("file_read_failed"));
+    reader.readAsDataURL(file);
+  });
 }
 
 // Only Telegram-supported reaction emojis (whitelist)
@@ -276,12 +275,17 @@ export function ContactTelegramChat({
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const prevMessageCountRef = useRef<number>(0);
+  const localMediaUrlsRef = useRef<string[]>([]);
+  const stickyScrollUntilRef = useRef(0);
+  const shouldStickToBottomRef = useRef(true);
+  const mediaUrlRequestsRef = useRef<Set<string>>(new Set());
+  const STICKY_THRESHOLD = 260;
 
   // === AUTO-REFRESH FOR PENDING MEDIA ===
   const pendingAutoRefreshRef = useRef<number | null>(null);
   const pendingRefreshCountRef = useRef(0);
-  const MAX_PENDING_REFRESH_ATTEMPTS = 12; // 2 minutes at 10s interval
-  const PENDING_REFRESH_INTERVAL = 10000; // 10 seconds
+  const MAX_PENDING_REFRESH_ATTEMPTS = 30; // 1 minute at 2s interval
+  const PENDING_REFRESH_INTERVAL = 2000; // 2 seconds
 
   function mergeByIdPreferEnriched(prev: TelegramMessage[], next: TelegramMessage[]) {
     const map = new Map<string, TelegramMessage>();
