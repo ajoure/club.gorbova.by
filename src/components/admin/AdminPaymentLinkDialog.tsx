@@ -249,11 +249,7 @@ export function AdminPaymentLinkDialog({
     if (legacy >= 2) return Math.min(12, legacy);
     return null;
   }, [isInstallmentOffer, effectiveOffer]);
-  // Round half-up до целых BYN.
-  const installmentPerPayment = useMemo(() => {
-    if (!isInstallmentOffer || !selectedInstallmentMonths || amountSafeForInstallment <= 0) return null;
-    return Math.round(amountSafeForInstallment / selectedInstallmentMonths);
-  }, [isInstallmentOffer, selectedInstallmentMonths, /* placeholder */]);
+  // per_payment считаем in-place там, где нужен amount — выше по модулю он ещё не объявлен.
 
   // Список всех active pay_now offers (для select override) — без фильтрации по типу
   const activeOffers = useMemo(
