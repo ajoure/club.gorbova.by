@@ -333,43 +333,80 @@ Source of truth конфигурации рассрочки — кнопка т�
    - `installment-charge-cron-evening` — `0 18 * * *` → `installment-charge-cron`
    - `installment-notifications-upcoming-daily` — `0 10 * * *` → `installment-notifications` с `action: upcoming`
 
-### DoD Stage 4 — выполнено
+### DoD Stage 4 — статус: технически принято, runtime-proof открыт
 
-- ✅ Cron jobs созданы и активны (jobid 45/46/47, проверено `cron.job`).
-- ✅ Audit-события `installment.notification_*` пишутся в `audit_logs` для каждого вызова уведомления (proof: после первого боевого прогона).
-- ✅ Финальный платёж шлёт отдельное письмо «🎉 Рассрочка полностью оплачена».
-- ✅ Уведомление best-effort: HTTP-ошибка/exception не ломает основной flow charge.
-- ✅ Существующий Telegram-уведомитель о неудаче (`sendPaymentFailureNotification`) не тронут.
+**Технически выполнено:**
+- ✅ Cron jobs созданы и активны (jobid 45/46/47, проверено `cron.job` — `active = true`).
+- ✅ Add-only action `completion` (отдельный шаблон «🎉 Рассрочка полностью оплачена»); `success|failed|upcoming` не тронуты.
+- ✅ `notifyWithAudit` в `installment-charge-cron`: best-effort, HTTP-ошибка/exception никогда не ломает charge.
+- ✅ Audit helper для `installment.notification_*` подключён к каждому пути (`success`, `failed`, `completion`, `request_failed`).
+- ✅ Существующий Telegram-уведомитель (`sendPaymentFailureNotification`) не тронут.
 
-### Observation (не blocker)
+**Runtime-proof — открыто до первого боевого прогона:**
 
-- `email_send_log` остаётся пустым по installment-уведомлениям, потому что `installment-notifications` шлёт через прямой SMTP (Yandex), минуя `send-transactional-email` / pgmq queue. Это известное архитектурное расхождение, вынесено в backlog `PAY-installment-email-unification`.
+Cron job нельзя считать закрытым только по факту создания. Закрытие требует:
 
-### SQL-proof (выполнить после первого боевого прогона)
+1. **Первый успешный запуск каждого job** — подтверждение через `cron.job_run_details`:
+   ```sql
+   SELECT j.jobname, r.start_time, r.status, r.return_message
+   FROM cron.job_run_details r
+   JOIN cron.job j ON j.jobid = r.jobid
+   WHERE j.jobname LIKE 'installment-%'
+   ORDER BY r.start_time DESC LIMIT 20;
+   ```
+   Ожидание: `status='succeeded'` минимум по одному запуску каждого из трёх job (`-morning`, `-evening`, `-upcoming-daily`).
 
-```sql
--- 1) cron jobs активны
-SELECT jobname, schedule, active FROM cron.job WHERE jobname LIKE 'installment-%';
+2. **Audit-события записаны** для реального installment (не теста):
+   ```sql
+   SELECT action, created_at, meta->>'installment_id' AS installment_id,
+          meta->>'notification_action' AS notification_action,
+          meta->>'http_status' AS http_status
+   FROM audit_logs
+   WHERE action LIKE 'installment.notification_%'
+   ORDER BY created_at DESC LIMIT 20;
+   ```
+   Ожидание: ≥1 запись `success_requested` или `failed_requested` после первого вечернего/утреннего запуска.
 
--- 2) audit-события уведомлений (последние 20)
-SELECT action, created_at, meta->>'installment_id' AS installment_id,
-       meta->>'notification_action' AS notification_action,
-       meta->>'http_status' AS http_status
-FROM audit_logs
-WHERE action LIKE 'installment.notification_%'
-ORDER BY created_at DESC LIMIT 20;
+3. **Audit helper sanity** — отсутствие `notification_request_failed` без причины:
+   ```sql
+   SELECT count(*) FILTER (WHERE action='installment.notification_request_failed') AS failed,
+          count(*) FILTER (WHERE action='installment.notification_success_requested') AS success_req,
+          count(*) FILTER (WHERE action='installment.notification_completion_requested') AS completion_req
+   FROM audit_logs
+   WHERE action LIKE 'installment.notification_%' AND created_at > now() - interval '7 days';
+   ```
+   Если `failed > 0` без соответствующего `success_req`/`completion_req` — расследовать (HTTP 401/500/timeout).
 
--- 3) email_send_log по тестовому installment (ожидается пусто из-за прямого SMTP)
-SELECT template_name, recipient_email, status, message_id, created_at
-FROM email_send_log
-WHERE template_name ILIKE '%installment%'
-   OR metadata->>'installment_id' IS NOT NULL
-ORDER BY created_at DESC LIMIT 10;
-```
+4. **Completion notification** — обязательная отдельная проверка после первой реально завершённой рассрочки:
+   ```sql
+   -- найти installment с payment_number = total_payments и status='paid'
+   SELECT ip.id, ip.order_id, ip.payment_number, ip.total_payments, ip.status, ip.paid_at
+   FROM installment_payments ip
+   WHERE ip.payment_number = ip.total_payments AND ip.status = 'paid'
+   ORDER BY ip.paid_at DESC LIMIT 5;
+
+   -- по ним должно быть ровно одно audit completion_requested
+   SELECT meta->>'installment_id', count(*)
+   FROM audit_logs
+   WHERE action = 'installment.notification_completion_requested'
+     AND meta->>'installment_id' = ANY(ARRAY[<ids выше>])
+   GROUP BY 1;
+   ```
+   Ожидание: ровно `1` на каждый завершённый installment. `0` или `>1` — баг.
+
+5. **`email_send_log` — статус риска: MEDIUM, не «ожидается пусто»:**
+
+   `installment-notifications` шлёт через прямой SMTP (Yandex), минуя `send-transactional-email` и pgmq queue. Это означает:
+   - **Нет proof-цепочки доставки** для installment-писем (не видно `sent`/`failed`/`bounced`/`dlq`).
+   - **Нет suppression-чекинга** — письмо уйдёт даже на адрес из `suppressed_emails`.
+   - **Нет retry на 5xx/429** — одна сетевая ошибка SMTP теряет письмо.
+   - **Нет единого логгинга** — жалоба «не пришло письмо о платеже» не воспроизводится через `email_send_log`.
+
+   Это **не blocker для Stage 4**, но требует закрытия через `PAY-installment-email-unification` (см. backlog) до роста объёма installment-уведомлений.
 
 ---
 
 ## Backlog
 
-- **PAY-installment-notify-TG** — расширить `installment-notifications` Telegram-каналом (success / failed / completion / upcoming). Сейчас только email + один точечный TG для failed внутри `installment-charge-cron`. Скоп вне Stage 4.
-- **PAY-installment-email-unification** — перевести `installment-notifications` на общий `send-transactional-email` (React Email + pgmq queue), чтобы все installment-письма попадали в `email_send_log` и проходили через suppression/retry pipeline. Сейчас прямой SMTP через Yandex.
+- **PAY-installment-notify-TG** — *priority: normal*. Расширить `installment-notifications` Telegram-каналом (success / failed / completion / upcoming). Сейчас только email + один точечный TG для failed внутри `installment-charge-cron`.
+- **PAY-installment-email-unification** — *priority: HIGH*. Перевести `installment-notifications` на общий `send-transactional-email` (React Email + pgmq queue). Без этого нет единого proof/logging по installment-письмам, нет suppression-чекинга, нет retry. Блокирует полноценный runtime-proof Stage 4 и диагностику жалоб «не пришло письмо».
