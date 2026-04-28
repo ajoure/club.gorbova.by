@@ -410,3 +410,130 @@ Cron job нельзя считать закрытым только по факт
 
 - **PAY-installment-notify-TG** — *priority: normal*. Расширить `installment-notifications` Telegram-каналом (success / failed / completion / upcoming). Сейчас только email + один точечный TG для failed внутри `installment-charge-cron`.
 - **PAY-installment-email-unification** — *priority: HIGH*. Перевести `installment-notifications` на общий `send-transactional-email` (React Email + pgmq queue). Без этого нет единого proof/logging по installment-письмам, нет suppression-чекинга, нет retry. Блокирует полноценный runtime-proof Stage 4 и диагностику жалоб «не пришло письмо».
+
+---
+
+## Stage L — Рассрочка через публичные ссылки оплаты (PAY-installment-public-link)
+
+**Источник проблемы:** при создании ссылки оплаты из карточки контакта по офферу с `payment_method='internal_installment'` (например, оффер «2 этапа», ссылка `872b0603a4c47b8ce29f8d97370a2547`) после оплаты не создаётся `subscriptions_v2` и не материализуются `installment_payments`. Заказ оформляется как разовый.
+
+### Базовый принцип переиспользования (обязательный)
+
+- Логика создания installment-заказа из публичной ссылки **должна быть идентична** ветке «direct charge» (создание из карточки контакта по кнопке «Разовый платёж» / «Подписка»).
+- **Запрещено** создавать в `bepaid-webhook` отдельную новую логику рассрочки. Используется только общий helper `_shared/installment-schedule.ts` (или существующий контракт direct-charge), чтобы public-link и direct-charge порождали одинаковые `installment_payments` (одна и та же форма записей: `installment_id`, `payment_number`, `total_payments`, `amount`, `status`, `due_at`).
+- UI-кнопки «Разовый платёж», «Подписка» и (новая) «Рассрочка» в `AdminPaymentLinkDialog` должны разделять единый writer-путь (`admin-create-public-link`), отличаясь только полями контракта, а не отдельными ветками вызова.
+
+### STOP-guard перед началом execute
+
+1. **Read-only proof обязателен ДО любых изменений.** Без него Stage L не стартует. Минимум:
+   ```sql
+   -- 1. сама ссылка
+   SELECT id, url_token, product_id, tariff_id, offer_id, payment_type, amount, currency, meta, status
+   FROM payment_links
+   WHERE url_token = '872b0603a4c47b8ce29f8d97370a2547';
+
+   -- 2. оффер «2 этапа» — payment_method, installment_count, installment_interval_days, first_payment_delay_days
+   SELECT id, title, payment_method, price, currency,
+          installment_count, installment_interval_days, first_payment_delay_days, meta
+   FROM tariff_offers
+   WHERE id = (SELECT offer_id FROM payment_links WHERE url_token = '872b0603a4c47b8ce29f8d97370a2547');
+
+   -- 3. что лежит в meta ссылки (ключевой вход для STOP-guard ниже)
+   SELECT meta FROM payment_links WHERE url_token = '872b0603a4c47b8ce29f8d97370a2547';
+
+   -- 4. фактические заказы по этой ссылке
+   SELECT id, status, amount, created_at, meta->>'payment_link_id' AS link_id, meta->>'installment_id' AS installment_id
+   FROM orders_v2
+   WHERE meta->>'payment_link_id' = (SELECT id::text FROM payment_links WHERE url_token = '872b0603a4c47b8ce29f8d97370a2547')
+   ORDER BY created_at DESC;
+
+   -- 5. installment_payments по этим заказам (ожидание: пусто — это и есть баг)
+   SELECT ip.* FROM installment_payments ip
+   WHERE ip.order_id IN (
+     SELECT id FROM orders_v2
+     WHERE meta->>'payment_link_id' = (SELECT id::text FROM payment_links WHERE url_token = '872b0603a4c47b8ce29f8d97370a2547')
+   );
+   ```
+2. **STOP-guard по схеме `payment_links`.** Если `payment_links.meta` уже содержит достаточные installment-данные (например, `meta.payment_method='internal_installment'` + `meta.installment_count` + `meta.installment_interval_days` + `meta.first_payment_delay_days`, или `meta.offer_snapshot` с теми же полями) — **новую миграцию колонок не делать**. Использовать существующий meta-контракт в writer и webhook.
+3. Контракт колонок добавляется только если meta-контракт объективно недостаточен (нельзя надёжно прочитать installment-параметры из `meta` или из связанного `tariff_offers` по `offer_id`).
+
+### Stage L1 — UI: распознавание installment-оффера в карточке контакта
+
+- В `AdminPaymentLinkDialog` (карточка контакта) при выборе оффера с `payment_method='internal_installment'`:
+  - тип ссылки определяется как **«Рассрочка»**, не «Подписка» и не «Разовая»;
+  - подпись на кнопке/чипе — «Рассрочка», локализация только русская;
+  - в форму подтягиваются `installment_count`, `installment_interval_days`, `first_payment_delay_days` из `tariff_offers` (read-only превью, не редактируется здесь);
+  - в writer (`admin-create-public-link`) передаются те же поля, что и в существующих ветках direct-charge для рассрочки (никаких новых параметров без необходимости).
+- **Переиспользование:** общий компонент выбора оффера/тарифа и тот же payload-builder, что используется для «Разовый платёж» и «Подписка». Отдельной формы для рассрочки не создавать.
+
+### Stage L2 — Контракт хранения (meta-first)
+
+1. **Сначала** — попытка сохранить installment-параметры в `payment_links.meta`:
+   ```json
+   {
+     "payment_method": "internal_installment",
+     "installment_count": 2,
+     "installment_interval_days": 30,
+     "first_payment_delay_days": 0,
+     "offer_id": "<uuid>"
+   }
+   ```
+   `admin-create-public-link` валидирует наличие этих полей при `payment_method='internal_installment'`, ошибка валидации → 400 без записи.
+2. **Только если** в `payment_links_enriched_v` или в downstream-чтении meta-контракт оказывается недостаточным (например, нужна индексация/фильтрация по `payment_method` на больших объёмах) — отдельной миграцией добавить колонки `payment_method`, `installment_count`, `installment_interval_days`, `first_payment_delay_days`. Это решение **фиксируется явным observation в proof**, не делается «на всякий случай».
+3. `payment_type` в `payment_links` остаётся существующим enum; «Рассрочка» derive-ится из `meta.payment_method` (или из новых колонок, если они понадобятся). `payment_links_enriched_v` обновляется минимально — только маппинг отображения «Рассрочка» в UI журнала ссылок.
+
+### Stage L3 — `bepaid-webhook`: материализация рассрочки (без дублей логики)
+
+1. При успешном webhook по заказу, у которого источник — публичная ссылка с `meta.payment_method='internal_installment'` (читается из `payment_links.meta` или новых колонок согласно решению L2):
+   - вызывается **тот же** `_shared/installment-schedule.ts` / общий helper, что используется в direct-charge ветке;
+   - создаётся `subscriptions_v2` (или связка с пользователем) ровно по той же схеме, что для direct-charge installment;
+   - материализуются `installment_payments` единым контрактом.
+2. Никаких новых функций «specific to public-link installments». Если общий helper не покрывает кейс — сначала исправляется helper, затем используется в обеих ветках.
+3. Идемпотентность по `orders_v2.meta.installment_materialized=true` (или существующему эквивалентному ключу из direct-charge), повторный webhook не создаёт второй комплект `installment_payments`.
+
+### DoD Stage L (обязательно)
+
+После оплаты ссылки `872b0603a4c47b8ce29f8d97370a2547` (оффер «2 этапа», `installment_count=2`):
+
+- ✅ создан `orders_v2` со `status='paid'` и корректным `meta.payment_link_id`;
+- ✅ создана `subscriptions_v2` (или эквивалентная связка с пользователем) — в строгом соответствии с тем, как это делает direct-charge ветка для installment-офферов;
+- ✅ в `installment_payments` создано **ровно `installment_count`** записей (для офера «2 этапа» — ровно 2);
+- ✅ `payment_number` идут строго `1..N` без пропусков и дублей;
+- ✅ `total_payments = installment_count` во всех записях;
+- ✅ первый платёж (`payment_number=1`) — `status='paid'`, `paid_at` заполнен;
+- ✅ остальные платежи (`payment_number > 1`) — `status='pending'`, `due_at` рассчитан по `installment_interval_days` и `first_payment_delay_days`;
+- ✅ нет «лишних» записей `installment_payments` для этого `order_id` / `subscription_id`;
+- ✅ повторный приход того же webhook не создаёт дубль (идемпотентность подтверждена).
+
+**SQL-proof DoD:**
+```sql
+WITH link AS (
+  SELECT id FROM payment_links WHERE url_token = '872b0603a4c47b8ce29f8d97370a2547'
+),
+ord AS (
+  SELECT id FROM orders_v2
+  WHERE meta->>'payment_link_id' = (SELECT id::text FROM link) AND status = 'paid'
+  ORDER BY created_at DESC LIMIT 1
+)
+SELECT
+  (SELECT count(*) FROM installment_payments WHERE order_id = (SELECT id FROM ord))                           AS total_rows,
+  (SELECT count(*) FROM installment_payments WHERE order_id = (SELECT id FROM ord) AND status='paid')         AS paid_rows,
+  (SELECT count(*) FROM installment_payments WHERE order_id = (SELECT id FROM ord) AND status='pending')      AS pending_rows,
+  (SELECT min(payment_number) FROM installment_payments WHERE order_id = (SELECT id FROM ord))                AS min_pn,
+  (SELECT max(payment_number) FROM installment_payments WHERE order_id = (SELECT id FROM ord))                AS max_pn,
+  (SELECT max(total_payments) FROM installment_payments WHERE order_id = (SELECT id FROM ord))                AS total_payments;
+-- Ожидание для оффера «2 этапа»: total_rows=2, paid_rows=1, pending_rows=1, min_pn=1, max_pn=2, total_payments=2
+```
+
+### UI-проверка (отдельный пункт DoD)
+
+- В карточке контакта оффер с `payment_method='internal_installment'` отображается как **«Рассрочка»**, а не как «Подписка» и не как «Разовая».
+- Те же оффер/тариф/писатель используются для всех трёх кнопок: «Разовый платёж», «Подписка», «Рассрочка». Отдельных писателей и отдельных диалогов не создаётся.
+- В журнале ссылок (`/admin/payments/links`) колонка «Тип» для такой ссылки показывает «Рассрочка».
+
+### Порядок исполнения
+
+1. Read-only proof по ссылке `872b0603a4c47b8ce29f8d97370a2547` и офферу «2 этапа» (Stage L блокируется до получения).
+2. По результату proof — STOP-guard: meta-only или meta + новые колонки.
+3. L1 → L2 → L3 в указанном порядке, каждая стадия со своим dry-run и proof.
+4. После L3 — повторный платёж по тестовой ссылке + SQL-proof DoD выше.
