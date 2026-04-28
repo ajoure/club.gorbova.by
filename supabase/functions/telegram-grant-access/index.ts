@@ -3,6 +3,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { hasValidAccess } from '../_shared/accessValidation.ts';
 import { writeLedgerEntry, type LedgerEntry } from '../_shared/fulfillment-executor.ts';
 import { greetPrefix } from '../_shared/recipient-name.ts';
+import { logAutomatedTelegramMessage } from '../_shared/log-automated-telegram.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -881,6 +882,25 @@ Deno.serve(async (req) => {
 
         dmSent = result.ok;
         if (!result.ok) dmError = result.description;
+
+        // Mirror to admin chat (Contact Center)
+        if (result?.ok && result?.result?.message_id) {
+          await logAutomatedTelegramMessage({
+            supabase,
+            user_id,
+            telegram_user_id: telegramUserId,
+            bot_id: bot?.id ?? null,
+            text: dmText,
+            telegram_message_id: result.result.message_id,
+            reply_markup: keyboard,
+            source: 'telegram-grant-access',
+            extra_meta: {
+              club_id: club.id,
+              source_id: source_id ?? null,
+              event: 'access_granted_dm',
+            },
+          });
+        }
 
         // Update can_dm status
         const canDm = !result.description?.includes('bot was blocked') && !result.description?.includes("can't initiate");
