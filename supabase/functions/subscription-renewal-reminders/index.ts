@@ -3,6 +3,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
 import { generateRenewalCTAs, type RenewalCTAs } from '../_shared/generate-renewal-ctas.ts';
 import { resolveProductRenewability } from '../_shared/renewal-offer-resolver.ts';
+import { greetPrefix, extractFirstName } from '../_shared/recipient-name.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -447,7 +448,9 @@ async function sendTelegramReminder(
       };
     }
 
-    const userName = profile.full_name?.split(' ')[0] || 'Клиент';
+    // PATCH NAME-V: безопасное обращение через helper. Если имя неопределено —
+    // префикс пустой, фраза начинается без обращения (а не с фамилии).
+    const safeNamePrefix = escapeMd(greetPrefix(profile));
     // PATCH ONE-TIME v2: точное время Минск (день + месяц + HH:mm)
     const dateFmt = new Intl.DateTimeFormat('ru-RU', {
       day: 'numeric', month: 'long', timeZone: 'Europe/Minsk'
@@ -457,7 +460,6 @@ async function sendTelegramReminder(
     });
     const formattedDate = `${dateFmt.format(expiryDate)} в ${timeFmt.format(expiryDate)} (Минск)`;
 
-    const safeUserName = escapeMd(userName);
     const safeProductName = escapeMd(productName);
     const safeTariffName = escapeMd(tariffName);
 
