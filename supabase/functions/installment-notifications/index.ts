@@ -8,7 +8,7 @@ const corsHeaders = {
 };
 
 interface NotificationRequest {
-  action: "test" | "upcoming" | "success" | "failed";
+  action: "test" | "upcoming" | "success" | "failed" | "completion";
   email?: string;
   installment_id?: string;
 }
