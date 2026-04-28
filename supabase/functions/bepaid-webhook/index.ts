@@ -2584,7 +2584,96 @@ Deno.serve(async (req) => {
       }
 
       // =====================================================================
-      // PATCH-LINK-INLINE: Inline update of access dates (parity with subv2 handler)
+      // STAGE L3: INSTALLMENT MATERIALIZATION (public link рассрочка)
+      // Триггер: linkOrder.meta.installment_count >= 2 (записан public-checkout из payment_links.meta).
+      // Источник графика: order.meta (NOT offer). Per-payment взят AS-IS (round-half-up-byn done by writer L2).
+      // Idempotency: pre-check + UNIQUE(order_id, payment_number) внутри generateInstallmentSchedule.
+      // НЕ ставим auto_renew=true: рассрочка идёт через installment_payments + installment-charge-cron.
+      // =====================================================================
+      const linkOrderMeta = (linkOrder.meta || {}) as Record<string, any>;
+      const installmentCountFromMeta = Number(linkOrderMeta.installment_count ?? 0);
+      const isInstallmentOrder = Number.isFinite(installmentCountFromMeta) && installmentCountFromMeta >= 2;
+
+      if (isInstallmentOrder && linkOrder.user_id) {
+        try {
+          // 1) Найти/создать subscriptions_v2 для рассрочки.
+          //    Правило: если grant-access-for-order уже создал sub (grantedSubscriptionV2Id) — используем её,
+          //    НЕ перезаписывая billing_type, который мог быть установлен grant'ом.
+          //    Только если sub отсутствует (fallback) — создаём новую с billing_type='internal_installment'.
+          let installmentSubV2Id: string | null = grantedSubscriptionV2Id;
+
+          if (!installmentSubV2Id) {
+            // Доказанное отсутствие — создаём fallback subscription.
+            const { data: createdSub, error: createSubErr } = await supabase
+              .from('subscriptions_v2')
+              .insert({
+                user_id: linkOrder.user_id,
+                product_id: linkOrder.product_id,
+                tariff_id: linkOrder.tariff_id,
+                status: 'active',
+                billing_type: 'internal_installment',
+                auto_renew: false,
+                meta: {
+                  source: 'bepaid_link_order_installment_fallback',
+                  order_id: linkOrder.id,
+                  installment_count: installmentCountFromMeta,
+                },
+              })
+              .select('id')
+              .single();
+            if (createSubErr) {
+              console.error('[WEBHOOK-LINK-ORDER][INSTALLMENT] fallback subscription create FAILED:', createSubErr);
+              await supabase.from('audit_logs').insert({
+                actor_type: 'system',
+                actor_label: 'bepaid-webhook',
+                action: 'bepaid.webhook.installment_subscription_create_failed',
+                meta: { order_id: linkOrder.id, error: createSubErr.message },
+              });
+            } else {
+              installmentSubV2Id = createdSub.id;
+              console.log('[WEBHOOK-LINK-ORDER][INSTALLMENT] fallback subscription created:', installmentSubV2Id);
+            }
+          }
+
+          // 2) Материализуем график через canonical helper (scheduleSource='order_meta').
+          if (installmentSubV2Id) {
+            const firstPaymentId = (payUpsertResult as any)?.id ?? null;
+            const scheduleResult = await generateInstallmentSchedule({
+              supabase,
+              offer: null, // в order_meta-режиме offer не нужен
+              order: { id: linkOrder.id, meta: linkOrderMeta },
+              subscription: { id: installmentSubV2Id },
+              user: { id: linkOrder.user_id },
+              totalAmount: Number(linkOrderMeta.installment_total_amount_byn ?? 0),
+              currency: linkOrder.currency || 'BYN',
+              firstPayment: { paymentId: firstPaymentId },
+              scheduleSource: 'order_meta',
+            });
+
+            console.log('[WEBHOOK-LINK-ORDER][INSTALLMENT] generateInstallmentSchedule result:', scheduleResult);
+
+            if (!('ok' in scheduleResult) || !scheduleResult.ok) {
+              await supabase.from('audit_logs').insert({
+                actor_type: 'system',
+                actor_label: 'bepaid-webhook',
+                action: 'bepaid.webhook.installment_schedule_failed',
+                meta: {
+                  order_id: linkOrder.id,
+                  subscription_id: installmentSubV2Id,
+                  error: (scheduleResult as any)?.error,
+                  details: (scheduleResult as any)?.details,
+                  severity: 'CRITICAL',
+                },
+              });
+            }
+          }
+        } catch (instErr) {
+          console.error('[WEBHOOK-LINK-ORDER][INSTALLMENT] unexpected error (non-fatal):', instErr);
+        }
+      }
+
+      // =====================================================================
+
       // Without this, renewals rely on delayed sync to update access_end_at/expires_at
       // =====================================================================
       if (grantedSubscriptionV2Id) {
