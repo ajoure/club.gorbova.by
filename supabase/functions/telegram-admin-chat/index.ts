@@ -479,15 +479,45 @@ Deno.serve(async (req) => {
         let sendResult: any;
         
         if (file) {
-          // Send file
-          sendResult = await telegramSendFile(
-            supabase,
-            botToken,
-            profile.telegram_user_id,
-            file,
-            message || undefined,
-            replyToMessageId ?? null,
-          );
+          // Send file. Payload/decoding problems are user-input errors, not edge runtime failures.
+          try {
+            sendResult = await telegramSendFile(
+              supabase,
+              botToken,
+              profile.telegram_user_id,
+              file,
+              message || undefined,
+              replyToMessageId ?? null,
+            );
+          } catch (fileErr) {
+            const fileErrorMessage = fileErr instanceof Error ? fileErr.message : String(fileErr);
+            console.warn("[telegram-admin-chat] file_send_prepare_failed", {
+              error: fileErrorMessage,
+              file_type: file?.type,
+              file_name: file?.name,
+              has_storage_path: !!file?.storage_path,
+              has_base64: !!file?.base64,
+            });
+            await supabase.from("telegram_logs").insert({
+              user_id,
+              action: "ADMIN_CHAT_FILE",
+              target: "user",
+              status: "error",
+              error_message: fileErrorMessage,
+              meta: {
+                failure_stage: "file_prepare",
+                file_type: file?.type,
+                file_name: file?.name,
+                sent_by_admin: user.id,
+              },
+            });
+            return new Response(JSON.stringify({
+              success: false,
+              error: "Не удалось обработать файл. Попробуйте выбрать файл заново.",
+            }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
         } else {
           // Send text message
           const sendBody: Record<string, unknown> = {
