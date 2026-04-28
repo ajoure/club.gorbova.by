@@ -427,6 +427,7 @@ export function AdminPaymentLinkDialog({
       setShowCancelConfirm(false);
       setConflictData(null);
       setReplaceStep("idle");
+      setSelectedInstallmentMonths(null);
     }
   }, [open]);
 
