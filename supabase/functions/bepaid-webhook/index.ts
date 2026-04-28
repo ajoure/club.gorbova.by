@@ -2246,6 +2246,9 @@ Deno.serve(async (req) => {
       }
 
       const existingMeta = (linkOrder.meta && typeof linkOrder.meta === 'object') ? linkOrder.meta : {};
+      // STAGE L3: признак installment-order вычисляется здесь, чтобы guard'ы ниже могли его использовать.
+      const installmentCountFromOrderMeta = Number((existingMeta as Record<string, any>).installment_count ?? 0);
+      const isInstallmentOrder = Number.isFinite(installmentCountFromOrderMeta) && installmentCountFromOrderMeta >= 2;
       // F12 P1: fill-only provider_payment_id on order
       const orderUpdatePayload: Record<string, any> = {
         status: 'paid',
