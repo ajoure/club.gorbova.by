@@ -674,15 +674,22 @@ ${amountLine}
 
       // Пробуем отправить в Telegram (тот же существующий путь)
       try {
-        const typeLabel =
-          effectivePaymentType === "subscription"
+        const isInstallmentMsg = isInstallmentOffer && (selectedInstallmentMonths ?? 0) >= 2;
+        const typeLabel = isInstallmentMsg
+          ? `Рассрочка · ${selectedInstallmentMonths} платежей`
+          : effectivePaymentType === "subscription"
             ? "Подписка (ежемесячно)"
             : "Разовая оплата";
-        const telegramMessage = `💳 *Оплата подписки*
+        const perPayment = amount;
+        const totalAmount = perPayment * (selectedInstallmentMonths || 1);
+        const amountLine = isInstallmentMsg
+          ? `💰 Стоимость: ${selectedInstallmentMonths} × ${perPayment} BYN (итого ${totalAmount} BYN)`
+          : `💰 Стоимость: ${amount} BYN`;
+        const telegramMessage = `💳 *Оплата ${isInstallmentMsg ? "в рассрочку" : "подписки"}*
 
 📦 Продукт: ${selectedProduct?.name}
 📋 Тариф: ${selectedTariff?.name}
-💰 Стоимость: ${amount} BYN
+${amountLine}
 📅 Тип: ${typeLabel}`;
         const { data: tgData, error: tgError } = await supabase.functions.invoke(
           "telegram-send-notification",
