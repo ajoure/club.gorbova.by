@@ -1,5 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { hasValidAccessBatch } from '../_shared/accessValidation.ts';
+import { logAutomatedTelegramMessage } from '../_shared/log-automated-telegram.ts';
+import { greetPrefix } from '../_shared/recipient-name.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -65,7 +67,7 @@ Deno.serve(async (req) => {
     // Get all active clubs with bots
     const { data: clubs } = await supabase
       .from('telegram_clubs')
-      .select('id, chat_id, channel_id, join_request_mode, club_name, telegram_bots(bot_token_encrypted, status)')
+      .select('id, chat_id, channel_id, join_request_mode, club_name, telegram_bots(id, bot_token_encrypted, status)')
       .eq('is_active', true);
 
     if (!clubs?.length) {
@@ -297,14 +299,46 @@ Deno.serve(async (req) => {
 
           // PATCH P0.9.8c: Add club name to reinvite DM
           const reinviteClubName = (club as any).club_name || 'клуб';
+
+          // PATCH NAME-V: безопасное обращение по имени, всегда «Вы».
+          let reinviteNamePrefix = '';
+          if (ghostUserId) {
+            const { data: ghProfile } = await supabase
+              .from('profiles')
+              .select('full_name')
+              .eq('user_id', ghostUserId)
+              .maybeSingle();
+            reinviteNamePrefix = greetPrefix(ghProfile);
+          }
+
+          const reinviteText =
+            `🔔 <b>Напоминание!</b>\n\n${reinviteNamePrefix}` +
+            `Вижу, что Вы ещё не зашли в <b>${reinviteClubName}</b> по предыдущей ссылке.\n` +
+            `Вот новые одноразовые ссылки:\n\n⚠️ Ссылки действуют 24 часа — переходите сейчас!`;
+
           const dmResult = await telegramRequest(botToken, 'sendMessage', {
             chat_id: ghost.telegram_user_id,
-            text: `🔔 <b>Напоминание!</b>\n\nВижу, что ты ещё не зашёл в <b>${reinviteClubName}</b> по предыдущей ссылке.\nВот новые одноразовые ссылки:\n\n⚠️ Ссылки действуют 24 часа — переходи сейчас!`,
+            text: reinviteText,
             parse_mode: 'HTML',
             reply_markup: keyboard,
           });
 
           if (dmResult.rate_limited) break;
+
+          // Mirror to admin chat (Contact Center)
+          if (dmResult?.ok && dmResult?.result?.message_id && ghostUserId) {
+            await logAutomatedTelegramMessage({
+              supabase,
+              user_id: ghostUserId,
+              telegram_user_id: ghost.telegram_user_id,
+              bot_id: bot?.id ?? null,
+              text: reinviteText.replace(/<[^>]*>/g, ''),
+              telegram_message_id: dmResult.result.message_id,
+              reply_markup: keyboard,
+              source: 'telegram-reinvite-ghosts',
+              extra_meta: { club_id: club.id, event: 'reinvite_dm' },
+            });
+          }
 
           // Save to telegram_invite_links
           const now24h = new Date(Date.now() + 86400 * 1000).toISOString();
