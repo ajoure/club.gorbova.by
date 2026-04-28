@@ -22,7 +22,7 @@ interface CreatePublicLinkRequest {
   product_id: string;
   tariff_id: string;
   offer_id?: string | null;
-  amount: number; // BYN kopecks
+  amount: number; // BYN kopecks (полная стоимость, для installment — total)
   currency?: string;
   payment_type?: 'one_time' | 'subscription';
   description?: string | null;
@@ -34,6 +34,9 @@ interface CreatePublicLinkRequest {
   resolved_mode?: 'canonical' | 'override';
   cta_source?: 'admin_manual' | 'reminder' | 'contact_card' | 'telegram_combined' | string;
   cta_contract_version?: number;
+  // Stage L: installment
+  installment_offer?: boolean;
+  selected_installment_months?: number;
 }
 
 Deno.serve(async (req) => {
