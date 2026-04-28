@@ -1,80 +1,135 @@
-да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-1. В audit добавить не только `old_tariff_id/new_tariff_id`, но и:
-  - `order_id`
-  - `product_id`
-  - `active_subscription_id`
-  - `active_subscription_access_end_at`
-  - `new_access_start_at`
-2. В коде явно зафиксировать правило:
+1. Для auth-писем сначала **проверить реальный контракт hook**: какие поля приходят (`token_hash`, `redirect_to`, `email_action_type`, `confirmation_url`) и не вставлять `confirmation_url` напрямую, если он содержит `supabase.co`.
+2. `auth/callback` должен принимать:
+  - `token_hash`
+  - `type`
+  - `next`
+  - fallback для старых ссылок
+3. В DoD добавить grep:
 
-```ts
-canExtendExistingSub =
-  activeSub.product_id === order.product_id &&
-  activeSub.tariff_id === order.tariff_id
+```bash
+rg "hdjgkjceownmmnrqqtuz|supabase\.co|lovable\.app|lovable\.dev" src index.html supabase/functions
 ```
 
-3. Если `activeSub.tariff_id IS NULL` — не extend, а safe fallback: создать новую подписку и записать audit `skip_extend_missing_tariff`.
-4. В DoD добавить grep/code-proof: поиск active subscription больше не считается только по `product_id`.
+4. Исключения должны быть явно закомментированы `admin-only` / `server-to-server`, иначе не засчитывать.
+5. `supabase.functions.invoke` скрывает URL из исходника, но в Network он всё равно пойдёт на Supabase endpoint. Это нормально; цель — убрать из публичного HTML/текстов/коммуникаций.
 
 Можно выполнять.
 
 &nbsp;
 
-План: исправить ошибочное продление чужого тарифа в `grant-access-for-order`
+Цель
 
-## Контекст и диагностика
+В клиентских коммуникациях (письма, Telegram, публичный UI, HTML главной страницы) НИГДЕ не должен светиться `https://hdjgkjceownmmnrqqtuz.supabase.co`. Все ссылки — на `https://gorbova.by` (или его поддомены).
 
-Кейс Гузаревич (`irkaguzarevich@mail.ru`, продукт Gorbova Club):
+Скриншот клиента (письмо «Сброс пароля») подтверждает главный источник проблемы: дефолтные auth-письма Supabase с ссылкой `*.supabase.co/auth/v1/verify?...`.
 
-- 07.04.26 куплен тариф FULL (`b276d8a5…`) → подписка `0bd8a9fc…`, access_end_at = 07.05.26.
-- 28.04.26 куплен другой тариф — BUSINESS (`7c748940…`), order `603dd348…`, `payment_flow=renewal_one_time`.
-- Webhook вызвал `grant-access-for-order` без `extendFromCurrent: false`.
-- В функции (`supabase/functions/grant-access-for-order/index.ts`, строки 273-291) extend-логика ищет активную подписку **только по `product_id**`, без сравнения `tariff_id`. Нашла подписку FULL, продлила её от 07.05 на месяц → 07.06.26 и записала order `603dd348…` в `meta.extended_by_orders`.
+## Диагностика (выполнена через rg)
 
-Это нарушает текущие memory-правила:
+Источники утечки:
 
-- «Renewal exact match, no 1-month math» (entitlement-renewal-alignment) — продление допустимо только при совпадении тарифа.
-- «Replace requires explicit cancel → supersede» (safe-replacement-flow) — смена тарифа должна идти отдельным путём, а не молчаливым extend.
-- «Default-Deny» — extend сейчас работает «по умолчанию», что небезопасно.
+**A. Auth-письма (КРИТИЧНО, сценарий со скриншота)**
 
-## Цель
+- `supabase/functions/auth-email-hook/` отсутствует.
+- GoTrue шлёт дефолтные шаблоны со ссылкой на `*.supabase.co/auth/v1/...`.
 
-При оплате нового заказа на тот же продукт, но **другой тариф**, чем у уже активной подписки:
+**B. Edge functions — fallback-домены**
 
-- НЕ продлевать существующую подписку,
-- НЕ суммировать остаток дней,
-- создать новую подписку на 30 дней (или `tariff.access_days`) от даты оплаты,
-- старую активную подписку оставить как есть (отдельная запись со своим access_end_at) — её ручное закрытие/supersede остаётся прерогативой администратора.
+- `supabase/functions/telegram-mass-broadcast/index.ts:555,606` — fallback `gorbova.lovable.app`, склейка из `SUPABASE_URL.replace('.supabase.co','')`.
+- `supabase/functions/telegram-admin-chat/index.ts:1829` — fallback `gorbova.lovable.app`.
 
-Если же тариф **совпадает** с активной подпиской — поведение не меняется (это легитимное продление того же тарифа).
+**C. Frontend хардкоды `${projectId}.supabase.co/functions/v1/...**` (видны в исходнике страницы и в DevTools/Network):
 
-## Что меняем в коде
+- `index.html` — `<link rel="preconnect">` и `<link rel="preload" href="...supabase.co/functions/v1/public-product?domain=club.gorbova.by">`.
+- `src/components/payment/PaymentDialog.tsx:611`
+- `src/pages/PublicPayPage.tsx:92-93`
+- `src/components/site-renderer/blocks/FormSection.tsx:176`
+- `src/pages/admin/AdminAmoCRM.tsx` (4 fetch + 2 текстовых вывода webhook URL)
+- `src/components/admin/lesson-editor/blocks/uploadToTrainingAssets.ts:269`
+- `src/components/admin/forms/FormsDetailOpener.tsx:134`
+- `src/archive/pages/AdminPayments.tsx:321` (архив)
 
-Файл: `supabase/functions/grant-access-for-order/index.ts`
+Платёжные `return_url`/`success_url`/`fail_url` в edge-функциях уже идут через `gorbova.by` (`CANONICAL_PUBLIC_HOST` или `effectiveOrigin`). Серверный `notification_url = ${SUPABASE_URL}/functions/v1/bepaid-webhook` остаётся — это server-to-server, клиент его не видит.
 
-1. В блоке поиска `activeSub` (строки 273-291) дополнительно сравнивать `tariff_id`:
-  - если `activeSub.tariff_id` задан и не равен `order.tariff_id` → НЕ использовать его как базу extend, оставить `existingProductSub = null`, `accessStartAt = baseStartDate` (дата оплаты).
-  - записать в логи и audit (`actor_type: 'system'`, action `grant-access-for-order.skip_extend_tariff_mismatch`) факт отказа от продления с указанием обоих tariff_id и subscription.id.
-2. Логика для club-продукта (calendar month, строки 299-316) и entitlement merge (GREATEST) остаётся, но т.к. `existingProductSub = null`, новая подписка получит свой собственный access-window от даты оплаты.
-3. Entitlement-merge (GREATEST) для одного `product_code` сохраняется — это правильно: пользователь не теряет доступ к продукту, пока активна старая подписка.
+## Что делаем
 
-Вызовы `grant-access-for-order` из webhook и admin-функций НЕ меняем — поведение по `extendFromCurrent=true` по умолчанию остаётся, но теперь оно безопасно ограничено совпадением тарифа.
+### Шаг 1. Auth-письма (решает скриншот)
+
+1. Проверить статус email-домена; если sender-домен (например `notify.gorbova.by`) ещё не настроен — показать диалог настройки.
+2. Scaffold `auth-email-hook` + 6 React-Email шаблонов (signup, recovery, magic-link, invite, email-change, reauthentication).
+3. Стилизовать шаблоны под бренд: цвета из `src/index.css`, белый body, лого, русский язык. Все ссылки строятся через `confirmationUrl` из site_url. В HTML писем НИКОГДА нет `*.supabase.co`.
+4. Deploy `auth-email-hook`.
+5. Проверить frontend `/auth/callback`: корректная обработка `token_hash` + `type` через `supabase.auth.verifyOtp` для recovery/signup/email_change. Если страницы нет — создать.
+6. Сообщить пользователю: после верификации DNS sender-домена в Cloud → Emails письма пойдут с `gorbova.by`. **Дополнительно** попросить пользователя в Lovable Cloud → Auth убедиться, что `Site URL = https://gorbova.by` и в Redirect URLs нет `*.supabase.co` / `*.lovable.app` (эта настройка управляется через Cloud UI).
+
+### Шаг 2. Frontend — заменить хардкоды URL функций на `supabase.functions.invoke`
+
+Все вызовы `fetch(\`https://${projectId}.supabase.co/functions/v1/...)`→`supabase.functions.invoke('&nbsp;', { body, headers })`. Поведение сохраняется, исходник перестаёт раскрывать ref проекта.
+
+Файлы:
+
+- `PaymentDialog.tsx` (`public-charge-saved-card`)
+- `PublicPayPage.tsx` (`public-checkout`, `public-charge-saved-card`)
+- `FormSection.tsx` (`site-form-upload`)
+- `AdminAmoCRM.tsx` — 4 fetch на `amocrm-sync`. Текстовые webhook-URL для копирования в внешние панели amoCRM/bePaid (admin-only) **оставить** с пометкой `// admin-only display`.
+- `uploadToTrainingAssets.ts` (`training-assets-delete`)
+- `FormsDetailOpener.tsx` (`training-assets-download`) — если используется как `<a href>`, перевести на invoke с blob или signed-URL из storage.
+- `archive/pages/AdminPayments.tsx` — оставить в архиве с пометкой или удалить отображаемый URL.
+
+### Шаг 3. `index.html`
+
+- Удалить `<link rel="preload" href="https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/public-product?...">`.
+- Удалить `<link rel="preconnect" href="https://hdjgkjceownmmnrqqtuz.supabase.co">`.
+- Перформанс-выигрыш мизерный по сравнению с раскрытием ref в любом исходнике страницы.
+
+### Шаг 4. Edge functions — fallback-домены
+
+- `telegram-mass-broadcast/index.ts:555,606` — fallback `gorbova.lovable.app` → `https://gorbova.by`. Убрать сборку из `SUPABASE_URL.replace('.supabase.co','')`.
+- `telegram-admin-chat/index.ts:1829` — fallback `gorbova.lovable.app` → `https://gorbova.by`.
+
+### Шаг 5. Memory + правило
+
+Создать `mem://security/communications/no-supabase-url-leakage`:
+
+> Клиентские коммуникации (email, Telegram, SMS, публичный UI, HTML главной страницы) НИКОГДА не содержат `*.supabase.co` и `*.lovable.app`. Канон: `https://gorbova.by`. `SUPABASE_URL` используется только для серверных вызовов (включая bePaid `notification_url`). Frontend дёргает edge functions через `supabase.functions.invoke`, не строит URL руками. Auth emails идут через кастомный `auth-email-hook` со ссылками на `gorbova.by/auth/callback`. Исключения с пометкой: admin-only displayed webhook URLs (для копирования в внешние панели), `system-health-full-check` (диагностика).
+
+Добавить Core-строку.
+
+## DoD
+
+- `rg "supabase\.co" supabase/functions/ src/ index.html` возвращает только: серверные `${SUPABASE_URL}/functions/v1/bepaid-webhook` (notification_url), `system-health-full-check` (админ-диагностика), admin-only displayed webhook URL в `AdminAmoCRM` (с пометкой). НИЧЕГО клиентского.
+- `rg "lovable\.app" supabase/functions/` пусто.
+- `supabase/functions/auth-email-hook/` существует и задеплоен; шаблоны со ссылками `gorbova.by`.
+- Тестовое письмо «Сброс пароля» приходит со ссылкой на `gorbova.by` и корректно завершает recovery-flow.
+- `index.html` без preload/preconnect на supabase.co.
+- Memory обновлена; добавлена Core-строка.
+
+## Технические детали
+
+```text
+client → fetch hardcode  → https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/X
+                            (виден в исходнике страницы и в Network)
+
+         ↓ заменяем на
+
+client → supabase.functions.invoke('X', {body})
+                            (URL не присутствует в коде, JS-клиент строит его внутри)
+```
+
+```text
+GoTrue (default) → email link: https://hdjgkjceownmmnrqqtuz.supabase.co/auth/v1/verify?token=...
+
+         ↓ через auth-email-hook + scaffolded templates
+
+GoTrue → auth-email-hook → React Email template:
+                            link: https://gorbova.by/auth/callback?token_hash=...&type=recovery
+```
 
 ## Что НЕ трогаем
 
-- `bepaid-webhook`, `admin-manual-charge`, `public-charge-saved-card` и прочие точки вызова.
-- Логику calendar-month, entitlement GREATEST, idempotency guard.
-- Поведение admin-операций (ручные продления администратора через свои edge functions проходят отдельным путём).
-- Существующие подписки в БД (никаких миграций данных по кейсу Гузаревич — администратор поправит руками или отдельной задачей).
-
-## Проверка (DoD)
-
-- Новый заказ с tariff_id ≠ активной подписки → создаётся новая подписка с `access_start_at = order.created_at` (или now), `access_end_at = start + access_days` (или calendar-month), `extended_by_orders` старой подписки НЕ обновляется.
-- Новый заказ с тем же tariff_id → продление работает по-старому (extend).
-- В audit_logs появляется запись `grant-access-for-order.skip_extend_tariff_mismatch` с обоими tariff_id.
-- Idempotency guard продолжает корректно отрабатывать для повторного webhook одного и того же order.
-
-## Что обновим в memory
-
-После выполнения добавить правило в `mem://commercial-logic/access/extend-tariff-match-required` и упомянуть в Core: «Extend существующей подписки в `grant-access-for-order` допустим ТОЛЬКО при совпадении `tariff_id`. Покупка другого тарифа того же продукта = новая подписка от даты оплаты, без суммирования остатка дней. Замена тарифа — только через explicit cancel → supersede администратором.»
+- Серверный `notification_url` для bePaid (внутренний webhook, клиент не видит).
+- `supabase/functions/system-health-full-check/` (админ-диагностика).
+- Custom API domain (`api.gorbova.by` → Supabase) — отдельная задача, пока не требуется (по решению пользователя).
+- Admin-only displayed webhook URLs в `AdminAmoCRM` для копирования в внешние панели.
+- Уже отправленные письма — их не переписать; фикс применяется к будущим коммуникациям.
