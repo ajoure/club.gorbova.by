@@ -582,19 +582,20 @@ Deno.serve(async (req) => {
             })
             .eq('id', installment.id);
 
-          // Send failed notification via email
-          try {
-            await fetch(`${supabaseUrl}/functions/v1/installment-notifications`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${supabaseServiceKey}`,
-              },
-              body: JSON.stringify({ action: 'failed', installment_id: installment.id }),
-            });
-          } catch (notifErr) {
-            console.error('Failed to send failure email notification:', notifErr);
-          }
+          // Stage 4: best-effort failed email с обязательным аудитом
+          await notifyWithAudit(
+            supabase,
+            supabaseUrl,
+            supabaseServiceKey,
+            'failed',
+            installment.id,
+            {
+              subscription_id: subscription.id,
+              payment_number: installment.payment_number,
+              total_payments: installment.total_payments,
+              error_message: errorMessage,
+            },
+          );
 
           // Send Telegram notification about failed payment
           const productName = subscription.products_v2?.name || 'Продукт';
