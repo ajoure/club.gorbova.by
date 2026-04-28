@@ -1298,7 +1298,7 @@ export function PaymentDialog({
                       </p>
                     )}
                   </div>
-                  <div className="flex flex-col sm:flex-row gap-2">
+                  <div className="flex flex-col gap-2 w-full">
                     <Button
                       type="button"
                       variant="outline"
@@ -1307,19 +1307,19 @@ export function PaymentDialog({
                         setConflictData(null);
                         onOpenChange(false);
                       }}
-                      className="flex-1"
+                      className="w-full min-w-0"
                     >
-                      Оставить текущую
+                      <span className="truncate">Оставить текущую</span>
                     </Button>
                     <Button
                       type="button"
                       size="sm"
                       onClick={() => setShowReplaceConfirm(true)}
                       disabled={isLoading}
-                      className="flex-1"
+                      className="w-full min-w-0"
                     >
-                      <Repeat className="mr-2 h-4 w-4" />
-                      Заменить подписку
+                      <Repeat className="mr-2 h-4 w-4 shrink-0" />
+                      <span className="truncate">Заменить подписку</span>
                     </Button>
                   </div>
                 </AlertDescription>
@@ -1425,7 +1425,7 @@ export function PaymentDialog({
 
             {/* MIT vs SBS choice removed — subscriptions always use provider_managed (SBS) */}
 
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button
                 type="button"
                 variant="outline"
@@ -1437,17 +1437,27 @@ export function PaymentDialog({
                   }
                 }}
                 disabled={isLoading || isTestPaymentLoading}
-                className="flex-1"
+                className="flex-1 min-w-0"
               >
-                {user && session ? "Отмена" : "Назад"}
+                <span className="truncate">{user && session ? "Отмена" : "Назад"}</span>
               </Button>
-              <Button onClick={handlePayment} disabled={isLoading || isTestPaymentLoading || isLoadingCard || !!conflictData} className="flex-1">
+              <Button
+                onClick={handlePayment}
+                disabled={
+                  isLoading ||
+                  isTestPaymentLoading ||
+                  isLoadingCard ||
+                  // F1: блокируем оплату только при конфликте по ТОМУ ЖЕ продукту в subscription-flow.
+                  (!!conflictData && conflictData.product_id === productId && !!isSubscription && !isTrial)
+                }
+                className="flex-1 min-w-0"
+              >
                 {isLoadingCard ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin shrink-0" />
                 ) : (
-                  <CreditCard className="mr-2 h-4 w-4" />
+                  <CreditCard className="mr-2 h-4 w-4 shrink-0" />
                 )}
-                {isTrial ? "Активировать триал" : `Оплатить ${price}`}
+                <span className="truncate">{isTrial ? "Активировать триал" : `Оплатить ${price}`}</span>
               </Button>
             </div>
 
