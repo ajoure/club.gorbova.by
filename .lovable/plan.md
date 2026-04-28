@@ -1,114 +1,202 @@
+План:
+
+## 1. Проблема
+
+Есть два связанных дефекта в уведомлениях и платёжных ссылках:
+
+1. В Telegram/уведомлениях иногда показывается «разовая оплата» или «разовая покупка — продление не требуется», хотя у продукта/тарифа есть активная кнопка тарифа с автопродлением.
+2. Логика продления сейчас местами выводится из текущей подписки пользователя (`billing_type`, `auto_renew`, наличие SBS/provider-managed), а должна выводиться из настроек активных кнопок тарифа по UUID: `product_id`, `tariff_id`, `offer_id`.
+
+Из-за этого при отсутствии действующей provider-managed подписки система может ошибочно считать продукт разовым и не предложить продление/подписочную ссылку.
+
+## 2. Диагностика
+
+Факты по текущей системе:
+
+- `subscription-renewal-reminders` содержит локальный классификатор `isOneTimeProduct`, который принимает решение по `tariff_offers`, но проверяет в основном наличие активного `offer_type='subscription'`. В текущей модели автопродление у кнопок хранится не так: для `pay_now`-кнопок признак подписки лежит в `tariff_offers.meta.recurring.is_recurring = true` и `requires_card_tokenization = true`.
+- Для Gorbova Club активные кнопки тарифа действительно рекуррентные:
+  - BUSINESS: active `pay_now`, `requires_card_tokenization=true`, `meta.recurring.is_recurring=true`, цена 250 BYN.
+  - CHAT: active `pay_now`, `requires_card_tokenization=true`, `meta.recurring.is_recurring=true`, цена 100 BYN.
+- Shared helper `generate-renewal-ctas.ts` всегда генерирует две ссылки: `one_time` и `subscription`, без проверки того, какие кнопки реально разрешены тарифом.
+- `telegram-send-reminders` — отдельная legacy edge function — также генерирует CTA через `generateRenewalCTAs`, но `resolveProductAndTariff` читает устаревшие/сомнительные поля (`tariffs.price`, `tariffs.billing_type`) и не смотрит на `tariff_offers.meta.recurring`.
+- `AdminPaymentLinkDialog.tsx` уже частично исправлялся, но последнее сообщение в логах показывает, что в 16:36 ушло сообщение:
+  - продукт: «Подоходный налог ИП»
+  - тариф: «2 этапа»
+  - тип: «Разовая оплата»
+  - хотя созданная ссылка была installment: `payment_method='internal_installment'`, `selected_installment_months=2`, amount per-payment 195 BYN.
+  Это значит, что UI-состояние/расчёт Telegram-сообщения не должен полагаться только на локальный `isInstallmentOffer`, а должен дополнительно сверяться с данными созданной ссылки/offer.
+- На скриншоте ошибка «Failed to send a request to the Edge Function» в контакт-центре. По доступным логам за последние 24 часа успешные отправки `telegram-admin-chat` были, явного backend-лога с ошибкой нет. Вероятный класс проблемы — UI показывает сырой SDK/network error, а не нормализованную причину. Также `telegram-admin-chat` не всегда возвращает структурированный `success:false` в catch для всех кейсов.
+
+## 3. Предлагаемое решение
+
+### 3.1. Ввести единый backend-resolver для платёжных возможностей тарифа
+
 да, согласен, с учетом правок:
 
-1. **F1 — обязательно**: блокировать оплату только если конфликт по тому же `product_id`. Чужая активная подписка не должна блокировать кнопку.
-2. **F2 — обязательно**: поправить overflow без изменения дизайна: `min-w-0`, `w-full`, `flex-wrap`, `overflow-y-auto`, кнопки не должны вылезать.
-3. **F3 — согласен с архитектурой через** `payment_links`, не через дублирование логики в `bepaid-create-token`.
-4. **Перед новой edge function проверить существующие функции**:
-  - `admin-create-public-link`
-  - `create-payment-link`
-  - `public-checkout`
-  - возможный bridge-link
-  Если можно расширить существующий writer безопасно — не создавать новую функцию.
-5. **Gate рассрочки должен быть только** `payment_method='internal_installment'`, а не `is_installment`.
-6. В `payment_links.meta.installment` явно добавить:
-  - `installment_count`
-  - `installment_interval_days`
-  - `first_payment_delay_days`
-  - `source='landing_payment_dialog'`
-  - `offer_id`
-7. DoD дополнить:
-  - `installment_payments` создаются ровно в количестве `installment_count`;
-  - нет лишних provider-managed подписок как у клуба;
-  - после последнего платежа сработает Stage 3 completion logic.
-  - &nbsp;
-  - План:
+1. Новый resolver — правильно. Источник истины только `tariff_offers`, не `subscription.billing_type` и не `product.entitlement_mode`.
+2. Для installment в reminders: **не создавать CTA автоматически**, только помечать продукт как renewable/installment и давать безопасный переход в кабинет/страницу продукта.
+3. В `AdminPaymentLinkDialog` финальный текст Telegram брать из созданной ссылки/ответа writer-а, а не из локального состояния формы.
+4. `ContactTelegramChat` — только нормализация ошибки, без изменения логики отправки.
+5. В DoD добавить grep-proof: нет старой фразы «разовая покупка — продление не требуется» для тарифов, где есть active subscription/installment offer.
 
-## Контекст и diagnose
+Можно выполнять.
 
-Проверены: `subscription-conflict.ts` (shared helper), `subscriptionReplacement.ts` (клиент), `PaymentDialog.tsx`, `UniversalPricingSection.tsx`, `public-checkout/index.ts`, данные `tariff_offers` для продукта `de36a695-...`.
+&nbsp;
 
-### Находки
+Создать shared helper в `supabase/functions/_shared/renewal-offer-resolver.ts`:
 
-**Баг 1 — «уже есть активная подписка» при создании installment/one-time кнопки.**
+- Вход: `productId`, `tariffId`, optional `preferredOfferId`.
+- Читает `tariffs`, `tariff_offers`, `tariff_prices`.
+- Работает только по UUID и активным `pay_now` offer-ам.
+- Классифицирует кнопки так:
+  - `subscription`: `offer.meta.recurring.is_recurring === true` или `requires_card_tokenization === true` при `payment_method='full_payment'`.
+  - `installment`: `payment_method='internal_installment'` и `installment_count/max_months >= 2`.
+  - `one_time`: активная `pay_now`-кнопка без recurring и без installment.
+- Возвращает:
+  - `isRenewable`: есть subscription или installment или one_time кнопка, по которой можно оплатить продление.
+  - `hasSubscriptionOffer`: есть активная кнопка автопродления.
+  - `hasInstallmentOffer`: есть активная рассрочка.
+  - `hasOneTimeOffer`: есть активная разовая кнопка.
+  - canonical offer IDs и цены для каждого типа.
+  - `classificationSource`: подробные сигналы для audit/logs.
 
-- Shared helper `subscription-conflict.ts` уже фильтрует по `user_id + product_id` (не по всем подпискам). Это ОК.
-- Но `existing_subscription_conflict` возвращается ТОЛЬКО из `bepaid-create-subscription-checkout` и `create-payment-checkout` (recurring path).
-- На UI кнопка `handlePayment` блокируется при ЛЮБОМ `conflictData` (строка 1444): `disabled={... || !!conflictData}`. Если conflictData по другому продукту — это не должно блокировать оплату.
-- Алерт «У вас уже есть активная подписка на этот продукт» показывается корректно только при `conflictData.product_id === productId`, но `disabled` на кнопке не учитывает этот же фильтр.
-- Кроме того, при попытке КУПИТЬ installment-оффер (`payment_method='internal_installment'`) у которого `is_installment=false` — UI всё равно классифицирует его как обычный one-time (`isSubscription=false`), и в этом сценарии conflict-проверка вообще не должна срабатывать. Если пользователь видит её — значит реально открывается subscription-checkout, скорее всего из-за `requires_card_tokenization=true` на оффере.
+Важно: это не новая таблица и не новый source of truth. Source of truth остаётся `tariff_offers`.
 
-**Баг 2 — кнопка вылезает за поля диалога на десктопе.**
+### 3.2. Исправить `generate-renewal-ctas.ts`
 
-- `DialogContent` (строка 1543): `sm:max-w-md` (~448px) + `overflow-hidden`.
-- Conflict-alert (строка 1301) рендерит две кнопки в `flex flex-col sm:flex-row gap-2`. На десктопе они становятся в ряд, вторая («Заменить подписку» с иконкой `Repeat`) переполняет.
-- Также основная кнопка «Оплатить 390 BYN» в `flex gap-2` (строка 1428) с двумя кнопками `flex-1` без `min-w-0` — иконка + длинный текст ломает layout.
+Сейчас helper всегда создаёт `one_time` + `subscription`. После правки:
 
-**Баг 3 — рассрочка не работает с лендинговой кнопки.**
+- Он сначала вызывает resolver.
+- Создаёт только те CTA, которые разрешены активными кнопками тарифа.
+- Если у тарифа есть автопродление — создаёт subscription-ссылку даже если у пользователя сейчас нет действующей provider-managed подписки.
+- Если есть one-time кнопка — создаёт one-time ссылку.
+- Если есть installment кнопка — не смешивает её с обычной `one_time`; либо не создаёт автоматом без явного выбора срока, либо создаёт только при наличии однозначного `installment_count`. Для reminder-CTA безопаснее: не добавлять installment в автоматические reminder-кнопки без явного выбора, но не называть продукт разовым.
+- В audit/meta писать, почему ссылка создана/не создана: `offer_id`, `offer_kind`, `has_subscription_offer`, `has_one_time_offer`, `has_installment_offer`.
 
-- В БД для тарифа «стандарт» есть оффер `32de637b-...` с `payment_method='internal_installment'`, `installment_count=2`, `is_installment=false`, `button_label='Оплатить в рассрочку'`.
-- `UniversalPricingSection.tsx` (строка 148) пробрасывает только `isSubscription={offer.requires_card_tokenization}`. Поле `payment_method` НЕ пробрасывается в `PaymentDialog`.
-- `PaymentDialog` → `bepaid-create-token` (one-time path) НЕ передаёт `installment`/`payment_method`. Edge function создаёт обычный платёж на полную сумму 390 BYN, без `installment_payments` и без `meta.installment.*`.
-- Installment-flow реализован только через `/pay/:token` payment_links с предзаполненной `link.meta.installment` (admin-create-public-link). Прямой checkout с лендинга в обход payment_links — не поддерживает рассрочку.
+### 3.3. Исправить `subscription-renewal-reminders`
 
-## План фиксов
+- Заменить `isOneTimeProduct` на resolver из shared helper.
+- Убрать зависимость «продукт разовый» от отсутствия активной provider-managed подписки.
+- Если `tariff_offers` говорит, что у продукта есть recurring-кнопка — уведомление должно быть про продление, а не «разовая покупка».
+- `hasActiveSBS` использовать только для текста «автопродление уже активно и спишется автоматически», а не для классификации продукта.
+- Если SBS нет, но recurring-кнопка есть — сформировать subscription CTA.
+- Email-ветку привести к той же логике, чтобы email и Telegram не расходились.
 
-### F1. Sub-conflict: блокировать кнопку оплаты только для same-product
+### 3.4. Исправить `telegram-send-reminders` legacy-функцию
 
-- В `PaymentDialog.tsx` (строка 1444): заменить `!!conflictData` на `(!!conflictData && conflictData.product_id === productId && isSubscription && !isTrial)`.
-- Обоснование: alert (строка 1275) уже использует ту же тройную проверку. Кнопка должна быть симметрично заблокирована по тем же условиям.
-- Дополнительно: в `setConflictData` после получения ответа из edge — оставить как есть (helper в edge уже фильтрует по product). На фронте дополнительной чистки не нужно.
+- Перевести `resolveProductAndTariff` на тот же resolver.
+- Не использовать `tariffs.price`/`tariffs.billing_type` как источник истины для способа продления.
+- Если есть recurring-кнопка — предлагать продление/подписочную ссылку даже без текущей active SBS.
+- Если нет продукта/тарифа/активной кнопки — не писать «разовый продукт», а отправлять безопасный fallback «открыть кабинет/страницу продукта» и логировать stop-reason.
 
-### F2. Desktop overflow
+### 3.5. Исправить Telegram-сообщение при создании публичной ссылки из админки
 
-В `PaymentDialog.tsx`:
+В `AdminPaymentLinkDialog.tsx`:
 
-- Строка 1301 (две кнопки в alert): добавить `min-w-0` к обеим кнопкам, иконку `Repeat` обернуть в `shrink-0`, текст — в `truncate`. Альтернатива: оставить кнопки колонкой и на десктопе (`flex-col` без `sm:flex-row`).
-- Строка 1428 (Оплатить/Отмена): добавить `min-w-0` к обеим кнопкам, текст «Оплатить {price}» обернуть в `<span className="truncate">`.
-- Проверить, что `DialogContent` не получает `overflow-hidden` без вертикального скролла на ready-step (строка 1543) — добавить `overflow-y-auto` если контент длинный.
+- Вынести построение текста Telegram в одну функцию, чтобы не было двух расходящихся веток (`sendToTelegramMutation` и `combined-flow`).
+- Определять installment не только по локальному `isInstallmentOffer`, но и по фактически созданной ссылке/offer:
+  - если `effectiveOffer.payment_method === 'internal_installment'`, всегда показывать «Оплата в рассрочку» и `N × per_payment BYN`;
+  - не использовать `effectivePaymentType === 'one_time'` для label, если offer installment.
+- После создания ссылки использовать ответ `admin-create-public-link` (`payment_type`, `amount`, `meta.installment`) как финальный источник отображения, если он доступен.
+- В UI toast не показывать сырой `Failed to send a request to the Edge Function`; нормализовать ошибку в понятный текст.
 
-### F3. Рассрочка с лендинговой кнопки
+### 3.6. Улучшить ошибку отправки из контакт-центра
 
-Архитектурное решение: переиспользовать существующий payment_links flow вместо дублирования логики installment в bepaid-create-token.
+В `ContactTelegramChat.tsx` и при необходимости `telegram-admin-chat`:
 
-- Когда `offer.payment_method === 'internal_installment'`:
-  1. Frontend (`UniversalPricingSection` / `PaymentDialog`) при клике на такой оффер вызывает новую edge `public-create-installment-link` (или расширяет существующую `payment-dialog-create-bridge-link`), которая:
-    - Принимает `product_id`, `tariff_id`, `offer_id`, контактные данные.
-    - Резолвит `offer.installment_count`, `offer.amount` → формирует `meta.installment = { selected_installment_months, per_payment_amount_byn, max_installment_months }`.
-    - Создаёт `payment_links` строку (без вызова bePaid — только запись).
-    - Возвращает `url_token`.
-  2. Frontend сразу редиректит на `/pay/:token` — дальше уже работает существующий public-checkout → bepaid-webhook → installment_payments materialization.
-- Альтернатива (простая): пробросить `payment_method` и `installment_count` в `bepaid-create-token`, добавить там branching на installment. Не рекомендуется — дублирует логику и обходит уже стабилизированный path через payment_links.
-- В `UniversalPricingSection` пробросить `offer.payment_method` и `offer.installment_count` в `PaymentDialog` через новые props.
-- В `PaymentDialog`:
-  - Если `paymentMethod === 'internal_installment'` — показать выбор количества платежей (если `installment_count > 0` фиксирован — просто показать «N платежей по X BYN»).
-  - При нажатии «Оплатить» → вызвать `public-create-installment-link` → редирект на `/pay/:token`.
+- Нормализовать SDK/network error `Failed to send a request to the Edge Function` в понятное сообщение: «Не удалось связаться с backend-функцией отправки. Сообщение не отправлено, попробуйте ещё раз; если повторится — проверьте доступность Lovable Cloud/бота».
+- Не менять бизнес-логику отправки сообщений, только обработку ошибок и диагностику.
+- Добавить в ошибочный toast больше контекста без сырого stack/error.
 
-### F0 (минимальная санация данных, opt-in)
+## 4. Изменяемые компоненты
 
-Текущий оффер `32de637b-...` имеет `is_installment=false` при `payment_method='internal_installment'`. Это data-anomaly. После фикса F3 поле `is_installment` уже не используется как gate (gate = `payment_method`). Менять данные не нужно, но в админке `AdminProductDetailV2.tsx` (строка 566) `isInstallment = payment_method==='internal_installment'` — уже правильная логика. Старое поле `is_installment` deprecated, оставляем для совместимости.
+Edge/shared:
 
-## DoD
+- `supabase/functions/_shared/renewal-offer-resolver.ts` — новый shared helper, без новой таблицы.
+- `supabase/functions/_shared/generate-renewal-ctas.ts` — использовать resolver и создавать CTA только по активным кнопкам тарифа.
+- `supabase/functions/subscription-renewal-reminders/index.ts` — заменить классификацию one-time/renewable.
+- `supabase/functions/telegram-send-reminders/index.ts` — привести legacy reminders к тому же источнику истины.
 
-- F1: при наличии active subscription на ДРУГОМ продукте — кнопка «Оплатить» активна и оплата проходит.
-- F2: на viewport 1048×893 кнопки в основном диалоге и в conflict-alert не выходят за границы DialogContent.
-- F3: клик на «Оплатить в рассрочку» с лендинга → редирект на `/pay/:token` → один платёж 195 BYN (390/2) → после оплаты `orders_v2.meta.installment_count=2`, `installment_payments` ровно 2 строки, первая paid, вторая pending, `subscriptions_v2.auto_renew=false`.
+UI:
 
-## Технические детали (для разработки)
+- `src/components/admin/AdminPaymentLinkDialog.tsx` — единый построитель Telegram-текста ссылки, корректная рассрочка/подписка/разовый тип.
+- `src/components/admin/ContactTelegramChat.tsx` — нормализация ошибки Edge Function при отправке.
 
-Файлы:
+Опционально только если диагностика покажет необходимость:
 
-- `src/components/payment/PaymentDialog.tsx` — F1 (строка 1444), F2 (1301, 1428).
-- `src/components/landing/UniversalPricingSection.tsx` — F3 (передача `paymentMethod`, `installmentCount` в PaymentDialog).
-- `src/hooks/usePublicProduct.tsx` — убедиться что `payment_method`, `installment_count` приходят из `tariff_offers` (тип уже есть, проверить SELECT).
-- Новая edge function `supabase/functions/public-create-installment-link/index.ts` (или расширение `payment-dialog-create-bridge-link`).
-- Новый prop в PaymentDialogProps: `paymentMethod?: string`, `installmentCount?: number | null`.
+- `supabase/functions/telegram-admin-chat/index.ts` — добавить более структурированный error response/audit при неожиданных ошибках отправки.
 
-Edge function `public-create-installment-link` контракт:
+## 5. Что не будет изменено
 
-- Input: `{ product_id, tariff_id, offer_id, customer_email, customer_phone, customer_first_name, customer_last_name, existing_user_id? }`.
-- Server-side fetch оффера и валидация `payment_method='internal_installment'` + `installment_count >= 2`.
-- Расчёт `per_payment = round(amount / installment_count, 2)`.
-- INSERT в `payment_links` с `meta.installment = { selected_installment_months: N, per_payment_amount_byn, max_installment_months: N }` и `payment_type='one_time'`, `amount = per_payment * 100` (kopecks).
-- Output: `{ success: true, url_token }`.
+- Не создавать новые таблицы, enum, статусы или параллельный notification workflow.
+- Не менять `src/integrations/supabase/client.ts` и `src/integrations/supabase/types.ts`.
+- Не менять RLS и роли.
+- Не менять canonical write-path платежей: `admin-create-public-link` остаётся writer для public links, `create-payment-checkout` остаётся downstream checkout path, `grant-access-for-order` остаётся write-path доступа.
+- Не выполнять массовые UPDATE/DELETE.
+- Не менять существующие подписки/заказы вручную.
 
-После approve выполню по порядку: F1 → F2 → F3 → smoke по протоколу из `.lovable/proofs/installment_l3_5_smoke_protocol.md`.
+## 6. Dry-run
+
+Перед выполнением патча:
+
+1. SQL-read проверка активных offer-ов для Gorbova Club и проблемного продукта «Подоходный налог ИП»:
+  - `product_id`, `tariff_id`, `offer_id`, `payment_method`, `requires_card_tokenization`, `meta.recurring.is_recurring`, `installment_count`, `meta.installment`.
+2. Проверить последние `payment_links` и `telegram_logs`, чтобы подтвердить:
+  - installment-ссылка создана корректно;
+  - уведомление ушло с неверным `message_text`.
+3. Проверить последние failed/blocked записи `notification_outbox`, `telegram_logs`, `telegram_messages`.
+
+## 7. Execute
+
+После подтверждения плана:
+
+1. Добавить shared resolver.
+2. Подключить resolver в `generate-renewal-ctas`.
+3. Обновить `subscription-renewal-reminders`.
+4. Обновить `telegram-send-reminders`.
+5. Обновить `AdminPaymentLinkDialog`.
+6. Обновить нормализацию ошибки в `ContactTelegramChat`.
+7. Задеплоить изменённые edge functions:
+  - `subscription-renewal-reminders`
+  - `telegram-send-reminders`
+  - при необходимости `telegram-admin-chat`
+
+## 8. STOP-guards
+
+Остановить выполнение и не отправлять/не создавать новые ссылки, если:
+
+- У тарифа нет активных `pay_now` кнопок.
+- Найден active offer, но он не принадлежит `tariff_id`.
+- `product_id` из тарифа не совпадает с ожидаемым `product_id`.
+- Цена меньше 1 BYN или не определена.
+- У recurring-кнопки нет валидной цены (`amount` или `auto_charge_amount`).
+- У installment-кнопки нет валидного `installment_count/max_months >= 2`.
+- Resolver возвращает несколько conflicting primary offer-ов — выбрать deterministic fallback, но записать audit warning.
+- Telegram API возвращает ошибку — не считать отправку успешной, писать structured log.
+
+## 9. DoD
+
+Задача считается выполненной, если:
+
+1. Для Gorbova Club resolver показывает `hasSubscriptionOffer=true` по active `tariff_offers.meta.recurring.is_recurring=true`.
+2. Напоминание для продукта с recurring-кнопкой больше не может попасть в ветку «разовая покупка — продление не требуется» только из-за отсутствия active SBS.
+3. Для пользователя без действующей provider-managed подписки, но с recurring-кнопкой тарифа, создаётся subscription CTA.
+4. Для installment-ссылки Telegram-текст показывает:
+  - «Оплата в рассрочку»;
+  - «Рассрочка · N платежей»;
+  - `N × per_payment BYN (итого total BYN)`.
+5. `telegram-send-reminders` и `subscription-renewal-reminders` используют один и тот же resolver, а не разные эвристики.
+6. UI больше не показывает сырой текст `Failed to send a request to the Edge Function`; ошибка нормализована.
+7. В `audit_logs`/`telegram_logs` есть достаточные признаки source-of-truth: `offer_id`, `offer_kind`, `has_subscription_offer`, `has_one_time_offer`, `has_installment_offer`.
+8. Не создано новых таблиц/статусов/workflow.
+
+## 10. Риски и зависимости
+
+- Автоматическое создание installment CTA в reminder-ах может быть спорным, потому что рассрочка требует явного выбора срока. Поэтому безопасный вариант: использовать installment как признак renewability, но не создавать installment-ссылку без однозначного срока.
+- Если у тарифа одновременно есть one-time и subscription кнопки, уведомление может показать обе кнопки — это допустимо только если обе активны в настройках тарифа.
+- Если старая legacy-функция `telegram-send-reminders` фактически не используется cron-ом, её всё равно нужно исправить, потому что пользователь просит проверить все edge functions, и она может быть запущена вручную/из другого места.
+- Проверка Edge Function логов сейчас не вернула runtime logs; верификацию надо делать через database logs/audit, прямой `curl_edge_functions` и targeted SQL-read.
+
+## 11. Требуется дополнительная информация
+
+Дополнительная информация от вас не требуется. Нужно подтверждение плана, после чего внесу патч и проведу проверку.
