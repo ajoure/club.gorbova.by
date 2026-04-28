@@ -56,7 +56,7 @@ export function FileBlock({ content, onChange, isEditing = true, lessonId }: Fil
       const result = await uploadToTrainingAssets(
         file,
         "lesson-files",
-        50,
+        500,
         undefined,
         undefined, // Админ: любые файлы, без ограничения расширений
         ownerId
@@ -210,7 +210,7 @@ export function FileBlock({ content, onChange, isEditing = true, lessonId }: Fil
                 Загрузить файл
               </Button>
               <p className="text-xs text-muted-foreground">
-                или перетащите файл сюда • любые файлы • до 50 МБ
+                или перетащите файл сюда • любые файлы • до 500 МБ
               </p>
             </>
           )}
