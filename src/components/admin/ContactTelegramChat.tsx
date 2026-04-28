@@ -876,25 +876,27 @@ export function ContactTelegramChat({
     const shouldScroll = !didInitialScrollRef.current || isNearBottom;
     if (!shouldScroll) return;
 
-    // Wait for DOM paint - double rAF for reliable scroll after paint
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        const vp = scrollRef.current?.querySelector("[data-radix-scroll-area-viewport]") as HTMLElement | null;
-        if (vp) vp.scrollTo({ top: vp.scrollHeight, behavior: "auto" });
-        didInitialScrollRef.current = true;
-      });
-    });
-
-    // Fallback timeout for edge cases where rAF doesn't fire correctly
-    const fallbackTimeout = setTimeout(() => {
-      if (!didInitialScrollRef.current) {
-        const vp = scrollRef.current?.querySelector("[data-radix-scroll-area-viewport]") as HTMLElement | null;
-        if (vp) vp.scrollTo({ top: vp.scrollHeight, behavior: "auto" });
-        didInitialScrollRef.current = true;
+    const scrollToBottom = () => {
+      const vp = scrollRef.current?.querySelector("[data-radix-scroll-area-viewport]") as HTMLElement | null;
+      if (vp) {
+        vp.scrollTo({ top: vp.scrollHeight, behavior: "auto" });
       }
-    }, 150);
+      // Fallback: bottomRef внутри ScrollArea гарантированно выровняется по нижней границе.
+      bottomRef.current?.scrollIntoView({ block: "end" });
+      didInitialScrollRef.current = true;
+    };
 
-    return () => clearTimeout(fallbackTimeout);
+    // Двойной rAF — ждём финальный layout/paint.
+    requestAnimationFrame(() => requestAnimationFrame(scrollToBottom));
+
+    // Повторный pass через 150мс на случай поздней догрузки сообщений/медиа.
+    const t1 = setTimeout(scrollToBottom, 150);
+    const t2 = setTimeout(scrollToBottom, 400);
+
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
   }, [userId, isLoading, chatItems.length]);
 
   const handleSend = () => {
