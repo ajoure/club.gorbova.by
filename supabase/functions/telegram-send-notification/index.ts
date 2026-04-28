@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { greetPrefix, greetSuffix } from '../_shared/recipient-name.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -445,38 +446,43 @@ Deno.serve(async (req) => {
     const cardLast4 = payment_method_meta?.last4 || '';
     const cardDisplay = cardBrand && cardLast4 ? `${cardBrand} ****${cardLast4}` : 'вашу карту';
     
+    // PATCH NAME-V: безопасное обращение по имени.
+    // namePrefix = "Имя, " либо "" — НИКОГДА не подставляет фамилию.
+    const namePrefix = greetPrefix(profile);
+
     // ===========================================================================
     // SECURITY: For service_role, IGNORE custom_message and use deterministic templates
+    // Все шаблоны — обращение строго на «Вы».
     // ===========================================================================
     const messageTemplates: Record<string, string> = {
       reminder_3_days: `⏰ Небольшое напоминание
 
-Ваша подписка в ${clubName} заканчивается через 3 дня.
+${namePrefix}ваша подписка в ${clubName} заканчивается через 3 дня.
 
 Чтобы не потерять доступ к чату и материалам, просто продлите её заранее 💙`,
       
       reminder_1_day: `⚠️ Важное напоминание
 
-Ваша подписка в ${clubName} заканчивается завтра!
+${namePrefix}ваша подписка в ${clubName} заканчивается завтра!
 
 Продлите сейчас, чтобы не потерять доступ 💙`,
       
       access_granted: `✅ Доступ восстановлен!
 
-Ваша подписка в ${clubName} активна${accessEndFormatted ? ` до ${accessEndFormatted}` : ''}.
+${namePrefix}ваша подписка в ${clubName} активна${accessEndFormatted ? ` до ${accessEndFormatted}` : ''}.
 
 Добро пожаловать! 💙`,
       
       access_revoked: `❌ Доступ к клубу закрыт
 
-Ваш доступ к ${clubName} был отозван, поэтому доступ к чату и каналу временно закрыт.
+${namePrefix}ваш доступ к ${clubName} был отозван, поэтому доступ к чату и каналу временно закрыт.
 
 Вы можете вернуться в любой момент, оформив подписку 👇`,
 
       // PATCH 10E: Шаблон извинения за ложный access_revoked
       access_still_active_apology: `✅ Ваш доступ активен!
 
-Приносим извинения за техническую ошибку — вы могли получить ошибочное сообщение об отзыве доступа.
+${namePrefix}приносим извинения за техническую ошибку — Вы могли получить ошибочное сообщение об отзыве доступа.
 
 На самом деле ваша подписка в ${clubName} активна${accessEndFormatted ? ` до ${accessEndFormatted}` : ''}.
 
@@ -485,7 +491,7 @@ Deno.serve(async (req) => {
       // PATCH 9 → PATCH-MIT: Шаблон для legacy карт (без призывов к токенизации)
       legacy_card_notification: `⚠️ Обновление платёжной системы
 
-Ваша сохранённая карта была удалена из личного кабинета.
+${namePrefix}ваша сохранённая карта была удалена из личного кабинета.
 
 Для продления подписки оплатите на сайте:
 🔗 ${siteUrl}/purchases`,
@@ -493,17 +499,17 @@ Deno.serve(async (req) => {
       // PATCH-MIT: Card with 3DS — нейтральный текст без обещаний автосписаний
       card_not_suitable_for_autopay: `ℹ️ Информация о карте
 
-Ваша карта ${cardDisplay} успешно добавлена.
+${namePrefix}ваша карта ${cardDisplay} успешно добавлена.
 
 Оплата этой картой может требовать подтверждения 3D-Secure.
 
-Для продления подписки вы всегда можете оплатить на сайте:
+Для продления подписки Вы всегда можете оплатить на сайте:
 🔗 ${siteUrl}/purchases`,
 
       // SECURE TEMPLATE: Card verification failed (temporary error, not 3DS rejection)
       card_verification_failed: `⚠️ Не удалось проверить карту
 
-Мы попытались проверить ${cardDisplay} для автоматических платежей, но произошла ошибка.
+${namePrefix}мы попытались проверить ${cardDisplay} для автоматических платежей, но произошла ошибка.
 
 Это может быть временная проблема с банком или платёжной системой.
 
@@ -513,9 +519,9 @@ Deno.serve(async (req) => {
 
 🔗 Настройки карт: ${siteUrl}/settings/payment-methods`,
       
-      welcome: `👋 Привет${profile.full_name ? ', ' + profile.full_name : ''}!
+      welcome: `👋 Здравствуйте${greetSuffix(profile)}!
 
-Рады видеть вас в ${clubName}!
+Рады видеть Вас в ${clubName}!
 
 Если возникнут вопросы — мы всегда на связи 💙`,
       

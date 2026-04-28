@@ -3,6 +3,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
 import { generateRenewalCTAs, type RenewalCTAs } from '../_shared/generate-renewal-ctas.ts';
 import { resolveProductRenewability } from '../_shared/renewal-offer-resolver.ts';
+import { greetPrefix, extractFirstName } from '../_shared/recipient-name.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -447,7 +448,9 @@ async function sendTelegramReminder(
       };
     }
 
-    const userName = profile.full_name?.split(' ')[0] || 'Клиент';
+    // PATCH NAME-V: безопасное обращение через helper. Если имя неопределено —
+    // префикс пустой, фраза начинается без обращения (а не с фамилии).
+    const safeNamePrefix = escapeMd(greetPrefix(profile));
     // PATCH ONE-TIME v2: точное время Минск (день + месяц + HH:mm)
     const dateFmt = new Intl.DateTimeFormat('ru-RU', {
       day: 'numeric', month: 'long', timeZone: 'Europe/Minsk'
@@ -457,7 +460,6 @@ async function sendTelegramReminder(
     });
     const formattedDate = `${dateFmt.format(expiryDate)} в ${timeFmt.format(expiryDate)} (Минск)`;
 
-    const safeUserName = escapeMd(userName);
     const safeProductName = escapeMd(productName);
     const safeTariffName = escapeMd(tariffName);
 
@@ -466,19 +468,19 @@ async function sendTelegramReminder(
       if (daysLeft === 7) {
         message = `📅 *Доступ скоро заканчивается*
 
-${safeUserName}, напоминаем: доступ к *${safeProductName}* заканчивается *${formattedDate}*.
+${safeNamePrefix}напоминаем: доступ к *${safeProductName}* заканчивается *${formattedDate}*.
 
 Это разовая покупка — продление не требуется. ✅ Спасибо, что были с нами!`;
       } else if (daysLeft === 3) {
         message = `⏰ *Осталось 3 дня доступа*
 
-${safeUserName}, доступ к *${safeProductName}* заканчивается *${formattedDate}*.
+${safeNamePrefix}доступ к *${safeProductName}* заканчивается *${formattedDate}*.
 
 Это разовая покупка — продление не требуется. ✅`;
       } else if (daysLeft === 1) {
         message = `🔔 *Завтра заканчивается доступ*
 
-${safeUserName}, это последнее напоминание: доступ к *${safeProductName}* заканчивается *${formattedDate}*.
+${safeNamePrefix}это последнее напоминание: доступ к *${safeProductName}* заканчивается *${formattedDate}*.
 
 Это разовая покупка — продление не требуется. ✅ Благодарим за доверие!`;
       }
@@ -488,13 +490,13 @@ ${safeUserName}, это последнее напоминание: доступ 
       if (hasSBS) {
         message = `📅 *Напоминание о подписке*
 
-${safeUserName}, ваша подписка на *${safeProductName}* заканчивается через неделю (${formattedDate}).
+${safeNamePrefix}ваша подписка на *${safeProductName}* заканчивается через неделю (${formattedDate}).
 
 Автопродление активно — подписка продлится автоматически. Отключить можно в кабинете.`;
       } else {
         message = `📅 *Напоминание о подписке*
 
-${safeUserName}, ваша подписка на *${safeProductName}* заканчивается через неделю (${formattedDate}).
+${safeNamePrefix}ваша подписка на *${safeProductName}* заканчивается через неделю (${formattedDate}).
 
 📦 *Продукт:* ${safeProductName}
 🎯 *Тариф:* ${safeTariffName}
@@ -505,13 +507,13 @@ ${safeUserName}, ваша подписка на *${safeProductName}* закан�
       if (hasSBS) {
         message = `⏰ *Подписка заканчивается через 3 дня*
 
-${safeUserName}, осталось 3 дня до окончания подписки на *${safeProductName}* (${formattedDate}).
+${safeNamePrefix}осталось 3 дня до окончания подписки на *${safeProductName}* (${formattedDate}).
 
 Автопродление активно — спишется автоматически. Отключить можно в кабинете.`;
       } else {
         message = `⏰ *Подписка заканчивается через 3 дня*
 
-${safeUserName}, осталось 3 дня до окончания подписки на *${safeProductName}* (${formattedDate}).
+${safeNamePrefix}осталось 3 дня до окончания подписки на *${safeProductName}* (${formattedDate}).
 
 📦 *${safeProductName}* / ${safeTariffName}
 
@@ -521,11 +523,11 @@ ${safeUserName}, осталось 3 дня до окончания подпис�
       if (hasSBS) {
         message = `🔔 *Завтра заканчивается подписка!*
 
-${safeUserName}, это последнее напоминание. Подписка продлится автоматически. Отключить можно в кабинете.`;
+${safeNamePrefix}это последнее напоминание. Подписка продлится автоматически. Отключить можно в кабинете.`;
       } else {
         message = `🔔 *Завтра заканчивается подписка!*
 
-${safeUserName}, это последнее напоминание. Подписка на *${safeProductName}* заканчивается ${formattedDate}.
+${safeNamePrefix}это последнее напоминание. Подписка на *${safeProductName}* заканчивается ${formattedDate}.
 
 Оплатите сейчас, чтобы сохранить доступ:`;
       }

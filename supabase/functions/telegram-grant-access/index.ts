@@ -2,6 +2,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { hasValidAccess } from '../_shared/accessValidation.ts';
 import { writeLedgerEntry, type LedgerEntry } from '../_shared/fulfillment-executor.ts';
+import { greetPrefix } from '../_shared/recipient-name.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -860,13 +861,16 @@ Deno.serve(async (req) => {
           : '';
 
         const joinRequestNote = joinRequestMode
-          ? '\n\n⏳ <i>После перехода по ссылке твоя заявка будет автоматически одобрена.</i>'
-          : '\n\n⚠️ <i>Ссылки одноразовые — переходи сейчас!</i>';
+          ? '\n\n⏳ <i>После перехода по ссылке Ваша заявка будет автоматически одобрена.</i>'
+          : '\n\n⚠️ <i>Ссылки одноразовые — переходите сейчас!</i>';
+
+        // PATCH NAME-V: безопасное обращение по имени, обращение строго на «Вы».
+        const dmNamePrefix = greetPrefix(profile);
 
         // Plain text for logs (no HTML tags)
-        dmText = `✅ Доступ открыт!\n\nТвой доступ к ${dmProductTitle}${dmTariffPart} активирован.\nКлуб: ${dmClubName}\n\nВот ссылки для входа:${validUntilText.replace(/<[^>]*>/g, '')}${joinRequestNote.replace(/<[^>]*>/g, '')}`;
+        dmText = `✅ Доступ открыт!\n\n${dmNamePrefix}Ваш доступ к ${dmProductTitle}${dmTariffPart} активирован.\nКлуб: ${dmClubName}\n\nВот ссылки для входа:${validUntilText.replace(/<[^>]*>/g, '')}${joinRequestNote.replace(/<[^>]*>/g, '')}`;
         // HTML for Telegram
-        const dmHtml = `✅ <b>Доступ открыт!</b>\n\nТвой доступ к <b>${dmProductTitle}</b>${dmTariffPart} активирован.\nКлуб: <b>${dmClubName}</b>\n\nВот ссылки для входа:${validUntilText}${joinRequestNote}`;
+        const dmHtml = `✅ <b>Доступ открыт!</b>\n\n${dmNamePrefix}Ваш доступ к <b>${dmProductTitle}</b>${dmTariffPart} активирован.\nКлуб: <b>${dmClubName}</b>\n\nВот ссылки для входа:${validUntilText}${joinRequestNote}`;
 
         const result = await sendMessage(
           botToken,

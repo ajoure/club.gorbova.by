@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { hasValidAccess } from '../_shared/accessValidation.ts';
+import { greetPrefix } from '../_shared/recipient-name.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -84,19 +85,19 @@ async function sendGraceNotification(
     return result;
   }
 
-  const userName = profile.full_name?.split(' ')[0] || 'Клиент';
+  const namePrefix = greetPrefix(profile);
   const hoursLeft = graceEndsAt ? getHoursRemaining(graceEndsAt) : 0;
 
-  // Message templates
+  // Message templates. Обращение строго на «Вы». Имя — через namePrefix.
   const messages: Record<string, string> = {
     grace_started: `⚠️ *Не удалось продлить подписку*
 
-${userName}, платёж за продление не прошёл.
+${namePrefix}платёж за продление не прошёл.
 
 📦 *Продукт:* ${productName || 'Подписка'}
 💳 *Сумма:* ${formatCurrency(amount, currency)}
 
-*У вас есть 72 часа*, чтобы оплатить и сохранить текущую цену.
+*У Вас есть 72 часа*, чтобы оплатить и сохранить текущую цену.
 
 После ${graceEndsAt ? formatDateRu(graceEndsAt) : 'истечения срока'} стоимость повторного вступления будет выше.
 
@@ -107,7 +108,7 @@ ${userName}, платёж за продление не прошёл.
 
     grace_24h_left: `⏳ *Осталось 48 часов*
 
-${userName}, напоминание: у вас осталось 48 часов, чтобы вернуться в клуб по прежней цене.
+${namePrefix}напоминание: у Вас осталось 48 часов, чтобы вернуться в клуб по прежней цене.
 
 После ${graceEndsAt ? formatDateRu(graceEndsAt) : 'дедлайна'} цена будет выше.
 
@@ -115,7 +116,7 @@ ${userName}, напоминание: у вас осталось 48 часов, �
 
     grace_48h_left: `⏰ *Последние 24 часа!*
 
-${userName}, осталось меньше суток до повышения цены.
+${namePrefix}осталось меньше суток до повышения цены.
 
 Если хотите сохранить прежнюю стоимость — оплатите сегодня.
 
@@ -123,7 +124,7 @@ ${userName}, осталось меньше суток до повышения ц
 
     grace_expired: `❌ *Время для возврата истекло*
 
-${userName}, 72 часа прошли — прежняя цена больше недоступна.
+${namePrefix}72 часа прошли — прежняя цена больше недоступна.
 
 Вернуться в клуб можно только вручную по текущей цене:
 🔗 [Посмотреть тарифы](https://club.gorbova.by/pricing)`,

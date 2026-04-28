@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { extractFirstName } from "../_shared/recipient-name.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -63,17 +64,23 @@ serve(async (req: Request) => {
     const bot = bots[0];
     const botToken = bot.bot_token_encrypted; // Token stored in this field
 
-    // Format confirmation message for the CLIENT
+    // Format confirmation message for the CLIENT (обращение строго на «Вы»)
     const productName = data.product_code === "cb20_predzapis" ? "«Ценный бухгалтер»" : data.product_code;
+    // Безопасное обращение по имени: для MarkdownV2 экранируем
+    const firstName = extractFirstName(profile);
+    const greetingLine = firstName
+      ? `${escapeMarkdown(firstName)}, Вы успешно записались на курс ${escapeMarkdown(productName)}\\.`
+      : `Вы успешно записались на курс ${escapeMarkdown(productName)}\\.`;
+
     const message = `✅ *Спасибо за предзапись\\!*
 
-Вы успешно записались на курс ${escapeMarkdown(productName)}\\. 
+${greetingLine}
 
 ${data.tariff_name ? `📦 *Тариф:* ${escapeMarkdown(data.tariff_name)}` : ""}
 
-Мы свяжемся с вами, когда откроется набор на курс\\.
+Мы свяжемся с Вами, когда откроется набор на курс\\.
 
-Если у вас есть вопросы — напишите нам\\!`;
+Если у Вас есть вопросы — напишите нам\\!`;
 
     // Send confirmation to the CLIENT via Telegram
     const telegramResponse = await fetch(
