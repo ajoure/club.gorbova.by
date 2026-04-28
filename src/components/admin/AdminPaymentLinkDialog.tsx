@@ -393,13 +393,23 @@ export function AdminPaymentLinkDialog({
     if (effectiveOffer) {
       setCustomAmount(String(Number(effectiveOffer.amount)));
       setGeneratedUrl(null);
+      // Stage L: если оффер installment — выставляем default = max_months и форсим one_time.
+      if ((effectiveOffer as any).payment_method === "internal_installment") {
+        const metaMax = Number((effectiveOffer as any).meta?.installment?.max_months ?? 0);
+        const legacy = Number((effectiveOffer as any).installment_count ?? 0);
+        const max = Math.min(12, metaMax >= 2 ? metaMax : (legacy >= 2 ? legacy : 0));
+        setSelectedInstallmentMonths(max >= 2 ? max : null);
+        if (paymentType !== "one_time") setPaymentType("one_time");
+      } else {
+        setSelectedInstallmentMonths(null);
+      }
     } else if (
       !resolved.ok &&
       tariffPrices?.price &&
       !customAmount
     ) {
-      // Только если резолвер заблокирован и есть legacy price
       setCustomAmount(String(tariffPrices.price));
+      setSelectedInstallmentMonths(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveOffer?.id]);
