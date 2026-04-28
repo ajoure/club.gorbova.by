@@ -2,14 +2,23 @@
  * Shared resolver: determines whether a product is "renewable" based on its
  * active tariff_offers — NOT the user's current subscription state.
  *
- * Sources of truth (priority):
+ * === PRODUCT-TYPE SOURCE OF TRUTH (canonical, 2026-04-28) ===
+ * Тип продукта (продлеваемый vs разовый) определяется ТОЛЬКО через активные
+ * tariff_offers по следующим полям:
  *   1. tariff_offers.meta.recurring.is_recurring === true
- *   2. tariff_offers.payment_method === 'internal_installment'  (рассрочка)
+ *      ↳ управляется UI-чекбоксом «Подписка (автопродление)» в карточке тарифа.
+ *   2. tariff_offers.payment_method === 'internal_installment'   (рассрочка)
  *   3. tariff_offers.is_installment === true
  *   4. tariff_offers.offer_type === 'subscription'
  *
- * If ANY active offer for the product matches → product is renewable.
- * If product has no active offers → conservative `renewable=false` + reason.
+ * Если ANY активный оффер продукта матчится → продукт renewable.
+ * Если у продукта нет активных офферов → conservative `renewable=false`.
+ *
+ * ЗАПРЕЩЕНО как классификатор продукта:
+ *   - tariff_offers.requires_card_tokenization (это биллинг-сигнал bePaid, не тип продукта)
+ *   - subscriptions_v2.billing_type / наличие active SBS у пользователя
+ *   - название/slug/code продукта или тарифа
+ *   - product_type как строковая эвристика
  *
  * Used by: subscription-renewal-reminders, telegram-send-reminders,
  *          generate-renewal-ctas (gating), AdminPaymentLinkDialog (telegram body).
