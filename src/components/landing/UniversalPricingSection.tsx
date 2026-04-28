@@ -145,7 +145,10 @@ export function UniversalPricingSection({
           isTrial={selectedOffer.offer.offer_type === "trial"}
           trialDays={selectedOffer.offer.trial_days ?? undefined}
           isClubProduct={!!product.telegram_club_id}
-          isSubscription={selectedOffer.offer.requires_card_tokenization}
+          isSubscription={
+            !!selectedOffer.offer.requires_card_tokenization &&
+            selectedOffer.offer.payment_method !== "internal_installment"
+          }
           paymentMethod={selectedOffer.offer.payment_method}
           installmentCount={selectedOffer.offer.installment_count ?? null}
         />
