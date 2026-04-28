@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
+import { getSubscriptionToken, isSkip } from '../_shared/token-resolver.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -202,28 +203,39 @@ Deno.serve(async (req) => {
       results.processed++;
       const subscription = installment.subscriptions_v2;
 
-      // SECURITY FIX: Check payment_method_id, not just payment_token
-      // This ensures we only charge cards the user can see and manage
-      if (!subscription?.payment_method_id || !['active', 'trial'].includes(subscription.status)) {
-        console.log(`Skipping installment ${installment.id}: subscription inactive or no payment_method linked`);
+      // Stage 1: единый helper для получения токена (priority chain)
+      // payment_methods → subscription_payment_credentials → subscriptions_v2.payment_token
+      if (!subscription?.id) {
+        console.log(`Skipping installment ${installment.id}: no subscription linked`);
         results.skipped++;
         continue;
       }
 
-      // Get the actual token from payment_methods table (trusted source)
-      const { data: paymentMethod } = await supabase
-        .from('payment_methods')
-        .select('id, status, provider_token')
-        .eq('id', subscription.payment_method_id)
-        .single();
+      const tokenResult = await getSubscriptionToken(supabase, subscription.id);
 
-      if (!paymentMethod || paymentMethod.status !== 'active' || !paymentMethod.provider_token) {
-        console.log(`Skipping installment ${installment.id}: payment_method not found or inactive`);
+      if (isSkip(tokenResult)) {
+        console.log(`Skipping installment ${installment.id}: ${tokenResult.reason}`, tokenResult.details);
+
+        // Audit ghost-token и payment_method_inactive
+        if (tokenResult.reason === 'ghost_token_no_payment_method' || tokenResult.reason === 'payment_method_inactive') {
+          await supabase.from('audit_logs').insert({
+            actor_type: 'system',
+            actor_label: 'installment-charge-cron',
+            action: `installment.token_resolve.${tokenResult.reason}`,
+            meta: {
+              installment_id: installment.id,
+              subscription_id: subscription.id,
+              ...tokenResult.details,
+            },
+          });
+        }
         results.skipped++;
         continue;
       }
 
-      const effectiveToken = paymentMethod.provider_token;
+      const effectiveToken = tokenResult.token;
+      console.log(`Token resolved for installment ${installment.id} via ${tokenResult.source}`);
+
 
       try {
         // Update installment status to processing
