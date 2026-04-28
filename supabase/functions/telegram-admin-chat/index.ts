@@ -496,19 +496,11 @@ Deno.serve(async (req) => {
             }
             
             if (fileId) {
-              // Get file path from Telegram
-              const fileInfoRes = await fetch(
-                `https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`
-              );
-              const fileInfo = await fileInfoRes.json();
-              
-              if (fileInfo.ok && fileInfo.result?.file_path) {
-                // Download file using arrayBuffer (more reliable)
-                const telegramFileUrl = `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`;
-                const fileResponse = await fetch(telegramFileUrl);
-                const arrayBuffer = await fileResponse.arrayBuffer();
-                
-                // Sanitize filename for Supabase Storage (no cyrillic, spaces, special chars)
+              // Upload the already selected local file bytes immediately.
+              // Do not download it back from Telegram: that added seconds of visible delay.
+              const localBytes = base64ToBytes(file.base64);
+
+              // Sanitize filename for Supabase Storage (no cyrillic, spaces, special chars)
                 const sanitizeOutboundFileName = (name: string): string => {
                   if (!name) return 'file';
                   const lastDot = name.lastIndexOf('.');
@@ -538,18 +530,18 @@ Deno.serve(async (req) => {
                 
                 const safeOutboundName = sanitizeOutboundFileName(file.name);
                 
-                // Upload to Supabase Storage
+                // Upload to Storage for instant UI preview after the real Telegram send succeeds.
                 storageBucket = 'telegram-media';
                 storagePath = `outbound/${user_id}/${Date.now()}_${safeOutboundName}`;
                 const { data: uploadData, error: uploadError } = await supabase.storage
                   .from(storageBucket)
-                  .upload(storagePath, arrayBuffer, { 
+                  .upload(storagePath, localBytes, { 
                     contentType: guessMimeType(file.name, file.type),
                     upsert: false 
                   });
                 
                 if (uploadData && !uploadError) {
-                  console.log(`[OUTBOUND] Upload OK: bucket=${storageBucket} path=${storagePath} bytes=${arrayBuffer.byteLength}`);
+                  console.log(`[OUTBOUND] Upload OK: bucket=${storageBucket} path=${storagePath} bytes=${localBytes.byteLength}`);
                 } else {
                   console.error(`[OUTBOUND] Upload FAILED: path=${storagePath}`, uploadError);
                   // Log to audit_logs
@@ -562,7 +554,6 @@ Deno.serve(async (req) => {
                   storageBucket = null;
                   storagePath = null;
                 }
-              }
             }
           } catch (uploadErr) {
             console.error("Failed to upload file to storage:", uploadErr);
