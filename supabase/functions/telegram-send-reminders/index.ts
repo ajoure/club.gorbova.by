@@ -243,30 +243,34 @@ Deno.serve(async (req) => {
         year: 'numeric'
       });
 
-      // Resolve product/tariff for CTA generation
+      // Resolve product/tariff for CTA generation (uses tariff_offers SOT)
       const resolved = await resolveProductAndTariff(supabase, access.user_id, access.club_id);
       const clubName = club.club_name || 'клубе';
 
-      // Check if user has active SBS (provider_managed) subscription
-      const hasSBS = resolved?.billingType === 'provider_managed';
+      // hasSBS = у пользователя уже активна провайдерская подписка (автосписание)
+      const hasSBS = !!resolved && resolved.renewable === true && resolved.hasActivePM;
+      // productRenewable = у продукта в принципе есть возможность продления (по tariff_offers)
+      const productRenewable = !!resolved && resolved.renewable === true;
+      const installmentMode = productRenewable && (resolved as any).kind === 'installment';
 
-      // Build message text
       let message: string;
       let keyboard: any;
+      let deliveryMethod: string;
 
       if (hasSBS) {
-        // SBS user — auto-renewal active, no payment links
+        // Авто-продление активно
         message = `⏰ Небольшое напоминание\n\nВаша подписка в ${clubName} продлится автоматически ${formattedDate}.\n\nАвтопродление активно — отключить его можно в личном кабинете 💙`;
-
         const siteUrl = Deno.env.get('SITE_URL') || 'https://club.gorbova.by';
         keyboard = {
-          inline_keyboard: [[
-            { text: '📋 Управление подпиской', url: `${siteUrl}/dashboard` }
-          ]]
+          inline_keyboard: [[{ text: '📋 Управление подпиской', url: `${siteUrl}/dashboard` }]],
         };
-      } else if (resolved) {
-        // Non-SBS user — generate 2 CTA buttons via shared helper
-        message = `⏰ Небольшое напоминание\n\nВаша подписка в ${clubName} заканчивается ${formattedDate}.\n\nЧтобы не потерять доступ к чату и материалам, просто продлите её заранее 💙`;
+        deliveryMethod = 'sbs_info';
+      } else if (productRenewable && resolved) {
+        // Продукт продлеваемый — генерируем CTA даже если у юзера нет подписки в БД
+        const intro = installmentMode
+          ? `⏰ Небольшое напоминание\n\nВаш доступ в ${clubName} заканчивается ${formattedDate}.\n\nЧтобы продолжить — оплатите следующий платёж рассрочки или оформите полный доступ 💙`
+          : `⏰ Небольшое напоминание\n\nВаша подписка в ${clubName} заканчивается ${formattedDate}.\n\nЧтобы не потерять доступ к чату и материалам, просто продлите её заранее 💙`;
+        message = intro;
 
         const ctas = await generateRenewalCTAs({
           supabase,
@@ -276,7 +280,9 @@ Deno.serve(async (req) => {
           amount: resolved.amount,
           origin: 'https://club.gorbova.by',
           actorType: 'system',
-          description: 'Продление подписки (авто-напоминание TG)',
+          description: installmentMode
+            ? 'Продление доступа (рассрочка, авто-напоминание TG)'
+            : 'Продление подписки (авто-напоминание TG)',
         });
 
         const buttons: Array<Array<{ text: string; url: string }>> = [];
@@ -289,26 +295,21 @@ Deno.serve(async (req) => {
 
         if (buttons.length > 0) {
           keyboard = { inline_keyboard: buttons };
+          deliveryMethod = 'dual_cta_buttons';
         } else {
-          // Fallback: link to pricing page if both CTAs failed
           const siteUrl = Deno.env.get('SITE_URL') || 'https://club.gorbova.by';
           keyboard = {
-            inline_keyboard: [[
-              { text: '💳 Продлить подписку', url: `${siteUrl}/#pricing` }
-            ]]
+            inline_keyboard: [[{ text: '💳 Продлить доступ', url: `${siteUrl}/#pricing` }]],
           };
+          deliveryMethod = 'pricing_fallback';
         }
       } else {
-        // No product/tariff resolved — generic fallback
-        message = `⏰ Небольшое напоминание\n\nВаша подписка в ${clubName} заканчивается ${formattedDate}.\n\nЧтобы не потерять доступ к чату и материалам, просто продлите её заранее 💙`;
-
-        const siteUrl = Deno.env.get('SITE_URL') || 'https://club.gorbova.by';
-        keyboard = {
-          inline_keyboard: [[
-            { text: '💳 Продлить подписку', url: `${siteUrl}/#pricing` }
-          ]]
-        };
+        // Продукт действительно разовый — продление не предусмотрено
+        message = `⏰ Небольшое напоминание\n\nВаш доступ в ${clubName} заканчивается ${formattedDate}.\n\nЭто разовая покупка — продление не предусмотрено. Спасибо, что были с нами! 💙`;
+        keyboard = undefined;
+        deliveryMethod = 'one_time_info';
       }
+
 
       const sendResult = await telegramRequest(botToken, 'sendMessage', {
         chat_id: profile.telegram_user_id,
