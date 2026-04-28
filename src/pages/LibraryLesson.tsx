@@ -11,6 +11,7 @@ import { useLessonQuestions, formatTimecode } from "@/hooks/useKbQuestions";
 import { SafeHtml } from "@/components/ui/SafeHtml";
 import { usePermissions } from "@/hooks/usePermissions";
 import { LessonBlockRenderer } from "@/components/lesson/LessonBlockRenderer";
+import { LessonActionDock } from "@/components/lesson/LessonActionDock";
 import { getFileTypeIcon, pickIconHint } from "@/components/admin/lesson-editor/blocks/fileTypeIcons";
 import { KvestLessonView } from "@/components/lesson/KvestLessonView";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
