@@ -170,6 +170,8 @@ Deno.serve(async (req) => {
         first_payment_delay_days: 0,
         total_amount: totalByn,
         per_payment_amount: perPaymentByn,
+        // Canonical key для public-checkout (читает per_payment_amount_byn).
+        per_payment_amount_byn: perPaymentByn,
         total_installment_amount: totalInstallmentByn,
         rounding_mode: 'round_half_up_byn',
       };
