@@ -1018,23 +1018,54 @@ export function ContactTelegramChat({
     if (inner) ro.observe(inner);
     ro.observe(viewport);
 
-    // 3) Картинки — каждая догрузка двигает scrollHeight.
-    const imgs = Array.from(viewport.querySelectorAll("img"));
-    const onImgLoad = () => pinToBottom();
-    imgs.forEach((img) => {
-      if (!(img as HTMLImageElement).complete) {
-        img.addEventListener("load", onImgLoad, { once: true });
-        img.addEventListener("error", onImgLoad, { once: true });
+    // 3) Картинки и видео — каждая догрузка двигает scrollHeight.
+    const onMediaLoad = () => {
+      if (isNearBottom()) pinToBottom();
+    };
+    const attachLoadListeners = (root: ParentNode) => {
+      const medias = Array.from(
+        root.querySelectorAll("img, video")
+      ) as Array<HTMLImageElement | HTMLVideoElement>;
+      medias.forEach((m) => {
+        // dataset-флаг чтобы не вешать listener дважды
+        if ((m as any).dataset?.pinAttached === "1") return;
+        (m as any).dataset.pinAttached = "1";
+        const isImg = m.tagName === "IMG";
+        const ready = isImg
+          ? (m as HTMLImageElement).complete && (m as HTMLImageElement).naturalWidth > 0
+          : (m as HTMLVideoElement).readyState >= 1;
+        if (ready) return;
+        const evtLoad = isImg ? "load" : "loadedmetadata";
+        m.addEventListener(evtLoad, onMediaLoad, { once: true });
+        m.addEventListener("error", onMediaLoad, { once: true });
+      });
+    };
+    attachLoadListeners(viewport);
+
+    // 4) MutationObserver — ловим динамически добавленные медиа
+    //    (когда телеграм-worker догружает картинку и React рендерит <img>).
+    const mo = new MutationObserver((mutations) => {
+      let hasNewMedia = false;
+      for (const m of mutations) {
+        m.addedNodes.forEach((n) => {
+          if (n.nodeType !== 1) return;
+          const el = n as Element;
+          if (el.tagName === "IMG" || el.tagName === "VIDEO" || el.querySelector?.("img, video")) {
+            hasNewMedia = true;
+          }
+        });
+      }
+      if (hasNewMedia) {
+        attachLoadListeners(viewport);
+        if (isNearBottom()) pinToBottom();
       }
     });
+    mo.observe(viewport, { childList: true, subtree: true });
 
     return () => {
       stickyActive = false;
       ro.disconnect();
-      imgs.forEach((img) => {
-        img.removeEventListener("load", onImgLoad);
-        img.removeEventListener("error", onImgLoad);
-      });
+      mo.disconnect();
     };
   }, [userId, isLoading, chatItems.length]);
 
