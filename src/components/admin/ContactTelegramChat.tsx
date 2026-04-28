@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { uploadToTelegramMedia } from "@/components/admin/chat/uploadToTelegramMedia";
 import { format, isToday, isYesterday, isSameDay } from "date-fns";
 import { ru } from "date-fns/locale";
 import { Button } from "@/components/ui/button";
