@@ -642,6 +642,12 @@ export function AdminPaymentLinkDialog({
             resolved_mode: isOverrideMode ? "override" : "canonical",
             cta_source: "telegram_combined",
             cta_contract_version: 1,
+            ...(isInstallmentOffer && selectedInstallmentMonths
+              ? {
+                  installment_offer: true,
+                  selected_installment_months: selectedInstallmentMonths,
+                }
+              : {}),
           },
         }
       );
