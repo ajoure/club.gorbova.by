@@ -1388,6 +1388,21 @@ export function PaymentDialog({
               </span>
             </div>
 
+            {/* F3: installment summary */}
+            {isInstallmentOffer && (
+              <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 text-sm space-y-1">
+                <p className="font-medium text-foreground">
+                  Рассрочка на {installmentCount} платежа
+                </p>
+                <p className="text-muted-foreground">
+                  Сегодня — первый платёж. Остальные спишутся автоматически с интервалом 30 дней.
+                </p>
+                <p className="text-xs text-muted-foreground/80 pt-1">
+                  После нажатия «Оплатить» вы перейдёте на защищённую страницу bePaid.
+                </p>
+              </div>
+            )}
+
             {/* PAY-I: subscription-info — 2 короткие строки + штатное упоминание bePaid */}
             {(isSubscription || isTrial) && (
               <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 text-sm space-y-1">
