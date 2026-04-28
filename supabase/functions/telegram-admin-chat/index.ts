@@ -10,7 +10,10 @@ const corsHeaders = {
 interface FileData {
   type: "photo" | "video" | "audio" | "video_note" | "document";
   name: string;
-  base64: string;
+  // Either base64 (small files) OR storage_path (large files via storage upload).
+  base64?: string;
+  storage_path?: string;
+  storage_bucket?: string;
 }
 
 interface ChatAction {
