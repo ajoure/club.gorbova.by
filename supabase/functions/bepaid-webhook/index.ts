@@ -2710,23 +2710,29 @@ Deno.serve(async (req) => {
             const renewAt = bepaidRenewAt ? new Date(bepaidRenewAt) : accessEndAt;
 
             // 1. Update subscriptions_v2
+            // STAGE L3 GUARD: для рассрочки (linkOrder.meta.installment_count >= 2) НЕ перезаписываем
+            // billing_type на 'provider_managed' и НЕ ставим auto_renew=true — рассрочка идёт через
+            // installment_payments + installment-charge-cron, а billing_type='internal_installment'.
             const existingSubMeta = (linkSubV2.meta as Record<string, any>) || {};
+            const subUpdatePayload: Record<string, any> = {
+              status: 'active',
+              access_end_at: accessEndAt.toISOString(),
+              next_charge_at: renewAt.toISOString(),
+              meta: {
+                ...existingSubMeta,
+                bepaid_subscription_id: String(subscriptionId),
+                bepaid_activated_at: now.toISOString(),
+              },
+            };
+            if (!isInstallmentOrder) {
+              subUpdatePayload.billing_type = 'provider_managed';
+              subUpdatePayload.auto_renew = true;
+            }
             await supabase
               .from('subscriptions_v2')
-              .update({
-                status: 'active',
-                billing_type: 'provider_managed',
-                access_end_at: accessEndAt.toISOString(),
-                next_charge_at: renewAt.toISOString(),
-                auto_renew: true,
-                meta: {
-                  ...existingSubMeta,
-                  bepaid_subscription_id: String(subscriptionId),
-                  bepaid_activated_at: now.toISOString(),
-                },
-              })
+              .update(subUpdatePayload)
               .eq('id', grantedSubscriptionV2Id);
-            console.log('[WEBHOOK-LINK-ORDER] INLINE: subscriptions_v2 access_end_at updated to', accessEndAt.toISOString());
+            console.log('[WEBHOOK-LINK-ORDER] INLINE: subscriptions_v2 access_end_at updated to', accessEndAt.toISOString(), 'isInstallment=', isInstallmentOrder);
 
             // 2. Update entitlements (GREATEST logic)
             const productCode = (linkSubV2.products_v2 as any)?.code;
