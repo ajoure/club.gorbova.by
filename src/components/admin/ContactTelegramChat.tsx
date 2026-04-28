@@ -1208,7 +1208,12 @@ export function ContactTelegramChat({
     return (
       <div
         key={msg.id}
-        className={`flex w-full min-w-0 ${msg.direction === "outgoing" ? "justify-end pr-1" : "justify-start"} group`}
+        id={`tg-msg-${msg.id}`}
+        className={cn(
+          "flex w-full min-w-0 group transition-colors duration-700 rounded-lg",
+          msg.direction === "outgoing" ? "justify-end pr-1" : "justify-start",
+          highlightedId === msg.id && "bg-yellow-200/40"
+        )}
       >
         <div className={`relative max-w-[80%] min-w-0 ${msg.direction === "outgoing" ? "mr-1" : ""}`}>
           <div className="flex flex-col w-full min-w-0">
@@ -1240,6 +1245,45 @@ export function ContactTelegramChat({
                       : (clientName || "Клиент")}
                   </span>
                 </div>
+
+                {/* Quote-блок (если это reply) */}
+                {msg.reply_to_message_id ? (() => {
+                  const quoted = messagesByTgId.get(msg.reply_to_message_id);
+                  const isOutgoing = msg.direction === "outgoing";
+                  const authorLabel = quoted
+                    ? (quoted.direction === "outgoing"
+                        ? (quoted.admin_profile?.full_name || "Администратор")
+                        : (clientName || "Клиент"))
+                    : "Сообщение";
+                  const previewText = quoted ? previewForQuote(quoted) : "Недоступно (не загружено)";
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => quoted && scrollToMessage(quoted.id)}
+                      disabled={!quoted}
+                      className={cn(
+                        "block w-full text-left mb-2 pl-2 border-l-2 rounded-sm py-1 px-2 -mx-1 transition-colors",
+                        isOutgoing
+                          ? "border-primary-foreground/60 bg-primary-foreground/10 hover:bg-primary-foreground/20"
+                          : "border-primary/60 bg-primary/5 hover:bg-primary/10",
+                        !quoted && "opacity-60 cursor-default"
+                      )}
+                    >
+                      <div className={cn(
+                        "text-[11px] font-semibold truncate",
+                        isOutgoing ? "text-primary-foreground/90" : "text-primary"
+                      )}>
+                        {authorLabel}
+                      </div>
+                      <div className={cn(
+                        "text-xs truncate",
+                        isOutgoing ? "text-primary-foreground/80" : "text-muted-foreground"
+                      )}>
+                        {previewText}
+                      </div>
+                    </button>
+                  );
+                })() : null}
                 
                 {/* Media preview with lightbox support - render if isMediaLike (not just fileType) */}
                 {isMediaLike && (
