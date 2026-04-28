@@ -1368,7 +1368,7 @@ export function ContactTelegramChat({
             {hasMessageText && (
               <div className="w-full px-4 py-2 bg-muted/50 rounded-lg text-xs text-muted-foreground border border-border/30">
                 <div className="whitespace-pre-wrap break-words max-h-32 overflow-y-auto">
-                  {event.message_text}
+                  {renderTelegramFormattedText(event.message_text || "")}
                 </div>
               </div>
             )}
@@ -1530,7 +1530,7 @@ export function ContactTelegramChat({
                 )}
                 
                 {msg.message_text && (
-                  <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
+                  <p className="text-sm whitespace-pre-wrap break-words">{renderTelegramFormattedText(msg.message_text)}</p>
                 )}
 
                 {/* Inline keyboard mirror — рендер как нативные Telegram-кнопки.
