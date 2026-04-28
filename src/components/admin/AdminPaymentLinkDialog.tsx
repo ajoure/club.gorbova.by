@@ -251,6 +251,48 @@ export function AdminPaymentLinkDialog({
   }, [isInstallmentOffer, effectiveOffer]);
   // per_payment для installment считается inline в JSX (там, где amount уже доступен).
 
+  // ── Унифицированный билдер Telegram-сообщения ──
+  // Корректно различает три случая: рассрочка / подписка с автосписанием / разовая оплата.
+  // Источники истины: isInstallmentOffer (payment_method='internal_installment'),
+  // effectivePaymentType ('subscription' | 'one_time'), selectedInstallmentMonths.
+  const buildTelegramMessage = (productName: string, tariffName: string) => {
+    const isInstallmentMsg =
+      isInstallmentOffer && (selectedInstallmentMonths ?? 0) >= 2;
+    const isSubscriptionMsg =
+      !isInstallmentMsg && effectivePaymentType === "subscription";
+
+    const headerKind = isInstallmentMsg
+      ? "в рассрочку"
+      : isSubscriptionMsg
+        ? "подписки"
+        : "доступа";
+
+    const typeLabel = isInstallmentMsg
+      ? `Рассрочка · ${selectedInstallmentMonths} платеж${
+          selectedInstallmentMonths === 1
+            ? ""
+            : (selectedInstallmentMonths ?? 0) < 5
+              ? "а"
+              : "ей"
+        }`
+      : isSubscriptionMsg
+        ? "Подписка с автосписанием"
+        : "Разовая оплата";
+
+    const perPayment = amount;
+    const totalAmount = perPayment * (selectedInstallmentMonths || 1);
+    const amountLine = isInstallmentMsg
+      ? `💰 Стоимость: ${selectedInstallmentMonths} × ${perPayment} BYN (итого ${totalAmount} BYN)`
+      : `💰 Стоимость: ${amount} BYN`;
+
+    return `💳 *Оплата ${headerKind}*
+
+📦 Продукт: ${productName}
+📋 Тариф: ${tariffName}
+${amountLine}
+📅 Тип: ${typeLabel}`;
+  };
+
   // Список всех active pay_now offers (для select override) — без фильтрации по типу
   const activeOffers = useMemo(
     () => (allOffers || []).filter((o) => o.is_active && o.offer_type === "pay_now"),
@@ -580,24 +622,10 @@ export function AdminPaymentLinkDialog({
       if (!generatedUrl || !selectedProduct || !selectedTariff) {
         throw new Error("Нет данных для отправки");
       }
-      const isInstallmentMsg = isInstallmentOffer && (selectedInstallmentMonths ?? 0) >= 2;
-      const typeLabel = isInstallmentMsg
-        ? `Рассрочка · ${selectedInstallmentMonths} платежей`
-        : effectivePaymentType === "subscription"
-          ? "Подписка (ежемесячно)"
-          : "Разовая оплата";
-      // Для installment-оффера amount уже = per-payment (offer.amount хранит per-payment).
-      const perPayment = amount;
-      const totalAmount = perPayment * (selectedInstallmentMonths || 1);
-      const amountLine = isInstallmentMsg
-        ? `💰 Стоимость: ${selectedInstallmentMonths} × ${perPayment} BYN (итого ${totalAmount} BYN)`
-        : `💰 Стоимость: ${amount} BYN`;
-      const telegramMessage = `💳 *Оплата ${isInstallmentMsg ? "в рассрочку" : "подписки"}*
-
-📦 Продукт: ${selectedProduct.name}
-📋 Тариф: ${selectedTariff.name}
-${amountLine}
-📅 Тип: ${typeLabel}`;
+      const telegramMessage = buildTelegramMessage(
+        selectedProduct.name,
+        selectedTariff.name,
+      );
 
       const { data, error } = await supabase.functions.invoke(
         "telegram-send-notification",
@@ -674,23 +702,10 @@ ${amountLine}
 
       // Пробуем отправить в Telegram (тот же существующий путь)
       try {
-        const isInstallmentMsg = isInstallmentOffer && (selectedInstallmentMonths ?? 0) >= 2;
-        const typeLabel = isInstallmentMsg
-          ? `Рассрочка · ${selectedInstallmentMonths} платежей`
-          : effectivePaymentType === "subscription"
-            ? "Подписка (ежемесячно)"
-            : "Разовая оплата";
-        const perPayment = amount;
-        const totalAmount = perPayment * (selectedInstallmentMonths || 1);
-        const amountLine = isInstallmentMsg
-          ? `💰 Стоимость: ${selectedInstallmentMonths} × ${perPayment} BYN (итого ${totalAmount} BYN)`
-          : `💰 Стоимость: ${amount} BYN`;
-        const telegramMessage = `💳 *Оплата ${isInstallmentMsg ? "в рассрочку" : "подписки"}*
-
-📦 Продукт: ${selectedProduct?.name}
-📋 Тариф: ${selectedTariff?.name}
-${amountLine}
-📅 Тип: ${typeLabel}`;
+        const telegramMessage = buildTelegramMessage(
+          selectedProduct?.name ?? "—",
+          selectedTariff?.name ?? "—",
+        );
         const { data: tgData, error: tgError } = await supabase.functions.invoke(
           "telegram-send-notification",
           {

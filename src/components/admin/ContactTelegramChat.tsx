@@ -73,6 +73,7 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { getEventLabel } from "@/lib/eventLabels";
+import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 import { VideoNoteRecorder } from "./VideoNoteRecorder";
 import { OutboundMediaPreview } from "./chat/OutboundMediaPreview";
 import { ChatMediaMessage } from "./chat/ChatMediaMessage";
@@ -647,6 +648,15 @@ export function ContactTelegramChat({
     return errorMessage;
   };
 
+  // Унифицированный форматтер ошибок чата:
+  // 1) normalizeEdgeFunctionError — раскрывает body Edge Function,
+  //    переводит "Failed to send a request to the Edge Function" в человеческое сообщение.
+  // 2) translateTelegramError — переводит Telegram-API ошибки на русский.
+  const formatChatError = (error: unknown): string => {
+    const normalized = normalizeEdgeFunctionError(error);
+    return translateTelegramError(normalized);
+  };
+
   // Fetch profile photo from Telegram
   const fetchPhotoMutation = useMutation({
     mutationFn: async () => {
@@ -665,7 +675,7 @@ export function ContactTelegramChat({
       toast.success("Фото профиля обновлено");
     },
     onError: (error) => {
-      toast.error("Ошибка загрузки фото: " + translateTelegramError((error as Error).message));
+      toast.error("Ошибка загрузки фото: " + formatChatError(error));
     },
   });
 
@@ -743,7 +753,7 @@ export function ContactTelegramChat({
     },
     onError: (error) => {
       setIsUploading(false);
-      toast.error("Ошибка отправки: " + translateTelegramError((error as Error).message));
+      toast.error("Ошибка отправки: " + formatChatError(error));
     },
   });
 
@@ -770,7 +780,7 @@ export function ContactTelegramChat({
       toast.success("Сообщение отредактировано");
     },
     onError: (error) => {
-      toast.error("Ошибка редактирования: " + translateTelegramError((error as Error).message));
+      toast.error("Ошибка редактирования: " + formatChatError(error));
     },
   });
 
@@ -794,7 +804,7 @@ export function ContactTelegramChat({
       toast.success("Сообщение удалено");
     },
     onError: (error) => {
-      toast.error("Ошибка удаления: " + translateTelegramError((error as Error).message));
+      toast.error("Ошибка удаления: " + formatChatError(error));
     },
   });
 

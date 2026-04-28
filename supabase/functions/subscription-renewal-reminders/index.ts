@@ -2,6 +2,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
 import { generateRenewalCTAs, type RenewalCTAs } from '../_shared/generate-renewal-ctas.ts';
+import { resolveProductRenewability } from '../_shared/renewal-offer-resolver.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -139,56 +140,33 @@ async function isOneTimeProduct(
   userId: string,
   productId: string | null,
 ): Promise<{ oneTime: boolean; signals: Record<string, any> }> {
+  // PATCH RENEWAL-RESOLVER v2 (2026-04-28):
+  // Source of truth = active tariff_offers of the PRODUCT.
+  // A product is "one-time" only when none of its active offers are recurring,
+  // installment, or a subscription offer. The user's current sub state is irrelevant
+  // for this classification (it is used only for «Подписка уже активна» messaging).
   const signals: Record<string, any> = {
     tariff_id: tariffId,
     product_id: productId,
-    has_subscription_offer: null,
-    active_offers_count: null,
-    has_active_pm_sub: null,
-    any_offer_requires_tokenization: null,
+    resolver: 'renewal-offer-resolver@v1',
   };
-  if (!tariffId) return { oneTime: false, signals };
+  if (!productId) {
+    signals.reason = 'no_product_id';
+    return { oneTime: false, signals };
+  }
   try {
-    const { data: offers, error: offersErr } = await supabase
-      .from('tariff_offers')
-      .select('offer_type, requires_card_tokenization, is_active')
-      .eq('tariff_id', tariffId)
-      .eq('is_active', true);
-    if (offersErr) {
-      console.warn('[one-time-classifier] offers query error:', offersErr);
-      return { oneTime: false, signals };
-    }
-    signals.active_offers_count = offers?.length || 0;
-    if (!offers || offers.length === 0) {
-      // No active offers — cannot classify, conservative false
-      return { oneTime: false, signals };
-    }
-    signals.has_subscription_offer = offers.some((o: any) => o.offer_type === 'subscription');
-    signals.any_offer_requires_tokenization = offers.some((o: any) => o.requires_card_tokenization === true);
-    if (signals.has_subscription_offer) {
-      return { oneTime: false, signals };
-    }
-    // Check provider_managed active sub for this user+product
-    if (productId) {
-      const { count, error: subErr } = await supabase
-        .from('subscriptions_v2')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', userId)
-        .eq('product_id', productId)
-        .eq('billing_type', 'provider_managed')
-        .in('status', ['active', 'trial']);
-      if (subErr) {
-        console.warn('[one-time-classifier] sub query error:', subErr);
-        return { oneTime: false, signals };
-      }
-      signals.has_active_pm_sub = (count || 0) > 0;
-      if (signals.has_active_pm_sub) {
-        return { oneTime: false, signals };
-      }
-    }
-    return { oneTime: true, signals };
+    const r = await resolveProductRenewability(supabase, productId, tariffId);
+    signals.renewable = r.renewable;
+    signals.has_recurring = r.hasRecurring;
+    signals.has_installment = r.hasInstallment;
+    signals.has_subscription_offer = r.hasSubscriptionOffer;
+    signals.preferred_tariff_id = r.preferredTariffId;
+    signals.preferred_kind = r.preferredOffer?.kind ?? null;
+    signals.reason = r.reason;
+    return { oneTime: !r.renewable, signals };
   } catch (err) {
-    console.warn('[one-time-classifier] exception:', err);
+    console.warn('[one-time-classifier] resolver exception:', err);
+    signals.error = err instanceof Error ? err.message : String(err);
     return { oneTime: false, signals };
   }
 }

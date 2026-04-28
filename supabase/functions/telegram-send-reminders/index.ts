@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { generateRenewalCTAs } from '../_shared/generate-renewal-ctas.ts';
+import { resolveProductRenewability } from '../_shared/renewal-offer-resolver.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -18,14 +19,34 @@ async function telegramRequest(botToken: string, method: string, params?: Record
 }
 
 /**
- * Resolve product + tariff + amount for a given user/club.
- * Returns null if not found or amount too small.
+ * PATCH RENEWAL-RESOLVER v2 (2026-04-28):
+ * Resolve product + renewable tariff for a (user, club).
+ * Strategy:
+ *   1. Find product mapped to this club.
+ *   2. Use shared resolveProductRenewability(product) — based on tariff_offers,
+ *      not on user's subscription state.
+ *   3. If user has an existing subscription tariff that is renewable — prefer it.
+ *   4. Else — fall back to preferredOffer from resolver.
+ *   5. If product has no renewable offer — return { renewable:false } so caller
+ *      can show "разовая покупка — продление не требуется".
  */
 async function resolveProductAndTariff(
   supabase: any,
   userId: string,
   clubId: string,
-): Promise<{ productId: string; tariffId: string; amount: number; billingType: string; productName: string } | null> {
+): Promise<
+  | {
+      productId: string;
+      productName: string;
+      renewable: true;
+      tariffId: string;
+      amount: number;
+      kind: 'recurring' | 'installment' | 'subscription_offer';
+      hasActivePM: boolean;
+    }
+  | { productId: string; productName: string; renewable: false; reason: string }
+  | null
+> {
   const { data: product } = await supabase
     .from('products_v2')
     .select('id, name')
@@ -38,9 +59,10 @@ async function resolveProductAndTariff(
     return null;
   }
 
+  // Try to find user's existing tariff for preference
   const { data: sub } = await supabase
     .from('subscriptions_v2')
-    .select('tariff_id, tariffs(id, name, price, billing_type)')
+    .select('tariff_id, billing_type')
     .eq('user_id', userId)
     .eq('product_id', product.id)
     .in('status', ['active', 'trial', 'past_due', 'canceled'])
@@ -48,25 +70,38 @@ async function resolveProductAndTariff(
     .limit(1)
     .maybeSingle();
 
-  if (!sub?.tariff_id || !sub?.tariffs) {
-    console.log(`[tg-reminders] No subscription/tariff found for user ${userId}, product ${product.id}`);
-    return null;
+  const preferredTariffId = sub?.tariff_id ?? null;
+  const hasActivePM = sub?.billing_type === 'provider_managed';
+
+  const r = await resolveProductRenewability(supabase, product.id, preferredTariffId);
+
+  if (!r.renewable || !r.preferredOffer) {
+    return {
+      productId: product.id,
+      productName: product.name,
+      renewable: false,
+      reason: r.reason,
+    };
   }
 
-  const tariff = sub.tariffs as any;
-  const price = tariff.price ?? 0;
-
-  if (price < 1) {
-    console.log(`[tg-reminders] STOP-GUARD: price too small (${price}) for checkout`);
-    return null;
+  const offer = r.preferredOffer;
+  if (offer.amount < 1) {
+    return {
+      productId: product.id,
+      productName: product.name,
+      renewable: false,
+      reason: 'amount_too_small',
+    };
   }
 
   return {
     productId: product.id,
-    tariffId: tariff.id,
-    amount: price, // BYN (not kopecks) — generateRenewalCTAs expects BYN
-    billingType: tariff.billing_type || 'mit',
     productName: product.name,
+    renewable: true,
+    tariffId: offer.tariff_id,
+    amount: Number(offer.amount), // BYN
+    kind: offer.kind as 'recurring' | 'installment' | 'subscription_offer',
+    hasActivePM,
   };
 }
 
@@ -208,30 +243,34 @@ Deno.serve(async (req) => {
         year: 'numeric'
       });
 
-      // Resolve product/tariff for CTA generation
+      // Resolve product/tariff for CTA generation (uses tariff_offers SOT)
       const resolved = await resolveProductAndTariff(supabase, access.user_id, access.club_id);
       const clubName = club.club_name || 'клубе';
 
-      // Check if user has active SBS (provider_managed) subscription
-      const hasSBS = resolved?.billingType === 'provider_managed';
+      // hasSBS = у пользователя уже активна провайдерская подписка (автосписание)
+      const hasSBS = !!resolved && resolved.renewable === true && resolved.hasActivePM;
+      // productRenewable = у продукта в принципе есть возможность продления (по tariff_offers)
+      const productRenewable = !!resolved && resolved.renewable === true;
+      const installmentMode = productRenewable && (resolved as any).kind === 'installment';
 
-      // Build message text
       let message: string;
       let keyboard: any;
+      let deliveryMethod: string;
 
       if (hasSBS) {
-        // SBS user — auto-renewal active, no payment links
+        // Авто-продление активно
         message = `⏰ Небольшое напоминание\n\nВаша подписка в ${clubName} продлится автоматически ${formattedDate}.\n\nАвтопродление активно — отключить его можно в личном кабинете 💙`;
-
         const siteUrl = Deno.env.get('SITE_URL') || 'https://club.gorbova.by';
         keyboard = {
-          inline_keyboard: [[
-            { text: '📋 Управление подпиской', url: `${siteUrl}/dashboard` }
-          ]]
+          inline_keyboard: [[{ text: '📋 Управление подпиской', url: `${siteUrl}/dashboard` }]],
         };
-      } else if (resolved) {
-        // Non-SBS user — generate 2 CTA buttons via shared helper
-        message = `⏰ Небольшое напоминание\n\nВаша подписка в ${clubName} заканчивается ${formattedDate}.\n\nЧтобы не потерять доступ к чату и материалам, просто продлите её заранее 💙`;
+        deliveryMethod = 'sbs_info';
+      } else if (productRenewable && resolved) {
+        // Продукт продлеваемый — генерируем CTA даже если у юзера нет подписки в БД
+        const intro = installmentMode
+          ? `⏰ Небольшое напоминание\n\nВаш доступ в ${clubName} заканчивается ${formattedDate}.\n\nЧтобы продолжить — оплатите следующий платёж рассрочки или оформите полный доступ 💙`
+          : `⏰ Небольшое напоминание\n\nВаша подписка в ${clubName} заканчивается ${formattedDate}.\n\nЧтобы не потерять доступ к чату и материалам, просто продлите её заранее 💙`;
+        message = intro;
 
         const ctas = await generateRenewalCTAs({
           supabase,
@@ -241,7 +280,9 @@ Deno.serve(async (req) => {
           amount: resolved.amount,
           origin: 'https://club.gorbova.by',
           actorType: 'system',
-          description: 'Продление подписки (авто-напоминание TG)',
+          description: installmentMode
+            ? 'Продление доступа (рассрочка, авто-напоминание TG)'
+            : 'Продление подписки (авто-напоминание TG)',
         });
 
         const buttons: Array<Array<{ text: string; url: string }>> = [];
@@ -254,32 +295,29 @@ Deno.serve(async (req) => {
 
         if (buttons.length > 0) {
           keyboard = { inline_keyboard: buttons };
+          deliveryMethod = 'dual_cta_buttons';
         } else {
-          // Fallback: link to pricing page if both CTAs failed
           const siteUrl = Deno.env.get('SITE_URL') || 'https://club.gorbova.by';
           keyboard = {
-            inline_keyboard: [[
-              { text: '💳 Продлить подписку', url: `${siteUrl}/#pricing` }
-            ]]
+            inline_keyboard: [[{ text: '💳 Продлить доступ', url: `${siteUrl}/#pricing` }]],
           };
+          deliveryMethod = 'pricing_fallback';
         }
       } else {
-        // No product/tariff resolved — generic fallback
-        message = `⏰ Небольшое напоминание\n\nВаша подписка в ${clubName} заканчивается ${formattedDate}.\n\nЧтобы не потерять доступ к чату и материалам, просто продлите её заранее 💙`;
-
-        const siteUrl = Deno.env.get('SITE_URL') || 'https://club.gorbova.by';
-        keyboard = {
-          inline_keyboard: [[
-            { text: '💳 Продлить подписку', url: `${siteUrl}/#pricing` }
-          ]]
-        };
+        // Продукт действительно разовый — продление не предусмотрено
+        message = `⏰ Небольшое напоминание\n\nВаш доступ в ${clubName} заканчивается ${formattedDate}.\n\nЭто разовая покупка — продление не предусмотрено. Спасибо, что были с нами! 💙`;
+        keyboard = undefined;
+        deliveryMethod = 'one_time_info';
       }
 
-      const sendResult = await telegramRequest(botToken, 'sendMessage', {
+
+      const sendPayload: Record<string, unknown> = {
         chat_id: profile.telegram_user_id,
         text: message,
-        reply_markup: keyboard,
-      });
+      };
+      if (keyboard) sendPayload.reply_markup = keyboard;
+
+      const sendResult = await telegramRequest(botToken, 'sendMessage', sendPayload);
 
       // If button send failed, try fallback with plain text
       if (!sendResult.ok) {
@@ -300,9 +338,12 @@ Deno.serve(async (req) => {
             expires_at: access.active_until,
             days_until_expiry: 3,
             has_sbs: hasSBS,
+            product_renewable: productRenewable,
+            installment_mode: installmentMode,
             delivery_method: 'fallback_text',
+            original_delivery: deliveryMethod,
             button_error: sendResult.description,
-          }
+          },
         });
 
         results.push({
@@ -311,34 +352,36 @@ Deno.serve(async (req) => {
           sent: fallbackResult.ok,
           delivery: 'fallback_text',
           has_sbs: hasSBS,
+          product_renewable: productRenewable,
           error: fallbackResult.ok ? null : fallbackResult.description,
         });
         continue;
       }
 
       // Log the reminder
-      await supabase
-        .from('telegram_logs')
-        .insert({
-          user_id: access.user_id,
-          club_id: access.club_id,
-          action: 'reminder_sent',
-          target: 'user',
-          status: 'success',
-          meta: {
-            expires_at: access.active_until,
-            days_until_expiry: 3,
-            has_sbs: hasSBS,
-            delivery_method: hasSBS ? 'sbs_info' : 'dual_cta_buttons',
-          }
-        });
+      await supabase.from('telegram_logs').insert({
+        user_id: access.user_id,
+        club_id: access.club_id,
+        action: 'reminder_sent',
+        target: 'user',
+        status: 'success',
+        meta: {
+          expires_at: access.active_until,
+          days_until_expiry: 3,
+          has_sbs: hasSBS,
+          product_renewable: productRenewable,
+          installment_mode: installmentMode,
+          delivery_method: deliveryMethod,
+        },
+      });
 
       results.push({
         user_id: access.user_id,
         club_id: access.club_id,
         sent: true,
-        delivery: hasSBS ? 'sbs_info' : 'dual_cta_buttons',
+        delivery: deliveryMethod,
         has_sbs: hasSBS,
+        product_renewable: productRenewable,
       });
     }
 
