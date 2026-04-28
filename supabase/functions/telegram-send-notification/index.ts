@@ -551,15 +551,29 @@ ${namePrefix}мы попытались проверить ${cardDisplay} для 
         ? { inline_keyboard: [[{ text: '💳 Продлить подписку', url: pricingUrl }]] }
         : undefined;
 
-    // Send message
-    const sendResult = await telegramRequest(botToken, 'sendMessage', {
+    // Send message — Markdown by default for bold/italic in admin templates.
+    // If Telegram rejects entities (rare special chars), retry as plain text so
+    // the message is never lost.
+    const sendPayload = {
       chat_id: profile.telegram_user_id,
       text: message,
       reply_markup: keyboard,
+    };
+    let usedParseMode: 'Markdown' | null = 'Markdown';
+    let sendResult = await telegramRequest(botToken, 'sendMessage', {
+      ...sendPayload,
+      parse_mode: 'Markdown',
     });
+    if (!sendResult?.ok && typeof sendResult?.description === 'string' &&
+        /can't parse entities|can't find end/i.test(sendResult.description)) {
+      console.warn('[telegram-send-notification] Markdown parse failed, retrying as plain text:', sendResult.description);
+      usedParseMode = null;
+      sendResult = await telegramRequest(botToken, 'sendMessage', sendPayload);
+    }
 
     // Mirror to admin chat (Contact Center) — only if buttons exist & message accepted by Telegram
-    if (sendResult?.ok && sendResult?.result?.message_id && keyboard) {
+    const wasMirroredToMessages = !!(sendResult?.ok && sendResult?.result?.message_id && keyboard);
+    if (wasMirroredToMessages) {
       await logAutomatedTelegramMessage({
         supabase,
         user_id,
@@ -573,6 +587,7 @@ ${namePrefix}мы попытались проверить ${cardDisplay} для 
           message_type,
           club_id: clubId,
           idempotency_key: idempotencyKey,
+          parse_mode: usedParseMode,
         },
       });
     }
@@ -608,7 +623,11 @@ ${namePrefix}мы попытались проверить ${cardDisplay} для 
       }
     });
 
-    // Log the notification in telegram_logs (correct schema: action, status, message_text, meta)
+    // Log the notification in telegram_logs (audit/analytics row).
+    // If the same outgoing message is already mirrored as a bubble in
+    // telegram_messages, DO NOT duplicate `message_text` here — otherwise the
+    // admin Contact Center renders both a bubble and an event-pill with the
+    // same text. Failed/skipped sends still keep the text for diagnostics.
     await supabase
       .from('telegram_logs')
       .insert({
@@ -617,7 +636,7 @@ ${namePrefix}мы попытались проверить ${cardDisplay} для 
         target: 'user',
         status: sendResult.ok ? 'success' : 'error',
         error_message: sendResult.ok ? null : sendResult.description,
-        message_text: message,
+        message_text: wasMirroredToMessages ? null : message,
         meta: {
           invocation: isServiceInvocation ? 'service_role' : 'user',
           sent_by: isServiceInvocation ? 'system' : actorUserId,
@@ -625,6 +644,9 @@ ${namePrefix}мы попытались проверить ${cardDisplay} для 
           payment_method_id: payment_method_meta?.id,
           last4: payment_method_meta?.last4,
           brand: payment_method_meta?.brand,
+          mirrored_to_telegram_messages: wasMirroredToMessages,
+          telegram_message_id: sendResult?.result?.message_id ?? null,
+          parse_mode: usedParseMode,
         }
       });
 

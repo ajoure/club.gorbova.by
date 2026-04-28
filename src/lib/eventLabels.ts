@@ -63,7 +63,11 @@ export const EVENT_LABELS: Record<string, string> = {
   ADMIN_DELETE_MESSAGE: "Сообщение удалено администратором",
   ADMIN_EDIT_MESSAGE: "Сообщение отредактировано",
   BOT_START: "Запустил бота",
-  
+  custom: "Сообщение от админа",
+  "telegram.notification.sent": "Уведомление отправлено",
+  "telegram.notification.failed": "Ошибка отправки уведомления",
+  "telegram.notification.blocked": "Уведомление заблокировано",
+
   // ===== Подписки =====
   SUBSCRIPTION_EXPIRED: "Подписка истекла",
   SUBSCRIPTION_ACTIVATED: "Подписка активирована",

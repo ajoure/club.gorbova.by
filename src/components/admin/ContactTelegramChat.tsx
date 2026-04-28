@@ -390,23 +390,46 @@ export function ContactTelegramChat({
     refetchOnWindowFocus: false,
   });
 
-  // Combine and sort messages + telegram events + billing events
-  // PATCH: Hide event-pills for SEND_REMINDER/manual_notification when a real
-  // telegram_messages bubble already mirrors the same notification (±2 min window).
-  const mirroredAt: number[] = (messages || [])
-    .filter((m: any) => m.direction === 'outgoing' && (m.meta?.automated === true || m.meta?.source))
-    .map((m: any) => new Date(m.created_at).getTime());
+  // Combine and sort messages + telegram events + billing events.
+  // PATCH: Hide event-pills that mirror a real outgoing telegram_messages bubble.
+  // Rules:
+  //   - status must be 'success' (failed/skipped stay visible as diagnostic pills);
+  //   - whitelist of admin/notification actions that are normally mirrored to chat;
+  //   - either bubble exists in ±5min window (heuristic) OR meta marks it as mirrored,
+  //     OR text is empty (no value to show as pill).
+  const normalizeText = (t?: string | null) =>
+    (t || "").replace(/\s+/g, " ").trim().toLowerCase();
+  const outgoingMirrored = (messages || []).filter(
+    (m: any) => m.direction === 'outgoing' && (m.meta?.automated === true || m.meta?.source)
+  );
+  const mirroredAt: number[] = outgoingMirrored.map((m: any) => new Date(m.created_at).getTime());
+  const mirroredTexts = new Set(outgoingMirrored.map((m: any) => normalizeText(m.message_text)));
+
+  const MIRRORABLE_ACTIONS = new Set<string>([
+    'SEND_REMINDER',
+    'manual_notification',
+    'MANUAL_NOTIFICATION',
+    'custom',
+    'telegram.notification.sent',
+    // subscription_reminder_*d are matched via prefix below
+  ]);
 
   const isMirroredEvent = (e: TelegramEvent): boolean => {
     const action = e.action || '';
-    const isReminderLike =
-      action === 'SEND_REMINDER' ||
-      action === 'manual_notification' ||
-      action === 'MANUAL_NOTIFICATION';
-    if (!isReminderLike) return false;
-    if (e.status !== 'success') return false; // skipped/failed остаются как pill
+    const isMirrorable =
+      MIRRORABLE_ACTIONS.has(action) ||
+      action.startsWith('subscription_reminder_');
+    if (!isMirrorable) return false;
+    if (e.status !== 'success') return false;
+    // Backend hint: explicit flag in meta wins.
+    if ((e.meta as any)?.mirrored_to_telegram_messages === true) return true;
+    // No payload to render as pill — always hide.
+    if (!e.message_text || !e.message_text.trim()) return true;
+    // Exact text match with any mirrored bubble.
+    if (mirroredTexts.has(normalizeText(e.message_text))) return true;
+    // Time-window fallback (±5 min) for legacy rows without explicit flag.
     const t = new Date(e.created_at).getTime();
-    return mirroredAt.some((mt) => Math.abs(mt - t) <= 120_000);
+    return mirroredAt.some((mt) => Math.abs(mt - t) <= 300_000);
   };
 
   const chatItems: ChatItem[] = [
@@ -1110,7 +1133,9 @@ export function ContactTelegramChat({
                   <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
                 )}
 
-                {/* Inline keyboard mirror — ONLY url buttons (callback_data is intentionally hidden) */}
+                {/* Inline keyboard mirror — рендер как нативные Telegram-кнопки.
+                    Берём только url-кнопки (callback_data намеренно скрыты).
+                    Кнопки тянутся на всю ширину пузыря, разделены тонкой линией от текста. */}
                 {(() => {
                   const rm = (msg.meta as any)?.reply_markup;
                   const rows: Array<Array<{ text?: string; url?: string }>> = Array.isArray(rm?.inline_keyboard) ? rm.inline_keyboard : [];
@@ -1118,10 +1143,14 @@ export function ContactTelegramChat({
                     .map((row) => row.filter((b) => b && typeof b.url === "string" && b.url.trim().length > 0))
                     .filter((row) => row.length > 0);
                   if (urlRows.length === 0) return null;
+                  const isOutgoing = msg.direction === "outgoing";
                   return (
-                    <div className="mt-2 flex flex-col gap-1">
+                    <div className={cn(
+                      "mt-2 pt-2 -mx-3 px-3 flex flex-col gap-1.5 border-t",
+                      isOutgoing ? "border-primary-foreground/20" : "border-border/40",
+                    )}>
                       {urlRows.map((row, ri) => (
-                        <div key={ri} className="flex flex-wrap gap-1">
+                        <div key={ri} className="flex flex-wrap gap-1.5">
                           {row.map((btn, bi) => (
                             <a
                               key={bi}
@@ -1129,13 +1158,13 @@ export function ContactTelegramChat({
                               target="_blank"
                               rel="noopener noreferrer"
                               className={cn(
-                                "inline-flex items-center px-2 py-1 rounded-md text-xs border transition-colors",
-                                msg.direction === "outgoing"
-                                  ? "bg-primary-foreground/10 border-primary-foreground/30 text-primary-foreground hover:bg-primary-foreground/20"
-                                  : "bg-background border-border hover:bg-accent",
+                                "flex-1 min-w-0 inline-flex items-center justify-center text-center h-9 px-3 rounded-lg text-sm font-medium transition-colors break-words",
+                                isOutgoing
+                                  ? "bg-primary-foreground/15 text-primary-foreground hover:bg-primary-foreground/25"
+                                  : "bg-primary/10 text-primary hover:bg-primary/20",
                               )}
                             >
-                              {btn.text || btn.url}
+                              <span className="truncate">{btn.text || btn.url}</span>
                             </a>
                           ))}
                         </div>
