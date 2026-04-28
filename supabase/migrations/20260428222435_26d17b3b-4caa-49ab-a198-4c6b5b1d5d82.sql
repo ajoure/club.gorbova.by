@@ -1,0 +1,1 @@
+DROP POLICY IF EXISTS "Public can read training-assets" ON storage.objects;
