@@ -97,6 +97,7 @@ interface TelegramMessage {
   direction: "outgoing" | "incoming";
   message_text: string | null;
   message_id: number | null;
+  reply_to_message_id?: number | null;
   status: string;
   created_at: string;
   sent_by_admin?: string | null;
