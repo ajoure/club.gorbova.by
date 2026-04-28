@@ -1550,7 +1550,7 @@ export function PaymentDialog({
 
       {/* Trial Already Used Modal */}
       <Dialog open={showTrialUsedModal} onOpenChange={setShowTrialUsedModal}>
-        <DialogContent className="w-[calc(100vw-24px)] sm:max-w-md max-h-[calc(100dvh-24px)] overflow-hidden flex flex-col bg-background/70 backdrop-blur-2xl border-white/10 shadow-2xl">
+        <DialogContent className="w-[calc(100vw-24px)] sm:max-w-md max-h-[calc(100dvh-24px)] overflow-y-auto flex flex-col bg-background/70 backdrop-blur-2xl border-white/10 shadow-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
               <AlertTriangle className="h-5 w-5" />
