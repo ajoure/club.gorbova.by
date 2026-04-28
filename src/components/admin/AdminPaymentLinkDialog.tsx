@@ -257,10 +257,10 @@ export function AdminPaymentLinkDialog({
   // effectivePaymentType ('subscription' | 'one_time'), selectedInstallmentMonths.
   const buildTelegramMessage = (productName: string, tariffName: string) => {
     // ВАЖНО: используем HTML-разметку, а НЕ Markdown.
-    // Причина: legacy Markdown в Telegram нестабильно распознаёт `*bold*`,
-    // когда `*` стоит впритык к эмодзи (`💳 *Оплата*`) — звёздочки тогда
-    // показываются как литералы. HTML (`<b>...</b>`) такой проблемы не имеет
-    // и поддерживается всеми клиентами Telegram. Edge `telegram-send-notification`
+    // Причина: legacy Markdown в Telegram нестабильно распознаёт жирный
+    // текст рядом с эмодзи и оставляет звёздочки как литералы. HTML
+    // (`<b>...</b>`) такой проблемы не имеет и поддерживается всеми
+    // клиентами Telegram. Edge `telegram-send-notification`
     // автоматически переключается на parse_mode=HTML при наличии тегов.
     const escapeHtml = (t: string) =>
       (t || "")
