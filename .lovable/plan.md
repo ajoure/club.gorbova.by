@@ -1,303 +1,114 @@
-# План: тип кнопки «Рассрочка» с выбираемым сроком 2–N месяцев + публичные ссылки на рассрочку
+да, согласен, с учетом правок:
 
-## 0. Что уже есть и НЕ ломаем
+1. **F1 — обязательно**: блокировать оплату только если конфликт по тому же `product_id`. Чужая активная подписка не должна блокировать кнопку.
+2. **F2 — обязательно**: поправить overflow без изменения дизайна: `min-w-0`, `w-full`, `flex-wrap`, `overflow-y-auto`, кнопки не должны вылезать.
+3. **F3 — согласен с архитектурой через** `payment_links`, не через дублирование логики в `bepaid-create-token`.
+4. **Перед новой edge function проверить существующие функции**:
+  - `admin-create-public-link`
+  - `create-payment-link`
+  - `public-checkout`
+  - возможный bridge-link
+  Если можно расширить существующий writer безопасно — не создавать новую функцию.
+5. **Gate рассрочки должен быть только** `payment_method='internal_installment'`, а не `is_installment`.
+6. В `payment_links.meta.installment` явно добавить:
+  - `installment_count`
+  - `installment_interval_days`
+  - `first_payment_delay_days`
+  - `source='landing_payment_dialog'`
+  - `offer_id`
+7. DoD дополнить:
+  - `installment_payments` создаются ровно в количестве `installment_count`;
+  - нет лишних provider-managed подписок как у клуба;
+  - после последнего платежа сработает Stage 3 completion logic.
+  - &nbsp;
+  - План:
 
-- `tariff_offers.offer_type ∈ {pay_now, trial, preregistration}` — назначение оффера. CHECK не трогаем.
-- `tariff_offers.payment_method ∈ {full_payment, internal_installment, …}` — способ оплаты внутри pay_now. `direct-charge` + `_shared/installment-schedule.ts` уже создают `installment_payments`. `installment-charge-cron` и `installment-notifications` готовы (Stage 4, runtime-proof открыт до первого cron-запуска).
-- В `AdminProductDetailV2` уже есть UI для `payment_method='internal_installment'` и `installment_count`, но привязан к старой модели «фиксированное число платежей».
-- `admin-create-public-link` → `public-checkout` → `_shared/create-payment-checkout.ts` → `bepaid-webhook` (ветка `WEBHOOK-LINK-ORDER`) — каноническая цепочка для public links. Расширяем её, второй payment-path не вводим.
+## Контекст и diagnose
 
-**Контракт фичи (single source of truth):**
-> Кнопка «Рассрочка» = `offer_type='pay_now' + payment_method='internal_installment'`. В кнопке хранится **максимальный** срок (`max_months ∈ [2..12]`), фиксированный интервал 30 дней и `first_payment_delay_days=0`. Реальное количество платежей выбирает плательщик/админ из `[2..max]`, и оно попадает в `installment_count` экземпляра.
+Проверены: `subscription-conflict.ts` (shared helper), `subscriptionReplacement.ts` (клиент), `PaymentDialog.tsx`, `UniversalPricingSection.tsx`, `public-checkout/index.ts`, данные `tariff_offers` для продукта `de36a695-...`.
 
-**Бизнес-правило округления (зафиксировано):**
-- per-payment = **round half-up** от `total/N` до целых BYN.
-- Итог рассрочки = `per_payment × N`, может отличаться от полной цены в большую или меньшую сторону.
-- Это допустимо: цена фиксируется с учётом выбранного срока. UI ОБЯЗАН показывать ИТОГО.
+### Находки
 
----
+**Баг 1 — «уже есть активная подписка» при создании installment/one-time кнопки.**
 
-## Stage L0 — Read-only proof (обязателен ДО патча)
+- Shared helper `subscription-conflict.ts` уже фильтрует по `user_id + product_id` (не по всем подпискам). Это ОК.
+- Но `existing_subscription_conflict` возвращается ТОЛЬКО из `bepaid-create-subscription-checkout` и `create-payment-checkout` (recurring path).
+- На UI кнопка `handlePayment` блокируется при ЛЮБОМ `conflictData` (строка 1444): `disabled={... || !!conflictData}`. Если conflictData по другому продукту — это не должно блокировать оплату.
+- Алерт «У вас уже есть активная подписка на этот продукт» показывается корректно только при `conflictData.product_id === productId`, но `disabled` на кнопке не учитывает этот же фильтр.
+- Кроме того, при попытке КУПИТЬ installment-оффер (`payment_method='internal_installment'`) у которого `is_installment=false` — UI всё равно классифицирует его как обычный one-time (`isSubscription=false`), и в этом сценарии conflict-проверка вообще не должна срабатывать. Если пользователь видит её — значит реально открывается subscription-checkout, скорее всего из-за `requires_card_tokenization=true` на оффере.
 
-По ссылке `872b0603a4c47b8ce29f8d97370a2547` и офферу «2 этапа»:
-1. `tariff_offers`: `payment_method`, `installment_count`, `installment_interval_days`, `first_payment_delay_days`, `meta`.
-2. `payment_links`: `payment_type`, `offer_id`, `meta`, `amount`.
-3. `orders_v2` по `meta.payment_link_id`, `installment_payments` по `order_id`, `audit_logs` `payment_link.created`.
+**Баг 2 — кнопка вылезает за поля диалога на десктопе.**
 
-Snapshot → `.lovable/proofs/installment_link_baseline.txt`. Без него L1 не запускаем.
+- `DialogContent` (строка 1543): `sm:max-w-md` (~448px) + `overflow-hidden`.
+- Conflict-alert (строка 1301) рендерит две кнопки в `flex flex-col sm:flex-row gap-2`. На десктопе они становятся в ряд, вторая («Заменить подписку» с иконкой `Repeat`) переполняет.
+- Также основная кнопка «Оплатить 390 BYN» в `flex gap-2` (строка 1428) с двумя кнопками `flex-1` без `min-w-0` — иконка + длинный текст ломает layout.
 
----
+**Баг 3 — рассрочка не работает с лендинговой кнопки.**
 
-## Stage L0a — Модель кнопки «Рассрочка» (без миграций схемы)
+- В БД для тарифа «стандарт» есть оффер `32de637b-...` с `payment_method='internal_installment'`, `installment_count=2`, `is_installment=false`, `button_label='Оплатить в рассрочку'`.
+- `UniversalPricingSection.tsx` (строка 148) пробрасывает только `isSubscription={offer.requires_card_tokenization}`. Поле `payment_method` НЕ пробрасывается в `PaymentDialog`.
+- `PaymentDialog` → `bepaid-create-token` (one-time path) НЕ передаёт `installment`/`payment_method`. Edge function создаёт обычный платёж на полную сумму 390 BYN, без `installment_payments` и без `meta.installment.*`.
+- Installment-flow реализован только через `/pay/:token` payment_links с предзаполненной `link.meta.installment` (admin-create-public-link). Прямой checkout с лендинга в обход payment_links — не поддерживает рассрочку.
 
-**Решения:**
-- НЕ вводим `offer_type='installment'`. UI-«4-й тип» = комбинация `pay_now + internal_installment`. CHECK не трогаем, новых колонок не добавляем.
-- В `tariff_offers.meta` добавляем подобъект:
-  ```
-  meta.installment = {
-    max_months: 2..12,
-    interval_days: 30,
-    first_payment_delay_days: 0,
-    rounding_mode: 'round_half_up_byn'
-  }
-  ```
-- Legacy-зеркало: writer пишет `installment_count = max_months`, `installment_interval_days = 30`, `first_payment_delay_days = 0` в существующие колонки. Это сохраняет работу `direct-charge`, `installment-charge-cron`, отчётов до полного перехода.
-
-### L0a-1 — `AdminProductDetailV2.tsx` (форма оффера)
-
-Dropdown «Тип кнопки» — 4 варианта:
-1. Оплата полной стоимости — `pay_now + full_payment`
-2. Trial — `trial`
-3. Предзапись — `preregistration`
-4. **Рассрочка** — `pay_now + internal_installment`
-
-При выборе «Рассрочка»:
-- Поле «Сумма» = полная стоимость тарифа.
-- Новое поле **«Максимальный срок рассрочки, мес»** — stepper +/− 2..12, default 6. → `meta.installment.max_months`.
-- Поля «Интервал» и «Задержка первого платежа» **скрыты в UI**, фиксированы кодом 30 и 0.
-- `requires_card_tokenization=true` форсится автоматически.
-- `is_primary` разрешён.
-- Подсказка (RU): «Клиент при оплате выберет срок от 2 до N месяцев. Сумма будет списываться равными платежами раз в 30 дней. Первый платёж — сразу при покупке.»
-
-Сохранение: `payment_method='internal_installment'`, `meta.installment={max_months, interval_days:30, first_payment_delay_days:0, rounding_mode:'round_half_up_byn'}`, legacy-зеркало.
-
-### L0a-2 — `OfferRowCompact.tsx`, `TariffCardCompact.tsx`
-
-Распознаём installment, бейдж «Рассрочка до N мес.» (RU), отдельный variant.
-
-DoD L0a: создание/редактирование с `max_months ∈ [2..12]` сохраняется в `meta.installment` + legacy. Существующие installment-офферы продолжают работать после L0b.
-
----
-
-## Stage L0b — Бэкфилл существующих installment-офферов (data-only, не миграция)
-
-Через insert-tool (UPDATE) для всех `payment_method='internal_installment' AND meta->'installment' IS NULL`:
-- `meta.installment.max_months = installment_count`
-- `meta.installment.interval_days = COALESCE(installment_interval_days, 30)`
-- `meta.installment.first_payment_delay_days = COALESCE(first_payment_delay_days, 0)`
-- `meta.installment.rounding_mode = 'round_half_up_byn'`
-
-DoD: SELECT возвращает 0 строк с `internal_installment AND meta->'installment' IS NULL`.
-
----
-
-## Stage L1 — Выбор срока в UI плательщика и админа
-
-### L1.1 — Карточка контакта `AdminPaymentLinkDialog.tsx`
-
-- Хелпер `offerKind(offer)` → `installment` | `subscription` | `one_time`.
-- Если `installment`:
-  - Скрыть ToggleGroup `one_time/subscription`, показать read-only бейдж «Рассрочка».
-  - **Dropdown «Срок рассрочки»** опции `2..max_months` (`offer.meta.installment.max_months` ?? `offer.installment_count`). Default = `max_months`.
-  - Подсказка для админа (RU): «Выберите, на сколько месяцев создать рассрочку для клиента.»
-  - **Полный UI-блок суммы:**
-    ```
-    N платежей × X BYN = ИТОГО Y BYN
-    Сумма платежа округлена до целых BYN. Итог рассрочки рассчитан с учётом выбранного срока и может отличаться от полной цены.
-    ```
-    `X = round_half_up(total / N)`, `Y = X * N`.
-  - Override-режим (превратить в one_time/subscription) запрещён.
-- Payload в `admin-create-public-link`: `installment_offer:true`, `selected_installment_months:N`. Никаких сумм с фронта.
-
-### L1.2 — `Pay.tsx` + `public-checkout` GET-info
-
-- Если `link.meta.installment`:
-  - Dropdown «Срок рассрочки» 2..max. Default = `max`.
-  - Текст для клиента (RU): «Выберите срок рассрочки. Сумма будет разделена на выбранное количество ежемесячных платежей. Списание происходит каждые 30 дней. Рассрочка является подпиской с ограниченным количеством платежей.»
-  - Тот же полный UI-блок: `N × X = ИТОГО Y` + пояснение про округление.
-- На submit POST → `public-checkout` `selected_installment_months: N`. Авторитет — сервер.
-
-DoD L1: для `max_months=6` доступны 2..6 (7+ невозможен) на обеих площадках. Для `max_months=12` — 2..12. UI показывает корректный ИТОГО.
-
----
-
-## Stage L2 — Writer `admin-create-public-link`
-
-Файл: `supabase/functions/admin-create-public-link/index.ts`.
-
-1. Принимаем `installment_offer:boolean`, `selected_installment_months:number`.
-2. После валидации `offer_id`:
-   - перечитываем offer, проверяем `payment_method='internal_installment'`,
-   - `max_months = offer.meta?.installment?.max_months ?? offer.installment_count`,
-   - валидируем `Number.isInteger(selected) && 2 ≤ selected ≤ max_months` → иначе `400 invalid_installment_months`.
-3. Расчёт сумм:
-   - `total_byn = amount_kopecks / 100` (UI шлёт полную стоимость).
-   - `per_payment_byn = Math.round(total_byn / selected)` (round half-up, целые BYN).
-   - `per_payment_kopecks = per_payment_byn * 100`.
-   - `total_installment_byn = per_payment_byn * selected`.
-4. INSERT `payment_links`:
-   - `payment_type='one_time'`,
-   - `amount = per_payment_kopecks` (сумма ПЕРВОГО bePaid checkout),
-   - `meta.installment`:
-     ```
-     {
-       payment_method: 'internal_installment',
-       max_installment_months: <max>,
-       selected_installment_months: <selected>,
-       interval_days: 30,
-       first_payment_delay_days: 0,
-       total_amount: <total_byn>,
-       per_payment_amount: <per_payment_byn>,
-       total_installment_amount: <total_installment_byn>,
-       rounding_mode: 'round_half_up_byn'
-     }
-     ```
-5. Audit `payment_link.created`: + `installment:true, selected_installment_months, max_installment_months, per_payment_amount, total_installment_amount`.
-
-DoD L2: для `total=200, selected=3` → `per_payment=67`, `link.amount=6700`, `total_installment=201`.
-
----
-
-## Stage L3 — Public-checkout → order → webhook
-
-### 3.1 `public-checkout/index.ts`
-
-- Принимаем optional `selected_installment_months`. Если link installment: `2..link.meta.installment.max_installment_months`. Default = `link.meta.installment.selected_installment_months`. 400 при выходе за границы.
-- Per-payment пересчитываем сервером: `Math.round(link.meta.installment.total_amount / effective_selected)`.
-- В `createPaymentCheckout` → `meta_extra`:
-  ```
-  {
-    payment_link_id: link.id,
-    is_installment: true,
-    installment_offer_id: link.offer_id,
-    installment_count: <effective_selected>,
-    installment_interval_days: 30,
-    first_payment_delay_days: 0,
-    installment_total_amount_byn: <per_payment * selected>,
-    installment_per_payment_amount_byn: <per_payment>
-  }
-  ```
-- `payment_type='one_time'`, amount → bePaid = `per_payment_kopecks`.
-
-### 3.2 `_shared/create-payment-checkout.ts`
-
-В ветке one_time копируем `is_installment` + `installment_*` из `meta_extra` в `orders_v2.meta`. Сам checkout-запрос к bePaid не меняется.
-
-### 3.3 `bepaid-webhook` ветка `WEBHOOK-LINK-ORDER`
-
-После `grant-access-for-order`, если `linkOrder.meta.is_installment === true`:
-1. Загружаем offer по `installment_offer_id`/`linkOrder.offer_id`.
-2. Эффективный offer для `generateInstallmentSchedule`:
-   ```
-   {
-     id: offer.id,
-     payment_method: 'internal_installment',
-     installment_count: linkOrder.meta.installment_count, // ← из order, не offer
-     installment_interval_days: 30,
-     first_payment_delay_days: 0,
-   }
-   ```
-3. `totalAmount = linkOrder.meta.installment_total_amount_byn` (= per_payment×N → все строки одинаковые).
-4. `generateInstallmentSchedule(...)` с `subscription = grantedSubscriptionV2Id` (или fallback-lookup), `firstPayment.paymentId = payment.id`.
-
-Все ошибки non-fatal с audit (как у соседних шагов).
-
-DoD L3: оплата по installment-ссылке `selected=3` создаёт **ровно 3** строки `installment_payments` (1 succeeded + 2 pending), все по 67 BYN. UNIQUE `(order_id, payment_number)` гарантирует идемпотентность.
-
----
-
-## Stage L4 — Контракт суммы (round half-up)
-
-- `per_payment = Math.round(total / selected)` BYN, целые BYN (round half-up).
-- `total_installment = per_payment * selected` (может > или < total).
-- `payment_links.amount = per_payment * 100` — сумма ПЕРВОГО checkout.
-- В `installment_payments` все N платежей одинаковой суммой `per_payment`. Хелперу передаём `totalAmount = per_payment * N`, чтобы внутреннее деление дало ровно `per_payment` без копеечных артефактов.
-
-DoD L4 (примеры):
-- `total=200, N=3` → 3×67=201
-- `total=200, N=4` → 4×50=200
-- `total=199, N=4` → 4×50=200
-- `total=99,  N=2` → 2×50=100
-
----
-
-## Stage L5 — Журнал ссылок: бейдж «Рассрочка»
-
-- `LinksTabContent.tsx`, `LinkDetailsDrawer.tsx`. View `payment_links_enriched_v` НЕ трогаем (читаем `meta`).
-- Helper: `link.meta?.payment_method === 'internal_installment'` → бейдж «Рассрочка N мес.» (RU).
-- В деталях: «Полная цена тарифа: total / N платежей по X BYN / ИТОГО Y BYN / Списание раз в 30 дней».
-
----
-
-## Stage L6 — Verify (runtime proof)
-
-1. В админке создать кнопку «Рассрочка» в тарифе с `max_months=6`.
-2. Из карточки контакта выбрать кнопку, `selected=3`, создать ссылку.
-3. Открыть `/pay/:token`, проверить dropdown 2..6, ИТОГО, оплатить тестовой картой.
-4. SQL-proof:
-   - `payment_links.meta.installment.selected_installment_months=3, max=6, per_payment=67, total_installment=201`.
-   - `orders_v2.meta`: `is_installment=true, installment_count=3, installment_per_payment_amount_byn=67`.
-   - `installment_payments`: ровно 3 строки, payment_number 1..3, amount=67 у всех, 1=succeeded, 2-3=pending, due_date 2 = first+30д, 3 = first+60д.
-   - `audit_logs`: `payment_link.created`(installment:true, selected:3, max:6), `installment_started`(count=3).
-   - `subscriptions_v2`: одна активная.
-5. Граничные:
-   - POST `selected=7` при max=6 → 400.
-   - POST `selected=1` → 400.
-   - Повторный webhook → нет дублей.
-6. После cron-списания всех 3 платежей: 4-й невозможен; cron не создаёт новых строк.
-
-→ `.lovable/proofs/installment_link_runtime.txt`.
-
----
-
-## Stage L7 — DoD общий
-
-- `max_months=6` ⇒ выбор 7..12 невозможен везде (UI карточки, `/pay`, серверная валидация POST).
-- `max_months=12` ⇒ доступны 2..12.
-- `selected=N` ⇒ ровно N строк `installment_payments`, лишних списаний нет.
-- После N-го платежа рассрочка завершается; `subscriptions_v2.access_end_at` живёт по правилам тарифа.
-- Существующие installment-офферы (после L0b) работают в `direct-charge` без регрессов.
-- UI везде показывает ИТОГО Y BYN с пояснением про округление.
-
----
-
-## Anti-scope
-
-- Не вводим `offer_type='installment'`.
-- Не добавляем колонок в `tariff_offers`/`payment_links`.
-- Не пишем новый writer/checkout/webhook — только расширение существующих.
-- `direct-charge` с выбором срока — backlog `PAY-installment-direct-charge-month-picker`.
-- TG-уведомления — backlog `PAY-installment-notify-TG`.
-- Email-унификация — backlog `PAY-installment-email-unification` (priority **high**).
-- Рассрочка без кнопки — backlog `PAY-installment-adhoc-link`.
-
----
-
-## Контракт (SoT)
-
-| Решение | Источник истины |
-|---|---|
-| Признак installment-кнопки | `tariff_offers.payment_method='internal_installment'` |
-| Максимальный срок | `tariff_offers.meta.installment.max_months` (legacy: `installment_count`) |
-| Интервал | фиксированно 30 дней |
-| Задержка первого платежа | фиксированно 0 |
-| Срок per-link | `payment_links.meta.installment.selected_installment_months` |
-| Срок per-order | `orders_v2.meta.installment_count` |
-| Per-payment | `Math.round(total / selected)` BYN, round half-up |
-| Total installment | `per_payment * selected` (может ≠ total) |
-| Создание `installment_payments` | только `_shared/installment-schedule.ts` |
-| Выдача доступа | только `grant-access-for-order` |
-| Cron / уведомления | без изменений |
-
----
-
-## Backlog (открытые пункты от Stage 4 — НЕ блокирующие L)
-
-- **PAY-installment-notify-TG** — Telegram-уведомления о платежах рассрочки. Priority: medium.
-- **PAY-installment-email-unification** — перевод `installment-notifications` на общий `send-transactional-email` для единого proof/logging. Priority: **high** (без него нет единого email-логирования).
-- **Stage 4 runtime-proof** — открыт до первого реального cron-запуска `installment-charge-cron`. Технически принят, runtime-proof отдельно.
-- **PAY-installment-landing-badge** — бейдж «Рассрочка до N мес.» на landing tariff card (публичная страница продукта). В админ-редакторе (`OfferRowCompact`) бейдж уже есть; на публичной карточке тарифа нужно проверить рендер и при отсутствии — добавить, читая `tariff_offers.payment_method='internal_installment'` + `meta.installment.max_months`. Priority: medium. Не блокирует L.
-
----
-
-## Pre-L1+L2 proof (Stage L pre-flight) — ✅ PASSED 2026-04-28
-
-Read-only verification перед стартом L1 (UI выбора срока) и L2 (writer).
-
-| Проверка | Результат |
-|---|---|
-| `meta.recurring` отсутствует у всех `payment_method='internal_installment'` офферов | ✅ 5/5 офферов: `has_recurring_key=false` |
-| `meta.installment.max_months` заполнен | ✅ 5/5: значения 2, 2, 2, 3, 4; `interval_days=30`; `first_payment_delay_days=0`; `rounding_mode='round_half_up_byn'` |
-| Save-path редактора пишет legacy-зеркало для новых офферов | ✅ `AdminProductDetailV2.tsx`: `meta.installment.max_months` (стр. 633–635) + `installment_count = max_months` (стр. 665); при выборе типа кнопки «Рассрочка» (стр. 1701+) `meta.recurring` не выставляется, `requires_card_tokenization=true` |
-
-**Вывод:** L0a/L0b закреплены, контракт офферов соответствует SoT. Можно стартовать L1+L2.
+## План фиксов
+
+### F1. Sub-conflict: блокировать кнопку оплаты только для same-product
+
+- В `PaymentDialog.tsx` (строка 1444): заменить `!!conflictData` на `(!!conflictData && conflictData.product_id === productId && isSubscription && !isTrial)`.
+- Обоснование: alert (строка 1275) уже использует ту же тройную проверку. Кнопка должна быть симметрично заблокирована по тем же условиям.
+- Дополнительно: в `setConflictData` после получения ответа из edge — оставить как есть (helper в edge уже фильтрует по product). На фронте дополнительной чистки не нужно.
+
+### F2. Desktop overflow
+
+В `PaymentDialog.tsx`:
+
+- Строка 1301 (две кнопки в alert): добавить `min-w-0` к обеим кнопкам, иконку `Repeat` обернуть в `shrink-0`, текст — в `truncate`. Альтернатива: оставить кнопки колонкой и на десктопе (`flex-col` без `sm:flex-row`).
+- Строка 1428 (Оплатить/Отмена): добавить `min-w-0` к обеим кнопкам, текст «Оплатить {price}» обернуть в `<span className="truncate">`.
+- Проверить, что `DialogContent` не получает `overflow-hidden` без вертикального скролла на ready-step (строка 1543) — добавить `overflow-y-auto` если контент длинный.
+
+### F3. Рассрочка с лендинговой кнопки
+
+Архитектурное решение: переиспользовать существующий payment_links flow вместо дублирования логики installment в bepaid-create-token.
+
+- Когда `offer.payment_method === 'internal_installment'`:
+  1. Frontend (`UniversalPricingSection` / `PaymentDialog`) при клике на такой оффер вызывает новую edge `public-create-installment-link` (или расширяет существующую `payment-dialog-create-bridge-link`), которая:
+    - Принимает `product_id`, `tariff_id`, `offer_id`, контактные данные.
+    - Резолвит `offer.installment_count`, `offer.amount` → формирует `meta.installment = { selected_installment_months, per_payment_amount_byn, max_installment_months }`.
+    - Создаёт `payment_links` строку (без вызова bePaid — только запись).
+    - Возвращает `url_token`.
+  2. Frontend сразу редиректит на `/pay/:token` — дальше уже работает существующий public-checkout → bepaid-webhook → installment_payments materialization.
+- Альтернатива (простая): пробросить `payment_method` и `installment_count` в `bepaid-create-token`, добавить там branching на installment. Не рекомендуется — дублирует логику и обходит уже стабилизированный path через payment_links.
+- В `UniversalPricingSection` пробросить `offer.payment_method` и `offer.installment_count` в `PaymentDialog` через новые props.
+- В `PaymentDialog`:
+  - Если `paymentMethod === 'internal_installment'` — показать выбор количества платежей (если `installment_count > 0` фиксирован — просто показать «N платежей по X BYN»).
+  - При нажатии «Оплатить» → вызвать `public-create-installment-link` → редирект на `/pay/:token`.
+
+### F0 (минимальная санация данных, opt-in)
+
+Текущий оффер `32de637b-...` имеет `is_installment=false` при `payment_method='internal_installment'`. Это data-anomaly. После фикса F3 поле `is_installment` уже не используется как gate (gate = `payment_method`). Менять данные не нужно, но в админке `AdminProductDetailV2.tsx` (строка 566) `isInstallment = payment_method==='internal_installment'` — уже правильная логика. Старое поле `is_installment` deprecated, оставляем для совместимости.
+
+## DoD
+
+- F1: при наличии active subscription на ДРУГОМ продукте — кнопка «Оплатить» активна и оплата проходит.
+- F2: на viewport 1048×893 кнопки в основном диалоге и в conflict-alert не выходят за границы DialogContent.
+- F3: клик на «Оплатить в рассрочку» с лендинга → редирект на `/pay/:token` → один платёж 195 BYN (390/2) → после оплаты `orders_v2.meta.installment_count=2`, `installment_payments` ровно 2 строки, первая paid, вторая pending, `subscriptions_v2.auto_renew=false`.
+
+## Технические детали (для разработки)
+
+Файлы:
+
+- `src/components/payment/PaymentDialog.tsx` — F1 (строка 1444), F2 (1301, 1428).
+- `src/components/landing/UniversalPricingSection.tsx` — F3 (передача `paymentMethod`, `installmentCount` в PaymentDialog).
+- `src/hooks/usePublicProduct.tsx` — убедиться что `payment_method`, `installment_count` приходят из `tariff_offers` (тип уже есть, проверить SELECT).
+- Новая edge function `supabase/functions/public-create-installment-link/index.ts` (или расширение `payment-dialog-create-bridge-link`).
+- Новый prop в PaymentDialogProps: `paymentMethod?: string`, `installmentCount?: number | null`.
+
+Edge function `public-create-installment-link` контракт:
+
+- Input: `{ product_id, tariff_id, offer_id, customer_email, customer_phone, customer_first_name, customer_last_name, existing_user_id? }`.
+- Server-side fetch оффера и валидация `payment_method='internal_installment'` + `installment_count >= 2`.
+- Расчёт `per_payment = round(amount / installment_count, 2)`.
+- INSERT в `payment_links` с `meta.installment = { selected_installment_months: N, per_payment_amount_byn, max_installment_months: N }` и `payment_type='one_time'`, `amount = per_payment * 100` (kopecks).
+- Output: `{ success: true, url_token }`.
+
+После approve выполню по порядку: F1 → F2 → F3 → smoke по протоколу из `.lovable/proofs/installment_l3_5_smoke_protocol.md`.

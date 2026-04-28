@@ -45,6 +45,10 @@ interface PaymentDialogProps {
   trialDays?: number;
   isClubProduct?: boolean;
   isSubscription?: boolean; // True for recurring payments (auto-renewal)
+  // Installment offer (payment_method='internal_installment'). Если задано
+  // и >=2 — кнопка «Оплатить» создаёт installment payment_link и редиректит на /pay/:token.
+  paymentMethod?: string | null;
+  installmentCount?: number | null;
   subscriptionMessage?: SubscriptionMessage;
 }
 
@@ -131,6 +135,8 @@ export function PaymentDialog({
   trialDays,
   isClubProduct,
   isSubscription,
+  paymentMethod,
+  installmentCount,
   subscriptionMessage,
 }: PaymentDialogProps) {
   const { user, session } = useAuth();
@@ -644,7 +650,55 @@ export function PaymentDialog({
     }
   };
 
+  // F3: рассрочка с лендинга. Создаём public payment_link через
+  // public-create-installment-link и редиректим на /pay/:token. Дальше уже
+  // работает существующий public-checkout → bepaid → installment_payments.
+  const isInstallmentOffer =
+    paymentMethod === 'internal_installment' &&
+    typeof installmentCount === 'number' &&
+    installmentCount >= 2 &&
+    !isTrial &&
+    !isSubscription;
+
+  const handleInstallmentPayment = async () => {
+    if (!offerId) {
+      setPaymentError('Не удалось определить оффер рассрочки.');
+      setStep('ready');
+      return;
+    }
+    setIsLoading(true);
+    setPaymentError(null);
+    setStep('processing');
+    try {
+      const { data, error } = await supabase.functions.invoke(
+        'public-create-installment-link',
+        { body: { product_id: productId, offer_id: offerId } }
+      );
+      if (error || !data?.success || !data?.url_token) {
+        const msg = data?.error || error?.message || 'Не удалось создать ссылку на рассрочку';
+        throw new Error(msg);
+      }
+      // Редирект на canonical /pay/:token (домен из public_url продукта).
+      const target = data.public_url || `/pay/${data.url_token}`;
+      window.location.href = target;
+    } catch (err) {
+      console.error('[PaymentDialog] installment link create failed:', err);
+      const message = err instanceof Error ? err.message : normalizeEdgeFunctionError(err);
+      setPaymentError(message);
+      toast.error(message);
+      setStep('ready');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handlePayment = async () => {
+    // F3: installment-оффер → отдельный path через payment_links.
+    if (isInstallmentOffer) {
+      await handleInstallmentPayment();
+      return;
+    }
+
     // PAY-K: для one_time + saved card → bridge flow; new_card продолжает обычный путь.
     if (!isSubscription && !isTrial && selectedMethod !== 'new_card') {
       await handlePayWithSavedCardOneTime(selectedMethod);
@@ -658,7 +712,7 @@ export function PaymentDialog({
     setShowReplaceConfirm(false);
     setStep("processing");
 
-    console.log("handlePayment called", { savedCard, tariffCode, user: !!user, productId, paymentFlowType, selectedMethod });
+    console.log("handlePayment called", { savedCard, tariffCode, user: !!user, productId, paymentFlowType, selectedMethod, isInstallmentOffer });
 
     try {
       // PATCH-3: If user selected provider_managed flow - no savedCard restriction
@@ -1298,7 +1352,7 @@ export function PaymentDialog({
                       </p>
                     )}
                   </div>
-                  <div className="flex flex-col sm:flex-row gap-2">
+                  <div className="flex flex-col gap-2 w-full">
                     <Button
                       type="button"
                       variant="outline"
@@ -1307,19 +1361,19 @@ export function PaymentDialog({
                         setConflictData(null);
                         onOpenChange(false);
                       }}
-                      className="flex-1"
+                      className="w-full min-w-0"
                     >
-                      Оставить текущую
+                      <span className="truncate">Оставить текущую</span>
                     </Button>
                     <Button
                       type="button"
                       size="sm"
                       onClick={() => setShowReplaceConfirm(true)}
                       disabled={isLoading}
-                      className="flex-1"
+                      className="w-full min-w-0"
                     >
-                      <Repeat className="mr-2 h-4 w-4" />
-                      Заменить подписку
+                      <Repeat className="mr-2 h-4 w-4 shrink-0" />
+                      <span className="truncate">Заменить подписку</span>
                     </Button>
                   </div>
                 </AlertDescription>
@@ -1333,6 +1387,21 @@ export function PaymentDialog({
                 {[formData.email, [formData.firstName, formData.lastName].filter(Boolean).join(" "), formData.phone].filter(Boolean).join(" · ")}
               </span>
             </div>
+
+            {/* F3: installment summary */}
+            {isInstallmentOffer && (
+              <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 text-sm space-y-1">
+                <p className="font-medium text-foreground">
+                  Рассрочка на {installmentCount} платежа
+                </p>
+                <p className="text-muted-foreground">
+                  Сегодня — первый платёж. Остальные спишутся автоматически с интервалом 30 дней.
+                </p>
+                <p className="text-xs text-muted-foreground/80 pt-1">
+                  После нажатия «Оплатить» вы перейдёте на защищённую страницу bePaid.
+                </p>
+              </div>
+            )}
 
             {/* PAY-I: subscription-info — 2 короткие строки + штатное упоминание bePaid */}
             {(isSubscription || isTrial) && (
@@ -1425,7 +1494,7 @@ export function PaymentDialog({
 
             {/* MIT vs SBS choice removed — subscriptions always use provider_managed (SBS) */}
 
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button
                 type="button"
                 variant="outline"
@@ -1437,17 +1506,27 @@ export function PaymentDialog({
                   }
                 }}
                 disabled={isLoading || isTestPaymentLoading}
-                className="flex-1"
+                className="flex-1 min-w-0"
               >
-                {user && session ? "Отмена" : "Назад"}
+                <span className="truncate">{user && session ? "Отмена" : "Назад"}</span>
               </Button>
-              <Button onClick={handlePayment} disabled={isLoading || isTestPaymentLoading || isLoadingCard || !!conflictData} className="flex-1">
+              <Button
+                onClick={handlePayment}
+                disabled={
+                  isLoading ||
+                  isTestPaymentLoading ||
+                  isLoadingCard ||
+                  // F1: блокируем оплату только при конфликте по ТОМУ ЖЕ продукту в subscription-flow.
+                  (!!conflictData && conflictData.product_id === productId && !!isSubscription && !isTrial)
+                }
+                className="flex-1 min-w-0"
+              >
                 {isLoadingCard ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin shrink-0" />
                 ) : (
-                  <CreditCard className="mr-2 h-4 w-4" />
+                  <CreditCard className="mr-2 h-4 w-4 shrink-0" />
                 )}
-                {isTrial ? "Активировать триал" : `Оплатить ${price}`}
+                <span className="truncate">{isTrial ? "Активировать триал" : `Оплатить ${price}`}</span>
               </Button>
             </div>
 
@@ -1540,7 +1619,7 @@ export function PaymentDialog({
 
       {/* Trial Already Used Modal */}
       <Dialog open={showTrialUsedModal} onOpenChange={setShowTrialUsedModal}>
-        <DialogContent className="w-[calc(100vw-24px)] sm:max-w-md max-h-[calc(100dvh-24px)] overflow-hidden flex flex-col bg-background/70 backdrop-blur-2xl border-white/10 shadow-2xl">
+        <DialogContent className="w-[calc(100vw-24px)] sm:max-w-md max-h-[calc(100dvh-24px)] overflow-y-auto flex flex-col bg-background/70 backdrop-blur-2xl border-white/10 shadow-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
               <AlertTriangle className="h-5 w-5" />
