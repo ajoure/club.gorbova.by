@@ -2572,14 +2572,19 @@ Deno.serve(async (req) => {
 
           if (existingSubV2) {
             const existingMeta = (existingSubV2.meta as Record<string, any>) || {};
+            const v2UpdatePayload: Record<string, any> = {
+              meta: { ...existingMeta, bepaid_subscription_id: String(subscriptionId) },
+            };
+            // STAGE L3 GUARD: для рассрочки billing_type должен оставаться установленным grant'ом
+            // (или 'internal_installment' для fallback). НЕ перезаписываем на 'provider_managed'.
+            if (!isInstallmentOrder) {
+              v2UpdatePayload.billing_type = 'provider_managed';
+            }
             await supabase
               .from('subscriptions_v2')
-              .update({
-                billing_type: 'provider_managed',
-                meta: { ...existingMeta, bepaid_subscription_id: String(subscriptionId) },
-              })
+              .update(v2UpdatePayload)
               .eq('id', grantedSubscriptionV2Id);
-            console.log('[WEBHOOK-LINK-ORDER] subscriptions_v2 updated: billing_type=provider_managed, bepaid_sub_id=', subscriptionId);
+            console.log('[WEBHOOK-LINK-ORDER] subscriptions_v2 updated: isInstallment=', isInstallmentOrder, 'bepaid_sub_id=', subscriptionId);
           }
         } catch (v2UpdateErr) {
           console.error('[WEBHOOK-LINK-ORDER] subscriptions_v2 billing_type update error (non-fatal):', v2UpdateErr);
