@@ -1,91 +1,31 @@
-да, согласен, с учетом правок:
+## План: Зафиксировать поле ввода ТГ-чата в карточке контакта
 
-1. Зафиксировать SOT явно: **единственный источник типа продукта для продления —** `tariff_offers.meta.recurring.is_recurring`, который управляется чекбоксом «Подписка (автопродление)».
-2. Не использовать как SOT:
-  - `requires_card_tokenization`
-  - `payment_method`
-  - наличие active SBS
-  - `subscriptions_v2.billing_type`
-  - название/slug/code продукта
-3. Добавить guard/test:
-  - если чекбокс включён → reminder считает продукт продлеваемым;
-  - если выключен → reminder считает продукт разовым;
-  - отсутствие active SBS не делает продукт разовым.
-4. В план добавить проверку конкретного тарифа BUSINESS:
-  - `meta.recurring.is_recurring=true`
-  - resolver возвращает `hasSubscriptionOffer=true`.
-5. Все тексты/кнопки напоминаний строить только через `renewal-offer-resolver`.
+### Diagnose
 
-Можно выполнять.
+- `ContactTelegramChat.tsx` уже корректно построен: `flex flex-col h-full min-h-0` + `ScrollArea flex-1 min-h-0` + композер `shrink-0 sticky bottom-0`. Внутри себя он работает правильно.
+- Реальная причина бага в родителе `src/components/admin/ContactDetailSheet.tsx`:
+  - Контейнер контента табов (стр. 1604) уже имеет общий скролл всей карточки: `<div className="flex-1 overflow-y-auto">`.
+  - `TabsContent value="telegram"` (стр. 2356) — это `space-y-4` без `flex-col`/`h-full`, поэтому вложенный `<div className="flex-1 min-h-0 overflow-hidden">` (стр. 2492) **не получает фиксированной высоты**.
+  - В итоге `h-full` внутри ContactTelegramChat равен высоте его собственного контента, чат «вылазит» за пределы вьюпорта, скроллится **внешний** контейнер карточки, а `sticky bottom-0` композера прилипает к низу внутреннего блока — а не к низу карточки. Поэтому при открытии видно верх профильной карты, а поле ввода и последние сообщения уходят ниже фолда.
 
-&nbsp;
+### Fix (точечные правки в `ContactDetailSheet.tsx`, телеграм-таб)
 
-План:
+1. Превратить `TabsContent value="telegram"` в полноразмерный flex-контейнер, который занимает всю высоту скролл-контейнера и **не позволяет** внешнему контейнеру прокручиваться по этой вкладке:
+   - Заменить `className="m-0 space-y-4"` на `className="m-0 h-full flex flex-col gap-3 px-4 sm:px-6 pb-3 overflow-hidden data-[state=inactive]:hidden"`.
+2. Профильную Telegram-карточку (`Card` со статусом/ID/Username/Клуб) сделать `shrink-0`, чтобы она не растягивалась и не отнимала высоту у чата.
+3. Чат-обёртке оставить `flex-1 min-h-0 overflow-hidden` — теперь она получит реальную высоту, и внутренний `sticky bottom-0` композера будет прилипать к низу видимой карточки.
+4. Чтобы внешний контейнер `flex-1 overflow-y-auto` не пытался скроллить телеграм-вкладку, сама `TabsContent` берёт `h-full` от родителя `data-[state=active]` — этого достаточно (родитель — flex-колонка с `min-h-0`, поэтому высота проброшена корректно).
 
-## Diagnose
+### Результат (DoD)
 
-Пользователь требует канонизировать SOT для типа продукта: **чекбокс «Подписка (автопродление)» на pay_now-оффере = единственный источник истины**. Если он включён → продукт продлеваемый, со всей соответствующей логикой (recurring-напоминания, кнопки «Продлить», авто-списание). Если выключен → продукт разовый, без напоминаний на продление и без кнопок оплаты в авто-уведомлениях.
+- При открытии вкладки «Telegram» в карточке контакта:
+  - Поле ввода всегда видно внизу карточки без ручного скролла.
+  - Чат при открытии автоматически прокручен к последнему сообщению (поведение уже реализовано в `ContactTelegramChat`, после фикса высоты сработает корректно).
+  - Скроллится только лента сообщений; шапка профиля Telegram и композер остаются на месте.
+- Другие вкладки (Профиль, Email, Доступы и т.д.) не затронуты — их верстка остаётся `space-y-4` со старым внешним скроллом.
 
-Проверка текущего состояния:
+### Verify
 
-- UI (`AdminProductDetailV2.tsx`, строки 588-624): чекбокс «Подписка (автопродление)» (поле `requires_card_tokenization` в форме) пишет `tariff_offers.meta.recurring.is_recurring=true` + одновременно ставит колонку `requires_card_tokenization=true`.
-- Резолвер (`_shared/renewal-offer-resolver.ts`): читает строго `meta.recurring.is_recurring`, плюс `payment_method='internal_installment'` (рассрочка), плюс `offer_type='subscription'`. Колонка `requires_card_tokenization` намеренно НЕ используется.
-- Reminders (`subscription-renewal-reminders/index.ts:135`): прямо в комментарии зафиксировано «requires_card_tokenization is used as a SECONDARY signal (logged in meta only), never as sole source of truth». Решение принимает только `resolveProductRenewability`.
-- Фактическая проверка офферов BUSINESS/FULL/CHAT (Gorbova Club): все активные pay_now-офферы корректно имеют `meta.recurring.is_recurring=true`. Резолвер их видит как recurring.
-
-Вывод: **архитектура уже соответствует требованию**. Канонизировать нужно три вещи:
-
-1. Закрепить контракт в memory как Core-rule, чтобы будущие правки не разъезжались.
-2. Добавить grep-guard / проверку, чтобы не появлялись эвристики типа «если `requires_card_tokenization` → это подписка» в обход резолвера.
-3. Убедиться, что **все** места, принимающие решение «продлеваемый ли продукт», ходят через `resolveProductRenewability`.
-
-## План правок
-
-### 1. Аудит всех точек принятия решения «recurring vs one-time»
-
-Прогон по edge-функциям и фронту: найти все места, где напрямую читаются `requires_card_tokenization`, `is_subscription`, `subscription`, или вычисляется флаг подписки. Каждое такое место либо
-
-- заменить на вызов `resolveProductRenewability(productId, tariffId)`,
-- либо — если речь про сам процесс оплаты (биллинг-флоу), оставить, но добавить комментарий «биллинг, не классификация».
-
-Ожидаемые «нарушители» для проверки:
-
-- `telegram-send-reminders`
-- `subscription-charge`
-- `bepaid-*` функции
-- `generate-renewal-ctas`
-- `AdminPaymentLinkDialog` (UI ветка «телеграм-кнопки»)
-- любые другие edge-функции, формирующие напоминания / кнопки продления.
-
-### 2. Hardening UI карточки тарифа
-
-В `AdminProductDetailV2.tsx`:
-
-- Переименовать в UI лейбл/help-text чекбокса так, чтобы было однозначно: **«Это подписка (автопродление)»** + подпись «Если выключено — продукт считается разовым».
-- При сохранении явно гарантировать: `meta.recurring.is_recurring === offerForm.requires_card_tokenization (для pay_now/full_payment)` — никогда не отдельная колонка как источник.
-- Disabled-состояние: для `internal_installment` чекбокс «Подписка» должен быть скрыт/disabled (рассрочка ≠ подписка, но это recurring другой природы).
-
-### 3. Renewal Offer Resolver — публичный контракт
-
-Добавить в `renewal-offer-resolver.ts` короткий jsdoc-блок «**Source of truth = `tariff_offers.meta.recurring.is_recurring**`. Никакая колонка вне этого пути не определяет продлеваемость. `requires_card_tokenization` — биллинг-сигнал, не классификация.»
-
-### 4. Memory rule
-
-Сохранить новую memory `mem://commercial-logic/products/product-type-source-of-truth`:
-
-- Type = `feature`
-- Rule: «Тип продукта (recurring vs one-time) определяется ТОЛЬКО через `resolveProductRenewability` поверх `tariff_offers.meta.recurring.is_recurring` / `payment_method='internal_installment'` / `offer_type='subscription'`. UI-чекбокс «Подписка (автопродление)» — единственное место, где это поле выставляется.»
-
-Добавить в Core-секцию index одну строку: «Product type SOT: tariff_offers.meta.recurring.is_recurring через resolveProductRenewability. Эвристики по requires_card_tokenization запрещены.»
-
-### 5. DoD
-
-- Аудит: список найденных мест, для каждого помечено «фикс» или «биллинг, оставляем».
-- Все «фикс»-места переведены на `resolveProductRenewability`.
-- В `AdminProductDetailV2.tsx` — обновлённый лейбл/подпись и инвариант сохранения.
-- Memory-файл создан, index обновлён.
-- Grep-guard-проверка вручную:
-  - `rg -n "requires_card_tokenization" supabase/functions/_shared/renewal-offer-resolver.ts` → пусто (или только в комментарии-предупреждении).
-  - `rg -n "is_subscription\|isSubscription" supabase/functions` → не используется как классификатор продукта (только как описание состояния пользовательской подписки).
-
-Подтвердите план — выполняю аудит и правки.
+- Smoke в UI: открыть несколько контактов с длинной историей ТГ — поле ввода видно сразу, лента доскроллена вниз, события и сообщения отображаются.
+- Проверить мобильную ширину (sm) — паддинги `px-4 sm:px-6` совпадают со стилем других табов.
+- Регрессия: переключение между вкладками не ломает скролл других табов.
