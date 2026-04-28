@@ -71,6 +71,7 @@ import {
   MoreVertical,
   Reply,
   CornerUpLeft,
+  ChevronDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -238,6 +239,8 @@ export function ContactTelegramChat({
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
   const [replyingTo, setReplyingTo] = useState<TelegramMessage | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const [isNearBottomState, setIsNearBottomState] = useState(true);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   // Fetch available bots
   const { data: telegramBots = [] } = useQuery({
@@ -591,21 +594,33 @@ export function ContactTelegramChat({
             }
           );
 
-          // Auto-scroll only if user is at bottom OR it's an outgoing message
+          // Auto-scroll: outgoing always; incoming — only if user near bottom.
+          // Otherwise increment unread badge so admin can jump down via FAB.
           const isFromAdmin = newMsg?.direction === "outgoing";
-          setTimeout(() => {
-            const root = scrollRef.current;
-            const viewport = root?.querySelector(
-              "[data-radix-scroll-area-viewport]"
-            ) as HTMLElement | null;
-            if (viewport) {
-              const isAtBottom =
-                viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 100;
-              if (isAtBottom || isFromAdmin) {
-                viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
-              }
-            }
-          }, 50);
+          const _root = scrollRef.current;
+          const _viewport = _root?.querySelector(
+            "[data-radix-scroll-area-viewport]"
+          ) as HTMLElement | null;
+          const _nearBottom = _viewport
+            ? _viewport.scrollHeight - _viewport.scrollTop - _viewport.clientHeight < 200
+            : true;
+
+          if (isFromAdmin || _nearBottom) {
+            // Двойной rAF — ждём, пока React докоммитит DOM нового сообщения.
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => {
+                const vp = scrollRef.current?.querySelector(
+                  "[data-radix-scroll-area-viewport]"
+                ) as HTMLElement | null;
+                if (vp) {
+                  vp.scrollTo({ top: vp.scrollHeight, behavior: "smooth" });
+                }
+                bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+              });
+            });
+          } else {
+            setUnreadCount((c) => c + 1);
+          }
         }
       )
       .on(
@@ -1021,6 +1036,38 @@ export function ContactTelegramChat({
       });
     };
   }, [userId, isLoading, chatItems.length]);
+
+  // Track scroll position → toggle "scroll to bottom" FAB + clear unread.
+  useEffect(() => {
+    const root = scrollRef.current;
+    const viewport = root?.querySelector(
+      "[data-radix-scroll-area-viewport]"
+    ) as HTMLElement | null;
+    if (!viewport) return;
+
+    const onScroll = () => {
+      const near =
+        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 200;
+      setIsNearBottomState(near);
+      if (near) setUnreadCount(0);
+    };
+
+    onScroll();
+    viewport.addEventListener("scroll", onScroll, { passive: true });
+    return () => viewport.removeEventListener("scroll", onScroll);
+  }, [userId, isLoading]);
+
+  // Smooth jump to the bottom (used by FAB).
+  const jumpToBottom = useCallback(() => {
+    const vp = scrollRef.current?.querySelector(
+      "[data-radix-scroll-area-viewport]"
+    ) as HTMLElement | null;
+    if (vp) {
+      vp.scrollTo({ top: vp.scrollHeight, behavior: "smooth" });
+    }
+    bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+    setUnreadCount(0);
+  }, []);
 
   const handleSend = () => {
     const trimmed = message.trim();
@@ -1521,54 +1568,73 @@ export function ContactTelegramChat({
         )}
 
         {/* Messages + Events - flex-1 with min-h-0 for proper scrolling */}
-        <ScrollArea className="flex-1 min-h-0 py-3 [&>[data-radix-scroll-area-viewport]>div]:!block" ref={scrollRef}>
-          {isLoading ? (
-            <div className="space-y-3 px-1">
-              {[1, 2, 3].map((i) => (
-                <Skeleton key={i} className="h-12 w-3/4" />
-              ))}
-            </div>
-          ) : !chatItems?.length ? (
-            <div className="h-full flex items-center justify-center text-muted-foreground min-h-[200px]">
-              <div className="text-center">
-                <Bot className="w-10 h-10 mx-auto mb-2 opacity-30" />
-                <p className="text-sm">Нет сообщений</p>
-                <p className="text-xs">Начните диалог, отправив сообщение</p>
+        <div className="relative flex-1 min-h-0 flex flex-col">
+          <ScrollArea className="flex-1 min-h-0 py-3 [&>[data-radix-scroll-area-viewport]>div]:!block" ref={scrollRef}>
+            {isLoading ? (
+              <div className="space-y-3 px-1">
+                {[1, 2, 3].map((i) => (
+                  <Skeleton key={i} className="h-12 w-3/4" />
+                ))}
               </div>
-            </div>
-          ) : (
-            <div className="space-y-3 px-3 w-full max-w-full box-border">
-              {chatItems.map((item, index) => {
-                const currentDate = new Date(item.created_at);
-                const prevItem = index > 0 ? chatItems[index - 1] : null;
-                const prevDate = prevItem ? new Date(prevItem.created_at) : null;
-                const showDateSeparator = !prevDate || !isSameDay(currentDate, prevDate);
-                
-                const getDateLabel = (date: Date) => {
-                  if (isToday(date)) return "Сегодня";
-                  if (isYesterday(date)) return "Вчера";
-                  return format(date, "dd.MM.yyyy", { locale: ru });
-                };
-                
-                return (
-                  <div key={item.id}>
-                    {showDateSeparator && (
-                      <div className="flex items-center justify-center my-4">
-                        <div className="flex-1 border-t border-border/30" />
-                        <span className="px-3 py-1 text-xs text-muted-foreground bg-muted/50 rounded-full mx-2">
-                          {getDateLabel(currentDate)}
-                        </span>
-                        <div className="flex-1 border-t border-border/30" />
-                      </div>
-                    )}
-                    {renderChatItem(item)}
-                  </div>
-                );
-              })}
-              <div ref={bottomRef} />
-            </div>
+            ) : !chatItems?.length ? (
+              <div className="h-full flex items-center justify-center text-muted-foreground min-h-[200px]">
+                <div className="text-center">
+                  <Bot className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                  <p className="text-sm">Нет сообщений</p>
+                  <p className="text-xs">Начните диалог, отправив сообщение</p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3 px-3 w-full max-w-full box-border">
+                {chatItems.map((item, index) => {
+                  const currentDate = new Date(item.created_at);
+                  const prevItem = index > 0 ? chatItems[index - 1] : null;
+                  const prevDate = prevItem ? new Date(prevItem.created_at) : null;
+                  const showDateSeparator = !prevDate || !isSameDay(currentDate, prevDate);
+
+                  const getDateLabel = (date: Date) => {
+                    if (isToday(date)) return "Сегодня";
+                    if (isYesterday(date)) return "Вчера";
+                    return format(date, "dd.MM.yyyy", { locale: ru });
+                  };
+
+                  return (
+                    <div key={item.id}>
+                      {showDateSeparator && (
+                        <div className="flex items-center justify-center my-4">
+                          <div className="flex-1 border-t border-border/30" />
+                          <span className="px-3 py-1 text-xs text-muted-foreground bg-muted/50 rounded-full mx-2">
+                            {getDateLabel(currentDate)}
+                          </span>
+                          <div className="flex-1 border-t border-border/30" />
+                        </div>
+                      )}
+                      {renderChatItem(item)}
+                    </div>
+                  );
+                })}
+                <div ref={bottomRef} />
+              </div>
+            )}
+          </ScrollArea>
+
+          {/* Floating "scroll to bottom" button with unread badge */}
+          {!isNearBottomState && chatItems.length > 0 && (
+            <button
+              type="button"
+              onClick={jumpToBottom}
+              aria-label="К новым сообщениям"
+              className="absolute bottom-3 right-3 z-10 h-10 w-10 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center hover:bg-primary/90 transition-colors"
+            >
+              <ChevronDown className="h-5 w-5" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-semibold flex items-center justify-center border-2 border-background">
+                  {unreadCount > 99 ? "99+" : unreadCount}
+                </span>
+              )}
+            </button>
           )}
-        </ScrollArea>
+        </div>
 
         {/* Selected file preview - shrink-0 to stay visible */}
         {selectedFile && (
