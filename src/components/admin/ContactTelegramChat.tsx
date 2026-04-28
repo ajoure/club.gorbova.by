@@ -1379,16 +1379,13 @@ export function ContactTelegramChat({
           <div className="flex flex-col w-full min-w-0">
             <div className="relative">
               {(() => {
-                const isPureVideoNote =
-                  fileType === "video_note" &&
-                  !msg.message_text &&
-                  !msg.reply_to_message_id;
+                const isVideoNoteMsg = fileType === "video_note";
                 return (
               <div
                 className={cn(
                   "break-words overflow-hidden",
-                  isPureVideoNote
-                    ? "p-0 bg-transparent rounded-full"
+                  isVideoNoteMsg
+                    ? "p-0 bg-transparent rounded-none"
                     : cn(
                         "rounded-lg p-3",
                         msg.direction === "outgoing"
