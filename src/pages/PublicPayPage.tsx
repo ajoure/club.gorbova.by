@@ -352,6 +352,8 @@ export default function PublicPayPage() {
     );
   }
 
+  const isInstallment = !!linkInfo.installment && (linkInfo.installment.selected_installment_months ?? 0) >= 2;
+  // Для installment платёжная сумма в bePaid checkout = per_payment (link.amount уже = per_payment_kopecks).
   const priceFormatted = formatPrice(linkInfo.amount, linkInfo.currency);
   const needsIdentity = linkInfo.requires_identity_input && !user;
   const isSubscription = linkInfo.payment_type === 'subscription';
