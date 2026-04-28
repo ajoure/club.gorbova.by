@@ -539,7 +539,7 @@ export function ContactTelegramChat({
     if (fileType === "audio") return "🎵 Аудио";
     if (fileType === "document") return `📎 ${meta.file_name || "Документ"}`;
     if (fileType === "sticker") return "🌟 Стикер";
-    const text = (m.message_text || "").trim();
+    const text = getTelegramPlainText(m.message_text).trim();
     return text.length > 80 ? text.slice(0, 80) + "…" : text || "Сообщение";
   }, []);
 
