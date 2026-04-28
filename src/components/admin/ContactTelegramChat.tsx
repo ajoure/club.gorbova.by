@@ -273,6 +273,7 @@ export function ContactTelegramChat({
   const SEND_DEBOUNCE_MS = 500;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const prevMessageCountRef = useRef<number>(0);
 
