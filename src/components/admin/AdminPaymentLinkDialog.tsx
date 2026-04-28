@@ -256,10 +256,18 @@ export function AdminPaymentLinkDialog({
   // Источники истины: isInstallmentOffer (payment_method='internal_installment'),
   // effectivePaymentType ('subscription' | 'one_time'), selectedInstallmentMonths.
   const buildTelegramMessage = (productName: string, tariffName: string) => {
-    // Markdown v1: экранируем спецсимволы в подстановках, чтобы Telegram точно
-    // распарсил `*Оплата ...*` как жирный, даже если в имени продукта/тарифа
-    // встретятся `_` `*` `[` `` ` ``.
-    const escapeMd = (t: string) => (t || "").replace(/([_*`\[])/g, "\\$1");
+    // ВАЖНО: используем HTML-разметку, а НЕ Markdown.
+    // Причина: legacy Markdown в Telegram нестабильно распознаёт `*bold*`,
+    // когда `*` стоит впритык к эмодзи (`💳 *Оплата*`) — звёздочки тогда
+    // показываются как литералы. HTML (`<b>...</b>`) такой проблемы не имеет
+    // и поддерживается всеми клиентами Telegram. Edge `telegram-send-notification`
+    // автоматически переключается на parse_mode=HTML при наличии тегов.
+    const escapeHtml = (t: string) =>
+      (t || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+
     const isInstallmentMsg =
       isInstallmentOffer && (selectedInstallmentMonths ?? 0) >= 2;
     const isSubscriptionMsg =
@@ -289,10 +297,10 @@ export function AdminPaymentLinkDialog({
       ? `💰 Стоимость: ${selectedInstallmentMonths} × ${perPayment} BYN (итого ${totalAmount} BYN)`
       : `💰 Стоимость: ${amount} BYN`;
 
-    return `💳 *Оплата ${headerKind}*
+    return `💳 <b>Оплата ${headerKind}</b>
 
-📦 Продукт: ${escapeMd(productName)}
-📋 Тариф: ${escapeMd(tariffName)}
+📦 Продукт: ${escapeHtml(productName)}
+📋 Тариф: ${escapeHtml(tariffName)}
 ${amountLine}
 📅 Тип: ${typeLabel}`;
   };
