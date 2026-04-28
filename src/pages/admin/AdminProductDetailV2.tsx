@@ -1674,14 +1674,37 @@ export default function AdminProductDetailV2() {
                 <div className="space-y-2">
                   <Label>Тип кнопки *</Label>
                   <Select
-                    value={offerForm.offer_type}
-                    onValueChange={(v: "pay_now" | "trial" | "preregistration") => {
-                      setOfferForm({ 
-                        ...offerForm, 
-                        offer_type: v,
-                        button_label: v === "trial" ? "Trial 1 BYN / 5 дней" : v === "preregistration" ? "Забронировать место" : "Оплатить",
-                        requires_card_tokenization: v === "trial" || v === "preregistration",
-                      });
+                    value={
+                      offerForm.offer_type === "pay_now" && offerForm.payment_method === "internal_installment"
+                        ? "installment"
+                        : offerForm.offer_type
+                    }
+                    onValueChange={(v: "pay_now" | "trial" | "preregistration" | "installment") => {
+                      if (v === "installment") {
+                        // Кнопка «Рассрочка» = pay_now + internal_installment.
+                        // Очищаем meta.recurring (взаимоисключение типов кнопки).
+                        const { recurring, ...metaWithoutRecurring } = (offerForm.meta || {}) as any;
+                        setOfferForm({
+                          ...offerForm,
+                          offer_type: "pay_now",
+                          payment_method: "internal_installment",
+                          button_label: "Оплатить в рассрочку",
+                          requires_card_tokenization: true,
+                          installment_count: Math.max(2, Math.min(12, offerForm.installment_count || 6)),
+                          installment_interval_days: 30,
+                          first_payment_delay_days: 0,
+                          meta: metaWithoutRecurring,
+                        });
+                      } else {
+                        setOfferForm({
+                          ...offerForm,
+                          offer_type: v,
+                          // При выходе из «Рассрочки» возвращаем full_payment.
+                          payment_method: offerForm.payment_method === "internal_installment" ? "full_payment" : offerForm.payment_method,
+                          button_label: v === "trial" ? "Trial 1 BYN / 5 дней" : v === "preregistration" ? "Забронировать место" : "Оплатить",
+                          requires_card_tokenization: v === "trial" || v === "preregistration",
+                        });
+                      }
                     }}
                   >
                     <SelectTrigger>
@@ -1691,8 +1714,14 @@ export default function AdminProductDetailV2() {
                       <SelectItem value="pay_now">Оплата (полная стоимость)</SelectItem>
                       <SelectItem value="trial">Trial (пробный период)</SelectItem>
                       <SelectItem value="preregistration">Предзапись (привязка карты)</SelectItem>
+                      <SelectItem value="installment">Рассрочка</SelectItem>
                     </SelectContent>
                   </Select>
+                  {offerForm.offer_type === "pay_now" && offerForm.payment_method === "internal_installment" && (
+                    <p className="text-xs text-muted-foreground">
+                      Клиент при оплате выберет срок от 2 до N месяцев. Сумма списывается равными платежами раз в 30 дней. Первый платёж — сразу при покупке.
+                    </p>
+                  )}
                 </div>
 
                 <Separator />
