@@ -33,20 +33,28 @@ export function MediaLightbox({
 
   const controlButtonClass = "h-8 w-8 text-foreground/80 hover:text-foreground hover:bg-muted";
 
+  const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget) {
+      onOpenChange(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent 
+      <DialogContent
         className={cn(
           "p-0 border-none overflow-visible shadow-none bg-transparent",
-          isPdf || isDocument 
-            ? "max-w-4xl max-h-[90vh]" 
-            : "w-fit max-w-[92vw] max-h-[92vh]"
+          "!max-w-none !w-screen !h-screen !top-0 !left-0 !translate-x-0 !translate-y-0 !rounded-none",
+          "flex items-center justify-center"
         )}
         showCloseButton={false}
-        onPointerDownOutside={() => onOpenChange(false)}
         onEscapeKeyDown={() => onOpenChange(false)}
+        onClick={handleBackdropClick}
       >
-        <div className="inline-flex w-fit max-w-[92vw] flex-col items-end gap-2">
+        <div
+          className="inline-flex w-fit max-w-[92vw] flex-col items-end gap-2"
+          onClick={(e) => e.stopPropagation()}
+        >
         {/* Controls */}
         <div className="z-50 flex items-center gap-1 rounded-full border border-border/60 bg-background/95 p-1 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80">
           <Button
