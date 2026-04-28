@@ -271,26 +271,27 @@ export function ChatMediaMessage({
       return (
         <>
           <div 
-            className="relative w-48 h-48 rounded-full overflow-hidden cursor-pointer group"
+            className="relative w-48 h-48 rounded-full overflow-hidden cursor-pointer group bg-transparent"
             onClick={handleVideoNoteClick}
           >
             <video
               ref={videoRef}
               src={fileUrl}
-              className="w-full h-full object-cover"
+              className="w-full h-full object-cover rounded-full bg-transparent"
               loop
               playsInline
               muted={false}
+              preload="metadata"
               controlsList="nodownload noplaybackrate"
               disablePictureInPicture
               onEnded={() => setIsPlaying(false)}
               onPause={() => setIsPlaying(false)}
               onPlay={() => setIsPlaying(true)}
             />
-            {/* Play/Pause overlay */}
+            {/* Play overlay only when paused — no background tint */}
             {!isPlaying && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/20">
-                <div className="w-12 h-12 rounded-full bg-black/50 flex items-center justify-center">
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="w-12 h-12 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center">
                   <Play className="w-6 h-6 text-white fill-white ml-1" />
                 </div>
               </div>
