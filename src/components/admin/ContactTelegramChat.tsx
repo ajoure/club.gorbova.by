@@ -648,6 +648,15 @@ export function ContactTelegramChat({
     return errorMessage;
   };
 
+  // Унифицированный форматтер ошибок чата:
+  // 1) normalizeEdgeFunctionError — раскрывает body Edge Function,
+  //    переводит "Failed to send a request to the Edge Function" в человеческое сообщение.
+  // 2) translateTelegramError — переводит Telegram-API ошибки на русский.
+  const formatChatError = (error: unknown): string => {
+    const normalized = normalizeEdgeFunctionError(error);
+    return translateTelegramError(normalized);
+  };
+
   // Fetch profile photo from Telegram
   const fetchPhotoMutation = useMutation({
     mutationFn: async () => {
