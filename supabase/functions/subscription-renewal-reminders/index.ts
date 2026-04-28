@@ -693,11 +693,14 @@ async function sendEmailReminder(
   isOneTime: boolean = false
 ): Promise<boolean> {
   try {
-    const formattedDate = expiryDate.toLocaleDateString('ru-RU', { 
-      day: 'numeric', 
-      month: 'long',
-      year: 'numeric'
+    // PATCH ONE-TIME v2: точное время Минск
+    const dateFmt = new Intl.DateTimeFormat('ru-RU', {
+      day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Minsk'
     });
+    const timeFmt = new Intl.DateTimeFormat('ru-RU', {
+      hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Minsk'
+    });
+    const formattedDate = `${dateFmt.format(expiryDate)} в ${timeFmt.format(expiryDate)} (Минск)`;
 
     let subject = '';
     let bodyHtml = '';
