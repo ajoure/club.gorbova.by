@@ -31,30 +31,28 @@ export function MediaLightbox({
     a.click();
   };
 
+  const controlButtonClass = "h-8 w-8 text-foreground/80 hover:text-foreground hover:bg-muted";
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent 
         className={cn(
-          "p-0 border-none overflow-visible shadow-none",
+          "p-0 border-none overflow-visible shadow-none bg-transparent",
           isPdf || isDocument 
-            ? "max-w-4xl max-h-[90vh] bg-background" 
-            : "w-fit max-w-[92vw] max-h-[92vh] bg-transparent"
+            ? "max-w-4xl max-h-[90vh]" 
+            : "w-fit max-w-[92vw] max-h-[92vh]"
         )}
         showCloseButton={false}
         onPointerDownOutside={() => onOpenChange(false)}
         onEscapeKeyDown={() => onOpenChange(false)}
       >
-        {/* Close button */}
-        <div className="absolute top-2 right-2 z-50 flex gap-2">
+        <div className="inline-flex w-fit max-w-[92vw] flex-col items-end gap-2">
+        {/* Controls */}
+        <div className="z-50 flex items-center gap-1 rounded-full border border-border/60 bg-background/95 p-1 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80">
           <Button
             variant="ghost"
             size="icon"
-            className={cn(
-              "h-8 w-8",
-              isPdf || isDocument 
-                ? "text-foreground/70 hover:text-foreground hover:bg-muted" 
-                : "text-white/70 hover:text-white hover:bg-white/10"
-            )}
+            className={controlButtonClass}
             onClick={handleDownload}
             title="Скачать"
           >
@@ -63,12 +61,7 @@ export function MediaLightbox({
           <Button
             variant="ghost"
             size="icon"
-            className={cn(
-              "h-8 w-8",
-              isPdf || isDocument 
-                ? "text-foreground/70 hover:text-foreground hover:bg-muted" 
-                : "text-white/70 hover:text-white hover:bg-white/10"
-            )}
+            className={controlButtonClass}
             onClick={() => window.open(url, "_blank")}
             title="Открыть в новой вкладке"
           >
@@ -77,12 +70,7 @@ export function MediaLightbox({
           <Button
             variant="ghost"
             size="icon"
-            className={cn(
-              "h-8 w-8",
-              isPdf || isDocument 
-                ? "text-foreground/70 hover:text-foreground hover:bg-muted" 
-                : "text-white/70 hover:text-white hover:bg-white/10"
-            )}
+            className={controlButtonClass}
             onClick={() => onOpenChange(false)}
           >
             <X className="h-5 w-5" />
@@ -91,8 +79,8 @@ export function MediaLightbox({
 
         {/* Content */}
         <div className={cn(
-          "flex items-center justify-center w-fit max-w-[92vw] max-h-[88vh]",
-          isPdf || isDocument ? "min-h-[300px] p-4" : "p-0"
+          "flex items-center justify-center w-fit max-w-[92vw] overflow-hidden",
+          isPdf || isDocument ? "min-h-[300px] max-h-[calc(90vh-3rem)] rounded-lg bg-background p-4" : "max-h-[calc(92vh-3rem)] p-0"
         )}>
           {isPdf ? (
             <iframe
@@ -127,7 +115,7 @@ export function MediaLightbox({
               controlsList="nodownload noplaybackrate"
               disablePictureInPicture
               className={cn(
-                "max-w-full max-h-[80vh]",
+                "max-w-full max-h-[calc(92vh-3rem)]",
                 isVideoNote ? "rounded-full aspect-square object-cover" : "rounded-lg"
               )}
               style={isVideoNote ? { maxWidth: "min(80vw, 400px)", maxHeight: "min(80vh, 400px)" } : undefined}
@@ -136,9 +124,10 @@ export function MediaLightbox({
             <img
               src={url}
               alt={fileName || "Image"}
-              className="block max-w-[92vw] max-h-[88vh] object-contain rounded-lg bg-transparent"
+              className="block max-w-[92vw] max-h-[calc(92vh-3rem)] object-contain rounded-lg bg-transparent"
             />
           )}
+        </div>
         </div>
       </DialogContent>
     </Dialog>
