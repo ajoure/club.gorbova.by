@@ -432,6 +432,63 @@ async function sendUpcomingReminders(): Promise<{ sent: number; errors: string[]
   return { sent, errors };
 }
 
+async function sendCompletionNotification(installmentId: string): Promise<void> {
+  const supabase = createClient(supabaseUrl, supabaseKey);
+
+  const { data: installment, error } = await supabase
+    .from("installment_payments")
+    .select(`
+      *,
+      subscription:subscriptions_v2(
+        user_id,
+        product:products_v2(name)
+      )
+    `)
+    .eq("id", installmentId)
+    .single();
+
+  if (error || !installment) {
+    throw new Error(`Installment not found: ${installmentId}`);
+  }
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("email, full_name")
+    .eq("user_id", installment.subscription.user_id)
+    .single();
+
+  if (!profile?.email) {
+    throw new Error("User email not found");
+  }
+
+  const productName = installment.subscription.product?.name || "Продукт";
+  const totalAmount = Number(installment.amount) * Number(installment.total_payments);
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h1 style="color: #10b981;">🎉 Рассрочка полностью оплачена</h1>
+      <p>Здравствуйте${profile.full_name ? `, ${profile.full_name}` : ""}!</p>
+      <p>Поздравляем — вы полностью завершили оплату по рассрочке.</p>
+
+      <div style="background: #d1fae5; padding: 15px; border-radius: 8px; margin: 20px 0;">
+        <p style="margin: 0;"><strong>Продукт:</strong> ${productName}</p>
+        <p style="margin: 10px 0 0;"><strong>Платежей оплачено:</strong> ${installment.total_payments} из ${installment.total_payments}</p>
+        <p style="margin: 10px 0 0;"><strong>Итоговая сумма:</strong> ${totalAmount.toFixed(2)} ${installment.currency}</p>
+        <p style="margin: 10px 0 0; color: #059669;"><strong>Статус:</strong> Рассрочка закрыта ✅</p>
+      </div>
+
+      <p>Спасибо, что выбрали нас. Доступ к продукту сохраняется согласно условиям тарифа.</p>
+
+      <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
+      <p style="color: #9ca3af; font-size: 12px;">
+        С уважением, команда Gorbova Club
+      </p>
+    </div>
+  `;
+
+  await sendEmail(profile.email, `🎉 Рассрочка полностью оплачена`, html);
+}
+
 const handler = async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
