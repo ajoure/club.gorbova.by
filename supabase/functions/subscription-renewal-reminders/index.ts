@@ -470,35 +470,39 @@ async function sendTelegramReminder(
     }
 
     const userName = profile.full_name?.split(' ')[0] || 'Клиент';
-    const formattedDate = expiryDate.toLocaleDateString('ru-RU', { 
-      day: 'numeric', 
-      month: 'long' 
+    // PATCH ONE-TIME v2: точное время Минск (день + месяц + HH:mm)
+    const dateFmt = new Intl.DateTimeFormat('ru-RU', {
+      day: 'numeric', month: 'long', timeZone: 'Europe/Minsk'
     });
+    const timeFmt = new Intl.DateTimeFormat('ru-RU', {
+      hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Minsk'
+    });
+    const formattedDate = `${dateFmt.format(expiryDate)} в ${timeFmt.format(expiryDate)} (Минск)`;
 
     const safeUserName = escapeMd(userName);
     const safeProductName = escapeMd(productName);
     const safeTariffName = escapeMd(tariffName);
 
-    // PATCH ONE-TIME v1: info-only text for one-time products (no renewal CTA)
+    // PATCH ONE-TIME v2: тёплые тексты с эмодзи, точное время, нейтральный CTA (ЛК)
     if (isOneTime) {
       if (daysLeft === 7) {
         message = `📅 *Доступ скоро заканчивается*
 
-${safeUserName}, ваш доступ к *${safeProductName}* заканчивается ${formattedDate}.
+${safeUserName}, напоминаем: доступ к *${safeProductName}* заканчивается *${formattedDate}*.
 
-Это разовый продукт — продление не предусмотрено.`;
+Это разовая покупка — продление не требуется. ✅ Спасибо, что были с нами!`;
       } else if (daysLeft === 3) {
-        message = `⏰ *Доступ заканчивается через 3 дня*
+        message = `⏰ *Осталось 3 дня доступа*
 
-${safeUserName}, ваш доступ к *${safeProductName}* заканчивается ${formattedDate}.
+${safeUserName}, доступ к *${safeProductName}* заканчивается *${formattedDate}*.
 
-Это разовый продукт — продление не предусмотрено.`;
+Это разовая покупка — продление не требуется. ✅`;
       } else if (daysLeft === 1) {
-        message = `🔔 *Доступ заканчивается завтра*
+        message = `🔔 *Завтра заканчивается доступ*
 
-${safeUserName}, это последнее напоминание. Доступ к *${safeProductName}* заканчивается ${formattedDate}.
+${safeUserName}, это последнее напоминание: доступ к *${safeProductName}* заканчивается *${formattedDate}*.
 
-Это разовый продукт — продление не предусмотрено.`;
+Это разовая покупка — продление не требуется. ✅ Благодарим за доверие!`;
       }
     }
     // PATCH RENEWAL+PAYMENTS.1 B3: Unified texts — SBS vs non-SBS (2 buttons)
@@ -555,7 +559,7 @@ ${safeUserName}, это последнее напоминание. Подпис�
     let replyMarkup: any;
     if (isOneTime) {
       replyMarkup = {
-        inline_keyboard: [[{ text: '📋 Управление в кабинете', url: 'https://club.gorbova.by/purchases' }]],
+        inline_keyboard: [[{ text: '👤 Открыть личный кабинет', url: 'https://club.gorbova.by/purchases' }]],
       };
     } else if (hasSBS) {
       replyMarkup = {
@@ -689,24 +693,26 @@ async function sendEmailReminder(
   isOneTime: boolean = false
 ): Promise<boolean> {
   try {
-    const formattedDate = expiryDate.toLocaleDateString('ru-RU', { 
-      day: 'numeric', 
-      month: 'long',
-      year: 'numeric'
+    // PATCH ONE-TIME v2: точное время Минск
+    const dateFmt = new Intl.DateTimeFormat('ru-RU', {
+      day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Minsk'
     });
+    const timeFmt = new Intl.DateTimeFormat('ru-RU', {
+      hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Minsk'
+    });
+    const formattedDate = `${dateFmt.format(expiryDate)} в ${timeFmt.format(expiryDate)} (Минск)`;
 
     let subject = '';
     let bodyHtml = '';
 
     // PATCH RENEWAL+PAYMENTS.1 B4: Build CTA section — SBS vs 2 buttons
-    // PATCH ONE-TIME v1: one-time products get info-only block (no payment CTA)
+    // PATCH ONE-TIME v2: one-time → нейтральная кнопка «Открыть личный кабинет», без слов «продление»
     let ctaHtml = '';
     if (isOneTime) {
       ctaHtml = `
-        <p style="color: #6b7280; margin: 16px 0;">Это разовый продукт — продление не предусмотрено.</p>
         <p style="margin-top: 24px;">
           <a href="https://club.gorbova.by/purchases" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500;">
-            📋 Управление в кабинете
+            👤 Открыть личный кабинет
           </a>
         </p>`;
     } else if (hasSBS) {
@@ -736,7 +742,34 @@ async function sendEmailReminder(
 
     const statusSection = ctaHtml;
 
-    if (daysLeft === 7) {
+    // PATCH ONE-TIME v2: отдельные subject/body для разовых продуктов (без слова «подписка»)
+    if (isOneTime) {
+      const headerByDays: Record<number, { subject: string; title: string; lead: string; tone: 'normal' | 'warn' }> = {
+        7:  { subject: `📅 Доступ к ${productName} скоро заканчивается`, title: 'Доступ скоро заканчивается', lead: 'Напоминаем: ваш доступ заканчивается через <strong>7 дней</strong>.', tone: 'normal' },
+        3:  { subject: `⏰ ${productName}: 3 дня до окончания доступа`, title: 'Осталось 3 дня', lead: 'До окончания вашего доступа осталось <strong>3 дня</strong>.', tone: 'normal' },
+        1:  { subject: `🔔 Завтра заканчивается доступ к ${productName}`, title: 'Завтра заканчивается доступ', lead: 'Ваш доступ заканчивается <strong>завтра</strong>.', tone: 'warn' },
+      };
+      const cfg = headerByDays[daysLeft];
+      if (cfg) {
+        subject = cfg.subject;
+        const cardBg = cfg.tone === 'warn' ? '#fef2f2' : '#f3f4f6';
+        const cardBorder = cfg.tone === 'warn' ? '1px solid #fecaca' : 'none';
+        const titleColor = cfg.tone === 'warn' ? '#dc2626' : '#1f2937';
+        bodyHtml = `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <h1 style="color: ${titleColor}; font-size: 24px; margin-bottom: 20px;">${cfg.title}</h1>
+            <p>Здравствуйте!</p>
+            <p>${cfg.lead}</p>
+            <div style="background: ${cardBg}; border: ${cardBorder}; border-radius: 8px; padding: 16px; margin: 20px 0;">
+              <p style="margin: 0 0 8px 0;"><strong>📦 Продукт:</strong> ${productName}</p>
+              <p style="margin: 0;"><strong>📆 Доступ до:</strong> ${formattedDate}</p>
+            </div>
+            <p style="color: #4b5563; margin: 16px 0;">Это разовая покупка — продление не требуется. ✅ Спасибо, что были с нами!</p>
+            ${statusSection}
+            <p style="color: #6b7280; margin-top: 32px; font-size: 14px;">С уважением,<br>Команда клуба</p>
+          </div>`;
+      }
+    } else if (daysLeft === 7) {
       subject = '📅 Напоминание: подписка заканчивается через неделю';
       bodyHtml = `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
