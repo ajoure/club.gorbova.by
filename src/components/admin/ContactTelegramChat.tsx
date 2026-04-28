@@ -868,34 +868,79 @@ export function ContactTelegramChat({
     const viewport = root?.querySelector(
       "[data-radix-scroll-area-viewport]",
     ) as HTMLElement | null;
+    if (!viewport) return;
 
-    const isNearBottom = viewport
-      ? viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 120
-      : true;
+    const isNearBottom =
+      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 120;
 
     const shouldScroll = !didInitialScrollRef.current || isNearBottom;
     if (!shouldScroll) return;
 
-    const scrollToBottom = () => {
-      const vp = scrollRef.current?.querySelector("[data-radix-scroll-area-viewport]") as HTMLElement | null;
-      if (vp) {
-        vp.scrollTo({ top: vp.scrollHeight, behavior: "auto" });
-      }
-      // Fallback: bottomRef внутри ScrollArea гарантированно выровняется по нижней границе.
-      bottomRef.current?.scrollIntoView({ block: "end" });
-      didInitialScrollRef.current = true;
+    // Скрытый pin-to-bottom: моментально, без анимации, чтобы пользователь
+    // НЕ видел промежуточные позиции пока медиа догружаются.
+    const pinToBottom = () => {
+      const vp = scrollRef.current?.querySelector(
+        "[data-radix-scroll-area-viewport]",
+      ) as HTMLElement | null;
+      if (!vp) return;
+      vp.scrollTop = vp.scrollHeight;
+      // Fallback на bottomRef внутри ScrollArea — гарантирует выравнивание
+      // даже если вьюпорт ещё не успел пересчитать scrollHeight.
+      bottomRef.current?.scrollIntoView({ block: "end", behavior: "auto" });
     };
 
-    // Двойной rAF — ждём финальный layout/paint.
-    requestAnimationFrame(() => requestAnimationFrame(scrollToBottom));
+    // 1) Немедленно (двойной rAF — ждём первый layout/paint).
+    requestAnimationFrame(() => requestAnimationFrame(pinToBottom));
 
-    // Повторный pass через 150мс на случай поздней догрузки сообщений/медиа.
-    const t1 = setTimeout(scrollToBottom, 150);
-    const t2 = setTimeout(scrollToBottom, 400);
+    // 2) Пока контент догружается (картинки, видео-постеры, длинный текст),
+    //    высота viewport растёт — повторно прижимаем к низу.
+    const ro = new ResizeObserver(() => {
+      // На initial pass держим у дна безусловно, чтобы первое открытие
+      // всегда заканчивалось на последнем сообщении.
+      if (!didInitialScrollRef.current) {
+        pinToBottom();
+        return;
+      }
+      // На последующих pass — только если уже были у дна.
+      const vp = scrollRef.current?.querySelector(
+        "[data-radix-scroll-area-viewport]",
+      ) as HTMLElement | null;
+      if (!vp) return;
+      const near = vp.scrollHeight - vp.scrollTop - vp.clientHeight < 200;
+      if (near) pinToBottom();
+    });
+    // Наблюдаем за внутренним контейнером (он растёт при подгрузке медиа).
+    const inner = viewport.firstElementChild as HTMLElement | null;
+    if (inner) ro.observe(inner);
+    ro.observe(viewport);
+
+    // 3) Слушаем load событий у картинок — каждая догрузка двигает scrollHeight.
+    const imgs = Array.from(viewport.querySelectorAll("img"));
+    const onImgLoad = () => pinToBottom();
+    imgs.forEach((img) => {
+      if (!(img as HTMLImageElement).complete) {
+        img.addEventListener("load", onImgLoad, { once: true });
+        img.addEventListener("error", onImgLoad, { once: true });
+      }
+    });
+
+    // 4) Страховочные таймеры — на случай поздней асинхронной отрисовки.
+    const t1 = setTimeout(pinToBottom, 150);
+    const t2 = setTimeout(pinToBottom, 400);
+    const t3 = setTimeout(() => {
+      pinToBottom();
+      didInitialScrollRef.current = true;
+    }, 800);
 
     return () => {
       clearTimeout(t1);
       clearTimeout(t2);
+      clearTimeout(t3);
+      ro.disconnect();
+      imgs.forEach((img) => {
+        img.removeEventListener("load", onImgLoad);
+        img.removeEventListener("error", onImgLoad);
+      });
     };
   }, [userId, isLoading, chatItems.length]);
 
