@@ -584,9 +584,12 @@ export default function AdminProductDetailV2() {
     }
     
     // Preserve/clear recurring settings based on subscription toggle
-    // PATCH: Normalize recurring config with defaults when saving subscription
-    const isSubscription = offerForm.offer_type === "trial" || isPreregistration || 
-      (isInstallment || offerForm.requires_card_tokenization);
+    // Installment НЕ recurring: meta.recurring очищается для installment-кнопок (взаимоисключение типов).
+    const isSubscription = !isInstallment && (
+      offerForm.offer_type === "trial" ||
+      isPreregistration ||
+      offerForm.requires_card_tokenization
+    );
     
     if (isSubscription) {
       // PATCH: Normalize recurring config with all required defaults
@@ -623,6 +626,21 @@ export default function AdminProductDetailV2() {
       delete metaToSave.recurring;
     }
     
+    // Installment metadata (Stage L0a-1):
+    // meta.installment = { max_months 2..12, interval_days:30, first_payment_delay_days:0, rounding_mode }
+    // legacy-зеркало в столбцах installment_count / installment_interval_days / first_payment_delay_days сохраняем.
+    if (isInstallment) {
+      const maxMonths = Math.max(2, Math.min(12, offerForm.installment_count || 6));
+      metaToSave.installment = {
+        max_months: maxMonths,
+        interval_days: 30,
+        first_payment_delay_days: 0,
+        rounding_mode: 'round_half_up_byn',
+      } as any;
+    } else {
+      delete (metaToSave as any).installment;
+    }
+    
     const data: TariffOfferInsert = {
       tariff_id: offerForm.tariff_id,
       offer_type: offerForm.offer_type,
@@ -642,13 +660,12 @@ export default function AdminProductDetailV2() {
       sort_order: offerForm.offer_type === "trial" ? 1 : (isPreregistration ? 2 : 0),
       getcourse_offer_id: offerForm.getcourse_offer_id || null,
       reject_virtual_cards: offerForm.reject_virtual_cards,
-      // Installment fields
+      // Installment fields (legacy mirror — installment_count хранит max_months)
       payment_method: offerForm.offer_type === "pay_now" ? offerForm.payment_method : "full_payment",
-      installment_count: isInstallment ? offerForm.installment_count : null,
-      installment_interval_days: isInstallment ? offerForm.installment_interval_days : null,
-      first_payment_delay_days: isInstallment ? offerForm.first_payment_delay_days : null,
-      // Meta field for welcome message + preregistration settings
-      // PATCH: Never set meta to null for subscription offers - ensures recurring config is preserved
+      installment_count: isInstallment ? Math.max(2, Math.min(12, offerForm.installment_count || 6)) : null,
+      installment_interval_days: isInstallment ? 30 : null,
+      first_payment_delay_days: isInstallment ? 0 : null,
+      // Meta field for welcome message + preregistration settings + installment
       meta: Object.keys(metaToSave).length > 0 ? metaToSave : (offerForm.requires_card_tokenization ? metaToSave : null),
     };
     
