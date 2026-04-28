@@ -622,24 +622,10 @@ ${amountLine}
       if (!generatedUrl || !selectedProduct || !selectedTariff) {
         throw new Error("Нет данных для отправки");
       }
-      const isInstallmentMsg = isInstallmentOffer && (selectedInstallmentMonths ?? 0) >= 2;
-      const typeLabel = isInstallmentMsg
-        ? `Рассрочка · ${selectedInstallmentMonths} платежей`
-        : effectivePaymentType === "subscription"
-          ? "Подписка (ежемесячно)"
-          : "Разовая оплата";
-      // Для installment-оффера amount уже = per-payment (offer.amount хранит per-payment).
-      const perPayment = amount;
-      const totalAmount = perPayment * (selectedInstallmentMonths || 1);
-      const amountLine = isInstallmentMsg
-        ? `💰 Стоимость: ${selectedInstallmentMonths} × ${perPayment} BYN (итого ${totalAmount} BYN)`
-        : `💰 Стоимость: ${amount} BYN`;
-      const telegramMessage = `💳 *Оплата ${isInstallmentMsg ? "в рассрочку" : "подписки"}*
-
-📦 Продукт: ${selectedProduct.name}
-📋 Тариф: ${selectedTariff.name}
-${amountLine}
-📅 Тип: ${typeLabel}`;
+      const telegramMessage = buildTelegramMessage(
+        selectedProduct.name,
+        selectedTariff.name,
+      );
 
       const { data, error } = await supabase.functions.invoke(
         "telegram-send-notification",
