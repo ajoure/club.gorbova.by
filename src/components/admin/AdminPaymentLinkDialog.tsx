@@ -249,7 +249,7 @@ export function AdminPaymentLinkDialog({
     if (legacy >= 2) return Math.min(12, legacy);
     return null;
   }, [isInstallmentOffer, effectiveOffer]);
-  // per_payment считаем in-place там, где нужен amount — выше по модулю он ещё не объявлен.
+  // per_payment для installment считается inline в JSX (там, где amount уже доступен).
 
   // Список всех active pay_now offers (для select override) — без фильтрации по типу
   const activeOffers = useMemo(
