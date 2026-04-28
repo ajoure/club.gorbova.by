@@ -1606,6 +1606,30 @@ export function ContactTelegramChat({
               </Select>
             </div>
           )}
+          {replyingTo && (
+            <div className="flex items-start gap-2 mb-2 p-2 rounded-md bg-muted border-l-2 border-primary">
+              <CornerUpLeft className="w-3.5 h-3.5 text-primary mt-0.5 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-[11px] font-semibold text-primary truncate">
+                  Ответ:{" "}
+                  {replyingTo.direction === "outgoing"
+                    ? (replyingTo.admin_profile?.full_name || "Администратор")
+                    : (clientName || "Клиент")}
+                </div>
+                <div className="text-xs text-muted-foreground truncate">
+                  {previewForQuote(replyingTo)}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReplyingTo(null)}
+                className="p-0.5 rounded hover:bg-accent"
+                title="Отменить ответ"
+              >
+                <X className="w-3.5 h-3.5 text-muted-foreground" />
+              </button>
+            </div>
+          )}
           <div className="flex gap-2">
           <div className="flex flex-col gap-1">
             <Popover>
