@@ -30,7 +30,7 @@ Deno.serve(async (req) => {
         .from('payment_links')
         .select(`
           id, url_token, user_id, amount, currency, payment_type, description, status,
-          max_uses, current_uses, expires_at,
+          max_uses, current_uses, expires_at, meta,
           products_v2!payment_links_product_id_fkey ( id, name, description, category ),
           tariffs!payment_links_tariff_id_fkey ( id, name, code, access_days )
         `)
@@ -60,6 +60,7 @@ Deno.serve(async (req) => {
 
       const product = (link as any).products_v2;
       const tariff = (link as any).tariffs;
+      const installment = (link as any).meta?.installment ?? null;
 
       return jsonResponse({
         product_name: product?.name || 'Продукт',
@@ -79,6 +80,8 @@ Deno.serve(async (req) => {
         //   null → public link, any authenticated user can pay with their own saved card.
         //   uuid → personal link, only owner sees the saved-card button.
         link_user_id: link.user_id,
+        // Stage L: installment summary (read-only для UI, срок зафиксирован админом).
+        installment,
       });
     }
 
