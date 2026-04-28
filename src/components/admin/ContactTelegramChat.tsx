@@ -854,67 +854,77 @@ export function ContactTelegramChat({
     },
   });
 
-  useEffect(() => {
+  // Автоскролл к последнему сообщению — выполняется через useLayoutEffect,
+  // чтобы прижатие к низу происходило ДО того, как браузер покажет кадр.
+  // Это исключает "вспышку" с прокруткой сверху при открытии шторки.
+  useLayoutEffect(() => {
     if (!userId) return;
     if (isLoading) return;
 
-    // Reset “initial scroll” when switching contact
+    // Reset "initial scroll" when switching contact
     if (lastUserIdRef.current !== userId) {
       lastUserIdRef.current = userId;
       didInitialScrollRef.current = false;
     }
 
-    const root = scrollRef.current;
-    const viewport = root?.querySelector(
-      "[data-radix-scroll-area-viewport]",
-    ) as HTMLElement | null;
+    const getViewport = (): HTMLElement | null => {
+      const root = scrollRef.current;
+      return (root?.querySelector(
+        "[data-radix-scroll-area-viewport]",
+      ) as HTMLElement | null) ?? null;
+    };
+
+    const viewport = getViewport();
     if (!viewport) return;
 
-    const isNearBottom =
-      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 120;
+    const isNearBottom = () => {
+      const vp = getViewport();
+      if (!vp) return false;
+      return vp.scrollHeight - vp.scrollTop - vp.clientHeight < 120;
+    };
 
-    const shouldScroll = !didInitialScrollRef.current || isNearBottom;
+    const shouldScroll = !didInitialScrollRef.current || isNearBottom();
     if (!shouldScroll) return;
 
-    // Скрытый pin-to-bottom: моментально, без анимации, чтобы пользователь
-    // НЕ видел промежуточные позиции пока медиа догружаются.
+    // Скрытый pin-to-bottom: моментально, без анимации.
     const pinToBottom = () => {
-      const vp = scrollRef.current?.querySelector(
-        "[data-radix-scroll-area-viewport]",
-      ) as HTMLElement | null;
+      const vp = getViewport();
       if (!vp) return;
       vp.scrollTop = vp.scrollHeight;
-      // Fallback на bottomRef внутри ScrollArea — гарантирует выравнивание
-      // даже если вьюпорт ещё не успел пересчитать scrollHeight.
       bottomRef.current?.scrollIntoView({ block: "end", behavior: "auto" });
     };
 
-    // 1) Немедленно (двойной rAF — ждём первый layout/paint).
-    requestAnimationFrame(() => requestAnimationFrame(pinToBottom));
+    // 1) Sticky-loop первые 1.5 секунды: на КАЖДЫЙ кадр прижимаем к низу,
+    //    пока контент (картинки, события, медиа) догружается и меняет высоту.
+    //    Это самый надёжный способ — даже если ResizeObserver/onload не сработает,
+    //    rAF-цикл всё равно поймает рост высоты.
+    let stickyActive = !didInitialScrollRef.current;
+    const stickyDeadline = performance.now() + 1500;
+    const stickyLoop = () => {
+      if (!stickyActive) return;
+      pinToBottom();
+      if (performance.now() < stickyDeadline) {
+        requestAnimationFrame(stickyLoop);
+      } else {
+        stickyActive = false;
+        didInitialScrollRef.current = true;
+      }
+    };
+    requestAnimationFrame(stickyLoop);
 
-    // 2) Пока контент догружается (картинки, видео-постеры, длинный текст),
-    //    высота viewport растёт — повторно прижимаем к низу.
+    // 2) ResizeObserver — для последующих апдейтов (новое сообщение, медиа).
     const ro = new ResizeObserver(() => {
-      // На initial pass держим у дна безусловно, чтобы первое открытие
-      // всегда заканчивалось на последнем сообщении.
       if (!didInitialScrollRef.current) {
         pinToBottom();
         return;
       }
-      // На последующих pass — только если уже были у дна.
-      const vp = scrollRef.current?.querySelector(
-        "[data-radix-scroll-area-viewport]",
-      ) as HTMLElement | null;
-      if (!vp) return;
-      const near = vp.scrollHeight - vp.scrollTop - vp.clientHeight < 200;
-      if (near) pinToBottom();
+      if (isNearBottom()) pinToBottom();
     });
-    // Наблюдаем за внутренним контейнером (он растёт при подгрузке медиа).
     const inner = viewport.firstElementChild as HTMLElement | null;
     if (inner) ro.observe(inner);
     ro.observe(viewport);
 
-    // 3) Слушаем load событий у картинок — каждая догрузка двигает scrollHeight.
+    // 3) Картинки — каждая догрузка двигает scrollHeight.
     const imgs = Array.from(viewport.querySelectorAll("img"));
     const onImgLoad = () => pinToBottom();
     imgs.forEach((img) => {
@@ -924,18 +934,8 @@ export function ContactTelegramChat({
       }
     });
 
-    // 4) Страховочные таймеры — на случай поздней асинхронной отрисовки.
-    const t1 = setTimeout(pinToBottom, 150);
-    const t2 = setTimeout(pinToBottom, 400);
-    const t3 = setTimeout(() => {
-      pinToBottom();
-      didInitialScrollRef.current = true;
-    }, 800);
-
     return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
+      stickyActive = false;
       ro.disconnect();
       imgs.forEach((img) => {
         img.removeEventListener("load", onImgLoad);
