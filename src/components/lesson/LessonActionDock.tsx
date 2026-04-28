@@ -42,8 +42,10 @@ export function LessonActionDock({
     <div
       className={cn(
         "fixed z-40 animate-in slide-in-from-bottom-4 fade-in duration-300",
-        // По центру на десктопе, на всю ширину с отступами на мобильных
+        // Центрируем по основному контенту (учитываем sidebar 16rem на десктопе)
         "left-1/2 -translate-x-1/2 bottom-4",
+        "sm:left-[calc(50%+8rem)] sm:-translate-x-1/2",
+        // На мобильных — растягиваем по ширине
         "max-sm:left-3 max-sm:right-3 max-sm:translate-x-0 max-sm:bottom-3",
         "w-auto max-sm:w-auto",
       )}
