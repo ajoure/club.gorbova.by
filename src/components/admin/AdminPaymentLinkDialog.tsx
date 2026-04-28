@@ -855,8 +855,9 @@ export function AdminPaymentLinkDialog({
                 </div>
               )}
 
-              {/* Тип оплаты — крупные сегменты */}
-              {selectedTariffId && (
+              {/* Тип оплаты — крупные сегменты. Скрыто для installment-офферов
+                  (срок рассрочки = свой селект ниже, payment_type форсится one_time). */}
+              {selectedTariffId && !isInstallmentOffer && (
                 <div className="rounded-lg border bg-card p-4 space-y-3">
                   <Label>Тип оплаты</Label>
                   <div className="grid grid-cols-2 gap-3">
@@ -895,6 +896,19 @@ export function AdminPaymentLinkDialog({
                   </div>
                   <p className="text-xs text-muted-foreground">
                     Предпочтение пользователя. Если в тарифе нет кнопки нужного типа, будет использована основная кнопка тарифа.
+                  </p>
+                </div>
+              )}
+
+              {/* Stage L: read-only бейдж для installment-оффера */}
+              {selectedTariffId && isInstallmentOffer && (
+                <div className="rounded-lg border bg-amber-500/5 border-amber-500/40 p-4 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <RefreshCw className="h-4 w-4 text-amber-600" />
+                    <span className="font-medium text-sm">Тип оплаты: Рассрочка</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Серия из {selectedInstallmentMonths ?? "—"} ежемесячных платежей. Сегодня клиент оплачивает первый платёж, остальные списываются с карты автоматически каждые 30 дней.
                   </p>
                 </div>
               )}
