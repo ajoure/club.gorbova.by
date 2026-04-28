@@ -955,7 +955,7 @@ export function ContactTelegramChat({
 
         // Файлы > 5 МБ грузим в storage (TUS), чтобы обойти лимит JSON-тела edge function.
         // Маленькие — отправляем base64 (быстрее, не плодим объекты в bucket).
-        const STORAGE_THRESHOLD = 5 * 1024 * 1024;
+        const STORAGE_THRESHOLD = 1 * 1024 * 1024;
         if (file.size > STORAGE_THRESHOLD) {
           try {
             const { bucket, path } = await uploadToTelegramMedia(file, userId);
