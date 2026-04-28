@@ -650,7 +650,55 @@ export function PaymentDialog({
     }
   };
 
+  // F3: рассрочка с лендинга. Создаём public payment_link через
+  // public-create-installment-link и редиректим на /pay/:token. Дальше уже
+  // работает существующий public-checkout → bepaid → installment_payments.
+  const isInstallmentOffer =
+    paymentMethod === 'internal_installment' &&
+    typeof installmentCount === 'number' &&
+    installmentCount >= 2 &&
+    !isTrial &&
+    !isSubscription;
+
+  const handleInstallmentPayment = async () => {
+    if (!offerId) {
+      setPaymentError('Не удалось определить оффер рассрочки.');
+      setStep('ready');
+      return;
+    }
+    setIsLoading(true);
+    setPaymentError(null);
+    setStep('processing');
+    try {
+      const { data, error } = await supabase.functions.invoke(
+        'public-create-installment-link',
+        { body: { product_id: productId, offer_id: offerId } }
+      );
+      if (error || !data?.success || !data?.url_token) {
+        const msg = data?.error || error?.message || 'Не удалось создать ссылку на рассрочку';
+        throw new Error(msg);
+      }
+      // Редирект на canonical /pay/:token (домен из public_url продукта).
+      const target = data.public_url || `/pay/${data.url_token}`;
+      window.location.href = target;
+    } catch (err) {
+      console.error('[PaymentDialog] installment link create failed:', err);
+      const message = err instanceof Error ? err.message : normalizeEdgeFunctionError(err);
+      setPaymentError(message);
+      toast.error(message);
+      setStep('ready');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handlePayment = async () => {
+    // F3: installment-оффер → отдельный path через payment_links.
+    if (isInstallmentOffer) {
+      await handleInstallmentPayment();
+      return;
+    }
+
     // PAY-K: для one_time + saved card → bridge flow; new_card продолжает обычный путь.
     if (!isSubscription && !isTrial && selectedMethod !== 'new_card') {
       await handlePayWithSavedCardOneTime(selectedMethod);
@@ -664,7 +712,7 @@ export function PaymentDialog({
     setShowReplaceConfirm(false);
     setStep("processing");
 
-    console.log("handlePayment called", { savedCard, tariffCode, user: !!user, productId, paymentFlowType, selectedMethod });
+    console.log("handlePayment called", { savedCard, tariffCode, user: !!user, productId, paymentFlowType, selectedMethod, isInstallmentOffer });
 
     try {
       // PATCH-3: If user selected provider_managed flow - no savedCard restriction
