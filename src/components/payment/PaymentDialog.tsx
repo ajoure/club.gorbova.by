@@ -45,6 +45,10 @@ interface PaymentDialogProps {
   trialDays?: number;
   isClubProduct?: boolean;
   isSubscription?: boolean; // True for recurring payments (auto-renewal)
+  // Installment offer (payment_method='internal_installment'). Если задано
+  // и >=2 — кнопка «Оплатить» создаёт installment payment_link и редиректит на /pay/:token.
+  paymentMethod?: string | null;
+  installmentCount?: number | null;
   subscriptionMessage?: SubscriptionMessage;
 }
 
@@ -131,6 +135,8 @@ export function PaymentDialog({
   trialDays,
   isClubProduct,
   isSubscription,
+  paymentMethod,
+  installmentCount,
   subscriptionMessage,
 }: PaymentDialogProps) {
   const { user, session } = useAuth();
