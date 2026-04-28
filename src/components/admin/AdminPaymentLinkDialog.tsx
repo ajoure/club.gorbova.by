@@ -580,15 +580,20 @@ export function AdminPaymentLinkDialog({
       if (!generatedUrl || !selectedProduct || !selectedTariff) {
         throw new Error("Нет данных для отправки");
       }
-      const typeLabel =
-        effectivePaymentType === "subscription"
+      const isInstallmentMsg = isInstallmentOffer && (selectedInstallmentMonths ?? 0) >= 2;
+      const typeLabel = isInstallmentMsg
+        ? `Рассрочка · ${selectedInstallmentMonths} платежей`
+        : effectivePaymentType === "subscription"
           ? "Подписка (ежемесячно)"
           : "Разовая оплата";
-      const telegramMessage = `💳 *Оплата подписки*
+      const amountLine = isInstallmentMsg
+        ? `💰 Стоимость: ${selectedInstallmentMonths} × ${effectiveOffer?.meta?.installment?.per_payment_amount_byn ?? Math.round(amount / (selectedInstallmentMonths || 1))} BYN (итого ${effectiveOffer?.meta?.installment?.total_amount ?? amount} BYN)`
+        : `💰 Стоимость: ${amount} BYN`;
+      const telegramMessage = `💳 *Оплата ${isInstallmentMsg ? "в рассрочку" : "подписки"}*
 
 📦 Продукт: ${selectedProduct.name}
 📋 Тариф: ${selectedTariff.name}
-💰 Стоимость: ${amount} BYN
+${amountLine}
 📅 Тип: ${typeLabel}`;
 
       const { data, error } = await supabase.functions.invoke(
