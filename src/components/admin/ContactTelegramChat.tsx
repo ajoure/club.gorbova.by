@@ -514,7 +514,7 @@ export function ContactTelegramChat({
     }, 1000);
   }, [refetchMessages]);
 
-  // Subscribe to realtime messages for this user
+  // Subscribe to realtime messages for this user — INSERT (new) + UPDATE (media enrichment)
   useEffect(() => {
     if (!userId) return;
 
@@ -522,63 +522,90 @@ export function ContactTelegramChat({
       .channel(`chat-messages-${userId}`)
       .on(
         "postgres_changes",
-        { 
-          event: "INSERT", 
-          schema: "public", 
+        {
+          event: "INSERT",
+          schema: "public",
           table: "telegram_messages",
           filter: `user_id=eq.${userId}`
         },
         (payload) => {
-          console.log("New message received:", payload);
-          
-          // FIX B: Remove temp messages that match the incoming real message
           const newMsg = payload.new as any;
           const msgText = (newMsg?.message_text || "").trim();
           const msgTime = new Date(newMsg?.created_at || Date.now()).getTime();
-          
-          queryClient.setQueryData(["telegram-messages", userId], (old: TelegramMessage[] | undefined) => {
-            if (!old) return old;
-            
-            // Filter out temp messages that match the new real message
-            return old.filter(m => {
-              // Keep all non-temp messages
-              if (!m.id.startsWith('temp-')) return true;
-              
-              // For temp messages: remove if text matches AND within 10s window
-              const tempText = (m.message_text || "").trim();
-              const tempTime = new Date(m.created_at).getTime();
-              const textMatches = tempText === msgText || (tempText.startsWith("📎") && msgText === "");
-              const timeClose = Math.abs(tempTime - msgTime) < 10000; // 10s window
-              
-              if (textMatches && timeClose) {
-                console.log("[DEDUP] Removing temp message:", m.id, "replaced by real:", newMsg.id);
-                return false; // Remove temp
-              }
-              return true;
-            });
-          });
-          
-          // Single debounced refetch
-          debouncedRefetch();
-          
+
+          // Patch cache: merge incoming row directly, drop matching temp row
+          queryClient.setQueryData(
+            ["telegram-messages", userId],
+            (old: TelegramMessage[] | undefined) => {
+              const list = old ? [...old] : [];
+              // already exists?
+              if (list.some((m) => m.id === newMsg.id)) return list;
+              // drop matching temp
+              const filtered = list.filter((m) => {
+                if (!m.id.startsWith("temp-")) return true;
+                const tempText = (m.message_text || "").trim();
+                const tempTime = new Date(m.created_at).getTime();
+                const textMatches = tempText === msgText || (tempText.startsWith("📎") && msgText === "");
+                const timeClose = Math.abs(tempTime - msgTime) < 10000;
+                return !(textMatches && timeClose);
+              });
+              filtered.push({ ...newMsg, type: "message" });
+              filtered.sort(
+                (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+              );
+              return filtered;
+            }
+          );
+
           // Auto-scroll only if user is at bottom OR it's an outgoing message
           const isFromAdmin = newMsg?.direction === "outgoing";
-          
           setTimeout(() => {
             const root = scrollRef.current;
             const viewport = root?.querySelector(
               "[data-radix-scroll-area-viewport]"
             ) as HTMLElement | null;
-            
             if (viewport) {
-              const isAtBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 100;
-              
-              // Scroll only if at bottom OR it's our own message
+              const isAtBottom =
+                viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 100;
               if (isAtBottom || isFromAdmin) {
                 viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
               }
             }
-          }, 100);
+          }, 50);
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "telegram_messages",
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload) => {
+          const updated = payload.new as any;
+          // Patch cache point-by-point: replace row by id (preserves order)
+          queryClient.setQueryData(
+            ["telegram-messages", userId],
+            (old: TelegramMessage[] | undefined) => {
+              if (!old) return old;
+              let found = false;
+              const next = old.map((m) => {
+                if (m.id === updated.id) {
+                  found = true;
+                  return { ...m, ...updated, type: "message" } as TelegramMessage;
+                }
+                return m;
+              });
+              if (!found) {
+                next.push({ ...updated, type: "message" } as TelegramMessage);
+                next.sort(
+                  (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+                );
+              }
+              return next;
+            }
+          );
         }
       )
       .subscribe();
@@ -589,7 +616,7 @@ export function ContactTelegramChat({
       }
       supabase.removeChannel(channel);
     };
-  }, [userId, debouncedRefetch]);
+  }, [userId, queryClient]);
 
   // === AUTO-REFRESH EFFECT FOR PENDING MEDIA ===
   // Polls every 10s if there are pending uploads, stops after 12 attempts (2 min)
