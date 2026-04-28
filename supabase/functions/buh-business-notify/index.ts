@@ -1,37 +1,43 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { greetPrefix } from "../_shared/recipient-name.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Notification templates in Katerina Gorbova's style
-const TEMPLATES = {
-  // PATCH-8: Tomorrow charge notification (HAS_CARD)
-  tomorrow_charge: `💫 Привет!
+// Notification templates in Katerina Gorbova's style.
+// Обращение строго на «Вы». Имя подставляется через greetPrefix() —
+// если имя не определено надёжно, фраза начинается без обращения.
+function buildTomorrowChargeText(profile: { full_name?: string | null } | null) {
+  const name = greetPrefix(profile).replace(/, $/, "");
+  const greeting = name ? `💫 Привет, ${name}!` : `💫 Здравствуйте!`;
+  return `${greeting}
 
-Завтра в 09:00 с твоей карты автоматически спишется 250 BYN за «Бухгалтерия как бизнес».
+Завтра в 09:00 с Вашей карты автоматически спишется 250 BYN за «Бухгалтерия как бизнес».
 
-Убедись, что на карте достаточно средств 💳
+Убедитесь, что на карте достаточно средств 💳
 
-Если что-то не так — напиши мне, разберёмся!
+Если что-то не так — напишите мне, разберёмся!
 
 С теплом,
-Катерина 🤍`,
+Катерина 🤍`;
+}
 
-  // PATCH-MIT: No card — нейтральный текст без призывов к токенизации
-  no_card: `⚠️ Напоминание
+function buildNoCardText(profile: { full_name?: string | null } | null) {
+  const prefix = greetPrefix(profile);
+  return `⚠️ Напоминание
 
-Привет! Скоро закончится доступ к «Бухгалтерия как бизнес».
+${prefix}скоро закончится доступ к «Бухгалтерия как бизнес».
 
 Для продления оплатите по ссылке:
 🔗 https://business-training.gorbova.by/purchases
 
-Если нужна помощь — напиши мне!
+Если нужна помощь — напишите мне!
 
-Катерина 🤍`,
-};
+Катерина 🤍`;
+}
 
 interface NotifyRequest {
   type: "tomorrow_charge" | "no_card" | "dry_run";
