@@ -286,8 +286,15 @@ export default function PublicPayPage() {
     `${(kopecks / 100).toFixed(2)} ${currency}`;
 
   // Тип ссылки имеет приоритет над категорией продукта.
-  // Иначе one_time-ссылка на subscription-продукт показывалась бы как «Подписка».
-  const getTypeLabel = (paymentType: string, category: string | null) => {
+  // Для installment-ссылок (one_time + meta.installment >= 2) показываем «Рассрочка».
+  const getTypeLabel = (
+    paymentType: string,
+    category: string | null,
+    installmentMonths?: number
+  ) => {
+    if (installmentMonths && installmentMonths >= 2) {
+      return `Рассрочка · ${installmentMonths} платежа`;
+    }
     if (paymentType === 'one_time') return 'Разовый платёж';
     if (paymentType === 'subscription') return 'Подписка';
     switch (category) {
@@ -393,7 +400,7 @@ export default function PublicPayPage() {
                 <CreditCard className="h-8 w-8 text-primary" />
               </div>
               <h1 className="text-2xl font-bold mb-2">{linkInfo.product_name}</h1>
-              <p className="text-muted-foreground">{getTypeLabel(linkInfo.payment_type, linkInfo.product_category)}</p>
+              <p className="text-muted-foreground">{getTypeLabel(linkInfo.payment_type, linkInfo.product_category, linkInfo.installment?.selected_installment_months)}</p>
             </div>
 
             {linkInfo.description && (
