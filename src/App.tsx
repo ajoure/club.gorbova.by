@@ -22,6 +22,7 @@ import { DomainHomePage } from "./components/layout/DomainRouter";
 // Non-landing pages - lazy loaded to reduce initial bundle
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Auth = lazy(() => import("./pages/Auth"));
+const AuthVerifyProxy = lazy(() => import("./pages/AuthVerifyProxy"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const SitePageBySlug = lazy(() => import("./pages/SitePageBySlug"));
 const EmbedFormPage = lazy(() => import("./pages/embed/EmbedFormPage"));
