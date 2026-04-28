@@ -41,19 +41,32 @@ import { CreditCard, CheckCircle, Clock, Shield, AlertCircle, Loader2, Repeat, P
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
 
+interface InstallmentInfo {
+  payment_method?: string;
+  max_installment_months?: number;
+  selected_installment_months?: number;
+  interval_days?: number;
+  first_payment_delay_days?: number;
+  total_amount?: number;            // BYN
+  per_payment_amount?: number;      // BYN
+  total_installment_amount?: number; // BYN
+  rounding_mode?: string;
+}
+
 interface PaymentLinkInfo {
   product_name: string;
   product_description: string | null;
   product_category: string | null;
   tariff_name: string | null;
   access_days: number | null;
-  amount: number; // kopecks
+  amount: number; // kopecks (для installment — per_payment_kopecks)
   currency: string;
   description: string | null;
   payment_type: string;
   has_target_user: boolean;
   requires_identity_input: boolean;
   link_user_id: string | null;
+  installment?: InstallmentInfo | null;
 }
 
 interface SavedCard {
