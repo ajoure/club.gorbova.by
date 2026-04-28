@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MediaLightbox } from "./MediaLightbox";
+import { AudioPlayer } from "./AudioPlayer";
 import {
   Tooltip,
   TooltipContent,
