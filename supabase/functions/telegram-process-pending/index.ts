@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { greetSuffix } from '../_shared/recipient-name.ts';
+import { logAutomatedTelegramMessage } from '../_shared/log-automated-telegram.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -105,11 +106,12 @@ Deno.serve(async (req) => {
 
     // Get bot token
     let botToken: string | null = null;
+    let botId: string | null = null;
 
     // First try to get from club
     const { data: anyClub } = await supabase
       .from('telegram_clubs')
-      .select('telegram_bots(bot_token_encrypted)')
+      .select('bot_id, telegram_bots(bot_token_encrypted)')
       .eq('is_active', true)
       .limit(1)
       .maybeSingle();
@@ -117,18 +119,20 @@ Deno.serve(async (req) => {
     if (anyClub) {
       const club = anyClub as any;
       botToken = club.telegram_bots?.bot_token_encrypted;
+      botId = club.bot_id ?? null;
     }
 
     if (!botToken) {
       // Try to get from any active bot
       const { data: anyBot } = await supabase
         .from('telegram_bots')
-        .select('bot_token_encrypted')
+        .select('id, bot_token_encrypted')
         .eq('status', 'active')
         .limit(1)
         .maybeSingle();
       
       botToken = anyBot?.bot_token_encrypted || null;
+      botId = (anyBot as any)?.id ?? null;
     }
 
     if (!botToken) {
@@ -188,6 +192,24 @@ Deno.serve(async (req) => {
         const sendResult = await sendMessage(botToken, telegramUserId, message, keyboard);
 
         if (sendResult.ok) {
+          // Mirror to admin chat (Contact Center) — only when buttons exist & message_id present
+          if (keyboard && sendResult?.result?.message_id) {
+            await logAutomatedTelegramMessage({
+              supabase,
+              user_id: targetUserId,
+              telegram_user_id: telegramUserId,
+              bot_id: botId,
+              text: message,
+              telegram_message_id: sendResult.result.message_id,
+              reply_markup: keyboard,
+              source: 'telegram-process-pending',
+              extra_meta: {
+                notification_type: notification.notification_type,
+                notification_id: notification.id,
+              },
+            });
+          }
+
           // Mark as sent
           await supabase
             .from('pending_telegram_notifications')
