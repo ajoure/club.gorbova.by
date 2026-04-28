@@ -551,15 +551,29 @@ ${namePrefix}мы попытались проверить ${cardDisplay} для 
         ? { inline_keyboard: [[{ text: '💳 Продлить подписку', url: pricingUrl }]] }
         : undefined;
 
-    // Send message
-    const sendResult = await telegramRequest(botToken, 'sendMessage', {
+    // Send message — Markdown by default for bold/italic in admin templates.
+    // If Telegram rejects entities (rare special chars), retry as plain text so
+    // the message is never lost.
+    const sendPayload = {
       chat_id: profile.telegram_user_id,
       text: message,
       reply_markup: keyboard,
+    };
+    let usedParseMode: 'Markdown' | null = 'Markdown';
+    let sendResult = await telegramRequest(botToken, 'sendMessage', {
+      ...sendPayload,
+      parse_mode: 'Markdown',
     });
+    if (!sendResult?.ok && typeof sendResult?.description === 'string' &&
+        /can't parse entities|can't find end/i.test(sendResult.description)) {
+      console.warn('[telegram-send-notification] Markdown parse failed, retrying as plain text:', sendResult.description);
+      usedParseMode = null;
+      sendResult = await telegramRequest(botToken, 'sendMessage', sendPayload);
+    }
 
     // Mirror to admin chat (Contact Center) — only if buttons exist & message accepted by Telegram
-    if (sendResult?.ok && sendResult?.result?.message_id && keyboard) {
+    const wasMirroredToMessages = !!(sendResult?.ok && sendResult?.result?.message_id && keyboard);
+    if (wasMirroredToMessages) {
       await logAutomatedTelegramMessage({
         supabase,
         user_id,
@@ -573,6 +587,7 @@ ${namePrefix}мы попытались проверить ${cardDisplay} для 
           message_type,
           club_id: clubId,
           idempotency_key: idempotencyKey,
+          parse_mode: usedParseMode,
         },
       });
     }
