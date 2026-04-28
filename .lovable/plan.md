@@ -1,210 +1,287 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
-1. **Не удалять subscriptions_v2.payment_token в этом спринте**  
-Этап 4 заменить на deferred/backlog:
-2. **Helper getSubscriptionToken**  
-Добавить порядок источников:  
-1. payment_methods.provider_token по payment_method_id
-3. 2. subscription_payment_credentials.provider_token
-4. 3. legacy subscriptions_v2.payment_token — read-only fallback  
-В payment_token больше не писать, только читать как fallback.
-5. **Ghost-токены**  
-Не делать auto-link без dry-run.  
-Добавить:  
-Сначала dry-run список 8 ghost-токенов:
-6. - subscription_id
-7. - user_id
-8. - last4/brand
-9. - candidate payment_method_id
-10. - confidence  
-Execute linking — только если confidence высокий.
-11. **bePaid-webhook**  
-Разделить на два шага:  
-A. убрать новые записи в subscriptions_v2.payment_token
-12. B. оставить чтение legacy fallback через helper  
-Не трогать fulfillment-path в этом же патче.
-13. **subscription_payment_credentials**  
-Зафиксировать как временный legacy fallback, а не новый основной SOT.  
-Основной SOT:
-14. **DoD пункт 8 исправить**  
-Было:  
-Колонка subscriptions_v2.payment_token удалена  
-Заменить на:
-15. **Мониторинг 7 дней**  
-Добавить explicit gate:
-16. **Рассрочка**  
-Подтверждаю решение:
+1. **Добавить обязательный блок backend (критично)**
 
-остаёмся на существующей архитектуре scheduler + installment_payments
+```text
+Перед UI задачами:
 
-bePaid Subscriptions API / billing_cycles не внедряем в этом спринте
+- installment schedule (installment_payments) создаётся из tariff_offers (UUID-only)
+- installment-charge-cron:
+  - getSubscriptionToken helper
+  - idempotency ключ installment_${id}_attempt_${N}
+  - overcharge guard (paid < total)
+- audit_logs (минимум):
+  installment_started
+  installment_payment_received
+  installment_completed
+  installment_charge_failed
+```
 
-После этих правок план можно выполнять с Этапа 1.
+2. **Страница рассрочки — уточнить scope**
+
+```text
+Только read-only v1:
+
+- список платежей (N/M)
+- статус (pending/paid/failed)
+- next_payment_at
+- без редактирования/пересчётов
+```
+
+3. **Лог рассрочки**
+
+```text
+Не отдельная система.
+
+Источник: audit_logs + installment_payments
+
+UI = агрегированный view, без новой таблицы
+```
+
+4. **Уведомления**
+
+```text
+Только 3 события:
+
+- успешный платёж
+- неудачный платёж
+- за 1 день до списания
+
+Без сложных цепочек и ретраев в этом спринте
+```
+
+5. **Отчёт legacy-долга**
+
+```text
+Отдельный deliverable:
+
+- список функций, пишущих payment_token
+- 21 active подписка
+- ghost + mismatch кейсы
+- план cleanup (без выполнения)
+```
+
+6. **UI настройки магазина**
+
+```text
+Проверить только:
+
+- выбор offer_id (UUID)
+- корректность installment-параметров (amount, interval, total)
+
+Без рефакторинга всей панели
+```
+
+7. **Жёсткое ограничение scope**
+
+```text
+В этом спринте запрещено:
+
+- трогать обычные subscriptions
+- массово переписывать payment_token
+- внедрять bePaid Subscriptions API
+- добавлять новые cron кроме installment-charge
+```
+
+После этих уточнений план соответствует цели — быстро запустить рассрочку без расползания scope.
 
 &nbsp;
 
-План: Рассрочка (direct-charge) по ID-First + ликвидация места №1 (`subscriptions_v2.payment_token`)
+План: Спринт «Рассрочки» — узкий scope, без legacy-миграции
 
-## Ответ на вопрос: можно ли удалить место №1 сразу?
+## 0. Принципы спринта (фиксируем приоритет)
 
-**Нет, не сразу — но в этом же спринте.** Аудит показал:
-
-- **93 подписки** с заполненным `payment_token`, **21 из них активные**, в том числе `provider_managed` с `next_charge_at` от 28.04.2026 до 16.06.2026 — это живые рекурренты Gorbova Club, которые сейчас списываются.
-- **8 ghost-токенов** (`token` есть, `payment_method_id` нет) — пользователь не видит карту, но мы можем списать. Это уже зафиксированный риск (миграция `20260116121925`).
-- **1 активный MIT** без `payment_method_id` (`9d2eef10…`) — отдельный кейс, ниже.
-- Уже существует целевая таблица `**subscription_payment_credentials**` (91 запись, service-role-only) — её создали миграцией `20260206062225`, но миграцию **не доделали**: код продолжает писать и читать из `subscriptions_v2.payment_token`.
-
-«Живые обращения» к месту №1 (production-функции, не тесты):
-
-```
-bepaid-webhook                           — пишет (5 мест)
-subscription-charge                      — читает (списание подписок)
-subscription-actions                     — пишет (привязка карты)
-subscription-admin-actions               — пишет/чистит (админ)
-direct-charge                            — пишет (4 места)
-admin-manual-charge                      — пишет/читает (ручное списание)
-payment-method-verify-recurring          — пишет
-payments-autolink-by-card                — читает (.eq('payment_token', …))
-bepaid-subscription-audit + audit-cron   — читает (мониторинг ghost-токенов)
-subscription-renewal-reminders           — читает
-preregistration-charge-cron              — читает (но через meta, не колонку)
-installment-charge-cron                  — читает
-```
-
-Итого 12 production-функций. Поэтому удаление колонки = отдельный финальный шаг, после миграции всех writers/readers на `payment_methods.provider_token` (+ `subscription_payment_credentials` как зашифрованный SOT для legacy).
+1. **Основная цель спринта — рассрочки.** Запуск installment-flow по конфигурации в кнопке тарифа (`tariff_offers`).
+2. **Миграция legacy `payment_token` НЕ является целью спринта.** Все большие рефакторы prod-функций (`subscription-charge`, `admin-manual-charge`, `payments-autolink-by-card`) — backlog.
+3. **Stage 1 сужается** до минимума, необходимого для безопасной работы рассрочек.
+4. **Stage 3 и Stage 4 запрещены к исполнению** в этом спринте (mass write-rewrite + drop колонки).
+5. **Проблемные подписки** (`9d2eef10`, `f51fec1e`, `ade2a1a3`) — отдельный backlog `legacy payment_token cleanup`. В этом спринте не трогаем, если они не участвуют в новом installment-flow.
 
 ---
 
-## Архитектурное решение
+## 1. Порядок работы спринта
 
 ```text
-SOT для токена карты:
-   payment_methods.provider_token   ← единственный источник истины
-        │
-        └── связь с подпиской: subscriptions_v2.payment_method_id (UUID)
-
-LEGACY (помечено DEPRECATED, удаляется в финале):
-   subscriptions_v2.payment_token   ← колонка-дубль, удалить
-   subscription_payment_credentials ← остаётся для исторических MIT-подписок
-                                     без payment_method_id (read-only fallback)
+1) Minimal token helper (только для рассрочки)
+2) Installment schedule generator (из tariff_offers)
+3) installment-charge-cron через helper
+4) Overcharge guard + idempotency + audit
+5) UI / notification по рассрочке (админ + кабинет)
+6) Отдельный отчёт: legacy payment_token cleanup backlog
 ```
 
-Все списания (cron + ручные + рассрочка) читают токен **только** через helper:
-`getSubscriptionToken(subscriptionId)` → читает `payment_methods.provider_token` по `payment_method_id`. Если `payment_method_id IS NULL` → fallback на `subscription_payment_credentials` (только для исторических). Если и там нет → **жёсткая ошибка**, никогда не из `subscriptions_v2.payment_token`.
+Каждый шаг — Diagnose → Plan → Dry run → Execute → Verify. Без пропусков.
 
 ---
 
-## Этапы (объединённый спринт)
+## 2. Stage 1 (узкий) — Minimal Token Helper
 
-### Этап 1 — Подготовка SOT для токена (1 миграция данных + 1 helper)
+### Scope
 
-1.1. Миграция данных (insert-tool, не schema):
+- Создать `supabase/functions/_shared/token-resolver.ts`.
+- Helper `getSubscriptionToken(subscriptionId)` с приоритетом источников:
+  1. `payment_methods` (по `subscription_payment_credentials.payment_method_id` или прямой связи user_id+subscription)
+  2. `subscription_payment_credentials` (legacy MIT)
+  3. `subscriptions_v2.payment_token` (fallback)
+- Возврат: `{ token, source, payment_method_id, ghost: boolean }`.
+- **Ghost-токен** (нет `payment_method_id`) → helper возвращает `ghost: true`. В installment-flow это означает: dry-run only, реального charge нет, аудит «ghost_token_skipped».
 
-- Для всех `subscriptions_v2` с `payment_method_id IS NOT NULL` и `payment_token IS NOT NULL` — сверить, что `payment_methods.provider_token` совпадает; если расходятся — записать аудит-лог `token_mismatch_detected` и оставить `payment_methods` как истину.
-- Для **8 ghost-токенов** (`payment_method_id IS NULL`) — попытаться авто-связать через `payments-autolink-by-card` логику (по `provider_token`); те, что не привязались, — пометить в audit `ghost_token_unresolved` и оставить как есть (read-only fallback через `subscription_payment_credentials`).
-- Для активного MIT `9d2eef10…` (без PM) — отдельный аудит-кейс, требует ручной проверки (вынесу в отчёт).
+### Что НЕ делаем в Stage 1
 
-1.2. Создать `supabase/functions/_shared/getSubscriptionToken.ts`:
+- НЕ переписываем `subscription-charge`.
+- НЕ переписываем `admin-manual-charge`.
+- НЕ переписываем `payments-autolink-by-card`.
+- НЕ трогаем 12 функций, пишущих в `payment_token`.
+- НЕ зеркалим writes.
+- НЕ удаляем колонку.
 
-- Вход: `subscriptionId`.
-- Логика: `payment_method_id` → `payment_methods.provider_token`. Fallback: `subscription_payment_credentials.payment_token`. Никогда: `subscriptions_v2.payment_token`.
-- Возврат: `{ token, source: 'payment_methods' | 'legacy_credentials' }`.
+### DoD Stage 1 (новый)
 
-### Этап 2 — Рассрочка по ID-First (основной плановый блок)
-
-2.1. **Конфигурация — только `tariff_offers**`:
-
-- Создать `supabase/functions/_shared/getInstallmentConfig.ts`: вход `offer_id` (UUID), читает `tariff_offers.meta.installment` или выделенные поля (`installment_count`, `installment_period_days`, `installment_amount`).
-- Запретить любые fallback на `payment_plans`, slug, name. Работа исключительно по `product_id` / `tariff_id` / `offer_id`.
-
-2.2. `**bepaid-webhook` — старт рассрочки на первой успешной оплате**:
-
-- Идемпотентность: `meta.installment_started === true` → выход.
-- Создать `subscriptions_v2` (`billing_type='mit'`, `meta.payment_flow='installment'`, привязка к `payment_method_id`, **не пишем `payment_token**`).
-- Снимок плана в `payment_plans` (нормализованная конфигурация, ссылка на `offer_id`).
-- Полное расписание в `installment_payments` (N-1 строк после первой оплаты, `payment_number` 2..N, `due_date` = `now + period_days * (k-1)`).
-- Audit: `installment_started` (с `subscription_id`, `offer_id`, `total_payments`, `period_days`).
-
-2.3. `**installment-charge-cron` — Overcharge Guard + ID-First + token via helper**:
-
-- Перед списанием: `SELECT count(*) FROM installment_payments WHERE subscription_id=$1 AND status='paid'` → если ≥ `total_payments`, **не списывать**, audit `installment_overcharge_prevented`, статус подписки → `completed`.
-- Токен: только через `getSubscriptionToken` (этап 1.2).
-- Идемпотентный ключ для bePaid: `installment_${installment_id}_attempt_${charge_attempts+1}` (включая номер попытки → ретраи безопасны).
-- При успехе: `installment_payments.status='paid'`, `paid_at=now()`, и **обязательно** вызвать `grant-access-for-order` (он уже идемпотентен — стандарт «Grant Access Idempotency»).
-- При финальном успехе (paid_count == total_payments): `subscriptions_v2.status='completed'`, audit `installment_completed`.
-
-2.4. **Аудит (8 событий)** через стандартный `emit → recordExecution → writeAudit`:
-   `installment_started`, `installment_payment_received`, `installment_payment_failed`, `installment_payment_retry_scheduled`, `installment_overcharge_prevented`, `installment_completed`, `installment_canceled_early`, `installment_token_missing`.
-
-2.5. **Webhook idempotency**: использовать существующий `webhook_events`-механизм (если есть) или хеш `tracking_id + status` как уникальный ключ.
-
-2.6. **Cron**: зашедулить `installment-charge-cron` через `pg_cron` каждые 30 минут (insert-tool, не миграция, т.к. содержит anon key).
-
-### Этап 3 — Миграция всех writers с `subscriptions_v2.payment_token`
-
-Для каждой функции из списка ниже: убрать запись в `payment_token`, оставить только `payment_method_id`. Чтения заменить на `getSubscriptionToken`.
-
-Порядок (от безопасного к критичному):
-
-1. `test-installment-flow`, `test-payment-complete`, `test-full-trial-flow` — тесты, без риска.
-2. `subscription-actions`, `subscription-admin-actions` — UI-привязка карты.
-3. `payment-method-verify-recurring`.
-4. `direct-charge` (4 места записи).
-5. `admin-manual-charge`.
-6. `bepaid-webhook` (5 мест записи) — **самое сложное**, делается отдельным коммитом, с тщательной проверкой recurrent-flow.
-7. Readers: `subscription-charge`, `subscription-renewal-reminders`, `payments-autolink-by-card`, `installment-charge-cron`, `bepaid-subscription-audit*` — переключить на helper / на `payment_methods`.
-
-После каждого пункта — `grep -n "payment_token" supabase/functions/<name>` должен вернуть 0 совпадений с `subscriptions_v2.payment_token`.
-
-### Этап 4 — Финал: удаление колонки `subscriptions_v2.payment_token`
-
-Только когда:
-
-- `rg "subscriptions_v2.*payment_token|payment_token.*subscriptions_v2"` по всему `supabase/functions/` возвращает **0 живых обращений** (тесты допустимы, если они тоже мигрированы).
-- Все 21 активных подписки прошли минимум одно успешное списание через `getSubscriptionToken` без обращения к колонке (проверим по логам).
-
-Тогда миграция (schema):
-
-```sql
--- 1. Обновить subscriptions_v2_safe view (убрать упоминание)
--- 2. DROP FUNCTION subscription_has_payment_token переписать на чтение из payment_methods
--- 3. ALTER TABLE subscriptions_v2 DROP COLUMN payment_token;
-```
-
-И обновить `bepaid-subscription-audit` — переключить «ghost token»-детектор на `subscription_payment_credentials` (legacy fallback).
+- Helper `getSubscriptionToken` создан и покрыт unit-тестом (Deno test).
+- `installment-charge-cron` (Stage 3 ниже) использует helper.
+- `provider_token` НЕ читается напрямую из `subscriptions_v2` в новом installment-flow.
+- Существующие обычные subscription-потоки (`subscription-charge`, webhook, autolink) **не изменены** — diff = 0 строк.
 
 ---
 
-## DoD
+## 3. Stage 2 — Installment Schedule Generator
 
-1. Конфигурация рассрочки читается **только** из `tariff_offers` по `offer_id` (UUID).
-2. Никаких string-match по slug/name/code — только UUID (`product_id`, `tariff_id`, `offer_id`).
-3. Токен карты для всех списаний берётся **только** через `getSubscriptionToken` helper.
-4. `bepaid-webhook` создаёт полное расписание `installment_payments` на первой успешной оплате; повторный webhook не дублирует (idempotency).
-5. `installment-charge-cron`: Overcharge Guard активен; идемпотентный ключ `installment_${id}_attempt_${N}`; `grant-access-for-order` вызывается на каждой успешной оплате и остаётся идемпотентным (без выдачи лишних дней).
-6. 8 аудит-событий пишутся системно через стандартный lifecycle.
-7. Количество циклов контролируется нашим scheduler (`total_payments`), bePaid в этой архитектуре — просто платёжный шлюз для каждого списания.
-8. **Колонка `subscriptions_v2.payment_token` удалена** (этап 4); `subscription_payment_credentials` остаётся для read-only legacy fallback.
-9. После этапа 3: `rg "subscriptions_v2.payment_token"` по `supabase/functions/` (без тестов) = 0 совпадений.
-10. Все 21 активная рекуррентная подписка продолжают списываться без сбоев (мониторинг 7 дней после этапа 3, до этапа 4).
+### Scope
+
+Source of truth конфигурации рассрочки — кнопка тарифа (`tariff_offers`):
+
+- `tariff_offers.kind = 'installment'`
+- `tariff_offers.config.installment`: `{ parts: N, interval_days: D, first_payment_amount?: X }`
+- Всё через UUID: `product_id`, `tariff_id`, `tariff_offer_id`. Никаких строковых slug/имён.
+
+### Алгоритм
+
+1. После успешного **первого** `direct charge` (через стандартный `bepaid-webhook` → `grant-access-for-order`) — триггерим installment scheduler.
+2. Scheduler читает `tariff_offers.config.installment` по `tariff_offer_id` из `orders_v2.meta.tariff_offer_id`.
+3. Вставляет в `installment_payments` записи `payment_number = 2..N`, `status = 'pending'`, `due_date = first_paid_at + (k-1)*interval_days`.
+4. Idempotency-ключ: `installment_${subscription_id}_attempt_${payment_number}`.
+5. **Overcharge guard**: перед вставкой — `count(*) where subscription_id = X and status in ('paid','pending')` ≤ `parts`.
+
+### Запрещено
+
+- Считать график по строковым названиям тарифов.
+- Создавать installment вне tariff_offers конфигурации.
+- Дублировать существующий `subscription-renewal` — это другой поток (recurring), не installment.
+
+### DoD Stage 2
+
+- Schedule создаётся только из `tariff_offers.config.installment` по UUID.
+- Overcharge guard работает (тест на повторный вызов scheduler — 0 новых строк).
+- Записи имеют корректный `due_date` и `payment_number`.
 
 ---
 
-## Риски и обработка
+## 4. Stage 3 — installment-charge-cron через helper
 
-- **Ghost-токены (8 шт)**: до миграции попытаемся auto-link, неудачников — задокументируем; после миграции они продолжат жить через `subscription_payment_credentials` (read-only fallback в helper).
-- **Активный MIT `9d2eef10…` без PM**: отдельный кейс, до этапа 4 ручная проверка — либо привязать `payment_method_id`, либо мигрировать в `subscription_payment_credentials`.
-- **bePaid-webhook (5 мест записи в `payment_token`)**: самый рискованный модуль. Менять отдельным коммитом, после прохождения всех остальных функций; держать колонку как «теневую запись» ещё 1 спринт перед DROP.
-- **Race condition на canceled**: использовать pull-state с bePaid API для определения причины (как договорились ранее), не webhook-order.
+### Scope
+
+- Cron каждый день читает `installment_payments` где `status='pending' AND due_date <= now()`.
+- Для каждой строки:
+  1. `getSubscriptionToken(subscription_id)` — единственный источник токена.
+  2. Если `ghost=true` → status `pending`, audit `ghost_token_skipped`, уведомление админу. **Реальный charge не делаем.**
+  3. Если token есть → `direct_charge` через bePaid с idempotency-ключом `installment_${id}_attempt_${attempts+1}`.
+  4. Webhook (`bepaid-webhook`) обновляет `installment_payments.status` → `paid` / `failed`, инкремент `charge_attempts`.
+- Retry policy: до 3 попыток, интервал 24ч, далее `failed` + уведомление.
+
+### Webhook split
+
+`bepaid-webhook` — минимальная правка:
+
+- Step 1: capture token/method (как сейчас, без изменений).
+- Step 2: если `meta.installment_id` присутствует → обновить `installment_payments`. Иначе — текущая логика. **Существующие ветки не трогаем.**
+
+### DoD Stage 3
+
+- Cron вызывает только helper, не читает `subscriptions_v2.payment_token` напрямую.
+- Ghost-токен → audit + skip, без charge.
+- Idempotency-ключ уникален per attempt.
+- Webhook корректно закрывает `installment_payments.status`.
 
 ---
 
-## Что НЕ делаем
+## 5. Stage 4 — UI / Notifications
 
-- Не мигрируем на bePaid Subscriptions API (`billing_cycles`) — остаёмся на собственном scheduler (решено).
-- Не трогаем `payment_plans` как отдельную сущность — она остаётся snapshot’ом, но **не источником конфигурации** (источник — `tariff_offers`).
-- Не удаляем `subscription_payment_credentials` — она нужна для legacy-подписок без `payment_method_id`.
+### Админ
+
+- `AdminPaymentsHub` → таб «Рассрочки» (используем существующий `useAdminInstallments`).
+- Действия: «Списать сейчас», «Закрыть рассрочку (cancelled / forgiven)» — уже реализованы в `useInstallments.tsx`. Проверить, что работают через новый helper.
+
+### Кабинет пользователя
+
+- Блок «Мои рассрочки» — список pending/paid с датами и суммами.
+
+### Уведомления
+
+- Email/Telegram пользователю: за 3 дня до `due_date`, в день списания (success/fail).
+- Email админу: ghost-токен, 3 неудачные попытки подряд.
+
+### DoD Stage 4
+
+- Админ видит список рассрочек по продукту/тарифу (UUID-фильтры).
+- Пользователь видит свои рассрочки.
+- Уведомления уходят по событиям.
 
 ---
 
-После одобрения переключаюсь в build mode и начинаю с Этапа 1 (helper + миграция данных по ghost-токенам).
+## 6. Stage 5 — Отдельный отчёт `legacy-payment-token-cleanup-backlog`
+
+Не реализуем, **только документ** в `docs/`:
+
+- Список 12 функций, пишущих в `payment_token`.
+- Список 4 функций, читающих `payment_token`.
+- 3 проблемные подписки: `9d2eef10` (ghost), `f51fec1e`, `ade2a1a3` (desync) — статус, рекомендация.
+- План фаз будущего спринта: mirror writes → switch reads → drop column.
+- **Важно:** этот документ не запускает работы в текущем спринте.
+
+---
+
+## 7. Что строго запрещено в текущем execute
+
+- Массовая переписка WRITE-операций в 9+ prod-функциях.
+- Зеркальная запись в `payment_methods` для всех путей.
+- Удаление/деприкейт колонки `subscriptions_v2.payment_token`.
+- Любые правки `subscription-charge`, `admin-manual-charge`, `payments-autolink-by-card`.
+- Ремонт 3 проблемных подписок (если они не приходят в installment-flow).
+
+---
+
+## 8. Технические детали (для разработчика)
+
+### Файлы (создать)
+
+- `supabase/functions/_shared/token-resolver.ts`
+- `supabase/functions/installment-schedule-generator/index.ts`
+- `supabase/functions/installment-charge-cron/index.ts`
+- `docs/legacy-payment-token-cleanup-backlog.md`
+
+### Файлы (минимальная правка)
+
+- `supabase/functions/bepaid-webhook/index.ts` — добавить ветку `if meta.installment_id`.
+- `supabase/functions/grant-access-for-order/index.ts` — после успешного первого charge триггерить `installment-schedule-generator`, **только если** `tariff_offer.kind = 'installment'`.
+
+### Таблицы (без изменений схемы)
+
+- `installment_payments` — уже существует.
+- `tariff_offers.config.installment` — уже поддерживается JSONB.
+
+### Cron
+
+- Новый job `installment-charge-cron` — daily 09:00 MSK.
+
+---
+
+## 9. Итоговый DoD спринта
+
+- Кнопка тарифа c `kind=installment` создаёт корректный график после первой оплаты.
+- Cron списывает по графику через helper, без прямого чтения `payment_token`.
+- Ghost-токен не приводит к failed charge — только аудит.
+- Overcharge guard защищает от повторных вставок.
+- Админ и пользователь видят рассрочки в UI.
+- Уведомления уходят.
+- Существующие subscription/payment-потоки не изменены (diff минимальный).
+- Создан backlog-документ по legacy `payment_token` — без исполнения.
