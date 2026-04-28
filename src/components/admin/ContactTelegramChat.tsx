@@ -793,9 +793,19 @@ export function ContactTelegramChat({
 
   // Send message mutation
   const sendMutation = useMutation({
-    mutationFn: async ({ text, file, fileType }: { text?: string; file?: File; fileType?: string }) => {
+    mutationFn: async ({
+      text,
+      file,
+      fileType,
+      replyToMessageId,
+    }: {
+      text?: string;
+      file?: File;
+      fileType?: string;
+      replyToMessageId?: number | null;
+    }) => {
       let fileData: { type: string; name: string; base64: string } | undefined;
-      
+
       if (file) {
         setIsUploading(true);
 
@@ -807,7 +817,7 @@ export function ContactTelegramChat({
           console.error("Failed to encode file to base64", e);
           throw new Error("Не удалось подготовить файл для отправки");
         }
-        
+
         // Use provided fileType or auto-detect
         let type = fileType || "document";
         if (!fileType) {
@@ -815,17 +825,18 @@ export function ContactTelegramChat({
           else if (file.type.startsWith("video/")) type = "video";
           else if (file.type.startsWith("audio/")) type = "audio";
         }
-        
+
         fileData = { type, name: file.name, base64 };
       }
 
       const { data, error } = await supabase.functions.invoke("telegram-admin-chat", {
-        body: { 
-          action: "send_message", 
-          user_id: userId, 
+        body: {
+          action: "send_message",
+          user_id: userId,
           message: text || "",
           file: fileData,
           bot_id: selectedBotId || undefined,
+          reply_to_message_id: replyToMessageId ?? undefined,
         },
       });
       if (error) throw error;
