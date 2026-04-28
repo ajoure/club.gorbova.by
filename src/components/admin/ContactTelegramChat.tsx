@@ -1385,36 +1385,48 @@ export function ContactTelegramChat({
                 </div>
               </div>
 
-              {/* Emoji reaction picker — hover trigger */}
-              <Popover>
-                <PopoverTrigger asChild>
-                  <button
-                    className={cn(
-                      "absolute -bottom-2 opacity-0 group-hover:opacity-100 transition-opacity",
-                      "h-6 w-6 rounded-full bg-card border border-border shadow-sm flex items-center justify-center hover:bg-accent",
-                      msg.direction === "outgoing" ? "left-0" : "right-0"
-                    )}
-                  >
-                    <SmilePlus className="h-3.5 w-3.5 text-muted-foreground" />
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent className="w-64 p-2" side="top" align="center">
-                  <div className="grid grid-cols-10 gap-1">
-                    {EMOJI_LIST.map((emoji) => (
-                      <button
-                        key={emoji}
-                        onClick={() => toggleTelegramReaction.mutate({ messageId: msg.id, emoji })}
-                        className="h-7 w-7 flex items-center justify-center rounded hover:bg-accent text-sm transition-colors"
-                      >
-                        {emoji}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="text-[10px] text-muted-foreground mt-1.5 text-center leading-tight">
-                    В Telegram отображается только 1 реакция от бота (лимит Telegram API)
-                  </p>
-                </PopoverContent>
-              </Popover>
+              {/* Reply + Emoji controls — hover */}
+              <div
+                className={cn(
+                  "absolute -bottom-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity",
+                  msg.direction === "outgoing" ? "left-0" : "right-0"
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={() => setReplyingTo(msg)}
+                  title="Ответить"
+                  className="h-6 w-6 rounded-full bg-card border border-border shadow-sm flex items-center justify-center hover:bg-accent"
+                >
+                  <Reply className="h-3.5 w-3.5 text-muted-foreground" />
+                </button>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <button
+                      className="h-6 w-6 rounded-full bg-card border border-border shadow-sm flex items-center justify-center hover:bg-accent"
+                      title="Реакция"
+                    >
+                      <SmilePlus className="h-3.5 w-3.5 text-muted-foreground" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-64 p-2" side="top" align="center">
+                    <div className="grid grid-cols-10 gap-1">
+                      {EMOJI_LIST.map((emoji) => (
+                        <button
+                          key={emoji}
+                          onClick={() => toggleTelegramReaction.mutate({ messageId: msg.id, emoji })}
+                          className="h-7 w-7 flex items-center justify-center rounded hover:bg-accent text-sm transition-colors"
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-1.5 text-center leading-tight">
+                      В Telegram отображается только 1 реакция от бота (лимит Telegram API)
+                    </p>
+                  </PopoverContent>
+                </Popover>
+              </div>
             </div>
 
             {/* Reactions display */}
