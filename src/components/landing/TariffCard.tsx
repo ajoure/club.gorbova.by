@@ -30,6 +30,8 @@ export interface TariffCardOffer {
   is_active?: boolean;
   is_primary?: boolean;
   sort_order?: number;
+  payment_method?: string | null;
+  installment_count?: number | null;
 }
 
 export interface TariffCardData {
