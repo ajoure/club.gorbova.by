@@ -252,7 +252,7 @@ Deno.serve(async (req) => {
         created_by: user.id,
         url_token,
         public_url,
-        meta: Object.keys(linkMeta).length > 0 ? linkMeta : null,
+        meta: linkMeta,
       })
       .select('id, url_token, status, current_uses, max_uses, expires_at, amount, currency, payment_type, product_id, tariff_id, offer_id, created_by, meta')
       .single();
