@@ -2480,7 +2480,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                   </CardContent>
                 </Card>
               ) : (
-                <Card>
+                <Card className="shrink-0">
                   <CardContent className="p-4 text-center text-muted-foreground">
                     <MessageCircle className="w-8 h-8 mx-auto mb-2 opacity-50" />
                     <p className="text-sm">Telegram не привязан</p>
