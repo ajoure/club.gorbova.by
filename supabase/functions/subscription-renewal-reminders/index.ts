@@ -573,6 +573,27 @@ ${safeNamePrefix}это последнее напоминание. Подпис�
     const result = await response.json();
     sent = result.ok === true;
 
+    // Mirror to admin chat (Contact Center) — only when sendMessage actually succeeded
+    if (sent && result?.result?.message_id) {
+      await logAutomatedTelegramMessage({
+        supabase,
+        user_id: userId,
+        telegram_user_id: profile.telegram_user_id,
+        bot_id: botId ?? null,
+        text: message,
+        telegram_message_id: result.result.message_id,
+        reply_markup: replyMarkup,
+        source: 'subscription-renewal-reminders',
+        extra_meta: {
+          event_type: `subscription_reminder_${daysLeft}d`,
+          subscription_id: subscriptionId,
+          order_id: orderId,
+          tariff_id: tariffId,
+          days_left: daysLeft,
+        },
+      });
+    }
+
     // FAIL - Telegram API error
     if (!sent) {
       const telegramError = result.description || `HTTP ${response.status}`;
