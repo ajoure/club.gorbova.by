@@ -1,0 +1,49 @@
+# Stage L0 — Read-only proof (baseline)
+# Дата: 2026-04-28
+# Ссылка: 872b0603a4c47b8ce29f8d97370a2547
+# Оффер: «Оплатить» (8ebe41dc-732d-4d28-82ae-15a65d54e793), тариф «2 этапа»
+
+## payment_links (44af0c74-86f9-4b17-ba6c-810eee4684f6)
+- payment_type: "subscription"        ← НЕ соответствует контракту L (должен быть one_time для installment-link)
+- amount: 39000 копеек = 390 BYN      ← полная стоимость, НЕ per-payment
+- offer_id: 8ebe41dc-...
+- meta: {}                            ← installment-параметров НЕТ (max_months, selected, и т.д.)
+- user_id: задан → /pay открывается без логина
+
+## tariff_offers (8ebe41dc-732d-4d28-82ae-15a65d54e793)
+- offer_type: "pay_now"
+- payment_method: "internal_installment"     ← рассрочка корректно настроена в кнопке
+- installment_count: 2                       ← legacy-fixed на 2 (нет max-выбора)
+- installment_interval_days: 30
+- first_payment_delay_days: 0
+- requires_card_tokenization: true
+- amount: 390 BYN
+- meta.recurring.is_recurring: true          ← коллизия: оффер помечен как recurring И как installment одновременно
+- meta.installment: ОТСУТСТВУЕТ              ← бэкфилл L0b нужен
+
+## orders_v2 (3513b79c-a369-4139-9ebf-197b7a9e53ed)
+- meta.type: "system_payment_link_subscription"
+- meta.payment_flow: "renewal_subscription"  ← создан как обычная подписка, НЕ installment
+- meta.is_installment: ОТСУТСТВУЕТ
+- meta.installment_count: ОТСУТСТВУЕТ
+- meta.bepaid_subscription_id: sbs_92a4616e90a35d44
+- amount: 390 (полная цена пошла в bePaid как subscription, а не per-payment)
+
+## installment_payments (по этому order)
+- 0 строк                                    ← подтверждает: installment-расписание НЕ создано
+
+## Выводы (gap-anlysis для Stage L)
+1. admin-create-public-link не различает installment-офферы: пишет payment_type=subscription и amount=полная цена.
+2. tariff_offers + meta.recurring.is_recurring=true ВМЕСТЕ с payment_method=internal_installment даёт двусмысленность.
+   Решение L0a: при выборе типа «Рассрочка» в редакторе оффера meta.recurring очищается (исключающий выбор типа кнопки).
+3. orders_v2 идёт по ветке renewal_subscription → bepaid-webhook не зовёт generateInstallmentSchedule.
+4. Bepaid_subscription_id создан как sbs_*, что для installment-контракта неверно (нужен одноразовый checkout per-payment, а не bePaid-subscription).
+
+## Решения, фиксируемые в патче
+- L0a-1: при offer_type=Рассрочка убирать meta.recurring (взаимоисключение в UI).
+- L0b: бэкфилл meta.installment для оффера 8ebe41dc-... (max_months=2 как было).
+- L2: writer пишет payment_type=one_time, amount=per_payment*100, meta.installment.*
+- L3: public-checkout/create-payment-checkout идёт по ветке one_time (без bePaid subscription),
+      а installment_payments создаются в bepaid-webhook через generateInstallmentSchedule.
+- L0a: в редакторе оффера для существующего «2 этапа» админ должен повысить max_months
+       (например до 6) для теста L6. Текущая 2 — оставляем как минимум допустимый.
