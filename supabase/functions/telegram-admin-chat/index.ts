@@ -117,7 +117,21 @@ async function telegramRequest(botToken: string, method: string, body: object) {
 }
 
 function base64ToBytes(base64: string): Uint8Array {
-  const binaryString = atob(base64);
+  if (!base64) throw new Error("Empty base64 input");
+  // Sanitize: strip data URL prefix, whitespace/newlines, normalize URL-safe alphabet, pad.
+  let cleaned = String(base64).trim();
+  if (cleaned.startsWith("data:") && cleaned.includes(",")) {
+    cleaned = cleaned.slice(cleaned.indexOf(",") + 1);
+  }
+  cleaned = cleaned.replace(/\s+/g, "").replace(/-/g, "+").replace(/_/g, "/");
+  const pad = cleaned.length % 4;
+  if (pad === 2) cleaned += "==";
+  else if (pad === 3) cleaned += "=";
+  else if (pad === 1) throw new Error("Invalid base64 length");
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(cleaned)) {
+    throw new Error("Invalid base64 characters");
+  }
+  const binaryString = atob(cleaned);
   const bytes = new Uint8Array(binaryString.length);
   for (let i = 0; i < binaryString.length; i++) {
     bytes[i] = binaryString.charCodeAt(i);
