@@ -11,13 +11,14 @@ import { useLessonQuestions, formatTimecode } from "@/hooks/useKbQuestions";
 import { SafeHtml } from "@/components/ui/SafeHtml";
 import { usePermissions } from "@/hooks/usePermissions";
 import { LessonBlockRenderer } from "@/components/lesson/LessonBlockRenderer";
+import { LessonActionDock } from "@/components/lesson/LessonActionDock";
 import { getFileTypeIcon, pickIconHint } from "@/components/admin/lesson-editor/blocks/fileTypeIcons";
 import { KvestLessonView } from "@/components/lesson/KvestLessonView";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Separator } from "@/components/ui/separator";
+
 import {
   ArrowLeft,
   ArrowRight,
@@ -282,7 +283,7 @@ export default function LibraryLesson() {
 
   return (
     <DashboardLayout>
-      <div className="container mx-auto px-4 py-6 max-w-4xl relative">
+      <div className="container mx-auto px-4 py-6 pb-32 max-w-4xl relative">
         {/* Decorative background blobs */}
         <div className="absolute top-0 right-0 w-80 h-80 bg-primary/5 rounded-full blur-3xl pointer-events-none -z-10" />
         <div className="absolute bottom-1/3 left-0 w-64 h-64 bg-accent/5 rounded-full blur-3xl pointer-events-none -z-10" />
@@ -548,63 +549,22 @@ export default function LibraryLesson() {
           </Card>
         )}
 
-        {/* Complete Button */}
-        <div className="flex justify-center mb-8">
-          <Button
-            size="lg"
-            variant={currentLesson.is_completed ? "outline" : "default"}
-            onClick={handleToggleComplete}
-            className="min-w-48"
-          >
-            <CheckCircle2 className="mr-2 h-5 w-5" />
-            {currentLesson.is_completed ? "Отметить как непройденный" : "Отметить как пройденный"}
-          </Button>
-        </div>
-
-        <Separator className="mb-6" />
-
-        {/* Navigation */}
-        <div className="flex items-center justify-between gap-4">
-          {prevLesson ? (
-            <Button
-              variant="outline"
-              onClick={() => navigateToLesson(prevLesson)}
-              className="flex-1 max-w-xs justify-start"
-            >
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              <span className="truncate">{prevLesson.title}</span>
-            </Button>
-          ) : (
-            <div />
-          )}
-          
-          {nextLesson ? (
-            <Button
-              variant="outline"
-              onClick={() => navigateToLesson(nextLesson)}
-              className="flex-1 max-w-xs justify-end"
-            >
-              <span className="truncate">{nextLesson.title}</span>
-              <ArrowRight className="ml-2 h-4 w-4" />
-            </Button>
-          ) : (
-            <Button
-              variant="default"
-              onClick={() => {
-                // Для контейнер-модулей возвращаемся в секцию
-                if (module.is_container) {
-                  navigate(getMenuSectionPath(module.menu_section_key));
-                } else {
-                  navigate(`/library/${moduleSlug}`);
-                }
-              }}
-              className="flex-1 max-w-xs justify-center"
-            >
-              <CheckCircle2 className="mr-2 h-4 w-4" />
-              Завершить
-            </Button>
-          )}
-        </div>
+        {/* Sticky frosted-glass dock with all lesson actions */}
+        <LessonActionDock
+          isCompleted={!!currentLesson.is_completed}
+          onToggleComplete={handleToggleComplete}
+          prevLesson={prevLesson ? { title: prevLesson.title } : null}
+          nextLesson={nextLesson ? { title: nextLesson.title } : null}
+          onNavigatePrev={prevLesson ? () => navigateToLesson(prevLesson) : undefined}
+          onNavigateNext={nextLesson ? () => navigateToLesson(nextLesson) : undefined}
+          onFinish={() => {
+            if (module.is_container) {
+              navigate(getMenuSectionPath(module.menu_section_key));
+            } else {
+              navigate(`/library/${moduleSlug}`);
+            }
+          }}
+        />
       </div>
     </DashboardLayout>
   );
