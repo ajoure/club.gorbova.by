@@ -67,14 +67,20 @@ export function OfferRowCompact({
   const isInstallment = offer.payment_method === "internal_installment";
   const isBankInstallment = offer.payment_method === "bank_installment";
 
-  // Calculate installment info
+  // Calculate installment info (Stage L0a-2):
+  // — max_months из meta.installment.max_months (fallback на legacy installment_count);
+  // — preview суммы при максимальном сроке: round half-up до целых BYN;
+  // — итог рассрочки = perPayment * maxMonths.
   const getInstallmentInfo = () => {
-    if (!isInstallment || !offer.installment_count) return null;
-    const perPayment = offer.amount / offer.installment_count;
+    if (!isInstallment) return null;
+    const maxMonths = (offer.meta as any)?.installment?.max_months ?? offer.installment_count ?? null;
+    if (!maxMonths || maxMonths < 2) return null;
+    const perPayment = Math.round(offer.amount / maxMonths);
     return {
-      count: offer.installment_count,
-      perPayment: perPayment.toFixed(2),
-      intervalDays: offer.installment_interval_days || 30,
+      maxMonths,
+      perPayment,
+      totalInstallment: perPayment * maxMonths,
+      intervalDays: 30,
     };
   };
 
