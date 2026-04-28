@@ -113,6 +113,15 @@ async function telegramRequest(botToken: string, method: string, body: object) {
   return response.json();
 }
 
+function base64ToBytes(base64: string): Uint8Array {
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+}
+
 function guessMimeType(fileName: string, kind: FileData["type"]) {
   const lower = fileName.toLowerCase();
   if (kind === "photo") {
@@ -145,11 +154,7 @@ async function telegramSendFile(
   replyToMessageId?: number | null,
 ) {
   // Convert base64 to bytes
-  const binaryString = atob(file.base64);
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
+  const bytes = base64ToBytes(file.base64);
 
   let contentType = guessMimeType(file.name, file.type);
   let fileName = file.name;
