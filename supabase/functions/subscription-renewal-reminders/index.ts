@@ -608,6 +608,8 @@ ${safeNamePrefix}это последнее напоминание. Подпис�
           subscription_id: subscriptionId, order_id: orderId, tariff_id: tariffId,
           days_left: daysLeft, has_sbs: hasSBS, has_one_time_url: !!oneTimeUrl, has_subscription_url: !!subscriptionUrl,
           telegram_error_code: result.error_code, telegram_response: result,
+          reply_markup: replyMarkup,
+          payment_url: oneTimeUrl || subscriptionUrl || null,
         },
       });
       const isDuplicate = failLogError?.code === '23505';
@@ -656,6 +658,10 @@ ${safeNamePrefix}это последнее напоминание. Подпис�
         currency: currency || null,
         pricing_mode: 'regular_renewal',
         source: 'renewal_reminder',
+        reply_markup: replyMarkup,
+        payment_url: oneTimeUrl || subscriptionUrl || null,
+        telegram_message_id: result?.result?.message_id ?? null,
+        mirrored_to_telegram_messages: true,
       },
     });
     const isDuplicate = insertError?.code === '23505';

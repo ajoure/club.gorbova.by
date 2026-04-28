@@ -391,9 +391,27 @@ export function ContactTelegramChat({
   });
 
   // Combine and sort messages + telegram events + billing events
+  // PATCH: Hide event-pills for SEND_REMINDER/manual_notification when a real
+  // telegram_messages bubble already mirrors the same notification (±2 min window).
+  const mirroredAt: number[] = (messages || [])
+    .filter((m: any) => m.direction === 'outgoing' && (m.meta?.automated === true || m.meta?.source))
+    .map((m: any) => new Date(m.created_at).getTime());
+
+  const isMirroredEvent = (e: TelegramEvent): boolean => {
+    const action = e.action || '';
+    const isReminderLike =
+      action === 'SEND_REMINDER' ||
+      action === 'manual_notification' ||
+      action === 'MANUAL_NOTIFICATION';
+    if (!isReminderLike) return false;
+    if (e.status !== 'success') return false; // skipped/failed остаются как pill
+    const t = new Date(e.created_at).getTime();
+    return mirroredAt.some((mt) => Math.abs(mt - t) <= 120_000);
+  };
+
   const chatItems: ChatItem[] = [
-    ...(messages || []), 
-    ...(events || []),
+    ...(messages || []),
+    ...((events || []).filter((e) => !isMirroredEvent(e as TelegramEvent))),
     ...(billingEvents || []),
   ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
@@ -937,24 +955,56 @@ export function ContactTelegramChat({
         displayText = `${prefix}: ${productInfo}${tariffInfo}${dateInfo}`;
       }
       
+      const isSkipped = event.status === 'skipped';
+      const isFailed = event.status === 'failed' || event.status === 'error';
+      const skipReason = (meta?.reason || meta?.skip_reason) as string | undefined;
+      const errorMsg = (meta as any)?.error_message as string | undefined;
+
+      const pillBg = isSkipped
+        ? 'bg-muted/40 border border-dashed border-muted-foreground/30'
+        : isFailed
+          ? 'bg-destructive/10 border border-destructive/30'
+          : 'bg-muted';
+
+      const statusSuffix = isSkipped
+        ? ' · не отправлено'
+        : isFailed
+          ? ' · ошибка отправки'
+          : '';
+
       return (
         <div key={event.id} className="flex justify-center my-2">
           <div className="flex flex-col items-center gap-1 max-w-[85%]">
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted text-xs text-muted-foreground">
-              {EVENT_ICONS[event.action] || <Bell className="w-3 h-3" />}
-              <span>{displayText}</span>
+            <div
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs text-muted-foreground ${pillBg}`}
+              title={skipReason ? `Причина: ${skipReason}` : errorMsg || undefined}
+            >
+              {isSkipped ? (
+                <AlertCircle className="w-3 h-3 text-muted-foreground" />
+              ) : (
+                EVENT_ICONS[event.action] || <Bell className="w-3 h-3" />
+              )}
+              <span>
+                {displayText}
+                {statusSuffix && <span className="opacity-70">{statusSuffix}</span>}
+              </span>
               <span className="opacity-60">
                 {format(new Date(event.created_at), "dd.MM HH:mm", { locale: ru })}
               </span>
               {event.status === 'success' && <CheckCircle className="w-3 h-3 text-green-500" />}
-              {event.status === 'error' && <AlertCircle className="w-3 h-3 text-destructive" />}
+              {isFailed && <AlertCircle className="w-3 h-3 text-destructive" />}
             </div>
-            {/* PATCH 13E: Show notification text */}
+            {/* PATCH 13E: Show notification text (skipped тоже показываем, чтобы было видно что планировалось) */}
             {hasMessageText && (
               <div className="w-full px-4 py-2 bg-muted/50 rounded-lg text-xs text-muted-foreground border border-border/30">
                 <div className="whitespace-pre-wrap break-words max-h-32 overflow-y-auto">
                   {event.message_text}
                 </div>
+              </div>
+            )}
+            {isSkipped && skipReason && (
+              <div className="text-[10px] text-muted-foreground/70 italic">
+                Причина: {skipReason}
               </div>
             )}
           </div>
