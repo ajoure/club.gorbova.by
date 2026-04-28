@@ -190,6 +190,8 @@ export function AdminPaymentLinkDialog({
     "idle" | "cancelling" | "creating" | "error"
   >("idle");
   const [combinedPending, setCombinedPending] = useState(false);
+  // Stage L: выбранный срок рассрочки (только для installment-офферов)
+  const [selectedInstallmentMonths, setSelectedInstallmentMonths] = useState<number | null>(null);
 
   const { data: products, isLoading: productsLoading } = useProductsV2();
   const { data: tariffs, isLoading: tariffsLoading } = useTariffs(selectedProductId);
