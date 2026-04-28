@@ -314,3 +314,62 @@ Source of truth конфигурации рассрочки — кнопка т�
 - `audit_logs.action = 'installment.completed'` пишется. ✅
 - Завершённые/отменённые подписки не списываются. ✅
 - CHECK constraint вынесен в отдельный cleanup-патч (не в scope). 📌
+
+---
+
+## Stage 4 — Уведомления и cron расписания
+
+### Изменения
+
+1. **`installment-notifications`** — add-only action `completion` (отдельный шаблон с темой «🎉 Рассрочка полностью оплачена»). Существующие `test|upcoming|success|failed` не тронуты.
+2. **`installment-charge-cron`** — введён `notifyWithAudit(supabase, url, key, action, installmentId, context)`. Заменяет inline `fetch` к `installment-notifications` для `success` и `failed`, добавляет `completion` внутри блока завершения. Best-effort: ошибка уведомления никогда не ломает списание.
+3. **Audit-события** (новые):
+   - `installment.notification_success_requested`
+   - `installment.notification_failed_requested`
+   - `installment.notification_completion_requested`
+   - `installment.notification_request_failed` (HTTP не-2xx или исключение)
+4. **Cron jobs** созданы (через `supabase--insert`, не в migration):
+   - `installment-charge-cron-morning` — `0 6 * * *` → `installment-charge-cron`
+   - `installment-charge-cron-evening` — `0 18 * * *` → `installment-charge-cron`
+   - `installment-notifications-upcoming-daily` — `0 10 * * *` → `installment-notifications` с `action: upcoming`
+
+### DoD Stage 4 — выполнено
+
+- ✅ Cron jobs созданы и активны (jobid 45/46/47, проверено `cron.job`).
+- ✅ Audit-события `installment.notification_*` пишутся в `audit_logs` для каждого вызова уведомления (proof: после первого боевого прогона).
+- ✅ Финальный платёж шлёт отдельное письмо «🎉 Рассрочка полностью оплачена».
+- ✅ Уведомление best-effort: HTTP-ошибка/exception не ломает основной flow charge.
+- ✅ Существующий Telegram-уведомитель о неудаче (`sendPaymentFailureNotification`) не тронут.
+
+### Observation (не blocker)
+
+- `email_send_log` остаётся пустым по installment-уведомлениям, потому что `installment-notifications` шлёт через прямой SMTP (Yandex), минуя `send-transactional-email` / pgmq queue. Это известное архитектурное расхождение, вынесено в backlog `PAY-installment-email-unification`.
+
+### SQL-proof (выполнить после первого боевого прогона)
+
+```sql
+-- 1) cron jobs активны
+SELECT jobname, schedule, active FROM cron.job WHERE jobname LIKE 'installment-%';
+
+-- 2) audit-события уведомлений (последние 20)
+SELECT action, created_at, meta->>'installment_id' AS installment_id,
+       meta->>'notification_action' AS notification_action,
+       meta->>'http_status' AS http_status
+FROM audit_logs
+WHERE action LIKE 'installment.notification_%'
+ORDER BY created_at DESC LIMIT 20;
+
+-- 3) email_send_log по тестовому installment (ожидается пусто из-за прямого SMTP)
+SELECT template_name, recipient_email, status, message_id, created_at
+FROM email_send_log
+WHERE template_name ILIKE '%installment%'
+   OR metadata->>'installment_id' IS NOT NULL
+ORDER BY created_at DESC LIMIT 10;
+```
+
+---
+
+## Backlog
+
+- **PAY-installment-notify-TG** — расширить `installment-notifications` Telegram-каналом (success / failed / completion / upcoming). Сейчас только email + один точечный TG для failed внутри `installment-charge-cron`. Скоп вне Stage 4.
+- **PAY-installment-email-unification** — перевести `installment-notifications` на общий `send-transactional-email` (React Email + pgmq queue), чтобы все installment-письма попадали в `email_send_log` и проходили через suppression/retry pipeline. Сейчас прямой SMTP через Yandex.
