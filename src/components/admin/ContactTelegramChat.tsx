@@ -1133,7 +1133,9 @@ export function ContactTelegramChat({
                   <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
                 )}
 
-                {/* Inline keyboard mirror — ONLY url buttons (callback_data is intentionally hidden) */}
+                {/* Inline keyboard mirror — рендер как нативные Telegram-кнопки.
+                    Берём только url-кнопки (callback_data намеренно скрыты).
+                    Кнопки тянутся на всю ширину пузыря, разделены тонкой линией от текста. */}
                 {(() => {
                   const rm = (msg.meta as any)?.reply_markup;
                   const rows: Array<Array<{ text?: string; url?: string }>> = Array.isArray(rm?.inline_keyboard) ? rm.inline_keyboard : [];
@@ -1141,10 +1143,14 @@ export function ContactTelegramChat({
                     .map((row) => row.filter((b) => b && typeof b.url === "string" && b.url.trim().length > 0))
                     .filter((row) => row.length > 0);
                   if (urlRows.length === 0) return null;
+                  const isOutgoing = msg.direction === "outgoing";
                   return (
-                    <div className="mt-2 flex flex-col gap-1">
+                    <div className={cn(
+                      "mt-2 pt-2 -mx-3 px-3 flex flex-col gap-1.5 border-t",
+                      isOutgoing ? "border-primary-foreground/20" : "border-border/40",
+                    )}>
                       {urlRows.map((row, ri) => (
-                        <div key={ri} className="flex flex-wrap gap-1">
+                        <div key={ri} className="flex flex-wrap gap-1.5">
                           {row.map((btn, bi) => (
                             <a
                               key={bi}
@@ -1152,13 +1158,13 @@ export function ContactTelegramChat({
                               target="_blank"
                               rel="noopener noreferrer"
                               className={cn(
-                                "inline-flex items-center px-2 py-1 rounded-md text-xs border transition-colors",
-                                msg.direction === "outgoing"
-                                  ? "bg-primary-foreground/10 border-primary-foreground/30 text-primary-foreground hover:bg-primary-foreground/20"
-                                  : "bg-background border-border hover:bg-accent",
+                                "flex-1 min-w-0 inline-flex items-center justify-center text-center h-9 px-3 rounded-lg text-sm font-medium transition-colors break-words",
+                                isOutgoing
+                                  ? "bg-primary-foreground/15 text-primary-foreground hover:bg-primary-foreground/25"
+                                  : "bg-primary/10 text-primary hover:bg-primary/20",
                               )}
                             >
-                              {btn.text || btn.url}
+                              <span className="truncate">{btn.text || btn.url}</span>
                             </a>
                           ))}
                         </div>
