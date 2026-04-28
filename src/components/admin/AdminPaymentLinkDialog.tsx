@@ -1241,49 +1241,53 @@ ${amountLine}
                 На очень узких экранах flex-wrap аккуратно перенесёт нижнюю кнопку,
                 сохраняя выравнивание правее, а не схлопывая всё в вертикальную стопку.
               */}
-              <DialogFooter className="!flex-row !flex-wrap !justify-end !space-x-0 gap-2 pt-2 [&>*]:w-auto [&>*]:flex-none">
+              {/*
+                Footer: используем простой div вместо shadcn DialogFooter, чтобы
+                полностью контролировать раскладку. Кнопки всегда в одну строку
+                по правому краю, размер по контенту, без растягивания при wrap.
+              */}
+              <div className="flex flex-row flex-wrap justify-end items-center gap-2 pt-2">
                 <Button
                   type="button"
                   variant="outline"
+                  size="sm"
                   onClick={() => onOpenChange(false)}
-                  className="h-10 px-4 w-auto"
+                  className="h-9 px-3 w-auto flex-none"
                 >
                   Отмена
                 </Button>
-                {/*
-                  Кнопки одного диалога — все используют canonical writers
-                  (admin-create-public-link). Никакого нового payment-path.
-                */}
                 <Button
                   type="button"
+                  size="sm"
                   variant={effectiveTelegramUserId ? "outline" : "default"}
                   disabled={isCreateDisabled || combinedPending}
                   onClick={() => createPublicLinkMutation.mutate()}
-                  className="h-10 px-4 w-auto"
+                  className="h-9 px-3 w-auto flex-none"
                 >
                   {createPublicLinkMutation.isPending ? (
                     <Loader2 className="h-4 w-4 animate-spin mr-2 shrink-0" />
                   ) : (
                     <Link2 className="h-4 w-4 mr-2 shrink-0" />
                   )}
-                  <span className="truncate">Создать ссылку</span>
+                  <span className="whitespace-nowrap">Создать ссылку</span>
                 </Button>
                 {effectiveTelegramUserId && (
                   <Button
                     type="button"
+                    size="sm"
                     disabled={isCreateDisabled || combinedPending}
                     onClick={handleCreateAndSendTelegram}
-                    className="h-10 px-4 w-auto"
+                    className="h-9 px-3 w-auto flex-none"
                   >
                     {combinedPending ? (
                       <Loader2 className="h-4 w-4 animate-spin mr-2 shrink-0" />
                     ) : (
                       <Send className="h-4 w-4 mr-2 shrink-0" />
                     )}
-                    <span className="truncate">Создать и отправить</span>
+                    <span className="whitespace-nowrap">Создать и отправить</span>
                   </Button>
                 )}
-              </DialogFooter>
+              </div>
             </form>
           )}
         </DialogContent>
