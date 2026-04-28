@@ -1556,6 +1556,8 @@ export function ContactTelegramChat({
                   )}
                 </div>
               </div>
+                );
+              })()}
 
               {/* Reply + Emoji controls — hover */}
               <div
