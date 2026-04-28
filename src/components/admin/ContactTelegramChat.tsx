@@ -675,7 +675,7 @@ export function ContactTelegramChat({
       toast.success("Фото профиля обновлено");
     },
     onError: (error) => {
-      toast.error("Ошибка загрузки фото: " + translateTelegramError((error as Error).message));
+      toast.error("Ошибка загрузки фото: " + formatChatError(error));
     },
   });
 
@@ -753,7 +753,7 @@ export function ContactTelegramChat({
     },
     onError: (error) => {
       setIsUploading(false);
-      toast.error("Ошибка отправки: " + translateTelegramError((error as Error).message));
+      toast.error("Ошибка отправки: " + formatChatError(error));
     },
   });
 
@@ -780,7 +780,7 @@ export function ContactTelegramChat({
       toast.success("Сообщение отредактировано");
     },
     onError: (error) => {
-      toast.error("Ошибка редактирования: " + translateTelegramError((error as Error).message));
+      toast.error("Ошибка редактирования: " + formatChatError(error));
     },
   });
 
@@ -804,7 +804,7 @@ export function ContactTelegramChat({
       toast.success("Сообщение удалено");
     },
     onError: (error) => {
-      toast.error("Ошибка удаления: " + translateTelegramError((error as Error).message));
+      toast.error("Ошибка удаления: " + formatChatError(error));
     },
   });
 
