@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { greetSuffix } from '../_shared/recipient-name.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -161,7 +162,7 @@ Deno.serve(async (req) => {
               ? `\n📅 Доступ активен до: ${new Date(validUntil).toLocaleDateString('ru-RU')}`
               : '';
 
-            message = `✅ <b>Доступ открыт!</b>\n\nЯ подготовил для вас ссылки для входа в клуб.${validUntilText}\n\n⚠️ <i>Ссылки одноразовые — переходите сейчас!</i>`;
+            message = `✅ <b>Доступ открыт!</b>\n\nЯ подготовил для Вас ссылки для входа в клуб.${validUntilText}\n\n⚠️ <i>Ссылки одноразовые — переходите сейчас!</i>`;
 
             const buttons: Array<Array<{ text: string; url: string }>> = [];
             if (chatLink) buttons.push([{ text: '💬 Войти в чат клуба', url: chatLink }]);
@@ -170,7 +171,7 @@ Deno.serve(async (req) => {
           }
 
           case 'welcome': {
-            message = `👋 Привет${profile.full_name ? ', ' + profile.full_name : ''}!\n\nРады видеть вас! Если возникнут вопросы — мы всегда на связи 💙`;
+            message = `👋 Здравствуйте${greetSuffix(profile)}!\n\nРады видеть Вас! Если возникнут вопросы — мы всегда на связи 💙`;
             break;
           }
 
