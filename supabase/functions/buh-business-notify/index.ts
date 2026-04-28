@@ -150,7 +150,7 @@ serve(async (req) => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               chat_id: telegramUserId,
-              text: TEMPLATES.tomorrow_charge,
+              text: buildTomorrowChargeText(profile),
               parse_mode: "Markdown",
             }),
           });
@@ -166,7 +166,7 @@ serve(async (req) => {
               action: "PREREG_CHARGE_REMINDER",
               event_type: "preregistration_tomorrow_charge",
               status: "ok",
-              message_text: TEMPLATES.tomorrow_charge,
+              message_text: buildTomorrowChargeText(profile),
               meta: { 
                 preregistration_id: prereg.id, 
                 message_id: result.result?.message_id,
@@ -278,7 +278,7 @@ serve(async (req) => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               chat_id: telegramUserId,
-              text: TEMPLATES.no_card,
+              text: buildNoCardText(profile),
               parse_mode: "Markdown",
             }),
           });
@@ -294,7 +294,7 @@ serve(async (req) => {
               action: "PREREG_NO_CARD_WARNING",
               event_type: "preregistration_no_card",
               status: "ok",
-              message_text: TEMPLATES.no_card,
+              message_text: buildNoCardText(profile),
               meta: { 
                 preregistration_id: prereg.id, 
                 message_id: result.result?.message_id,
