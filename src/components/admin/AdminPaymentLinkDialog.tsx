@@ -1022,10 +1022,57 @@ export function AdminPaymentLinkDialog({
                       Цена тарифа: {tariffPrices.price} BYN
                     </p>
                   )}
+                  {isInstallmentOffer && (
+                    <p className="text-xs text-muted-foreground">
+                      Это полная стоимость продукта. Сумма каждого платежа рассчитывается автоматически по выбранному сроку рассрочки ниже.
+                    </p>
+                  )}
                 </div>
               )}
 
-              {/* Conflict (PATCH E) */}
+              {/* Stage L: Селектор срока рассрочки + блок суммы */}
+              {selectedTariffId && isInstallmentOffer && installmentMaxMonths && installmentMaxMonths >= 2 && (
+                <div className="rounded-lg border bg-card p-4 space-y-3">
+                  <Label>Срок рассрочки</Label>
+                  <Select
+                    value={selectedInstallmentMonths ? String(selectedInstallmentMonths) : ""}
+                    onValueChange={(v) => setSelectedInstallmentMonths(Number(v))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Выберите срок…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Array.from({ length: installmentMaxMonths - 1 }, (_, i) => i + 2).map((n) => (
+                        <SelectItem key={n} value={String(n)}>
+                          {n} {n === 1 ? "месяц" : n < 5 ? "месяца" : "месяцев"}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Выберите, на сколько месяцев создать рассрочку для клиента. Доступны варианты 2–{installmentMaxMonths} (зависит от настроек кнопки в тарифе).
+                  </p>
+
+                  {selectedInstallmentMonths && amount > 0 && (() => {
+                    const N = selectedInstallmentMonths;
+                    const perPayment = Math.round(amount / N);
+                    const totalInstallment = perPayment * N;
+                    const diff = totalInstallment - amount;
+                    return (
+                      <div className="rounded-md border border-primary/30 bg-primary/5 p-3 space-y-1">
+                        <p className="text-base font-semibold">
+                          {N} платеж{N === 1 ? "" : N < 5 ? "а" : "ей"} × {perPayment} BYN = ИТОГО {totalInstallment} BYN
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Сумма платежа округлена до целых BYN. Итог рассрочки рассчитан с учётом выбранного срока и может отличаться от полной цены ({amount} BYN
+                          {diff !== 0 ? `, разница: ${diff > 0 ? "+" : ""}${diff} BYN` : ""}).
+                          Списание происходит каждые 30 дней. Первый платёж — сегодня.
+                        </p>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
               {isCurrentConflict && conflictData && (
                 <div className="p-3 rounded-lg border border-destructive/50 bg-destructive/5 space-y-2">
                   <div className="flex items-center gap-2 text-destructive">
