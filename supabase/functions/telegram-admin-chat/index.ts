@@ -515,11 +515,16 @@ Deno.serve(async (req) => {
             }
             
             if (fileId) {
-              // Upload the already selected local file bytes immediately.
-              // Do not download it back from Telegram: that added seconds of visible delay.
-              const localBytes = await loadFileBytes(supabase, file);
+              // If file was already uploaded via storage_path, reuse it directly.
+              if (file.storage_path) {
+                storageBucket = file.storage_bucket || 'telegram-media';
+                storagePath = file.storage_path;
+                console.log(`[OUTBOUND] Reusing storage path: bucket=${storageBucket} path=${storagePath}`);
+              } else {
+                // Small files came via base64: upload them now for UI preview.
+                const localBytes = await loadFileBytes(supabase, file);
 
-              // Sanitize filename for Supabase Storage (no cyrillic, spaces, special chars)
+                // Sanitize filename for Supabase Storage (no cyrillic, spaces, special chars)
                 const sanitizeOutboundFileName = (name: string): string => {
                   if (!name) return 'file';
                   const lastDot = name.lastIndexOf('.');
@@ -549,7 +554,6 @@ Deno.serve(async (req) => {
                 
                 const safeOutboundName = sanitizeOutboundFileName(file.name);
                 
-                // Upload to Storage for instant UI preview after the real Telegram send succeeds.
                 storageBucket = 'telegram-media';
                 storagePath = `outbound/${user_id}/${Date.now()}_${safeOutboundName}`;
                 const { data: uploadData, error: uploadError } = await supabase.storage
@@ -563,7 +567,6 @@ Deno.serve(async (req) => {
                   console.log(`[OUTBOUND] Upload OK: bucket=${storageBucket} path=${storagePath} bytes=${localBytes.byteLength}`);
                 } else {
                   console.error(`[OUTBOUND] Upload FAILED: path=${storagePath}`, uploadError);
-                  // Log to audit_logs
                   await supabase.from('audit_logs').insert({
                     actor_type: 'system',
                     actor_label: 'telegram-admin-chat',
@@ -573,6 +576,7 @@ Deno.serve(async (req) => {
                   storageBucket = null;
                   storagePath = null;
                 }
+              }
             }
           } catch (uploadErr) {
             console.error("Failed to upload file to storage:", uploadErr);
