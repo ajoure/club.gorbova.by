@@ -45,6 +45,17 @@ export interface CrmRoutingConfig {
   stage_on_failed: string;
 }
 
+export interface InstallmentConfig {
+  // Максимальный срок рассрочки в месяцах (2..12), задаётся в кнопке.
+  max_months: number;
+  // Фиксировано 30 дней. Хранится для будущей расширяемости/прозрачности.
+  interval_days: number;
+  // Фиксировано 0 — первый платёж сразу при покупке.
+  first_payment_delay_days: number;
+  // Текущий контракт округления per-payment суммы.
+  rounding_mode: 'round_half_up_byn';
+}
+
 export interface OfferMetaConfig {
   welcome_message?: {
     enabled: boolean;
@@ -64,6 +75,9 @@ export interface OfferMetaConfig {
   preregistration?: PreregistrationConfig;
   // Recurring/subscription settings (auto-renewal config)
   recurring?: RecurringConfig;
+  // Installment settings (Stage L0a-1) — присутствует только для payment_method='internal_installment'.
+  // Взаимоисключение с recurring (см. handleSaveOffer).
+  installment?: InstallmentConfig;
   // CRM routing — связь с воронкой продаж (Layer A: только offer-driven первичная оплата)
   crm_routing?: CrmRoutingConfig;
 }
