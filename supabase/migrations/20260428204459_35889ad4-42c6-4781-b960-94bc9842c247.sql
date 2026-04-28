@@ -1,0 +1,1 @@
+ALTER TABLE public.telegram_messages REPLICA IDENTITY FULL;
