@@ -1,539 +1,332 @@
-# да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. **Добавить обязательный блок backend (критично)**
+1. Зафиксировать: **кнопка “Рассрочка” = отдельный тип в UI**, но технически без нового offer_type:  
+offer_type='pay_now' + payment_method='internal_installment'.
+2. Добавить в DoD:  
+администратор при создании кнопки задаёт **максимальный срок рассрочки 2–12 месяцев**, а клиент/админ при оплате выбирает срок только в этих пределах.
+3. Уточнить текст для клиента:
 
-```text
-Перед UI задачами:
+Рассрочка — это оплата частями. Первый платёж списывается сразу, остальные — каждые 30 дней. Количество платежей ограничено выбранным сроком.
 
-- installment schedule (installment_payments) создаётся из tariff_offers (UUID-only)
-- installment-charge-cron:
-  - getSubscriptionToken helper
-  - idempotency ключ installment_${id}_attempt_${N}
-  - overcharge guard (paid < total)
-- audit_logs (минимум):
-  installment_started
-  installment_payment_received
-  installment_completed
-  installment_charge_failed
-```
-
-2. **Страница рассрочки — уточнить scope**
-
-```text
-Только read-only v1:
-
-- список платежей (N/M)
-- статус (pending/paid/failed)
-- next_payment_at
-- без редактирования/пересчётов
-```
-
-3. **Лог рассрочки**
-
-```text
-Не отдельная система.
-
-Источник: audit_logs + installment_payments
-
-UI = агрегированный view, без новой таблицы
-```
-
-4. **Уведомления**
-
-```text
-Только 3 события:
-
-- успешный платёж
-- неудачный платёж
-- за 1 день до списания
-
-Без сложных цепочек и ретраев в этом спринте
-```
-
-5. **Отчёт legacy-долга**
-
-```text
-Отдельный deliverable:
-
-- список функций, пишущих payment_token
-- 21 active подписка
-- ghost + mismatch кейсы
-- план cleanup (без выполнения)
-```
-
-6. **UI настройки магазина**
-
-```text
-Проверить только:
-
-- выбор offer_id (UUID)
-- корректность installment-параметров (amount, interval, total)
-
-Без рефакторинга всей панели
-```
-
-7. **Жёсткое ограничение scope**
-
-```text
-В этом спринте запрещено:
-
-- трогать обычные subscriptions
-- массово переписывать payment_token
-- внедрять bePaid Subscriptions API
-- добавлять новые cron кроме installment-charge
-```
-
-После этих уточнений план соответствует цели — быстро запустить рассрочку без расползания scope.
+4. Уточнить важное: если используется floor(total/N), итоговая сумма может быть меньше полной цены. Это должно быть явно принято как бизнес-правило. Если нет — остаток лучше добавлять в первый платёж.
 
 &nbsp;
 
-План: Спринт «Рассрочки» — узкий scope, без legacy-миграции
+да, согласен, с учетом правок:
 
-## 0. Принципы спринта (фиксируем приоритет)
+Добавить решение по округлению:
 
-1. **Основная цель спринта — рассрочки.** Запуск installment-flow по конфигурации в кнопке тарифа (`tariff_offers`).
-2. **Миграция legacy `payment_token` НЕ является целью спринта.** Все большие рефакторы prod-функций (`subscription-charge`, `admin-manual-charge`, `payments-autolink-by-card`) — backlog.
-3. **Stage 1 сужается** до минимума, необходимого для безопасной работы рассрочек.
-4. **Stage 3 и Stage 4 запрещены к исполнению** в этом спринте (mass write-rewrite + drop колонки).
-5. **Проблемные подписки** (`9d2eef10`, `f51fec1e`, `ade2a1a3`) — отдельный backlog `legacy payment_token cleanup`. В этом спринте не трогаем, если они не участвуют в новом installment-flow.
+Округление суммы рассрочки принимается как бизнес-правило.
 
----
+&nbsp;
 
-## 1. Порядок работы спринта
+Если полная стоимость не делится ровно на выбранное количество платежей, сумма одного платежа округляется до целых BYN. Итоговая сумма рассрочки может отличаться от полной стоимости тарифа в большую или меньшую сторону. Это допустимо, так как цена фиксируется с учётом выбранного срока рассрочки.
 
-```text
-1) Minimal token helper (только для рассрочки)
-2) Installment schedule generator (из tariff_offers)
-3) installment-charge-cron через helper
-4) Overcharge guard + idempotency + audit
-5) UI / notification по рассрочке (админ + кабинет)
-6) Отдельный отчёт: legacy payment_token cleanup backlog
-```
+&nbsp;
 
-Каждый шаг — Diagnose → Plan → Dry run → Execute → Verify. Без пропусков.
+В UI обязательно показывать:
 
----
+- количество платежей;
 
-## 2. Stage 1 (узкий) — Minimal Token Helper
+- сумму одного платежа;
 
-### Scope
+- итоговую сумму рассрочки;
 
-- Создать `supabase/functions/_shared/token-resolver.ts`.
-- Helper `getSubscriptionToken(subscriptionId)` с приоритетом источников:
-  1. `payment_methods` (по `subscription_payment_credentials.payment_method_id` или прямой связи user_id+subscription)
-  2. `subscription_payment_credentials` (legacy MIT)
-  3. `subscriptions_v2.payment_token` (fallback)
-- Возврат: `{ token, source, payment_method_id, ghost: boolean }`.
-- **Ghost-токен** (нет `payment_method_id`) → helper возвращает `ghost: true`. В installment-flow это означает: dry-run only, реального charge нет, аудит «ghost_token_skipped».
+- пояснение, что итоговая сумма рассчитана с учётом выбранного срока.
 
-### Что НЕ делаем в Stage 1
+В DoD добавить:
 
-- НЕ переписываем `subscription-charge`.
-- НЕ переписываем `admin-manual-charge`.
-- НЕ переписываем `payments-autolink-by-card`.
-- НЕ трогаем 12 функций, пишущих в `payment_token`.
-- НЕ зеркалим writes.
-- НЕ удаляем колонку.
+Для total=200 BYN и selected=3 система показывает 3 платежа по округлённой сумме и итоговую сумму рассрочки. Пользователь видит итог до оплаты.
 
-### DoD Stage 1 (новый)
+## План: тип кнопки «Рассрочка» с выбираемым сроком 2–N месяцев + публичные ссылки на рассрочку (без новых параллельных функций)
 
-- Helper `getSubscriptionToken` создан и покрыт unit-тестом (Deno test).
-- `installment-charge-cron` (Stage 3 ниже) использует helper.
-- `provider_token` НЕ читается напрямую из `subscriptions_v2` в новом installment-flow.
-- Существующие обычные subscription-потоки (`subscription-charge`, webhook, autolink) **не изменены** — diff = 0 строк.
+### 0. Что уже есть и НЕ ломаем
+
+- `tariff_offers.offer_type ∈ {pay_now, trial, preregistration}` — это **назначение оффера**.
+- `tariff_offers.payment_method ∈ {full_payment, internal_installment, …}` — это **способ оплаты внутри pay_now**. Уже работает: `direct-charge` читает `installment_count`, `installment_interval_days`, `first_payment_delay_days`, `amount` и через `_shared/installment-schedule.ts` создаёт `installment_payments`. `installment-charge-cron` и `installment-notifications` — уже завершены.
+- В UI редактора оффера (`AdminProductDetailV2`) уже есть `payment_method` и `installment_count`, но они привязаны к старой модели «фиксированное число платежей».
+- `admin-create-public-link` + `public-checkout` + `_shared/create-payment-checkout.ts` + `bepaid-webhook` (ветка WEBHOOK-LINK-ORDER) — **существующая** канонная цепочка для public links. Расширяем её, второй payment-path не вводим.
+
+**Контракт всей фичи (single source of truth):**
+
+> Кнопка «Рассрочка» = `offer_type='pay_now' + payment_method='internal_installment'`. В кнопке хранится **максимальный** срок рассрочки (`max_installment_months`), фиксированный интервал 30 дней и `first_payment_delay_days=0`. Реальное количество платежей выбирает плательщик (или админ при создании ссылки) в пределах [2 .. max], и оно попадает в `installment_count` конкретного экземпляра расписания.
 
 ---
 
-## 3. Stage 2 — Installment Schedule Generator
+### Stage L0 — Read-only proof (обязателен ДО патча)
 
-### Scope
+По ссылке `872b0603a4c47b8ce29f8d97370a2547` и офферу «2 этапа»:
 
-Source of truth конфигурации рассрочки — кнопка тарифа (`tariff_offers`):
+1. `tariff_offers`: `payment_method`, `installment_count`, `installment_interval_days`, `first_payment_delay_days`, `meta`.
+2. `payment_links`: `payment_type`, `offer_id`, `meta`, `amount`.
+3. `orders_v2` по `meta.payment_link_id`, `installment_payments` по `order_id`, `audit_logs payment_link.created`.
 
-- `tariff_offers.kind = 'installment'`
-- `tariff_offers.config.installment`: `{ parts: N, interval_days: D, first_payment_amount?: X }`
-- Всё через UUID: `product_id`, `tariff_id`, `tariff_offer_id`. Никаких строковых slug/имён.
-
-### Алгоритм
-
-1. После успешного **первого** `direct charge` (через стандартный `bepaid-webhook` → `grant-access-for-order`) — триггерим installment scheduler.
-2. Scheduler читает `tariff_offers.config.installment` по `tariff_offer_id` из `orders_v2.meta.tariff_offer_id`.
-3. Вставляет в `installment_payments` записи `payment_number = 2..N`, `status = 'pending'`, `due_date = first_paid_at + (k-1)*interval_days`.
-4. Idempotency-ключ: `installment_${subscription_id}_attempt_${payment_number}`.
-5. **Overcharge guard**: перед вставкой — `count(*) where subscription_id = X and status in ('paid','pending')` ≤ `parts`.
-
-### Запрещено
-
-- Считать график по строковым названиям тарифов.
-- Создавать installment вне tariff_offers конфигурации.
-- Дублировать существующий `subscription-renewal` — это другой поток (recurring), не installment.
-
-### DoD Stage 2
-
-- Schedule создаётся только из `tariff_offers.config.installment` по UUID.
-- Overcharge guard работает (тест на повторный вызов scheduler — 0 новых строк).
-- Записи имеют корректный `due_date` и `payment_number`.
+DoD L0: snapshot в `.lovable/proofs/installment_link_baseline.txt`. Без него L1 не запускаем.
 
 ---
 
-## 4. Stage 3 — installment-charge-cron через helper
+### Stage L0a — Модель кнопки «Рассрочка» (схема и редактор кнопки)
 
-### Scope
+**Решения по схеме (минимально-инвазивно):**
 
-- Cron каждый день читает `installment_payments` где `status='pending' AND due_date <= now()`.
-- Для каждой строки:
-  1. `getSubscriptionToken(subscription_id)` — единственный источник токена.
-  2. Если `ghost=true` → status `pending`, audit `ghost_token_skipped`, уведомление админу. **Реальный charge не делаем.**
-  3. Если token есть → `direct_charge` через bePaid с idempotency-ключом `installment_${id}_attempt_${attempts+1}`.
-  4. Webhook (`bepaid-webhook`) обновляет `installment_payments.status` → `paid` / `failed`, инкремент `charge_attempts`.
-- Retry policy: до 3 попыток, интервал 24ч, далее `failed` + уведомление.
+- НЕ вводим новый `offer_type='installment'` — UI-«4-й тип» получается из комбинации `offer_type='pay_now' + payment_method='internal_installment'`. CHECK не трогаем.
+- В существующее поле `tariff_offers.meta` (jsonb) добавляем подобъект:
+  ```
+  meta.installment = {
+    max_months: 2..12,
+    interval_days: 30,
+    first_payment_delay_days: 0,
+    rounding_mode: 'floor_byn'
+  }
+  ```
+  Никаких новых колонок. `installment_count` / `installment_interval_days` / `first_payment_delay_days` остаются как **legacy-зеркало для обратной совместимости**: writer (см. ниже) при сохранении кнопки записывает туда `installment_count = max_months`, `installment_interval_days = 30`, `first_payment_delay_days = 0`. Это сохраняет работу `direct-charge`, `installment-charge-cron`, отчётов до полного перехода.
 
-### Webhook split
+**Stage L0a-1 — Редактор оффера в `AdminProductDetailV2.tsx` (+ форма):**
 
-`bepaid-webhook` — минимальная правка:
+В выпадающем списке «Тип кнопки» (сейчас он подсказывается через `payment_method`/`offer_type`) показать 4 варианта в одном dropdown:
 
-- Step 1: capture token/method (как сейчас, без изменений).
-- Step 2: если `meta.installment_id` присутствует → обновить `installment_payments`. Иначе — текущая логика. **Существующие ветки не трогаем.**
+1. Оплата полной стоимости — `offer_type=pay_now, payment_method=full_payment`
+2. Trial — `offer_type=trial`
+3. Предзапись — `offer_type=preregistration`
+4. **Рассрочка** — `offer_type=pay_now, payment_method=internal_installment`
 
-### DoD Stage 3
+При выборе «Рассрочка»:
 
-- Cron вызывает только helper, не читает `subscriptions_v2.payment_token` напрямую.
-- Ghost-токен → audit + skip, без charge.
-- Idempotency-ключ уникален per attempt.
-- Webhook корректно закрывает `installment_payments.status`.
+- Поле «Сумма» = полная стоимость тарифа (как сейчас).
+- Новое поле **«Максимальный срок рассрочки, мес»** — stepper +/− со значениями 2..12, default 6. Сохраняется в `meta.installment.max_months`.
+- Поля «Интервал списания» и «Задержка первого платежа» **скрыты** в UI и фиксированы кодом: 30 и 0. (Поля БД остаются, но писать только эти значения.)
+- `requires_card_tokenization=true` форсится автоматически (уже так в `AdminProductDetailV2` lines 637).
+- `is_primary` разрешён.
+- Поясняющий текст под полем (RU): «Клиент при оплате выберет срок от 2 до N месяцев. Сумма будет списываться равными платежами раз в 30 дней. Первый платёж — сразу при покупке.»
 
----
+Сохранение оффера (handler уже есть, lines 566+):
 
-## 5. Stage 4 — UI / Notifications
+- Если выбран «Рассрочка»: `payment_method='internal_installment'`, `meta.installment={max_months, interval_days:30, first_payment_delay_days:0, rounding_mode:'floor_byn'}`, **legacy-зеркало** `installment_count=max_months`, `installment_interval_days=30`, `first_payment_delay_days=0`.
 
-### Админ
+**Stage L0a-2 — Карточка/строка оффера (`OfferRowCompact.tsx`, `TariffCardCompact.tsx`):**
 
-- `AdminPaymentsHub` → таб «Рассрочки» (используем существующий `useAdminInstallments`).
-- Действия: «Списать сейчас», «Закрыть рассрочку (cancelled / forgiven)» — уже реализованы в `useInstallments.tsx`. Проверить, что работают через новый helper.
+- Добавить распознавание installment-кнопки и бейдж «Рассрочка до N мес.» (RU). Иконка/цвет — отличить от `pay_now`/`trial`/`preregistration` (используем существующие variants, без новых компонентов).
 
-### Кабинет пользователя
-
-- Блок «Мои рассрочки» — список pending/paid с датами и суммами.
-
-### Уведомления
-
-- Email/Telegram пользователю: за 3 дня до `due_date`, в день списания (success/fail).
-- Email админу: ghost-токен, 3 неудачные попытки подряд.
-
-### DoD Stage 4
-
-- Админ видит список рассрочек по продукту/тарифу (UUID-фильтры).
-- Пользователь видит свои рассрочки.
-- Уведомления уходят по событиям.
+DoD L0a: можно создать/отредактировать кнопку «Рассрочка» с `max_months ∈ [2..12]`, она корректно отображается в админке и сохраняется в `tariff_offers.meta.installment` + legacy-полях. Существующие installment-офферы продолжают работать (миграция данных не нужна, см. L0b).
 
 ---
 
-## 6. Stage 5 — Отдельный отчёт `legacy-payment-token-cleanup-backlog`
+### Stage L0b — Бэкфилл существующих installment-офферов (data-only, не миграция)
 
-Не реализуем, **только документ** в `docs/`:
+Для всех офферов с `payment_method='internal_installment'`, у которых `meta.installment IS NULL`:
 
-- Список 12 функций, пишущих в `payment_token`.
-- Список 4 функций, читающих `payment_token`.
-- 3 проблемные подписки: `9d2eef10` (ghost), `f51fec1e`, `ade2a1a3` (desync) — статус, рекомендация.
-- План фаз будущего спринта: mirror writes → switch reads → drop column.
-- **Важно:** этот документ не запускает работы в текущем спринте.
+- `meta.installment.max_months = installment_count` (фиксируем как «сколько и было»),
+- `meta.installment.interval_days = COALESCE(installment_interval_days, 30)`,
+- `meta.installment.first_payment_delay_days = COALESCE(first_payment_delay_days, 0)`,
+- `meta.installment.rounding_mode = 'floor_byn'`.
 
----
-
-## 7. Что строго запрещено в текущем execute
-
-- Массовая переписка WRITE-операций в 9+ prod-функциях.
-- Зеркальная запись в `payment_methods` для всех путей.
-- Удаление/деприкейт колонки `subscriptions_v2.payment_token`.
-- Любые правки `subscription-charge`, `admin-manual-charge`, `payments-autolink-by-card`.
-- Ремонт 3 проблемных подписок (если они не приходят в installment-flow).
+Делается через insert-tool (UPDATE), не через миграцию. DoD: SELECT-ом подтверждаем 0 офферов с `payment_method='internal_installment' AND meta->'installment' IS NULL`.
 
 ---
 
-## 8. Технические детали (для разработчика)
+### Stage L1 — Выбор срока рассрочки в UI плательщика и админа
 
-### Файлы (создать)
+**L1.1 — Карточка контакта `AdminPaymentLinkDialog.tsx`:**
 
-- `supabase/functions/_shared/token-resolver.ts`
-- `supabase/functions/installment-schedule-generator/index.ts`
-- `supabase/functions/installment-charge-cron/index.ts`
-- `docs/legacy-payment-token-cleanup-backlog.md`
+- Хелпер `offerKind(offer)`:
+  - `installment` если `payment_method='internal_installment'`,
+  - `subscription` если `meta.recurring.is_recurring`,
+  - иначе `one_time`.
+- Если `effectiveOffer.kind === 'installment'`:
+  - Скрыть ToggleGroup `one_time/subscription` (для рассрочки он не имеет смысла), показать read-only бейдж «Рассрочка».
+  - Показать **dropdown «Срок рассрочки»** с опциями `2..max_months` (из `offer.meta.installment.max_months`, fallback на legacy `installment_count`). Default = `max_months`.
+  - Под dropdown текст для админа (RU): «Выберите, на сколько месяцев создать рассрочку для клиента.»
+  - Превью: «N платежей по X BYN», где `X = floor(totalAmount / N)` (целые BYN, без копеек).
+  - Override-режим (превратить рассрочку в обычный one_time/subscription) **запрещён** — это коммерчески другой контракт, для этого редактируется сама кнопка.
+- В payload в `admin-create-public-link` для installment-кнопок:
+  - `installment_offer: true`
+  - `selected_installment_months: <N>` (число в [2..max])
+  - Никаких сумм/интервалов с фронта — writer пересчитывает сам по `offer_id`.
 
-### Файлы (минимальная правка)
+**L1.2 — Публичная страница оплаты `/pay/:token` (`Pay.tsx` / `public-checkout` GET-info):**
 
-- `supabase/functions/bepaid-webhook/index.ts` — добавить ветку `if meta.installment_id`.
-- `supabase/functions/grant-access-for-order/index.ts` — после успешного первого charge триггерить `installment-schedule-generator`, **только если** `tariff_offer.kind = 'installment'`.
+- Если link представляет рассрочку (`meta.payment_method='internal_installment'`):
+  - Dropdown «Срок рассрочки» с опциями `2..max_installment_months`. Default = `max_installment_months`.
+  - Текст для клиента (RU): «Выберите срок рассрочки. Сумма будет разделена на выбранное количество ежемесячных платежей. Списание происходит каждые 30 дней. Рассрочка является подпиской с ограниченным количеством платежей.»
+  - Превью: «N платежей по X BYN». X считается клиентом так же, как сервером (`floor(total / N)`), для отображения; авторитет — сервер.
+- На submit POST в `public-checkout` передаётся `selected_installment_months: N`.
 
-### Таблицы (без изменений схемы)
+DoD L1: 
 
-- `installment_payments` — уже существует.
-- `tariff_offers.config.installment` — уже поддерживается JSONB.
-
-### Cron
-
-- Новый job `installment-charge-cron` — daily 09:00 MSK.
-
----
-
-## 9. Итоговый DoD спринта
-
-- Кнопка тарифа c `kind=installment` создаёт корректный график после первой оплаты.
-- Cron списывает по графику через helper, без прямого чтения `payment_token`.
-- Ghost-токен не приводит к failed charge — только аудит.
-- Overcharge guard защищает от повторных вставок.
-- Админ и пользователь видят рассрочки в UI.
-- Уведомления уходят.
-- Существующие subscription/payment-потоки не изменены (diff минимальный).
-- Создан backlog-документ по legacy `payment_token` — без исполнения.
----
-
-## 10. Stage 3 — Cron lock + completion + audit (выполнено)
-
-### Read-only проверка enum subscriptions_v2.status
-
-- Фактические значения в БД: `active`, `trial`, `past_due`, `canceled`, `expired`, `superseded`.
-- `completed` отсутствует → используем `expired` + `meta.installment_completed_at`.
-- Стиль: `subscriptions_v2.status` = `canceled` (одно l), `installment_payments.status` = `cancelled` (два l).
-- CHECK constraint по `installment_payments.status` НЕ добавляется в этом спринте (вынесен в отдельный cleanup-патч).
-
-### Что сделано в `installment-charge-cron`
-
-1. **Атомарный lock pending → processing**: единый `update().eq('status','pending').select('id')`. Если 0 строк — параллельный cron уже захватил, skip.
-2. **Skip завершённых/отменённых подписок**: пропуск, если `subscriptions_v2.status ∈ {canceled, expired, superseded}` + audit `installment.skipped_subscription_inactive`.
-3. **Guard payment_number > total_payments**: skip + audit `installment.guard_payment_number_overflow`.
-4. **Completion после последнего платежа**: при `payment_number >= total_payments` подписка переводится в `expired`, `next_charge_at = NULL`, в `meta` пишется `installment_completed_at` и `installment_completed_payments`.
-5. **Audit `installment.completed`** с `subscription_id`, `order_id`, `total_payments`, `previous_status`, `new_status`.
-6. Удалён дублирующий update `status='processing'` внутри try (lock уже выполнен снаружи).
-7. Все логи и комментарии русифицированы там, где их видит человек.
-
-### DoD Stage 3 — выполнено
-
-- Атомарный lock защищает от двойного списания при параллельном cron. ✅
-- Guard блокирует overflow по payment_number. ✅
-- После последнего платежа подписка → `expired`, `next_charge_at=NULL`. ✅
-- `audit_logs.action = 'installment.completed'` пишется. ✅
-- Завершённые/отменённые подписки не списываются. ✅
-- CHECK constraint вынесен в отдельный cleanup-патч (не в scope). 📌
+- В карточке контакта и на `/pay/:token` для оффера с `max_months=6` доступен выбор 2..6 (7+ невозможен).
+- Для оффера с `max_months=12` доступен 2..12.
+- Превью суммы корректно: `total / N` округлено вниз до целого BYN.
 
 ---
 
-## Stage 4 — Уведомления и cron расписания
+### Stage L2 — Writer `admin-create-public-link`: сохранить выбранный срок (STOP-guard выполнен — без новых колонок)
 
-### Изменения
+Файл: `supabase/functions/admin-create-public-link/index.ts`.
 
-1. **`installment-notifications`** — add-only action `completion` (отдельный шаблон с темой «🎉 Рассрочка полностью оплачена»). Существующие `test|upcoming|success|failed` не тронуты.
-2. **`installment-charge-cron`** — введён `notifyWithAudit(supabase, url, key, action, installmentId, context)`. Заменяет inline `fetch` к `installment-notifications` для `success` и `failed`, добавляет `completion` внутри блока завершения. Best-effort: ошибка уведомления никогда не ломает списание.
-3. **Audit-события** (новые):
-   - `installment.notification_success_requested`
-   - `installment.notification_failed_requested`
-   - `installment.notification_completion_requested`
-   - `installment.notification_request_failed` (HTTP не-2xx или исключение)
-4. **Cron jobs** созданы (через `supabase--insert`, не в migration):
-   - `installment-charge-cron-morning` — `0 6 * * *` → `installment-charge-cron`
-   - `installment-charge-cron-evening` — `0 18 * * *` → `installment-charge-cron`
-   - `installment-notifications-upcoming-daily` — `0 10 * * *` → `installment-notifications` с `action: upcoming`
+Изменения:
 
-### DoD Stage 4 — статус: технически принято, runtime-proof открыт
+1. Принимаем `installment_offer: boolean`, `selected_installment_months: number` (только если installment).
+2. После валидации `offer_id` (lines 109–120):
+  - перечитываем offer и проверяем `payment_method='internal_installment'`,
+  - `max_months = offer.meta?.installment?.max_months ?? offer.installment_count` (fallback на legacy),
+  - валидируем: `Number.isInteger(selected_installment_months) && 2 ≤ selected ≤ max_months`. Иначе `400 invalid_installment_months`.
+  - `interval_days = offer.meta?.installment?.interval_days ?? offer.installment_interval_days ?? 30` — должен быть `=30`.
+  - `first_payment_delay_days = 0`.
+3. Расчёт сумм (см. L4):
+  - `total_byn = amount_kopecks / 100` (входящий `amount` от UI = полная стоимость в копейках).
+  - `per_payment_byn = Math.floor(total_byn / selected)` (целые BYN, без копеек, **floor**).
+  - `per_payment_kopecks = per_payment_byn * 100`.
+4. INSERT в `payment_links`:
+  - `payment_type = 'one_time'` (вариант A, view не ломается),
+  - `amount = per_payment_kopecks` (это сумма ПЕРВОГО списания через bePaid),
+  - `meta.installment`:
+    ```
+    {
+      payment_method: 'internal_installment',
+      max_installment_months: <max>,
+      selected_installment_months: <selected>,
+      interval_days: 30,
+      first_payment_delay_days: 0,
+      total_amount: <total_byn>,
+      per_payment_amount: <per_payment_byn>,
+      rounding_mode: 'floor_byn'
+    }
+    ```
+5. Audit `payment_link.created` дополняется `installment: true`, `selected_installment_months`, `max_installment_months`.
 
-**Технически выполнено:**
-- ✅ Cron jobs созданы и активны (jobid 45/46/47, проверено `cron.job` — `active = true`).
-- ✅ Add-only action `completion` (отдельный шаблон «🎉 Рассрочка полностью оплачена»); `success|failed|upcoming` не тронуты.
-- ✅ `notifyWithAudit` в `installment-charge-cron`: best-effort, HTTP-ошибка/exception никогда не ломает charge.
-- ✅ Audit helper для `installment.notification_*` подключён к каждому пути (`success`, `failed`, `completion`, `request_failed`).
-- ✅ Существующий Telegram-уведомитель (`sendPaymentFailureNotification`) не тронут.
-
-**Runtime-proof — открыто до первого боевого прогона:**
-
-Cron job нельзя считать закрытым только по факту создания. Закрытие требует:
-
-1. **Первый успешный запуск каждого job** — подтверждение через `cron.job_run_details`:
-   ```sql
-   SELECT j.jobname, r.start_time, r.status, r.return_message
-   FROM cron.job_run_details r
-   JOIN cron.job j ON j.jobid = r.jobid
-   WHERE j.jobname LIKE 'installment-%'
-   ORDER BY r.start_time DESC LIMIT 20;
-   ```
-   Ожидание: `status='succeeded'` минимум по одному запуску каждого из трёх job (`-morning`, `-evening`, `-upcoming-daily`).
-
-2. **Audit-события записаны** для реального installment (не теста):
-   ```sql
-   SELECT action, created_at, meta->>'installment_id' AS installment_id,
-          meta->>'notification_action' AS notification_action,
-          meta->>'http_status' AS http_status
-   FROM audit_logs
-   WHERE action LIKE 'installment.notification_%'
-   ORDER BY created_at DESC LIMIT 20;
-   ```
-   Ожидание: ≥1 запись `success_requested` или `failed_requested` после первого вечернего/утреннего запуска.
-
-3. **Audit helper sanity** — отсутствие `notification_request_failed` без причины:
-   ```sql
-   SELECT count(*) FILTER (WHERE action='installment.notification_request_failed') AS failed,
-          count(*) FILTER (WHERE action='installment.notification_success_requested') AS success_req,
-          count(*) FILTER (WHERE action='installment.notification_completion_requested') AS completion_req
-   FROM audit_logs
-   WHERE action LIKE 'installment.notification_%' AND created_at > now() - interval '7 days';
-   ```
-   Если `failed > 0` без соответствующего `success_req`/`completion_req` — расследовать (HTTP 401/500/timeout).
-
-4. **Completion notification** — обязательная отдельная проверка после первой реально завершённой рассрочки:
-   ```sql
-   -- найти installment с payment_number = total_payments и status='paid'
-   SELECT ip.id, ip.order_id, ip.payment_number, ip.total_payments, ip.status, ip.paid_at
-   FROM installment_payments ip
-   WHERE ip.payment_number = ip.total_payments AND ip.status = 'paid'
-   ORDER BY ip.paid_at DESC LIMIT 5;
-
-   -- по ним должно быть ровно одно audit completion_requested
-   SELECT meta->>'installment_id', count(*)
-   FROM audit_logs
-   WHERE action = 'installment.notification_completion_requested'
-     AND meta->>'installment_id' = ANY(ARRAY[<ids выше>])
-   GROUP BY 1;
-   ```
-   Ожидание: ровно `1` на каждый завершённый installment. `0` или `>1` — баг.
-
-5. **`email_send_log` — статус риска: MEDIUM, не «ожидается пусто»:**
-
-   `installment-notifications` шлёт через прямой SMTP (Yandex), минуя `send-transactional-email` и pgmq queue. Это означает:
-   - **Нет proof-цепочки доставки** для installment-писем (не видно `sent`/`failed`/`bounced`/`dlq`).
-   - **Нет suppression-чекинга** — письмо уйдёт даже на адрес из `suppressed_emails`.
-   - **Нет retry на 5xx/429** — одна сетевая ошибка SMTP теряет письмо.
-   - **Нет единого логгинга** — жалоба «не пришло письмо о платеже» не воспроизводится через `email_send_log`.
-
-   Это **не blocker для Stage 4**, но требует закрытия через `PAY-installment-email-unification` (см. backlog) до роста объёма installment-уведомлений.
+DoD L2: ссылка для оффера «2 этапа» (для теста — admin-edit повышает max_months до 6, выбираем 3) создаётся с `meta.installment.selected_installment_months=3`, `amount = floor(total/3)*100`.
 
 ---
 
-## Backlog
+### Stage L3 — Public-checkout: пробросить выбранный срок до order
 
-- **PAY-installment-notify-TG** — *priority: normal*. Расширить `installment-notifications` Telegram-каналом (success / failed / completion / upcoming). Сейчас только email + один точечный TG для failed внутри `installment-charge-cron`.
-- **PAY-installment-email-unification** — *priority: HIGH*. Перевести `installment-notifications` на общий `send-transactional-email` (React Email + pgmq queue). Без этого нет единого proof/logging по installment-письмам, нет suppression-чекинга, нет retry. Блокирует полноценный runtime-proof Stage 4 и диагностику жалоб «не пришло письмо».
+Файлы: `supabase/functions/public-checkout/index.ts`, `_shared/create-payment-checkout.ts`, `bepaid-webhook/index.ts`.
+
+**3.1 `public-checkout`:**
+
+- В POST принимаем опциональный `selected_installment_months` от клиента.
+- Защита: если link installment — клиентское значение должно быть `2..link.meta.installment.max_installment_months`. Если клиент не передал — берём `link.meta.installment.selected_installment_months` (default = max). Никогда не больше max.
+- В `createPaymentCheckout` пробрасываем `meta_extra`:
+  ```
+  meta_extra: {
+    payment_link_id: link.id,
+    ...(installment ? {
+      is_installment: true,
+      installment_offer_id: link.offer_id,
+      installment_count: <effective_selected>,   // авторитет — сервер
+      installment_interval_days: 30,
+      first_payment_delay_days: 0,
+      installment_total_amount_byn: link.meta.installment.total_amount,
+      installment_per_payment_amount_byn: link.meta.installment.per_payment_amount
+    } : {})
+  }
+  ```
+- `payment_type` остаётся `one_time`. amount, что уйдёт в bePaid = `link.amount` (per-payment копейки).
+
+**3.2 `_shared/create-payment-checkout.ts`:**
+
+- В ветке `one_time` копируем `is_installment`, `installment_*` ключи из `meta_extra` в `orders_v2.meta` без логики (как уже делается с `payment_link_id`). Сам checkout-запрос к bePaid не меняется (списывается per_payment, как и должно быть для первого платежа рассрочки).
+
+**3.3 `bepaid-webhook` ветка `WEBHOOK-LINK-ORDER` (после `grant-access-for-order`, ~lines 2515–2522):**
+
+- Если `linkOrder.meta.is_installment === true`:
+  1. Загружаем offer по `linkOrder.meta.installment_offer_id` (или `linkOrder.offer_id`).
+  2. Готовим адаптированный «эффективный offer» для `generateInstallmentSchedule`:
+    ```
+     effectiveOffer = {
+       id: offer.id,
+       payment_method: 'internal_installment',
+       installment_count: linkOrder.meta.installment_count,        // ← из order, НЕ из offer
+       installment_interval_days: 30,
+       first_payment_delay_days: 0,
+     }
+    ```
+  3. `totalAmount = linkOrder.meta.installment_total_amount_byn`.
+  4. Зовём `generateInstallmentSchedule(...)` с `subscription = grantedSubscriptionV2Id` (или fallback-lookup — он уже есть в lines 2525–2543), `firstPayment.paymentId = payment.id`.
+- Все ошибки — non-fatal с audit (как в остальных шагах ветки).
+
+DoD L3: оплата по installment-ссылке с `selected=3` создаёт **ровно 3** строки `installment_payments` (1 succeeded + 2 pending), `total_payments=3`, audit `installment_started` с `installment_count=3`. Если на ту же ссылку пришёл бы webhook повторно — UNIQUE `(order_id, payment_number)` гарантирует идемпотентность.
 
 ---
 
-## Stage L — Рассрочка через публичные ссылки оплаты (PAY-installment-public-link)
+### Stage L4 — Контракт суммы (заменяет старую фиксированную логику)
 
-**Источник проблемы:** при создании ссылки оплаты из карточки контакта по офферу с `payment_method='internal_installment'` (например, оффер «2 этапа», ссылка `872b0603a4c47b8ce29f8d97370a2547`) после оплаты не создаётся `subscriptions_v2` и не материализуются `installment_payments`. Заказ оформляется как разовый.
+Принципы:
 
-### Базовый принцип переиспользования (обязательный)
+- **Полная стоимость** = `tariff_offer.amount` (берётся из кнопки, как сейчас).
+- **Per-payment** = `floor(total / selected_installment_months)` BYN, **без копеек**.
+- В `payment_links.amount` пишем `per_payment * 100` (kopecks). Это сумма ПЕРВОГО bePaid checkout.
+- `installment_payments`: все N платежей одинаковой суммой `per_payment` (текущий хелпер `installment-schedule.ts` уже делит totalAmount на count, но он делает rounding до 2 знаков. **Правка:** в этой ветке передаём `totalAmount = per_payment * count` (а не исходный total), чтобы сумма всех платежей == чистый total после floor; «остаток» от исходной цены безвозвратно отбрасывается — это и есть `floor_byn` контракт). Альтернатива «остаток в первый/последний платёж» отвергается ради простоты UX «ровно X BYN каждый месяц».
 
-- Логика создания installment-заказа из публичной ссылки **должна быть идентична** ветке «direct charge» (создание из карточки контакта по кнопке «Разовый платёж» / «Подписка»).
-- **Запрещено** создавать в `bepaid-webhook` отдельную новую логику рассрочки. Используется только общий helper `_shared/installment-schedule.ts` (или существующий контракт direct-charge), чтобы public-link и direct-charge порождали одинаковые `installment_payments` (одна и та же форма записей: `installment_id`, `payment_number`, `total_payments`, `amount`, `status`, `due_at`).
-- UI-кнопки «Разовый платёж», «Подписка» и (новая) «Рассрочка» в `AdminPaymentLinkDialog` должны разделять единый writer-путь (`admin-create-public-link`), отличаясь только полями контракта, а не отдельными ветками вызова.
+DoD L4: для total=200 BYN, selected=3 → per_payment=66 BYN, 3 платежа по 66 BYN, итог 198 BYN. Никаких копеек в суммах installment_payments.
 
-### STOP-guard перед началом execute
+---
 
-1. **Read-only proof обязателен ДО любых изменений.** Без него Stage L не стартует. Минимум:
-   ```sql
-   -- 1. сама ссылка
-   SELECT id, url_token, product_id, tariff_id, offer_id, payment_type, amount, currency, meta, status
-   FROM payment_links
-   WHERE url_token = '872b0603a4c47b8ce29f8d97370a2547';
+### Stage L5 — Журнал ссылок: бейдж «Рассрочка»
 
-   -- 2. оффер «2 этапа» — payment_method, installment_count, installment_interval_days, first_payment_delay_days
-   SELECT id, title, payment_method, price, currency,
-          installment_count, installment_interval_days, first_payment_delay_days, meta
-   FROM tariff_offers
-   WHERE id = (SELECT offer_id FROM payment_links WHERE url_token = '872b0603a4c47b8ce29f8d97370a2547');
+Файлы: `LinksTabContent.tsx`, `LinkDetailsDrawer.tsx`. View `payment_links_enriched_v` НЕ трогаем (читаем `meta`).
 
-   -- 3. что лежит в meta ссылки (ключевой вход для STOP-guard ниже)
-   SELECT meta FROM payment_links WHERE url_token = '872b0603a4c47b8ce29f8d97370a2547';
+- Helper: `link.meta?.payment_method === 'internal_installment'` → бейдж «Рассрочка N мес.» (RU), показываем `selected_installment_months`.
+- В деталях: «Полная сумма / N платежей по X BYN / Списание раз в 30 дней».
 
-   -- 4. фактические заказы по этой ссылке
-   SELECT id, status, amount, created_at, meta->>'payment_link_id' AS link_id, meta->>'installment_id' AS installment_id
-   FROM orders_v2
-   WHERE meta->>'payment_link_id' = (SELECT id::text FROM payment_links WHERE url_token = '872b0603a4c47b8ce29f8d97370a2547')
-   ORDER BY created_at DESC;
+DoD L5: ссылка с installment отображается корректно; обычные one_time/subscription без изменений.
 
-   -- 5. installment_payments по этим заказам (ожидание: пусто — это и есть баг)
-   SELECT ip.* FROM installment_payments ip
-   WHERE ip.order_id IN (
-     SELECT id FROM orders_v2
-     WHERE meta->>'payment_link_id' = (SELECT id::text FROM payment_links WHERE url_token = '872b0603a4c47b8ce29f8d97370a2547')
-   );
-   ```
-2. **STOP-guard по схеме `payment_links`.** Если `payment_links.meta` уже содержит достаточные installment-данные (например, `meta.payment_method='internal_installment'` + `meta.installment_count` + `meta.installment_interval_days` + `meta.first_payment_delay_days`, или `meta.offer_snapshot` с теми же полями) — **новую миграцию колонок не делать**. Использовать существующий meta-контракт в writer и webhook.
-3. Контракт колонок добавляется только если meta-контракт объективно недостаточен (нельзя надёжно прочитать installment-параметры из `meta` или из связанного `tariff_offers` по `offer_id`).
+---
 
-### Stage L1 — UI: распознавание installment-оффера в карточке контакта
+### Stage L6 — Verify (runtime proof)
 
-- В `AdminPaymentLinkDialog` (карточка контакта) при выборе оффера с `payment_method='internal_installment'`:
-  - тип ссылки определяется как **«Рассрочка»**, не «Подписка» и не «Разовая»;
-  - подпись на кнопке/чипе — «Рассрочка», локализация только русская;
-  - в форму подтягиваются `installment_count`, `installment_interval_days`, `first_payment_delay_days` из `tariff_offers` (read-only превью, не редактируется здесь);
-  - в writer (`admin-create-public-link`) передаются те же поля, что и в существующих ветках direct-charge для рассрочки (никаких новых параметров без необходимости).
-- **Переиспользование:** общий компонент выбора оффера/тарифа и тот же payload-builder, что используется для «Разовый платёж» и «Подписка». Отдельной формы для рассрочки не создавать.
+1. Создать/отредактировать в админке кнопку «Рассрочка» в тарифе (например «Подоходный налог для ИП») с `max_months=6`.
+2. В карточке контакта выбрать эту кнопку, выбрать `selected=3`, создать публичную ссылку.
+3. Открыть `/pay/:token`, проверить dropdown 2..6, выбрать 3 (или оставить переданное), оплатить тестовой картой.
+4. SQL-proof:
+  - `payment_links.meta.installment.selected_installment_months = 3`, `max_installment_months = 6`.
+  - `orders_v2.meta`: `is_installment=true`, `installment_count=3`.
+  - `installment_payments`: ровно 3 строки, payment_number 1..3, amount одинаковый, payment 1 = succeeded, 2-3 = pending, due_date второго = first+30д, третьего = first+60д.
+  - `audit_logs`: `payment_link.created` (installment:true, selected:3, max:6), `installment_started` (count=3).
+  - `subscriptions_v2`: одна активная.
+5. Граничные кейсы:
+  - В `public-checkout` POST с `selected_installment_months=7` при max=6 → 400.
+  - С `selected=1` → 400.
+  - Idempotency: повторная отправка webhook не создаёт дубликатов.
+6. После cron-списания всех 3 платежей: 4-й платёж невозможен (нет 4-й pending-строки), `installment-charge-cron` ничего не делает, `subscriptions_v2.access_end_at` не продлевается рассрочкой.
 
-### Stage L2 — Контракт хранения (meta-first)
+Фиксируется в `.lovable/proofs/installment_link_runtime.txt`.
 
-1. **Сначала** — попытка сохранить installment-параметры в `payment_links.meta`:
-   ```json
-   {
-     "payment_method": "internal_installment",
-     "installment_count": 2,
-     "installment_interval_days": 30,
-     "first_payment_delay_days": 0,
-     "offer_id": "<uuid>"
-   }
-   ```
-   `admin-create-public-link` валидирует наличие этих полей при `payment_method='internal_installment'`, ошибка валидации → 400 без записи.
-2. **Только если** в `payment_links_enriched_v` или в downstream-чтении meta-контракт оказывается недостаточным (например, нужна индексация/фильтрация по `payment_method` на больших объёмах) — отдельной миграцией добавить колонки `payment_method`, `installment_count`, `installment_interval_days`, `first_payment_delay_days`. Это решение **фиксируется явным observation в proof**, не делается «на всякий случай».
-3. `payment_type` в `payment_links` остаётся существующим enum; «Рассрочка» derive-ится из `meta.payment_method` (или из новых колонок, если они понадобятся). `payment_links_enriched_v` обновляется минимально — только маппинг отображения «Рассрочка» в UI журнала ссылок.
+---
 
-### Stage L3 — `bepaid-webhook`: материализация рассрочки (без дублей логики)
+### Stage L7 — DoD общий (границы)
 
-1. При успешном webhook по заказу, у которого источник — публичная ссылка с `meta.payment_method='internal_installment'` (читается из `payment_links.meta` или новых колонок согласно решению L2):
-   - вызывается **тот же** `_shared/installment-schedule.ts` / общий helper, что используется в direct-charge ветке;
-   - создаётся `subscriptions_v2` (или связка с пользователем) ровно по той же схеме, что для direct-charge installment;
-   - материализуются `installment_payments` единым контрактом.
-2. Никаких новых функций «specific to public-link installments». Если общий helper не покрывает кейс — сначала исправляется helper, затем используется в обеих ветках.
-3. Идемпотентность по `orders_v2.meta.installment_materialized=true` (или существующему эквивалентному ключу из direct-charge), повторный webhook не создаёт второй комплект `installment_payments`.
+- Если у кнопки `max_months=6` — выбор 7..12 невозможен ни в карточке контакта, ни на `/pay/:token`, ни через прямой POST в `public-checkout` (валидация на сервере 400).
+- Если `max_months=12` — доступны 2..12.
+- `selected_installment_months = N` ⇒ создаётся **ровно N** строк в `installment_payments`. Лишние списания невозможны (cron работает по существующим pending-строкам, новых не создаёт).
+- После N-го платежа рассрочка завершается; `subscriptions_v2` доживает до конца `access_end_at` тарифа независимо от рассрочки.
+- Существующие installment-офферы (после L0b backfill) продолжают работать в `direct-charge` без регрессов.
 
-### DoD Stage L (обязательно)
+---
 
-После оплаты ссылки `872b0603a4c47b8ce29f8d97370a2547` (оффер «2 этапа», `installment_count=2`):
+### Что НЕ делаем (anti-scope)
 
-- ✅ создан `orders_v2` со `status='paid'` и корректным `meta.payment_link_id`;
-- ✅ создана `subscriptions_v2` (или эквивалентная связка с пользователем) — в строгом соответствии с тем, как это делает direct-charge ветка для installment-офферов;
-- ✅ в `installment_payments` создано **ровно `installment_count`** записей (для офера «2 этапа» — ровно 2);
-- ✅ `payment_number` идут строго `1..N` без пропусков и дублей;
-- ✅ `total_payments = installment_count` во всех записях;
-- ✅ первый платёж (`payment_number=1`) — `status='paid'`, `paid_at` заполнен;
-- ✅ остальные платежи (`payment_number > 1`) — `status='pending'`, `due_at` рассчитан по `installment_interval_days` и `first_payment_delay_days`;
-- ✅ нет «лишних» записей `installment_payments` для этого `order_id` / `subscription_id`;
-- ✅ повторный приход того же webhook не создаёт дубль (идемпотентность подтверждена).
+- Не вводим новый `offer_type='installment'` (CHECK не трогаем).
+- Не добавляем новых колонок в `tariff_offers` или `payment_links` (всё через `meta`).
+- Не пишем новый писатель ссылок и новый payment-flow — только расширение существующих writer/checkout/webhook.
+- Не меняем поведение `direct-charge` коммерчески: для прямого `direct-charge` рассрочка = `installment_count` оффера (это тоже будет `meta.installment.max_months` после L0b). Возможность выбора срока **в `direct-charge**` — отдельный backlog `PAY-installment-direct-charge-month-picker`.
+- Не расширяем Telegram-уведомления — backlog `PAY-installment-notify-TG`.
+- Не вводим «рассрочка для произвольного продукта без кнопки» — backlog `PAY-installment-adhoc-link`.
 
-**SQL-proof DoD:**
-```sql
-WITH link AS (
-  SELECT id FROM payment_links WHERE url_token = '872b0603a4c47b8ce29f8d97370a2547'
-),
-ord AS (
-  SELECT id FROM orders_v2
-  WHERE meta->>'payment_link_id' = (SELECT id::text FROM link) AND status = 'paid'
-  ORDER BY created_at DESC LIMIT 1
-)
-SELECT
-  (SELECT count(*) FROM installment_payments WHERE order_id = (SELECT id FROM ord))                           AS total_rows,
-  (SELECT count(*) FROM installment_payments WHERE order_id = (SELECT id FROM ord) AND status='paid')         AS paid_rows,
-  (SELECT count(*) FROM installment_payments WHERE order_id = (SELECT id FROM ord) AND status='pending')      AS pending_rows,
-  (SELECT min(payment_number) FROM installment_payments WHERE order_id = (SELECT id FROM ord))                AS min_pn,
-  (SELECT max(payment_number) FROM installment_payments WHERE order_id = (SELECT id FROM ord))                AS max_pn,
-  (SELECT max(total_payments) FROM installment_payments WHERE order_id = (SELECT id FROM ord))                AS total_payments;
--- Ожидание для оффера «2 этапа»: total_rows=2, paid_rows=1, pending_rows=1, min_pn=1, max_pn=2, total_payments=2
-```
+---
 
-### UI-проверка (отдельный пункт DoD)
+### Технический контракт (single source of truth)
 
-- В карточке контакта оффер с `payment_method='internal_installment'` отображается как **«Рассрочка»**, а не как «Подписка» и не как «Разовая».
-- Те же оффер/тариф/писатель используются для всех трёх кнопок: «Разовый платёж», «Подписка», «Рассрочка». Отдельных писателей и отдельных диалогов не создаётся.
-- В журнале ссылок (`/admin/payments/links`) колонка «Тип» для такой ссылки показывает «Рассрочка».
 
-### Порядок исполнения
-
-1. Read-only proof по ссылке `872b0603a4c47b8ce29f8d97370a2547` и офферу «2 этапа» (Stage L блокируется до получения).
-2. По результату proof — STOP-guard: meta-only или meta + новые колонки.
-3. L1 → L2 → L3 в указанном порядке, каждая стадия со своим dry-run и proof.
-4. После L3 — повторный платёж по тестовой ссылке + SQL-proof DoD выше.
+| Решение                         | Источник истины                                                           |
+| ------------------------------- | ------------------------------------------------------------------------- |
+| Признак installment-кнопки      | `tariff_offers.payment_method='internal_installment'`                     |
+| Максимальный срок               | `tariff_offers.meta.installment.max_months` (legacy: `installment_count`) |
+| Интервал                        | фиксированно 30 дней                                                      |
+| Задержка первого платежа        | фиксированно 0                                                            |
+| Выбранный срок (per-link)       | `payment_links.meta.installment.selected_installment_months`              |
+| Выбранный срок (per-order)      | `orders_v2.meta.installment_count`                                        |
+| Per-payment сумма               | `floor(total / selected)` BYN, без копеек                                 |
+| Создание `installment_payments` | только `_shared/installment-schedule.ts`                                  |
+| Выдача доступа                  | только `grant-access-for-order`                                           |
+| Cron / уведомления              | без изменений                                                             |
