@@ -1235,12 +1235,18 @@ ${amountLine}
                 </div>
               )}
 
-              <DialogFooter className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+              {/*
+                Кнопки футера — всегда в один ряд (даже в узком preview-iframe),
+                выровнены по правому краю и одной высоты для премиум-вида.
+                На очень узких экранах flex-wrap аккуратно перенесёт нижнюю кнопку,
+                сохраняя выравнивание правее, а не схлопывая всё в вертикальную стопку.
+              */}
+              <DialogFooter className="!flex-row !flex-wrap !justify-end !space-x-0 gap-2 pt-2">
                 <Button
                   type="button"
                   variant="outline"
                   onClick={() => onOpenChange(false)}
-                  className="w-full sm:w-auto"
+                  className="h-10 px-4"
                 >
                   Отмена
                 </Button>
@@ -1253,7 +1259,7 @@ ${amountLine}
                   variant={effectiveTelegramUserId ? "outline" : "default"}
                   disabled={isCreateDisabled || combinedPending}
                   onClick={() => createPublicLinkMutation.mutate()}
-                  className="w-full sm:w-auto min-w-0"
+                  className="h-10 px-4 min-w-0"
                 >
                   {createPublicLinkMutation.isPending ? (
                     <Loader2 className="h-4 w-4 animate-spin mr-2 shrink-0" />
@@ -1267,7 +1273,7 @@ ${amountLine}
                     type="button"
                     disabled={isCreateDisabled || combinedPending}
                     onClick={handleCreateAndSendTelegram}
-                    className="w-full sm:w-auto min-w-0"
+                    className="h-10 px-4 min-w-0"
                   >
                     {combinedPending ? (
                       <Loader2 className="h-4 w-4 animate-spin mr-2 shrink-0" />
