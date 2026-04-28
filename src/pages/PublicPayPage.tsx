@@ -400,7 +400,7 @@ export default function PublicPayPage() {
                 <CreditCard className="h-8 w-8 text-primary" />
               </div>
               <h1 className="text-2xl font-bold mb-2">{linkInfo.product_name}</h1>
-              <p className="text-muted-foreground">{getTypeLabel(linkInfo.payment_type, linkInfo.product_category)}</p>
+              <p className="text-muted-foreground">{getTypeLabel(linkInfo.payment_type, linkInfo.product_category, linkInfo.installment?.selected_installment_months)}</p>
             </div>
 
             {linkInfo.description && (
