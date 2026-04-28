@@ -546,6 +546,13 @@ export function AdminPaymentLinkDialog({
             resolved_mode: isOverrideMode ? "override" : "canonical",
             cta_source: "admin_manual",
             cta_contract_version: 1,
+            // Stage L: installment payload (writer ignore-ит, если поля null/false).
+            ...(isInstallmentOffer && selectedInstallmentMonths
+              ? {
+                  installment_offer: true,
+                  selected_installment_months: selectedInstallmentMonths,
+                }
+              : {}),
           },
         }
       );
