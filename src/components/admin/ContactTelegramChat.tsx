@@ -1037,6 +1037,38 @@ export function ContactTelegramChat({
     };
   }, [userId, isLoading, chatItems.length]);
 
+  // Track scroll position → toggle "scroll to bottom" FAB + clear unread.
+  useEffect(() => {
+    const root = scrollRef.current;
+    const viewport = root?.querySelector(
+      "[data-radix-scroll-area-viewport]"
+    ) as HTMLElement | null;
+    if (!viewport) return;
+
+    const onScroll = () => {
+      const near =
+        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 200;
+      setIsNearBottomState(near);
+      if (near) setUnreadCount(0);
+    };
+
+    onScroll();
+    viewport.addEventListener("scroll", onScroll, { passive: true });
+    return () => viewport.removeEventListener("scroll", onScroll);
+  }, [userId, isLoading]);
+
+  // Smooth jump to the bottom (used by FAB).
+  const jumpToBottom = useCallback(() => {
+    const vp = scrollRef.current?.querySelector(
+      "[data-radix-scroll-area-viewport]"
+    ) as HTMLElement | null;
+    if (vp) {
+      vp.scrollTo({ top: vp.scrollHeight, behavior: "smooth" });
+    }
+    bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+    setUnreadCount(0);
+  }, []);
+
   const handleSend = () => {
     const trimmed = message.trim();
     if (!trimmed && !selectedFile) return;
