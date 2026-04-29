@@ -655,7 +655,7 @@ export default function AdminDeals() {
       const accessUntil = accessMap?.get(d.id)?.access_until || d.trial_end_at;
       return accessUntil ? format(new Date(accessUntil), "dd.MM.yyyy") : "";
     } },
-  ], [fallbackProfilesMap, moduleMetaMap]);
+  ], [fallbackProfilesMap, moduleMetaMap, accessMap]);
 
   // Sorting on loaded data
   const { sortedData: sortedDeals, sortKey, sortDirection, handleSort } = useTableSort({
