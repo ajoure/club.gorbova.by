@@ -624,10 +624,22 @@ export default function AdminDeals() {
         return (deal.tariffs as any)?.name || "";
       case "deal_date":
         return getEffectiveDealDate(deal);
+      case "final_price": {
+        // Принудительно number — иначе строки сравниваются лексикографически
+        const v = deal.final_price;
+        if (v == null || v === "") return null;
+        const n = typeof v === "number" ? v : Number(v);
+        return Number.isFinite(n) ? n : null;
+      }
+      case "trial_end_at": {
+        // Колонка «Доступ до» — сортируем по фактической дате окончания доступа
+        const accessUntil = accessMap?.get(deal.id)?.access_until || deal.trial_end_at;
+        return accessUntil ? new Date(accessUntil) : null;
+      }
       default:
         return deal[fieldKey];
     }
-  }, [fallbackProfilesMap, moduleMetaMap]);
+  }, [fallbackProfilesMap, moduleMetaMap, accessMap]);
 
   // Export columns
   const getDealsExportColumns = useCallback((): ExportColumn<any>[] => [
