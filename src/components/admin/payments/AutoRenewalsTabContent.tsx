@@ -1507,7 +1507,7 @@ export function AutoRenewalsTabContent() {
                 )}
               >
                 <CreditCard className="h-3 w-3" />
-                Без карты (MIT): {stats.noCard.count}
+                Без карты: {stats.noCard.count}
               </button>
             )}
           </div>
