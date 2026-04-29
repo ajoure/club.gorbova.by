@@ -1235,24 +1235,13 @@ ${amountLine}
                 </div>
               )}
 
-              {/*
-                Кнопки футера — всегда в один ряд (даже в узком preview-iframe),
-                выровнены по правому краю и одной высоты для премиум-вида.
-                На очень узких экранах flex-wrap аккуратно перенесёт нижнюю кнопку,
-                сохраняя выравнивание правее, а не схлопывая всё в вертикальную стопку.
-              */}
-              {/*
-                Footer: используем простой div вместо shadcn DialogFooter, чтобы
-                полностью контролировать раскладку. Кнопки всегда в одну строку
-                по правому краю, размер по контенту, без растягивания при wrap.
-              */}
-              <div className="flex flex-row flex-wrap justify-end items-center gap-2 pt-2">
+              <div className="grid grid-cols-1 gap-2 pt-2 sm:flex sm:items-center sm:justify-end">
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
                   onClick={() => onOpenChange(false)}
-                  className="h-9 px-3 w-auto flex-none"
+                  className="h-9 w-full px-3 sm:w-auto sm:flex-none"
                 >
                   Отмена
                 </Button>
@@ -1262,7 +1251,7 @@ ${amountLine}
                   variant={effectiveTelegramUserId ? "outline" : "default"}
                   disabled={isCreateDisabled || combinedPending}
                   onClick={() => createPublicLinkMutation.mutate()}
-                  className="h-9 px-3 w-auto flex-none"
+                  className="h-9 w-full px-3 sm:w-auto sm:flex-none"
                 >
                   {createPublicLinkMutation.isPending ? (
                     <Loader2 className="h-4 w-4 animate-spin mr-2 shrink-0" />
@@ -1277,7 +1266,7 @@ ${amountLine}
                     size="sm"
                     disabled={isCreateDisabled || combinedPending}
                     onClick={handleCreateAndSendTelegram}
-                    className="h-9 px-3 w-auto flex-none"
+                    className="h-9 w-full px-3 sm:w-auto sm:flex-none"
                   >
                     {combinedPending ? (
                       <Loader2 className="h-4 w-4 animate-spin mr-2 shrink-0" />
