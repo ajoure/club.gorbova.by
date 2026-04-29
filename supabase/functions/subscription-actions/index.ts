@@ -2,6 +2,146 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { syncEntitlement } from '../_shared/entitlement-sync.ts';
 
+// ============= Resume eligibility (3-level check) =============
+// SOT: local state + payment method + provider state.
+// Read-only helper — never writes. Used by both `check-resume` and `resume`.
+type ResumeReason =
+  | 'ok'
+  | 'not_needed'
+  | 'no_payment_method'
+  | 'provider_dead'
+  | 'provider_check_failed';
+
+interface ResumeEligibility {
+  resume_available: boolean;
+  reason: ResumeReason;
+  has_card: boolean;
+  provider_state: string | null;
+  provider_subscription_id: string | null;
+  payment_method_id: string | null;
+  payment_token: string | null;
+  prior_state: 'cancel_scheduled' | 'auto_renew_off_legacy' | 'active_normal';
+  cta_product_id: string | null;
+  cta_tariff_id: string | null;
+}
+
+// deno-lint-ignore no-explicit-any
+async function evaluateResumeEligibility(supabase: any, subscription: any, userId: string): Promise<ResumeEligibility> {
+  const result: ResumeEligibility = {
+    resume_available: false,
+    reason: 'ok',
+    has_card: false,
+    provider_state: null,
+    provider_subscription_id: null,
+    payment_method_id: null,
+    payment_token: null,
+    prior_state: 'active_normal',
+    cta_product_id: subscription.product_id ?? null,
+    cta_tariff_id: subscription.tariff_id ?? null,
+  };
+
+  // ---- Level 1: local state ----
+  const status = String(subscription.status || '').toLowerCase();
+  const cancelAtFuture = subscription.cancel_at && new Date(subscription.cancel_at) > new Date();
+  const autoRenewOff = subscription.auto_renew === false;
+
+  if (status !== 'active' && status !== 'trial' && status !== 'trialing') {
+    result.reason = 'not_needed';
+    return result;
+  }
+  if (!autoRenewOff && !cancelAtFuture) {
+    // Already auto-renewing and no scheduled cancellation → nothing to resume.
+    result.reason = 'not_needed';
+    return result;
+  }
+
+  result.prior_state = cancelAtFuture
+    ? 'cancel_scheduled'
+    : (autoRenewOff ? 'auto_renew_off_legacy' : 'active_normal');
+
+  // ---- Level 2: payment method ----
+  // Prefer the card already linked to the subscription; fall back to user's default active card.
+  let pm: { id: string; provider_token: string | null; status: string } | null = null;
+  if (subscription.payment_method_id) {
+    const { data } = await supabase
+      .from('payment_methods')
+      .select('id, provider_token, status')
+      .eq('id', subscription.payment_method_id)
+      .maybeSingle();
+    if (data && data.status === 'active' && data.provider_token) {
+      pm = data;
+    }
+  }
+  if (!pm) {
+    const { data } = await supabase
+      .from('payment_methods')
+      .select('id, provider_token, status')
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .not('provider_token', 'is', null)
+      .order('is_default', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (data) pm = data;
+  }
+
+  if (!pm) {
+    result.reason = 'no_payment_method';
+    return result;
+  }
+  result.has_card = true;
+  result.payment_method_id = pm.id;
+  result.payment_token = pm.provider_token;
+
+  // ---- Level 3: provider (bePaid) state ----
+  // Check provider_subscriptions for this subv2. If a record exists, its state must be active.
+  // If NO provider record exists at all → legacy local-only subscription, allowed (card already validated).
+  const { data: providerRows } = await supabase
+    .from('provider_subscriptions')
+    .select('provider_subscription_id, state, updated_at')
+    .eq('subscription_v2_id', subscription.id)
+    .eq('provider', 'bepaid')
+    .order('updated_at', { ascending: false });
+
+  if (providerRows && providerRows.length > 0) {
+    // If ANY linked provider subscription is active → ok.
+    const live = providerRows.find((r: any) => {
+      const s = String(r.state || '').toLowerCase();
+      return s === 'active' || s === 'trial';
+    });
+    const newest = providerRows[0];
+    result.provider_subscription_id = (live ?? newest).provider_subscription_id ?? null;
+    result.provider_state = String((live ?? newest).state || '').toLowerCase() || null;
+
+    if (!live) {
+      // All linked provider subs are dead (canceled/expired/terminated/failed/...).
+      result.reason = 'provider_dead';
+      return result;
+    }
+  }
+  // else: no provider record → local-only, fall through to ok.
+
+  result.resume_available = true;
+  result.reason = 'ok';
+  return result;
+}
+
+function eligibilityToHttpError(e: ResumeEligibility): { code: string; message: string } {
+  switch (e.reason) {
+    case 'no_payment_method':
+      return { code: 'resume_blocked_no_payment_method', message: 'Нужно заново привязать карту или оформить новую подписку' };
+    case 'provider_dead':
+      return { code: 'resume_blocked_provider_dead', message: 'Эту подписку нельзя возобновить, оформите новую' };
+    case 'not_needed':
+      return { code: 'resume_blocked_not_needed', message: 'Подписка уже активна' };
+    case 'provider_check_failed':
+      return { code: 'resume_blocked_provider_check_failed', message: 'Не удалось проверить статус подписки у провайдера. Попробуйте позже или оформите новую подписку.' };
+    default:
+      return { code: 'resume_blocked', message: 'Нельзя возобновить подписку' };
+  }
+}
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
