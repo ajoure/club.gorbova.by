@@ -679,14 +679,69 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     }
 
     const accessDays = tariff.access_days || 30;
-    const intervalDays = 30;
-    const trackingId = `link:order:${order.id}`;
+    // PATCH INSTALLMENT-PUBLIC-LINK: распознаём installment-subscription по meta_extra.installment_count.
+    // Для обычной подписки — старое поведение (infinite, interval=30).
+    const installmentCountRaw = Number(extraMeta.installment_count);
+    const isInstallmentSubscription = Number.isFinite(installmentCountRaw) && installmentCountRaw >= 2;
+    const billingCycles = isInstallmentSubscription ? installmentCountRaw : null;
+    const installmentExtra = (extraMeta.installment && typeof extraMeta.installment === 'object')
+      ? extraMeta.installment as Record<string, any>
+      : {};
+    const intervalDays = isInstallmentSubscription
+      ? Number(installmentExtra.interval_days ?? 30)
+      : 30;
+
+    // PATCH INSTALLMENT-PUBLIC-LINK: pre-create subscriptions_v2 ДО bePaid /subscriptions,
+    // чтобы tracking_id содержал реальный subscription_v2_id (canonical формат subv2:{sub_id}:order:{order_id}).
+    // billing_type=provider_managed (enum допускает только 'mit'|'provider_managed'); installment-маркер живёт в meta.
+    const preSubMeta: Record<string, any> = {
+      source: isInstallmentSubscription ? 'public_link_installment' : 'public_link_subscription',
+      checkout_order_id: order.id,
+      created_at_pre: new Date().toISOString(),
+    };
+    if (isInstallmentSubscription) {
+      preSubMeta.installment_count = installmentCountRaw;
+      preSubMeta.billing_cycles = billingCycles;
+      preSubMeta.installment_per_payment_amount_byn = Number(extraMeta.installment_per_payment_amount_byn ?? amountByn);
+      preSubMeta.installment_total_amount_byn = Number(extraMeta.installment_total_amount_byn ?? (amountByn * (billingCycles || 1)));
+      preSubMeta.installment = installmentExtra;
+      preSubMeta.model = 'bepaid_finite_subscription';
+    }
+    const { data: preSub, error: preSubError } = await supabase
+      .from('subscriptions_v2')
+      .insert({
+        user_id,
+        profile_id: profileId,
+        product_id,
+        tariff_id,
+        offer_id: offer_id || null,
+        order_id: order.id,
+        status: 'past_due',
+        billing_type: 'provider_managed',
+        auto_renew: !isInstallmentSubscription, // installment завершается сам после N платежей
+        access_days: accessDays,
+        amount: amountByn,
+        currency: 'BYN',
+        meta: preSubMeta,
+      })
+      .select('id')
+      .single();
+    if (preSubError || !preSub) {
+      console.error('[create-payment-checkout] subscriptions_v2 pre-create failed:', preSubError);
+      await supabase.from('orders_v2').update({ status: 'failed' }).eq('id', order.id);
+      return { success: false, error: 'Failed to pre-create subscription' };
+    }
+    const subscriptionV2Id = preSub.id as string;
+
+    const trackingId = `subv2:${subscriptionV2Id}:order:${order.id}`;
     const successReturnUrl = `${effectiveOrigin}/purchases?bepaid_sub=success&order=${order.id}`;
 
     const planTitle = `${product.name} — ${tariff.name}`;
-    const planDescription = `Подписка. Автосписание каждый месяц. Можно отменить в любой момент.`;
+    const planDescription = isInstallmentSubscription
+      ? `Рассрочка: ${billingCycles} платежа по ${amountByn} BYN каждые ${intervalDays} дней. Подписка завершится после ${billingCycles} платежей.`
+      : `Подписка. Автосписание каждый месяц. Можно отменить в любой момент.`;
 
-    const bepaidPayload = {
+    const bepaidPayload: Record<string, any> = {
       notification_url: notificationUrl,
       return_url: successReturnUrl,
       tracking_id: trackingId,
@@ -706,6 +761,9 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           interval: intervalDays,
           interval_unit: 'day',
         },
+        ...(isInstallmentSubscription
+          ? { infinite: false, billing_cycles: billingCycles, number_payment_attempts: 3 }
+          : {}),
       },
       settings: {
         language: 'ru',
