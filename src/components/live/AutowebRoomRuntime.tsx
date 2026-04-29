@@ -23,6 +23,7 @@ import { LiveEventComments } from "@/components/live/LiveEventComments";
 import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 import { AutowebTimelineOverlay } from "@/components/live/AutowebTimelineOverlay";
 import { formatDualTz } from "@/lib/autowebTzLabel";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import "@/components/live/liveRoomTheme.css";
 
 interface Props {
