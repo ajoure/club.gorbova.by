@@ -807,7 +807,7 @@ export function AutoRenewalsTabContent() {
     
     switch (filter) {
       case 'due_today':
-        result = result.filter(r => r.next_charge_at && isTodayMinsk(new Date(r.next_charge_at)));
+        result = result.filter(r => r.charged_today || (r.next_charge_at && isTodayMinsk(new Date(r.next_charge_at))));
         break;
       case 'due_week':
         result = result.filter(r => {
@@ -923,7 +923,9 @@ export function AutoRenewalsTabContent() {
     // PATCH-6: For due/overdue metrics, exclude staff and NULL next_charge_at
     const eligibleForMetrics = renewals.filter(r => r.next_charge_at && !r.is_staff);
     
-    const dueTodayList = eligibleForMetrics.filter(r => isTodayMinsk(new Date(r.next_charge_at!)));
+    const chargedTodayList = renewals.filter(r => r.charged_today && !r.is_staff);
+    const dueTodayRemainingList = eligibleForMetrics.filter(r => isTodayMinsk(new Date(r.next_charge_at!)) && !r.charged_today);
+    const dueTodayList = renewals.filter(r => !r.is_staff && (r.charged_today || (r.next_charge_at && isTodayMinsk(new Date(r.next_charge_at)))));
     const overdueList = eligibleForMetrics.filter(r => isPastMinsk(new Date(r.next_charge_at!)));
     // AR-P0.9.6: exclude BePaid from "no card" stat (PATCH 3.1: use is_bepaid)
     const noCardList = renewals.filter(r => !r.payment_method_id && !r.is_bepaid);
@@ -955,6 +957,8 @@ export function AutoRenewalsTabContent() {
     return {
       total: { count: renewals.length, sum: sumAmount(renewals) },
       dueToday: { count: dueTodayList.length, sum: sumAmount(dueTodayList) },
+      dueTodayCharged: { count: chargedTodayList.length, sum: sumAmount(chargedTodayList) },
+      dueTodayRemaining: { count: dueTodayRemainingList.length, sum: sumAmount(dueTodayRemainingList) },
       overdue: { count: overdueList.length, sum: sumAmount(overdueList) },
       noCard: { count: noCardList.length, sum: sumAmount(noCardList) },
       noChargeDate: { count: noChargeDateList.length, sum: 0 },
