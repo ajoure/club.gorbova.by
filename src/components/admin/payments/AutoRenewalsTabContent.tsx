@@ -1577,6 +1577,9 @@ export function AutoRenewalsTabContent() {
             Обновить
           </Button>
 
+          {/* INV-22 — шестерёнка с badge числа зомби-подписок, открывает диалог разбора */}
+          <Inv22ResolverPanel />
+
           {/* PATCH-5: Tools dropdown */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
