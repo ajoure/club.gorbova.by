@@ -1,408 +1,245 @@
-&nbsp;
-
 да, согласен, с учетом правок:
 
-1. В миграции provider_subscriptions.order_id добавить IF NOT EXISTS и index CONCURRENTLY только если ваш migration-runner это поддерживает. Если нет — обычный index, но с коротким комментарием.
-2. test-payment-complete лучше не смешивать с production-fix. Можно включить, но как отдельный подпункт PATCH-SIMULATION-CANONICAL, чтобы не блокировать checkout-fix.
-3. В create-payment-checkout.ts обязательно:
-  - rollback pre-created subscriptions_v2 при любой ошибке bePaid;
-  - order.status='failed';
-  - orders_v2.meta.last_provider_error с sanitized provider response.
-4. В DoD добавить grep:
-
-rg -n "access_days:|billing_type: 'internal_installment'|from\\('subscriptions_v2'\\).*insert" supabase/functions/_shared supabase/functions/bepaid-webhook supabase/functions/test-payment-complete
-
-5. Старые failed-заказы не чинить в этом патче — только диагностика.
+1. В trigger-fix не блокировать все order_id IS NOT NULL. Блокировать только если meta.source IN ('public_link_installment','public_link_subscription') или tracking_id LIKE 'subv2:%:order:%'. Иначе можно задеть легитимные legacy-подписки.
+2. Manual grant не должен попадать под антидубль. Условие: если source='manual' / is_manual=true / admin action — разрешить повторную отправку.
+3. В telegram-grant-access duplicate guard должен проверять не только telegram_messages, но и telegram_logs/audit с тем же idempotency_key, чтобы не было гонки между двумя параллельными вызовами.
+4. В *shared/log-automated-telegram.ts idempotency key лучше писать в meta.idempotency*key, но не делать DB constraint в этом патче.
+5. UI-дедуп status='ok' добавить, но failed/skipped оставить видимыми.
 
 Можно выполнять.
+
+&nbsp;
 
 План:
 
 ## 1. Проблема
 
-На публичной оплате сейчас воспроизводится ошибка `Failed to pre-create subscription`. Это не «случайная» ошибка bePaid, а конкретный backend-регресс в новой ветке finite subscription для рассрочек/подписок.
+Дубли Telegram-сообщений после оплаты/выдачи доступа не устранены полностью:
 
-Фактический root cause по логам backend:
-
-```text
-subscriptions_v2 pre-create failed:
-PGRST204: Could not find the 'access_days' column of 'subscriptions_v2' in the schema cache
-```
-
-В `supabase/functions/_shared/create-payment-checkout.ts` при pre-create `subscriptions_v2` записывается top-level поле `access_days`, но в реальной таблице `subscriptions_v2` такого столбца нет. В других частях системы `access_days` хранится в `tariffs.access_days` или в `meta`, поэтому текущая вставка ломает создание checkout до вызова bePaid.
-
-Дополнительно ревизия показала несколько мест, которые нужно исправить вместе, чтобы проблема не повторялась:
-
-1. В webhook provider-managed подписок текущая логика после оплаты выставляет `auto_renew: true` для всех provider-managed подписок, включая finite installment. Для finite-рассрочки ожидается `auto_renew=false`.
-2. В старой link-order ветке webhook есть fallback с `billing_type='internal_installment'`, но реальный constraint `subscriptions_v2.billing_type` допускает только `mit` и `provider_managed`.
-3. `test-payment-complete` в симуляции вручную создает `subscriptions_v2` и `entitlements`, обходя канонический `grant-access-for-order`. Это противоречит текущему SOT и может давать расхождения между тестом и реальной оплатой.
-4. `provider_subscriptions` сейчас не имеет отдельного `order_id` столбца, хотя контракт требует сохранять связь с order. Сейчас order лежит только в `meta.order_id`, что слабее для диагностики и join-proof.
-5. Пользовательская ошибка сейчас пробрасывается как технический текст `Failed to pre-create subscription`, вместо нормализованного безопасного сообщения.
+- клиент получает два DM «Доступ открыт!»;
+- в контакт-центре дополнительно видны системные/служебные карточки типа «Авто-выдача...»;
+- по свежему кейсу пользователя `shefska@gmail.com / Валентина Хрущёва` подтверждено два исходящих сообщения:
+  - `18:00:00` — `telegram_messages.meta.source_id = order_id`;
+  - `18:00:10` — `telegram_messages.meta.source_id = subscription_id`.
 
 ## 2. Диагностика
 
-Проверено:
+Факты по свежему кейсу:
 
-- `docs/ENGINEERING_RULES.md` прочитан, работаю по Diagnose → Plan → Dry run → Execute → Verify.
-- Реальная схема `subscriptions_v2` не содержит `access_days`.
-- Реальная схема `provider_subscriptions` содержит `subscription_v2_id`, `provider_subscription_id`, `meta`, но не содержит `order_id`.
-- Constraint `subscriptions_v2_billing_type_check` допускает только:
+1. В `telegram_messages` зафиксированы два реальных исходящих Telegram DM:
+  - `message_id=17164`, `source_id=3e376279-5ba2-4753-a071-59979d8ef926` — пришло из `grant-access-for-order`;
+  - `message_id=17170`, `source_id=085952d5-ef13-41c6-91e3-a49d431b5e7d` — пришло из `telegram_access_queue` через `telegram-process-access-queue`.
+2. В `telegram_access_queue` есть строка:
+  - `subscription_id=085952d5-ef13-41c6-91e3-a49d431b5e7d`;
+  - `status=completed`;
+  - создана в момент активации подписки.
+3. Текущий trigger `public.trg_subscription_grant_telegram()` уже имеет guard, но он ловит только:
+  - `meta.granted_by = 'grant-access-for-order'`;
+  - `meta.source = 'grant-access-for-order'`;
+  - `meta.initial_order_id`.
+4. Для provider-managed public link подписки реальный `subscriptions_v2.meta` другой:
+  - `meta.source = 'public_link_subscription'`;
+  - `meta.checkout_order_id = order_id`;
+  - `meta.tracking_id = subv2:{subscription_id}:order:{order_id}`;
+  - `meta.extended_by_orders` содержит order_id после `grant-access-for-order`.
 
-```sql
-billing_type IN ('mit', 'provider_managed')
-```
+Из-за этого trigger не распознает такую подписку как уже обработанную каноническим order-путём и ставит вторую задачу в `telegram_access_queue`.
 
-- В логах `public-checkout` зафиксированы две ошибки pre-create на одной публичной ссылке:
-
-```text
-Could not find the 'access_days' column of 'subscriptions_v2'
-```
-
-- В базе уже есть failed-заказы от этих попыток:
-
-```text
-status=failed
-payment_flow=renewal_subscription
-payment_link_id=9cd076e2-a448-4ef0-8810-d3791310d1d8
-amount=150.00 BYN
-```
-
-- В `test-payment-direct` уже используется `grant-access-for-order`, а `test-payment-complete` еще использует ручной bypass.
+5. Дополнительная причина «системных» карточек в UI:
+  - `ContactTelegramChat.tsx` скрывает mirror-events только при `status === 'success'`;
+  - `telegram-grant-access` пишет `telegram_logs.status = 'ok'`, поэтому даже mirrored `AUTO_GRANT` может отображаться как отдельная системная карточка.
+6. Дополнительный обнаруженный дефект наблюдаемости:
+  - `telegram-grant-access` формирует ledger key с `Date.now()`;
+  - `fulfillment-executor` запрещает timestamp-like значения;
+  - в логах есть ошибка ledger write, non-blocking, но это нарушает auditability.
 
 ## 3. Предлагаемое решение
 
-### 3.1. Срочный backend fix создания payment checkout
+### A. Backend: остановить второй реальный DM
 
-В `supabase/functions/_shared/create-payment-checkout.ts`:
+Обновить `public.trg_subscription_grant_telegram()` через миграцию.
 
-- Убрать top-level `access_days` из insert в `subscriptions_v2`.
-- Сохранять `access_days` только в `meta.access_days` / `meta.tariff_access_days`.
-- При ошибке pre-create:
-  - помечать `orders_v2.status='failed'`;
-  - писать `orders_v2.meta.precreate_subscription_error` с safe-payload;
-  - писать `audit_logs` с `action='payment_checkout.subscription_precreate_failed'`;
-  - возвращать стабильный error-code, например `subscription_precreate_failed`, а не raw English.
-- Сохранить уже добавленную rollback-логику после bePaid `/subscriptions` 4xx/5xx, но дополнить audit/meta proof.
+Новый guard должен считать подписку уже обработанной canonical checkout/order flow, если выполняется хотя бы одно условие:
 
-### 3.2. Finite installment subscription contract
+- текущие старые условия сохраняются;
+- `NEW.order_id IS NOT NULL`;
+- `NEW.meta ? 'checkout_order_id'`;
+- `NEW.meta ? 'tracking_id' AND NEW.meta->>'tracking_id' LIKE 'subv2:%:order:%'`;
+- `jsonb_array_length(NEW.meta->'extended_by_orders') > 0`.
 
-В `supabase/functions/_shared/create-payment-checkout.ts`:
+Эффект: provider-managed подписка после оплаты не будет ставить вторую queue-задачу, потому что первичная выдача уже прошла через `grant-access-for-order`.
 
-- Для finite installment сохранять в `subscriptions_v2.meta`:
-  - `model: 'bepaid_finite_subscription'`;
-  - `installment_count`;
-  - `billing_cycles`;
-  - `installment_per_payment_amount_byn`;
-  - `installment_total_amount_byn`;
-  - `tracking_id` после получения bePaid response;
-  - `access_days` из тарифа в meta, не как колонку.
-- Для обычных подписок оставить прежний режим infinite provider subscription.
+### B. Backend: идемпотентность самого `telegram-grant-access`
 
-### 3.3. `provider_subscriptions.order_id` как явная связь
+Даже если второй вызов всё же придёт из другого legacy-пути, `telegram-grant-access` должен не отправлять второй «Доступ открыт!» по тому же бизнес-событию.
 
-Добавить безопасную миграцию:
+Добавить в `telegram-grant-access` pre-send guard:
 
-```sql
-ALTER TABLE public.provider_subscriptions
-ADD COLUMN IF NOT EXISTS order_id uuid REFERENCES public.orders_v2(id) ON DELETE SET NULL;
+- вычислить canonical business id:
+  - если `source_id` — это `orders_v2.id`, использовать этот order id;
+  - если `source_id` — это `subscriptions_v2.id`, попробовать взять order id из:
+    - `subscriptions_v2.order_id`;
+    - `meta.checkout_order_id`;
+    - `meta.initial_order_id`;
+    - `meta.extended_by_orders[0]`;
+    - `meta.tracking_id` формата `subv2:{sub}:order:{order}`.
+- перед `sendMessage(...)` проверить, нет ли уже `telegram_messages` для `user_id + club_id + event='access_granted_dm'` с тем же canonical order id;
+- если есть — не создавать новые invite links и не отправлять DM, а вернуть `skipped_duplicate=true` и записать audit/log без `message_text`.
 
-CREATE INDEX IF NOT EXISTS idx_provider_subscriptions_order_id
-ON public.provider_subscriptions(order_id)
-WHERE order_id IS NOT NULL;
-```
+Важно: это не заменяет trigger-fix, а страхует систему от повторов при retries/legacy queue.
 
-Затем backfill только там, где `meta->>'order_id'` выглядит как UUID и соответствующий order существует:
+### C. Backend: сделать mirror logging идемпотентным
 
-```sql
-UPDATE public.provider_subscriptions ps
-SET order_id = (ps.meta->>'order_id')::uuid
-WHERE ps.order_id IS NULL
-  AND ps.meta->>'order_id' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-  AND EXISTS (
-    SELECT 1 FROM public.orders_v2 o
-    WHERE o.id = (ps.meta->>'order_id')::uuid
-  );
-```
+В `_shared/log-automated-telegram.ts` добавить optional `idempotency_key`/`meta.idempotency_key` support и перед insert проверять existing row по `meta->>'idempotency_key'`.
 
-В коде upsert `provider_subscriptions` дополнительно писать:
-
-- `order_id: order.id`;
-- `provider_subscription_id`;
-- `subscription_v2_id`;
-- `meta.tracking_id`;
-- `meta.installment_count`;
-- `meta.billing_cycles`.
-
-### 3.4. Webhook fix для finite installments
-
-В `supabase/functions/bepaid-webhook/index.ts`, provider-managed branch `subv2:{sub_id}:order:{order_id}`:
-
-- До update определить `isInstallmentFinite` по `subscriptions_v2.meta.installment_count >= 2` или `meta.model='bepaid_finite_subscription'`.
-- Для finite installment при активации:
-  - `billing_type='provider_managed'`;
-  - `auto_renew=false`;
-  - `meta.model='bepaid_finite_subscription'` сохранить;
-  - `meta.billing_cycles=N` сохранить;
-  - `meta.tracking_id` сохранить;
-  - audit `model: 'bepaid_finite_subscription'` оставить/усилить;
-  - не материализовать `installment_payments`.
-- Для обычных provider-managed подписок оставить `auto_renew=true`.
-
-### 3.5. Старый internal installment fallback в webhook
-
-В старой link-order ветке `bepaid-webhook`:
-
-- Не использовать несуществующий/запрещенный `billing_type='internal_installment'`.
-- Для legacy internal installment fallback использовать допустимый `billing_type='mit'` + явный `meta.model='internal_installment'` / `meta.source='bepaid_link_order_installment_fallback'`.
-- Новая finite bePaid installment ветка должна обходить `installment_payments`, поэтому DoD для новых рассрочек остается `count(*) = 0`.
-
-### 3.6. Исправить симуляцию оплаты
-
-В `supabase/functions/test-payment-complete/index.ts`:
-
-- Убрать ручное создание `subscriptions_v2`.
-- Убрать ручной upsert `entitlements`.
-- После перевода order в `paid` и создания `payments_v2` вызывать канонический `grant-access-for-order`.
-- Возвращать results:
-  - `order_updated`;
-  - `payment_created`;
-  - `grant_access_invoked`;
-  - `subscription_action`;
-  - `entitlement_action`;
-  - ошибки grant, если есть.
-- Сохранить super_admin guard.
-- Добавить audit proof, что симуляция прошла через canonical grant path.
-
-`test-payment-direct` уже ближе к канону, но будет проверен на соответствие тем же result-полям и audit-proof.
-
-### 3.7. Нормализация UI-ошибок
-
-В `src/utils/normalizeEdgeFunctionError.ts`:
-
-- Добавить mapping для:
-  - `subscription_precreate_failed`;
-  - `bePaid subscription creation failed`;
-  - `Failed to pre-create subscription`.
-
-Пользователь должен видеть не raw backend-текст, а нормальное сообщение, например:
+Для access-granted DM передавать ключ вида:
 
 ```text
-Не удалось подготовить платёж. Мы уже зафиксировали ошибку, попробуйте ещё раз через минуту или обратитесь в поддержку.
+access_granted_dm:{user_id}:{club_id}:{canonical_order_id_or_source_id}
 ```
 
-В `src/pages/PublicPayPage.tsx` дополнительная логика не должна принимать бизнес-решения; только показывать нормализованную ошибку.
+Если запись уже есть — не вставлять второй mirror-row в `telegram_messages`.
+
+### D. UI: убрать лишние системные карточки в контакт-центре
+
+В `src/components/admin/ContactTelegramChat.tsx` поправить `isMirroredEvent`:
+
+- считать успешными не только `status === 'success'`, но и `status === 'ok'`;
+- добавить `AUTO_GRANT` и `MANUAL_GRANT` в mirrorable actions;
+- если `meta.mirrored_to_telegram_messages === true` или `meta.telegram_message_id` совпадает с исходящим bubble — скрывать event-pill;
+- failed/skipped события оставить видимыми для диагностики.
+
+Эффект: реальный bubble остаётся, дублирующая системная карточка «Авто-выдача...» пропадает.
+
+### E. Ledger auditability fix
+
+В `telegram-grant-access` заменить `ledgerSourceEventKey`:
+
+Сейчас:
+
+```text
+tg-grant:{user_id}:{club_ids}:{Date.now()}
+```
+
+Нужно сделать deterministic:
+
+```text
+tg-grant:{source || manual}:{source_id || admin_id || user_id}:{club_ids}
+```
+
+Без timestamp-like числа, чтобы `writeLedgerEntry` не падал.
 
 ## 4. Изменяемые компоненты
 
+### SQL / DB
+
+- новая миграция для `public.trg_subscription_grant_telegram()`;
+- возможно, read-only proof queries по:
+  - `telegram_messages`;
+  - `telegram_logs`;
+  - `telegram_access_queue`;
+  - `subscriptions_v2`;
+  - `pg_get_functiondef(...)`.
+
 ### Edge functions
 
-- `supabase/functions/_shared/create-payment-checkout.ts`
-- `supabase/functions/bepaid-webhook/index.ts`
-- `supabase/functions/test-payment-complete/index.ts`
-- при необходимости точечно: `supabase/functions/test-payment-direct/index.ts`
+- `supabase/functions/telegram-grant-access/index.ts`;
+- `supabase/functions/_shared/log-automated-telegram.ts`.
 
 ### UI
 
-- `src/utils/normalizeEdgeFunctionError.ts`
-- при необходимости только отображение: `src/pages/PublicPayPage.tsx`
+- `src/components/admin/ContactTelegramChat.tsx`.
 
-### Database
+## 5. Что не будет изменено
 
-- `provider_subscriptions`: добавить nullable `order_id` + index + safe backfill.
-- Не добавлять `subscriptions_v2.access_days`, потому что это противоречит текущей модели: duration берется из `tariffs.access_days` и/или `meta`.
+- не меняю платежную архитектуру bePaid;
+- не меняю `orders_v2`, `subscriptions_v2`, `entitlements` как source of truth;
+- не удаляю старые сообщения из Telegram у клиентов;
+- не делаю массовый DELETE/UPDATE исторических данных;
+- не меняю правила доступа `access_rules`;
+- не меняю механику инвайт-ссылок, кроме предотвращения повторной отправки.
 
-### Не трогать
-
-- `src/integrations/supabase/client.ts`
-- `src/integrations/supabase/types.ts`
-- `.env`
-- роли/права пользователей
-- публичные payment links массово не инвалидировать
-- старые оплаченные заказы не repair-ить в этом patch, кроме диагностического backfill `provider_subscriptions.order_id`
-
-## 5. Dry-run
+## 6. Dry-run
 
 Перед Execute выполнить безопасные проверки:
 
-### 5.1. Schema proof
+1. Проверить текущую функцию trigger:
 
 ```sql
-SELECT column_name
-FROM information_schema.columns
-WHERE table_schema='public'
-  AND table_name='subscriptions_v2'
-ORDER BY ordinal_position;
+SELECT pg_get_functiondef('public.trg_subscription_grant_telegram()'::regprocedure);
 ```
 
-Ожидание: `access_days` отсутствует.
+2. Проверить fresh duplicate cohort:
 
 ```sql
-SELECT conname, pg_get_constraintdef(oid)
-FROM pg_constraint
-WHERE conrelid='public.subscriptions_v2'::regclass;
+WITH access_msgs AS (...)
+SELECT user_id, canonical_order_id, count(*), array_agg(source_id)
+FROM access_msgs
+GROUP BY user_id, canonical_order_id
+HAVING count(*) > 1;
 ```
 
-Ожидание: `billing_type` только `mit/provider_managed`.
-
-### 5.2. Failed checkout scope
+3. Проверить строки queue, созданные для canonical provider-managed подписок:
 
 ```sql
-SELECT count(*)
-FROM orders_v2
-WHERE status='failed'
-  AND meta->>'payment_link_id' IS NOT NULL
-  AND meta->>'payment_flow'='renewal_subscription'
-  AND created_at > now() - interval '24 hours';
-```
-
-Только диагностика, без repair.
-
-### 5.3. Backfill scope для provider_subscriptions.order_id
-
-После добавления nullable column, до UPDATE:
-
-```sql
-SELECT count(*) AS would_backfill
-FROM provider_subscriptions ps
-WHERE ps.order_id IS NULL
-  AND ps.meta->>'order_id' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-  AND EXISTS (
-    SELECT 1 FROM orders_v2 o
-    WHERE o.id = (ps.meta->>'order_id')::uuid
+SELECT q.*
+FROM telegram_access_queue q
+JOIN subscriptions_v2 s ON s.id = q.subscription_id
+WHERE q.created_at > now() - interval '7 days'
+  AND (
+    s.order_id IS NOT NULL
+    OR s.meta ? 'checkout_order_id'
+    OR s.meta->>'tracking_id' LIKE 'subv2:%:order:%'
   );
 ```
 
-STOP если rowcount неожиданно большой или есть невалидные UUID.
+4. Проверить UI-only источник системных карточек — без изменения данных.
 
-### 5.4. Code dry-run
+## 7. Execute
 
-- Поиск по коду на запрещенный insert:
+После approval:
 
-```text
-subscriptions_v2 insert + top-level access_days
-```
+1. Создать миграцию с обновленным `trg_subscription_grant_telegram()`.
+2. Обновить `telegram-grant-access`:
+  - canonical source resolution;
+  - pre-send duplicate guard;
+  - deterministic ledger key;
+  - audit `telegram.grant.skipped_duplicate_dm` при skip.
+3. Обновить `_shared/log-automated-telegram.ts`:
+  - idempotency key check;
+  - не бросать ошибку при duplicate.
+4. Обновить `ContactTelegramChat.tsx`:
+  - корректно скрывать mirrored `AUTO_GRANT/MANUAL_GRANT` events со статусом `ok`.
+5. Деплой затронутых edge functions.
 
-Ожидание после patch: таких вставок нет.
+## 8. STOP-guards
 
-- Поиск по коду на запрещенный billing_type:
+Остановить выполнение и не деплоить, если:
 
-```text
-billing_type: 'internal_installment'
-```
+- `subscriptions_v2` не содержит ожидаемых полей `order_id`, `meta`, `status`, `product_id`, `tariff_id`;
+- `trg_subscription_grant_telegram()` отличается от прочитанной структуры настолько, что нельзя безопасно внести additive guard;
+- duplicate cohort показывает неожиданный источник не из `order/subscription` пары;
+- новая проверка может блокировать manual re-issue links без явного `is_manual=true`;
+- idempotency guard не может надежно извлечь canonical order id — тогда fallback только на `(user_id, club_id, source_id)`.
 
-Ожидание после patch: не используется как значение колонки.
+## 9. DoD
 
-## 6. Execute
+Задача считается выполненной, если:
 
-1. Внести миграцию `provider_subscriptions.order_id` + index + guarded backfill.
-2. Исправить `create-payment-checkout.ts`:
-  - убрать top-level `access_days`;
-  - усилить pre-create error audit/meta;
-  - писать `provider_subscriptions.order_id`;
-  - сохранить finite installment meta.
-3. Исправить `bepaid-webhook/index.ts`:
-  - finite installment `auto_renew=false`;
-  - audit model proof;
-  - убрать запрещенный `internal_installment` billing_type fallback.
-4. Исправить `test-payment-complete/index.ts`:
-  - перейти на `grant-access-for-order`;
-  - убрать ручные writes subscriptions/entitlements;
-  - audit canonical simulation.
-5. Добавить нормализацию ошибок в `normalizeEdgeFunctionError.ts`.
-6. Задеплоить измененные backend functions:
-  - `public-checkout` если изменился shared helper;
-  - `admin-create-payment-link` если использует shared helper;
-  - `bepaid-create-token` если использует shared helper;
-  - `subscription-renewal-reminders` если тянет shared helper;
-  - `bepaid-webhook`;
-  - `test-payment-complete`.
+1. Для новой оплаты provider-managed public link создаётся только один реальный Telegram DM «Доступ открыт!».
+2. `telegram_access_queue` не получает вторую `grant`-задачу для подписки, у которой есть canonical order markers (`order_id`, `checkout_order_id`, `subv2:*:order:*`, `extended_by_orders`).
+3. Если legacy queue всё-таки вызовет `telegram-grant-access`, функция вернёт skip и не отправит второй DM.
+4. В контакт-центре отображается один bubble с кнопками входа, без лишней системной карточки «Авто-выдача...» рядом с ним.
+5. Failed/skipped диагностические events остаются видимыми.
+6. `telegram-grant-access` больше не пишет ledger error из-за timestamp-like source_event_key.
+7. Proof SQL показывает отсутствие новых дублей после патча.
 
-## 7. STOP-guards
+## 10. Риски и зависимости
 
-Остановить Execute, если:
+- Старые уже отправленные Telegram DM удалить невозможно без отдельной операции удаления сообщений через Telegram API; в рамках этого патча не делаем.
+- Если администратор вручную переотправляет доступ (`is_manual=true`), нужно сохранить возможность повторной ручной выдачи; антидубль должен блокировать только автоматические повторные grant-события.
+- Если есть legacy direct subscription flow без order id, он должен продолжить работать через queue.
 
-- реальная схема отличается от уже проверенной;
-- `provider_subscriptions.order_id` уже существует с другим типом;
-- backfill затрагивает неожиданно большой объем строк;
-- в `subscriptions_v2` обнаружены production-зависимости от несуществующего `access_days` как колонки;
-- тестовый вызов public checkout возвращает ошибку provider credentials вместо исправленного pre-create flow;
-- webhook finite installment не может определить `subscription_v2_id` и `order_id` из tracking_id.
+## 11. Требуется дополнительная информация
 
-## 8. DoD
-
-Задача считается выполненной, когда выполнены все проверки:
-
-### 8.1. Нет текущей ошибки pre-create
-
-- `public-checkout` больше не пишет `access_days` как колонку `subscriptions_v2`.
-- Повторная попытка создать checkout для подписки/рассрочки не падает с `PGRST204`.
-- Ошибка `Failed to pre-create subscription` не появляется пользователю как raw-текст.
-
-### 8.2. Proof finite installment после тестовой оплаты
-
-Для тестового `:order_id`:
-
-```sql
-SELECT s.id, s.status, s.billing_type, s.auto_renew,
-       s.meta->>'model' AS model,
-       s.meta->>'billing_cycles' AS billing_cycles,
-       ps.subscription_v2_id,
-       ps.order_id,
-       ps.meta->>'tracking_id' AS tracking_id
-FROM subscriptions_v2 s
-LEFT JOIN provider_subscriptions ps ON ps.subscription_v2_id = s.id
-WHERE s.order_id = :order_id;
-```
-
-Ожидание:
-
-```text
-billing_type='provider_managed'
-auto_renew=false
-model='bepaid_finite_subscription'
-billing_cycles=N
-ps.order_id=:order_id
-tracking_id='subv2:{sub_id}:order:{order_id}'
-```
-
-И:
-
-```sql
-SELECT count(*)
-FROM installment_payments
-WHERE order_id = :order_id;
-```
-
-Ожидание:
-
-```text
-0
-```
-
-### 8.3. Simulation proof
-
-Для `test-payment-complete`:
-
-- нет прямого insert в `subscriptions_v2`;
-- нет прямого upsert в `entitlements`;
-- доступ выдается через `grant-access-for-order`;
-- audit содержит proof canonical simulation.
-
-### 8.4. Regression checks
-
-- One-time checkout работает по старой ветке.
-- Обычная provider-managed subscription сохраняет `auto_renew=true`.
-- Finite installment provider-managed subscription сохраняет `auto_renew=false`.
-- Старый internal installment fallback не падает на `billing_type` constraint.
-- `provider_subscriptions` содержит `provider_subscription_id`, `subscription_v2_id`, `order_id`, `meta.tracking_id`, `meta.installment_count`, `meta.billing_cycles` для finite installment.
-
-## 9. Риски и зависимости
-
-- Если bePaid отклонит payload `/subscriptions`, checkout не будет создан, но pre-created `subscriptions_v2` должен быть rollbacked в `canceled` с meta-error. Это уже предусмотрено и будет усилено audit-proof.
-- Старые failed-заказы от текущей ошибки останутся failed; их repair/cleanup — отдельный PATCH, если понадобится.
-- Добавление `provider_subscriptions.order_id` безопасно как nullable column; жесткий `NOT NULL` не вводится, чтобы не ломать legacy rows.
-- `provider_subscriptions` backfill не меняет платежные статусы и не влияет на доступ.
-
-## 10. Требуется дополнительная информация
-
-Не требуется. Причина ошибки доказана логами и схемой. После approval можно выполнять Execute.
+Дополнительная информация от вас не требуется. Диагностика по свежему кейсу уже подтвердила конкретный источник дублей: canonical order path + legacy subscription queue path.
