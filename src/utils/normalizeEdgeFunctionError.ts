@@ -103,6 +103,19 @@ function extractMeaningful(body: unknown): string | null {
 function mapKnown(raw: string): string | null {
   const s = raw.toLowerCase();
 
+  if (s.includes('resume_blocked_no_payment_method')) {
+    return 'Нужно заново привязать карту или оформить новую подписку.';
+  }
+  if (s.includes('resume_blocked_provider_dead')) {
+    return 'Эту подписку нельзя возобновить — оформите новую.';
+  }
+  if (s.includes('resume_blocked_not_needed')) {
+    return 'Подписка уже активна.';
+  }
+  if (s.includes('resume_blocked_provider_check_failed')) {
+    return 'Не удалось проверить статус подписки у провайдера. Попробуйте позже или оформите новую подписку.';
+  }
+
   if (
     s.includes("already has active provider subscription") ||
     s.includes("duplicate_subscription")
