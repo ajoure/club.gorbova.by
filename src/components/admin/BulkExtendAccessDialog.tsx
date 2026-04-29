@@ -339,13 +339,14 @@ export function BulkExtendAccessDialog({
         // PATCH-EXECUTE-TARGET-DATE: for admin manual edits send the exact previewed
         // date per row. This bypasses replay/idempotency no-op and also allows
         // decreasing an incorrectly set access window.
+        const shouldManualEditExistingAccess = isAdminOverride && !!row.currentEnd && !!row.newEnd;
         const body: Record<string, any> = {
           orderId: row.orderId,
           extendFromCurrent,
-          adminManualAccessEdit: isAdminOverride,
+          adminManualAccessEdit: shouldManualEditExistingAccess,
         };
 
-        if (isAdminOverride && row.newEnd) {
+        if (shouldManualEditExistingAccess) {
           body.customAccessEndAt = row.newEnd;
         } else if (mode === "date" && targetEndDateFromPicker) {
           body.customAccessEndAt = targetEndDateFromPicker.toISOString();
