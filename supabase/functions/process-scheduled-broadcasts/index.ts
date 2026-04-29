@@ -238,9 +238,8 @@ Deno.serve(async (req) => {
     //  - dry_run    → just record skipped run, no template mutation
     if (totalCount === 0) {
       console.warn(`[broadcast-dispatcher] template ${tpl.id} empty audience — skipping send`);
-      const epochMin = Math.floor(Date.now() / 60000);
       for (const channel of channels) {
-        const idemKey = `tpl:${tpl.id}:${channel}:${epochMin}:${triggeredBy}`;
+        const idemKey = `tpl:${tpl.id}:${channel}:${slotKey}:${triggeredBy}`;
         await supabase.from('broadcast_runs').insert({
           template_id: tpl.id,
           channel,
