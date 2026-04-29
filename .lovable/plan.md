@@ -1,52 +1,151 @@
-План: красивый sticky-dock в уроке тренинга
+да, согласен, с учетом правок:
 
-## Контекст
-На странице урока (`src/pages/LibraryLesson.tsx`, маршрут `/library/<module>/<lesson>`) сейчас кнопки разнесены:
-- «Отметить как пройденный» — отдельный центрированный блок с ярко-синей `default`-кнопкой (строки 551–562).
-- «Завершить» — крайняя правая кнопка в ряду навигации Назад/Далее (строки 567–607), тоже ярко-синяя.
+1. Перед ремонтом сделать pull-state через bepaid-get-subscription-details по всем 5 provider_subscription_id.
+2. Если bePaid подтверждает expired/redirecting без успешных списаний:
+  - subscriptions_[v2.auto](http://v2.auto)_renew=false;
+  - subscriptions_v2.status='canceled' или expired — выбрать по текущему enum/правилу;
+  - provider_subscriptions.state оставить как provider-state, не переписывать искусственно;
+  - audit [inv22.repair](http://inv22.repair)_provider_dead_local_active.
+3. Не отзывать Telegram-доступ автоматически. Это отдельное решение, потому что access_end_at ещё в будущем.
+4. Добавить dry-run → execute:
+  - dry-run показывает 5 записей и planned updates;
+  - execute только после подтверждения.
+5. После execute:
 
-Нужен «премиальный» вид: одна frosted-glass панель внизу экрана с обеими кнопками и навигацией, в стиле уже существующих в проекте toast/sonner (`bg-background/40 backdrop-blur-xl border-border/30`) — не яркие синие пилюли.
+-- INV-22 должен вернуть 0
 
-## Что меняем
+SELECT count(*)
 
-### 1. Sticky-dock внизу экрана (LessonActionDock)
-Создать новый компонент `src/components/lesson/LessonActionDock.tsx` — закреплённая снизу панель:
+FROM subscriptions_v2 s
 
-- Позиционирование: `fixed bottom-4 left-1/2 -translate-x-1/2 z-40`, центрируется в видимой области; на мобильных — `bottom-3 inset-x-3 translate-x-0` (растягивается на всю ширину с боковыми отступами).
-- Геометрия: `rounded-2xl`, `px-2 py-2`, max-width ~`880px`, `min-h-12`.
-- Frosted-glass фон (как в `sonner.tsx`/`toast.tsx`): `bg-background/60 dark:bg-background/40 backdrop-blur-xl border border-border/40 shadow-lg shadow-black/5 ring-1 ring-white/5`.
-- Внутри — flex-row с тремя зонами:
-  - слева: кнопка «Назад» (`prevLesson`) — `ghost` стиль с лёгким hover `bg-foreground/5`, иконка `ArrowLeft`, в тексте — короткое «Назад» (полное название в `title`/tooltip, чтобы dock не раздувался);
-  - центр: основное действие — toggle «Отметить как пройденный» / «Отметить как непройденный»; стиль — мягкая «soft» pill: `bg-primary/15 text-primary hover:bg-primary/25 border border-primary/20 backdrop-blur-md`, иконка `CheckCircle2`. Когда урок уже пройден — `bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/25` + иконка `RotateCcw`/`CheckCheck`;
-  - справа: «Далее» — на последнем уроке заменяется на «Завершить» (тот же мягкий primary-стиль, чуть более акцентный: `bg-primary/20 ... border-primary/30`).
-- Все кнопки — `size="sm"` или `size="default"` через shadcn `Button` с `variant="ghost"` + кастомные классы (никаких ярких `default`-fillов).
-- Разделители между зонами: тонкие `w-px h-6 bg-border/40` для премиального ощущения.
+JOIN provider_subscriptions ps ON ps.subscription_v2_id = [s.id](http://s.id)
 
-Поведение:
-- На мобильных — текстовые лейблы навигации скрываются (`hidden sm:inline`), остаются только иконки.
-- При длинных названиях соседних уроков использовать `title` атрибут (нативный tooltip) вместо растягивания dock.
-- Чтобы dock не закрывал последний контент урока, добавить `pb-28` нижний spacer в `LibraryLesson` контейнере.
-- Анимация появления: `animate-in slide-in-from-bottom-4 fade-in` (tailwindcss-animate уже подключен).
+WHERE s.status='active'
 
-### 2. Удаление старых блоков в `LibraryLesson.tsx`
-- Убрать блок `Complete Button` (553–562).
-- Убрать `Separator` (564) и блок `Navigation` (566–607).
-- Вместо них — рендер `<LessonActionDock ... />` после основного контента; передать props: `isCompleted`, `onToggleComplete`, `prevLesson`, `nextLesson`, `onNavigatePrev`, `onNavigateNext`, `onFinish` (поведение «Завершить» — текущая логика возврата либо в секцию меню, либо в `/library/<moduleSlug>`).
-- Добавить `pb-28 md:pb-24` в основной контейнер страницы, чтобы контент не уходил под dock.
+  AND [s.auto](http://s.auto)_renew=true
 
-### 3. Согласованность стиля (без расширения скоупа)
-- Использовать только уже принятые в проекте токены (`bg-background/*`, `border-border/*`, `text-primary`, `text-emerald-*`) — никаких новых цветов в `tailwind.config.ts`/`index.css` не добавляем.
-- Никаких изменений в логике прогресса, маршрутизации, доступа — это чисто UI-рефактор.
+  AND s.access_end_at > now()
 
-## Затронутые файлы
-- `src/pages/LibraryLesson.tsx` — удалить старые блоки кнопок, подключить dock, добавить нижний padding.
-- `src/components/lesson/LessonActionDock.tsx` — новый компонент frosted-glass dock.
+  AND (
 
-## Проверка (DoD)
-1. Открыть `/library/<module>/<lesson>` под текущим логином в превью.
-2. Скрин 1: общий вид страницы — dock закреплён внизу, контент над ним не обрезается.
-3. Скрин 2: hover на «Отметить как пройденный» — мягкое подсвечивание, без ярко-синей заливки.
-4. Скрин 3: состояние «урок пройден» — кнопка в emerald-soft варианте, текст «Отметить как непройденный».
-5. Скрин 4: последний урок модуля — справа в dock «Завершить» вместо «Далее».
-6. Проверка адаптива (узкое окно): dock прижимается к краям с отступами, текст навигации скрывается, остаются иконки + центральная кнопка.
-7. Никаких регрессий: переходы Назад/Далее, toggle прогресса, возврат «Завершить» работают как раньше.
+    ps.state IN ('expired','redirecting')
+
+    OR (ps.state='active' AND [ps.next](http://ps.next)_charge_at IS NULL AND ps.last_charge_at IS NULL)
+
+  );
+
+Можно выполнять как отдельный repair patch.
+
+&nbsp;
+
+План: разбор INV-22 (5 рассинхронизированных подписок)
+
+## Diagnose (что показал отчёт)
+
+INV-22 — это **не мусор**, в отличие от INV-20. Это валидные «зомби-подписки»: в нашей БД они стоят активными и продлеваемыми, а на стороне bePaid их фактически нет.
+
+Все 5 случаев — один и тот же продукт (клуб, `product_id = 11c9f1b8…`) и один и тот же паттерн:
+
+```text
+                  bePaid (provider_subscriptions)   |  Наша БД (subscriptions_v2)
+sub #1  sbs_de50…  state=expired,    last=NULL      |  active, auto_renew=true, end=2026-05-02
+sub #2  sbs_6005…  state=expired,    last=NULL      |  active, auto_renew=true, end=2026-05-11
+sub #3  sbs_8381…  state=expired,    last=NULL      |  active, auto_renew=true, end=2026-05-17
+sub #4  sbs_9e59…  state=redirecting,last=NULL      |  active, auto_renew=true, end=2026-05-27
+sub #5  sbs_c67b…  state=redirecting,last=NULL      |  active, auto_renew=true, end=2026-06-22
+```
+
+Что произошло на самом деле:
+
+- У всех 5 `last_charge_at = NULL` — **первичная оплата так и не прошла** (3DS застрял или провайдер закрыл pending).
+- Запись в `subscriptions_v2` была создана авансом (под checkout) и осталась висеть со `status=active`.
+- Пользователю в кабинете показывается «всё ок, продлится автоматически», хотя bePaid эту подписку давно похоронил.
+
+Это и есть та «реальная ситуация», которая должна приходить в ежедневный отчёт — её нельзя глушить.
+
+## Решение
+
+Сделать INV-22 не только сигналом, но и channel'ом для разбора: показать в отчёте конкретику и дать безопасный one-click ремонт. Дублей не плодим — используем уже существующие канонические writer'ы.
+
+### 1. Расширить отчёт INV-22 (полезный диагноз вместо «5 шт.»)
+
+Файл: `supabase/functions/nightly-payments-invariants/index.ts`.
+
+Сейчас в Telegram уходит безликое `5 активных подписок десинхронизированы`. Добавить в сообщение:
+
+- разбивку по причинам: `expired (N)`, `redirecting (N)`, `active без дат (N)`;
+- признак «никогда не было успешного списания» (`ps.last_charge_at IS NULL`) — это «мёртвые при рождении»;
+- первые 3 sample строкой `product=… user=… ps_state=… created=…` (не только `sub_id`).
+
+Для этого расширить RPC `inv22_subscription_desync`: добавить в payload поля `bucket` (`never_charged_expired` / `never_charged_redirecting` / `active_no_dates`) и агрегат `by_bucket`.
+
+### 2. Канонический REPAIR без новых функций
+
+Никаких новых writer-функций. Используем существующие:
+
+
+| Кейс bePaid                                      | Действие на нашей стороне                                                                                                                                                                                                               | Чем закрываем                                                                          |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `ps.state = 'expired'`, `last_charge_at IS NULL` | Подписка never-charged → закрыть как `expired_reentry` (без revoke доступа, доступа и не было, но и `auto_renew=false`, чтобы перестало числиться в зомби)                                                                              | через `bepaid-cancel-subscriptions` (already exists) с reason `inv22_provider_expired` |
+| `ps.state = 'redirecting'`, возраст ≥ 48ч        | То же самое: 3DS не дойдёт, считаем мёртвым                                                                                                                                                                                             | то же                                                                                  |
+| `ps.state = 'active'`, обе даты NULL             | Сначала pull через `bepaid-get-subscription-details` — возможно у нас просто устарел snapshot. Если bePaid возвращает active+next_charge_at — обновляем `provider_subscriptions`. Если bePaid возвращает terminal — закрываем как выше. | `bepaid-get-subscription-details` → потом тот же путь                                  |
+
+
+Минимальная защита: **не трогать** записи моложе 48 ч (см. memory `revoke-race-condition-guard`) — `redirecting` свежее 48 ч может ещё дойти.
+
+### 3. UI для ручного разбора
+
+Страница `/admin/system-health` уже умеет показывать invariants. Для INV-22 добавить в `OwnerProblemCard` (или его аналог в `AdminSystemHealth`) action-кнопку «Разобрать INV-22» с двумя шагами:
+
+1. **Dry-run** — вызывает новый thin-endpoint `system-health-inv22-plan` (read-only): возвращает табличку «что собираемся сделать с каждой из 5 подписок».
+2. **Execute** — после явного подтверждения вызывает `system-health-inv22-resolve`, который для каждой записи делегирует в `bepaid-get-subscription-details` или `bepaid-cancel-subscriptions`. Никаких прямых UPDATE в `subscriptions_v2`/`provider_subscriptions` — всё через канонические writer'ы.
+
+Оба endpoint'а пишут аудит в `audit_logs`:
+
+- `inv22.plan.viewed` (actor = JWT super_admin)
+- `inv22.resolve.applied` (per-subscription, c `before_state` / `after_state` / `delegated_to`)
+
+### 4. Поднять INV-22 в classification
+
+Сейчас INV-22 в humanizer не упомянут, поэтому попадает в fallback `tech_info`. Добавить в `src/lib/system-health/invariant-humanize.ts` маппинг:
+
+- `INV-22` → `problem_type='critical_fix'`, `recommended_action='fix_via_lovable'`
+- `whyNotAutofixed`: «Затрагивает живые карты пользователей — нужна явная кнопка владельца»
+- `consequenceOfInaction`: «UI показывает пользователям ложное «активна, продлится», провайдер уже не спишет»
+- Связанный раздел: `/admin/subscriptions-v2`
+
+### 5. Memory
+
+Записать в `mem://commercial-logic/subscriptions/inv22-desync-resolution`:
+
+- определение «зомби-подписки» = `subv2.active+auto_renew && ps.state in (expired, redirecting) || (active && both dates NULL)`;
+- buckets и решение по каждому;
+- 48-часовой grace для `redirecting`;
+- запрет прямых UPDATE — только через `bepaid-cancel-subscriptions` / `bepaid-get-subscription-details`;
+- INV-22 — `critical_fix`, не глушить никогда.
+
+## Технические детали
+
+**Файлы, которые меняются:**
+
+- миграция: новая версия `inv22_subscription_desync` с buckets
+- `supabase/functions/nightly-payments-invariants/index.ts` — текст алерта с разбивкой
+- `supabase/functions/system-health-inv22-plan/index.ts` — новый, read-only
+- `supabase/functions/system-health-inv22-resolve/index.ts` — новый, делегирует в существующие writer'ы
+- `src/lib/system-health/invariant-humanize.ts` — INV-22 → critical_fix
+- `src/components/admin/system-health/owner/OwnerProblemCard.tsx` — кнопка action для INV-22
+- `mem://commercial-logic/subscriptions/inv22-desync-resolution` + апдейт `mem://index.md`
+
+**Что не трогаем:**
+
+- `bepaid-cancel-subscriptions`, `bepaid-get-subscription-details`, `subscriptions-reconcile`, `bepaid-webhook` — существующий канон.
+- Прямых SQL-апдейтов по `subscriptions_v2` / `provider_subscriptions` нигде нет (см. memory `canonical-write-path-standard`).
+
+## DoD
+
+1. `inv22_subscription_desync` возвращает buckets, и в Telegram приходит человеческое сообщение с разбивкой по 5 текущим записям.
+2. На `/admin/system-health` INV-22 виден как `critical_fix` с кнопкой «Разобрать».
+3. Dry-run показывает план по каждой из 5 подписок (что закрыть, что pull-ить).
+4. После Execute: либо bePaid подтверждает active и provider_subscriptions обновляется, либо подписка переводится в `expired_reentry` через `bepaid-cancel-subscriptions`, `auto_renew=false`. Доступ не дёргаем (его не было).
+5. Повторный запуск INV-22 возвращает `count=0` (или меньшее число с обоснованием по каждой оставшейся).
+6. Аудит записан: `inv22.resolve.applied` per subscription с before/after.
