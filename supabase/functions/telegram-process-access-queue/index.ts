@@ -15,8 +15,27 @@ interface QueueItem {
   subscription_id: string | null;
   action: "grant" | "revoke";
   attempts: number;
-  meta: { parent_event_key?: string; parent_execution_key?: string } | null;
+  meta:
+    | {
+        parent_event_key?: string;
+        parent_execution_key?: string;
+        source?: string;
+      }
+    | null;
 }
+
+// Whitelist of explicit MANUAL/REPAIR sources that are allowed to drive
+// telegram_access_queue. The legacy auto-grant path
+// (subscriptions_v2 trigger → queue) is decommissioned: canonical write-path
+// for any payment-driven Telegram DM is grant-access-for-order →
+// telegram-grant-access. Anything that lands in the queue without one of
+// these sources is treated as a stray legacy insert and skipped.
+const ALLOWED_QUEUE_SOURCES = new Set([
+  "reinvite",
+  "manual_bulk",
+  "repair",
+  "admin_backfill",
+]);
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
