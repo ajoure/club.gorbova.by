@@ -14456,6 +14456,10 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      inv20_paid_orders_actionable: {
+        Args: { p_limit?: number; p_since?: string }
+        Returns: Json
+      }
       inv20_paid_orders_without_payments: {
         Args: { p_limit?: number; p_since?: string }
         Returns: {
