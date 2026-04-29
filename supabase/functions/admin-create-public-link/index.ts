@@ -298,6 +298,9 @@ Deno.serve(async (req) => {
               max_installment_months: installmentBlock.max_installment_months,
               per_payment_amount: installmentBlock.per_payment_amount,
               total_installment_amount: installmentBlock.total_installment_amount,
+              billing_cycles: installmentBlock.billing_cycles,
+              as_finite_subscription: installmentBlock.as_finite_subscription,
+              proof: 'public_link.installment_as_subscription',
             }
           : null,
       },
