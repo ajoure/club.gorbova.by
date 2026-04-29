@@ -1111,6 +1111,7 @@ Deno.serve(async (req) => {
           id,
           user_id,
           order_id,
+          status,
           access_end_at,
           payment_token,
           tariff_id,
@@ -1340,159 +1341,13 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ============ EXPIRING WITHOUT SBS (replaces old NO-CARD WARNING) ============
-    // Instead of warning about missing cards, we now check for missing SBS and send payment links
-    console.log('Checking for expiring subscriptions without SBS...');
-    
-    const sevenDaysFromNow = new Date(now);
-    sevenDaysFromNow.setDate(sevenDaysFromNow.getDate() + 7);
-
-    const { data: expiringSubs } = await supabase
-      .from('subscriptions_v2')
-      .select(`
-        id,
-        user_id,
-        order_id,
-        access_end_at,
-        tariff_id,
-        billing_type,
-        tariffs (
-          id,
-          name,
-          product_id,
-          products_v2 (id, name)
-        )
-      `)
-      // PATCH PAYMENTS+REMINDERS v3 B-S1: убран фильтр .eq('auto_renew', true).
-      // Логика "expiring without SBS" уже базируется на hasActiveSBS (ниже), фильтр auto_renew был лишним:
-      // он отрезал именно тех, у кого автопродления нет, — кому напоминание нужно больше всего.
-      .in('status', ['active', 'trial'])
-      .lte('access_end_at', sevenDaysFromNow.toISOString())
-      .gte('access_end_at', now.toISOString())
-      .limit(100);
-
-    console.log(`[v3 B-S1] Found ${expiringSubs?.length || 0} subscriptions expiring within 7 days for SBS check (cohort expanded)`);
-
-    for (const sub of expiringSubs || []) {
-      const userId = sub.user_id;
-
-      const tariff = sub.tariffs as any;
-      const product = tariff?.products_v2 as any;
-      const productId = product?.id || tariff?.product_id || null;
-      const productName = product?.name || tariff?.name || 'Подписка';
-
-      const accessEndAt = new Date(sub.access_end_at);
-      const daysLeft = Math.ceil((accessEndAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-
-      const noCardReminderDays = [7, 3, 1];
-      if (!noCardReminderDays.includes(daysLeft)) continue;
-
-      const eventType = `subscription_reminder_${daysLeft}d`;
-
-      // PATCH OUTCOME-PARITY v1: skip second-block if main loop already produced TG outcome today
-      if (await hasSuccessOutcomeToday(supabase, 'telegram', sub.id, eventType, todayWindow)) {
-        console.log(`[second-block] Subscription ${sub.id} already has TG success today, skipping duplicate`);
-        continue;
-      }
-
-      // Legacy lock kept for backward compat
-      if (await wasReminderSentToday(supabase, userId, 'subscription_no_card_warning', todayWindow)) {
-        continue;
-      }
-
-      // PATCH ONE-TIME v1: classify in second block too
-      const classify = await isOneTimeProduct(supabase, sub.tariff_id, userId, productId);
-      const productIsOneTime = classify.oneTime;
-
-      // Only send if user does NOT have active SBS
-      const userHasSBS = await hasActiveSBS(supabase, userId, productId);
-      if (userHasSBS && !productIsOneTime) {
-        console.log(`User ${userId} has active SBS, skipping expiring-without-SBS warning`);
-        await supabase.from('audit_logs').insert({
-          action: 'reminders.paylink_cta_suppressed_sbs',
-          actor_type: 'system',
-          actor_label: 'subscription-renewal-reminders',
-          meta: { user_id: userId, product_id: productId, subscription_id: sub.id },
-        });
-        // PATCH SKIP-LOG v1: write canonical skip outcome (so UI shows green for SBS users)
-        await logTelegramSkip(supabase, userId, sub.id, eventType, 'active_sbs_provider_will_charge', {
-          days_left: daysLeft, source_block: 'expiring_without_sbs',
-        });
-        continue;
-      }
-
-      // Get tariff price for payment link
-      let amount = 0;
-      let currency = 'BYN';
-      if (sub.tariff_id) {
-        const { data: priceData } = await supabase
-          .from('tariff_prices')
-          .select('final_price, price, currency')
-          .eq('tariff_id', sub.tariff_id)
-          .eq('is_active', true)
-          .limit(1)
-          .single();
-        if (priceData) {
-          amount = priceData.final_price || priceData.price || 0;
-          currency = priceData.currency || 'BYN';
-        }
-      }
-
-      // PATCH RENEWAL+PAYMENTS.1 B5: Generate 2 CTA links — only for recurring products
-      let ncOneTimeUrl: string | null = null;
-      let ncSubscriptionUrl: string | null = null;
-      if (!productIsOneTime && productId && sub.tariff_id && amount > 0) {
-        const ctas = await generateRenewalCTAs({
-          supabase, userId, productId, tariffId: sub.tariff_id,
-          amount, currency, actorType: 'system',
-        });
-        ncOneTimeUrl = ctas.oneTimeUrl;
-        ncSubscriptionUrl = ctas.subscriptionUrl;
-
-        if (ncOneTimeUrl || ncSubscriptionUrl) {
-          await supabase.from('audit_logs').insert({
-            action: 'reminders.paylink_cta_generated',
-            actor_type: 'system',
-            actor_label: 'subscription-renewal-reminders',
-            meta: {
-              user_id: userId, product_id: productId, subscription_id: sub.id,
-              days_left: daysLeft, has_one_time: !!ncOneTimeUrl, has_subscription: !!ncSubscriptionUrl,
-              source_block: 'expiring_without_sbs',
-            },
-          });
-        }
-      }
-
-      // Send via the unified sendTelegramReminder (with hasSBS=false, isOneTime from classify)
-      const telegramResult = await sendTelegramReminder(
-        supabase, botToken, userId,
-        productName, tariff?.name || 'Стандартный',
-        accessEndAt, daysLeft, amount, currency,
-        false, ncOneTimeUrl, ncSubscriptionUrl,
-        sub.id, sub.order_id, sub.tariff_id, productId, productIsOneTime,
-        linkBot?.id ?? null,
-      );
-
-      results.push({
-        user_id: userId,
-        subscription_id: sub.id,
-        order_id: sub.order_id,
-        tariff_id: sub.tariff_id,
-        days_until_expiry: daysLeft,
-        telegram_sent: telegramResult.sent,
-        telegram_logged: telegramResult.logged,
-        telegram_log_error: telegramResult.logError,
-        email_sent: false,
-        reminder_type: 'no_card_warning', // keep for backward compat in stats
-        skip_reason: telegramResult.skipReason,
-        fail_reason: telegramResult.failReason,
-        error_stage: telegramResult.errorStage,
-        telegram_api_error: telegramResult.telegramApiError,
-        duplicate_suppressed: telegramResult.duplicateSuppressed,
-      });
-
-      console.log(`Expiring-without-SBS for user ${userId}: sent=${telegramResult.sent}, oneTime=${!!ncOneTimeUrl}, sub=${!!ncSubscriptionUrl}`);
-    }
+    // ============ SECOND BLOCK REMOVED (PATCH-2026-04-29) ============
+    // Ранее здесь был дублирующий sending-блок "EXPIRING WITHOUT SBS",
+    // который слал Telegram повторно как 'no_card_warning' и не отправлял email.
+    // После исправления anti-stale guard основной 7/3/1 цикл выше уже корректно
+    // покрывает all renewable + one-time когорты, поэтому второй блок удалён.
+    // Email отправляется только из основного цикла. Email точки 7/3/1 в UI
+    // строятся из email_logs.meta.subscription_id + meta.event_type.
 
     // ============ Statistics ============
     const reminders7d = results.filter(r => r.days_until_expiry === 7 && r.reminder_type === 'expiry_reminder');
