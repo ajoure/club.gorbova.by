@@ -732,19 +732,11 @@ export default function AdminProductDetailV2() {
     setFlowDialog({ open: false, editing: null });
   };
 
-  // Delete handler
+  // Delete handler — only for "flow"; tariff/offer handled by TariffDeleteConfirmDialog
   const handleDelete = async () => {
     if (!deleteConfirm) return;
-    switch (deleteConfirm.type) {
-      case "tariff":
-        await deleteTariff.mutateAsync(deleteConfirm.id);
-        break;
-      case "offer":
-        await deleteOffer.mutateAsync(deleteConfirm.id);
-        break;
-      case "flow":
-        await deleteFlow.mutateAsync(deleteConfirm.id);
-        break;
+    if (deleteConfirm.type === "flow") {
+      await deleteFlow.mutateAsync(deleteConfirm.id);
     }
     setDeleteConfirm(null);
   };
