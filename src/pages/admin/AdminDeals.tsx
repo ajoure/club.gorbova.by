@@ -677,8 +677,20 @@ export default function AdminDeals() {
     getFieldValue: getDealFieldValue,
   });
 
-  // Visible deals — limited to displayLimit
-  const visibleDeals = useMemo(() => sortedDeals.slice(0, displayLimit), [sortedDeals, displayLimit]);
+  // Когда пользователь сортирует по нестандартному ключу (не дефолтный deal_date desc) —
+  // автозагружаем все страницы, иначе сортировка применяется только к первой странице.
+  const isCustomSort = sortKey !== null && !(sortKey === "deal_date" && sortDirection === "desc");
+  useEffect(() => {
+    if (isCustomSort && hasNextPage && !isFetchingNextPage) {
+      fetchNextPage();
+    }
+  }, [isCustomSort, hasNextPage, isFetchingNextPage, fetchNextPage, allDeals.length]);
+
+  // Visible deals — limited to displayLimit. При активной сортировке показываем всё загруженное.
+  const visibleDeals = useMemo(
+    () => isCustomSort ? sortedDeals : sortedDeals.slice(0, displayLimit),
+    [sortedDeals, displayLimit, isCustomSort],
+  );
 
   // Preset tab definitions with server-side counts
   const DEAL_PRESETS: FilterPreset[] = useMemo(() => [
