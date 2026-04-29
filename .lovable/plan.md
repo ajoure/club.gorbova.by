@@ -1,127 +1,150 @@
 да, согласен, с учетом правок:
 
-1. subscription-charge не должен напрямую вызывать telegram-grant-access, если после списания уже вызывается или может вызываться grant-access-for-order. Проверить это до патча. Цель — не создать третий путь.
-2. Если subscription-charge сейчас действительно сам продлевает доступ без grant-access-for-order, тогда правильнее сначала перевести его на grant-access-for-order, а не напрямую на Telegram.
-3. Для telegram_access_queue оставить только явные ручные/repair источники:
-  - reinvite
-  - manual_bulk
-  - repair
-  - admin_backfill
-4. Любой queue item без meta.source или с auto-source → skipped, без отправки DM.
-5. В DoD добавить:
+1. resume_available лучше считать на backend или через единый view/helper, а не только в UI. UI не должен сам решать по разрозненным полям.
+2. Если provider-check недоступен временно, не включать auto_renew=true. Возвращать safe-block:
 
-SELECT count(*)
+Не удалось проверить статус подписки у провайдера. Попробуйте позже или оформите новую подписку.
 
-FROM telegram_access_queue q
+3. CTA «Оформить новую подписку» должен вести на тариф этого же продукта, если product_id/tariff_id известны.
+4. Audit по блокировкам должен содержать:
 
-JOIN subscriptions_v2 s ON [s.id](http://s.id) = q.subscription_id
-
-WHERE q.created_at > now() - interval '10 minutes'
-
-  AND q.action='grant'
-
-  AND q.status IN ('pending','processing','completed')
-
-  AND (q.meta->>'source' IS NULL OR q.meta->>'source' NOT IN ('reinvite','manual_bulk','repair','admin_backfill'));
-
-Ожидание: 0.
+- subscription_id
+- user_id
+- provider_subscription_id
+- payment_method_id
+- block_reason
+- provider_state, если удалось получить
 
 Можно выполнять.
 
 &nbsp;
 
-## Цель
+План: Безопасный resume подписок с трёхуровневой проверкой (local + card + provider)
 
-В системе должен остаться **один canonical путь автоматической выдачи Telegram-доступа** — только `grant-access-for-order` после успешного заказа/платежа. Legacy-путь `subscriptions_v2 → trg_subscription_grant_telegram → telegram_access_queue → telegram-process-access-queue → telegram-grant-access` отключается для всех платёжных сценариев.
+## Контекст
 
-Дублирующие DM «Доступ открыт!» исчезнут на уровне источника, а не за счёт всё новых пост-фильтров.
+Пользователь Ирина (`a61b9879…`), подписка `207ed874-2b25-4d9a-add3-cbddbb7341e3` и ~187 аналогичных legacy-записей (`auto_renew=false, cancel_at=NULL, status=active`). UI показывает «Возобновить» → backend бьёт 400 «Subscription is not scheduled for cancellation». Нельзя ни молча включать `auto_renew=true`, ни глобально прятать кнопку: нужна детерминированная проверка способа списания и состояния provider-подписки.
 
-## Текущая картина (read-only аудит)
+## Архитектура решения
 
-```text
-                 ┌─────────────────────────────┐
-ПЛАТЁЖ ──┬──►   │ grant-access-for-order      │ ── canonical
-         │      │ → telegram-grant-access     │
-         │      │ → telegram_messages mirror  │
-         │      └─────────────────────────────┘
-         │
-         └──►   trg_subscription_grant_telegram         ◄── ЛЕГАСИ, отключаем
-                  → telegram_access_queue (cron 1/min)
-                  → telegram-process-access-queue
-                  → telegram-grant-access (СНОВА)       ◄── второй DM
+### Трёхуровневая проверка resume_available
+
+Перед любой записью `auto_renew=true` обязательны ВСЕ три уровня:
+
+1. **Local state**
+  - `status = 'active'`
+  - И (`auto_renew = false` ИЛИ `cancel_at` в будущем)
+  - Иначе → `subscription.resume_blocked_not_needed` → «Подписка уже активна»
+2. **Payment method**
+  - `subscriptions_v2.payment_method_id IS NOT NULL` (или fallback: активная карта пользователя с `is_default`)
+  - `payment_methods.status = 'active'`
+  - `payment_methods.provider_token IS NOT NULL`
+  - Иначе → `subscription.resume_blocked_no_payment_method` → «Нужно заново привязать карту или оформить новую подписку»
+3. **Provider (bePaid)**
+  - Если есть `provider_subscription_id` / `bepaid_subscription_id` или запись в `provider_subscriptions` — вызвать `bepaid-get-subscription-details`
+  - Provider state должен быть `active`
+  - Если `expired/canceled/failed/not_found` → `subscription.resume_blocked_provider_dead` → «Эту подписку нельзя возобновить, оформите новую»
+  - Если provider-связи нет вовсе и подписка local-only → допускается (legacy ветка), но тогда обязательна валидная карта из шага 2
+
+Только при прохождении всех трёх — выполнить resume и записать `subscription.resumed`.
+
+## Шаги
+
+### 1. Diagnose (read-only)
+
+DoD-SQL по проблемной подписке:
+
+```sql
+SELECT s.id, s.status, s.auto_renew, s.cancel_at, s.access_end_at,
+       s.payment_method_id,
+       pm.status AS pm_status,
+       pm.provider_token IS NOT NULL AS has_token,
+       s.bepaid_subscription_id, s.provider_subscription_id
+FROM subscriptions_v2 s
+LEFT JOIN payment_methods pm ON pm.id = s.payment_method_id
+WHERE s.id = '207ed874-2b25-4d9a-add3-cbddbb7341e3';
 ```
 
-Подтверждено в БД:
+Профиль когорты `auto_renew=false AND cancel_at IS NULL AND status='active'`: разбивка по (a) с активной картой, (b) без карты, (c) с мёртвой provider-подпиской.
 
-- триггер `subscription_grant_telegram` на `subscriptions_v2` enabled (`O`), AFTER INSERT OR UPDATE
-- cron job `telegram-access-queue-processor` каждую минуту вызывает `telegram-process-access-queue`
-- за 14 дней через очередь прошло 99 grant-задач (97 completed + 2 failed) — все они дубли canonical-пути
-- наблюдаемый дубликат: sub `085952d5…`, source=`public_link_subscription`, tracking=`subv2:…:order:…` — текущие guards в функции триггера НЕ сработали, потому что триггер AFTER INSERT срабатывает раньше, чем `grant-access-for-order` дописывает `tracking_id` UPDATE-ом
+### 2. Backend: новая RPC / endpoint `subscription_resume_eligibility`
 
-Прочие источники записи в `telegram_access_queue`:
+- Read-only резолвер, возвращает:
+  ```ts
+  { resume_available: boolean,
+    reason: 'ok' | 'not_needed' | 'no_payment_method' | 'provider_dead',
+    provider_state?: string,
+    has_card: boolean }
+  ```
+- Используется и UI (для решения «показывать кнопку или CTA»), и edge function `subscription-actions` (для жёсткой проверки на сервере).
+- Реализация: либо внутри `subscription-actions` отдельный action `'check-resume'`, либо новая лёгкая функция. Предпочтительно — action в существующей `subscription-actions` (не плодим функции).
 
-- `subscription-charge` (charge при продлении, юзер не в клубе) — НЕ ходит через `grant-access-for-order`, должен быть переведён на canonical путь (см. шаг 4)
-- `telegram-club-members` (reinvite-ghosts) — ручной админский reinvite, оставляем
-- legacy RPC `bulk_grant_telegram_access` и backfill-миграции — только по явному вызову админом, оставляем
+### 3. Патч `supabase/functions/subscription-actions/index.ts` (case `'resume'`)
 
-## Что делаем
+- Удалить текущее жёсткое условие `if (!subscription.cancel_at) → 400`.
+- Прогнать три уровня (см. выше) через единый helper `evaluateResumeEligibility(supabase, subscription, userId)`.
+- При `reason !== 'ok'`:
+  - Записать соответствующий audit (`subscription.resume_blocked_*`) с `meta: { subscription_id, provider_state, has_card, reason }`.
+  - Вернуть 400 с `code` (для маппинга в `normalizeEdgeFunctionError`) и `message`.
+- При `reason === 'ok'`:
+  - `auto_renew=true`, `cancel_at=NULL`, `canceled_at=NULL`, очистить `auto_renew_disabled_*`.
+  - Привязать `payment_method_id` + `payment_token` из шага 2.
+  - Audit `subscription.resumed` с `prior_state ∈ {'cancel_scheduled','auto_renew_off_legacy'}`, `provider_state`, `payment_method_id`.
+  - Запустить `syncEntitlement` (как сейчас).
 
-### Шаг 1. Отключить триггер `subscription_grant_telegram` (DB migration)
+### 4. UI
 
-`ALTER TABLE public.subscriptions_v2 DISABLE TRIGGER subscription_grant_telegram;`
+Найти место кнопки «Возобновить подписку» (вероятно `src/components/subscriptions/...` или ЛК `src/pages/Dashboard.tsx`). Изменения:
 
-Функцию `trg_subscription_grant_telegram()` оставляем в БД (для отката одной строкой), но тело перепишем в безусловный no-op с `RAISE NOTICE` и `RETURN NEW`. Любая попытка повторно ENABLE триггера ничего не сделает — пока кто-то осознанно не восстановит логику из git-истории.
+- При загрузке карточки подписки звать `subscription-actions` action `check-resume` (или включить `resume_available` в существующий `useSubscriptions` хук).
+- Если `resume_available === true` → показывать кнопку «Возобновить подписку».
+- Если `resume_available === false` → вместо resume показывать CTA «Оформить новую подписку» (deeplink в checkout продукта).
+- Все ошибки от resume action прогонять через `normalizeEdgeFunctionError`. Добавить mapping для:
+  - `resume_blocked_no_payment_method` → «Нужно заново привязать карту или оформить новую подписку»
+  - `resume_blocked_provider_dead` → «Эту подписку нельзя возобновить, оформите новую»
+  - `resume_blocked_not_needed` → «Подписка уже активна»
 
-`COMMENT ON FUNCTION public.trg_subscription_grant_telegram()` — описать, что путь намеренно выведен из автозапуска, canonical writer = `grant-access-for-order`.
+### 5. Verify
 
-### Шаг 2. `telegram-process-access-queue` — режим manual-only
-
-Edge function продолжает работать (нужна для ручных reinvite-задач), но добавляем guard на источник:
-
-- Если запись в очереди НЕ помечена как `meta.source IN ('manual_admin', 'reinvite', 'bulk_grant', 'repair')` — обрабатывать её **НЕ** будем: переводим в status=`skipped` с `last_error='legacy_auto_grant_disabled'` и пишем в `audit_logs` (action=`telegram.legacy_queue_skip`, meta содержит `subscription_id`, `user_id`, `club_id`).
-- Это страхует от случайных будущих INSERT-ов, не помеченных как ручные.
-
-### Шаг 3. Cron `telegram-access-queue-processor` оставляем
-
-Cron нужен для обслуживания ручных задач (reinvite, bulk, repair). Просто его «корм» теперь почти всегда пустой.
-
-### Шаг 4. Перевести `subscription-charge` (продление) на canonical путь
-
-В `subscription-charge/index.ts` вокруг строки 1858 — INSERT в `telegram_access_queue` для случая «продление подписки + юзер не в клубе» — заменить на прямой вызов `telegram-grant-access` (как делает `grant-access-for-order`), с `source='subscription_renewal'`, `source_id=charge_order_id`, `clubs=[clubId]`. Pre-send guard в `telegram-grant-access` (уже задеплоен) исключит дубликаты.
-
-Это убирает последний автоматический канал «оплата → queue».
-
-### Шаг 5. Помечать ручные источники
-
-В `telegram-club-members` (reinvite-ghosts) и в любом другом ручном INSERT в queue — добавить `meta.source = 'reinvite'` / `'manual_admin'` / `'bulk_grant'` / `'repair'`, чтобы guard из шага 2 их пропускал.
-
-### Шаг 6. UI — `AdminTelegramDiagnostics`
-
-В секцию `TelegramAuditSection` добавить отображение нового события `telegram.legacy_queue_skip`, чтобы видеть «случайных гостей» в queue, если что-то всё-таки попадёт туда автоматически.
-
-### Шаг 7. Memory + DoD
-
-Сохранить новый стандарт памятью `mem://architecture/telegram/canonical-grant-write-path` (Core-rule: «Auto-grant Telegram идёт ТОЛЬКО через `grant-access-for-order → telegram-grant-access`. `telegram_access_queue` — только для ручных reinvite/bulk/repair»).
+- `curl` resume для `207ed874…`:
+  - Без карты → 400 `resume_blocked_no_payment_method`, `auto_renew` в БД остался `false`.
+  - С картой и живым provider → 200, `auto_renew=true`, `cancel_at=NULL`.
+- Ещё 2-3 подписки разных классов когорты — поведение детерминированное.
+- DoD-SQL после resume:
+  ```sql
+  -- Состояние после resume
+  SELECT s.id, s.auto_renew, s.cancel_at, s.payment_method_id,
+         pm.status, pm.provider_token IS NOT NULL AS has_token
+  FROM subscriptions_v2 s
+  LEFT JOIN payment_methods pm ON pm.id = s.payment_method_id
+  WHERE s.id = '207ed874-2b25-4d9a-add3-cbddbb7341e3';
+  ```
+- Audit за последний час:
+  ```sql
+  SELECT action, meta, created_at FROM audit_logs
+  WHERE created_at > now() - interval '1 hour'
+    AND action IN ('subscription.resumed',
+                   'subscription.resume_blocked_no_payment_method',
+                   'subscription.resume_blocked_provider_dead',
+                   'subscription.resume_blocked_not_needed')
+  ORDER BY created_at DESC;
+  ```
 
 ## DoD
 
-- триггер `subscription_grant_telegram` физически DISABLED, функция = no-op (proof: `pg_trigger.tgenabled = 'D'` и `pg_get_functiondef` тело-no-op)
-- новая оплата создаёт **ровно один** Telegram DM (proof: `SELECT count(*) FROM telegram_messages WHERE meta->>'event'='access_granted_dm' AND user_id=:uid AND created_at > now()-interval '10 min'` → 1)
-- после новой оплаты в `telegram_access_queue` **нет** ни одной auto-grant записи для этой подписки (proof: `SELECT count(*) FROM telegram_access_queue WHERE subscription_id=:sub_id` → 0)
-- продление подписки через `subscription-charge` для юзера не в клубе тоже выдаёт ровно один DM (proof: те же два запроса для charge order)
-- ручной reinvite через `telegram-club-members` продолжает работать: запись попадает в queue с `meta.source='reinvite'`, обработчик её принимает, DM отправляется
-- любая будущая случайная INSERT в queue без `meta.source` отмечается `skipped` + audit `telegram.legacy_queue_skip`
-- обновлена память `mem://index.md` (Core-rule добавлен)
+- Edge function `subscription-actions` resume **никогда** не включает `auto_renew=true`, если хотя бы один уровень из {local, card, provider} не пройден.
+- Все 4 audit-события (`resumed`, `resume_blocked_no_payment_method`, `resume_blocked_provider_dead`, `resume_blocked_not_needed`) пишутся корректно с `subscription_id` в `meta`.
+- UI:
+  - Кнопка «Возобновить подписку» показывается **только** при `resume_available=true`.
+  - При `resume_available=false` показывается CTA «Оформить новую подписку».
+  - Ошибки нормализуются через `normalizeEdgeFunctionError`, без сырых backend-сообщений.
+- DoD-SQL по `207ed874…` приложен в отчёте: до resume + после (если проходит) или audit-запись о блокировке (если нет).
+- Audit-выборка за час показывает корректные события для проверочных кейсов.
+- Regress-проверка: классическая ветка (`cancel_at` в будущем + есть карта + provider жив) продолжает работать.
 
-## Технические детали
+## Технические заметки
 
-Файлы, которые меняются:
-
-- новая миграция: `DISABLE TRIGGER subscription_grant_telegram` + `CREATE OR REPLACE FUNCTION public.trg_subscription_grant_telegram()` → no-op + COMMENT
-- `supabase/functions/telegram-process-access-queue/index.ts` — guard `meta.source IN (...)` + skip + audit
-- `supabase/functions/subscription-charge/index.ts` — заменить INSERT в queue на `supabase.functions.invoke('telegram-grant-access', { body: { user_id, clubs:[clubId], source:'subscription_renewal', source_id: chargeOrderId } })`
-- `supabase/functions/telegram-club-members/index.ts` — добавить `meta: { source: 'reinvite' }` в INSERT
-- `src/components/admin/telegram/TelegramAuditSection.tsx` — добавить `telegram.legacy_queue_skip` в `or(...)`-фильтр
-- новая memory-запись `mem://architecture/telegram/canonical-grant-write-path` + апдейт `mem://index.md`
-
-Откат: одна команда `ALTER TABLE subscriptions_v2 ENABLE TRIGGER subscription_grant_telegram;` + восстановить тело функции из git (предыдущая миграция `20260429181943_*`).
+- `bepaid-get-subscription-details` уже существует и используется в INV-22. Переиспользуем; новых функций для provider-checks не создаём.
+- В `subscriptions_v2` все нужные поля уже есть (`payment_method_id`, `payment_token`, `provider_subscription_id`, `bepaid_subscription_id`).
+- В `payment_methods` ключевые поля: `status`, `provider_token`. Менять схему не нужно.
+- Никаких новых таблиц/миграций.
