@@ -504,6 +504,48 @@ Deno.serve(async (req) => {
     const results = [];
     const telegramUserId = Number(profile.telegram_user_id);
 
+    // ============================================================
+    // PATCH TG-DUPLICATE-DM-GUARD: resolve canonical business order id
+    // (used both for idempotency key on mirror row and for pre-send check
+    // to prevent a second "Доступ открыт!" DM when both canonical order
+    // path and legacy subscription queue path call this function for the
+    // same paid order). Manual grants bypass this guard.
+    // ============================================================
+    let canonicalOrderId: string | null = null;
+    if (source_id) {
+      // Case 1: source_id IS an order id
+      const { data: maybeOrder } = await supabase
+        .from('orders_v2')
+        .select('id')
+        .eq('id', source_id)
+        .maybeSingle();
+      if (maybeOrder?.id) {
+        canonicalOrderId = maybeOrder.id;
+      } else {
+        // Case 2: source_id is a subscription id — derive its canonical order
+        const { data: maybeSub } = await supabase
+          .from('subscriptions_v2')
+          .select('order_id, meta')
+          .eq('id', source_id)
+          .maybeSingle();
+        if (maybeSub) {
+          const sm = (maybeSub.meta || {}) as Record<string, any>;
+          canonicalOrderId =
+            (maybeSub as any).order_id ||
+            sm.checkout_order_id ||
+            sm.initial_order_id ||
+            (Array.isArray(sm.extended_by_orders) && sm.extended_by_orders[0]) ||
+            null;
+          if (!canonicalOrderId && typeof sm.tracking_id === 'string') {
+            const m = /:order:([0-9a-f-]{36})/i.exec(sm.tracking_id);
+            if (m) canonicalOrderId = m[1];
+          }
+        }
+      }
+    }
+    const canonicalBusinessRef = canonicalOrderId || source_id || null;
+
+
     for (const club of clubs) {
       const bot = club.telegram_bots;
       if (!bot || bot.status !== 'active') {
