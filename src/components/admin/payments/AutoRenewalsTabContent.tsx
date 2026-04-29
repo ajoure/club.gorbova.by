@@ -28,6 +28,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { BackfillSnapshotTool } from "./BackfillSnapshotTool";
 import { Backfill2026OrdersTool } from "./Backfill2026OrdersTool";
 import { FixPaymentsIntegrityTool } from "./FixPaymentsIntegrityTool";
+import { Inv22ResolverPanel } from "./Inv22ResolverPanel";
 import {
   DndContext,
   closestCenter,
