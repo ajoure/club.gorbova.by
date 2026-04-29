@@ -144,6 +144,15 @@ function mapKnown(raw: string): string | null {
   if (s.includes("payment_failed") || s.includes("card declined")) {
     return "Платёж отклонён банком. Попробуйте другую карту или свяжитесь с банком.";
   }
+  if (
+    s.includes("subscription_precreate_failed") ||
+    s.includes("failed to pre-create subscription") ||
+    s.includes("bepaid subscription creation failed") ||
+    s.includes("bepaid checkout creation failed") ||
+    s.includes("failed to create order")
+  ) {
+    return "Не удалось подготовить платёж. Мы зафиксировали ошибку — попробуйте ещё раз через минуту или напишите в поддержку.";
+  }
 
   return null;
 }
