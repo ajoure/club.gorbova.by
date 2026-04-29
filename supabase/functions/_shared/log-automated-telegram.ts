@@ -103,6 +103,42 @@ export async function logAutomatedTelegramMessage(
       meta.reply_markup = args.reply_markup;
     }
 
+    // Idempotency guard (best-effort, no DB constraint per plan):
+    // If meta.idempotency_key is set and a previous mirror row already exists
+    // for the same key + user_id, skip insert so admin Contact Center does not
+    // show duplicate bubbles when an automated DM is replayed.
+    const idempotencyKey: string | null =
+      typeof meta.idempotency_key === 'string' && meta.idempotency_key.length > 0
+        ? meta.idempotency_key
+        : null;
+
+    if (idempotencyKey) {
+      try {
+        const { data: existing } = await supabase
+          .from('telegram_messages')
+          .select('id')
+          .eq('user_id', args.user_id)
+          .eq('direction', 'outgoing')
+          .filter('meta->>idempotency_key', 'eq', idempotencyKey)
+          .limit(1)
+          .maybeSingle();
+        if (existing?.id) {
+          console.warn('[logAutomatedTelegramMessage] skip duplicate by idempotency_key', {
+            source: args.source,
+            user_id: args.user_id,
+            idempotency_key: idempotencyKey,
+            existing_row_id: existing.id,
+          });
+          return { ok: true, inserted: false, reason: 'duplicate_idempotency_key', row_id: existing.id };
+        }
+      } catch (idemErr) {
+        console.warn('[logAutomatedTelegramMessage] idempotency lookup failed (continuing)', {
+          source: args.source,
+          error: idemErr instanceof Error ? idemErr.message : String(idemErr),
+        });
+      }
+    }
+
     const row = {
       user_id: args.user_id,
       telegram_user_id: Number(args.telegram_user_id),
