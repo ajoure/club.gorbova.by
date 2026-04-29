@@ -174,9 +174,13 @@ Deno.serve(async (req) => {
         per_payment_amount_byn: perPaymentByn,
         total_installment_amount: totalInstallmentByn,
         rounding_mode: 'round_half_up_byn',
+        // PATCH INSTALLMENT-PUBLIC-LINK: installment теперь оформляется как finite bePaid subscription.
+        // billing_cycles = N, провайдер сам списывает оставшиеся N-1 платежей.
+        as_finite_subscription: true,
+        billing_cycles: sel,
       };
-      // Force one_time — installment-link это серия one-time платежей.
-      payment_type = 'one_time';
+      // PATCH INSTALLMENT-PUBLIC-LINK: installment-link теперь = finite subscription (billing_cycles=N).
+      payment_type = 'subscription';
     }
 
     // Финальная нормализация audit-полей.
