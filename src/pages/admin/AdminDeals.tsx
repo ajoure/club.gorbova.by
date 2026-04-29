@@ -651,7 +651,10 @@ export default function AdminDeals() {
     { header: "Сумма", getValue: (d) => d.final_price ?? "" },
     { header: "Валюта", getValue: (d) => d.currency || "" },
     { header: "Статус", getValue: (d) => getStatusConfig(d.status).label },
-    { header: "Доступ до", getValue: (d) => d.trial_end_at ? format(new Date(d.trial_end_at), "dd.MM.yyyy") : "" },
+    { header: "Доступ до", getValue: (d) => {
+      const accessUntil = accessMap?.get(d.id)?.access_until || d.trial_end_at;
+      return accessUntil ? format(new Date(accessUntil), "dd.MM.yyyy") : "";
+    } },
   ], [fallbackProfilesMap, moduleMetaMap]);
 
   // Sorting on loaded data
