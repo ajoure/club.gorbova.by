@@ -3,6 +3,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { AutowebSessionSelector } from "@/components/live/AutowebSessionSelector";
 import { AutowebRoomRuntime } from "@/components/live/AutowebRoomRuntime";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useKinescopePlayer } from "@/hooks/useKinescopePlayer";
