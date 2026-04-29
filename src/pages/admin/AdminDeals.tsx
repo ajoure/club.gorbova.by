@@ -1485,7 +1485,15 @@ export default function AdminDeals() {
               {isFetchingNextPage ? (
                 <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Загрузка...</>
               ) : (
-                <>Показать ещё {showRemaining > 0 ? `(${showRemaining > 99 ? "99+" : showRemaining} осталось)` : ""}</>
+                (() => {
+                  const nextBatch = Math.min(PAGE_SIZE, showRemaining || PAGE_SIZE);
+                  return (
+                    <>
+                      Показать ещё {nextBatch}
+                      {showRemaining > nextBatch ? ` (осталось ${showRemaining})` : ""}
+                    </>
+                  );
+                })()
               )}
             </Button>
           </div>
