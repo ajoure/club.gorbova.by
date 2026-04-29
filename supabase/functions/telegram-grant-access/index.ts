@@ -1296,7 +1296,11 @@ Deno.serve(async (req) => {
       }
 
       const clubIdsList = resolvedClubIds.join(',');
-      const ledgerSourceEventKey = `tg-grant:${user_id}:${clubIdsList}:${Date.now()}`;
+      // Deterministic ledger key — fulfillment-executor rejects timestamp-like numbers.
+      const ledgerSubjectRef =
+        canonicalBusinessRef || source_id || admin_id || user_id;
+      const ledgerSourceTag = source || (is_manual ? 'manual' : 'system');
+      const ledgerSourceEventKey = `tg-grant:${ledgerSourceTag}:${ledgerSubjectRef}:${clubIdsList}`;
 
       const ledgerEntry: LedgerEntry = {
         source_event_type: is_manual ? 'admin' : 'system',
