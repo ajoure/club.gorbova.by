@@ -14508,6 +14508,9 @@ export type Database = {
       norm_phone: { Args: { _val: string }; Returns: string }
       norm_tg_username: { Args: { _val: string }; Returns: string }
       normalize_card_brand: { Args: { _brand: string }; Returns: string }
+      offer_archive: { Args: { p_offer_id: string }; Returns: Json }
+      offer_delete_safety_check: { Args: { p_offer_id: string }; Returns: Json }
+      offer_hard_delete: { Args: { p_offer_id: string }; Returns: Json }
       products_bulk_delete_dryrun: {
         Args: { product_ids: string[] }
         Returns: {
@@ -14702,6 +14705,12 @@ export type Database = {
         Args: { p_subscription_id: string }
         Returns: boolean
       }
+      tariff_archive: { Args: { p_tariff_id: string }; Returns: Json }
+      tariff_delete_safety_check: {
+        Args: { p_tariff_id: string }
+        Returns: Json
+      }
+      tariff_hard_delete: { Args: { p_tariff_id: string }; Returns: Json }
       trigger_card_verification: { Args: never; Returns: undefined }
       try_backfill_lock: { Args: { p_lock_id: number }; Returns: boolean }
       unlock_stuck_media_jobs: {
