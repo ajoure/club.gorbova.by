@@ -70,7 +70,7 @@ const FILTER_OPTIONS: { value: FilterType; label: string; icon?: any }[] = [
   { value: 'in_grace', label: 'В grace (72ч)', icon: Clock },
   { value: 'expired_reentry', label: 'Удалённые', icon: XCircle },
   { value: 'no_charge_date', label: 'Нет даты списания', icon: AlertTriangle },
-  { value: 'no_card', label: 'Без карты (MIT)', icon: CreditCard },
+  { value: 'no_card', label: 'Без карты', icon: CreditCard },
   { value: 'no_token', label: 'Без токена' },
   { value: 'pm_inactive', label: 'PM неактивен' },
   { value: 'max_attempts', label: 'Макс. попыток' },
