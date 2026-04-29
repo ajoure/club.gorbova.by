@@ -1147,8 +1147,10 @@ Deno.serve(async (req) => {
             user_id: profile.user_id,
             club_id: club_id,
             action: 'grant',
-            source: 'reinvite',
-            priority: 5,
+            // SOURCE-TAG required by telegram-process-access-queue source-guard.
+            // Without meta.source ∈ {reinvite, manual_bulk, repair, admin_backfill}
+            // the queue item is treated as a stray legacy insert and skipped.
+            meta: { source: 'reinvite' },
           });
           queuedCount++;
         }

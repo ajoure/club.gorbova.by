@@ -1853,28 +1853,20 @@ async function chargeSubscription(
                 .eq('club_id', clubId)
                 .eq('status', 'active');
             } else {
-              // User NOT in this club → queue grant as before
-              const { error: queueError } = await supabase
-                .from('telegram_access_queue')
-                .upsert({
-                  user_id,
-                  club_id: clubId,
-                  subscription_id: id,
-                  action: 'grant',
-                  status: 'pending',
-                  ...(renewLedgerResult?.execution_key ? {
-                    meta: {
-                      parent_event_key: renewSourceEventKey,
-                      parent_execution_key: renewLedgerResult.execution_key,
-                    }
-                  } : {}),
-                }, { onConflict: 'user_id,club_id,subscription_id,action' });
-
-              if (queueError) {
-                console.error('[TG-QUEUE] Failed to queue access grant:', queueError);
-              } else {
-                console.log(`[TG-QUEUE] Queued grant for user ${user_id}, club ${clubId}`);
-              }
+              // User NOT in this club → DO NOT queue here.
+              // Decommissioned: this used to upsert into telegram_access_queue,
+              // which together with the (also decommissioned) subscriptions_v2
+              // trigger produced a SECOND "Доступ открыт!" DM on every renewal.
+              //
+              // Canonical path for renewal: bepaid-webhook (WEBHOOK-SUBSCRIPTION)
+              // calls grant-access-for-order with context='subscription_renewal',
+              // which in turn invokes telegram-grant-access exactly once.
+              // See migration that disables trigger subscription_grant_telegram
+              // and the source-guard in telegram-process-access-queue.
+              console.log(
+                `[TG-QUEUE] SKIP queue insert for user ${user_id}, club ${clubId}: ` +
+                  `canonical renewal grant goes through bepaid-webhook → grant-access-for-order.`
+              );
             }
           }
         } else {
