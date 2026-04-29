@@ -12287,6 +12287,20 @@ export type Database = {
             referencedRelation: "telegram_bots_safe"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "telegram_messages_sent_by_admin_fkey"
+            columns: ["sent_by_admin"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "telegram_messages_sent_by_admin_fkey"
+            columns: ["sent_by_admin"]
+            isOneToOne: false
+            referencedRelation: "v_club_members_enriched"
+            referencedColumns: ["auth_user_id"]
+          },
         ]
       }
       telegram_mtproto_sessions: {
