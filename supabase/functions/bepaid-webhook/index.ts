@@ -1515,6 +1515,14 @@ Deno.serve(async (req) => {
         }
         const renewAt = bepaidRenewAt ? new Date(bepaidRenewAt) : accessEndAt;
         
+        // PATCH PAYMENTS-REVISION: для finite bePaid installment auto_renew должен оставаться false.
+        // Источник истины — subV2.meta.installment_count >= 2 или meta.model='bepaid_finite_subscription'.
+        const subV2Meta = (subV2.meta || {}) as Record<string, any>;
+        const subInstallmentCount = Number(subV2Meta.installment_count ?? 0);
+        const subIsInstallmentFinite =
+          subV2Meta.model === 'bepaid_finite_subscription' ||
+          (Number.isFinite(subInstallmentCount) && subInstallmentCount >= 2);
+
         await supabase
           .from('subscriptions_v2')
           .update({
@@ -1522,16 +1530,23 @@ Deno.serve(async (req) => {
             billing_type: 'provider_managed',
             access_start_at: now.toISOString(),
             access_end_at: accessEndAt.toISOString(),
-            next_charge_at: renewAt.toISOString(),
-            auto_renew: true,
+            next_charge_at: subIsInstallmentFinite ? null : renewAt.toISOString(),
+            auto_renew: !subIsInstallmentFinite,
             meta: {
-              ...(subV2.meta || {}),
+              ...subV2Meta,
               bepaid_subscription_id: subscriptionId,
               bepaid_activated_at: now.toISOString(),
+              ...(subIsInstallmentFinite
+                ? {
+                    model: 'bepaid_finite_subscription',
+                    billing_cycles: Number(subV2Meta.billing_cycles ?? subInstallmentCount),
+                    installment_count: subInstallmentCount,
+                  }
+                : {}),
             },
           })
           .eq('id', subscriptionV2Id);
-        console.log('[WEBHOOK-SUBSCRIPTION] Subscription updated to active, provider_managed');
+        console.log('[WEBHOOK-SUBSCRIPTION] Subscription updated to active, provider_managed, finite=', subIsInstallmentFinite);
         
         // 3. Update provider_subscriptions state
         await supabase
@@ -2621,7 +2636,9 @@ Deno.serve(async (req) => {
           // 1) Найти/создать subscriptions_v2 для рассрочки.
           //    Правило: если grant-access-for-order уже создал sub (grantedSubscriptionV2Id) — используем её,
           //    НЕ перезаписывая billing_type, который мог быть установлен grant'ом.
-          //    Только если sub отсутствует (fallback) — создаём новую с billing_type='internal_installment'.
+          //    Только если sub отсутствует (fallback) — создаём новую с допустимым billing_type='mit'
+          //    + meta.model='internal_installment' (CHECK constraint subscriptions_v2_billing_type_check
+          //    допускает только 'mit'|'provider_managed'; 'internal_installment' как значение колонки запрещено).
           let installmentSubV2Id: string | null = grantedSubscriptionV2Id;
 
           if (!installmentSubV2Id) {
@@ -2632,13 +2649,15 @@ Deno.serve(async (req) => {
                 user_id: linkOrder.user_id,
                 product_id: linkOrder.product_id,
                 tariff_id: linkOrder.tariff_id,
+                order_id: linkOrder.id,
                 status: 'active',
-                billing_type: 'internal_installment',
+                billing_type: 'mit',
                 auto_renew: false,
                 meta: {
                   source: 'bepaid_link_order_installment_fallback',
                   order_id: linkOrder.id,
                   installment_count: installmentCountFromOrderMeta,
+                  model: 'internal_installment',
                 },
               })
               .select('id')

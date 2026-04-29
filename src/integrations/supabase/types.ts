@@ -9213,6 +9213,7 @@ export type Database = {
           last_charge_at: string | null
           meta: Json | null
           next_charge_at: string | null
+          order_id: string | null
           profile_id: string | null
           provider: string
           provider_subscription_id: string
@@ -9234,6 +9235,7 @@ export type Database = {
           last_charge_at?: string | null
           meta?: Json | null
           next_charge_at?: string | null
+          order_id?: string | null
           profile_id?: string | null
           provider?: string
           provider_subscription_id: string
@@ -9255,6 +9257,7 @@ export type Database = {
           last_charge_at?: string | null
           meta?: Json | null
           next_charge_at?: string | null
+          order_id?: string | null
           profile_id?: string | null
           provider?: string
           provider_subscription_id?: string
@@ -9265,6 +9268,13 @@ export type Database = {
           user_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "provider_subscriptions_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "provider_subscriptions_profile_id_fkey"
             columns: ["profile_id"]

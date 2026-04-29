@@ -691,13 +691,18 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       ? Number(installmentExtra.interval_days ?? 30)
       : 30;
 
-    // PATCH INSTALLMENT-PUBLIC-LINK: pre-create subscriptions_v2 ДО bePaid /subscriptions,
+    // PATCH PAYMENTS-REVISION: pre-create subscriptions_v2 ДО bePaid /subscriptions,
     // чтобы tracking_id содержал реальный subscription_v2_id (canonical формат subv2:{sub_id}:order:{order_id}).
-    // billing_type=provider_managed (enum допускает только 'mit'|'provider_managed'); installment-маркер живёт в meta.
+    // billing_type=provider_managed (enum допускает только 'mit'|'provider_managed').
+    // ВАЖНО: subscriptions_v2 НЕ имеет колонки access_days/amount/currency —
+    // храним их ТОЛЬКО в meta (источник истины: tariffs.access_days + orders_v2.final_price).
     const preSubMeta: Record<string, any> = {
       source: isInstallmentSubscription ? 'public_link_installment' : 'public_link_subscription',
       checkout_order_id: order.id,
       created_at_pre: new Date().toISOString(),
+      tariff_access_days: accessDays,
+      amount_byn: amountByn,
+      currency: 'BYN',
     };
     if (isInstallmentSubscription) {
       preSubMeta.installment_count = installmentCountRaw;
@@ -719,17 +724,46 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         status: 'past_due',
         billing_type: 'provider_managed',
         auto_renew: !isInstallmentSubscription, // installment завершается сам после N платежей
-        access_days: accessDays,
-        amount: amountByn,
-        currency: 'BYN',
         meta: preSubMeta,
       })
       .select('id')
       .single();
     if (preSubError || !preSub) {
-      console.error('[create-payment-checkout] subscriptions_v2 pre-create failed:', preSubError);
-      await supabase.from('orders_v2').update({ status: 'failed' }).eq('id', order.id);
-      return { success: false, error: 'Failed to pre-create subscription' };
+      // PATCH PAYMENTS-REVISION: усиленный audit/meta proof + стабильный error-code.
+      const safeErrPayload = {
+        code: (preSubError as any)?.code ?? null,
+        message: (preSubError as any)?.message ?? String(preSubError),
+        captured_at: new Date().toISOString(),
+      };
+      console.error('[create-payment-checkout] subscriptions_v2 pre-create failed:', safeErrPayload);
+
+      const { error: orderFailErr } = await supabase
+        .from('orders_v2')
+        .update({
+          status: 'failed',
+          meta: {
+            ...subMetaWithRouting,
+            precreate_subscription_error: safeErrPayload,
+          },
+        })
+        .eq('id', order.id);
+      if (orderFailErr) console.error('[payment_checkout] order status→failed update failed', { order_id: order.id, payment_type: 'subscription', error: orderFailErr });
+
+      await supabase.from('audit_logs').insert({
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'create-payment-checkout',
+        action: 'payment_checkout.subscription_precreate_failed',
+        target_user_id: user_id,
+        meta: {
+          order_id: order.id,
+          payment_type: 'subscription',
+          payment_flow: paymentFlow,
+          is_installment: isInstallmentSubscription,
+          provider_error: safeErrPayload,
+        },
+      });
+      return { success: false, error: 'subscription_precreate_failed' };
     }
     const subscriptionV2Id = preSub.id as string;
 
@@ -863,11 +897,13 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       return { success: false, error: 'bePaid did not return a subscription URL' };
     }
 
-    // PATCH F2 + INSTALLMENT-PUBLIC-LINK: Store provider subscription — теперь с subscription_v2_id и installment-полями.
+    // PATCH F2 + INSTALLMENT-PUBLIC-LINK + PAYMENTS-REVISION:
+    // Store provider subscription — с subscription_v2_id, явным order_id-колонкой и installment-полями.
     const { error: provSubError } = await supabase.from('provider_subscriptions').upsert({
       provider: 'bepaid',
       provider_subscription_id: String(bepaidSubId),
       subscription_v2_id: subscriptionV2Id,
+      order_id: order.id,
       user_id,
       profile_id: profileId,
       state: 'pending',

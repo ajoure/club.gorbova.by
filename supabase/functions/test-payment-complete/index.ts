@@ -319,58 +319,46 @@ Deno.serve(async (req) => {
           .eq('id', orderV2.id);
       }
 
-      // Create subscription
-      // For trials, set next_charge_at to trial end date for auto-charge
-      const nextChargeAt = orderV2.is_trial ? accessEndAt.toISOString() : null;
-      
-      const { error: subError } = await supabase
-        .from('subscriptions_v2')
-        .insert({
-          user_id: orderV2.user_id,
-          product_id: orderV2.product_id,
-          tariff_id: orderV2.tariff_id,
-          order_id: orderV2.id,
-          status: orderV2.is_trial ? 'trial' : 'active',
-          is_trial: !!orderV2.is_trial,
-          auto_renew: !!orderV2.is_trial, // Enable auto-renew for trial subscriptions
-          access_start_at: accessStartAt,
-          access_end_at: accessEndAt.toISOString(),
-          trial_end_at: orderV2.is_trial ? accessEndAt.toISOString() : null,
-          payment_method_id: (orderV2.meta as any)?.payment_method_id || null,
-          payment_token: null,
-          next_charge_at: nextChargeAt,
-          updated_at: now.toISOString(),
+      // PATCH-SIMULATION-CANONICAL:
+      // Симуляция должна идти через канонический grant-access-for-order,
+      // а НЕ ручным insert subscriptions_v2 + entitlements.
+      // Это делает проверочный путь идентичным реальной оплате (та же логика
+      // продления, primary entitlement integrity, secondary grants).
+      try {
+        const grantRes = await supabase.functions.invoke('grant-access-for-order', {
+          body: {
+            orderId: orderV2.id,
+            customAccessDays: accessDays,
+            grantTelegram: false,  // обработаем ниже отдельно
+            grantGetcourse: false, // обработаем ниже отдельно
+          },
         });
 
-      if (!subError) results.subscription_created = true;
-
-      // Entitlement (used by access checks) - dual-write: user_id + profile_id + order_id
-      if (product?.code) {
-        // Resolve profile_id
-        const { data: profileData } = await supabase
-          .from('profiles')
-          .select('id')
-          .eq('user_id', orderV2.user_id)
-          .single();
-        const profileId = profileData?.id || orderV2.profile_id || null;
-
-        const { error: entError } = await supabase
-          .from('entitlements')
-          .upsert(
-            {
-              user_id: orderV2.user_id,
-              profile_id: profileId,
-              order_id: orderV2.id,
-              product_code: product.code,
-              status: 'active',
-              expires_at: accessEndAt.toISOString(),
-              meta: { source: 'admin_test', order_id: orderV2.id },
-            },
-            { onConflict: 'user_id,product_code' }
-          );
-        results.entitlement_created = !entError;
-        if (entError) results.entitlement_error = entError.message;
+        if (grantRes.error) {
+          console.error('[Test Payment] grant-access-for-order error:', grantRes.error);
+          results.grant_access_invoked = false;
+          results.subscription_error = grantRes.error.message;
+        } else {
+          const grantData = grantRes.data as Record<string, any>;
+          results.grant_access_invoked = true;
+          results.subscription_action = grantData?.results?.subscription?.action || null;
+          results.subscription_created = !!grantData?.results?.subscription;
+          results.entitlement_action = grantData?.results?.entitlement?.action || null;
+          results.entitlement_created = !!grantData?.results?.entitlement;
+        }
+      } catch (grantErr) {
+        console.error('[Test Payment] grant-access-for-order exception:', grantErr);
+        results.grant_access_invoked = false;
+        results.subscription_error = grantErr instanceof Error ? grantErr.message : String(grantErr);
       }
+
+      // Resolve profile_id (used by GetCourse sync below)
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('user_id', orderV2.user_id)
+        .single();
+      const profileId = profileData?.id || orderV2.profile_id || null;
 
       // Telegram access
       if (product?.telegram_club_id) {
@@ -446,14 +434,21 @@ Deno.serve(async (req) => {
         results.getcourse_error = 'No user profile found';
       }
 
-      // Audit log
+      // Audit log — PATCH-SIMULATION-CANONICAL proof: симуляция прошла через grant-access-for-order.
       await supabase
         .from('audit_logs')
         .insert({
           action: 'test_payment_complete',
+          actor_type: 'user',
           actor_user_id: user.id,
+          actor_label: 'test-payment-complete',
           target_user_id: orderV2.user_id,
-          meta: { order_id: orderV2.id, results },
+          meta: {
+            order_id: orderV2.id,
+            results,
+            canonical_simulation: true,
+            grant_path: 'grant-access-for-order',
+          },
         });
 
       console.log(`[Test Payment] Completed (v2) for order ${orderV2.id}:`, results);
