@@ -1798,12 +1798,17 @@ Deno.serve(async (req) => {
          }
        }
        
-       // 7. Audit log (SYSTEM ACTOR PROOF)
+        // 7. Audit log (SYSTEM ACTOR PROOF)
+        // PATCH INSTALLMENT-PUBLIC-LINK: distinguish finite installment subscription via model marker.
+        const installmentCountForAudit = Number(
+          (subV2.meta as any)?.installment_count ?? (orderV2?.meta as any)?.installment_count ?? 0
+        );
+        const isInstallmentFinite = Number.isFinite(installmentCountForAudit) && installmentCountForAudit >= 2;
         await supabase.from('audit_logs').insert({
           actor_type: 'system',
           actor_user_id: null,
           actor_label: 'bepaid-webhook',
-          action: 'bepaid.subscription.processed',
+          action: isInstallmentFinite ? 'bepaid.subscription.installment_processed' : 'bepaid.subscription.processed',
           target_user_id: subV2.user_id,
           meta: {
             subscription_v2_id: subscriptionV2Id,
@@ -1812,6 +1817,16 @@ Deno.serve(async (req) => {
             event: 'activated',
             state: subscriptionState,
             last_tx_uid: transactionUid,
+            ...(isInstallmentFinite
+              ? {
+                  model: 'bepaid_finite_subscription',
+                  billing_cycles: Number((subV2.meta as any)?.billing_cycles ?? installmentCountForAudit),
+                  installment_count: installmentCountForAudit,
+                  per_payment_amount: transaction?.amount ? transaction.amount / 100 : null,
+                  // STAGE L3 GUARD: для finite bePaid installment internal installment_payments НЕ материализуется.
+                  internal_installment_skipped: true,
+                }
+              : {}),
           },
         });
         
