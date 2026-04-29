@@ -1515,6 +1515,14 @@ Deno.serve(async (req) => {
         }
         const renewAt = bepaidRenewAt ? new Date(bepaidRenewAt) : accessEndAt;
         
+        // PATCH PAYMENTS-REVISION: для finite bePaid installment auto_renew должен оставаться false.
+        // Источник истины — subV2.meta.installment_count >= 2 или meta.model='bepaid_finite_subscription'.
+        const subV2Meta = (subV2.meta || {}) as Record<string, any>;
+        const subInstallmentCount = Number(subV2Meta.installment_count ?? 0);
+        const subIsInstallmentFinite =
+          subV2Meta.model === 'bepaid_finite_subscription' ||
+          (Number.isFinite(subInstallmentCount) && subInstallmentCount >= 2);
+
         await supabase
           .from('subscriptions_v2')
           .update({
@@ -1522,16 +1530,23 @@ Deno.serve(async (req) => {
             billing_type: 'provider_managed',
             access_start_at: now.toISOString(),
             access_end_at: accessEndAt.toISOString(),
-            next_charge_at: renewAt.toISOString(),
-            auto_renew: true,
+            next_charge_at: subIsInstallmentFinite ? null : renewAt.toISOString(),
+            auto_renew: !subIsInstallmentFinite,
             meta: {
-              ...(subV2.meta || {}),
+              ...subV2Meta,
               bepaid_subscription_id: subscriptionId,
               bepaid_activated_at: now.toISOString(),
+              ...(subIsInstallmentFinite
+                ? {
+                    model: 'bepaid_finite_subscription',
+                    billing_cycles: Number(subV2Meta.billing_cycles ?? subInstallmentCount),
+                    installment_count: subInstallmentCount,
+                  }
+                : {}),
             },
           })
           .eq('id', subscriptionV2Id);
-        console.log('[WEBHOOK-SUBSCRIPTION] Subscription updated to active, provider_managed');
+        console.log('[WEBHOOK-SUBSCRIPTION] Subscription updated to active, provider_managed, finite=', subIsInstallmentFinite);
         
         // 3. Update provider_subscriptions state
         await supabase
