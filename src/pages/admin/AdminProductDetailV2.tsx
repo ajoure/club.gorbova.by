@@ -2522,11 +2522,19 @@ export default function AdminProductDetailV2() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation */}
-      <Dialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}>
+      {/* Delete Confirmation — Tariff/Offer with safety check */}
+      <TariffDeleteConfirmDialog
+        open={!!deleteConfirm && (deleteConfirm.type === "tariff" || deleteConfirm.type === "offer")}
+        entityType={(deleteConfirm?.type === "offer" ? "offer" : "tariff") as "tariff" | "offer"}
+        entityId={deleteConfirm && (deleteConfirm.type === "tariff" || deleteConfirm.type === "offer") ? deleteConfirm.id : null}
+        onClose={() => setDeleteConfirm(null)}
+      />
+
+      {/* Delete Confirmation — Flow (simple) */}
+      <Dialog open={!!deleteConfirm && deleteConfirm.type === "flow"} onOpenChange={() => setDeleteConfirm(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Подтвердите удаление</DialogTitle>
+            <DialogTitle>Удалить поток?</DialogTitle>
             <DialogDescription>
               Это действие нельзя отменить.
             </DialogDescription>
