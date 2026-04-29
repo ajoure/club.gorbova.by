@@ -1,111 +1,135 @@
-План: разрешить удаление тарифов и кнопок оплаты с понятным предупреждением
+# План: публичная ссылка рассрочки = finite bePaid subscription
 
-## Контекст / диагностика
+> Источник: чат-сообщение пользователя (полный текст), сохранён здесь как канонический план.
+> Любое расхождение между этим файлом и текущим кодом — повод для STOP-guard, не для тихой адаптации.
 
-В админке Продукта V2 при удалении тарифа/кнопки оплаты вылетает сырая ошибка PostgREST:
-`update or delete on table "tariffs" violates foreign key constraint "payment_links_tariff_id_fkey" on table "payment_links"`.
+## 1. Цель
 
-Корень: тариф (или кнопка оплаты) удалить нельзя, пока на него ссылаются «защитные» FK без `ON DELETE CASCADE/SET NULL`. Сейчас на `tariffs` без каскада висят:
+Публичная ссылка рассрочки (`/pay/:token`, `payment_links.meta.installment.selected_installment_months >= 2`) должна оплачиваться через bePaid `/subscriptions` как **finite** подписка с `billing_cycles=N`, а не через `/checkouts` как one-time платёж.
 
-- `orders_v2.tariff_id` — исторические заказы (трогать нельзя, это финансовая правда — SOT по `Commercial Entity SOT`).
-- `subscriptions_v2.tariff_id` — активные/закрытые подписки (SOT по `Club Product SOT`, `Extend ↔ Tariff Match`).
-- `payment_links.tariff_id` / `payment_links.offer_id` — журнал публичных ссылок (`Payment Links Admin Tab`).
-- `payment_reconcile_queue.matched_tariff_id` / `matched_offer_id` — очередь сверки.
-- `live_event_access_rules.tariff_id`, `live_event_product_cta_bindings.tariff_id/offer_id`, `broadcast_templates.targeting_tariff_id` — ссылки из коммуникаций/CTA.
+После первого успешного платежа bePaid сам списывает оставшиеся N−1 платежей раз в 30 дней, завершает подписку, никаких internal `installment-charge-cron` дублирующих списаний.
 
-На `tariff_offers` без каскада: те же `orders_v2.offer_id`, `payment_links.offer_id`, `payment_reconcile_queue.matched_offer_id`, `live_event_product_cta_bindings.offer_id`.
+## 2. Что сейчас не так
 
-Каскады, которые уже работают и сами зачистят зависимое: `tariff_prices`, `payment_plans`, `tariff_offers`, `tariff_features`, `access_rules`, `module_access`, `lesson_price_rules`, `document_generation_rules`, `bepaid_product_mappings` (SET NULL), `import_mapping_rules` (SET NULL), `rejected_card_attempts` (SET NULL), `access_grant_ledger.source_offer_id` (SET NULL).
+- `admin-create-public-link` для installment пишет `payment_type='one_time'`.
+- `/pay/:token` уходит в one-time `/checkouts` bePaid → ЕРИП виден, авто-списания нет.
+- В DB: `provider_subscriptions` не создаётся, `subscriptions_v2` нет, второй и далее платежи не выполняются автоматически.
+- Старая internal installment-схема (`installment_payments` + `installment-charge-cron`) применима только к старой ветке и не должна срабатывать на новой provider-managed installment.
 
-Поэтому реальные «блокировщики» удаления — только финансовая/коммуникационная история. Просто снести FK нельзя — нарушим `Commercial Entity SOT` и `Extend ↔ Tariff Match`. Решение: мягкое удаление + детонация только зачищаемых зависимостей + честное предупреждение в UI.
+## 3. Что меняем (по компонентам)
 
-## Что меняется (по слоям)
+### 3.1. `admin-create-public-link`
+- Если `meta.installment.selected_installment_months >= 2` → `payment_type='subscription'`.
+- `amount` = per-payment kopecks (как сейчас для рассрочки).
+- Audit proof обновить: `public_link.installment_as_subscription`.
+- Никаких новых таблиц/RPC.
 
-### 1. БД: новая RPC `tariff_delete_safety_check(p_tariff_id uuid)` и `offer_delete_safety_check(p_offer_id uuid)`
+### 3.2. `public-checkout`
+- Для installment-ссылки пробросить в shared subscription branch:
+  ```ts
+  meta_extra: {
+    installment_count: N,
+    installment: { interval_days: 30 },
+  }
+  ```
+- Не создавать второй workflow, использовать существующую subscription-ветку.
 
-`SECURITY DEFINER`, доступна `super_admin`/`admin` через `has_role_v2`. Возвращают JSON-сводку:
+### 3.3. `_shared/create-payment-checkout.ts`
+- Распознать installment subscription:
+  ```ts
+  const isInstallmentSubscription = Number(extraMeta.installment_count) >= 2;
+  const billingCycles = isInstallmentSubscription ? Number(extraMeta.installment_count) : null;
+  const intervalDays = isInstallmentSubscription
+    ? Number(extraMeta.installment?.interval_days ?? 30)
+    : 30;
+  ```
+- Для обычных подписок — старое поведение: `infinite=true`, без `billing_cycles`.
+- Для рассрочки в bePaid plan:
+  ```ts
+  plan: {
+    shop_id: Number(bepaidCreds.shop_id),
+    currency: 'BYN',
+    title: planTitle,
+    description: planDescription,
+    plan: { amount, interval: intervalDays, interval_unit: 'day' },
+    infinite: false,
+    billing_cycles: billingCycles,
+    number_payment_attempts: 3,
+  }
+  ```
+- `planDescription`:
+  ```
+  Рассрочка: N платежа по X BYN каждые 30 дней. Подписка завершится после N платежей.
+  ```
+- `tracking_id`: `subv2:{subscription_v2_id}:order:{order_id}` (provider-managed формат).
 
-```
-{
-  "blockers": {
-    "orders_v2": <count>,
-    "subscriptions_v2_active": <count>,
-    "subscriptions_v2_total": <count>,
-    "payment_links_active": <count>,
-    "payment_reconcile_queue": <count>
-  },
-  "soft_links": {
-    "live_event_access_rules": <count>,
-    "live_event_product_cta_bindings": <count>,
-    "broadcast_templates": <count>
-  },
-  "cascade_will_remove": {
-    "tariff_offers": <count>,            // только для tariff
-    "tariff_features": <count>,
-    "tariff_prices": <count>,
-    "payment_plans": <count>,
-    "access_rules": <count>,
-    "module_access": <count>,
-    "lesson_price_rules": <count>,
-    "document_generation_rules": <count>
-  },
-  "can_hard_delete": <bool>,
-  "recommended_action": "soft_archive" | "hard_delete"
-}
-```
+### 3.4. Pre-create `subscriptions_v2` до bePaid
+В subscription-ветке `createPaymentCheckout`:
+- Создать `subscriptions_v2`:
+  - `status='past_due'`
+  - `billing_type='provider_managed'` (если enum не принимает `provider_managed_installment` — STOP-guard, использовать существующее значение + `meta.installment_count`)
+  - `auto_renew=true`
+  - `order_id=order.id`
+  - `meta.checkout_order_id=order.id`
+  - `meta.installment_count=N` только для рассрочки
+- `trackingId = subv2:${subscription.id}:order:${order.id}`.
+- `provider_subscriptions.upsert` с `subscription_v2_id: subscription.id` сразу.
 
-`can_hard_delete = true` только если все blockers и soft_links по нулям.
+### 3.5. `bepaid-webhook`
+- Использовать существующий provider-managed handler (`rawTrackingId.startsWith('subv2:')`).
+- Распознавать `isInstallmentProviderManaged` по `subV2.meta.installment_count >= 2 || order.meta.installment_count >= 2`.
+- При active payment: orders.paid, subv2.active, ps.active, payments.is_recurring=true, grant-access-for-order — как есть.
+- Защита от запуска old internal STAGE L3 (`installment_payments` + `installment-charge-cron`) для provider-managed installment.
+- Audit: `bepaid.subscription.installment_processed` с `billing_cycles, per_payment_amount, provider_subscription_id, subscription_v2_id, order_id`.
 
-### 2. БД: миграция «мягкого удаления»
+### 3.6. `PublicPayPage`
+- Только текст:
+  ```
+  Вас перенаправит на защищённую страницу bePaid для оформления рассрочки.
+  bePaid автоматически спишет N платежей и завершит подписку.
+  ```
+- ЕРИП вручную не скрывать — на `/subscriptions` он отсутствует автоматически.
 
-- В `tariffs` уже есть статус (`Активен`/`Архив` в UI). Если поле `is_active`/`status` уже существует — переиспользуем, новых колонок не создаём (правило «без дублирования»). Если нет — добавить `archived_at timestamptz null`.
-- Аналогично для `tariff_offers` (поле скрытия кнопки уже есть в UI как «Архив/Скрыта» — переиспользовать).
-- Проверить наличие перед миграцией; добавлять только то, чего нет.
+## 4. Что НЕ меняем
+- Никаких новых таблиц, RPC, edge functions, статусов, enum.
+- Никакого второго checkout workflow.
+- Никаких ручных манипуляций ЕРИП в payload.
+- Обычные one-time ссылки и обычные infinite subscriptions — без изменений.
+- Никакого string-matching по продукту/тарифу.
 
-### 3. БД: RPC `tariff_archive(p_tariff_id uuid)` и `offer_archive(p_offer_id uuid)` + `tariff_hard_delete(p_tariff_id uuid)` / `offer_hard_delete(p_offer_id uuid)`
+## 5. Dry-run (только SELECT)
+1. Текущие installment payment_links: `payment_links.meta.installment.selected_installment_months >= 2` → их `payment_type` сейчас.
+2. Уже оплаченные/начатые рассрочки, которые ушли one-time: `orders_v2.meta.installment_count >= 2`, `payment_flow`, наличие `provider_subscriptions`.
+3. Реально допустимые значения `subscriptions_v2.billing_type` (enum/check).
+4. Формат `provider_subscriptions.tracking_id` для уже работающих provider-managed подписок (валидация формата `subv2:...`).
 
-- `*_archive`: ставит «архив», скрывает в публичных списках, не трогает FK. Безопасно всегда.
-- `*_hard_delete`: вызывает `*_safety_check`, если `can_hard_delete=false` → бросает понятную ошибку с кодом и счётчиками; иначе делает физический `DELETE` (каскады сами добьют связанные сущности). Все действия пишутся в `audit_logs` (actor=JWT, по `Audit Actor Standard`).
+## 6. Execute (после approval, последовательно)
+1. `admin-create-public-link` — installment → `payment_type='subscription'`.
+2. `public-checkout` — пробросить installment meta_extra.
+3. `_shared/create-payment-checkout.ts` — finite plan + pre-create `subscriptions_v2` + tracking_id.
+4. `bepaid-webhook` — installment audit + защита от internal scheduler.
+5. `PublicPayPage` — текст.
+6. Memory: `Installment Public Link = finite bePaid subscription`.
 
-### 4. UI: диалог удаления — два режима с пояснениями
+## 7. STOP-guards
+1. bePaid не принимает inline `infinite/billing_cycles` в `POST /subscriptions` → план меняется: сначала `/plans`, потом `/subscriptions` по `plan.id`. Без новой функции.
+2. `subscriptions_v2.billing_type` enum не принимает proposed value и нельзя безопасно использовать `provider_managed` + meta marker.
+3. Webhook не сможет резолвить `subv2:{sub_id}:order:{order_id}`.
+4. Dry-run находит уже paid one-time installment orders → их repair выносится в отдельный план, не в этот патч.
+5. Любой массовый UPDATE по старым данным — отдельный dry-run + rowcount guard.
 
-Файл: `src/pages/admin/AdminProductDetailV2.tsx`, диалог «Подтвердите удаление» (строки ~2532–2550) и bulk-диалог (~2552–2570).
+## 8. DoD
+1. Новая публичная installment-ссылка: `payment_type='subscription'`, `amount=per_payment_kopecks`, `meta.installment.selected_installment_months=N`.
+2. `/pay/:token` → bePaid `/subscriptions` (не `/checkouts`).
+3. ЕРИП в bePaid не отображается автоматически.
+4. Payload bePaid: `infinite=false`, `billing_cycles=N`, `number_payment_attempts=3`, `plan.amount=per_payment_kopecks`, `plan.interval=30`, `plan.interval_unit=day`.
+5. `tracking_id = subv2:{subscription_v2_id}:order:{order_id}`.
+6. Webhook идёт в provider-managed subscription branch.
+7. После 1-го успешного платежа: orders.paid, subv2.active, ps.active, ps.subscription_v2_id заполнен, payments.is_recurring=true, доступ через grant-access-for-order.
+8. Никаких duplicate internal `installment_payments` для новых provider-managed installment.
+9. Обычные one-time ссылки — без изменений.
+10. Обычные infinite subscriptions — без `billing_cycles`.
 
-При открытии диалога вызываем safety-check RPC и показываем:
-
-- **Зелёный сценарий (`can_hard_delete=true`)**: «Тариф/кнопку можно удалить безопасно. Будут также удалены: N кнопок оплаты, M цен, K правил доступа, …». Кнопка «Удалить навсегда».
-- **Жёлтый сценарий (есть `soft_links`, нет `blockers`)**: «Удаление возможно, но осиротеют: N CTA на эфирах, M шаблонов рассылок. Их нужно будет переназначить на другой тариф. Рекомендуется сначала перевести в архив». Две кнопки: «В архив» (рекомендуется) и «Удалить навсегда».
-- **Красный сценарий (есть `blockers`)**: «Удалить навсегда нельзя — на тариф ссылаются: N оплаченных заказов, M активных подписок, K активных платёжных ссылок. Удаление бы нарушило финансовую историю. Можно перевести в архив — тариф пропадёт из всех публичных страниц и админских селектов, но история сохранится». Кнопка «В архив», вторая кнопка «Удалить навсегда» — disabled с tooltip-объяснением.
-
-Каждая строка-блокер — кликабельная: ведёт в соответствующий раздел с предзаполненным фильтром (`/admin/payments?tariff_id=…`, `/admin/payments/links?tariff_id=…`, `/admin/subscriptions?tariff_id=…`).
-
-Ниже — раздел «Как починить»:
-- Платёжные ссылки: «Деактивируйте или замените тариф в журнале ссылок».
-- Подписки: «Отмените активные подписки или дождитесь окончания периода».
-- Заказы: «Архив — корректный способ. Удалять оплаченные заказы нельзя».
-- CTA эфиров / шаблоны рассылок: «Откройте раздел и перепривяжите на другой тариф».
-
-### 5. UI: bulk-удаление
-
-В bulk-диалоге дополнительно показывать сводку по выделенным: «Из N выбранных безопасно удаляются K, в архив пойдёт L, заблокировано M». Кнопки: «Архивировать всё», «Удалить только безопасные», «Отмена».
-
-### 6. Нормализация ошибок
-
-Запросы к RPC проводить через существующий `normalizeEdgeFunctionError` (правило `Error Normalization`) — никаких сырых текстов вроде `violates foreign key constraint` пользователю.
-
-## Файлы
-
-- Миграция БД: новые RPC `tariff_delete_safety_check`, `offer_delete_safety_check`, `tariff_archive`, `offer_archive`, `tariff_hard_delete`, `offer_hard_delete` + (опционально) `archived_at` колонки, если их нет.
-- `src/hooks/useTariffOffers.tsx`, `src/hooks/useProductsV2.tsx` (или соседние) — заменить прямые `delete` на вызовы новых RPC (`useDeleteTariff`, `useDeleteOffer`, `useArchiveTariff`, `useArchiveOffer`).
-- `src/pages/admin/AdminProductDetailV2.tsx` — переработка двух диалогов (одиночный и bulk), новая загрузка safety-check, маппинг сценариев → копирайт, кнопки.
-- `src/lib/errors.ts` (или существующий `normalizeEdgeFunctionError`) — без изменений, только использование.
-- Возможно новый компонент `TariffDeleteConfirmDialog.tsx` для чистоты, рядом с `BulkExtendAccessDialog.tsx`.
-
-## DoD
-
-- При нажатии «Удалить» по тарифу с активной платёжной ссылкой/подпиской/заказом: больше нет красного toast'а с FK-ошибкой; вместо этого открывается диалог с понятным объяснением и предложением «Архив».
-- Тариф/кнопку без зависимостей можно удалить физически одним кликом (как раньше), без новых трений.
-- Архивированные тарифы/кнопки исчезают из публичных страниц продаж и из селектов оплаты, но остаются видны в админке с бейджем «Архив» и доступны для восстановления.
-- Все вызовы пишут запись в `audit_logs` с actor из JWT.
-- Ошибки edge/RPC проходят через `normalizeEdgeFunctionError` — пользователь видит человеческий текст.
-- `Commercial Entity SOT`, `Extend ↔ Tariff Match`, `Audit Actor Standard`, `Error Normalization` — не нарушены.
+## 9. Риски
+- bePaid API: возможно потребуется отдельный `POST /plans` перед `POST /subscriptions`. Решается в рамках STOP-guard №1, без архитектурных изменений.
+- Старые ошибочные one-time installment orders — repair НЕ в этом патче, отдельным планом.
