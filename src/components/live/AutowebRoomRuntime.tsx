@@ -132,8 +132,8 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
     <div className="live-room-themed min-h-screen flex flex-col">
       {/* Header */}
       <div className="max-w-[1600px] w-full mx-auto px-3 md:px-6 pt-3 md:pt-4 pb-2">
+        <h1 className="room-title text-base md:text-xl lg:text-2xl font-bold leading-tight text-balance line-clamp-2 mb-1 md:mb-1.5 max-w-3xl" title={title ?? "Автовебинар"}>{title ?? "Автовебинар"}</h1>
         <div className="flex items-center gap-2 md:gap-3 mb-1 flex-wrap">
-          <h1 className="room-title text-lg md:text-2xl font-bold truncate">{title ?? "Автовебинар"}</h1>
           <Badge variant={isLive ? "default" : "outline"}>
             {isPreShow && "До эфира"}
             {isLive && "В эфире"}
