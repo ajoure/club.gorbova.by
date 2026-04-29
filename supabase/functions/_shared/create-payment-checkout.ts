@@ -811,6 +811,17 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         .eq('id', order.id);
       if (failErr2) console.error('[payment_checkout] order status→failed update failed', { order_id: order.id, payment_type: 'subscription', error: failErr2 });
 
+      // PATCH INSTALLMENT-PUBLIC-LINK: rollback pre-created subscriptions_v2 чтобы не оставлять past_due-мусор.
+      const { error: rollbackErr } = await supabase
+        .from('subscriptions_v2')
+        .update({
+          status: 'canceled',
+          auto_renew: false,
+          meta: { ...preSubMeta, rollback_reason: 'bepaid_subscription_create_failed', rollback_at: new Date().toISOString(), provider_error: providerErrorPayloadSub },
+        })
+        .eq('id', subscriptionV2Id);
+      if (rollbackErr) console.error('[payment_checkout] subscriptions_v2 rollback failed', { subscription_v2_id: subscriptionV2Id, error: rollbackErr });
+
       await supabase.from('audit_logs').insert({
         action: 'bepaid.checkout.declined',
         actor_type: 'system',
@@ -818,8 +829,10 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         target_user_id: user_id,
         meta: {
           order_id: order.id,
+          subscription_v2_id: subscriptionV2Id,
           payment_type: 'subscription',
           payment_flow: paymentFlow,
+          model: isInstallmentSubscription ? 'bepaid_finite_subscription' : 'bepaid_subscription',
           provider_error: providerErrorPayloadSub,
         },
       });
@@ -838,6 +851,15 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       console.error('[create-payment-checkout] No subscription ID or redirect URL in bePaid response');
       const { error: failErr3 } = await supabase.from('orders_v2').update({ status: 'failed' }).eq('id', order.id);
       if (failErr3) console.error('[payment_checkout] order status→failed update failed', { order_id: order.id, payment_type: 'subscription', error: failErr3 });
+      // Rollback pre-created subscription
+      await supabase
+        .from('subscriptions_v2')
+        .update({
+          status: 'canceled',
+          auto_renew: false,
+          meta: { ...preSubMeta, rollback_reason: 'bepaid_no_subscription_or_redirect_url', rollback_at: new Date().toISOString() },
+        })
+        .eq('id', subscriptionV2Id);
       return { success: false, error: 'bePaid did not return a subscription URL' };
     }
 
