@@ -434,14 +434,21 @@ Deno.serve(async (req) => {
         results.getcourse_error = 'No user profile found';
       }
 
-      // Audit log
+      // Audit log — PATCH-SIMULATION-CANONICAL proof: симуляция прошла через grant-access-for-order.
       await supabase
         .from('audit_logs')
         .insert({
           action: 'test_payment_complete',
+          actor_type: 'user',
           actor_user_id: user.id,
+          actor_label: 'test-payment-complete',
           target_user_id: orderV2.user_id,
-          meta: { order_id: orderV2.id, results },
+          meta: {
+            order_id: orderV2.id,
+            results,
+            canonical_simulation: true,
+            grant_path: 'grant-access-for-order',
+          },
         });
 
       console.log(`[Test Payment] Completed (v2) for order ${orderV2.id}:`, results);
