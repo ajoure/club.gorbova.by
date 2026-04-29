@@ -1406,9 +1406,9 @@ export function AutoRenewalsTabContent() {
               <div className="text-sm font-medium mt-1">
                 {stats.total.sum.toFixed(2)} BYN
               </div>
-              {stats.bepaidTotal > 0 && (
+              {(stats.bepaidTotal > 0 || stats.mitTotal > 0) && (
                 <div className="text-[10px] text-muted-foreground mt-0.5">
-                  MIT: {stats.mitTotal} · BePaid: {stats.bepaidTotal}
+                  bePaid: {stats.bepaidTotal}{stats.mitTotal > 0 ? ` · Локальная карта: ${stats.mitTotal}` : ''}
                 </div>
               )}
             </Card>
@@ -1428,7 +1428,7 @@ export function AutoRenewalsTabContent() {
               </div>
               {(stats.mitDueToday > 0 || stats.bepaidDueToday > 0) && (
                 <div className="text-[10px] text-muted-foreground mt-0.5">
-                  MIT: {stats.mitDueToday} · BePaid: {stats.bepaidDueToday}
+                  bePaid: {stats.bepaidDueToday}{stats.mitDueToday > 0 ? ` · Локальная карта: ${stats.mitDueToday}` : ''}
                 </div>
               )}
             </Card>
