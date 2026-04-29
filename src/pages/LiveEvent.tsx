@@ -3,6 +3,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { AutowebSessionSelector } from "@/components/live/AutowebSessionSelector";
 import { AutowebRoomRuntime } from "@/components/live/AutowebRoomRuntime";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useKinescopePlayer } from "@/hooks/useKinescopePlayer";
@@ -651,7 +652,20 @@ function LiveEventLegacy() {
           M1.4: уменьшены вертикальные отступы и размер заголовка на mobile, чтобы первый экран
           был плотнее и не было пустого «воздуха» сверху между header и video-shell. */}
       <div data-mobile-header className="max-w-[1600px] w-full mx-auto px-3 md:px-6 pt-1.5 md:pt-4 pb-1 md:pb-2 max-lg:flex-shrink-0">
-        <h1 className="room-title text-sm md:text-xl lg:text-2xl font-bold leading-tight text-balance line-clamp-2 mb-1 md:mb-1.5 max-w-3xl" title={data?.title}>{data?.title}</h1>
+        <Tooltip delayDuration={200}>
+          <TooltipTrigger asChild>
+            <h1
+              tabIndex={0}
+              className="room-title w-full text-base md:text-2xl lg:text-[28px] font-semibold tracking-tight leading-[1.2] text-balance line-clamp-1 md:line-clamp-2 mb-1 md:mb-1.5 cursor-default focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded-sm"
+              title={data?.title}
+            >
+              {data?.title}
+            </h1>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="start" className="max-w-[min(92vw,640px)] text-sm leading-snug whitespace-normal break-words">
+            {data?.title}
+          </TooltipContent>
+        </Tooltip>
         <div className="flex items-center gap-1.5 md:gap-3 mb-0.5 md:mb-1 flex-wrap">
           {/* Sprint 2 PATCH 2.5/2.7: room state badge через единый VM, не локальное вычисление */}
           {isWaiting ? (
