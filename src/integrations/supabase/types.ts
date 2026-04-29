@@ -14699,6 +14699,7 @@ export type Database = {
           latest_payment_status: string
           meta: Json
           order_number: string
+          pipeline_id: string
           product_code: string
           product_id: string
           product_name: string

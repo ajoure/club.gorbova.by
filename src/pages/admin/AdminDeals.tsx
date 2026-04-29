@@ -414,6 +414,7 @@ export default function AdminDeals() {
       trial_end_at: r.trial_end_at,
       product_id: r.product_id,
       tariff_id: r.tariff_id,
+      pipeline_id: r.pipeline_id,
       user_id: r.user_id,
       profile_id: r.profile_id,
       reconcile_source: r.reconcile_source,
