@@ -984,6 +984,7 @@ export function AutoRenewalsTabContent() {
   };
 
   const getChargeStatus = (renewal: AutoRenewal) => {
+    if (renewal.charged_today) return { label: 'Списано', variant: 'default' as const, className: 'bg-emerald-600' };
     if (!renewal.next_charge_at) return { label: 'Нет даты', variant: 'secondary' as const };
     
     const date = new Date(renewal.next_charge_at);
@@ -1443,10 +1444,15 @@ export function AutoRenewalsTabContent() {
               role="button"
               aria-pressed={filter === 'due_today'}
             >
-              <div className="text-2xl font-bold text-blue-600">{stats.dueToday.count}</div>
+              <div className="text-2xl font-bold text-blue-600">
+                {stats.dueTodayCharged.count}/{stats.dueToday.count}
+              </div>
               <div className="text-xs text-muted-foreground">К списанию сегодня</div>
               <div className="text-sm font-medium text-blue-600 mt-1">
                 {stats.dueToday.sum.toFixed(2)} BYN
+              </div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">
+                Списано: {stats.dueTodayCharged.count} · Осталось: {stats.dueTodayRemaining.count}
               </div>
               {(stats.mitDueToday > 0 || stats.bepaidDueToday > 0) && (
                 <div className="text-[10px] text-muted-foreground mt-0.5">
