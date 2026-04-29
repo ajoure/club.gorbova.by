@@ -24,7 +24,7 @@ type ReasonTone = "success" | "warning" | "danger" | "muted";
 
 const REASON_META: Record<string, { label: string; tone: ReasonTone }> = {
   "не_оплачено": { label: "Сделка не оплачена — продление не выполняется", tone: "muted" },
-  "нет_user_id": { label: "Нет привязки к пользователю. Сначала свяжите сделку с пользователем или восстановите user_id", tone: "danger" },
+  "нет_user_id": { label: "Контакт ещё не зарегистрирован на платформе — выдать доступ нельзя. После первого входа по email сделка и доступ привяжутся автоматически (handle_new_user).", tone: "warning" },
   "нет_product_id": { label: "У сделки не указан продукт", tone: "danger" },
   "продукт_деактивирован": { label: "Продукт деактивирован — доступ не выдаётся", tone: "danger" },
   "тариф_деактивирован": { label: "Тариф деактивирован", tone: "danger" },
