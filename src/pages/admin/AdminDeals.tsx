@@ -570,6 +570,47 @@ export default function AdminDeals() {
     staleTime: 5 * 60 * 1000,
   });
 
+  // Access map: order_id → { access_until: string, source: 'subscription'|'entitlement'|'trial' }
+  const dealIdsForAccess = useMemo(() => allDeals.map((d: any) => d.id), [allDeals]);
+  const { data: accessMap } = useQuery({
+    queryKey: ["deals-access-map", dealIdsForAccess.length, dealIdsForAccess.slice(0, 5).join(",")],
+    queryFn: async () => {
+      const map = new Map<string, { access_until: string | null; source: string }>();
+      if (dealIdsForAccess.length === 0) return map;
+      const CHUNK = 200;
+      for (let i = 0; i < dealIdsForAccess.length; i += CHUNK) {
+        const chunk = dealIdsForAccess.slice(i, i + CHUNK);
+        const [subsRes, entRes] = await Promise.all([
+          supabase
+            .from("subscriptions_v2")
+            .select("order_id, access_end_at, status")
+            .in("order_id", chunk),
+          supabase
+            .from("entitlements")
+            .select("order_id, expires_at")
+            .in("order_id", chunk),
+        ]);
+        (subsRes.data || []).forEach((s: any) => {
+          if (!s.access_end_at) return;
+          const cur = map.get(s.order_id);
+          if (!cur || (cur.access_until && new Date(s.access_end_at) > new Date(cur.access_until))) {
+            map.set(s.order_id, { access_until: s.access_end_at, source: "subscription" });
+          }
+        });
+        (entRes.data || []).forEach((e: any) => {
+          if (!e.expires_at) return;
+          const cur = map.get(e.order_id);
+          if (!cur || (cur.access_until && new Date(e.expires_at) > new Date(cur.access_until))) {
+            map.set(e.order_id, { access_until: e.expires_at, source: cur?.source || "entitlement" });
+          }
+        });
+      }
+      return map;
+    },
+    enabled: dealIdsForAccess.length > 0,
+    staleTime: 60_000,
+  });
+
   // Get field value for sorting
   const getDealFieldValue = useCallback((deal: any, fieldKey: string): any => {
     switch (fieldKey) {
