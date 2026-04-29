@@ -1,0 +1,2 @@
+REVOKE EXECUTE ON FUNCTION public.inv20_paid_orders_actionable(timestamp with time zone, integer) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.inv20_paid_orders_actionable(timestamp with time zone, integer) TO service_role;
