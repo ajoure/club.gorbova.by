@@ -897,11 +897,13 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       return { success: false, error: 'bePaid did not return a subscription URL' };
     }
 
-    // PATCH F2 + INSTALLMENT-PUBLIC-LINK: Store provider subscription — теперь с subscription_v2_id и installment-полями.
+    // PATCH F2 + INSTALLMENT-PUBLIC-LINK + PAYMENTS-REVISION:
+    // Store provider subscription — с subscription_v2_id, явным order_id-колонкой и installment-полями.
     const { error: provSubError } = await supabase.from('provider_subscriptions').upsert({
       provider: 'bepaid',
       provider_subscription_id: String(bepaidSubId),
       subscription_v2_id: subscriptionV2Id,
+      order_id: order.id,
       user_id,
       profile_id: profileId,
       state: 'pending',
