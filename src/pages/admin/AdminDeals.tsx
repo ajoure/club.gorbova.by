@@ -624,10 +624,22 @@ export default function AdminDeals() {
         return (deal.tariffs as any)?.name || "";
       case "deal_date":
         return getEffectiveDealDate(deal);
+      case "final_price": {
+        // Принудительно number — иначе строки сравниваются лексикографически
+        const v = deal.final_price;
+        if (v == null || v === "") return null;
+        const n = typeof v === "number" ? v : Number(v);
+        return Number.isFinite(n) ? n : null;
+      }
+      case "trial_end_at": {
+        // Колонка «Доступ до» — сортируем по фактической дате окончания доступа
+        const accessUntil = accessMap?.get(deal.id)?.access_until || deal.trial_end_at;
+        return accessUntil ? new Date(accessUntil) : null;
+      }
       default:
         return deal[fieldKey];
     }
-  }, [fallbackProfilesMap, moduleMetaMap]);
+  }, [fallbackProfilesMap, moduleMetaMap, accessMap]);
 
   // Export columns
   const getDealsExportColumns = useCallback((): ExportColumn<any>[] => [
@@ -665,8 +677,20 @@ export default function AdminDeals() {
     getFieldValue: getDealFieldValue,
   });
 
-  // Visible deals — limited to displayLimit
-  const visibleDeals = useMemo(() => sortedDeals.slice(0, displayLimit), [sortedDeals, displayLimit]);
+  // Когда пользователь сортирует по нестандартному ключу (не дефолтный deal_date desc) —
+  // автозагружаем все страницы, иначе сортировка применяется только к первой странице.
+  const isCustomSort = sortKey !== null && !(sortKey === "deal_date" && sortDirection === "desc");
+  useEffect(() => {
+    if (isCustomSort && hasNextPage && !isFetchingNextPage) {
+      fetchNextPage();
+    }
+  }, [isCustomSort, hasNextPage, isFetchingNextPage, fetchNextPage, allDeals.length]);
+
+  // Visible deals — limited to displayLimit. При активной сортировке показываем всё загруженное.
+  const visibleDeals = useMemo(
+    () => isCustomSort ? sortedDeals : sortedDeals.slice(0, displayLimit),
+    [sortedDeals, displayLimit, isCustomSort],
+  );
 
   // Preset tab definitions with server-side counts
   const DEAL_PRESETS: FilterPreset[] = useMemo(() => [
@@ -1456,16 +1480,21 @@ export default function AdminDeals() {
       {/* Show More button — reuses Contacts pattern (list mode only) */}
       {viewMode === "list" && (() => {
         const loadedCount = Math.min(displayLimit, allDeals.length);
-        // tabCounts не учитывает фильтры pipeline/tariff → при их активности используем фактический allDeals.length
         const filtersBeyondTabCounts = !!activePipelineId || selectedTariffIds.length > 0;
-        const effectiveTotal = filtersBeyondTabCounts
-          ? (hasNextPage ? Math.max(allDeals.length + 1, loadedCount) : allDeals.length)
-          : (totalCount ?? allDeals.length);
-        const remaining = effectiveTotal - loadedCount;
-        // Скрываем кнопку, если всё показано и больше нечего загружать
+
+        // Условия скрытия:
+        // 1. Сервер сказал «больше нет» И мы уже показали всё загруженное
         if (!hasNextPage && displayLimit >= allDeals.length) return null;
-        if (remaining <= 0 && !hasNextPage) return null;
-        const showRemaining = Math.max(0, remaining);
+
+        // Реальный остаток считаем только когда totalCount достоверный
+        // (без фильтров pipeline/tariff, которые не учтены в tabCounts).
+        const totalReliable = !filtersBeyondTabCounts && typeof totalCount === "number";
+        const remaining = totalReliable ? Math.max(0, (totalCount as number) - loadedCount) : null;
+        const nextBatch = remaining != null ? Math.min(PAGE_SIZE, remaining) : PAGE_SIZE;
+
+        // Если totalCount достоверен и остатка нет, и сервер тоже исчерпан — скрываем
+        if (totalReliable && remaining === 0 && !hasNextPage) return null;
+
         return (
           <div className="flex justify-center py-3">
             <Button
@@ -1484,16 +1513,10 @@ export default function AdminDeals() {
             >
               {isFetchingNextPage ? (
                 <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Загрузка...</>
+              ) : remaining != null && remaining > 0 ? (
+                <>Показать ещё {nextBatch}{remaining > nextBatch ? ` (осталось ${remaining})` : ""}</>
               ) : (
-                (() => {
-                  const nextBatch = Math.min(PAGE_SIZE, showRemaining || PAGE_SIZE);
-                  return (
-                    <>
-                      Показать ещё {nextBatch}
-                      {showRemaining > nextBatch ? ` (осталось ${showRemaining})` : ""}
-                    </>
-                  );
-                })()
+                <>Показать ещё</>
               )}
             </Button>
           </div>
