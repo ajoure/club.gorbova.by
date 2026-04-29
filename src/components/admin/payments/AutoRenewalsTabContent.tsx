@@ -1365,9 +1365,6 @@ export function AutoRenewalsTabContent() {
   return (
     <TooltipProvider>
       <div className="space-y-4">
-        {/* INV-22 — рассинхрон зомби-подписок с провайдером (dry-run + execute) */}
-        <Inv22ResolverPanel />
-
         {/* Stats with amounts - PATCH-5: Fixed borders and removed "на сумму" */}
         {stats && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -1579,6 +1576,9 @@ export function AutoRenewalsTabContent() {
             <RefreshCw className="h-4 w-4 mr-1" />
             Обновить
           </Button>
+
+          {/* INV-22 — шестерёнка с badge числа зомби-подписок, открывает диалог разбора */}
+          <Inv22ResolverPanel />
 
           {/* PATCH-5: Tools dropdown */}
           <DropdownMenu>
