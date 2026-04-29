@@ -357,25 +357,63 @@ Deno.serve(async (req) => {
     // -------------------------
     const { data: inv22Result, error: inv22Error } = await supabase.rpc(
       "inv22_subscription_desync",
-      { p_limit: 10 }
+      { p_limit: 50 }
     );
 
     const inv22Count = inv22Error ? -1 : (inv22Result?.count ?? 0);
     const inv22Samples = inv22Error ? [] : (inv22Result?.samples ?? []);
+    const inv22ByBucket = inv22Error ? {} : (inv22Result?.by_bucket ?? {});
     const inv22Critical = inv22Count > 5;
+
+    // Human-readable bucket labels
+    const BUCKET_LABEL: Record<string, string> = {
+      never_charged_expired: "мёртвые без оплаты (expired)",
+      previously_charged_expired: "expired после успешных списаний",
+      never_charged_redirecting: "застряли на 3DS (redirecting)",
+      previously_charged_redirecting: "redirecting после списаний",
+      active_no_dates: "active без дат списаний",
+      other: "прочее",
+    };
+
+    const bucketSummary = Object.entries(inv22ByBucket as Record<string, number>)
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `${BUCKET_LABEL[k] ?? k}: ${v}`)
+      .join(", ");
 
     invariants.push({
       name: "INV-22: Active subscription desync with provider",
       passed: inv22Count === 0,
       count: inv22Count,
       samples: inv22Samples,
+      by_bucket: inv22ByBucket,
       description: inv22Error
         ? `Ошибка RPC inv22_subscription_desync: ${inv22Error.message}`
-        : `${inv22Count} активных подписок десинхронизированы с provider_subscriptions (terminal state или пустые даты списания). ${inv22Critical ? "CRITICAL" : inv22Count > 0 ? "WARNING" : "OK"}.`,
+        : `${inv22Count} активных подписок десинхронизированы с provider_subscriptions${bucketSummary ? ` — ${bucketSummary}` : ""}. ${inv22Critical ? "CRITICAL" : inv22Count > 0 ? "WARNING" : "OK"}.`,
     });
 
     if (inv22Count > 0) {
       try {
+        const headerIcon = inv22Critical ? "🚨" : "⚠️";
+        const headerLabel = inv22Critical ? " CRITICAL" : "";
+        const sampleLines = inv22Samples.slice(0, 3).map((d: any) => {
+          const sub = String(d.subscription_id ?? "").slice(0, 8);
+          const psid = String(d.provider_subscription_id ?? "").slice(0, 16);
+          const age = typeof d.age_hours === "number" ? `${Math.round(d.age_hours)}ч` : "?ч";
+          return `• sub=${sub}… ps=${psid} state=${d.ps_state} bucket=${d.bucket} age=${age} end=${String(d.access_end_at ?? "").slice(0, 10)}`;
+        }).join("\n");
+
+        const message = [
+          `${headerIcon} INV-22${headerLabel}: ${inv22Count} активных подписок десинхронизированы с провайдером.`,
+          bucketSummary ? `Разбивка: ${bucketSummary}` : "",
+          "",
+          "Что это значит: на нашей стороне подписки числятся активными и продлеваемыми, а на стороне bePaid либо закрыты, либо застряли на 3DS — автосписаний не будет.",
+          "",
+          "Примеры (первые 3):",
+          sampleLines,
+          "",
+          "Разбор: /admin/system-health → INV-22 → «Разобрать» (dry-run + execute).",
+        ].filter(Boolean).join("\n");
+
         await fetch(`${supabaseUrl}/functions/v1/telegram-notify-admins`, {
           method: "POST",
           headers: {
@@ -383,7 +421,7 @@ Deno.serve(async (req) => {
             Authorization: `Bearer ${supabaseServiceKey}`,
           },
           body: JSON.stringify({
-            message: `${inv22Critical ? "🚨" : "⚠️"} INV-22${inv22Critical ? " CRITICAL" : ""}: ${inv22Count} активных подписок десинхронизированы с provider_subscriptions!\n\nПримеры: ${inv22Samples.slice(0, 3).map((d: any) => `sub=${String(d.subscription_id).slice(0,8)}… ps_state=${d.ps_state}`).join(", ")}`,
+            message,
             source: "nightly-payments-invariants",
           }),
         });

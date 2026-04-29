@@ -76,6 +76,20 @@ export const INVARIANT_HUMANIZE: Record<string, InvariantDescriptor> = {
     whyItMatters: "Информационная метрика выручки.",
     suggestedFix: "Действие не требуется.",
   },
+  "INV-22": {
+    code: "INV-22",
+    problemType: "critical_fix",
+    recommendedAction: "fix_via_lovable",
+    ownerTitle: "Подписки рассинхронизированы с bePaid",
+    ownerSummary: "Локально active+auto_renew, у провайдера expired/redirecting",
+    whatHappened: "Подписки числятся активными и продлеваемыми у нас, но bePaid их уже не считает живыми (expired или застряли на 3DS).",
+    whyItMatters: "Кабинет показывает пользователю «активна, продлится автоматически», но провайдер не спишет — клиент потеряет доступ без предупреждения.",
+    whyNotAutofixed: "Затрагивает живые карты пользователей и видимость в кабинете — нужна явная кнопка владельца с dry-run и подтверждением.",
+    consequenceOfInaction: "Накопление зомби-подписок: ложная статистика выручки, обманутые ожидания клиентов, риск негатива при истечении доступа.",
+    suggestedFix: "Откройте Платежи → Автопродления → блок «INV-22 — рассинхрон подписок» сверху страницы. Сначала «Загрузить план», затем «Разобрать» — выполнит dry-run и закроет локально только тех, кого bePaid тоже считает мёртвыми. Доступ не отзывается.",
+    relatedRoute: "/admin/payments/auto-renewals",
+    relatedRouteLabel: "Автопродления",
+  },
 };
 
 export function humanizeInvariant(code: string): InvariantDescriptor {
