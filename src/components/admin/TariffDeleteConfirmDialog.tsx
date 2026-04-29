@@ -91,6 +91,7 @@ const CASCADE_LABELS: Record<string, string> = {
 
 export function TariffDeleteConfirmDialog({ open, entityType, entityId, onClose }: Props) {
   const [safety, setSafety] = useState<SafetyResult | null>(null);
+  const [checkError, setCheckError] = useState<string | null>(null);
 
   const tariffSafety = useTariffDeleteSafetyCheck();
   const offerSafety = useOfferDeleteSafetyCheck();
@@ -108,15 +109,19 @@ export function TariffDeleteConfirmDialog({ open, entityType, entityId, onClose 
   useEffect(() => {
     if (open && entityId) {
       setSafety(null);
+      setCheckError(null);
       checkMutation.mutateAsync(entityId).then(
         (res) => setSafety(res as SafetyResult),
-        () => setSafety(null),
+        (error) => {
+          setSafety(null);
+          setCheckError(error?.message || "Не удалось проверить зависимости");
+        },
       );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, entityId, entityType]);
 
-  const isLoading = checkMutation.isPending || (!safety && open);
+  const isLoading = checkMutation.isPending || (!safety && !checkError && open);
   const blockers = safety
     ? Object.entries(safety.blockers).filter(([, v]) => Number(v) > 0)
     : [];
@@ -169,6 +174,16 @@ export function TariffDeleteConfirmDialog({ open, entityType, entityId, onClose 
           <div className="flex items-center gap-2 py-6 text-muted-foreground text-sm">
             <Loader2 className="h-4 w-4 animate-spin" /> Проверяем зависимости…
           </div>
+        )}
+
+        {!isLoading && checkError && (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>Не удалось проверить зависимости</AlertTitle>
+            <AlertDescription>
+              Обновите страницу и повторите. Если ошибка повторится, используйте «В архив» только после проверки связей в платежах и эфирах.
+            </AlertDescription>
+          </Alert>
         )}
 
         {!isLoading && safety && (
@@ -270,11 +285,11 @@ export function TariffDeleteConfirmDialog({ open, entityType, entityId, onClose 
           <Button variant="outline" onClick={onClose}>
             Отмена
           </Button>
-          {safety && scenario !== "green" && (
+          {((safety && scenario !== "green") || checkError) && (
             <Button
               variant="secondary"
               onClick={handleArchive}
-              disabled={archiveMutation.isPending}
+              disabled={archiveMutation.isPending || !entityId}
             >
               {archiveMutation.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin mr-1" />
