@@ -699,6 +699,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     const preSubMeta: Record<string, any> = {
       source: isInstallmentSubscription ? 'public_link_installment' : 'public_link_subscription',
       checkout_order_id: order.id,
+      offer_id: offer_id || null,
       created_at_pre: new Date().toISOString(),
       tariff_access_days: accessDays,
       amount_byn: amountByn,
@@ -719,7 +720,6 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         profile_id: profileId,
         product_id,
         tariff_id,
-        offer_id: offer_id || null,
         order_id: order.id,
         status: 'past_due',
         billing_type: 'provider_managed',
