@@ -470,8 +470,14 @@ export function ContactTelegramChat({
     'MANUAL_NOTIFICATION',
     'custom',
     'telegram.notification.sent',
+    // Auto/manual access grants — backend mirrors them as a real outgoing
+    // bubble in telegram_messages, so the event-pill is redundant.
+    'AUTO_GRANT',
+    'MANUAL_GRANT',
     // subscription_reminder_*d are matched via prefix below
   ]);
+
+  const SUCCESSFUL_STATUSES = new Set<string>(['success', 'ok', 'sent']);
 
   const isMirroredEvent = (e: TelegramEvent): boolean => {
     const action = e.action || '';
@@ -479,9 +485,16 @@ export function ContactTelegramChat({
       MIRRORABLE_ACTIONS.has(action) ||
       action.startsWith('subscription_reminder_');
     if (!isMirrorable) return false;
-    if (e.status !== 'success') return false;
+    // Keep failed/skipped events visible as diagnostic pills.
+    if (!SUCCESSFUL_STATUSES.has(String(e.status || ''))) return false;
     // Backend hint: explicit flag in meta wins.
     if ((e.meta as any)?.mirrored_to_telegram_messages === true) return true;
+    // Match by telegram message id if backend provided it.
+    const mirroredTgId = (e.meta as any)?.telegram_message_id;
+    if (typeof mirroredTgId === 'number' && mirroredTgId > 0) {
+      const hit = (messages || []).some((m: any) => m.message_id === mirroredTgId);
+      if (hit) return true;
+    }
     // No payload to render as pill — always hide.
     if (!e.message_text || !e.message_text.trim()) return true;
     // Exact text match with any mirrored bubble.
