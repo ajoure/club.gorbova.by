@@ -75,16 +75,21 @@ export function TelegramAuditSection() {
             const meta = log.meta as any;
             const isExpanded = expandedItems.has(log.id);
             const isBotMissing = log.action === 'telegram.bot_config_missing';
+            const isLegacySkip = log.action === 'telegram.legacy_queue_skip';
             
             return (
               <Collapsible key={log.id} open={isExpanded} onOpenChange={() => toggleExpand(log.id)}>
                 <CollapsibleTrigger className="w-full">
                   <div className={cn(
                     "flex items-center gap-3 p-3 rounded-lg border transition-colors hover:bg-muted/50",
-                    isBotMissing ? 'border-destructive/30 bg-destructive/5' : 'border-border'
+                    isBotMissing ? 'border-destructive/30 bg-destructive/5'
+                      : isLegacySkip ? 'border-amber-500/30 bg-amber-500/5'
+                      : 'border-border'
                   )}>
                     {isBotMissing ? (
                       <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
+                    ) : isLegacySkip ? (
+                      <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
                     ) : (
                       <CheckCircle className="h-4 w-4 text-green-600 shrink-0" />
                     )}
