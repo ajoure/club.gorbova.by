@@ -132,7 +132,20 @@ export function AutowebRoomRuntime({ sessionId, title, description }: Props) {
     <div className="live-room-themed min-h-screen flex flex-col">
       {/* Header */}
       <div className="max-w-[1600px] w-full mx-auto px-3 md:px-6 pt-3 md:pt-4 pb-2">
-        <h1 className="room-title text-base md:text-xl lg:text-2xl font-bold leading-tight text-balance line-clamp-2 mb-1 md:mb-1.5 max-w-3xl" title={title ?? "Автовебинар"}>{title ?? "Автовебинар"}</h1>
+        <Tooltip delayDuration={200}>
+          <TooltipTrigger asChild>
+            <h1
+              tabIndex={0}
+              className="room-title w-full text-base md:text-2xl lg:text-[28px] font-semibold tracking-tight leading-[1.2] text-balance line-clamp-1 md:line-clamp-2 mb-1 md:mb-1.5 cursor-default focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded-sm"
+              title={title ?? "Автовебинар"}
+            >
+              {title ?? "Автовебинар"}
+            </h1>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="start" className="max-w-[min(92vw,640px)] text-sm leading-snug whitespace-normal break-words">
+            {title ?? "Автовебинар"}
+          </TooltipContent>
+        </Tooltip>
         <div className="flex items-center gap-2 md:gap-3 mb-1 flex-wrap">
           <Badge variant={isLive ? "default" : "outline"}>
             {isPreShow && "До эфира"}
