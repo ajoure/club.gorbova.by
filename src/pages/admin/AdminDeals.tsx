@@ -570,6 +570,47 @@ export default function AdminDeals() {
     staleTime: 5 * 60 * 1000,
   });
 
+  // Access map: order_id → { access_until: string, source: 'subscription'|'entitlement'|'trial' }
+  const dealIdsForAccess = useMemo(() => allDeals.map((d: any) => d.id), [allDeals]);
+  const { data: accessMap } = useQuery({
+    queryKey: ["deals-access-map", dealIdsForAccess.length, dealIdsForAccess.slice(0, 5).join(",")],
+    queryFn: async () => {
+      const map = new Map<string, { access_until: string | null; source: string }>();
+      if (dealIdsForAccess.length === 0) return map;
+      const CHUNK = 200;
+      for (let i = 0; i < dealIdsForAccess.length; i += CHUNK) {
+        const chunk = dealIdsForAccess.slice(i, i + CHUNK);
+        const [subsRes, entRes] = await Promise.all([
+          supabase
+            .from("subscriptions_v2")
+            .select("order_id, access_end_at, status")
+            .in("order_id", chunk),
+          supabase
+            .from("entitlements")
+            .select("order_id, expires_at")
+            .in("order_id", chunk),
+        ]);
+        (subsRes.data || []).forEach((s: any) => {
+          if (!s.access_end_at) return;
+          const cur = map.get(s.order_id);
+          if (!cur || (cur.access_until && new Date(s.access_end_at) > new Date(cur.access_until))) {
+            map.set(s.order_id, { access_until: s.access_end_at, source: "subscription" });
+          }
+        });
+        (entRes.data || []).forEach((e: any) => {
+          if (!e.expires_at) return;
+          const cur = map.get(e.order_id);
+          if (!cur || (cur.access_until && new Date(e.expires_at) > new Date(cur.access_until))) {
+            map.set(e.order_id, { access_until: e.expires_at, source: cur?.source || "entitlement" });
+          }
+        });
+      }
+      return map;
+    },
+    enabled: dealIdsForAccess.length > 0,
+    staleTime: 60_000,
+  });
+
   // Get field value for sorting
   const getDealFieldValue = useCallback((deal: any, fieldKey: string): any => {
     switch (fieldKey) {
@@ -610,8 +651,11 @@ export default function AdminDeals() {
     { header: "Сумма", getValue: (d) => d.final_price ?? "" },
     { header: "Валюта", getValue: (d) => d.currency || "" },
     { header: "Статус", getValue: (d) => getStatusConfig(d.status).label },
-    { header: "Доступ до", getValue: (d) => d.trial_end_at ? format(new Date(d.trial_end_at), "dd.MM.yyyy") : "" },
-  ], [fallbackProfilesMap, moduleMetaMap]);
+    { header: "Доступ до", getValue: (d) => {
+      const accessUntil = accessMap?.get(d.id)?.access_until || d.trial_end_at;
+      return accessUntil ? format(new Date(accessUntil), "dd.MM.yyyy") : "";
+    } },
+  ], [fallbackProfilesMap, moduleMetaMap, accessMap]);
 
   // Sorting on loaded data
   const { sortedData: sortedDeals, sortKey, sortDirection, handleSort } = useTableSort({
@@ -1373,18 +1417,31 @@ export default function AdminDeals() {
                           <CheckCircle className="h-3 w-3 text-green-600" />
                           <span>{paidPayments.length} платеж{paidPayments.length > 1 ? "а" : ""}</span>
                         </div>
+                      ) : deal.status === "paid" ? (
+                        <div className="flex items-center gap-1.5 text-sm">
+                          <CheckCircle className="h-3 w-3 text-green-600" />
+                          <span className="text-muted-foreground">Оплачено</span>
+                        </div>
                       ) : (
                         <span className="text-muted-foreground text-sm">—</span>
                       )}
                     </TableCell>
                     <TableCell>
-                      {deal.trial_end_at ? (
-                        <div className="text-sm">
-                          {format(new Date(deal.trial_end_at), "dd.MM.yy")}
-                        </div>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
+                      {(() => {
+                        const accessInfo = accessMap?.get(deal.id);
+                        const accessUntil = accessInfo?.access_until || deal.trial_end_at;
+                        if (!accessUntil) {
+                          return <span className="text-muted-foreground">—</span>;
+                        }
+                        return (
+                          <div className="text-sm">
+                            {format(new Date(accessUntil), "dd.MM.yy")}
+                            {accessInfo?.source === "subscription" && (
+                              <div className="text-[10px] text-muted-foreground">подписка</div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </TableCell>
                   </TableRow>
                 );
@@ -1399,12 +1456,16 @@ export default function AdminDeals() {
       {/* Show More button — reuses Contacts pattern (list mode only) */}
       {viewMode === "list" && (() => {
         const loadedCount = Math.min(displayLimit, allDeals.length);
-        const remaining = (totalCount ?? allDeals.length) - loadedCount;
-        if (remaining <= 0 && allDeals.length <= displayLimit && !hasNextPage) return null;
-        const showRemaining = allDeals.length > displayLimit 
-          ? allDeals.length - displayLimit 
-          : remaining;
-        if (showRemaining <= 0 && !hasNextPage) return null;
+        // tabCounts не учитывает фильтры pipeline/tariff → при их активности используем фактический allDeals.length
+        const filtersBeyondTabCounts = !!activePipelineId || selectedTariffIds.length > 0;
+        const effectiveTotal = filtersBeyondTabCounts
+          ? (hasNextPage ? Math.max(allDeals.length + 1, loadedCount) : allDeals.length)
+          : (totalCount ?? allDeals.length);
+        const remaining = effectiveTotal - loadedCount;
+        // Скрываем кнопку, если всё показано и больше нечего загружать
+        if (!hasNextPage && displayLimit >= allDeals.length) return null;
+        if (remaining <= 0 && !hasNextPage) return null;
+        const showRemaining = Math.max(0, remaining);
         return (
           <div className="flex justify-center py-3">
             <Button
