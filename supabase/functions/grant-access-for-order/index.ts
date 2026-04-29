@@ -109,6 +109,8 @@ Deno.serve(async (req) => {
       extendFromCurrent = true,
       grantTelegram = true,
       grantGetcourse = true,
+      adminManualAccessEdit = false,
+      manualSubscriptionId = null,
     } = await req.json();
 
     if (!orderId) {
