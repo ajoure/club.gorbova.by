@@ -83,11 +83,68 @@ export function SubscriptionDetailSheet({
   receiptUrl,
   isProcessing,
 }: SubscriptionDetailSheetProps) {
+  // Hooks must be called unconditionally (no early `if (!subscription) return`).
+  const subId = subscription?.id ?? null;
+  const productId = subscription?.products_v2?.id ?? null;
+
+  // Eligibility: backend SOT for whether resume is allowed.
+  type Eligibility = {
+    resume_available: boolean;
+    reason: 'ok' | 'not_needed' | 'no_payment_method' | 'provider_dead' | 'provider_check_failed' | null;
+    provider_state: string | null;
+    has_card: boolean;
+    cta_product_id: string | null;
+    cta_tariff_id: string | null;
+  };
+  const [eligibility, setEligibility] = useState<Eligibility | null>(null);
+  const [eligibilityLoading, setEligibilityLoading] = useState(false);
+
+  useEffect(() => {
+    if (!subId) { setEligibility(null); return; }
+    let cancelled = false;
+    setEligibilityLoading(true);
+    (async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke('subscription-actions', {
+          body: { action: 'check-resume', subscription_id: subId },
+        });
+        if (cancelled) return;
+        if (error || !data?.success) {
+          setEligibility(null);
+        } else {
+          setEligibility({
+            resume_available: !!data.resume_available,
+            reason: data.reason ?? null,
+            provider_state: data.provider_state ?? null,
+            has_card: !!data.has_card,
+            cta_product_id: data.cta_product_id ?? null,
+            cta_tariff_id: data.cta_tariff_id ?? null,
+          });
+        }
+      } catch {
+        if (!cancelled) setEligibility(null);
+      } finally {
+        if (!cancelled) setEligibilityLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [subId]);
+
   if (!subscription) return null;
 
   const isCanceled = !!subscription.canceled_at;
   const isExpired = subscription.access_end_at && new Date(subscription.access_end_at) < new Date();
   const isActive = !isExpired && (subscription.status === "active" || subscription.status === "trial");
+  const autoRenewOff = subscription.auto_renew === false;
+  // Show resume slot whenever auto-renew is off OR cancellation is scheduled — backend decides what to render inside.
+  const resumeSlotApplicable = isActive && (isCanceled || autoRenewOff);
+  const buildPurchaseHref = (): string => {
+    const pid = eligibility?.cta_product_id ?? productId;
+    const code = subscription.products_v2?.code;
+    if (code) return `/${code}#tariffs`;
+    if (pid) return `/?product=${pid}#tariffs`;
+    return '/#pricing';
+  };
 
   const formatDate = (dateString: string) => {
     return format(new Date(dateString), "d MMMM yyyy, HH:mm", { locale: ru });
