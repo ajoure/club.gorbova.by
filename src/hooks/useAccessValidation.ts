@@ -228,7 +228,9 @@ export function checkExtendEligibility(
     return { action: "заблокировано", reason: diagnosis.reason, reasonCode: diagnosis.reasonCode };
   }
 
-  if (newEnd && activeSub.access_end_at && newEnd < new Date(activeSub.access_end_at)) {
+  // Админ имеет право уменьшать срок (исправление неверной даты, корректировки).
+  // Для не-админа сокращение блокируется как защита от случайного уменьшения.
+  if (!isAdmin && newEnd && activeSub.access_end_at && newEnd < new Date(activeSub.access_end_at)) {
     return { action: "заблокировано", reason: "Новый срок короче текущего — сокращение заблокировано", reasonCode: "новый_срок_короче_текущего" };
   }
 
