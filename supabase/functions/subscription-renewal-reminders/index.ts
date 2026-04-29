@@ -802,7 +802,8 @@ async function sendEmailReminder(
           <div style="background: #f3f4f6; border-radius: 8px; padding: 16px; margin: 20px 0;">
             <p style="margin: 0 0 8px 0;"><strong>📦 Продукт:</strong> ${productName}</p>
             <p style="margin: 0 0 8px 0;"><strong>🎯 Тариф:</strong> ${tariffName}</p>
-            <p style="margin: 0;"><strong>📆 Дата окончания:</strong> ${formattedDate}</p>
+            <p style="margin: 0 0 8px 0;"><strong>📆 Дата окончания:</strong> ${formattedDate}</p>
+            <p style="margin: 0;"><strong>💳 Сумма списания:</strong> ${formatCurrency(amount, currency)}</p>
           </div>
           ${statusSection}
           <p style="color: #6b7280; margin-top: 32px; font-size: 14px;">С уважением,<br>Команда клуба</p>
@@ -817,7 +818,8 @@ async function sendEmailReminder(
           <div style="background: #f3f4f6; border-radius: 8px; padding: 16px; margin: 20px 0;">
             <p style="margin: 0 0 8px 0;"><strong>📦 Продукт:</strong> ${productName}</p>
             <p style="margin: 0 0 8px 0;"><strong>🎯 Тариф:</strong> ${tariffName}</p>
-            <p style="margin: 0;"><strong>📆 Дата окончания:</strong> ${formattedDate}</p>
+            <p style="margin: 0 0 8px 0;"><strong>📆 Дата окончания:</strong> ${formattedDate}</p>
+            <p style="margin: 0;"><strong>💳 Сумма списания:</strong> ${formatCurrency(amount, currency)}</p>
           </div>
           ${statusSection}
           <p style="color: #6b7280; margin-top: 32px; font-size: 14px;">С уважением,<br>Команда клуба</p>
@@ -832,7 +834,8 @@ async function sendEmailReminder(
           <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 16px; margin: 20px 0;">
             <p style="margin: 0 0 8px 0;"><strong>📦 Продукт:</strong> ${productName}</p>
             <p style="margin: 0 0 8px 0;"><strong>🎯 Тариф:</strong> ${tariffName}</p>
-            <p style="margin: 0;"><strong>📆 Дата окончания:</strong> ${formattedDate}</p>
+            <p style="margin: 0 0 8px 0;"><strong>📆 Дата окончания:</strong> ${formattedDate}</p>
+            <p style="margin: 0;"><strong>💳 Сумма списания:</strong> ${formatCurrency(amount, currency)}</p>
           </div>
           ${statusSection}
           <p style="color: #6b7280; margin-top: 32px; font-size: 14px;">С уважением,<br>Команда клуба</p>
