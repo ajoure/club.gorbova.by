@@ -267,57 +267,84 @@ serve(async (req) => {
         });
       }
 
+      case 'check-resume': {
+        const eligibility = await evaluateResumeEligibility(supabase, subscription, userId);
+        return new Response(JSON.stringify({
+          success: true,
+          resume_available: eligibility.resume_available,
+          reason: eligibility.reason,
+          has_card: eligibility.has_card,
+          provider_state: eligibility.provider_state,
+          prior_state: eligibility.prior_state,
+          cta_product_id: eligibility.cta_product_id,
+          cta_tariff_id: eligibility.cta_tariff_id,
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
       case 'resume': {
-        if (!subscription.cancel_at) {
-          return new Response(JSON.stringify({ error: 'Subscription is not scheduled for cancellation' }), {
+        const eligibility = await evaluateResumeEligibility(supabase, subscription, userId);
+
+        if (!eligibility.resume_available) {
+          const auditAction =
+            eligibility.reason === 'no_payment_method' ? 'subscription.resume_blocked_no_payment_method' :
+            eligibility.reason === 'provider_dead'     ? 'subscription.resume_blocked_provider_dead' :
+            eligibility.reason === 'not_needed'        ? 'subscription.resume_blocked_not_needed' :
+            eligibility.reason === 'provider_check_failed' ? 'subscription.resume_blocked_provider_check_failed' :
+            'subscription.resume_blocked';
+
+          await supabase.from('audit_logs').insert({
+            actor_user_id: userId,
+            action: auditAction,
+            target_user_id: subscription.user_id,
+            meta: {
+              subscription_id,
+              user_id: subscription.user_id,
+              provider_subscription_id: eligibility.provider_subscription_id,
+              payment_method_id: eligibility.payment_method_id,
+              block_reason: eligibility.reason,
+              provider_state: eligibility.provider_state,
+              prior_state: eligibility.prior_state,
+              has_card: eligibility.has_card,
+            },
+          });
+
+          const httpErr = eligibilityToHttpError(eligibility);
+          return new Response(JSON.stringify({
+            error: httpErr.message,
+            code: httpErr.code,
+            reason: eligibility.reason,
+            cta_product_id: eligibility.cta_product_id,
+            cta_tariff_id: eligibility.cta_tariff_id,
+          }), {
             status: 400,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
         }
 
-        // Check if cancel_at is still in the future
-        if (new Date(subscription.cancel_at) < new Date()) {
-          return new Response(JSON.stringify({ error: 'Subscription has already expired' }), {
-            status: 400,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
-        }
-
-        // Try to find user's active payment method to enable auto-renewal
-        const { data: paymentMethod } = await supabase
-          .from('payment_methods')
-          .select('id, provider_token')
-          .eq('user_id', userId)
-          .eq('status', 'active')
-          .order('is_default', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        // Prepare updated meta
         const existingMeta = subscription.meta as Record<string, unknown> || {};
         const newMeta = {
           ...existingMeta,
           cancel_source: null,
           resumed_at: new Date().toISOString(),
           resumed_by_user: true,
+          resumed_prior_state: eligibility.prior_state,
         };
 
         const updateData: Record<string, unknown> = {
           cancel_at: null,
           canceled_at: null,
-          auto_renew: true, // IMPORTANT: re-enable auto-renew when user resumes
-          // PATCH 13+: Clear disabled tracking when re-enabled
+          auto_renew: true,
           auto_renew_disabled_by: null,
           auto_renew_disabled_at: null,
           auto_renew_disabled_by_user_id: null,
           meta: newMeta,
           updated_at: new Date().toISOString(),
         };
-
-        // Link payment method if available
-        if (paymentMethod) {
-          updateData.payment_method_id = paymentMethod.id;
-          updateData.payment_token = paymentMethod.provider_token;
+        if (eligibility.payment_method_id) {
+          updateData.payment_method_id = eligibility.payment_method_id;
+          updateData.payment_token = eligibility.payment_token;
         }
 
         const { error: updateError } = await supabase
@@ -333,20 +360,23 @@ serve(async (req) => {
           });
         }
 
-        // Log the action
         await supabase.from('audit_logs').insert({
           actor_user_id: userId,
           action: 'subscription.resumed',
-          meta: { 
-            subscription_id, 
+          target_user_id: subscription.user_id,
+          meta: {
+            subscription_id,
+            user_id: subscription.user_id,
             auto_renew: true,
-            payment_method_linked: !!paymentMethod,
+            payment_method_id: eligibility.payment_method_id,
+            provider_subscription_id: eligibility.provider_subscription_id,
+            provider_state: eligibility.provider_state,
+            prior_state: eligibility.prior_state,
           },
         });
 
-        console.log(`Subscription ${subscription_id} resumed by user, auto_renew enabled`);
+        console.log(`Subscription ${subscription_id} resumed (prior_state=${eligibility.prior_state})`);
 
-        // ============= v23.1.10: Entitlement sync on resume =============
         if (subscription.product_id) {
           try {
             const { data: prdSync } = await supabase.from('products_v2').select('code').eq('id', subscription.product_id).maybeSingle();
@@ -363,10 +393,11 @@ serve(async (req) => {
           } catch (e) { console.error('[subscription-actions] Entitlement sync error (resume):', e); }
         }
 
-        return new Response(JSON.stringify({ 
-          success: true, 
+        return new Response(JSON.stringify({
+          success: true,
           auto_renew: true,
-          payment_method_linked: !!paymentMethod,
+          payment_method_linked: !!eligibility.payment_method_id,
+          prior_state: eligibility.prior_state,
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
