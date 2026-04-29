@@ -18,7 +18,7 @@ export function TelegramAuditSection() {
       const { data, error } = await supabase
         .from('audit_logs')
         .select('id, action, actor_type, actor_label, meta, created_at')
-        .or('action.eq.telegram.bot_config_missing,action.eq.subscription.reminders_cron_completed')
+        .or('action.eq.telegram.bot_config_missing,action.eq.subscription.reminders_cron_completed,action.eq.telegram.legacy_queue_skip')
         .order('created_at', { ascending: false })
         .limit(30);
       
