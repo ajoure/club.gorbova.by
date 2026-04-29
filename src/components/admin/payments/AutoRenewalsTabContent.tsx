@@ -1364,6 +1364,9 @@ export function AutoRenewalsTabContent() {
   return (
     <TooltipProvider>
       <div className="space-y-4">
+        {/* INV-22 — рассинхрон зомби-подписок с провайдером (dry-run + execute) */}
+        <Inv22ResolverPanel />
+
         {/* Stats with amounts - PATCH-5: Fixed borders and removed "на сумму" */}
         {stats && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
