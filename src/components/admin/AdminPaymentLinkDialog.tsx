@@ -1234,12 +1234,7 @@ ${amountLine}
                 </div>
               )}
 
-              <div
-                className={cn(
-                  "grid grid-cols-1 gap-2 pt-2",
-                  effectiveTelegramUserId ? "sm:grid-cols-2" : "sm:grid-cols-2"
-                )}
-              >
+              <div className="grid grid-cols-1 gap-2 pt-2 sm:grid-cols-2">
                 <Button
                   type="button"
                   variant="outline"
