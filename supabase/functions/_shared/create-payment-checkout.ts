@@ -919,6 +919,20 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     }).eq('id', order.id);
     if (subMetaActiveErr) console.error('[payment_checkout] subscription order meta merge failed', { order_id: order.id, payment_type: 'subscription', error: subMetaActiveErr });
 
+    // PATCH INSTALLMENT-PUBLIC-LINK: связать pre-created subscriptions_v2 с bepaid_subscription_id.
+    const { error: subLinkErr } = await supabase
+      .from('subscriptions_v2')
+      .update({
+        meta: {
+          ...preSubMeta,
+          bepaid_subscription_id: String(bepaidSubId),
+          tracking_id: trackingId,
+          checkout_url: redirectUrl,
+        },
+      })
+      .eq('id', subscriptionV2Id);
+    if (subLinkErr) console.error('[payment_checkout] subscriptions_v2 link to bepaid failed', { subscription_v2_id: subscriptionV2Id, error: subLinkErr });
+
     // Audit log
     const { error: auditCreatedErr2 } = await supabase.from('audit_logs').insert({
       actor_type: auditActorType,
