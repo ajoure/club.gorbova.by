@@ -853,6 +853,11 @@ Deno.serve(async (req) => {
       let dmSent = false;
       let dmError: string | undefined;
       let dmText = '';
+      // PATCH: scope-fix — переменные для зеркалирования DM в telegram_messages
+      // должны быть доступны в нижнем блоке записи telegram_logs (раньше падало
+      // с ReferenceError: wasMirroredToMessages is not defined).
+      let wasMirroredToMessages = false;
+      let mirroredTelegramMessageId: number | null = null;
 
       if (chatInviteLink || channelInviteLink) {
         const keyboard: { inline_keyboard: Array<Array<{ text: string; url: string }>> } = { inline_keyboard: [] };
@@ -902,6 +907,8 @@ Deno.serve(async (req) => {
               event: 'access_granted_dm',
             },
           });
+          mirroredTelegramMessageId = result.result.message_id;
+          wasMirroredToMessages = true;
         }
 
         // Update can_dm status
@@ -1112,7 +1119,7 @@ Deno.serve(async (req) => {
           dm_sent: dmSent,
           dm_error: dmError || null,
           mirrored_to_telegram_messages: wasMirroredToMessages,
-          telegram_message_id: result?.result?.message_id ?? null,
+          telegram_message_id: mirroredTelegramMessageId,
         },
         // If the same outgoing DM is mirrored as a blue telegram_messages bubble,
         // do not duplicate it as a grey event-card in Contact Center.
