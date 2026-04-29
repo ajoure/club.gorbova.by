@@ -440,7 +440,7 @@ export default function PublicPayPage() {
                   </p>
                   <p className="text-xs text-muted-foreground max-w-md mx-auto">
                     Сумма платежа округлена до целых {linkInfo.currency}. Итог рассрочки рассчитан с учётом выбранного срока и может отличаться от полной цены ({linkInfo.installment.total_amount} {linkInfo.currency}).
-                    Списание происходит каждые {linkInfo.installment.interval_days ?? 30} дней. Сегодня вы оплачиваете первый платёж — {priceFormatted}.
+                    Вас перенаправит на защищённую страницу bePaid для оформления рассрочки. bePaid автоматически спишет {linkInfo.installment.selected_installment_months} платежей раз в {linkInfo.installment.interval_days ?? 30} дней и завершит подписку.
                   </p>
                 </div>
               ) : (
