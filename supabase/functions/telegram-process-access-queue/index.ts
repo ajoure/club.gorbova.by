@@ -76,6 +76,48 @@ serve(async (req) => {
     for (const item of pendingItems as QueueItem[]) {
       console.log(`[telegram-process-access-queue] Processing item ${item.id}: ${item.action} for user ${item.user_id}`);
 
+      // ============================================================
+      // SOURCE GUARD (decommission of legacy auto-grant path):
+      // Only items explicitly tagged with a manual/repair source are
+      // allowed. Anything else is a stray legacy insert and must NOT
+      // produce a Telegram DM.
+      // ============================================================
+      const itemSource = item.meta?.source ?? null;
+      if (!itemSource || !ALLOWED_QUEUE_SOURCES.has(itemSource)) {
+        console.log(
+          `[telegram-process-access-queue] LEGACY-SKIP item ${item.id}: source=${itemSource ?? "<null>"} not in allowed manual sources`
+        );
+
+        await supabase
+          .from("telegram_access_queue")
+          .update({
+            status: "skipped",
+            last_error: "legacy_auto_grant_disabled",
+            processed_at: new Date().toISOString(),
+          })
+          .eq("id", item.id);
+
+        await supabase.from("audit_logs").insert({
+          action: "telegram.legacy_queue_skip",
+          actor_type: "system",
+          actor_label: "telegram-process-access-queue",
+          target_user_id: item.user_id,
+          meta: {
+            queue_item_id: item.id,
+            user_id: item.user_id,
+            club_id: item.club_id,
+            subscription_id: item.subscription_id,
+            queue_action: item.action,
+            source: itemSource,
+            reason: "legacy_auto_grant_disabled",
+            note: "Canonical path is grant-access-for-order → telegram-grant-access.",
+          },
+        });
+
+        results.push({ id: item.id, success: false, error: "legacy_auto_grant_disabled", decision: "legacy_skip" });
+        continue;
+      }
+
       // Mark as processing
       await supabase
         .from("telegram_access_queue")
