@@ -7,7 +7,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -1235,13 +1234,18 @@ ${amountLine}
                 </div>
               )}
 
-              <div className="grid grid-cols-1 gap-2 pt-2 sm:flex sm:items-center sm:justify-end">
+              <div
+                className={cn(
+                  "grid grid-cols-1 gap-2 pt-2",
+                  effectiveTelegramUserId ? "sm:grid-cols-2" : "sm:grid-cols-2"
+                )}
+              >
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
                   onClick={() => onOpenChange(false)}
-                  className="h-9 w-full px-3 sm:w-auto sm:flex-none"
+                  className="h-9 w-full px-3"
                 >
                   Отмена
                 </Button>
@@ -1251,7 +1255,7 @@ ${amountLine}
                   variant={effectiveTelegramUserId ? "outline" : "default"}
                   disabled={isCreateDisabled || combinedPending}
                   onClick={() => createPublicLinkMutation.mutate()}
-                  className="h-9 w-full px-3 sm:w-auto sm:flex-none"
+                  className="h-9 w-full px-3"
                 >
                   {createPublicLinkMutation.isPending ? (
                     <Loader2 className="h-4 w-4 animate-spin mr-2 shrink-0" />
@@ -1266,7 +1270,7 @@ ${amountLine}
                     size="sm"
                     disabled={isCreateDisabled || combinedPending}
                     onClick={handleCreateAndSendTelegram}
-                    className="h-9 w-full px-3 sm:w-auto sm:flex-none"
+                    className="h-9 w-full px-3 sm:col-span-2"
                   >
                     {combinedPending ? (
                       <Loader2 className="h-4 w-4 animate-spin mr-2 shrink-0" />
