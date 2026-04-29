@@ -18,6 +18,113 @@ const STAFF_EMAILS = [
 ];
 
 /**
+ * SOT-aligned recurring resolver. Read-only helper. NEVER mutates orders_v2.offer_id.
+ *
+ * Decision matrix:
+ *   1) order.offer_id present AND its tariff_offers.meta.recurring.is_recurring = true
+ *      → decision = 'from_order_offer', is_recurring = true
+ *   2) order.offer_id missing/non-recurring, but tariff has an active recurring offer
+ *      → decision = 'resolved_from_tariff', is_recurring = true
+ *   3) Neither → decision = 'one_time' or 'not_resolved', is_recurring = false
+ *
+ * snapshot_complete distinguishes a real data-defect (recurring offer present
+ * but meta.recurring incomplete) from the normal "no recurring at all" case.
+ */
+async function resolveRecurringFromOrderOrTariff(
+  supabase: any,
+  orderOfferId: string | null | undefined,
+  tariffId: string | null | undefined,
+): Promise<{
+  is_recurring: boolean;
+  snapshot: Record<string, any> | null;
+  snapshot_complete: boolean;
+  resolved_offer_id: string | null;
+  decision: 'from_order_offer' | 'resolved_from_tariff' | 'one_time' | 'not_resolved';
+}> {
+  const REQUIRED_KEYS = [
+    'is_recurring',
+    'billing_period_mode',
+    'grace_hours',
+    'charge_attempts_per_day',
+    'charge_times_local',
+  ];
+  const isComplete = (snap: any): boolean => {
+    if (!snap || typeof snap !== 'object') return false;
+    return REQUIRED_KEYS.every((k) => snap[k] !== undefined && snap[k] !== null);
+  };
+
+  // 1) Try order.offer_id directly
+  if (orderOfferId) {
+    const { data: offerRow } = await supabase
+      .from('tariff_offers')
+      .select('id, tariff_id, meta')
+      .eq('id', orderOfferId)
+      .maybeSingle();
+
+    const recurring = offerRow?.meta?.recurring || null;
+    if (recurring?.is_recurring === true) {
+      return {
+        is_recurring: true,
+        snapshot: recurring,
+        snapshot_complete: isComplete(recurring),
+        resolved_offer_id: offerRow.id,
+        decision: 'from_order_offer',
+      };
+    }
+    // Order's offer is non-recurring — fall through to tariff probe.
+  }
+
+  // 2) Probe tariff for an active recurring offer
+  if (tariffId) {
+    const { data: tariffOffers } = await supabase
+      .from('tariff_offers')
+      .select('id, is_active, is_primary, sort_order, meta')
+      .eq('tariff_id', tariffId)
+      .eq('is_active', true);
+
+    const recurringOffers = (tariffOffers || []).filter(
+      (o: any) => o?.meta?.recurring?.is_recurring === true,
+    );
+
+    if (recurringOffers.length > 0) {
+      recurringOffers.sort((a: any, b: any) => {
+        if ((b.is_primary ? 1 : 0) !== (a.is_primary ? 1 : 0)) {
+          return (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0);
+        }
+        return (a.sort_order ?? 0) - (b.sort_order ?? 0);
+      });
+      const chosen = recurringOffers[0];
+      const snap = chosen.meta?.recurring || null;
+      return {
+        is_recurring: true,
+        snapshot: snap,
+        snapshot_complete: isComplete(snap),
+        resolved_offer_id: chosen.id,
+        decision: 'resolved_from_tariff',
+      };
+    }
+
+    // Tariff has no active recurring offer → SOT says one-time
+    return {
+      is_recurring: false,
+      snapshot: null,
+      snapshot_complete: false,
+      resolved_offer_id: null,
+      decision: 'one_time',
+    };
+  }
+
+  // 3) No offer_id, no tariff_id → cannot decide
+  return {
+    is_recurring: false,
+    snapshot: null,
+    snapshot_complete: false,
+    resolved_offer_id: null,
+    decision: 'not_resolved',
+  };
+}
+
+/**
  * PATCH 2: Get correct recurring_amount for trial orders
  * For trial orders, we need the price from auto_charge_offer_id, not order.final_price (1 BYN)
  * 
@@ -941,57 +1048,76 @@ Deno.serve(async (req) => {
       const existingMeta = (fullExistingSub?.meta || {}) as Record<string, any>;
       const extendedByOrders = existingMeta.extended_by_orders || [];
       
-      // PATCH: Ensure recurring_snapshot exists on extend (fallback if missing)
-      const DEFAULT_RECURRING_SNAPSHOT_EXTEND = {
-        is_recurring: true,
-        timezone: 'Europe/Minsk',
-        billing_period_mode: 'month',
-        grace_hours: 72,
-        charge_attempts_per_day: 2,
-        charge_times_local: ['09:00', '21:00'],
-        pre_due_reminders_days: [7, 3, 1],
-        notify_before_each_charge: true,
-        notify_grace_events: true,
-      };
-      
+      // SOT-aligned snapshot resolver on EXTEND.
+      // Read-only helper: never writes to orders_v2.offer_id.
+      // Decision matrix: order.offer_id → tariff active recurring offer → no snapshot.
       let extendRecurringSnapshot = existingMeta.recurring_snapshot;
-      
-      // PATCH: Fallback only if auto_renew=true (guard for extend branch)
-      const shouldAddFallbackSnapshot = !extendRecurringSnapshot && existingProductSub?.auto_renew === true;
-      
-      if (shouldAddFallbackSnapshot) {
-        // Try to get from offer if available
-        if (order.offer_id) {
-          const { data: offerData } = await supabase
-            .from('tariff_offers')
-            .select('meta')
-            .eq('id', order.offer_id)
-            .maybeSingle();
-          extendRecurringSnapshot = offerData?.meta?.recurring || null;
-        }
-        // Fallback to default
-        if (!extendRecurringSnapshot) {
-          extendRecurringSnapshot = DEFAULT_RECURRING_SNAPSHOT_EXTEND;
-          console.log(`[grant-access-for-order] Added fallback recurring_snapshot on extend for sub ${existingProductSub.id}`);
-          
-          // PATCH: SYSTEM ACTOR Proof for fallback in extend branch
+      let extendResolverDecision: {
+        offer_id: string | null;
+        tariff_id: string | null;
+        resolved_offer_id: string | null;
+        is_recurring: boolean;
+        decision: string;
+      } = {
+        offer_id: order.offer_id || null,
+        tariff_id: tariffId || null,
+        resolved_offer_id: null,
+        is_recurring: false,
+        decision: 'snapshot_already_present',
+      };
+
+      if (!extendRecurringSnapshot) {
+        const resolved = await resolveRecurringFromOrderOrTariff(
+          supabase,
+          order.offer_id,
+          tariffId
+        );
+        extendResolverDecision = {
+          offer_id: order.offer_id || null,
+          tariff_id: tariffId || null,
+          resolved_offer_id: resolved.resolved_offer_id,
+          is_recurring: resolved.is_recurring,
+          decision: resolved.decision,
+        };
+
+        if (resolved.is_recurring && resolved.snapshot) {
+          extendRecurringSnapshot = resolved.snapshot;
+
+          if (resolved.decision === 'resolved_from_tariff') {
+            await supabase.from('audit_logs').insert({
+              action: 'subscription.recurring_snapshot_resolved_from_tariff',
+              actor_type: 'system',
+              actor_user_id: null,
+              actor_label: 'grant-access-for-order',
+              target_user_id: userId,
+              meta: {
+                subscription_id: existingProductSub.id,
+                order_id: orderId,
+                context: 'extend_branch',
+                ...extendResolverDecision,
+              },
+            });
+          }
+        } else if (resolved.is_recurring && !resolved.snapshot_complete) {
+          // Real data defect: recurring offer exists but snapshot is incomplete
           await supabase.from('audit_logs').insert({
             action: 'subscription.recurring_snapshot_fallback_used',
             actor_type: 'system',
             actor_user_id: null,
             actor_label: 'grant-access-for-order',
             target_user_id: userId,
-            meta: { 
+            meta: {
               subscription_id: existingProductSub.id,
-              order_id: orderId, 
-              reason: 'extend_missing_snapshot',
+              order_id: orderId,
+              reason: 'recurring_offer_present_but_snapshot_incomplete',
               context: 'extend_branch',
-              auto_renew: existingProductSub.auto_renew,
+              ...extendResolverDecision,
             },
           });
         }
+        // If not recurring per SOT — do NOT create a snapshot, do NOT audit fallback.
       }
-      
+
       const updateData: Record<string, any> = {
         status: "active",
         access_end_at: accessEndAt.toISOString(),
@@ -1040,79 +1166,64 @@ Deno.serve(async (req) => {
       }
     } else {
     // CREATE new subscription (no active subscription for this user+product)
-      // PATCH 14: Save recurring_amount for consistent auto-renewals
-      // PATCH: Save recurring_snapshot from offer for grace period config
-      // PATCH: Fallback to default snapshot if no offer found, but only for likely subscriptions
-      
-      const DEFAULT_RECURRING_SNAPSHOT = {
-        is_recurring: true,
-        timezone: 'Europe/Minsk',
-        billing_period_mode: 'month',
-        grace_hours: 72,
-        charge_attempts_per_day: 2,
-        charge_times_local: ['09:00', '21:00'],
-        pre_due_reminders_days: [7, 3, 1],
-        notify_before_each_charge: true,
-        notify_grace_events: true,
+      // SOT-aligned snapshot resolver. Strict: classification by tariff_offers.meta.recurring.is_recurring.
+      // hasPaymentMethod / requires_card_tokenization are NOT classifiers.
+      // For one-time products: no snapshot, no fallback audit, no _missing audit.
+
+      const resolved = await resolveRecurringFromOrderOrTariff(
+        supabase,
+        order.offer_id,
+        tariffId
+      );
+
+      const resolverDecision = {
+        offer_id: order.offer_id || null,
+        tariff_id: tariffId || null,
+        resolved_offer_id: resolved.resolved_offer_id,
+        is_recurring: resolved.is_recurring,
+        decision: resolved.decision,
       };
-      
-      let recurringSnapshot = null;
-      
-      // 1) Try to get from offer
-      if (order.offer_id) {
-        const { data: offerData } = await supabase
-          .from('tariff_offers')
-          .select('meta')
-          .eq('id', order.offer_id)
-          .maybeSingle();
-        
-        if (offerData?.meta?.recurring) {
-          recurringSnapshot = offerData.meta.recurring;
-          console.log(`[grant-access-for-order] Saved recurring_snapshot from offer ${order.offer_id}`);
+
+      let recurringSnapshot: Record<string, any> | null = null;
+
+      if (resolved.is_recurring && resolved.snapshot) {
+        recurringSnapshot = resolved.snapshot;
+        console.log(`[grant-access-for-order] recurring_snapshot resolved (${resolved.decision}) for order ${orderId}`);
+
+        // Audit info-level resolve from tariff (helper acted as fallback path,
+        // because writer did not pass offer_id, but SOT confirmed recurring).
+        if (resolved.decision === 'resolved_from_tariff') {
+          await supabase.from('audit_logs').insert({
+            action: 'subscription.recurring_snapshot_resolved_from_tariff',
+            actor_type: 'system',
+            actor_user_id: null,
+            actor_label: 'grant-access-for-order',
+            target_user_id: userId,
+            meta: {
+              order_id: orderId,
+              context: 'create_branch',
+              ...resolverDecision,
+            },
+          });
         }
-      }
-      
-      // 2) Fallback with isLikelySubscription guard
-      // Guard: at least one of these indicates this should be a subscription
-      const isLikelySubscription = 
-        order.offer_id != null ||
-        tariffId != null ||
-        hasPaymentMethod ||
-        isClubProduct; // Club product is always subscription
-      
-      if (!recurringSnapshot && isLikelySubscription) {
-        recurringSnapshot = DEFAULT_RECURRING_SNAPSHOT;
-        console.log(`[grant-access-for-order] Using fallback recurring_snapshot for order ${orderId}`);
-        
-        // SYSTEM ACTOR Proof: log fallback usage
+      } else if (resolved.is_recurring && !resolved.snapshot_complete) {
+        // Real data defect: recurring offer exists, but meta.recurring is incomplete.
+        console.warn(`[grant-access-for-order] recurring offer present but snapshot incomplete for order ${orderId}`);
         await supabase.from('audit_logs').insert({
           action: 'subscription.recurring_snapshot_fallback_used',
           actor_type: 'system',
           actor_user_id: null,
           actor_label: 'grant-access-for-order',
           target_user_id: userId,
-          meta: { 
-            order_id: orderId, 
-            reason: 'missing_offer_or_recurring',
-            guards: { offer_id: !!order.offer_id, tariff_id: !!tariffId, has_payment_method: hasPaymentMethod, is_club: isClubProduct }
-          },
-        });
-      } else if (!recurringSnapshot && !isLikelySubscription) {
-        console.log(`[grant-access-for-order] No recurring_snapshot and not likely subscription for order ${orderId}`);
-        // Log missing snapshot for non-subscription orders (for diagnostics)
-        await supabase.from('audit_logs').insert({
-          action: 'subscription.recurring_snapshot_missing',
-          actor_type: 'system',
-          actor_user_id: null,
-          actor_label: 'grant-access-for-order',
-          target_user_id: userId,
-          meta: { 
-            order_id: orderId, 
-            reason: 'not_likely_subscription',
-            guards: { offer_id: !!order.offer_id, tariff_id: !!tariffId, has_payment_method: hasPaymentMethod, is_club: isClubProduct }
+          meta: {
+            order_id: orderId,
+            reason: 'recurring_offer_present_but_snapshot_incomplete',
+            context: 'create_branch',
+            ...resolverDecision,
           },
         });
       }
+      // else: SOT says one-time → no snapshot, no audit. Silent and clean.
 
       // GUARD A (PATCH-KOROLYOVA): If accessEndAt is stale (in the past),
       // set a safe 48h placeholder to prevent immediate revoke by cron
