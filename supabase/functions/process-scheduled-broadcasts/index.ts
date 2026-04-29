@@ -302,10 +302,9 @@ Deno.serve(async (req) => {
 
     // Per-channel send
     let templateSent = 0, templateFailed = 0;
-    const epochMin = Math.floor(Date.now() / 60000);
 
     for (const channel of channels) {
-      const idemKey = `tpl:${tpl.id}:${channel}:${epochMin}:${triggeredBy}`;
+      const idemKey = `tpl:${tpl.id}:${channel}:${slotKey}:${triggeredBy}`;
 
       // Pre-insert run row (UNIQUE on idempotency_key blocks duplicates)
       const { data: runRow, error: insErr } = await supabase
