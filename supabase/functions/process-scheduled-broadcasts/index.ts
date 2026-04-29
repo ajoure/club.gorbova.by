@@ -184,6 +184,32 @@ Deno.serve(async (req) => {
       ? 'dry_run'
       : (tpl.send_mode === 'recurring' ? 'recurring' : 'scheduled');
 
+    // ===== Atomic lock: prevent the next cron tick from re-picking this template =====
+    // Bug fix (29.04.2026): без этого замка между тиками cron шаблон оставался
+    // status='scheduled' с next_run_at <= now() до самого вызова advanceTemplate(),
+    // и параллельный/следующий тик отправлял те же сообщения повторно (по 2-3 раза).
+    // Skip lock for: dry_run (read-only), force_template_id (operator override).
+    // Stable slot key for idempotency — origin scheduled slot, не «минута запуска».
+    const slotKey: string = (tpl.next_run_at as string) || `force:${nowIso}`;
+    if (!isDryRun && !forceTemplateId && tpl.next_run_at) {
+      const { data: lockedRows, error: lockErr } = await supabase
+        .from('broadcast_templates')
+        .update({ next_run_at: null })
+        .eq('id', tpl.id)
+        .eq('next_run_at', tpl.next_run_at)
+        .select('id');
+      if (lockErr) {
+        console.error(`[broadcast-dispatcher] lock failed for ${tpl.id}:`, lockErr);
+        perTemplateLog.push({ template_id: tpl.id, error: `lock_failed: ${lockErr.message}` });
+        continue;
+      }
+      if (!lockedRows || lockedRows.length === 0) {
+        console.log(`[broadcast-dispatcher] template ${tpl.id} already locked by parallel tick — skip`);
+        perTemplateLog.push({ template_id: tpl.id, skipped: 'lock_lost_to_parallel_tick' });
+        continue;
+      }
+    }
+
     // Resolve audience once via the canonical RPC (single source of truth)
     // Dispatcher runs under service_role (no auth.uid()), so we mark the call
     // as system-bypass so the RPC skips the entitlements.manage check.
@@ -212,9 +238,8 @@ Deno.serve(async (req) => {
     //  - dry_run    → just record skipped run, no template mutation
     if (totalCount === 0) {
       console.warn(`[broadcast-dispatcher] template ${tpl.id} empty audience — skipping send`);
-      const epochMin = Math.floor(Date.now() / 60000);
       for (const channel of channels) {
-        const idemKey = `tpl:${tpl.id}:${channel}:${epochMin}:${triggeredBy}`;
+        const idemKey = `tpl:${tpl.id}:${channel}:${slotKey}:${triggeredBy}`;
         await supabase.from('broadcast_runs').insert({
           template_id: tpl.id,
           channel,
@@ -277,10 +302,9 @@ Deno.serve(async (req) => {
 
     // Per-channel send
     let templateSent = 0, templateFailed = 0;
-    const epochMin = Math.floor(Date.now() / 60000);
 
     for (const channel of channels) {
-      const idemKey = `tpl:${tpl.id}:${channel}:${epochMin}:${triggeredBy}`;
+      const idemKey = `tpl:${tpl.id}:${channel}:${slotKey}:${triggeredBy}`;
 
       // Pre-insert run row (UNIQUE on idempotency_key blocks duplicates)
       const { data: runRow, error: insErr } = await supabase
