@@ -109,6 +109,8 @@ Deno.serve(async (req) => {
       extendFromCurrent = true,
       grantTelegram = true,
       grantGetcourse = true,
+      adminManualAccessEdit = false,
+      manualSubscriptionId = null,
     } = await req.json();
 
     if (!orderId) {
@@ -151,6 +153,184 @@ Deno.serve(async (req) => {
     const userId = order.user_id;
     const profileId = order.profile_id;
     const productId = order.product_id;
+
+    // Admin manual access edit: exact date correction path.
+    // This is intentionally before the idempotency replay guard, because editing an
+    // already fulfilled order must not become a no-op. It updates only the primary
+    // access window for the order's user/product and writes a server-side audit.
+    if (adminManualAccessEdit === true) {
+      const authHeader = req.headers.get("Authorization") || "";
+      const token = authHeader.replace("Bearer ", "");
+      const { data: authData, error: authError } = await supabase.auth.getUser(token);
+      const actor = authData?.user || null;
+      if (authError || !actor) {
+        return new Response(
+          JSON.stringify({ success: false, error: "admin_manual_access_edit_unauthorized" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const [{ data: isAdmin }, { data: isSuperAdmin }] = await Promise.all([
+        supabase.rpc("has_role_v2", { _user_id: actor.id, _role_code: "admin" }),
+        supabase.rpc("has_role_v2", { _user_id: actor.id, _role_code: "super_admin" }),
+      ]);
+      if (!isAdmin && !isSuperAdmin) {
+        return new Response(
+          JSON.stringify({ success: false, error: "admin_manual_access_edit_forbidden" }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      if (!customAccessEndAt) {
+        return new Response(
+          JSON.stringify({ success: false, error: "customAccessEndAt is required for admin manual access edit" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const manualAccessEndAt = new Date(customAccessEndAt);
+      if (Number.isNaN(manualAccessEndAt.getTime())) {
+        return new Response(
+          JSON.stringify({ success: false, error: "customAccessEndAt is invalid" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      let subQuery = supabase
+        .from("subscriptions_v2")
+        .select("id, access_end_at, next_charge_at, status, tariff_id, meta")
+        .eq("user_id", userId)
+        .eq("product_id", productId);
+      if (manualSubscriptionId) subQuery = subQuery.eq("id", manualSubscriptionId);
+      const { data: candidateSubs, error: subLookupError } = await subQuery
+        .order("access_end_at", { ascending: false, nullsFirst: false })
+        .limit(5);
+
+      if (subLookupError) {
+        return new Response(
+          JSON.stringify({ success: false, error: "admin_manual_access_edit_subscription_lookup_failed", details: subLookupError.message }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const subscriptionToEdit = (candidateSubs || []).find((s: any) => s.tariff_id === order.tariff_id) || candidateSubs?.[0] || null;
+      const { data: existingEntitlement } = await supabase
+        .from("entitlements")
+        .select("id, expires_at, meta")
+        .eq("user_id", userId)
+        .eq("product_id", productId)
+        .maybeSingle();
+
+      const before = {
+        subscription_id: subscriptionToEdit?.id || null,
+        subscription_access_end_at: subscriptionToEdit?.access_end_at || null,
+        subscription_next_charge_at: subscriptionToEdit?.next_charge_at || null,
+        entitlement_id: existingEntitlement?.id || null,
+        entitlement_expires_at: existingEntitlement?.expires_at || null,
+      };
+
+      const nowIso = new Date().toISOString();
+      let updatedSubscriptionId: string | null = null;
+      let updatedEntitlementId: string | null = null;
+
+      if (subscriptionToEdit?.id) {
+        const existingMeta = (subscriptionToEdit.meta || {}) as Record<string, unknown>;
+        const { error: updateSubError } = await supabase
+          .from("subscriptions_v2")
+          .update({
+            status: "active",
+            access_end_at: manualAccessEndAt.toISOString(),
+            next_charge_at: manualAccessEndAt.toISOString(),
+            updated_at: nowIso,
+            meta: {
+              ...existingMeta,
+              manual_access_edit_last_at: nowIso,
+              manual_access_edit_last_by: actor.id,
+              manual_access_edit_last_order_id: orderId,
+              manual_access_edit_previous_end_at: subscriptionToEdit.access_end_at || null,
+            },
+          })
+          .eq("id", subscriptionToEdit.id);
+        if (updateSubError) {
+          return new Response(
+            JSON.stringify({ success: false, error: "admin_manual_access_edit_subscription_update_failed", details: updateSubError.message }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        updatedSubscriptionId = subscriptionToEdit.id;
+      }
+
+      if (existingEntitlement?.id) {
+        const existingMeta = (existingEntitlement.meta || {}) as Record<string, unknown>;
+        const { error: updateEntError } = await supabase
+          .from("entitlements")
+          .update({
+            status: "active",
+            expires_at: manualAccessEndAt.toISOString(),
+            updated_at: nowIso,
+            meta: {
+              ...existingMeta,
+              manual_access_edit_last_at: nowIso,
+              manual_access_edit_last_by: actor.id,
+              manual_access_edit_last_order_id: orderId,
+              manual_access_edit_previous_expires_at: existingEntitlement.expires_at || null,
+            },
+          })
+          .eq("id", existingEntitlement.id);
+        if (updateEntError) {
+          return new Response(
+            JSON.stringify({ success: false, error: "admin_manual_access_edit_entitlement_update_failed", details: updateEntError.message }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        updatedEntitlementId = existingEntitlement.id;
+      }
+
+      if (!updatedSubscriptionId && !updatedEntitlementId) {
+        return new Response(
+          JSON.stringify({ success: false, error: "admin_manual_access_edit_no_access_record_found" }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      await supabase.from("audit_logs").insert({
+        action: "admin.manual_access_date_edit",
+        actor_type: "admin",
+        actor_user_id: actor.id,
+        actor_label: actor.email || "admin",
+        target_user_id: userId,
+        meta: {
+          order_id: orderId,
+          product_id: productId,
+          tariff_id: order.tariff_id,
+          requested_subscription_id: manualSubscriptionId,
+          before,
+          after: {
+            subscription_id: updatedSubscriptionId,
+            entitlement_id: updatedEntitlementId,
+            access_end_at: manualAccessEndAt.toISOString(),
+          },
+          decreased_access_window:
+            !!(before.subscription_access_end_at && manualAccessEndAt < new Date(before.subscription_access_end_at)) ||
+            !!(before.entitlement_expires_at && manualAccessEndAt < new Date(before.entitlement_expires_at)),
+        },
+      });
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          manual_access_edit: true,
+          results: {
+            orderId,
+            userId,
+            productId,
+            subscription: updatedSubscriptionId ? { action: "manual_date_updated", id: updatedSubscriptionId } : null,
+            entitlement: updatedEntitlementId ? { action: "manual_date_updated", id: updatedEntitlementId } : null,
+            accessEndAt: manualAccessEndAt.toISOString(),
+          },
+        }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     // ── IDEMPOTENCY HARD GUARD ──────────────────────────────────────────
     // If this order already fulfilled (both entitlement AND subscription exist
