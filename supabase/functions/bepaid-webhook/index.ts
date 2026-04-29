@@ -2636,7 +2636,9 @@ Deno.serve(async (req) => {
           // 1) Найти/создать subscriptions_v2 для рассрочки.
           //    Правило: если grant-access-for-order уже создал sub (grantedSubscriptionV2Id) — используем её,
           //    НЕ перезаписывая billing_type, который мог быть установлен grant'ом.
-          //    Только если sub отсутствует (fallback) — создаём новую с billing_type='internal_installment'.
+          //    Только если sub отсутствует (fallback) — создаём новую с допустимым billing_type='mit'
+          //    + meta.model='internal_installment' (CHECK constraint subscriptions_v2_billing_type_check
+          //    допускает только 'mit'|'provider_managed'; 'internal_installment' как значение колонки запрещено).
           let installmentSubV2Id: string | null = grantedSubscriptionV2Id;
 
           if (!installmentSubV2Id) {
@@ -2647,13 +2649,15 @@ Deno.serve(async (req) => {
                 user_id: linkOrder.user_id,
                 product_id: linkOrder.product_id,
                 tariff_id: linkOrder.tariff_id,
+                order_id: linkOrder.id,
                 status: 'active',
-                billing_type: 'internal_installment',
+                billing_type: 'mit',
                 auto_renew: false,
                 meta: {
                   source: 'bepaid_link_order_installment_fallback',
                   order_id: linkOrder.id,
                   installment_count: installmentCountFromOrderMeta,
+                  model: 'internal_installment',
                 },
               })
               .select('id')
