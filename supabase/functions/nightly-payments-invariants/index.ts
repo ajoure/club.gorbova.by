@@ -204,48 +204,60 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // INV-20: Paid orders without payments_v2 (via RPC for accurate count)
-    const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-    let inv20Missing = 0;
+    // INV-20 (v2): Actionable paid orders without payments_v2 (30-day window)
+    // Separates real "needs repair" from synthetic imports / orphan / suppressed.
+    let inv20Actionable = 0;
+    let inv20Orphan = 0;
+    let inv20Synthetic = 0;
     let inv20Suppressed = 0;
+    let inv20Total = 0;
     let inv20Samples: any[] = [];
 
     const { data: inv20Data, error: inv20Err } = await supabase.rpc(
-      "inv20_paid_orders_without_payments",
-      { p_since: ninetyDaysAgo, p_limit: 10 }
+      "inv20_paid_orders_actionable",
+      { p_limit: 5 }
     );
 
     if (inv20Err) {
-      // RPC failed — log error, do NOT attempt JS fallback (can't reproduce hybrid WHERE)
       console.error("[nightly] INV-20 RPC failed:", inv20Err.message);
       invariants.push({
-        name: "INV-20: Paid orders without payments_v2",
+        name: "INV-20: Actionable paid orders without payments_v2 (30d)",
         passed: false,
         count: -1,
-        suppressed: 0,
-        samples: [],
-        description: `RPC inv20_paid_orders_without_payments failed: ${inv20Err.message}. No fallback — fix the RPC.`,
+        description: `RPC inv20_paid_orders_actionable failed: ${inv20Err.message}.`,
       });
     } else if (inv20Data) {
-      const row = Array.isArray(inv20Data) ? inv20Data[0] : inv20Data;
-      inv20Missing = Number(row?.count_total ?? 0);
-      inv20Suppressed = Number(row?.suppressed_count ?? 0);
-      inv20Samples = row?.samples ?? [];
+      inv20Actionable = Number(inv20Data?.actionable_count ?? 0);
+      inv20Orphan = Number(inv20Data?.orphan_count ?? 0);
+      inv20Synthetic = Number(inv20Data?.synthetic_count ?? 0);
+      inv20Suppressed = Number(inv20Data?.suppressed_count ?? 0);
+      inv20Total = Number(inv20Data?.total ?? 0);
+      inv20Samples = inv20Data?.samples ?? [];
     }
 
-    const inv20Critical = inv20Missing > 5;
+    // Always log the full breakdown for visibility (orphan/synthetic are NOT alerts)
+    console.log(
+      `[nightly] INV-20 30d breakdown — actionable=${inv20Actionable} orphan=${inv20Orphan} synthetic=${inv20Synthetic} suppressed=${inv20Suppressed} total=${inv20Total}`
+    );
+
+    const inv20Critical = inv20Actionable > 5;
     invariants.push({
-      name: "INV-20: Paid orders without payments_v2",
-      passed: inv20Missing === 0,
-      count: inv20Missing,
+      name: "INV-20: Actionable paid orders without payments_v2 (30d)",
+      passed: inv20Actionable === 0,
+      count: inv20Actionable,
+      orphan: inv20Orphan,
+      synthetic: inv20Synthetic,
       suppressed: inv20Suppressed,
+      total: inv20Total,
       samples: inv20Samples,
-      description: `Paid orders (90d) with no corresponding payments_v2 record (${inv20Suppressed} suppressed by repair). ${
-        inv20Critical ? "CRITICAL" : "WARNING"
-      }. Run admin-repair-missing-payments execute.`,
+      description:
+        `Actionable=${inv20Actionable} (требуют admin-repair-missing-payments). ` +
+        `Информационно: orphan=${inv20Orphan} (без user_id), synthetic=${inv20Synthetic} (исторические импорты), suppressed=${inv20Suppressed}. ` +
+        `Total=${inv20Total} за 30д.`,
     });
 
-    if (inv20Missing > 0) {
+    // Alert ONLY when there are actionable items — never on synthetic/orphan noise
+    if (inv20Actionable > 0) {
       try {
         await fetch(`${supabaseUrl}/functions/v1/telegram-notify-admins`, {
           method: "POST",
@@ -254,7 +266,12 @@ Deno.serve(async (req) => {
             Authorization: `Bearer ${supabaseServiceKey}`,
           },
           body: JSON.stringify({
-            message: `${inv20Critical ? "🚨" : "⚠️"} INV-20${inv20Critical ? " CRITICAL" : ""}: ${inv20Missing} paid заказ(ов) без записи в payments_v2!\n\nПримеры: ${(inv20Samples || []).map((s: any) => s.order_number).join(", ")}\n\nРекомендация: запустить admin-repair-missing-payments execute`,
+            message:
+              `${inv20Critical ? "🚨" : "⚠️"} INV-20${inv20Critical ? " CRITICAL" : ""}: ` +
+              `${inv20Actionable} paid заказ(ов) без записи в payments_v2 за 30д (требуют ремонта).\n\n` +
+              `Примеры: ${(inv20Samples || []).map((s: any) => s.order_number).join(", ")}\n\n` +
+              `Контекст (не алерт): orphan=${inv20Orphan}, synthetic=${inv20Synthetic}, suppressed=${inv20Suppressed}, total=${inv20Total}.\n\n` +
+              `Рекомендация: запустить admin-repair-missing-payments execute`,
             source: "nightly-payments-invariants",
           }),
         });
