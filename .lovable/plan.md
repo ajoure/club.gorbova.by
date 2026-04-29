@@ -1,151 +1,198 @@
-да, согласен, с учетом правок:
+дополни план следующей информацией:
 
-1. Перед ремонтом сделать pull-state через bepaid-get-subscription-details по всем 5 provider_subscription_id.
-2. Если bePaid подтверждает expired/redirecting без успешных списаний:
-  - subscriptions_[v2.auto](http://v2.auto)_renew=false;
-  - subscriptions_v2.status='canceled' или expired — выбрать по текущему enum/правилу;
-  - provider_subscriptions.state оставить как provider-state, не переписывать искусственно;
-  - audit [inv22.repair](http://inv22.repair)_provider_dead_local_active.
-3. Не отзывать Telegram-доступ автоматически. Это отдельное решение, потому что access_end_at ещё в будущем.
-4. Добавить dry-run → execute:
-  - dry-run показывает 5 записей и planned updates;
-  - execute только после подтверждения.
-5. После execute:
+1. **SOT автопродления только один:** включенный чекбокс/режим **«Подписка / автопродление»** в настройках кнопки тарифа (`tariff_offers.meta.recurring.is_recurring=true`).  
+Всё остальное — разовые продукты.
+2. **Разовые продукты не попадают в** `/admin/payments/auto-renewals`**.**  
+По ним можно только отправлять уведомление об окончании доступа. Без автопродления, без учёта в таблице автопродлений.
+3. **Продукты с включённой подпиской попадают в автопродления независимо от карты.**  
+Если карта не привязана — это всё равно автопродляемый продукт, просто статус «без карты».
+4. **Для продуктов с автопродлением должны уходить уведомления за 7/3/1 день:**
+  - Telegram;
+  - Email;
+  - текст о скором окончании подписки;
+  - две ссылки: **разовая оплата** и **подписка / автопродление**.
+5. **Серые/зелёные точки в таблице — обязательный DoD.**  
+После успешной отправки Telegram/Email соответствующая точка 7/3/1 должна становиться зелёной.  
+Если не отправлено — серая/жёлтая с причиной в tooltip.
+6. **Запрещено ломать уже реализованную механику** `generate-renewal-ctas`**.**  
+Нужно восстановить прежнее поведение: для recurring-продуктов создаются обе ссылки — one-time и subscription.
+7. **Исправить именно регрессию, а не менять архитектуру.**  
+Не вводить новый workflow уведомлений, не менять grant/access/payment-flow, не включать разовые продукты в автопродления.
 
--- INV-22 должен вернуть 0
-
-SELECT count(*)
-
-FROM subscriptions_v2 s
-
-JOIN provider_subscriptions ps ON ps.subscription_v2_id = [s.id](http://s.id)
-
-WHERE s.status='active'
-
-  AND [s.auto](http://s.auto)_renew=true
-
-  AND s.access_end_at > now()
-
-  AND (
-
-    ps.state IN ('expired','redirecting')
-
-    OR (ps.state='active' AND [ps.next](http://ps.next)_charge_at IS NULL AND ps.last_charge_at IS NULL)
-
-  );
-
-Можно выполнять как отдельный repair patch.
+Коротко: автопродление определяется только включённой подпиской в кнопке тарифа. Всё остальное — разовое и не должно попадать в таблицу автопродлений.
 
 &nbsp;
 
-План: разбор INV-22 (5 рассинхронизированных подписок)
+План:
 
-## Diagnose (что показал отчёт)
+## 1. Проблема
 
-INV-22 — это **не мусор**, в отличие от INV-20. Это валидные «зомби-подписки»: в нашей БД они стоят активными и продлеваемыми, а на стороне bePaid их фактически нет.
+Сейчас страница `/admin/payments/auto-renewals` и ежедневный cron уведомлений показывают/обрабатывают неправильную реальность:
 
-Все 5 случаев — один и тот же продукт (клуб, `product_id = 11c9f1b8…`) и один и тот же паттерн:
+1. Уведомления за 7/3/1 день по email фактически не появляются в `email_logs`, поэтому email-точки в UI остаются серыми.
+2. Основной блок уведомлений по Telegram за 7/3/1 часто не отправляет сообщения, а пишет `skipped: subscription_changed`.
+3. Второй блок внутри того же cron отправляет Telegram как `no_card_warning`, из-за чего статистика показывает `expiry_reminders_sent: 0`, `no_card_warnings_sent: 29`, а не нормальные напоминания окончания доступа/подписки.
+4. UI автопродлений до сих пор классифицирует подписочность через `requires_card_tokenization` / `product.category`, что противоречит текущему SOT: тип продукта определяется только через `resolveProductRenewability` / active `tariff_offers.meta.recurring.is_recurring` и другие canonical offer-сигналы.
+5. Из-за этого разовые продукты попадают в автопродления и в MIT/«без карты», хотя они не должны считаться автопродляемыми.
+6. Надпись MIT вводит в заблуждение: по данным сейчас есть активные provider-managed/bePaid подписки, а локальная MIT-модель не должна отображаться как отдельная живая когорта, если MIT реально не используется.
 
-```text
-                  bePaid (provider_subscriptions)   |  Наша БД (subscriptions_v2)
-sub #1  sbs_de50…  state=expired,    last=NULL      |  active, auto_renew=true, end=2026-05-02
-sub #2  sbs_6005…  state=expired,    last=NULL      |  active, auto_renew=true, end=2026-05-11
-sub #3  sbs_8381…  state=expired,    last=NULL      |  active, auto_renew=true, end=2026-05-17
-sub #4  sbs_9e59…  state=redirecting,last=NULL      |  active, auto_renew=true, end=2026-05-27
-sub #5  sbs_c67b…  state=redirecting,last=NULL      |  active, auto_renew=true, end=2026-06-22
-```
+## 2. Диагностика: фактическое состояние
 
-Что произошло на самом деле:
+Проверено read-only:
 
-- У всех 5 `last_charge_at = NULL` — **первичная оплата так и не прошла** (3DS застрял или провайдер закрыл pending).
-- Запись в `subscriptions_v2` была создана авансом (под checkout) и осталась висеть со `status=active`.
-- Пользователю в кабинете показывается «всё ок, продлится автоматически», хотя bePaid эту подписку давно похоронил.
+- Cron `subscription-renewal-reminders` существует и активен, расписание `0 6 * * *`.
+- Последний запуск есть: `2026-04-29 06:00 UTC`.
+- Последний summary:
+  - `total_processed: 31`
+  - `telegram_sent_count: 29`
+  - `expiry_reminders_sent: 0`
+  - `no_card_warnings_sent: 29`
+  - `duplicate_suppressed_count: 25`
+- За последние 14 дней в `telegram_logs` есть subscription reminder записи, но много `skipped`, а сегодня основной блок пишет `reason=subscription_changed`.
+- В `email_logs` за последние 14 дней нет ни одной записи с `meta.event_type like 'subscription_reminder_%'`.
+- В коде `sendEmailReminder()` вызывает `send-email`, но фактические логи отсутствуют. Значит email-ветка либо не доходит до вызова, либо падает до логирования, либо блокируется логикой основного цикла.
+- В UI `AutoRenewalsTabContent.tsx` сейчас:
+  - основной запрос берет `subscriptions_v2_safe` с `.eq('auto_renew', true)`;
+  - `is_subscription` вычисляется через `tariff_offers.requires_card_tokenization === true || product.category === 'subscription'`;
+  - это запрещено текущим SOT для типа продукта.
+- Скан показал расхождение:
+  - текущий UI включает 253 записи;
+  - canonical renewable по offer-SOT — 183;
+  - примерно 70 разовых записей попадают в UI ошибочно.
 
-Это и есть та «реальная ситуация», которая должна приходить в ежедневный отчёт — её нельзя глушить.
+## 3. Предлагаемое решение
 
-## Решение
+### A. Починить cron `subscription-renewal-reminders`
 
-Сделать INV-22 не только сигналом, но и channel'ом для разбора: показать в отчёте конкретику и дать безопасный one-click ремонт. Дублей не плодим — используем уже существующие канонические writer'ы.
+1. Убрать ложный anti-stale guard:
+  - сейчас он сравнивает `freshSub.status !== sub.status`, но `sub.status` не выбран в SELECT;
+  - из-за этого `freshSub.status !== undefined` почти всегда true и основной блок пропускает реальные напоминания.
+  - Нужно добавить `status` в SELECT и/или сравнивать только реально выбранные поля.
+2. Сделать email-ветку доказуемой:
+  - если email отсутствует — писать `email_logs` skip `email_missing`;
+  - если `send-email` вернул ошибку — писать `email_logs` failed;
+  - если отправка принята — писать canonical `email_logs` sent/success с `meta.subscription_id`, `meta.event_type`, `days_left`, `product_id`, `is_one_time`.
+3. Убрать вредный второй блок `EXPIRING WITHOUT SBS` как отдельный отправщик Telegram:
+  - он дублирует основной 7/3/1 workflow;
+  - он не отправляет email;
+  - он маскирует нормальные напоминания как `no_card_warning`;
+  - после исправления основного блока он станет источником дублей.
+  - Вместо него оставить только audit/diagnostic summary либо полностью отключить sending-часть.
+4. Сохранить бизнес-логику текстов:
+  - активная provider-managed подписка: уведомление о ближайшем автосписании/автопродлении;
+  - продлеваемый продукт без active provider-managed: уведомление о скором окончании + корректные CTA;
+  - разовый продукт: только уведомление о скором окончании доступа, без продления/автосписания.
 
-### 1. Расширить отчёт INV-22 (полезный диагноз вместо «5 шт.»)
+### B. Починить UI автопродлений
 
-Файл: `supabase/functions/nightly-payments-invariants/index.ts`.
+1. В `AutoRenewalsTabContent.tsx` заменить вычисление `is_subscription`:
+  - убрать `requires_card_tokenization` и `product.category` как классификаторы;
+  - использовать canonical offer-SOT: active offers продукта, где:
+    - `meta.recurring.is_recurring=true`, или
+    - `payment_method='internal_installment'`, или
+    - `is_installment=true`, или
+    - `offer_type='subscription'`.
+2. Разовые продукты не должны попадать в таблицу автопродлений.
+  - Они остаются в уведомлениях окончания доступа через cron, но не отображаются как автопродления/карточные проблемы.
+3. Исправить верхние счетчики:
+  - «Всего подписок» считать только canonical renewable cohort;
+  - «К списанию сегодня» — только provider-managed или реально списываемые подписки с `next_charge_at` сегодня;
+  - «Без карты» — не показывать как MIT для разовых продуктов;
+  - если MIT как способ списания реально не используется — убрать подпись `MIT` из split или заменить на нейтральное «Локальные»/«Без provider-managed» только если такие записи реально есть и являются renewable.
+4. Исправить фильтры:
+  - фильтр `no_card` должен считать только renewable non-provider-managed записи;
+  - `bepaid` — только active provider_subscriptions;
+  - `link_only/requires_3ds/broken_token` не должны включать one-time продукты.
+5. Исправить email/TG точки:
+  - UI должен читать успешные email outcome из `email_logs` по `meta.subscription_id + meta.event_type`;
+  - TG — из `telegram_logs` по `meta.subscription_id + event_type`;
+  - зеленая точка должна появляться при фактическом `sent/success`, а `skipped` должен оставаться желтым.
 
-Сейчас в Telegram уходит безликое `5 активных подписок десинхронизированы`. Добавить в сообщение:
+## 4. Изменяемые компоненты
 
-- разбивку по причинам: `expired (N)`, `redirecting (N)`, `active без дат (N)`;
-- признак «никогда не было успешного списания» (`ps.last_charge_at IS NULL`) — это «мёртвые при рождении»;
-- первые 3 sample строкой `product=… user=… ps_state=… created=…` (не только `sub_id`).
+Файлы:
 
-Для этого расширить RPC `inv22_subscription_desync`: добавить в payload поля `bucket` (`never_charged_expired` / `never_charged_redirecting` / `active_no_dates`) и агрегат `by_bucket`.
+- `supabase/functions/subscription-renewal-reminders/index.ts`
+- `src/components/admin/payments/AutoRenewalsTabContent.tsx`
+- `src/hooks/useAutoRenewalAlerts.ts`
 
-### 2. Канонический REPAIR без новых функций
+Вероятная миграция:
 
-Никаких новых writer-функций. Используем существующие:
+- поправить/добавить индекс идемпотентности Telegram, если текущий уникальный индекс `(user_id,event_type,event_day)` мешает нескольким подпискам одного пользователя в один день.
+- Текущий индекс не содержит `subscription_id`, который лежит в `meta`; это риск ложного duplicate suppression для пользователей с несколькими продуктами. Предпочтительно заменить на expression unique index по `(user_id, event_type, event_day, (meta->>'subscription_id'))` для reminder-событий.
 
+Edge functions:
 
-| Кейс bePaid                                      | Действие на нашей стороне                                                                                                                                                                                                               | Чем закрываем                                                                          |
-| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `ps.state = 'expired'`, `last_charge_at IS NULL` | Подписка never-charged → закрыть как `expired_reentry` (без revoke доступа, доступа и не было, но и `auto_renew=false`, чтобы перестало числиться в зомби)                                                                              | через `bepaid-cancel-subscriptions` (already exists) с reason `inv22_provider_expired` |
-| `ps.state = 'redirecting'`, возраст ≥ 48ч        | То же самое: 3DS не дойдёт, считаем мёртвым                                                                                                                                                                                             | то же                                                                                  |
-| `ps.state = 'active'`, обе даты NULL             | Сначала pull через `bepaid-get-subscription-details` — возможно у нас просто устарел snapshot. Если bePaid возвращает active+next_charge_at — обновляем `provider_subscriptions`. Если bePaid возвращает terminal — закрываем как выше. | `bepaid-get-subscription-details` → потом тот же путь                                  |
+- redeploy `subscription-renewal-reminders` после правки.
 
+UI:
 
-Минимальная защита: **не трогать** записи моложе 48 ч (см. memory `revoke-race-condition-guard`) — `redirecting` свежее 48 ч может ещё дойти.
+- таблица, счетчики, фильтры и точки уведомлений на `/admin/payments/auto-renewals`.
 
-### 3. UI для ручного разбора
+## 5. Что не будет изменено
 
-Страница `/admin/system-health` уже умеет показывать invariants. Для INV-22 добавить в `OwnerProblemCard` (или его аналог в `AdminSystemHealth`) action-кнопку «Разобрать INV-22» с двумя шагами:
+- Не трогаю доступы пользователей и даты подписок.
+- Не делаю массовых UPDATE/DELETE по подпискам.
+- Не меняю платежный grant/access flow.
+- Не меняю `grant-access-for-order`.
+- Не создаю новый параллельный workflow уведомлений.
+- Не включаю разовые продукты в автопродления.
 
-1. **Dry-run** — вызывает новый thin-endpoint `system-health-inv22-plan` (read-only): возвращает табличку «что собираемся сделать с каждой из 5 подписок».
-2. **Execute** — после явного подтверждения вызывает `system-health-inv22-resolve`, который для каждой записи делегирует в `bepaid-get-subscription-details` или `bepaid-cancel-subscriptions`. Никаких прямых UPDATE в `subscriptions_v2`/`provider_subscriptions` — всё через канонические writer'ы.
+## 6. Dry-run
 
-Оба endpoint'а пишут аудит в `audit_logs`:
+Перед execute будут выполнены read-only проверки:
 
-- `inv22.plan.viewed` (actor = JWT super_admin)
-- `inv22.resolve.applied` (per-subscription, c `before_state` / `after_state` / `delegated_to`)
+1. Посчитать ожидаемую cohort для 7/3/1 дней по `access_end_at` в Europe/Minsk.
+2. Разделить ее на:
+  - provider-managed active;
+  - renewable без provider-managed;
+  - one-time.
+3. Проверить, сколько email/TG outcome должно быть создано и сколько уже есть сегодня.
+4. Проверить, сколько записей UI должен показывать после canonical фильтра.
+5. Проверить, не даст ли новый idempotency-index конфликтов на исторических данных.
 
-### 4. Поднять INV-22 в classification
+## 7. Execute
 
-Сейчас INV-22 в humanizer не упомянут, поэтому попадает в fallback `tech_info`. Добавить в `src/lib/system-health/invariant-humanize.ts` маппинг:
+После подтверждения:
 
-- `INV-22` → `problem_type='critical_fix'`, `recommended_action='fix_via_lovable'`
-- `whyNotAutofixed`: «Затрагивает живые карты пользователей — нужна явная кнопка владельца»
-- `consequenceOfInaction`: «UI показывает пользователям ложное «активна, продлится», провайдер уже не спишет»
-- Связанный раздел: `/admin/subscriptions-v2`
+1. Исправлю anti-stale bug в `subscription-renewal-reminders`.
+2. Уберу/отключу дублирующий второй sending-блок `EXPIRING WITHOUT SBS`.
+3. Усилю email outcome logging.
+4. Переведу UI на canonical product renewability SOT.
+5. Исправлю счетчики/фильтры и подписи MIT/bePaid.
+6. При необходимости добавлю безопасную миграцию idempotency-index для Telegram reminder по `subscription_id`.
+7. Redeploy edge function.
 
-### 5. Memory
+## 8. STOP-guards
 
-Записать в `mem://commercial-logic/subscriptions/inv22-desync-resolution`:
+Остановить выполнение, если:
 
-- определение «зомби-подписки» = `subv2.active+auto_renew && ps.state in (expired, redirecting) || (active && both dates NULL)`;
-- buckets и решение по каждому;
-- 48-часовой grace для `redirecting`;
-- запрет прямых UPDATE — только через `bepaid-cancel-subscriptions` / `bepaid-get-subscription-details`;
-- INV-22 — `critical_fix`, не глушить никогда.
+- canonical renewable cohort неожиданно отличается от текущей больше чем на ожидаемые 70 разовых записей без объяснения;
+- найдено несколько активных provider_subscriptions на одну subscription_v2 без правила дедупа;
+- новый индекс идемпотентности конфликтует с историческими дублями;
+- `send-email` не развернут/не имеет активного email account;
+- cron вызывает не тот deployed function version;
+- dry-run показывает потенциальную отправку массово не тем пользователям.
 
-## Технические детали
+## 9. DoD
 
-**Файлы, которые меняются:**
+Задача считается выполненной, когда подтверждено сканами:
 
-- миграция: новая версия `inv22_subscription_desync` с buckets
-- `supabase/functions/nightly-payments-invariants/index.ts` — текст алерта с разбивкой
-- `supabase/functions/system-health-inv22-plan/index.ts` — новый, read-only
-- `supabase/functions/system-health-inv22-resolve/index.ts` — новый, делегирует в существующие writer'ы
-- `src/lib/system-health/invariant-humanize.ts` — INV-22 → critical_fix
-- `src/components/admin/system-health/owner/OwnerProblemCard.tsx` — кнопка action для INV-22
-- `mem://commercial-logic/subscriptions/inv22-desync-resolution` + апдейт `mem://index.md`
+1. Dry-run показывает корректную cohort 7/3/1: active provider-managed, renewable без provider-managed, one-time отдельно.
+2. Симуляция/ручной безопасный запуск cron возвращает `expiry_reminders > 0` при наличии cohort и не пишет всё как `no_card_warning`.
+3. В `telegram_logs` появляются `subscription_reminder_7d/3d/1d` с `status=success` и `meta.subscription_id`.
+4. В `email_logs` появляются строки с `meta.event_type=subscription_reminder_*` и `meta.subscription_id`; UI email-точки могут стать зелеными.
+5. В UI автопродлений разовые продукты больше не входят в список и счетчики.
+6. Верхние счетчики соответствуют backend SQL scan.
+7. Подпись MIT не показывает несуществующую отдельную cohort, если таких подписок реально нет.
+8. Edge function redeployed.
 
-**Что не трогаем:**
+## 10. Риски и зависимости
 
-- `bepaid-cancel-subscriptions`, `bepaid-get-subscription-details`, `subscriptions-reconcile`, `bepaid-webhook` — существующий канон.
-- Прямых SQL-апдейтов по `subscriptions_v2` / `provider_subscriptions` нигде нет (см. memory `canonical-write-path-standard`).
+- Email зависит от существующей функции `send-email` и активного email account. Если account не настроен, будет честный failed outcome, а не серая пустота.
+- Если у одного пользователя несколько подписок с одинаковым event_type в один день, текущий Telegram unique index может подавлять часть отправок. Это нужно исправить миграцией индекса.
+- Разовые продукты будут исключены из UI автопродлений, но останутся в cron уведомлений окончания доступа — это ожидаемое поведение.
 
-## DoD
+## 11. Требуется дополнительная информация
 
-1. `inv22_subscription_desync` возвращает buckets, и в Telegram приходит человеческое сообщение с разбивкой по 5 текущим записям.
-2. На `/admin/system-health` INV-22 виден как `critical_fix` с кнопкой «Разобрать».
-3. Dry-run показывает план по каждой из 5 подписок (что закрыть, что pull-ить).
-4. После Execute: либо bePaid подтверждает active и provider_subscriptions обновляется, либо подписка переводится в `expired_reentry` через `bepaid-cancel-subscriptions`, `auto_renew=false`. Доступ не дёргаем (его не было).
-5. Повторный запуск INV-22 возвращает `count=0` (или меньшее число с обоснованием по каждой оставшейся).
-6. Аудит записан: `inv22.resolve.applied` per subscription с before/after.
+Дополнительных данных от пользователя не требуется. Нужен approve плана для внесения изменений, миграции и redeploy.

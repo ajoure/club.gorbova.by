@@ -1111,6 +1111,7 @@ Deno.serve(async (req) => {
           id,
           user_id,
           order_id,
+          status,
           access_end_at,
           payment_token,
           tariff_id,
