@@ -379,6 +379,10 @@ function isPastMinsk(date: Date): boolean {
   return dateStart < todayStart;
 }
 
+function isStaleOverdue(date: Date, hours = 72): boolean {
+  return Date.now() - date.getTime() > hours * 60 * 60 * 1000;
+}
+
 export function AutoRenewalsTabContent() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<FilterType>('all');
@@ -637,6 +641,7 @@ export function AutoRenewalsTabContent() {
         if (!sub.is_subscription) return false;
         const isStaleNonChargeableOverdue = !!sub.next_charge_at
           && isPastMinsk(new Date(sub.next_charge_at))
+          && isStaleOverdue(new Date(sub.next_charge_at))
           && !sub.is_bepaid
           && !sub.payment_method_id
           && !sub.has_payment_token;
