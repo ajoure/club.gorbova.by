@@ -279,6 +279,9 @@ interface AutoRenewal {
   pm_verification_status: string | null;
   pm_verification_error: string | null;
   pm_recurring_verified: boolean | null;
+  provider_subscription_id: string | null;
+  provider_last_charge_at: string | null;
+  charged_today: boolean;
 }
 
 // PATCH P2.5: Compute actual billing type from token/PM/provider state
@@ -374,6 +377,10 @@ function isPastMinsk(date: Date): boolean {
   const todayStart = startOfDay(nowMinsk);
   const dateStart = startOfDay(dateMinsk);
   return dateStart < todayStart;
+}
+
+function isStaleOverdue(date: Date, hours = 72): boolean {
+  return Date.now() - date.getTime() > hours * 60 * 60 * 1000;
 }
 
 export function AutoRenewalsTabContent() {
@@ -491,7 +498,7 @@ export function AutoRenewalsTabContent() {
       // PATCH 3.1: Fetch active provider_subscriptions to determine BePaid status (source of truth)
       const { data: providerSubs } = await supabase
         .from('provider_subscriptions')
-        .select('id, subscription_v2_id, provider_subscription_id, user_id, profile_id, amount_cents, currency, next_charge_at, card_brand, card_last4, raw_data, state')
+        .select('id, subscription_v2_id, provider_subscription_id, user_id, profile_id, amount_cents, currency, next_charge_at, last_charge_at, card_brand, card_last4, raw_data, state')
         .eq('state', 'active');
 
       // Build lookup: subscription_v2_id → provider_subscription record
@@ -549,6 +556,7 @@ export function AutoRenewalsTabContent() {
         const pm = sub.payment_methods as any;
         const profile = profileMap.get(sub.user_id);
         const order = sub.orders_v2 as any;
+        const linkedPs = linkedPsMap.get(sub.id);
 
         // PATCH-2026-04-29: canonical recurring (SOT — UI-чекбокс «Подписка»)
         const isSubscription = productId ? recurringProductIds.has(productId) : false;
@@ -612,21 +620,33 @@ export function AutoRenewalsTabContent() {
           // PATCH-7: Billing type
           billing_type: (sub as any).billing_type || 'mit',
           // PATCH 3.1: BePaid flag — ONLY from provider_subscriptions active records (source of truth)
-          is_bepaid: linkedPsMap.has(sub.id),
+          is_bepaid: !!linkedPs,
           // PATCH P2.5: Computed display billing type
           display_billing_type: computeDisplayBillingType({
-            is_bepaid: linkedPsMap.has(sub.id),
+            is_bepaid: !!linkedPs,
             has_payment_token: (sub as any).has_payment_token ?? false,
             payment_method_id: sub.payment_method_id,
             pm_status: pm?.status || null,
             billing_type: (sub as any).billing_type || 'mit',
           }),
+          provider_subscription_id: linkedPs?.provider_subscription_id || null,
+          provider_last_charge_at: linkedPs?.last_charge_at || null,
+          charged_today: !!linkedPs?.last_charge_at && isTodayMinsk(new Date(linkedPs.last_charge_at)),
         };
       });
 
       // PATCH-2026-04-29: оставляем только подписки рекурент-продуктов (canonical SOT).
       // Разовые продукты не попадают в таблицу автопродлений независимо от auto_renew/карты.
-      const filteredSubs = mappedSubs.filter(sub => sub.is_subscription);
+      const filteredSubs = mappedSubs.filter(sub => {
+        if (!sub.is_subscription) return false;
+        const isStaleNonChargeableOverdue = !!sub.next_charge_at
+          && isPastMinsk(new Date(sub.next_charge_at))
+          && isStaleOverdue(new Date(sub.next_charge_at))
+          && !sub.is_bepaid
+          && !sub.payment_method_id
+          && !sub.has_payment_token;
+        return !isStaleNonChargeableOverdue;
+      });
 
       // PATCH P0.9.6: Dedup by user_id+product_name — keep only the "best" (latest access_end_at, NULL=∞)
       const dedupedSubs = filteredSubs.reduce((acc: AutoRenewal[], sub) => {
@@ -690,6 +710,9 @@ export function AutoRenewalsTabContent() {
           pm_verification_status: null,
           pm_verification_error: null,
           pm_recurring_verified: null,
+          provider_subscription_id: ps.provider_subscription_id || null,
+          provider_last_charge_at: ps.last_charge_at || null,
+          charged_today: !!ps.last_charge_at && isTodayMinsk(new Date(ps.last_charge_at)),
         });
       }
 
@@ -789,7 +812,7 @@ export function AutoRenewalsTabContent() {
     
     switch (filter) {
       case 'due_today':
-        result = result.filter(r => r.next_charge_at && isTodayMinsk(new Date(r.next_charge_at)));
+        result = result.filter(r => r.charged_today || (r.next_charge_at && isTodayMinsk(new Date(r.next_charge_at))));
         break;
       case 'due_week':
         result = result.filter(r => {
@@ -905,7 +928,9 @@ export function AutoRenewalsTabContent() {
     // PATCH-6: For due/overdue metrics, exclude staff and NULL next_charge_at
     const eligibleForMetrics = renewals.filter(r => r.next_charge_at && !r.is_staff);
     
-    const dueTodayList = eligibleForMetrics.filter(r => isTodayMinsk(new Date(r.next_charge_at!)));
+    const chargedTodayList = renewals.filter(r => r.charged_today && !r.is_staff);
+    const dueTodayRemainingList = eligibleForMetrics.filter(r => isTodayMinsk(new Date(r.next_charge_at!)) && !r.charged_today);
+    const dueTodayList = renewals.filter(r => !r.is_staff && (r.charged_today || (r.next_charge_at && isTodayMinsk(new Date(r.next_charge_at)))));
     const overdueList = eligibleForMetrics.filter(r => isPastMinsk(new Date(r.next_charge_at!)));
     // AR-P0.9.6: exclude BePaid from "no card" stat (PATCH 3.1: use is_bepaid)
     const noCardList = renewals.filter(r => !r.payment_method_id && !r.is_bepaid);
@@ -937,6 +962,8 @@ export function AutoRenewalsTabContent() {
     return {
       total: { count: renewals.length, sum: sumAmount(renewals) },
       dueToday: { count: dueTodayList.length, sum: sumAmount(dueTodayList) },
+      dueTodayCharged: { count: chargedTodayList.length, sum: sumAmount(chargedTodayList) },
+      dueTodayRemaining: { count: dueTodayRemainingList.length, sum: sumAmount(dueTodayRemainingList) },
       overdue: { count: overdueList.length, sum: sumAmount(overdueList) },
       noCard: { count: noCardList.length, sum: sumAmount(noCardList) },
       noChargeDate: { count: noChargeDateList.length, sum: 0 },
@@ -962,6 +989,7 @@ export function AutoRenewalsTabContent() {
   };
 
   const getChargeStatus = (renewal: AutoRenewal) => {
+    if (renewal.charged_today) return { label: 'Списано', variant: 'default' as const, className: 'bg-emerald-600' };
     if (!renewal.next_charge_at) return { label: 'Нет даты', variant: 'secondary' as const };
     
     const date = new Date(renewal.next_charge_at);
@@ -1421,10 +1449,15 @@ export function AutoRenewalsTabContent() {
               role="button"
               aria-pressed={filter === 'due_today'}
             >
-              <div className="text-2xl font-bold text-blue-600">{stats.dueToday.count}</div>
+              <div className="text-2xl font-bold text-blue-600">
+                {stats.dueTodayCharged.count}/{stats.dueToday.count}
+              </div>
               <div className="text-xs text-muted-foreground">К списанию сегодня</div>
               <div className="text-sm font-medium text-blue-600 mt-1">
                 {stats.dueToday.sum.toFixed(2)} BYN
+              </div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">
+                Списано: {stats.dueTodayCharged.count} · Осталось: {stats.dueTodayRemaining.count}
               </div>
               {(stats.mitDueToday > 0 || stats.bepaidDueToday > 0) && (
                 <div className="text-[10px] text-muted-foreground mt-0.5">
