@@ -366,6 +366,8 @@ Deno.serve(async (req) => {
         }, { onConflict: 'user_id,club_id' });
       }
 
+      const wasMirroredToMessages = !!(dmSent && result?.ok && result?.result?.message_id);
+
       await supabase.from('telegram_logs').insert({
         user_id, action: 'GRANT_QUEUED', status: 'ok', 
         error_message: 'Telegram not linked - notification queued',
@@ -1109,9 +1111,12 @@ Deno.serve(async (req) => {
           source_id,
           dm_sent: dmSent,
           dm_error: dmError || null,
+          mirrored_to_telegram_messages: wasMirroredToMessages,
+          telegram_message_id: result?.result?.message_id ?? null,
         },
-        // PATCH P0.9.8c-fix: Store actual DM text (plain), only if sent successfully
-        message_text: dmSent ? dmText : `[DM не отправлен] ${dmError || 'unknown error'}\n---\n${logMessage}`,
+        // If the same outgoing DM is mirrored as a blue telegram_messages bubble,
+        // do not duplicate it as a grey event-card in Contact Center.
+        message_text: wasMirroredToMessages ? null : `[DM не отправлен] ${dmError || 'unknown error'}\n---\n${logMessage}`,
       });
 
       results.push({
