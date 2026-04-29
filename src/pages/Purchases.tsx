@@ -12,6 +12,7 @@ import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { toast } from "sonner";
 import { generateOrderReceipt, generateSubscriptionReceipt } from "@/utils/receiptGenerator";
+import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 import {
   AlertDialog,
   AlertDialogAction,
