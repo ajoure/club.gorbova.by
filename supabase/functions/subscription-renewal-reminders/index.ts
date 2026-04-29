@@ -464,6 +464,11 @@ async function sendTelegramReminder(
 
     const safeProductName = escapeMd(productName);
     const safeTariffName = escapeMd(tariffName);
+    const safeAmount = escapeMd(formatCurrency(amount, currency));
+    const renewalDetailsBlock = `📦 *Продукт:* ${safeProductName}
+🎯 *Тариф:* ${safeTariffName}
+📆 *Доступ до:* ${formattedDate}
+💳 *Сумма списания:* ${safeAmount}`;
 
     // PATCH ONE-TIME v2: тёплые тексты с эмодзи, точное время, нейтральный CTA (ЛК)
     if (isOneTime) {
@@ -492,16 +497,17 @@ ${safeNamePrefix}это последнее напоминание: доступ 
       if (hasSBS) {
         message = `📅 *Напоминание о подписке*
 
-${safeNamePrefix}ваша подписка на *${safeProductName}* заканчивается через неделю (${formattedDate}).
+${safeNamePrefix}ваша подписка заканчивается через неделю.
+
+${renewalDetailsBlock}
 
 Автопродление активно — подписка продлится автоматически. Отключить можно в кабинете.`;
       } else {
         message = `📅 *Напоминание о подписке*
 
-${safeNamePrefix}ваша подписка на *${safeProductName}* заканчивается через неделю (${formattedDate}).
+${safeNamePrefix}ваша подписка заканчивается через неделю.
 
-📦 *Продукт:* ${safeProductName}
-🎯 *Тариф:* ${safeTariffName}
+${renewalDetailsBlock}
 
 Выберите удобный способ продления:`;
       }
@@ -509,15 +515,17 @@ ${safeNamePrefix}ваша подписка на *${safeProductName}* закан�
       if (hasSBS) {
         message = `⏰ *Подписка заканчивается через 3 дня*
 
-${safeNamePrefix}осталось 3 дня до окончания подписки на *${safeProductName}* (${formattedDate}).
+${safeNamePrefix}осталось 3 дня до окончания подписки.
+
+${renewalDetailsBlock}
 
 Автопродление активно — спишется автоматически. Отключить можно в кабинете.`;
       } else {
         message = `⏰ *Подписка заканчивается через 3 дня*
 
-${safeNamePrefix}осталось 3 дня до окончания подписки на *${safeProductName}* (${formattedDate}).
+${safeNamePrefix}осталось 3 дня до окончания подписки.
 
-📦 *${safeProductName}* / ${safeTariffName}
+${renewalDetailsBlock}
 
 Выберите удобный способ продления:`;
       }
@@ -525,11 +533,17 @@ ${safeNamePrefix}осталось 3 дня до окончания подпис�
       if (hasSBS) {
         message = `🔔 *Завтра заканчивается подписка!*
 
-${safeNamePrefix}это последнее напоминание. Подписка продлится автоматически. Отключить можно в кабинете.`;
+${safeNamePrefix}это последнее напоминание: подписка заканчивается завтра.
+
+${renewalDetailsBlock}
+
+Автопродление активно — сумма спишется автоматически с привязанной карты. Отключить можно в кабинете.`;
       } else {
         message = `🔔 *Завтра заканчивается подписка!*
 
-${safeNamePrefix}это последнее напоминание. Подписка на *${safeProductName}* заканчивается ${formattedDate}.
+${safeNamePrefix}это последнее напоминание: подписка заканчивается завтра.
+
+${renewalDetailsBlock}
 
 Оплатите сейчас, чтобы сохранить доступ:`;
       }
