@@ -379,17 +379,40 @@ export function SubscriptionDetailSheet({
             </Button>
           )}
 
-          {isCanceled && isActive && (
+          {resumeSlotApplicable && eligibility?.resume_available && (
             <Button
               variant="outline"
               className="w-full gap-2"
               onClick={() => onResume(subscription)}
-              disabled={isProcessing}
+              disabled={isProcessing || eligibilityLoading}
             >
               <RotateCcw className="h-4 w-4" />
               Возобновить подписку
             </Button>
           )}
+
+          {resumeSlotApplicable && eligibility && !eligibility.resume_available && eligibility.reason !== 'not_needed' && (
+            <div className="space-y-2">
+              <div className="flex items-start gap-2 rounded-md border border-amber-300/60 bg-amber-50 dark:bg-amber-900/20 p-3 text-xs text-amber-800 dark:text-amber-300">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <span>
+                  {eligibility.reason === 'no_payment_method' && 'Эту подписку нельзя возобновить — нужно заново привязать карту или оформить новую подписку.'}
+                  {eligibility.reason === 'provider_dead' && 'Подписка отменена на стороне платёжной системы. Возобновить нельзя — оформите новую.'}
+                  {eligibility.reason === 'provider_check_failed' && 'Не удалось проверить статус подписки у провайдера. Попробуйте позже или оформите новую подписку.'}
+                </span>
+              </div>
+              <Button
+                variant="default"
+                className="w-full gap-2"
+                onClick={() => { window.location.href = buildPurchaseHref(); }}
+                disabled={isProcessing}
+              >
+                <ShoppingCart className="h-4 w-4" />
+                Оформить новую подписку
+              </Button>
+            </div>
+          )}
+
         </div>
       </SheetContent>
     </Sheet>
