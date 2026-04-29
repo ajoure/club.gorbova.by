@@ -249,15 +249,23 @@ export default function Purchases() {
         },
       });
 
-      if (error) throw error;
-      if (!data.success) throw new Error(data.error || "Failed to resume");
+      if (error) {
+        const msg = normalizeEdgeFunctionError(error, data);
+        toast.error(msg);
+        return;
+      }
+      if (!data?.success) {
+        const msg = normalizeEdgeFunctionError(null, data) || data?.error || "Не удалось возобновить подписку";
+        toast.error(msg);
+        return;
+      }
 
       toast.success("Подписка восстановлена");
       queryClient.invalidateQueries({ queryKey: ["user-subscriptions-v2"] });
       setDetailSheetOpen(false);
     } catch (error) {
       console.error("Resume error:", error);
-      toast.error("Ошибка восстановления подписки");
+      toast.error(normalizeEdgeFunctionError(error));
     } finally {
       setIsProcessing(false);
     }
