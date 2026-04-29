@@ -1041,6 +1041,10 @@ Deno.serve(async (req) => {
               club_id: club.id,
               source_id: source_id ?? null,
               event: 'access_granted_dm',
+              canonical_order_id: canonicalOrderId,
+              idempotency_key: canonicalBusinessRef
+                ? `access_granted_dm:${user_id}:${club.id}:${canonicalBusinessRef}`
+                : undefined,
             },
           });
           mirroredTelegramMessageId = result.result.message_id;
