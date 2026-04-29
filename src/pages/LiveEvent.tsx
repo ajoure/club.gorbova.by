@@ -549,12 +549,12 @@ function LiveEventLegacy() {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4 px-4">
         <CalendarClock className="h-16 w-16 text-primary" />
-        <h1 className="text-2xl font-bold text-foreground">{data?.title || "Эфир"}</h1>
+        <h1 className="text-2xl md:text-3xl font-bold text-foreground text-center text-balance max-w-3xl mx-auto leading-tight px-4">{data?.title || "Эфир"}</h1>
         {data?.event_type && (
           <Badge variant="outline">{data.event_type === "live_stream" ? "Живой эфир" : "Видео"}</Badge>
         )}
         {data?.description && (
-          <p className="text-muted-foreground text-center max-w-md">{data.description}</p>
+          <p className="text-muted-foreground text-center text-balance max-w-2xl mx-auto px-4">{data.description}</p>
         )}
         {data?.scheduled_at && (
           <div className="bg-primary/10 rounded-lg px-6 py-3 text-primary font-medium">
@@ -575,7 +575,7 @@ function LiveEventLegacy() {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4 px-4">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
-        <h1 className="text-2xl font-bold text-foreground">{data?.title || "Эфир запускается"}</h1>
+        <h1 className="text-2xl md:text-3xl font-bold text-foreground text-center text-balance max-w-3xl mx-auto leading-tight px-4">{data?.title || "Эфир запускается"}</h1>
         <p className="text-muted-foreground text-center max-w-md">
           Эфир уже начался, подключаемся к источнику видео. Это может занять несколько секунд.
         </p>
@@ -588,7 +588,7 @@ function LiveEventLegacy() {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4 px-4">
         <Video className="h-16 w-16 text-muted-foreground" />
-        <h1 className="text-2xl font-bold text-foreground">{data?.title || "Эфир завершён"}</h1>
+        <h1 className="text-2xl md:text-3xl font-bold text-foreground text-center text-balance max-w-3xl mx-auto leading-tight px-4">{data?.title || "Эфир завершён"}</h1>
         <p className="text-muted-foreground text-center max-w-md">
           Эфир завершён. Запись пока недоступна.
         </p>
