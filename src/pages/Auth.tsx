@@ -249,9 +249,28 @@ export default function Auth() {
     setIsSubmitting(false);
 
     if (error) {
+      console.error("[Auth] updateUser password error:", error);
+      const code = (error as any)?.code || "";
+      const msg = (error as any)?.message || "";
+      let title = "Не удалось обновить пароль";
+      let description = "Попробуйте позже или запросите новую ссылку для сброса.";
+
+      if (code === "same_password" || /should be different from the old password/i.test(msg)) {
+        title = "Пароль совпадает со старым";
+        description = "Введите пароль, отличный от текущего.";
+      } else if (code === "weak_password" || /pwned|leaked|compromis/i.test(msg)) {
+        title = "Этот пароль скомпрометирован";
+        description = "Этот пароль найден в утечках. Придумайте другой, более надёжный.";
+      } else if (/session|jwt|expired|invalid/i.test(msg)) {
+        title = "Ссылка устарела";
+        description = "Запросите новое письмо для восстановления пароля.";
+      } else if (msg) {
+        description = msg;
+      }
+
       toast({
-        title: "Ошибка сервера",
-        description: "Не удалось обновить пароль. Попробуйте позже.",
+        title,
+        description,
         variant: "destructive",
       });
     } else {
