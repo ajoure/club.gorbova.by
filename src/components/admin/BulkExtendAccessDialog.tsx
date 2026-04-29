@@ -111,7 +111,7 @@ function PreviewCard({ row, formatDate }: { row: PreviewRow; formatDate: (d: str
         </div>
       )}
       <div className="text-xs mt-1 text-muted-foreground">
-        {getReasonLabel(row.reasonCode, row.reason)}
+        {row.reasonCode === "нет_user_id" ? row.reason : getReasonLabel(row.reasonCode, row.reason)}
       </div>
     </div>
   );
