@@ -191,19 +191,51 @@ export function useUpdateTariff() {
   });
 }
 
+export function useTariffDeleteSafetyCheck() {
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data, error } = await supabase.rpc("tariff_delete_safety_check" as any, { p_tariff_id: id });
+      if (error) throw error;
+      return data as any;
+    },
+  });
+}
+
+export function useArchiveTariff() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data, error } = await supabase.rpc("tariff_archive" as any, { p_tariff_id: id });
+      if (error) throw error;
+      return data as any;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tariffs"] });
+      queryClient.invalidateQueries({ queryKey: ["tariff_offers"] });
+      toast.success("Тариф переведён в архив");
+    },
+    onError: (error: any) => {
+      toast.error(`Не удалось архивировать: ${error?.message ?? "неизвестная ошибка"}`);
+    },
+  });
+}
+
 export function useDeleteTariff() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("tariffs").delete().eq("id", id);
+      const { data, error } = await supabase.rpc("tariff_hard_delete" as any, { p_tariff_id: id });
       if (error) throw error;
+      return data as any;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tariffs"] });
+      queryClient.invalidateQueries({ queryKey: ["tariff_offers"] });
       toast.success("Тариф удалён");
     },
-    onError: (error) => {
-      toast.error(`Ошибка: ${error.message}`);
+    onError: (error: any) => {
+      // Сырое сообщение от RPC может содержать JSON safety-check — обрабатывается в UI диалоге.
+      toast.error(`Не удалось удалить тариф: ${error?.message?.split(":")[0] ?? "ошибка"}`);
     },
   });
 }
