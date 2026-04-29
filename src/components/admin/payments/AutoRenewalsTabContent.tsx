@@ -279,6 +279,9 @@ interface AutoRenewal {
   pm_verification_status: string | null;
   pm_verification_error: string | null;
   pm_recurring_verified: boolean | null;
+  provider_subscription_id: string | null;
+  provider_last_charge_at: string | null;
+  charged_today: boolean;
 }
 
 // PATCH P2.5: Compute actual billing type from token/PM/provider state
@@ -491,7 +494,7 @@ export function AutoRenewalsTabContent() {
       // PATCH 3.1: Fetch active provider_subscriptions to determine BePaid status (source of truth)
       const { data: providerSubs } = await supabase
         .from('provider_subscriptions')
-        .select('id, subscription_v2_id, provider_subscription_id, user_id, profile_id, amount_cents, currency, next_charge_at, card_brand, card_last4, raw_data, state')
+        .select('id, subscription_v2_id, provider_subscription_id, user_id, profile_id, amount_cents, currency, next_charge_at, last_charge_at, card_brand, card_last4, raw_data, state')
         .eq('state', 'active');
 
       // Build lookup: subscription_v2_id → provider_subscription record
@@ -549,6 +552,7 @@ export function AutoRenewalsTabContent() {
         const pm = sub.payment_methods as any;
         const profile = profileMap.get(sub.user_id);
         const order = sub.orders_v2 as any;
+        const linkedPs = linkedPsMap.get(sub.id);
 
         // PATCH-2026-04-29: canonical recurring (SOT — UI-чекбокс «Подписка»)
         const isSubscription = productId ? recurringProductIds.has(productId) : false;
@@ -612,21 +616,32 @@ export function AutoRenewalsTabContent() {
           // PATCH-7: Billing type
           billing_type: (sub as any).billing_type || 'mit',
           // PATCH 3.1: BePaid flag — ONLY from provider_subscriptions active records (source of truth)
-          is_bepaid: linkedPsMap.has(sub.id),
+          is_bepaid: !!linkedPs,
           // PATCH P2.5: Computed display billing type
           display_billing_type: computeDisplayBillingType({
-            is_bepaid: linkedPsMap.has(sub.id),
+            is_bepaid: !!linkedPs,
             has_payment_token: (sub as any).has_payment_token ?? false,
             payment_method_id: sub.payment_method_id,
             pm_status: pm?.status || null,
             billing_type: (sub as any).billing_type || 'mit',
           }),
+          provider_subscription_id: linkedPs?.provider_subscription_id || null,
+          provider_last_charge_at: linkedPs?.last_charge_at || null,
+          charged_today: !!linkedPs?.last_charge_at && isTodayMinsk(new Date(linkedPs.last_charge_at)),
         };
       });
 
       // PATCH-2026-04-29: оставляем только подписки рекурент-продуктов (canonical SOT).
       // Разовые продукты не попадают в таблицу автопродлений независимо от auto_renew/карты.
-      const filteredSubs = mappedSubs.filter(sub => sub.is_subscription);
+      const filteredSubs = mappedSubs.filter(sub => {
+        if (!sub.is_subscription) return false;
+        const isStaleNonChargeableOverdue = !!sub.next_charge_at
+          && isPastMinsk(new Date(sub.next_charge_at))
+          && !sub.is_bepaid
+          && !sub.payment_method_id
+          && !sub.has_payment_token;
+        return !isStaleNonChargeableOverdue;
+      });
 
       // PATCH P0.9.6: Dedup by user_id+product_name — keep only the "best" (latest access_end_at, NULL=∞)
       const dedupedSubs = filteredSubs.reduce((acc: AutoRenewal[], sub) => {
@@ -690,6 +705,9 @@ export function AutoRenewalsTabContent() {
           pm_verification_status: null,
           pm_verification_error: null,
           pm_recurring_verified: null,
+          provider_subscription_id: ps.provider_subscription_id || null,
+          provider_last_charge_at: ps.last_charge_at || null,
+          charged_today: !!ps.last_charge_at && isTodayMinsk(new Date(ps.last_charge_at)),
         });
       }
 
