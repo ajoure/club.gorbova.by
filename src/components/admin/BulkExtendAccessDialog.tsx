@@ -336,13 +336,18 @@ export function BulkExtendAccessDialog({
     for (const row of applicable) {
       if (!row.orderId) continue;
       try {
-        // PATCH-EXECUTE-TARGET-DATE: send customAccessEndAt for date mode
+        // PATCH-EXECUTE-TARGET-DATE: for admin manual edits send the exact previewed
+        // date per row. This bypasses replay/idempotency no-op and also allows
+        // decreasing an incorrectly set access window.
         const body: Record<string, any> = {
           orderId: row.orderId,
           extendFromCurrent,
+          adminManualAccessEdit: isAdminOverride,
         };
 
-        if (mode === "date" && targetEndDateFromPicker) {
+        if (isAdminOverride && row.newEnd) {
+          body.customAccessEndAt = row.newEnd;
+        } else if (mode === "date" && targetEndDateFromPicker) {
           body.customAccessEndAt = targetEndDateFromPicker.toISOString();
         } else {
           body.customAccessDays = days;
@@ -362,6 +367,7 @@ export function BulkExtendAccessDialog({
     setProcessing(false);
     setStep("done");
     queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
+    queryClient.invalidateQueries({ queryKey: ["deals-access-map"] });
     queryClient.invalidateQueries({ queryKey: ["contact-subscriptions"] });
   };
 
