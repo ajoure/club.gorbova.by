@@ -504,6 +504,48 @@ Deno.serve(async (req) => {
     const results = [];
     const telegramUserId = Number(profile.telegram_user_id);
 
+    // ============================================================
+    // PATCH TG-DUPLICATE-DM-GUARD: resolve canonical business order id
+    // (used both for idempotency key on mirror row and for pre-send check
+    // to prevent a second "Доступ открыт!" DM when both canonical order
+    // path and legacy subscription queue path call this function for the
+    // same paid order). Manual grants bypass this guard.
+    // ============================================================
+    let canonicalOrderId: string | null = null;
+    if (source_id) {
+      // Case 1: source_id IS an order id
+      const { data: maybeOrder } = await supabase
+        .from('orders_v2')
+        .select('id')
+        .eq('id', source_id)
+        .maybeSingle();
+      if (maybeOrder?.id) {
+        canonicalOrderId = maybeOrder.id;
+      } else {
+        // Case 2: source_id is a subscription id — derive its canonical order
+        const { data: maybeSub } = await supabase
+          .from('subscriptions_v2')
+          .select('order_id, meta')
+          .eq('id', source_id)
+          .maybeSingle();
+        if (maybeSub) {
+          const sm = (maybeSub.meta || {}) as Record<string, any>;
+          canonicalOrderId =
+            (maybeSub as any).order_id ||
+            sm.checkout_order_id ||
+            sm.initial_order_id ||
+            (Array.isArray(sm.extended_by_orders) && sm.extended_by_orders[0]) ||
+            null;
+          if (!canonicalOrderId && typeof sm.tracking_id === 'string') {
+            const m = /:order:([0-9a-f-]{36})/i.exec(sm.tracking_id);
+            if (m) canonicalOrderId = m[1];
+          }
+        }
+      }
+    }
+    const canonicalBusinessRef = canonicalOrderId || source_id || null;
+
+
     for (const club of clubs) {
       const bot = club.telegram_bots;
       if (!bot || bot.status !== 'active') {
@@ -518,6 +560,100 @@ Deno.serve(async (req) => {
       let channelInviteLink: string | null = null;
       let chatUnbanned = false;
       let channelUnbanned = false;
+
+      // ============================================================
+      // PATCH TG-DUPLICATE-DM-GUARD: skip if access_granted_dm already
+      // sent for this (user, club, canonical_business_ref).
+      // Skipped only for AUTO grants (is_manual=false). Manual re-issue
+      // by admin is always allowed. Failed/skipped previous sends do not
+      // block — we look only for successful mirror rows in telegram_messages.
+      // ============================================================
+      if (!is_manual && canonicalBusinessRef) {
+        const dmIdempotencyKey = `access_granted_dm:${user_id}:${club.id}:${canonicalBusinessRef}`;
+        try {
+          const { data: existingDm } = await supabase
+            .from('telegram_messages')
+            .select('id, message_id, created_at')
+            .eq('user_id', user_id)
+            .eq('direction', 'outgoing')
+            .filter('meta->>idempotency_key', 'eq', dmIdempotencyKey)
+            .limit(1)
+            .maybeSingle();
+
+          // Fallback for legacy rows without idempotency_key — match by
+          // (user, club, event=access_granted_dm, source_id=any of canonical refs).
+          let legacyMatch: { id: string; message_id: number | null } | null = null;
+          if (!existingDm) {
+            const candidateRefs = Array.from(new Set([
+              canonicalOrderId,
+              source_id,
+            ].filter(Boolean) as string[]));
+            if (candidateRefs.length > 0) {
+              const { data: legacy } = await supabase
+                .from('telegram_messages')
+                .select('id, message_id, meta, created_at')
+                .eq('user_id', user_id)
+                .eq('direction', 'outgoing')
+                .filter('meta->>event', 'eq', 'access_granted_dm')
+                .filter('meta->>club_id', 'eq', club.id)
+                .in('meta->>source_id', candidateRefs)
+                .order('created_at', { ascending: false })
+                .limit(1);
+              if (legacy && legacy.length > 0) legacyMatch = legacy[0] as any;
+            }
+          }
+
+          const dup = existingDm || legacyMatch;
+          if (dup) {
+            console.log(`[telegram-grant-access] SKIP duplicate access_granted_dm: user=${user_id} club=${club.id} ref=${canonicalBusinessRef} existing_msg=${(dup as any).id}`);
+            await supabase.from('audit_logs').insert({
+              action: 'telegram.grant.skipped_duplicate_dm',
+              actor_type: 'system',
+              actor_label: 'telegram-grant-access',
+              target_user_id: user_id,
+              meta: {
+                user_id,
+                club_id: club.id,
+                source,
+                source_id,
+                canonical_order_id: canonicalOrderId,
+                canonical_business_ref: canonicalBusinessRef,
+                idempotency_key: dmIdempotencyKey,
+                existing_telegram_message_row_id: (dup as any).id,
+                existing_telegram_message_id: (dup as any).message_id ?? null,
+                trigger_type: 'auto',
+                decision: 'skipped',
+                reason_code: 'duplicate_access_granted_dm',
+              },
+            });
+            await supabase.from('telegram_logs').insert({
+              user_id,
+              club_id: club.id,
+              action: 'AUTO_GRANT',
+              target: 'both',
+              status: 'skipped',
+              meta: {
+                skip_reason: 'duplicate_access_granted_dm',
+                canonical_order_id: canonicalOrderId,
+                source,
+                source_id,
+                idempotency_key: dmIdempotencyKey,
+                existing_telegram_message_row_id: (dup as any).id,
+                mirrored_to_telegram_messages: true,
+              },
+            });
+            results.push({
+              club_id: club.id,
+              skipped_duplicate: true,
+              existing_message_row_id: (dup as any).id,
+              dm_sent: false,
+            });
+            continue;
+          }
+        } catch (dupErr) {
+          console.warn('[telegram-grant-access] duplicate-DM lookup failed (continuing):', dupErr);
+        }
+      }
 
       // Process chat
       if (club.chat_id) {
@@ -905,6 +1041,10 @@ Deno.serve(async (req) => {
               club_id: club.id,
               source_id: source_id ?? null,
               event: 'access_granted_dm',
+              canonical_order_id: canonicalOrderId,
+              idempotency_key: canonicalBusinessRef
+                ? `access_granted_dm:${user_id}:${club.id}:${canonicalBusinessRef}`
+                : undefined,
             },
           });
           mirroredTelegramMessageId = result.result.message_id;
@@ -1156,7 +1296,11 @@ Deno.serve(async (req) => {
       }
 
       const clubIdsList = resolvedClubIds.join(',');
-      const ledgerSourceEventKey = `tg-grant:${user_id}:${clubIdsList}:${Date.now()}`;
+      // Deterministic ledger key — fulfillment-executor rejects timestamp-like numbers.
+      const ledgerSubjectRef =
+        canonicalBusinessRef || source_id || admin_id || user_id;
+      const ledgerSourceTag = source || (is_manual ? 'manual' : 'system');
+      const ledgerSourceEventKey = `tg-grant:${ledgerSourceTag}:${ledgerSubjectRef}:${clubIdsList}`;
 
       const ledgerEntry: LedgerEntry = {
         source_event_type: is_manual ? 'admin' : 'system',
