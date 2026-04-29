@@ -18,6 +18,113 @@ const STAFF_EMAILS = [
 ];
 
 /**
+ * SOT-aligned recurring resolver. Read-only helper. NEVER mutates orders_v2.offer_id.
+ *
+ * Decision matrix:
+ *   1) order.offer_id present AND its tariff_offers.meta.recurring.is_recurring = true
+ *      → decision = 'from_order_offer', is_recurring = true
+ *   2) order.offer_id missing/non-recurring, but tariff has an active recurring offer
+ *      → decision = 'resolved_from_tariff', is_recurring = true
+ *   3) Neither → decision = 'one_time' or 'not_resolved', is_recurring = false
+ *
+ * snapshot_complete distinguishes a real data-defect (recurring offer present
+ * but meta.recurring incomplete) from the normal "no recurring at all" case.
+ */
+async function resolveRecurringFromOrderOrTariff(
+  supabase: any,
+  orderOfferId: string | null | undefined,
+  tariffId: string | null | undefined,
+): Promise<{
+  is_recurring: boolean;
+  snapshot: Record<string, any> | null;
+  snapshot_complete: boolean;
+  resolved_offer_id: string | null;
+  decision: 'from_order_offer' | 'resolved_from_tariff' | 'one_time' | 'not_resolved';
+}> {
+  const REQUIRED_KEYS = [
+    'is_recurring',
+    'billing_period_mode',
+    'grace_hours',
+    'charge_attempts_per_day',
+    'charge_times_local',
+  ];
+  const isComplete = (snap: any): boolean => {
+    if (!snap || typeof snap !== 'object') return false;
+    return REQUIRED_KEYS.every((k) => snap[k] !== undefined && snap[k] !== null);
+  };
+
+  // 1) Try order.offer_id directly
+  if (orderOfferId) {
+    const { data: offerRow } = await supabase
+      .from('tariff_offers')
+      .select('id, tariff_id, meta')
+      .eq('id', orderOfferId)
+      .maybeSingle();
+
+    const recurring = offerRow?.meta?.recurring || null;
+    if (recurring?.is_recurring === true) {
+      return {
+        is_recurring: true,
+        snapshot: recurring,
+        snapshot_complete: isComplete(recurring),
+        resolved_offer_id: offerRow.id,
+        decision: 'from_order_offer',
+      };
+    }
+    // Order's offer is non-recurring — fall through to tariff probe.
+  }
+
+  // 2) Probe tariff for an active recurring offer
+  if (tariffId) {
+    const { data: tariffOffers } = await supabase
+      .from('tariff_offers')
+      .select('id, is_active, is_primary, sort_order, meta')
+      .eq('tariff_id', tariffId)
+      .eq('is_active', true);
+
+    const recurringOffers = (tariffOffers || []).filter(
+      (o: any) => o?.meta?.recurring?.is_recurring === true,
+    );
+
+    if (recurringOffers.length > 0) {
+      recurringOffers.sort((a: any, b: any) => {
+        if ((b.is_primary ? 1 : 0) !== (a.is_primary ? 1 : 0)) {
+          return (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0);
+        }
+        return (a.sort_order ?? 0) - (b.sort_order ?? 0);
+      });
+      const chosen = recurringOffers[0];
+      const snap = chosen.meta?.recurring || null;
+      return {
+        is_recurring: true,
+        snapshot: snap,
+        snapshot_complete: isComplete(snap),
+        resolved_offer_id: chosen.id,
+        decision: 'resolved_from_tariff',
+      };
+    }
+
+    // Tariff has no active recurring offer → SOT says one-time
+    return {
+      is_recurring: false,
+      snapshot: null,
+      snapshot_complete: false,
+      resolved_offer_id: null,
+      decision: 'one_time',
+    };
+  }
+
+  // 3) No offer_id, no tariff_id → cannot decide
+  return {
+    is_recurring: false,
+    snapshot: null,
+    snapshot_complete: false,
+    resolved_offer_id: null,
+    decision: 'not_resolved',
+  };
+}
+
+/**
  * PATCH 2: Get correct recurring_amount for trial orders
  * For trial orders, we need the price from auto_charge_offer_id, not order.final_price (1 BYN)
  * 
