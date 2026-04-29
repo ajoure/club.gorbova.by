@@ -1453,12 +1453,16 @@ export default function AdminDeals() {
       {/* Show More button — reuses Contacts pattern (list mode only) */}
       {viewMode === "list" && (() => {
         const loadedCount = Math.min(displayLimit, allDeals.length);
-        const remaining = (totalCount ?? allDeals.length) - loadedCount;
-        if (remaining <= 0 && allDeals.length <= displayLimit && !hasNextPage) return null;
-        const showRemaining = allDeals.length > displayLimit 
-          ? allDeals.length - displayLimit 
-          : remaining;
-        if (showRemaining <= 0 && !hasNextPage) return null;
+        // tabCounts не учитывает фильтры pipeline/tariff → при их активности используем фактический allDeals.length
+        const filtersBeyondTabCounts = !!activePipelineId || selectedTariffIds.length > 0;
+        const effectiveTotal = filtersBeyondTabCounts
+          ? (hasNextPage ? Math.max(allDeals.length + 1, loadedCount) : allDeals.length)
+          : (totalCount ?? allDeals.length);
+        const remaining = effectiveTotal - loadedCount;
+        // Скрываем кнопку, если всё показано и больше нечего загружать
+        if (!hasNextPage && displayLimit >= allDeals.length) return null;
+        if (remaining <= 0 && !hasNextPage) return null;
+        const showRemaining = Math.max(0, remaining);
         return (
           <div className="flex justify-center py-3">
             <Button
