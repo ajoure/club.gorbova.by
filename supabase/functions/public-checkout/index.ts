@@ -200,6 +200,9 @@ Deno.serve(async (req) => {
             rounding_mode: String(linkInstallment.rounding_mode ?? 'round_half_up_byn'),
             max_installment_months: Number(linkInstallment.max_installment_months ?? linkInstallment.selected_installment_months),
             source: 'payment_link',
+            // PATCH INSTALLMENT-PUBLIC-LINK: маркер для shared checkout — оформить как finite bePaid subscription.
+            as_finite_subscription: true,
+            billing_cycles: Number(linkInstallment.selected_installment_months),
           },
         }
       : {};
