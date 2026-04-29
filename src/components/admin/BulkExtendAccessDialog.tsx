@@ -24,7 +24,7 @@ type ReasonTone = "success" | "warning" | "danger" | "muted";
 
 const REASON_META: Record<string, { label: string; tone: ReasonTone }> = {
   "не_оплачено": { label: "Сделка не оплачена — продление не выполняется", tone: "muted" },
-  "нет_user_id": { label: "Нет привязки к пользователю. Сначала свяжите сделку с пользователем или восстановите user_id", tone: "danger" },
+  "нет_user_id": { label: "Контакт ещё не зарегистрирован на платформе — выдать доступ нельзя. После первого входа по email сделка и доступ привяжутся автоматически (handle_new_user).", tone: "warning" },
   "нет_product_id": { label: "У сделки не указан продукт", tone: "danger" },
   "продукт_деактивирован": { label: "Продукт деактивирован — доступ не выдаётся", tone: "danger" },
   "тариф_деактивирован": { label: "Тариф деактивирован", tone: "danger" },
@@ -111,7 +111,7 @@ function PreviewCard({ row, formatDate }: { row: PreviewRow; formatDate: (d: str
         </div>
       )}
       <div className="text-xs mt-1 text-muted-foreground">
-        {getReasonLabel(row.reasonCode, row.reason)}
+        {row.reasonCode === "нет_user_id" ? row.reason : getReasonLabel(row.reasonCode, row.reason)}
       </div>
     </div>
   );
@@ -289,13 +289,19 @@ export function BulkExtendAccessDialog({
       );
 
       if (check.action !== "применить") {
+        // Обогащаем reason для orphan-сделок: показываем email, по которому при регистрации произойдёт автоматический мердж (handle_new_user).
+        let enrichedReason = check.reason;
+        if (check.reasonCode === "нет_user_id") {
+          const orphanEmail = profile?.email || "—";
+          enrichedReason = `Контакт «${userName}» (email: ${orphanEmail}) ещё не входил в платформу. Доступ выдать нельзя — нет user_id. После первой регистрации/входа по этому email сделка автоматически привяжется и доступ можно будет продлить.`;
+        }
         return {
           orderId: order.id, orderNumber: order.order_number || "—",
           productName, userName,
           currentEnd: sub?.access_end_at || null,
           newEnd: null,
           action: check.action,
-          reason: check.reason,
+          reason: enrichedReason,
           reasonCode: check.reasonCode,
         };
       }
