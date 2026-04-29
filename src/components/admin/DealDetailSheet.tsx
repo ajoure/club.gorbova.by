@@ -456,7 +456,25 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
 
   if (!deal) return null;
 
-  const statusConfig = STATUS_CONFIG[deal.status] || { label: deal.status, color: "bg-muted", icon: Clock };
+  // Detect partial refund: order marked refunded but refunded amount < total paid
+  const isPartialRefund = (() => {
+    if (deal.status !== 'refunded' || !payments || payments.length === 0) return false;
+    let paidSum = 0;
+    let refundedSum = 0;
+    for (const p of payments as any[]) {
+      const status = p?.status;
+      if (status === 'paid' || status === 'succeeded' || status === 'refunded') {
+        paidSum += Number(p?.amount) || 0;
+      }
+      refundedSum += Number(p?.refunded_amount) || 0;
+    }
+    return refundedSum > 0 && paidSum > 0 && refundedSum + 0.01 < paidSum;
+  })();
+
+  const baseStatusConfig = STATUS_CONFIG[deal.status] || { label: deal.status, color: "bg-muted", icon: Clock };
+  const statusConfig = isPartialRefund
+    ? { label: "Частичный возврат", color: "bg-amber-500/20 text-amber-600", icon: Undo2 }
+    : baseStatusConfig;
   const StatusIcon = statusConfig.icon;
   const product = deal.products_v2 as any;
   const tariff = deal.tariffs as any;
