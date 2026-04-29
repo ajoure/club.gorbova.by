@@ -229,20 +229,50 @@ export function useUpdateTariffOffer() {
   });
 }
 
+export function useOfferDeleteSafetyCheck() {
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data, error } = await supabase.rpc("offer_delete_safety_check" as any, { p_offer_id: id });
+      if (error) throw error;
+      return data as any;
+    },
+  });
+}
+
+export function useArchiveTariffOffer() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data, error } = await supabase.rpc("offer_archive" as any, { p_offer_id: id });
+      if (error) throw error;
+      return data as any;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tariff_offers"] });
+      queryClient.invalidateQueries({ queryKey: ["product_offers"] });
+      toast.success("Кнопка оплаты переведена в архив");
+    },
+    onError: (error: any) => {
+      toast.error(`Не удалось архивировать: ${error?.message ?? "ошибка"}`);
+    },
+  });
+}
+
 export function useDeleteTariffOffer() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("tariff_offers").delete().eq("id", id);
+      const { data, error } = await supabase.rpc("offer_hard_delete" as any, { p_offer_id: id });
       if (error) throw error;
+      return data as any;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tariff_offers"] });
       queryClient.invalidateQueries({ queryKey: ["product_offers"] });
       toast.success("Кнопка оплаты удалена");
     },
-    onError: (error) => {
-      toast.error(`Ошибка: ${error.message}`);
+    onError: (error: any) => {
+      toast.error(`Не удалось удалить кнопку: ${error?.message?.split(":")[0] ?? "ошибка"}`);
     },
   });
 }

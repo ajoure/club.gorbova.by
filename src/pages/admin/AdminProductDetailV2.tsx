@@ -38,6 +38,7 @@ import { UniversalPricingSection } from "@/components/landing/UniversalPricingSe
 import { buildTariffCardViewModel, type CardConfig } from "@/lib/tariffCardViewModel";
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { SortPill } from "@/components/admin/SortPill";
+import { TariffDeleteConfirmDialog } from "@/components/admin/TariffDeleteConfirmDialog";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useTableSort } from "@/hooks/useTableSort";
 import { useDragSelect } from "@/hooks/useDragSelect";
@@ -731,19 +732,11 @@ export default function AdminProductDetailV2() {
     setFlowDialog({ open: false, editing: null });
   };
 
-  // Delete handler
+  // Delete handler — only for "flow"; tariff/offer handled by TariffDeleteConfirmDialog
   const handleDelete = async () => {
     if (!deleteConfirm) return;
-    switch (deleteConfirm.type) {
-      case "tariff":
-        await deleteTariff.mutateAsync(deleteConfirm.id);
-        break;
-      case "offer":
-        await deleteOffer.mutateAsync(deleteConfirm.id);
-        break;
-      case "flow":
-        await deleteFlow.mutateAsync(deleteConfirm.id);
-        break;
+    if (deleteConfirm.type === "flow") {
+      await deleteFlow.mutateAsync(deleteConfirm.id);
     }
     setDeleteConfirm(null);
   };
@@ -2529,11 +2522,19 @@ export default function AdminProductDetailV2() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation */}
-      <Dialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}>
+      {/* Delete Confirmation — Tariff/Offer with safety check */}
+      <TariffDeleteConfirmDialog
+        open={!!deleteConfirm && (deleteConfirm.type === "tariff" || deleteConfirm.type === "offer")}
+        entityType={(deleteConfirm?.type === "offer" ? "offer" : "tariff") as "tariff" | "offer"}
+        entityId={deleteConfirm && (deleteConfirm.type === "tariff" || deleteConfirm.type === "offer") ? deleteConfirm.id : null}
+        onClose={() => setDeleteConfirm(null)}
+      />
+
+      {/* Delete Confirmation — Flow (simple) */}
+      <Dialog open={!!deleteConfirm && deleteConfirm.type === "flow"} onOpenChange={() => setDeleteConfirm(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Подтвердите удаление</DialogTitle>
+            <DialogTitle>Удалить поток?</DialogTitle>
             <DialogDescription>
               Это действие нельзя отменить.
             </DialogDescription>
