@@ -1414,18 +1414,31 @@ export default function AdminDeals() {
                           <CheckCircle className="h-3 w-3 text-green-600" />
                           <span>{paidPayments.length} платеж{paidPayments.length > 1 ? "а" : ""}</span>
                         </div>
+                      ) : deal.status === "paid" ? (
+                        <div className="flex items-center gap-1.5 text-sm">
+                          <CheckCircle className="h-3 w-3 text-green-600" />
+                          <span className="text-muted-foreground">Оплачено</span>
+                        </div>
                       ) : (
                         <span className="text-muted-foreground text-sm">—</span>
                       )}
                     </TableCell>
                     <TableCell>
-                      {deal.trial_end_at ? (
-                        <div className="text-sm">
-                          {format(new Date(deal.trial_end_at), "dd.MM.yy")}
-                        </div>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
+                      {(() => {
+                        const accessInfo = accessMap?.get(deal.id);
+                        const accessUntil = accessInfo?.access_until || deal.trial_end_at;
+                        if (!accessUntil) {
+                          return <span className="text-muted-foreground">—</span>;
+                        }
+                        return (
+                          <div className="text-sm">
+                            {format(new Date(accessUntil), "dd.MM.yy")}
+                            {accessInfo?.source === "subscription" && (
+                              <div className="text-[10px] text-muted-foreground">подписка</div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </TableCell>
                   </TableRow>
                 );
