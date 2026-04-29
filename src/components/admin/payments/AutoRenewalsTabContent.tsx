@@ -442,6 +442,12 @@ export function AutoRenewalsTabContent() {
   };
 
   // Main query for subscriptions
+  // PATCH-2026-04-29 (regression fix):
+  //   SOT для "автопродление" — единственный признак: у любого active tariff_offer
+  //   продукта поле meta.recurring.is_recurring === true (UI-чекбокс
+  //   «Подписка / автопродление» в карточке тарифа).
+  //   Всё остальное — разовые продукты, и они НЕ попадают в эту таблицу.
+  //   Карта/auto_renew флаг/статус подписки на классификацию продукта НЕ влияют.
   const { data: renewals, isLoading, refetch } = useQuery({
     queryKey: ['auto-renewals'],
     queryFn: async () => {
@@ -466,20 +472,20 @@ export function AutoRenewalsTabContent() {
           grace_period_started_at,
           grace_period_ends_at,
           tariffs (
+            id,
             name,
             original_price,
             trial_price,
-            products_v2 (name, category),
-            tariff_offers (requires_card_tokenization)
+            product_id,
+            products_v2 (id, name, category)
           ),
           payment_methods (status, last4, brand, verification_status, verification_error, recurring_verified),
           orders_v2 (final_price, currency)
         `)
-        .eq('auto_renew', true)
         .in('status', ['active', 'trial', 'past_due'])
         .order('next_charge_at', { ascending: true, nullsFirst: false })
-        .limit(500);
-      
+        .limit(1000);
+
       if (error) throw error;
 
       // PATCH 3.1: Fetch active provider_subscriptions to determine BePaid status (source of truth)
@@ -499,6 +505,31 @@ export function AutoRenewalsTabContent() {
         }
       }
 
+      // PATCH-2026-04-29: canonical recurring SOT — собираем все active offers
+      // по уникальным product_id, проверяем meta.recurring.is_recurring=true
+      // (= UI-чекбокс «Подписка / автопродление»).
+      const productIds = Array.from(new Set(
+        (data || [])
+          .map(s => (s.tariffs as any)?.product_id)
+          .filter(Boolean)
+      ));
+
+      const recurringProductIds = new Set<string>();
+      if (productIds.length > 0) {
+        const { data: offers } = await supabase
+          .from('tariff_offers')
+          .select('id, tariff_id, is_active, meta, tariffs!inner(product_id, is_active)')
+          .eq('is_active', true)
+          .in('tariffs.product_id', productIds);
+
+        for (const o of (offers || []) as any[]) {
+          const t = o.tariffs as any;
+          if (!t?.is_active || !t?.product_id) continue;
+          const isRec = !!o?.meta?.recurring?.is_recurring;
+          if (isRec) recurringProductIds.add(t.product_id);
+        }
+      }
+
       // Fetch profiles separately (include orphan PS user_ids)
       const orphanUserIds = orphanPs.map(ps => ps.user_id).filter(Boolean);
       const allUserIds = [...new Set([...(data || []).map(s => s.user_id), ...orphanUserIds])];
@@ -514,30 +545,22 @@ export function AutoRenewalsTabContent() {
       const mappedSubs = (data || []).map((sub): AutoRenewal => {
         const tariff = sub.tariffs as any;
         const product = tariff?.products_v2 as any;
+        const productId: string | null = product?.id || tariff?.product_id || null;
         const pm = sub.payment_methods as any;
         const profile = profileMap.get(sub.user_id);
         const order = sub.orders_v2 as any;
-        
-        // FIX-2: Normalize tariff_offers to array (Supabase may return object instead of array)
-        const rawOffers = tariff?.tariff_offers;
-        const tariffOffers = Array.isArray(rawOffers) 
-          ? rawOffers 
-          : (rawOffers ? [rawOffers] : []);
-        
-        // Determine if this is a subscription (not one-time)
-        // Check tariff_offers for requires_card_tokenization
-        const isSubscription = 
-          tariffOffers.some((o: any) => o?.requires_card_tokenization === true) ||
-          product?.category === 'subscription';
+
+        // PATCH-2026-04-29: canonical recurring (SOT — UI-чекбокс «Подписка»)
+        const isSubscription = productId ? recurringProductIds.has(productId) : false;
 
         // PATCH-6: Detect staff by email
         const email = profile?.email?.toLowerCase() || '';
         const isStaff = STAFF_EMAILS.includes(email);
-        
+
         // PATCH-6: Detect comped (last factual price = 0)
         const orderPrice = order?.final_price;
         const isComped = !isStaff && orderPrice !== null && Number(orderPrice) === 0;
-        
+
         // PATCH-6: Determine pricing source
         const metaObj = sub.meta as Record<string, unknown> | null;
         let pricingSource: 'meta' | 'order' | 'tariff_fallback' = 'tariff_fallback';
@@ -572,7 +595,7 @@ export function AutoRenewalsTabContent() {
           pm_recurring_verified: pm?.recurring_verified ?? null,
           order_final_price: order?.final_price || null,
           order_currency: order?.currency || null,
-          // PATCH-2: subscription filter
+          // canonical SOT
           is_subscription: isSubscription,
           // PATCH-3: Trial detection
           is_trial: sub.is_trial || sub.status === 'trial',
@@ -601,7 +624,8 @@ export function AutoRenewalsTabContent() {
         };
       });
 
-      // PATCH-2: Filter out non-subscription (one-time) products
+      // PATCH-2026-04-29: оставляем только подписки рекурент-продуктов (canonical SOT).
+      // Разовые продукты не попадают в таблицу автопродлений независимо от auto_renew/карты.
       const filteredSubs = mappedSubs.filter(sub => sub.is_subscription);
 
       // PATCH P0.9.6: Dedup by user_id+product_name — keep only the "best" (latest access_end_at, NULL=∞)
@@ -627,7 +651,7 @@ export function AutoRenewalsTabContent() {
         const profile = ps.user_id ? profileMap.get(ps.user_id) : (ps.profile_id ? profileByIdMap.get(ps.profile_id) : null);
         const planTitle = ps.raw_data?.plan?.title || ps.raw_data?.plan?.name || null;
         const amountByn = (ps.amount_cents || 0) / 100;
-        
+
         dedupedSubs.push({
           id: ps.id, // use provider_subscriptions UUID
           user_id: ps.user_id || '',
