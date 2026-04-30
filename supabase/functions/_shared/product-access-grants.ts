@@ -29,6 +29,7 @@ export type SecondaryGrantOutcome =
   | 'reactivated'    // expired→active reactivation (safe lineage)
   | 'extended'       // expires_at updated to a larger value
   | 'already_satisfied' // entitlement already covers planned window
+  | 'metadata_backfilled' // already_satisfied + safe meta backfill applied (expires_at/status untouched)
   | 'condition_not_met'  // prior_purchase failed
   | 'no_source_window'   // align_with_source but no active source subscription
   | 'conflict_manual'    // existing entitlement has manual lineage — do not touch
