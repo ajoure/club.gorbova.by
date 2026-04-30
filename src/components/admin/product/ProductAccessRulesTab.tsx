@@ -400,10 +400,22 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
     tc_auto_include_new_modules: false,
   });
 
+  // Confirm-dialog для перевода existing partial → full
+  const [confirmFullSwitch, setConfirmFullSwitch] = useState(false);
+
   // Tree picker for training_content
   const { data: trainingTree } = useTrainingContentTree(
     form.grant_target_type === "training_content" ? form.target_ref : undefined
   );
+
+  // Orphan modules: для partial — папки в дереве, которых нет в allowed_module_ids
+  const orphanModules = useMemo(() => {
+    if (form.grant_target_type !== "training_content") return [];
+    if (form.tc_access_mode !== "partial") return [];
+    if (!trainingTree?.children?.length) return [];
+    const allowed = new Set(form.tc_allowed_module_ids);
+    return trainingTree.children.filter((m: TreeModule) => !allowed.has(m.id));
+  }, [form.grant_target_type, form.tc_access_mode, form.tc_allowed_module_ids, trainingTree]);
 
   // Filtered rules
   const filteredRules = useMemo(() => {
