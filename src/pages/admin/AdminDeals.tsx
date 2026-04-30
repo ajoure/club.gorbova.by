@@ -340,6 +340,7 @@ export default function AdminDeals() {
   // Pipelines
   const { pipelines, isLoading: pipelinesLoading, createPipeline: createPipelineFn, renamePipeline: renamePipelineFn, deletePipeline: deletePipelineFn, reorderPipelines: reorderPipelinesFn } = usePipelines();
   const activePipelineId = selectedPipelineId || pipelines.find((p) => p.is_default)?.id || pipelines[0]?.id || null;
+  const { stages: activePipelineStages = [] } = usePipelineStages(activePipelineId);
 
   // Deal counts per pipeline (for delete guards)
   const { data: pipelineDealCounts } = useQuery({
