@@ -233,6 +233,7 @@ Deno.serve(async (req) => {
           extended: buckets.extended,
           reactivated: buckets.reactivated,
           already_satisfied: buckets.already_satisfied,
+          metadata_backfilled: buckets.metadata_backfilled,
           skipped_no_change: buckets.skipped_no_change,
           no_source_window: buckets.no_source_window,
           conflict_manual: buckets.conflict_manual,
