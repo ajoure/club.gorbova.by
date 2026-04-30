@@ -261,7 +261,14 @@ async function logTelegramSkip(
 }
 
 /**
- * PATCH SKIP-LOG v1: Insert canonical skip/fail outcome into email_logs.
+ * PATCH SKIP-LOG v2: Write canonical skip/fail outcome into audit_logs.
+ *
+ * Previously this inserted a placeholder row into `email_logs` (subject NULL,
+ * body NULL, from_email='system'). Those rows leaked into UI "История переписки"
+ * as phantom "(Без темы)" messages without any content. Real email rows are
+ * still written by `send-email` with subject/body/provider populated.
+ *
+ * Outcome telemetry now lives in `audit_logs` and never touches `email_logs`.
  */
 async function logEmailOutcome(
   supabase: any,
@@ -276,25 +283,28 @@ async function logEmailOutcome(
   extraMeta: Record<string, any> = {},
 ): Promise<void> {
   try {
-    await supabase.from('email_logs').insert({
-      user_id: userId,
-      profile_id: profileId,
-      direction: 'outgoing',
-      from_email: 'system',
-      to_email: toEmail || 'unknown',
-      subject: null,
-      status: status === 'success' ? 'sent' : status,
-      error_message: errorMessage,
-      meta: {
+    await supabase.from('audit_logs').insert({
+      action: 'subscription_renewal_reminder_email_outcome',
+      entity_type: 'subscription',
+      entity_id: subscriptionId,
+      actor_type: 'system',
+      actor_id: null,
+      details: {
+        channel: 'email',
         event_type: eventType,
         subscription_id: subscriptionId,
+        user_id: userId,
+        profile_id: profileId,
+        to_email: toEmail,
+        status,
         reason,
+        error_message: errorMessage,
         source: 'subscription-renewal-reminders',
         ...extraMeta,
       },
     });
   } catch (err) {
-    console.warn('[email-outcome-log] insert failed:', err);
+    console.warn('[email-outcome-log] audit_logs insert failed:', err);
   }
 }
 
