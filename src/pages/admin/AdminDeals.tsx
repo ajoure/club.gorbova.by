@@ -458,7 +458,7 @@ export default function AdminDeals() {
     isFetchingNextPage,
     refetch,
   } = useInfiniteQuery({
-    queryKey: ["admin-deals", activePreset, debouncedSearch, selectedProductId, selectedTariffIds, dateFilter, activePipelineId],
+    queryKey: ["admin-deals", activePreset, debouncedSearch, selectedProductId, selectedTariffIds, dateFilter, activePipelineId, extraFilters],
     queryFn: async ({ pageParam = 0 }) => {
       // When search is active → use RPC for full-name search across profiles
       if (debouncedSearch) {
@@ -485,6 +485,28 @@ export default function AdminDeals() {
             return r.pipeline_id === activePipelineId;
           });
         }
+        // Client-side extra filters for RPC results (mirror server-side semantics)
+        if (extraFilters.statuses.length > 0) {
+          const set = new Set(extraFilters.statuses);
+          filtered = filtered.filter((r: any) => set.has(r.status));
+        }
+        if (extraFilters.createdFrom) {
+          const ts = new Date(`${extraFilters.createdFrom}T00:00:00Z`).getTime();
+          filtered = filtered.filter((r: any) => new Date(r.created_at).getTime() >= ts);
+        }
+        if (extraFilters.createdTo) {
+          const ts = new Date(`${extraFilters.createdTo}T23:59:59Z`).getTime();
+          filtered = filtered.filter((r: any) => new Date(r.created_at).getTime() <= ts);
+        }
+        if (extraFilters.priceMin != null) filtered = filtered.filter((r: any) => Number(r.final_price ?? 0) >= extraFilters.priceMin!);
+        if (extraFilters.priceMax != null) filtered = filtered.filter((r: any) => Number(r.final_price ?? 0) <= extraFilters.priceMax!);
+        if (extraFilters.stageId) filtered = filtered.filter((r: any) => r.pipeline_stage_id === extraFilters.stageId);
+        if (extraFilters.contactProfileId) filtered = filtered.filter((r: any) => r.profile_id === extraFilters.contactProfileId);
+        else if (extraFilters.contactEmail) filtered = filtered.filter((r: any) => r.customer_email === extraFilters.contactEmail);
+        if (extraFilters.source) filtered = filtered.filter((r: any) => r.meta?.source === extraFilters.source);
+        if (extraFilters.provider) filtered = filtered.filter((r: any) => r.meta?.payment_provider === extraFilters.provider);
+        if (extraFilters.reconcileSource) filtered = filtered.filter((r: any) => r.reconcile_source === extraFilters.reconcileSource);
+        if (!extraFilters.includeSynthetic) filtered = filtered.filter((r: any) => r.meta?.source !== "rule_engine");
         return {
           rows: filtered,
           nextOffset: rows.length === PAGE_SIZE ? pageParam + PAGE_SIZE : undefined,
@@ -492,7 +514,7 @@ export default function AdminDeals() {
       }
 
       // Default mode → lightweight PostgREST query (no name search needed)
-      const query = buildDealsQuery(activePreset, debouncedSearch, selectedProductId, dateFilter, selectedTariffIds, activePipelineId, activePipeline?.is_default);
+      const query = buildDealsQuery(activePreset, debouncedSearch, selectedProductId, dateFilter, selectedTariffIds, activePipelineId, activePipeline?.is_default, extraFilters);
       const { data, error } = await query
         .order("deal_date", { ascending: false, nullsFirst: false })
         .order("id", { ascending: false })
