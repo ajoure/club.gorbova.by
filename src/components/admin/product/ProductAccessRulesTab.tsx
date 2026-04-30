@@ -1847,6 +1847,29 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Confirm: partial → full switch */}
+      <AlertDialog open={confirmFullSwitch} onOpenChange={setConfirmFullSwitch}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Перевести правило в «Полный доступ»?</AlertDialogTitle>
+            <AlertDialogDescription>
+              После перевода в full пользователи этого правила увидят все текущие и будущие папки тренинга. Текущий список выбранных модулей будет сброшен.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setForm({ ...form, tc_access_mode: "full", tc_allowed_module_ids: [], tc_allowed_lesson_ids: [], tc_auto_include_new_modules: false });
+                setConfirmFullSwitch(false);
+              }}
+            >
+              Перевести в full
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
