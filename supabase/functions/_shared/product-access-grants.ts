@@ -242,20 +242,32 @@ export async function syncSecondaryProductAccessForUser(
         let conditionMet = false;
         if (matchMode === 'per_product') {
           // For per_product, the prior purchase must match this specific target product
-          // Match canonical behavior of grant-access-for-order: only check when the target is in the list
           if (reqList.length === 0 || reqList.includes(targetProdId)) {
-            const r = await checkPriorPurchase(supabase, userId, targetProdId, excludeOrderId);
-            conditionMet = r.found;
+            if (priorPurchaseCache) {
+              conditionMet = hasPriorFromCache(targetProdId);
+            } else {
+              const r = await checkPriorPurchase(supabase, userId, targetProdId, excludeOrderId);
+              conditionMet = r.found;
+            }
           }
         } else {
           // any/all
-          for (const reqId of reqList) {
-            const r = await checkPriorPurchase(supabase, userId, reqId, excludeOrderId);
-            if (matchMode === 'any' && r.found) { conditionMet = true; break; }
-            if (matchMode === 'all' && !r.found) { conditionMet = false; break; }
-            if (matchMode === 'all') conditionMet = true;
+          if (reqList.length === 0) {
+            conditionMet = true;
+          } else if (priorPurchaseCache) {
+            if (matchMode === 'all') {
+              conditionMet = reqList.every((id) => hasPriorFromCache(id));
+            } else {
+              conditionMet = reqList.some((id) => hasPriorFromCache(id));
+            }
+          } else {
+            for (const reqId of reqList) {
+              const r = await checkPriorPurchase(supabase, userId, reqId, excludeOrderId);
+              if (matchMode === 'any' && r.found) { conditionMet = true; break; }
+              if (matchMode === 'all' && !r.found) { conditionMet = false; break; }
+              if (matchMode === 'all') conditionMet = true;
+            }
           }
-          if (reqList.length === 0) conditionMet = true; // no condition → pass
         }
 
         if (!conditionMet) {
