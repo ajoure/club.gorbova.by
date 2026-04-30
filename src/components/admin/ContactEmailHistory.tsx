@@ -47,6 +47,7 @@ interface EmailLog {
   created_at: string;
   opened_at: string | null;
   clicked_at: string | null;
+  meta?: Record<string, any> | null;
 }
 
 export function ContactEmailHistory({ userId, profileId, email, clientName }: ContactEmailHistoryProps) {
