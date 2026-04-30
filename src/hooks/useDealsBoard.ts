@@ -3,6 +3,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { moveDealToStage } from "@/services/pipelineService";
 import { toast } from "sonner";
 import type { CrmPipelineStage } from "@/services/pipelineService";
+import { applyExtraDealFilters } from "@/utils/applyExtraDealFilters";
+import type { DealsExtraFilters } from "@/hooks/useDealsFilters";
 
 export interface BoardDeal {
   id: string;
