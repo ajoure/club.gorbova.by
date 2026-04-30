@@ -152,56 +152,135 @@ export async function resolveProductAccessRules(
 }
 
 /**
+ * Information about a prior paid purchase for a single (user, target_product_id).
+ * Captured during batch cache build so the helper can enrich entitlement.meta
+ * for the runtime read-path (scope_resolution_mode, historical_module_product_ids).
+ */
+export interface PriorPurchaseInfo {
+  match_type: 'direct' | 'module_list_mapped';
+  order_id: string;
+  historical_purchase_type: string | null;
+  historical_tariff_id: string | null;
+  historical_module_product_ids: string[];
+}
+
+export type PriorPurchaseCache = Map<string, Map<string, PriorPurchaseInfo>>;
+
+/**
  * Batch-build prior_purchase cache for a cohort.
  * SOT: orders_v2.status='paid' only. NEVER reads entitlements/access_rules.
+ *
+ * Two evidence channels (both UUID-only, NEVER name/slug):
+ *   1. Direct match: orders_v2.product_id = target_product_id
+ *   2. Module fallback: purchase_snapshot.historical_purchase_type='module_only_standalone'
+ *      AND purchase_snapshot.module_list_mapped contains target_product_id
  *
  * @param userIds   All users to evaluate.
  * @param productIds All product_ids that may appear in any rule's required_product_ids
  *                   or as targets of per_product mode.
  * @param excludeOrderId  If provided, that order_id is excluded (e.g., the very order being processed).
- * @returns Map<user_id, Set<product_id>>
+ * @returns PriorPurchaseCache: Map<user_id, Map<target_product_id, PriorPurchaseInfo>>
  */
 export async function buildPriorPurchaseCache(
   supabase: SupabaseClient,
   userIds: string[],
   productIds: string[],
   excludeOrderId?: string,
-): Promise<Map<string, Set<string>>> {
-  const cache = new Map<string, Set<string>>();
+): Promise<PriorPurchaseCache> {
+  const cache: PriorPurchaseCache = new Map();
   if (userIds.length === 0 || productIds.length === 0) return cache;
 
   const uniqueUsers = [...new Set(userIds.filter((u): u is string => !!u))];
   const uniqueProducts = [...new Set(productIds.filter((p): p is string => !!p))];
 
+  const recordInfo = (userId: string, productId: string, info: PriorPurchaseInfo) => {
+    if (!cache.has(userId)) cache.set(userId, new Map());
+    const userMap = cache.get(userId)!;
+    const existing = userMap.get(productId);
+    // Prefer 'direct' over 'module_list_mapped' evidence; otherwise keep first-seen.
+    if (!existing || (existing.match_type === 'module_list_mapped' && info.match_type === 'direct')) {
+      userMap.set(productId, info);
+    }
+  };
+
   // Chunk users to keep IN-list manageable
   const CHUNK = 500;
   for (let i = 0; i < uniqueUsers.length; i += CHUNK) {
     const slice = uniqueUsers.slice(i, i + CHUNK);
-    let q = supabase
-      .from('orders_v2')
-      .select('user_id, product_id, id')
-      .eq('status', 'paid')
-      .in('user_id', slice)
-      .in('product_id', uniqueProducts);
 
-    if (excludeOrderId) {
-      q = q.neq('id', excludeOrderId);
+    // ── Channel 1: direct product match ─────────────────────────────────
+    {
+      let q = supabase
+        .from('orders_v2')
+        .select('user_id, product_id, id, tariff_id, purchase_snapshot')
+        .eq('status', 'paid')
+        .in('user_id', slice)
+        .in('product_id', uniqueProducts);
+      if (excludeOrderId) q = q.neq('id', excludeOrderId);
+
+      let from = 0;
+      const PAGE = 1000;
+      while (true) {
+        const { data, error } = await q.range(from, from + PAGE - 1);
+        if (error) throw error;
+        const rows = data || [];
+        for (const row of rows as Array<{
+          user_id: string; product_id: string; id: string;
+          tariff_id: string | null; purchase_snapshot: Record<string, any> | null;
+        }>) {
+          if (!row.user_id || !row.product_id) continue;
+          const snapshot = row.purchase_snapshot || {};
+          recordInfo(row.user_id, row.product_id, {
+            match_type: 'direct',
+            order_id: row.id,
+            historical_purchase_type: snapshot.historical_purchase_type
+              || (row.tariff_id ? 'base_tariff_purchase' : null),
+            historical_tariff_id: row.tariff_id || (snapshot.tariff_id || null),
+            historical_module_product_ids: Array.isArray(snapshot.module_list_mapped)
+              ? snapshot.module_list_mapped : [],
+          });
+        }
+        if (rows.length < PAGE) break;
+        from += PAGE;
+      }
     }
 
-    // pull all matching rows (chunked further by Supabase limit)
-    let from = 0;
-    const PAGE = 1000;
-    while (true) {
-      const { data, error } = await q.range(from, from + PAGE - 1);
-      if (error) throw error;
-      const rows = data || [];
-      for (const row of rows as Array<{ user_id: string; product_id: string }>) {
-        if (!row.user_id || !row.product_id) continue;
-        if (!cache.has(row.user_id)) cache.set(row.user_id, new Set());
-        cache.get(row.user_id)!.add(row.product_id);
+    // ── Channel 2: module_list_mapped fallback ──────────────────────────
+    // For each target product_id, check if any paid module-only standalone order
+    // contains it in purchase_snapshot.module_list_mapped (UUID match).
+    // Use containment per product to leverage JSONB index.
+    for (const targetProdId of uniqueProducts) {
+      let q = supabase
+        .from('orders_v2')
+        .select('user_id, product_id, id, tariff_id, purchase_snapshot')
+        .eq('status', 'paid')
+        .in('user_id', slice)
+        .eq('purchase_snapshot->>historical_purchase_type', 'module_only_standalone')
+        .contains('purchase_snapshot', { module_list_mapped: [targetProdId] });
+      if (excludeOrderId) q = q.neq('id', excludeOrderId);
+
+      const { data, error } = await q.range(0, 999);
+      if (error) {
+        console.error('[product-access-grants] module fallback query error:', error.message);
+        continue;
       }
-      if (rows.length < PAGE) break;
-      from += PAGE;
+      for (const row of (data || []) as Array<{
+        user_id: string; product_id: string; id: string;
+        tariff_id: string | null; purchase_snapshot: Record<string, any> | null;
+      }>) {
+        if (!row.user_id) continue;
+        const snapshot = row.purchase_snapshot || {};
+        const moduleList = Array.isArray(snapshot.module_list_mapped) ? snapshot.module_list_mapped : [];
+        // Confirm UUID containment (defensive — query already filtered)
+        if (!moduleList.includes(targetProdId)) continue;
+        recordInfo(row.user_id, targetProdId, {
+          match_type: 'module_list_mapped',
+          order_id: row.id,
+          historical_purchase_type: 'module_only_standalone',
+          historical_tariff_id: row.tariff_id || (snapshot.tariff_id || null),
+          historical_module_product_ids: moduleList,
+        });
+      }
     }
   }
 
