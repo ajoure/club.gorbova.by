@@ -96,6 +96,9 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { usePipelines } from "@/hooks/usePipelines";
 import { DealsKanbanBoard } from "@/components/admin/deals/DealsKanbanBoard";
 import { PipelineManagementPopover } from "@/components/admin/deals/PipelineManagementPopover";
+import { DealsFiltersBar } from "@/components/admin/deals/DealsFiltersBar";
+import { useDealsFilters, type DealsExtraFilters } from "@/hooks/useDealsFilters";
+import { applyExtraDealFilters } from "@/utils/applyExtraDealFilters";
 
 const PAGE_SIZE = 100;
 
