@@ -1522,322 +1522,100 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 3b. Process product_access rules — grant access to additional products
+    // 3b. Process product_access rules via canonical shared helper.
+    // SOT: _shared/product-access-grants.ts → syncSecondaryProductAccessForUser.
+    // No inline grant logic — single write-path, idempotent, ledger-aware.
+    // The helper aligns secondary entitlements with the FRESH source subscription window
+    // (re-read after primary subscription was created/extended above).
     try {
-      let productAccessRules: any[] = [];
+      const paRules = await resolveProductAccessRules(
+        supabase,
+        productId,
+        tariffId || null,
+      );
 
-      // Tariff-level rules first (higher precedence)
-      if (tariffId) {
-        const { data: tariffRules } = await supabase
-          .from("access_rules")
-          .select("id, target_ref, conditions, priority, duration_days")
-          .eq("tariff_id", tariffId)
-          .eq("grant_target_type", "product_access")
-          .eq("is_active", true)
-          .order("priority", { ascending: false });
-        if (tariffRules?.length) productAccessRules = tariffRules;
-      }
-
-      // Product-level rules (fallback if no tariff rules)
-      if (productAccessRules.length === 0 && productId) {
-        const { data: prodRules } = await supabase
-          .from("access_rules")
-          .select("id, target_ref, conditions, priority, duration_days")
-          .eq("product_id", productId)
-          .is("tariff_id", null)
-          .eq("grant_target_type", "product_access")
-          .eq("is_active", true)
-          .order("priority", { ascending: false });
-        if (prodRules?.length) productAccessRules = prodRules;
-      }
-
-      if (productAccessRules.length > 0) {
-        console.log(`[grant-access] Found ${productAccessRules.length} product_access rules`);
-        const productAccessResults: any[] = [];
-
-        for (const rule of productAccessRules) {
-          const ruleConditions = rule.conditions || {};
-          
-          // Resolve target product IDs: multi-product (new) or single (legacy)
-          const targetProductIds: string[] = Array.isArray(ruleConditions.target_product_ids)
-            ? ruleConditions.target_product_ids
-            : (rule.target_ref ? [rule.target_ref] : []);
-
-          if (targetProductIds.length === 0) continue;
-
-          // Check if rule has prior_purchase condition
-          const hasPriorPurchaseCondition = ruleConditions.condition_type === 'prior_purchase';
-
-          // Resolve condition product IDs for per-product filtering
-          let conditionProductIds: string[] = [];
-          if (hasPriorPurchaseCondition) {
-            conditionProductIds = Array.isArray(ruleConditions.required_product_ids)
-              ? ruleConditions.required_product_ids
-              : (ruleConditions.required_product_id ? [ruleConditions.required_product_id] : []);
-            
-            // If match_mode is per_product and no explicit condition list, use target list
-            if (conditionProductIds.length === 0 && ruleConditions.match_mode === 'per_product') {
-              conditionProductIds = targetProductIds;
-            }
-          }
-
-          // Process each target product
-          for (const targetProdId of targetProductIds) {
-            const eventKey = `gafo:product_access:${orderId}:${rule.id}:${targetProdId}`;
-            
-            // Per-product prior purchase check
-            if (hasPriorPurchaseCondition) {
-              // Check if this specific target product was previously purchased
-              const productToCheck = conditionProductIds.includes(targetProdId) 
-                ? targetProdId 
-                : null;
-
-              if (productToCheck) {
-                // Use canonical shared resolver (direct match + module_list_mapped fallback)
-                const priorResult = await checkPriorPurchase(supabase, userId, productToCheck, orderId);
-
-                if (!priorResult.found) {
-                  console.log(`[grant-access] product_access: target ${targetProdId} SKIPPED (no prior purchase, checked direct + module_list_mapped)`);
-                  try {
-                    await writeLedgerEntry(supabase, {
-                      source_event_type: 'webhook',
-                      source_event_key: eventKey,
-                      source_subject_type: 'order',
-                      source_subject_ref: orderId,
-                      source_order_id: orderId,
-                      action_type: 'grant',
-                      reason_code: 'no_matching_target',
-                      target_type: 'product',
-                      target_key: `${userId}:${targetProdId}`,
-                      user_id: userId,
-                      profile_id: profileId || null,
-                      order_id: orderId,
-                      status: 'skipped',
-                      result: {
-                        rule_id: rule.id,
-                        condition_type: 'prior_purchase',
-                        target_product_id: targetProdId,
-                        check_result: false,
-                      },
-                    });
-                  } catch (ledgerErr) {
-                    console.error('[grant-access] Ledger write for product_access skip failed:', ledgerErr);
-                  }
-                  productAccessResults.push({ target_product_id: targetProdId, status: 'skipped', reason: 'condition_not_met' });
-                  continue;
-                }
-                
-                console.log(`[grant-access] product_access: target ${targetProdId} prior purchase FOUND via ${priorResult.match_type} (order: ${priorResult.order_id})`);
-              } else {
-                // Target product not in condition list — skip
-                console.log(`[grant-access] product_access: target ${targetProdId} SKIPPED (not in condition product list)`);
-                productAccessResults.push({ target_product_id: targetProdId, status: 'skipped', reason: 'not_in_condition_list' });
-                continue;
-              }
-            }
-
-            // Grant: write entitlement for this target product
-            console.log(`[grant-access] product_access: GRANTING access to product ${targetProdId}`);
-            try {
-              // Look up target product code
-              const { data: targetProduct } = await supabase
-                .from('products_v2')
-                .select('code')
-                .eq('id', targetProdId)
-                .maybeSingle();
-
-              const targetProductCode = targetProduct?.code || targetProdId;
-
-              // Phase C: align_with_source — if rule.duration_days is null, 
-              // align expires_at with the source subscription's access_end_at
-              let paExpiresAt: string | null = null;
-              let sourceWindowRule = 'default';
-
-              if (rule.duration_days) {
-                paExpiresAt = new Date(Date.now() + rule.duration_days * 86400000).toISOString();
-                sourceWindowRule = 'rule_duration';
-              } else {
-                // align_with_source: use the triggering subscription's access_end_at
-                // Canonical SoT: MAX(access_end_at) from active OR past_due subscriptions
-                const { data: sourceSub } = await supabase
-                  .from('subscriptions_v2')
-                  .select('id, access_end_at, tariff_id')
-                  .eq('user_id', userId)
-                  .eq('product_id', productId)
-                  .in('status', ['active', 'past_due'])
-                  .order('access_end_at', { ascending: false })
-                  .limit(1)
-                  .maybeSingle();
-                
-                if (sourceSub?.access_end_at) {
-                  paExpiresAt = sourceSub.access_end_at;
-                  sourceWindowRule = 'align_with_source';
-                  console.log(`[grant-access] product_access: align_with_source expires_at=${paExpiresAt} from sub ${sourceSub.id} (canonical SoT: MAX active+past_due)`);
-                } else {
-                  console.warn(`[grant-access] product_access: no active/past_due source subscription for align_with_source, expires_at=null`);
-                }
-              }
-
-              // Phase C: Build enriched meta with mandatory traceability fields
-              // Determine historical purchase type from prior order
-              let historicalPurchaseType = 'unknown';
-              let historicalTariffId: string | null = null;
-              let historicalModuleProductIds: string[] = [];
-              let scopeResolutionMode = 'full_tariff_scope';
-
-              // Prefer orders with tariff_id (full product purchase) over module-only orders
-              const { data: priorOrdersList } = await supabase
-                .from('orders_v2')
-                .select('id, tariff_id, purchase_snapshot')
-                .eq('user_id', userId)
-                .eq('product_id', targetProdId)
-                .eq('status', 'paid')
-                .neq('id', orderId)
-                .order('tariff_id', { ascending: false, nullsFirst: false })
-                .limit(5);
-
-              const priorOrderData = (priorOrdersList || []).find(o => o.tariff_id) || (priorOrdersList || [])[0] || null;
-
-              if (priorOrderData) {
-                const snapshot = (priorOrderData.purchase_snapshot || {}) as Record<string, any>;
-                historicalPurchaseType = snapshot.historical_purchase_type || 
-                  (priorOrderData.tariff_id ? 'base_tariff_purchase' : 'module_only_standalone');
-                historicalTariffId = priorOrderData.tariff_id || snapshot.tariff_id || null;
-                
-                if (Array.isArray(snapshot.module_list_mapped)) {
-                  historicalModuleProductIds = snapshot.module_list_mapped;
-                }
-
-                // Variant B scope resolution
-                if (historicalPurchaseType === 'module_only_standalone' || historicalPurchaseType === 'module_child_purchase') {
-                  scopeResolutionMode = historicalModuleProductIds.length > 0 ? 'module_scope_only' : 'manual_review';
-                } else if (priorOrderData.tariff_id) {
-                  scopeResolutionMode = 'full_tariff_scope';
-                }
-              } else {
-                scopeResolutionMode = 'no_scope';
-              }
-
-              // Get source business subscription info (canonical SoT: active+past_due, MAX access_end_at)
-              const { data: businessSub } = await supabase
-                .from('subscriptions_v2')
-                .select('id, tariff_id, access_end_at')
-                .eq('user_id', userId)
-                .eq('product_id', productId)
-                .in('status', ['active', 'past_due'])
-                .order('access_end_at', { ascending: false })
-                .limit(1)
-                .maybeSingle();
-
-              const enrichedMeta = {
-                granted_by: "rule_engine_product_access",
-                source_rule_id: rule.id,
-                source_order_id: orderId,
-                business_subscription_id: businessSub?.id || null,
-                business_tariff_id: businessSub?.tariff_id || tariffId || null,
-                source_access_end_at: businessSub?.access_end_at || null,
-                historical_purchase_type: historicalPurchaseType,
-                historical_tariff_id: historicalTariffId,
-                historical_module_product_ids: historicalModuleProductIds,
-                scope_resolution_mode: scopeResolutionMode,
-                source_window_rule: sourceWindowRule,
-              };
-
-              // Check existing entitlement first (GREATEST logic - never decrease)
-              // PATCH: lookup by product_id (ID-first), not product_code
-              const { data: existingPaEnt } = await supabase
-                .from('entitlements')
-                .select('id, expires_at, order_id, meta')
-                .eq('user_id', userId)
-                .eq('product_id', targetProdId)
-                .maybeSingle();
-
-              let paEntAction = 'created';
-              let paEntError: any = null;
-
-              if (existingPaEnt) {
-                // Update existing — GREATEST logic, preserve original order_id
-                const newExpiry = paExpiresAt 
-                  ? (existingPaEnt.expires_at && new Date(existingPaEnt.expires_at) > new Date(paExpiresAt) 
-                      ? existingPaEnt.expires_at 
-                      : paExpiresAt)
-                  : existingPaEnt.expires_at; // null (unlimited) from rule means keep current
-
-                // Merge existing meta with enriched meta (enriched takes precedence)
-                const existingMeta = (existingPaEnt.meta || {}) as Record<string, any>;
-                const mergedMeta = { ...existingMeta, ...enrichedMeta };
-
-                const { error } = await supabase
-                  .from('entitlements')
-                  .update({
-                    status: 'active',
-                    expires_at: newExpiry,
-                    meta: mergedMeta,
-                    updated_at: new Date().toISOString(),
-                  })
-                  .eq('id', existingPaEnt.id);
-                paEntError = error;
-                paEntAction = 'updated';
-              } else {
-                // Create new entitlement — no order_id to avoid unique constraint
-                const { error } = await supabase
-                  .from('entitlements')
-                  .insert({
-                    user_id: userId,
-                    product_code: targetProductCode,
-                    product_id: targetProdId,
-                    profile_id: profileId || null,
-                    status: 'active',
-                    expires_at: paExpiresAt,
-                    meta: enrichedMeta,
-                  });
-                paEntError = error;
-              }
-
-              if (paEntError) {
-                console.error(`[grant-access] Entitlement ${paEntAction} failed for ${targetProdId}:`, paEntError);
-                productAccessResults.push({ target_product_id: targetProdId, status: 'failed', error: paEntError.message });
-              } else {
-                // Ledger: granted
-                try {
-                  await writeLedgerEntry(supabase, {
-                    source_event_type: 'webhook',
-                    source_event_key: eventKey,
-                    source_subject_type: 'order',
-                    source_subject_ref: orderId,
-                    source_order_id: orderId,
-                    action_type: 'grant',
-                    reason_code: 'rule_engine_bonus',
-                    target_type: 'product',
-                    target_key: `${userId}:${targetProdId}`,
-                    user_id: userId,
-                    profile_id: profileId || null,
-                    order_id: orderId,
-                    status: 'granted',
-                    result: {
-                      rule_id: rule.id,
-                      target_product_id: targetProdId,
-                      product_code: targetProductCode,
-                      expires_at: paExpiresAt,
-                      entitlement_action: paEntAction,
-                    },
-                  });
-                } catch (ledgerErr) {
-                  console.error('[grant-access] Ledger write for product_access grant failed:', ledgerErr);
-                }
-                productAccessResults.push({ target_product_id: targetProdId, status: 'granted', product_code: targetProductCode, entitlement_action: paEntAction });
-              }
-            } catch (grantErr) {
-              console.error(`[grant-access] product_access grant error for ${targetProdId}:`, grantErr);
-              productAccessResults.push({ target_product_id: targetProdId, status: 'failed', error: String(grantErr) });
-            }
-          }
+      if (paRules.length === 0) {
+        results.product_access = { skipped: 'no_rules' };
+      } else {
+        // Resolve canonical source subscription AFTER primary write,
+        // so helper sees the just-extended access_end_at (canonical SoT:
+        // MAX access_end_at across active+past_due, tariff_id-matched).
+        let sourceSub: { id: string; access_end_at: string | null } | null = null;
+        const newSubIdLocal = results.subscription?.id || null;
+        if (newSubIdLocal) {
+          const { data: subRow } = await supabase
+            .from('subscriptions_v2')
+            .select('id, access_end_at')
+            .eq('id', newSubIdLocal)
+            .maybeSingle();
+          if (subRow) sourceSub = { id: subRow.id, access_end_at: subRow.access_end_at };
+        }
+        if (!sourceSub) {
+          const { data: subRow } = await supabase
+            .from('subscriptions_v2')
+            .select('id, access_end_at')
+            .eq('user_id', userId)
+            .eq('product_id', productId)
+            .in('status', ['active', 'past_due'])
+            .order('access_end_at', { ascending: false, nullsFirst: false })
+            .limit(1)
+            .maybeSingle();
+          if (subRow) sourceSub = { id: subRow.id, access_end_at: subRow.access_end_at };
         }
 
-        results.product_access = productAccessResults;
+        const secondaryActions = await syncSecondaryProductAccessForUser(supabase, {
+          userId,
+          profileId: profileId || null,
+          sourceProductId: productId,
+          sourceTariffId: tariffId || null,
+          sourceSubscription: sourceSub,
+          rules: paRules,
+          excludeOrderId: orderId,
+          // No prior_purchase cache in single webhook flow → helper uses canonical
+          // checkPriorPurchase fallback (orders_v2 paid + module_list_mapped).
+          ctx: {
+            sourceEventType: 'webhook',
+            sourceSubjectType: 'order',
+            sourceEventKeyPrefix: `gafo:product_access:${orderId}`,
+            orderId,
+            allowReduceAccess: false,
+          },
+        });
+
+        const outcomeBuckets = secondaryActions.reduce((acc: Record<string, number>, a: any) => {
+          acc[a.outcome] = (acc[a.outcome] || 0) + 1;
+          return acc;
+        }, {});
+
+        results.product_access = {
+          rule_count: paRules.length,
+          source_subscription_id: sourceSub?.id || null,
+          source_access_end_at: sourceSub?.access_end_at || null,
+          actions_count: secondaryActions.length,
+          outcomes: outcomeBuckets,
+          actions: secondaryActions,
+        };
+
+        const failedCount = outcomeBuckets.failed || 0;
+        if (failedCount > 0) {
+          console.error(`[grant-access] product_access helper reported ${failedCount} failures for order ${orderId}`);
+          await supabase.from('audit_logs').insert({
+            actor_type: 'system',
+            actor_label: 'grant-access-for-order',
+            action: 'grant_access.product_access_helper_failures',
+            target_user_id: userId,
+            meta: {
+              order_id: orderId,
+              product_id: productId,
+              tariff_id: tariffId,
+              outcomes: outcomeBuckets,
+              severity: 'WARNING',
+            },
+          });
+        }
       }
     } catch (productAccessError) {
-      console.error("Product access rules error (non-critical):", productAccessError);
+      console.error("[grant-access] Product access helper error (non-critical):", productAccessError);
       results.product_access = { error: String(productAccessError) };
     }
 

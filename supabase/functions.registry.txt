@@ -93,6 +93,7 @@ process-scheduled-broadcasts
 rules-retroapply
 webinar-activity-consumer
 repair-module-entitlements
+access-rules-nightly-reconcile
 
 # Autowebinars (Sprint A)
 autoweb-resolve-sessions
