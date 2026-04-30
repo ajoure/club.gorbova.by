@@ -94,6 +94,7 @@ import { PeriodSelector, DateFilter } from "@/components/ui/period-selector";
 import { ArchiveCleanupDialog } from "@/components/admin/ArchiveCleanupDialog";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { usePipelines } from "@/hooks/usePipelines";
+import { usePipelineStages } from "@/hooks/usePipelineStages";
 import { DealsKanbanBoard } from "@/components/admin/deals/DealsKanbanBoard";
 import { PipelineManagementPopover } from "@/components/admin/deals/PipelineManagementPopover";
 import { DealsFiltersBar } from "@/components/admin/deals/DealsFiltersBar";
