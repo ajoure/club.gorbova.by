@@ -47,6 +47,7 @@ interface EmailLog {
   created_at: string;
   opened_at: string | null;
   clicked_at: string | null;
+  meta?: Record<string, any> | null;
 }
 
 export function ContactEmailHistory({ userId, profileId, email, clientName }: ContactEmailHistoryProps) {
@@ -153,9 +154,22 @@ export function ContactEmailHistory({ userId, profileId, email, clientName }: Co
     }
   };
 
+  // Filter out technical outcome markers from email_logs:
+  // 1) Rows explicitly hidden via meta.ui_hidden = true
+  // 2) Legacy rows with no subject AND no body AND from_email='system' (no provider) —
+  //    these are internal telemetry from subscription-renewal-reminders, not real letters.
+  const isPhantomLog = (e: any) => {
+    const meta = (e?.meta ?? {}) as Record<string, any>;
+    if (meta.ui_hidden === true) return true;
+    const noSubject = !e?.subject;
+    const noBody = !e?.body_html && !e?.body_text;
+    const isSystemSender = e?.from_email === 'system' && !e?.provider;
+    return noSubject && noBody && isSystemSender;
+  };
+
   // Combine email logs, inbox emails and contact requests
   const allEmails = [
-    ...(emails || []).map(e => ({ ...e, _source: 'log' as const })),
+    ...((emails || []).filter(e => !isPhantomLog(e))).map(e => ({ ...e, _source: 'log' as const })),
     ...(inboxEmails || []).map((e) => ({
       id: e.id,
       direction: "incoming" as const,

@@ -128,8 +128,16 @@ export function UnifiedCommunicationHistory({
   const allCommunications = useMemo(() => {
     const items: CommunicationItem[] = [];
 
-    // Add outgoing emails
+    // Add outgoing emails — skip technical outcome markers (no subject + no body + system sender,
+    // or explicitly hidden via meta.ui_hidden). These are internal telemetry, not real letters.
     emailLogs.forEach(log => {
+      const meta = (log.meta ?? {}) as Record<string, any>;
+      const noSubject = !log.subject;
+      const noBody = !log.body_html && !log.body_text;
+      const isSystemSender = log.from_email === 'system' && !log.provider;
+      if (meta.ui_hidden === true) return;
+      if (noSubject && noBody && isSystemSender) return;
+
       items.push({
         id: `email_out_${log.id}`,
         type: "email_out",
