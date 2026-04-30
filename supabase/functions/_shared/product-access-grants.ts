@@ -544,9 +544,44 @@ export async function syncSecondaryProductAccessForUser(
         const plannedMs = planned ? new Date(planned).getTime() : null;
 
         if (ent.status === 'active' && currentMs && plannedMs && Math.abs(currentMs - plannedMs) < 60000) {
+          // Safe meta-only backfill: only when priorInfo is present AND any of the
+          // canonical scope keys are missing/incomplete on the existing entitlement.
+          // expires_at / status / lineage flags are NEVER touched here.
+          const backfillKeys = priorInfo
+            ? computeMetaBackfillKeys(meta, enrichedMeta, priorInfo)
+            : [];
+
+          if (backfillKeys.length > 0) {
+            const metaPatch: Record<string, any> = { ...meta };
+            for (const k of backfillKeys) {
+              metaPatch[k] = (enrichedMeta as Record<string, any>)[k];
+            }
+            metaPatch.metadata_backfilled_at = new Date().toISOString();
+            metaPatch.metadata_backfill_keys = backfillKeys;
+
+            if (!ctx.dryRun) {
+              const { error: backfillErr } = await supabase
+                .from('entitlements')
+                .update({ meta: metaPatch, updated_at: new Date().toISOString() })
+                .eq('id', ent.id);
+              if (backfillErr) {
+                action.outcome = 'failed';
+                action.reason = `meta_backfill_failed: ${backfillErr.message}`;
+                out.push(action);
+                await writeFailedLedger(supabase, ctx, action, action.reason);
+                continue;
+              }
+            }
+            action.outcome = 'metadata_backfilled';
+            action.reason = `keys=${backfillKeys.join(',')}`;
+            out.push(action);
+            await writeMetadataBackfillLedger(supabase, ctx, action, backfillKeys);
+            continue;
+          }
+
           action.outcome = 'already_satisfied';
           out.push(action);
-          // No ledger row for "already_satisfied" — keep ledger noise low.
+          // No ledger row for plain "already_satisfied" — keep ledger noise low.
           continue;
         }
 
