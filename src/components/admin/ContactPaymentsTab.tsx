@@ -315,14 +315,14 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
   return (
     <div className="space-y-4">
       {/* Header with re-autolink button */}
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold flex items-center gap-2">
-          <CreditCard className="w-5 h-5" />
-          Платежи
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <h3 className="text-lg font-semibold flex items-center gap-2 min-w-0">
+          <CreditCard className="w-5 h-5 shrink-0" />
+          <span className="truncate">Платежи</span>
         </h3>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {linkedCards && linkedCards.length > 0 && (
-            <span className="text-xs text-muted-foreground">
+            <span className="text-xs text-muted-foreground whitespace-nowrap">
               {linkedCards.length} карт{linkedCards.length === 1 ? 'а' : linkedCards.length < 5 ? 'ы' : ''}
             </span>
           )}
