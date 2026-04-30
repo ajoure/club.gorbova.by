@@ -43,6 +43,7 @@ interface OutcomeBuckets {
   extended: number;
   reactivated: number;
   already_satisfied: number;
+  metadata_backfilled: number;
   condition_not_met_prior_purchase: number;
   no_source_window: number;
   conflict_manual: number;
@@ -58,6 +59,7 @@ const emptyBuckets = (): OutcomeBuckets => ({
   extended: 0,
   reactivated: 0,
   already_satisfied: 0,
+  metadata_backfilled: 0,
   condition_not_met_prior_purchase: 0,
   no_source_window: 0,
   conflict_manual: 0,
@@ -77,6 +79,7 @@ function bumpBucket(b: OutcomeBuckets, a: SecondaryGrantAction) {
     case 'extended':
     case 'reactivated':
     case 'already_satisfied':
+    case 'metadata_backfilled':
     case 'no_source_window':
     case 'conflict_manual':
     case 'conflict_other_rule':
@@ -197,6 +200,7 @@ Deno.serve(async (req) => {
       buckets.extended +
       buckets.reactivated +
       buckets.already_satisfied +
+      buckets.metadata_backfilled +
       buckets.skipped_no_change +
       buckets.no_source_window +
       buckets.conflict_manual +
@@ -229,6 +233,7 @@ Deno.serve(async (req) => {
           extended: buckets.extended,
           reactivated: buckets.reactivated,
           already_satisfied: buckets.already_satisfied,
+          metadata_backfilled: buckets.metadata_backfilled,
           skipped_no_change: buckets.skipped_no_change,
           no_source_window: buckets.no_source_window,
           conflict_manual: buckets.conflict_manual,
