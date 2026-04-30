@@ -1,43 +1,28 @@
-дополни план следующей информацией:
+да, согласен, с учетом правок:
 
-1. **Главный приоритет — мгновенный webhook-flow**  
-Ночная проверка — только аварийный fallback. Основной результат должен быть:
-  - оплата прошла;
-  - webhook получил статус paid/success;
-  - `grant-access-for-order` сразу выдал primary + secondary доступы;
-  - клиент видит доступы в течение 1–3 секунд.
-2. **SOT по правилам доступов**  
-Единственный источник правил — UI «Доступы» продукта/тарифа → `access_rules`.  
-Все grants должны идти только через:
-  - `source_product_id`;
-  - `source_tariff_id`;
-  - `target_product_ids`;
-  - UUID, без названий/slug/string-match.
-3. **Shared helper обязателен**  
-Вынести `product_access` выдачу в общий helper и использовать его минимум в:
-  - `grant-access-for-order`;
-  - `rules-retroapply`;
-  - `access-rules-nightly-reconcile`.
-4. **Early return фикс**  
-`skip_already_fulfilled` не должен выходить до secondary sync. Даже если primary access уже есть, helper должен проверить и догрантить бонусные доступы.
-5. **Webhook DoD**  
-Добавить отдельный DoD:
-  - тестовая оплата BUSINESS → все product_access entitlements созданы/продлены сразу;
-  - повторный webhook не создаёт дубли;
-  - audit chain содержит `payment → order_paid → grant_primary → grant_secondary_product_access`.
-6. **Fallback DoD**  
-Ночной reconcile должен после нормальной оплаты ничего не чинить:
-  &nbsp;
-  - `missing=0`;
-  - `needs_extension=0`;
-  - `reactivated=0`;  
-  если webhook-flow отработал правильно.
-7. **UI/настройки**  
-Не добавлять правила доступов где-либо ещё. Вся настройка должна оставаться только в UI «Доступы» продукта/тарифа.
+1. **Webhook-flow — главный приоритет.**  
+Cron остаётся только safety net. В плане явно зафиксировать: после оплаты `grant-access-for-order` обязан сразу запускать secondary helper и продлевать product_access без ожидания ночи.
+2. **Не сокращать доступы автоматически.**  
+`allow_reduce_access=true` не использовать в этом патче. Если у пользователя доступ длиннее нового source-window — только `skipped_no_change`.
+3. **По Валерии отдельно зафиксировать результат.**  
+В финальном отчёте показать:
+  - source subscription;
+  - rule_id;
+  - target products;
+  - текущие `expires_at`;
+  - что именно продлено/пропущено и почему.
+4. **Перед execute обязательный гейт:**
+  - `failed=0`;
+  - `conflict_manual=0`;
+  - `conflict_multiple=0`;
+  - planned writes ≤ 10 для scoped execute.
+5. **После execute:**
+  - повторный dry-run;
+  - ledger proof;
+  - audit proof;
+  - cron proof.
 
-&nbsp;
-
-можно выполнять после dry-run.
+Можно продолжать до полного DoD.
 
 &nbsp;
 
@@ -45,285 +30,147 @@
 
 ## 1. Проблема
 
-Автоматическая выдача бонусных/дополнительных доступов по правилам из вкладки «Доступы» продукта работает нестабильно: после покупки/продления Gorbova Club BUSINESS часть продуктовых доступов не создаётся или не продлевается, а иногда доступы затем истекают/отзываются, поэтому приходится вручную запускать пересчёт через `rules-retroapply`.
+По Валерии видно, что оплата/renewal BUSINESS была обработана, но secondary product_access после оплаты не был корректно доведён в момент webhook-flow. Сейчас часть доступов закрывается ночным reconcile, но это не заменяет требование: после оплаты тарифа BUSINESS выдача/продление/безопасное сокращение должны происходить автоматически и единым правилом, без ручной выдачи.
 
-Цель: найти и устранить причины, а также добавить ежедневную ночную самопроверку в 03:00 по Минску, которая безопасно восстанавливает/продлевает доступы по `access_rules` без ручного вмешательства.
+## 2. Диагностика
 
-## 2. Диагностика: факты, уже подтверждённые чтением кода и БД
+Фактически проверено:
 
-### Текущая архитектура
+- У Валерии профиль: `6972333@mail.ru`, user_id `0d778566-b079-4e62-a5c0-3d9f07ec898e`.
+- BUSINESS subscription: `159e70e0-89a0-4b16-8ead-035e93d371b5`, tariff_id `7c748940-dcad-4c7c-a92e-76a2344622d3`.
+- Сегодня webhook/order `09018e5b-0af1-4cc2-9554-dfe930e56dab` был обработан, `webhook_events` показывает `outcome=processed`, `parsed_kind=link_order`, `http_status=200`.
+- `grant-access-for-order.skip_already_fulfilled` сработал в 11:30 UTC, но audit показал `secondary_sync_outcomes: already_satisfied=3, condition_not_met=8` при старом `subscription_access_end_at=2026-04-30T20:59:59+00:00`.
+- После этого сама source subscription была обновлена до `2026-05-30T20:59:59+00:00`, а secondary-доступы были догнаны позже reconcile/ручным запуском.
+- Cron `access-rules-nightly-reconcile` уже активен: schedule `0 0 * * *` (00:00 UTC / 03:00 Minsk).
+- Но в коде всё ещё есть критичный дефект: `grant-access-for-order/index.ts` содержит старый большой inline-блок `product_access` на строках примерно `1525–1842`, параллельно с helper `syncSecondaryProductAccessForUser`. Это два разных SOT.
+- `access-rules-nightly-reconcile/index.ts` в репозитории не пишет audit summary, хотя в БД есть audit от другой/старой версии деплоя. Нужно привести код к обязательной наблюдаемости.
+- В helper найден риск для сокращения срока: `allowReduceAccess` уже есть, но cron payload сейчас не передаёт его явно, а UI/ручной сценарий на скриншоте требует контролируемое применение сокращений после preview.
 
-- Конфигурация выдачи находится в `access_rules`.
-- Покупка/продление должна идти через `grant-access-for-order`.
-- Ручной пересчёт во вкладке продукта вызывает `rules-retroapply`.
-- Фактическая видимость продукта завязана на `entitlements`.
-- Источник периода для Gorbova Club BUSINESS — `subscriptions_v2.access_end_at`.
-- Уже есть hourly job `expire-stale-entitlements-hourly`, который переводит `entitlements.status='active'` в `expired`, если `expires_at < now()`.
-- Уже есть hourly job `subscriptions-reconcile-hourly`, который может отзывать downstream-доступы после окончания подписки.
+## 3. Предлагаемое решение
 
-### Что найдено по Gorbova Club BUSINESS
+### PATCH A — убрать второй SOT в `grant-access-for-order`
 
-- Product: `Gorbova Club`, id `11c9f1b8-0355-4753-bd74-40b42aa53616`.
-- Tariff BUSINESS: id `7c748940-dcad-4c7c-a92e-76a2344622d3`, `access_days=30`.
-- Для BUSINESS есть несколько активных `product_access` rules, включая:
-  - правило на 9 продуктов ЦБ 1 ступень / модули;
-  - правило на «Деньги BY 1 тариф»;
-  - правило на «Подоходный налог с физлиц».
-- По read-only dry-run SQL на текущей базе для BUSINESS найдено минимум:
-  - `eligible_pairs = 328`;
-  - `missing_entitlement = 1`;
-  - `non_active_entitlement = 3`;
-  - `needs_extension_or_null = 9`;
-  - `satisfied = 315`.
+1. Полностью удалить/заменить основной inline-блок `product_access` в `grant-access-for-order`.
+2. После создания/обновления primary subscription вычислять актуальный source subscription:
+  - при `results.subscription.id` — использовать её;
+  - иначе перечитать активную/past_due subscription по `user_id + product_id + tariff_id`, сортируя по максимальному `access_end_at`;
+  - это устранит баг Валерии: helper должен видеть уже новый `access_end_at`, а не старое значение до webhook-обновления.
+3. Вызвать только `syncSecondaryProductAccessForUser`:
+  - `sourceEventType='webhook'`;
+  - `sourceSubjectType='order'`;
+  - `sourceEventKeyPrefix='gafo:product_access:<orderId>'` или совместимый deterministic prefix;
+  - `excludeOrderId=orderId`;
+  - `allowReduceAccess=false` по умолчанию.
+4. Early-return `already_fulfilled` оставить через helper, но source subscription передавать актуальную, перечитанную после возможного webhook update.
+5. Старый inline-код не оставлять как активную ветку. Максимум — короткий комментарий-reference, что SOT перенесён в helper.
 
-Это подтверждает, что проблема не только в интерфейсе: в базе уже есть пользователи, которым по активной BUSINESS-подписке и правилам должен быть выровнен/восстановлен доступ.
+### PATCH B — корректная автоматизация после webhook renewal
 
-## 3. Предварительные причины дефекта
+1. В `bepaid-webhook` проверить участок link_order/subscription renewal:
+  - если webhook сначала вызывает `grant-access-for-order`, а затем обновляет `subscriptions_v2`, переставить порядок или добавить повторный secondary sync после финального обновления subscription window.
+2. Канонично: после того как `subscriptions_v2.access_end_at` уже обновлён до provider truth, вызвать `grant-access-for-order`/helper так, чтобы secondary-доступы получили новый срок сразу.
+3. Не добавлять отдельный write-path: все writes product_access остаются через helper.
 
-### Причина A. `grant-access-for-order` содержит ранний idempotency return
+### PATCH C — reconcile как safety net, не основной поток
 
-В `grant-access-for-order` есть guard `skip_already_fulfilled`: если основной entitlement и subscription по заказу уже существуют, функция сразу возвращает success и не доходит до блока `product_access` rules.
+1. Оставить cron `0 0 * * *` активным.
+2. В `access-rules-nightly-reconcile` добавить обязательный audit summary в `audit_logs`:
+  - `dry_run`, `source`, `tariff_ids/product_ids/user_ids`, `max_subscriptions`;
+  - counts: `condition_not_met_prior_purchase`, `condition_met`, `missing/granted`, `needs_extension/extended`, `reactivation_candidates/reactivated`, `conflict_manual`, `conflict_multiple`, `failed`;
+  - elapsed_ms, processed, evaluated.
+3. Поддержать безопасные лимиты batch/limit из payload cron. Если лимита нет — использовать существующий safe default.
+4. Для сокращения срока: добавить/проверить явный `allow_reduce_access` в payload и helper, но не включать его в nightly по умолчанию без отдельного админского подтверждения.
 
-Это опасно для повторных/задержанных fulfillment-вызовов: основной доступ уже есть, но вторичные доступы могли не выдаться ранее из-за сбоя, таймаута, изменения правил или race condition. При повторном вызове функция уже не пытается догрантить бонусы.
+### PATCH D — helper correctness
 
-Планируемое исправление: даже при `already_fulfilled` запускать идемпотентный lightweight sync вторичных `product_access` rules, либо вынести вторичные grants в общий helper и вызвать его до return.
+1. Проверить и при необходимости поправить `product-access-grants.ts`:
+  - `priorPurchaseCache` используется только когда передан;
+  - без cache единичный webhook-flow использует `checkPriorPurchase`;
+  - batch prior_purchase SOT остаётся только `orders_v2.status='paid'`, `user_id`, `product_id`, exclude current `order_id`;
+  - `writeLedgerEntry` возвращает и пробрасывает `id`, `execution_key`;
+  - ledger enums/checks: `source_subject_type='order'|'cron_job'`, `source_event_type='webhook'|'cron'` валидны.
+2. Исправить metadata для updated entitlements: `source_access_end_at` должен отражать новый source window, а не старый.
 
-### Причина B. `grant-access-for-order` и `rules-retroapply` дублируют разную логику
+## 4. Изменяемые компоненты
 
-В `grant-access-for-order` есть собственный блок обработки `product_access` rules.
-В `rules-retroapply` есть другой блок классификации/execute тех же правил.
+- `supabase/functions/grant-access-for-order/index.ts`
+- `supabase/functions/bepaid-webhook/index.ts`
+- `supabase/functions/_shared/product-access-grants.ts`
+- `supabase/functions/access-rules-nightly-reconcile/index.ts`
+- при необходимости `supabase/functions.registry.txt`, если reconcile-функция не включена в деплойный registry.
+- Таблицы только читаются/пишутся через существующие механизмы: `orders_v2`, `subscriptions_v2`, `entitlements`, `access_rules`, `access_grant_ledger`, `audit_logs`, `cron.job`.
 
-Различия:
+## 5. Что не будет изменено
 
-- разные условия выбора правил;
-- разные правила reactivation expired entitlement;
-- разные meta-поля;
-- разные условия безопасного update;
-- разные batch/timeout характеристики.
+- Не создаём новые таблицы, enum, статусы или второй ledger.
+- Не меняем source of truth: `orders_v2` для покупки, `subscriptions_v2` для recurring window, `entitlements` для видимости, `access_rules` для правил.
+- Не делаем ручной массовый UPDATE без dry-run.
+- Не используем `entitlements + access_rules` как proof prior_purchase.
+- Не меняем правила доступа BUSINESS по названиям/строкам — только UUID.
 
-Это нарушает single source of truth: ручной пересчёт может чинить то, что автоматический путь пропустил.
+## 6. Dry-run
 
-Планируемое исправление: вынести общую серверную логику `product_access` secondary grants в shared helper и использовать её и в `grant-access-for-order`, и в ночном reconciliation. `rules-retroapply` оставить как UI/manual wrapper, но выровнять его execute через тот же helper по возможности.
+После патча, перед execute:
 
-### Причина C. `rules-retroapply` на полном BUSINESS scope может таймаутиться
+1. `deno check` для изменённых edge functions/shared helpers.
+2. Dry-run helper/reconcile по Валерии:
+  - `dry_run=true`, `tariff_ids=[BUSINESS]`, `user_ids=[0d778566...]`.
+  - Ожидание: после уже догнанного состояния `extended=0`, `failed=0`, `conflict_manual=0`, `conflict_multiple=0`, `already_satisfied=3`, `condition_not_met_prior_purchase=8`.
+3. Full BUSINESS dry-run:
+  - без timeout;
+  - отдельно вывести counts: `condition_not_met_prior_purchase`, `condition_met`, `missing/granted`, `needs_extension/extended`, `reactivation_candidates/reactivated`, `conflicts`, `failed`.
+4. Проверить grep-guard: в `grant-access-for-order` не осталось активного inline product_access grant logic.
 
-Пробный вызов `rules-retroapply` preview по BUSINESS из edge curl завершился `context canceled`. В коде видно N+1-подобную обработку: на каждое правило/target идут батчи и проверки, плюс checkPriorPurchase на пользователя/продукт.
+## 7. Execute
 
-Это объясняет, почему ручная кнопка иногда работает нестабильно или требует повторного запуска.
+1. Задеплоить изменённые edge functions.
+2. Выполнить controlled execute только если dry-run не показывает неожиданные conflicts/failed.
+3. Если по BUSINESS есть текущий drift — выполнить controlled execute с STOP-guard:
+  - stop если planned writes > 10 для scoped execute;
+  - stop если failed/conflicts > 0.
+4. Повторный dry-run после execute.
+5. Проверить ledger rows по текущему source_event_key_prefix.
+6. Проверить cron job:
 
-Планируемое исправление: ночной процесс должен быть batch-based, с лимитами, offset/keyset-пагинацией, advisory lock, audit summary и возможностью повторного добора на следующем запуске, а не одним большим full-scan без контроля.
-
-### Причина D. `expire_stale_entitlements` истекает бонусный доступ раньше, чем repair успевает продлить
-
-Сейчас hourly SQL function просто истекает любой active entitlement с `expires_at < now()`. Если продление BUSINESS прошло, но вторичный entitlement не был продлён из-за причин A/B/C, он будет переведён в `expired`.
-
-Планируемое исправление: не отключать expire job, а добавить ночной repair раньше/стабильно, который reactivates expired secondary entitlements, если они снова подтверждены активной BUSINESS-подпиской и `access_rules`.
-
-### Причина E. Риск неправильного отзыва Telegram/club доступов из-за неполного scope resolver
-
-В `_shared/accessValidation.ts` комментарии говорят о `product_club_mappings`, но фактически lookup идёт по `access_rules`. Нужно проверить, учитывает ли он `tariff_id` rules без `product_id`, потому что часть правил Gorbova Club BUSINESS тарифные. Если club/product mapping берётся только из `product_id`, тарифные правила могут быть пропущены при revoke-guard.
-
-Планируемое исправление: отдельно проверить и поправить resolver club/product ids так, чтобы tariff-level rules тоже корректно резолвились через `tariffs.product_id`, без возврата к legacy mappings.
-
-## 4. Предлагаемое решение
-
-### PATCH 1. Shared engine для вторичных product_access grants
-
-Создать/выделить общий backend helper, например:
-
-```text
-supabase/functions/_shared/product-access-grants.ts
+```sql
+SELECT jobname, schedule, active
+FROM cron.job
+WHERE jobname ILIKE '%access-rules%';
 ```
 
-Функции helper:
+## 8. STOP-guards
 
-- resolveProductAccessRules(source_product_id, source_tariff_id): тарифные правила + продуктовые fallback без string matching;
-- resolveTargetProductIds(rule): только UUID из `conditions.target_product_ids` / `target_ref`;
-- checkPriorPurchase через существующий `_shared/check-prior-purchase.ts`;
-- calculateTargetExpiresAt:
-  - если `duration_days` задан — fixed duration;
-  - иначе `align_with_source` = `subscriptions_v2.access_end_at` активной/past_due подписки источника;
-- upsert/reactivate entitlement по `(user_id, product_id)` с GREATEST-логикой, чтобы срок не уменьшался;
-- писать `access_grant_ledger` для grant/update/reactivate/skip/failed;
-- писать audit summary в `audit_logs`.
+Остановиться и не выполнять execute, если:
 
-Важно: helper должен быть идемпотентным. Повторный вызов не должен создавать дубли и не должен сокращать срок.
+- `deno check` падает;
+- full dry-run BUSINESS уходит в timeout;
+- `failed > 0` или `conflict_manual/conflict_multiple > 0` в execute-когорте;
+- planned writes для scoped execute > 10 без отдельного подтверждения;
+- обнаружится, что `grant-access-for-order` всё ещё содержит активный inline product_access write-path;
+- `writeLedgerEntry` не возвращает `id/execution_key` или ledger check constraints не принимают source types;
+- webhook обновляет subscription window после secondary sync и нет повторного вызова helper.
 
-### PATCH 2. Исправить `grant-access-for-order`
+## 9. DoD
 
-- Заменить текущий inline-блок `product_access` на вызов shared helper.
-- В `skip_already_fulfilled` не выходить до проверки вторичных доступов: выполнить secondary sync и вернуть результат в `results.product_access`.
-- Сохранять текущие security/integrity guards:
-  - primary entitlement hard guard;
-  - tariff-match extend guard;
-  - GREATEST по primary entitlement;
-  - `grant-access-for-order` остаётся единственным write-path для paid order fulfillment.
+Задача считается завершённой, когда подтверждено:
 
-### PATCH 3. Ночная функция reconciliation в 03:00 Minsk
+1. По Валерии текущие BUSINESS secondary-доступы соответствуют покупке тарифа BUSINESS и source subscription window.
+2. Новые BUSINESS renewal payments автоматически доводят secondary product_access сразу после webhook, без ручной выдачи.
+3. `grant-access-for-order` больше не содержит отдельный inline product_access grant logic.
+4. Early-return и обычный fulfillment используют один helper.
+5. `prior_purchase` остаётся SOT только по фактическим paid orders.
+6. Dry-run BUSINESS проходит без timeout и показывает раздельные counts.
+7. Execute при необходимости проходит с `failed=0`, `conflict_manual=0`, `conflict_multiple=0`.
+8. `access_grant_ledger` содержит валидные `source_subject_type`/`source_event_type` и возвращённые `execution_key`.
+9. Cron `0 0 * * *` активен, но является safety net, а не единственным способом выдачи после оплаты.
+10. Финальный отчёт содержит: webhook-flow/helper proof, dry-run counts, execute counts, ledger proof, cron proof.
 
-Добавить backend function, например:
+## 10. Риски и зависимости
 
-```text
-supabase/functions/access-rules-nightly-reconcile/index.ts
-```
+- Сейчас проект в read-only/plan mode, поэтому я не могу внести PATCH и выполнить deploy/execute до утверждения плана.
+- В продакшене уже есть движение данных: новые оплаты могут менять counts между dry-run и post-check. Это фиксируем как `new_drift_after_execute`, не как blocker, если failed/conflicts = 0.
+- Сокращение сроков должно оставаться отдельным подтверждаемым режимом (`allow_reduce_access=true`) — нельзя включить silent shortening в nightly без отдельного бизнес-решения.
 
-Режимы:
+## 11. Требуется дополнительная информация
 
-- `mode: "dry_run"` — только считает кандидатов и категории;
-- `mode: "execute"` — применяет безопасные изменения;
-- `scope_product_id`, `scope_tariff_id`, `limit`, `cursor` — для безопасного батчинга;
-- `allow_reduce_access` по умолчанию `false`.
-
-Что делает execute:
-
-- находит активные source subscriptions по `access_rules`;
-- по каждому `product_access` rule проверяет eligibility;
-- создаёт missing entitlements;
-- reactivates expired entitlements, если entitlement был создан rule engine / retroapply / fulfillment lineage и текущая подписка снова подтверждает доступ;
-- продлевает active entitlements до source subscription access_end_at;
-- не сокращает сроки по умолчанию;
-- конфликтные/manual-source случаи только логирует как `requires_manual_review` / `conflict_existing`.
-
-Отдельно: первая версия ночного repair будет сконцентрирована на `grant_target_type='product_access'`, потому что жалоба именно про бонусные продукты по Gorbova Club BUSINESS. Club/Telegram grant/revoke не смешивать в этот PATCH, кроме проверки revoke guards.
-
-### PATCH 4. Cron в 03:00 по Минску
-
-В проекте cron schedules выглядят как UTC. Минск = UTC+3, значит 03:00 Minsk = 00:00 UTC.
-
-Добавить cron job:
-
-```text
-access-rules-nightly-reconcile-minsk-0300
-schedule: 0 0 * * *
-body: { "mode": "execute", "source": "cron", "target_tz": "Europe/Minsk", "target_hour": 3 }
-```
-
-Если решим использовать hourly wrapper с timezone guard, можно сделать как в `nightly-system-health-hourly`, но предпочтительнее простой daily job на 00:00 UTC.
-
-### PATCH 5. Проверить и поправить revoke guards
-
-- Проверить `_shared/accessValidation.ts` и `_shared/resolve-effective-access.ts` на корректный учёт tariff-level access_rules.
-- Если tariff-level club/product relation сейчас теряется, добавить join через `tariffs.product_id`.
-- Убедиться, что при истечении одной подписки доступ не отзывается, если есть другой активный источник по тому же club/product scope.
-
-### PATCH 6. Наблюдаемость и админский контроль
-
-Минимально:
-
-- audit action `access_rules_nightly_reconcile.completed` / `.failed`;
-- summary: scanned rules, scanned users, created, reactivated, extended, skipped_conflict, skipped_condition, errors;
-- ledger rows по фактическим изменениям;
-- логи edge function без сырых секретов.
-
-Опционально после основного фикса: добавить в UI вкладки «Доступы» блок последнего ночного запуска и кнопку dry-run по текущему продукту.
-
-## 5. Изменяемые компоненты
-
-### Edge/shared code
-
-- `supabase/functions/_shared/product-access-grants.ts` — новый общий helper.
-- `supabase/functions/grant-access-for-order/index.ts` — заменить inline secondary product_access и исправить early return.
-- `supabase/functions/rules-retroapply/index.ts` — по возможности выровнять execute через общий helper или хотя бы устранить расхождения по reactivation/update.
-- `supabase/functions/access-rules-nightly-reconcile/index.ts` — новая ночная функция.
-- `supabase/functions/_shared/accessValidation.ts` — проверить/исправить tariff-level scope для revoke guards.
-- `supabase/functions/_shared/resolve-effective-access.ts` — проверить/исправить tariff-level scope при необходимости.
-
-### Database / cron
-
-- Cron job для ежедневного запуска в 03:00 Minsk.
-- Возможно индексы, если dry-run покажет медленные места, например по:
-  - `subscriptions_v2(product_id, tariff_id, status, access_end_at)`;
-  - `entitlements(user_id, product_id, status)`;
-  - `orders_v2(user_id, product_id, status)`.
-
-Индексы добавлять только после проверки существующих индексов.
-
-### UI
-
-- Основной PATCH backend-only.
-- UI менять только если потребуется показать статус ночного repair или сделать ручной dry-run стабильнее.
-
-## 6. Что не будет изменено
-
-- Не менять логику тарифов, цен, оплат, bePaid и public checkout.
-- Не менять source of truth: `orders_v2`, `subscriptions_v2`, `entitlements`, `access_rules` остаются каноническими.
-- Не делать массовое сокращение сроков доступов в ночной функции по умолчанию.
-- Не восстанавливать доступы без подтверждения активной source subscription + active access_rule + prior purchase condition.
-- Не создавать параллельную таблицу прав доступа.
-- Не переводить ручные/конфликтные доступы автоматически без явного safe lineage.
-
-## 7. Dry-run перед Execute
-
-Перед реальными изменениями выполнить read-only/preview проверки:
-
-1. Инвентаризация rules:
-  - сколько active `product_access` rules;
-  - сколько tariff-level vs product-level;
-  - сколько `duration_days is null`.
-2. Инвентаризация Gorbova Club BUSINESS:
-  - eligible pairs;
-  - missing;
-  - expired but repairable;
-  - active but needs extension;
-  - conflicts/manual sources;
-  - no source window.
-3. Проверка индексов и планов выборок.
-4. Тестовый dry-run новой функции:
-  - `mode=dry_run`, `scope_tariff_id=BUSINESS`, small limit;
-  - затем full dry-run без мутаций.
-5. Сравнить dry-run новой функции с текущим `rules-retroapply` по количествам, но не требовать точного совпадения там, где старая логика ошибалась.
-
-## 8. Execute
-
-После одобрения:
-
-1. Реализовать shared helper.
-2. Подключить helper в `grant-access-for-order`.
-3. Добавить nightly reconcile function.
-4. Добавить/обновить tests или smoke scripts для helper/fn.
-5. Deploy изменённых edge functions.
-6. Выполнить dry-run на BUSINESS.
-7. Выполнить controlled execute для BUSINESS, если rowcount в пределах STOP-guards.
-8. Включить cron на 03:00 Minsk.
-9. Проверить audit/ledger и повторный dry-run должен показать `missing=0`, `repairable=0/минимум`, без сокращений.
-
-## 9. STOP-guards
-
-Остановить execute и не менять данные, если:
-
-- dry-run показывает неожиданно большой объём, например `missing + reactivated + extended > 500` за один запуск без отдельного подтверждения;
-- есть `target_product_ids` не UUID или несуществующие продукты;
-- source subscription не найдена для align_with_source;
-- planned expiry меньше текущего expiry, а `allow_reduce_access=false`;
-- entitlement имеет manual/admin source и не содержит safe lineage (`rule_engine_product_access`, `retroapply`, `source_rule_id`, `business_subscription_id`);
-- есть несколько active entitlements для одного `(user_id, product_id)`;
-- ledger insert массово падает;
-- edge function получает timeout на первом batch;
-- cron уже существует с таким именем или есть дублирующий workflow.
-
-## 10. DoD
-
-Задача считается выполненной, когда:
-
-1. Покупка/продление Gorbova Club BUSINESS автоматически создаёт/продлевает все положенные `product_access` entitlements.
-2. Повторный вызов `grant-access-for-order` для уже fulfilled order всё равно проверяет и догранчивает вторичные доступы идемпотентно.
-3. Ночной reconcile в 03:00 Minsk включён и пишет audit summary.
-4. Dry-run после execute показывает отсутствие repairable missing/expired/needs_extension по BUSINESS в рамках подтверждённой выборки.
-5. `expires_at` не уменьшается без явного allow-reduce.
-6. Expired secondary entitlement может быть безопасно reactivated при активной source subscription и подтверждённом rule.
-7. Конфликтные/manual-source случаи не меняются автоматически, а попадают в audit/manual review.
-8. Ledger содержит записи по созданным/обновлённым/пропущенным secondary grants.
-9. Проверены логи edge functions без 500/timeout на контрольном запуске.
-10. Не создан второй source of truth и не нарушены текущие правила ID-first.
-
-## 11. Риски и зависимости
-
-- Есть риск больших объёмов данных, поэтому нужен batch execution.
-- `rules-retroapply` сейчас может таймаутиться на полном scope — нельзя просто поставить его в cron как есть.
-- Нужно аккуратно работать с expired entitlements: reactivation разрешать только для safe lineage.
-- Cron SQL содержит project-specific URL/key, поэтому его нельзя оформлять как обычную переносимую миграцию без учёта текущих правил проекта.
-- Нужно сохранить совместимость с `expire_stale_entitlements-hourly` и `subscriptions-reconcile-hourly`.
-
-## 12. Дополнительная информация
-
-Дополнительных вопросов к вам сейчас нет. После одобрения плана я перейду к реализации с обязательным dry-run перед массовым execute.
+Дополнительная информация от вас не нужна. После утверждения я продолжу выполнение до полного DoD: патч, dry-run, controlled execute при необходимости, verify и финальный отчёт.
