@@ -285,15 +285,13 @@ async function logEmailOutcome(
   try {
     await supabase.from('audit_logs').insert({
       action: 'subscription_renewal_reminder_email_outcome',
-      entity_type: 'subscription',
-      entity_id: subscriptionId,
       actor_type: 'system',
-      actor_id: null,
-      details: {
+      actor_label: 'subscription-renewal-reminders',
+      target_user_id: userId,
+      meta: {
         channel: 'email',
         event_type: eventType,
         subscription_id: subscriptionId,
-        user_id: userId,
         profile_id: profileId,
         to_email: toEmail,
         status,
