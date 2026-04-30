@@ -179,14 +179,76 @@ Deno.serve(async (req) => {
     }
 
     const elapsedMs = Date.now() - startedAt;
+    const runId = `${new Date().toISOString()}:${Math.random().toString(36).slice(2, 8)}`;
+    const totalEvaluated = (Object.values(buckets) as number[]).reduce((a, b) => a + b, 0);
+    const conditionMet =
+      buckets.granted +
+      buckets.extended +
+      buckets.reactivated +
+      buckets.already_satisfied +
+      buckets.skipped_no_change +
+      buckets.no_source_window +
+      buckets.conflict_manual +
+      buckets.conflict_other_rule +
+      buckets.conflict_multiple +
+      buckets.failed;
+
+    // Mandatory audit summary — observable for every run, dry_run or execute.
+    try {
+      await supabase.from('audit_logs').insert({
+        actor_type: 'system',
+        actor_label: 'access-rules-nightly-reconcile',
+        action: dryRun
+          ? 'access-rules-nightly-reconcile.dry_run'
+          : 'access-rules-nightly-reconcile.execute',
+        meta: {
+          run_id: runId,
+          dry_run: dryRun,
+          source: (body as any).source || null,
+          filter_tariff_ids: body.tariff_ids || null,
+          filter_product_ids: body.product_ids || null,
+          filter_user_ids: body.user_ids || null,
+          max_subscriptions: maxSubs,
+          cohort_size: subscriptions.length,
+          processed_subscriptions: processed,
+          rule_pairs_evaluated: totalEvaluated,
+          condition_met: conditionMet,
+          condition_not_met_prior_purchase: buckets.condition_not_met_prior_purchase,
+          granted: buckets.granted,
+          extended: buckets.extended,
+          reactivated: buckets.reactivated,
+          already_satisfied: buckets.already_satisfied,
+          skipped_no_change: buckets.skipped_no_change,
+          no_source_window: buckets.no_source_window,
+          conflict_manual: buckets.conflict_manual,
+          conflict_other_rule: buckets.conflict_other_rule,
+          conflict_multiple: buckets.conflict_multiple,
+          failed: buckets.failed,
+          elapsed_ms: elapsedMs,
+        },
+      });
+    } catch (auditErr) {
+      console.error('[access-rules-nightly-reconcile] audit summary write failed:', auditErr);
+    }
+
     return new Response(
       JSON.stringify({
         ok: true,
+        run_id: runId,
         dry_run: dryRun,
         subscriptions_total: subscriptions.length,
         subscriptions_processed: processed,
-        rule_pairs_evaluated:
-          (Object.values(buckets) as number[]).reduce((a, b) => a + b, 0),
+        rule_pairs_evaluated: totalEvaluated,
+        counts: {
+          condition_met: conditionMet,
+          condition_not_met_prior_purchase: buckets.condition_not_met_prior_purchase,
+          missing_granted: buckets.granted,
+          needs_extension_extended: buckets.extended,
+          reactivation_candidates_reactivated: buckets.reactivated,
+          conflicts:
+            buckets.conflict_manual + buckets.conflict_other_rule + buckets.conflict_multiple,
+          failed: buckets.failed,
+        },
         buckets,
         sample_actions: sampleActions,
         elapsed_ms: elapsedMs,
