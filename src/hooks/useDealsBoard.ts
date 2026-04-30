@@ -78,6 +78,11 @@ export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId
         q = q.lte("deal_date", `${dateTo}T23:59:59Z`);
       }
 
+      // Apply canonical extra filters server-side
+      if (extraFilters) {
+        q = applyExtraDealFilters(q, extraFilters);
+      }
+
       q = q.order("updated_at", { ascending: false }).order("id", { ascending: false });
 
       // Fetch all pages (Supabase returns max 1000 per request)
