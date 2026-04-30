@@ -350,6 +350,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       tc_access_mode: "full",
       tc_allowed_module_ids: [],
       tc_allowed_lesson_ids: [],
+      tc_auto_include_new_modules: false,
     });
     setAdvancedOpen(false);
     setDialogOpen(true);
@@ -396,12 +397,25 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
     tc_access_mode: "full" as "full" | "partial",
     tc_allowed_module_ids: [] as string[],
     tc_allowed_lesson_ids: [] as string[],
+    tc_auto_include_new_modules: false,
   });
+
+  // Confirm-dialog для перевода existing partial → full
+  const [confirmFullSwitch, setConfirmFullSwitch] = useState(false);
 
   // Tree picker for training_content
   const { data: trainingTree } = useTrainingContentTree(
     form.grant_target_type === "training_content" ? form.target_ref : undefined
   );
+
+  // Orphan modules: для partial — папки в дереве, которых нет в allowed_module_ids
+  const orphanModules = useMemo(() => {
+    if (form.grant_target_type !== "training_content") return [];
+    if (form.tc_access_mode !== "partial") return [];
+    if (!trainingTree?.children?.length) return [];
+    const allowed = new Set(form.tc_allowed_module_ids);
+    return trainingTree.children.filter((m: TreeModule) => !allowed.has(m.id));
+  }, [form.grant_target_type, form.tc_access_mode, form.tc_allowed_module_ids, trainingTree]);
 
   // Filtered rules
   const filteredRules = useMemo(() => {
@@ -518,6 +532,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       tc_access_mode: "full",
       tc_allowed_module_ids: [],
       tc_allowed_lesson_ids: [],
+      tc_auto_include_new_modules: false,
     });
     setAdvancedOpen(false);
     setDialogOpen(true);
@@ -573,6 +588,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       tc_access_mode: tcAccessMode,
       tc_allowed_module_ids: tcAllowedModuleIds,
       tc_allowed_lesson_ids: tcAllowedLessonIds,
+      tc_auto_include_new_modules: Boolean(conditions.auto_include_new_modules),
     });
     setAdvancedOpen(false);
     setDialogOpen(true);
@@ -634,9 +650,13 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
         const normalized = normalizeTrainingContentPayload(form.tc_allowed_module_ids, form.tc_allowed_lesson_ids, trainingTree);
         conditions.allowed_module_ids = normalized.allowed_module_ids;
         conditions.allowed_lesson_ids = normalized.allowed_lesson_ids;
+        // partial: явно фиксируем флаг авто-включения новых папок (по умолчанию выключен)
+        conditions.auto_include_new_modules = Boolean(form.tc_auto_include_new_modules);
       } else {
         conditions.allowed_module_ids = [];
         conditions.allowed_lesson_ids = [];
+        // full: флаг авто-включения не нужен — full и так видит все будущие модули
+        delete conditions.auto_include_new_modules;
       }
     }
 
@@ -1429,7 +1449,14 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                       <Label className="text-xs">Режим доступа</Label>
                       <div className="flex gap-2">
                         <button
-                          onClick={() => setForm({ ...form, tc_access_mode: "full", tc_allowed_module_ids: [], tc_allowed_lesson_ids: [] })}
+                          onClick={() => {
+                            // При переходе с partial → full в edit-режиме существующего правила требуем подтверждение
+                            if (editing && form.tc_access_mode === "partial") {
+                              setConfirmFullSwitch(true);
+                              return;
+                            }
+                            setForm({ ...form, tc_access_mode: "full", tc_allowed_module_ids: [], tc_allowed_lesson_ids: [], tc_auto_include_new_modules: false });
+                          }}
                           className={cn(
                             "flex-1 px-3 py-2 rounded-lg border text-sm transition-all",
                             form.tc_access_mode === "full"
@@ -1451,6 +1478,11 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                           Частичный доступ
                         </button>
                       </div>
+                      {form.tc_access_mode === "full" && (
+                        <p className="text-[11px] text-muted-foreground">
+                          Полный доступ автоматически включает все текущие и будущие папки тренинга.
+                        </p>
+                      )}
                     </div>
                   )}
 
@@ -1466,6 +1498,67 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                     ) : (
                       <div className="text-xs text-muted-foreground text-center py-4">Загрузка дерева…</div>
                     )
+                  )}
+
+                  {/* Auto-include flag (только для partial) */}
+                  {form.target_ref && form.tc_access_mode === "partial" && (
+                    <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 p-3">
+                      <Checkbox
+                        id="tc-auto-include"
+                        checked={form.tc_auto_include_new_modules}
+                        onCheckedChange={(v) => setForm({ ...form, tc_auto_include_new_modules: Boolean(v) })}
+                        className="mt-0.5"
+                      />
+                      <div className="space-y-1">
+                        <Label htmlFor="tc-auto-include" className="text-xs font-medium cursor-pointer">
+                          Автоматически добавлять новые папки тренинга
+                        </Label>
+                        <p className="text-[11px] text-muted-foreground">
+                          По умолчанию выключено. Если когорта по бизнес-логике должна видеть весь тренинг — лучше выбрать «Полный доступ».
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Orphan modules alert */}
+                  {form.target_ref && form.tc_access_mode === "partial" && orphanModules.length > 0 && (
+                    <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 space-y-2">
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+                        <div className="space-y-1">
+                          <p className="text-xs font-medium text-amber-900">
+                            Не включены в правило: {orphanModules.length} {orphanModules.length === 1 ? "папка" : "папок"}
+                          </p>
+                          <p className="text-[11px] text-amber-800">
+                            {orphanModules.slice(0, 5).map((m: TreeModule) => m.title).join(", ")}
+                            {orphanModules.length > 5 ? ` и ещё ${orphanModules.length - 5}` : ""}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-[11px]"
+                          onClick={() => {
+                            const allIds = trainingTree?.children?.map((m: TreeModule) => m.id) || [];
+                            setForm(prev => ({ ...prev, tc_allowed_module_ids: Array.from(new Set([...prev.tc_allowed_module_ids, ...allIds])) }));
+                          }}
+                        >
+                          Добавить все
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-[11px]"
+                          onClick={() => editing ? setConfirmFullSwitch(true) : setForm({ ...form, tc_access_mode: "full", tc_allowed_module_ids: [], tc_allowed_lesson_ids: [], tc_auto_include_new_modules: false })}
+                        >
+                          Перевести в «Полный доступ»
+                        </Button>
+                      </div>
+                    </div>
                   )}
                 </div>
               )}
@@ -1750,6 +1843,29 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
               }}
             >
               {isDeletePending ? "Удаление…" : "Удалить правило"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Confirm: partial → full switch */}
+      <AlertDialog open={confirmFullSwitch} onOpenChange={setConfirmFullSwitch}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Перевести правило в «Полный доступ»?</AlertDialogTitle>
+            <AlertDialogDescription>
+              После перевода в full пользователи этого правила увидят все текущие и будущие папки тренинга. Текущий список выбранных модулей будет сброшен.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setForm({ ...form, tc_access_mode: "full", tc_allowed_module_ids: [], tc_allowed_lesson_ids: [], tc_auto_include_new_modules: false });
+                setConfirmFullSwitch(false);
+              }}
+            >
+              Перевести в full
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
