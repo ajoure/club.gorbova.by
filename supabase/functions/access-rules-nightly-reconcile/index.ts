@@ -263,6 +263,8 @@ Deno.serve(async (req) => {
         },
         buckets,
         sample_actions: sampleActions,
+        sample_condition_not_met: sampleConditionNotMet,
+        module_list_mapped_matches: moduleListMappedMatches,
         elapsed_ms: elapsedMs,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
