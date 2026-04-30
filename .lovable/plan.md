@@ -1,28 +1,31 @@
-да, согласен, с учетом правок:
+дополни план следующей информацией:
 
-1. **Webhook-flow — главный приоритет.**  
-Cron остаётся только safety net. В плане явно зафиксировать: после оплаты `grant-access-for-order` обязан сразу запускать secondary helper и продлевать product_access без ожидания ночи.
-2. **Не сокращать доступы автоматически.**  
-`allow_reduce_access=true` не использовать в этом патче. Если у пользователя доступ длиннее нового source-window — только `skipped_no_change`.
-3. **По Валерии отдельно зафиксировать результат.**  
-В финальном отчёте показать:
-  - source subscription;
-  - rule_id;
-  - target products;
-  - текущие `expires_at`;
-  - что именно продлено/пропущено и почему.
-4. **Перед execute обязательный гейт:**
-  - `failed=0`;
-  - `conflict_manual=0`;
-  - `conflict_multiple=0`;
-  - planned writes ≤ 10 для scoped execute.
-5. **После execute:**
-  - повторный dry-run;
-  - ledger proof;
-  - audit proof;
-  - cron proof.
+1. **Сначала доказать источник покупки по UUID.**  
+Перед любым execute по Ерастовой показать SQL-proof:
+  - `orders_v2.status='paid'`;
+  - `purchase_snapshot.module_list_mapped` содержит product_id модуля;
+  - без string/name/slug matching.
+2. **Для** `prior_purchase` **расширить SOT аккуратно:**
+  - direct `orders_v2.product_id`;
+  - mapped module UUID из `orders_v2.meta.purchase_snapshot.module_list_mapped`;
+  - только `status='paid'`;
+  - `excludeOrderId` сохраняется.
+3. **Нельзя автоматически давать полный CB20 parent за покупку одного модуля.**  
+Если найден только module-only purchase — выдаётся только соответствующий module target, с `scope_resolution_mode='module_scope_only'`.
+4. **Meta обязательна для UI-read path:**
+  - `scope_resolution_mode`;
+  - `prior_purchase_match_type`;
+  - `prior_purchase_order_id`;
+  - `historical_module_product_ids`;
+  - `source_rule_id`.
+5. **Execute по Ерастовой — отдельно от BUSINESS.**  
+Сначала targeted dry-run по пользователю. Если `failed=0/conflicts=0` и planned writes ожидаемые — только тогда targeted execute.
+6. **Full BUSINESS execute не запускать автоматически.**  
+После изменения prior_purchase логики сделать full dry-run. Если planned writes > 25 — отдельный approval.
+7. **Training_content rule не менять до proof.**  
+Сначала доказать, что entitlement есть, meta корректная, но read-path всё равно не показывает модуль. Только после этого править existing `training_content` rule.
 
-Можно продолжать до полного DoD.
+Можно продолжать после этих правок.
 
 &nbsp;
 
@@ -30,147 +33,173 @@ Cron остаётся только safety net. В плане явно зафик
 
 ## 1. Проблема
 
-По Валерии видно, что оплата/renewal BUSINESS была обработана, но secondary product_access после оплаты не был корректно доведён в момент webhook-flow. Сейчас часть доступов закрывается ночным reconcile, но это не заменяет требование: после оплаты тарифа BUSINESS выдача/продление/безопасное сокращение должны происходить автоматически и единым правилом, без ручной выдачи.
+На примере Антонины/Ксении Ерастовой видно, что после BUSINESS доступы в админской вкладке «Доступы» выглядят частично корректно, но в личном кабинете отображается не всё. Конкретно по «Ценный бухгалтер 1 ступень 2.0» и модулю «Маркетплейсы» доступ должен соответствовать BUSINESS и прошлой покупке, но сейчас видимость и сроки расходятся.
 
 ## 2. Диагностика
 
-Фактически проверено:
+Фактические находки:
 
-- У Валерии профиль: `6972333@mail.ru`, user_id `0d778566-b079-4e62-a5c0-3d9f07ec898e`.
-- BUSINESS subscription: `159e70e0-89a0-4b16-8ead-035e93d371b5`, tariff_id `7c748940-dcad-4c7c-a92e-76a2344622d3`.
-- Сегодня webhook/order `09018e5b-0af1-4cc2-9554-dfe930e56dab` был обработан, `webhook_events` показывает `outcome=processed`, `parsed_kind=link_order`, `http_status=200`.
-- `grant-access-for-order.skip_already_fulfilled` сработал в 11:30 UTC, но audit показал `secondary_sync_outcomes: already_satisfied=3, condition_not_met=8` при старом `subscription_access_end_at=2026-04-30T20:59:59+00:00`.
-- После этого сама source subscription была обновлена до `2026-05-30T20:59:59+00:00`, а secondary-доступы были догнаны позже reconcile/ручным запуском.
-- Cron `access-rules-nightly-reconcile` уже активен: schedule `0 0 * * *` (00:00 UTC / 03:00 Minsk).
-- Но в коде всё ещё есть критичный дефект: `grant-access-for-order/index.ts` содержит старый большой inline-блок `product_access` на строках примерно `1525–1842`, параллельно с helper `syncSecondaryProductAccessForUser`. Это два разных SOT.
-- `access-rules-nightly-reconcile/index.ts` в репозитории не пишет audit summary, хотя в БД есть audit от другой/старой версии деплоя. Нужно привести код к обязательной наблюдаемости.
-- В helper найден риск для сокращения срока: `allowReduceAccess` уже есть, но cron payload сейчас не передаёт его явно, а UI/ручной сценарий на скриншоте требует контролируемое применение сокращений после preview.
+1. У пользователя `antoninaerastova2020@gmail.com` есть активная подписка Gorbova Club BUSINESS:
+  - product_id `11c9f1b8-0355-4753-bd74-40b42aa53616`
+  - tariff_id `7c748940-dcad-4c7c-a92e-76a2344622d3`
+  - access_end_at сейчас `2026-05-03 20:59:59+00`.
+2. По `product_access` правилу BUSINESS для CB20 есть target list из полного продукта и модульных продуктов. При этом `prior_purchase` обязан проверяться только по фактическим paid orders.
+3. Для «Маркетплейсы» есть исторический paid order, но он записан как:
+  - `orders_v2.product_id = 7101ed3c...` (родительский продукт CB20)
+  - `purchase_snapshot.module_list_mapped = [d7effaf4...]` (модуль «Маркетплейсы»)
+   Поэтому прежний batch-cache, который смотрит только `orders_v2.product_id`, не видит эту покупку как prior_purchase для target module product_id.
+4. Ранее существующий `check-prior-purchase.ts` уже умеет такой fallback через `purchase_snapshot.module_list_mapped`, но последний batch-cache был сделан слишком узким и потерял этот кейс. Это нарушило паритет single webhook-flow и batch/nightly-flow.
+5. Второй баг: новые helper-записи product_access кладут meta без `scope_resolution_mode`, `historical_purchase_type`, `historical_module_product_ids`, `prior_purchase_order_id`. Runtime-хук `useTrainingContentRules` трактует такие legacy bonus entitlements как `no_scope`, из-за чего админка показывает entitlement, но личный кабинет может отфильтровать контент.
+6. Третий баг конфигурации/видимости: у продукта-модуля «Маркетплейсы» training_content rule сейчас неактивен, а активный training module есть (`4c97d21c...`). Поэтому даже при наличии entitlement read-path может не получить корректную scope-инструкцию для личного кабинета.
+7. Дополнительная проблема наблюдаемости: `access-rules-nightly-reconcile` сейчас не возвращает детальные `condition_not_met` по target product/user в полном отчёте, поэтому админке кажется «нет ошибок», хотя часть target-доступов пропущена по prior_purchase или no_scope.
 
 ## 3. Предлагаемое решение
 
-### PATCH A — убрать второй SOT в `grant-access-for-order`
+### PATCH A — восстановить parity prior_purchase для batch/nightly
 
-1. Полностью удалить/заменить основной inline-блок `product_access` в `grant-access-for-order`.
-2. После создания/обновления primary subscription вычислять актуальный source subscription:
-  - при `results.subscription.id` — использовать её;
-  - иначе перечитать активную/past_due subscription по `user_id + product_id + tariff_id`, сортируя по максимальному `access_end_at`;
-  - это устранит баг Валерии: helper должен видеть уже новый `access_end_at`, а не старое значение до webhook-обновления.
-3. Вызвать только `syncSecondaryProductAccessForUser`:
-  - `sourceEventType='webhook'`;
-  - `sourceSubjectType='order'`;
-  - `sourceEventKeyPrefix='gafo:product_access:<orderId>'` или совместимый deterministic prefix;
-  - `excludeOrderId=orderId`;
-  - `allowReduceAccess=false` по умолчанию.
-4. Early-return `already_fulfilled` оставить через helper, но source subscription передавать актуальную, перечитанную после возможного webhook update.
-5. Старый inline-код не оставлять как активную ветку. Максимум — короткий комментарий-reference, что SOT перенесён в helper.
+В `_shared/product-access-grants.ts` расширить batch prior-purchase cache без второго SOT:
 
-### PATCH B — корректная автоматизация после webhook renewal
+- основной источник остаётся фактическая покупка: `orders_v2.status='paid'`;
+- direct match: `orders_v2.product_id IN required_product_ids`;
+- module fallback: `purchase_snapshot.historical_purchase_type='module_only_standalone'` + `purchase_snapshot.module_list_mapped` содержит target product_id;
+- исключать `excludeOrderId`, если передан;
+- сформировать `Map<user_id, Map<product_id, priorPurchaseInfo>>`, а не только `Set`, чтобы helper мог записать enriched meta.
 
-1. В `bepaid-webhook` проверить участок link_order/subscription renewal:
-  - если webhook сначала вызывает `grant-access-for-order`, а затем обновляет `subscriptions_v2`, переставить порядок или добавить повторный secondary sync после финального обновления subscription window.
-2. Канонично: после того как `subscriptions_v2.access_end_at` уже обновлён до provider truth, вызвать `grant-access-for-order`/helper так, чтобы secondary-доступы получили новый срок сразу.
-3. Не добавлять отдельный write-path: все writes product_access остаются через helper.
+Single webhook-flow сохранить быстрым:
 
-### PATCH C — reconcile как safety net, не основной поток
+- если `priorPurchaseCache` не передан, helper использует текущий `checkPriorPurchase`;
+- если cache передан, N+1 нет, только cache.
 
-1. Оставить cron `0 0 * * *` активным.
-2. В `access-rules-nightly-reconcile` добавить обязательный audit summary в `audit_logs`:
-  - `dry_run`, `source`, `tariff_ids/product_ids/user_ids`, `max_subscriptions`;
-  - counts: `condition_not_met_prior_purchase`, `condition_met`, `missing/granted`, `needs_extension/extended`, `reactivation_candidates/reactivated`, `conflict_manual`, `conflict_multiple`, `failed`;
-  - elapsed_ms, processed, evaluated.
-3. Поддержать безопасные лимиты batch/limit из payload cron. Если лимита нет — использовать существующий safe default.
-4. Для сокращения срока: добавить/проверить явный `allow_reduce_access` в payload и helper, но не включать его в nightly по умолчанию без отдельного админского подтверждения.
+### PATCH B — enriched meta для product_access entitlement
 
-### PATCH D — helper correctness
+В `syncSecondaryProductAccessForUser` добавить в meta при prior_purchase:
 
-1. Проверить и при необходимости поправить `product-access-grants.ts`:
-  - `priorPurchaseCache` используется только когда передан;
-  - без cache единичный webhook-flow использует `checkPriorPurchase`;
-  - batch prior_purchase SOT остаётся только `orders_v2.status='paid'`, `user_id`, `product_id`, exclude current `order_id`;
-  - `writeLedgerEntry` возвращает и пробрасывает `id`, `execution_key`;
-  - ledger enums/checks: `source_subject_type='order'|'cron_job'`, `source_event_type='webhook'|'cron'` валидны.
-2. Исправить metadata для updated entitlements: `source_access_end_at` должен отражать новый source window, а не старый.
+- `historical_purchase_type`;
+- `historical_tariff_id`;
+- `historical_module_product_ids`;
+- `scope_resolution_mode`:
+  - full product/tariff purchase → `full_tariff_scope`;
+  - module-only standalone → `module_scope_only`;
+  - ambiguous/no mapping → `manual_review` или `no_scope`;
+- `prior_purchase_match_type`;
+- `prior_purchase_order_id`.
+
+Это устранит рассинхрон «в админке доступ есть, а в личном кабинете контент скрыт».
+
+### PATCH C — repair/reconcile для текущих BUSINESS-доступов
+
+После кода выполнить dry-run по BUSINESS:
+
+- `tariff_ids = ['7c748940-dcad-4c7c-a92e-76a2344622d3']`;
+- отдельно по пользователю Ерастовой;
+- проверить buckets: `condition_met`, `condition_not_met_prior_purchase`, `missing`, `needs_extension`, `reactivation_candidates`, `conflicts`, `failed`, плюс sample по target products.
+
+Execute только после dry-run без timeout и при guards:
+
+- `failed = 0`;
+- `conflicts = 0`;
+- planned writes для targeted user ожидаемо малые;
+- для полного BUSINESS — остановка, если planned writes неожиданно > 25 без отдельного подтверждения.
+
+Для Ерастовой ожидаем восстановить/обновить:
+
+- CB20 parent;
+- «Маркетплейсы» как module_only_standalone, если prior_purchase найден через `module_list_mapped`;
+- другие модули только если есть фактический paid order/direct or mapped prior purchase.
+
+### PATCH D — training_content visibility для standalone module products
+
+Проверить и исправить существующие access_rules, не создавая параллельную архитектуру:
+
+- для продукта «Ценный бухгалтер | Модуль: Маркетплейсы» активировать/восстановить корректное `training_content` правило на training module `4c97d21c...`, если dry-run подтвердит, что именно это блокирует видимость;
+- не выдавать полный CB20 при покупке одного модуля;
+- оставить rule-based visibility как SOT.
+
+### PATCH E — наблюдаемость
+
+Расширить response/audit `access-rules-nightly-reconcile`:
+
+- добавлять sample skipped actions с `condition_not_met` по target product;
+- отдельно показывать `prior_purchase_match_type`;
+- в audit summary фиксировать `module_list_mapped_matches`.
 
 ## 4. Изменяемые компоненты
 
-- `supabase/functions/grant-access-for-order/index.ts`
-- `supabase/functions/bepaid-webhook/index.ts`
+Edge/shared:
+
 - `supabase/functions/_shared/product-access-grants.ts`
+- при необходимости `supabase/functions/_shared/check-prior-purchase.ts` только для переиспользуемого типа/контракта
 - `supabase/functions/access-rules-nightly-reconcile/index.ts`
-- при необходимости `supabase/functions.registry.txt`, если reconcile-функция не включена в деплойный registry.
-- Таблицы только читаются/пишутся через существующие механизмы: `orders_v2`, `subscriptions_v2`, `entitlements`, `access_rules`, `access_grant_ledger`, `audit_logs`, `cron.job`.
+- `supabase/functions/grant-access-for-order/index.ts` только если потребуется передать новый тип cache/metadata без изменения write-path
+
+Database/config data:
+
+- существующая таблица `access_rules` — только точечная правка/активация existing training_content rule для Маркетплейсов, если dry-run подтвердит;
+- существующая таблица `entitlements` — controlled reconcile через helper, не ручные UPDATE без dry-run;
+- `audit_logs` и `access_grant_ledger` — доказательства выполнения.
+
+UI/read-path:
+
+- `src/hooks/useTrainingContentRules.ts` — только если после meta-fix останется необходимость корректнее различать rule-engine bonus meta; без нового SOT.
 
 ## 5. Что не будет изменено
 
-- Не создаём новые таблицы, enum, статусы или второй ledger.
-- Не меняем source of truth: `orders_v2` для покупки, `subscriptions_v2` для recurring window, `entitlements` для видимости, `access_rules` для правил.
-- Не делаем ручной массовый UPDATE без dry-run.
-- Не используем `entitlements + access_rules` как proof prior_purchase.
-- Не меняем правила доступа BUSINESS по названиям/строкам — только UUID.
+- Не будет hardcode по именам «Маркетплейсы», «Бизнес», email или slug.
+- Не будет второго источника доступа.
+- Не будет ручного массового UPDATE entitlements в обход helper/write-path.
+- Не будет изменения цен, тарифов, order/payment логики.
+- Не будет автоматического сокращения срока, пока `allowReduceAccess=false`.
 
 ## 6. Dry-run
 
-После патча, перед execute:
+Перед execute выполнить:
 
-1. `deno check` для изменённых edge functions/shared helpers.
-2. Dry-run helper/reconcile по Валерии:
-  - `dry_run=true`, `tariff_ids=[BUSINESS]`, `user_ids=[0d778566...]`.
-  - Ожидание: после уже догнанного состояния `extended=0`, `failed=0`, `conflict_manual=0`, `conflict_multiple=0`, `already_satisfied=3`, `condition_not_met_prior_purchase=8`.
-3. Full BUSINESS dry-run:
-  - без timeout;
-  - отдельно вывести counts: `condition_not_met_prior_purchase`, `condition_met`, `missing/granted`, `needs_extension/extended`, `reactivation_candidates/reactivated`, `conflicts`, `failed`.
-4. Проверить grep-guard: в `grant-access-for-order` не осталось активного inline product_access grant logic.
+1. Dry-run helper/reconcile только по Ерастовой.
+2. Dry-run по всему BUSINESS tariff.
+3. SQL-проверка:
+  - paid orders direct;
+  - paid orders через `purchase_snapshot.module_list_mapped`;
+  - active subscriptions;
+  - entitlements meta;
+  - training_content rules по target products.
+4. Проверить личный кабинет read-path логически: entitlement + scope meta + training_content rule должны давать видимость.
 
 ## 7. Execute
 
-1. Задеплоить изменённые edge functions.
-2. Выполнить controlled execute только если dry-run не показывает неожиданные conflicts/failed.
-3. Если по BUSINESS есть текущий drift — выполнить controlled execute с STOP-guard:
-  - stop если planned writes > 10 для scoped execute;
-  - stop если failed/conflicts > 0.
-4. Повторный dry-run после execute.
-5. Проверить ledger rows по текущему source_event_key_prefix.
-6. Проверить cron job:
+После успешного dry-run:
 
-```sql
-SELECT jobname, schedule, active
-FROM cron.job
-WHERE jobname ILIKE '%access-rules%';
-```
+1. Деплой изменённых edge functions.
+2. Controlled execute по Ерастовой.
+3. При необходимости controlled execute по BUSINESS с лимитом и STOP-guards.
+4. Точечная активация/исправление existing training_content rule для Маркетплейсов, если подтверждено dry-run.
+5. Повторный full dry-run.
+6. Проверка `access_grant_ledger` и `audit_logs`.
 
 ## 8. STOP-guards
 
-Остановиться и не выполнять execute, если:
+Остановиться и не выполнять write, если:
 
-- `deno check` падает;
-- full dry-run BUSINESS уходит в timeout;
-- `failed > 0` или `conflict_manual/conflict_multiple > 0` в execute-когорте;
-- planned writes для scoped execute > 10 без отдельного подтверждения;
-- обнаружится, что `grant-access-for-order` всё ещё содержит активный inline product_access write-path;
-- `writeLedgerEntry` не возвращает `id/execution_key` или ledger check constraints не принимают source types;
-- webhook обновляет subscription window после secondary sync и нет повторного вызова helper.
+- `failed > 0`;
+- `conflict_manual/conflict_multiple/conflict_other_rule > 0`;
+- dry-run показывает неожиданный planned write-count;
+- найдено, что target product не имеет training module или имеет несколько неоднозначных root modules;
+- prior_purchase найден только по тексту/name/slug, а не по UUID/product_id/module_list_mapped;
+- full BUSINESS dry-run уходит в timeout.
 
 ## 9. DoD
 
-Задача считается завершённой, когда подтверждено:
+Задача считается выполненной, когда:
 
-1. По Валерии текущие BUSINESS secondary-доступы соответствуют покупке тарифа BUSINESS и source subscription window.
-2. Новые BUSINESS renewal payments автоматически доводят secondary product_access сразу после webhook, без ручной выдачи.
-3. `grant-access-for-order` больше не содержит отдельный inline product_access grant logic.
-4. Early-return и обычный fulfillment используют один helper.
-5. `prior_purchase` остаётся SOT только по фактическим paid orders.
-6. Dry-run BUSINESS проходит без timeout и показывает раздельные counts.
-7. Execute при необходимости проходит с `failed=0`, `conflict_manual=0`, `conflict_multiple=0`.
-8. `access_grant_ledger` содержит валидные `source_subject_type`/`source_event_type` и возвращённые `execution_key`.
-9. Cron `0 0 * * *` активен, но является safety net, а не единственным способом выдачи после оплаты.
-10. Финальный отчёт содержит: webhook-flow/helper proof, dry-run counts, execute counts, ledger proof, cron proof.
+1. Для Ерастовой `access-rules-nightly-reconcile dry_run` показывает expected condition_met для реально купленных продуктов/модулей.
+2. «Маркетплейсы» имеет active entitlement до срока BUSINESS и meta со `scope_resolution_mode=module_scope_only` и `historical_module_product_ids=[d7effaf4...]`.
+3. Личный кабинет получает видимость модуля «Маркетплейсы» через rule-based read-path.
+4. Full BUSINESS dry-run без timeout, `failed=0`, `conflicts=0`.
+5. Webhook-flow и nightly-flow дают одинаковую prior_purchase классификацию.
+6. `access_grant_ledger` содержит корректные записи, `audit_logs` содержит summary.
+7. Cron 03:00 Minsk остаётся включён и будет контролировать drift.
 
 ## 10. Риски и зависимости
 
-- Сейчас проект в read-only/plan mode, поэтому я не могу внести PATCH и выполнить deploy/execute до утверждения плана.
-- В продакшене уже есть движение данных: новые оплаты могут менять counts между dry-run и post-check. Это фиксируем как `new_drift_after_execute`, не как blocker, если failed/conflicts = 0.
-- Сокращение сроков должно оставаться отдельным подтверждаемым режимом (`allow_reduce_access=true`) — нельзя включить silent shortening в nightly без отдельного бизнес-решения.
-
-## 11. Требуется дополнительная информация
-
-Дополнительная информация от вас не нужна. После утверждения я продолжу выполнение до полного DoD: патч, dry-run, controlled execute при необходимости, verify и финальный отчёт.
+- Исторические GetCourse orders могут иметь module mapping только в `purchase_snapshot`; это надо считать допустимым фактом покупки, но только через UUID `module_list_mapped`, не через названия.
+- Для старых entitlements потребуется безопасное обновление meta, иначе UI продолжит скрывать контент.
+- Если у какого-то модуля нет активного training_content rule, нужно исправлять именно существующее правило/привязку, а не обходить фильтр в UI.
