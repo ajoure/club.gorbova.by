@@ -151,6 +151,81 @@ export async function resolveProductAccessRules(
   return rules;
 }
 
+/**
+ * Batch-build prior_purchase cache for a cohort.
+ * SOT: orders_v2.status='paid' only. NEVER reads entitlements/access_rules.
+ *
+ * @param userIds   All users to evaluate.
+ * @param productIds All product_ids that may appear in any rule's required_product_ids
+ *                   or as targets of per_product mode.
+ * @param excludeOrderId  If provided, that order_id is excluded (e.g., the very order being processed).
+ * @returns Map<user_id, Set<product_id>>
+ */
+export async function buildPriorPurchaseCache(
+  supabase: SupabaseClient,
+  userIds: string[],
+  productIds: string[],
+  excludeOrderId?: string,
+): Promise<Map<string, Set<string>>> {
+  const cache = new Map<string, Set<string>>();
+  if (userIds.length === 0 || productIds.length === 0) return cache;
+
+  const uniqueUsers = [...new Set(userIds.filter((u): u is string => !!u))];
+  const uniqueProducts = [...new Set(productIds.filter((p): p is string => !!p))];
+
+  // Chunk users to keep IN-list manageable
+  const CHUNK = 500;
+  for (let i = 0; i < uniqueUsers.length; i += CHUNK) {
+    const slice = uniqueUsers.slice(i, i + CHUNK);
+    let q = supabase
+      .from('orders_v2')
+      .select('user_id, product_id, id')
+      .eq('status', 'paid')
+      .in('user_id', slice)
+      .in('product_id', uniqueProducts);
+
+    if (excludeOrderId) {
+      q = q.neq('id', excludeOrderId);
+    }
+
+    // pull all matching rows (chunked further by Supabase limit)
+    let from = 0;
+    const PAGE = 1000;
+    while (true) {
+      const { data, error } = await q.range(from, from + PAGE - 1);
+      if (error) throw error;
+      const rows = data || [];
+      for (const row of rows as Array<{ user_id: string; product_id: string }>) {
+        if (!row.user_id || !row.product_id) continue;
+        if (!cache.has(row.user_id)) cache.set(row.user_id, new Set());
+        cache.get(row.user_id)!.add(row.product_id);
+      }
+      if (rows.length < PAGE) break;
+      from += PAGE;
+    }
+  }
+
+  return cache;
+}
+
+/** Collect all product_ids referenced by a rule list (required_product_ids + per_product targets). */
+export function collectPriorPurchaseProductIds(rules: InternalRule[]): string[] {
+  const ids = new Set<string>();
+  for (const r of rules) {
+    const cond = r.conditions || {};
+    if (cond.condition_type !== 'prior_purchase') continue;
+    const reqList: string[] = Array.isArray(cond.required_product_ids)
+      ? cond.required_product_ids
+      : cond.required_product_id ? [cond.required_product_id] : [];
+    for (const id of reqList) if (typeof id === 'string') ids.add(id);
+    // per_product: also include target_product_ids
+    if ((cond.match_mode || 'any') === 'per_product') {
+      for (const tid of resolveTargetProductIds(r)) ids.add(tid);
+    }
+  }
+  return [...ids];
+}
+
 /** Extract canonical UUID list of target products from rule.conditions / target_ref. */
 export function resolveTargetProductIds(rule: InternalRule, ruleTargetRef?: string | null): string[] {
   const cond = rule.conditions || {};
@@ -175,11 +250,22 @@ export async function syncSecondaryProductAccessForUser(
     sourceSubscription: { id: string; access_end_at: string | null } | null;
     rules: InternalRule[];
     excludeOrderId?: string;
+    /**
+     * Optional pre-built prior_purchase cache to avoid N+1 queries.
+     * Key = userId, Value = Set of product_ids the user has paid for (orders_v2.status='paid').
+     * If not provided, helper falls back to per-product checkPriorPurchase (single webhook flow).
+     */
+    priorPurchaseCache?: Map<string, Set<string>>;
     ctx: SecondaryGrantContext;
   },
 ): Promise<SecondaryGrantAction[]> {
-  const { userId, profileId, sourceProductId, sourceTariffId, sourceSubscription, rules, ctx } = params;
+  const { userId, profileId, sourceProductId, sourceTariffId, sourceSubscription, rules, ctx, priorPurchaseCache } = params;
   const excludeOrderId = params.excludeOrderId || '00000000-0000-0000-0000-000000000000';
+  const userPaidSet = priorPurchaseCache?.get(userId) ?? null;
+
+  const hasPriorFromCache = (productId: string): boolean => {
+    return userPaidSet ? userPaidSet.has(productId) : false;
+  };
 
   const out: SecondaryGrantAction[] = [];
   if (rules.length === 0) return out;
@@ -231,20 +317,32 @@ export async function syncSecondaryProductAccessForUser(
         let conditionMet = false;
         if (matchMode === 'per_product') {
           // For per_product, the prior purchase must match this specific target product
-          // Match canonical behavior of grant-access-for-order: only check when the target is in the list
           if (reqList.length === 0 || reqList.includes(targetProdId)) {
-            const r = await checkPriorPurchase(supabase, userId, targetProdId, excludeOrderId);
-            conditionMet = r.found;
+            if (priorPurchaseCache) {
+              conditionMet = hasPriorFromCache(targetProdId);
+            } else {
+              const r = await checkPriorPurchase(supabase, userId, targetProdId, excludeOrderId);
+              conditionMet = r.found;
+            }
           }
         } else {
           // any/all
-          for (const reqId of reqList) {
-            const r = await checkPriorPurchase(supabase, userId, reqId, excludeOrderId);
-            if (matchMode === 'any' && r.found) { conditionMet = true; break; }
-            if (matchMode === 'all' && !r.found) { conditionMet = false; break; }
-            if (matchMode === 'all') conditionMet = true;
+          if (reqList.length === 0) {
+            conditionMet = true;
+          } else if (priorPurchaseCache) {
+            if (matchMode === 'all') {
+              conditionMet = reqList.every((id) => hasPriorFromCache(id));
+            } else {
+              conditionMet = reqList.some((id) => hasPriorFromCache(id));
+            }
+          } else {
+            for (const reqId of reqList) {
+              const r = await checkPriorPurchase(supabase, userId, reqId, excludeOrderId);
+              if (matchMode === 'any' && r.found) { conditionMet = true; break; }
+              if (matchMode === 'all' && !r.found) { conditionMet = false; break; }
+              if (matchMode === 'all') conditionMet = true;
+            }
           }
-          if (reqList.length === 0) conditionMet = true; // no condition → pass
         }
 
         if (!conditionMet) {
