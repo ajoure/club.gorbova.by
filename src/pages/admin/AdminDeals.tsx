@@ -1185,6 +1185,7 @@ export default function AdminDeals() {
           tariffIds={selectedTariffIds}
           dateFrom={dateFilter.from}
           dateTo={dateFilter.to}
+          extraFilters={extraFilters}
           onOpenDeal={(id) => setSelectedDealId(id)}
         />
       )}
