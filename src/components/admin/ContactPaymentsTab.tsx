@@ -315,14 +315,14 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
   return (
     <div className="space-y-4">
       {/* Header with re-autolink button */}
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold flex items-center gap-2">
-          <CreditCard className="w-5 h-5" />
-          Платежи
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <h3 className="text-lg font-semibold flex items-center gap-2 min-w-0">
+          <CreditCard className="w-5 h-5 shrink-0" />
+          <span className="truncate">Платежи</span>
         </h3>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {linkedCards && linkedCards.length > 0 && (
-            <span className="text-xs text-muted-foreground">
+            <span className="text-xs text-muted-foreground whitespace-nowrap">
               {linkedCards.length} карт{linkedCards.length === 1 ? 'а' : linkedCards.length < 5 ? 'ы' : ''}
             </span>
           )}
@@ -381,23 +381,23 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
           </div>
           {payments.map((payment) => (
             <Card key={payment.id} className="hover:bg-muted/50 transition-colors">
-              <CardContent className="py-3 px-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    {getTransactionIcon(payment.transaction_type)}
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">
+              <CardContent className="py-3 px-3 sm:px-4">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 min-w-0">
+                  <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                    <div className="shrink-0 mt-0.5">{getTransactionIcon(payment.transaction_type)}</div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium whitespace-nowrap">
                           {payment.amount ? `${payment.amount.toLocaleString('ru-RU')} BYN` : '—'}
                         </span>
                         {getStatusBadge(payment.status)}
                       </div>
-                      <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5">
+                      <div className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5 flex-wrap">
                         <span>{getTransactionLabel(payment.transaction_type)}</span>
                         {payment.paid_at && (
                           <>
                             <span>•</span>
-                            <span>
+                            <span className="whitespace-nowrap">
                               {format(new Date(payment.paid_at), 'dd MMM yyyy, HH:mm', { locale: ru })}
                             </span>
                           </>
@@ -405,16 +405,16 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
                         {payment.card_last4 && (
                           <>
                             <span>•</span>
-                            <span className="font-mono">****{payment.card_last4}</span>
+                            <span className="font-mono whitespace-nowrap">****{payment.card_last4}</span>
                           </>
                         )}
                       </div>
                     </div>
                   </div>
-                  
-                  <div className="flex items-center gap-2">
+
+                  <div className="flex items-center gap-1.5 flex-wrap min-w-0 sm:justify-end sm:shrink-0">
                     {payment.productName && (
-                      <Badge variant="outline" className="text-xs gap-1 max-w-[200px] truncate">
+                      <Badge variant="outline" className="text-xs gap-1 max-w-full sm:max-w-[200px] min-w-0">
                         <ProductCategoryBadge category={(payment as any).category} />
                         <Layers className="w-3 h-3 shrink-0 text-indigo-500" />
                         <span className="truncate">{payment.productName}</span>
@@ -427,7 +427,7 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="h-7 w-7 p-0"
+                        className="h-7 w-7 p-0 shrink-0"
                         onClick={() => window.open(`/admin/orders/${payment.order_id}`, '_blank')}
                         title="Открыть заказ"
                       >
