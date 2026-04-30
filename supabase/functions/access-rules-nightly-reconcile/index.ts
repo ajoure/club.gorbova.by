@@ -143,7 +143,16 @@ Deno.serve(async (req) => {
     // 4. Iterate subscriptions, run helper.
     const buckets = emptyBuckets();
     const sampleActions: SecondaryGrantAction[] = [];
+    const sampleConditionNotMet: SecondaryGrantAction[] = [];
     let processed = 0;
+    let moduleListMappedMatches = 0;
+
+    // Tally module_list_mapped matches across the cache for observability.
+    for (const userMap of priorPurchaseCache.values()) {
+      for (const info of userMap.values()) {
+        if (info.match_type === 'module_list_mapped') moduleListMappedMatches++;
+      }
+    }
 
     for (const s of subscriptions) {
       const rules = rulesByKey.get(ruleCacheKey(s.product_id, s.tariff_id)) || [];
@@ -167,12 +176,14 @@ Deno.serve(async (req) => {
       });
 
       for (const a of actions) bumpBucket(buckets, a);
-      if (sampleActions.length < 50) {
-        for (const a of actions) {
-          if (sampleActions.length >= 50) break;
-          if (a.outcome !== 'already_satisfied' && a.outcome !== 'condition_not_met') {
-            sampleActions.push(a);
-          }
+      for (const a of actions) {
+        if (sampleActions.length < 50
+            && a.outcome !== 'already_satisfied'
+            && a.outcome !== 'condition_not_met') {
+          sampleActions.push(a);
+        }
+        if (sampleConditionNotMet.length < 50 && a.outcome === 'condition_not_met') {
+          sampleConditionNotMet.push(a);
         }
       }
       processed++;
