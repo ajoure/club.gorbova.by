@@ -831,3 +831,91 @@ async function writeFailedLedger(
     console.error('[product-access-grants] failed ledger failed', e);
   }
 }
+
+/**
+ * Decide which meta keys must be backfilled on an `already_satisfied` entitlement.
+ * Strict rules:
+ *   - Only keys derived from priorInfo are eligible (no expires_at, no status, no lineage).
+ *   - A key is selected only if it is missing, null, empty array, or differs from the
+ *     value computed by buildEnrichedMeta (i.e., truly incomplete).
+ *   - Returns [] when nothing needs to be patched.
+ */
+function computeMetaBackfillKeys(
+  currentMeta: Record<string, any>,
+  enrichedMeta: Record<string, any>,
+  _priorInfo: PriorPurchaseInfo,
+): string[] {
+  const candidates = [
+    'scope_resolution_mode',
+    'prior_purchase_match_type',
+    'prior_purchase_order_id',
+    'historical_purchase_type',
+    'historical_tariff_id',
+    'historical_module_product_ids',
+  ];
+  const out: string[] = [];
+  for (const key of candidates) {
+    const desired = enrichedMeta[key];
+    if (desired === undefined || desired === null) continue;
+    if (key === 'historical_module_product_ids' && Array.isArray(desired) && desired.length === 0) continue;
+
+    const current = currentMeta[key];
+    const missing = current === undefined
+      || current === null
+      || (Array.isArray(current) && current.length === 0)
+      || (typeof current === 'string' && current.trim() === '');
+
+    if (missing) {
+      out.push(key);
+    }
+  }
+  return out;
+}
+
+/**
+ * Ledger row for safe meta-only backfill on already_satisfied entitlements.
+ * action_type='skip' / status='skipped' (no business-state change),
+ * reason_code='already_active' (closest valid code), result.outcome='metadata_backfilled'.
+ */
+async function writeMetadataBackfillLedger(
+  supabase: SupabaseClient,
+  ctx: SecondaryGrantContext,
+  action: SecondaryGrantAction,
+  backfilledKeys: string[],
+) {
+  if (ctx.dryRun) return;
+  try {
+    const eventKey = `${ctx.sourceEventKeyPrefix}:${action.rule_id}:${action.target_product_id}:meta_backfill`;
+    await writeLedgerEntry(supabase, {
+      source_event_type: ctx.sourceEventType,
+      source_event_key: eventKey,
+      source_subject_type: ctx.sourceSubjectType,
+      source_subject_ref: action.source_subscription_id || ctx.orderId || null,
+      source_subscription_id: action.source_subscription_id,
+      source_order_id: ctx.orderId || null,
+      action_type: 'skip',
+      reason_code: 'already_active',
+      target_type: 'product',
+      target_key: `${action.user_id}:${action.target_product_id}`,
+      target_ref: null,
+      user_id: action.user_id,
+      profile_id: action.profile_id,
+      order_id: ctx.orderId || null,
+      status: 'skipped',
+      result: {
+        rule_id: action.rule_id,
+        target_product_id: action.target_product_id,
+        outcome: 'metadata_backfilled',
+        backfilled_keys: backfilledKeys,
+      },
+      metadata: {
+        backfill_kind: 'secondary_product_access_meta',
+        backfilled_keys: backfilledKeys,
+      },
+      parent_event_key: ctx.parentEventKey || null,
+      parent_execution_key: ctx.parentExecutionKey || null,
+    });
+  } catch (e) {
+    console.error('[product-access-grants] meta-backfill ledger failed', e);
+  }
+}
