@@ -151,6 +151,81 @@ export async function resolveProductAccessRules(
   return rules;
 }
 
+/**
+ * Batch-build prior_purchase cache for a cohort.
+ * SOT: orders_v2.status='paid' only. NEVER reads entitlements/access_rules.
+ *
+ * @param userIds   All users to evaluate.
+ * @param productIds All product_ids that may appear in any rule's required_product_ids
+ *                   or as targets of per_product mode.
+ * @param excludeOrderId  If provided, that order_id is excluded (e.g., the very order being processed).
+ * @returns Map<user_id, Set<product_id>>
+ */
+export async function buildPriorPurchaseCache(
+  supabase: SupabaseClient,
+  userIds: string[],
+  productIds: string[],
+  excludeOrderId?: string,
+): Promise<Map<string, Set<string>>> {
+  const cache = new Map<string, Set<string>>();
+  if (userIds.length === 0 || productIds.length === 0) return cache;
+
+  const uniqueUsers = [...new Set(userIds.filter((u): u is string => !!u))];
+  const uniqueProducts = [...new Set(productIds.filter((p): p is string => !!p))];
+
+  // Chunk users to keep IN-list manageable
+  const CHUNK = 500;
+  for (let i = 0; i < uniqueUsers.length; i += CHUNK) {
+    const slice = uniqueUsers.slice(i, i + CHUNK);
+    let q = supabase
+      .from('orders_v2')
+      .select('user_id, product_id, id')
+      .eq('status', 'paid')
+      .in('user_id', slice)
+      .in('product_id', uniqueProducts);
+
+    if (excludeOrderId) {
+      q = q.neq('id', excludeOrderId);
+    }
+
+    // pull all matching rows (chunked further by Supabase limit)
+    let from = 0;
+    const PAGE = 1000;
+    while (true) {
+      const { data, error } = await q.range(from, from + PAGE - 1);
+      if (error) throw error;
+      const rows = data || [];
+      for (const row of rows as Array<{ user_id: string; product_id: string }>) {
+        if (!row.user_id || !row.product_id) continue;
+        if (!cache.has(row.user_id)) cache.set(row.user_id, new Set());
+        cache.get(row.user_id)!.add(row.product_id);
+      }
+      if (rows.length < PAGE) break;
+      from += PAGE;
+    }
+  }
+
+  return cache;
+}
+
+/** Collect all product_ids referenced by a rule list (required_product_ids + per_product targets). */
+export function collectPriorPurchaseProductIds(rules: InternalRule[]): string[] {
+  const ids = new Set<string>();
+  for (const r of rules) {
+    const cond = r.conditions || {};
+    if (cond.condition_type !== 'prior_purchase') continue;
+    const reqList: string[] = Array.isArray(cond.required_product_ids)
+      ? cond.required_product_ids
+      : cond.required_product_id ? [cond.required_product_id] : [];
+    for (const id of reqList) if (typeof id === 'string') ids.add(id);
+    // per_product: also include target_product_ids
+    if ((cond.match_mode || 'any') === 'per_product') {
+      for (const tid of resolveTargetProductIds(r)) ids.add(tid);
+    }
+  }
+  return [...ids];
+}
+
 /** Extract canonical UUID list of target products from rule.conditions / target_ref. */
 export function resolveTargetProductIds(rule: InternalRule, ruleTargetRef?: string | null): string[] {
   const cond = rule.conditions || {};
