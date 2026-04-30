@@ -618,8 +618,10 @@ function buildEnrichedMeta(p: {
   source_tariff_id: string | null;
   source_access_end_at: string | null;
   source_window_rule: 'rule_duration' | 'align_with_source';
+  prior_purchase: PriorPurchaseInfo | null;
+  target_product_id: string;
 }) {
-  return {
+  const base: Record<string, any> = {
     granted_by: 'rule_engine_product_access',
     source_type: 'rule_engine',
     source_rule_id: p.rule_id,
@@ -629,6 +631,33 @@ function buildEnrichedMeta(p: {
     source_access_end_at: p.source_access_end_at,
     source_window_rule: p.source_window_rule,
   };
+
+  if (p.prior_purchase) {
+    const pp = p.prior_purchase;
+    base.prior_purchase_match_type = pp.match_type;
+    base.prior_purchase_order_id = pp.order_id;
+    base.historical_purchase_type = pp.historical_purchase_type;
+    base.historical_tariff_id = pp.historical_tariff_id;
+    base.historical_module_product_ids = pp.historical_module_product_ids;
+    // Read-path SOT: useTrainingContentRules consumes scope_resolution_mode.
+    // Module-only standalone history → bonus must be scoped to those modules.
+    // Full tariff/product purchase → full tariff scope.
+    // Anything else → safe default of no_scope (never silent full access).
+    let scopeResolutionMode: string;
+    if (pp.match_type === 'module_list_mapped'
+        || pp.historical_purchase_type === 'module_only_standalone'
+        || pp.historical_purchase_type === 'module_child_purchase') {
+      scopeResolutionMode = pp.historical_module_product_ids.length > 0
+        ? 'module_scope_only' : 'manual_review';
+    } else if (pp.historical_tariff_id || pp.historical_purchase_type === 'base_tariff_purchase') {
+      scopeResolutionMode = 'full_tariff_scope';
+    } else {
+      scopeResolutionMode = 'no_scope';
+    }
+    base.scope_resolution_mode = scopeResolutionMode;
+  }
+
+  return base;
 }
 
 /** Treat entitlement lineage as safe to update if it was originally created by rule engine
