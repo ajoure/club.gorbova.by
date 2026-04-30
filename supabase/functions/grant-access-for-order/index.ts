@@ -491,7 +491,40 @@ Deno.serve(async (req) => {
 
     if (entitlementMatchesProduct && (subscriptionMatchesOrder || subscriptionExtendedByOrder)) {
       const guardSource = subscriptionMatchesOrder ? "order_id" : "extended_by_orders";
-      console.log(`[grant-access] IDEMPOTENCY GUARD: order ${orderId} already fulfilled (product ${productId}, match via ${guardSource}). Entitlement: ${existingEntByOrder.id}, Subscription: ${resolvedSubscription!.id}. Strict no-op.`);
+      console.log(`[grant-access] IDEMPOTENCY GUARD: order ${orderId} already fulfilled (product ${productId}, match via ${guardSource}). Running secondary product_access sync to ensure bonus grants are present.`);
+
+      // Even if primary access already exists, secondary product_access bonuses
+      // could have been missed previously (race / partial failure / rule update).
+      // Run idempotent secondary sync via shared helper before returning.
+      let secondaryActions: any[] = [];
+      try {
+        const rules = await resolveProductAccessRules(
+          supabase,
+          productId,
+          order.tariff_id || null,
+        );
+        if (rules.length > 0) {
+          secondaryActions = await syncSecondaryProductAccessForUser(supabase, {
+            userId,
+            profileId: order.profile_id || null,
+            sourceProductId: productId,
+            sourceTariffId: order.tariff_id || null,
+            sourceSubscription: resolvedSubscription
+              ? { id: resolvedSubscription.id, access_end_at: resolvedSubscription.access_end_at }
+              : null,
+            rules,
+            excludeOrderId: orderId,
+            ctx: {
+              sourceEventType: 'webhook',
+              sourceSubjectType: 'order',
+              sourceEventKeyPrefix: `gafo:idempotent_resync:${orderId}`,
+              orderId,
+            },
+          });
+        }
+      } catch (e) {
+        console.error('[grant-access] secondary sync on idempotent path failed (non-critical):', e);
+      }
 
       await supabase.from("audit_logs").insert({
         action: "grant-access-for-order.skip_already_fulfilled",
@@ -509,6 +542,11 @@ Deno.serve(async (req) => {
           subscription_status: resolvedSubscription!.status,
           subscription_access_end_at: resolvedSubscription!.access_end_at,
           guard_match_source: guardSource,
+          secondary_sync_count: secondaryActions.length,
+          secondary_sync_outcomes: secondaryActions.reduce((acc: any, a: any) => {
+            acc[a.outcome] = (acc[a.outcome] || 0) + 1;
+            return acc;
+          }, {}),
         },
       });
 
@@ -522,6 +560,7 @@ Deno.serve(async (req) => {
             subscription_id: resolvedSubscription!.id,
             guard_match_source: guardSource,
           },
+          product_access: secondaryActions,
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
