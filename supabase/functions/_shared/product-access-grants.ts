@@ -152,56 +152,135 @@ export async function resolveProductAccessRules(
 }
 
 /**
+ * Information about a prior paid purchase for a single (user, target_product_id).
+ * Captured during batch cache build so the helper can enrich entitlement.meta
+ * for the runtime read-path (scope_resolution_mode, historical_module_product_ids).
+ */
+export interface PriorPurchaseInfo {
+  match_type: 'direct' | 'module_list_mapped';
+  order_id: string;
+  historical_purchase_type: string | null;
+  historical_tariff_id: string | null;
+  historical_module_product_ids: string[];
+}
+
+export type PriorPurchaseCache = Map<string, Map<string, PriorPurchaseInfo>>;
+
+/**
  * Batch-build prior_purchase cache for a cohort.
  * SOT: orders_v2.status='paid' only. NEVER reads entitlements/access_rules.
+ *
+ * Two evidence channels (both UUID-only, NEVER name/slug):
+ *   1. Direct match: orders_v2.product_id = target_product_id
+ *   2. Module fallback: purchase_snapshot.historical_purchase_type='module_only_standalone'
+ *      AND purchase_snapshot.module_list_mapped contains target_product_id
  *
  * @param userIds   All users to evaluate.
  * @param productIds All product_ids that may appear in any rule's required_product_ids
  *                   or as targets of per_product mode.
  * @param excludeOrderId  If provided, that order_id is excluded (e.g., the very order being processed).
- * @returns Map<user_id, Set<product_id>>
+ * @returns PriorPurchaseCache: Map<user_id, Map<target_product_id, PriorPurchaseInfo>>
  */
 export async function buildPriorPurchaseCache(
   supabase: SupabaseClient,
   userIds: string[],
   productIds: string[],
   excludeOrderId?: string,
-): Promise<Map<string, Set<string>>> {
-  const cache = new Map<string, Set<string>>();
+): Promise<PriorPurchaseCache> {
+  const cache: PriorPurchaseCache = new Map();
   if (userIds.length === 0 || productIds.length === 0) return cache;
 
   const uniqueUsers = [...new Set(userIds.filter((u): u is string => !!u))];
   const uniqueProducts = [...new Set(productIds.filter((p): p is string => !!p))];
 
+  const recordInfo = (userId: string, productId: string, info: PriorPurchaseInfo) => {
+    if (!cache.has(userId)) cache.set(userId, new Map());
+    const userMap = cache.get(userId)!;
+    const existing = userMap.get(productId);
+    // Prefer 'direct' over 'module_list_mapped' evidence; otherwise keep first-seen.
+    if (!existing || (existing.match_type === 'module_list_mapped' && info.match_type === 'direct')) {
+      userMap.set(productId, info);
+    }
+  };
+
   // Chunk users to keep IN-list manageable
   const CHUNK = 500;
   for (let i = 0; i < uniqueUsers.length; i += CHUNK) {
     const slice = uniqueUsers.slice(i, i + CHUNK);
-    let q = supabase
-      .from('orders_v2')
-      .select('user_id, product_id, id')
-      .eq('status', 'paid')
-      .in('user_id', slice)
-      .in('product_id', uniqueProducts);
 
-    if (excludeOrderId) {
-      q = q.neq('id', excludeOrderId);
+    // ── Channel 1: direct product match ─────────────────────────────────
+    {
+      let q = supabase
+        .from('orders_v2')
+        .select('user_id, product_id, id, tariff_id, purchase_snapshot')
+        .eq('status', 'paid')
+        .in('user_id', slice)
+        .in('product_id', uniqueProducts);
+      if (excludeOrderId) q = q.neq('id', excludeOrderId);
+
+      let from = 0;
+      const PAGE = 1000;
+      while (true) {
+        const { data, error } = await q.range(from, from + PAGE - 1);
+        if (error) throw error;
+        const rows = data || [];
+        for (const row of rows as Array<{
+          user_id: string; product_id: string; id: string;
+          tariff_id: string | null; purchase_snapshot: Record<string, any> | null;
+        }>) {
+          if (!row.user_id || !row.product_id) continue;
+          const snapshot = row.purchase_snapshot || {};
+          recordInfo(row.user_id, row.product_id, {
+            match_type: 'direct',
+            order_id: row.id,
+            historical_purchase_type: snapshot.historical_purchase_type
+              || (row.tariff_id ? 'base_tariff_purchase' : null),
+            historical_tariff_id: row.tariff_id || (snapshot.tariff_id || null),
+            historical_module_product_ids: Array.isArray(snapshot.module_list_mapped)
+              ? snapshot.module_list_mapped : [],
+          });
+        }
+        if (rows.length < PAGE) break;
+        from += PAGE;
+      }
     }
 
-    // pull all matching rows (chunked further by Supabase limit)
-    let from = 0;
-    const PAGE = 1000;
-    while (true) {
-      const { data, error } = await q.range(from, from + PAGE - 1);
-      if (error) throw error;
-      const rows = data || [];
-      for (const row of rows as Array<{ user_id: string; product_id: string }>) {
-        if (!row.user_id || !row.product_id) continue;
-        if (!cache.has(row.user_id)) cache.set(row.user_id, new Set());
-        cache.get(row.user_id)!.add(row.product_id);
+    // ── Channel 2: module_list_mapped fallback ──────────────────────────
+    // For each target product_id, check if any paid module-only standalone order
+    // contains it in purchase_snapshot.module_list_mapped (UUID match).
+    // Use containment per product to leverage JSONB index.
+    for (const targetProdId of uniqueProducts) {
+      let q = supabase
+        .from('orders_v2')
+        .select('user_id, product_id, id, tariff_id, purchase_snapshot')
+        .eq('status', 'paid')
+        .in('user_id', slice)
+        .eq('purchase_snapshot->>historical_purchase_type', 'module_only_standalone')
+        .contains('purchase_snapshot', { module_list_mapped: [targetProdId] });
+      if (excludeOrderId) q = q.neq('id', excludeOrderId);
+
+      const { data, error } = await q.range(0, 999);
+      if (error) {
+        console.error('[product-access-grants] module fallback query error:', error.message);
+        continue;
       }
-      if (rows.length < PAGE) break;
-      from += PAGE;
+      for (const row of (data || []) as Array<{
+        user_id: string; product_id: string; id: string;
+        tariff_id: string | null; purchase_snapshot: Record<string, any> | null;
+      }>) {
+        if (!row.user_id) continue;
+        const snapshot = row.purchase_snapshot || {};
+        const moduleList = Array.isArray(snapshot.module_list_mapped) ? snapshot.module_list_mapped : [];
+        // Confirm UUID containment (defensive — query already filtered)
+        if (!moduleList.includes(targetProdId)) continue;
+        recordInfo(row.user_id, targetProdId, {
+          match_type: 'module_list_mapped',
+          order_id: row.id,
+          historical_purchase_type: 'module_only_standalone',
+          historical_tariff_id: row.tariff_id || (snapshot.tariff_id || null),
+          historical_module_product_ids: moduleList,
+        });
+      }
     }
   }
 
@@ -252,20 +331,21 @@ export async function syncSecondaryProductAccessForUser(
     excludeOrderId?: string;
     /**
      * Optional pre-built prior_purchase cache to avoid N+1 queries.
-     * Key = userId, Value = Set of product_ids the user has paid for (orders_v2.status='paid').
+     * Key = userId, Value = Map<target_product_id, PriorPurchaseInfo>.
      * If not provided, helper falls back to per-product checkPriorPurchase (single webhook flow).
      */
-    priorPurchaseCache?: Map<string, Set<string>>;
+    priorPurchaseCache?: PriorPurchaseCache;
     ctx: SecondaryGrantContext;
   },
 ): Promise<SecondaryGrantAction[]> {
   const { userId, profileId, sourceProductId, sourceTariffId, sourceSubscription, rules, ctx, priorPurchaseCache } = params;
   const excludeOrderId = params.excludeOrderId || '00000000-0000-0000-0000-000000000000';
-  const userPaidSet = priorPurchaseCache?.get(userId) ?? null;
+  const userPaidMap = priorPurchaseCache?.get(userId) ?? null;
 
-  const hasPriorFromCache = (productId: string): boolean => {
-    return userPaidSet ? userPaidSet.has(productId) : false;
+  const getPriorFromCache = (productId: string): PriorPurchaseInfo | null => {
+    return userPaidMap ? (userPaidMap.get(productId) ?? null) : null;
   };
+  const hasPriorFromCache = (productId: string): boolean => !!getPriorFromCache(productId);
 
   const out: SecondaryGrantAction[] = [];
   if (rules.length === 0) return out;
@@ -308,6 +388,7 @@ export async function syncSecondaryProductAccessForUser(
       };
 
       // 1. Per-product prior purchase check (when applicable)
+      let priorInfo: PriorPurchaseInfo | null = null;
       if (hasPriorPurchase) {
         const matchMode = conditions.match_mode || 'any';
         const reqList: string[] = Array.isArray(conditions.required_product_ids)
@@ -319,10 +400,23 @@ export async function syncSecondaryProductAccessForUser(
           // For per_product, the prior purchase must match this specific target product
           if (reqList.length === 0 || reqList.includes(targetProdId)) {
             if (priorPurchaseCache) {
-              conditionMet = hasPriorFromCache(targetProdId);
+              priorInfo = getPriorFromCache(targetProdId);
+              conditionMet = !!priorInfo;
             } else {
               const r = await checkPriorPurchase(supabase, userId, targetProdId, excludeOrderId);
               conditionMet = r.found;
+              if (r.found && r.order_data) {
+                const snap = r.order_data.purchase_snapshot || {};
+                priorInfo = {
+                  match_type: r.match_type as 'direct' | 'module_list_mapped',
+                  order_id: r.order_id!,
+                  historical_purchase_type: snap.historical_purchase_type
+                    || (r.order_data.tariff_id ? 'base_tariff_purchase' : null),
+                  historical_tariff_id: r.order_data.tariff_id || (snap.tariff_id || null),
+                  historical_module_product_ids: Array.isArray(snap.module_list_mapped)
+                    ? snap.module_list_mapped : [],
+                };
+              }
             }
           }
         } else {
@@ -399,6 +493,8 @@ export async function syncSecondaryProductAccessForUser(
         source_tariff_id: sourceTariffId,
         source_access_end_at: sourceSubscription?.access_end_at || null,
         source_window_rule: rule.duration_days ? 'rule_duration' : 'align_with_source',
+        prior_purchase: priorInfo,
+        target_product_id: targetProdId,
       });
 
       try {
@@ -522,8 +618,10 @@ function buildEnrichedMeta(p: {
   source_tariff_id: string | null;
   source_access_end_at: string | null;
   source_window_rule: 'rule_duration' | 'align_with_source';
+  prior_purchase: PriorPurchaseInfo | null;
+  target_product_id: string;
 }) {
-  return {
+  const base: Record<string, any> = {
     granted_by: 'rule_engine_product_access',
     source_type: 'rule_engine',
     source_rule_id: p.rule_id,
@@ -533,6 +631,33 @@ function buildEnrichedMeta(p: {
     source_access_end_at: p.source_access_end_at,
     source_window_rule: p.source_window_rule,
   };
+
+  if (p.prior_purchase) {
+    const pp = p.prior_purchase;
+    base.prior_purchase_match_type = pp.match_type;
+    base.prior_purchase_order_id = pp.order_id;
+    base.historical_purchase_type = pp.historical_purchase_type;
+    base.historical_tariff_id = pp.historical_tariff_id;
+    base.historical_module_product_ids = pp.historical_module_product_ids;
+    // Read-path SOT: useTrainingContentRules consumes scope_resolution_mode.
+    // Module-only standalone history → bonus must be scoped to those modules.
+    // Full tariff/product purchase → full tariff scope.
+    // Anything else → safe default of no_scope (never silent full access).
+    let scopeResolutionMode: string;
+    if (pp.match_type === 'module_list_mapped'
+        || pp.historical_purchase_type === 'module_only_standalone'
+        || pp.historical_purchase_type === 'module_child_purchase') {
+      scopeResolutionMode = pp.historical_module_product_ids.length > 0
+        ? 'module_scope_only' : 'manual_review';
+    } else if (pp.historical_tariff_id || pp.historical_purchase_type === 'base_tariff_purchase') {
+      scopeResolutionMode = 'full_tariff_scope';
+    } else {
+      scopeResolutionMode = 'no_scope';
+    }
+    base.scope_resolution_mode = scopeResolutionMode;
+  }
+
+  return base;
 }
 
 /** Treat entitlement lineage as safe to update if it was originally created by rule engine
