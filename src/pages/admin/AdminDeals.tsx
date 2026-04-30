@@ -169,6 +169,7 @@ function buildDealsQuery(
   tariffIds?: string[],
   pipelineId?: string | null,
   isDefaultPipeline?: boolean,
+  extraFilters?: DealsExtraFilters,
 ) {
   // Lightweight select: only columns used in the table row
   let query = supabase
@@ -242,6 +243,12 @@ function buildDealsQuery(
     } else {
       query = query.eq("pipeline_id", pipelineId);
     }
+  }
+
+  // Apply canonical extra filters (status, created range, price, stage,
+  // exact contact, advanced source/provider/recon, synthetic exclusion)
+  if (extraFilters) {
+    query = applyExtraDealFilters(query, extraFilters);
   }
 
   return query;
