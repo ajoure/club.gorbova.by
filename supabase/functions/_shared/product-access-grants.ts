@@ -493,6 +493,8 @@ export async function syncSecondaryProductAccessForUser(
         source_tariff_id: sourceTariffId,
         source_access_end_at: sourceSubscription?.access_end_at || null,
         source_window_rule: rule.duration_days ? 'rule_duration' : 'align_with_source',
+        prior_purchase: priorInfo,
+        target_product_id: targetProdId,
       });
 
       try {
