@@ -350,6 +350,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       tc_access_mode: "full",
       tc_allowed_module_ids: [],
       tc_allowed_lesson_ids: [],
+      tc_auto_include_new_modules: false,
     });
     setAdvancedOpen(false);
     setDialogOpen(true);
