@@ -333,6 +333,10 @@ export default function AdminDeals() {
     }, { replace: true });
   }, [setSearchParams]);
 
+
+  // Canonical extra filters (URL-synced)
+  const { filters: extraFilters, updateFilters: updateExtraFilters, resetExtraFilters, activeCount: extraActiveCount } = useDealsFilters();
+
   // Pipelines
   const { pipelines, isLoading: pipelinesLoading, createPipeline: createPipelineFn, renamePipeline: renamePipelineFn, deletePipeline: deletePipelineFn, reorderPipelines: reorderPipelinesFn } = usePipelines();
   const activePipelineId = selectedPipelineId || pipelines.find((p) => p.is_default)?.id || pipelines[0]?.id || null;
