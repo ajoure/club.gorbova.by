@@ -1119,6 +1119,13 @@ export default function AdminDeals() {
         {/* Period + actions */}
         <div className="flex items-center gap-1.5 ml-auto">
           <PeriodSelector value={dateFilter} onChange={setDateFilter} />
+          <DealsFiltersBar
+            filters={extraFilters}
+            onChange={updateExtraFilters}
+            onReset={resetExtraFilters}
+            activeCount={extraActiveCount}
+            pipelineStages={activePipelineStages}
+          />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="h-7 w-7 p-0" disabled={allDeals.length === 0}>
