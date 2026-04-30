@@ -388,6 +388,7 @@ export async function syncSecondaryProductAccessForUser(
       };
 
       // 1. Per-product prior purchase check (when applicable)
+      let priorInfo: PriorPurchaseInfo | null = null;
       if (hasPriorPurchase) {
         const matchMode = conditions.match_mode || 'any';
         const reqList: string[] = Array.isArray(conditions.required_product_ids)
@@ -399,10 +400,23 @@ export async function syncSecondaryProductAccessForUser(
           // For per_product, the prior purchase must match this specific target product
           if (reqList.length === 0 || reqList.includes(targetProdId)) {
             if (priorPurchaseCache) {
-              conditionMet = hasPriorFromCache(targetProdId);
+              priorInfo = getPriorFromCache(targetProdId);
+              conditionMet = !!priorInfo;
             } else {
               const r = await checkPriorPurchase(supabase, userId, targetProdId, excludeOrderId);
               conditionMet = r.found;
+              if (r.found && r.order_data) {
+                const snap = r.order_data.purchase_snapshot || {};
+                priorInfo = {
+                  match_type: r.match_type as 'direct' | 'module_list_mapped',
+                  order_id: r.order_id!,
+                  historical_purchase_type: snap.historical_purchase_type
+                    || (r.order_data.tariff_id ? 'base_tariff_purchase' : null),
+                  historical_tariff_id: r.order_data.tariff_id || (snap.tariff_id || null),
+                  historical_module_product_ids: Array.isArray(snap.module_list_mapped)
+                    ? snap.module_list_mapped : [],
+                };
+              }
             }
           }
         } else {
