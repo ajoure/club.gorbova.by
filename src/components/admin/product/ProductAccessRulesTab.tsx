@@ -396,6 +396,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
     tc_access_mode: "full" as "full" | "partial",
     tc_allowed_module_ids: [] as string[],
     tc_allowed_lesson_ids: [] as string[],
+    tc_auto_include_new_modules: false,
   });
 
   // Tree picker for training_content
@@ -518,6 +519,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       tc_access_mode: "full",
       tc_allowed_module_ids: [],
       tc_allowed_lesson_ids: [],
+      tc_auto_include_new_modules: false,
     });
     setAdvancedOpen(false);
     setDialogOpen(true);
@@ -573,6 +575,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       tc_access_mode: tcAccessMode,
       tc_allowed_module_ids: tcAllowedModuleIds,
       tc_allowed_lesson_ids: tcAllowedLessonIds,
+      tc_auto_include_new_modules: Boolean(conditions.auto_include_new_modules),
     });
     setAdvancedOpen(false);
     setDialogOpen(true);
@@ -634,9 +637,13 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
         const normalized = normalizeTrainingContentPayload(form.tc_allowed_module_ids, form.tc_allowed_lesson_ids, trainingTree);
         conditions.allowed_module_ids = normalized.allowed_module_ids;
         conditions.allowed_lesson_ids = normalized.allowed_lesson_ids;
+        // partial: явно фиксируем флаг авто-включения новых папок (по умолчанию выключен)
+        conditions.auto_include_new_modules = Boolean(form.tc_auto_include_new_modules);
       } else {
         conditions.allowed_module_ids = [];
         conditions.allowed_lesson_ids = [];
+        // full: флаг авто-включения не нужен — full и так видит все будущие модули
+        delete conditions.auto_include_new_modules;
       }
     }
 
