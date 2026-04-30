@@ -331,20 +331,21 @@ export async function syncSecondaryProductAccessForUser(
     excludeOrderId?: string;
     /**
      * Optional pre-built prior_purchase cache to avoid N+1 queries.
-     * Key = userId, Value = Set of product_ids the user has paid for (orders_v2.status='paid').
+     * Key = userId, Value = Map<target_product_id, PriorPurchaseInfo>.
      * If not provided, helper falls back to per-product checkPriorPurchase (single webhook flow).
      */
-    priorPurchaseCache?: Map<string, Set<string>>;
+    priorPurchaseCache?: PriorPurchaseCache;
     ctx: SecondaryGrantContext;
   },
 ): Promise<SecondaryGrantAction[]> {
   const { userId, profileId, sourceProductId, sourceTariffId, sourceSubscription, rules, ctx, priorPurchaseCache } = params;
   const excludeOrderId = params.excludeOrderId || '00000000-0000-0000-0000-000000000000';
-  const userPaidSet = priorPurchaseCache?.get(userId) ?? null;
+  const userPaidMap = priorPurchaseCache?.get(userId) ?? null;
 
-  const hasPriorFromCache = (productId: string): boolean => {
-    return userPaidSet ? userPaidSet.has(productId) : false;
+  const getPriorFromCache = (productId: string): PriorPurchaseInfo | null => {
+    return userPaidMap ? (userPaidMap.get(productId) ?? null) : null;
   };
+  const hasPriorFromCache = (productId: string): boolean => !!getPriorFromCache(productId);
 
   const out: SecondaryGrantAction[] = [];
   if (rules.length === 0) return out;
