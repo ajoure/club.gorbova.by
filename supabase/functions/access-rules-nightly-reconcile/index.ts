@@ -235,6 +235,7 @@ Deno.serve(async (req) => {
           conflict_other_rule: buckets.conflict_other_rule,
           conflict_multiple: buckets.conflict_multiple,
           failed: buckets.failed,
+          module_list_mapped_matches: moduleListMappedMatches,
           elapsed_ms: elapsedMs,
         },
       });
