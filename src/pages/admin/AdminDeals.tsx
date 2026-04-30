@@ -94,8 +94,12 @@ import { PeriodSelector, DateFilter } from "@/components/ui/period-selector";
 import { ArchiveCleanupDialog } from "@/components/admin/ArchiveCleanupDialog";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { usePipelines } from "@/hooks/usePipelines";
+import { usePipelineStages } from "@/hooks/usePipelineStages";
 import { DealsKanbanBoard } from "@/components/admin/deals/DealsKanbanBoard";
 import { PipelineManagementPopover } from "@/components/admin/deals/PipelineManagementPopover";
+import { DealsFiltersBar } from "@/components/admin/deals/DealsFiltersBar";
+import { useDealsFilters, type DealsExtraFilters } from "@/hooks/useDealsFilters";
+import { applyExtraDealFilters } from "@/utils/applyExtraDealFilters";
 
 const PAGE_SIZE = 100;
 
@@ -166,6 +170,7 @@ function buildDealsQuery(
   tariffIds?: string[],
   pipelineId?: string | null,
   isDefaultPipeline?: boolean,
+  extraFilters?: DealsExtraFilters,
 ) {
   // Lightweight select: only columns used in the table row
   let query = supabase
@@ -239,6 +244,12 @@ function buildDealsQuery(
     } else {
       query = query.eq("pipeline_id", pipelineId);
     }
+  }
+
+  // Apply canonical extra filters (status, created range, price, stage,
+  // exact contact, advanced source/provider/recon, synthetic exclusion)
+  if (extraFilters) {
+    query = applyExtraDealFilters(query, extraFilters);
   }
 
   return query;
@@ -323,9 +334,14 @@ export default function AdminDeals() {
     }, { replace: true });
   }, [setSearchParams]);
 
+
+  // Canonical extra filters (URL-synced)
+  const { filters: extraFilters, updateFilters: updateExtraFilters, resetExtraFilters, activeCount: extraActiveCount } = useDealsFilters();
+
   // Pipelines
   const { pipelines, isLoading: pipelinesLoading, createPipeline: createPipelineFn, renamePipeline: renamePipelineFn, deletePipeline: deletePipelineFn, reorderPipelines: reorderPipelinesFn } = usePipelines();
   const activePipelineId = selectedPipelineId || pipelines.find((p) => p.is_default)?.id || pipelines[0]?.id || null;
+  const { stages: activePipelineStages = [] } = usePipelineStages(activePipelineId);
 
   // Deal counts per pipeline (for delete guards)
   const { data: pipelineDealCounts } = useQuery({
@@ -442,7 +458,7 @@ export default function AdminDeals() {
     isFetchingNextPage,
     refetch,
   } = useInfiniteQuery({
-    queryKey: ["admin-deals", activePreset, debouncedSearch, selectedProductId, selectedTariffIds, dateFilter, activePipelineId],
+    queryKey: ["admin-deals", activePreset, debouncedSearch, selectedProductId, selectedTariffIds, dateFilter, activePipelineId, extraFilters],
     queryFn: async ({ pageParam = 0 }) => {
       // When search is active → use RPC for full-name search across profiles
       if (debouncedSearch) {
@@ -469,6 +485,28 @@ export default function AdminDeals() {
             return r.pipeline_id === activePipelineId;
           });
         }
+        // Client-side extra filters for RPC results (mirror server-side semantics)
+        if (extraFilters.statuses.length > 0) {
+          const set = new Set(extraFilters.statuses);
+          filtered = filtered.filter((r: any) => set.has(r.status));
+        }
+        if (extraFilters.createdFrom) {
+          const ts = new Date(`${extraFilters.createdFrom}T00:00:00Z`).getTime();
+          filtered = filtered.filter((r: any) => new Date(r.created_at).getTime() >= ts);
+        }
+        if (extraFilters.createdTo) {
+          const ts = new Date(`${extraFilters.createdTo}T23:59:59Z`).getTime();
+          filtered = filtered.filter((r: any) => new Date(r.created_at).getTime() <= ts);
+        }
+        if (extraFilters.priceMin != null) filtered = filtered.filter((r: any) => Number(r.final_price ?? 0) >= extraFilters.priceMin!);
+        if (extraFilters.priceMax != null) filtered = filtered.filter((r: any) => Number(r.final_price ?? 0) <= extraFilters.priceMax!);
+        if (extraFilters.stageId) filtered = filtered.filter((r: any) => r.pipeline_stage_id === extraFilters.stageId);
+        if (extraFilters.contactProfileId) filtered = filtered.filter((r: any) => r.profile_id === extraFilters.contactProfileId);
+        else if (extraFilters.contactEmail) filtered = filtered.filter((r: any) => r.customer_email === extraFilters.contactEmail);
+        if (extraFilters.source) filtered = filtered.filter((r: any) => r.meta?.source === extraFilters.source);
+        if (extraFilters.provider) filtered = filtered.filter((r: any) => r.meta?.payment_provider === extraFilters.provider);
+        if (extraFilters.reconcileSource) filtered = filtered.filter((r: any) => r.reconcile_source === extraFilters.reconcileSource);
+        if (!extraFilters.includeSynthetic) filtered = filtered.filter((r: any) => r.meta?.source !== "rule_engine");
         return {
           rows: filtered,
           nextOffset: rows.length === PAGE_SIZE ? pageParam + PAGE_SIZE : undefined,
@@ -476,7 +514,7 @@ export default function AdminDeals() {
       }
 
       // Default mode → lightweight PostgREST query (no name search needed)
-      const query = buildDealsQuery(activePreset, debouncedSearch, selectedProductId, dateFilter, selectedTariffIds, activePipelineId, activePipeline?.is_default);
+      const query = buildDealsQuery(activePreset, debouncedSearch, selectedProductId, dateFilter, selectedTariffIds, activePipelineId, activePipeline?.is_default, extraFilters);
       const { data, error } = await query
         .order("deal_date", { ascending: false, nullsFirst: false })
         .order("id", { ascending: false })
@@ -1081,6 +1119,13 @@ export default function AdminDeals() {
         {/* Period + actions */}
         <div className="flex items-center gap-1.5 ml-auto">
           <PeriodSelector value={dateFilter} onChange={setDateFilter} />
+          <DealsFiltersBar
+            filters={extraFilters}
+            onChange={updateExtraFilters}
+            onReset={resetExtraFilters}
+            activeCount={extraActiveCount}
+            pipelineStages={activePipelineStages}
+          />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="h-7 w-7 p-0" disabled={allDeals.length === 0}>
@@ -1140,6 +1185,7 @@ export default function AdminDeals() {
           tariffIds={selectedTariffIds}
           dateFrom={dateFilter.from}
           dateTo={dateFilter.to}
+          extraFilters={extraFilters}
           onOpenDeal={(id) => setSelectedDealId(id)}
         />
       )}

@@ -3,6 +3,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { moveDealToStage } from "@/services/pipelineService";
 import { toast } from "sonner";
 import type { CrmPipelineStage } from "@/services/pipelineService";
+import { applyExtraDealFilters } from "@/utils/applyExtraDealFilters";
+import type { DealsExtraFilters } from "@/hooks/useDealsFilters";
 
 export interface BoardDeal {
   id: string;
@@ -30,11 +32,12 @@ interface UseDealsBoardOpts {
   tariffIds?: string[];
   dateFrom?: string;
   dateTo?: string;
+  extraFilters?: DealsExtraFilters;
 }
 
-export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId, tariffIds, dateFrom, dateTo }: UseDealsBoardOpts) {
+export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId, tariffIds, dateFrom, dateTo, extraFilters }: UseDealsBoardOpts) {
   const qc = useQueryClient();
-  const queryKey = ["deals-board", pipelineId, isDefaultPipeline, search, productId, tariffIds, dateFrom, dateTo];
+  const queryKey = ["deals-board", pipelineId, isDefaultPipeline, search, productId, tariffIds, dateFrom, dateTo, extraFilters];
 
   const { data: deals = [], isLoading } = useQuery({
     queryKey,
@@ -73,6 +76,11 @@ export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId
       }
       if (dateTo) {
         q = q.lte("deal_date", `${dateTo}T23:59:59Z`);
+      }
+
+      // Apply canonical extra filters server-side
+      if (extraFilters) {
+        q = applyExtraDealFilters(q, extraFilters);
       }
 
       q = q.order("updated_at", { ascending: false }).order("id", { ascending: false });

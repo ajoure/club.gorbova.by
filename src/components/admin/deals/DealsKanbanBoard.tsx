@@ -16,6 +16,7 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { useDealsBoard, type BoardDeal } from "@/hooks/useDealsBoard";
+import type { DealsExtraFilters } from "@/hooks/useDealsFilters";
 import { usePipelineStages } from "@/hooks/usePipelineStages";
 import { KanbanColumn } from "./KanbanColumn";
 import { KanbanSummaryStrip } from "./KanbanSummaryStrip";
@@ -38,6 +39,7 @@ interface Props {
   tariffIds?: string[];
   dateFrom?: string;
   dateTo?: string;
+  extraFilters?: DealsExtraFilters;
   onOpenDeal: (dealId: string) => void;
 }
 
@@ -48,14 +50,14 @@ const formatCurrency = (v: number, currency?: string | null) =>
     maximumFractionDigits: 0,
   }).format(v);
 
-export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, search, productId, tariffIds, dateFrom, dateTo, onOpenDeal }: Props) {
+export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, search, productId, tariffIds, dateFrom, dateTo, extraFilters, onOpenDeal }: Props) {
   const { canWrite, isSuperAdmin } = usePermissions();
   const canEdit = canWrite("deals") || isSuperAdmin();
 
   const { stages, isLoading: stagesLoading, createStage, renameStage, updateStageColor, deleteStage, reorderStages } =
     usePipelineStages(pipelineId);
   const { deals, isLoading: dealsLoading, moveDeal, groupByStage, getStageTotals } =
-    useDealsBoard({ pipelineId, isDefaultPipeline, search, productId, tariffIds, dateFrom, dateTo });
+    useDealsBoard({ pipelineId, isDefaultPipeline, search, productId, tariffIds, dateFrom, dateTo, extraFilters });
 
   const [activeDeal, setActiveDeal] = useState<BoardDeal | null>(null);
   const [activeStageId, setActiveStageId] = useState<string | null>(null);
