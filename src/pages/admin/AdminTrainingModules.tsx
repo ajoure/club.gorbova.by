@@ -375,6 +375,7 @@ export default function AdminTrainingModules() {
   const navigate = useNavigate();
   const { modules, loading, refetch, createModule, updateModule, deleteModule } = useTrainingModules();
   const [editingModule, setEditingModule] = useState<TrainingModule | null>(null);
+  const [inheritContentMonth, setInheritContentMonth] = useState(true);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -555,6 +556,7 @@ export default function AdminTrainingModules() {
 
   const openEditDialog = useCallback((module: TrainingModule) => {
     setEditingModule(module);
+    setInheritContentMonth(true);
     setFormData({
       title: module.title,
       slug: module.slug,
@@ -591,6 +593,17 @@ export default function AdminTrainingModules() {
     
     const success = await updateModule(editingModule.id, formData);
     if (success) {
+      if (inheritContentMonth) {
+        const { error } = await supabase
+          .from("training_lessons")
+          .update({ content_month: formData.content_month ?? null })
+          .eq("module_id", editingModule.id);
+
+        if (error) {
+          toast.error("Модуль сохранён, но месяц не применился к урокам");
+          return;
+        }
+      }
       setEditingModule(null);
       resetForm();
     }
