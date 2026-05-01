@@ -359,6 +359,13 @@ export default function AdminTrainingLessons() {
   const navigate = useNavigate();
   
   const [editingLesson, setEditingLesson] = useState<TrainingLesson | null>(null);
+  const [editingModule, setEditingModule] = useState<any | null>(null);
+  const [moduleFormData, setModuleFormData] = useState({
+    title: "",
+    slug: "",
+    description: "",
+    is_active: true,
+  });
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
@@ -409,7 +416,7 @@ export default function AdminTrainingLessons() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("training_modules")
-        .select("id, title, slug, is_active, is_container, sort_order")
+        .select("*")
         .eq("parent_module_id", moduleId!)
         .order("sort_order");
       if (error) throw error;
@@ -536,6 +543,39 @@ export default function AdminTrainingLessons() {
       require_previous: lesson.require_previous || false,
     });
   }, []);
+
+  const openModuleEditDialog = useCallback((moduleRow: any) => {
+    setEditingModule(moduleRow);
+    setModuleFormData({
+      title: moduleRow.title || "",
+      slug: moduleRow.slug || "",
+      description: moduleRow.description || "",
+      is_active: moduleRow.is_active !== false,
+    });
+  }, []);
+
+  const handleModuleUpdate = useCallback(async () => {
+    if (!editingModule || !moduleFormData.title || !moduleFormData.slug) return;
+    const { error } = await supabase
+      .from("training_modules")
+      .update({
+        title: moduleFormData.title,
+        slug: moduleFormData.slug,
+        description: moduleFormData.description || null,
+        is_active: moduleFormData.is_active,
+      })
+      .eq("id", editingModule.id);
+
+    if (error) {
+      toast.error("Ошибка обновления модуля");
+      return;
+    }
+
+    toast.success("Модуль обновлён");
+    setEditingModule(null);
+    refetchChildModules();
+    window.location.reload();
+  }, [editingModule, moduleFormData, refetchChildModules]);
 
   const handleCreate = useCallback(async () => {
     if (!formData.title || !formData.slug || !moduleId) return;
