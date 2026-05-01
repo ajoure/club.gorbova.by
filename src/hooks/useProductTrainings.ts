@@ -16,6 +16,13 @@ export interface LinkedTraining {
   product_id: string | null;
   lesson_count: number;
   children: LinkedTraining[];
+  /**
+   * true, если строка попала в дерево как страховочный потомок:
+   * у неё product_id IS NULL, но она лежит под корнем,
+   * привязанным к этому продукту через parent_module_id.
+   * UI показывает таким строкам бейдж «Унаследовано».
+   */
+  product_id_inherited?: boolean;
 }
 
 export interface TrainingBindingDiagnostics {
