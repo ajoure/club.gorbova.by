@@ -142,7 +142,8 @@ export function useTrainingModules() {
           .eq("user_id", user.id);
 
         progressData?.forEach(p => {
-          const moduleId = (p.training_lessons as any)?.module_id;
+          const lesson = p.training_lessons as { module_id?: string | null } | null;
+          const moduleId = lesson?.module_id;
           if (moduleId) {
             progressMap[moduleId] = (progressMap[moduleId] || 0) + 1;
           }
@@ -188,7 +189,7 @@ export function useTrainingModules() {
         const lessonCount = directLessonCount[mod.id] || 0;
         const recursiveLessonCount = computeRecursiveLessonCount(mod.id);
         const moduleAccess = accessData?.filter(a => a.module_id === mod.id) || [];
-        const accessibleTariffs = moduleAccess.map(a => (a.tariffs as any)?.name || "");
+        const accessibleTariffs = moduleAccess.map(a => (a.tariffs as ModuleAccessTariffInfo | null)?.name || "");
         
         // Phase F fix: Access precedence for product-linked modules
         // If module has product_id, use ONLY entitlement path (not legacy module_access)
@@ -206,7 +207,8 @@ export function useTrainingModules() {
         // Group by product for compact display
         const productMap: Record<string, { product_name: string; tariff_count: number }> = {};
         moduleAccess.forEach(a => {
-          const productName = (a.tariffs as any)?.products_v2?.name || "Без продукта";
+          const tariff = a.tariffs as ModuleAccessTariffInfo | null;
+          const productName = tariff?.products_v2?.name || "Без продукта";
           if (!productMap[productName]) {
             productMap[productName] = { product_name: productName, tariff_count: 0 };
           }
