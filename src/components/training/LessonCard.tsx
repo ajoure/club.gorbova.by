@@ -5,6 +5,8 @@ import { Play, Clock, Calendar, Lock, Video, Timer } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, isFuture } from "date-fns";
 import { ru } from "date-fns/locale";
+import { getStatusBadgeClass } from "@/utils/badgeUtils";
+import { formatLockedMonth } from "@/hooks/useMonthGate";
 
 export interface LessonCardData {
   id: string;
@@ -17,6 +19,8 @@ export interface LessonCardData {
   published_at?: string | null; // Use for display instead of created_at if available
   sort_order?: number;
   has_access?: boolean;
+  lock_reason?: "month_mismatch" | null;
+  locked_month?: string | null;
 }
 
 interface LessonCardProps {
