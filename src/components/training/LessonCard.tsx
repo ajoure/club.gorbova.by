@@ -166,6 +166,13 @@ export function LessonCard({
           {lesson.title}
         </h3>
 
+        {/* Month-lock subtitle */}
+        {isMonthLocked && lesson.locked_month && (
+          <div className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+            Контент за {formatLockedMonth(lesson.locked_month)}
+          </div>
+        )}
+
         {/* Meta info */}
         {formattedDate && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground mt-2">
