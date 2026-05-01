@@ -322,10 +322,7 @@ function DealRow({
       onClick={onOpen}
     >
       <div className="w-7 h-7 rounded-full bg-indigo-50 flex items-center justify-center shrink-0">
-        <ProductCategoryBadge
-          category={(deal.products_v2 as any)?.category}
-          iconOnly
-        />
+        <Layers className="w-3.5 h-3.5 text-indigo-500" />
       </div>
 
       <div className="flex-1 min-w-0">
