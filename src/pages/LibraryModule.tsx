@@ -419,9 +419,9 @@ export default function LibraryModule() {
                           </Badge>
                         )}
                       </div>
-                      {isMonthLocked && lesson.locked_month ? (
+                      {isMonthLocked ? (
                         <p className="text-xs text-amber-600 dark:text-amber-400">
-                          Контент за {formatLockedMonth(lesson.locked_month)}
+                          Доступно покупателям тарифа BUSINESS
                         </p>
                       ) : isScheduled && lesson.published_at ? (
                         <p className="text-xs text-amber-600 flex items-center gap-1">
