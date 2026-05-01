@@ -1,9 +1,11 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useActiveTrainingContentRules, resolveTrainingContentFilter, isLessonVisible as isLessonAllowed } from "@/hooks/useTrainingContentRules";
 import { LessonCardData } from "@/components/training/LessonCard";
+import { useMonthGate, type MonthGateLessonInput } from "@/hooks/useMonthGate";
 
 interface ContainerModule {
   id: string;
