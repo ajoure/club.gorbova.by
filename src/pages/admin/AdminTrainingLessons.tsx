@@ -14,6 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Calendar } from "@/components/ui/calendar";
+import { MonthYearPicker, formatMonthYearLabel } from "@/components/ui/month-year-picker";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { TimezoneSelector } from "@/components/admin/payments/TimezoneSelector";
 import { format, parseISO } from "date-fns";
@@ -280,6 +281,22 @@ const LessonFormContent = memo(function LessonFormContent({
             Урок будет показан со статусом «Скоро» до указанной даты
           </p>
         )}
+      </div>
+
+      {/* === ДОСТУП === */}
+      <div className="border-t pt-4 mt-4">
+        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Доступ</div>
+        <div className="space-y-2">
+          <Label>Месяц контента</Label>
+          <MonthYearPicker
+            value={formData.content_month ?? null}
+            onChange={(value) => onFormDataChange(prev => ({ ...prev, content_month: value }))}
+            placeholder="Не задан"
+          />
+          <p className="text-[11px] text-muted-foreground">
+            Используется правилом доступа «Совпадение месяца покупки».
+          </p>
+        </div>
       </div>
 
 
