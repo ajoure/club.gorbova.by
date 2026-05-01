@@ -52,7 +52,7 @@ export function useLibraryLessons() {
         // Batched query: all lessons for all requested modules
         const { data: lessonsData, error } = await supabase
           .from("training_lessons")
-          .select("id, module_id, title, slug, content_type, sort_order, is_active, duration_minutes, published_at")
+          .select("id, module_id, title, slug, content_type, sort_order, is_active, duration_minutes, published_at, content_month")
           .in("module_id", toFetch)
           .eq("is_active", true)
           .order("sort_order", { ascending: true });
