@@ -398,6 +398,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
     tc_allowed_module_ids: [] as string[],
     tc_allowed_lesson_ids: [] as string[],
     tc_auto_include_new_modules: false,
+    match_purchase_month: false,
   });
 
   // Confirm-dialog для перевода existing partial → full
