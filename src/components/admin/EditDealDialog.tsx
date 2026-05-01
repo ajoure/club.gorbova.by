@@ -184,6 +184,7 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
         auto_renew: subscription?.auto_renew ?? false,
         profile_id: deal.profile_id || profile?.id || null,
         user_id: deal.user_id || profile?.user_id || null,
+        deal_month: (deal as any)?.meta?.deal_month ?? null,
       });
       setShowContactSearch(false);
       setContactSearch("");
