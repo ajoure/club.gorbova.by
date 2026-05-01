@@ -735,7 +735,7 @@ async function sendEmailReminder(
     const formattedDate = `${dateFmt.format(expiryDate)} в ${timeFmt.format(expiryDate)} (Минск)`;
     // PATCH AMOUNT-RESOLVER v4: omit amount line in HTML if unresolved.
     const amountLineHtml = amount > 0
-      ? `<p style="margin: 0;"><strong>💳 Сумма списания:</strong> ${formatCurrency(amount, currency)}</p>`
+      ? `${amountLineHtml}`
       : '';
 
     let subject = '';
@@ -816,7 +816,7 @@ async function sendEmailReminder(
             <p style="margin: 0 0 8px 0;"><strong>📦 Продукт:</strong> ${productName}</p>
             <p style="margin: 0 0 8px 0;"><strong>🎯 Тариф:</strong> ${tariffName}</p>
             <p style="margin: 0 0 8px 0;"><strong>📆 Дата окончания:</strong> ${formattedDate}</p>
-            <p style="margin: 0;"><strong>💳 Сумма списания:</strong> ${formatCurrency(amount, currency)}</p>
+            ${amountLineHtml}
           </div>
           ${statusSection}
           <p style="color: #6b7280; margin-top: 32px; font-size: 14px;">С уважением,<br>Команда клуба</p>
@@ -832,7 +832,7 @@ async function sendEmailReminder(
             <p style="margin: 0 0 8px 0;"><strong>📦 Продукт:</strong> ${productName}</p>
             <p style="margin: 0 0 8px 0;"><strong>🎯 Тариф:</strong> ${tariffName}</p>
             <p style="margin: 0 0 8px 0;"><strong>📆 Дата окончания:</strong> ${formattedDate}</p>
-            <p style="margin: 0;"><strong>💳 Сумма списания:</strong> ${formatCurrency(amount, currency)}</p>
+            ${amountLineHtml}
           </div>
           ${statusSection}
           <p style="color: #6b7280; margin-top: 32px; font-size: 14px;">С уважением,<br>Команда клуба</p>
@@ -848,7 +848,7 @@ async function sendEmailReminder(
             <p style="margin: 0 0 8px 0;"><strong>📦 Продукт:</strong> ${productName}</p>
             <p style="margin: 0 0 8px 0;"><strong>🎯 Тариф:</strong> ${tariffName}</p>
             <p style="margin: 0 0 8px 0;"><strong>📆 Дата окончания:</strong> ${formattedDate}</p>
-            <p style="margin: 0;"><strong>💳 Сумма списания:</strong> ${formatCurrency(amount, currency)}</p>
+            ${amountLineHtml}
           </div>
           ${statusSection}
           <p style="color: #6b7280; margin-top: 32px; font-size: 14px;">С уважением,<br>Команда клуба</p>
