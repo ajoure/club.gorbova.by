@@ -67,6 +67,7 @@ import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale";
 import { slugify } from "@/utils/slugify";
 import { LiveEventAccessRulesEditor, type AccessRuleRow } from "@/components/admin/live/LiveEventAccessRulesEditor";
+import { MonthYearPicker } from "@/components/ui/month-year-picker";
 import { LiveEventComments } from "@/components/live/LiveEventComments";
 import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 import { LiveEventModerationPanel } from "@/components/live/LiveEventModeration";
