@@ -433,7 +433,7 @@ export default function AdminTrainingLessons() {
         .eq("id", moduleId)
         .single();
       if (error) throw error;
-      return data;
+      return data as TrainingModuleRow;
     },
     enabled: !!moduleId,
   });
@@ -448,7 +448,7 @@ export default function AdminTrainingLessons() {
         .eq("parent_module_id", moduleId!)
         .order("sort_order");
       if (error) throw error;
-      return data ?? [];
+      return (data ?? []) as TrainingModuleRow[];
     },
     enabled: !!moduleId,
   });
