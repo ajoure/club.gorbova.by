@@ -124,11 +124,36 @@ export function useLibraryLessons() {
     [user]
   );
 
+  // Month-gate over all currently loaded lessons (non-admin only).
+  const { isAdmin } = usePermissions();
+  const isAdminUser = isAdmin();
+
+  const allLoadedLessons = useMemo<LibraryLesson[]>(() => {
+    const out: LibraryLesson[] = [];
+    for (const arr of Object.values(lessonsByModule)) out.push(...arr);
+    return out;
+  }, [lessonsByModule]);
+
+  const monthGateInputs: MonthGateLessonInput[] = useMemo(() => {
+    if (isAdminUser) return [];
+    return allLoadedLessons
+      .filter((l) => !!l.content_month)
+      .map((l) => ({ lesson_id: l.id, module_id: l.module_id, content_month: l.content_month ?? null }));
+  }, [allLoadedLessons, isAdminUser]);
+
+  const { map: monthGateMap } = useMonthGate(monthGateInputs);
+
   const getLessons = useCallback(
     (moduleId: string): LibraryLesson[] => {
-      return lessonsByModule[moduleId] || cacheRef.current[moduleId] || [];
+      const base = lessonsByModule[moduleId] || cacheRef.current[moduleId] || [];
+      if (monthGateMap.size === 0) return base;
+      return base.map((l) => {
+        const gate = monthGateMap.get(l.id);
+        if (!gate) return l;
+        return { ...l, lock_reason: gate.lock_reason, locked_month: gate.locked_month };
+      });
     },
-    [lessonsByModule]
+    [lessonsByModule, monthGateMap]
   );
 
   const isLoading = useCallback(
