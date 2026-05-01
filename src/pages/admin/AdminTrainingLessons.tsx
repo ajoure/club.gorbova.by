@@ -104,6 +104,15 @@ const completionModeOptions = [
   { value: "kvest", label: "Прохождение квеста", description: "Пошаговое прохождение интерактивного урока" },
 ];
 
+interface TrainingModuleRow {
+  id: string;
+  title: string;
+  slug: string;
+  description: string | null;
+  is_active: boolean;
+  content_month?: string | null;
+}
+
 // ─── SortableItem wrapper ───
 
 function SortableItem({ id, children }: { id: string; children: React.ReactNode }) {
@@ -376,7 +385,7 @@ export default function AdminTrainingLessons() {
   const navigate = useNavigate();
   
   const [editingLesson, setEditingLesson] = useState<TrainingLesson | null>(null);
-  const [editingModule, setEditingModule] = useState<any | null>(null);
+  const [editingModule, setEditingModule] = useState<TrainingModuleRow | null>(null);
   const [moduleFormData, setModuleFormData] = useState({
     title: "",
     slug: "",
