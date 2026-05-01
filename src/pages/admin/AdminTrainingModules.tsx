@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
+import { MonthYearPicker } from "@/components/ui/month-year-picker";
 import {
   Dialog,
   DialogContent,
@@ -141,8 +142,9 @@ function ModuleFormContent({ formData, setFormData, editingModule }: ModuleFormC
       } else {
         toast.error("Не удалось получить URL обложки", { id: toastId });
       }
-    } catch (error: any) {
-      toast.error(`Ошибка: ${error.message}`, { id: toastId });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Неизвестная ошибка";
+      toast.error(`Ошибка: ${message}`, { id: toastId });
     } finally {
       setGenerating(false);
     }
@@ -327,6 +329,18 @@ function ModuleFormContent({ formData, setFormData, editingModule }: ModuleFormC
         <Label htmlFor="is_active">Активен</Label>
       </div>
 
+      <div className="space-y-2 border-t pt-4">
+        <Label>Месяц контента</Label>
+        <MonthYearPicker
+          value={formData.content_month ?? null}
+          onChange={(value) => setFormData(prev => ({ ...prev, content_month: value }))}
+          placeholder="Не задан"
+        />
+        <p className="text-[11px] text-muted-foreground">
+          Используется правилом доступа «Совпадение месяца покупки».
+        </p>
+      </div>
+
       {/* Раздел меню */}
       <ContentSectionSelector
         value={formData.menu_section_key || "products-library"}
@@ -362,6 +376,7 @@ export default function AdminTrainingModules() {
   const navigate = useNavigate();
   const { modules, loading, refetch, createModule, updateModule, deleteModule } = useTrainingModules();
   const [editingModule, setEditingModule] = useState<TrainingModule | null>(null);
+  const [inheritContentMonth, setInheritContentMonth] = useState(true);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -481,6 +496,7 @@ export default function AdminTrainingModules() {
     tariff_ids: [],
     menu_section_key: "products",
     display_layout: "grid",
+    content_month: null,
   });
 
   // Fetch products with tariffs for access selector
@@ -497,7 +513,7 @@ export default function AdminTrainingModules() {
       return data?.map(p => ({
         id: p.id,
         name: p.name,
-        tariffs: (p.tariffs as any[])?.filter(t => t.is_active).map(t => ({
+        tariffs: (p.tariffs as Array<{ id: string; name: string; is_active: boolean }> | null)?.filter(t => t.is_active).map(t => ({
           id: t.id,
           name: t.name,
         })) || [],
@@ -530,6 +546,7 @@ export default function AdminTrainingModules() {
       tariff_ids: [],
       menu_section_key: "products",
       display_layout: "grid",
+      content_month: null,
     });
   }, []);
 
@@ -540,6 +557,7 @@ export default function AdminTrainingModules() {
 
   const openEditDialog = useCallback((module: TrainingModule) => {
     setEditingModule(module);
+    setInheritContentMonth(true);
     setFormData({
       title: module.title,
       slug: module.slug,
@@ -550,7 +568,7 @@ export default function AdminTrainingModules() {
       tariff_ids: [],
       menu_section_key: module.menu_section_key || "products",
       display_layout: module.display_layout || "grid",
-      content_month: (module as any).content_month ?? null,
+      content_month: module.content_month ?? null,
     });
   }, []);
 
@@ -559,7 +577,7 @@ export default function AdminTrainingModules() {
     if (moduleAccess && editingModule) {
       setFormData(prev => ({ ...prev, tariff_ids: moduleAccess }));
     }
-  }, [moduleAccess, editingModule?.id]);
+  }, [moduleAccess, editingModule]);
 
   const handleCreate = async () => {
     if (!formData.title || !formData.slug) return;
@@ -576,6 +594,17 @@ export default function AdminTrainingModules() {
     
     const success = await updateModule(editingModule.id, formData);
     if (success) {
+      if (inheritContentMonth) {
+        const { error } = await supabase
+          .from("training_lessons")
+          .update({ content_month: formData.content_month ?? null })
+          .eq("module_id", editingModule.id);
+
+        if (error) {
+          toast.error("Модуль сохранён, но месяц не применился к урокам");
+          return;
+        }
+      }
       setEditingModule(null);
       resetForm();
     }
@@ -593,7 +622,7 @@ export default function AdminTrainingModules() {
   // Active tab state — scoped localStorage key
   const [activeTab, setActiveTab] = useState<"modules" | "progress" | "settings">(() => {
     const saved = localStorage.getItem("admin_training_modules.activeTab");
-    if (saved === "modules" || saved === "progress" || saved === "settings") return saved as any;
+    if (saved === "modules" || saved === "progress" || saved === "settings") return saved;
     return "modules";
   });
 
@@ -874,6 +903,19 @@ export default function AdminTrainingModules() {
                 setFormData={setFormData}
                 editingModule={editingModule}
               />
+              <div className="flex items-start gap-2 rounded-md border border-border p-3">
+                <Switch
+                  id="inherit-content-month"
+                  checked={inheritContentMonth}
+                  onCheckedChange={setInheritContentMonth}
+                />
+                <div className="space-y-1">
+                  <Label htmlFor="inherit-content-month">Применить этот месяц ко всем урокам внутри модуля</Label>
+                  <p className="text-[11px] text-muted-foreground">
+                    При сохранении уроки получат тот же месяц; при очистке месяца он очистится и у уроков.
+                  </p>
+                </div>
+              </div>
               <ModuleAccessForm
                 formData={formData}
                 setFormData={setFormData}

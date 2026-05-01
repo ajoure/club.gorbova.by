@@ -14,6 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Calendar } from "@/components/ui/calendar";
+import { MonthYearPicker, formatMonthYearLabel } from "@/components/ui/month-year-picker";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { TimezoneSelector } from "@/components/admin/payments/TimezoneSelector";
 import { format, parseISO } from "date-fns";
@@ -102,6 +103,16 @@ const completionModeOptions = [
   { value: "watch_video", label: "Просмотр видео", description: "Автоматически при полном просмотре видео" },
   { value: "kvest", label: "Прохождение квеста", description: "Пошаговое прохождение интерактивного урока" },
 ];
+
+interface TrainingModuleRow {
+  id: string;
+  title: string;
+  slug: string;
+  description: string | null;
+  is_active: boolean;
+  content_month?: string | null;
+  menu_section_key?: string | null;
+}
 
 // ─── SortableItem wrapper ───
 
@@ -282,6 +293,22 @@ const LessonFormContent = memo(function LessonFormContent({
         )}
       </div>
 
+      {/* === ДОСТУП === */}
+      <div className="border-t pt-4 mt-4">
+        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Доступ</div>
+        <div className="space-y-2">
+          <Label>Месяц контента</Label>
+          <MonthYearPicker
+            value={formData.content_month ?? null}
+            onChange={(value) => onFormDataChange(prev => ({ ...prev, content_month: value }))}
+            placeholder="Не задан"
+          />
+          <p className="text-[11px] text-muted-foreground">
+            Используется правилом доступа «Совпадение месяца покупки».
+          </p>
+        </div>
+      </div>
+
 
       {/* === ПРОХОЖДЕНИЕ === */}
       <div className="border-t pt-4 mt-4">
@@ -359,12 +386,14 @@ export default function AdminTrainingLessons() {
   const navigate = useNavigate();
   
   const [editingLesson, setEditingLesson] = useState<TrainingLesson | null>(null);
-  const [editingModule, setEditingModule] = useState<any | null>(null);
+  const [editingModule, setEditingModule] = useState<TrainingModuleRow | null>(null);
   const [moduleFormData, setModuleFormData] = useState({
     title: "",
     slug: "",
     description: "",
     is_active: true,
+    content_month: null as string | null,
+    inherit_content_month: true,
   });
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -405,7 +434,7 @@ export default function AdminTrainingLessons() {
         .eq("id", moduleId)
         .single();
       if (error) throw error;
-      return data;
+      return data as TrainingModuleRow;
     },
     enabled: !!moduleId,
   });
@@ -420,7 +449,7 @@ export default function AdminTrainingLessons() {
         .eq("parent_module_id", moduleId!)
         .order("sort_order");
       if (error) throw error;
-      return data ?? [];
+      return (data ?? []) as TrainingModuleRow[];
     },
     enabled: !!moduleId,
   });
@@ -492,13 +521,14 @@ export default function AdminTrainingLessons() {
       thumbnail_url: "",
       duration_minutes: undefined,
       is_active: true,
+      content_month: module?.content_month ?? null,
       completion_mode: "manual",
       require_previous: false,
     });
     setPublishDate(undefined);
     setPublishTime("12:00");
     setPublishTimezone("Europe/Minsk");
-  }, [moduleId]);
+  }, [moduleId, module?.content_month]);
 
   const openCreateDialog = useCallback(() => {
     resetForm();
@@ -520,7 +550,9 @@ export default function AdminTrainingLessons() {
         parsedDate = utcDate; // Store the UTC date
         // Format time IN THE SELECTED TIMEZONE (not browser local time)
         parsedTime = formatInTimeZone(utcDate, tz, "HH:mm");
-      } catch {}
+      } catch (error) {
+        console.warn("Failed to parse lesson publish date", error);
+      }
     }
     setPublishDate(parsedDate);
     setPublishTime(parsedTime);
@@ -538,19 +570,21 @@ export default function AdminTrainingLessons() {
       thumbnail_url: lesson.thumbnail_url || "",
       duration_minutes: lesson.duration_minutes || undefined,
       is_active: lesson.is_active,
-      content_month: (lesson as any).content_month ?? null,
+      content_month: lesson.content_month ?? null,
       completion_mode: lesson.completion_mode || "manual",
       require_previous: lesson.require_previous || false,
     });
   }, []);
 
-  const openModuleEditDialog = useCallback((moduleRow: any) => {
+  const openModuleEditDialog = useCallback((moduleRow: TrainingModuleRow) => {
     setEditingModule(moduleRow);
     setModuleFormData({
       title: moduleRow.title || "",
       slug: moduleRow.slug || "",
       description: moduleRow.description || "",
       is_active: moduleRow.is_active !== false,
+      content_month: moduleRow.content_month ?? null,
+      inherit_content_month: true,
     });
   }, []);
 
@@ -563,6 +597,7 @@ export default function AdminTrainingLessons() {
         slug: moduleFormData.slug,
         description: moduleFormData.description || null,
         is_active: moduleFormData.is_active,
+        content_month: moduleFormData.content_month,
       })
       .eq("id", editingModule.id);
 
@@ -571,7 +606,19 @@ export default function AdminTrainingLessons() {
       return;
     }
 
-    toast.success("Модуль обновлён");
+    if (moduleFormData.inherit_content_month) {
+      const { error: lessonsError } = await supabase
+        .from("training_lessons")
+        .update({ content_month: moduleFormData.content_month })
+        .eq("module_id", editingModule.id);
+
+      if (lessonsError) {
+        toast.error("Модуль сохранён, но месяц не применился к урокам");
+        return;
+      }
+    }
+
+    toast.success(moduleFormData.inherit_content_month ? "Модуль и уроки обновлены" : "Модуль обновлён");
     setEditingModule(null);
     refetchChildModules();
     window.location.reload();
@@ -705,6 +752,13 @@ export default function AdminTrainingLessons() {
               <span className="hidden sm:inline">Назад</span>
             </button>
             <button
+              onClick={() => openModuleEditDialog(module)}
+              className="flex items-center gap-1.5 px-3 h-8 rounded-full text-xs font-medium border border-border bg-background hover:bg-muted transition-colors"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Редактировать модуль</span>
+            </button>
+            <button
               onClick={() => setIsWizardOpen(true)}
               className="flex items-center gap-1.5 px-3 h-8 rounded-full text-xs font-medium border border-border bg-background hover:bg-muted transition-colors"
             >
@@ -746,6 +800,11 @@ export default function AdminTrainingLessons() {
                             {child.is_active ? <Eye className="h-3 w-3 mr-1" /> : <EyeOff className="h-3 w-3 mr-1" />}
                             <span className="hidden sm:inline">{child.is_active ? "Активен" : "Скрыт"}</span>
                           </Badge>
+                          {child.content_month && (
+                            <Badge variant="outline" className="shrink-0">
+                              {formatMonthYearLabel(child.content_month)}
+                            </Badge>
+                          )}
                           <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
                             <Button
                               variant="ghost"
@@ -854,6 +913,11 @@ export default function AdminTrainingLessons() {
                                     <Clock className="h-3 w-3" />
                                     {lesson.duration_minutes} мин
                                   </span>
+                                )}
+                                {lesson.content_month && (
+                                  <Badge variant="outline" className="text-xs font-normal">
+                                    {formatMonthYearLabel(lesson.content_month)}
+                                  </Badge>
                                 )}
                                 <span className="hidden sm:inline">{typeOpt?.label}</span>
                               </div>
@@ -1022,6 +1086,30 @@ export default function AdminTrainingLessons() {
                   onCheckedChange={(checked) => setModuleFormData((prev) => ({ ...prev, is_active: checked }))}
                 />
                 <Label htmlFor="module-is-active">Активен</Label>
+              </div>
+              <div className="space-y-2 border-t pt-4">
+                <Label>Месяц контента</Label>
+                <MonthYearPicker
+                  value={moduleFormData.content_month}
+                  onChange={(value) => setModuleFormData((prev) => ({ ...prev, content_month: value }))}
+                  placeholder="Не задан"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Используется правилом доступа «Совпадение месяца покупки».
+                </p>
+              </div>
+              <div className="flex items-start gap-2 rounded-md border border-border p-3">
+                <Switch
+                  id="module-inherit-content-month"
+                  checked={moduleFormData.inherit_content_month}
+                  onCheckedChange={(checked) => setModuleFormData((prev) => ({ ...prev, inherit_content_month: checked }))}
+                />
+                <div className="space-y-1">
+                  <Label htmlFor="module-inherit-content-month">Применить этот месяц ко всем урокам внутри модуля</Label>
+                  <p className="text-[11px] text-muted-foreground">
+                    При сохранении уроки получат тот же месяц; при очистке месяца он очистится и у уроков.
+                  </p>
+                </div>
               </div>
             </div>
             <DialogFooter className="sticky bottom-0 bg-background pt-4 pb-[env(safe-area-inset-bottom)]">
