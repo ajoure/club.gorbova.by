@@ -14436,6 +14436,13 @@ export type Database = {
         Args: { _month: string; _tariff_id: string; _user_id: string }
         Returns: boolean
       }
+      has_month_purchase_bulk: {
+        Args: { _items: Json; _user_id: string }
+        Returns: {
+          has_purchase: boolean
+          lesson_id: string
+        }[]
+      }
       has_permission: {
         Args: { _permission_code: string; _user_id: string }
         Returns: boolean

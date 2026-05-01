@@ -1,6 +1,8 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
+import { useMonthGate, type MonthGateLessonInput } from "@/hooks/useMonthGate";
 
 export interface LibraryLesson {
   id: string;
@@ -14,6 +16,9 @@ export interface LibraryLesson {
   duration_minutes: number | null;
   published_at: string | null;
   isScheduled: boolean;
+  content_month?: string | null;
+  lock_reason?: "month_mismatch" | null;
+  locked_month?: string | null;
 }
 
 /**
@@ -47,7 +52,7 @@ export function useLibraryLessons() {
         // Batched query: all lessons for all requested modules
         const { data: lessonsData, error } = await supabase
           .from("training_lessons")
-          .select("id, module_id, title, slug, content_type, sort_order, is_active, duration_minutes, published_at")
+          .select("id, module_id, title, slug, content_type, sort_order, is_active, duration_minutes, published_at, content_month")
           .in("module_id", toFetch)
           .eq("is_active", true)
           .order("sort_order", { ascending: true });
@@ -87,6 +92,7 @@ export function useLibraryLessons() {
             duration_minutes: l.duration_minutes,
             published_at: l.published_at,
             isScheduled: Boolean(publishedAt && publishedAt > now),
+            content_month: (l as any).content_month ?? null,
           };
           if (!grouped[l.module_id]) grouped[l.module_id] = [];
           grouped[l.module_id].push(lesson);
@@ -118,11 +124,36 @@ export function useLibraryLessons() {
     [user]
   );
 
+  // Month-gate over all currently loaded lessons (non-admin only).
+  const { isAdmin } = usePermissions();
+  const isAdminUser = isAdmin();
+
+  const allLoadedLessons = useMemo<LibraryLesson[]>(() => {
+    const out: LibraryLesson[] = [];
+    for (const arr of Object.values(lessonsByModule)) out.push(...arr);
+    return out;
+  }, [lessonsByModule]);
+
+  const monthGateInputs: MonthGateLessonInput[] = useMemo(() => {
+    if (isAdminUser) return [];
+    return allLoadedLessons
+      .filter((l) => !!l.content_month)
+      .map((l) => ({ lesson_id: l.id, module_id: l.module_id, content_month: l.content_month ?? null }));
+  }, [allLoadedLessons, isAdminUser]);
+
+  const { map: monthGateMap } = useMonthGate(monthGateInputs);
+
   const getLessons = useCallback(
     (moduleId: string): LibraryLesson[] => {
-      return lessonsByModule[moduleId] || cacheRef.current[moduleId] || [];
+      const base = lessonsByModule[moduleId] || cacheRef.current[moduleId] || [];
+      if (monthGateMap.size === 0) return base;
+      return base.map((l) => {
+        const gate = monthGateMap.get(l.id);
+        if (!gate) return l;
+        return { ...l, lock_reason: gate.lock_reason, locked_month: gate.locked_month };
+      });
     },
-    [lessonsByModule]
+    [lessonsByModule, monthGateMap]
   );
 
   const isLoading = useCallback(

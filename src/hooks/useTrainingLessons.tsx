@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
 import { toast } from "sonner";
 import { extractPathsFromBlocks, extractPathsFromProgress } from "@/components/admin/lesson-editor/blocks/extractTrainingAssetPaths";
 import { deleteTrainingAssets, type DeleteTrainingAssetsResult } from "@/components/admin/lesson-editor/blocks/uploadToTrainingAssets";
+import { useMonthGate, type MonthGateLessonInput } from "@/hooks/useMonthGate";
 
 export interface LessonAttachment {
   id: string;
@@ -39,11 +40,15 @@ export interface TrainingLesson {
   published_at: string | null;
   require_previous: boolean;
   completion_mode: CompletionMode;
+  content_month?: string | null;
   // Computed fields
   is_completed?: boolean;
   attachments?: LessonAttachment[];
   // PATCH: Scheduled lessons flag
   isScheduled?: boolean;
+  // Month-gate (cabinet, source: backend RPC)
+  lock_reason?: "month_mismatch" | null;
+  locked_month?: string | null;
 }
 
 export interface TrainingLessonFormData {
@@ -157,6 +162,29 @@ export function useTrainingLessons(moduleId?: string) {
   useEffect(() => {
     fetchLessons();
   }, [fetchLessons]);
+
+  // Month-gate (backend SOT): only for non-admin users.
+  const monthGateInputs: MonthGateLessonInput[] = useMemo(() => {
+    if (isAdminUser) return [];
+    return lessons
+      .filter((l) => !!l.content_month)
+      .map((l) => ({
+        lesson_id: l.id,
+        module_id: l.module_id,
+        content_month: l.content_month ?? null,
+      }));
+  }, [lessons, isAdminUser]);
+
+  const { map: monthGateMap } = useMonthGate(monthGateInputs);
+
+  const lessonsWithGate = useMemo<TrainingLesson[]>(() => {
+    if (monthGateMap.size === 0) return lessons;
+    return lessons.map((l) => {
+      const gate = monthGateMap.get(l.id);
+      if (!gate) return l;
+      return { ...l, lock_reason: gate.lock_reason, locked_month: gate.locked_month };
+    });
+  }, [lessons, monthGateMap]);
 
   const createLesson = async (data: TrainingLessonFormData): Promise<boolean> => {
     try {
@@ -397,7 +425,7 @@ export function useTrainingLessons(moduleId?: string) {
   };
 
   return {
-    lessons,
+    lessons: lessonsWithGate,
     loading,
     refetch: fetchLessons,
     createLesson,

@@ -11,12 +11,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   ChevronRight, ChevronDown, Play, BookOpen, Check, Search,
   FileText, Video, Headphones, Clock, Filter,
-  AlertCircle,
+  AlertCircle, Lock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TrainingModule } from "@/hooks/useTrainingModules";
 import { useLibraryTree, resolveAccessLabel, shouldFlattenSingleRoot } from "@/hooks/useLibraryTree";
 import { useLibraryLessons, type LibraryLesson } from "@/hooks/useLibraryLessons";
+import { formatLockedMonth } from "@/hooks/useMonthGate";
+import { getStatusBadgeClass } from "@/utils/badgeUtils";
 import type { LibraryGroup, LibraryRootModule } from "@/hooks/useLibraryTree";
 
 /* ── localStorage keys ───────────────────────────────── */
@@ -267,11 +269,20 @@ export function LibraryTableView({ libraryModules, allModules }: LibraryTableVie
   /* ── Lesson row ──────────────────────────────────── */
   const renderLessonRow = (lesson: LibraryLesson, moduleSlug: string, depth: number) => {
     const indent = depth * 24 + 16;
+    const isMonthLocked = lesson.lock_reason === "month_mismatch";
     return (
       <TableRow
         key={lesson.id}
-        className="cursor-pointer hover:bg-muted/30 group/lesson"
-        onClick={() => navigate(`/library/${moduleSlug}/${lesson.slug}`)}
+        className={cn(
+          "group/lesson",
+          isMonthLocked
+            ? "cursor-not-allowed opacity-80"
+            : "cursor-pointer hover:bg-muted/30"
+        )}
+        onClick={() => {
+          if (isMonthLocked) return;
+          navigate(`/library/${moduleSlug}/${lesson.slug}`);
+        }}
       >
         <TableCell className="py-2">
           <div className="flex items-center gap-2" style={{ paddingLeft: indent }}>
@@ -279,15 +290,28 @@ export function LibraryTableView({ libraryModules, allModules }: LibraryTableVie
             <span className={cn(
               "text-sm",
               lesson.is_completed && "text-muted-foreground line-through",
-              lesson.isScheduled && "text-muted-foreground italic"
+              (lesson.isScheduled || isMonthLocked) && "text-muted-foreground italic"
             )}>
               {lesson.title}
             </span>
-            {lesson.isScheduled && (
+            {isMonthLocked ? (
+              <Badge
+                variant="outline"
+                className={cn("text-[10px] px-1.5 py-0 h-4 gap-0.5", getStatusBadgeClass("warning"))}
+              >
+                <Lock className="h-2.5 w-2.5" />
+                Доступно за отдельную плату
+              </Badge>
+            ) : lesson.isScheduled && (
               <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 gap-0.5">
                 <Clock className="h-2.5 w-2.5" />
                 Скоро
               </Badge>
+            )}
+            {isMonthLocked && lesson.locked_month && (
+              <span className="text-[10px] text-amber-600 dark:text-amber-400">
+                · Контент за {formatLockedMonth(lesson.locked_month)}
+              </span>
             )}
           </div>
         </TableCell>
@@ -302,7 +326,7 @@ export function LibraryTableView({ libraryModules, allModules }: LibraryTableVie
             <span className="inline-flex items-center gap-1 text-xs text-primary">
               <Check className="h-3 w-3" />
             </span>
-          ) : lesson.isScheduled ? null : (
+          ) : lesson.isScheduled || isMonthLocked ? null : (
             <span className="text-xs text-primary opacity-0 group-hover/lesson:opacity-100 transition-opacity">
               Открыть
             </span>

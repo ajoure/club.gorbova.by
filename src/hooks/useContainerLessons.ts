@@ -1,9 +1,11 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useActiveTrainingContentRules, resolveTrainingContentFilter, isLessonVisible as isLessonAllowed } from "@/hooks/useTrainingContentRules";
 import { LessonCardData } from "@/components/training/LessonCard";
+import { useMonthGate, type MonthGateLessonInput } from "@/hooks/useMonthGate";
 
 interface ContainerModule {
   id: string;
@@ -70,7 +72,8 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
           created_at,
           published_at,
           sort_order,
-          module_id
+          module_id,
+          content_month
         `)
         .in("module_id", allModuleIds)
         .eq("is_active", true)
@@ -250,6 +253,9 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
         published_at: lesson.published_at,
         sort_order: lesson.sort_order ?? 0,
         has_access: hasAccess,
+        // Carry through content_month/module_id for month-gate post-processing.
+        // (LessonCardData has lock_reason/locked_month; module_id/content_month are extra meta.)
+        ...( { module_id: lesson.module_id, content_month: (lesson as any).content_month ?? null } as any),
       });
     }
 
@@ -261,8 +267,40 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
     }
   }
 
+  // Month-gate (backend SOT). Apply for non-admin users only.
+  const monthGateInputs: MonthGateLessonInput[] = useMemo(() => {
+    if (isAdminUser) return [];
+    const inputs: MonthGateLessonInput[] = [];
+    for (const section of Object.values(lessonsBySection)) {
+      for (const l of section.lessons) {
+        const cm = (l as any).content_month as string | null | undefined;
+        const mid = (l as any).module_id as string | undefined;
+        if (cm && mid) inputs.push({ lesson_id: l.id, module_id: mid, content_month: cm });
+      }
+    }
+    return inputs;
+  }, [lessonsBySection, isAdminUser]);
+
+  const { map: monthGateMap } = useMonthGate(monthGateInputs);
+
+  const lessonsBySectionGated = useMemo(() => {
+    if (monthGateMap.size === 0) return lessonsBySection;
+    const out: typeof lessonsBySection = {};
+    for (const [key, section] of Object.entries(lessonsBySection)) {
+      out[key] = {
+        moduleSlug: section.moduleSlug,
+        lessons: section.lessons.map((l) => {
+          const gate = monthGateMap.get(l.id);
+          if (!gate) return l;
+          return { ...l, lock_reason: gate.lock_reason, locked_month: gate.locked_month };
+        }),
+      };
+    }
+    return out;
+  }, [lessonsBySection, monthGateMap]);
+
   return {
-    lessonsBySection,
+    lessonsBySection: lessonsBySectionGated,
     containerModules,
     restrictedTariffs: Array.from(restrictedTariffIds),
     isLoading,

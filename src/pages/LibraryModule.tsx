@@ -26,6 +26,8 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import { getStatusBadgeClass } from "@/utils/badgeUtils";
+import { formatLockedMonth } from "@/hooks/useMonthGate";
 
 const contentTypeConfig = {
   video: { icon: Video, label: "Видео", color: "text-blue-500" },
@@ -128,6 +130,7 @@ export default function LibraryModule() {
   });
 
   const handleLessonClick = (lesson: TrainingLesson) => {
+    if (lesson.lock_reason === "month_mismatch") return;
     navigate(`/library/${moduleSlug}/${lesson.slug}`);
   };
 
@@ -342,26 +345,27 @@ export default function LibraryModule() {
               const config = contentTypeConfig[lesson.content_type];
               const Icon = config.icon;
               const isScheduled = lesson.isScheduled;
+              const isMonthLocked = lesson.lock_reason === "month_mismatch";
 
               return (
                 <Card
                   key={lesson.id}
                   className={`transition-all group ${
                     lesson.is_completed ? "bg-muted/30" : ""
-                  } ${isScheduled 
-                    ? "opacity-80 cursor-not-allowed" 
+                  } ${isScheduled || isMonthLocked
+                    ? "opacity-80 cursor-not-allowed"
                     : "cursor-pointer hover:shadow-md"
                   }`}
-                  onClick={() => !isScheduled && handleLessonClick(lesson)}
+                  onClick={() => !isScheduled && !isMonthLocked && handleLessonClick(lesson)}
                 >
                   <CardContent className="flex items-center gap-4 p-4">
                     {/* Lesson number or lock icon */}
                     <div className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
-                      isScheduled 
-                        ? "bg-amber-100 text-amber-600 dark:bg-amber-900/30" 
+                      isScheduled || isMonthLocked
+                        ? "bg-amber-100 text-amber-600 dark:bg-amber-900/30"
                         : "bg-muted"
                     }`}>
-                      {isScheduled ? (
+                      {(isScheduled || isMonthLocked) ? (
                         <Lock className="h-4 w-4" />
                       ) : (
                         index + 1
@@ -378,7 +382,7 @@ export default function LibraryModule() {
                       <div className="flex items-center gap-2">
                         <h3 className={`font-medium transition-colors ${
                           lesson.is_completed ? "text-muted-foreground line-through" : ""
-                        } ${!isScheduled ? "group-hover:text-primary" : ""}`}>
+                        } ${!isScheduled && !isMonthLocked ? "group-hover:text-primary" : ""}`}>
                           {lesson.title}
                         </h3>
                         {(unreadByLesson?.get(lesson.id) ?? 0) > 0 && (
@@ -387,7 +391,11 @@ export default function LibraryModule() {
                           </Badge>
                         )}
                       </div>
-                      {isScheduled && lesson.published_at ? (
+                      {isMonthLocked && lesson.locked_month ? (
+                        <p className="text-xs text-amber-600 dark:text-amber-400">
+                          Контент за {formatLockedMonth(lesson.locked_month)}
+                        </p>
+                      ) : isScheduled && lesson.published_at ? (
                         <p className="text-xs text-amber-600 flex items-center gap-1">
                           <Timer className="h-3 w-3" />
                           Откроется {format(new Date(lesson.published_at), "d MMMM 'в' HH:mm", { locale: ru })}
@@ -399,8 +407,16 @@ export default function LibraryModule() {
                       ) : null}
                     </div>
 
-                    {/* Scheduled badge or regular controls */}
-                    {isScheduled ? (
+                    {/* Right-side badge / controls */}
+                    {isMonthLocked ? (
+                      <Badge
+                        variant="outline"
+                        className={`shrink-0 ${getStatusBadgeClass("warning")}`}
+                      >
+                        <Lock className="h-3 w-3 mr-1" />
+                        Доступно за отдельную плату
+                      </Badge>
+                    ) : isScheduled ? (
                       <Badge variant="outline" className="shrink-0 bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-900/30 dark:text-amber-500 dark:border-amber-700">
                         <Clock className="h-3 w-3 mr-1" />
                         Скоро

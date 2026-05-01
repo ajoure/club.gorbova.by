@@ -5,6 +5,8 @@ import { Play, Clock, Calendar, Lock, Video, Timer } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, isFuture } from "date-fns";
 import { ru } from "date-fns/locale";
+import { getStatusBadgeClass } from "@/utils/badgeUtils";
+import { formatLockedMonth } from "@/hooks/useMonthGate";
 
 export interface LessonCardData {
   id: string;
@@ -17,6 +19,8 @@ export interface LessonCardData {
   published_at?: string | null; // Use for display instead of created_at if available
   sort_order?: number;
   has_access?: boolean;
+  lock_reason?: "month_mismatch" | null;
+  locked_month?: string | null;
 }
 
 interface LessonCardProps {
@@ -42,12 +46,15 @@ export function LessonCard({
 }: LessonCardProps) {
   const navigate = useNavigate();
   const hasAccess = lesson.has_access !== false;
-  
+  const isMonthLocked = !isAdmin && lesson.lock_reason === "month_mismatch" && !!lesson.locked_month;
+
   // Check if lesson is scheduled for future
   const isScheduled = lesson.published_at && isFuture(new Date(lesson.published_at));
   const scheduledDate = isScheduled ? new Date(lesson.published_at!) : null;
 
   const handleClick = () => {
+    // Block navigation when locked by month-gate (non-admin only)
+    if (isMonthLocked) return;
     // If scheduled and not admin - don't navigate
     if (isScheduled && !isAdmin) {
       return;
@@ -66,9 +73,10 @@ export function LessonCard({
     <GlassCard
       className={cn(
         "overflow-hidden group relative bg-background/60 backdrop-blur-xl border border-border/30 transition-all duration-300",
-        !isScheduled && "hover:border-primary/40 hover:shadow-xl cursor-pointer",
+        !isScheduled && !isMonthLocked && "hover:border-primary/40 hover:shadow-xl cursor-pointer",
         isScheduled && !isAdmin && "cursor-not-allowed",
         isScheduled && isAdmin && "hover:border-amber-500/40 cursor-pointer",
+        isMonthLocked && "cursor-not-allowed opacity-80",
         !hasAccess && "opacity-80"
       )}
       onClick={handleClick}
@@ -108,8 +116,21 @@ export function LessonCard({
           </div>
         )}
 
+        {/* Month-gate badge — highest priority */}
+        {isMonthLocked && (
+          <div className="absolute top-3 right-3">
+            <Badge
+              variant="outline"
+              className={cn("gap-1 backdrop-blur-sm", getStatusBadgeClass("warning"))}
+            >
+              <Lock className="h-3 w-3" />
+              Доступно за отдельную плату
+            </Badge>
+          </div>
+        )}
+
         {/* Scheduled badge - "Скоро" */}
-        {isScheduled && scheduledDate && (
+        {!isMonthLocked && isScheduled && scheduledDate && (
           <div className="absolute top-3 right-3">
             <Badge className="gap-1 bg-amber-500 hover:bg-amber-600 text-white">
               <Timer className="h-3 w-3" />
@@ -118,8 +139,8 @@ export function LessonCard({
           </div>
         )}
 
-        {/* Access badge - only show if not scheduled */}
-        {!hasAccess && !isScheduled && (
+        {/* Access badge - only show if not scheduled and not month-locked */}
+        {!hasAccess && !isScheduled && !isMonthLocked && (
           <div className="absolute top-3 right-3">
             <Badge variant="secondary" className="gap-1 bg-background/80 backdrop-blur-sm">
               <Lock className="h-3 w-3" />
@@ -144,6 +165,13 @@ export function LessonCard({
         <h3 className="text-base font-semibold text-foreground leading-tight mb-2 group-hover:text-primary transition-colors line-clamp-2">
           {lesson.title}
         </h3>
+
+        {/* Month-lock subtitle */}
+        {isMonthLocked && lesson.locked_month && (
+          <div className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+            Контент за {formatLockedMonth(lesson.locked_month)}
+          </div>
+        )}
 
         {/* Meta info */}
         {formattedDate && (
