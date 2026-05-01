@@ -1,81 +1,189 @@
-Да, план правильный.
+Да, согласен, с учетом правок:
 
-Важное уточнение к апруву:
-
-- **one-time не трогать вообще**: без суммы, без CTA, без amount-resolver.
-- Amount-resolver только для recurring/installment.
-- Fallback на primary tariff_offer обязателен.
-- Если сумма не найдена — это **не блокирует отправку**, но пишется reminders.amount_unresolved_critical.
-
-Можно выполнять точечный патч только в subscription-renewal-reminders/index.ts.
+1. content_month валидировать CHECK-условием формата YYYY-MM.
+2. Бэкфилл orders_[v2.meta.deal](http://v2.meta.deal)_month делать только для status='paid', без перезаписи существующего значения.
+3. Для slug DDMMYYYY обязательно валидировать реальную дату, а не только regex.
+4. В audit_logs не писать на каждый просмотр карточки, иначе будет шум. Логировать только на серверном access-check/resolve, с дедупом по user_id + content_id + month + day.
 
 &nbsp;
 
-План: Исправить «Сумма списания» в напоминаниях о подписке (v4 — final)
+1. grant-access-for-order не должен менять старые paid orders; только новые заказы получают deal_month при создании/fulfillment.
+2. Перед execute нужен dry-run:
+  - сколько уроков получат content_month;
+  - сколько live_events получат metadata.content_month;
+  - сколько paid orders получат deal_month;
+  - сколько правил уже имеют match_purchase_month=true.
 
-## Что делает функция сегодня (перепроверено по коду)
+Можно выполнять после этих уточнений.
 
-`supabase/functions/subscription-renewal-reminders/index.ts` — единая cron-функция, шлёт напоминания за 7/3/1 день до конца доступа.
+&nbsp;
 
-Она УЖЕ умеет различать тип продукта через `isOneTimeProduct(supabase, tariff_id, userId, productId)` (line 139), который под капотом ходит в SOT `resolveProductRenewability` поверх `tariff_offers` и возвращает флаги `is_recurring` / `has_installment` / `is_one_time`. Этот классификатор — общий, переиспользуем, ничего нового не создаём.
+# План: Помесячная привязка контента к сделкам клуба «Бизнес»
 
-Существующие ветки шаблонов:
+## Бизнес-формулировка
 
-- `sendTelegramReminder` / `sendEmailReminder` принимают параметр `isOneTime: boolean`.
-- Если `isOneTime=true` (line 482, 564, 742, 777) — отправляется info-only текст: «срок доступа истекает», БЕЗ строки «💳 Сумма списания» и БЕЗ CTA на оплату/продление. Это уже корректное поведение для разовых продуктов.
-- Если `isOneTime=false` (recurring или installment) — отправляется renewal-текст со строкой «💳 Сумма списания: `{amount} {currency}`» (lines 814/830/846 в email; аналогично в TG).
+У контента (уроки/модули/вебинары) появляется поле **«Месяц контента»** в формате `YYYY-MM`. У сделки в `orders_v2` появляется **«Месяц сделки»** (`meta.deal_month`). Контент виден пользователю только если:
 
-## Где именно баг (узкий)
+1. Подписка/право на продукт+тариф активна (как сейчас).
+2. **И** у пользователя есть paid-сделка по тому же тарифу с `deal_month == content.content_month` (если правило доступа явно требует этой проверки).
 
-Lines 1207–1223: для recurring/installment-веток `amount` читается ТОЛЬКО из легаси `tariff_prices` → для большинства тарифов (вкл. `c5981337-…`, Татьяна Образова) → 0 → «💳 Сумма списания: 0.00 BYN».
+Платный «докуп» пропущенного месяца — отдельная задача в будущем.
 
-Бизнес-инвариант пользователя: цена существует всегда, потому что у тарифа всегда есть «основная кнопка» (`tariff_offers.is_primary=true`). Состояние «не нашли цену» для recurring/installment продукта быть не может.
+## Что переиспользуем (НИЧЕГО НЕ ДУБЛИРУЕМ)
 
-## Решение — точечный патч ОДНОЙ функции, без новых файлов/таблиц/edge functions
 
-### 1) Добавить локальный inline-резолвер `resolveReminderAmount(sub, tariffId)` внутри `index.ts` (не отдельный модуль)
+| Сущность             | Где живёт                                                                         | Как используем                                                                                  |
+| -------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Сделка               | `orders_v2.meta.deal_month` (новое поле в `meta`)                                 | Источник «месяца сделки»                                                                        |
+| Дефолт месяца сделки | существующий `deal_date` / `created_at`                                           | Для бэкфилла и автозаполнения                                                                   |
+| Контент              | `training_lessons`, `training_modules`, `live_events`                             | Добавляем `content_month` (text `YYYY-MM`)                                                      |
+| Правила доступа      | существующее `access_rules.conditions jsonb` + аналог в `live_event_access_rules` | Добавляем флаг `match_purchase_month: true`                                                     |
+| UI редактор правил   | `ProductAccessRulesTab.tsx`, `LiveEventAccessRulesEditor.tsx`                     | Один Switch                                                                                     |
+| Резолвер             | `live-resolve/index.ts`, `_shared/access-resolver.ts`                             | Новый month-gate                                                                                |
+| Канон prior-purchase | `_shared/check-prior-purchase.ts`                                                 | Создаём sibling `check-month-purchase.ts` (тот же контракт, фильтр по `deal_month + tariff_id`) |
+| UI редактор сделки   | `EditDealDialog.tsx`                                                              | Поле «Месяц сделки»                                                                             |
 
-Вызывается ТОЛЬКО когда классификатор уже сказал, что продукт recurring или installment (`productIsOneTime === false`). Для one-time резолвер вообще не дёргается — оставляем `amount=0` и шаблон-info, как сейчас.
 
-Приоритет источников (первый ненулевой выигрывает):
+## Модель данных
 
-1. **bePaid live snapshot** — `subscriptions_v2.meta.bepaid.next_charge_amount` (или эквивалент, что уже кладёт `bepaid-sync` / `bepaid-get-subscription-details`). Используется когда фактическая сумма у провайдера отличается от тарифа (промо/индивидуальная цена). На execute-этапе один read_query подтвердит точный путь в meta. Audit: `amount_source='bepaid_snapshot'`.
-2. **Order/Subscription snapshot** — `subscriptions_v2.meta.amount_byn` или `final_price` последнего `paid` ордера данной подписки. Audit: `amount_source='order_snapshot'`.
-3. **Recurring tariff_offer** — активный offer с `meta.recurring.is_recurring=true`, выбор `is_primary DESC NULLS LAST, sort_order ASC NULLS LAST` (по SOT recurring-snapshot-resolver). Audit: `amount_source='tariff_recurring_offer'`.
-4. **Primary tariff_offer (НОВОЕ — гарантированный fallback)** — `is_primary=true AND is_active=true`, при отсутствии — первый `is_active=true ORDER BY sort_order ASC LIMIT 1`. Это «основная кнопка оплаты» из карточки тарифа. Audit: `amount_source='tariff_primary_offer'` + warning `reminders.amount_fallback_to_primary_offer` (recurring offer/snapshot не нашлись, но primary спас).
-5. **Legacy `tariff_prices**` — последний fallback для совместимости. Audit: `amount_source='legacy_tariff_prices'`.
+### 1. `orders_v2.meta.deal_month`
 
-Валюта: `subscriptions_v2.meta.currency` → дефолт `BYN` (в `tariff_offers` колонки currency нет, подтверждено схемой).
+- Формат `YYYY-MM`, Europe/Minsk.
+- Дефолт: `to_char((coalesce(deal_date::timestamptz, created_at) at time zone 'Europe/Minsk'),'YYYY-MM')`.
+- Helper `_shared/deal-month.ts` → `resolveDealMonth(order)`. Используется в `grant-access-for-order` и админских insert/update сделок.
 
-### 2) Гарантия отправки
+### 2. `training_lessons.content_month`, `training_modules.content_month` (text, nullable)
 
-- Если все 5 источников вернули 0 для recurring/installment подписки — это data-defect (тариф без единой кнопки). Reminder ВСЁ РАВНО уходит, но строка «💳 Сумма списания» опускается, пишется audit `reminders.amount_unresolved_critical` с `subscription_id`/`tariff_id` для алерта. Это аварийный путь, не штатный.
+### 3. `live_events.metadata.content_month` (без новой колонки)
 
-### 3) One-time — без изменений
+### 4. `live_event_access_rules.conditions jsonb not null default '{}'` (новая колонка)
 
-Для `productIsOneTime===true` поведение остаётся ровно как сейчас: info-only шаблон, без суммы, без CTA. Резолвер не вызывается. Никаких новых полей, никаких новых веток.
+### 5. `access_rules.conditions.match_purchase_month: boolean` (поле в существующем jsonb)
 
-## Что НЕ создаём и не трогаем
+## Бэкфилл «месяца контента» из slug
 
-- Никаких новых edge functions, таблиц, RPC, cron jobs, миграций.
-- Не трогаем `bepaid-sync` / `bepaid-get-subscription-details` — только читаем `subscriptions_v2.meta`.
-- Не трогаем `isOneTimeProduct` / `resolveProductRenewability` — это уже SOT, переиспользуем.
-- Не трогаем `tariff_prices` (оставляем как fallback).
-- Не трогаем cron-расписание, формат даты/времени по Минску, CTA-генерацию, ветку one-time, no_card_warning.
-- Шаблоны email/TG: меняется только то, что строка суммы корректно подставляется или (в аварийном режиме) опускается.
+**Точное состояние БД** (проверено):
 
-## Verify (DoD)
+- `training_lessons` — всего 396; **ровно 9 строк** имеют slug формата `DDMMYYYY` (`01022025`, `01032025`, …, `01122025`). Это и есть «вебинары-тренинги» бизнес-клуба.
+- Других числовых форматов slug (`DDMMYY`, `YYYY-MM…`) — 0.
 
-1. Татьяна Образова (tariff `c5981337-…`, recurring): сейчас amount=0 → ожидаем `amount > 0` с источником `bepaid_snapshot` или `order_snapshot` или `tariff_recurring_offer` или `tariff_primary_offer`. Подтверждается одним dry-run прогоном с логом `amount_source`.
-2. Прогон по всем `auto_renew=true` подпискам в окнах 7/3/1: сводка `audit_logs` по `event_subtype LIKE 'reminders.amount_%'`. Ожидание: `amount_unresolved_critical = 0`.
-3. One-time продукт (например, разовый курс): убедиться, что reminder уходит без строки суммы и без CTA, резолвер не вызван (нет audit `reminders.amount_*`).
-4. Installment-подписка: reminder уходит с суммой очередного транша.
-5. Регрессия легаси: тариф из `tariff_prices` без `tariff_offers` → источник `legacy_tariff_prices`, сумма прежняя.
+**Правило бэкфилла (один SQL в миграции):**
 
-## Memory update (после execute)
+```sql
+update public.training_lessons
+set content_month = substring(slug from 5 for 4) || '-' || substring(slug from 3 for 2)
+where content_month is null
+  and slug ~ '^[0-3][0-9][0-1][0-9][0-9]{4}$';
+```
 
-Дополнить `architecture/communications/renewal-offer-resolver-sot`:
+Это даст:
 
-> Reminder amount-резолвер вызывается ТОЛЬКО для recurring/installment продуктов (классификация — `isOneTimeProduct` поверх `resolveProductRenewability`). Для one-time продуктов сумма не резолвится и в шаблон не попадает. Цепочка для recurring/installment: bePaid snapshot → order snapshot → recurring offer → **primary tariff_offer (fallback)** → legacy `tariff_prices`. «Цена не найдена» — инвариант-нарушение, логируется как `reminders.amount_unresolved_critical`, но reminder всё равно отправляется без строки суммы.
+- `01022025` → `2025-02` (Февраль 2025)
+- `01032025` → `2025-03`
+- … `01122025` → `2025-12`
 
-После апрува — переключаюсь в default mode, делаю один read_query по фактической форме `subscriptions_v2.meta.bepaid` (точный путь к next_charge_amount), затем точечный патч в `subscription-renewal-reminders/index.ts` (lines 1207–1223 + добавление inline-резолвера). Других файлов не трогаю.
+Дополнительный бэкфилл (для остальных, если позже появятся): `content_month = to_char(coalesce(published_at, created_at) at time zone 'Europe/Minsk','YYYY-MM')` — **только** для уроков, попавших под правило с `match_purchase_month` (запускается отдельным скриптом по требованию админа, не автоматически, чтобы не «помечать месяцами» весь курсный контент).
+
+Для `live_events` (если есть клубные вебинары как `live_events`):
+
+```sql
+update public.live_events
+set metadata = coalesce(metadata,'{}'::jsonb)
+  || jsonb_build_object('content_month',
+       to_char(scheduled_at at time zone 'Europe/Minsk','YYYY-MM'))
+where (metadata->>'content_month') is null
+  and scheduled_at is not null
+  and event_type in ('live_webinar','recorded_webinar','autowebinar');
+```
+
+**Бэкфилл `orders_v2.meta.deal_month**` — одной миграцией для всех `status='paid'`, где поле ещё не задано (см. предыдущую итерацию плана).
+
+После миграции — **proof**: SELECT с группировкой `content_month, count(*)` по 9 уроков, чтобы админ глазами проверил соответствие.
+
+## Резолвер — единый helper
+
+Новый `_shared/check-month-purchase.ts` (близнец `check-prior-purchase.ts`):
+
+```
+checkMonthPurchase(supabase, userId, tariffId, month) -> { found, order_id }
+```
+
+Запрос: `orders_v2 where user_id=? and tariff_id=? and status='paid' and meta->>'deal_month' = ? limit 1`.
+
+Подключение:
+
+- `live-resolve/index.ts` — после прохождения `productOk`, если `rule.conditions.match_purchase_month === true`, читаем `event.metadata.content_month` и зовём helper. Без совпадения → `productOk=false`.
+- `access-resolver.ts` — то же для `grant_target_type='training_content'`: берём `content_month` целевого урока/модуля.
+
+Поведение по умолчанию (без флага в правиле) **не меняется** — старые правила продолжают работать.
+
+## UI
+
+### A. Новый компонент `src/components/ui/MonthYearPicker.tsx`
+
+Один Popover: выбор `Месяц` + `Год`. Значение — строка `YYYY-MM`. Переиспользуется во всех точках.
+
+### B. `EditDealDialog.tsx`
+
+Поле «Месяц сделки» (`MonthYearPicker`). По умолчанию — из `meta.deal_month` или вычисленное из `deal_date`. Сохранение в `meta.deal_month` (через существующий update-путь сделки).
+
+### C. Форма урока (`LessonFormFields.tsx`), форма модуля, `LiveEventForm.tsx`
+
+Поле «Месяц контента» (`MonthYearPicker`). Запись в колонку `content_month` (для уроков/модулей) или `metadata.content_month` (для `live_events`). Hint: «Используется для гейта доступа по месяцу покупки».
+
+### D. `ProductAccessRulesTab.tsx` и `LiveEventAccessRulesEditor.tsx`
+
+Switch: **«Только для тех, кто покупал тариф в том же месяце, что и контент»**. Запись `conditions.match_purchase_month`. Превью-текст с явным объяснением.
+
+### E. Карточки в кабинете
+
+В `LessonCard` / списке вебинаров — три состояния:
+
+- **Открыт**: подписка активна И месяцы совпали (или флага нет).
+- **Закрыт по месяцу**: подписка активна, но в этом месяце сделки не было. Бейдж «Доступно за отдельную плату» (CTA — следующая итерация).
+- **Закрыт по подписке**: текущее поведение.
+
+Состояние получаем из существующего `useAccessValidation` / резолвера — отдельной клиентской логики нет.
+
+## Файлы
+
+**Миграция:**
+
+- `alter table training_lessons add column content_month text`
+- `alter table training_modules add column content_month text`
+- `alter table live_event_access_rules add column conditions jsonb not null default '{}'::jsonb`
+- бэкфилл `training_lessons.content_month` из slug `DDMMYYYY` (9 строк)
+- бэкфилл `live_events.metadata.content_month` из `scheduled_at`
+- бэкфилл `orders_v2.meta.deal_month` из `deal_date`/`created_at`
+
+**Edge Functions:**
+
+- `_shared/deal-month.ts` (helper)
+- `_shared/check-month-purchase.ts` (helper)
+- правки в `live-resolve/index.ts`
+- правки в `_shared/access-resolver.ts` (ветка training_content)
+- правки в `grant-access-for-order/index.ts` (вызов `resolveDealMonth` при создании ордера)
+
+**UI:**
+
+- `src/components/ui/MonthYearPicker.tsx`
+- `EditDealDialog.tsx`, `LessonFormFields.tsx`, форма модуля, `LiveEventForm.tsx`
+- `ProductAccessRulesTab.tsx`, `LiveEventAccessRulesEditor.tsx`
+- `LessonCard.tsx` (бейдж «Закрыт по месяцу»)
+
+## DoD
+
+1. Миграция применена. Proof: SELECT `slug, content_month` по 9 уроков-вебинаров — все равны соответствующим `YYYY-MM`.
+2. Все paid-ордера получили `meta.deal_month`.
+3. `checkMonthPurchase` покрыт юнит-тестом (совпадение / несовпадение / другой тариф).
+4. `live-resolve` и `access-resolver` корректно блокируют контент при `match_purchase_month=true` без сделки в нужном месяце; без флага поведение не меняется.
+5. UI: «Месяц сделки» редактируется и сохраняется; «Месяц контента» виден в форме урока и автозаполнен у 9 вебинаров; Switch в редакторе правил пишет `conditions.match_purchase_month`.
+6. В `audit_logs` пишется `access.month_gate_{passed|blocked}` с `user_id, content_id, tariff_id, month`.
+7. Существующие правила без флага и весь не-вебинарный контент продолжают работать без изменений (regress-проверка по 387 урокам без `content_month`).
+
+## Что НЕ делаем
+
+- Не создаём новые таблицы.
+- Не дублируем `check-prior-purchase`.
+- Не включаем `match_purchase_month` автоматически ни на одно правило — админ ставит галку сам (так ничего не сломаем в текущих доступах).
+- Не реализуем платный докуп месяца.
