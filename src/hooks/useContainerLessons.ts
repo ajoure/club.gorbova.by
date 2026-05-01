@@ -253,6 +253,9 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
         published_at: lesson.published_at,
         sort_order: lesson.sort_order ?? 0,
         has_access: hasAccess,
+        // Carry through content_month/module_id for month-gate post-processing.
+        // (LessonCardData has lock_reason/locked_month; module_id/content_month are extra meta.)
+        ...( { module_id: lesson.module_id, content_month: (lesson as any).content_month ?? null } as any),
       });
     }
 
