@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -16,6 +17,7 @@ import { Plus, X, Info } from "lucide-react";
 export interface AccessRuleRow {
   product_id: string;
   tariff_ids: string[]; // empty = all tariffs
+  match_purchase_month?: boolean;
 }
 
 interface LiveEventAccessRulesEditorProps {
