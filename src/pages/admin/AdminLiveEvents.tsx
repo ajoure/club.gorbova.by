@@ -193,6 +193,7 @@ const defaultForm: LiveEventForm = {
   event_type: "recorded_webinar",
   event_timezone: "Europe/Minsk",
   kinescope_live_event_id: "",
+  content_month: null,
   _providerDraft: null,
   notification_enabled: false,
   notification_template_id: "",
