@@ -918,15 +918,20 @@ export default function AdminLiveEvents() {
   // Sync loaded rules into form when editing
   useMemo(() => {
     if (!existingRules || !editingId) return;
-    const grouped = new Map<string, string[]>();
-    for (const row of existingRules) {
+    type Group = { tariff_ids: string[]; match_purchase_month: boolean };
+    const grouped = new Map<string, Group>();
+    for (const row of existingRules as Array<{ product_id: string; tariff_id: string | null; conditions?: any }>) {
       const pid = row.product_id;
-      if (!grouped.has(pid)) grouped.set(pid, []);
-      if (row.tariff_id) grouped.get(pid)!.push(row.tariff_id);
+      if (!grouped.has(pid)) grouped.set(pid, { tariff_ids: [], match_purchase_month: false });
+      const g = grouped.get(pid)!;
+      if (row.tariff_id) g.tariff_ids.push(row.tariff_id);
+      const cond = row.conditions || {};
+      if (cond?.match_purchase_month === true) g.match_purchase_month = true;
     }
-    const accessRules: AccessRuleRow[] = Array.from(grouped.entries()).map(([product_id, tariff_ids]) => ({
+    const accessRules: AccessRuleRow[] = Array.from(grouped.entries()).map(([product_id, g]) => ({
       product_id,
-      tariff_ids,
+      tariff_ids: g.tariff_ids,
+      match_purchase_month: g.match_purchase_month,
     }));
     if (accessRules.length > 0 || form.access_rules.length === 0) {
       setForm(f => ({ ...f, access_rules: accessRules }));
