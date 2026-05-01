@@ -351,6 +351,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       tc_allowed_module_ids: [],
       tc_allowed_lesson_ids: [],
       tc_auto_include_new_modules: false,
+      match_purchase_month: false,
     });
     setAdvancedOpen(false);
     setDialogOpen(true);
@@ -398,6 +399,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
     tc_allowed_module_ids: [] as string[],
     tc_allowed_lesson_ids: [] as string[],
     tc_auto_include_new_modules: false,
+    match_purchase_month: false,
   });
 
   // Confirm-dialog для перевода existing partial → full
@@ -533,6 +535,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       tc_allowed_module_ids: [],
       tc_allowed_lesson_ids: [],
       tc_auto_include_new_modules: false,
+      match_purchase_month: false,
     });
     setAdvancedOpen(false);
     setDialogOpen(true);
@@ -589,6 +592,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       tc_allowed_module_ids: tcAllowedModuleIds,
       tc_allowed_lesson_ids: tcAllowedLessonIds,
       tc_auto_include_new_modules: Boolean(conditions.auto_include_new_modules),
+      match_purchase_month: conditions.match_purchase_month === true,
     });
     setAdvancedOpen(false);
     setDialogOpen(true);
@@ -658,6 +662,11 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
         // full: флаг авто-включения не нужен — full и так видит все будущие модули
         delete conditions.auto_include_new_modules;
       }
+    }
+
+    // Month-gated access (applies to training_content and live_event-style rules)
+    if (form.match_purchase_month) {
+      conditions.match_purchase_month = true;
     }
 
     // Parse string fields to numbers on save
@@ -1483,6 +1492,24 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                           Полный доступ автоматически включает все текущие и будущие папки тренинга.
                         </p>
                       )}
+                    </div>
+                  )}
+
+                  {form.grant_target_type === "training_content" && (
+                    <div className="flex items-start gap-2 p-3 rounded-lg border border-border/50 bg-muted/30">
+                      <Switch
+                        id="rule-match-purchase-month"
+                        checked={form.match_purchase_month}
+                        onCheckedChange={(v) => setForm({ ...form, match_purchase_month: Boolean(v) })}
+                      />
+                      <div className="flex-1 -mt-0.5">
+                        <Label htmlFor="rule-match-purchase-month" className="text-xs font-medium cursor-pointer">
+                          Совпадение месяца покупки
+                        </Label>
+                        <p className="text-[11px] text-muted-foreground">
+                          Если включено — урок/модуль с заданным «Месяцем контента» откроется только тем, у кого есть оплата в том же месяце по этому тарифу.
+                        </p>
+                      </div>
                     </div>
                   )}
 

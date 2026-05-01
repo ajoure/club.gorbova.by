@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -16,6 +17,7 @@ import { Plus, X, Info } from "lucide-react";
 export interface AccessRuleRow {
   product_id: string;
   tariff_ids: string[]; // empty = all tariffs
+  match_purchase_month?: boolean;
 }
 
 interface LiveEventAccessRulesEditorProps {
@@ -62,6 +64,12 @@ export function LiveEventAccessRulesEditor({ rules, onChange }: LiveEventAccessR
     onChange(updated);
   };
 
+  const updateMonthGate = (index: number, value: boolean) => {
+    const updated = [...rules];
+    updated[index] = { ...updated[index], match_purchase_month: value };
+    onChange(updated);
+  };
+
   // Build audience preview text
   const previewText = buildPreviewText(rules, products || []);
 
@@ -86,6 +94,7 @@ export function LiveEventAccessRulesEditor({ rules, onChange }: LiveEventAccessR
           usedProductIds={usedProductIds}
           onUpdateProduct={updateProduct}
           onUpdateTariffs={updateTariffs}
+          onUpdateMonthGate={updateMonthGate}
           onRemove={removeRule}
         />
       ))}
@@ -112,10 +121,11 @@ interface RuleRowProps {
   usedProductIds: string[];
   onUpdateProduct: (index: number, productId: string) => void;
   onUpdateTariffs: (index: number, tariffIds: string[]) => void;
+  onUpdateMonthGate: (index: number, value: boolean) => void;
   onRemove: (index: number) => void;
 }
 
-function RuleRow({ rule, index, products, usedProductIds, onUpdateProduct, onUpdateTariffs, onRemove }: RuleRowProps) {
+function RuleRow({ rule, index, products, usedProductIds, onUpdateProduct, onUpdateTariffs, onUpdateMonthGate, onRemove }: RuleRowProps) {
   const { data: tariffs } = useQuery({
     queryKey: ["live-access-tariffs", rule.product_id],
     queryFn: async () => {
@@ -184,6 +194,24 @@ function RuleRow({ rule, index, products, usedProductIds, onUpdateProduct, onUpd
                 ? "Доступ по любому тарифу этого продукта"
                 : "Доступ только по выбранным тарифам"}
             </p>
+          </div>
+        )}
+
+        {rule.product_id && (
+          <div className="flex items-start gap-2 pt-1.5 border-t border-border/40">
+            <Switch
+              id={`month-gate-${index}`}
+              checked={rule.match_purchase_month === true}
+              onCheckedChange={(v) => onUpdateMonthGate(index, v)}
+            />
+            <div className="flex-1 -mt-0.5">
+              <Label htmlFor={`month-gate-${index}`} className="text-xs font-medium cursor-pointer">
+                Совпадение месяца покупки
+              </Label>
+              <p className="text-[11px] text-muted-foreground">
+                Доступ только если у пользователя есть оплата в месяце эфира.
+              </p>
+            </div>
           </div>
         )}
       </div>

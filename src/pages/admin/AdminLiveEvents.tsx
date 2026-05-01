@@ -67,6 +67,7 @@ import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale";
 import { slugify } from "@/utils/slugify";
 import { LiveEventAccessRulesEditor, type AccessRuleRow } from "@/components/admin/live/LiveEventAccessRulesEditor";
+import { MonthYearPicker } from "@/components/ui/month-year-picker";
 import { LiveEventComments } from "@/components/live/LiveEventComments";
 import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 import { LiveEventModerationPanel } from "@/components/live/LiveEventModeration";
@@ -155,6 +156,7 @@ interface LiveEventForm {
   event_type: EventType;
   event_timezone: string;
   kinescope_live_event_id: string;
+  content_month: string | null;
   /** Transient provider data from create — persisted on save for new events */
   _providerDraft?: {
     live_event_id: string;
@@ -192,6 +194,7 @@ const defaultForm: LiveEventForm = {
   event_type: "recorded_webinar",
   event_timezone: "Europe/Minsk",
   kinescope_live_event_id: "",
+  content_month: null,
   _providerDraft: null,
   notification_enabled: false,
   notification_template_id: "",
@@ -337,7 +340,7 @@ export default function AdminLiveEvents() {
       if (!editingId) return [];
       const { data } = await supabase
         .from("live_event_access_rules")
-        .select("product_id, tariff_id, sort_order")
+        .select("product_id, tariff_id, sort_order, conditions")
         .eq("live_event_id", editingId)
         .order("sort_order");
       return data || [];
@@ -729,6 +732,9 @@ export default function AdminLiveEvents() {
         offsets: data.notification_offsets,
       };
 
+      // Persist content_month for month-gated access (null clears the field)
+      mergedMetadata.content_month = data.content_month || null;
+
 
       // SURGICAL HARDENING (live-bugfix): never write platform_status/status from form save.
       // Lifecycle (draft → scheduled → live → ended → replay_available) is owned exclusively
@@ -795,14 +801,16 @@ export default function AdminLiveEvents() {
       if (eventId) {
         await supabase.from("live_event_access_rules").delete().eq("live_event_id", eventId);
         const validRules = data.access_rules.filter(r => r.product_id);
-        const rows: Array<{ live_event_id: string; product_id: string; tariff_id: string | null; sort_order: number }> = [];
-        
+        const rows: Array<{ live_event_id: string; product_id: string; tariff_id: string | null; sort_order: number; conditions: Record<string, any> }> = [];
+
         validRules.forEach((rule, ruleIdx) => {
+          const conditions: Record<string, any> = {};
+          if (rule.match_purchase_month === true) conditions.match_purchase_month = true;
           if (rule.tariff_ids.length === 0) {
-            rows.push({ live_event_id: eventId!, product_id: rule.product_id, tariff_id: null, sort_order: ruleIdx * 10 });
+            rows.push({ live_event_id: eventId!, product_id: rule.product_id, tariff_id: null, sort_order: ruleIdx * 10, conditions });
           } else {
             rule.tariff_ids.forEach((tariffId, tIdx) => {
-              rows.push({ live_event_id: eventId!, product_id: rule.product_id, tariff_id: tariffId, sort_order: ruleIdx * 10 + tIdx });
+              rows.push({ live_event_id: eventId!, product_id: rule.product_id, tariff_id: tariffId, sort_order: ruleIdx * 10 + tIdx, conditions });
             });
           }
         });
@@ -898,6 +906,7 @@ export default function AdminLiveEvents() {
       event_type: (event.event_type as EventType) || "recorded_webinar",
       event_timezone: event.event_timezone || "Europe/Minsk",
       kinescope_live_event_id: event.kinescope_live_event_id || "",
+      content_month: (meta.content_month as string | undefined) ?? null,
       notification_enabled: ns.enabled ?? false,
       notification_template_id: ns.template_id || "",
       notification_channels: ns.channels || ["telegram"],
@@ -918,15 +927,20 @@ export default function AdminLiveEvents() {
   // Sync loaded rules into form when editing
   useMemo(() => {
     if (!existingRules || !editingId) return;
-    const grouped = new Map<string, string[]>();
-    for (const row of existingRules) {
+    type Group = { tariff_ids: string[]; match_purchase_month: boolean };
+    const grouped = new Map<string, Group>();
+    for (const row of existingRules as Array<{ product_id: string; tariff_id: string | null; conditions?: any }>) {
       const pid = row.product_id;
-      if (!grouped.has(pid)) grouped.set(pid, []);
-      if (row.tariff_id) grouped.get(pid)!.push(row.tariff_id);
+      if (!grouped.has(pid)) grouped.set(pid, { tariff_ids: [], match_purchase_month: false });
+      const g = grouped.get(pid)!;
+      if (row.tariff_id) g.tariff_ids.push(row.tariff_id);
+      const cond = row.conditions || {};
+      if (cond?.match_purchase_month === true) g.match_purchase_month = true;
     }
-    const accessRules: AccessRuleRow[] = Array.from(grouped.entries()).map(([product_id, tariff_ids]) => ({
+    const accessRules: AccessRuleRow[] = Array.from(grouped.entries()).map(([product_id, g]) => ({
       product_id,
-      tariff_ids,
+      tariff_ids: g.tariff_ids,
+      match_purchase_month: g.match_purchase_month,
     }));
     if (accessRules.length > 0 || form.access_rules.length === 0) {
       setForm(f => ({ ...f, access_rules: accessRules }));
@@ -1363,6 +1377,17 @@ export default function AdminLiveEvents() {
                   <TabsContent value="access" className="m-0 space-y-4">
               {/* Section 3: Access rules */}
               <FormSection>
+                <div className="space-y-2 mb-4">
+                  <Label className="text-sm font-medium">Месяц контента</Label>
+                  <MonthYearPicker
+                    value={form.content_month}
+                    onChange={(v) => setForm({ ...form, content_month: v })}
+                    placeholder="Не задан (берётся из даты эфира)"
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Используется правилами с включённым флагом «Совпадение месяца покупки».
+                  </p>
+                </div>
                 <LiveEventAccessRulesEditor
                   rules={form.access_rules}
                   onChange={(rules) => setForm({ ...form, access_rules: rules })}

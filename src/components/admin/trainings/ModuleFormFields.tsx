@@ -15,6 +15,7 @@ import { Upload, Sparkles, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { ContentSectionSelector } from "./ContentSectionSelector";
+import { MonthYearPicker } from "@/components/ui/month-year-picker";
 
 export const gradientOptions = [
   { value: "from-pink-500 to-fuchsia-600", label: "Розовый → Фуксия" },
@@ -51,6 +52,7 @@ export interface ModuleFormData {
   is_active?: boolean;
   menu_section_key?: string;
   display_layout?: string;
+  content_month?: string | null;
 }
 
 interface ModuleFormFieldsProps {
@@ -315,6 +317,19 @@ export function ModuleFormFields({
           <Label htmlFor="module-is_active">Активен</Label>
         </div>
       )}
+
+      <div className="space-y-2">
+        <Label>Месяц контента (для привязки к месяцу покупки)</Label>
+        <MonthYearPicker
+          value={formData.content_month ?? null}
+          onChange={(v) => updateField("content_month", v)}
+          placeholder="Не задан"
+        />
+        <p className="text-[11px] text-muted-foreground">
+          Если задано и в правиле доступа включён флаг «Совпадение месяца покупки»,
+          модуль будет доступен только тем, у кого есть оплата в этом месяце.
+        </p>
+      </div>
 
       {showSectionSelector && (
         <ContentSectionSelector

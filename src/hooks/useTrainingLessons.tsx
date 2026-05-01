@@ -59,6 +59,7 @@ export interface TrainingLessonFormData {
   sort_order?: number;
   duration_minutes?: number;
   is_active?: boolean;
+  content_month?: string | null;
   // Scheduling & completion fields
   published_at?: string;
   completion_mode?: CompletionMode;

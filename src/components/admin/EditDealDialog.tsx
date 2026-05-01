@@ -43,6 +43,7 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { MonthYearPicker } from "@/components/ui/month-year-picker";
 
 interface EditDealDialogProps {
   deal: any | null;
@@ -77,6 +78,7 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
     auto_renew: false,
     profile_id: "" as string | null,
     user_id: "" as string | null,
+    deal_month: null as string | null,
   });
   const [showContactSearch, setShowContactSearch] = useState(false);
   const [contactSearch, setContactSearch] = useState("");
@@ -183,6 +185,7 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
         auto_renew: subscription?.auto_renew ?? false,
         profile_id: deal.profile_id || profile?.id || null,
         user_id: deal.user_id || profile?.user_id || null,
+        deal_month: (deal as any)?.meta?.deal_month ?? null,
       });
       setShowContactSearch(false);
       setContactSearch("");
@@ -215,6 +218,15 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
       if (newDealDate) {
         orderUpdate.deal_date = newDealDate;
       }
+
+      // deal_month: persist into meta (preserve other meta keys)
+      const oldDealMonth = (deal as any)?.meta?.deal_month ?? null;
+      const newDealMonth = formData.deal_month || null;
+      const dealMonthChanged = oldDealMonth !== newDealMonth;
+      if (dealMonthChanged) {
+        const existingMeta = ((deal as any)?.meta && typeof (deal as any).meta === "object") ? (deal as any).meta : {};
+        orderUpdate.meta = { ...existingMeta, deal_month: newDealMonth };
+      }
       // NOTE: created_at is never updated — it's a system timestamp
       const { error: orderError } = await supabase
         .from("orders_v2")
@@ -244,7 +256,27 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
         });
       }
 
-      // 2. Re-fetch subscription inside mutation to avoid stale cache
+      // Audit: log manual deal_month change
+      if (dealMonthChanged) {
+        const { data: { user: currentUser } } = await supabase.auth.getUser();
+        await supabase.from("audit_logs").insert({
+          action: "deal.deal_month.updated",
+          actor_type: "user",
+          actor_user_id: currentUser?.id || null,
+          actor_label: "admin-ui",
+          target_user_id: deal.user_id || null,
+          meta: {
+            order_id: deal.id,
+            order_number: deal.order_number,
+            old_deal_month: oldDealMonth,
+            new_deal_month: newDealMonth,
+          },
+          created_at: new Date().toISOString(),
+        }).then(({ error: auditErr }) => {
+          if (auditErr) console.error("Audit log error:", auditErr);
+        });
+      }
+
       const { data: freshSubscription } = await supabase
         .from("subscriptions_v2")
         .select("*")
@@ -698,6 +730,19 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
                     </PopoverContent>
                   </Popover>
                 </div>
+              </div>
+              <div className="space-y-2 sm:col-span-2">
+                <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Месяц сделки (для контента, привязанного к месяцу)
+                </Label>
+                <MonthYearPicker
+                  value={formData.deal_month}
+                  onChange={(v) => setFormData(prev => ({ ...prev, deal_month: v }))}
+                  placeholder="Не задан (используется дата сделки)"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Используется правилами доступа с флагом «Совпадение месяца покупки» (например, для вебинаров клуба).
+                </p>
               </div>
             </div>
           </div>
