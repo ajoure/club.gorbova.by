@@ -45,18 +45,21 @@ interface TcRuleRow {
   conditions: any;
 }
 
-function resolveRootProductId(
+/**
+ * Walk up parent_module_id chain to find the ROOT training_module.id.
+ * Root = module with parent_module_id = null. This is what
+ * access_rules.target_ref points to for grant_target_type='training_content'.
+ */
+function resolveRootModuleId(
   moduleId: string,
   modulesById: Map<string, ModuleRow>
 ): string | null {
-  // Walk up parent chain (with cycle/safety guard).
   let cur = modulesById.get(moduleId);
   const visited = new Set<string>();
   while (cur) {
     if (visited.has(cur.id)) return null;
     visited.add(cur.id);
-    if (cur.product_id) return cur.product_id;
-    if (!cur.parent_module_id) return null;
+    if (!cur.parent_module_id) return cur.id; // reached root
     cur = modulesById.get(cur.parent_module_id);
     if (visited.size > 20) return null;
   }
