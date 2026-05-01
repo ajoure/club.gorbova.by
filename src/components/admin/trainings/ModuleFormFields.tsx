@@ -15,6 +15,7 @@ import { Upload, Sparkles, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { ContentSectionSelector } from "./ContentSectionSelector";
+import { MonthYearPicker } from "@/components/ui/month-year-picker";
 
 export const gradientOptions = [
   { value: "from-pink-500 to-fuchsia-600", label: "Розовый → Фуксия" },
