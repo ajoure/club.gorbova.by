@@ -26,6 +26,8 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import { getStatusBadgeClass } from "@/utils/badgeUtils";
+import { formatLockedMonth } from "@/hooks/useMonthGate";
 
 const contentTypeConfig = {
   video: { icon: Video, label: "Видео", color: "text-blue-500" },
