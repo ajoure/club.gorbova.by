@@ -285,6 +285,29 @@ export default function LibraryModule() {
           </Card>
         )}
 
+        {/* Month-locked banner (has_access=true но контент за неоплаченный месяц) */}
+        {moduleMonthLocked && moduleLockedMonth && (
+          <Card className="mb-6 border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/20 dark:border-amber-800">
+            <CardContent className="py-8 text-center">
+              <Lock className="h-12 w-12 mx-auto mb-4 text-amber-600 dark:text-amber-400" />
+              <h3 className="text-lg font-semibold mb-2 text-amber-900 dark:text-amber-100">
+                Контент за {formatLockedMonth(moduleLockedMonth)} доступен покупателям
+              </h3>
+              <p className="text-amber-800/90 dark:text-amber-200/90 mb-4 max-w-xl mx-auto">
+                Вы можете ознакомиться с темой и описанием, но просмотр материалов открыт
+                только тем, кто оплатил клуб BUSINESS за {formatLockedMonth(moduleLockedMonth)}.
+                Оформите доступ к нужному месяцу, чтобы открыть видео и материалы.
+              </p>
+              <Button
+                onClick={() => window.location.href = "https://club.gorbova.by"}
+                className="bg-amber-600 hover:bg-amber-700 text-white"
+              >
+                Получить доступ
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Lessons List */}
         {lessonsLoading ? (
           <div className="space-y-4">
