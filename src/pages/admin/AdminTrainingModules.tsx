@@ -902,6 +902,19 @@ export default function AdminTrainingModules() {
                 setFormData={setFormData}
                 editingModule={editingModule}
               />
+              <div className="flex items-start gap-2 rounded-md border border-border p-3">
+                <Switch
+                  id="inherit-content-month"
+                  checked={inheritContentMonth}
+                  onCheckedChange={setInheritContentMonth}
+                />
+                <div className="space-y-1">
+                  <Label htmlFor="inherit-content-month">Применить этот месяц ко всем урокам внутри модуля</Label>
+                  <p className="text-[11px] text-muted-foreground">
+                    При сохранении уроки получат тот же месяц; при очистке месяца он очистится и у уроков.
+                  </p>
+                </div>
+              </div>
               <ModuleAccessForm
                 formData={formData}
                 setFormData={setFormData}
