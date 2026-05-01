@@ -187,3 +187,29 @@ Switch: **«Только для тех, кто покупал тариф в то
 - Не дублируем `check-prior-purchase`.
 - Не включаем `match_purchase_month` автоматически ни на одно правило — админ ставит галку сам (так ничего не сломаем в текущих доступах).
 - Не реализуем платный докуп месяца.
+---
+
+## Отчёт о выполнении — Этап 1 (backend access gate)
+
+**Diagnose**: RPC `has_month_purchase(_user_id, _tariff_id, _month)` уже существовала, но требовала non-null `_tariff_id` (равенство NULL = false). Это блокировало правила «любой тариф продукта».
+
+**Изменения**:
+1. `supabase/functions/_shared/check-month-purchase.ts` — новый shared helper. Read-only, валидация формата YYYY-MM, единственный путь — RPC `has_month_purchase`. Возвращает `{ passed, reason }`.
+2. RPC `has_month_purchase` — расширена: при `_tariff_id IS NULL` ищет любой оплаченный заказ пользователя в указанный месяц (поведение для заданного tariff_id не изменилось).
+3. `supabase/functions/live-resolve/index.ts`:
+   - Импорт helper.
+   - В чтение `live_event_access_rules` добавлено поле `conditions`.
+   - Gate срабатывает **только** если `rule.conditions.match_purchase_month === true` и у события есть `metadata.content_month`.
+   - Если флаг включён, но у события нет `content_month` — gate пропускает + аудит `month_gate_passed` с `skip_reason='event_has_no_content_month'`.
+   - Дедуп аудита через локальный `monthGateAudited` flag → один verdict (`access.month_gate_passed`/`blocked`) на запрос.
+4. `supabase/functions/_shared/access-resolver.ts` — `TrainingContentFilter` дополнен полями `match_purchase_month: boolean` и `rule_tariff_id: string | null`. `resolveTrainingContentFilters` пробрасывает их из `conditions`. Downstream-потребителей этих полей в edge-функциях нет (frontend `TrainingContentFilter` — отдельный одноимённый интерфейс), правка обратно-совместимая.
+
+**Verify (DoD Этап 1)**:
+- Миграция RPC применена (линтер: только pre-existing INFO/WARN, новых нарушений нет).
+- Smoke RPC на 4 кейсах: `t / t / f / f` — корректно.
+- `live-resolve` задеплоен; запрос без auth корректно возвращает 401, новые импорты резолвятся.
+- Существующих правил с `match_purchase_month=true` ещё нет — поведение всех остальных правил не изменилось (gate выключен по умолчанию, default-deny не нарушен).
+
+**Не сделано в этом этапе (намеренно)**:
+- Runtime-применение `match_purchase_month` для уроков/модулей в кабинете — Этап 3.
+- UI-переключатели и `MonthYearPicker` — Этап 2.
