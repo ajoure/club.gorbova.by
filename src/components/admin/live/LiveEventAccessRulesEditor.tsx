@@ -196,6 +196,24 @@ function RuleRow({ rule, index, products, usedProductIds, onUpdateProduct, onUpd
             </p>
           </div>
         )}
+
+        {rule.product_id && (
+          <div className="flex items-start gap-2 pt-1.5 border-t border-border/40">
+            <Switch
+              id={`month-gate-${index}`}
+              checked={rule.match_purchase_month === true}
+              onCheckedChange={(v) => onUpdateMonthGate(index, v)}
+            />
+            <div className="flex-1 -mt-0.5">
+              <Label htmlFor={`month-gate-${index}`} className="text-xs font-medium cursor-pointer">
+                Совпадение месяца покупки
+              </Label>
+              <p className="text-[11px] text-muted-foreground">
+                Доступ только если у пользователя есть оплата в месяце эфира.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
       <Button variant="ghost" size="icon" className="shrink-0 h-8 w-8" onClick={() => onRemove(index)}>
         <X className="h-3.5 w-3.5" />
