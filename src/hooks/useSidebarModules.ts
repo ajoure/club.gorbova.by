@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useActiveTrainingContentRules, resolveTrainingContentFilter, isModuleVisible as isModAllowed } from "@/hooks/useTrainingContentRules";
+import { useModuleMonthGate } from "@/hooks/useModuleMonthGate";
 import { useMemo } from "react";
 
 export interface SidebarModule {
@@ -15,7 +16,14 @@ export interface SidebarModule {
   is_container?: boolean;
   parent_module_id?: string | null;
   product_id?: string | null;
+  content_month?: string | null;
   has_access?: boolean;
+  /** True when has_access=true via tariff/product BUT month-gate failed. */
+  month_locked?: boolean;
+  /** YYYY-MM, populated when month_locked=true. */
+  locked_month?: string | null;
+  /** Tariff that grants access to this content_month. */
+  required_tariff_id?: string | null;
   accessible_tariffs?: string[];
 }
 
