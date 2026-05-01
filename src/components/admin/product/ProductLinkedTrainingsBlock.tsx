@@ -727,6 +727,17 @@ function RuleLinkedTrainingCard({ vt, onFocusRule, onEditRule, onDeleteRule, con
 // --- Main Block ---
 export function ProductLinkedTrainingsBlock({ productId, onUseViaRule, onFocusRule, onEditRule }: Props) {
   const queryClient = useQueryClient();
+
+  // Гарантия свежих данных при открытии вкладки «Доступы».
+  // Например, если за время сессии в БД появились новые модули/вебинары,
+  // они подхватятся без полной перезагрузки страницы.
+  useEffect(() => {
+    if (!productId) return;
+    queryClient.invalidateQueries({ queryKey: ["product-linked-trainings", productId] });
+    queryClient.invalidateQueries({ queryKey: ["training-content-rules", productId] });
+    queryClient.invalidateQueries({ queryKey: ["training-content-tree"] });
+  }, [productId, queryClient]);
+
   const { trainings, diagnostics, isLoading, bindTraining, unbindTraining, rebindTraining, getRebindPreview, getUnbindPreview } = useProductTrainings(productId);
   const { data: contentRules = [] } = useTrainingContentRulesForProduct(productId);
   const { data: ruleLinkedData, isLoading: isRuleLinkedLoading } = useRuleLinkedTrainings(productId, contentRules);
