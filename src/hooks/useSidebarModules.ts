@@ -205,11 +205,39 @@ export function useSidebarModules() {
     });
   }, [modules, isAdminUser, tcData, tcLoading]);
 
+  // Month-gate: collect modules with content_month + has_access=true (skip admin).
+  const moduleMonthInputs = useMemo(() => {
+    if (isAdminUser) return [];
+    return filteredModules
+      .filter((m: any) => m.has_access && m.content_month)
+      .map((m: any) => ({
+        module_id: m.id,
+        content_month: m.content_month as string,
+        parent_module_id: m.parent_module_id ?? null,
+      }));
+  }, [filteredModules, isAdminUser]);
+
+  const { map: monthGateMap } = useModuleMonthGate(moduleMonthInputs);
+
+  const monthGatedModules = useMemo<SidebarModule[]>(() => {
+    if (isAdminUser || monthGateMap.size === 0) return filteredModules as SidebarModule[];
+    return (filteredModules as SidebarModule[]).map((m) => {
+      const gate = monthGateMap.get(m.id);
+      if (!gate) return m;
+      return {
+        ...m,
+        month_locked: true,
+        locked_month: gate.locked_month,
+        required_tariff_id: gate.required_tariff_id,
+      };
+    });
+  }, [filteredModules, monthGateMap, isAdminUser]);
+
   // Group modules by exact section key
   const modulesBySection = useMemo<ModulesBySection>(() => {
-    if (!filteredModules.length) return {};
+    if (!monthGatedModules.length) return {};
 
-    return filteredModules.reduce((acc, module) => {
+    return monthGatedModules.reduce((acc, module) => {
       const key = module.menu_section_key || "products";
       if (!acc[key]) {
         acc[key] = [];
@@ -217,10 +245,10 @@ export function useSidebarModules() {
       acc[key].push(module);
       return acc;
     }, {} as ModulesBySection);
-  }, [filteredModules]);
+  }, [monthGatedModules]);
 
   return {
-    modules,
+    modules: monthGatedModules,
     modulesBySection,
     isLoading,
   };
