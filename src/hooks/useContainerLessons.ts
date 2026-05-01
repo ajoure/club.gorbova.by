@@ -267,8 +267,40 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
     }
   }
 
+  // Month-gate (backend SOT). Apply for non-admin users only.
+  const monthGateInputs: MonthGateLessonInput[] = useMemo(() => {
+    if (isAdminUser) return [];
+    const inputs: MonthGateLessonInput[] = [];
+    for (const section of Object.values(lessonsBySection)) {
+      for (const l of section.lessons) {
+        const cm = (l as any).content_month as string | null | undefined;
+        const mid = (l as any).module_id as string | undefined;
+        if (cm && mid) inputs.push({ lesson_id: l.id, module_id: mid, content_month: cm });
+      }
+    }
+    return inputs;
+  }, [lessonsBySection, isAdminUser]);
+
+  const { map: monthGateMap } = useMonthGate(monthGateInputs);
+
+  const lessonsBySectionGated = useMemo(() => {
+    if (monthGateMap.size === 0) return lessonsBySection;
+    const out: typeof lessonsBySection = {};
+    for (const [key, section] of Object.entries(lessonsBySection)) {
+      out[key] = {
+        moduleSlug: section.moduleSlug,
+        lessons: section.lessons.map((l) => {
+          const gate = monthGateMap.get(l.id);
+          if (!gate) return l;
+          return { ...l, lock_reason: gate.lock_reason, locked_month: gate.locked_month };
+        }),
+      };
+    }
+    return out;
+  }, [lessonsBySection, monthGateMap]);
+
   return {
-    lessonsBySection,
+    lessonsBySection: lessonsBySectionGated,
     containerModules,
     restrictedTariffs: Array.from(restrictedTariffIds),
     isLoading,
