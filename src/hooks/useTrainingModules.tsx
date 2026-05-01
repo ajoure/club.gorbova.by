@@ -335,9 +335,10 @@ export function useTrainingModules() {
       console.error("Error fetching modules:", error);
       toast.error("Ошибка загрузки модулей");
     } finally {
-      if (fetchId !== fetchIdRef.current) return;
-      hasLoadedOnceRef.current = true;
-      setLoading(false);
+      if (fetchId === fetchIdRef.current) {
+        hasLoadedOnceRef.current = true;
+        setLoading(false);
+      }
     }
   // tcFingerprint ensures refetch when training content rules load (fixes stale closure on refresh)
   // eslint-disable-next-line react-hooks/exhaustive-deps
