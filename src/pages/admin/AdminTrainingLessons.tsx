@@ -456,6 +456,11 @@ export default function AdminTrainingLessons() {
 
   const { lessons, loading, createLesson, updateLesson, deleteLesson, reorderLessons, refetch: refetchLessons } = useTrainingLessons(moduleId);
 
+  // Back navigation: parent module if nested, otherwise root list
+  const backHref = (module as any)?.parent_module_id
+    ? `/admin/training-modules/${(module as any).parent_module_id}/lessons`
+    : "/admin/training-modules";
+
   // DnD sensors
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
