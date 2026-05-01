@@ -1204,24 +1204,6 @@ Deno.serve(async (req) => {
           userEmail = authUser?.user?.email;
         }
 
-        // Get tariff price
-        let amount = 0;
-        let currency = 'BYN';
-        if (sub.tariff_id) {
-          const { data: priceData } = await supabase
-            .from('tariff_prices')
-            .select('final_price, price, currency')
-            .eq('tariff_id', sub.tariff_id)
-            .eq('is_active', true)
-            .limit(1)
-            .single();
-          
-          if (priceData) {
-            amount = priceData.final_price || priceData.price || 0;
-            currency = priceData.currency || 'BYN';
-          }
-        }
-
         const tariff = sub.tariffs as any;
         const product = tariff?.products_v2 as any;
         const productId = product?.id || tariff?.product_id || null;
@@ -1229,9 +1211,117 @@ Deno.serve(async (req) => {
         const tariffName = tariff?.name || 'Стандартный';
         const expiryDate = new Date(sub.access_end_at);
 
-        // PATCH ONE-TIME v1: classify product (ID-first)
+        // PATCH ONE-TIME v1: classify product (ID-first) — SOT: tariff_offers.meta.recurring.is_recurring
         const classify = await isOneTimeProduct(supabase, sub.tariff_id, userId, productId);
         const productIsOneTime = classify.oneTime;
+
+        // PATCH AMOUNT-RESOLVER v4: resolve amount ONLY for recurring/installment products.
+        // For one-time products amount stays 0 → template renders info-only branch (no amount line, no CTA).
+        // Priority chain: bePaid snapshot → order snapshot → recurring offer → primary offer (guaranteed) → legacy tariff_prices.
+        let amount = 0;
+        let currency = 'BYN';
+        let amountSource: string = 'none';
+
+        if (!productIsOneTime && sub.tariff_id) {
+          const subMeta = (sub as any).meta || {};
+
+          // (1) bePaid live snapshot stored on subscription (next charge amount in BYN units)
+          const bepaidNext = Number(
+            subMeta?.bepaid?.next_charge_amount ??
+            subMeta?.bepaid?.amount ??
+            subMeta?.next_charge_amount ??
+            0
+          );
+          if (bepaidNext > 0) {
+            amount = bepaidNext;
+            currency = subMeta?.bepaid?.currency || subMeta?.currency || 'BYN';
+            amountSource = 'bepaid_snapshot';
+          }
+
+          // (2) Order/subscription snapshot from prior successful payment
+          if (amount <= 0) {
+            const snapAmount = Number(
+              subMeta?.recurring_amount ??
+              subMeta?.amount_byn ??
+              subMeta?.last_paid_amount ??
+              0
+            );
+            if (snapAmount > 0) {
+              amount = snapAmount;
+              currency = subMeta?.recurring_currency || subMeta?.currency || 'BYN';
+              amountSource = 'order_snapshot';
+            }
+          }
+
+          // (3) Recurring tariff_offer (active, meta.recurring.is_recurring = true)
+          if (amount <= 0) {
+            const { data: offers } = await supabase
+              .from('tariff_offers')
+              .select('amount, is_primary, is_active, sort_order, meta')
+              .eq('tariff_id', sub.tariff_id)
+              .eq('is_active', true)
+              .order('is_primary', { ascending: false, nullsFirst: false })
+              .order('sort_order', { ascending: true, nullsFirst: false });
+
+            const recurringOffer = (offers || []).find((o: any) => o?.meta?.recurring?.is_recurring === true);
+            if (recurringOffer && Number(recurringOffer.amount) > 0) {
+              amount = Number(recurringOffer.amount);
+              currency = 'BYN';
+              amountSource = 'tariff_recurring_offer';
+            } else if ((offers || []).length > 0) {
+              // (4) Primary tariff_offer fallback — guaranteed "main payment button"
+              const primary = (offers || []).find((o: any) => o.is_primary === true) || offers![0];
+              if (primary && Number(primary.amount) > 0) {
+                amount = Number(primary.amount);
+                currency = 'BYN';
+                amountSource = 'tariff_primary_offer';
+                await supabase.from('audit_logs').insert({
+                  action: 'reminders.amount_fallback_to_primary_offer',
+                  actor_type: 'system',
+                  actor_label: 'subscription-renewal-reminders',
+                  meta: {
+                    user_id: userId, subscription_id: sub.id, tariff_id: sub.tariff_id,
+                    product_id: productId, days_left: daysLeft, amount,
+                  },
+                });
+              }
+            }
+          }
+
+          // (5) Legacy fallback — tariff_prices
+          if (amount <= 0) {
+            const { data: priceData } = await supabase
+              .from('tariff_prices')
+              .select('final_price, price, currency')
+              .eq('tariff_id', sub.tariff_id)
+              .eq('is_active', true)
+              .limit(1)
+              .maybeSingle();
+            if (priceData) {
+              amount = Number(priceData.final_price || priceData.price || 0);
+              currency = priceData.currency || 'BYN';
+              if (amount > 0) amountSource = 'legacy_tariff_prices';
+            }
+          }
+
+          // Critical: recurring/installment product must have a price. If still 0 — data defect.
+          // Reminder is still sent, but the amount line will be omitted (see template).
+          if (amount <= 0) {
+            await supabase.from('audit_logs').insert({
+              action: 'reminders.amount_unresolved_critical',
+              actor_type: 'system',
+              actor_label: 'subscription-renewal-reminders',
+              meta: {
+                user_id: userId, subscription_id: sub.id, tariff_id: sub.tariff_id,
+                product_id: productId, days_left: daysLeft,
+                signals: classify.signals,
+              },
+            });
+          } else {
+            console.log(`[reminders] amount resolved: ${amount} ${currency} via ${amountSource} (sub=${sub.id})`);
+          }
+        }
+
         if (productIsOneTime) {
           await supabase.from('audit_logs').insert({
             action: 'reminders.one_time_product_detected',
