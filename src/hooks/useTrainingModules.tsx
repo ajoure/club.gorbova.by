@@ -51,6 +51,7 @@ export interface TrainingModuleFormData {
   // New fields
   menu_section_key?: string;
   display_layout?: string;
+  content_month?: string | null;
 }
 
 export function useTrainingModules() {
