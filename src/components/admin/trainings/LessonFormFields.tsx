@@ -11,6 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { FileText, Video, Music, Files, BookOpen } from "lucide-react";
+import { MonthYearPicker } from "@/components/ui/month-year-picker";
 
 export const contentTypeOptions = [
   { value: "article", label: "Статья", icon: FileText },
