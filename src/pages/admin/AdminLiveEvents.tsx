@@ -902,6 +902,7 @@ export default function AdminLiveEvents() {
       event_type: (event.event_type as EventType) || "recorded_webinar",
       event_timezone: event.event_timezone || "Europe/Minsk",
       kinescope_live_event_id: event.kinescope_live_event_id || "",
+      content_month: (meta.content_month as string | undefined) ?? null,
       notification_enabled: ns.enabled ?? false,
       notification_template_id: ns.template_id || "",
       notification_channels: ns.channels || ["telegram"],
