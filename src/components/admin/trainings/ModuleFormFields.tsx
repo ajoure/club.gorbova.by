@@ -51,6 +51,7 @@ export interface ModuleFormData {
   is_active?: boolean;
   menu_section_key?: string;
   display_layout?: string;
+  content_month?: string | null;
 }
 
 interface ModuleFormFieldsProps {
