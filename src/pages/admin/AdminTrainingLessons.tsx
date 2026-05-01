@@ -456,6 +456,11 @@ export default function AdminTrainingLessons() {
 
   const { lessons, loading, createLesson, updateLesson, deleteLesson, reorderLessons, refetch: refetchLessons } = useTrainingLessons(moduleId);
 
+  // Back navigation: parent module if nested, otherwise root list
+  const backHref = (module as any)?.parent_module_id
+    ? `/admin/training-modules/${(module as any).parent_module_id}/lessons`
+    : "/admin/training-modules";
+
   // DnD sensors
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -715,7 +720,7 @@ export default function AdminTrainingLessons() {
       <AdminLayout>
         <div className="container mx-auto px-4 py-6 max-w-6xl text-center">
           <h1 className="text-2xl font-bold mb-4">Модуль не найден</h1>
-          <Button onClick={() => navigate("/admin/training-modules")}>
+          <Button onClick={() => navigate(backHref)}>
             <ArrowLeft className="mr-2 h-4 w-4" />
             К списку модулей
           </Button>
@@ -744,7 +749,7 @@ export default function AdminTrainingLessons() {
           </div>
           <div className="flex gap-1.5 flex-wrap">
             <button
-              onClick={() => navigate("/admin/training-modules")}
+              onClick={() => navigate(backHref)}
               className="flex items-center gap-1.5 px-3 h-8 rounded-full text-xs font-medium border border-border bg-background hover:bg-muted transition-colors"
             >
               <ArrowLeft className="h-3.5 w-3.5" />

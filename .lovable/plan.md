@@ -1,74 +1,32 @@
-## Да, согласен, с учетом правок:
-
-1. Убрать верхний лимит полностью, но оставить **UI-warning** при `N > 500`: «Будет создано много сделок, выполнение займёт несколько минут».
-2. Chunking делать **по 50 платежей**, но не смешивать разные контакты внутри ошибки: результат должен показывать:
-  - всего обработано;
-  - создано;
-  - пропущено;
-  - ошибки;
-  - ошибки по contact/profile/email.
-3. STOP-guard:
-  - cumulative error rate > 20% после 10 обработанных;
-  - либо 10 подряд ошибок;
-  - либо edge timeout/network error 3 раза подряд.
-4. Audit:
-  - `total_selected`;
-  - `eligible_count`;
-  - `chunk_size`;
-  - `chunks_total`;
-  - `chunks_processed`;
-  - `created_count`;
-  - `failed_count`;
-  - `skipped_count`.
-5. После завершения обязательно показать список failed/skipped с причиной, чтобы не искать вручную.
-6. &nbsp;
-7. Задача
-
-В диалоге «Создать сделки из платежей» (`/admin/payments`) сейчас стоит хард-лимит **100 платежей за раз** (`BATCH_LIMIT=100`, ошибка toast при превышении). На скриншоте: выбрано 737 — кнопка работает, но при сабмите блок. Нужно: разрешить любое количество, автоматически делить на чанки, не запрещать админу.
+## Проблема
+На странице `/admin/training-modules/:moduleId/lessons` (например, «Вебинары» — дочерний модуль «База знаний») кнопка **«Назад»** (`AdminTrainingLessons.tsx:747`) и fallback-кнопка «Вернуться к списку» (`:718`) жёстко ведут на корень `/admin/training-modules`, теряя контекст родителя. Нужно возвращаться на один шаг — к родительскому модулю, если он есть.
 
 ## Что меняется
 
-### `src/components/admin/payments/BulkCreateDealsDialog.tsx`
+### `src/pages/admin/AdminTrainingLessons.tsx`
 
-1. **Удалить STOP-guard `BATCH_LIMIT=100**` (строки 217-222).
-2. **Auto-chunking**: пройти `eligiblePayments` чанками по `CHUNK_SIZE = 50`, между чанками `setTimeout(500ms)`. Внутри одного чанка — текущая последовательная логика (по группам контактов).
-3. **Прогресс-индикатор**: добавить state `chunkInfo: {current, total}`, отображать «Чанк X из Y · обработано N из M (NN%)». Прогресс-бар продолжает считаться по `processed/total`.
-4. **STOP-guard ошибок сохранить**: текущее правило «>20% ошибок после 10 обработанных» работает поверх всех чанков (cumulative). Это защита от лавины ошибок, не лимит на объём.
-5. **Кнопка**: текст `Создать N сделок` остаётся; при N > 50 — добавить подпись `(будет обработано чанками по 50)` под кнопкой для прозрачности.
-6. **Audit log**: в `meta` добавить `chunk_size` и `chunks_processed` для трассируемости.
+1. Добавить мемо `backHref`:
+   ```ts
+   const backHref = module?.parent_module_id
+     ? `/admin/training-modules/${module.parent_module_id}/lessons`
+     : "/admin/training-modules";
+   ```
+2. Заменить оба `navigate("/admin/training-modules")` на `navigate(backHref)` (строки 718 и 747).
+3. Тултип/aria-label кнопки оставить «Назад» — текст не меняем.
 
 ### Что НЕ меняется
+- Маршруты, breadcrumbs, остальная навигация.
+- Поведение для модулей верхнего уровня (без `parent_module_id`) — как раньше уходит на корневой список.
+- Никаких изменений БД, edge-функций, RLS.
 
-- Бизнес-логика создания заказа (orderNumber, source=`admin_bulk_from_payments`, grant flow через `grant-access-for-order`).
-- Ghost-обработка, historical-флаг, чекбокс «Выдать доступ».
-- Telegram/GetCourse side-effects.
-- Аудит actor=JWT user (super_admin guard на странице).
-
-## Технические детали
+## Поведение
 
 ```text
-Selected: 737
-  ↓ filter eligible (profile_id + no order_id + paid)
-Eligible: 737
-  ↓ group by profile (91 контакт)
-  ↓ flatten в порядке групп
-  ↓ split на chunks по 50
-Chunks: ceil(737/50) = 15
-  ↓ для каждого чанка:
-       - последовательно (текущая логика)
-       - update progress
-       - update chunkInfo
-  ↓ pause 500ms между чанками
-  ↓ STOP если cumulative error rate > 20% после 10
-Result: success/failed/skipped как сейчас
+Вебинары (parent=База знаний) → «Назад» → /admin/training-modules/{Базы знаний}/lessons
+База знаний (parent=null)     → «Назад» → /admin/training-modules
 ```
 
-Поведение `setProgress` остаётся `processed/total*100` — так пользователь видит общий прогресс независимо от чанков.
-
 ## DoD
-
-- 737 платежей создаются успешно без ручного разбиения.
-- В UI виден индикатор «Чанк 7 из 15 · 348 / 737 (47%)».
-- Audit запись содержит `chunk_size: 50, chunks_processed: 15`.
-- STOP по ошибкам срабатывает корректно (тест: специально невалидный продукт → стоп после ~10).
-- Регрессия: для выбора ≤50 поведение идентично текущему (1 чанк, без задержки в конце).
+- На скриншоте «Вебинары»: «Назад» ведёт на страницу модуля «База знаний» с её дочерними модулями и уроками.
+- На корневом модуле без родителя: «Назад» по-прежнему ведёт в корень `/admin/training-modules`.
+- Прямой заход по URL (когда `module` ещё грузится) не ломает кнопку — она временно ведёт в корень до загрузки `module`.
