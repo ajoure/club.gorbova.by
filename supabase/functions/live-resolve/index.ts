@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolveEffectiveProductAccess } from '../_shared/resolve-effective-access.ts';
+import { checkMonthPurchase, isValidMonthKey } from '../_shared/check-month-purchase.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -163,8 +164,37 @@ Deno.serve(async (req) => {
       // Try new multi-rule table first
       const { data: accessRules } = await supabase
         .from('live_event_access_rules')
-        .select('product_id, tariff_id')
+        .select('id, product_id, tariff_id, conditions')
         .eq('live_event_id', event.id);
+
+      // Month-gate context: derived from event.metadata.content_month
+      const eventMeta = (event.metadata || {}) as Record<string, any>;
+      const eventContentMonth: string | null = isValidMonthKey(eventMeta.content_month)
+        ? eventMeta.content_month
+        : null;
+
+      // Dedup audit: one month-gate verdict per request
+      let monthGateAudited = false;
+      const auditMonthGate = async (
+        passed: boolean,
+        ruleId: string,
+        extra: Record<string, any> = {},
+      ) => {
+        if (monthGateAudited) return;
+        monthGateAudited = true;
+        await logAudit(
+          supabase,
+          passed ? 'access.month_gate_passed' : 'access.month_gate_blocked',
+          userId,
+          slug,
+          event.id,
+          {
+            rule_id: ruleId,
+            content_month: eventContentMonth,
+            ...extra,
+          },
+        );
+      };
 
       if (accessRules && accessRules.length > 0) {
         for (const rule of accessRules) {
@@ -187,6 +217,40 @@ Deno.serve(async (req) => {
 
             if (!tariffSub) {
               productOk = false;
+            }
+          }
+
+          // Month-gate: применяется только при явном флаге в conditions
+          if (productOk) {
+            const ruleConditions = (rule.conditions || {}) as Record<string, any>;
+            const monthGateEnabled = ruleConditions.match_purchase_month === true;
+
+            if (monthGateEnabled) {
+              if (!eventContentMonth) {
+                // Флаг включён, но у события нет content_month — gate пропускает
+                // (нечего сверять). Явный аудит для прозрачности.
+                await auditMonthGate(true, rule.id, {
+                  skip_reason: 'event_has_no_content_month',
+                });
+              } else {
+                const monthCheck = await checkMonthPurchase(supabase, {
+                  user_id: userId,
+                  tariff_id: rule.tariff_id ?? null,
+                  month: eventContentMonth,
+                });
+                if (!monthCheck.passed) {
+                  productOk = false;
+                  await auditMonthGate(false, rule.id, {
+                    reason: monthCheck.reason,
+                    tariff_id: rule.tariff_id,
+                  });
+                  continue; // пробуем следующее правило
+                } else {
+                  await auditMonthGate(true, rule.id, {
+                    tariff_id: rule.tariff_id,
+                  });
+                }
+              }
             }
           }
 
