@@ -731,6 +731,9 @@ export default function AdminLiveEvents() {
         offsets: data.notification_offsets,
       };
 
+      // Persist content_month for month-gated access (null clears the field)
+      mergedMetadata.content_month = data.content_month || null;
+
 
       // SURGICAL HARDENING (live-bugfix): never write platform_status/status from form save.
       // Lifecycle (draft → scheduled → live → ended → replay_available) is owned exclusively
