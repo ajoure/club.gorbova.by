@@ -1377,6 +1377,17 @@ export default function AdminLiveEvents() {
                   <TabsContent value="access" className="m-0 space-y-4">
               {/* Section 3: Access rules */}
               <FormSection>
+                <div className="space-y-2 mb-4">
+                  <Label className="text-sm font-medium">Месяц контента</Label>
+                  <MonthYearPicker
+                    value={form.content_month}
+                    onChange={(v) => setForm({ ...form, content_month: v })}
+                    placeholder="Не задан (берётся из даты эфира)"
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Используется правилами с включённым флагом «Совпадение месяца покупки».
+                  </p>
+                </div>
                 <LiveEventAccessRulesEditor
                   rules={form.access_rules}
                   onChange={(rules) => setForm({ ...form, access_rules: rules })}
