@@ -7,7 +7,6 @@ import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { useNavigate } from "react-router-dom";
 import { format, parse } from "date-fns";
 import { ru } from "date-fns/locale";
-import { ru } from "date-fns/locale";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
