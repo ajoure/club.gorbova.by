@@ -142,8 +142,9 @@ function ModuleFormContent({ formData, setFormData, editingModule }: ModuleFormC
       } else {
         toast.error("Не удалось получить URL обложки", { id: toastId });
       }
-    } catch (error: any) {
-      toast.error(`Ошибка: ${error.message}`, { id: toastId });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Неизвестная ошибка";
+      toast.error(`Ошибка: ${message}`, { id: toastId });
     } finally {
       setGenerating(false);
     }
@@ -512,7 +513,7 @@ export default function AdminTrainingModules() {
       return data?.map(p => ({
         id: p.id,
         name: p.name,
-        tariffs: (p.tariffs as any[])?.filter(t => t.is_active).map(t => ({
+        tariffs: (p.tariffs as Array<{ id: string; name: string; is_active: boolean }> | null)?.filter(t => t.is_active).map(t => ({
           id: t.id,
           name: t.name,
         })) || [],
@@ -567,7 +568,7 @@ export default function AdminTrainingModules() {
       tariff_ids: [],
       menu_section_key: module.menu_section_key || "products",
       display_layout: module.display_layout || "grid",
-      content_month: (module as any).content_month ?? null,
+      content_month: module.content_month ?? null,
     });
   }, []);
 
@@ -576,7 +577,7 @@ export default function AdminTrainingModules() {
     if (moduleAccess && editingModule) {
       setFormData(prev => ({ ...prev, tariff_ids: moduleAccess }));
     }
-  }, [moduleAccess, editingModule?.id]);
+  }, [moduleAccess, editingModule]);
 
   const handleCreate = async () => {
     if (!formData.title || !formData.slug) return;
@@ -621,7 +622,7 @@ export default function AdminTrainingModules() {
   // Active tab state — scoped localStorage key
   const [activeTab, setActiveTab] = useState<"modules" | "progress" | "settings">(() => {
     const saved = localStorage.getItem("admin_training_modules.activeTab");
-    if (saved === "modules" || saved === "progress" || saved === "settings") return saved as any;
+    if (saved === "modules" || saved === "progress" || saved === "settings") return saved;
     return "modules";
   });
 
