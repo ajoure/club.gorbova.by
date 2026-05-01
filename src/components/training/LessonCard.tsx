@@ -73,9 +73,10 @@ export function LessonCard({
     <GlassCard
       className={cn(
         "overflow-hidden group relative bg-background/60 backdrop-blur-xl border border-border/30 transition-all duration-300",
-        !isScheduled && "hover:border-primary/40 hover:shadow-xl cursor-pointer",
+        !isScheduled && !isMonthLocked && "hover:border-primary/40 hover:shadow-xl cursor-pointer",
         isScheduled && !isAdmin && "cursor-not-allowed",
         isScheduled && isAdmin && "hover:border-amber-500/40 cursor-pointer",
+        isMonthLocked && "cursor-not-allowed opacity-80",
         !hasAccess && "opacity-80"
       )}
       onClick={handleClick}
