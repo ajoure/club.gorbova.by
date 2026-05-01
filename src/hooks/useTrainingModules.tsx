@@ -10,6 +10,12 @@ export interface AccessibleProduct {
   tariff_count: number;
 }
 
+interface ModuleAccessTariffInfo {
+  name?: string | null;
+  product_id?: string | null;
+  products_v2?: { name?: string | null } | null;
+}
+
 export interface TrainingModule {
   id: string;
   product_id: string | null;
@@ -102,7 +108,7 @@ export function useTrainingModules() {
 
       // Fetch user subscriptions if logged in
       let userTariffIds: string[] = [];
-      let userEntitlementProductIds = new Set<string>();
+      const userEntitlementProductIds = new Set<string>();
       if (user) {
         const { data: subsData } = await supabase
           .from("subscriptions_v2")
@@ -128,7 +134,7 @@ export function useTrainingModules() {
       }
 
       // Fetch user progress
-      let progressMap: Record<string, number> = {};
+      const progressMap: Record<string, number> = {};
       if (user) {
         const { data: progressData } = await supabase
           .from("lesson_progress")
