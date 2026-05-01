@@ -39,11 +39,15 @@ export interface TrainingLesson {
   published_at: string | null;
   require_previous: boolean;
   completion_mode: CompletionMode;
+  content_month?: string | null;
   // Computed fields
   is_completed?: boolean;
   attachments?: LessonAttachment[];
   // PATCH: Scheduled lessons flag
   isScheduled?: boolean;
+  // Month-gate (cabinet, source: backend RPC)
+  lock_reason?: "month_mismatch" | null;
+  locked_month?: string | null;
 }
 
 export interface TrainingLessonFormData {
