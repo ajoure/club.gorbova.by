@@ -45,6 +45,7 @@ interface DealsGroup {
   paidCount: number;
   totalSum: number;
   currency: string;
+  sortTs: number;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
