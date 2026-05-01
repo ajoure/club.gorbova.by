@@ -494,6 +494,7 @@ export default function AdminTrainingModules() {
     tariff_ids: [],
     menu_section_key: "products",
     display_layout: "grid",
+    content_month: null,
   });
 
   // Fetch products with tariffs for access selector
@@ -543,6 +544,7 @@ export default function AdminTrainingModules() {
       tariff_ids: [],
       menu_section_key: "products",
       display_layout: "grid",
+      content_month: null,
     });
   }, []);
 
