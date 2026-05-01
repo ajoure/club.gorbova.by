@@ -86,6 +86,7 @@ export function BulkCreateDealsDialog({
       loadProducts();
       setResult(null);
       setProgress(0);
+      setChunkInfo(null);
     }
   }, [open]);
 
@@ -107,6 +108,7 @@ export function BulkCreateDealsDialog({
       setGrantAccess(false);
       setResult(null);
       setProgress(0);
+      setChunkInfo(null);
     }
   }, [open]);
 
