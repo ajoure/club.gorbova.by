@@ -550,6 +550,7 @@ export default function AdminTrainingModules() {
       tariff_ids: [],
       menu_section_key: module.menu_section_key || "products",
       display_layout: module.display_layout || "grid",
+      content_month: (module as any).content_month ?? null,
     });
   }, []);
 
