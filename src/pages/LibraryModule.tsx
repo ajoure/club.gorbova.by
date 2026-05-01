@@ -286,17 +286,17 @@ export default function LibraryModule() {
         )}
 
         {/* Month-locked banner (has_access=true но контент за неоплаченный месяц) */}
-        {moduleMonthLocked && moduleLockedMonth && (
+        {moduleMonthLocked && (
           <Card className="mb-6 border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/20 dark:border-amber-800">
             <CardContent className="py-8 text-center">
               <Lock className="h-12 w-12 mx-auto mb-4 text-amber-600 dark:text-amber-400" />
               <h3 className="text-lg font-semibold mb-2 text-amber-900 dark:text-amber-100">
-                Контент за {formatLockedMonth(moduleLockedMonth)} доступен покупателям
+                Контент доступен покупателям тарифа BUSINESS
               </h3>
               <p className="text-amber-800/90 dark:text-amber-200/90 mb-4 max-w-xl mx-auto">
-                Вы можете ознакомиться с темой и описанием, но просмотр материалов открыт
-                только тем, кто оплатил клуб BUSINESS за {formatLockedMonth(moduleLockedMonth)}.
-                Оформите доступ к нужному месяцу, чтобы открыть видео и материалы.
+                Вы можете ознакомиться с темой и описанием, но просмотр материалов
+                открыт только покупателям клуба BUSINESS. Оформите доступ, чтобы
+                открыть видео и материалы.
               </p>
               <Button
                 onClick={() => window.location.href = "https://club.gorbova.by"}
@@ -419,9 +419,9 @@ export default function LibraryModule() {
                           </Badge>
                         )}
                       </div>
-                      {isMonthLocked && lesson.locked_month ? (
+                      {isMonthLocked ? (
                         <p className="text-xs text-amber-600 dark:text-amber-400">
-                          Контент за {formatLockedMonth(lesson.locked_month)}
+                          Доступно покупателям тарифа BUSINESS
                         </p>
                       ) : isScheduled && lesson.published_at ? (
                         <p className="text-xs text-amber-600 flex items-center gap-1">
