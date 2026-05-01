@@ -454,7 +454,7 @@ export default function AdminTrainingLessons() {
     enabled: !!moduleId,
   });
 
-  const { lessons, loading, createLesson, updateLesson, deleteLesson, reorderLessons } = useTrainingLessons(moduleId);
+  const { lessons, loading, createLesson, updateLesson, deleteLesson, reorderLessons, refetch: refetchLessons } = useTrainingLessons(moduleId);
 
   // DnD sensors
   const sensors = useSensors(
@@ -620,9 +620,8 @@ export default function AdminTrainingLessons() {
 
     toast.success(moduleFormData.inherit_content_month ? "Модуль и уроки обновлены" : "Модуль обновлён");
     setEditingModule(null);
-    refetchChildModules();
-    window.location.reload();
-  }, [editingModule, moduleFormData, refetchChildModules]);
+    await Promise.all([refetchChildModules(), refetchLessons()]);
+  }, [editingModule, moduleFormData, refetchChildModules, refetchLessons]);
 
   const handleCreate = useCallback(async () => {
     if (!formData.title || !formData.slug || !moduleId) return;
@@ -1161,8 +1160,7 @@ export default function AdminTrainingLessons() {
           currentSectionKey={module?.menu_section_key || "products-library"}
           onSuccess={() => {
             refetchChildModules();
-            // refetch lessons via hook
-            window.location.reload();
+            refetchLessons();
           }}
         />
       )}
