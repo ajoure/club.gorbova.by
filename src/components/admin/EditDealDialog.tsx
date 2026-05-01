@@ -77,6 +77,7 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
     auto_renew: false,
     profile_id: "" as string | null,
     user_id: "" as string | null,
+    deal_month: null as string | null,
   });
   const [showContactSearch, setShowContactSearch] = useState(false);
   const [contactSearch, setContactSearch] = useState("");
