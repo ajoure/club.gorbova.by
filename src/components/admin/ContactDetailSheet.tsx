@@ -132,6 +132,7 @@ import { AvatarZoomDialog } from "./AvatarZoomDialog";
 import { LoyaltyPulse } from "./LoyaltyPulse";
 import { ContactLoyaltyTab } from "./ContactLoyaltyTab";
 import { ContactArtifactsTab } from "./contact/ContactArtifactsTab";
+import { ContactDealsTab } from "./contact/ContactDealsTab";
 import { ContactPaymentsTab } from "./ContactPaymentsTab";
 
 import { usePermissions } from "@/hooks/usePermissions";
@@ -3232,143 +3233,15 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             </TabsContent>
 
             {/* Deals Tab */}
-            <TabsContent value="deals" className="m-0 space-y-4">
-              {dealsLoading ? (
-                <div className="space-y-3">
-                  {[1, 2, 3].map(i => <Skeleton key={i} className="h-20 w-full" />)}
-                </div>
-              ) : !deals?.length ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Handshake className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                  <p>Нет сделок</p>
-                </div>
-              ) : (
-                deals.map(deal => {
-                  const isPaid = deal.status === "paid";
-                  const payments = (deal as any).payments_v2 as any[] | undefined;
-                  const successfulPayment = payments?.find((p: any) => p.status === "succeeded");
-                  // Fix: Check receipt_url column first, then nested provider_response
-                  const receiptUrl = (successfulPayment as any)?.receipt_url 
-                    || successfulPayment?.provider_response?.transaction?.receipt_url as string | undefined;
-                  
-                  return (
-                    <Card 
-                      key={deal.id} 
-                      className="cursor-pointer hover:bg-muted/50 transition-colors"
-                      onClick={() => {
-                        setSelectedDealId(deal.id);
-                      }}
-                    >
-                      <CardContent className={`p-4 ${(() => {
-                        const meta = deal.meta as Record<string, any> | null;
-                        return meta?.split_status === 'children_created' ? 'opacity-50 border-l-2 border-amber-400' : '';
-                      })()}`}>
-                        <div className="flex items-start justify-between mb-2">
-                          <div>
-                            <div className="font-medium flex items-center gap-1.5 flex-wrap">
-                              <ProductCategoryBadge category={(deal.products_v2 as any)?.category} />
-                              <span>{getShortDisplayName(getDealDisplayName({
-                                productsV2: deal.products_v2 as any,
-                                purchaseSnapshot: deal.purchase_snapshot,
-                                moduleProduct: moduleMetaMap?.get(deal.id)?.moduleProduct,
-                                fallback: "Продукт",
-                              }), (deal.products_v2 as any)?.category)}</span>
-                            </div>
-                            {deal.product_id && (() => {
-                              const meta = moduleMetaMap?.get(deal.id);
-                              const displayPublicId = (meta?.resolutionType === "direct_module" && meta.resolvedPublicId)
-                                ? meta.resolvedPublicId
-                                : (deal.products_v2 as any)?.public_id || deal.product_id.substring(0, 8);
-                              const copyValue = meta?.resolvedModuleProductId || deal.product_id;
-                              return <CopyableIdChip value={displayPublicId} copyValue={copyValue} successMessage="Product ID скопирован" className="mt-0.5" />;
-                            })()}
-                            {deal.tariffs && (
-                              <div className="text-sm text-muted-foreground">{(deal.tariffs as any)?.name}</div>
-                            )}
-                            {(() => {
-                              const meta = deal.meta as Record<string, any> | null;
-                              const snapshot = deal.purchase_snapshot as Record<string, any> | null;
-                              if (meta?.split_status === 'children_created') {
-                                return <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300 mt-0.5">📦 Разделена на модули</Badge>;
-                              }
-                              if (meta?.split_from_order_id) {
-                                return <Badge variant="outline" className="text-[10px] text-blue-600 border-blue-300 mt-0.5">📄 Модуль (split)</Badge>;
-                              }
-                              if (snapshot?.historical_purchase_type === 'module_only_standalone') {
-                                return (
-                                  <>
-                                    <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300 mt-0.5">Модульная покупка</Badge>
-                                    {!snapshot?.display_purchase_name && (
-                                      <Badge variant="outline" className="text-[10px] text-amber-700 border-amber-400 bg-amber-50 mt-0.5">⚠ Historical name missing</Badge>
-                                    )}
-                                  </>
-                                );
-                              }
-                              return null;
-                            })()}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Badge className={getStatusColor(deal.status)}>{getStatusLabel(deal.status)}</Badge>
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setDealToEditId(deal.id);
-                              }}
-                              className="h-6 w-6 text-muted-foreground hover:text-primary"
-                            >
-                              <Pencil className="w-3 h-3" />
-                            </Button>
-                            <Eye className="w-4 h-4 text-muted-foreground" />
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between text-sm">
-                          <div className="flex items-center gap-2 text-muted-foreground">
-                            <CalendarIcon className="w-3 h-3" />
-                            {format(new Date(getEffectiveDealDate(deal)), "dd.MM.yy HH:mm")}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium flex items-center gap-1">
-                              <CreditCard className="w-3 h-3" />
-                              {new Intl.NumberFormat("ru-BY", { style: "currency", currency: deal.currency }).format(Number(deal.final_price))}
-                            </span>
-                            
-                            {receiptUrl && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 px-2 text-xs"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  window.open(receiptUrl, '_blank');
-                                }}
-                              >
-                                <Download className="w-3 h-3" />
-                              </Button>
-                            )}
-                            
-                            {isPaid && (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-7 px-2 text-xs text-purple-600 hover:text-purple-700"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setRefundDealId(deal.id);
-                                }}
-                              >
-                                <Undo2 className="w-3 h-3 mr-1" />
-                                <span className="hidden sm:inline">Возврат</span>
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  );
-                })
-              )}
+            <TabsContent value="deals" className="m-0 space-y-3">
+              <ContactDealsTab
+                deals={deals}
+                isLoading={dealsLoading}
+                moduleMetaMap={moduleMetaMap}
+                onOpenDeal={(id) => setSelectedDealId(id)}
+                onEditDeal={(id) => setDealToEditId(id)}
+                onRefund={(id) => setRefundDealId(id)}
+              />
             </TabsContent>
 
             {/* Communications Tab */}

@@ -5,7 +5,7 @@ import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
 import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
 import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { useNavigate } from "react-router-dom";
-import { format } from "date-fns";
+import { format, parse } from "date-fns";
 import { ru } from "date-fns/locale";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -35,6 +35,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Package,
   Calendar,
+  CalendarDays,
   CreditCard,
   User,
   Mail,
@@ -544,6 +545,51 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
               Удалить
             </Badge>
           </div>
+
+          {/* Месяц сделки (для контента, привязанного к месяцу) */}
+          {(() => {
+            const dealMonth = (deal.meta as any)?.deal_month as string | undefined;
+            const isCurrent = dealMonth
+              ? dealMonth === format(new Date(), "yyyy-MM")
+              : false;
+            return (
+              <div className="mt-3 flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-muted-foreground">Месяц сделки:</span>
+                {dealMonth ? (
+                  <Badge
+                    variant="outline"
+                    className={`h-7 px-2.5 text-xs gap-1 capitalize ${
+                      isCurrent
+                        ? "bg-violet-500/15 text-violet-700 border-violet-300 dark:text-violet-300"
+                        : "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950/40 dark:text-violet-300"
+                    }`}
+                  >
+                    <CalendarDays className="w-3 h-3" />
+                    {(() => {
+                      try {
+                        return format(parse(`${dealMonth}-01`, "yyyy-MM-dd", new Date()), "LLLL yyyy", { locale: ru });
+                      } catch {
+                        return dealMonth;
+                      }
+                    })()}
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="h-7 px-2.5 text-xs text-muted-foreground">
+                    не задан
+                  </Badge>
+                )}
+                <Badge
+                  variant="outline"
+                  className="cursor-pointer h-7 px-2 text-xs gap-1 hover:bg-accent"
+                  onClick={() => setEditDialogOpen(true)}
+                  title="Изменить месяц через редактор сделки"
+                >
+                  <Pencil className="w-3 h-3" />
+                  изменить
+                </Badge>
+              </div>
+            );
+          })()}
         </SheetHeader>
 
         <div className="flex-1 overflow-y-auto p-6">
