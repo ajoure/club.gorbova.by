@@ -1,100 +1,81 @@
-да, согласен, с учетом правок:
+Да, план правильный.
 
-1. Перед UPDATE сделать dry-run rowcount и список orphan training_modules, где parent.product_id IS NOT NULL AND child.product_id IS NULL.
-2. Backfill делать только:
-  - child.product_id IS NULL
-  - parent_module_id IS NOT NULL
-  - parent.product_id IS NOT NULL
-  - без перезаписи уже заполненного product_id.
-3. Триггер:
-  - только BEFORE INSERT OR UPDATE OF parent_module_id
-  - если NEW.product_id IS NULL
-  - наследовать product_id от ближайшего родителя.
-4. В audit_logs записать:
-  - training_modules.product_id_inherited_backfill
-  - affected_count
-  - список первых 50 модулей.
-5. UI-бейдж «Унаследовано» — только если реально есть product_id_inherited=true; не делать обязательным для первого патча.
-6. Главное DoD:
-  - «Идеологическая работа в бизнесе» появляется в «Тренинги этого продукта».
-  - Новые дочерние вебинары автоматически получают product_id.
-  - Picker правил не ломается.
+Важное уточнение к апруву:
+
+- **one-time не трогать вообще**: без суммы, без CTA, без amount-resolver.
+- Amount-resolver только для recurring/installment.
+- Fallback на primary tariff_offer обязателен.
+- Если сумма не найдена — это **не блокирует отправку**, но пишется reminders.amount_unresolved_critical.
+
+Можно выполнять точечный патч только в subscription-renewal-reminders/index.ts.
 
 &nbsp;
 
-План:
+План: Исправить «Сумма списания» в напоминаниях о подписке (v4 — final)
 
-## Контекст и диагноз (Diagnose)
+## Что делает функция сегодня (перепроверено по коду)
 
-На вкладке «Продукт → Доступы» дерево «Тренинги этого продукта» (компонент `ProductLinkedTrainingsBlock` + хук `useProductTrainings`) строится **строго по `training_modules.product_id = productId**`. Если у дочернего модуля (например, новый вебинар внутри контейнера «Вебинары») `product_id = NULL`, он в дерево не попадает, хотя физически лежит под нужным родителем.
+`supabase/functions/subscription-renewal-reminders/index.ts` — единая cron-функция, шлёт напоминания за 7/3/1 день до конца доступа.
 
-В то же время мастер правил доступа (`useTrainingContentTree` → `TrainingContentTreePicker`) ходит по `parent_module_id` от корня тренинга и `product_id` не проверяет — поэтому там новые вебинары видны. Отсюда и расхождение, которое описывает пользователь.
+Она УЖЕ умеет различать тип продукта через `isOneTimeProduct(supabase, tariff_id, userId, productId)` (line 139), который под капотом ходит в SOT `resolveProductRenewability` поверх `tariff_offers` и возвращает флаги `is_recurring` / `has_installment` / `is_one_time`. Этот классификатор — общий, переиспользуем, ничего нового не создаём.
 
-Проверка БД подтвердила причину на конкретном продукте «База знаний» (`product_id = 11c9f1b8-…`):
+Существующие ветки шаблонов:
 
-- Контейнер «Вебинары» (TRN-000026) имеет 12 дочерних модулей.
-- 11 из них имеют `product_id = 11c9f1b8-…` и видны на вкладке «Доступы».
-- Новый вебинар «Идеологическая работа в бизнесе» (создан 28.04.2026, TRN-000054) имеет `product_id = NULL` → невидим в «Доступах», но виден в picker правил.
+- `sendTelegramReminder` / `sendEmailReminder` принимают параметр `isOneTime: boolean`.
+- Если `isOneTime=true` (line 482, 564, 742, 777) — отправляется info-only текст: «срок доступа истекает», БЕЗ строки «💳 Сумма списания» и БЕЗ CTA на оплату/продление. Это уже корректное поведение для разовых продуктов.
+- Если `isOneTime=false` (recurring или installment) — отправляется renewal-текст со строкой «💳 Сумма списания: `{amount} {currency}`» (lines 814/830/846 в email; аналогично в TG).
 
-В `pg_trigger` нет триггера, который наследует `product_id` от родителя при INSERT/UPDATE `parent_module_id`. То есть проблема системная: любой новый модуль/вебинар, созданный без явного указания `product_id`, будет «бесхозным».
+## Где именно баг (узкий)
 
-Дополнительно: данные на вкладке кешируются React Query и не инвалидируются при возврате на страницу, поэтому без явного refresh обновлений не видно.
+Lines 1207–1223: для recurring/installment-веток `amount` читается ТОЛЬКО из легаси `tariff_prices` → для большинства тарифов (вкл. `c5981337-…`, Татьяна Образова) → 0 → «💳 Сумма списания: 0.00 BYN».
 
-## Что сделаем
+Бизнес-инвариант пользователя: цена существует всегда, потому что у тарифа всегда есть «основная кнопка» (`tariff_offers.is_primary=true`). Состояние «не нашли цену» для recurring/installment продукта быть не может.
 
-### 1. Server-side: автонаследование `product_id` от родителя (миграция)
+## Решение — точечный патч ОДНОЙ функции, без новых файлов/таблиц/edge functions
 
-Создать BEFORE INSERT OR UPDATE OF `parent_module_id` триггер `tg_training_module_inherit_product_id` на `public.training_modules`:
+### 1) Добавить локальный inline-резолвер `resolveReminderAmount(sub, tariffId)` внутри `index.ts` (не отдельный модуль)
 
-- Если `NEW.parent_module_id IS NOT NULL` и `NEW.product_id IS NULL` → подставить `product_id` родителя.
-- Не перезаписывать `product_id`, если он уже задан явно (включая случай, когда админ хочет «бесхозный» модуль — задаёт `product_id = NULL` отдельно).
-- Добавить `audit_logs` запись `training_module.inherit_product_id` с `{module_id, parent_module_id, inherited_product_id}` для трассируемости.
+Вызывается ТОЛЬКО когда классификатор уже сказал, что продукт recurring или installment (`productIsOneTime === false`). Для one-time резолвер вообще не дёргается — оставляем `amount=0` и шаблон-info, как сейчас.
 
-### 2. Однократный backfill «бесхозных» потомков (миграция, dry-run → execute)
+Приоритет источников (первый ненулевой выигрывает):
 
-- **Dry-run отчёт** в `.lovable/proofs/training_modules_orphan_product_id_audit.md`: для каждого модуля с `product_id IS NULL` и `parent_module_id IS NOT NULL` показать `{id, title, parent_id, root_product_id, depth}`. Источник истины — `product_id` корня поддерева (модуль с `parent_module_id IS NULL` в цепочке вверх).
-- **Execute** UPDATE: проставить `product_id` рекурсивно от корня вниз по дереву только там, где у потомка `product_id IS NULL` и у корня `product_id IS NOT NULL`. Никогда не трогать модули, где корень тоже бесхозный (это легитимные «свободные» тренинги, доступные для bind через UI).
-- Записать в `audit_logs` `training_module.product_id_backfill` с количеством обновлённых строк.
+1. **bePaid live snapshot** — `subscriptions_v2.meta.bepaid.next_charge_amount` (или эквивалент, что уже кладёт `bepaid-sync` / `bepaid-get-subscription-details`). Используется когда фактическая сумма у провайдера отличается от тарифа (промо/индивидуальная цена). На execute-этапе один read_query подтвердит точный путь в meta. Audit: `amount_source='bepaid_snapshot'`.
+2. **Order/Subscription snapshot** — `subscriptions_v2.meta.amount_byn` или `final_price` последнего `paid` ордера данной подписки. Audit: `amount_source='order_snapshot'`.
+3. **Recurring tariff_offer** — активный offer с `meta.recurring.is_recurring=true`, выбор `is_primary DESC NULLS LAST, sort_order ASC NULLS LAST` (по SOT recurring-snapshot-resolver). Audit: `amount_source='tariff_recurring_offer'`.
+4. **Primary tariff_offer (НОВОЕ — гарантированный fallback)** — `is_primary=true AND is_active=true`, при отсутствии — первый `is_active=true ORDER BY sort_order ASC LIMIT 1`. Это «основная кнопка оплаты» из карточки тарифа. Audit: `amount_source='tariff_primary_offer'` + warning `reminders.amount_fallback_to_primary_offer` (recurring offer/snapshot не нашлись, но primary спас).
+5. **Legacy `tariff_prices**` — последний fallback для совместимости. Audit: `amount_source='legacy_tariff_prices'`.
 
-### 3. Расширить хук `useProductTrainings` (read-path, мягкая страховка)
+Валюта: `subscriptions_v2.meta.currency` → дефолт `BYN` (в `tariff_offers` колонки currency нет, подтверждено схемой).
 
-Чтобы дерево перестало «терять» новые потомки даже если триггер вдруг не отработает (например, при прямой вставке с обходом):
+### 2) Гарантия отправки
 
-- В `queryFn` дополнительно подгрузить ВСЕХ потомков (BFS по `parent_module_id`) от уже найденных корней с `product_id = productId`, без фильтра по `product_id`.
-- Влить таких потомков в `allModules` с пометкой `product_id_inherited: true` (новый необязательный флаг в `LinkedTraining`).
-- В UI рядом с такими модулями показывать маленький значок/тултип «Унаследовано от родителя» (мелкий бейдж, иконка `Info`), чтобы админ видел, что строка появилась через наследование.
-- Глубина обхода — итеративная, как в существующем `getAllDescendantIds` (с защитой `MAX_ITERATIONS`).
+- Если все 5 источников вернули 0 для recurring/installment подписки — это data-defect (тариф без единой кнопки). Reminder ВСЁ РАВНО уходит, но строка «💳 Сумма списания» опускается, пишется audit `reminders.amount_unresolved_critical` с `subscription_id`/`tariff_id` для алерта. Это аварийный путь, не штатный.
 
-### 4. Авто-обновление при открытии страницы
+### 3) One-time — без изменений
 
-В `useProductTrainings` и `useTrainingContentRulesForProduct`:
+Для `productIsOneTime===true` поведение остаётся ровно как сейчас: info-only шаблон, без суммы, без CTA. Резолвер не вызывается. Никаких новых полей, никаких новых веток.
 
-- Добавить `refetchOnMount: "always"` и `refetchOnWindowFocus: true`.
-- На монтирование `ProductLinkedTrainingsBlock` дополнительно вызывать `queryClient.invalidateQueries({ queryKey: ["product-linked-trainings", productId] })` и `["training-content-rules", productId]`.
-- (Опционально, без перегруза) realtime-подписка на `training_modules` с фильтром `product_id=eq.<productId>` ИЛИ на `parent_module_id IN (<rootIds>)` — invalidate соответствующих query keys. Если будет дорого — оставить только refetch on mount/focus.
+## Что НЕ создаём и не трогаем
 
-### 5. Привести picker глубины к универсальному обходу
+- Никаких новых edge functions, таблиц, RPC, cron jobs, миграций.
+- Не трогаем `bepaid-sync` / `bepaid-get-subscription-details` — только читаем `subscriptions_v2.meta`.
+- Не трогаем `isOneTimeProduct` / `resolveProductRenewability` — это уже SOT, переиспользуем.
+- Не трогаем `tariff_prices` (оставляем как fallback).
+- Не трогаем cron-расписание, формат даты/времени по Минску, CTA-генерацию, ветку one-time, no_card_warning.
+- Шаблоны email/TG: меняется только то, что строка суммы корректно подставляется или (в аварийном режиме) опускается.
 
-В `useTrainingContentTree` сейчас явный двухуровневый `or(id.eq.,parent_module_id.eq.)` + один проход за внуками. Заменить на тот же итеративный BFS по `parent_module_id`, что используется в `getAllDescendantIds`, чтобы внуки/правнуки не терялись. Это поддерживает уже существующий контракт выбора по модулям/урокам.
+## Verify (DoD)
 
-### 6. DoD (Definition of Done)
+1. Татьяна Образова (tariff `c5981337-…`, recurring): сейчас amount=0 → ожидаем `amount > 0` с источником `bepaid_snapshot` или `order_snapshot` или `tariff_recurring_offer` или `tariff_primary_offer`. Подтверждается одним dry-run прогоном с логом `amount_source`.
+2. Прогон по всем `auto_renew=true` подпискам в окнах 7/3/1: сводка `audit_logs` по `event_subtype LIKE 'reminders.amount_%'`. Ожидание: `amount_unresolved_critical = 0`.
+3. One-time продукт (например, разовый курс): убедиться, что reminder уходит без строки суммы и без CTA, резолвер не вызван (нет audit `reminders.amount_*`).
+4. Installment-подписка: reminder уходит с суммой очередного транша.
+5. Регрессия легаси: тариф из `tariff_prices` без `tariff_offers` → источник `legacy_tariff_prices`, сумма прежняя.
 
-- На странице «Продукт → Доступы» для «Базы знаний» появляется «Идеологическая работа в бизнесе» и любые будущие новые вебинары без ручного bind.
-- При создании нового модуля под существующим контейнером `product_id` проставляется автоматически (триггер).
-- Backfill выполнен, в `audit_logs` есть запись с количеством обновлённых строк, в proofs-файле — список затронутых модулей.
-- Открытие/возврат на вкладку «Доступы» гарантированно перечитывает данные.
-- Picker правил продолжает показывать тех же вебинаров (поведение не регрессирует), глубина обхода — единая.
-- Никаких изменений write-path для `access_rules` / `entitlements` / `subscriptions` — только наследование `product_id` и read-path.
+## Memory update (после execute)
 
-## Технические детали для реализации
+Дополнить `architecture/communications/renewal-offer-resolver-sot`:
 
-- **Миграции** (две, в одной папке `supabase/migrations/`):
-  1. `…_inherit_product_id_trigger.sql` — функция + триггер.
-  2. `…_backfill_orphan_product_id.sql` — dry-run select в комментарии + UPDATE + audit.
-- **Файлы фронта**:
-  - `src/hooks/useProductTrainings.ts` — расширить `queryFn`, добавить `refetchOnMount/Focus`, поле `product_id_inherited` в `LinkedTraining`.
-  - `src/hooks/useTrainingContentRules.ts` — заменить выборку модулей в `useTrainingContentTree` на итеративный BFS, `refetchOnMount: "always"`.
-  - `src/components/admin/product/ProductLinkedTrainingsBlock.tsx` — `useEffect` invalidate на mount; маленький бейдж «Унаследовано» рядом с такими строками.
-- **Proof-файл**: `.lovable/proofs/training_modules_orphan_product_id_audit.md` — список «бесхозных» модулей до backfill + контрольный SELECT после.
+> Reminder amount-резолвер вызывается ТОЛЬКО для recurring/installment продуктов (классификация — `isOneTimeProduct` поверх `resolveProductRenewability`). Для one-time продуктов сумма не резолвится и в шаблон не попадает. Цепочка для recurring/installment: bePaid snapshot → order snapshot → recurring offer → **primary tariff_offer (fallback)** → legacy `tariff_prices`. «Цена не найдена» — инвариант-нарушение, логируется как `reminders.amount_unresolved_critical`, но reminder всё равно отправляется без строки суммы.
 
-Подтверждаете план — выполняю?
+После апрува — переключаюсь в default mode, делаю один read_query по фактической форме `subscriptions_v2.meta.bepaid` (точный путь к next_charge_amount), затем точечный патч в `subscription-renewal-reminders/index.ts` (lines 1207–1223 + добавление inline-резолвера). Других файлов не трогаю.
