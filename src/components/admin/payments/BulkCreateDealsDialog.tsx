@@ -63,7 +63,13 @@ export function BulkCreateDealsDialog({
 }: BulkCreateDealsDialogProps) {
   const [isCreating, setIsCreating] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [chunkInfo, setChunkInfo] = useState<{ current: number; total: number } | null>(null);
   const [result, setResult] = useState<CreateResult | null>(null);
+
+  // Auto-chunking config: no upper limit on selection
+  const CHUNK_SIZE = 50;
+  const CHUNK_PAUSE_MS = 500;
+  const WARN_THRESHOLD = 500;
   
   // Form state
   const [productId, setProductId] = useState("");
