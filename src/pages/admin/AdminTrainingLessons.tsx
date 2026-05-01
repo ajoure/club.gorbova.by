@@ -359,6 +359,13 @@ export default function AdminTrainingLessons() {
   const navigate = useNavigate();
   
   const [editingLesson, setEditingLesson] = useState<TrainingLesson | null>(null);
+  const [editingModule, setEditingModule] = useState<any | null>(null);
+  const [moduleFormData, setModuleFormData] = useState({
+    title: "",
+    slug: "",
+    description: "",
+    is_active: true,
+  });
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
@@ -409,7 +416,7 @@ export default function AdminTrainingLessons() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("training_modules")
-        .select("id, title, slug, is_active, is_container, sort_order")
+        .select("*")
         .eq("parent_module_id", moduleId!)
         .order("sort_order");
       if (error) throw error;
@@ -536,6 +543,39 @@ export default function AdminTrainingLessons() {
       require_previous: lesson.require_previous || false,
     });
   }, []);
+
+  const openModuleEditDialog = useCallback((moduleRow: any) => {
+    setEditingModule(moduleRow);
+    setModuleFormData({
+      title: moduleRow.title || "",
+      slug: moduleRow.slug || "",
+      description: moduleRow.description || "",
+      is_active: moduleRow.is_active !== false,
+    });
+  }, []);
+
+  const handleModuleUpdate = useCallback(async () => {
+    if (!editingModule || !moduleFormData.title || !moduleFormData.slug) return;
+    const { error } = await supabase
+      .from("training_modules")
+      .update({
+        title: moduleFormData.title,
+        slug: moduleFormData.slug,
+        description: moduleFormData.description || null,
+        is_active: moduleFormData.is_active,
+      })
+      .eq("id", editingModule.id);
+
+    if (error) {
+      toast.error("Ошибка обновления модуля");
+      return;
+    }
+
+    toast.success("Модуль обновлён");
+    setEditingModule(null);
+    refetchChildModules();
+    window.location.reload();
+  }, [editingModule, moduleFormData, refetchChildModules]);
 
   const handleCreate = useCallback(async () => {
     if (!formData.title || !formData.slug || !moduleId) return;
@@ -718,7 +758,8 @@ export default function AdminTrainingLessons() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() => navigate(`/admin/training-modules/${child.id}/lessons`)}
+                              title="Редактировать модуль"
+                              onClick={() => openModuleEditDialog(child)}
                             >
                               <Pencil className="h-4 w-4" />
                             </Button>
@@ -928,6 +969,66 @@ export default function AdminTrainingLessons() {
                 Отмена
               </Button>
               <Button onClick={handleUpdate} disabled={!formData.title || !formData.slug}>
+                Сохранить
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Edit child module Dialog */}
+        <Dialog open={!!editingModule} onOpenChange={(open) => !open && setEditingModule(null)}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Редактирование модуля</DialogTitle>
+              <DialogDescription>
+                Измените название, адрес и видимость папки
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="module-title">Название *</Label>
+                  <Input
+                    id="module-title"
+                    value={moduleFormData.title}
+                    onChange={(e) => setModuleFormData((prev) => ({ ...prev, title: e.target.value }))}
+                    placeholder="Название модуля"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="module-slug">URL-slug *</Label>
+                  <Input
+                    id="module-slug"
+                    value={moduleFormData.slug}
+                    onChange={(e) => setModuleFormData((prev) => ({ ...prev, slug: e.target.value }))}
+                    placeholder="url-modulya"
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="module-description">Описание</Label>
+                <Textarea
+                  id="module-description"
+                  value={moduleFormData.description}
+                  onChange={(e) => setModuleFormData((prev) => ({ ...prev, description: e.target.value }))}
+                  placeholder="Краткое описание модуля"
+                  rows={3}
+                />
+              </div>
+              <div className="flex items-center space-x-2">
+                <Switch
+                  id="module-is-active"
+                  checked={moduleFormData.is_active}
+                  onCheckedChange={(checked) => setModuleFormData((prev) => ({ ...prev, is_active: checked }))}
+                />
+                <Label htmlFor="module-is-active">Активен</Label>
+              </div>
+            </div>
+            <DialogFooter className="sticky bottom-0 bg-background pt-4 pb-[env(safe-area-inset-bottom)]">
+              <Button variant="outline" onClick={() => setEditingModule(null)}>
+                Отмена
+              </Button>
+              <Button onClick={handleModuleUpdate} disabled={!moduleFormData.title || !moduleFormData.slug}>
                 Сохранить
               </Button>
             </DialogFooter>
