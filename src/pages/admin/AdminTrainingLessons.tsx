@@ -1075,6 +1075,30 @@ export default function AdminTrainingLessons() {
                 />
                 <Label htmlFor="module-is-active">Активен</Label>
               </div>
+              <div className="space-y-2 border-t pt-4">
+                <Label>Месяц контента</Label>
+                <MonthYearPicker
+                  value={moduleFormData.content_month}
+                  onChange={(value) => setModuleFormData((prev) => ({ ...prev, content_month: value }))}
+                  placeholder="Не задан"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Используется правилом доступа «Совпадение месяца покупки».
+                </p>
+              </div>
+              <div className="flex items-start gap-2 rounded-md border border-border p-3">
+                <Switch
+                  id="module-inherit-content-month"
+                  checked={moduleFormData.inherit_content_month}
+                  onCheckedChange={(checked) => setModuleFormData((prev) => ({ ...prev, inherit_content_month: checked }))}
+                />
+                <div className="space-y-1">
+                  <Label htmlFor="module-inherit-content-month">Применить этот месяц ко всем урокам внутри модуля</Label>
+                  <p className="text-[11px] text-muted-foreground">
+                    При сохранении уроки получат тот же месяц; при очистке месяца он очистится и у уроков.
+                  </p>
+                </div>
+              </div>
             </div>
             <DialogFooter className="sticky bottom-0 bg-background pt-4 pb-[env(safe-area-inset-bottom)]">
               <Button variant="outline" onClick={() => setEditingModule(null)}>
