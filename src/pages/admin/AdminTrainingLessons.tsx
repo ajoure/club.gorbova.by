@@ -382,6 +382,8 @@ export default function AdminTrainingLessons() {
     slug: "",
     description: "",
     is_active: true,
+    content_month: null as string | null,
+    inherit_content_month: true,
   });
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -509,6 +511,7 @@ export default function AdminTrainingLessons() {
       thumbnail_url: "",
       duration_minutes: undefined,
       is_active: true,
+      content_month: (module as any)?.content_month ?? null,
       completion_mode: "manual",
       require_previous: false,
     });
@@ -568,6 +571,8 @@ export default function AdminTrainingLessons() {
       slug: moduleRow.slug || "",
       description: moduleRow.description || "",
       is_active: moduleRow.is_active !== false,
+      content_month: moduleRow.content_month ?? null,
+      inherit_content_month: true,
     });
   }, []);
 
