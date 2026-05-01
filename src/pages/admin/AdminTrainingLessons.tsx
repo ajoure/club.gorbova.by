@@ -740,6 +740,13 @@ export default function AdminTrainingLessons() {
               <span className="hidden sm:inline">Назад</span>
             </button>
             <button
+              onClick={() => openModuleEditDialog(module)}
+              className="flex items-center gap-1.5 px-3 h-8 rounded-full text-xs font-medium border border-border bg-background hover:bg-muted transition-colors"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Редактировать модуль</span>
+            </button>
+            <button
               onClick={() => setIsWizardOpen(true)}
               className="flex items-center gap-1.5 px-3 h-8 rounded-full text-xs font-medium border border-border bg-background hover:bg-muted transition-colors"
             >
@@ -781,6 +788,11 @@ export default function AdminTrainingLessons() {
                             {child.is_active ? <Eye className="h-3 w-3 mr-1" /> : <EyeOff className="h-3 w-3 mr-1" />}
                             <span className="hidden sm:inline">{child.is_active ? "Активен" : "Скрыт"}</span>
                           </Badge>
+                          {child.content_month && (
+                            <Badge variant="outline" className="shrink-0">
+                              {formatMonthYearLabel(child.content_month)}
+                            </Badge>
+                          )}
                           <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
                             <Button
                               variant="ghost"
@@ -889,6 +901,11 @@ export default function AdminTrainingLessons() {
                                     <Clock className="h-3 w-3" />
                                     {lesson.duration_minutes} мин
                                   </span>
+                                )}
+                                {lesson.content_month && (
+                                  <Badge variant="outline" className="text-xs font-normal">
+                                    {formatMonthYearLabel(lesson.content_month)}
+                                  </Badge>
                                 )}
                                 <span className="hidden sm:inline">{typeOpt?.label}</span>
                               </div>
