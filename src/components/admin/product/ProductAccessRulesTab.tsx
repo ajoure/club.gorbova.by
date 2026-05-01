@@ -664,6 +664,11 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       }
     }
 
+    // Month-gated access (applies to training_content and live_event-style rules)
+    if (form.match_purchase_month) {
+      conditions.match_purchase_month = true;
+    }
+
     // Parse string fields to numbers on save
     const parsedPriority = form.priority.trim() === "" ? 0 : (parseInt(form.priority, 10) || 0);
     const parsedDuration = form.duration_mode === "manual"
