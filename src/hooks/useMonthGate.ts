@@ -146,26 +146,26 @@ export function useMonthGate(lessons: MonthGateLessonInput[]): {
             .filter((pid: string | null): pid is string => !!pid && !known.has(pid));
         }
 
-        // 2) Resolve each lesson's root product_id and group by it for rule fetching.
-        const lessonRootProduct = new Map<string, string>();
+        // 2) Resolve each lesson's ROOT module_id (target_ref of training_content rules).
+        const lessonRootModule = new Map<string, string>();
         for (const c of candidates) {
-          const rootProd = resolveRootProductId(c.module_id, modulesById);
-          if (rootProd) lessonRootProduct.set(c.lesson_id, rootProd);
+          const rootMod = resolveRootModuleId(c.module_id, modulesById);
+          if (rootMod) lessonRootModule.set(c.lesson_id, rootMod);
         }
-        const productIds = Array.from(new Set(lessonRootProduct.values()));
-        if (productIds.length === 0) {
+        const rootModuleIds = Array.from(new Set(lessonRootModule.values()));
+        if (rootModuleIds.length === 0) {
           if (!cancelled) setMap(result);
           return;
         }
 
         // 3) Fetch active training_content rules with match_purchase_month=true
-        //    for the relevant root products.
+        //    whose target_ref points to one of these root modules.
         const { data: rulesRaw, error: rulesErr } = await supabase
           .from("access_rules")
           .select("id, tariff_id, target_ref, conditions")
           .eq("grant_target_type", "training_content")
           .eq("is_active", true)
-          .in("target_ref", productIds);
+          .in("target_ref", rootModuleIds);
         if (rulesErr) throw rulesErr;
 
         const rules: TcRuleRow[] = (rulesRaw || []).filter(
@@ -176,11 +176,11 @@ export function useMonthGate(lessons: MonthGateLessonInput[]): {
           return;
         }
 
-        // Index rules by target_ref (root product_id).
-        const rulesByProduct = new Map<string, TcRuleRow[]>();
+        // Index rules by target_ref (root module_id).
+        const rulesByRootModule = new Map<string, TcRuleRow[]>();
         for (const r of rules) {
-          if (!rulesByProduct.has(r.target_ref)) rulesByProduct.set(r.target_ref, []);
-          rulesByProduct.get(r.target_ref)!.push(r);
+          if (!rulesByRootModule.has(r.target_ref)) rulesByRootModule.set(r.target_ref, []);
+          rulesByRootModule.get(r.target_ref)!.push(r);
         }
 
         // 4) For each candidate lesson, find a matching rule -> build RPC payload.
@@ -193,9 +193,9 @@ export function useMonthGate(lessons: MonthGateLessonInput[]): {
         const lessonTariffMap = new Map<string, string>();
 
         for (const c of candidates) {
-          const rootProd = lessonRootProduct.get(c.lesson_id);
-          if (!rootProd) continue;
-          const candidateRules = rulesByProduct.get(rootProd) || [];
+          const rootMod = lessonRootModule.get(c.lesson_id);
+          if (!rootMod) continue;
+          const candidateRules = rulesByRootModule.get(rootMod) || [];
           // Pick the first rule whose scope includes this lesson.
           const match = candidateRules.find((r) =>
             lessonInRuleScope(c.lesson_id, c.module_id, r.conditions)
