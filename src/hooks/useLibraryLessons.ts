@@ -92,6 +92,7 @@ export function useLibraryLessons() {
             duration_minutes: l.duration_minutes,
             published_at: l.published_at,
             isScheduled: Boolean(publishedAt && publishedAt > now),
+            content_month: (l as any).content_month ?? null,
           };
           if (!grouped[l.module_id]) grouped[l.module_id] = [];
           grouped[l.module_id].push(lesson);
