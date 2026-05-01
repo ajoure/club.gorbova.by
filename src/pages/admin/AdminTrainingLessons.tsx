@@ -749,7 +749,7 @@ export default function AdminTrainingLessons() {
           </div>
           <div className="flex gap-1.5 flex-wrap">
             <button
-              onClick={() => navigate("/admin/training-modules")}
+              onClick={() => navigate(backHref)}
               className="flex items-center gap-1.5 px-3 h-8 rounded-full text-xs font-medium border border-border bg-background hover:bg-muted transition-colors"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
