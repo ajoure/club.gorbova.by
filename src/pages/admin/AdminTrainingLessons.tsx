@@ -527,7 +527,7 @@ export default function AdminTrainingLessons() {
     setPublishDate(undefined);
     setPublishTime("12:00");
     setPublishTimezone("Europe/Minsk");
-  }, [moduleId]);
+  }, [moduleId, module?.content_month]);
 
   const openCreateDialog = useCallback(() => {
     resetForm();
