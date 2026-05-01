@@ -795,14 +795,16 @@ export default function AdminLiveEvents() {
       if (eventId) {
         await supabase.from("live_event_access_rules").delete().eq("live_event_id", eventId);
         const validRules = data.access_rules.filter(r => r.product_id);
-        const rows: Array<{ live_event_id: string; product_id: string; tariff_id: string | null; sort_order: number }> = [];
-        
+        const rows: Array<{ live_event_id: string; product_id: string; tariff_id: string | null; sort_order: number; conditions: Record<string, any> }> = [];
+
         validRules.forEach((rule, ruleIdx) => {
+          const conditions: Record<string, any> = {};
+          if (rule.match_purchase_month === true) conditions.match_purchase_month = true;
           if (rule.tariff_ids.length === 0) {
-            rows.push({ live_event_id: eventId!, product_id: rule.product_id, tariff_id: null, sort_order: ruleIdx * 10 });
+            rows.push({ live_event_id: eventId!, product_id: rule.product_id, tariff_id: null, sort_order: ruleIdx * 10, conditions });
           } else {
             rule.tariff_ids.forEach((tariffId, tIdx) => {
-              rows.push({ live_event_id: eventId!, product_id: rule.product_id, tariff_id: tariffId, sort_order: ruleIdx * 10 + tIdx });
+              rows.push({ live_event_id: eventId!, product_id: rule.product_id, tariff_id: tariffId, sort_order: ruleIdx * 10 + tIdx, conditions });
             });
           }
         });
