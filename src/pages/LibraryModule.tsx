@@ -130,6 +130,7 @@ export default function LibraryModule() {
   });
 
   const handleLessonClick = (lesson: TrainingLesson) => {
+    if (lesson.lock_reason === "month_mismatch") return;
     navigate(`/library/${moduleSlug}/${lesson.slug}`);
   };
 
