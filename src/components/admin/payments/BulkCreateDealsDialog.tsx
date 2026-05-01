@@ -37,11 +37,22 @@ interface GroupedPayment {
   payments: UnifiedPayment[];
 }
 
+interface FailedItem {
+  paymentUid: string;
+  profileName: string;
+  profileEmail: string | null;
+  reason: string;
+}
+
 interface CreateResult {
   success: number;
   failed: number;
   skipped: number;
-  errors: string[];
+  totalProcessed: number;
+  chunksProcessed: number;
+  chunksTotal: number;
+  failedItems: FailedItem[];
+  stopReason?: string;
 }
 
 export function BulkCreateDealsDialog({
