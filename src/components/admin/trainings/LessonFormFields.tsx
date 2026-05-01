@@ -200,6 +200,19 @@ export const LessonFormFields = memo(function LessonFormFields({
           <Label htmlFor="lesson-is_active">Активен</Label>
         </div>
       )}
+
+      <div className="space-y-2">
+        <Label>Месяц контента (для привязки к месяцу покупки)</Label>
+        <MonthYearPicker
+          value={formData.content_month ?? null}
+          onChange={(v) => updateField("content_month", v)}
+          placeholder="Не задан"
+        />
+        <p className="text-[11px] text-muted-foreground">
+          Если задано и в правиле доступа включён флаг «Совпадение месяца покупки»,
+          урок будет доступен только тем, у кого есть оплата в этом месяце.
+        </p>
+      </div>
     </div>
   );
 });
