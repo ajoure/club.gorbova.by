@@ -21,7 +21,6 @@ import {
 import { format, parse } from "date-fns";
 import { ru } from "date-fns/locale";
 import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
-import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
 import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
 
 // ── Types ───────────────────────────────────────────────────────────
