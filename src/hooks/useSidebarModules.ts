@@ -63,7 +63,8 @@ export function useSidebarModules() {
           sort_order,
           is_container,
           parent_module_id,
-          product_id
+          product_id,
+          content_month
         `)
         .eq("is_active", true)
         .order("sort_order");
