@@ -233,26 +233,20 @@ export function BulkCreateDealsDialog({
       return;
     }
 
-    // STOP-guard: max 100 per batch
-    const BATCH_LIMIT = 100;
-    if (eligiblePayments.length > BATCH_LIMIT) {
-      toast.error(`Максимум ${BATCH_LIMIT} платежей за раз. Выбрано: ${eligiblePayments.length}`);
-      return;
-    }
-
     setIsCreating(true);
     setProgress(0);
-    
+    setChunkInfo(null);
+
     const currentUser = (await supabase.auth.getUser()).data.user;
     const productCode = selectedProduct?.code || 'DEAL';
     const now = new Date();
-    
+
     let success = 0;
     let failed = 0;
-    let skipped = 0;
-    const errors: string[] = [];
     let stopped = false;
-    
+    let stopReason: string | undefined;
+    const failedItems: FailedItem[] = [];
+
     // Get existing deal counts per profile for this product
     const profileIds = groupedPayments.map(g => g.profileId);
     const { data: existingCounts } = await supabase
@@ -261,64 +255,112 @@ export function BulkCreateDealsDialog({
       .eq('product_id', productId)
       .in('profile_id', profileIds)
       .in('status', ['paid', 'refunded', 'canceled']);
-    
-    // Build count map
+
     const countMap = new Map<string, number>();
     (existingCounts || []).forEach(o => {
       countMap.set(o.profile_id, (countMap.get(o.profile_id) || 0) + 1);
     });
 
-    let processed = 0;
-    const total = eligiblePayments.length;
-
-    for (const group of groupedPayments) {
-      if (stopped) break;
-      
-      const baseCount = countMap.get(group.profileId) || 0;
-      const profileShort = getProfileShort(group.profileName, group.profileEmail);
-      
-      // Get profile data for user_id
-      const { data: profile } = await supabase
+    // Pre-load profiles in one query (avoid N+1 on big batches)
+    const profileMap = new Map<string, { id: string; user_id: string | null; email: string | null }>();
+    {
+      const { data: profilesData } = await supabase
         .from('profiles')
         .select('id, user_id, email')
-        .eq('id', group.profileId)
-        .single();
-      
-      if (!profile) {
-        for (const payment of group.payments) {
-          failed++;
-          errors.push(`${payment.uid.slice(0, 8)}: Профиль не найден`);
+        .in('id', profileIds);
+      (profilesData || []).forEach(p => profileMap.set(p.id, p as any));
+    }
+
+    // Flatten ordered list: keep group order, payments stay grouped by profile
+    type FlatItem = { group: GroupedPayment; payment: UnifiedPayment; indexInGroup: number };
+    const flat: FlatItem[] = [];
+    for (const group of groupedPayments) {
+      group.payments.forEach((payment, indexInGroup) => {
+        flat.push({ group, payment, indexInGroup });
+      });
+    }
+
+    const total = flat.length;
+    const chunksTotal = Math.ceil(total / CHUNK_SIZE);
+    let chunksProcessed = 0;
+    let processed = 0;
+
+    // STOP-guard counters
+    let consecutiveFailures = 0;
+    let consecutiveTimeouts = 0;
+    const TIMEOUT_RE = /timeout|network|fetch|aborted|failed to fetch/i;
+
+    const recordFail = (item: FlatItem, reason: string) => {
+      failed++;
+      failedItems.push({
+        paymentUid: item.payment.uid,
+        profileName: item.group.profileName,
+        profileEmail: item.group.profileEmail,
+        reason,
+      });
+      consecutiveFailures++;
+      if (TIMEOUT_RE.test(reason)) consecutiveTimeouts++;
+      else consecutiveTimeouts = 0;
+    };
+
+    const recordSuccess = () => {
+      success++;
+      consecutiveFailures = 0;
+      consecutiveTimeouts = 0;
+    };
+
+    const checkStop = (): boolean => {
+      if (processed >= 10 && failed / processed > 0.2) {
+        stopReason = `Cumulative error rate > 20% (${failed}/${processed})`;
+        return true;
+      }
+      if (consecutiveFailures >= 10) {
+        stopReason = `10 consecutive failures`;
+        return true;
+      }
+      if (consecutiveTimeouts >= 3) {
+        stopReason = `3 consecutive network/timeout errors`;
+        return true;
+      }
+      return false;
+    };
+
+    for (let chunkIdx = 0; chunkIdx < chunksTotal; chunkIdx++) {
+      if (stopped) break;
+      const chunk = flat.slice(chunkIdx * CHUNK_SIZE, (chunkIdx + 1) * CHUNK_SIZE);
+      setChunkInfo({ current: chunkIdx + 1, total: chunksTotal });
+
+      for (const item of chunk) {
+        if (stopped) break;
+        const { group, payment, indexInGroup } = item;
+        const profile = profileMap.get(group.profileId);
+
+        if (!profile) {
+          recordFail(item, 'Профиль не найден');
           processed++;
           setProgress(Math.round((processed / total) * 100));
+          if (checkStop()) { stopped = true; break; }
+          continue;
         }
-        continue;
-      }
 
-      for (let i = 0; i < group.payments.length; i++) {
-        if (stopped) break;
-        
-        const payment = group.payments[i];
-        const dealSequence = baseCount + i + 1;
+        const baseCount = countMap.get(group.profileId) || 0;
+        const profileShort = getProfileShort(group.profileName, group.profileEmail);
+        const dealSequence = baseCount + 1; // sequence based on live count
         const orderNumber = generateOrderNumber(dealSequence, productCode, profileShort);
-        
+
         const paidAt = new Date(payment.paid_at || payment.created_at);
         const accessStart = paidAt;
         const accessEnd = addDays(paidAt, 30);
         const isExpired = accessEnd < now;
         const isGhost = !profile.user_id;
-        
-        // Determine if we should grant access
         const shouldGrantAccess = grantAccess && !isGhost && !isExpired;
-        
+
         try {
-          // 1. Create order with historical created_at
-          // NOTE: user_id must be null for ghost profiles (where profile.user_id is null)
-          // Never use profile.id as user_id - they are different entities
           const { data: newOrder, error: orderError } = await supabase
             .from('orders_v2')
             .insert({
               order_number: orderNumber,
-              user_id: profile.user_id || null, // Ghost profiles get null user_id
+              user_id: profile.user_id || null,
               profile_id: profile.id,
               product_id: productId,
               tariff_id: tariffId,
@@ -345,7 +387,7 @@ export function BulkCreateDealsDialog({
 
           if (orderError) throw orderError;
 
-          // 2. Link payment to order
+          // Link payment to order
           if (payment.rawSource === 'queue') {
             await supabase
               .from('payment_reconcile_queue')
@@ -358,28 +400,18 @@ export function BulkCreateDealsDialog({
               .eq('id', payment.id);
           }
 
-          // 3. Grant access via canonical fulfillment (grant-access-for-order)
+          // Grant access via canonical fulfillment
           if (shouldGrantAccess && profile.user_id) {
             try {
-              const { data: grantResult, error: grantError } = await supabase.functions.invoke(
-                "grant-access-for-order",
-                {
-                  body: {
-                    order_id: newOrder.id,
-                    source: "admin_bulk_from_payments",
-                  },
-                }
+              const { error: grantError } = await supabase.functions.invoke(
+                'grant-access-for-order',
+                { body: { order_id: newOrder.id, source: 'admin_bulk_from_payments' } }
               );
-
-              if (grantError) {
-                console.error("grant-access-for-order error for order", newOrder.id, grantError);
-                // Don't fail the whole batch, log and continue
-              }
+              if (grantError) console.error('grant-access-for-order error', newOrder.id, grantError);
             } catch (grantErr) {
-              console.error("grant-access-for-order call failed:", grantErr);
+              console.error('grant-access-for-order call failed:', grantErr);
             }
 
-            // Telegram access (separate side-effect)
             const days = differenceInDays(accessEnd, accessStart) + 1;
             if (selectedProduct?.telegram_club_id) {
               await supabase.functions.invoke('telegram-grant-access', {
@@ -396,7 +428,6 @@ export function BulkCreateDealsDialog({
               });
             }
 
-            // GetCourse sync
             const gcOfferId = selectedTariff?.getcourse_offer_id || selectedTariff?.getcourse_offer_code;
             if (gcOfferId) {
               await supabase.functions.invoke('test-getcourse-sync', {
@@ -417,29 +448,32 @@ export function BulkCreateDealsDialog({
             }
           }
 
-          success++;
-          
-          // Update count for next iteration
+          recordSuccess();
           countMap.set(group.profileId, (countMap.get(group.profileId) || 0) + 1);
-          
         } catch (e: any) {
-          failed++;
-          errors.push(`${payment.uid.slice(0, 8)}: ${e.message}`);
+          recordFail(item, e?.message || String(e));
         }
-        
+
         processed++;
         setProgress(Math.round((processed / total) * 100));
-        
-        // STOP-guard: >20% errors after 10 processed
-        if (processed >= 10 && failed / processed > 0.2) {
+
+        if (checkStop()) {
           stopped = true;
-          toast.error(`Остановлено: слишком много ошибок (${Math.round((failed / processed) * 100)}%)`);
+          toast.error(`Остановлено: ${stopReason}`);
+          break;
         }
-        
-        // Small delay between operations
-        if (i < group.payments.length - 1) {
+
+        // tiny pause inside chunk
+        if (indexInGroup < chunk.length - 1) {
           await new Promise(r => setTimeout(r, 100));
         }
+      }
+
+      chunksProcessed++;
+
+      // Pause between chunks (skip after last)
+      if (!stopped && chunkIdx < chunksTotal - 1) {
+        await new Promise(r => setTimeout(r, CHUNK_PAUSE_MS));
       }
     }
 
@@ -453,17 +487,31 @@ export function BulkCreateDealsDialog({
         tariff_id: tariffId,
         tariff_name: selectedTariff?.name,
         total_selected: selectedPayments.length,
-        eligible: eligiblePayments.length,
-        success,
-        failed,
-        skipped: skippedCount,
+        eligible_count: eligiblePayments.length,
+        chunk_size: CHUNK_SIZE,
+        chunks_total: chunksTotal,
+        chunks_processed: chunksProcessed,
+        created_count: success,
+        failed_count: failed,
+        skipped_count: skippedCount,
         grant_access: grantAccess,
         stopped,
+        stop_reason: stopReason,
       },
     });
 
-    setResult({ success, failed, skipped: skippedCount, errors: errors.slice(0, 10) });
+    setResult({
+      success,
+      failed,
+      skipped: skippedCount,
+      totalProcessed: processed,
+      chunksProcessed,
+      chunksTotal,
+      failedItems,
+      stopReason,
+    });
     setIsCreating(false);
+    setChunkInfo(null);
 
     if (success > 0) {
       toast.success(`Создано сделок: ${success} из ${eligiblePayments.length}`);
