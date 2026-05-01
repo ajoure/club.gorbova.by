@@ -155,6 +155,7 @@ export function useTrainingContentRulesForProduct(productId?: string) {
       })) as TrainingContentRule[];
     },
     enabled: !!productId,
+    refetchOnMount: "always",
   });
 }
 
