@@ -46,3 +46,14 @@ WHERE product_id IS NULL AND root_product_id IS NOT NULL;
 - Только `child.product_id IS NULL` AND `parent_module_id IS NOT NULL` AND `root.product_id IS NOT NULL`.
 - Никогда не перезаписываем уже заполненный `product_id`.
 - Поддеревья «свободных» тренингов (root.product_id IS NULL) не трогаем.
+
+## После миграции (Verify)
+
+| Метрика | До | После |
+|---|---|---|
+| remaining_orphans | 1 | **0** |
+| audit_logs.training_modules.product_id_inherited_backfill.affected_count | — | **1** |
+| training_modules[Идеологическая работа в бизнесе].product_id | NULL | `11c9f1b8-0355-4753-bd74-40b42aa53616` |
+
+Триггер `tg_training_module_inherit_product_id` активен — все будущие новые модули,
+создаваемые внутри привязанного контейнера, автоматически получают `product_id` родителя.
