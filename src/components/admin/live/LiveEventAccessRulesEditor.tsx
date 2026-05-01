@@ -121,10 +121,11 @@ interface RuleRowProps {
   usedProductIds: string[];
   onUpdateProduct: (index: number, productId: string) => void;
   onUpdateTariffs: (index: number, tariffIds: string[]) => void;
+  onUpdateMonthGate: (index: number, value: boolean) => void;
   onRemove: (index: number) => void;
 }
 
-function RuleRow({ rule, index, products, usedProductIds, onUpdateProduct, onUpdateTariffs, onRemove }: RuleRowProps) {
+function RuleRow({ rule, index, products, usedProductIds, onUpdateProduct, onUpdateTariffs, onUpdateMonthGate, onRemove }: RuleRowProps) {
   const { data: tariffs } = useQuery({
     queryKey: ["live-access-tariffs", rule.product_id],
     queryFn: async () => {
