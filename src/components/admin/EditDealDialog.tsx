@@ -217,6 +217,15 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
       if (newDealDate) {
         orderUpdate.deal_date = newDealDate;
       }
+
+      // deal_month: persist into meta (preserve other meta keys)
+      const oldDealMonth = (deal as any)?.meta?.deal_month ?? null;
+      const newDealMonth = formData.deal_month || null;
+      const dealMonthChanged = oldDealMonth !== newDealMonth;
+      if (dealMonthChanged) {
+        const existingMeta = ((deal as any)?.meta && typeof (deal as any).meta === "object") ? (deal as any).meta : {};
+        orderUpdate.meta = { ...existingMeta, deal_month: newDealMonth };
+      }
       // NOTE: created_at is never updated — it's a system timestamp
       const { error: orderError } = await supabase
         .from("orders_v2")
