@@ -72,7 +72,8 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
           created_at,
           published_at,
           sort_order,
-          module_id
+          module_id,
+          content_month
         `)
         .in("module_id", allModuleIds)
         .eq("is_active", true)
