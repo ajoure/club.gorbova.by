@@ -94,6 +94,7 @@ export function LiveEventAccessRulesEditor({ rules, onChange }: LiveEventAccessR
           usedProductIds={usedProductIds}
           onUpdateProduct={updateProduct}
           onUpdateTariffs={updateTariffs}
+          onUpdateMonthGate={updateMonthGate}
           onRemove={removeRule}
         />
       ))}
