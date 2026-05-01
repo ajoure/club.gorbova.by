@@ -729,13 +729,18 @@ export function BulkCreateDealsDialog({
           )}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+          {!result && eligiblePayments.length > CHUNK_SIZE && !isCreating && (
+            <div className="text-xs text-muted-foreground sm:mr-auto">
+              Будет обработано чанками по {CHUNK_SIZE} (всего {Math.ceil(eligiblePayments.length / CHUNK_SIZE)})
+            </div>
+          )}
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {result ? 'Закрыть' : 'Отмена'}
           </Button>
           {!result && (
-            <Button 
-              onClick={handleCreate} 
+            <Button
+              onClick={handleCreate}
               disabled={isCreating || !productId || !tariffId || eligiblePayments.length === 0}
             >
               {isCreating ? (
