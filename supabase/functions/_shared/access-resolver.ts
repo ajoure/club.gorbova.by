@@ -58,6 +58,14 @@ export interface TrainingContentFilter {
   allowed_module_ids: string[];
   allowed_lesson_ids: string[];
   rule_id: string;
+  /**
+   * Month-gate: если true — runtime-видимость урока/модуля должна
+   * дополнительно проверять checkMonthPurchase(user, rule.tariff_id, content_month).
+   * Применяется ТОЛЬКО для контента с заполненным content_month.
+   */
+  match_purchase_month: boolean;
+  /** tariff_id правила (нужен для проверки month-gate). null = любой тариф продукта. */
+  rule_tariff_id: string | null;
 }
 
 export interface AccessResolution {
@@ -429,6 +437,8 @@ async function resolveTrainingContentFilters(
       allowed_module_ids: cond.allowed_module_ids || [],
       allowed_lesson_ids: cond.allowed_lesson_ids || [],
       rule_id: bestRule.id,
+      match_purchase_month: cond.match_purchase_month === true,
+      rule_tariff_id: bestRule.tariff_id ?? null,
     });
   }
 
