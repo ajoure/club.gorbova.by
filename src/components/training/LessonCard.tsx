@@ -116,8 +116,21 @@ export function LessonCard({
           </div>
         )}
 
+        {/* Month-gate badge — highest priority */}
+        {isMonthLocked && (
+          <div className="absolute top-3 right-3">
+            <Badge
+              variant="outline"
+              className={cn("gap-1 backdrop-blur-sm", getStatusBadgeClass("warning"))}
+            >
+              <Lock className="h-3 w-3" />
+              Доступно за отдельную плату
+            </Badge>
+          </div>
+        )}
+
         {/* Scheduled badge - "Скоро" */}
-        {isScheduled && scheduledDate && (
+        {!isMonthLocked && isScheduled && scheduledDate && (
           <div className="absolute top-3 right-3">
             <Badge className="gap-1 bg-amber-500 hover:bg-amber-600 text-white">
               <Timer className="h-3 w-3" />
@@ -126,8 +139,8 @@ export function LessonCard({
           </div>
         )}
 
-        {/* Access badge - only show if not scheduled */}
-        {!hasAccess && !isScheduled && (
+        {/* Access badge - only show if not scheduled and not month-locked */}
+        {!hasAccess && !isScheduled && !isMonthLocked && (
           <div className="absolute top-3 right-3">
             <Badge variant="secondary" className="gap-1 bg-background/80 backdrop-blur-sm">
               <Lock className="h-3 w-3" />
