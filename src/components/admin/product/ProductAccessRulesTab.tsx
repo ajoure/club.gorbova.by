@@ -592,6 +592,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       tc_allowed_module_ids: tcAllowedModuleIds,
       tc_allowed_lesson_ids: tcAllowedLessonIds,
       tc_auto_include_new_modules: Boolean(conditions.auto_include_new_modules),
+      match_purchase_month: conditions.match_purchase_month === true,
     });
     setAdvancedOpen(false);
     setDialogOpen(true);
