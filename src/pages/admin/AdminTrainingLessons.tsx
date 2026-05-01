@@ -531,6 +531,7 @@ export default function AdminTrainingLessons() {
       thumbnail_url: lesson.thumbnail_url || "",
       duration_minutes: lesson.duration_minutes || undefined,
       is_active: lesson.is_active,
+      content_month: (lesson as any).content_month ?? null,
       completion_mode: lesson.completion_mode || "manual",
       require_previous: lesson.require_previous || false,
     });
