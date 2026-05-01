@@ -730,6 +730,19 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
                   </Popover>
                 </div>
               </div>
+              <div className="space-y-2 sm:col-span-2">
+                <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Месяц сделки (для контента, привязанного к месяцу)
+                </Label>
+                <MonthYearPicker
+                  value={formData.deal_month}
+                  onChange={(v) => setFormData(prev => ({ ...prev, deal_month: v }))}
+                  placeholder="Не задан (используется дата сделки)"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Используется правилами доступа с флагом «Совпадение месяца покупки» (например, для вебинаров клуба).
+                </p>
+              </div>
             </div>
           </div>
 
