@@ -585,6 +585,7 @@ export default function AdminTrainingLessons() {
         slug: moduleFormData.slug,
         description: moduleFormData.description || null,
         is_active: moduleFormData.is_active,
+        content_month: moduleFormData.content_month,
       })
       .eq("id", editingModule.id);
 
@@ -593,7 +594,19 @@ export default function AdminTrainingLessons() {
       return;
     }
 
-    toast.success("Модуль обновлён");
+    if (moduleFormData.inherit_content_month) {
+      const { error: lessonsError } = await supabase
+        .from("training_lessons")
+        .update({ content_month: moduleFormData.content_month })
+        .eq("module_id", editingModule.id);
+
+      if (lessonsError) {
+        toast.error("Модуль сохранён, но месяц не применился к урокам");
+        return;
+      }
+    }
+
+    toast.success(moduleFormData.inherit_content_month ? "Модуль и уроки обновлены" : "Модуль обновлён");
     setEditingModule(null);
     refetchChildModules();
     window.location.reload();
