@@ -163,6 +163,29 @@ export function useTrainingLessons(moduleId?: string) {
     fetchLessons();
   }, [fetchLessons]);
 
+  // Month-gate (backend SOT): only for non-admin users.
+  const monthGateInputs: MonthGateLessonInput[] = useMemo(() => {
+    if (isAdminUser) return [];
+    return lessons
+      .filter((l) => !!l.content_month)
+      .map((l) => ({
+        lesson_id: l.id,
+        module_id: l.module_id,
+        content_month: l.content_month ?? null,
+      }));
+  }, [lessons, isAdminUser]);
+
+  const { map: monthGateMap } = useMonthGate(monthGateInputs);
+
+  const lessonsWithGate = useMemo<TrainingLesson[]>(() => {
+    if (monthGateMap.size === 0) return lessons;
+    return lessons.map((l) => {
+      const gate = monthGateMap.get(l.id);
+      if (!gate) return l;
+      return { ...l, lock_reason: gate.lock_reason, locked_month: gate.locked_month };
+    });
+  }, [lessons, monthGateMap]);
+
   const createLesson = async (data: TrainingLessonFormData): Promise<boolean> => {
     try {
       const { error } = await supabase
