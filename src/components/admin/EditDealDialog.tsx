@@ -255,7 +255,27 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
         });
       }
 
-      // 2. Re-fetch subscription inside mutation to avoid stale cache
+      // Audit: log manual deal_month change
+      if (dealMonthChanged) {
+        const { data: { user: currentUser } } = await supabase.auth.getUser();
+        await supabase.from("audit_logs").insert({
+          action: "deal.deal_month.updated",
+          actor_type: "user",
+          actor_user_id: currentUser?.id || null,
+          actor_label: "admin-ui",
+          target_user_id: deal.user_id || null,
+          meta: {
+            order_id: deal.id,
+            order_number: deal.order_number,
+            old_deal_month: oldDealMonth,
+            new_deal_month: newDealMonth,
+          },
+          created_at: new Date().toISOString(),
+        }).then(({ error: auditErr }) => {
+          if (auditErr) console.error("Audit log error:", auditErr);
+        });
+      }
+
       const { data: freshSubscription } = await supabase
         .from("subscriptions_v2")
         .select("*")
