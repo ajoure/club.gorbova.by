@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
+import { MonthYearPicker } from "@/components/ui/month-year-picker";
 import {
   Dialog,
   DialogContent,
@@ -325,6 +326,18 @@ function ModuleFormContent({ formData, setFormData, editingModule }: ModuleFormC
           onCheckedChange={(checked) => setFormData(prev => ({ ...prev, is_active: checked }))}
         />
         <Label htmlFor="is_active">Активен</Label>
+      </div>
+
+      <div className="space-y-2 border-t pt-4">
+        <Label>Месяц контента</Label>
+        <MonthYearPicker
+          value={formData.content_month ?? null}
+          onChange={(value) => setFormData(prev => ({ ...prev, content_month: value }))}
+          placeholder="Не задан"
+        />
+        <p className="text-[11px] text-muted-foreground">
+          Используется правилом доступа «Совпадение месяца покупки».
+        </p>
       </div>
 
       {/* Раздел меню */}
