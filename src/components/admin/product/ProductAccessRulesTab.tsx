@@ -1495,6 +1495,24 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                     </div>
                   )}
 
+                  {form.grant_target_type === "training_content" && (
+                    <div className="flex items-start gap-2 p-3 rounded-lg border border-border/50 bg-muted/30">
+                      <Switch
+                        id="rule-match-purchase-month"
+                        checked={form.match_purchase_month}
+                        onCheckedChange={(v) => setForm({ ...form, match_purchase_month: Boolean(v) })}
+                      />
+                      <div className="flex-1 -mt-0.5">
+                        <Label htmlFor="rule-match-purchase-month" className="text-xs font-medium cursor-pointer">
+                          Совпадение месяца покупки
+                        </Label>
+                        <p className="text-[11px] text-muted-foreground">
+                          Если включено — урок/модуль с заданным «Месяцем контента» откроется только тем, у кого есть оплата в том же месяце по этому тарифу.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Tree picker for partial */}
                   {form.target_ref && form.tc_access_mode === "partial" && (
                     trainingTree ? (
