@@ -155,6 +155,7 @@ interface LiveEventForm {
   event_type: EventType;
   event_timezone: string;
   kinescope_live_event_id: string;
+  content_month: string | null;
   /** Transient provider data from create — persisted on save for new events */
   _providerDraft?: {
     live_event_id: string;
