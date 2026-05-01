@@ -76,12 +76,17 @@ export default function LibraryModule() {
     enabled: !!moduleSlug,
   });
 
-  // Get access info from useTrainingModules
+  // Get access info from useTrainingModules (sidebar/global access list)
   const { modules: allModules, loading: modulesLoading } = useTrainingModules();
   const moduleWithAccess = allModules.find(m => m.slug === moduleSlug);
   const hasAccess = moduleWithAccess?.has_access ?? true;
-
+  // Month-lock comes from useTrainingLessons / sidebar; for module-level we read it from
+  // the first lesson lock (cabinet rule: parent month-lock manifests via lesson lock_reason).
   const { lessons, loading: lessonsLoading, markCompleted, markIncomplete } = useTrainingLessons(module?.id);
+  const moduleMonthLocked = hasAccess && lessons.length > 0 && lessons.every(l => l.lock_reason === "month_mismatch");
+  const moduleLockedMonth = moduleMonthLocked
+    ? lessons.find(l => l.lock_reason === "month_mismatch")?.locked_month ?? null
+    : null;
 
   // Fetch child modules if this module has no direct lessons
   const { data: childModules, isLoading: childModulesLoading } = useQuery({
