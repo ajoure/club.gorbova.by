@@ -345,17 +345,18 @@ export default function LibraryModule() {
               const config = contentTypeConfig[lesson.content_type];
               const Icon = config.icon;
               const isScheduled = lesson.isScheduled;
+              const isMonthLocked = lesson.lock_reason === "month_mismatch";
 
               return (
                 <Card
                   key={lesson.id}
                   className={`transition-all group ${
                     lesson.is_completed ? "bg-muted/30" : ""
-                  } ${isScheduled 
-                    ? "opacity-80 cursor-not-allowed" 
+                  } ${isScheduled || isMonthLocked
+                    ? "opacity-80 cursor-not-allowed"
                     : "cursor-pointer hover:shadow-md"
                   }`}
-                  onClick={() => !isScheduled && handleLessonClick(lesson)}
+                  onClick={() => !isScheduled && !isMonthLocked && handleLessonClick(lesson)}
                 >
                   <CardContent className="flex items-center gap-4 p-4">
                     {/* Lesson number or lock icon */}
