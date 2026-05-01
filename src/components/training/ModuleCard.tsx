@@ -82,7 +82,7 @@ export function ModuleCard({ module, variant = "default" }: ModuleCardProps) {
                 className="gap-1 bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 backdrop-blur-sm"
               >
                 <Lock className="h-3 w-3" />
-                Нет доступа{lockedMonthLabel ? ` · ${lockedMonthLabel}` : ""}
+                Нет доступа
               </Badge>
             </div>
           )}
