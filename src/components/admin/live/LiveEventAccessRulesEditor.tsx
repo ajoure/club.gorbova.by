@@ -64,6 +64,12 @@ export function LiveEventAccessRulesEditor({ rules, onChange }: LiveEventAccessR
     onChange(updated);
   };
 
+  const updateMonthGate = (index: number, value: boolean) => {
+    const updated = [...rules];
+    updated[index] = { ...updated[index], match_purchase_month: value };
+    onChange(updated);
+  };
+
   // Build audience preview text
   const previewText = buildPreviewText(rules, products || []);
 
