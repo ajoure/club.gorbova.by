@@ -11,12 +11,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   ChevronRight, ChevronDown, Play, BookOpen, Check, Search,
   FileText, Video, Headphones, Clock, Filter,
-  AlertCircle,
+  AlertCircle, Lock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TrainingModule } from "@/hooks/useTrainingModules";
 import { useLibraryTree, resolveAccessLabel, shouldFlattenSingleRoot } from "@/hooks/useLibraryTree";
 import { useLibraryLessons, type LibraryLesson } from "@/hooks/useLibraryLessons";
+import { formatLockedMonth } from "@/hooks/useMonthGate";
+import { getStatusBadgeClass } from "@/utils/badgeUtils";
 import type { LibraryGroup, LibraryRootModule } from "@/hooks/useLibraryTree";
 
 /* ── localStorage keys ───────────────────────────────── */
