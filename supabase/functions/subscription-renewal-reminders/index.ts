@@ -733,6 +733,10 @@ async function sendEmailReminder(
       hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Minsk'
     });
     const formattedDate = `${dateFmt.format(expiryDate)} в ${timeFmt.format(expiryDate)} (Минск)`;
+    // PATCH AMOUNT-RESOLVER v4: omit amount line in HTML if unresolved.
+    const amountLineHtml = amount > 0
+      ? `<p style="margin: 0;"><strong>💳 Сумма списания:</strong> ${formatCurrency(amount, currency)}</p>`
+      : '';
 
     let subject = '';
     let bodyHtml = '';
