@@ -46,12 +46,15 @@ export function LessonCard({
 }: LessonCardProps) {
   const navigate = useNavigate();
   const hasAccess = lesson.has_access !== false;
-  
+  const isMonthLocked = !isAdmin && lesson.lock_reason === "month_mismatch" && !!lesson.locked_month;
+
   // Check if lesson is scheduled for future
   const isScheduled = lesson.published_at && isFuture(new Date(lesson.published_at));
   const scheduledDate = isScheduled ? new Date(lesson.published_at!) : null;
 
   const handleClick = () => {
+    // Block navigation when locked by month-gate (non-admin only)
+    if (isMonthLocked) return;
     // If scheduled and not admin - don't navigate
     if (isScheduled && !isAdmin) {
       return;
