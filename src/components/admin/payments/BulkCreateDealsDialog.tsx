@@ -642,11 +642,29 @@ export function BulkCreateDealsDialog({
             </label>
           </div>
 
+          {/* Big-batch warning */}
+          {!isCreating && !result && eligiblePayments.length > WARN_THRESHOLD && (
+            <Alert>
+              <AlertTriangle className="h-4 w-4" />
+              <AlertDescription>
+                Будет создано много сделок (<strong>{eligiblePayments.length}</strong>) — выполнение
+                займёт несколько минут. Не закрывайте окно до завершения.
+              </AlertDescription>
+            </Alert>
+          )}
+
           {/* Progress */}
           {isCreating && (
             <div className="space-y-2">
               <div className="flex items-center justify-between text-sm">
-                <span>Создание сделок...</span>
+                <span>
+                  Создание сделок...
+                  {chunkInfo && (
+                    <span className="ml-1 text-muted-foreground">
+                      Чанк {chunkInfo.current} из {chunkInfo.total}
+                    </span>
+                  )}
+                </span>
                 <span>{progress}%</span>
               </div>
               <Progress value={progress} />
@@ -656,29 +674,56 @@ export function BulkCreateDealsDialog({
           {/* Result */}
           {result && (
             <div className="p-3 rounded-lg border bg-muted/30 space-y-2">
-              <div className="flex items-center gap-4 text-sm">
+              <div className="flex flex-wrap items-center gap-4 text-sm">
                 <span className="flex items-center gap-1 text-green-600">
                   <CheckCircle className="h-4 w-4" />
-                  {result.success}
+                  Создано: {result.success}
                 </span>
                 <span className="flex items-center gap-1 text-red-600">
                   <XCircle className="h-4 w-4" />
-                  {result.failed}
+                  Ошибок: {result.failed}
                 </span>
                 {result.skipped > 0 && (
                   <span className="text-muted-foreground">
                     Пропущено: {result.skipped}
                   </span>
                 )}
+                <span className="text-muted-foreground">
+                  Обработано: {result.totalProcessed} · Чанков: {result.chunksProcessed}/{result.chunksTotal}
+                </span>
               </div>
-              {result.errors.length > 0 && (
-                <ScrollArea className="h-20">
-                  <div className="text-xs text-muted-foreground space-y-0.5">
-                    {result.errors.map((err, i) => (
-                      <div key={i}>{err}</div>
-                    ))}
-                  </div>
-                </ScrollArea>
+
+              {result.stopReason && (
+                <Alert variant="destructive">
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertDescription>Остановлено: {result.stopReason}</AlertDescription>
+                </Alert>
+              )}
+
+              {result.failedItems.length > 0 && (
+                <div className="space-y-1">
+                  <div className="text-xs font-medium">Ошибки по контактам:</div>
+                  <ScrollArea className="h-32 rounded border bg-background/50">
+                    <div className="text-xs space-y-1 p-2">
+                      {Object.entries(
+                        result.failedItems.reduce<Record<string, FailedItem[]>>((acc, item) => {
+                          const key = `${item.profileName}${item.profileEmail ? ` <${item.profileEmail}>` : ''}`;
+                          (acc[key] ||= []).push(item);
+                          return acc;
+                        }, {})
+                      ).map(([contact, items]) => (
+                        <div key={contact} className="border-b border-border/50 pb-1 last:border-0">
+                          <div className="font-medium">{contact} ({items.length})</div>
+                          {items.map((it, i) => (
+                            <div key={i} className="text-muted-foreground pl-3">
+                              · {it.paymentUid.slice(0, 8)}: {it.reason}
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                </div>
               )}
             </div>
           )}
