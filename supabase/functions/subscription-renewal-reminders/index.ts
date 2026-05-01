@@ -473,10 +473,11 @@ async function sendTelegramReminder(
     const safeProductName = escapeMd(productName);
     const safeTariffName = escapeMd(tariffName);
     const safeAmount = escapeMd(formatCurrency(amount, currency));
+    // PATCH AMOUNT-RESOLVER v4: omit amount line if unresolved (data-defect path) — reminder still sent.
+    const amountLine = amount > 0 ? `\n💳 *Сумма списания:* ${safeAmount}` : '';
     const renewalDetailsBlock = `📦 *Продукт:* ${safeProductName}
 🎯 *Тариф:* ${safeTariffName}
-📆 *Доступ до:* ${formattedDate}
-💳 *Сумма списания:* ${safeAmount}`;
+📆 *Доступ до:* ${formattedDate}${amountLine}`;
 
     // PATCH ONE-TIME v2: тёплые тексты с эмодзи, точное время, нейтральный CTA (ЛК)
     if (isOneTime) {
