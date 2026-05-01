@@ -43,6 +43,7 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { MonthYearPicker } from "@/components/ui/month-year-picker";
 
 interface EditDealDialogProps {
   deal: any | null;
