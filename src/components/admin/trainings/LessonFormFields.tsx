@@ -45,6 +45,7 @@ export interface LessonFormData {
   audio_url?: string;
   duration_minutes?: number;
   is_active?: boolean;
+  content_month?: string | null;
 }
 
 interface LessonFormFieldsProps {
