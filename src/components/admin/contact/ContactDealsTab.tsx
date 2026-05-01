@@ -360,8 +360,6 @@ function DealRow({
         <div className="flex items-center gap-2 text-[11px] text-muted-foreground mt-0.5">
           <CalendarIcon className="w-2.5 h-2.5" />
           <span>{format(new Date(getEffectiveDealDate(deal)), "dd.MM.yy HH:mm")}</span>
-          <span>·</span>
-          <span className="font-mono">{deal.order_number}</span>
         </div>
       </div>
 
