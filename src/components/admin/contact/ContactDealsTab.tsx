@@ -118,6 +118,14 @@ function groupDealsByProduct(deals: AnyDeal[], moduleMetaMap?: Map<string, any>)
       .filter(i => i.status === "paid")
       .reduce((sum, i) => sum + Number(i.final_price || 0), 0);
     const currency = items[0]?.currency || "BYN";
+
+    // Sort group by latest paid deal date; fallback to latest deal date overall.
+    const paidItems = items.filter(i => i.status === "paid");
+    const tsPool = (paidItems.length ? paidItems : items).map(i =>
+      new Date(getEffectiveDealDate(i)).getTime()
+    );
+    const sortTs = tsPool.length ? Math.max(...tsPool) : 0;
+
     groups.push({
       key,
       label: labelMap.get(key) || "Без продукта",
@@ -127,10 +135,15 @@ function groupDealsByProduct(deals: AnyDeal[], moduleMetaMap?: Map<string, any>)
       paidCount,
       totalSum,
       currency,
+      sortTs,
     });
   }
 
-  groups.sort((a, b) => a.label.localeCompare(b.label, "ru"));
+  // Latest activity first; ties broken alphabetically.
+  groups.sort((a, b) => {
+    if (b.sortTs !== a.sortTs) return b.sortTs - a.sortTs;
+    return a.label.localeCompare(b.label, "ru");
+  });
   return groups;
 }
 
