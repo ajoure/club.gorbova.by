@@ -121,6 +121,16 @@ All colors MUST be HSL.
   body {
     @apply bg-background text-foreground;
   }
+
+  /* Hard-stop horizontal overflow — критично для PWA standalone на iOS,
+     где любой потомок, превышающий viewport, ломает layout (контент уезжает
+     за правый край, появляется горизонтальный скролл). Не влияет на sticky/
+     fixed-элементы, поскольку overflow ставится на html/body/#root, а не
+     на промежуточные скролл-контейнеры. */
+  html, body, #root {
+    overflow-x: hidden;
+    max-width: 100vw;
+  }
 }
 
 /* Impersonation bar: единый источник высоты через CSS-переменную */
