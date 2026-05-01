@@ -73,6 +73,16 @@ function TrainingTreeItem({ training, diagnostics, level = 0, onUnbind }: {
           <Badge variant="outline" className="text-[10px] text-muted-foreground shrink-0">Неактивен</Badge>
         )}
 
+        {training.product_id_inherited && (
+          <Badge
+            variant="outline"
+            className="text-[10px] text-amber-700 border-amber-300 bg-amber-50 dark:bg-amber-900/20 dark:text-amber-200 shrink-0"
+            title="Этот модуль появился в дереве через родителя — его собственный product_id не задан. Будет автоматически унаследован при следующем UPDATE родителя."
+          >
+            Унаследовано
+          </Badge>
+        )}
+
         <span className="text-[11px] text-muted-foreground shrink-0">
           {totalLessons > 0
             ? `${totalLessons} ${totalLessons === 1 ? "урок" : totalLessons >= 2 && totalLessons <= 4 ? "урока" : "уроков"}`
@@ -727,6 +737,17 @@ function RuleLinkedTrainingCard({ vt, onFocusRule, onEditRule, onDeleteRule, con
 // --- Main Block ---
 export function ProductLinkedTrainingsBlock({ productId, onUseViaRule, onFocusRule, onEditRule }: Props) {
   const queryClient = useQueryClient();
+
+  // Гарантия свежих данных при открытии вкладки «Доступы».
+  // Например, если за время сессии в БД появились новые модули/вебинары,
+  // они подхватятся без полной перезагрузки страницы.
+  useEffect(() => {
+    if (!productId) return;
+    queryClient.invalidateQueries({ queryKey: ["product-linked-trainings", productId] });
+    queryClient.invalidateQueries({ queryKey: ["training-content-rules", productId] });
+    queryClient.invalidateQueries({ queryKey: ["training-content-tree"] });
+  }, [productId, queryClient]);
+
   const { trainings, diagnostics, isLoading, bindTraining, unbindTraining, rebindTraining, getRebindPreview, getUnbindPreview } = useProductTrainings(productId);
   const { data: contentRules = [] } = useTrainingContentRulesForProduct(productId);
   const { data: ruleLinkedData, isLoading: isRuleLinkedLoading } = useRuleLinkedTrainings(productId, contentRules);

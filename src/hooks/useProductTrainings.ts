@@ -16,6 +16,13 @@ export interface LinkedTraining {
   product_id: string | null;
   lesson_count: number;
   children: LinkedTraining[];
+  /**
+   * true, если строка попала в дерево как страховочный потомок:
+   * у неё product_id IS NULL, но она лежит под корнем,
+   * привязанным к этому продукту через parent_module_id.
+   * UI показывает таким строкам бейдж «Унаследовано».
+   */
+  product_id_inherited?: boolean;
 }
 
 export interface TrainingBindingDiagnostics {
@@ -98,14 +105,51 @@ export function useProductTrainings(productId?: string) {
     queryFn: async () => {
       if (!productId) return { trainings: [], diagnostics: {} as Record<string, TrainingBindingDiagnostics> };
 
-      const { data: modules, error } = await supabase
+      const { data: ownedModules, error } = await supabase
         .from("training_modules")
         .select("id, title, slug, public_id, is_active, is_container, parent_module_id, sort_order, product_id")
         .eq("product_id", productId)
         .order("sort_order");
       if (error) throw error;
 
-      const moduleIds = modules?.map(m => m.id) || [];
+      // Корни поддеревьев, привязанных к продукту (parent_module_id IS NULL).
+      const ownedRootIds = (ownedModules || [])
+        .filter(m => !m.parent_module_id)
+        .map(m => m.id);
+
+      // ── Страховочный BFS: подтягиваем ВСЕХ потомков от корней,
+      //    даже если у них product_id IS NULL (не сработал триггер наследования
+      //    либо данные пришли через прямую вставку с обходом). Такие строки
+      //    помечаем product_id_inherited=true, чтобы UI мог показать бейдж.
+      const inheritedDescendants: any[] = [];
+      const knownIds = new Set<string>((ownedModules || []).map(m => m.id));
+      let frontier = [...ownedRootIds];
+      const MAX_ITERATIONS = 50;
+      let iteration = 0;
+      while (frontier.length > 0) {
+        if (++iteration > MAX_ITERATIONS) {
+          console.error("[useProductTrainings] hard-stop: max BFS iterations");
+          break;
+        }
+        const { data: kids } = await supabase
+          .from("training_modules")
+          .select("id, title, slug, public_id, is_active, is_container, parent_module_id, sort_order, product_id")
+          .in("parent_module_id", frontier)
+          .order("sort_order");
+        if (!kids || kids.length === 0) break;
+        const newOnes = kids.filter(k => !knownIds.has(k.id));
+        if (newOnes.length === 0) break;
+        for (const k of newOnes) {
+          knownIds.add(k.id);
+          inheritedDescendants.push(k);
+        }
+        frontier = newOnes.map(k => k.id);
+      }
+
+      const modules = [...(ownedModules || []), ...inheritedDescendants];
+      const inheritedIdSet = new Set(inheritedDescendants.map(m => m.id));
+
+      const moduleIds = modules.map(m => m.id);
       let lessonCounts: Record<string, number> = {};
       if (moduleIds.length > 0) {
         const { data: lessons } = await supabase
@@ -141,11 +185,12 @@ export function useProductTrainings(productId?: string) {
         });
       }
 
-      const allModules: LinkedTraining[] = (modules || []).map(m => ({
+      const allModules: LinkedTraining[] = modules.map(m => ({
         ...m,
         is_container: m.is_container ?? false,
         lesson_count: lessonCounts[m.id] || 0,
         children: [],
+        product_id_inherited: inheritedIdSet.has(m.id),
       }));
 
       const rootModules: LinkedTraining[] = [];
@@ -185,6 +230,8 @@ export function useProductTrainings(productId?: string) {
       return { trainings: rootModules, diagnostics };
     },
     enabled: !!productId,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
 
   // Bind a free training to this product

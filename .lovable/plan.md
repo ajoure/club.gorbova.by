@@ -1,132 +1,100 @@
 да, согласен, с учетом правок:
 
-1. **В шаге 4 исправить SQL.**  
-Если access_mode — отдельная колонка, обновлять нужно колонку, а не conditions:  
-UPDATE access_rules
-2. SET access_mode = 'full',
-3.     updated_at = now()
-4. WHERE id = '417e5071-d2e0-43ed-9bed-91696ea108ec';  
-Если в этой таблице access_mode хранится внутри conditions, тогда сначала подтвердить schema-proof.
-5. **Ledger для data-fix обязателен.**  
-Перед/после:
-  - rule_id;
-  - old_access_mode;
-  - new_access_mode;
-  - target_ref;
-  - reason='business_tariff_should_receive_all_new_training_modules'.
-6. **Backfill auto_include_new_modules=false только для partial.**  
-Не трогать full.
-7. **Триггер должен быть no-op, если allowed_module_ids отсутствует.**  
-В этом случае сначала создать пустой массив и добавить [NEW.id](http://NEW.id).
-8. **UI-кнопка “Перевести в full” — с подтверждением.**  
-Текст: “После перевода в full пользователи этого правила увидят все текущие и будущие папки тренинга.”
-
-Можно выполнять.
+1. Перед UPDATE сделать dry-run rowcount и список orphan training_modules, где parent.product_id IS NOT NULL AND child.product_id IS NULL.
+2. Backfill делать только:
+  - child.product_id IS NULL
+  - parent_module_id IS NOT NULL
+  - parent.product_id IS NOT NULL
+  - без перезаписи уже заполненного product_id.
+3. Триггер:
+  - только BEFORE INSERT OR UPDATE OF parent_module_id
+  - если NEW.product_id IS NULL
+  - наследовать product_id от ближайшего родителя.
+4. В audit_logs записать:
+  - training_modules.product_id_inherited_backfill
+  - affected_count
+  - список первых 50 модулей.
+5. UI-бейдж «Унаследовано» — только если реально есть product_id_inherited=true; не делать обязательным для первого патча.
+6. Главное DoD:
+  - «Идеологическая работа в бизнесе» появляется в «Тренинги этого продукта».
+  - Новые дочерние вебинары автоматически получают product_id.
+  - Picker правил не ломается.
 
 &nbsp;
 
-План: Авто-видимость новых папок тренинга через корректное использование full/partial
+План:
 
-## Диагноз (доказан в БД)
+## Контекст и диагноз (Diagnose)
 
-Тренинг «База знаний» (TRN-000001, root=`8b1fb03e…`) имеет 5 активных `training_content` правил:
+На вкладке «Продукт → Доступы» дерево «Тренинги этого продукта» (компонент `ProductLinkedTrainingsBlock` + хук `useProductTrainings`) строится **строго по `training_modules.product_id = productId**`. Если у дочернего модуля (например, новый вебинар внутри контейнера «Вебинары») `product_id = NULL`, он в дерево не попадает, хотя физически лежит под нужным родителем.
 
+В то же время мастер правил доступа (`useTrainingContentTree` → `TrainingContentTreePicker`) ходит по `parent_module_id` от корня тренинга и `product_id` не проверяет — поэтому там новые вебинары видны. Отсюда и расхождение, которое описывает пользователь.
 
-| product / тариф                               | mode        | allowed_module_ids             | вердикт                                    |
-| --------------------------------------------- | ----------- | ------------------------------ | ------------------------------------------ |
-| CB20 / БАЗА (b276d8a5)                        | partial     | 2 (Видеоответы + Итоги месяца) | partial корректно — это ограниченный тариф |
-| CB20 / БИЗНЕС (7c748940)                      | **full**    | —                              | корректно, новые папки уже видны           |
-| Горбуша Club / BUSINESS (f9e53860, no tariff) | **partial** | 1 модуль                       | **БАГ**: бизнес-тариф должен быть `full`   |
-| Бухгалтер 1.0 (84055f12)                      | partial     | 1 модуль                       | корректно (бонусный standalone)            |
-| Закрытие года (b868013a)                      | partial     | 1 модуль                       | корректно (бонусный standalone)            |
+Проверка БД подтвердила причину на конкретном продукте «База знаний» (`product_id = 11c9f1b8-…`):
 
+- Контейнер «Вебинары» (TRN-000026) имеет 12 дочерних модулей.
+- 11 из них имеют `product_id = 11c9f1b8-…` и видны на вкладке «Доступы».
+- Новый вебинар «Идеологическая работа в бизнесе» (создан 28.04.2026, TRN-000054) имеет `product_id = NULL` → невидим в «Доступах», но виден в picker правил.
 
-Корень проблемы из скриншота: пользователь с тарифом BUSINESS (Горбуша Club) не видит новые папки «Идеологическая работа в бизнесе», «Вебинары», «Квесты» и т.д. — потому что правило ошибочно `partial` со статичным списком из 1 модуля. По бизнес-логике BUSINESS = всё, значит должно быть `full`.
+В `pg_trigger` нет триггера, который наследует `product_id` от родителя при INSERT/UPDATE `parent_module_id`. То есть проблема системная: любой новый модуль/вебинар, созданный без явного указания `product_id`, будет «бесхозным».
 
-## Ключевые принципы (зафиксированы)
+Дополнительно: данные на вкладке кешируются React Query и не инвалидируются при возврате на страницу, поэтому без явного refresh обновлений не видно.
 
-1. `**full` — единственный механизм авто-видимости новых папок.** Если тариф должен автоматически получать все будущие модули — это `mode='full'`, не `partial` с авто-расширением списка.
-2. `**partial` означает строго выбранный список.** Новые папки сюда не добавляются автоматически.
-3. **Авто-расширение partial — только под явным флагом** `conditions.auto_include_new_modules=true` (default `false`). Это редкий, опциональный кейс (например: «эта когорта получает все будущие подмодули папки X, кроме архивных» — но даже тогда лучше `full` на уровне родителя).
-4. **Read-path не трогаем.** `useTrainingContentRules.resolveTrainingContentFilter` уже корректно интерпретирует `full`/`partial`. Меняется только write/config-path и одно конкретное данные-правило.
+## Что сделаем
 
-## Шаги (Diagnose → Plan → Dry-run → Execute → Verify)
+### 1. Server-side: автонаследование `product_id` от родителя (миграция)
 
-### Шаг 1. Dry-run классификация всех `training_content` правил
+Создать BEFORE INSERT OR UPDATE OF `parent_module_id` триггер `tg_training_module_inherit_product_id` на `public.training_modules`:
 
-Read-only SQL-отчёт по всем активным правилам со статусом `partial`:
+- Если `NEW.parent_module_id IS NOT NULL` и `NEW.product_id IS NULL` → подставить `product_id` родителя.
+- Не перезаписывать `product_id`, если он уже задан явно (включая случай, когда админ хочет «бесхозный» модуль — задаёт `product_id = NULL` отдельно).
+- Добавить `audit_logs` запись `training_module.inherit_product_id` с `{module_id, parent_module_id, inherited_product_id}` для трассируемости.
 
-- product/tariff name + текущий `allowed_modules_count`;
-- сколько активных дочерних модулей сейчас в target тренинге;
-- ручная классификация админом по 3 корзинам:
-  - **A. → перевести в `full**`: тариф по бизнес-логике даёт «весь тренинг» (BUSINESS Горбуша Club — кандидат №1).
-  - **B. оставить `partial` без авто-расширения**: ограниченные тарифы (CB20/БАЗА), бонусные standalone (Бухгалтер 1.0, Закрытие года).
-  - **C. оставить `partial` + поставить `auto_include_new_modules=true**`: только если админ явно подтвердит для конкретного правила. По умолчанию никого в эту корзину.
+### 2. Однократный backfill «бесхозных» потомков (миграция, dry-run → execute)
 
-Артефакт: `.lovable/proofs/training_content_partial_audit.md` со списком правил и предлагаемой классификацией. **Execute только после явного approve пользователем**.
+- **Dry-run отчёт** в `.lovable/proofs/training_modules_orphan_product_id_audit.md`: для каждого модуля с `product_id IS NULL` и `parent_module_id IS NOT NULL` показать `{id, title, parent_id, root_product_id, depth}`. Источник истины — `product_id` корня поддерева (модуль с `parent_module_id IS NULL` в цепочке вверх).
+- **Execute** UPDATE: проставить `product_id` рекурсивно от корня вниз по дереву только там, где у потомка `product_id IS NULL` и у корня `product_id IS NOT NULL`. Никогда не трогать модули, где корень тоже бесхозный (это легитимные «свободные» тренинги, доступные для bind через UI).
+- Записать в `audit_logs` `training_module.product_id_backfill` с количеством обновлённых строк.
 
-### Шаг 2. Миграция схемы (минимальная)
+### 3. Расширить хук `useProductTrainings` (read-path, мягкая страховка)
 
-Никаких новых колонок. Используем только `conditions JSONB`:
+Чтобы дерево перестало «терять» новые потомки даже если триггер вдруг не отработает (например, при прямой вставке с обходом):
 
-- ввести опциональный ключ `conditions.auto_include_new_modules: boolean` (default `false` при отсутствии);
-- backfill: для всех существующих `partial`-правил выставить явное `auto_include_new_modules=false` (no surprise, нет неоднозначности `undefined`).
+- В `queryFn` дополнительно подгрузить ВСЕХ потомков (BFS по `parent_module_id`) от уже найденных корней с `product_id = productId`, без фильтра по `product_id`.
+- Влить таких потомков в `allModules` с пометкой `product_id_inherited: true` (новый необязательный флаг в `LinkedTraining`).
+- В UI рядом с такими модулями показывать маленький значок/тултип «Унаследовано от родителя» (мелкий бейдж, иконка `Info`), чтобы админ видел, что строка появилась через наследование.
+- Глубина обхода — итеративная, как в существующем `getAllDescendantIds` (с защитой `MAX_ITERATIONS`).
 
-### Шаг 3. Триггер БД `tg_training_module_propagate_to_partial_rules`
+### 4. Авто-обновление при открытии страницы
 
-`AFTER INSERT ON training_modules` — срабатывает только при создании дочернего модуля (`NEW.parent_module_id IS NOT NULL`).
+В `useProductTrainings` и `useTrainingContentRulesForProduct`:
 
-Жёсткие условия применения (все обязательны):
+- Добавить `refetchOnMount: "always"` и `refetchOnWindowFocus: true`.
+- На монтирование `ProductLinkedTrainingsBlock` дополнительно вызывать `queryClient.invalidateQueries({ queryKey: ["product-linked-trainings", productId] })` и `["training-content-rules", productId]`.
+- (Опционально, без перегруза) realtime-подписка на `training_modules` с фильтром `product_id=eq.<productId>` ИЛИ на `parent_module_id IN (<rootIds>)` — invalidate соответствующих query keys. Если будет дорого — оставить только refetch on mount/focus.
 
-1. `access_rules.grant_target_type = 'training_content'`
-2. `access_rules.is_active = true`
-3. `access_rules.target_ref = NEW.parent_module_id` (root этого модуля)
-4. `conditions->>'access_mode' = 'partial'`
-5. `(conditions->>'auto_include_new_modules')::boolean = true`
+### 5. Привести picker глубины к универсальному обходу
 
-При совпадении — добавляет `NEW.id` в `conditions.allowed_module_ids` и пишет запись в `access_grant_ledger`:
+В `useTrainingContentTree` сейчас явный двухуровневый `or(id.eq.,parent_module_id.eq.)` + один проход за внуками. Заменить на тот же итеративный BFS по `parent_module_id`, что используется в `getAllDescendantIds`, чтобы внуки/правнуки не терялись. Это поддерживает уже существующий контракт выбора по модулям/урокам.
 
-- `outcome = 'auto_propagated_new_module'`
-- before/after snapshot
-- `actor = 'system_trigger'`
+### 6. DoD (Definition of Done)
 
-Для `mode='full'` — триггер НЕ нужен (full видит всё нативно через read-path).
-Для `partial + auto_include_new_modules=false` — триггер НЕ срабатывает (по дизайну).
+- На странице «Продукт → Доступы» для «Базы знаний» появляется «Идеологическая работа в бизнесе» и любые будущие новые вебинары без ручного bind.
+- При создании нового модуля под существующим контейнером `product_id` проставляется автоматически (триггер).
+- Backfill выполнен, в `audit_logs` есть запись с количеством обновлённых строк, в proofs-файле — список затронутых модулей.
+- Открытие/возврат на вкладку «Доступы» гарантированно перечитывает данные.
+- Picker правил продолжает показывать тех же вебинаров (поведение не регрессирует), глубина обхода — единая.
+- Никаких изменений write-path для `access_rules` / `entitlements` / `subscriptions` — только наследование `product_id` и read-path.
 
-### Шаг 4. Точечный execute по корзине A
+## Технические детали для реализации
 
-После approve пользователем dry-run:
+- **Миграции** (две, в одной папке `supabase/migrations/`):
+  1. `…_inherit_product_id_trigger.sql` — функция + триггер.
+  2. `…_backfill_orphan_product_id.sql` — dry-run select в комментарии + UPDATE + audit.
+- **Файлы фронта**:
+  - `src/hooks/useProductTrainings.ts` — расширить `queryFn`, добавить `refetchOnMount/Focus`, поле `product_id_inherited` в `LinkedTraining`.
+  - `src/hooks/useTrainingContentRules.ts` — заменить выборку модулей в `useTrainingContentTree` на итеративный BFS, `refetchOnMount: "always"`.
+  - `src/components/admin/product/ProductLinkedTrainingsBlock.tsx` — `useEffect` invalidate на mount; маленький бейдж «Унаследовано» рядом с такими строками.
+- **Proof-файл**: `.lovable/proofs/training_modules_orphan_product_id_audit.md` — список «бесхозных» модулей до backfill + контрольный SELECT после.
 
-- правило `417e5071…` (BUSINESS Горбуша Club): `UPDATE access_rules SET conditions = jsonb_set(conditions, '{access_mode}', '"full"') WHERE id = '417e5071-d2e0-43ed-9bed-91696ea108ec'`;
-- запись в `access_grant_ledger` с before/after.
-- НЕ трогаем `allowed_module_ids` — read-path в режиме `full` его игнорирует.
-
-### Шаг 5. UI-патч `ProductAccessRulesTab` (минимальный)
-
-Для каждого правила `training_content`:
-
-- если `mode='partial'` — показать чек-бокс «Автоматически добавлять новые папки тренинга» (привязан к `conditions.auto_include_new_modules`, по умолчанию выкл);
-- если `mode='partial'` и есть «осиротевшие» новые папки (созданы после `updated_at` правила и не входят в `allowed_module_ids`) — показать ненавязчивый алерт «Новые папки не включены: …» с двумя кнопками: «Добавить выбранные» (открывает tree-picker) и «Перевести в full» (переключает режим). **Никаких авто-действий без подтверждения**.
-
-### Шаг 6. Verify
-
-- SQL-proof: BUSINESS Горбуша Club правило теперь `mode='full'`; пользователь с активной подпиской видит «Идеологическая работа в бизнесе» (новую папку) без правок `allowed_module_ids`.
-- SQL-proof: CB20/БАЗА правило осталось `partial` с прежними 2 модулями, новые папки туда не попали (как и должно быть).
-- Smoke: создать тестовую папку под `8b1fb03e…` → убедиться, что триггер не сработал (т.к. ни одно правило не имеет `auto_include_new_modules=true`); запись в `access_grant_ledger` отсутствует.
-- Visual: `/library/<новый-slug>` виден у BUSINESS, не виден у БАЗА.
-
-## DoD
-
-- BUSINESS Горбуша Club правило переведено в `mode='full'` после approve dry-run; новые папки в «Базе знаний» автоматически видны этой когорте без ручных правок `allowed_module_ids`.
-- Все существующие `partial`-правила имеют явный `conditions.auto_include_new_modules=false`.
-- Триггер `tg_training_module_propagate_to_partial_rules` создан и срабатывает строго по 5 условиям; для `full` и `partial+false` — no-op.
-- Read-path `useTrainingContentRules` НЕ изменён.
-- В админке `ProductAccessRulesTab` для `partial` правил доступен чек-бокс `auto_include_new_modules` и алерт об осиротевших папках с двумя действиями: «Добавить выбранные» / «Перевести в full».
-- Артефакты: `.lovable/proofs/training_content_partial_audit.md` (dry-run) + `.lovable/proofs/training_content_business_full_fix.md` (execute + verify).
-
-## Технические артефакты
-
-- Миграция: `supabase/migrations/<ts>_training_content_auto_include_trigger.sql` — функция + триггер + backfill `auto_include_new_modules=false` для существующих `partial`.
-- Точечный data-fix (через insert-tool): `UPDATE access_rules` для правила `417e5071…` (после approve).
-- Patch UI: `src/components/admin/product/ProductAccessRulesTab.tsx` (чек-бокс + алерт-блок).
-- Read-path: **без изменений**.
+Подтверждаете план — выполняю?
