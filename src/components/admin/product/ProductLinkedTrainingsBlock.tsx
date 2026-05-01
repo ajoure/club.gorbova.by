@@ -73,6 +73,16 @@ function TrainingTreeItem({ training, diagnostics, level = 0, onUnbind }: {
           <Badge variant="outline" className="text-[10px] text-muted-foreground shrink-0">Неактивен</Badge>
         )}
 
+        {training.product_id_inherited && (
+          <Badge
+            variant="outline"
+            className="text-[10px] text-amber-700 border-amber-300 bg-amber-50 dark:bg-amber-900/20 dark:text-amber-200 shrink-0"
+            title="Этот модуль появился в дереве через родителя — его собственный product_id не задан. Будет автоматически унаследован при следующем UPDATE родителя."
+          >
+            Унаследовано
+          </Badge>
+        )}
+
         <span className="text-[11px] text-muted-foreground shrink-0">
           {totalLessons > 0
             ? `${totalLessons} ${totalLessons === 1 ? "урок" : totalLessons >= 2 && totalLessons <= 4 ? "урока" : "уроков"}`
