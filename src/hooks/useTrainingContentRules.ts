@@ -59,28 +59,38 @@ export function useTrainingContentTree(trainingId?: string) {
     queryFn: async () => {
       if (!trainingId) return null;
 
-      // Get all descendant modules (including root)
-      const { data: modules, error: modError } = await supabase
+      // Корень
+      const { data: rootRow, error: rootErr } = await supabase
         .from("training_modules")
         .select("id, title, public_id, is_active, sort_order, parent_module_id")
-        .or(`id.eq.${trainingId},parent_module_id.eq.${trainingId}`)
-        .order("sort_order");
+        .eq("id", trainingId)
+        .maybeSingle();
+      if (rootErr) throw rootErr;
+      if (!rootRow) return null;
 
-      if (modError) throw modError;
-
-      // Also get grandchildren (depth 2)
-      const childIds = (modules || []).filter(m => m.parent_module_id === trainingId).map(m => m.id);
-      let allModules = modules || [];
-
-      if (childIds.length > 0) {
-        const { data: grandchildren } = await supabase
+      // Итеративный BFS по parent_module_id — поддерживает любую глубину поддерева,
+      // не теряет внуков/правнуков (раньше был жёсткий 2-уровневый запрос).
+      let allModules: any[] = [rootRow];
+      const knownIds = new Set<string>([rootRow.id]);
+      let frontier = [rootRow.id];
+      const MAX_ITERATIONS = 50;
+      let iteration = 0;
+      while (frontier.length > 0) {
+        if (++iteration > MAX_ITERATIONS) {
+          console.error("[useTrainingContentTree] hard-stop: max BFS iterations");
+          break;
+        }
+        const { data: kids } = await supabase
           .from("training_modules")
           .select("id, title, public_id, is_active, sort_order, parent_module_id")
-          .in("parent_module_id", childIds)
+          .in("parent_module_id", frontier)
           .order("sort_order");
-        if (grandchildren) {
-          allModules = [...allModules, ...grandchildren];
-        }
+        if (!kids || kids.length === 0) break;
+        const newOnes = kids.filter(k => !knownIds.has(k.id));
+        if (newOnes.length === 0) break;
+        for (const k of newOnes) knownIds.add(k.id);
+        allModules = allModules.concat(newOnes);
+        frontier = newOnes.map(k => k.id);
       }
 
       // Get all module IDs for lesson query
@@ -113,13 +123,11 @@ export function useTrainingContentTree(trainingId?: string) {
         };
       };
 
-      const root = allModules.find(m => m.id === trainingId);
-      if (!root) return null;
-
-      return buildNode(root);
+      return buildNode(rootRow);
     },
     enabled: !!trainingId,
     staleTime: 2 * 60 * 1000,
+    refetchOnMount: "always",
   });
 }
 
