@@ -425,7 +425,7 @@ export function useTrainingLessons(moduleId?: string) {
   };
 
   return {
-    lessons,
+    lessons: lessonsWithGate,
     loading,
     refetch: fetchLessons,
     createLesson,
