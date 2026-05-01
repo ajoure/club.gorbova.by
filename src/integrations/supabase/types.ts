@@ -5618,6 +5618,7 @@ export type Database = {
       }
       live_event_access_rules: {
         Row: {
+          conditions: Json
           created_at: string
           id: string
           live_event_id: string
@@ -5626,6 +5627,7 @@ export type Database = {
           tariff_id: string | null
         }
         Insert: {
+          conditions?: Json
           created_at?: string
           id?: string
           live_event_id: string
@@ -5634,6 +5636,7 @@ export type Database = {
           tariff_id?: string | null
         }
         Update: {
+          conditions?: Json
           created_at?: string
           id?: string
           live_event_id?: string
@@ -12779,6 +12782,7 @@ export type Database = {
           audio_url: string | null
           completion_mode: string | null
           content: string | null
+          content_month: string | null
           content_type: string
           created_at: string
           description: string | null
@@ -12800,6 +12804,7 @@ export type Database = {
           audio_url?: string | null
           completion_mode?: string | null
           content?: string | null
+          content_month?: string | null
           content_type?: string
           created_at?: string
           description?: string | null
@@ -12821,6 +12826,7 @@ export type Database = {
           audio_url?: string | null
           completion_mode?: string | null
           content?: string | null
+          content_month?: string | null
           content_type?: string
           created_at?: string
           description?: string | null
@@ -12858,6 +12864,7 @@ export type Database = {
       training_modules: {
         Row: {
           color_gradient: string | null
+          content_month: string | null
           cover_image: string | null
           created_at: string
           description: string | null
@@ -12878,6 +12885,7 @@ export type Database = {
         }
         Insert: {
           color_gradient?: string | null
+          content_month?: string | null
           cover_image?: string | null
           created_at?: string
           description?: string | null
@@ -12898,6 +12906,7 @@ export type Database = {
         }
         Update: {
           color_gradient?: string | null
+          content_month?: string | null
           cover_image?: string | null
           created_at?: string
           description?: string | null
@@ -14421,6 +14430,10 @@ export type Database = {
           p_roles: Database["public"]["Enums"]["app_role"][]
           p_user_id: string
         }
+        Returns: boolean
+      }
+      has_month_purchase: {
+        Args: { _month: string; _tariff_id: string; _user_id: string }
         Returns: boolean
       }
       has_permission: {
