@@ -1,6 +1,8 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
+import { useMonthGate, type MonthGateLessonInput } from "@/hooks/useMonthGate";
 
 export interface LibraryLesson {
   id: string;
@@ -14,6 +16,9 @@ export interface LibraryLesson {
   duration_minutes: number | null;
   published_at: string | null;
   isScheduled: boolean;
+  content_month?: string | null;
+  lock_reason?: "month_mismatch" | null;
+  locked_month?: string | null;
 }
 
 /**
