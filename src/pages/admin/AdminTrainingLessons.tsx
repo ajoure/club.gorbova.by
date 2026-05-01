@@ -520,7 +520,7 @@ export default function AdminTrainingLessons() {
       thumbnail_url: "",
       duration_minutes: undefined,
       is_active: true,
-      content_month: (module as any)?.content_month ?? null,
+      content_month: module?.content_month ?? null,
       completion_mode: "manual",
       require_previous: false,
     });
@@ -549,7 +549,9 @@ export default function AdminTrainingLessons() {
         parsedDate = utcDate; // Store the UTC date
         // Format time IN THE SELECTED TIMEZONE (not browser local time)
         parsedTime = formatInTimeZone(utcDate, tz, "HH:mm");
-      } catch {}
+      } catch (error) {
+        console.warn("Failed to parse lesson publish date", error);
+      }
     }
     setPublishDate(parsedDate);
     setPublishTime(parsedTime);
@@ -567,13 +569,13 @@ export default function AdminTrainingLessons() {
       thumbnail_url: lesson.thumbnail_url || "",
       duration_minutes: lesson.duration_minutes || undefined,
       is_active: lesson.is_active,
-      content_month: (lesson as any).content_month ?? null,
+      content_month: lesson.content_month ?? null,
       completion_mode: lesson.completion_mode || "manual",
       require_previous: lesson.require_previous || false,
     });
   }, []);
 
-  const openModuleEditDialog = useCallback((moduleRow: any) => {
+  const openModuleEditDialog = useCallback((moduleRow: TrainingModuleRow) => {
     setEditingModule(moduleRow);
     setModuleFormData({
       title: moduleRow.title || "",
