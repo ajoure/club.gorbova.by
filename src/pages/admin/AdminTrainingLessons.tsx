@@ -720,7 +720,7 @@ export default function AdminTrainingLessons() {
       <AdminLayout>
         <div className="container mx-auto px-4 py-6 max-w-6xl text-center">
           <h1 className="text-2xl font-bold mb-4">Модуль не найден</h1>
-          <Button onClick={() => navigate("/admin/training-modules")}>
+          <Button onClick={() => navigate(backHref)}>
             <ArrowLeft className="mr-2 h-4 w-4" />
             К списку модулей
           </Button>
