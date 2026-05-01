@@ -111,6 +111,7 @@ interface TrainingModuleRow {
   description: string | null;
   is_active: boolean;
   content_month?: string | null;
+  menu_section_key?: string | null;
 }
 
 // ─── SortableItem wrapper ───
