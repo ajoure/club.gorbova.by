@@ -21,6 +21,7 @@ export interface TrainingModule {
   color_gradient: string;
   sort_order: number;
   is_active: boolean;
+  content_month?: string | null;
   created_at: string;
   updated_at: string;
   // Hierarchy
