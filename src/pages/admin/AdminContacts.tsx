@@ -1407,7 +1407,7 @@ export default function AdminContacts() {
             className="table-scroll-x select-none"
           >
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            <Table>
+            <Table wrapperClassName="contents" style={{ minWidth: 1200 }}>
               <TableHeader>
                 <TableRow>
                   {/* Checkbox - not draggable */}
