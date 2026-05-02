@@ -387,22 +387,27 @@ function ArtifactRow({ artifact, onClick }: { artifact: ContactArtifact; onClick
 
   return (
     <div
-      className="flex items-center gap-2.5 px-2.5 py-2 rounded-md cursor-pointer hover:bg-accent/40 transition-colors"
+      className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2.5 px-2.5 py-2 rounded-md cursor-pointer hover:bg-accent/40 transition-colors"
       onClick={onClick}
     >
-      <div className={`w-7 h-7 rounded-full ${iconBgMap[artifact.source_type]} flex items-center justify-center shrink-0`}>
-        <Icon className={`w-3.5 h-3.5 ${config.color}`} />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5">
-          <span className="text-sm truncate">{artifact.lesson_title || artifact.title}</span>
-          <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5 flex-shrink-0">{config.label}</Badge>
+      {/* Top row on mobile: icon + title (+ type badge); inline on desktop */}
+      <div className="flex items-start sm:items-center gap-2.5 min-w-0 sm:flex-1">
+        <div className={`w-7 h-7 rounded-full ${iconBgMap[artifact.source_type]} flex items-center justify-center shrink-0`}>
+          <Icon className={`w-3.5 h-3.5 ${config.color}`} />
         </div>
-        {artifact.subtitle && (
-          <div className="text-[11px] text-muted-foreground truncate mt-0.5">{artifact.subtitle}</div>
-        )}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-sm break-words sm:truncate">{artifact.lesson_title || artifact.title}</span>
+            <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5 flex-shrink-0">{config.label}</Badge>
+          </div>
+          {artifact.subtitle && (
+            <div className="text-[11px] text-muted-foreground truncate mt-0.5">{artifact.subtitle}</div>
+          )}
+        </div>
       </div>
-      <div className="flex items-center gap-1.5 flex-shrink-0">
+
+      {/* Bottom row on mobile (offset under title); inline on desktop */}
+      <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap sm:flex-shrink-0 pl-9 sm:pl-0">
         {artifact.score !== null && artifact.max_score !== null && (
           <span className="text-[11px] text-muted-foreground">{artifact.score}/{artifact.max_score}</span>
         )}
