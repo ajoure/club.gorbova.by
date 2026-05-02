@@ -1306,9 +1306,10 @@ export default function AdminDeals() {
           <div 
             ref={containerRef}
             onMouseDown={handleMouseDown}
-            className="overflow-x-auto select-none"
+            data-table-scroll-x="true"
+            className="table-scroll-x select-none"
           >
-          <Table>
+          <Table wrapperClassName="contents" style={{ minWidth: 1100 }}>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-10">

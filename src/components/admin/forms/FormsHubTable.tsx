@@ -331,7 +331,8 @@ export function FormsHubTable({
     <div
       ref={containerRef}
       onMouseDown={handleMouseDown}
-      className="overflow-x-auto select-none relative"
+      data-table-scroll-x="true"
+      className="table-scroll-x select-none relative"
     >
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         {tableContent}
