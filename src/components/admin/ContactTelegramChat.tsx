@@ -1207,7 +1207,7 @@ export function ContactTelegramChat({
       ro.disconnect();
       mo.disconnect();
     };
-  }, [userId, isLoading, chatItems.length]);
+  }, [userId, isLoading, chatItems.length, isActive]);
 
   // Track scroll position → toggle "scroll to bottom" FAB + clear unread.
   useEffect(() => {
