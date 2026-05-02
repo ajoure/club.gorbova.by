@@ -1403,10 +1403,11 @@ export default function AdminContacts() {
           <div 
             ref={containerRef}
             onMouseDown={handleMouseDown}
-            className="overflow-x-auto select-none"
+            data-table-scroll-x="true"
+            className="table-scroll-x select-none"
           >
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            <Table>
+            <Table wrapperClassName="contents" style={{ minWidth: 1200 }}>
               <TableHeader>
                 <TableRow>
                   {/* Checkbox - not draggable */}
