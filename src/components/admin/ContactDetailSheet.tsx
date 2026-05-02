@@ -1479,7 +1479,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             </div>
           </div>
 
-          <Separator className="mt-3" />
+          {/* Separator removed — TabsList provides visual separation */}
 
           {/* Row 2: All badges & actions as uniform pills */}
           <div className="flex flex-wrap items-center gap-1.5 px-1 py-1">
