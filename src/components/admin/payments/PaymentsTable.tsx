@@ -193,6 +193,13 @@ export default function PaymentsTable({
     [...columns].filter(c => c.visible).sort((a, b) => a.order - b.order),
     [columns]
   );
+
+  // Total width to give the inner <Table> a deterministic minWidth so the
+  // outer overflow-x-auto container actually scrolls horizontally on mobile.
+  const totalColumnsWidth = useMemo(
+    () => sortedColumns.reduce((sum, c) => sum + (c.width || 0), 0),
+    [sortedColumns]
+  );
   
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
