@@ -1,136 +1,152 @@
-&nbsp;
-
 Да, согласен, с учетом правок:
 
-1. Перед backfill сделать **read-only dry-run**:
-  - сколько orders_v2 будет обновлено по каждому продукту;
-  - сколько офферов получит meta.crm_routing;
-  - список продуктов, которые останутся вне mapping.
-2. Backfill orders_v2 делать только при доказуемом mapping:
-  - product_id → pipeline_id;
-  - status='paid' → closed_won / Успешно;
-  - status IN ('pending','new') → первая open stage;
-  - failed/canceled/refunded → closed_lost / Отказ.
-3. Не трогать сделки, где pipeline_id уже заполнен, если только нет отдельного dry-run с доказательством неправильной воронки.
-4. В audit_logs обязательно:
-  - actor_type='system';
-  - actor_user_id=NULL;
-  - actor_label='crm-routing-backfill';
-  - rowcount по orders_v2 и tariff_offers.
-5. Для tariff_offers.meta.crm_routing добавить не только pipeline_id, но и pipeline_code/name в meta для диагностики, если это уже принято в проекте.
-6. Landing-продукты без mapping не оставлять молча: в отчёте отдельный блок **“Unmapped products / требует решения”**.
-7. После миграции обязательно проверить:
-  - orders_v2.pipeline_id IS NULL;
-  - orders_v2.pipeline_stage_id IS NULL;
-  - офферы без meta.crm_routing;
-  - канбан по каждой воронке, не только Gorbova Club.
-8. Новый payment-flow проверить не тестовым заказом в проде, а безопасным dry-run/тестовой оплатой только если есть тестовый режим. Если тестового режима нет — проверить по следующему реальному заказу через audit/log proof.
+1. Перед backfill сделать **dry-run с точным списком 76 подписок**:
+  - subscription_id, email, текущий access_start_at/access_end_at, расчётный correct_end, дельта дней.
+  - отдельно показать Екатерину.
+2. Не отправлять уведомления всем 76 автоматически.  
+Сначала исправить даты, затем решить отдельно, кому реально нужно письмо/Telegram. Екатерине — можно, если подтверждаешь.
+3. Backfill должен менять также:
+  - subscriptions_[v2.next](http://v2.next)_charge_at;
+  - primary entitlements.expires_at;
+  - secondary product_access entitlements, если они были выровнены по этой подписке.
+4. В bepaid-webhook guard должен быть не просто > 1.5 × cycle, а:
+  - если bePaid candidate > локально рассчитанного expected_end + tolerance → skip;
+  - логировать current_end, bepaid_active_to, expected_end, subscription_id, order_id.
+5. После backfill проверить не только Club:
+  - read-only аудит всех recurring-подписок с last_extension_days=30 и фактическим окном >45 дней;
+  - если есть другие продукты — отдельный блок, без исправления до подтверждения.
+6. Execute только после dry-run rowcount. Тут затрагиваются реальные даты доступа, поэтому без dry-run — STOP.
 
-Можно выполнять после dry-run-таблицы с rowcount.
+&nbsp;
 
-## Отчёт о диагностике
+&nbsp;
 
-**Корень проблемы (ID-First, не эвристика):**
+## Диагноз
 
-1. **На офферах не заполнен `meta.crm_routing`.** Из 26 активных pay_now/trial офферов **18 без routing** (в т.ч. Club BUSINESS, Club FULL, БкБ, ЦБ 1 ступень и все её модули, Подоходный с ФЛ, ЗАКРОЙ ГОД-trial и др.).
-2. Edge-функция `_shared/crm-routing.ts → resolveOfferRoutingWithFallback` в этом случае возвращает `routing_disabled_or_missing` или `no_offer_for_tariff`, заказ создаётся с `pipeline_id = NULL`, в `meta.crm_routing_snapshot` пишется negative-snapshot.
-3. UI-правило "Default Pipeline Scope" показывает все сделки с `pipeline_id = NULL` в дефолтной воронке «Основная» — отсюда визуальная картинка на скриншоте.
+**Корень бага: bepaid-webhook перезаписывает корректно посчитанный `access_end_at` данными от bePaid, которые ушли на 1 цикл вперёд.**
 
-**Текущее состояние данных (NULL pipeline_id):**
+### Доказательная цепочка (Екатерина Ларионец, sbs_50c2b31efad2850b)
 
+```text
+11:48:25  public-checkout создал order b68bf688 (Gorbova Club BUSINESS, 250 BYN)
+11:51:06  grant-access-for-order:
+          - старая подписка cd740534 expired 28.04 → existingProductSub = null
+          - isClubProduct=true → calcCalendarMonthEnd(2026-05-02) = 2026-06-02 12:00 ✓ ПРАВИЛЬНО
+          - INSERT subscriptions_v2 64067f5d с access_end_at = 2026-06-02 12:00
+11:51:06  ensure_billing_alignment trigger: corrected_to=2026-06-01 20:59
+11:51:08  bepaid-webhook (event=activated) сработал, попал в блок строки 2716-2776:
+          - bepaidActiveTo = "2026-07-01" ← bePaid отдаёт active_to уже на 2-й цикл вперёд
+          - access_end_at = endOfDayAppTz("2026-07-01") = 2026-07-01 12:00 UTC
+          - UPDATE subscriptions_v2 SET access_end_at = 2026-07-01 12:00 ✗ ПЕРЕЗАПИСАЛО
+```
 
-| Продукт                 | NULL-сделок |
-| ----------------------- | ----------- |
-| Gorbova Club            | 1085        |
-| Бухгалтерия как бизнес  | 37          |
-| ЦБ 1 ступень + модули   | ~30         |
-| Подоходный ИП           | 8           |
-| Подоходный ФЛ           | 3           |
-| ЗАКРОЙ ГОД              | 4           |
-| **Итого ≈ 1170 сделок** | &nbsp;      |
+**Это не разовая аномалия.** Запрос показал **76 Club-подписок** с `last_extension_days=30`, но фактическим окном 60+ дней (все с `bepaid_subscription_id`). Самые ранние пострадавшие — с 20.04.26.
 
+### Почему это происходит
 
-Стадии во всех воронках унифицированы: `Новая/Регистрация` (open) → `В работе` (open) → `Успешно` (closed_won) → `Отказ` (closed_lost).
+bePaid API при создании recurring `/subscriptions` сразу после первого charge возвращает `active_to`, который трактуется их системой как «дата истечения подписки = дата следующего после-следующего charge» (защита от race с next_charge_at). Это **их особенность**, не наша ошибка. Наш правильный SoT — `subscriptions_v2.access_end_at`, рассчитанный в `grant-access-for-order` через `calcCalendarMonthEnd`.
+
+Блок в `bepaid-webhook/index.ts:2716-2776` (комментарий: «Without this, renewals rely on delayed sync to update access_end_at/expires_at») был добавлен для **продлений** (renewal payments), но он не различает «первичная активация» vs «renewal» и поэтому ломает первичную выдачу.
 
 ---
 
 ## План исправления
 
-### Шаг 1. Backfill существующих сделок (миграция)
+### Шаг 1. Патч `bepaid-webhook` — сделать блок idempotent при первичной активации
 
-Одна SQL-миграция, которая обновляет `orders_v2 SET pipeline_id, pipeline_stage_id` для всех записей с `pipeline_id IS NULL` через mapping `product_id → pipeline_id`.
+В `supabase/functions/bepaid-webhook/index.ts` блок 2716-2776:
 
-Mapping (детерминирован, взят из доминирующих явных привязок):
+```ts
+// БЫЛО: безусловная перезапись из bePaid active_to
+if (bepaidActiveTo) {
+  accessEndAt = new Date(endOfDayAppTz(bepaidActiveTo));
+}
+// UPDATE access_end_at = accessEndAt
+```
+
+```ts
+// СТАЛО: 
+// 1. Прочитать ТЕКУЩИЙ access_end_at у linkSubV2 (он уже посчитан grant-access-for-order)
+// 2. Кандидат от bePaid: bepaidActiveTo (если есть) либо +accessDays
+// 3. Применить GREATEST + sanity-cap:
+//    - НЕ перезаписывать, если кандидат больше текущего более чем на 1.5 × billing_cycle_days
+//      (защита от bePaid active_to-shift на 1 цикл вперёд)
+//    - Если кандидат внутри окна [текущий, текущий + 1.5cycle] — применять (это renewal)
+//    - Если кандидат меньше текущего — НЕ перезаписывать (entitlement_sync GREATEST)
+// 4. Audit `bepaid.webhook.access_end_at_skipped_overshoot` если skip
+```
+
+`renewAt` (next_charge_at) считаем по тому же правилу.
+
+Это **сохраняет работу для renewal-платежей** (где access_end_at двигается вперёд на 1 цикл), но **ломает overshoot на первичной активации**.
+
+### Шаг 2. Backfill 76 пострадавших Club-подписок
+
+Скрипт правит только подписки, где:
+
+- `product_id = Gorbova Club`
+- `meta->>bepaid_subscription_id IS NOT NULL`
+- `meta->>last_extension_days = '30'`
+- `(access_end_at - access_start_at) > 45 дней` (overshoot ≥ 15 дней)
+
+Для каждой:
+
+1. Пересчитать `correct_end = calcCalendarMonthEnd(access_start_at)` (Phase 1: +1 calendar month) — реализовать прямо в SQL через `access_start_at + interval '1 month' AT TIME ZONE 'UTC' с нормализацией часа = 12 UTC`.
+2. Если `current access_end_at > correct_end + 7 дней` → UPDATE access_end_at + next_charge_at = correct_end.
+3. Sync entitlements через `entitlement-sync` (GREATEST defended — но нам нужно явное СНИЖЕНИЕ, т.к. baseline неверен; используем direct UPDATE с audit).
+4. Audit `subscription.access_end_at_backfill_overshoot_2026_05` с before/after.
+
+⚠️ **Внимание**: GREATEST в entitlement-sync защищает от снижения. Здесь надо обойти эту защиту с явным audit и `force_correction=true`. Это исключение фиксирую memory-rule.
+
+### Шаг 3. Уведомить Екатерину
+
+Дополнительно отправить ей письмо/Telegram с правильной датой:
 
 ```text
-Gorbova Club                       → Gorbova Club
-Бухгалтерия как бизнес             → Бухгалтерия как бизнес
-Ценный бухгалтер | 1 ступень 2.0   → ЦБ | 1 ступень |  (включая все 8 модулей)
-Ценный бухгалтер | 2 ступень       → ЦБ | 2 ступень |
-ЗАКРОЙ ГОД                         → Закрой год
-Подоходный налог с физлиц          → Подоходный налог с ФЛ
-Подоходный налог ИП                → Подоходный налог ИП
-Платная консультация               → Платная консультация
-Тестовый продукт для админов       → Тестовый продукт для админов
+Здравствуйте, Екатерина!
+
+В системе была исправлена ошибка с датой окончания доступа к Gorbova Club.
+
+✅ Правильная дата окончания доступа: 1 июня 2026, 23:59 (Минск)
+✅ Следующее автосписание: 1 июня 2026
+
+Спасибо за понимание!
 ```
 
-Правила расстановки стадий:
+Канал: Telegram (у неё привязан `katerinalar7`) + email (`katx@tut.by`).
 
-- `payment_status = 'paid'` → `closed_won` (Успешно)
-- `payment_status IN ('failed','cancelled','refunded')` → `closed_lost` (Отказ)
-- остальные (`pending`, `processing`, NULL) → `order_index = 0` стадия (Новая/Регистрация)
+Для отправки использую существующие edge-функции:
 
-Гарантии:
+- `send-email-via-resend` для email
+- `telegram-bot-message` для Telegram DM
 
-- **Не трогаем** сделки, у которых `pipeline_id IS NOT NULL` (ручные перемещения сохраняются).
-- Продукты не из mapping (БЕЗОПАСНОСТЬ, Налоговый кодекс-2026, ФСЗН — маркетинговые landing-офферы без своей воронки) **не мигрируем** — они корректно остаются в «Без воронки» / «Основной».
-- Аудит-запись `crm_pipeline_backfill_2026_05` с количеством, breakdown по продуктам и timestamp.
+### Шаг 4. QA в режиме симуляции
 
-### Шаг 2. Авто-заполнение `crm_routing` на офферах (insert-операция)
+После backfill:
 
-UPDATE `tariff_offers SET meta = jsonb_set(...)` для 18 активных pay_now/trial-офферов без routing. Каждому офферу прописываем:
+1. SQL-проверка: `SELECT COUNT(*) FROM subscriptions_v2 WHERE ... AND days_diff > 45` должно быть = 0.
+2. Скрин карточки контакта Екатерины в `/admin/contacts` — убедиться, что подписка показывает «Доступ до: 01.06.26 23:59».
+3. Скрин аудита: ленты `subscription.access_end_at_backfill_overshoot_2026_05`.
 
-```json
-{
-  "enabled": true,
-  "pipeline_id": "<воронка продукта>",
-  "stage_on_pending": "<стадия order_index=0>",
-  "stage_on_success": "<closed_won>",
-  "stage_on_failed":  "<closed_lost>"
-}
-```
+### Шаг 5. Memory-rule
 
-Только для офферов, чей продукт есть в mapping. Для landing-офферов (БЕЗОПАСНОСТЬ, ФСЗН, Налоговый кодекс) `crm_routing` не проставляем — нужна осознанная привязка к новой воронке.
+Добавить `mem://architecture/subscriptions/bepaid-active-to-overshoot-guard`: 
 
-После этого все новые оплаты будут идти строго по `crm-routing.ts` → snapshot positive → правильная воронка/стадия.
-
-### Шаг 3. Verify (read-only)
-
-После применения:
-
-1. `SELECT COUNT(*) FROM orders_v2 WHERE pipeline_id IS NULL GROUP BY product_id` — должны остаться только продукты вне mapping.
-2. `SELECT COUNT(*) FROM tariff_offers WHERE is_active AND offer_type IN ('pay_now','trial') AND (meta->'crm_routing'->>'enabled') IS NULL` — должны остаться только landing-офферы.
-3. Скриншот канбана `/admin/deals` (вид «Воронка», «Gorbova Club») — колонки «Регистрация / Успешно» вместо «Без стадии».
-
-### Шаг 4. Memory-rule (новая запись)
-
-Добавить в `mem://commercial-logic/crm/product-pipeline-mapping-canon` правило: «Каждому продукту с активной воронкой ОБЯЗАТЕЛЬНО проставлять `meta.crm_routing` на всех его pay_now/trial-офферах. Отсутствие routing → визуальный дефолт в "Основную" (антипаттерн)». Index обновим.
-
----
-
-## Что НЕ входит в этот патч
-
-- UI-валидатор «оффер без routing» в админке Продуктов — отдельная follow-up задача.
-- Landing-продукты без своей воронки (БЕЗОПАСНОСТЬ, ФСЗН и др.) — нужно отдельное решение от тебя: создавать им воронки или оставлять в «Основной».
-- Триггер «при создании оффера автоматически заполнять routing воронкой продукта» — обсудим позже, чтобы не сломать кастомные сценарии.
+> bePaid `/subscriptions` после первого charge возвращает `active_to`, смещённый на +1 billing cycle. SoT для access_end_at — `grant-access-for-order` → `calcCalendarMonthEnd`. `bepaid-webhook` блок 2716-2776 применяет update из bePaid ТОЛЬКО если кандидат внутри окна [current, current + 1.5 × billing_cycle], иначе skip с audit.
 
 ---
 
 ## DoD
 
-- Миграция backfill применена, аудит записан.
-- 18 офферов получили `meta.crm_routing`.
-- `pipeline_id IS NULL` остаётся только для landing-продуктов вне mapping.
-- Канбан «Gorbova Club» показывает 2258 сделок (1173 + 1085) распределённых по стадиям.
-- Новый payment-flow проверен на одном тестовом заказе → snapshot `enabled:true`.
-- Memory-правило добавлено.
+- `bepaid-webhook` патч применён, идемпотентен, audit `bepaid.webhook.access_end_at_skipped_overshoot` для skip.
+- 76 Club-подписок исправлены, у Екатерины `access_end_at = 2026-06-01 23:59` (Минск).
+- Audit-batch `subscription.access_end_at_backfill_overshoot_2026_05` записан.
+- Екатерине отправлено уведомление в Telegram + email.
+- QA: 0 подписок с overshoot в БД, скрин карточки контакта Екатерины.
+- Memory-rule добавлен.
+- **Не нарушает renewal-flow**: при следующем bePaid charge access_end_at нормально продлевается на следующий цикл.
+
+## Что НЕ входит
+
+- Аналогичная проверка не-Club продуктов с recurring (если такие есть). Можно добавить, если ты подтвердишь, что нужно расширить scope.
+- Изменения в `bepaid-get-subscription-details` (ручная синхронизация) — там GREATEST уже защищает.

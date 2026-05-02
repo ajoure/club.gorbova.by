@@ -2733,12 +2733,37 @@ Deno.serve(async (req) => {
           if (linkSubV2) {
             const accessDays = (linkSubV2.tariffs as any)?.access_days || 30;
 
-            let accessEndAt: Date;
+            // OVERSHOOT GUARD (bepaid-active-to-overshoot-guard):
+            // bePaid `/subscriptions` после первого charge возвращает active_to,
+            // смещённый на +1 billing cycle вперёд (active_to = next_charge_at + 1 cycle).
+            // SOT для access_end_at — grant-access-for-order → calcCalendarMonthEnd, уже
+            // записанный в subscriptions_v2.access_end_at. Применяем bePaid candidate
+            // только если он внутри окна [expected_end, expected_end + tolerance].
+            // Если кандидат выходит за tolerance — это overshoot bug, skip перезаписи.
+
+            const expectedEnd = (linkSubV2.access_end_at as string | null)
+              ? new Date(linkSubV2.access_end_at as string)
+              : null;
+            const toleranceMs = Math.max(
+              Math.round(accessDays * 1.5),
+              accessDays + 5
+            ) * 24 * 60 * 60 * 1000;
+
+            let bepaidCandidate: Date | null = null;
+            let candidateSource: 'bepaid_active_to' | 'fallback_access_days' = 'fallback_access_days';
             if (bepaidActiveTo) {
-              accessEndAt = new Date(endOfDayAppTz(bepaidActiveTo));
-            } else {
-              // Fallback: +accessDays (with mandatory audit)
+              bepaidCandidate = new Date(endOfDayAppTz(bepaidActiveTo));
+              candidateSource = 'bepaid_active_to';
+            }
+
+            // Determine final accessEndAt
+            let accessEndAt: Date;
+            let endAtAction: 'apply_candidate' | 'keep_existing_overshoot' | 'fallback_no_candidate' = 'apply_candidate';
+
+            if (!bepaidCandidate) {
+              // No bePaid date at all — fallback to +accessDays from now
               accessEndAt = new Date(now.getTime() + accessDays * 24 * 60 * 60 * 1000);
+              endAtAction = 'fallback_no_candidate';
               console.warn('[WEBHOOK-LINK-ORDER] FALLBACK: no active_to from bePaid, using +accessDays');
               await supabase.from('audit_logs').insert({
                 action: 'bepaid.webhook.link_order_fallback_access_days',
@@ -2747,8 +2772,65 @@ Deno.serve(async (req) => {
                 target_user_id: linkSubV2.user_id,
                 meta: { subscription_id: grantedSubscriptionV2Id, access_days: accessDays, reason: 'no_active_to_field' },
               });
+            } else if (
+              expectedEnd &&
+              bepaidCandidate.getTime() > expectedEnd.getTime() + toleranceMs
+            ) {
+              // OVERSHOOT detected: bePaid candidate ahead of expected end by > tolerance.
+              // Keep our SOT (expected_end) и НЕ применяем кандидат.
+              accessEndAt = expectedEnd;
+              endAtAction = 'keep_existing_overshoot';
+              console.warn(
+                '[WEBHOOK-LINK-ORDER] OVERSHOOT GUARD: bePaid active_to=' +
+                bepaidCandidate.toISOString() +
+                ' overshoots expected_end=' + expectedEnd.toISOString() +
+                ' by > ' + Math.round(toleranceMs / 86400000) + ' days. Keeping expected_end.'
+              );
+              await supabase.from('audit_logs').insert({
+                action: 'bepaid.webhook.access_end_at_skipped_overshoot',
+                actor_type: 'system',
+                actor_label: 'bepaid-webhook',
+                target_user_id: linkSubV2.user_id,
+                meta: {
+                  subscription_id: grantedSubscriptionV2Id,
+                  order_id: (typeof linkOrder !== 'undefined' && linkOrder?.id) ? linkOrder.id : null,
+                  expected_end: expectedEnd.toISOString(),
+                  bepaid_active_to: bepaidCandidate.toISOString(),
+                  overshoot_days: Math.round(
+                    (bepaidCandidate.getTime() - expectedEnd.getTime()) / 86400000
+                  ),
+                  tolerance_days: Math.round(toleranceMs / 86400000),
+                  access_days: accessDays,
+                  candidate_source: candidateSource,
+                  guard: 'bepaid_active_to_overshoot_guard',
+                },
+              });
+            } else {
+              // Candidate within tolerance — apply (renewal flow).
+              // GREATEST defended: never decrease access_end_at silently.
+              if (expectedEnd && bepaidCandidate.getTime() < expectedEnd.getTime()) {
+                accessEndAt = expectedEnd;
+                console.log('[WEBHOOK-LINK-ORDER] candidate < expected_end, keeping expected (GREATEST)');
+              } else {
+                accessEndAt = bepaidCandidate;
+              }
             }
-            const renewAt = bepaidRenewAt ? new Date(bepaidRenewAt) : accessEndAt;
+
+            // renewAt: same guard logic (если есть expected, не уезжаем дальше tolerance)
+            let renewAt: Date;
+            if (bepaidRenewAt) {
+              const renewCandidate = new Date(bepaidRenewAt);
+              if (
+                expectedEnd &&
+                renewCandidate.getTime() > expectedEnd.getTime() + toleranceMs
+              ) {
+                renewAt = accessEndAt; // align to safe accessEndAt
+              } else {
+                renewAt = renewCandidate;
+              }
+            } else {
+              renewAt = accessEndAt;
+            }
 
             // 1. Update subscriptions_v2
             // STAGE L3 GUARD: для рассрочки (linkOrder.meta.installment_count >= 2) НЕ перезаписываем
@@ -2773,7 +2855,7 @@ Deno.serve(async (req) => {
               .from('subscriptions_v2')
               .update(subUpdatePayload)
               .eq('id', grantedSubscriptionV2Id);
-            console.log('[WEBHOOK-LINK-ORDER] INLINE: subscriptions_v2 access_end_at updated to', accessEndAt.toISOString(), 'isInstallment=', isInstallmentOrder);
+            console.log('[WEBHOOK-LINK-ORDER] INLINE: subscriptions_v2 access_end_at updated to', accessEndAt.toISOString(), 'isInstallment=', isInstallmentOrder, 'endAtAction=', endAtAction);
 
             // 2. Update entitlements (GREATEST logic)
             const productCode = (linkSubV2.products_v2 as any)?.code;
