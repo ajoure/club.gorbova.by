@@ -432,6 +432,13 @@ export function AutoRenewalsTabContent() {
     [...columns].filter(c => c.visible).sort((a, b) => a.order - b.order),
     [columns]
   );
+
+  // Сумма видимых колонок — детерминированная min-width таблицы для надёжного
+  // горизонтального скролла на mobile/PWA.
+  const totalColumnsWidth = useMemo(
+    () => sortedColumns.reduce((sum, c) => sum + (c.width || 0), 0),
+    [sortedColumns]
+  );
   
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
