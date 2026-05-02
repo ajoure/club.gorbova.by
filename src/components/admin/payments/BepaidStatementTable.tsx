@@ -179,7 +179,7 @@ export function BepaidStatementTable({
   return (
     <div className="rounded-lg border border-border/50 bg-card/30 backdrop-blur-sm overflow-hidden">
       {/* Scrollable container with max height */}
-      <div className="max-h-[70vh] overflow-auto">
+      <div data-table-scroll-x="true" className="table-scroll-x md:max-h-[70vh] md:overflow-auto">
         <table className="w-full text-xs">
           {/* Sticky header */}
           <thead className="sticky top-0 z-30">
