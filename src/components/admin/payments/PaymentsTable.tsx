@@ -193,6 +193,13 @@ export default function PaymentsTable({
     [...columns].filter(c => c.visible).sort((a, b) => a.order - b.order),
     [columns]
   );
+
+  // Total width to give the inner <Table> a deterministic minWidth so the
+  // outer overflow-x-auto container actually scrolls horizontally on mobile.
+  const totalColumnsWidth = useMemo(
+    () => sortedColumns.reduce((sum, c) => sum + (c.width || 0), 0),
+    [sortedColumns]
+  );
   
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
@@ -720,15 +727,24 @@ export default function PaymentsTable({
   return (
     <TooltipProvider>
       <div className="space-y-2">
-        {/* E1: Sticky header table container */}
-        <div className="overflow-auto max-h-[600px] relative">
+        {/* Адаптивный скролл-контейнер:
+            - mobile (< md): только горизонтальный скролл, вертикально visible
+              → жест вверх/вниз пробрасывается на window scroll, не "залипает".
+            - desktop (≥ md): прежнее поведение overflow-auto + max-h + sticky header. */}
+        <div
+          className="relative overflow-x-auto touch-scroll md:overflow-auto md:max-h-[600px]"
+          style={{ WebkitOverflowScrolling: "touch" }}
+        >
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
             onDragEnd={handleDragEnd}
           >
-            <Table style={{ tableLayout: 'fixed' }}>
-              <TableHeader className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b">
+            <Table
+              wrapperClassName=""
+              style={{ tableLayout: 'fixed', minWidth: totalColumnsWidth }}
+            >
+              <TableHeader className="md:sticky md:top-0 z-10 bg-background/95 backdrop-blur-sm border-b">
                 <SortableContext
                   items={sortedColumns.map(c => c.key)}
                   strategy={horizontalListSortingStrategy}

@@ -54,7 +54,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     <>
       <ImpersonationBar />
       <SidebarProvider>
-        <div className="min-h-screen flex w-full min-w-0 max-w-full overflow-x-hidden">
+        <div className="min-h-screen flex w-full min-w-0 max-w-full">
         <AppSidebar />
         <SidebarInset className="flex-1 flex flex-col min-w-0">
           <header 
@@ -70,7 +70,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           </header>
           <PullToRefresh>
             <main 
-              className="flex-1 flex flex-col p-4 md:p-6 bg-gradient-to-br from-background via-muted/30 to-background overflow-x-hidden pb-20 md:pb-6 min-h-0"
+              className="flex-1 flex flex-col p-4 md:p-6 bg-gradient-to-br from-background via-muted/30 to-background overflow-x-clip pb-20 md:pb-6 min-h-0"
               style={{
                 paddingLeft: 'max(1rem, env(safe-area-inset-left, 0px))',
                 paddingRight: 'max(1rem, env(safe-area-inset-right, 0px))',
