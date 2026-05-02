@@ -2049,7 +2049,7 @@ export function ContactTelegramChat({
             </Button>
           </div>
           </div>
-          <p className="text-xs text-muted-foreground mt-1">
+          <p className="text-[11px] leading-tight text-muted-foreground mt-0.5">
             Enter для отправки, Shift+Enter для новой строки
           </p>
         </div>
