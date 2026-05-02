@@ -1602,7 +1602,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               )}
             </TabsList>
           </div>
-          <Separator className="mx-4 sm:mx-6" />
+          {/* Separator removed — TabsList active state already provides visual border */}
 
           {/* Telegram-вкладка вынесена ИЗ внешнего скролла:
               скроллится только лента сообщений внутри ContactTelegramChat,
