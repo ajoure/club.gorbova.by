@@ -1610,7 +1610,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           <TabsContent
             value="telegram"
             forceMount
-            className="m-0 flex-1 min-h-0 flex flex-col gap-3 px-4 sm:px-6 pb-3 pt-3 overflow-hidden data-[state=inactive]:hidden"
+            className="m-0 flex-1 min-h-0 flex flex-col gap-2 px-4 sm:px-6 pb-1 pt-2 overflow-hidden data-[state=inactive]:hidden"
           >
             {/* Telegram Profile Info Card */}
             {resolvedTelegramUserId ? (
