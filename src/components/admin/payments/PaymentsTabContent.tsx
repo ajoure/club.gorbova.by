@@ -621,21 +621,19 @@ export function PaymentsTabContent() {
         </div>
       )}
       
-      {/* 5. Table - PATCH-5: limited by pageSize */}
-      <div className="overflow-x-auto">
-        <PaymentsTable
-          payments={filteredPayments.slice(0, pageSize)}
-          isLoading={isLoading}
-          selectedItems={selectedItems}
-          onToggleSelectAll={toggleSelectAll}
-          onToggleItem={toggleItem}
-          onRefetch={refetch}
-          displayTimezone="user"
-          selectedTimezoneIANA={selectedTimezone}
-          columns={columns}
-          onColumnsChange={setColumns}
-        />
-      </div>
+      {/* 5. Table - PATCH-5: limited by pageSize. Скролл-контейнер только внутри PaymentsTable. */}
+      <PaymentsTable
+        payments={filteredPayments.slice(0, pageSize)}
+        isLoading={isLoading}
+        selectedItems={selectedItems}
+        onToggleSelectAll={toggleSelectAll}
+        onToggleItem={toggleItem}
+        onRefetch={refetch}
+        displayTimezone="user"
+        selectedTimezoneIANA={selectedTimezone}
+        columns={columns}
+        onColumnsChange={setColumns}
+      />
       
       {/* Load more button - PATCH-5 */}
       {filteredPayments.length > pageSize && (
