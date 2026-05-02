@@ -1558,7 +1558,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {/* Scrollable tabs for mobile */}
           <div className="flex-shrink-0 overflow-x-auto scrollbar-none" style={{ paddingLeft: 'env(safe-area-inset-left, 0px)', paddingRight: 'env(safe-area-inset-right, 0px)' }}>
-            <TabsList className="mx-4 sm:mx-6 my-2 sm:my-3 inline-flex w-auto whitespace-nowrap bg-transparent h-auto">
+            <TabsList className="mx-4 sm:mx-6 my-1 sm:my-1.5 inline-flex w-auto whitespace-nowrap bg-transparent h-auto">
               <TabsTrigger value="profile" className="text-xs sm:text-sm px-2.5 sm:px-3">Профиль</TabsTrigger>
               <TabsTrigger value="telegram" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 <MessageCircle className="w-3 h-3 mr-1" />
