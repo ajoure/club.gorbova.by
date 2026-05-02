@@ -1673,7 +1673,7 @@ export function BepaidSubscriptionsTabContent() {
         </div>
       ) : (
         <div className="rounded-xl border border-border/30 bg-card/30 backdrop-blur-xl overflow-hidden">
-          <div className="overflow-x-auto">
+          <div data-table-scroll-x="true" className="table-scroll-x">
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
               <Table className="min-w-[900px]">
                 <TableHeader>
