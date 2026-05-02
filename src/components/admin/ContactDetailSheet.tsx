@@ -1795,6 +1795,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 telegramUserId={resolvedTelegramUserId}
                 telegramUsername={resolvedTelegramUsername}
                 clientName={contact.full_name}
+                hidePhotoButton
+                isActive={activeTab === "telegram"}
               />
             </div>
           </TabsContent>
