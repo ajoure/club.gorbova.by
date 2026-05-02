@@ -727,13 +727,14 @@ export default function PaymentsTable({
   return (
     <TooltipProvider>
       <div className="space-y-2">
-        {/* Адаптивный скролл-контейнер:
-            - mobile (< md): только горизонтальный скролл, вертикально visible
-              → жест вверх/вниз пробрасывается на window scroll, не "залипает".
-            - desktop (≥ md): прежнее поведение overflow-auto + max-h + sticky header. */}
+        {/* Единый scroll-контракт для всех устройств:
+            - mobile: только горизонтальный scroll внутри таблицы; вертикальный
+              жест пробрасывается на основной контент страницы (см. .table-scroll-x);
+            - desktop: добавляем sticky header без max-h, чтобы не плодить второй
+              вертикальный скролл — вертикально прокручивает страница. */}
         <div
-          className="relative overflow-x-auto touch-scroll md:overflow-auto md:max-h-[600px]"
-          style={{ WebkitOverflowScrolling: "touch" }}
+          data-table-scroll-x="true"
+          className="relative table-scroll-x rounded-md border border-border/30 bg-card/30"
         >
           <DndContext
             sensors={sensors}
@@ -742,9 +743,9 @@ export default function PaymentsTable({
           >
             <Table
               wrapperClassName=""
-              style={{ tableLayout: 'fixed', minWidth: totalColumnsWidth }}
+              style={{ tableLayout: 'fixed', width: totalColumnsWidth, minWidth: totalColumnsWidth }}
             >
-              <TableHeader className="md:sticky md:top-0 z-10 bg-background/95 backdrop-blur-sm border-b">
+              <TableHeader className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b">
                 <SortableContext
                   items={sortedColumns.map(c => c.key)}
                   strategy={horizontalListSortingStrategy}
