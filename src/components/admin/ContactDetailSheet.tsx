@@ -1460,7 +1460,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className={SHEET_SHELL_CLASS}>
         {/* Compact header for mobile - with padding-right for close button */}
-        <SheetHeader className="p-4 sm:p-6 pb-3 sm:pb-4 pr-14 sm:pr-16 flex-shrink-0">
+        <SheetHeader className="p-4 sm:p-6 pb-2 sm:pb-3 pr-14 sm:pr-16 flex-shrink-0">
           {/* Row 1: Avatar + Name + Email */}
           <div className="flex items-start gap-3">
             <AvatarZoomDialog
