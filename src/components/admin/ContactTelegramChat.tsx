@@ -1088,12 +1088,17 @@ export function ContactTelegramChat({
   useLayoutEffect(() => {
     if (!userId) return;
     if (isLoading) return;
+    // Если вкладка скрыта — не трогаем scroll, чтобы не дёргать viewport (он 0×0).
+    if (!isActive) return;
 
-    // Reset "initial scroll" when switching contact
-    if (lastUserIdRef.current !== userId) {
+    // Reset "initial scroll" when switching contact OR when tab becomes active again.
+    // Без этого при возврате на вкладку Telegram (компонент не размонтирован из-за forceMount)
+    // лента остаётся на той позиции, где её оставил browser layout — обычно сверху.
+    if (lastUserIdRef.current !== userId || lastIsActiveRef.current === false) {
       lastUserIdRef.current = userId;
       didInitialScrollRef.current = false;
     }
+    lastIsActiveRef.current = isActive;
 
     const getViewport = (): HTMLElement | null => {
       const root = scrollRef.current;
