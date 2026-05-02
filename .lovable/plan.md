@@ -1,96 +1,101 @@
-План: восстановить горизонтальный И вертикальный скролл таблицы «Платежи» на мобильном/PWA
 
-## Диагностика
+План: безопасная чистка SMOKE/E2E записей из БД
 
-После правок под PWA добавили жёсткое `overflow-x: hidden` на `html`, `body`, `#root` и `<main>` в `DashboardLayout`. Это убрало «выпирание» layout’а, но сломало внутренние скролл-контейнеры широких таблиц — горизонтальный свайп больше не работает.
+## Принципы
 
-Кроме того, у `PaymentsTable` контейнер строки 724 имеет `overflow-auto max-h-[600px]`. На мобильном:
+- Критерий: ТОЛЬКО явные маркеры `[SMOKE]`, `SMOKE`, `E2E` (регистронезависимо, по границам слов). Слова «test/тест/debug/sample» НЕ трогаем (есть реальные пользовательские опросы вроде «Тест: В какой роли вы находитесь сейчас»).
+- Ручной review: ниже приведён полный список кандидатов с ID. Ты вычёркиваешь то, что трогать нельзя — потом я выполняю миграцию.
+- Hard delete (по твоему выбору «удалить»). Soft-delete не используем.
+- Удаление через Supabase migration с явным `WHERE id IN (...)` и `BEGIN/COMMIT`. Никаких массовых `DELETE … WHERE title ILIKE '%test%'`.
 
-1. Палец, начавший скролл внутри этого контейнера, «застревает»: iOS не передаёт жест родительской странице, когда внутренний контейнер достигает своего верха/низа (`overscroll-behavior: auto` по умолчанию + отсутствие `-webkit-overflow-scrolling: touch` → нет momentum, скролл «замирает»).
-2. На viewport 518×940 высота 600px — это больше половины экрана; пользователь физически попадает пальцем именно в этот контейнер и не может прокрутить страницу дальше.
-3. Двойная обёртка `overflow-x-auto` (TabContent) → `overflow-auto` (PaymentsTable) → `<div className="relative w-full overflow-auto">` (внутри `Table` из `ui/table.tsx`) создаёт ТРИ вложенных скролл-контекста. iOS такие конфигурации обрабатывает плохо.
+## Кандидаты на удаление (всё, что найдено)
 
-Точки правок:
-- `src/index.css` — глобальный `overflow-x: hidden` на `#root`.
-- `src/components/layout/DashboardLayout.tsx` — `overflow-x-hidden` на корне и `<main>`.
-- `src/components/admin/payments/PaymentsTabContent.tsx:625` — внешняя обёртка `overflow-x-auto`.
-- `src/components/admin/payments/PaymentsTable.tsx:724` — `overflow-auto max-h-[600px]`.
-- `src/components/ui/table.tsx` — встроенный `<div className="relative w-full overflow-auto">` вокруг `<table>`.
+### Домен 1: Тренинги (модули и уроки) — 2 записи
 
-## Что меняем
+| Таблица | ID | Название |
+|---|---|---|
+| training_lessons | `aaaaaaaa-bbbb-cccc-dddd-000000000301` | `[SMOKE] month-gate test lesson` |
+| training_lessons | `c2222222-3333-4444-5555-666666666666` | `E2E Test Questionnaire` |
 
-### 1. `src/index.css`
-- Убрать `overflow-x: hidden` с `#root`. Оставить на `html, body` (защищает от случайного выпирания всей страницы, но не блокирует жесты внутри потомков).
-- Добавить утилиту `.touch-scroll`:
-  ```css
-  .touch-scroll {
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior: contain;
-  }
-  ```
-  Используется на скролл-контейнерах таблиц для inertial-скролла на iOS и корректной передачи overscroll родителю.
+Связанные данные (будут удалены каскадно или вручную в той же транзакции):
+- `user_lesson_progress`: 1 строка
+- `lesson_blocks`: 1 строка
+- `lesson_progress`, `lesson_progress_state`, `lesson_attachments`, `lesson_price_rules`: 0
 
-### 2. `src/components/layout/DashboardLayout.tsx`
-- На корневом flex-контейнере (стр. 57): убрать `overflow-x-hidden`, оставить `min-w-0 max-w-full`.
-- На `<main>` (стр. 73): заменить `overflow-x-hidden` → `overflow-x-clip`. `clip` не создаёт scroll-container и не мешает жестам потомков (в отличие от `hidden`).
+Тренинговых **модулей** с маркерами SMOKE/E2E **нет**. Модуль `ТЕСТ` (`f78a8821-…`) НЕ попадает в критерий — оставляем.
 
-### 3. `src/components/admin/payments/PaymentsTabContent.tsx`
-- Удалить внешнюю обёртку `<div className="overflow-x-auto">` вокруг `<PaymentsTable>` (строка 625). Горизонтальный скролл должен жить ровно в одном месте — внутри самой таблицы.
+### Домен 2: Вебинары и автовебинары — 0 записей
 
-### 4. `src/components/admin/payments/PaymentsTable.tsx` (строка 724) — ключевая правка
-Заменить:
-```tsx
-<div className="overflow-auto max-h-[600px] relative">
+`live_events` со SMOKE/E2E в названии — нет. «Тестируем картинку до веба» НЕ попадает в критерий — оставляем (создан тобой как реальный эфир).
+
+### Домен 3: Продукты, тарифы, офферы — 0 записей
+
+В `products`, `tariffs`, `tariff_offers` маркеров SMOKE/E2E нет.
+
+### Домен 4: Заказы и платёжные ссылки — 10 заказов, 0 ссылок
+
+`payment_links` со SMOKE/E2E — нет.
+
+`orders_v2` со SMOKE-маркером в `meta.description = "smoke-test TTL reuse v1"`, все pending, без оплат, без entitlements/subscriptions, customer = `7500084@gmail.com`:
+
+| order_number | id | created_at |
+|---|---|---|
+| ORD-LINK-1772660212459 | `413e6862-0e5d-40d2-bde5-51f4c1b9ef6b` | 2026-03-04 21:36 |
+| ORD-LINK-1772659691665 | `9992cd77-5122-46dc-9445-67058148b1b7` | 2026-03-04 21:28 |
+| ORD-LINK-1772659650842 | `e5c5c236-c488-4a47-a65e-862cc63bba4d` | 2026-03-04 21:27 |
+| ORD-LINK-1772659645751 | `b3902d90-3ccb-4a62-ba81-3a063526e010` | 2026-03-04 21:27 |
+| ORD-LINK-1772659587841 | `28fe6860-9d82-4dac-b9a0-787ec6855317` | 2026-03-04 21:26 |
+| ORD-LINK-1772659568162 | `34eafa88-ebeb-480b-af93-0a24bd9e950d` | 2026-03-04 21:26 |
+| ORD-LINK-1772659562841 | `6900e7d4-4833-4698-8753-db2c4814bd03` | 2026-03-04 21:26 |
+| ORD-LINK-1772658481024 | `dc59844d-7e3d-4d81-b55f-5c3773f11087` | 2026-03-04 21:08 |
+| ORD-LINK-1772658319553 | `4e7ffbd6-0aaf-4a00-a34f-68c8b1ebdce4` | 2026-03-04 21:05 |
+| ORD-LINK-1772658312947 | `20baa099-bf04-4d1f-ba42-8209e26ef0ac` | 2026-03-04 21:05 |
+
+Все с `final_price=100.00 BYN`, `status=pending`, продукт «Gorbova Club / CHAT». Ни один не имеет связанных `entitlements`/`subscriptions_v2` — безопасно удаляются.
+
+## Технические детали миграции (после твоего OK)
+
+```sql
+BEGIN;
+
+-- 1. Уроки SMOKE/E2E + зависимости
+DELETE FROM user_lesson_progress
+ WHERE lesson_id IN ('aaaaaaaa-bbbb-cccc-dddd-000000000301',
+                     'c2222222-3333-4444-5555-666666666666');
+DELETE FROM lesson_blocks
+ WHERE lesson_id IN ('aaaaaaaa-bbbb-cccc-dddd-000000000301',
+                     'c2222222-3333-4444-5555-666666666666');
+DELETE FROM training_lessons
+ WHERE id IN ('aaaaaaaa-bbbb-cccc-dddd-000000000301',
+              'c2222222-3333-4444-5555-666666666666');
+
+-- 2. SMOKE-заказы (10 шт., pending, без access)
+DELETE FROM orders_v2
+ WHERE id IN (
+   '413e6862-0e5d-40d2-bde5-51f4c1b9ef6b',
+   '9992cd77-5122-46dc-9445-67058148b1b7',
+   'e5c5c236-c488-4a47-a65e-862cc63bba4d',
+   'b3902d90-3ccb-4a62-ba81-3a063526e010',
+   '28fe6860-9d82-4dac-b9a0-787ec6855317',
+   '34eafa88-ebeb-480b-af93-0a24bd9e950d',
+   '6900e7d4-4833-4698-8753-db2c4814bd03',
+   'dc59844d-7e3d-4d81-b55f-5c3773f11087',
+   '4e7ffbd6-0aaf-4a00-a34f-68c8b1ebdce4',
+   '20baa099-bf04-4d1f-ba42-8209e26ef0ac'
+ );
+
+COMMIT;
 ```
-на адаптивный контейнер:
-```tsx
-<div className="relative md:overflow-auto md:max-h-[600px] md:touch-scroll
-                overflow-x-auto touch-scroll">
-```
 
-Логика:
-- **Мобильный (< md):** только горизонтальный скролл (`overflow-x-auto`), вертикально — `visible`. Вертикальная прокрутка таблицы идёт вместе с прокруткой страницы → палец никогда не «застревает», всегда работает window scroll.
-- **Десктоп (≥ md):** прежнее поведение `overflow-auto max-h-[600px]` со sticky header.
-- На обоих — `.touch-scroll` (inertial + `overscroll-behavior: contain`, чтобы случайный horizontal swipe не уводил браузер на back-navigation).
-
-Дополнительно: проставить `style={{ minWidth: totalColumnsWidth }}` на `<Table>` (сумма `column.width` из `sortedColumns`) чтобы скролл-контейнер знал реальную ширину контента и горизонтальный скролл работал детерминированно.
-
-### 5. `src/components/ui/table.tsx` (canonical)
-- Базовый `<Table>` сейчас оборачивает `<table>` в `<div className="relative w-full overflow-auto">`. Это создаёт лишний скролл-контекст внутри уже обёрнутого `PaymentsTable`. 
-- Добавить опциональный prop `wrapperClassName` (default = `relative w-full overflow-auto`), но НЕ менять поведение по умолчанию для других страниц.
-- В `PaymentsTable` передать `wrapperClassName="contents"` (или просто `""`) — чтобы внутренний div не создавал второго скролла поверх нашего основного контейнера.
-
-Минимально-инвазивная альтернатива: в `PaymentsTable` обернуть `<Table>` с `className="!overflow-visible"` через дочерний селектор — но проще и чище через prop.
-
-### 6. Sticky header
-- На мобильном при `overflow-y: visible` sticky на `top-0` относительно ближайшего scroll-ancestor (теперь это window) → header будет прилипать к верху окна, что даже лучше UX. Если это нежелательно — на мобильном применим `md:sticky` (sticky только с десктопа). Применим `md:sticky` для безопасности.
-
-## Верификация в симуляции
-
-После правок провести browser-симуляцию от лица текущего пользователя:
-
-1. `browser--navigate_to_sandbox` → `/admin/payments`, viewport 518×940 (как у пользователя).
-2. Скриншот стартового состояния таблицы.
-3. Свайп пальцем влево внутри таблицы → горизонтальный скролл работает, видны все колонки до конца.
-4. Свайп вверх внутри таблицы (длинный, через несколько строк) → страница плавно прокручивается, скролл НЕ «зависает», пагинатор и нижние секции достижимы.
-5. Свайп вниз — возврат наверх работает, нет «капкана» на таблице.
-6. Сделать скриншоты до/после каждого этапа для подтверждения.
-7. Проверить /admin/contacts и /admin/forms — их таблицы тоже используют тот же layout, должны продолжать работать (sticky на десктопе сохранён, на мобильном тоже не зависают).
+Дополнительно: проверю на этапе Execute, есть ли FK-зависимости, которые я мог не учесть (audit_logs, communications, payment_sessions и т.п.) — если нашлись, либо удалю каскадом в той же транзакции, либо остановлюсь и доложу.
 
 ## DoD
 
-- На viewport 518×940 (iPhone PWA) таблица «Платежи»:
-  - горизонтально прокручивается свайпом, видны все колонки;
-  - не «захватывает» вертикальный скролл — страница продолжает прокручиваться сквозь таблицу;
-  - имеет inertial momentum в PWA standalone.
-- На десктопе (≥ md) sticky header + ограничение `max-h-[600px]` сохранены.
-- Layout не «уезжает» горизонтально — `html/body` защита остаётся.
-- Скриншоты браузер-симуляции прикреплены к отчёту.
+- 2 урока удалены, 10 SMOKE-заказов удалены.
+- Контрольный SELECT после миграции возвращает 0 по тем же критериям.
+- Ни одна запись из доменов «вебинары» и «продукты/тарифы» не затронута.
+- Записи, не подходящие под SMOKE/E2E (включая «Тест: В какой роли…», «ТЕСТ»-модуль, «Тестируем картинку до веба»), остаются нетронутыми.
 
-## Файлы
+## Что мне нужно от тебя
 
-- `src/index.css`
-- `src/components/layout/DashboardLayout.tsx`
-- `src/components/admin/payments/PaymentsTabContent.tsx`
-- `src/components/admin/payments/PaymentsTable.tsx`
-- `src/components/ui/table.tsx`
+Подтверди план или вычеркни строки, которые удалять нельзя (например: «не трогай заказ XXX» или «оставь урок YYY»). После подтверждения выполню миграцию.
