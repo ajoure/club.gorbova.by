@@ -93,6 +93,8 @@ interface ContactTelegramChatProps {
   onAvatarUpdated?: (url: string) => void;
   hidePhotoButton?: boolean;
   onMessageSent?: () => void;
+  /** True когда вкладка Telegram активна. При переходе false→true автоматически прижимаем ленту к низу. */
+  isActive?: boolean;
 }
 
 interface TelegramMessage {
