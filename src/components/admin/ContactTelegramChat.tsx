@@ -1854,7 +1854,7 @@ export function ContactTelegramChat({
         {/* Input — shrink-0 в нижней части flex-контейнера. Без sticky:
             родитель уже ограничен по высоте (Telegram-вкладка),
             поэтому композер всегда виден внизу карточки. */}
-        <div className="pt-2 border-t shrink-0 bg-background" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
+        <div className="pt-1.5 border-t shrink-0 bg-background" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
           {activeBots.length > 1 && (
             <div className="flex items-center gap-1.5 pb-1.5">
               <Select value={selectedBotId || ""} onValueChange={handleBotChange}>
