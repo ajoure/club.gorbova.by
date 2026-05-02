@@ -315,6 +315,7 @@ export function ContactTelegramChat({
   const bottomRef = useRef<HTMLDivElement>(null);
   const didInitialScrollRef = useRef(false);
   const lastUserIdRef = useRef<string | null>(null);
+  const lastIsActiveRef = useRef<boolean>(true);
   
   // Anti double-click protection for send button
   const lastSendTimeRef = useRef<number>(0);
