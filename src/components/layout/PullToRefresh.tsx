@@ -80,23 +80,34 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
       // Block if editing, refreshing, or in cooldown
       if (isEditableElement(document.activeElement)) return;
       if (refreshing) return;
-      
+
       // Cooldown check
       const now = Date.now();
       if (now - lastRefreshTime.current < COOLDOWN_MS) return;
 
       // Find scrollable container from touch target with fallback
       const targetEl = (e.target as Element | null) ?? null;
-      const startFrom = (targetEl && typeof (targetEl as any).closest === 'function') 
-        ? (targetEl as Element) 
+      const startFrom = (targetEl && typeof (targetEl as any).closest === 'function')
+        ? (targetEl as Element)
         : (e.currentTarget as Element);
+
+      // Если касание началось внутри горизонтального scroll-контейнера таблицы —
+      // не перехватываем жест, отдаём управление браузеру (горизонтальный свайп
+      // прокручивает таблицу, вертикальный — нативно прокручивает страницу).
+      if (
+        targetEl &&
+        typeof (targetEl as any).closest === 'function' &&
+        (targetEl as Element).closest('[data-table-scroll-x="true"], .table-scroll-x')
+      ) {
+        return;
+      }
 
       const scrollContainer =
         findScrollableParent(startFrom as HTMLElement)
         ?? (document.scrollingElement as HTMLElement | null);
-      
-      const scrollTop = scrollContainer 
-        ? scrollContainer.scrollTop 
+
+      const scrollTop = scrollContainer
+        ? scrollContainer.scrollTop
         : window.scrollY;
 
       // Allow small tolerance for iOS inertia (scrollTop can be 1-5px)

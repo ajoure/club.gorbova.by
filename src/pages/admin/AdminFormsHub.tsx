@@ -27,7 +27,7 @@ export default function AdminFormsHub() {
   };
 
   return (
-    <AdminLayout>
+    <AdminLayout fullHeight>
       <div className="h-full min-h-0 flex flex-col overflow-hidden">
         {/* Glass Pills Tabs */}
         <div className="px-3 md:px-4 pt-1 pb-1.5 shrink-0">
@@ -54,8 +54,12 @@ export default function AdminFormsHub() {
           </div>
         </div>
 
-        {/* Tab Content */}
-        <div className="flex-1 min-h-0 overflow-auto px-3 md:px-4 pb-4">
+        {/* Tab Content — единственная вертикальная scroll-зона страницы.
+            Горизонтальный скролл живёт ТОЛЬКО внутри таблиц (.table-scroll-x). */}
+        <div
+          className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden touch-scroll px-3 md:px-4 pb-4"
+          style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 0px))' }}
+        >
           {activeTab === "all" && <FormsAllTabContent />}
           {activeTab === "site" && <FormsSiteTabContent />}
           {activeTab === "preorders" && <FormsPreorderTabContent />}

@@ -432,6 +432,13 @@ export function AutoRenewalsTabContent() {
     [...columns].filter(c => c.visible).sort((a, b) => a.order - b.order),
     [columns]
   );
+
+  // Сумма видимых колонок — детерминированная min-width таблицы для надёжного
+  // горизонтального скролла на mobile/PWA.
+  const totalColumnsWidth = useMemo(
+    () => sortedColumns.reduce((sum, c) => sum + (c.width || 0), 0),
+    [sortedColumns]
+  );
   
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
@@ -1705,67 +1712,69 @@ export function AutoRenewalsTabContent() {
                 Нет подписок с автопродлением
               </div>
             ) : (
-              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                <SortableContext items={sortedColumns.map(c => c.key)} strategy={horizontalListSortingStrategy}>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        {sortedColumns.map(col => (
-                          <SortableResizableHeader 
-                            key={col.key} 
-                            column={col} 
-                            onResize={handleResize}
-                            onSort={handleSort}
-                            sortKey={sortKey}
-                            sortDirection={sortDirection}
-                          >
-                            {col.key === 'checkbox' ? (
-                              <Checkbox 
-                                checked={selectedIds.size === sortedData.length && sortedData.length > 0}
-                                onCheckedChange={toggleSelectAll}
-                              />
-                            ) : col.key === 'tg_status' ? (
-                              <div className="flex flex-col items-center">
-                                <Send className="h-3.5 w-3.5 mb-0.5" />
-                                <span className="text-[9px]">TG 7/3/1</span>
-                              </div>
-                            ) : col.key === 'email_status' ? (
-                              <div className="flex flex-col items-center">
-                                <Mail className="h-3.5 w-3.5 mb-0.5" />
-                                <span className="text-[9px]">Email 7/3/1</span>
-                              </div>
-                            ) : col.label}
-                          </SortableResizableHeader>
-                        ))}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {sortedData.slice(0, 100).map((renewal) => (
-                        <TableRow 
-                          key={renewal.id}
-                          className="cursor-pointer hover:bg-muted/50"
-                          onClick={() => renewal.profile_id && openContactSheet(renewal.profile_id)}
-                          data-state={selectedIds.has(renewal.id) ? 'selected' : undefined}
-                        >
+              <div data-table-scroll-x="true" className="table-scroll-x">
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                  <SortableContext items={sortedColumns.map(c => c.key)} strategy={horizontalListSortingStrategy}>
+                    <Table style={{ tableLayout: 'fixed', width: totalColumnsWidth, minWidth: totalColumnsWidth }}>
+                      <TableHeader className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm">
+                        <TableRow>
                           {sortedColumns.map(col => (
-                            <TableCell 
+                            <SortableResizableHeader 
                               key={col.key} 
-                              style={{ width: col.width }}
-                              className={cn(
-                                col.key === 'checkbox' && 'text-center',
-                                col.key === 'card' && 'text-center',
-                                col.key === 'attempts' && 'text-center',
-                              )}
+                              column={col} 
+                              onResize={handleResize}
+                              onSort={handleSort}
+                              sortKey={sortKey}
+                              sortDirection={sortDirection}
                             >
-                              {renderCell(col.key, renewal)}
-                            </TableCell>
+                              {col.key === 'checkbox' ? (
+                                <Checkbox 
+                                  checked={selectedIds.size === sortedData.length && sortedData.length > 0}
+                                  onCheckedChange={toggleSelectAll}
+                                />
+                              ) : col.key === 'tg_status' ? (
+                                <div className="flex flex-col items-center">
+                                  <Send className="h-3.5 w-3.5 mb-0.5" />
+                                  <span className="text-[9px]">TG 7/3/1</span>
+                                </div>
+                              ) : col.key === 'email_status' ? (
+                                <div className="flex flex-col items-center">
+                                  <Mail className="h-3.5 w-3.5 mb-0.5" />
+                                  <span className="text-[9px]">Email 7/3/1</span>
+                                </div>
+                              ) : col.label}
+                            </SortableResizableHeader>
                           ))}
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </SortableContext>
-              </DndContext>
+                      </TableHeader>
+                      <TableBody>
+                        {sortedData.slice(0, 100).map((renewal) => (
+                          <TableRow 
+                            key={renewal.id}
+                            className="cursor-pointer hover:bg-muted/50"
+                            onClick={() => renewal.profile_id && openContactSheet(renewal.profile_id)}
+                            data-state={selectedIds.has(renewal.id) ? 'selected' : undefined}
+                          >
+                            {sortedColumns.map(col => (
+                              <TableCell 
+                                key={col.key} 
+                                style={{ width: col.width }}
+                                className={cn(
+                                  col.key === 'checkbox' && 'text-center',
+                                  col.key === 'card' && 'text-center',
+                                  col.key === 'attempts' && 'text-center',
+                                )}
+                              >
+                                {renderCell(col.key, renewal)}
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </SortableContext>
+                </DndContext>
+              </div>
             )}
           </CardContent>
         </Card>
