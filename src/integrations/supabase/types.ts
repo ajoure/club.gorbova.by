@@ -14,6 +14,81 @@ export type Database = {
   }
   public: {
     Tables: {
+      _inv22_overshoot_snapshot: {
+        Row: {
+          cohort: string
+          correct_end_at: string | null
+          created_at: string
+          current_end_at: string | null
+          email: string | null
+          id: string
+          is_expired_after_correction: boolean
+          meta: Json | null
+          notify_required: boolean
+          price: number | null
+          price_source: string | null
+          product_id: string | null
+          product_name: string | null
+          revoke_required: boolean
+          revoke_snapshot_bound: boolean
+          silent_backfill: boolean
+          snapshot_id: string
+          subscription_id: string
+          tariff_id: string | null
+          tariff_name: string | null
+          telegram_user_id: string | null
+          user_id: string | null
+        }
+        Insert: {
+          cohort: string
+          correct_end_at?: string | null
+          created_at?: string
+          current_end_at?: string | null
+          email?: string | null
+          id?: string
+          is_expired_after_correction: boolean
+          meta?: Json | null
+          notify_required: boolean
+          price?: number | null
+          price_source?: string | null
+          product_id?: string | null
+          product_name?: string | null
+          revoke_required: boolean
+          revoke_snapshot_bound?: boolean
+          silent_backfill?: boolean
+          snapshot_id: string
+          subscription_id: string
+          tariff_id?: string | null
+          tariff_name?: string | null
+          telegram_user_id?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          cohort?: string
+          correct_end_at?: string | null
+          created_at?: string
+          current_end_at?: string | null
+          email?: string | null
+          id?: string
+          is_expired_after_correction?: boolean
+          meta?: Json | null
+          notify_required?: boolean
+          price?: number | null
+          price_source?: string | null
+          product_id?: string | null
+          product_name?: string | null
+          revoke_required?: boolean
+          revoke_snapshot_bound?: boolean
+          silent_backfill?: boolean
+          snapshot_id?: string
+          subscription_id?: string
+          tariff_id?: string | null
+          tariff_name?: string | null
+          telegram_user_id?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       access_grant_ledger: {
         Row: {
           action_type: string
