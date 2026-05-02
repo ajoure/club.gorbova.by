@@ -273,6 +273,7 @@ export function ContactTelegramChat({
   onAvatarUpdated,
   hidePhotoButton = false,
   onMessageSent,
+  isActive = true,
 }: ContactTelegramChatProps) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
