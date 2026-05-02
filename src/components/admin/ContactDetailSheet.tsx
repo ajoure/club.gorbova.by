@@ -1460,7 +1460,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className={SHEET_SHELL_CLASS}>
         {/* Compact header for mobile - with padding-right for close button */}
-        <SheetHeader className="p-4 sm:p-6 pb-3 sm:pb-4 pr-14 sm:pr-16 flex-shrink-0">
+        <SheetHeader className="p-4 sm:p-6 pb-2 sm:pb-3 pr-14 sm:pr-16 flex-shrink-0">
           {/* Row 1: Avatar + Name + Email */}
           <div className="flex items-start gap-3">
             <AvatarZoomDialog
@@ -1479,7 +1479,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             </div>
           </div>
 
-          <Separator className="mt-3" />
+          {/* Separator removed — TabsList provides visual separation */}
 
           {/* Row 2: All badges & actions as uniform pills */}
           <div className="flex flex-wrap items-center gap-1.5 px-1 py-1">
@@ -1558,7 +1558,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {/* Scrollable tabs for mobile */}
           <div className="flex-shrink-0 overflow-x-auto scrollbar-none" style={{ paddingLeft: 'env(safe-area-inset-left, 0px)', paddingRight: 'env(safe-area-inset-right, 0px)' }}>
-            <TabsList className="mx-4 sm:mx-6 my-2 sm:my-3 inline-flex w-auto whitespace-nowrap bg-transparent h-auto">
+            <TabsList className="mx-4 sm:mx-6 my-1 sm:my-1.5 inline-flex w-auto whitespace-nowrap bg-transparent h-auto">
               <TabsTrigger value="profile" className="text-xs sm:text-sm px-2.5 sm:px-3">Профиль</TabsTrigger>
               <TabsTrigger value="telegram" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 <MessageCircle className="w-3 h-3 mr-1" />
@@ -1602,7 +1602,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               )}
             </TabsList>
           </div>
-          <Separator className="mx-4 sm:mx-6" />
+          {/* Separator removed — TabsList active state already provides visual border */}
 
           {/* Telegram-вкладка вынесена ИЗ внешнего скролла:
               скроллится только лента сообщений внутри ContactTelegramChat,
@@ -1610,7 +1610,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           <TabsContent
             value="telegram"
             forceMount
-            className="m-0 flex-1 min-h-0 flex flex-col gap-3 px-4 sm:px-6 pb-3 pt-3 overflow-hidden data-[state=inactive]:hidden"
+            className="m-0 flex-1 min-h-0 flex flex-col gap-2 px-4 sm:px-6 pb-1 pt-2 overflow-hidden data-[state=inactive]:hidden"
           >
             {/* Telegram Profile Info Card */}
             {resolvedTelegramUserId ? (
@@ -1795,6 +1795,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 telegramUserId={resolvedTelegramUserId}
                 telegramUsername={resolvedTelegramUsername}
                 clientName={contact.full_name}
+                hidePhotoButton
+                isActive={activeTab === "telegram"}
               />
             </div>
           </TabsContent>

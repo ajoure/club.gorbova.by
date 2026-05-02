@@ -93,6 +93,8 @@ interface ContactTelegramChatProps {
   onAvatarUpdated?: (url: string) => void;
   hidePhotoButton?: boolean;
   onMessageSent?: () => void;
+  /** True когда вкладка Telegram активна. При переходе false→true автоматически прижимаем ленту к низу. */
+  isActive?: boolean;
 }
 
 interface TelegramMessage {
@@ -271,6 +273,7 @@ export function ContactTelegramChat({
   onAvatarUpdated,
   hidePhotoButton = false,
   onMessageSent,
+  isActive = true,
 }: ContactTelegramChatProps) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
@@ -312,6 +315,7 @@ export function ContactTelegramChat({
   const bottomRef = useRef<HTMLDivElement>(null);
   const didInitialScrollRef = useRef(false);
   const lastUserIdRef = useRef<string | null>(null);
+  const lastIsActiveRef = useRef<boolean>(true);
   
   // Anti double-click protection for send button
   const lastSendTimeRef = useRef<number>(0);
@@ -1085,12 +1089,17 @@ export function ContactTelegramChat({
   useLayoutEffect(() => {
     if (!userId) return;
     if (isLoading) return;
+    // Если вкладка скрыта — не трогаем scroll, чтобы не дёргать viewport (он 0×0).
+    if (!isActive) return;
 
-    // Reset "initial scroll" when switching contact
-    if (lastUserIdRef.current !== userId) {
+    // Reset "initial scroll" when switching contact OR when tab becomes active again.
+    // Без этого при возврате на вкладку Telegram (компонент не размонтирован из-за forceMount)
+    // лента остаётся на той позиции, где её оставил browser layout — обычно сверху.
+    if (lastUserIdRef.current !== userId || lastIsActiveRef.current === false) {
       lastUserIdRef.current = userId;
       didInitialScrollRef.current = false;
     }
+    lastIsActiveRef.current = isActive;
 
     const getViewport = (): HTMLElement | null => {
       const root = scrollRef.current;
@@ -1198,7 +1207,7 @@ export function ContactTelegramChat({
       ro.disconnect();
       mo.disconnect();
     };
-  }, [userId, isLoading, chatItems.length]);
+  }, [userId, isLoading, chatItems.length, isActive]);
 
   // Track scroll position → toggle "scroll to bottom" FAB + clear unread.
   useEffect(() => {
@@ -1845,7 +1854,7 @@ export function ContactTelegramChat({
         {/* Input — shrink-0 в нижней части flex-контейнера. Без sticky:
             родитель уже ограничен по высоте (Telegram-вкладка),
             поэтому композер всегда виден внизу карточки. */}
-        <div className="pt-2 border-t shrink-0 bg-background" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
+        <div className="pt-1.5 border-t shrink-0 bg-background" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
           {activeBots.length > 1 && (
             <div className="flex items-center gap-1.5 pb-1.5">
               <Select value={selectedBotId || ""} onValueChange={handleBotChange}>
@@ -2040,7 +2049,7 @@ export function ContactTelegramChat({
             </Button>
           </div>
           </div>
-          <p className="text-xs text-muted-foreground mt-1">
+          <p className="text-[11px] leading-tight text-muted-foreground mt-0.5">
             Enter для отправки, Shift+Enter для новой строки
           </p>
         </div>
