@@ -172,7 +172,8 @@ export function LinksTabContent() {
 
       {/* Table */}
       <div className="rounded-md border bg-card">
-        <Table>
+        <div data-table-scroll-x="true" className="table-scroll-x">
+        <Table style={{ minWidth: 1100 }}>
           <TableHeader>
             <TableRow>
               <TableHead className="w-[140px]">Создана</TableHead>
@@ -277,6 +278,7 @@ export function LinksTabContent() {
             ))}
           </TableBody>
         </Table>
+        </div>
       </div>
 
       {/* Dialogs */}
