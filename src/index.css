@@ -122,15 +122,23 @@ All colors MUST be HSL.
     @apply bg-background text-foreground;
   }
 
-  /* Hard-stop horizontal overflow — критично для PWA standalone на iOS,
-     где любой потомок, превышающий viewport, ломает layout (контент уезжает
-     за правый край, появляется горизонтальный скролл). Не влияет на sticky/
-     fixed-элементы, поскольку overflow ставится на html/body/#root, а не
-     на промежуточные скролл-контейнеры. */
-  html, body, #root {
+  /* Hard-stop горизонтального overflow на html/body — защищает страницу от
+     случайного "выпирания" в PWA standalone на iOS. ВАЖНО: НЕ ставим
+     overflow-x:hidden на #root и промежуточные контейнеры — это блокирует
+     touch-скролл вложенных контейнеров (горизонтальные таблицы) и приводит
+     к "залипанию" вертикального скролла внутри них. */
+  html, body {
     overflow-x: hidden;
     max-width: 100vw;
   }
+}
+
+/* Touch-scroll утилита: inertial momentum на iOS + корректная передача
+   overscroll родителю, чтобы вертикальный жест внутри широкой таблицы
+   не "застревал" на её границах. */
+.touch-scroll {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 /* Impersonation bar: единый источник высоты через CSS-переменную */
