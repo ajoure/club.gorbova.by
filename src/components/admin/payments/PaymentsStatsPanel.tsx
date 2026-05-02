@@ -94,8 +94,11 @@ export default function PaymentsStatsPanel({
        <div className="absolute -z-10 bottom-[-140px] right-[-140px] h-[380px] w-[380px] rounded-full bg-violet-500/20 blur-[110px] pointer-events-none" />
        <div className="absolute -z-10 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-[280px] w-[280px] rounded-full bg-blue-500/15 blur-[100px] pointer-events-none" />
       
-      {/* Stats grid */}
-      <div className="relative grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      {/* Stats: horizontal swipe ribbon on mobile, grid on desktop */}
+      <div
+        data-table-scroll-x="true"
+        className="relative table-scroll-x flex md:grid gap-3 md:grid-cols-3 lg:grid-cols-6 snap-x snap-mandatory md:snap-none -mx-1 px-1 md:mx-0 md:px-0 [&>*]:shrink-0 md:[&>*]:shrink [&>*]:basis-[44%] sm:[&>*]:basis-[30%] md:[&>*]:basis-auto [&>*]:snap-start"
+      >
        <GlassStatCard
         title="Успешные"
          value={formatAmount(stats.successful.amount)}
