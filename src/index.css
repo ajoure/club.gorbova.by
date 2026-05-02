@@ -133,12 +133,31 @@ All colors MUST be HSL.
   }
 }
 
-/* Touch-scroll утилита: inertial momentum на iOS + корректная передача
-   overscroll родителю, чтобы вертикальный жест внутри широкой таблицы
-   не "застревал" на её границах. */
+/* Touch-scroll утилита: inertial momentum на iOS.
+   ВАЖНО: overscroll-behavior контейнера НЕ должен мешать вертикальному
+   жесту прокручивать страницу. Поэтому Y-направление = auto (передача
+   родителю), а X-направление = contain (не триггерит горизонтальную
+   нав-историю браузера на широких таблицах). */
 .touch-scroll {
   -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
+  overscroll-behavior-x: contain;
+  overscroll-behavior-y: auto;
+}
+
+/* Горизонтальный scroll-контейнер таблиц.
+   - инерционный скролл на iOS;
+   - touch-action: pan-x pan-y — оба направления остаются жестами,
+     горизонтальный — внутри контейнера, вертикальный — пробрасывается
+     на страницу;
+   - overscroll-behavior-x: contain — не дёргает back-навигацию браузера;
+   - overscroll-behavior-y: auto — вертикальный свайп не «залипает». */
+.table-scroll-x {
+  overflow-x: auto;
+  overflow-y: visible;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y;
+  overscroll-behavior-x: contain;
+  overscroll-behavior-y: auto;
 }
 
 /* Impersonation bar: единый источник высоты через CSS-переменную */
