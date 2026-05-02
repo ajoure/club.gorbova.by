@@ -290,7 +290,7 @@ export function FormsHubTable({
   };
 
   const tableContent = (
-    <Table style={{ tableLayout: "fixed", width: "max-content", minWidth: "100%" }}>
+    <Table wrapperClassName="contents" style={{ tableLayout: "fixed", width: "max-content", minWidth: "100%" }}>
       <colgroup>
         {visibleColumns.map((col) => (
           <col key={col.key} style={{ width: `${col.width}px` }} />
