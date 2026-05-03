@@ -2548,39 +2548,62 @@ Deno.serve(async (req) => {
           });
         }
         
-        // PATCH P2: Extract subscription_v2_id from grant result if available
-        grantedSubscriptionV2Id = grantResult?.subscription_id || grantResult?.subscription_v2_id || null;
+        // PATCH rebill-idempotency-fix-2026-05: read sub id from all possible response shapes,
+        // including the idempotent `already_fulfilled` branch where it lives under `existing`.
+        grantedSubscriptionV2Id =
+          grantResult?.subscription_id ||
+          grantResult?.subscription_v2_id ||
+          grantResult?.existing?.subscription_id ||
+          null;
       } catch (grantErr) {
         console.error('[WEBHOOK-LINK-ORDER] grant-access-for-order error (non-fatal):', grantErr);
       }
 
-      // PATCH P2: Link provider_subscriptions → subscriptions_v2
-      // Safe lookup: find via entitlements created for this order
-      if (subscriptionId && !grantedSubscriptionV2Id) {
+      // PATCH rebill-idempotency-fix-2026-05: robust fallback by order_id (no entitlement.status filter).
+      // Required so rebill flow extends access even when entitlement is currently `expired`
+      // (rebill arrives at/after access_end_at).
+      if (!grantedSubscriptionV2Id && linkOrder?.id) {
         try {
-          const { data: entForOrder } = await supabase
-            .from('entitlements')
-            .select('id, order_id')
+          // 1) sub directly bound to this order
+          const { data: subByOrder } = await supabase
+            .from('subscriptions_v2')
+            .select('id')
             .eq('order_id', linkOrder.id)
-            .eq('status', 'active')
+            .order('created_at', { ascending: false })
             .limit(1)
             .maybeSingle();
+          if (subByOrder) {
+            grantedSubscriptionV2Id = subByOrder.id;
+          } else {
+            // 2) sub previously extended by this order
+            const { data: subExtended } = await supabase
+              .from('subscriptions_v2')
+              .select('id')
+              .contains('meta', { extended_by_orders: [linkOrder.id] })
+              .order('updated_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            if (subExtended) grantedSubscriptionV2Id = subExtended.id;
+          }
 
-          if (entForOrder && linkOrder.user_id && linkOrder.product_id) {
-            const { data: subV2 } = await supabase
+          // 3) legacy fallback by user+product (no status filter — rebill may hit after expiry)
+          if (!grantedSubscriptionV2Id && linkOrder.user_id && linkOrder.product_id) {
+            const { data: subByUserProduct } = await supabase
               .from('subscriptions_v2')
               .select('id')
               .eq('user_id', linkOrder.user_id)
               .eq('product_id', linkOrder.product_id)
-              .in('status', ['active', 'trial'])
               .order('created_at', { ascending: false })
               .limit(1)
               .maybeSingle();
-            
-            if (subV2) grantedSubscriptionV2Id = subV2.id;
+            if (subByUserProduct) grantedSubscriptionV2Id = subByUserProduct.id;
+          }
+
+          if (grantedSubscriptionV2Id) {
+            console.log('[WEBHOOK-LINK-ORDER] rebill fallback resolved subscription_v2_id=', grantedSubscriptionV2Id);
           }
         } catch (lookupErr) {
-          console.error('[WEBHOOK-LINK-ORDER] subscription_v2_id lookup error (non-fatal):', lookupErr);
+          console.error('[WEBHOOK-LINK-ORDER] subscription_v2_id fallback lookup error (non-fatal):', lookupErr);
         }
       }
 
