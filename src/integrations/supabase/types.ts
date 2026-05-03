@@ -131,6 +131,123 @@ export type Database = {
         }
         Relationships: []
       }
+      _orders_cohort_b_cleanup_2026_05_backup: {
+        Row: {
+          base_price: number
+          bepaid_subscription_id: string | null
+          created_at: string
+          currency: string
+          customer_email: string | null
+          customer_ip: string | null
+          customer_phone: string | null
+          deal_date: string | null
+          discount_percent: number | null
+          final_price: number
+          flow_id: string | null
+          gc_next_retry_at: string | null
+          id: string
+          invoice_email: string | null
+          invoice_sent_at: string | null
+          is_trial: boolean
+          meta: Json | null
+          offer_id: string | null
+          order_number: string
+          paid_amount: number | null
+          payer_type: string | null
+          payment_plan_id: string | null
+          pipeline_id: string | null
+          pipeline_stage_id: string | null
+          pricing_stage_id: string | null
+          product_id: string | null
+          profile_id: string | null
+          provider: string | null
+          provider_payment_id: string | null
+          purchase_snapshot: Json | null
+          reconcile_source: string | null
+          status: Database["public"]["Enums"]["order_status"]
+          tariff_id: string | null
+          trial_end_at: string | null
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          base_price: number
+          bepaid_subscription_id?: string | null
+          created_at?: string
+          currency?: string
+          customer_email?: string | null
+          customer_ip?: string | null
+          customer_phone?: string | null
+          deal_date?: string | null
+          discount_percent?: number | null
+          final_price: number
+          flow_id?: string | null
+          gc_next_retry_at?: string | null
+          id?: string
+          invoice_email?: string | null
+          invoice_sent_at?: string | null
+          is_trial?: boolean
+          meta?: Json | null
+          offer_id?: string | null
+          order_number: string
+          paid_amount?: number | null
+          payer_type?: string | null
+          payment_plan_id?: string | null
+          pipeline_id?: string | null
+          pipeline_stage_id?: string | null
+          pricing_stage_id?: string | null
+          product_id?: string | null
+          profile_id?: string | null
+          provider?: string | null
+          provider_payment_id?: string | null
+          purchase_snapshot?: Json | null
+          reconcile_source?: string | null
+          status?: Database["public"]["Enums"]["order_status"]
+          tariff_id?: string | null
+          trial_end_at?: string | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          base_price?: number
+          bepaid_subscription_id?: string | null
+          created_at?: string
+          currency?: string
+          customer_email?: string | null
+          customer_ip?: string | null
+          customer_phone?: string | null
+          deal_date?: string | null
+          discount_percent?: number | null
+          final_price?: number
+          flow_id?: string | null
+          gc_next_retry_at?: string | null
+          id?: string
+          invoice_email?: string | null
+          invoice_sent_at?: string | null
+          is_trial?: boolean
+          meta?: Json | null
+          offer_id?: string | null
+          order_number?: string
+          paid_amount?: number | null
+          payer_type?: string | null
+          payment_plan_id?: string | null
+          pipeline_id?: string | null
+          pipeline_stage_id?: string | null
+          pricing_stage_id?: string | null
+          product_id?: string | null
+          profile_id?: string | null
+          provider?: string | null
+          provider_payment_id?: string | null
+          purchase_snapshot?: Json | null
+          reconcile_source?: string | null
+          status?: Database["public"]["Enums"]["order_status"]
+          tariff_id?: string | null
+          trial_end_at?: string | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       _orders_orphan_cleanup_2026_05_backup: {
         Row: {
           backed_up_at: string
