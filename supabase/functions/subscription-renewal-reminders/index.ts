@@ -818,6 +818,7 @@ async function sendEmailReminder(
             <p style="margin: 0 0 8px 0;"><strong>🎯 Тариф:</strong> ${tariffName}</p>
             <p style="margin: 0 0 8px 0;"><strong>📆 Дата окончания:</strong> ${formattedDate}</p>
             ${amountLineHtml}
+            ${chargeTimeLineHtml}
           </div>
           ${statusSection}
           <p style="color: #6b7280; margin-top: 32px; font-size: 14px;">С уважением,<br>Команда клуба</p>
@@ -834,6 +835,7 @@ async function sendEmailReminder(
             <p style="margin: 0 0 8px 0;"><strong>🎯 Тариф:</strong> ${tariffName}</p>
             <p style="margin: 0 0 8px 0;"><strong>📆 Дата окончания:</strong> ${formattedDate}</p>
             ${amountLineHtml}
+            ${chargeTimeLineHtml}
           </div>
           ${statusSection}
           <p style="color: #6b7280; margin-top: 32px; font-size: 14px;">С уважением,<br>Команда клуба</p>
@@ -850,6 +852,7 @@ async function sendEmailReminder(
             <p style="margin: 0 0 8px 0;"><strong>🎯 Тариф:</strong> ${tariffName}</p>
             <p style="margin: 0 0 8px 0;"><strong>📆 Дата окончания:</strong> ${formattedDate}</p>
             ${amountLineHtml}
+            ${chargeTimeLineHtml}
           </div>
           ${statusSection}
           <p style="color: #6b7280; margin-top: 32px; font-size: 14px;">С уважением,<br>Команда клуба</p>
