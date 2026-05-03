@@ -238,13 +238,26 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Format expiry date
+      // PATCH MINSK-TIME v1: точный формат "3 мая в 23:59 (Минск)" + строка списания
       const expiryDate = new Date(access.active_until!);
-      const formattedDate = expiryDate.toLocaleDateString('ru-RU', {
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric'
-      });
+      const formattedDate = formatMinskDateTime(expiryDate) || '';
+
+      // Резолвим next_charge_at из subscriptions_v2 (если у юзера есть активная подписка)
+      let nextChargeLine = '';
+      try {
+        const { data: subRow } = await supabase
+          .from('subscriptions_v2')
+          .select('next_charge_at, status, auto_renew, tariff_id')
+          .eq('user_id', access.user_id)
+          .in('status', ['active', 'trial'])
+          .order('access_end_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (subRow?.next_charge_at && subRow.auto_renew) {
+          const nc = formatMinskDateTime(subRow.next_charge_at);
+          if (nc) nextChargeLine = `\n\n⚡ Списание: ${nc}`;
+        }
+      } catch (_e) { /* non-blocking */ }
 
       // Resolve product/tariff for CTA generation (uses tariff_offers SOT)
       const resolved = await resolveProductAndTariff(supabase, access.user_id, access.club_id);
