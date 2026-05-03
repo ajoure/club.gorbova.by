@@ -723,20 +723,20 @@ async function sendEmailReminder(
   subscriptionId: string,
   orderId: string | null,
   tariffId: string | null,
-  isOneTime: boolean = false
+  isOneTime: boolean = false,
+  nextChargeAt: Date | null = null,
 ): Promise<boolean> {
   try {
-    // PATCH ONE-TIME v2: точное время Минск
-    const dateFmt = new Intl.DateTimeFormat('ru-RU', {
-      day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Minsk'
-    });
-    const timeFmt = new Intl.DateTimeFormat('ru-RU', {
-      hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Minsk'
-    });
-    const formattedDate = `${dateFmt.format(expiryDate)} в ${timeFmt.format(expiryDate)} (Минск)`;
+    // PATCH MINSK-TIME v1: единый формат с годом + строка списания
+    const formattedDate = formatMinskDateTimeWithYear(expiryDate) || '';
+    const formattedNextCharge = formatMinskDateTimeWithYear(nextChargeAt);
     // PATCH AMOUNT-RESOLVER v4: omit amount line in HTML if unresolved.
     const amountLineHtml = amount > 0
       ? `<p style="margin: 0;"><strong>💳 Сумма списания:</strong> ${formatCurrency(amount, currency)}</p>`
+      : '';
+    // PATCH MINSK-TIME v1: строка времени списания для recurring с автопродлением
+    const chargeTimeLineHtml = (hasSBS && !isOneTime && formattedNextCharge)
+      ? `<p style="margin: 0;"><strong>⚡ Списание:</strong> ${formattedNextCharge}</p>`
       : '';
 
     let subject = '';
