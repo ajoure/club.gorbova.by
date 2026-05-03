@@ -131,6 +131,51 @@ export type Database = {
         }
         Relationships: []
       }
+      _orders_orphan_cleanup_2026_05_backup: {
+        Row: {
+          backed_up_at: string
+          created_at: string | null
+          customer_email: string | null
+          final_price: number | null
+          id: string
+          meta: Json | null
+          order_number: string | null
+          product_id: string | null
+          profile_id: string | null
+          snapshot: Json | null
+          status: string | null
+          user_id: string | null
+        }
+        Insert: {
+          backed_up_at?: string
+          created_at?: string | null
+          customer_email?: string | null
+          final_price?: number | null
+          id: string
+          meta?: Json | null
+          order_number?: string | null
+          product_id?: string | null
+          profile_id?: string | null
+          snapshot?: Json | null
+          status?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          backed_up_at?: string
+          created_at?: string | null
+          customer_email?: string | null
+          final_price?: number | null
+          id?: string
+          meta?: Json | null
+          order_number?: string | null
+          product_id?: string | null
+          profile_id?: string | null
+          snapshot?: Json | null
+          status?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       access_grant_ledger: {
         Row: {
           action_type: string
