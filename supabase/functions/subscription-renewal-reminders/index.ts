@@ -463,23 +463,22 @@ async function sendTelegramReminder(
     // PATCH NAME-V: безопасное обращение через helper. Если имя неопределено —
     // префикс пустой, фраза начинается без обращения (а не с фамилии).
     const safeNamePrefix = escapeMd(greetPrefix(profile));
-    // PATCH ONE-TIME v2: точное время Минск (день + месяц + HH:mm)
-    const dateFmt = new Intl.DateTimeFormat('ru-RU', {
-      day: 'numeric', month: 'long', timeZone: 'Europe/Minsk'
-    });
-    const timeFmt = new Intl.DateTimeFormat('ru-RU', {
-      hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Minsk'
-    });
-    const formattedDate = `${dateFmt.format(expiryDate)} в ${timeFmt.format(expiryDate)} (Минск)`;
+    // PATCH MINSK-TIME v1: единый формат "3 мая в 23:59 (Минск)" + строка списания
+    const formattedDate = formatMinskDateTime(expiryDate) || '';
+    const formattedNextCharge = formatMinskDateTime(nextChargeAt);
 
     const safeProductName = escapeMd(productName);
     const safeTariffName = escapeMd(tariffName);
     const safeAmount = escapeMd(formatCurrency(amount, currency));
     // PATCH AMOUNT-RESOLVER v4: omit amount line if unresolved (data-defect path) — reminder still sent.
     const amountLine = amount > 0 ? `\n💳 *Сумма списания:* ${safeAmount}` : '';
+    // PATCH MINSK-TIME v1: строка времени списания (только для recurring с автопродлением)
+    const chargeTimeLine = (hasSBS && !isOneTime && formattedNextCharge)
+      ? `\n⚡ *Списание:* ${escapeMd(formattedNextCharge)}`
+      : '';
     const renewalDetailsBlock = `📦 *Продукт:* ${safeProductName}
 🎯 *Тариф:* ${safeTariffName}
-📆 *Доступ до:* ${formattedDate}${amountLine}`;
+📆 *Доступ до:* ${formattedDate}${amountLine}${chargeTimeLine}`;
 
     // PATCH ONE-TIME v2: тёплые тексты с эмодзи, точное время, нейтральный CTA (ЛК)
     if (isOneTime) {
