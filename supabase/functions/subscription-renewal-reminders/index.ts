@@ -1147,6 +1147,7 @@ Deno.serve(async (req) => {
           order_id,
           status,
           access_end_at,
+          next_charge_at,
           payment_token,
           tariff_id,
           billing_type,
