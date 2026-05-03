@@ -554,6 +554,11 @@ Deno.serve(async (req) => {
         JSON.stringify({
           success: true,
           already_fulfilled: true,
+          // PATCH rebill-idempotency-fix-2026-05: lift IDs to top level so callers
+          // (bepaid-webhook rebill path) can extend access without depending on `existing` shape.
+          subscription_id: resolvedSubscription!.id,
+          subscription_v2_id: resolvedSubscription!.id,
+          entitlement_id: existingEntByOrder.id,
           message: "Доступ по этому заказу уже был выдан ранее",
           existing: {
             entitlement_id: existingEntByOrder.id,
