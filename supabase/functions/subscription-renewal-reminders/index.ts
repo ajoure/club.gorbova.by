@@ -383,6 +383,7 @@ async function sendTelegramReminder(
   productId?: string | null,
   isOneTime: boolean = false,
   botId?: string | null,
+  nextChargeAt: Date | null = null,
 ): Promise<{ 
   sent: boolean; 
   logged: boolean; 
