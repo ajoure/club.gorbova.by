@@ -1,164 +1,95 @@
-Да, согласен, с учетом правок:
+# План: мониторинг recurring rebill без продления доступа
 
-План согласован.
+## Цель
 
-&nbsp;
+Diagnostic alert: «успешный recurring платёж прошёл, но доступ фактически не продлился». Без auto-repair. Только сигнал админу.
 
-Обязательные уточнения перед build:
+## Этап 1 — Discovery (без миграций)
 
-&nbsp;
+1. Проверить существующие таблицы для алертов:
+   - `system_health_alerts` — структура, поля, есть ли уникальность по ключу.
+   - `system_health_reports` — подходит ли как контейнер.
+   - audit_logs — какие action уже есть для rebill (`bepaid.webhook.link_order_dates_updated`, `rebill_backfill_2026_05.fixed`, `skip_already_fulfilled` и т.п.).
+2. Проверить существующие cron jobs (`pg_cron`) — есть ли уже похожие 15-минутные мониторы, чтобы не дублировать.
+3. Проверить `telegram-notify-admins` — формат aggregated-сообщения, лимиты.
+4. Подтвердить: новую таблицу создаём ТОЛЬКО если существующие не подходят.
 
-1. Не создавать новый параллельный механизм выдачи доступа.
+Discovery → отдельный отчёт перед миграцией.
 
-   Использовать только существующий canonical flow:
+## Этап 2 — Detection logic
 
-   bePaid webhook → grant-access-for-order → subscriptions_v2 / entitlements / Telegram access / audit.
-
-&nbsp;
-
-2. Главный фикс:
-
-   если recurring payment успешно прошёл, `skip_already_fulfilled` НЕ должен блокировать продление.
-
-   Для rebill нужно продлевать существующую подписку и доступы идемпотентно.
-
-&nbsp;
-
-3. End-of-day invariant обязателен:
-
-   access_end_at / expires_at = 23:59:59 Europe/Minsk нужного дня.
-
-   Не возвращаться к точному времени платежа.
-
-&nbsp;
-
-4. Перед backfill:
-
-   обязательно показать CSV/list всех пострадавших:
-
-   user, product, tariff, payment_id, paid_at, old_access_end, expected_access_end, Telegram status.
-
-   Execute backfill только после отдельного approve.
-
-&nbsp;
-
-5. По Елене Ширшовой отдельно показать proof:
-
-   было / стало по subscription, entitlement, Telegram access, audit.
-
-&nbsp;
-
-6. Добавить мониторинг/alert:
-
-   successful recurring payment без продления access_end_at в течение 15 минут = alert.
-
-&nbsp;
-
-7. Уведомления клиентам пока не отправлять.
-
-   Сначала восстановить доступы и показать итоговый список.
-
-&nbsp;
-
-После этих правок можно начинать Diagnose/Fix/Dry-run.
-
-&nbsp;
-
-## План: восстановить продление подписок при rebill public-link
-
-### Diagnose (подтверждено по аудиту Елены Ширшовой)
-
-- public-link подписка `SUB-LINK-MNHH6TU2`, order `2e0b6eaa`, sub `a25168db`.
-- 02.04.26 — первичный grant, access до 02.05.26 12:00.
-- 02.05.26 13:15 — bePaid rebill с тем же `order_id`/`tracking_id`.
-- `bepaid-webhook` → `grant-access-for-order` → HARD GUARD `skip_already_fulfilled` (entitlement+sub уже есть на этот `order_id`).
-- Ответ `{ already_fulfilled: true, existing: { subscription_id } }` — `subscription_id` НЕ на верхнем уровне.
-- В webhook: `grantedSubscriptionV2Id = grantResult?.subscription_id || grantResult?.subscription_v2_id` → `null`.
-- Fallback-лукап требует `entitlements.status='active'`, но он уже `expired` → снова `null`.
-- INLINE-блок продления (`access_end_at`, `entitlements`, `telegram_access`) пропущен. Деньги списаны, доступа нет.
-
-Это регресс idempotency-guard на rebill: гвард корректно блокирует дубль первого платежа, но ломает rebill по тому же `order_id`.
-
-### Fix-1: контракт `grant-access-for-order` (idempotent response)
-
-`supabase/functions/grant-access-for-order/index.ts` — в ветке `skip_already_fulfilled` поднять `subscription_id` и `entitlement_id` на верхний уровень ответа, не ломая существующее поле `existing`.
-
-### Fix-2: webhook — надёжный rebill-extend
-
-`supabase/functions/bepaid-webhook/index.ts` (link-order ветка):
-
-1. Расширить чтение ID:
-  ```
-   grantedSubscriptionV2Id =
-     grantResult?.subscription_id ||
-     grantResult?.subscription_v2_id ||
-     grantResult?.existing?.subscription_id ||
-     null;
-  ```
-2. Заменить fallback-лукап на надёжный по `order_id`:
-  - `subscriptions_v2 WHERE order_id = linkOrder.id`
-  - затем `meta->'extended_by_orders' ? linkOrder.id`
-  - убрать жёсткий фильтр `entitlements.status='active'`.
-3. Вычисление `accessEndAt` / `next_charge_at` выполнять ВСЕГДА при наличии `linkSubV2`, даже если grant вернул `already_fulfilled`.
-4. Сохранить инварианты:
-  - GREATEST по `expires_at` (Entitlement Sync Engine);
-  - end-of-day Europe/Minsk (`endOfDayAppTz`) — same-day drift игнорируется;
-  - overshoot guard (date-level, ≤1.5×access_days);
-  - canonical write-path: только через grant + INLINE как страховка.
-
-### Fix-3: единая точка продления — `mode: 'rebill'`
-
-В `grant-access-for-order` добавить детектор rebill (вторая+ `payments_v2.succeeded` по тому же `order_id`) либо явный параметр `mode: 'rebill'`. В этом режиме функция:
-
-- НЕ создаёт сущности;
-- вызывает существующую `extendSubscriptionAccess(subscription_id, accessDays)`;
-- пишет audit `grant-access-for-order.rebill_extended`;
-- запускает sync entitlements + `telegram-grant-access` через canonical путь (см. Canonical Telegram Grant Write-Path).
-
-INLINE-блок в webhook остаётся как страховка, но идемпотентен по дате (GREATEST + EOD Minsk).
-
-### Backfill пострадавших
-
-Dry-run выборка (recurring `payments_v2.succeeded` без сопровождающего `bepaid.webhook.link_order_dates_updated` в окне ±15 мин):
+**Главный критерий (SOT):**
 
 ```
-SELECT s.id sub_id, s.user_id, s.product_id, s.tariff_id,
-       s.access_end_at, p.id payment_id, p.paid_at, p.amount,
-       o.id order_id, o.order_number
-FROM payments_v2 p
-JOIN orders_v2 o ON o.id = p.order_id
-JOIN subscriptions_v2 s ON s.order_id = o.id
-WHERE p.status='succeeded'
-  AND p.is_recurring = true
-  AND p.paid_at > s.access_end_at - interval '12 hours'
-  AND NOT EXISTS (
-    SELECT 1 FROM audit_logs a
-    WHERE a.action='bepaid.webhook.link_order_dates_updated'
-      AND a.meta->>'order_id' = o.id::text
-      AND a.created_at BETWEEN p.paid_at - interval '5 minutes'
-                           AND p.paid_at + interval '15 minutes')
-ORDER BY p.paid_at DESC;
+payment.status = 'succeeded'
+AND payment.is_recurring = true
+AND subscription.access_end_at <= expected_end_at_minsk
 ```
 
-1. Полный список → CSV в `/mnt/documents/rebill_backfill_2026_05_dryrun.csv`.
-2. Показать тебе before-execute, ждать approve.
-3. По approve — для каждой строки вызвать `grant-access-for-order` (после Fix-1/2/3) с `mode='rebill'` и `idempotency_key='rebill_backfill_2026_05:{payment_id}'`.
-4. Audit per row: `rebill_backfill_2026_05.fixed`.
+где `expected_end_at_minsk = endOfDayAppTz(paid_at + access_days)` (Europe/Minsk, 23:59:59).
 
-### Verify / DoD
+**Audit `bepaid.webhook.link_order_dates_updated`** — диагностическое поле в alert (`audit_present: true/false`), НЕ единственный фильтр.
 
-- Елена Ширшова: `a25168db` → `status=active`, `access_end_at` = EOD Minsk даты от bePaid `active_to`, `next_charge_at` обновлён, telegram_access продлён, новый audit `bepaid.webhook.link_order_dates_updated`.
-- Backfill-выборка возвращает 0 строк.
-- Smoke: повторный вызов `grant-access-for-order` для уже продлённого order → `skip_already_fulfilled` БЕЗ изменения дат.
-- Новых `skip_already_fulfilled` без сопутствующего `link_order_dates_updated` для rebill-платежей не появляется (мониторинг 7 дней).
-- Proof: `.lovable/proofs/rebill_idempotency_fix_2026_05.md` (diagnose, fix, dry-run CSV, execute log, verify).
+**Окно cron:** платежи старше 15 минут и не старше 24 часов.
+**Окно dry-run:** параметризуется до 7 дней (для бэкаудита).
 
-### НЕ трогаем
+**Обязательные исключения:**
+- `subscriptions_v2.meta->>'model' = 'internal_installment'` или `billing_type IN ('mit')` с installment-маркером;
+- `subscriptions_v2.status IN ('canceled','superseded','refunded')`;
+- payments с уже существующим audit `rebill_backfill_*.fixed` или `manual_repair.*`;
+- same-day drift: `date_trunc('day', access_end_at AT TIME ZONE 'Europe/Minsk') = date_trunc('day', expected_end_at AT TIME ZONE 'Europe/Minsk')` → **не алертим** (закрыто `microcorrection_rollback_2026_05_03`);
+- не-bePaid провайдеры.
 
-- Первичный grant (работает корректно).
-- Installment-ветку (`billing_type='mit'` + `meta.model='internal_installment'`).
-- `subscriptions_v2` schema (только meta).
-- Other providers, manual queue (`telegram_access_queue`).
-- Same-day drift correction (закрыто `microcorrection_rollback_2026_05_03`).
+## Этап 3 — Alert payload
 
-После твоего approve — переключаюсь в build, делаю Fix-1/2/3, dry-run CSV backfill, показываю список, и только после второго approve выполняю backfill.
+Поля per alert (idempotent по `payment_id`):
+- `payment_id`, `order_id`, `subscription_id`, `user_id`, `email`
+- `product_id` + name, `tariff_id` + name
+- `paid_at`, `access_days`
+- `current_access_end_at`, `expected_access_end_at_minsk`, `gap_hours`
+- `audit_link_order_dates_updated_present` (диагностика)
+- `reason` enum: `no_extension` / `partial_extension` / `audit_missing_with_drift`
+- `created_at`
+
+## Этап 4 — Notification
+
+- Telegram: **aggregated message per tick** (один пост со списком), не по одному на платёж.
+- Если 0 кандидатов — ничего не отправляем (silent OK).
+- Формат: count + top-N строк + ссылка на admin view.
+- Reuse `telegram-notify-admins`.
+
+## Этап 5 — Cron
+
+`pg_cron` каждые 15 минут → edge function `monitor-rebill-no-extension`.
+Функция:
+1. Запускает SELECT detection-логики (окно 15м–24ч).
+2. Для каждого нового кандидата (нет alert по этому `payment_id`) — INSERT в alerts table.
+3. Если есть новые → один aggregated Telegram-пост.
+4. **No auto-repair.** Только запись + нотификация.
+
+## Этап 6 — Execute порядок
+
+1. Discovery → отчёт.
+2. Dry-run за 7 дней → CSV `/mnt/documents/rebill_monitor_dryrun_2026_05.csv` + список «какой alert был бы создан».
+3. Approve от тебя.
+4. Миграция (alerts table если нужна + cron) + deploy edge function.
+5. Verify: 1-я итерация cron → 0 новых alert (после Fix-1/2/3 и backfill Ширшовой пострадавших нет).
+6. Smoke: искусственно отметить тестовый платёж → проверить, что alert создаётся и приходит в Telegram.
+
+## DoD
+
+- Discovery-отчёт с решением «новая таблица / переиспользуем».
+- Dry-run CSV с 0 false positives после фиксов.
+- Cron активен, edge function deployed.
+- Telegram aggregated alert работает.
+- Repair кнопка/ручная процедура — отдельная follow-up задача (вне этого плана).
+- Proof: `.lovable/proofs/rebill_monitoring_alert_2026_05.md` — discovery, схема, dry-run, smoke-тест.
+
+## НЕ трогаем
+
+- `grant-access-for-order` / `bepaid-webhook` (Fix-1/2/3 уже задеплоены).
+- Installment-ветку.
+- Same-day drift correction.
+- Auto-repair — explicit out of scope.
+
+После approve — переключаюсь в build, начинаю с Discovery без миграций.
