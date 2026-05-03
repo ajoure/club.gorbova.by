@@ -5,6 +5,7 @@ import { generateRenewalCTAs, type RenewalCTAs } from '../_shared/generate-renew
 import { resolveProductRenewability } from '../_shared/renewal-offer-resolver.ts';
 import { greetPrefix, extractFirstName } from '../_shared/recipient-name.ts';
 import { logAutomatedTelegramMessage } from '../_shared/log-automated-telegram.ts';
+import { formatMinskDateTime, formatMinskDateTimeWithYear } from '../_shared/formatMinsk.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -382,6 +383,7 @@ async function sendTelegramReminder(
   productId?: string | null,
   isOneTime: boolean = false,
   botId?: string | null,
+  nextChargeAt: Date | null = null,
 ): Promise<{ 
   sent: boolean; 
   logged: boolean; 
@@ -461,23 +463,22 @@ async function sendTelegramReminder(
     // PATCH NAME-V: безопасное обращение через helper. Если имя неопределено —
     // префикс пустой, фраза начинается без обращения (а не с фамилии).
     const safeNamePrefix = escapeMd(greetPrefix(profile));
-    // PATCH ONE-TIME v2: точное время Минск (день + месяц + HH:mm)
-    const dateFmt = new Intl.DateTimeFormat('ru-RU', {
-      day: 'numeric', month: 'long', timeZone: 'Europe/Minsk'
-    });
-    const timeFmt = new Intl.DateTimeFormat('ru-RU', {
-      hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Minsk'
-    });
-    const formattedDate = `${dateFmt.format(expiryDate)} в ${timeFmt.format(expiryDate)} (Минск)`;
+    // PATCH MINSK-TIME v1: единый формат "3 мая в 23:59 (Минск)" + строка списания
+    const formattedDate = formatMinskDateTime(expiryDate) || '';
+    const formattedNextCharge = formatMinskDateTime(nextChargeAt);
 
     const safeProductName = escapeMd(productName);
     const safeTariffName = escapeMd(tariffName);
     const safeAmount = escapeMd(formatCurrency(amount, currency));
     // PATCH AMOUNT-RESOLVER v4: omit amount line if unresolved (data-defect path) — reminder still sent.
     const amountLine = amount > 0 ? `\n💳 *Сумма списания:* ${safeAmount}` : '';
+    // PATCH MINSK-TIME v1: строка времени списания (только для recurring с автопродлением)
+    const chargeTimeLine = (hasSBS && !isOneTime && formattedNextCharge)
+      ? `\n⚡ *Списание:* ${escapeMd(formattedNextCharge)}`
+      : '';
     const renewalDetailsBlock = `📦 *Продукт:* ${safeProductName}
 🎯 *Тариф:* ${safeTariffName}
-📆 *Доступ до:* ${formattedDate}${amountLine}`;
+📆 *Доступ до:* ${formattedDate}${amountLine}${chargeTimeLine}`;
 
     // PATCH ONE-TIME v2: тёплые тексты с эмодзи, точное время, нейтральный CTA (ЛК)
     if (isOneTime) {
@@ -722,20 +723,20 @@ async function sendEmailReminder(
   subscriptionId: string,
   orderId: string | null,
   tariffId: string | null,
-  isOneTime: boolean = false
+  isOneTime: boolean = false,
+  nextChargeAt: Date | null = null,
 ): Promise<boolean> {
   try {
-    // PATCH ONE-TIME v2: точное время Минск
-    const dateFmt = new Intl.DateTimeFormat('ru-RU', {
-      day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Minsk'
-    });
-    const timeFmt = new Intl.DateTimeFormat('ru-RU', {
-      hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Minsk'
-    });
-    const formattedDate = `${dateFmt.format(expiryDate)} в ${timeFmt.format(expiryDate)} (Минск)`;
+    // PATCH MINSK-TIME v1: единый формат с годом + строка списания
+    const formattedDate = formatMinskDateTimeWithYear(expiryDate) || '';
+    const formattedNextCharge = formatMinskDateTimeWithYear(nextChargeAt);
     // PATCH AMOUNT-RESOLVER v4: omit amount line in HTML if unresolved.
     const amountLineHtml = amount > 0
       ? `<p style="margin: 0;"><strong>💳 Сумма списания:</strong> ${formatCurrency(amount, currency)}</p>`
+      : '';
+    // PATCH MINSK-TIME v1: строка времени списания для recurring с автопродлением
+    const chargeTimeLineHtml = (hasSBS && !isOneTime && formattedNextCharge)
+      ? `<p style="margin: 0;"><strong>⚡ Списание:</strong> ${formattedNextCharge}</p>`
       : '';
 
     let subject = '';
@@ -817,6 +818,7 @@ async function sendEmailReminder(
             <p style="margin: 0 0 8px 0;"><strong>🎯 Тариф:</strong> ${tariffName}</p>
             <p style="margin: 0 0 8px 0;"><strong>📆 Дата окончания:</strong> ${formattedDate}</p>
             ${amountLineHtml}
+            ${chargeTimeLineHtml}
           </div>
           ${statusSection}
           <p style="color: #6b7280; margin-top: 32px; font-size: 14px;">С уважением,<br>Команда клуба</p>
@@ -833,6 +835,7 @@ async function sendEmailReminder(
             <p style="margin: 0 0 8px 0;"><strong>🎯 Тариф:</strong> ${tariffName}</p>
             <p style="margin: 0 0 8px 0;"><strong>📆 Дата окончания:</strong> ${formattedDate}</p>
             ${amountLineHtml}
+            ${chargeTimeLineHtml}
           </div>
           ${statusSection}
           <p style="color: #6b7280; margin-top: 32px; font-size: 14px;">С уважением,<br>Команда клуба</p>
@@ -849,6 +852,7 @@ async function sendEmailReminder(
             <p style="margin: 0 0 8px 0;"><strong>🎯 Тариф:</strong> ${tariffName}</p>
             <p style="margin: 0 0 8px 0;"><strong>📆 Дата окончания:</strong> ${formattedDate}</p>
             ${amountLineHtml}
+            ${chargeTimeLineHtml}
           </div>
           ${statusSection}
           <p style="color: #6b7280; margin-top: 32px; font-size: 14px;">С уважением,<br>Команда клуба</p>
@@ -1143,6 +1147,7 @@ Deno.serve(async (req) => {
           order_id,
           status,
           access_end_at,
+          next_charge_at,
           payment_token,
           tariff_id,
           billing_type,
@@ -1393,12 +1398,14 @@ Deno.serve(async (req) => {
           result.telegram_sent = true;
           result.telegram_logged = true;
         } else {
+          const nextChargeAt = (sub as any).next_charge_at ? new Date((sub as any).next_charge_at) : null;
           const telegramResult = await sendTelegramReminder(
             supabase, botToken, userId,
             productName, tariffName, expiryDate, daysLeft,
             amount, currency, userHasSBS, oneTimeUrl, subscriptionUrl,
             sub.id, sub.order_id, sub.tariff_id, productId, productIsOneTime,
             linkBot?.id ?? null,
+            nextChargeAt,
           );
           result.telegram_sent = telegramResult.sent;
           result.telegram_logged = telegramResult.logged;
@@ -1427,7 +1434,8 @@ Deno.serve(async (req) => {
               supabase, userId, profile?.id || null, userEmail,
               productName, tariffName, expiryDate, daysLeft,
               amount, currency, userHasSBS, oneTimeUrl, subscriptionUrl,
-              sub.id, sub.order_id, sub.tariff_id, productIsOneTime
+              sub.id, sub.order_id, sub.tariff_id, productIsOneTime,
+              (sub as any).next_charge_at ? new Date((sub as any).next_charge_at) : null,
             );
             // PATCH OUTCOME-PARITY v1: write canonical email outcome.
             // send-email writes its OWN row with status='sent' on actual SMTP accept.

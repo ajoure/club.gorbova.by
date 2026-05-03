@@ -3,6 +3,7 @@ import { generateRenewalCTAs } from '../_shared/generate-renewal-ctas.ts';
 import { resolveProductRenewability } from '../_shared/renewal-offer-resolver.ts';
 import { greetPrefix } from '../_shared/recipient-name.ts';
 import { logAutomatedTelegramMessage } from '../_shared/log-automated-telegram.ts';
+import { formatMinskDateTime } from '../_shared/formatMinsk.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -237,13 +238,26 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Format expiry date
+      // PATCH MINSK-TIME v1: точный формат "3 мая в 23:59 (Минск)" + строка списания
       const expiryDate = new Date(access.active_until!);
-      const formattedDate = expiryDate.toLocaleDateString('ru-RU', {
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric'
-      });
+      const formattedDate = formatMinskDateTime(expiryDate) || '';
+
+      // Резолвим next_charge_at из subscriptions_v2 (если у юзера есть активная подписка)
+      let nextChargeLine = '';
+      try {
+        const { data: subRow } = await supabase
+          .from('subscriptions_v2')
+          .select('next_charge_at, status, auto_renew, tariff_id')
+          .eq('user_id', access.user_id)
+          .in('status', ['active', 'trial'])
+          .order('access_end_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (subRow?.next_charge_at && subRow.auto_renew) {
+          const nc = formatMinskDateTime(subRow.next_charge_at);
+          if (nc) nextChargeLine = `\n\n⚡ Списание: ${nc}`;
+        }
+      } catch (_e) { /* non-blocking */ }
 
       // Resolve product/tariff for CTA generation (uses tariff_offers SOT)
       const resolved = await resolveProductAndTariff(supabase, access.user_id, access.club_id);
@@ -264,7 +278,7 @@ Deno.serve(async (req) => {
 
       if (hasSBS) {
         // Авто-продление активно
-        message = `⏰ Небольшое напоминание\n\n${namePrefix}ваша подписка в ${clubName} продлится автоматически ${formattedDate}.\n\nАвтопродление активно — отключить его можно в личном кабинете 💙`;
+        message = `⏰ Небольшое напоминание\n\n${namePrefix}ваша подписка в ${clubName} продлится автоматически ${formattedDate}.${nextChargeLine}\n\nАвтопродление активно — отключить его можно в личном кабинете 💙`;
         const siteUrl = Deno.env.get('SITE_URL') || 'https://club.gorbova.by';
         keyboard = {
           inline_keyboard: [[{ text: '📋 Управление подпиской', url: `${siteUrl}/dashboard` }]],
