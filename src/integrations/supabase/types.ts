@@ -89,6 +89,48 @@ export type Database = {
         }
         Relationships: []
       }
+      _microcorrection_rollback_2026_05_03_backup: {
+        Row: {
+          access_end_at_before: string | null
+          backup_id: string
+          captured_at: string
+          expires_at_before: string | null
+          marker: string | null
+          meta_before: Json | null
+          next_charge_at_before: string | null
+          product_id: string | null
+          source_id: string
+          source_table: string
+          user_id: string | null
+        }
+        Insert: {
+          access_end_at_before?: string | null
+          backup_id?: string
+          captured_at?: string
+          expires_at_before?: string | null
+          marker?: string | null
+          meta_before?: Json | null
+          next_charge_at_before?: string | null
+          product_id?: string | null
+          source_id: string
+          source_table: string
+          user_id?: string | null
+        }
+        Update: {
+          access_end_at_before?: string | null
+          backup_id?: string
+          captured_at?: string
+          expires_at_before?: string | null
+          marker?: string | null
+          meta_before?: Json | null
+          next_charge_at_before?: string | null
+          product_id?: string | null
+          source_id?: string
+          source_table?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       access_grant_ledger: {
         Row: {
           action_type: string
