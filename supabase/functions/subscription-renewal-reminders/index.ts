@@ -1434,7 +1434,8 @@ Deno.serve(async (req) => {
               supabase, userId, profile?.id || null, userEmail,
               productName, tariffName, expiryDate, daysLeft,
               amount, currency, userHasSBS, oneTimeUrl, subscriptionUrl,
-              sub.id, sub.order_id, sub.tariff_id, productIsOneTime
+              sub.id, sub.order_id, sub.tariff_id, productIsOneTime,
+              (sub as any).next_charge_at ? new Date((sub as any).next_charge_at) : null,
             );
             // PATCH OUTCOME-PARITY v1: write canonical email outcome.
             // send-email writes its OWN row with status='sent' on actual SMTP accept.
