@@ -1,95 +1,121 @@
-# План: мониторинг recurring rebill без продления доступа
+да, согласен, с учетом правок:
 
-## Цель
+Добавь в dry-run обязательные STOP-checks:
 
-Diagnostic alert: «успешный recurring платёж прошёл, но доступ фактически не продлился». Без auto-repair. Только сигнал админу.
+&nbsp;
 
-## Этап 1 — Discovery (без миграций)
+1. Не удалять `failed/canceled/pending`, если есть хоть одна запись в:
 
-1. Проверить существующие таблицы для алертов:
-   - `system_health_alerts` — структура, поля, есть ли уникальность по ключу.
-   - `system_health_reports` — подходит ли как контейнер.
-   - audit_logs — какие action уже есть для rebill (`bepaid.webhook.link_order_dates_updated`, `rebill_backfill_2026_05.fixed`, `skip_already_fulfilled` и т.п.).
-2. Проверить существующие cron jobs (`pg_cron`) — есть ли уже похожие 15-минутные мониторы, чтобы не дублировать.
-3. Проверить `telegram-notify-admins` — формат aggregated-сообщения, лимиты.
-4. Подтвердить: новую таблицу создаём ТОЛЬКО если существующие не подходят.
+   - payments_v2 по order_id;
 
-Discovery → отдельный отчёт перед миграцией.
+   - subscriptions_v2.order_id;
 
-## Этап 2 — Detection logic
+   - subscriptions_v2.meta.extended_by_orders;
 
-**Главный критерий (SOT):**
+   - entitlements.meta с order_id/source_order_id;
 
-```
-payment.status = 'succeeded'
-AND payment.is_recurring = true
-AND subscription.access_end_at <= expected_end_at_minsk
-```
+   - access_grant_ledger;
 
-где `expected_end_at_minsk = endOfDayAppTz(paid_at + access_days)` (Europe/Minsk, 23:59:59).
+   - audit_logs с order_id.
 
-**Audit `bepaid.webhook.link_order_dates_updated`** — диагностическое поле в alert (`audit_present: true/false`), НЕ единственный фильтр.
+&nbsp;
 
-**Окно cron:** платежи старше 15 минут и не старше 24 часов.
-**Окно dry-run:** параметризуется до 7 дней (для бэкаудита).
+2. Перед DELETE сохранить snapshot удаляемых строк в отдельную backup-таблицу:
 
-**Обязательные исключения:**
-- `subscriptions_v2.meta->>'model' = 'internal_installment'` или `billing_type IN ('mit')` с installment-маркером;
-- `subscriptions_v2.status IN ('canceled','superseded','refunded')`;
-- payments с уже существующим audit `rebill_backfill_*.fixed` или `manual_repair.*`;
-- same-day drift: `date_trunc('day', access_end_at AT TIME ZONE 'Europe/Minsk') = date_trunc('day', expected_end_at AT TIME ZONE 'Europe/Minsk')` → **не алертим** (закрыто `microcorrection_rollback_2026_05_03`);
-- не-bePaid провайдеры.
+   `_orders_orphan_cleanup_2026_05_backup`.
 
-## Этап 3 — Alert payload
+&nbsp;
 
-Поля per alert (idempotent по `payment_id`):
-- `payment_id`, `order_id`, `subscription_id`, `user_id`, `email`
-- `product_id` + name, `tariff_id` + name
-- `paid_at`, `access_days`
-- `current_access_end_at`, `expected_access_end_at_minsk`, `gap_hours`
-- `audit_link_order_dates_updated_present` (диагностика)
-- `reason` enum: `no_extension` / `partial_extension` / `audit_missing_with_drift`
-- `created_at`
+3. Execute делать только по exact id-list из approved dry-run snapshot, не пересчитывать cohort заново внутри execute.
 
-## Этап 4 — Notification
+&nbsp;
 
-- Telegram: **aggregated message per tick** (один пост со списком), не по одному на платёж.
-- Если 0 кандидатов — ничего не отправляем (silent OK).
-- Формат: count + top-N строк + ссылка на admin view.
-- Reuse `telegram-notify-admins`.
+4. В Cohort B отдельно вывести причину сохранения:
 
-## Этап 5 — Cron
+   `paid_without_payment`, `refunded`, `has_payment`, `has_subscription_ref`, `has_entitlement_ref`, `has_audit_ref`.
 
-`pg_cron` каждые 15 минут → edge function `monitor-rebill-no-extension`.
-Функция:
-1. Запускает SELECT detection-логики (окно 15м–24ч).
-2. Для каждого нового кандидата (нет alert по этому `payment_id`) — INSERT в alerts table.
-3. Если есть новые → один aggregated Telegram-пост.
-4. **No auto-repair.** Только запись + нотификация.
+&nbsp;
 
-## Этап 6 — Execute порядок
+5. Verify:
 
-1. Discovery → отчёт.
-2. Dry-run за 7 дней → CSV `/mnt/documents/rebill_monitor_dryrun_2026_05.csv` + список «какой alert был бы создан».
-3. Approve от тебя.
-4. Миграция (alerts table если нужна + cron) + deploy edge function.
-5. Verify: 1-я итерация cron → 0 новых alert (после Fix-1/2/3 и backfill Ширшовой пострадавших нет).
-6. Smoke: искусственно отметить тестовый платёж → проверить, что alert создаётся и приходит в Telegram.
+   - удалено ровно approved_count;
+
+   - backup_count = deleted_count;
+
+   - повторный execute = 0;
+
+   - доступы/подписки/entitlements не изменились.
+
+&nbsp;
+
+План: Аудит сделок без платежей (Gorbova Club + Бухгалтерия как бизнес)
+
+## Контекст
+
+Правило: «есть платёж — есть сделка; нет платежа — сделки быть не должно». Удаляем только висячие `orders_v2` без единой строки `payments_v2`. Доступы пользователей живут в `subscriptions_v2` / `access_rules` / `entitlements` и от удаления `orders_v2` не зависят.
+
+## Скоуп (только два продукта)
+
+- `11c9f1b8-0355-4753-bd74-40b42aa53616` — Gorbova Club
+- `85046734-2282-4ded-b0d3-8c66c8f5bc2b` — Бухгалтерия как бизнес
+
+## Текущая картина (live)
+
+
+| Продукт | Всего | С оплаченным платежом | Только неуспешный платёж | Без платежей | Из них status=paid |
+| ------- | ----- | --------------------- | ------------------------ | ------------ | ------------------ |
+| Club    | 2263  | 1536                  | 101                      | 626          | 3                  |
+| БкБ     | 142   | 110                   | 22                       | 10           | 0                  |
+
+
+«Без платежей» по статусу:
+
+- Club: pending=609, failed=12, canceled=2, paid=3
+- БкБ: pending=10
+
+## Когорты
+
+- **Cohort A — кандидаты на удаление**: orders_v2 без `payments_v2` И status ∈ (`pending`, `failed`, `canceled`). Ожидаемо ~633 строки.
+- **Cohort B — STOP, ручной разбор**: orders_v2 без платежей со status=`paid` (3 Club).
+- **Cohort C — не трогаем**: всё с любыми payments_v2 (включая failed) и `refunded`.
+
+## Pre-delete safety check (для каждой строки Cohort A)
+
+Если найдено ЛЮБОЕ — строка уходит в Cohort B (manual review):
+
+1. Нет `subscriptions_v2` через `meta->>'origin_order_id'` или `order_id`.
+2. Нет `access_rules.source_order_id = order.id`.
+3. Нет `entitlements.meta->>'order_id'`.
+4. Нет `crm_activity_log.order_id` (либо архивируем активность отдельно).
+
+## Этапы
+
+1. **Dry-run (read-only)**
+  - Полный SQL по двум продуктам, фильтрация Cohort A с safety-checks.
+  - CSV в `/mnt/documents/cohort_a_club.csv`, `cohort_a_buh.csv`, `cohort_b.csv`.
+  - Колонки: `id, order_number, product, status, final_price, profile_id, email, created_at`.
+  - Возврат точного числа строк к удалению + список Cohort B.
+2. **Approve gate** — жду подтверждения по точному количеству.
+3. **Execute (миграция)**
+  - `INSERT INTO audit_logs(action='orders.cohort_a_orphan_delete_2026_05', meta=jsonb_строки)` ПЕРЕД delete.
+  - `DELETE FROM orders_v2 WHERE id = ANY($cohort_a_ids)`.
+  - Идемпотентность: повторный запуск = 0.
+4. **Verify**
+  - Повторный аудит: `no_payment AND status IN ('pending','failed','canceled')` для двух продуктов = 0.
+  - Snapshot `subscriptions_v2/access_rules/entitlements` count по затронутым `profile_id` до/после = diff 0.
+  - Proof: `.lovable/proofs/orders_v2_orphan_cleanup_2026_05.md`.
 
 ## DoD
 
-- Discovery-отчёт с решением «новая таблица / переиспользуем».
-- Dry-run CSV с 0 false positives после фиксов.
-- Cron активен, edge function deployed.
-- Telegram aggregated alert работает.
-- Repair кнопка/ручная процедура — отдельная follow-up задача (вне этого плана).
-- Proof: `.lovable/proofs/rebill_monitoring_alert_2026_05.md` — discovery, схема, dry-run, smoke-тест.
+- Cohort A удалён, Cohort B сохранён и передан тебе списком.
+- Audit-лог на каждую удалённую строку.
+- Доступы не изменились (verify diff = 0).
+- Повторный dry-run = 0.
 
-## НЕ трогаем
+## Что НЕ трогаем
 
-- `grant-access-for-order` / `bepaid-webhook` (Fix-1/2/3 уже задеплоены).
-- Installment-ветку.
-- Same-day drift correction.
-- Auto-repair — explicit out of scope.
+- `refunded`, `paid`-без-платежа (Cohort B), любые orders с payments (включая failed).
+- Другие продукты.
+- `subscriptions_v2` / `access_rules` / `entitlements`.
 
-После approve — переключаюсь в build, начинаю с Discovery без миграций.
+Подтверди план — переключусь в build, сгенерю dry-run CSV и покажу полные списки до любых удалений.
