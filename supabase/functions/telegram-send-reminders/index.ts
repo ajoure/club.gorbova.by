@@ -3,6 +3,7 @@ import { generateRenewalCTAs } from '../_shared/generate-renewal-ctas.ts';
 import { resolveProductRenewability } from '../_shared/renewal-offer-resolver.ts';
 import { greetPrefix } from '../_shared/recipient-name.ts';
 import { logAutomatedTelegramMessage } from '../_shared/log-automated-telegram.ts';
+import { formatMinskDateTime } from '../_shared/formatMinsk.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
