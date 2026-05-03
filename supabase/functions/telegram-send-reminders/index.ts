@@ -278,7 +278,7 @@ Deno.serve(async (req) => {
 
       if (hasSBS) {
         // Авто-продление активно
-        message = `⏰ Небольшое напоминание\n\n${namePrefix}ваша подписка в ${clubName} продлится автоматически ${formattedDate}.\n\nАвтопродление активно — отключить его можно в личном кабинете 💙`;
+        message = `⏰ Небольшое напоминание\n\n${namePrefix}ваша подписка в ${clubName} продлится автоматически ${formattedDate}.${nextChargeLine}\n\nАвтопродление активно — отключить его можно в личном кабинете 💙`;
         const siteUrl = Deno.env.get('SITE_URL') || 'https://club.gorbova.by';
         keyboard = {
           inline_keyboard: [[{ text: '📋 Управление подпиской', url: `${siteUrl}/dashboard` }]],
