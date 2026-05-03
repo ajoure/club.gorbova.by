@@ -5,6 +5,7 @@ import { generateRenewalCTAs, type RenewalCTAs } from '../_shared/generate-renew
 import { resolveProductRenewability } from '../_shared/renewal-offer-resolver.ts';
 import { greetPrefix, extractFirstName } from '../_shared/recipient-name.ts';
 import { logAutomatedTelegramMessage } from '../_shared/log-automated-telegram.ts';
+import { formatMinskDateTime, formatMinskDateTimeWithYear } from '../_shared/formatMinsk.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
