@@ -1398,12 +1398,14 @@ Deno.serve(async (req) => {
           result.telegram_sent = true;
           result.telegram_logged = true;
         } else {
+          const nextChargeAt = (sub as any).next_charge_at ? new Date((sub as any).next_charge_at) : null;
           const telegramResult = await sendTelegramReminder(
             supabase, botToken, userId,
             productName, tariffName, expiryDate, daysLeft,
             amount, currency, userHasSBS, oneTimeUrl, subscriptionUrl,
             sub.id, sub.order_id, sub.tariff_id, productId, productIsOneTime,
             linkBot?.id ?? null,
+            nextChargeAt,
           );
           result.telegram_sent = telegramResult.sent;
           result.telegram_logged = telegramResult.logged;
