@@ -661,32 +661,49 @@ export function ContactTelegramChat({
   }, [refetchMessages]);
 
   // Subscribe to realtime messages for this user — INSERT (new) + UPDATE (media enrichment)
+  // Channel name uses an instance-unique suffix so multiple components mounted for the same
+  // userId (e.g. InboxTabContent + ContactDetailSheet) don't collide on a single channel.
+  const instanceIdRef = useRef<string>(
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2)
+  );
+
   useEffect(() => {
-    if (!userId) return;
+    // Strict UUID guard — never subscribe with empty/invalid userId (filter would silently miss).
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!userId || !UUID_RE.test(userId)) {
+      console.warn("[ContactTelegramChat][realtime] skip subscribe — invalid userId:", userId);
+      return;
+    }
+
+    const filter = `user_id=eq.${userId}`;
+    const channelName = `chat-messages-${userId}-${instanceIdRef.current}`;
+    console.log("[ContactTelegramChat][realtime] subscribing", { channelName, filter });
 
     const channel = supabase
-      .channel(`chat-messages-${userId}`)
+      .channel(channelName)
       .on(
         "postgres_changes",
         {
           event: "INSERT",
           schema: "public",
           table: "telegram_messages",
-          filter: `user_id=eq.${userId}`
+          filter,
         },
         (payload) => {
           const newMsg = payload.new as any;
+          console.log("[ContactTelegramChat][realtime] INSERT", { id: newMsg?.id, user_id: newMsg?.user_id, direction: newMsg?.direction });
           const msgText = (newMsg?.message_text || "").trim();
           const msgTime = new Date(newMsg?.created_at || Date.now()).getTime();
 
-          // Patch cache: merge incoming row directly, drop matching temp row
+          // Patch cache: merge incoming row directly, drop matching temp row.
+          // Dedup by telegram_messages.id — guard against double-insert from realtime + fallback refetch.
           queryClient.setQueryData(
             ["telegram-messages", userId],
             (old: TelegramMessage[] | undefined) => {
               const list = old ? [...old] : [];
-              // already exists?
               if (list.some((m) => m.id === newMsg.id)) return list;
-              // drop matching temp
               const filtered = list.filter((m) => {
                 if (!m.id.startsWith("temp-")) return true;
                 const tempText = (m.message_text || "").trim();
@@ -703,11 +720,8 @@ export function ContactTelegramChat({
             }
           );
 
-          // Auto-scroll: outgoing always; incoming — only if user was near bottom before render.
-          // Otherwise increment unread badge so admin can jump down via FAB.
           const isFromAdmin = newMsg?.direction === "outgoing";
           const _nearBottom = isNearBottom();
-
           if (isFromAdmin || _nearBottom) {
             startStickyScroll(2600);
           } else {
@@ -721,12 +735,11 @@ export function ContactTelegramChat({
           event: "UPDATE",
           schema: "public",
           table: "telegram_messages",
-          filter: `user_id=eq.${userId}`,
+          filter,
         },
         (payload) => {
           const updated = payload.new as any;
           const shouldPin = isNearBottom();
-          // Patch cache point-by-point: replace row by id (preserves order)
           queryClient.setQueryData(
             ["telegram-messages", userId],
             (old: TelegramMessage[] | undefined) => {
@@ -751,15 +764,52 @@ export function ContactTelegramChat({
           if (shouldPin) startStickyScroll(2600);
         }
       )
+      .subscribe((status, err) => {
+        console.log("[ContactTelegramChat][realtime] status", { channelName, status, err });
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          // Fallback safety net: realtime not delivering → trigger a debounced refetch
+          // so the open chat doesn't get stuck without the latest message.
+          console.warn("[ContactTelegramChat][realtime] fallback refetch triggered due to status", status);
+          debouncedRefetch();
+        }
+      });
+
+    // Fallback refetch hook: when the LEFT inbox list invalidates the per-user message cache
+    // (it does so on its own realtime INSERT), perform a safe refetch in the open right panel
+    // even if our channel didn't fire. Dedup is handled inside the query (mergeByIdPreferEnriched).
+    const inboxBridgeChannel = supabase
+      .channel(`chat-bridge-${userId}-${instanceIdRef.current}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "telegram_messages",
+          filter,
+        },
+        (payload) => {
+          const row = payload.new as any;
+          const cached = queryClient.getQueryData(["telegram-messages", userId]) as
+            | TelegramMessage[]
+            | undefined;
+          const alreadyHave = !!cached?.some((m) => m.id === row?.id);
+          if (!alreadyHave) {
+            console.log("[ContactTelegramChat][realtime] bridge fallback refetch — message missing in cache", row?.id);
+            debouncedRefetch();
+          }
+        }
+      )
       .subscribe();
 
     return () => {
       if (refetchTimerRef.current) {
         window.clearTimeout(refetchTimerRef.current);
       }
+      console.log("[ContactTelegramChat][realtime] unsubscribing", { channelName });
       supabase.removeChannel(channel);
+      supabase.removeChannel(inboxBridgeChannel);
     };
-  }, [userId, queryClient, isNearBottom, startStickyScroll]);
+  }, [userId, queryClient, isNearBottom, startStickyScroll, debouncedRefetch]);
 
   const mediaIdsNeedingUrls = useMemo(() => {
     return (messages || [])
