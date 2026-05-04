@@ -457,19 +457,28 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
 
   if (!deal) return null;
 
-  // PATCH partial-refund-classifier-2026-05:
-  // Detect partial refund commercially via paidSum/refundedSum, regardless of orders_v2.status.
-  // Supports BOTH formats:
-  //   - new canonical: refund-row has transaction_type='refund' + status='refunded',
-  //                    parent payment has refunded_amount > 0
-  //   - legacy: refund-row has amount<0 + meta.type='refund' (status may be 'succeeded')
-  // paidSum: only positive non-refund successful payments (excludes refund-rows).
-  // refundedSum: parent.refunded_amount + |amount| of legacy refund-rows.
+  // PATCH partial-refund-classifier-2026-05 (v2 — no double count):
+  // paidSum: positive non-refund successful payments only.
+  // refundedSum:
+  //   1) parentRefundedSum = Σ parent.refunded_amount (canonical format, Patch 2)
+  //   2) для legacy/orphan refund-row добавляем |amount| ТОЛЬКО если этот refund-row
+  //      НЕ покрыт parent.refunded_amount (parent не найден или его refunded_amount = 0).
+  // Это убирает двойной учёт, когда Patch 2 пишет одновременно
+  // parent.refunded_amount += X и refund-row amount=-X.
   const refundTotals = (() => {
     if (!payments || payments.length === 0) return { paidSum: 0, refundedSum: 0 };
+    const list = payments as any[];
+    // index parent payments by id and by provider_payment_id (uid)
+    const parentById = new Map<string, any>();
+    const parentByUid = new Map<string, any>();
+    for (const p of list) {
+      if (p?.id) parentById.set(String(p.id), p);
+      if (p?.provider_payment_id) parentByUid.set(String(p.provider_payment_id), p);
+    }
     let paidSum = 0;
-    let refundedSum = 0;
-    for (const p of payments as any[]) {
+    let parentRefundedSum = 0;
+    let legacyRefundedSum = 0;
+    for (const p of list) {
       const status = (p?.status || '').toLowerCase();
       const txType = (p?.transaction_type || '').toLowerCase();
       const metaType = (p?.meta?.type || '').toLowerCase();
@@ -480,14 +489,24 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
         && (status === 'paid' || status === 'succeeded' || status === 'refunded')) {
         paidSum += amount;
       }
-      // Sum parent.refunded_amount (canonical format)
-      refundedSum += Number(p?.refunded_amount) || 0;
-      // Sum legacy refund-rows by absolute amount
+      // canonical: суммируем parent.refunded_amount (только non-refund rows, чтобы не учесть поле на самом refund-row)
+      if (!isRefundRow) {
+        parentRefundedSum += Number(p?.refunded_amount) || 0;
+      }
+      // legacy fallback: refund-row учитываем, только если его parent НЕ покрывает эту сумму
       if (isRefundRow) {
-        refundedSum += Math.abs(amount);
+        const parentId = p?.meta?.parent_payment_id ? String(p.meta.parent_payment_id) : null;
+        const parentUid = p?.meta?.parent_payment_uid ? String(p.meta.parent_payment_uid) : null;
+        const parent = (parentId && parentById.get(parentId))
+          || (parentUid && parentByUid.get(parentUid))
+          || null;
+        const parentRefunded = Number(parent?.refunded_amount) || 0;
+        if (!parent || parentRefunded <= 0) {
+          legacyRefundedSum += Math.abs(amount);
+        }
       }
     }
-    return { paidSum, refundedSum };
+    return { paidSum, refundedSum: parentRefundedSum + legacyRefundedSum };
   })();
   const isPartialRefund = refundTotals.refundedSum > 0
     && refundTotals.paidSum > 0

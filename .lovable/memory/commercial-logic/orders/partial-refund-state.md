@@ -33,10 +33,14 @@ type: feature
 `isPartialRefund` / `isFullRefund` считается коммерчески, **не зависит от `orders_v2.status`**:
 
 - `paidSum = Σ amount` где `amount > 0` И НЕ refund-row И `status ∈ {paid, succeeded, refunded}`
-- `refundedSum = Σ parent.refunded_amount` (canonical) **+** `Σ |amount|` legacy refund-rows
+- `refundedSum = parentRefundedSum + legacyRefundedSum`, где:
+  - `parentRefundedSum = Σ p.refunded_amount` по non-refund payments (canonical, Patch 2)
+  - `legacyRefundedSum = Σ |amount|` по refund-rows, у которых parent НЕ найден ИЛИ `parent.refunded_amount <= 0`
+- **НИКОГДА** не суммировать одновременно `parent.refunded_amount` и `|refund-row.amount|` за один и тот же refund — это double-count. Canonical writer (Patch 2) пишет ОБА признака; legacy писал только refund-row.
 - refund-row детектируется по: `transaction_type` содержит `refund`/`возврат`, ИЛИ `meta.type='refund'`, ИЛИ `amount < 0`
-- `isPartialRefund = refundedSum > 0 && paidSum > 0 && refundedSum + 0.01 < paidSum` → amber бейдж «Частичный возврат»
-- `isFullRefund = refundedSum > 0 && paidSum > 0 && refundedSum + 0.01 >= paidSum` → red бейдж «Возврат»
+- parent резолвится через `meta.parent_payment_id` (внутренний id) или `meta.parent_payment_uid` (provider id)
+- `isPartialRefund = refundedSum > 0 && paidSum > 0 && refundedSum + 0.01 < paidSum` → amber «Частичный возврат»
+- `isFullRefund = refundedSum > 0 && paidSum > 0 && refundedSum + 0.01 >= paidSum` → red «Возврат»
 
 ## Multi-payment-per-deal (rebill контекст)
 
