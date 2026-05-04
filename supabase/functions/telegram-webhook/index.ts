@@ -1280,9 +1280,55 @@ Deno.serve(async (req) => {
             const adminUserIds = [...new Set((adminRoles || []).map((r: any) => r.user_id))];
             
             if (adminUserIds.length > 0) {
-              const senderName = [msg.from.first_name, msg.from.last_name].filter(Boolean).join(' ') || 'Пользователь';
+              // ============================================================
+              // Resolve sender display name from PLATFORM profile (SOT).
+              // Mirrors src/lib/nameUtils.ts → formatContactName used in
+              // Контакт-центр UI ("Шостак Каролина", "Дергелёва Ольга").
+              // Pure helper — no DB writes, no side effects.
+              // ============================================================
+              let platformProfile: { first_name: string | null; last_name: string | null; full_name: string | null } | null = null;
+              try {
+                const { data: pp } = await supabase
+                  .from('profiles')
+                  .select('first_name, last_name, full_name')
+                  .eq('user_id', profile.user_id)
+                  .maybeSingle();
+                platformProfile = pp as any ?? null;
+              } catch (_) {
+                platformProfile = null;
+              }
+
+              const resolvePlatformDisplayName = (
+                pp: { first_name: string | null; last_name: string | null; full_name: string | null } | null,
+                tgFrom: { first_name?: string; last_name?: string; username?: string } | undefined,
+              ): { senderName: string; source: string; fallback: boolean } => {
+                const first = pp?.first_name?.trim() || null;
+                const last = pp?.last_name?.trim() || null;
+                const full = pp?.full_name?.trim() || null;
+                if (last && first) return { senderName: `${last} ${first}`, source: 'platform_first_last', fallback: false };
+                if (last) return { senderName: last, source: 'platform_last', fallback: false };
+                if (first) return { senderName: first, source: 'platform_first', fallback: false };
+                if (full) return { senderName: full, source: 'platform_full', fallback: false };
+                // Fallback (вариант 1): TG first+last → @username → generic
+                const tgFirst = tgFrom?.first_name?.trim() || '';
+                const tgLast = tgFrom?.last_name?.trim() || '';
+                const tgFull = [tgFirst, tgLast].filter(Boolean).join(' ');
+                if (tgFull) return { senderName: tgFull, source: 'tg_first_last', fallback: true };
+                if (tgFrom?.username) return { senderName: `@${tgFrom.username}`, source: 'tg_username', fallback: true };
+                return { senderName: 'Сообщение из Telegram', source: 'generic', fallback: true };
+              };
+
+              const { senderName, source, fallback } = resolvePlatformDisplayName(platformProfile, msg.from);
               const msgPreview = (msg.text || msg.caption || '[медиа]').slice(0, 100);
-              
+
+              // PII-safe log: only source / IDs / fallback flag — no names, no message text.
+              console.log('[Push][telegram] resolved name', JSON.stringify({
+                source,
+                profile_user_id: profile.user_id,
+                tg_id: telegramUserId,
+                fallback,
+              }));
+
               fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
                 method: 'POST',
                 headers: {
