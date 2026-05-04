@@ -409,11 +409,42 @@ Deno.serve(async (req) => {
         });
       }
 
-      // bePaid refund successful OR no bePaid payment - proceed with order update
+      // PATCH partial-refund-writer-2026-05:
+      // Compute paidSum/refundedSum across order's payments to decide partial vs full.
+      // refund-row goes WITH transaction_type='refund' + status='refunded' (not status='succeeded').
+      // Parent payment gets refunded_amount += actualRefundAmount.
+      // orders_v2.status stays 'paid' if refund < paidSum, becomes 'refunded' if refund >= paidSum.
+      const paymentsArr = (order.payments_v2 as any[]) || [];
+      let paidSumForOrder = 0;
+      let priorRefundedSumForOrder = 0;
+      for (const p of paymentsArr) {
+        const pStatus = (p?.status || '').toLowerCase();
+        const pTxType = (p?.transaction_type || '').toLowerCase();
+        const pMetaType = ((p?.meta as any)?.type || '').toLowerCase();
+        const isRefundRow = pTxType.includes('refund') || pTxType.includes('возврат')
+          || pMetaType === 'refund' || (Number(p?.amount) || 0) < 0;
+        // paidSum: only positive non-refund successful payments
+        if (!isRefundRow && Number(p?.amount) > 0
+          && (pStatus === 'succeeded' || pStatus === 'paid' || pStatus === 'refunded')) {
+          paidSumForOrder += Number(p.amount) || 0;
+        }
+        // refundedSum: parent's refunded_amount + legacy refund-row absolute amounts
+        priorRefundedSumForOrder += Number(p?.refunded_amount) || 0;
+        if (isRefundRow) {
+          priorRefundedSumForOrder += Math.abs(Number(p?.amount) || 0);
+        }
+      }
+      const totalRefundedAfter = priorRefundedSumForOrder + actualRefundAmount;
+      const isFullRefund = paidSumForOrder > 0
+        ? totalRefundedAfter + 0.01 >= paidSumForOrder
+        : true; // no positive payments → treat as full
+      const refundStatus: 'partial' | 'full' = isFullRefund ? 'full' : 'partial';
+      const newOrderStatus = isFullRefund ? 'refunded' : 'paid';
+
       await supabase
         .from('orders_v2')
         .update({
-          status: 'refunded',
+          status: newOrderStatus,
           meta: {
             ...(order.meta as object || {}),
             refund_amount: actualRefundAmount,
@@ -424,6 +455,10 @@ Deno.serve(async (req) => {
             bepaid_refund_error: bepaidRefundError,
             access_action: access_action || 'revoke',
             reduce_days: reduce_days || null,
+            // PATCH partial-refund-writer-2026-05:
+            partial_refund_total: totalRefundedAfter,
+            paid_sum: paidSumForOrder,
+            refund_status: refundStatus,
           },
           updated_at: new Date().toISOString(),
         })
@@ -431,6 +466,7 @@ Deno.serve(async (req) => {
 
       // Create refund record in payments_v2 if bePaid refund was successful
       if (bepaidRefundSuccessful) {
+        // PATCH partial-refund-writer-2026-05: canonical refund-row format
         await supabase
           .from('payments_v2')
           .insert({
@@ -439,19 +475,60 @@ Deno.serve(async (req) => {
             user_id: order.user_id,
             amount: -actualRefundAmount, // Negative amount for refund
             currency: order.currency,
-            status: 'succeeded',
+            status: 'refunded', // canonical: refund-row uses status='refunded'
+            transaction_type: 'refund', // canonical: explicit refund tx type
             provider: 'bepaid',
             provider_payment_id: bepaidRefundResult.transaction.uid,
             paid_at: new Date().toISOString(),
             meta: {
               type: 'refund',
-              parent_payment_id: successfulPayment.provider_payment_id,
+              parent_payment_id: successfulPayment.id, // internal payments_v2.id
               parent_payment_uid: successfulPayment.provider_payment_id,
               reason: refund_reason,
+              refund_status: refundStatus,
               bepaid_response: bepaidRefundResult.transaction,
             },
           });
-        console.log(`Created refund record in payments_v2 with uid=${bepaidRefundResult.transaction.uid}`);
+        console.log(`Created refund-row in payments_v2 uid=${bepaidRefundResult.transaction.uid} status=${refundStatus}`);
+
+        // PATCH partial-refund-writer-2026-05: bump parent's refunded_amount
+        const newParentRefundedAmount = (Number(successfulPayment.refunded_amount) || 0) + actualRefundAmount;
+        const { error: parentBumpError } = await supabase
+          .from('payments_v2')
+          .update({
+            refunded_amount: newParentRefundedAmount,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', successfulPayment.id);
+        if (parentBumpError) {
+          console.error('[refund] failed to bump parent.refunded_amount:', parentBumpError);
+        } else {
+          console.log(`[refund] parent ${successfulPayment.id} refunded_amount → ${newParentRefundedAmount}`);
+        }
+
+        // Audit
+        try {
+          await supabase.from('audit_logs').insert({
+            actor_user_id: adminUserId,
+            target_user_id: order.user_id,
+            actor_type: 'user',
+            actor_label: 'subscription-admin-actions[refund]',
+            action: 'admin.subscription.refund_recorded',
+            meta: {
+              order_id,
+              order_number: order.order_number,
+              refund_amount: actualRefundAmount,
+              refund_status: refundStatus,
+              paid_sum: paidSumForOrder,
+              total_refunded_after: totalRefundedAfter,
+              parent_payment_id: successfulPayment.id,
+              refund_uid: bepaidRefundResult.transaction.uid,
+              new_order_status: newOrderStatus,
+            },
+          });
+        } catch (e) {
+          console.error('[refund] audit insert failed (non-fatal):', e);
+        }
       }
 
       // Handle access action
