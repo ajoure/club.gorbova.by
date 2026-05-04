@@ -84,10 +84,10 @@ interface DiagnosticTableBlockProps {
 const DEFAULT_COLUMNS: DiagnosticTableColumn[] = [
   { id: 'source', name: 'Источник дохода', type: 'text', required: true },
   { id: 'type', name: 'Тип', type: 'select', options: ['найм', 'клиент'] },
-  { id: 'income', name: 'Доход в месяц', type: 'number', required: true },
+  { id: 'income', name: 'Доход в месяц, BYN', type: 'number', required: true },
   { id: 'work_hours', name: 'Часы по задачам', type: 'number' },
   { id: 'overhead_hours', name: 'Часы переписки', type: 'number' },
-  { id: 'hourly_rate', name: 'Доход за час', type: 'computed', formula: 'income / (work_hours + overhead_hours)' },
+  { id: 'hourly_rate', name: 'Доход за час, BYN', type: 'computed', formula: 'income / (work_hours + overhead_hours)' },
   { id: 'legal_risk', name: 'Юридические риски', type: 'select', options: ['низкий', 'средний', 'высокий'] },
   { id: 'financial_risk', name: 'Финансовые риски', type: 'select', options: ['низкий', 'средний', 'высокий'] },
   { id: 'reputation_risk', name: 'Репутационные риски', type: 'select', options: ['низкий', 'средний', 'высокий'] },
@@ -723,6 +723,9 @@ export function DiagnosticTableBlock({
       );
     }
 
+    const isMoneyCol = col.id === 'monthly_income' || col.id === 'income';
+    const numberPlaceholder = isMoneyCol ? 'например, 1500' : '';
+
     return (
       <div>
         <Input
@@ -738,6 +741,7 @@ export function DiagnosticTableBlock({
           className={inputClass}
           disabled={isCompleted}
           min={col.type === 'number' ? 0 : undefined}
+          placeholder={col.type === 'number' ? numberPlaceholder : undefined}
         />
         {hasError && <p className="text-xs text-destructive mt-1">{col.name}: обязательное поле</p>}
       </div>
@@ -765,14 +769,14 @@ export function DiagnosticTableBlock({
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
                 <div className="text-center">
                   <p className="text-muted-foreground text-xs">Общий доход</p>
-                  <p className="font-bold text-lg">{v2Aggregates.total_income.toLocaleString()} BYN/мес</p>
+                  <p className="font-bold text-lg">{v2Aggregates.total_income.toLocaleString()} BYN / мес</p>
                 </div>
                 <div className="text-center">
                   <p className="text-muted-foreground text-xs">Общие часы</p>
                   <p className="font-semibold text-lg">{v2Aggregates.total_hours} ч</p>
                 </div>
                 <div className="text-center bg-primary/10 rounded-lg py-1">
-                  <p className="text-muted-foreground text-xs">Средний доход/час</p>
+                  <p className="text-muted-foreground text-xs">Средний доход / час</p>
                   <p className="font-bold text-lg text-primary">{v2Aggregates.avg_hourly_income} BYN</p>
                 </div>
               </div>
@@ -803,9 +807,9 @@ export function DiagnosticTableBlock({
                   <TableHead className="text-xs py-1.5 w-8">#</TableHead>
                   <TableHead className="text-xs py-1.5">Клиент</TableHead>
                   <TableHead className="text-xs py-1.5">Тип</TableHead>
-                  <TableHead className="text-xs py-1.5 text-right">Доход</TableHead>
+                  <TableHead className="text-xs py-1.5 text-right">Доход, BYN</TableHead>
                   <TableHead className="text-xs py-1.5 text-right">Часы</TableHead>
-                  <TableHead className="text-xs py-1.5 text-right">Доход/час</TableHead>
+                  <TableHead className="text-xs py-1.5 text-right">Доход/час, BYN</TableHead>
                   <TableHead className="text-xs py-1.5 text-right">Доля нагр.</TableHead>
                   <TableHead className="text-xs py-1.5">Категория</TableHead>
                   <TableHead className="text-xs py-1.5">Стр. ценность</TableHead>
@@ -870,7 +874,7 @@ export function DiagnosticTableBlock({
                     <Badge variant="outline" className="text-[10px]">{String(row.source_type || '—')}</Badge>
                   </div>
                   <div className="grid grid-cols-3 gap-2 text-xs">
-                    <div><span className="text-muted-foreground">Доход:</span> <span className="font-mono">{income.toLocaleString()}</span></div>
+                    <div><span className="text-muted-foreground">Доход, BYN:</span> <span className="font-mono">{income.toLocaleString()}</span></div>
                     <div><span className="text-muted-foreground">Часы:</span> {computed?.total_hours || 0}</div>
                     <div><span className="text-muted-foreground">BYN/ч:</span> <span className="font-mono">{computed?.hourly_income || 0}</span></div>
                   </div>
@@ -940,6 +944,16 @@ export function DiagnosticTableBlock({
         />
       )}
 
+      {/* Currency reminder — все цифры в BYN */}
+      <Alert className="border-primary/30 bg-primary/5">
+        <Info className="h-4 w-4 text-primary" />
+        <AlertDescription className="text-xs">
+          Все суммы указывайте в <strong>BYN</strong> (белорусских рублях).
+          Если сумма в USD — умножьте на <strong>3</strong> и внесите значение в BYN.
+          Если сумма в EUR — используйте курс, указанный в инструкции или администратором.
+        </AlertDescription>
+      </Alert>
+
       {/* V2: Summary analytics — ABOVE the rows (edit mode) */}
       {isV2 && content.showAggregates && v2Aggregates && localRows.length > 0 && (
         <Card className="bg-primary/5 border-primary/20">
@@ -947,14 +961,14 @@ export function DiagnosticTableBlock({
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
               <div className="text-center">
                 <p className="text-muted-foreground text-xs">Общий доход</p>
-                <p className="font-bold text-lg">{v2Aggregates.total_income.toLocaleString()} BYN/мес</p>
+                <p className="font-bold text-lg">{v2Aggregates.total_income.toLocaleString()} BYN / мес</p>
               </div>
               <div className="text-center">
                 <p className="text-muted-foreground text-xs">Общие часы</p>
                 <p className="font-semibold">{v2Aggregates.total_hours} ч</p>
               </div>
               <div className="text-center bg-primary/10 rounded-lg py-1">
-                <p className="text-muted-foreground text-xs">Средний доход/час</p>
+                <p className="text-muted-foreground text-xs">Средний доход / час</p>
                 <p className="font-bold text-lg text-primary">{v2Aggregates.avg_hourly_income} BYN</p>
               </div>
             </div>
@@ -975,7 +989,7 @@ export function DiagnosticTableBlock({
                       <TableHeader>
                         <TableRow>
                           <TableHead className="text-xs py-1">Клиент</TableHead>
-                          <TableHead className="text-xs py-1 text-right">Доход</TableHead>
+                          <TableHead className="text-xs py-1 text-right">Доход, BYN</TableHead>
                           <TableHead className="text-xs py-1 text-right">Часы</TableHead>
                           <TableHead className="text-xs py-1 text-right">Доля</TableHead>
                           <TableHead className="text-xs py-1">Категория</TableHead>
@@ -1137,7 +1151,7 @@ export function DiagnosticTableBlock({
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
               <div className="text-center">
                 <p className="text-muted-foreground text-xs">Общий доход</p>
-                <p className="font-bold text-lg">{totalAggregates.total_income.toLocaleString()} BYN/мес</p>
+                <p className="font-bold text-lg">{totalAggregates.total_income.toLocaleString()} BYN / мес</p>
               </div>
               <div className="text-center">
                 <p className="text-muted-foreground text-xs">Часы по задачам</p>
@@ -1148,7 +1162,7 @@ export function DiagnosticTableBlock({
                 <p className="font-semibold">{totalAggregates.total_overhead_hours} ч</p>
               </div>
               <div className="text-center bg-primary/10 rounded-lg py-1">
-                <p className="text-muted-foreground text-xs">Средний доход/час</p>
+                <p className="text-muted-foreground text-xs">Средний доход / час</p>
                 <p className="font-bold text-lg text-primary">{totalAggregates.avg_hourly_rate} BYN</p>
               </div>
             </div>

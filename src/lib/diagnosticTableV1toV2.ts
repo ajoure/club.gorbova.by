@@ -67,11 +67,11 @@ export interface V2ColumnDef {
 export const DEFAULT_V2_COLUMNS: V2ColumnDef[] = [
   { id: 'client', name: 'Клиент / источник', type: 'text', required: true },
   { id: 'source_type', name: 'Тип', type: 'select', options: ['найм', 'клиент'], required: true },
-  { id: 'monthly_income', name: 'Доход в месяц', type: 'number', required: true },
+  { id: 'monthly_income', name: 'Доход в месяц, BYN', type: 'number', required: true },
   { id: 'direct_hours', name: 'Часы прямой работы', type: 'number' },
   { id: 'mental_hours', name: 'Часы ментальной нагрузки', type: 'number' },
   { id: 'total_hours', name: 'Общие часы', type: 'computed' },
-  { id: 'hourly_income', name: 'Доход за час', type: 'computed' },
+  { id: 'hourly_income', name: 'Доход за час, BYN', type: 'computed' },
   { id: 'legal_risk', name: 'Юридические риски', type: 'select', options: ['низкий', 'средний', 'высокий'] },
   { id: 'financial_risk', name: 'Финансовые риски', type: 'select', options: ['низкий', 'средний', 'высокий'] },
   { id: 'reputation_risk', name: 'Репутационные риски', type: 'select', options: ['низкий', 'средний', 'высокий'] },
