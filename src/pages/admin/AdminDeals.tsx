@@ -172,7 +172,9 @@ function buildDealsQuery(
   isDefaultPipeline?: boolean,
   extraFilters?: DealsExtraFilters,
 ) {
-  // Lightweight select: only columns used in the table row
+  // Lightweight select: only columns used in the table row.
+  // count: "exact" → server returns total rows matching ALL applied filters,
+  // so the UI counter "Показано X из Y" stays consistent with pipeline/tariff/extra filters.
   let query = supabase
     .from("orders_v2")
     .select(`
@@ -200,7 +202,7 @@ function buildDealsQuery(
       tariffs(id, name),
       profiles:profile_id(id, user_id, full_name, email, phone, avatar_url),
       payments_v2(id, status, paid_at, created_at, card_holder, meta)
-    `);
+    `, { count: "exact" });
 
   // Server-side preset filters
   if (activePreset === "trial") {
@@ -510,12 +512,15 @@ export default function AdminDeals() {
         return {
           rows: filtered,
           nextOffset: rows.length === PAGE_SIZE ? pageParam + PAGE_SIZE : undefined,
+          // RPC search mode: server-truth count is not available cheaply.
+          // UI gracefully degrades to "Показано: N" without "из Y".
+          serverTotalCount: undefined as number | undefined,
         };
       }
 
       // Default mode → lightweight PostgREST query (no name search needed)
       const query = buildDealsQuery(activePreset, debouncedSearch, selectedProductId, dateFilter, selectedTariffIds, activePipelineId, activePipeline?.is_default, extraFilters);
-      const { data, error } = await query
+      const { data, error, count } = await query
         .order("deal_date", { ascending: false, nullsFirst: false })
         .order("id", { ascending: false })
         .range(pageParam, pageParam + PAGE_SIZE - 1);
@@ -524,6 +529,7 @@ export default function AdminDeals() {
       return {
         rows: data || [],
         nextOffset: (data?.length || 0) === PAGE_SIZE ? pageParam + PAGE_SIZE : undefined,
+        serverTotalCount: typeof count === "number" ? count : undefined,
       };
     },
     getNextPageParam: (lastPage) => lastPage.nextOffset,
@@ -819,8 +825,13 @@ export default function AdminDeals() {
     setActivePreset(tabId);
   }, []);
 
-  // Total count from server-side RPC
+  // Total count for "Показано X из Y".
+  // Priority: server-truth count from the same paginated query (учитывает ВСЕ
+  // фильтры: pipeline, tariff, extraFilters.statuses и др.). Если первая страница
+  // ещё не пришла или мы в search-режиме — fallback на tabCounts (preset-level).
+  const serverTotalCount = dealsData?.pages?.[0]?.serverTotalCount;
   const totalCount = useMemo(() => {
+    if (typeof serverTotalCount === "number") return serverTotalCount;
     if (!tabCounts) return undefined;
     switch (activePreset) {
       case "trial": return tabCounts.trial;
@@ -828,7 +839,7 @@ export default function AdminDeals() {
       case "imported": return tabCounts.imported;
       default: return tabCounts.all;
     }
-  }, [tabCounts, activePreset]);
+  }, [serverTotalCount, tabCounts, activePreset]);
 
   // Create pipeline dialog state
   const [showCreatePipelineDialog, setShowCreatePipelineDialog] = useState(false);
@@ -1528,19 +1539,17 @@ export default function AdminDeals() {
       {/* Show More button — reuses Contacts pattern (list mode only) */}
       {viewMode === "list" && (() => {
         const loadedCount = Math.min(displayLimit, allDeals.length);
-        const filtersBeyondTabCounts = !!activePipelineId || selectedTariffIds.length > 0;
 
-        // Условия скрытия:
-        // 1. Сервер сказал «больше нет» И мы уже показали всё загруженное
+        // Hide if server reported "no more pages" AND we've already revealed everything loaded.
         if (!hasNextPage && displayLimit >= allDeals.length) return null;
 
-        // Реальный остаток считаем только когда totalCount достоверный
-        // (без фильтров pipeline/tariff, которые не учтены в tabCounts).
-        const totalReliable = !filtersBeyondTabCounts && typeof totalCount === "number";
+        // totalCount is now server-truth when available (matches the same query
+        // that fetches rows: pipeline + tariff + extraFilters all included).
+        // In search mode it falls back to undefined → graceful "Показать ещё" without exact remainder.
+        const totalReliable = typeof totalCount === "number" && !isSearchMode;
         const remaining = totalReliable ? Math.max(0, (totalCount as number) - loadedCount) : null;
         const nextBatch = remaining != null ? Math.min(PAGE_SIZE, remaining) : PAGE_SIZE;
 
-        // Если totalCount достоверен и остатка нет, и сервер тоже исчерпан — скрываем
         if (totalReliable && remaining === 0 && !hasNextPage) return null;
 
         return (

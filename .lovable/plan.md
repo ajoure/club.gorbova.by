@@ -1,121 +1,81 @@
-да, согласен, с учетом правок:
+План: исправление счётчика «Показано X из Y» в разделе Сделки
 
-Добавь в dry-run обязательные STOP-checks:
+## Диагноз (read-only)
 
-&nbsp;
+Скриншот пользователя: URL `?statuses=paid&product=de36a695...&pipeline=a0000001-...-008`, заголовок «Показано: 13 из 32». Кнопки «Показать ещё» нет.
 
-1. Не удалять `failed/canceled/pending`, если есть хоть одна запись в:
+Что реально происходит в `src/pages/admin/AdminDeals.tsx`:
 
-   - payments_v2 по order_id;
+1. **Загрузка работает корректно.** `useInfiniteQuery` тянет страницы по `PAGE_SIZE=100` через PostgREST. Серверный фильтр уже включает `pipeline_id`, `tariff_id`, `product_id`, `extraFilters.statuses` (строки 165–251, 517).
+2. **На сервере по этим фильтрам действительно 13 строк** (paid + продукт «Подходный налог ИП» + pipeline «Подходный налог ИП»). Поэтому первая страница вернула 13, `hasNextPage=false`, кнопка «Показать ещё» правильно скрыта (строка 1535).
+3. **Проблема — только в знаменателе «из 32».** `totalCount` берётся из `tabCounts` через RPC `get_deal_tab_counts` (строка 398), которая считает сделки **только** по `search`, `product_id` и диапазону дат. Она **не учитывает**:
+   - `activePipelineId` (фильтр по воронке);
+   - `selectedTariffIds` (фильтр по тарифам);
+   - `extraFilters.statuses` (фильтр-табы «Оплачен / Ожидает / …» из URL `statuses=`);
+   - остальные `extraFilters` (provider, source, contact, price range, stageId, reconcileSource, includeSynthetic, createdFrom/To).
+4. Дополнительно, в `useMemo` для `totalCount` (строки 823–831) `switch (activePreset)` вообще не имеет case-ов для `paid/pending/failed` — но это сейчас не критично, потому что preset `all` и так показывает `tabCounts.all`.
 
-   - subscriptions_v2.order_id;
+Итог: бага «не показываются все сделки» нет. Есть **баг отображения**: знаменатель «из 32» соответствует «всего сделок по продукту», а не «всего сделок по текущему набору фильтров». Это ровно то, что пользователь воспринял как «13 из 32, добавить нельзя».
 
-   - subscriptions_v2.meta.extended_by_orders;
+## Что меняем
 
-   - entitlements.meta с order_id/source_order_id;
+### 1. Источник правды для знаменателя
 
-   - access_grant_ledger;
+Делаем знаменатель «из N» консистентным с тем, что реально применяется к запросу. Самый дешёвый и надёжный путь — попросить PostgREST вернуть exact count тем же запросом, который уже строится в `buildDealsQuery`, и использовать его как `totalCount`.
 
-   - audit_logs с order_id.
+Изменения в `src/pages/admin/AdminDeals.tsx`:
 
-&nbsp;
+- В ветке «Default mode» (строки 516–527) добавить к запросу `{ count: "exact", head: false }` (через `.select(..., { count: "exact" })` в самом `buildDealsQuery`) и вернуть из `queryFn` поле `totalCount` из `count`.
+- В ветке «search mode» (строки 463–514) — обернуть RPC `search_deal_rows` дополнительным параметром или вторым лёгким RPC `search_deal_count`, который возвращает только `int` с тем же набором аргументов (`p_search`, `p_product_id`, `p_date_from`, `p_date_to`, `p_preset`). Если расширение RPC дороже — на первом шаге fallback: `totalCount = filtered.length` пока загружено < PAGE_SIZE, иначе `undefined` (тогда показываем «Показано: N» без «из»).
+- В `useInfiniteQuery` сохранять `totalCount` из первой страницы в локальный стейт/мемо (берём `dealsData?.pages[0]?.totalCount`).
+- Заменить вычисление `totalCount` (строки 823–831) на этот «server-truth» count.
 
-2. Перед DELETE сохранить snapshot удаляемых строк в отдельную backup-таблицу:
+### 2. Поведение UI
 
-   `_orders_orphan_cleanup_2026_05_backup`.
+- «Показано: X из Y» — Y теперь = реальное количество строк под текущие фильтры (pipeline + tariff + product + preset + extraFilters.statuses + даты + поиск).
+- Условие скрытия кнопки «Показать ещё» (строки 1528–1572) упрощается: больше не нужен флаг `filtersBeyondTabCounts`, так как `totalCount` всегда консистентен. Логика становится:
+  - если `loadedCount >= totalCount` И `!hasNextPage` → скрыть;
+  - иначе показать «Показать ещё N (осталось M)», где `M = totalCount - loadedCount`.
+- Tab-счётчики на табах «Все / Триал / Отменённые / Импортированные» (`DEAL_PRESETS`, строки 735–740) **оставляем как есть** — это сводные числа по продукту/датам, они должны игнорировать pipeline/tariff, иначе теряют смысл.
 
-&nbsp;
+### 3. Регресс-проверка по другим разделам
 
-3. Execute делать только по exact id-list из approved dry-run snapshot, не пересчитывать cohort заново внутри execute.
+Проверить и при необходимости применить ту же модель «server-truth count = same query as data» (или явно подписать «по продукту», чтобы не путать пользователя):
 
-&nbsp;
+- `/admin/orders-v2` (если есть аналогичный счётчик) — проверить.
+- `/admin/contacts` — `Показано` присутствует, проверить, что Y совпадает с применёнными фильтрами.
+- `/admin/payments` (`PaymentsTabContent`, `LinksTabContent`, `BepaidSubscriptionsTabContent`, `BepaidStatementTabContent`) — проверить совпадение Y с фильтрами; при расхождении — выровнять по тому же принципу.
+- `/admin/forms/*` — проверить.
 
-4. В Cohort B отдельно вывести причину сохранения:
+В этих разделах ничего не трогаем, если счётчик уже корректный; правки точечные.
 
-   `paid_without_payment`, `refunded`, `has_payment`, `has_subscription_ref`, `has_entitlement_ref`, `has_audit_ref`.
+## Технические детали
 
-&nbsp;
-
-5. Verify:
-
-   - удалено ровно approved_count;
-
-   - backup_count = deleted_count;
-
-   - повторный execute = 0;
-
-   - доступы/подписки/entitlements не изменились.
-
-&nbsp;
-
-План: Аудит сделок без платежей (Gorbova Club + Бухгалтерия как бизнес)
-
-## Контекст
-
-Правило: «есть платёж — есть сделка; нет платежа — сделки быть не должно». Удаляем только висячие `orders_v2` без единой строки `payments_v2`. Доступы пользователей живут в `subscriptions_v2` / `access_rules` / `entitlements` и от удаления `orders_v2` не зависят.
-
-## Скоуп (только два продукта)
-
-- `11c9f1b8-0355-4753-bd74-40b42aa53616` — Gorbova Club
-- `85046734-2282-4ded-b0d3-8c66c8f5bc2b` — Бухгалтерия как бизнес
-
-## Текущая картина (live)
-
-
-| Продукт | Всего | С оплаченным платежом | Только неуспешный платёж | Без платежей | Из них status=paid |
-| ------- | ----- | --------------------- | ------------------------ | ------------ | ------------------ |
-| Club    | 2263  | 1536                  | 101                      | 626          | 3                  |
-| БкБ     | 142   | 110                   | 22                       | 10           | 0                  |
-
-
-«Без платежей» по статусу:
-
-- Club: pending=609, failed=12, canceled=2, paid=3
-- БкБ: pending=10
-
-## Когорты
-
-- **Cohort A — кандидаты на удаление**: orders_v2 без `payments_v2` И status ∈ (`pending`, `failed`, `canceled`). Ожидаемо ~633 строки.
-- **Cohort B — STOP, ручной разбор**: orders_v2 без платежей со status=`paid` (3 Club).
-- **Cohort C — не трогаем**: всё с любыми payments_v2 (включая failed) и `refunded`.
-
-## Pre-delete safety check (для каждой строки Cohort A)
-
-Если найдено ЛЮБОЕ — строка уходит в Cohort B (manual review):
-
-1. Нет `subscriptions_v2` через `meta->>'origin_order_id'` или `order_id`.
-2. Нет `access_rules.source_order_id = order.id`.
-3. Нет `entitlements.meta->>'order_id'`.
-4. Нет `crm_activity_log.order_id` (либо архивируем активность отдельно).
-
-## Этапы
-
-1. **Dry-run (read-only)**
-  - Полный SQL по двум продуктам, фильтрация Cohort A с safety-checks.
-  - CSV в `/mnt/documents/cohort_a_club.csv`, `cohort_a_buh.csv`, `cohort_b.csv`.
-  - Колонки: `id, order_number, product, status, final_price, profile_id, email, created_at`.
-  - Возврат точного числа строк к удалению + список Cohort B.
-2. **Approve gate** — жду подтверждения по точному количеству.
-3. **Execute (миграция)**
-  - `INSERT INTO audit_logs(action='orders.cohort_a_orphan_delete_2026_05', meta=jsonb_строки)` ПЕРЕД delete.
-  - `DELETE FROM orders_v2 WHERE id = ANY($cohort_a_ids)`.
-  - Идемпотентность: повторный запуск = 0.
-4. **Verify**
-  - Повторный аудит: `no_payment AND status IN ('pending','failed','canceled')` для двух продуктов = 0.
-  - Snapshot `subscriptions_v2/access_rules/entitlements` count по затронутым `profile_id` до/после = diff 0.
-  - Proof: `.lovable/proofs/orders_v2_orphan_cleanup_2026_05.md`.
-
-## DoD
-
-- Cohort A удалён, Cohort B сохранён и передан тебе списком.
-- Audit-лог на каждую удалённую строку.
-- Доступы не изменились (verify diff = 0).
-- Повторный dry-run = 0.
+- `buildDealsQuery` (строки 165–251) меняем сигнатуру/реализацию так, чтобы возвращался запрос с `select(..., { count: "exact" })`. Все существующие фильтры остаются нетронутыми.
+- В `queryFn` (PostgREST-ветка):
+  ```text
+  const { data, error, count } = await query
+    .order("deal_date", { ascending: false, nullsFirst: false })
+    .order("id", { ascending: false })
+    .range(pageParam, pageParam + PAGE_SIZE - 1);
+  return { rows: data || [], nextOffset: ..., totalCount: count ?? undefined };
+  ```
+- Для search-режима — на первом шаге допускаем `totalCount: undefined` и аккуратно деградируем UI: «Показано: N» без «из», кнопка «Показать ещё» работает по `hasNextPage`. Расширение RPC делаем отдельной задачей, если потребуется точный счётчик в поиске.
+- `useMemo` для `totalCount` теперь читает `dealsData?.pages?.[0]?.totalCount`.
+- Условие «Показать ещё» переписываем на основе нового `totalCount`.
 
 ## Что НЕ трогаем
 
-- `refunded`, `paid`-без-платежа (Cohort B), любые orders с payments (включая failed).
-- Другие продукты.
-- `subscriptions_v2` / `access_rules` / `entitlements`.
+- Серверные фильтры — уже корректны.
+- Tab-counts RPC `get_deal_tab_counts` — оставляем без изменений.
+- Структуру таблиц, RPC, edge functions, миграции.
+- Board-режим (Kanban) — там своя загрузка.
 
-Подтверди план — переключусь в build, сгенерю dry-run CSV и покажу полные списки до любых удалений.
+## DoD
+
+- На скрине пользователя (paid + продукт + pipeline) счётчик показывает «Показано: 13 из 13», кнопка «Показать ещё» скрыта.
+- На «Все периоды / Все / без pipeline / без tariff» по тому же продукту — счётчик показывает «13 из 32» → станет «X из X_total_по_фильтрам» (например «32 из 32»).
+- При смене pipeline/tariff/preset/статуса/диапазона дат — Y моментально пересчитывается и совпадает с реальным количеством.
+- Регресс-чек: открыть 3 другие воронки и 3 других продукта — счётчик и кнопка «Показать ещё» ведут себя консистентно, кнопка появляется ровно тогда, когда `loaded < total`.
+- В Kanban-режиме поведение не изменилось.
+- В отчёте указать: какие файлы изменены, какие RPC/таблицы/edge functions затронуты (ожидается: только UI + опционально новый read-only RPC `search_deal_count`, без изменений схемы).
