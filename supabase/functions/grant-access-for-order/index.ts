@@ -489,7 +489,61 @@ Deno.serve(async (req) => {
 
     const resolvedSubscription = existingSubByOrder || existingSubExtendedByOrder;
 
-    if (entitlementMatchesProduct && (subscriptionMatchesOrder || subscriptionExtendedByOrder)) {
+    // PATCH 12.2 (skip-stale guard):
+    // Before treating order as already fulfilled, verify that the existing
+    // entitlement/subscription dates actually reach `expected_min_end`. If
+    // either side is stale (more than 12h short of expected), do NOT skip —
+    // fall through to the normal extend-flow so GREATEST can recover the date.
+    const tariffForSkipGuard = (order as any).tariff as { access_days?: number } | null;
+    const accessDaysForSkipGuard = customAccessDays ?? tariffForSkipGuard?.access_days ?? 30;
+    const paidAtForSkipGuard = (order as any).paid_at
+      ? new Date((order as any).paid_at)
+      : new Date();
+    const expectedMinEndForSkipGuard = new Date(
+      paidAtForSkipGuard.getTime() + accessDaysForSkipGuard * 24 * 60 * 60 * 1000
+    );
+    const skipGuardThresholdMs = expectedMinEndForSkipGuard.getTime() - 12 * 60 * 60 * 1000;
+
+    const entitlementDateOk = !!(
+      existingEntByOrder?.expires_at &&
+      new Date(existingEntByOrder.expires_at).getTime() >= skipGuardThresholdMs
+    );
+    const subscriptionDateOk = !!(
+      resolvedSubscription?.access_end_at &&
+      new Date(resolvedSubscription.access_end_at).getTime() >= skipGuardThresholdMs
+    );
+
+    const datesAreStale = (entitlementMatchesProduct && !entitlementDateOk)
+      || ((subscriptionMatchesOrder || subscriptionExtendedByOrder) && !subscriptionDateOk);
+
+    if (entitlementMatchesProduct && (subscriptionMatchesOrder || subscriptionExtendedByOrder) && datesAreStale) {
+      // PATCH 12.2: do NOT skip — write audit and fall through to extend-flow.
+      await supabase.from("audit_logs").insert({
+        action: "grant-access-for-order.skip_blocked_stale_access",
+        actor_type: "system",
+        actor_user_id: null,
+        actor_label: "grant-access-for-order",
+        target_user_id: userId,
+        meta: {
+          order_id: orderId,
+          product_id: productId,
+          paid_at: paidAtForSkipGuard.toISOString(),
+          expected_min_end: expectedMinEndForSkipGuard.toISOString(),
+          access_days: accessDaysForSkipGuard,
+          existing_entitlement_id: existingEntByOrder?.id || null,
+          existing_entitlement_expires_at: existingEntByOrder?.expires_at || null,
+          existing_subscription_id: resolvedSubscription?.id || null,
+          existing_subscription_access_end_at: resolvedSubscription?.access_end_at || null,
+          subscription_status: resolvedSubscription?.status || null,
+          entitlement_status: existingEntByOrder?.status || null,
+          entitlement_date_ok: entitlementDateOk,
+          subscription_date_ok: subscriptionDateOk,
+          patch: "patch-12.2-skip-stale-guard",
+        },
+      });
+      console.log(`[grant-access] PATCH 12.2: skip_already_fulfilled BLOCKED for order ${orderId} — existing dates stale vs expected_min_end=${expectedMinEndForSkipGuard.toISOString()}. Falling through to extend-flow.`);
+      // intentional fall-through: do NOT return, continue to normal flow below.
+    } else if (entitlementMatchesProduct && (subscriptionMatchesOrder || subscriptionExtendedByOrder)) {
       const guardSource = subscriptionMatchesOrder ? "order_id" : "extended_by_orders";
       console.log(`[grant-access] IDEMPOTENCY GUARD: order ${orderId} already fulfilled (product ${productId}, match via ${guardSource}). Running secondary product_access sync to ensure bonus grants are present.`);
 
@@ -547,6 +601,9 @@ Deno.serve(async (req) => {
             acc[a.outcome] = (acc[a.outcome] || 0) + 1;
             return acc;
           }, {}),
+          // PATCH 12.2 telemetry: confirms skip was allowed (dates fresh).
+          skip_guard_passed: true,
+          expected_min_end: expectedMinEndForSkipGuard.toISOString(),
         },
       });
 
