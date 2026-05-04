@@ -1151,7 +1151,7 @@ export function DiagnosticTableBlock({
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
               <div className="text-center">
                 <p className="text-muted-foreground text-xs">Общий доход</p>
-                <p className="font-bold text-lg">{totalAggregates.total_income.toLocaleString()} BYN/мес</p>
+                <p className="font-bold text-lg">{totalAggregates.total_income.toLocaleString()} BYN / мес</p>
               </div>
               <div className="text-center">
                 <p className="text-muted-foreground text-xs">Часы по задачам</p>
@@ -1162,7 +1162,7 @@ export function DiagnosticTableBlock({
                 <p className="font-semibold">{totalAggregates.total_overhead_hours} ч</p>
               </div>
               <div className="text-center bg-primary/10 rounded-lg py-1">
-                <p className="text-muted-foreground text-xs">Средний доход/час</p>
+                <p className="text-muted-foreground text-xs">Средний доход / час</p>
                 <p className="font-bold text-lg text-primary">{totalAggregates.avg_hourly_rate} BYN</p>
               </div>
             </div>
