@@ -512,12 +512,15 @@ export default function AdminDeals() {
         return {
           rows: filtered,
           nextOffset: rows.length === PAGE_SIZE ? pageParam + PAGE_SIZE : undefined,
+          // RPC search mode: server-truth count is not available cheaply.
+          // UI gracefully degrades to "Показано: N" without "из Y".
+          serverTotalCount: undefined as number | undefined,
         };
       }
 
       // Default mode → lightweight PostgREST query (no name search needed)
       const query = buildDealsQuery(activePreset, debouncedSearch, selectedProductId, dateFilter, selectedTariffIds, activePipelineId, activePipeline?.is_default, extraFilters);
-      const { data, error } = await query
+      const { data, error, count } = await query
         .order("deal_date", { ascending: false, nullsFirst: false })
         .order("id", { ascending: false })
         .range(pageParam, pageParam + PAGE_SIZE - 1);
@@ -526,6 +529,7 @@ export default function AdminDeals() {
       return {
         rows: data || [],
         nextOffset: (data?.length || 0) === PAGE_SIZE ? pageParam + PAGE_SIZE : undefined,
+        serverTotalCount: typeof count === "number" ? count : undefined,
       };
     },
     getNextPageParam: (lastPage) => lastPage.nextOffset,
