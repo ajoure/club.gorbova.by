@@ -1539,19 +1539,17 @@ export default function AdminDeals() {
       {/* Show More button — reuses Contacts pattern (list mode only) */}
       {viewMode === "list" && (() => {
         const loadedCount = Math.min(displayLimit, allDeals.length);
-        const filtersBeyondTabCounts = !!activePipelineId || selectedTariffIds.length > 0;
 
-        // Условия скрытия:
-        // 1. Сервер сказал «больше нет» И мы уже показали всё загруженное
+        // Hide if server reported "no more pages" AND we've already revealed everything loaded.
         if (!hasNextPage && displayLimit >= allDeals.length) return null;
 
-        // Реальный остаток считаем только когда totalCount достоверный
-        // (без фильтров pipeline/tariff, которые не учтены в tabCounts).
-        const totalReliable = !filtersBeyondTabCounts && typeof totalCount === "number";
+        // totalCount is now server-truth when available (matches the same query
+        // that fetches rows: pipeline + tariff + extraFilters all included).
+        // In search mode it falls back to undefined → graceful "Показать ещё" without exact remainder.
+        const totalReliable = typeof totalCount === "number" && !isSearchMode;
         const remaining = totalReliable ? Math.max(0, (totalCount as number) - loadedCount) : null;
         const nextBatch = remaining != null ? Math.min(PAGE_SIZE, remaining) : PAGE_SIZE;
 
-        // Если totalCount достоверен и остатка нет, и сервер тоже исчерпан — скрываем
         if (totalReliable && remaining === 0 && !hasNextPage) return null;
 
         return (
