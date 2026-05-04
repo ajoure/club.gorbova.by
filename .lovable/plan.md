@@ -1,167 +1,342 @@
-## да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. **План переименовать корректно**
-  &nbsp;
-  &nbsp;
-  - заголовок должен быть:  
-  `План: исправление валюты в диагностических таблицах тренинга «Бухгалтерия как бизнес»`
-  - сейчас в сообщении смешаны diagnose, выводы и план. Это допустимо только если явно разделить:
-    - `Отчет о выполненной работе: Diagnose`
-    - `План: исправление валюты...`
-2. **Курс USD зафиксировать**
-  - `1 USD = 3 BYN` принимаем как рабочий курс для этого патча.
-  - В UI писать не «по курсу на дату оплаты», а конкретно:  
-  `Если сумма в USD — умножьте на 3 и внесите значение в BYN.`
-  - Иначе пользователи снова будут вводить по разным курсам.
-3. **EUR тоже поддержать**
-  - Нельзя оставлять EUR «уточню», если клиенты уже вводили EUR.
-  - В UI добавить текст:  
-  `Если сумма в EUR — используйте курс, указанный в инструкции/администратором.`
-  - Но ретро-конвертацию EUR **не выполнять**, пока не утвержден курс EUR→BYN.
-  - В dry-run отдельно показать строки, которые могут быть EUR/неопределённой валютой.
-4. **Не делать автоматическую ретро-конвертацию по порогу 800 без подтверждения**
-  - Порог `<800` слишком рискованный.
-  - Возможна ситуация: клиент в BYN ввёл 500–700 BYN, и мы ошибочно умножим на 3.
-  - Шаг 3 пока только dry-run.
-  - UPDATE существующих ответов — только после ручного подтверждения списка затрагиваемых строк.
-5. **Добавить ручной review-list**  
-В dry-run отчете показать не только агрегаты, но и таблицу:
-  - `user_id`
-  - `lesson_id`
-  - `block_id`
-  - `client_name` / строка клиента, если есть
-  - `old_value`
-  - `suggested_value`
-  - `reason`
-  - `confidence: high / medium / low`
-  - `action: convert / skip / manual_review`
-6. **Не хранить backup внутри произвольного** `state_json.meta`**, если структура блока другая**
-  - Сначала проверить фактическую структуру `state_json`.
-  - Backup писать туда, где это не ломает renderer.
-  - Если `meta` отсутствует — создать безопасно.
-  - Если renderer ожидает только массив строк без meta — backup лучше писать в отдельный audit/proof table или в существующий служебный metadata-слой, если он есть.
-7. **Проверить все точки форматирования**  
-Обязательно найти и исправить:
-  - labels колонок;
-  - placeholder input;
-  - formatter computed values;
-  - summary/итоги;
-  - export/print/pdf, если есть;
-  - mobile view;
-  - admin preview;
-  - student view.
-8. **Не ограничиваться двумя блоками, пока не проверены все diagnostic_table**
-  - Сделать read-only поиск всех `diagnostic_table`, где есть `income`, `monthly_income`, `hourly_rate`, `revenue`, `доход`.
-  - Изменять только блоки тренинга «Бухгалтерия как бизнес», но сначала показать список найденных кандидатов.
-9. **Instruction лучше обновлять в существующем блоке**
-  - Согласен: не плодить новые callout-блоки.
-  - Обновить `content.instruction` существующих блоков.
-  - Перед UPDATE сохранить before/after snapshot.
-10. **DoD дополнить**
+1. **План оформлен правильно**
+  - Scope read-only соблюден.
+  - Никаких repair/retry/revoke/grant сейчас не делать.
+  - Постоянные view/RPC/table не создавать.
+2. **Добавить в начало proof явный executive summary**  
+В `.lovable/proofs/recurring_diagnosis_2026_05.md` первым блоком:
+  - есть ли подтвержденный инцидент;
+  - сколько пользователей затронуто;
+  - какие домены затронуты: `subscriptions_v2`, `entitlements`, `telegram_access`;
+  - главный предполагаемый root cause;
+  - что точно не менялось.
+3. **Не использовать bePaid** `active_to` **как единственный SOT**  
+В отчете явно разделить:
+  - `provider_active_to` / bePaid date;
+  - `expected_min_end` по внутренней логике платформы;
+  - `local_subscription_access_end_at`;
+  - `entitlement_expires_at`;
+  - `telegram_access_active_until`.
+  Вывод делать не «bePaid прав», а «расхождение между provider и локальными источниками».
+4. **Для recurring и installment разделить классификацию**  
+Даже если выборка сейчас `is_recurring=true`, в отчете явно отметить:
+  - recurring payment;
+  - installment/рассрочка;
+  - обычная разовая оплата.
+  Если installment попали в выборку — вынести отдельным bucket и не смешивать с recurring.
+5. **Добавить проверку staff-исключений**  
+В report и proposed repair обязательно исключить / пометить staff-аккаунты:
+  - Анна Бруйло;
+  - Никита Рохмистров;
+  - Катерина Горбова;
+  - Ирина Гаринова.
+  Их доступы не трогать даже в будущем repair.
+6. **Audit actor proof**  
+Для событий, которые будут признаны значимыми (`overshoot`, `skip_already_fulfilled`, `telegram.access_expired`, revoke), показать:
+  - `actor_type`;
+  - `actor_user_id`;
+  - `actor_label`;
+  - `target_user_id`.
+  Это нужно, чтобы понять, кто/что инициировал revoke или skip.
+7. **Timeline делать не только по** `order_id`  
+Некоторые события могут быть связаны не через `order_id`, а через:
+  - `payment_id`;
+  - `provider_payment_id`;
+  - `subscription_id`;
+  - `target_user_id`;
+  - `telegram_user_id`;
+  - `club_id`.
+  Для проблемных строк собрать timeline по всем доступным ключам, иначе можно пропустить причину.
+8. **Telegram risk bucket разделить**  
+В `valid_sub_but_tg_bad` отдельно классифицировать:
+  - `no_telegram_access_row`;
+  - `active_until_expired`;
+  - `state_chat_revoked`;
+  - `state_channel_revoked`;
+  - `not_in_chat`;
+  - `not_in_channel`;
+  - `invite_pending`.
+  Не смешивать отсутствие строки и реальный revoke.
+9. **Добавить bucket “access source mismatch”**  
+Отдельно показать случаи:
+  - subscription валидна, entitlement истёк;
+  - entitlement валиден, subscription истекла;
+  - telegram_access валиден, entitlement истёк;
+  - telegram_access revoked, entitlement валиден.
+  Это важно, потому что source of truth доступа — `entitlements`, а Telegram не является source of truth.
+10. **Proposed repair plan пока только в виде вариантов**  
+В proof не писать финальное «надо сделать так». Писать:
+
+- Вариант A: repair по internal expected_min_end.
+- Вариант B: repair по provider_active_to.
+- Вариант C: repair только Telegram после восстановления subscription/entitlement.
+
+Финальный repair выбрать только после review отчета.
+
+11. **Добавить строгий вывод по безопасности**  
+В конце отчета:
+
+- какие операции безопасны для следующего controlled repair;
+- какие операции запрещены до фикса webhook/idempotency;
+- какие пользователи требуют ручной проверки.
+
+Можно выполнять read-only диагностику.
 
 &nbsp;
 
-- Скрин student view: видно `BYN` в Шаге 2 и Шаге 3.
-- Скрин admin preview: видно `BYN`.
-- Новая запись с `1500` сохраняется как число, без изменения формата.
-- Computed-поля считают на базе BYN.
-- Существующие ответы до ретро-конвертации не изменены.
-- Dry-run ретро-конвертации подготовлен, но UPDATE не выполнен без отдельного approve.
+План: диагностический mini-sprint по recurring-платежам, продлению подписок и Telegram-доступам (read-only)
 
-11. **Порядок выполнения**
+## 1. Проблема
 
-- Execute сейчас разрешается только для UI/контента:
-  1. подписи BYN;
-  2. placeholder;
-  3. instruction;
-  4. проверка всех форматтеров.
-- Ретро-конвертация существующих ответов — отдельный gated этап после dry-run и ручного approve.
-- &nbsp;
-- Контекст
+Пользователи сообщают: bePaid списывает деньги по автосписанию, но доступ не продлевается, а к концу дня отзывается. Случай не единичный.
 
-Шаг 2 и Шаг 3 тренинга «Бухгалтерия как бизнес» — это два урока с блоком `diagnostic_table` (V1 и V2 версии). В коде нигде не указано в какой валюте вводить «Доход в месяц», поэтому одни ученики ввели в USD, другие в BYN, а Шаг 3 строит расчёты «доход за час», «эффективность», «категория клиента» исходя из единой шкалы. Жалоба клиента валидна на уровне UX.
+Цель этого спринта — read-only диагностика без правок доступов: понять масштаб, классифицировать причины, подготовить отдельный repair-план.
 
-Подтверждено в БД:
+Никаких UPDATE / grant / revoke / delete / manual repair в этом спринте.
 
-- V1-блок «Диагностика точки А» в уроке `Тест: В какой роли вы находитесь сейчас` — 33 заполненных ответа.
-- V2-блок «Аналитика портфеля клиентов» в уроке `Шаг 2: Анализ и формирование портфеля клиентов` — 30 заполненных ответов.
+## 2. Что уже подтверждено диагностикой
 
-Курс конвертации legacy-данных: **1 USD = 3 BYN** (EUR не задан — будет вопрос только если в данных найдём EUR-ввод; по факту поле — просто число, валюта в нём не хранится, поэтому сейчас работаем только с долларовой гипотезой).
+- За 7 дней: 55 успешных recurring bePaid-платежей.
+- Из них:
+  - `sub_not_extended_to_expected`: 10
+  - `entitlement_not_extended_to_expected`: 12
+  - `no_entitlement_by_product`: 2
+  - `subscription_v2.status=expired` после успешного списания: подтверждено на 6+ примерах (Королёва, Монич, Шидловская, Жарко, Чистякова, Криштопик и др.).
+- В audit за 3 дня:
+  - `bepaid.webhook.link_order_processed`: 21
+  - `bepaid.webhook.link_order_dates_updated`: 19
+  - `grant-access-for-order.skip_already_fulfilled`: 23
+  - `bepaid.webhook.access_end_at_skipped_overshoot`: 6 (overshoot 59–117 дней при tolerance 45)
+- Подозрительная связка:
+  - subscription имеет stale `access_end_at` (например 2026-02-12) после прошлых backfill;
+  - bePaid возвращает `active_to` = 2026-06-03 (нормальное окно от paid_at);
+  - overshoot-guard в `bepaid-webhook` считает разницу > tolerance и отказывается перезаписывать `access_end_at`;
+  - в результате `subscriptions_v2.access_end_at` остается старый, `entitlements.expires_at` старый, `telegram_access.active_until` тоже не продлевается;
+  - cron `telegram-check-expired` отзывает Telegram-доступ.
 
-## Что меняем (3 шага)
+Эти данные уже собраны read-only и используются дальше как baseline.
 
-### Шаг 1. UI — явная BYN везде в DiagnosticTableBlock
+## 3. Scope (что делаем сейчас, read-only)
 
-Файлы: `src/lib/diagnosticTableV1toV2.ts`, `src/components/admin/lesson-editor/blocks/DiagnosticTableBlock.tsx`.
+### 3.1. Reconciliation report за 7 дней
 
-1. В `DEFAULT_V2_COLUMNS` и `DEFAULT_COLUMNS` (V1) переименовать подписи:
-  - `Доход в месяц` → `Доход в месяц, BYN`
-  - `Доход за час` → `Доход за час, BYN`
-2. В `formatV2Computed` для `hourly_income`, `total_hours` (числовые) — оставить число, но в шапке колонок и в строке итогов добавить суффикс  `BYN` для денежных метрик (`total_income`, `avg_hourly_income`).
-3. В режиме «player» (не isEditing) над таблицей вывести компактный info-баннер:
-  > Все суммы указывайте в BYN. Если работаете с клиентом в долларах — переведите по курсу на дату оплаты.
-4. Плейсхолдеры в `Input type="number"` для `monthly_income` поменять на `например, 1500` (BYN).
+Собрать в proof-файле `.lovable/proofs/recurring_diagnosis_2026_05.md` отчёт по всем `payments_v2` где:
 
-Это минимально-ломающее изменение: формат данных не меняется, новые ответы сразу будут согласованы.
+- `provider = 'bepaid'`
+- `status = 'succeeded'`
+- `is_recurring = true`
+- `paid_at >= now() - interval '7 days'`
 
-### Шаг 2. Контент уроков — инфо-блок над таблицей
+Поля строки отчета:
 
-В двух конкретных уроках добавить (через миграцию-вставку `lesson_blocks` типа `callout`, либо в `instruction` блока diagnostic_table):
+- `payment_id`, `provider_payment_id`, `paid_at`, `amount`
+- `order_id`, `order_number`
+- `user_id`, `email`, `full_name`
+- `product_id`, `product_name`
+- `tariff_id`, `tariff_name`, `access_days`
+- `expected_min_end` = endOfDay(`Europe/Minsk`, `paid_at + access_days`)
+- `subscription_id`, `subscription_status`, `subscription.access_end_at`, `subscription.next_charge_at`, `subscription.billing_type`, `subscription.auto_renew`
+- `entitlement_id`, `entitlement.expires_at`, `entitlement.status`
+- `telegram_access.id`, `telegram_access.active_until`, `state_chat`, `state_channel`
+- последний relevant `audit_logs` action для этого order/sub
+- флаги:
+  - `no_order`
+  - `no_subscription_same_pair`
+  - `sub_end_before_payment`
+  - `sub_not_extended_to_expected`
+  - `no_entitlement_by_product`
+  - `entitlement_not_extended_to_expected`
+  - `no_telegram_access_row`
+  - `telegram_access_expired_now`
+  - `telegram_access_revoked_state`
+  - `valid_sub_but_tg_bad`
+  - `webhook_overshoot_skipped`
+  - `grant_skipped_already_fulfilled`
 
-- урок `96c970e6-d530-473c-84ab-06b176d1c98a` — Шаг с V1
-- урок `6fb911a0-eb41-43a7-9935-abd68237e465` — Шаг с V2
+Это read-only выборка. Никаких permanent SQL view не создаём.
 
-Текст: «Все цифры — в белорусских рублях (BYN). Доллары переводите по курсу 1 USD = 3 BYN.»
+### 3.2. Агрегаты
 
-Реализация: апдейт `instruction` в `content` существующих блоков `81a10e8d-…` и `16d68578-…`, чтобы не плодить новые блоки и не двигать порядок.
+В тот же proof добавить агрегаты за 7 дней:
 
-### Шаг 3. Ретро-конвертация существующих ответов (отдельная процедура, гейтированная)
+- `total_successful_recurring`
+- `no_order`
+- `no_subscription_same_pair`
+- `sub_end_before_payment`
+- `sub_not_extended_to_expected`
+- `no_entitlement_by_product`
+- `entitlement_not_extended_to_expected`
+- `no_telegram_access_row`
+- `telegram_access_expired_now`
+- `telegram_access_revoked_state`
+- `valid_sub_but_tg_bad`
+- `webhook_overshoot_skipped_count`
+- `grant_access_skip_already_fulfilled_count`
+- `webhook_link_order_processed_count`
+- `webhook_link_order_dates_updated_count`
 
-Цель: пересчитать `monthly_income`/`income` × 3 для тех ответов, где значения явно похожи на USD (эвристика).
+И отдельно — список проблемных строк, `LIMIT 50`, отсортированный по `paid_at DESC`, с явной причиной для каждой.
 
-Поскольку валюта не хранилась, нужна осторожная эвристика. Предлагаемая безопасная логика:
+### 3.3. Overshoot guard report
 
-```text
-для каждой строки в state_json:
-  if monthly_income > 0 and monthly_income < 800:
-      → likely USD → multiply by 3
-  else:
-      → likely BYN → keep
-  записать в meta: { currency_migrated_at, original_value, factor: 3 }
-```
+По `audit_logs.action = 'bepaid.webhook.access_end_at_skipped_overshoot'` за 7 дней:
 
-Порог 800 — настраиваемый. Сначала **dry-run-отчёт** с разбивкой:
+- `created_at`
+- `order_id`, `subscription_id`
+- `expected_end`, `bepaid_active_to`
+- `overshoot_days`, `tolerance_days`
+- `target_user_id`, `email`, `full_name`
+- факт: что произошло после этого audit'а с `subscriptions_v2.access_end_at` и `entitlements.expires_at` (изменилось / не изменилось).
 
-- сколько строк затронет конвертация,
-- сколько останутся без изменений,
-- top-10 сэмплов «до/после» по каждому уроку,
-- сколько user_id затронуто.
+Цель: подтвердить или опровергнуть гипотезу, что overshoot guard блокирует нормальное продление при stale локальной дате.
 
-Только после твоего подтверждения dry-run — применяем UPDATE с записью оригинала в `state_json.meta.legacy_currency_backup`, чтобы откат был возможен.
+### 3.4. Webhook retry / idempotency report
 
-> Если ты хочешь конвертировать **все** записи без эвристики — скажи, сделаем без порога. Эвристика нужна только чтобы не утроить тех, кто уже ввёл в BYN.
+Для каждого проблемного `order_id` собрать timeline audit-событий:
 
-## DoD
+- `bepaid.webhook.link_order_processed`
+- `bepaid.webhook.link_order_dates_updated`
+- `bepaid.webhook.link_order_fallback_access_days`
+- `bepaid.webhook.access_end_at_skipped_overshoot`
+- `bepaid.webhook.grant_access_failed`
+- `grant-access-for-order.skip_already_fulfilled`
+- `grant-access-for-order.skip_extend_tariff_mismatch`
+- любые `failed`, `not_found`, `ambiguous`, `unresolved`
+- повторные `webhook_events` по одному `transaction_uid` / `provider_payment_id`
+- наличие `payments_v2.provider_payment_id` уникального ключа, который блокирует повторную обработку
 
-- В админке и в кабинете в обоих блоках видны подписи `, BYN` и инфо-баннер.
-- Новые заполнения сохраняются как раньше (формат не изменился).
-- Скриншот «до/после» из dry-run приложен в отчёте, ты подтверждаешь — затем UPDATE.
-- В `lesson_progress_state.state_json.meta.legacy_currency_backup` для затронутых строк сохранён оригинал — есть откат одной обратной миграцией.
-- Ничего не меняется в `tariff_offers`, `orders_v2`, чекауте, payment_links — это вне области.
+Этот раздел — read-only. Никакие retry / replay не запускаем.
 
-## Что НЕ трогаем
+### 3.5. Telegram revoke risk report
 
-- Тарифы и оплата (там валюта уже BYN по умолчанию).
-- `currency` поля в orders_v2 / tariff_offers.
-- Другие блоки уроков, не использующие денежные суммы.
-- Структуру таблиц — только UI и UPDATE данных.
+Отдельный список пользователей, у которых одновременно:
 
-## Порядок выполнения после approve
+- активная `subscriptions_v2` (`status IN ('active','trial','past_due')` и `access_end_at > now()`)
+и/или активный `entitlement` (`status='active'` и `expires_at > now()`),
+- но `telegram_access` либо отсутствует, либо `active_until < now()`, либо `state_chat='revoked'`, либо `state_channel='revoked'`.
 
-1. Diagnose ✅ (выполнен в этом плане).
-2. Шаг 1 (UI-подписи) — патч + скриншот.
-3. Шаг 2 (instruction в двух блоках) — миграция-вставка через insert-tool.
-4. Шаг 3.a — dry-run отчёт (без UPDATE) → жду подтверждение.
-5. Шаг 3.b — UPDATE с backup в meta → отчёт по затронутым строкам.
+Поля:
 
-Жду подтверждение на Execute либо корректировки (особенно по эвристике порога 800 и курсу EUR, если он нужен).
+- `user_id`, `email`, `full_name`
+- `product_id`, `product_name`
+- `club_id` (через `access_rules` `grant_target_type='club'`)
+- `subscription_id`, `subscription.access_end_at`
+- `entitlement_id`, `entitlement.expires_at`
+- `telegram_access.id`, `active_until`, `state_chat`, `state_channel`, `last_sync_at`
+- последнее `audit_logs.action LIKE 'telegram.access_expired%'` или `telegram.revoke%` для этого user/club
+- последнее `subscriptions-reconcile`/`telegram-check-expired` событие, инициировавшее revoke (если есть в audit/ledger)
+
+Никаких grant/revoke сейчас не выполняем.
+
+### 3.6. Monitoring proposal (только описание, без execute)
+
+В отдельной секции proof'а описать предлагаемые алерты:
+
+- successful recurring payment без extension `subscriptions_v2.access_end_at` за +30 минут после `paid_at`;
+- entitlement не продлён до `expected_min_end` за +30 минут после `paid_at`;
+- валидная subscription/entitlement, но `telegram_access` revoked/expired в окне 24 часа;
+- сработал overshoot-guard;
+- сработал `grant-access skip_already_fulfilled`, но при этом `subscriptions_v2.access_end_at < expected_min_end`.
+
+Реализацию мониторинга НЕ внедряем в этом спринте.
+
+## 4. Изменяемые компоненты
+
+В этом спринте:
+
+- создаётся ТОЛЬКО proof-файл `.lovable/proofs/recurring_diagnosis_2026_05.md`.
+
+Read-only источники:
+
+- `payments_v2`
+- `orders_v2`
+- `subscriptions_v2`
+- `entitlements`
+- `telegram_access`
+- `access_rules`
+- `audit_logs`
+- `webhook_events`
+- `provider_webhook_orphans`
+- `payment_reconcile_queue`
+- `profiles`
+- `products_v2`, `tariffs`
+
+## 5. Что не будет изменено
+
+- Не трогаем `subscriptions_v2`, `entitlements`, `telegram_access`, `payments_v2`, `orders_v2`.
+- Не запускаем retry / replay webhook'ов.
+- Не вызываем `grant-access-for-order`, `telegram-grant-access`, `telegram-revoke-access`.
+- Не правим код edge-функций `bepaid-webhook`, `grant-access-for-order`, `telegram-check-expired`.
+- Не создаём новые таблицы / views / RPC / cron / triggers.
+- Не делаем DELETE.
+- Не показываем raw данные карт/PII в отчёте сверх того, что уже есть в audit_logs.
+
+## 6. Dry-run
+
+Все запросы из 3.1–3.5 — это и есть dry-run. Перед публикацией отчёта показать:
+
+- размер выборки за 7 дней;
+- сколько строк в каждом флаге;
+- 5 примеров до сохранения proof-файла, чтобы убедиться, что классификация корректна.
+
+## 7. Execute
+
+«Execute» в этом спринте означает только:
+
+- написать SQL-запросы и выполнить их через `supabase--read_query`;
+- собрать результаты в proof-файл;
+- агрегировать и классифицировать.
+
+Никаких write-операций в БД и edge-функциях.
+
+## 8. STOP-guards
+
+Остановиться и не двигаться к repair-патчу, если:
+
+- найден хотя бы один пользователь с валидной подпиской/entitlement, но revoked Telegram → не запускать `telegram-revoke-access`/`telegram-check-expired` коррекции до отдельного repair-плана;
+- найден idempotency bug в webhook → не запускать массовый retry/replay;
+- найден overshoot bug → сначала отдельный proof, потом patch логики `bepaid-webhook`, потом controlled retry, и только тогда repair данных;
+- любая выборка превышает 500 строк — переходить на агрегаты и samples, не вываливать всё в proof целиком;
+- встречаются заказы без `user_id`/`product_id`/`tariff_id` — фиксируем как отдельный bucket, не трогаем.
+
+## 9. DoD
+
+Спринт считается выполненным, если в `.lovable/proofs/recurring_diagnosis_2026_05.md` есть:
+
+1. Агрегаты за 7 дней по всем флагам из 3.2.
+2. Список проблемных строк (LIMIT 50) с явной причиной по каждой.
+3. Полный список overshoot-skip кейсов (3.3) с фактическим состоянием подписки/entitlement после события.
+4. Audit-timeline для каждого проблемного `order_id` (3.4).
+5. Отдельный Telegram revoke risk список (3.5).
+6. Классификация по причинам:
+  - A. всё корректно;
+  - B. subscription не создана / не найдена;
+  - C. subscription есть, но не продлена;
+  - D. entitlement отсутствует / истёк;
+  - E. Telegram access плохой при валидном доступе;
+  - F. webhook overshoot guard заблокировал ожидаемое обновление;
+  - G. idempotency / skip сработал неверно (skip_already_fulfilled при stale access_end_at).
+7. Отдельный список строк, которые требуют repair, без выполнения repair'а.
+8. Раздел «Proposed repair plan» — только текстом, на отдельный approve:
+  - patch `bepaid-webhook` (overshoot guard не должен блокировать stale local end);
+  - controlled repair `subscriptions_v2.access_end_at`, `entitlements.expires_at`, `telegram_access.active_until` с GREATEST и UUID-matching;
+  - правила для recurring vs installment;
+  - явное исключение staff-аккаунтов.
+9. Раздел «Proposed monitoring» (3.6) — только описание, без внедрения.
+
+## 10. Риски и зависимости
+
+- Read-only диагностика безопасна. Главный риск — пропустить какой-то канал revoke (cron `subscriptions-reconcile`, `bepaid-subscription-audit-cron`, ручные действия). Поэтому в 3.5 явно ищем последнее audit-событие revoke и его источник.
+- Возможен скрытый дефект: overshoot guard сравнивает с локальной `access_end_at`, которая ранее была приведена backfill'ом к стабильному значению и теперь воспринимается как «expected». Это нужно подтвердить отдельным разделом 3.3, прежде чем менять код.
+- Нельзя одновременно фиксить код и данные — сначала диагностический отчёт, потом отдельный patch для логики webhook, потом отдельный repair для данных.
+
+## 11. Требуется дополнительная информация
+
+Для repair-плана (следующий спринт, не сейчас) понадобится подтверждение:
+
+- какое окно мы готовы откатывать назад (7 / 14 / 30 дней);
+- считаем ли финальной truth bePaid `active_to` или собственный SOT (`grant-access-for-order` calendar-month) при их расхождении;
+- допускаем ли авто-репeйр Telegram-доступов без подтверждения админом, или только в режиме «список + ручной grant».
+
+Эти вопросы поднимем после публикации отчёта, не сейчас.
