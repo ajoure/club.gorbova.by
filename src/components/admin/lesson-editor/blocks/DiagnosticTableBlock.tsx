@@ -84,10 +84,10 @@ interface DiagnosticTableBlockProps {
 const DEFAULT_COLUMNS: DiagnosticTableColumn[] = [
   { id: 'source', name: 'Источник дохода', type: 'text', required: true },
   { id: 'type', name: 'Тип', type: 'select', options: ['найм', 'клиент'] },
-  { id: 'income', name: 'Доход в месяц', type: 'number', required: true },
+  { id: 'income', name: 'Доход в месяц, BYN', type: 'number', required: true },
   { id: 'work_hours', name: 'Часы по задачам', type: 'number' },
   { id: 'overhead_hours', name: 'Часы переписки', type: 'number' },
-  { id: 'hourly_rate', name: 'Доход за час', type: 'computed', formula: 'income / (work_hours + overhead_hours)' },
+  { id: 'hourly_rate', name: 'Доход за час, BYN', type: 'computed', formula: 'income / (work_hours + overhead_hours)' },
   { id: 'legal_risk', name: 'Юридические риски', type: 'select', options: ['низкий', 'средний', 'высокий'] },
   { id: 'financial_risk', name: 'Финансовые риски', type: 'select', options: ['низкий', 'средний', 'высокий'] },
   { id: 'reputation_risk', name: 'Репутационные риски', type: 'select', options: ['низкий', 'средний', 'высокий'] },
@@ -803,9 +803,9 @@ export function DiagnosticTableBlock({
                   <TableHead className="text-xs py-1.5 w-8">#</TableHead>
                   <TableHead className="text-xs py-1.5">Клиент</TableHead>
                   <TableHead className="text-xs py-1.5">Тип</TableHead>
-                  <TableHead className="text-xs py-1.5 text-right">Доход</TableHead>
+                  <TableHead className="text-xs py-1.5 text-right">Доход, BYN</TableHead>
                   <TableHead className="text-xs py-1.5 text-right">Часы</TableHead>
-                  <TableHead className="text-xs py-1.5 text-right">Доход/час</TableHead>
+                  <TableHead className="text-xs py-1.5 text-right">Доход/час, BYN</TableHead>
                   <TableHead className="text-xs py-1.5 text-right">Доля нагр.</TableHead>
                   <TableHead className="text-xs py-1.5">Категория</TableHead>
                   <TableHead className="text-xs py-1.5">Стр. ценность</TableHead>
@@ -870,7 +870,7 @@ export function DiagnosticTableBlock({
                     <Badge variant="outline" className="text-[10px]">{String(row.source_type || '—')}</Badge>
                   </div>
                   <div className="grid grid-cols-3 gap-2 text-xs">
-                    <div><span className="text-muted-foreground">Доход:</span> <span className="font-mono">{income.toLocaleString()}</span></div>
+                    <div><span className="text-muted-foreground">Доход, BYN:</span> <span className="font-mono">{income.toLocaleString()}</span></div>
                     <div><span className="text-muted-foreground">Часы:</span> {computed?.total_hours || 0}</div>
                     <div><span className="text-muted-foreground">BYN/ч:</span> <span className="font-mono">{computed?.hourly_income || 0}</span></div>
                   </div>
@@ -975,7 +975,7 @@ export function DiagnosticTableBlock({
                       <TableHeader>
                         <TableRow>
                           <TableHead className="text-xs py-1">Клиент</TableHead>
-                          <TableHead className="text-xs py-1 text-right">Доход</TableHead>
+                          <TableHead className="text-xs py-1 text-right">Доход, BYN</TableHead>
                           <TableHead className="text-xs py-1 text-right">Часы</TableHead>
                           <TableHead className="text-xs py-1 text-right">Доля</TableHead>
                           <TableHead className="text-xs py-1">Категория</TableHead>
