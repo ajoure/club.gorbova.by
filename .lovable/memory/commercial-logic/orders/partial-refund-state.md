@@ -4,29 +4,22 @@ description: Canonical refund-row format в payments_v2, расчёт partial vs
 type: feature
 ---
 
-## Writer (subscription-admin-actions[refund])
+## Writer (subscription-admin-actions[refund]) — atomic via RPC
 
-При успешном refund в bePaid:
+После успешного refund в bePaid вся DB-часть выполняется в одной транзакции через RPC `public.record_refund_atomic(order_id, parent_payment_id, amount, refund_uid, reason, actor_uid, target_uid, bepaid_response)`:
 
-1. **Refund-row в `payments_v2`** (canonical):
-   - `transaction_type='refund'`
-   - `status='refunded'`
-   - `amount = -actualRefundAmount`
-   - `meta.type='refund'`
-   - `meta.parent_payment_id` — внутренний `payments_v2.id` родителя
-   - `meta.parent_payment_uid` — `provider_payment_id` родителя (для bePaid links)
-   - `meta.refund_status` — `'partial' | 'full'`
-   - `provider_payment_id` — `uid` refund-транзакции в bePaid
+1. **Идемпотентность**: refund-row с тем же `provider_payment_id=refund_uid` и `transaction_type='refund'` уже существует → RPC возвращает `{idempotent:true}`, ничего не пишет повторно. parent.refunded_amount НЕ инкрементируется второй раз.
+2. **Lock**: `FOR UPDATE` на `payments_v2` (parent) и `orders_v2`.
+3. **Refund-row** в `payments_v2`: `transaction_type='refund'`, `status='refunded'`, `amount=-actualRefundAmount`, `provider='bepaid'`, `provider_payment_id=refund_uid`; `meta`: `type='refund'`, `parent_payment_id`, `parent_payment_uid`, `reason`, `refund_status`, `bepaid_response`.
+4. **Parent payment**: `refunded_amount = COALESCE(refunded_amount,0) + amount`.
+5. **`orders_v2`**: `status='paid'` если partial, `'refunded'` если full. `meta` дополняется `partial_refund_total`, `paid_sum`, `refund_status`, `refund_amount`, `refund_reason`, `refunded_at`, `refunded_by`, `bepaid_refund`.
+6. **Audit**: `admin.subscription.refund_recorded` пишется в той же транзакции.
 
-2. **Parent payment**:
-   - `refunded_amount = COALESCE(refunded_amount, 0) + actualRefundAmount`
+**Hard error policy**: если RPC вернул error — edge function НЕ считает refund записанным, пишет audit `admin.subscription.refund_db_recording_failed` (с `bepaid_refund_uid` и `requires_manual_repair:true`) и возвращает HTTP 500.
 
-3. **`orders_v2`**:
-   - Если `totalRefundedAfter < paidSum`: `status='paid'` (не `refunded`!)
-   - Если `totalRefundedAfter >= paidSum`: `status='refunded'`
-   - В `meta`: `partial_refund_total`, `paid_sum`, `refund_status='partial'|'full'`
+`parentBumpError as non-fatal` — **запрещено**. Раздельные TS-операции `insert refund-row` + `update parent` + `update order` после bePaid refund — **запрещено**. Только атомарный RPC.
 
-4. **Audit**: `admin.subscription.refund_recorded` с `refund_status`, `paid_sum`, `total_refunded_after`, `parent_payment_id`, `new_order_status`.
+**Fallback (no-bepaid path)**: если parent не имеет `provider_payment_id` (bePaid пропущен), обновляем только `orders_v2` с `meta.no_bepaid_payment=true`. Hard error если update упал.
 
 ## Classifier (UI: DealDetailSheet)
 
