@@ -944,6 +944,16 @@ export function DiagnosticTableBlock({
         />
       )}
 
+      {/* Currency reminder — все цифры в BYN */}
+      <Alert className="border-primary/30 bg-primary/5">
+        <Info className="h-4 w-4 text-primary" />
+        <AlertDescription className="text-xs">
+          Все суммы указывайте в <strong>BYN</strong> (белорусских рублях).
+          Если сумма в USD — умножьте на <strong>3</strong> и внесите значение в BYN.
+          Если сумма в EUR — используйте курс, указанный в инструкции или администратором.
+        </AlertDescription>
+      </Alert>
+
       {/* V2: Summary analytics — ABOVE the rows (edit mode) */}
       {isV2 && content.showAggregates && v2Aggregates && localRows.length > 0 && (
         <Card className="bg-primary/5 border-primary/20">
