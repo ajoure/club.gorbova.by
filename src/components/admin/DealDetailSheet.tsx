@@ -457,25 +457,51 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
 
   if (!deal) return null;
 
-  // Detect partial refund: order marked refunded but refunded amount < total paid
-  const isPartialRefund = (() => {
-    if (deal.status !== 'refunded' || !payments || payments.length === 0) return false;
+  // PATCH partial-refund-classifier-2026-05:
+  // Detect partial refund commercially via paidSum/refundedSum, regardless of orders_v2.status.
+  // Supports BOTH formats:
+  //   - new canonical: refund-row has transaction_type='refund' + status='refunded',
+  //                    parent payment has refunded_amount > 0
+  //   - legacy: refund-row has amount<0 + meta.type='refund' (status may be 'succeeded')
+  // paidSum: only positive non-refund successful payments (excludes refund-rows).
+  // refundedSum: parent.refunded_amount + |amount| of legacy refund-rows.
+  const refundTotals = (() => {
+    if (!payments || payments.length === 0) return { paidSum: 0, refundedSum: 0 };
     let paidSum = 0;
     let refundedSum = 0;
     for (const p of payments as any[]) {
-      const status = p?.status;
-      if (status === 'paid' || status === 'succeeded' || status === 'refunded') {
-        paidSum += Number(p?.amount) || 0;
+      const status = (p?.status || '').toLowerCase();
+      const txType = (p?.transaction_type || '').toLowerCase();
+      const metaType = (p?.meta?.type || '').toLowerCase();
+      const amount = Number(p?.amount) || 0;
+      const isRefundRow = txType.includes('refund') || txType.includes('возврат')
+        || metaType === 'refund' || amount < 0;
+      if (!isRefundRow && amount > 0
+        && (status === 'paid' || status === 'succeeded' || status === 'refunded')) {
+        paidSum += amount;
       }
+      // Sum parent.refunded_amount (canonical format)
       refundedSum += Number(p?.refunded_amount) || 0;
+      // Sum legacy refund-rows by absolute amount
+      if (isRefundRow) {
+        refundedSum += Math.abs(amount);
+      }
     }
-    return refundedSum > 0 && paidSum > 0 && refundedSum + 0.01 < paidSum;
+    return { paidSum, refundedSum };
   })();
+  const isPartialRefund = refundTotals.refundedSum > 0
+    && refundTotals.paidSum > 0
+    && refundTotals.refundedSum + 0.01 < refundTotals.paidSum;
+  const isFullRefund = refundTotals.refundedSum > 0
+    && refundTotals.paidSum > 0
+    && refundTotals.refundedSum + 0.01 >= refundTotals.paidSum;
 
   const baseStatusConfig = STATUS_CONFIG[deal.status] || { label: deal.status, color: "bg-muted", icon: Clock };
   const statusConfig = isPartialRefund
     ? { label: "Частичный возврат", color: "bg-amber-500/20 text-amber-600", icon: Undo2 }
-    : baseStatusConfig;
+    : isFullRefund
+      ? { label: "Возврат", color: "bg-red-500/20 text-red-600", icon: Undo2 }
+      : baseStatusConfig;
   const StatusIcon = statusConfig.icon;
   const product = deal.products_v2 as any;
   const tariff = deal.tariffs as any;
