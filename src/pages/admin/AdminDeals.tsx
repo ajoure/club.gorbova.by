@@ -172,7 +172,9 @@ function buildDealsQuery(
   isDefaultPipeline?: boolean,
   extraFilters?: DealsExtraFilters,
 ) {
-  // Lightweight select: only columns used in the table row
+  // Lightweight select: only columns used in the table row.
+  // count: "exact" → server returns total rows matching ALL applied filters,
+  // so the UI counter "Показано X из Y" stays consistent with pipeline/tariff/extra filters.
   let query = supabase
     .from("orders_v2")
     .select(`
@@ -200,7 +202,7 @@ function buildDealsQuery(
       tariffs(id, name),
       profiles:profile_id(id, user_id, full_name, email, phone, avatar_url),
       payments_v2(id, status, paid_at, created_at, card_holder, meta)
-    `);
+    `, { count: "exact" });
 
   // Server-side preset filters
   if (activePreset === "trial") {
