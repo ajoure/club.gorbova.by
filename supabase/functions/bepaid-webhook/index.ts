@@ -2779,9 +2779,31 @@ Deno.serve(async (req) => {
               candidateSource = 'bepaid_active_to';
             }
 
+            // PATCH 12.1 (stale-local recovery):
+            // Internal SOT for "where access SHOULD reach after this rebill" =
+            //   expected_min_end = paid_at + accessDays.
+            // If local subscriptions_v2.access_end_at is older than paid_at, it is
+            // a stale baseline (legacy backfill / earlier expired cycle), and we
+            // MUST NOT use it as overshoot anchor — otherwise normal +30 days
+            // bePaid renewal looks like 100+ days overshoot and gets rejected.
+            const paidAtIso = (transaction as any)?.paid_at || (body as any)?.paid_at || null;
+            const paidAt = paidAtIso ? new Date(paidAtIso) : now;
+            const expectedMinEnd = new Date(
+              endOfDayAppTz(new Date(paidAt.getTime() + accessDays * 24 * 60 * 60 * 1000).toISOString())
+            );
+            const isStaleLocal = !!expectedEnd && (
+              expectedEnd.getTime() < paidAt.getTime() ||
+              expectedEnd.getTime() < now.getTime()
+            );
+
             // Determine final accessEndAt
             let accessEndAt: Date;
-            let endAtAction: 'apply_candidate' | 'keep_existing_overshoot' | 'fallback_no_candidate' = 'apply_candidate';
+            let endAtAction:
+              | 'apply_candidate'
+              | 'keep_existing_overshoot'
+              | 'fallback_no_candidate'
+              | 'stale_local_end_recovered'
+              = 'apply_candidate';
 
             if (!bepaidCandidate) {
               // No bePaid date at all — fallback to +accessDays from now
@@ -2791,16 +2813,57 @@ Deno.serve(async (req) => {
               await supabase.from('audit_logs').insert({
                 action: 'bepaid.webhook.link_order_fallback_access_days',
                 actor_type: 'system',
+                actor_user_id: null,
                 actor_label: 'bepaid-webhook',
                 target_user_id: linkSubV2.user_id,
                 meta: { subscription_id: grantedSubscriptionV2Id, access_days: accessDays, reason: 'no_active_to_field' },
+              });
+            } else if (isStaleLocal) {
+              // PATCH 12.1: stale local baseline — bypass overshoot guard, recover
+              // access via GREATEST(local, expected_min_end, provider_active_to).
+              const candidates = [
+                expectedEnd ? expectedEnd.getTime() : 0,
+                expectedMinEnd.getTime(),
+                bepaidCandidate.getTime(),
+              ];
+              accessEndAt = new Date(Math.max(...candidates));
+              endAtAction = 'stale_local_end_recovered';
+              console.warn(
+                '[WEBHOOK-LINK-ORDER] STALE LOCAL RECOVERED: local_end=' +
+                (expectedEnd ? expectedEnd.toISOString() : 'null') +
+                ' < paid_at=' + paidAt.toISOString() +
+                '. Using GREATEST(local, expected_min_end, bepaid_active_to)=' +
+                accessEndAt.toISOString()
+              );
+              await supabase.from('audit_logs').insert({
+                action: 'bepaid.webhook.stale_local_end_recovered',
+                actor_type: 'system',
+                actor_user_id: null,
+                actor_label: 'bepaid-webhook',
+                target_user_id: linkSubV2.user_id,
+                meta: {
+                  subscription_id: grantedSubscriptionV2Id,
+                  order_id: (typeof linkOrder !== 'undefined' && linkOrder?.id) ? linkOrder.id : null,
+                  paid_at: paidAt.toISOString(),
+                  local_access_end_at: expectedEnd ? expectedEnd.toISOString() : null,
+                  expected_min_end: expectedMinEnd.toISOString(),
+                  bepaid_active_to: bepaidCandidate.toISOString(),
+                  resolved_access_end_at: accessEndAt.toISOString(),
+                  access_days: accessDays,
+                  candidate_source: candidateSource,
+                  reason: expectedEnd && expectedEnd.getTime() < paidAt.getTime()
+                    ? 'local_end_before_paid_at'
+                    : 'local_end_in_past',
+                  patch: 'patch-12.1-stale-local-recovery',
+                },
               });
             } else if (
               expectedEnd &&
               bepaidCandidate.getTime() > expectedEnd.getTime() + toleranceMs
             ) {
-              // OVERSHOOT detected: bePaid candidate ahead of expected end by > tolerance.
-              // Keep our SOT (expected_end) и НЕ применяем кандидат.
+              // OVERSHOOT detected on FRESH local baseline: bePaid candidate ahead
+              // of expected end by > tolerance. Keep our SOT (expected_end).
+              // PATCH 12.1: this branch now only fires when local_end is NOT stale.
               accessEndAt = expectedEnd;
               endAtAction = 'keep_existing_overshoot';
               console.warn(
@@ -2812,6 +2875,7 @@ Deno.serve(async (req) => {
               await supabase.from('audit_logs').insert({
                 action: 'bepaid.webhook.access_end_at_skipped_overshoot',
                 actor_type: 'system',
+                actor_user_id: null,
                 actor_label: 'bepaid-webhook',
                 target_user_id: linkSubV2.user_id,
                 meta: {
@@ -2826,6 +2890,7 @@ Deno.serve(async (req) => {
                   access_days: accessDays,
                   candidate_source: candidateSource,
                   guard: 'bepaid_active_to_overshoot_guard',
+                  is_stale_local: false,
                 },
               });
             } else {
