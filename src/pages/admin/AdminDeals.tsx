@@ -825,8 +825,13 @@ export default function AdminDeals() {
     setActivePreset(tabId);
   }, []);
 
-  // Total count from server-side RPC
+  // Total count for "Показано X из Y".
+  // Priority: server-truth count from the same paginated query (учитывает ВСЕ
+  // фильтры: pipeline, tariff, extraFilters.statuses и др.). Если первая страница
+  // ещё не пришла или мы в search-режиме — fallback на tabCounts (preset-level).
+  const serverTotalCount = dealsData?.pages?.[0]?.serverTotalCount;
   const totalCount = useMemo(() => {
+    if (typeof serverTotalCount === "number") return serverTotalCount;
     if (!tabCounts) return undefined;
     switch (activePreset) {
       case "trial": return tabCounts.trial;
@@ -834,7 +839,7 @@ export default function AdminDeals() {
       case "imported": return tabCounts.imported;
       default: return tabCounts.all;
     }
-  }, [tabCounts, activePreset]);
+  }, [serverTotalCount, tabCounts, activePreset]);
 
   // Create pipeline dialog state
   const [showCreatePipelineDialog, setShowCreatePipelineDialog] = useState(false);
