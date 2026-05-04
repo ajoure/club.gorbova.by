@@ -3828,6 +3828,57 @@ export type Database = {
           },
         ]
       }
+      entitlements_repair_backup_2026_05: {
+        Row: {
+          backup_id: string
+          batch_id: string
+          ent_id: string
+          expected_min_end: string
+          expires_at: string | null
+          meta: Json | null
+          product_id: string
+          reason: string
+          repair_bucket: string
+          snapshot_at: string
+          source_order_id: string
+          source_payment_id: string
+          status: string | null
+          user_id: string
+        }
+        Insert: {
+          backup_id?: string
+          batch_id: string
+          ent_id: string
+          expected_min_end: string
+          expires_at?: string | null
+          meta?: Json | null
+          product_id: string
+          reason: string
+          repair_bucket: string
+          snapshot_at?: string
+          source_order_id: string
+          source_payment_id: string
+          status?: string | null
+          user_id: string
+        }
+        Update: {
+          backup_id?: string
+          batch_id?: string
+          ent_id?: string
+          expected_min_end?: string
+          expires_at?: string | null
+          meta?: Json | null
+          product_id?: string
+          reason?: string
+          repair_bucket?: string
+          snapshot_at?: string
+          source_order_id?: string
+          source_payment_id?: string
+          status?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       executors: {
         Row: {
           acts_on_basis: string | null
@@ -10787,6 +10838,63 @@ export type Database = {
           },
         ]
       }
+      subscriptions_v2_repair_backup_2026_05: {
+        Row: {
+          access_end_at: string | null
+          backup_id: string
+          batch_id: string
+          expected_min_end: string
+          meta: Json | null
+          next_charge_at: string | null
+          product_id: string
+          reason: string
+          repair_bucket: string
+          snapshot_at: string
+          source_order_id: string
+          source_payment_id: string
+          status: string | null
+          sub_id: string
+          tariff_id: string | null
+          user_id: string
+        }
+        Insert: {
+          access_end_at?: string | null
+          backup_id?: string
+          batch_id: string
+          expected_min_end: string
+          meta?: Json | null
+          next_charge_at?: string | null
+          product_id: string
+          reason: string
+          repair_bucket: string
+          snapshot_at?: string
+          source_order_id: string
+          source_payment_id: string
+          status?: string | null
+          sub_id: string
+          tariff_id?: string | null
+          user_id: string
+        }
+        Update: {
+          access_end_at?: string | null
+          backup_id?: string
+          batch_id?: string
+          expected_min_end?: string
+          meta?: Json | null
+          next_charge_at?: string | null
+          product_id?: string
+          reason?: string
+          repair_bucket?: string
+          snapshot_at?: string
+          source_order_id?: string
+          source_payment_id?: string
+          status?: string | null
+          sub_id?: string
+          tariff_id?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       support_ticket_counters: {
         Row: {
           seq: number
@@ -11817,6 +11925,57 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      telegram_access_repair_backup_2026_05: {
+        Row: {
+          active_until: string | null
+          backup_id: string
+          batch_id: string
+          club_id: string
+          expected_min_end: string
+          reason: string
+          repair_bucket: string
+          snapshot_at: string
+          source_order_id: string
+          source_payment_id: string
+          state_channel: string | null
+          state_chat: string | null
+          tg_id: string
+          user_id: string
+        }
+        Insert: {
+          active_until?: string | null
+          backup_id?: string
+          batch_id: string
+          club_id: string
+          expected_min_end: string
+          reason: string
+          repair_bucket: string
+          snapshot_at?: string
+          source_order_id: string
+          source_payment_id: string
+          state_channel?: string | null
+          state_chat?: string | null
+          tg_id: string
+          user_id: string
+        }
+        Update: {
+          active_until?: string | null
+          backup_id?: string
+          batch_id?: string
+          club_id?: string
+          expected_min_end?: string
+          reason?: string
+          repair_bucket?: string
+          snapshot_at?: string
+          source_order_id?: string
+          source_payment_id?: string
+          state_channel?: string | null
+          state_chat?: string | null
+          tg_id?: string
+          user_id?: string
+        }
+        Relationships: []
       }
       telegram_ai_conversations: {
         Row: {
