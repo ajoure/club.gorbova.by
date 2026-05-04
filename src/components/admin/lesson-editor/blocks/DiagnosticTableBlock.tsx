@@ -723,6 +723,9 @@ export function DiagnosticTableBlock({
       );
     }
 
+    const isMoneyCol = col.id === 'monthly_income' || col.id === 'income';
+    const numberPlaceholder = isMoneyCol ? 'например, 1500' : '';
+
     return (
       <div>
         <Input
@@ -738,6 +741,7 @@ export function DiagnosticTableBlock({
           className={inputClass}
           disabled={isCompleted}
           min={col.type === 'number' ? 0 : undefined}
+          placeholder={col.type === 'number' ? numberPlaceholder : undefined}
         />
         {hasError && <p className="text-xs text-destructive mt-1">{col.name}: обязательное поле</p>}
       </div>
