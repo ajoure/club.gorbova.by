@@ -254,7 +254,6 @@ Deno.serve(async (req) => {
             }
 
             // PATCH 1: Use shared hasValidAccessBatch result instead of local function
-            const userId = member.profiles?.user_id;
             const accessResult = userId ? accessMap.get(userId) : undefined;
             const hasAccess = accessResult?.valid ?? false;
 
