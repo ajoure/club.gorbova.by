@@ -1,13 +1,26 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { Badge } from "@/components/ui/badge";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { CheckCircle, XCircle, Clock, HelpCircle, Info } from "lucide-react";
+import {
+  Check,
+  X,
+  Clock,
+  HelpCircle,
+  Info,
+  MessageSquare,
+  Megaphone,
+  Send,
+  ShieldCheck,
+  ShieldAlert,
+  CircleDot,
+  CircleCheck,
+  CircleAlert,
+} from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
@@ -35,7 +48,6 @@ interface Props {
 }
 
 const FRESH_HOURS = 24;
-const STALE_HOURS = 24 * 7;
 
 type Freshness = "fresh" | "stale" | "never";
 
@@ -46,82 +58,61 @@ function freshnessOf(ts: string | null): Freshness {
   return "stale";
 }
 
-function clubSyncBadge(row: ClubMembershipRow) {
-  // full = last_members_sync_at fresh; partial = status fresh, members stale; stale = both stale
-  const membersFresh = freshnessOf(row.club_last_members_sync_at);
-  const statusFresh = freshnessOf(row.club_last_status_check_at);
-  if (membersFresh === "fresh") {
-    return {
-      label: "Полная синхронизация",
-      cls: "bg-emerald-500/10 text-emerald-700 border-emerald-500/30",
-    };
-  }
-  if (statusFresh === "fresh") {
-    return {
-      label: "Частичная синхронизация",
-      cls: "bg-amber-500/10 text-amber-700 border-amber-500/30",
-    };
-  }
-  return {
-    label: "Устаревшая синхронизация",
-    cls: "bg-red-500/10 text-red-700 border-red-500/30",
-  };
+type SyncState = "full" | "partial" | "stale";
+
+function syncStateOf(row: ClubMembershipRow): SyncState {
+  const m = freshnessOf(row.club_last_members_sync_at);
+  const s = freshnessOf(row.club_last_status_check_at);
+  if (m === "fresh") return "full";
+  if (s === "fresh") return "partial";
+  return "stale";
 }
 
-function memberFreshnessBadge(row: ClubMembershipRow) {
-  const f = freshnessOf(row.last_telegram_check_at);
-  if (f === "fresh") {
-    return { label: "Свежая проверка", cls: "bg-emerald-500/10 text-emerald-700 border-emerald-500/30" };
-  }
-  if (f === "stale") {
-    return { label: "Требует проверки", cls: "bg-amber-500/10 text-amber-700 border-amber-500/30" };
-  }
-  return { label: "Не проверялся", cls: "bg-muted text-muted-foreground border-border" };
-}
+const SYNC_META: Record<SyncState, { label: string; dot: string; text: string; Icon: any }> = {
+  full: {
+    label: "Синхронизировано",
+    dot: "bg-emerald-500",
+    text: "text-emerald-700",
+    Icon: CircleCheck,
+  },
+  partial: {
+    label: "Частичная синхронизация",
+    dot: "bg-amber-500",
+    text: "text-amber-700",
+    Icon: CircleDot,
+  },
+  stale: {
+    label: "Синхронизация устарела",
+    dot: "bg-red-500",
+    text: "text-red-700",
+    Icon: CircleAlert,
+  },
+};
 
-function presenceBadges(row: ClubMembershipRow) {
-  const out: { key: string; label: string; cls: string; Icon: any }[] = [];
-  if (row.in_chat === true) {
-    out.push({ key: "chat", label: "В чате", cls: "bg-emerald-500/10 text-emerald-700 border-emerald-500/30", Icon: CheckCircle });
-  } else if (row.in_chat === false) {
-    out.push({ key: "chat", label: "Не в чате", cls: "bg-red-500/10 text-red-700 border-red-500/30", Icon: XCircle });
-  }
-  if (row.in_channel === true) {
-    out.push({ key: "channel", label: "В канале", cls: "bg-emerald-500/10 text-emerald-700 border-emerald-500/30", Icon: CheckCircle });
-  } else if (row.in_channel === false) {
-    out.push({ key: "channel", label: "Не в канале", cls: "bg-muted text-muted-foreground border-border", Icon: XCircle });
-  }
-  return out;
-}
+const ACCESS_LABELS: Record<string, { label: string; tone: "ok" | "bad" | "muted" }> = {
+  ok: { label: "Доступ активен", tone: "ok" },
+  active: { label: "Доступ активен", tone: "ok" },
+  no_access: { label: "Нет доступа", tone: "bad" },
+  removed: { label: "Доступ удалён", tone: "bad" },
+  kicked: { label: "Исключён", tone: "bad" },
+  expired: { label: "Доступ истёк", tone: "bad" },
+  revoked: { label: "Доступ отозван", tone: "bad" },
+  pending: { label: "Доступ ожидает", tone: "muted" },
+};
 
-function inviteBadge(row: ClubMembershipRow) {
-  if (!row.invite_status && !row.invite_sent_at) return null;
-  const s = (row.invite_status || "").toLowerCase();
-  let cls = "bg-muted text-muted-foreground border-border";
-  let label = row.invite_status || "invite";
-  if (s === "sent" || s === "delivered") {
-    cls = "bg-blue-500/10 text-blue-700 border-blue-500/30";
-    label = "Invite отправлен";
-  } else if (s === "failed" || s === "error") {
-    cls = "bg-red-500/10 text-red-700 border-red-500/30";
-    label = "Invite ошибка";
-  } else if (s === "expired") {
-    cls = "bg-amber-500/10 text-amber-700 border-amber-500/30";
-    label = "Invite истёк";
-  }
-  return { label, cls };
-}
-
-function accessBadge(row: ClubMembershipRow) {
-  const s = (row.access_status || "").toLowerCase();
+function accessLabel(s: string | null) {
   if (!s) return null;
-  if (s === "ok" || s === "active") {
-    return { label: "Доступ активен", cls: "bg-emerald-500/10 text-emerald-700 border-emerald-500/30" };
-  }
-  if (["removed", "kicked", "expired", "no_access", "revoked"].includes(s)) {
-    return { label: `Доступ: ${s}`, cls: "bg-red-500/10 text-red-700 border-red-500/30" };
-  }
-  return { label: `Доступ: ${s}`, cls: "bg-muted text-muted-foreground border-border" };
+  const key = s.toLowerCase();
+  return ACCESS_LABELS[key] ?? { label: s, tone: "muted" as const };
+}
+
+function inviteLabel(row: ClubMembershipRow) {
+  if (!row.invite_status) return null;
+  const s = row.invite_status.toLowerCase();
+  if (s === "sent" || s === "delivered") return { label: "Приглашение отправлено", tone: "info" as const };
+  if (s === "failed" || s === "error") return { label: "Ошибка приглашения", tone: "bad" as const };
+  if (s === "expired") return { label: "Приглашение истекло", tone: "warn" as const };
+  return { label: row.invite_status, tone: "muted" as const };
 }
 
 function fmt(ts: string | null) {
@@ -140,6 +131,49 @@ function ago(ts: string | null) {
   } catch {
     return "—";
   }
+}
+
+function partialReason(row: ClubMembershipRow): string {
+  const parts: string[] = [];
+  const m = row.club_last_members_sync_at;
+  const s = row.club_last_status_check_at;
+  if (!m) parts.push("полный обход участников ещё не выполнялся");
+  else parts.push(`полный обход последний раз: ${fmt(m)} (${ago(m)})`);
+  if (s) parts.push(`последняя batch-проверка: ${fmt(s)} (${ago(s)})`);
+  parts.push("Cron обходит участников батчами по 200 — следующие тики догонят остаток.");
+  return parts.join(" · ");
+}
+
+function PresenceIcon({
+  present,
+  Icon,
+  label,
+}: {
+  present: boolean | null;
+  Icon: any;
+  label: string;
+}) {
+  const ok = present === true;
+  const bad = present === false;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className={cn(
+            "inline-flex items-center justify-center w-5 h-5 rounded-full border text-[10px]",
+            ok && "bg-emerald-500/10 border-emerald-500/30 text-emerald-700",
+            bad && "bg-red-500/10 border-red-500/30 text-red-700",
+            !ok && !bad && "bg-muted border-border text-muted-foreground",
+          )}
+        >
+          <Icon className="w-3 h-3" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="text-xs">
+        {label}: {ok ? "да" : bad ? "нет" : "неизвестно"}
+      </TooltipContent>
+    </Tooltip>
+  );
 }
 
 export function ContactClubMembershipsList({ profileId, enabled }: Props) {
@@ -181,7 +215,7 @@ export function ContactClubMembershipsList({ profileId, enabled }: Props) {
 
   return (
     <TooltipProvider delayDuration={150}>
-      <div className="space-y-2">
+      <div className="space-y-1.5">
         <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
           Telegram-клубы ({rows.length})
           <Tooltip>
@@ -192,78 +226,127 @@ export function ContactClubMembershipsList({ profileId, enabled }: Props) {
             </TooltipTrigger>
             <TooltipContent side="right" className="max-w-xs text-xs">
               <div className="space-y-1">
-                <div><b>Свежая проверка</b> — last_telegram_check_at ≤ {FRESH_HOURS}ч.</div>
-                <div><b>Требует проверки</b> — старше {FRESH_HOURS}ч.</div>
-                <div className="pt-1 border-t border-border/50">
-                  <b>Полная синхронизация</b> — last_members_sync_at ≤ {FRESH_HOURS}ч (cron прошёл всех участников клуба).<br />
-                  <b>Частичная</b> — last_status_check_at свежий, но full pass устарел (cron работает по batch).<br />
-                  <b>Устаревшая</b> — оба старше {FRESH_HOURS}ч.
+                <div>
+                  <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 mr-1.5 align-middle" />
+                  <b>Синхронизировано</b> — полный обход участников клуба прошёл за последние 24ч.
                 </div>
-                <div className="pt-1 border-t border-border/50">
-                  <b>last_status_check_at</b> — последний batch/status-check клуба.<br />
-                  <b>last_members_sync_at</b> — последний полный проход по всем участникам.
+                <div>
+                  <span className="inline-block w-2 h-2 rounded-full bg-amber-500 mr-1.5 align-middle" />
+                  <b>Частичная</b> — batch-проверка свежая, но полный обход ещё не закончен.
+                </div>
+                <div>
+                  <span className="inline-block w-2 h-2 rounded-full bg-red-500 mr-1.5 align-middle" />
+                  <b>Устарела</b> — обе проверки старше 24ч.
                 </div>
               </div>
             </TooltipContent>
           </Tooltip>
         </div>
 
-        <div className="space-y-2">
+        <div className="space-y-1">
           {rows.map((row) => {
-            const sync = clubSyncBadge(row);
-            const fresh = memberFreshnessBadge(row);
-            const presence = presenceBadges(row);
-            const invite = inviteBadge(row);
-            const access = accessBadge(row);
+            const sync = syncStateOf(row);
+            const meta = SYNC_META[sync];
+            const access = accessLabel(row.access_status);
+            const invite = inviteLabel(row);
+            const memberFresh = freshnessOf(row.last_telegram_check_at);
 
             return (
               <div
                 key={row.club_id}
-                className="rounded-md border border-border bg-card/40 px-3 py-2 space-y-1.5"
+                className="rounded-md border border-border bg-card/40 px-2.5 py-1.5"
               >
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-sm font-medium truncate">{row.club_name}</span>
-                  </div>
+                <div className="flex items-center gap-2 min-w-0">
+                  {/* Sync status dot with tooltip */}
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Badge variant="outline" className={cn("text-[10px] py-0 h-5", sync.cls)}>
-                        {sync.label}
-                      </Badge>
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 shrink-0 cursor-help",
+                          meta.text,
+                        )}
+                      >
+                        <span className={cn("w-2 h-2 rounded-full", meta.dot)} />
+                      </span>
                     </TooltipTrigger>
-                    <TooltipContent side="left" className="text-xs">
-                      <div>last_status_check_at: {fmt(row.club_last_status_check_at)}</div>
-                      <div>last_members_sync_at: {fmt(row.club_last_members_sync_at)}</div>
+                    <TooltipContent side="top" className="max-w-xs text-xs">
+                      <div className="font-medium mb-1">{meta.label}</div>
+                      {sync === "partial" && (
+                        <div className="text-muted-foreground">{partialReason(row)}</div>
+                      )}
+                      {sync === "full" && (
+                        <div className="text-muted-foreground">
+                          Полный обход: {fmt(row.club_last_members_sync_at)} ({ago(row.club_last_members_sync_at)})
+                        </div>
+                      )}
+                      {sync === "stale" && (
+                        <div className="text-muted-foreground">
+                          Последний обход: {fmt(row.club_last_members_sync_at)} ({ago(row.club_last_members_sync_at)}).
+                          Cron не доходит до клуба — нужна диагностика.
+                        </div>
+                      )}
                     </TooltipContent>
                   </Tooltip>
+
+                  {/* Club name */}
+                  <span className="text-sm font-medium truncate flex-1 min-w-0">
+                    {row.club_name}
+                  </span>
+
+                  {/* Presence icons (chat/channel) */}
+                  <div className="flex items-center gap-1 shrink-0">
+                    <PresenceIcon present={row.in_chat} Icon={MessageSquare} label="В чате" />
+                    <PresenceIcon present={row.in_channel} Icon={Megaphone} label="В канале" />
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {presence.map((p) => (
-                    <Badge key={p.key} variant="outline" className={cn("text-[10px] py-0 h-5", p.cls)}>
-                      <p.Icon className="w-3 h-3 mr-1" />
-                      {p.label}
-                    </Badge>
-                  ))}
+                {/* Secondary line: access + invite + freshness — compact text */}
+                <div className="flex items-center gap-x-2 gap-y-0.5 flex-wrap text-[11px] text-muted-foreground mt-0.5 pl-4">
                   {access && (
-                    <Badge variant="outline" className={cn("text-[10px] py-0 h-5", access.cls)}>
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1",
+                        access.tone === "ok" && "text-emerald-700",
+                        access.tone === "bad" && "text-red-700",
+                      )}
+                    >
+                      {access.tone === "ok" ? (
+                        <ShieldCheck className="w-3 h-3" />
+                      ) : access.tone === "bad" ? (
+                        <ShieldAlert className="w-3 h-3" />
+                      ) : (
+                        <ShieldCheck className="w-3 h-3" />
+                      )}
                       {access.label}
-                    </Badge>
+                    </span>
                   )}
                   {invite && (
-                    <Badge variant="outline" className={cn("text-[10px] py-0 h-5", invite.cls)}>
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1",
+                        invite.tone === "info" && "text-blue-700",
+                        invite.tone === "bad" && "text-red-700",
+                        invite.tone === "warn" && "text-amber-700",
+                      )}
+                    >
+                      <Send className="w-3 h-3" />
                       {invite.label}
-                    </Badge>
+                    </span>
                   )}
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Badge variant="outline" className={cn("text-[10px] py-0 h-5", fresh.cls)}>
-                        {fresh.label}
-                      </Badge>
+                      <span className="inline-flex items-center gap-1 cursor-help">
+                        <Clock className="w-3 h-3" />
+                        {memberFresh === "fresh"
+                          ? "проверен недавно"
+                          : memberFresh === "stale"
+                            ? "проверка устарела"
+                            : "не проверялся"}
+                      </span>
                     </TooltipTrigger>
-                    <TooltipContent side="left" className="text-xs">
-                      <div>last_telegram_check_at: {fmt(row.last_telegram_check_at)} ({ago(row.last_telegram_check_at)})</div>
-                      <div>last_verified_at: {fmt(row.last_verified_at)}</div>
+                    <TooltipContent side="top" className="text-xs">
+                      <div>Последняя проверка: {fmt(row.last_telegram_check_at)}</div>
+                      <div className="text-muted-foreground">{ago(row.last_telegram_check_at)}</div>
                     </TooltipContent>
                   </Tooltip>
                 </div>
