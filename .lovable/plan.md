@@ -1,110 +1,250 @@
 Да, согласен, с учетом правок:
 
-1. Не менять Vite chunks на стабильные имена. Оставить hashed chunks. Стабильные имена могут ухудшить cache-invalidations. Основной фикс: no-cache/revalidate для index.html + LazyErrorBoundary для stale dynamic imports.
+1. **Сделать не отдельный календарь для реквизитов, а единый canonical DatePicker**
+  - Все новые date-поля должны использовать только общий `DatePicker`.
+  - Не плодить локальные календарики внутри форм.
+2. **Сохранить текущий красивый shadcn-дизайн**
+  - Не менять визуальную концепцию.
+  - Dropdown месяца/года должен выглядеть как часть текущего UI, а не как нативный некрасивый select.
+3. **Добавить режимы использования**
+  - `variant="default"` — как сейчас, без dropdown, чтобы старые места не поменялись.
+  - `variant="extended"` или пропсы `showMonthYearDropdowns` / `allowManualInput` — для форм, где нужен быстрый выбор старых дат.
+  - Это защитит остальные экраны от неожиданных изменений.
+4. **Ручной ввод даты сделать строго валидируемым**
+  - Принимать:
+    - `ДД.ММ.ГГГГ`
+    - `ГГГГ-ММ-ДД`
+  - На выходе всегда сохранять только `yyyy-MM-dd`.
+  - Некорректную дату не применять.
+  - Проверять реальные даты: `31.02.1990` не должен проходить.
+5. **Добавить ограничения диапазона**
+  - Дата рождения: `1920 → текущий год`, не позже сегодня.
+  - Дата выдачи паспорта: `1990 → текущий год`, не позже сегодня.
+  - Срок действия паспорта: `текущий год → текущий год + 30`.
+  - Если дата вне диапазона — показывать ошибку и не применять.
+6. **Проверить все формы, где уже используются даты**
+  - `IndividualDetailsForm`
+  - `OrganizationDetailsForm`
+  - `PersonFieldsForm`
+  - другие места через поиск по `DatePicker`, `Calendar`, `type="date"`, `birth_date`, `issued_date`, `valid_until`.
+  - Цель: привести к единому canonical DatePicker, но без массового UI-ломания.
+7. **Добавить mini-regression check**
+  - Старые экраны без `fromYear/toYear` работают как раньше.
+  - В Dialog/Popover календарь не закрывается случайно.
+  - `z-index`, `pointer-events`, scroll внутри modal не ломаются.
+8. **Proof**
+  - В proof-файле обязательно указать:
+    - какие файлы изменены;
+    - где включён dropdown;
+    - где оставлен старый режим;
+    - формат входа/выхода даты;
+    - скрин/описание проверки `/admin/communication → Настройки → Реквизиты`.
 
-2. Обязательно проверить server/CDN SPA fallback: прямой заход на [https://gorbova.by/zgai](https://gorbova.by/zgai) должен всегда отдавать index.html. В proof добавить curl -I для /zgai и для assets, указать status, content-type и cache-control.
+Копируемый блок для Lovable:
 
-3. Для index.html обеспечить Cache-Control: no-cache, must-revalidate. Для hashed assets long-cache допустим.
+```text
+Доработать единый canonical DatePicker во всей системе.
 
-4. Service Worker не unregister глобально, чтобы не сломать push. Только bump version, аккуратный skipWaiting/clients.claim и очистка старых cache storage, если они реально есть.
+Жёсткие правила:
+- Не создавать отдельные календарики внутри форм.
+- Использовать общий DatePicker как единый компонент.
+- Сохранить текущий красивый shadcn-дизайн.
+- Не ломать существующие места использования DatePicker.
+- Никаких изменений в БД, edge functions, RPC, RLS.
+- Значение даты наружу всегда отдавать в формате yyyy-MM-dd.
 
-5. LazyErrorBoundary должен срабатывать только на ошибки dynamic import/chunk load:
+Scope:
 
-- ChunkLoadError
+1. Расширить общий DatePicker
+- Добавить поддержку dropdown месяца и года через react-day-picker v8:
+  - captionLayout="dropdown-buttons"
+  - fromYear
+  - toYear
+  - fromDate
+  - toDate
+- Добавить ручной ввод даты над календарём.
+- Поддержать ввод:
+  - ДД.ММ.ГГГГ
+  - ГГГГ-ММ-ДД
+- При корректном вводе дата применяется и сохраняется как yyyy-MM-dd.
+- При некорректном вводе дата не применяется, popover не закрывается, показывается ошибка.
+- Проверять реальные даты: 31.02.1990 не должен проходить.
+- Проверять диапазон min/max.
 
-- Failed to fetch dynamically imported module
+2. Режим обратной совместимости
+- Если fromYear/toYear/showMonthYearDropdowns/allowManualInput не переданы — DatePicker должен работать и выглядеть как раньше.
+- Для расширенного режима использовать пропсы, например:
+  - showMonthYearDropdowns
+  - allowManualInput
+  - fromYear
+  - toYear
+  - minDate
+  - maxDate
 
-- Importing a module script failed
+3. Calendar UI
+- В src/components/ui/calendar.tsx добавить стили для:
+  - caption_dropdowns
+  - dropdown_month
+  - dropdown_year
+- Dropdown должен выглядеть в стиле shadcn, без некрасивого нативного вида.
+- Локаль ru сохранить.
 
-Reload только один раз через sessionStorage. На обычные React-ошибки страницу не перезагружать.
+4. Подключить в формах реквизитов
+В IndividualDetailsForm:
+- ind_birth_date:
+  - fromYear=1920
+  - toYear=currentYear
+  - maxDate=today
+- ind_passport_issued_date:
+  - fromYear=1990
+  - toYear=currentYear
+  - maxDate=today
+- ind_passport_valid_until:
+  - fromYear=currentYear
+  - toYear=currentYear + 30
 
-6. ButtonBlock и lesson_blocks не менять. URL [https://gorbova.by/zgai](https://gorbova.by/zgai) корректный. В proof подтвердить: target=_blank, rel=noopener noreferrer, externalLinkKillSwitch не блокирует [gorbova.by](http://gorbova.by).
+Также проверить и при необходимости подключить canonical DatePicker в:
+- OrganizationDetailsForm
+- PersonFieldsForm
+- другие места, найденные через поиск по DatePicker / Calendar / type="date" / birth_date / issued_date / valid_until
 
-7. Verify:
+5. UX
+- Над календарём поле ручного ввода с placeholder "ДД.ММ.ГГГГ".
+- Enter/Tab применяет дату, если она валидна.
+- Месяц в dropdown — текстом.
+- Год — числом.
+- Кнопку «Сегодня» можно оставить, но она не должна нарушать min/max.
+- В Dialog/Popover календарь должен нормально кликаться: pointer-events/z-index не ломать.
 
-- открыть /zgai напрямую;
+6. DoD
+- В форме реквизитов физлица у даты рождения, даты выдачи паспорта и срока действия паспорта есть dropdown месяца/года.
+- Год 1990 можно выбрать быстро через dropdown, без пролистывания по месяцам.
+- Ручной ввод 15.01.1990 сохраняет значение как 1990-01-15.
+- Некорректный ввод 31.02.1990 не применяется.
+- Дата за пределами диапазона не применяется.
+- Старые места использования DatePicker без новых пропсов визуально и функционально не изменились.
+- Форма реквизитов сохраняется как раньше.
+- Проверено в preview: /admin/communication → Настройки → Реквизиты.
 
-- открыть /zgai из урока по кнопке;
+7. Proof
+Создать proof-файл:
+.lovable/proofs/datepicker_year_dropdown_2026_05.md
 
-- hard refresh /zgai;
+В proof указать:
+- изменённые файлы;
+- где включён extended DatePicker;
+- где оставлен старый режим;
+- формат входа/выхода даты;
+- результаты проверки формы реквизитов;
+- отсутствие изменений БД / edge / RPC / RLS.План: Удобный выбор даты в форме реквизитов (год/месяц + ручной ввод)
+```
 
-- симулировать stale chunk и подтвердить single reload без бесконечного цикла.
+  
+  
+Да, согласен, исправление:
 
-8. Не делать redirect вместо фикса. /zgai — валидная slug-страница, проблема не в URL, а в стабильности загрузки SPA/chunks/cache/fallback.
+В плане заменить:
 
-Запрещено:
+```text
+На выходе всегда сохранять только yyyy-MM-dd.
+```
 
-- не менять site_pages zgai;
+на:
 
-- не менять lesson_blocks;
+```text
+На выходе сохранять корректную дату в формате ДД.ММ.ГГГГ.
+```
 
-- не менять subscriptions_v2 / entitlements / orders_v2;
+И в копируемом блоке Lovable заменить все места:
 
-- не делать глобальный unregister service worker;
+```text
+Значение даты наружу всегда отдавать в формате yyyy-MM-dd.
+```
 
-- не отключать lazy loading целиком.
+```text
+При корректном вводе дата применяется и сохраняется как yyyy-MM-dd.
+```
 
-&nbsp;
+```text
+Ручной ввод 15.01.1990 сохраняет значение как 1990-01-15.
+```
 
-## План: диагностика "ошибка по кнопке гайда" в уроке "Знакомство с нейросетями"
+на:
 
-### Что уже подтверждено (Diagnose)
+```text
+Значение даты наружу всегда отдавать в формате ДД.ММ.ГГГГ.
+```
 
-1. **Сама страница `/zgai` существует и публикуется штатно**
-  - `site_pages.slug = 'zgai'`, `status = published`, 1 блок (hero), биндинг к домену `gorbova.by`.
-  - Прямой запрос `https://gorbova.by/zgai` отдаёт корректный HTML и контент (проверено fetch → скриншот: видно «Закрой год: гайд по нейросетям»).
-  - Маршрут в `src/App.tsx:331` — `<Route path="/:slug" element={<SitePageBySlug />}>`, рендерится через `SiteRenderService.resolveBySlug` (без привязки к домену) — то есть путь `/zgai` всегда резолвится.
-2. **Кнопка в уроке настроена корректно**
-  - `lesson_blocks` для `urok-1-znakomstvo-s-populyarnymi-nejrosetyami`: блок `button` с `{ "label": "Гайд", "url": "https://gorbova.by/zgai" }`.
-  - Рендер: `src/components/admin/lesson-editor/blocks/ButtonBlock.tsx` → `<a href={btn.url} target="_blank" rel="noopener noreferrer">`.
-  - `externalLinkKillSwitch` блокирует только `kinescope.io`, не `gorbova.by` — кнопка не блокируется.
-3. **Симптом «не всегда загружается»** при прямой вставке в адресную строку — характерный признак двух причин одновременно:
-  - **(A) Stale Service Worker / chunk cache.** `SitePageBySlug` грузится lazy (`React.lazy`). После деплоя у части пользователей в `index.html` остаётся ссылка на старый chunk, который на CDN уже отсутствует → Suspense падает с ошибкой загрузки модуля → белая страница / "ошибка". Это объясняет, почему у тебя/у меня всё работает (свежий кэш), а у пользователей — через раз.
-  - **(B) `public/sw.js` зарегистрирован у пользователей под `gorbova.by` и при `activate` вызывает `clients.claim()`. Сам по себе он не кэширует страницы, но если когда-либо был расширенный SW — старая версия может оставаться у части юзеров и мешать.** Нужно проверить, регистрируется ли SW и нет ли legacy-инсталляций.
+```text
+При корректном вводе дата применяется и сохраняется как ДД.ММ.ГГГГ.
+```
 
-### Что сделаю в Execute
+```text
+Ручной ввод 15.01.1990 сохраняет значение как 15.01.1990.
+```
 
-**Шаг 1. Подтвердить корневую причину по логам и истории SW**
+  
 
-- Проверить registration SW в `src/main.tsx` / `src/App.tsx` (`navigator.serviceWorker.register`).
-- В edge-логах посмотреть 404 на статические ассеты под `/assets/SitePageBySlug-*.js` за 7 дней (через `supabase--analytics_query` по `function_edge_logs` / запросить логи CDN если доступны).
-- Если подтверждается stale chunk — это и есть причина.
 
-**Шаг 2. Защитить SPA от stale lazy chunks**
+## Проблема
 
-- Добавить в `vite.config.ts` `build.rollupOptions.output.entryFileNames`/`chunkFileNames` со стабильным паттерном + проставить `<meta http-equiv="Cache-Control" content="no-cache">` на `index.html` (если ещё не проставлено).
-- В `src/App.tsx` обернуть `<Suspense>` в `ErrorBoundary` с авто-`window.location.reload()` ровно один раз при ошибке загрузки chunk (по signature `ChunkLoadError` / `Failed to fetch dynamically imported module`). Это то, что в индустрии решает проблему «у пользователя страница не открывается после деплоя».
-- Защита одноразовая через `sessionStorage` флаг — без бесконечных перезагрузок.
+Юлия Соваськова сообщает, что в форме реквизитов (Контакт-центр → Настройки → Реквизиты) выбор даты рождения и паспортных дат неудобен: только листание по одному месяцу. Для даты рождения 30+ лет назад это десятки кликов. Без этих полей форма не сохраняется.
 
-**Шаг 3. Аудит Service Worker**
+Затронуты поля во всех формах реквизитов:
 
-- Проверить, регистрируется ли `sw.js` всегда или только под подписку на push. Если регистрируется глобально и старые версии мешают — добавить unregister-стратегию для пользователей без активной push-подписки.
-- Текущий `public/sw.js` минимальный (только push), не кэширует — но bump'нуть `tag` в `install`, чтобы старые версии гарантированно перезаписались.
+- `IndividualDetailsForm` (физлицо): Дата рождения, Дата выдачи паспорта, Действителен до
+- Также `OrganizationDetailsForm` и любые другие потребители общего `DatePicker` (`src/components/ui/date-picker.tsx`)
 
-**Шаг 4. Verify (Definition of Done)**
+## Что делаем
 
-- В preview: открыть `/zgai` напрямую, открыть из урока (target=_blank) — оба пути работают.
-- Симулировать stale chunk: вручную сломать имя чанка в DevTools → проверить, что ErrorBoundary делает single reload и страница оживает.
-- В консоли: при первом заходе нет ошибок `Failed to fetch dynamically imported module`.
-- Лог "before/after" в `.lovable/proofs/zgai_button_stable_load_2026_05.md`:
-  - кнопка урока: `target=_blank`, `rel=noopener`, URL `/zgai` ✅
-  - страница `/zgai`: rendered, 1 block ✅
-  - ErrorBoundary для lazy chunks: установлен ✅
-  - SW: поведение задокументировано ✅
+### 1. Расширяем общий `DatePicker` (`src/components/ui/date-picker.tsx`)
 
-### Что **не** буду делать
+Делаем единый компонент удобным для дат рождения и юридических дат:
 
-- Не трогаю `lesson_blocks` (URL правильный).
-- Не трогаю `site_pages` zgai (страница рабочая).
-- Не меняю роутинг `/:slug` (он корректен).
-- Никаких UPDATE в `subscriptions_v2`, `entitlements`, `orders_v2`.
+- Добавляем prop `captionLayout?: "dropdown" | "buttons"` (default `"dropdown"` когда задан `fromYear`/`toYear`).
+- Добавляем prop `fromYear?: number`, `toYear?: number` (диапазон лет в выпадающем списке).
+- Передаём в `<Calendar>` опции `react-day-picker` v8: `captionLayout="dropdown-buttons"`, `fromYear`, `toYear` — это даёт **выпадающие списки месяца и года прямо в шапке календаря**.
+- Добавляем **поле ручного ввода** над календарём в `PopoverContent`: `<Input>` с маской `ДД.ММ.ГГГГ` (или `ГГГГ-ММ-ДД`). При корректном вводе — синхронизируем с календарём и закрываем popover; при некорректном — подсветка ошибки, не закрываем.
+- Defaults: если `fromYear`/`toYear` не заданы — для обратной совместимости рендерим как раньше (только листание).
 
-### Файлы под изменение
+### 2. Дополняем `Calendar` (`src/components/ui/calendar.tsx`)
 
-- `src/App.tsx` — обёртка `<Suspense>` в `LazyErrorBoundary`.
-- `src/components/system/LazyErrorBoundary.tsx` — новый компонент (single-shot reload по `ChunkLoadError`).
-- `vite.config.ts` — стабильные имена chunks (если ещё не проставлено).
-- `public/sw.js` — bump версии install + safe activate.
-- `.lovable/proofs/zgai_button_stable_load_2026_05.md` — отчёт.
+- Прокидываем `captionLayout`, `fromYear`, `toYear`, `fromDate`, `toDate` через `...props` (уже работает через спред, но добавим стилевые классы для `dropdown_month`, `dropdown_year`, `caption_dropdowns` чтобы выпадайки выглядели в стиле shadcn — компактные, с темой, читаемые).
 
-После approve — выполняю Diagnose шаг 1, потом Execute 2–4 единым проходом.
+### 3. Подключаем в формах реквизитов
+
+- `src/components/legal-details/IndividualDetailsForm.tsx`:
+  - `ind_birth_date`: `fromYear={1920}`, `toYear={текущий год}`, `maxDate={сегодня}`.
+  - `ind_passport_issued_date`: `fromYear={1990}`, `toYear={текущий год}`, `maxDate={сегодня}`.
+  - `ind_passport_valid_until`: `fromYear={текущий год}`, `toYear={текущий год + 30}`.
+- Проверяем `OrganizationDetailsForm` и `PersonFieldsForm` (`src/components/ai-requisites/PersonFieldsForm.tsx`) — где есть даты, аналогично задаём разумный диапазон лет.
+
+### 4. UX-детали
+
+- Локаль `ru` (уже есть).
+- Месяц — текстом (`сентябрь`), год — числом, оба в выпадающих списках.
+- Кнопка «Сегодня» оставляем; для дат рождения она бесполезна, но не мешает.
+- Поле ручного ввода — приоритетный путь: пользователь печатает `15.01.1990` и Tab/Enter — дата применяется без открытия календаря.
+- Pointer-events-auto уже стоит на Calendar — открытие из Dialog работает.
+
+## Технические детали
+
+- `react-day-picker@^8.10.1` уже установлен — поддерживает `captionLayout="dropdown-buttons"` нативно, доп. зависимости не нужны.
+- Парсинг ручного ввода — `date-fns/parse` с шаблоном `dd.MM.yyyy`, fallback на `parseISO` для `yyyy-MM-dd`.
+- Совместимость: `value`/`onChange` API не меняем — продолжаем работать с `yyyy-MM-dd`.
+- Никаких изменений в БД, edge functions, RPC, RLS — это чисто frontend UI patch.
+
+## Вне scope
+
+- Не меняем сами поля схемы реквизитов и валидацию (`z.string().min(1, ...)`).
+- Не трогаем процесс сохранения / документы / `legal_details`.
+- Не вводим новые типы дат и не делаем breaking-change для других потребителей `DatePicker`.
+
+## DoD
+
+1. В форме реквизитов (физлицо) у трёх дат над календарём есть **выпадающие списки месяца и года** — выбор 1990 года в один клик.
+2. Над календарём есть **поле ручного ввода** `ДД.ММ.ГГГГ` — печать + Enter сохраняет дату.
+3. Существующие места использования `DatePicker` без переданных `fromYear`/`toYear` визуально и функционально не изменились.
+4. Форма реквизитов сохраняется как раньше (значение в формате `yyyy-MM-dd`).
+5. Проверено в preview на /admin/communication → Настройки → Реквизиты.
+6. Proof-файл: `.lovable/proofs/datepicker_year_dropdown_2026_05.md` с before/after скриншотами и списком форм, где включён dropdown.

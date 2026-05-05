@@ -1,15 +1,16 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Calendar as CalendarIcon, X, CalendarDays } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Label } from "@/components/ui/label";
-import { format, parseISO } from "date-fns";
+import { format, parse, parseISO, isValid } from "date-fns";
 import { ru } from "date-fns/locale";
 
 export interface DatePickerProps {
-  value?: string; // yyyy-MM-dd
+  value?: string; // yyyy-MM-dd (canonical storage format)
   onChange: (value: string) => void;
   label?: string;
   placeholder?: string;
@@ -18,6 +19,30 @@ export interface DatePickerProps {
   className?: string;
   disabled?: boolean;
   id?: string;
+  /** Enable month/year dropdowns + manual input. */
+  fromYear?: number;
+  toYear?: number;
+  /** Force-enable extended UI even without year range. */
+  showMonthYearDropdowns?: boolean;
+  /** Force-enable manual input field. Default: true when fromYear/toYear set. */
+  allowManualInput?: boolean;
+}
+
+const DISPLAY_FMT = "dd.MM.yyyy";
+
+function tryParseInput(raw: string): Date | null {
+  const s = raw.trim();
+  if (!s) return null;
+  // Try dd.MM.yyyy
+  let d = parse(s, DISPLAY_FMT, new Date());
+  if (isValid(d)) return d;
+  // Try yyyy-MM-dd
+  d = parse(s, "yyyy-MM-dd", new Date());
+  if (isValid(d)) return d;
+  // Tolerate dd/MM/yyyy
+  d = parse(s, "dd/MM/yyyy", new Date());
+  if (isValid(d)) return d;
+  return null;
 }
 
 export function DatePicker({
@@ -30,12 +55,72 @@ export function DatePicker({
   className,
   disabled,
   id,
+  fromYear,
+  toYear,
+  showMonthYearDropdowns,
+  allowManualInput,
 }: DatePickerProps) {
   const [open, setOpen] = useState(false);
 
   const dateValue = value ? parseISO(value) : undefined;
   const minDateObj = minDate ? parseISO(minDate) : undefined;
   const maxDateObj = maxDate ? parseISO(maxDate) : undefined;
+
+  const extended =
+    showMonthYearDropdowns === true ||
+    typeof fromYear === "number" ||
+    typeof toYear === "number";
+  const manual = allowManualInput ?? extended;
+
+  // Manual input local state
+  const [inputText, setInputText] = useState<string>(
+    dateValue ? format(dateValue, DISPLAY_FMT) : ""
+  );
+  const [inputError, setInputError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setInputText(dateValue ? format(dateValue, DISPLAY_FMT) : "");
+    setInputError(null);
+  }, [value]);
+
+  const commitInput = (closeOnSuccess: boolean) => {
+    const txt = inputText.trim();
+    if (!txt) {
+      onChange("");
+      setInputError(null);
+      if (closeOnSuccess) setOpen(false);
+      return;
+    }
+    const d = tryParseInput(txt);
+    if (!d) {
+      setInputError("Формат: ДД.ММ.ГГГГ");
+      return;
+    }
+    if (minDateObj && d < minDateObj) {
+      setInputError("Дата слишком ранняя");
+      return;
+    }
+    if (maxDateObj && d > maxDateObj) {
+      setInputError("Дата слишком поздняя");
+      return;
+    }
+    setInputError(null);
+    onChange(format(d, "yyyy-MM-dd"));
+    if (closeOnSuccess) setOpen(false);
+  };
+
+  // Compute defaultMonth so dropdown opens at a sensible year when no value yet.
+  const defaultMonth =
+    dateValue ??
+    (toYear ? new Date(toYear, 0, 1) : undefined);
+
+  const calendarExtraProps: Record<string, unknown> = {};
+  if (extended) {
+    calendarExtraProps.captionLayout = "dropdown-buttons";
+    if (typeof fromYear === "number") calendarExtraProps.fromYear = fromYear;
+    if (typeof toYear === "number") calendarExtraProps.toYear = toYear;
+  }
+  if (defaultMonth) calendarExtraProps.defaultMonth = defaultMonth;
 
   return (
     <div className={cn("space-y-1.5", className)}>
@@ -58,7 +143,7 @@ export function DatePicker({
             )}
           >
             <CalendarIcon className="h-3.5 w-3.5 mr-2 text-muted-foreground" />
-            {dateValue ? format(dateValue, "d MMM yyyy", { locale: ru }) : placeholder}
+            {dateValue ? format(dateValue, DISPLAY_FMT, { locale: ru }) : placeholder}
           </Button>
         </PopoverTrigger>
         <PopoverContent
@@ -72,6 +157,34 @@ export function DatePicker({
             "animate-in fade-in-0 zoom-in-95"
           )}
         >
+          {manual && (
+            <div className="p-2 pb-0 space-y-1">
+              <Input
+                autoFocus
+                value={inputText}
+                onChange={(e) => {
+                  setInputText(e.target.value);
+                  if (inputError) setInputError(null);
+                }}
+                onBlur={() => commitInput(false)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    commitInput(true);
+                  }
+                }}
+                placeholder="ДД.ММ.ГГГГ"
+                inputMode="numeric"
+                className={cn(
+                  "h-8 text-xs",
+                  inputError && "border-destructive focus-visible:ring-destructive/30"
+                )}
+              />
+              {inputError && (
+                <p className="text-[10px] text-destructive px-0.5">{inputError}</p>
+              )}
+            </div>
+          )}
           <Calendar
             mode="single"
             selected={dateValue}
@@ -87,13 +200,14 @@ export function DatePicker({
               return false;
             }}
             locale={ru}
-            initialFocus
+            initialFocus={!manual}
             className={cn(
               "p-3 pointer-events-auto",
               "[&_.rdp-day_focus]:ring-2 [&_.rdp-day_focus]:ring-primary/30",
               "[&_.rdp-day_selected]:bg-primary [&_.rdp-day_selected]:text-primary-foreground",
               "[&_.rdp-day_today]:bg-accent/60 [&_.rdp-day_today]:font-semibold"
             )}
+            {...calendarExtraProps}
           />
           <div className="flex items-center justify-between p-2 pt-0 border-t border-border/30">
             <Button
@@ -113,7 +227,10 @@ export function DatePicker({
               size="sm"
               className="h-7 text-xs"
               onClick={() => {
-                onChange(format(new Date(), "yyyy-MM-dd"));
+                const today = new Date();
+                if (minDateObj && today < minDateObj) return;
+                if (maxDateObj && today > maxDateObj) return;
+                onChange(format(today, "yyyy-MM-dd"));
                 setOpen(false);
               }}
             >
