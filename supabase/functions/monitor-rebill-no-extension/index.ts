@@ -3,8 +3,24 @@
  *
  * Diagnostic monitor (NO auto-repair).
  *
- * SOT: successful recurring payment exists, but subscription.access_end_at <= expected_end_at_minsk,
- * where expected_end_at_minsk = endOfDay Europe/Minsk for (paid_at + access_days).
+ * SOT (PATCH 2026-05):
+ *   Для каждого успешного recurring-платежа в окне сравнивается
+ *   expected_end_at_minsk = endOfDay Europe/Minsk(paid_at + tariff.access_days)
+ *   с фактическим покрытием по user+product:
+ *     coverage_end = GREATEST(
+ *       MAX(subscriptions_v2.access_end_at) WHERE status='active'
+ *         AND user_id=order.user_id AND product_id=order.product_id,
+ *       MAX(entitlements.expires_at) WHERE expires_at IS NOT NULL
+ *         AND user_id=order.user_id AND product_id=order.product_id
+ *     )
+ *   Если coverage_end >= expected_end_at_minsk → check считается passed (не алертим).
+ *
+ * Buckets:
+ *   - 'no_extension' (severity critical) — нет покрытия и расхождение > tariff/2.
+ *   - 'provider_period_shorter_than_tariff_access_days' (severity warning) —
+ *     покрытие отсутствует, но gap ≤ ~36 часов и tariff.access_days ≥ 28.
+ *     Кейс bePaid даёт период короче, чем tariff.access_days. Доступ есть,
+ *     это не "нет продления", а несовпадение длительности.
  *
  * Window:
  *   - cron mode: paid_at in [now - 24h, now - 15m]
@@ -12,15 +28,20 @@
  *
  * Excludes:
  *   - installment / internal_installment
- *   - canceled / superseded subscriptions
+ *   - canceled / superseded subscriptions on the order
  *   - payments with existing rebill_backfill_*.fixed or manual_repair.* audit
  *   - same-day drift (date in Minsk equal — not an overshoot)
  *
  * Behaviour:
  *   - persists each new candidate as a system_health_checks row with stable
  *     check_key = `REBILL-NO-EXT:{payment_id}` (idempotent per payment_id)
- *   - sends ONE aggregated Telegram message per tick if there are any NEW candidates
- *   - never repairs or modifies subscriptions/entitlements
+ *   - re-evaluates already-open REBILL-NO-EXT rows: if coverage теперь покрывает
+ *     expected_end — помечает их status='passed', details.resolved_by=
+ *     'covered_by_current_active_subscription' (только в health/reporting-слое).
+ *   - sends ONE aggregated Telegram message per tick если есть NEW critical
+ *     candidates (provider-period-mismatch не алертится).
+ *   - НИКОГДА не пишет в subscriptions_v2 / entitlements / payments_v2.
+ *   - Не вызывает grant-access / revoke / webhook replay.
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
@@ -34,10 +55,16 @@ const corsHeaders = {
 
 interface RequestBody {
   dry_run?: boolean;
-  dry_run_days?: number; // override for dry-run window (default 7)
+  dry_run_days?: number;
   source?: string;
-  notify?: boolean; // default true; set false in dry_run
+  notify?: boolean;
+  resolve_only?: boolean; // if true — только переоценка уже открытых, без detect
 }
+
+type Reason =
+  | 'no_extension'
+  | 'provider_period_shorter_than_tariff_access_days'
+  | 'audit_missing_with_drift';
 
 interface Candidate {
   payment_id: string;
@@ -53,10 +80,14 @@ interface Candidate {
   paid_at: string;
   access_days: number;
   current_access_end_at: string;
+  coverage_end_at: string | null;
+  coverage_source: 'subscription' | 'entitlement' | 'none';
   expected_access_end_at_minsk: string;
   gap_hours: number;
   audit_link_order_dates_updated_present: boolean;
-  reason: 'no_extension' | 'partial_extension' | 'audit_missing_with_drift';
+  reason: Reason;
+  severity: 'critical' | 'warning';
+  covered: boolean;
 }
 
 Deno.serve(async (req) => {
@@ -77,127 +108,116 @@ Deno.serve(async (req) => {
     }
 
     const dryRun = body.dry_run === true;
-    const dryRunDays = Math.max(
-      1,
-      Math.min(30, body.dry_run_days ?? 7),
-    );
+    const dryRunDays = Math.max(1, Math.min(30, body.dry_run_days ?? 7));
     const notify = body.notify ?? !dryRun;
     const source = body.source ?? (dryRun ? 'dry_run' : 'cron');
+    const resolveOnly = body.resolve_only === true;
 
     const fromIso = new Date(
-      Date.now() -
-        (dryRun ? dryRunDays * 24 : 24) * 60 * 60 * 1000,
+      Date.now() - (dryRun ? dryRunDays * 24 : 24) * 60 * 60 * 1000,
     ).toISOString();
-    const toIso = new Date(
-      Date.now() - 15 * 60 * 1000,
-    ).toISOString();
+    const toIso = new Date(Date.now() - 15 * 60 * 1000).toISOString();
 
-    // 1. Detection query
-    const sqlDetect = `
-      WITH candidates AS (
-        SELECT
-          p.id          AS payment_id,
-          p.order_id    AS order_id,
-          p.paid_at     AS paid_at,
-          o.order_number,
-          o.profile_id,
-          o.product_id,
-          o.tariff_id,
-          s.id          AS subscription_id,
-          s.status::text AS sub_status,
-          s.access_end_at,
-          s.billing_type,
-          s.meta->>'model' AS sub_model,
-          COALESCE(t.access_days, 30) AS access_days,
-          pr.name       AS product_name,
-          tf.name       AS tariff_name,
-          pf.email      AS user_email,
-          pf.user_id    AS user_id
-        FROM payments_v2 p
-        JOIN orders_v2 o ON o.id = p.order_id
-        LEFT JOIN subscriptions_v2 s ON s.order_id = o.id
-        LEFT JOIN tariffs t ON t.id = o.tariff_id
-        LEFT JOIN products_v2 pr ON pr.id = o.product_id
-        LEFT JOIN tariffs tf ON tf.id = o.tariff_id
-        LEFT JOIN profiles pf ON pf.id = o.profile_id
-        WHERE p.status = 'succeeded'
-          AND p.is_recurring = true
-          AND p.paid_at BETWEEN '${fromIso}'::timestamptz AND '${toIso}'::timestamptz
-      ),
-      expected AS (
-        SELECT c.*,
-          ((date_trunc('day',
-              (c.paid_at + (c.access_days || ' days')::interval)
-                AT TIME ZONE 'Europe/Minsk')
-             + interval '1 day' - interval '1 second')
-             AT TIME ZONE 'Europe/Minsk') AS expected_end_utc
-        FROM candidates c
-      )
-      SELECT
-        e.payment_id::text                             AS payment_id,
-        e.order_id::text                               AS order_id,
-        e.order_number,
-        e.user_id::text                                AS user_id,
-        e.user_email,
-        e.product_id::text                             AS product_id,
-        e.product_name,
-        e.tariff_id::text                              AS tariff_id,
-        e.tariff_name,
-        e.subscription_id::text                        AS subscription_id,
-        e.paid_at,
-        e.access_days,
-        e.access_end_at                                AS current_access_end_at,
-        e.expected_end_utc                             AS expected_access_end_at_minsk,
-        ROUND(EXTRACT(EPOCH FROM (e.expected_end_utc - e.access_end_at))/3600, 2)::float8 AS gap_hours,
-        EXISTS (
-          SELECT 1 FROM audit_logs a
-          WHERE a.action = 'bepaid.webhook.link_order_dates_updated'
-            AND (a.meta->>'order_id') = e.order_id::text
-            AND a.created_at BETWEEN e.paid_at - interval '5 minutes'
-                                AND e.paid_at + interval '30 minutes'
-        ) AS audit_present
-      FROM expected e
-      WHERE e.subscription_id IS NOT NULL
-        AND e.sub_status NOT IN ('canceled','superseded')
-        AND COALESCE(e.sub_model,'') <> 'internal_installment'
-        AND e.access_end_at < e.expected_end_utc
-        -- exclude same-day drift (date-level overshoot only)
-        AND date_trunc('day', e.access_end_at AT TIME ZONE 'Europe/Minsk')
-          < date_trunc('day', e.expected_end_utc AT TIME ZONE 'Europe/Minsk')
-        -- exclude payments with backfill/manual repair audit
-        AND NOT EXISTS (
-          SELECT 1 FROM audit_logs a
-          WHERE (a.action LIKE 'rebill_backfill_%.fixed'
-              OR a.action LIKE 'manual_repair.%'
-              OR a.action LIKE 'access_repair.%')
-            AND ((a.meta->>'payment_id') = e.payment_id::text
-              OR (a.meta->>'subscription_id') = e.subscription_id::text
-              OR (a.meta->>'order_id') = e.order_id::text)
-        )
-      ORDER BY e.paid_at DESC
-      LIMIT 200;
-    `;
+    // ===== STEP 0. Re-evaluate already-open REBILL-NO-EXT rows =====
+    // Если для уже зафиксированной (status='failed') записи теперь есть
+    // coverage по active subscription/entitlement — помечаем passed.
+    // Только в health-слое. Никаких изменений payments/subs/entitlements.
+    const resolvedNow: Array<{
+      check_id: string;
+      payment_id: string;
+      coverage_end_at: string;
+      coverage_source: 'subscription' | 'entitlement';
+    }> = [];
 
-    const { data: rows, error: detectErr } = await supabase.rpc(
-      'exec_readonly_sql',
-      { sql: sqlDetect },
-    ).select();
+    const { data: openChecks } = await supabase
+      .from('system_health_checks')
+      .select('id, check_key, details, status')
+      .like('check_key', 'REBILL-NO-EXT:%')
+      .eq('status', 'failed')
+      .limit(500);
 
-    // Fallback: if RPC isn't present, run via PostgREST raw — but we don't expose raw SQL.
-    // Instead use a safer pre-built view-style approach via supabase-js builder:
-    let candidates: any[] = [];
-    if (detectErr || !rows) {
-      // Fallback path using JS-side filtering
-      candidates = await fallbackDetect(supabase, fromIso, toIso);
-    } else {
-      candidates = rows as any[];
+    for (const row of openChecks ?? []) {
+      const d = (row as any).details ?? {};
+      const userId: string | null = d.user_id ?? null;
+      const productId: string | null = d.product_id ?? null;
+      const expected: string | null = d.expected_access_end_at_minsk ?? null;
+      if (!userId || !productId || !expected) continue;
+
+      const cov = await computeCoverage(supabase, userId, productId);
+      if (!cov.coverageEndAt) continue;
+      if (new Date(cov.coverageEndAt) >= new Date(expected)) {
+        if (!dryRun) {
+          await supabase
+            .from('system_health_checks')
+            .update({
+              status: 'passed',
+              details: {
+                ...d,
+                resolved_by: 'covered_by_current_active_subscription',
+                resolved_at: new Date().toISOString(),
+                coverage_end_at: cov.coverageEndAt,
+                coverage_source: cov.source,
+              },
+            })
+            .eq('id', (row as any).id);
+        }
+        resolvedNow.push({
+          check_id: (row as any).id,
+          payment_id: d.payment_id,
+          coverage_end_at: cov.coverageEndAt,
+          coverage_source: cov.source as 'subscription' | 'entitlement',
+        });
+      }
     }
 
-    const mapped: Candidate[] = candidates.map((r: any) => {
-      const reason: Candidate['reason'] = r.audit_present
-        ? 'audit_missing_with_drift' // audit present but дата не доехала
+    if (resolveOnly) {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          mode: 'resolve_only',
+          dry_run: dryRun,
+          re_evaluated: openChecks?.length ?? 0,
+          resolved: resolvedNow.length,
+          resolved_items: resolvedNow,
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
+
+    // ===== STEP 1. Detect candidates in window =====
+    const candidates = await detectCandidates(supabase, fromIso, toIso);
+
+    // ===== STEP 2. Compute coverage per candidate, classify =====
+    const enriched: Candidate[] = [];
+    for (const r of candidates) {
+      const cov = r.user_id && r.product_id
+        ? await computeCoverage(supabase, r.user_id, r.product_id)
+        : { coverageEndAt: null, source: 'none' as const };
+
+      const expected = new Date(r.expected_access_end_at_minsk);
+      const covered = !!(
+        cov.coverageEndAt && new Date(cov.coverageEndAt) >= expected
+      );
+
+      let reason: Reason = r.audit_present
+        ? 'audit_missing_with_drift'
         : 'no_extension';
-      return {
+      let severity: 'critical' | 'warning' = 'critical';
+
+      // Bucket: provider_period_shorter_than_tariff_access_days
+      // Условие: нет покрытия, но gap небольшой (≤ ~36ч) и tariff длительный (≥28d).
+      // Это значит, что bePaid дал период короче, чем tariff.access_days,
+      // а другого active покрытия нет. Доступ всё ещё есть, просто короче.
+      if (
+        !covered &&
+        Number(r.gap_hours) <= 36 &&
+        Number(r.access_days) >= 28
+      ) {
+        reason = 'provider_period_shorter_than_tariff_access_days';
+        severity = 'warning';
+      }
+
+      enriched.push({
         payment_id: r.payment_id,
         order_id: r.order_id,
         order_number: r.order_number ?? null,
@@ -211,15 +231,22 @@ Deno.serve(async (req) => {
         paid_at: r.paid_at,
         access_days: Number(r.access_days),
         current_access_end_at: r.current_access_end_at,
+        coverage_end_at: cov.coverageEndAt,
+        coverage_source: cov.source,
         expected_access_end_at_minsk: r.expected_access_end_at_minsk,
         gap_hours: Number(r.gap_hours),
         audit_link_order_dates_updated_present: !!r.audit_present,
-        reason: r.audit_present ? 'audit_missing_with_drift' : reason,
-      };
-    });
+        reason,
+        severity,
+        covered,
+      });
+    }
 
-    // 2. Idempotency: filter out payments that already have an alert row
-    const paymentIds = mapped.map((c) => c.payment_id);
+    // covered → не алертим (это passed by coverage)
+    const realIssues = enriched.filter((c) => !c.covered);
+
+    // ===== STEP 3. Idempotency =====
+    const paymentIds = realIssues.map((c) => c.payment_id);
     let existingKeys = new Set<string>();
     if (paymentIds.length > 0) {
       const keys = paymentIds.map((id) => `REBILL-NO-EXT:${id}`);
@@ -229,11 +256,13 @@ Deno.serve(async (req) => {
         .in('check_key', keys);
       existingKeys = new Set((existing ?? []).map((r: any) => r.check_key));
     }
-    const fresh = mapped.filter(
+    const fresh = realIssues.filter(
       (c) => !existingKeys.has(`REBILL-NO-EXT:${c.payment_id}`),
     );
+    const freshCritical = fresh.filter((c) => c.severity === 'critical');
+    const freshWarning = fresh.filter((c) => c.severity === 'warning');
 
-    // 3. Persist new alerts as system_health_checks rows (real run only)
+    // ===== STEP 4. Persist new alerts (real run only) =====
     let runId: string | null = null;
     if (!dryRun && fresh.length > 0) {
       const { data: run, error: runErr } = await supabase
@@ -243,24 +272,30 @@ Deno.serve(async (req) => {
           status: 'completed',
           started_at: new Date().toISOString(),
           finished_at: new Date().toISOString(),
-          summary: { count: fresh.length, source },
+          summary: {
+            count: fresh.length,
+            critical: freshCritical.length,
+            warning: freshWarning.length,
+            source,
+          },
           meta: { window_from: fromIso, window_to: toIso },
         })
         .select('id')
         .single();
 
-      if (runErr) {
-        console.error('[monitor-rebill] runs insert error', runErr);
-      }
+      if (runErr) console.error('[monitor-rebill] runs insert error', runErr);
       runId = run?.id ?? null;
 
       if (runId) {
         const checkRows = fresh.map((c) => ({
           run_id: runId,
           check_key: `REBILL-NO-EXT:${c.payment_id}`,
-          check_name: `Rebill paid but access not extended (${c.email ?? c.user_id ?? 'unknown'})`,
+          check_name:
+            c.severity === 'critical'
+              ? `Rebill paid but access not extended (${c.email ?? c.user_id ?? 'unknown'})`
+              : `Provider period shorter than tariff access_days (${c.email ?? c.user_id ?? 'unknown'})`,
           category: 'payments.rebill',
-          status: 'failed',
+          status: c.severity === 'critical' ? 'failed' : 'warning',
           details: c,
           count: 1,
         }));
@@ -271,25 +306,25 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 4. Aggregated Telegram notify
+    // ===== STEP 5. Telegram notify (only critical) =====
     let notified = false;
-    if (notify && fresh.length > 0) {
-      const top = fresh.slice(0, 10);
+    if (notify && freshCritical.length > 0) {
+      const top = freshCritical.slice(0, 10);
       const lines = top.map((c) => {
         const exp = c.expected_access_end_at_minsk?.slice(0, 10);
         const cur = c.current_access_end_at?.slice(0, 10);
         return `• <code>${c.order_number ?? c.order_id.slice(0, 8)}</code> · ${c.email ?? c.user_id ?? '—'} · ${c.product_name ?? c.product_id?.slice(0, 8)} · paid ${c.paid_at.slice(0, 16).replace('T', ' ')} · access ${cur} → expected ${exp} · Δ ${c.gap_hours.toFixed(1)}h`;
       });
-      const more = fresh.length > top.length
-        ? `\n…and ${fresh.length - top.length} more`
+      const more = freshCritical.length > top.length
+        ? `\n…and ${freshCritical.length - top.length} more`
         : '';
       const message =
         `⚠️ <b>Rebill paid but access NOT extended</b>\n` +
-        `Count: <b>${fresh.length}</b>\n` +
+        `Count: <b>${freshCritical.length}</b>\n` +
         `Window: ${fromIso.slice(0, 16).replace('T', ' ')} … ${toIso.slice(0, 16).replace('T', ' ')} UTC\n\n` +
         lines.join('\n') +
         more +
-        `\n\n<i>Diagnostic only — no auto-repair. Inspect & repair manually.</i>`;
+        `\n\n<i>Diagnostic only — no auto-repair. Coverage по user+product уже учтена. Inspect & repair manually.</i>`;
 
       try {
         const { error: notifyErr } = await supabase.functions.invoke(
@@ -317,12 +352,18 @@ Deno.serve(async (req) => {
         ok: true,
         dry_run: dryRun,
         window: { from: fromIso, to: toIso },
-        scanned: mapped.length,
-        already_alerted: mapped.length - fresh.length,
+        scanned: enriched.length,
+        covered_by_current_access: enriched.filter((c) => c.covered).length,
+        already_alerted: realIssues.length - fresh.length,
         new_alerts: fresh.length,
+        new_critical: freshCritical.length,
+        new_warning: freshWarning.length,
+        re_evaluated_open: openChecks?.length ?? 0,
+        resolved_now: resolvedNow.length,
         run_id: runId,
         telegram_notified: notified,
-        candidates: dryRun ? mapped : undefined, // full payload only in dry-run
+        candidates: dryRun ? enriched : undefined,
+        resolved_items: dryRun ? resolvedNow : undefined,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     );
@@ -331,7 +372,7 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({ ok: false, error: (e as Error).message }),
       {
-        status: 200, // soft-fail: monitor must never break the platform
+        status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       },
     );
@@ -339,10 +380,57 @@ Deno.serve(async (req) => {
 });
 
 /**
- * Fallback detector using supabase-js builder when no SQL RPC is available.
- * Less efficient — only used if the primary SQL path fails.
+ * Coverage по user+product:
+ *   coverage_end = GREATEST(
+ *     MAX(subscriptions_v2.access_end_at) WHERE status='active' AND user_id=? AND product_id=?,
+ *     MAX(entitlements.expires_at) WHERE user_id=? AND product_id=? AND expires_at IS NOT NULL
+ *   )
  */
-async function fallbackDetect(
+async function computeCoverage(
+  supabase: any,
+  userId: string,
+  productId: string,
+): Promise<{
+  coverageEndAt: string | null;
+  source: 'subscription' | 'entitlement' | 'none';
+}> {
+  const { data: subs } = await supabase
+    .from('subscriptions_v2')
+    .select('access_end_at')
+    .eq('user_id', userId)
+    .eq('product_id', productId)
+    .eq('status', 'active')
+    .order('access_end_at', { ascending: false })
+    .limit(1);
+  const subMax = subs?.[0]?.access_end_at ?? null;
+
+  const { data: ents } = await supabase
+    .from('entitlements')
+    .select('expires_at')
+    .eq('user_id', userId)
+    .eq('product_id', productId)
+    .not('expires_at', 'is', null)
+    .order('expires_at', { ascending: false })
+    .limit(1);
+  const entMax = ents?.[0]?.expires_at ?? null;
+
+  if (!subMax && !entMax) return { coverageEndAt: null, source: 'none' };
+  if (subMax && (!entMax || new Date(subMax) >= new Date(entMax))) {
+    return { coverageEndAt: subMax, source: 'subscription' };
+  }
+  return { coverageEndAt: entMax, source: 'entitlement' };
+}
+
+/**
+ * Detect candidates: успешные recurring-платежи в окне, у которых
+ * на их subscription_v2 (по order_id) access_end_at < expected_end_at_minsk.
+ *
+ * NB: первичная фильтрация по subscription по order_id используется только
+ * чтобы понять, что у этого платежа есть какая-то ветка с подпиской (не one-time
+ * и не installment). Финальное решение «covered/uncovered» принимается
+ * НЕ по этой подписке, а по computeCoverage(user, product) выше.
+ */
+async function detectCandidates(
   supabase: any,
   fromIso: string,
   toIso: string,
@@ -362,15 +450,28 @@ async function fallbackDetect(
   const orderIds = [...new Set(payments.map((p: any) => p.order_id))];
   const { data: orders } = await supabase
     .from('orders_v2')
-    .select('id, order_number, profile_id, product_id, tariff_id')
+    .select('id, order_number, profile_id, user_id, product_id, tariff_id')
     .in('id', orderIds);
   const ordersById = new Map((orders ?? []).map((o: any) => [o.id, o]));
 
   const { data: subs } = await supabase
     .from('subscriptions_v2')
-    .select('id, order_id, status, access_end_at, billing_type, meta')
-    .in('order_id', orderIds);
-  const subsByOrder = new Map((subs ?? []).map((s: any) => [s.order_id, s]));
+    .select('id, order_id, status, access_end_at, billing_type, meta, updated_at')
+    .in('order_id', orderIds)
+    .order('updated_at', { ascending: false });
+  // Берём по каждому order_id ПОСЛЕДНЮЮ active (или иначе самую свежую) запись —
+  // НЕ просто первую попавшуюся. Это устраняет первый источник false-positive.
+  const subsByOrder = new Map<string, any>();
+  for (const s of subs ?? []) {
+    const cur = subsByOrder.get((s as any).order_id);
+    if (!cur) {
+      subsByOrder.set((s as any).order_id, s);
+      continue;
+    }
+    const curActive = cur.status === 'active';
+    const newActive = (s as any).status === 'active';
+    if (newActive && !curActive) subsByOrder.set((s as any).order_id, s);
+  }
 
   const tariffIds = [...new Set((orders ?? []).map((o: any) => o.tariff_id).filter(Boolean))];
   const { data: tariffs } = tariffIds.length
@@ -390,12 +491,32 @@ async function fallbackDetect(
     : { data: [] };
   const profilesById = new Map((profiles ?? []).map((p: any) => [p.id, p]));
 
+  // Pre-fetch repair audits, чтобы исключить уже починенные платежи.
+  const paymentIdSet = payments.map((p: any) => p.id);
+  const { data: repairAudits } = await supabase
+    .from('audit_logs')
+    .select('action, meta')
+    .or('action.like.rebill_backfill_%.fixed,action.like.manual_repair.%,action.like.access_repair.%')
+    .gte('created_at', fromIso);
+  const repairedPayments = new Set<string>();
+  const repairedSubs = new Set<string>();
+  const repairedOrders = new Set<string>();
+  for (const a of repairAudits ?? []) {
+    const m = (a as any).meta ?? {};
+    if (m.payment_id) repairedPayments.add(String(m.payment_id));
+    if (m.subscription_id) repairedSubs.add(String(m.subscription_id));
+    if (m.order_id) repairedOrders.add(String(m.order_id));
+  }
+
   const result: any[] = [];
-  for (const p of payments) {
+  for (const p of payments as any[]) {
+    if (repairedPayments.has(p.id)) continue;
     const o: any = ordersById.get(p.order_id);
     if (!o) continue;
+    if (repairedOrders.has(o.id)) continue;
     const s: any = subsByOrder.get(o.id);
     if (!s) continue;
+    if (repairedSubs.has(s.id)) continue;
     if (['canceled', 'superseded'].includes(s.status)) continue;
     if ((s.meta?.model ?? '') === 'internal_installment') continue;
 
@@ -403,12 +524,11 @@ async function fallbackDetect(
     const accessDays = t?.access_days ?? 30;
     const paid = new Date(p.paid_at);
     const expectedDate = new Date(paid.getTime() + accessDays * 86400_000);
-    // EOD Minsk: compute YYYY-MM-DD in Minsk, then 23:59:59 → UTC
     const minskKey = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'Europe/Minsk',
       year: 'numeric', month: '2-digit', day: '2-digit',
     }).format(expectedDate);
-    // Approximate: Europe/Minsk = UTC+3 year-round
+    // Europe/Minsk = UTC+3 year-round
     const expectedEndUtc = new Date(`${minskKey}T23:59:59+03:00`);
 
     const current = new Date(s.access_end_at);
@@ -422,12 +542,13 @@ async function fallbackDetect(
 
     const pr: any = productsById.get(o.product_id);
     const pf: any = profilesById.get(o.profile_id);
+    const userId = o.user_id ?? pf?.user_id ?? null;
 
     result.push({
       payment_id: p.id,
       order_id: o.id,
       order_number: o.order_number,
-      user_id: pf?.user_id ?? null,
+      user_id: userId,
       user_email: pf?.email ?? null,
       product_id: o.product_id,
       product_name: pr?.name ?? null,
