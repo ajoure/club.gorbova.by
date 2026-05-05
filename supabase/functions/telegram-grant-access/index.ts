@@ -142,8 +142,8 @@ async function sendTariffMedia(
   botToken: string,
   chatId: number,
   media: { type?: string; storage_path?: string }
-) {
-  if (!media.type || !media.storage_path) return;
+): Promise<{ ok: boolean; message_id?: number; media_type?: string; filename?: string }> {
+  if (!media.type || !media.storage_path) return { ok: false };
   
   try {
     // Download from Storage
@@ -153,7 +153,7 @@ async function sendTariffMedia(
     
     if (error || !data) {
       console.error('Failed to download tariff media:', error);
-      return;
+      return { ok: false };
     }
 
     // Get filename from path
@@ -187,12 +187,51 @@ async function sendTariffMedia(
     const result = await response.json();
     if (!result.ok) {
       console.error('Telegram send media error:', result);
-    } else {
-      console.log('Sent tariff media:', media.type);
+      return { ok: false };
     }
+    console.log('Sent tariff media:', media.type);
+    return {
+      ok: true,
+      message_id: result.result?.message_id,
+      media_type: media.type,
+      filename,
+    };
   } catch (err) {
     console.error('Error sending tariff media:', err);
+    return { ok: false };
   }
+}
+
+// Mirror welcome media to telegram_messages with placeholder text
+async function mirrorWelcomeMedia(params: {
+  supabase: any;
+  user_id: string;
+  telegram_user_id: number;
+  bot_id: string | null;
+  club_id: string;
+  source_id: string | null;
+  event: string;
+  media_result: { ok: boolean; message_id?: number; media_type?: string; filename?: string };
+}) {
+  const { media_result, event, ...rest } = params;
+  if (!media_result.ok || !media_result.message_id) return;
+  const placeholder = `[медиа: ${media_result.media_type}]${media_result.filename ? ' ' + media_result.filename : ''}`;
+  await logAutomatedTelegramMessage({
+    supabase: rest.supabase,
+    user_id: rest.user_id,
+    telegram_user_id: rest.telegram_user_id,
+    bot_id: rest.bot_id,
+    text: placeholder,
+    telegram_message_id: media_result.message_id,
+    source: 'telegram-grant-access',
+    extra_meta: {
+      club_id: rest.club_id,
+      source_id: rest.source_id,
+      event,
+      media_type: media_result.media_type,
+      telegram_message_id: media_result.message_id,
+    },
+  });
 }
 
 function getSiteUrl(): string {
@@ -1073,7 +1112,7 @@ Deno.serve(async (req) => {
           if (orderInfo?.tariff_id) {
             const { data: tariffData } = await supabase
               .from('tariffs')
-              .select('getcourse_offer_id, meta')
+              .select('meta')
               .eq('id', orderInfo.tariff_id)
               .maybeSingle();
             
@@ -1119,11 +1158,16 @@ Deno.serve(async (req) => {
                 } | undefined;
                 
                 if (offerWelcomeMessage?.enabled) {
-                  // Send offer media first if present
+                  // Send offer media first if present + mirror
                   if (offerWelcomeMessage.media?.type && offerWelcomeMessage.media?.storage_path) {
-                    await sendTariffMedia(supabase, botToken, telegramUserId, offerWelcomeMessage.media);
+                    const mediaRes = await sendTariffMedia(supabase, botToken, telegramUserId, offerWelcomeMessage.media);
+                    await mirrorWelcomeMedia({
+                      supabase, user_id, telegram_user_id: telegramUserId, bot_id: bot?.id ?? null,
+                      club_id: club.id, source_id: source_id ?? null,
+                      event: 'offer_welcome_media', media_result: mediaRes,
+                    });
                   }
-                  // Send offer text with optional button
+                  // Send offer text with optional button — mirror always
                   if (offerWelcomeMessage.text) {
                     const keyboard = offerWelcomeMessage.button?.enabled && offerWelcomeMessage.button.url ? {
                       inline_keyboard: [[{
@@ -1132,7 +1176,7 @@ Deno.serve(async (req) => {
                       }]]
                     } : undefined;
                     const wRes = await sendMessage(botToken, telegramUserId, offerWelcomeMessage.text, keyboard);
-                    if (keyboard && wRes?.ok && wRes?.result?.message_id) {
+                    if (wRes?.ok && wRes?.result?.message_id) {
                       await logAutomatedTelegramMessage({
                         supabase, user_id, telegram_user_id: telegramUserId, bot_id: bot?.id ?? null,
                         text: offerWelcomeMessage.text, telegram_message_id: wRes.result.message_id,
@@ -1150,7 +1194,12 @@ Deno.serve(async (req) => {
               // 2. TARIFF welcome (fallback) — only if offer didn't send
               if (!welcomeSent && welcomeMessage?.enabled) {
                 if (welcomeMessage.media?.type && welcomeMessage.media?.storage_path) {
-                  await sendTariffMedia(supabase, botToken, telegramUserId, welcomeMessage.media);
+                  const mediaRes = await sendTariffMedia(supabase, botToken, telegramUserId, welcomeMessage.media);
+                  await mirrorWelcomeMedia({
+                    supabase, user_id, telegram_user_id: telegramUserId, bot_id: bot?.id ?? null,
+                    club_id: club.id, source_id: source_id ?? null,
+                    event: 'tariff_welcome_media', media_result: mediaRes,
+                  });
                 }
                 if (welcomeMessage.text) {
                   const keyboard = welcomeMessage.button?.enabled && welcomeMessage.button.url ? {
@@ -1160,7 +1209,7 @@ Deno.serve(async (req) => {
                     }]]
                   } : undefined;
                   const wRes = await sendMessage(botToken, telegramUserId, welcomeMessage.text, keyboard);
-                  if (keyboard && wRes?.ok && wRes?.result?.message_id) {
+                  if (wRes?.ok && wRes?.result?.message_id) {
                     await logAutomatedTelegramMessage({
                       supabase, user_id, telegram_user_id: telegramUserId, bot_id: bot?.id ?? null,
                       text: welcomeMessage.text, telegram_message_id: wRes.result.message_id,
@@ -1174,19 +1223,8 @@ Deno.serve(async (req) => {
                 console.log(`[telegram-grant-access] Sent TARIFF welcome (fallback) for tariff ${orderInfo.tariff_id}`);
               }
 
-              // 3. GC link (last resort) — only if nothing sent
-              const gcUrl = tariffMeta?.getcourse_lesson_url as string | undefined;
-              const getcourseOfferId = tariffData?.getcourse_offer_id;
-              if (!welcomeSent && (getcourseOfferId || gcUrl)) {
-                const gcMessage = 
-                  `📚 Материалы доступны на GetCourse.\n\n` +
-                  `Письмо с доступом придёт на email в течение ~5 минут.\n\n` +
-                  (gcUrl ? `Ссылка: ${gcUrl}` : 'https://gorbova.getcourse.ru/teach');
-                await sendMessage(botToken, telegramUserId, gcMessage);
-                welcomeSent = true;
-                welcomeType = 'gc_link';
-                console.log(`[telegram-grant-access] Sent GC link (no welcome configured)`);
-              }
+              // 3. GC fallback DM — REMOVED. No fallback message sent if no welcome configured.
+              // Only the main "✅ Доступ открыт" DM is delivered in that case.
 
               // 4. Log idempotency record
               if (welcomeSent) {
