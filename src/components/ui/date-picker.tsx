@@ -177,7 +177,7 @@ export function DatePicker({
                 autoFocus
                 value={inputText}
                 onChange={(e) => {
-                  setInputText(e.target.value);
+                  setInputText(maskDateInput(e.target.value));
                   if (inputError) setInputError(null);
                 }}
                 onBlur={() => commitInput(false)}
