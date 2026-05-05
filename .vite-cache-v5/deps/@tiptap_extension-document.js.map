@@ -1,7 +1,0 @@
-{
-  "version": 3,
-  "sources": ["../../node_modules/.bun/@tiptap+extension-document@3.20.1+426911c3531ad19c/node_modules/@tiptap/extension-document/src/document.ts", "../../node_modules/.bun/@tiptap+extension-document@3.20.1+426911c3531ad19c/node_modules/@tiptap/extension-document/src/index.ts"],
-  "sourcesContent": ["import { Node } from '@tiptap/core'\n\n/**\n * The default document node which represents the top level node of the editor.\n * @see https://tiptap.dev/api/nodes/document\n */\nexport const Document = Node.create({\n  name: 'doc',\n  topNode: true,\n  content: 'block+',\n\n  renderMarkdown: (node, h) => {\n    if (!node.content) {\n      return ''\n    }\n\n    return h.renderChildren(node.content, '\\n\\n')\n  },\n})\n", "import { Document } from './document.js'\n\nexport * from './document.js'\n\nexport default Document\n"],
-  "mappings": ";;;;;;;AAMO,IAAM,WAAW,MAAK,OAAO;EAClC,MAAM;EACN,SAAS;EACT,SAAS;EAET,gBAAgB,CAAC,MAAM,MAAM;AAC3B,QAAI,CAAC,KAAK,SAAS;AACjB,aAAO;IACT;AAEA,WAAO,EAAE,eAAe,KAAK,SAAS,MAAM;EAC9C;AACF,CAAC;ACdD,IAAO,gBAAQ;",
-  "names": []
-}
