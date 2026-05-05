@@ -14131,6 +14131,25 @@ export type Database = {
           in_chat: boolean
         }[]
       }
+      admin_get_club_memberships_all: {
+        Args: { p_profile_id: string }
+        Returns: {
+          access_status: string
+          club_id: string
+          club_last_members_sync_at: string
+          club_last_status_check_at: string
+          club_name: string
+          in_channel: boolean
+          in_chat: boolean
+          invite_sent_at: string
+          invite_status: string
+          is_active_club: boolean
+          last_telegram_check_at: string
+          last_verified_at: string
+          link_status: string
+          member_updated_at: string
+        }[]
+      }
       admin_get_payments_page_v1: {
         Args: {
           p_from: string

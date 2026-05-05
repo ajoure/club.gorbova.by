@@ -122,6 +122,7 @@ import { RefundDialog } from "./RefundDialog";
 import { AccessHistorySheet } from "./AccessHistorySheet";
 import { EditContactDialog } from "./EditContactDialog";
 import { ContactTelegramChat } from "./ContactTelegramChat";
+import { ContactClubMembershipsList } from "./ContactClubMembershipsList";
 import { ContactEmailHistory } from "./ContactEmailHistory";
 import { EditSubscriptionDialog } from "./EditSubscriptionDialog";
 import { EditDealDialog } from "./EditDealDialog";
@@ -1702,47 +1703,12 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                             </Badge>
                           </div>
                         )}
-                        {/* Club membership status */}
-                        <div className="flex items-center gap-2 text-sm flex-wrap">
-                          <span className="text-muted-foreground">Клуб:</span>
-                          {clubMembership ? (
-                            <>
-                              {(clubMembership.in_chat === true || clubMembership.in_channel === true) ? (
-                                <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">
-                                  <CheckCircle className="w-3 h-3 mr-1" />
-                                  В клубе
-                                </Badge>
-                              ) : clubMembership.access_status === 'ok' ? (
-                                <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/20">
-                                  <Clock className="w-3 h-3 mr-1" />
-                                  Ожидает входа
-                                </Badge>
-                              ) : ['removed', 'kicked', 'expired', 'no_access'].includes(clubMembership.access_status || '') ? (
-                                <Badge className="bg-red-500/10 text-red-600 border-red-500/20">
-                                  <XCircle className="w-3 h-3 mr-1" />
-                                  Удалён
-                                </Badge>
-                              ) : (
-                                <Badge variant="outline">
-                                  {clubMembership.access_status || '—'}
-                                </Badge>
-                              )}
-                              {(clubMembership as any).club_name && (
-                                <span className="text-xs text-muted-foreground">
-                                  ({(clubMembership as any).club_name})
-                                </span>
-                              )}
-                            </>
-                          ) : (
-                            <span className="text-muted-foreground text-xs">нет данных</span>
-                          )}
-                          <button
-                            onClick={() => refetchClubMembership()}
-                            className="text-muted-foreground hover:text-foreground transition-colors"
-                            title="Обновить статус клуба"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
-                          </button>
+                        {/* Club memberships — статус по всем активным Telegram-клубам */}
+                        <div className="pt-1">
+                          <ContactClubMembershipsList
+                            profileId={contact?.id ?? null}
+                            enabled={!!contact?.id && tgInfoExpanded}
+                          />
                         </div>
                         {telegramUserInfo && (
                           <>
