@@ -463,6 +463,7 @@ export function resolveTrainingContentFilter(
   const syntheticLegacyRules = matchingRules.filter(r => r.id.startsWith('synthetic-legacy-safe-'));
 
   let bestRule: TrainingContentRule | null = null;
+  let ruleSource: "db_tariff" | "db_product" | "synthetic_bonus" | "synthetic_legacy" | "rule_unresolved" | "no_rule" = "no_rule";
 
   // Priority 1: Tariff-level DB rules (most specific)
   // effectiveTariffIds = global subscription tariffs + product-scoped entitlement tariffs
@@ -475,27 +476,71 @@ export function resolveTrainingContentFilter(
   for (const rule of dbRules) {
     if (rule.tariff_id && effectiveTariffIds.includes(rule.tariff_id)) {
       bestRule = rule;
+      ruleSource = "db_tariff";
       break;
     }
   }
 
   // Priority 2: Product-level DB rules (no tariff specified)
   if (!bestRule) {
-    bestRule = dbRules.find(r => !r.tariff_id && r.product_id === productId) || null;
+    const prodRule = dbRules.find(r => !r.tariff_id && r.product_id === productId);
+    if (prodRule) {
+      bestRule = prodRule;
+      ruleSource = "db_product";
+    }
   }
 
   // Priority 3: Synthetic bonus rules (explicit scope_resolution_mode from meta)
   if (!bestRule && syntheticBonusRules.length > 0) {
     bestRule = syntheticBonusRules[0];
+    ruleSource = "synthetic_bonus";
   }
 
   // Priority 4: Synthetic legacy safe default (no meta → no_scope)
-  // This catches bonus entitlements without tariff context that would otherwise get full access
+  // Only generated when product has NO DB rules at all (see resolveBonusScopeRules).
   if (!bestRule && syntheticLegacyRules.length > 0) {
     bestRule = syntheticLegacyRules[0];
+    ruleSource = "synthetic_legacy";
+  }
+
+  // Priority 5 (NEW): Diagnostic bucket — product has DB rules but none matched user's
+  // tariff context. Default-deny (empty allowlist), NEVER full access. This catches the
+  // case where entitlement.meta.tariff_id does not align with any DB tariff rule.
+  if (!bestRule && dbRules.length > 0) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
+      const diag = require("@/lib/trainingContentDiag") as typeof import("@/lib/trainingContentDiag");
+      diag.logTrainingContentDiag({
+        user_id: null,
+        product_id: productId,
+        training_module_id: trainingModuleId,
+        entitlement_tariff_id: productEntTariffs[0] ?? null,
+        subscription_tariff_ids: userTariffIds,
+        matched_rule_id: null,
+        rule_source: "rule_unresolved",
+        fallback_reason: "no_db_rule_matched_user_tariff_context",
+      });
+    } catch { /* diag is best-effort */ }
+    return { mode: "partial", allowedModuleIds: new Set(), allowedLessonIds: new Set() };
   }
 
   if (!bestRule) return null;
+
+  // Diagnostic log for matched rule (only when flag enabled)
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
+    const diag = require("@/lib/trainingContentDiag") as typeof import("@/lib/trainingContentDiag");
+    diag.logTrainingContentDiag({
+      user_id: null,
+      product_id: productId,
+      training_module_id: trainingModuleId,
+      entitlement_tariff_id: productEntTariffs[0] ?? null,
+      subscription_tariff_ids: userTariffIds,
+      matched_rule_id: bestRule.id,
+      rule_source: ruleSource,
+      allowed_module_count: (bestRule.conditions.allowed_module_ids || []).length,
+    });
+  } catch { /* diag is best-effort */ }
 
   const cond = bestRule.conditions;
   if (cond.access_mode === "full") {
