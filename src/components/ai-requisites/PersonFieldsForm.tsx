@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2, User, FileText, MapPin, Phone, Info } from 'lucide-react';
 import { StructuredAddressBlock } from '@/components/shared/StructuredAddressBlock';
+import { DatePicker } from '@/components/ui/date-picker';
 import { CopyablePlainLabel } from '@/components/ui/CopyablePlainLabel';
 import { useLegalDetailsFields } from '@/hooks/useLegalDetailsFields';
 import { normalizePassport, containsCyrillic } from '@/lib/persons/passportNormalizer';
