@@ -310,6 +310,27 @@ serve(async (req) => {
           const queueParentEventKey = (item.meta as any)?.parent_event_key || null;
           const queueParentExecutionKey = (item.meta as any)?.parent_execution_key || null;
 
+          // ============================================================
+          // PATCH MANUAL-REPAIR-REINVITE (2026-05-05):
+          // Narrow scope override: queue item помеченный как manual_repair
+          // (source=repair + meta.intent=manual_repair + meta.force_new_invite=true)
+          // должен обходить duplicate-DM guard в telegram-grant-access. Guard
+          // в grant-access пропускается ТОЛЬКО при is_manual=true. Источник
+          // 'manual_repair' (для логов grant-access) не добавляется в
+          // ALLOWED_QUEUE_SOURCES — это контракт grant-access, не queue.
+          // Allowlist не расширяется. Обычные repair/reinvite items идут
+          // прежним путём (is_manual=false).
+          // ============================================================
+          const queueMeta = (item.meta as any) || {};
+          const isManualRepair =
+            itemSource === "repair" &&
+            queueMeta.intent === "manual_repair" &&
+            queueMeta.force_new_invite === true;
+          const repairActorLabel = isManualRepair
+            ? (queueMeta.actor_label || "manual_repair")
+            : null;
+          const repairReason = isManualRepair ? (queueMeta.reason || null) : null;
+
           // Call telegram-grant-access
           const { data: grantResult, error: grantError } = await supabase.functions.invoke(
             "telegram-grant-access",
@@ -317,8 +338,8 @@ serve(async (req) => {
               body: {
                 user_id: item.user_id,
                 club_id: item.club_id,
-                is_manual: false,
-                source: "auto_subscription",
+                is_manual: isManualRepair ? true : false,
+                source: isManualRepair ? "manual_repair" : "auto_subscription",
                 source_id: item.subscription_id,
                 tariff_name: tariffName,
                 product_name: productName,
@@ -327,6 +348,9 @@ serve(async (req) => {
                 // Sub-patch B: Forward parent lineage (nullable, queue is not primary)
                 parent_event_key: queueParentEventKey,
                 parent_execution_key: queueParentExecutionKey,
+                ...(isManualRepair
+                  ? { comment: `manual_repair: ${repairReason || "n/a"} (actor=${repairActorLabel})` }
+                  : {}),
               },
               headers: {
                 Authorization: `Bearer ${supabaseKey}`,
@@ -342,6 +366,64 @@ serve(async (req) => {
             throw new Error(grantResult?.error || "Grant access returned no success");
           }
 
+          // ============================================================
+          // PATCH MANUAL-REPAIR-EFFECT-CHECK (2026-05-05):
+          // Если grant-access вернул только skipped_duplicate=true для всех
+          // results — реального invite/DM не было. Это false-positive
+          // completed: queue item НЕ должен считаться полноценным repair.
+          // ============================================================
+          const grantResults: any[] = Array.isArray(grantResult?.results)
+            ? grantResult.results
+            : [];
+          const anyEffective = grantResults.some(
+            (r) => r && r.skipped_duplicate !== true,
+          );
+          const allSkippedDuplicate =
+            grantResults.length > 0 && grantResults.every((r) => r?.skipped_duplicate === true);
+
+          if (allSkippedDuplicate && !anyEffective) {
+            await supabase
+              .from("telegram_access_queue")
+              .update({
+                status: "failed",
+                last_error: "completed_without_effect_no_invite_sent",
+                processed_at: new Date().toISOString(),
+              })
+              .eq("id", item.id);
+
+            await supabase.from("audit_logs").insert({
+              action: isManualRepair
+                ? "telegram.manual_repair.no_invite_sent"
+                : "telegram.queue.no_invite_sent",
+              actor_type: "system",
+              actor_label: repairActorLabel || "telegram-process-access-queue",
+              target_user_id: item.user_id,
+              meta: {
+                queue_item_id: item.id,
+                user_id: item.user_id,
+                club_id: item.club_id,
+                subscription_id: item.subscription_id,
+                source: itemSource,
+                intent: queueMeta.intent || null,
+                reason: repairReason,
+                grant_results: grantResults,
+                decision: "completed_without_effect",
+                reason_code: "duplicate_dm_guard_blocked_no_new_invite",
+              },
+            });
+
+            console.log(
+              `[telegram-process-access-queue] Item ${item.id} completed_without_effect (all results skipped_duplicate)`,
+            );
+            results.push({
+              id: item.id,
+              success: false,
+              error: "completed_without_effect_no_invite_sent",
+              decision: "no_invite_sent",
+            });
+            continue;
+          }
+
           // Mark as completed
           await supabase
             .from("telegram_access_queue")
@@ -350,6 +432,27 @@ serve(async (req) => {
               processed_at: new Date().toISOString(),
             })
             .eq("id", item.id);
+
+          // MANUAL_REPAIR_REINVITE audit (success)
+          if (isManualRepair) {
+            await supabase.from("audit_logs").insert({
+              action: "MANUAL_REPAIR_REINVITE",
+              actor_type: "system",
+              actor_label: repairActorLabel || "manual_repair",
+              target_user_id: item.user_id,
+              meta: {
+                queue_item_id: item.id,
+                user_id: item.user_id,
+                club_id: item.club_id,
+                subscription_id: item.subscription_id,
+                source: "repair",
+                intent: "manual_repair",
+                reason: repairReason,
+                grant_results: grantResults,
+                result: "success",
+              },
+            });
+          }
 
           console.log(`[telegram-process-access-queue] Item ${item.id} completed successfully`);
           results.push({ id: item.id, success: true, decision: "granted" });
