@@ -101,8 +101,11 @@ Deno.serve(async (req) => {
 
     const results: any[] = [];
     const BATCH_SIZE = 25;
+    // P3: cursor-based batching — process limited slice per invocation
+    const BATCH_LIMIT = Number(Deno.env.get('TELEGRAM_CRON_BATCH_LIMIT') ?? '200');
 
     for (const club of clubs || []) {
+      const clubStartedAt = Date.now();
       const bot = club.telegram_bots;
       if (!bot || bot.status !== 'active') {
         console.log(`Skipping club ${club.id} - bot inactive`);
@@ -114,12 +117,24 @@ Deno.serve(async (req) => {
 
       console.log(`Processing club: ${club.club_name} (autokick: ${autokick})`);
 
-      // Get members with linked profiles (have telegram_user_id)
+      // P3: pick the stalest slice — last_telegram_check_at ASC NULLS FIRST, id ASC
       const { data: members } = await supabase
         .from('telegram_club_members')
         .select('*, profiles(*)')
         .eq('club_id', club.id)
-        .not('profile_id', 'is', null);
+        .not('profile_id', 'is', null)
+        .order('last_telegram_check_at', { ascending: true, nullsFirst: true })
+        .order('id', { ascending: true })
+        .limit(BATCH_LIMIT);
+
+      // Count remaining candidates eligible for next batch (older than 24h or never checked)
+      const cutoffIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { count: eligibleCount } = await supabase
+        .from('telegram_club_members')
+        .select('id', { count: 'exact', head: true })
+        .eq('club_id', club.id)
+        .not('profile_id', 'is', null)
+        .or(`last_telegram_check_at.is.null,last_telegram_check_at.lt.${cutoffIso}`);
 
       if (!members?.length) {
         console.log(`No linked members in club ${club.id}`);
