@@ -287,19 +287,30 @@ export function ContactClubMembershipsList({ profileId, enabled }: Props) {
                         <span className={cn("w-2 h-2 rounded-full", meta.dot)} />
                       </span>
                     </TooltipTrigger>
-                    <TooltipContent side="top" className="max-w-xs text-xs">
+                    <TooltipContent side="top" className="max-w-[260px] text-xs">
                       <div className="font-medium mb-1">{meta.label}</div>
                       {sync === "partial" && (
-                        <div className="text-muted-foreground">{partialReason(row)}</div>
+                        <div className="space-y-1 text-muted-foreground">
+                          <div>
+                            Cron обходит участников батчами по 200. Часть уже проверена,
+                            остаток догонится в ближайшие тики (раз в час).
+                          </div>
+                          <div>
+                            Полный обход: {row.club_last_members_sync_at ? fmtShort(row.club_last_members_sync_at) : "ещё не было"}
+                          </div>
+                          <div>
+                            Последняя batch-проверка: {fmtShort(row.club_last_status_check_at)}
+                          </div>
+                        </div>
                       )}
                       {sync === "full" && (
                         <div className="text-muted-foreground">
-                          Полный обход: {fmt(row.club_last_members_sync_at)} ({ago(row.club_last_members_sync_at)})
+                          Полный обход: {fmtShort(row.club_last_members_sync_at)} ({ago(row.club_last_members_sync_at)})
                         </div>
                       )}
                       {sync === "stale" && (
                         <div className="text-muted-foreground">
-                          Последний обход: {fmt(row.club_last_members_sync_at)} ({ago(row.club_last_members_sync_at)}).
+                          Последний обход: {fmtShort(row.club_last_members_sync_at)} ({ago(row.club_last_members_sync_at)}).
                           Cron не доходит до клуба — нужна диагностика.
                         </div>
                       )}
