@@ -256,11 +256,24 @@ export function PersonFieldsForm({ initialData, onSubmit, isSubmitting }: Person
           <div className="grid grid-cols-2 gap-3">
             <div>
               <CopyablePlainLabel htmlFor="pf-passport-issued-date" label="Дата выдачи" publicId={pid('passport_issued_date')} />
-              <Input id="pf-passport-issued-date" type="date" value={passportIssuedDate} onChange={(e) => setPassportIssuedDate(e.target.value)} />
+              <DatePicker
+                id="pf-passport-issued-date"
+                value={passportIssuedDate}
+                onChange={setPassportIssuedDate}
+                fromYear={1990}
+                toYear={new Date().getFullYear()}
+                maxDate={new Date().toISOString().slice(0, 10)}
+              />
             </div>
             <div>
               <CopyablePlainLabel htmlFor="pf-passport-valid-until" label="Срок действия" publicId={pid('passport_valid_until')} />
-              <Input id="pf-passport-valid-until" type="date" value={passportValidUntil} onChange={(e) => setPassportValidUntil(e.target.value)} />
+              <DatePicker
+                id="pf-passport-valid-until"
+                value={passportValidUntil}
+                onChange={setPassportValidUntil}
+                fromYear={new Date().getFullYear()}
+                toYear={new Date().getFullYear() + 30}
+              />
             </div>
           </div>
         </CardContent>
