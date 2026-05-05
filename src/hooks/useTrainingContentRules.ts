@@ -263,23 +263,39 @@ export function useActiveTrainingContentRules() {
 async function resolveBonusScopeRules(
   entitlements: Array<{ product_id: string | null; meta: any }>,
   supabaseClient: typeof supabase,
+  dbRules: TrainingContentRule[] = [],
 ): Promise<TrainingContentRule[]> {
   const syntheticRules: TrainingContentRule[] = [];
 
+  // Set of product_ids that already have at least one active DB training_content rule.
+  // synthetic-legacy must NOT be generated for these — DB rules win, default-deny otherwise.
+  const productsWithDbRules = new Set<string>(
+    dbRules.filter(r => r.product_id && r.is_active).map(r => r.product_id as string),
+  );
+
   // Separate entitlements into two groups:
   // 1. Entitlements WITH scope_resolution_mode (explicit scope from write-side)
-  // 2. Entitlements WITHOUT meta (legacy — need safe default)
+  // 2. Entitlements WITHOUT meta (legacy — need safe default), AND without meta.tariff_id
+  //    (entitlement.meta.tariff_id is a first-class tariff matching source — such entitlements
+  //     are direct purchases, NOT legacy bonus, and must go through the DB tariff path.)
+  const UUID_RE_LOCAL = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const scopedEnts = entitlements.filter(e => {
     const meta = (e.meta || {}) as Record<string, any>;
     const mode = meta.scope_resolution_mode;
     return mode && mode !== 'full_tariff_scope';
   });
 
-  // Legacy entitlements without scope_resolution_mode that are product-linked
-  // These need a safe default to prevent silent full access
+  // Legacy entitlements without scope_resolution_mode AND without meta.tariff_id
+  // AND product has no DB rules. If DB rules exist, default-deny is enforced via P5
+  // diagnostic bucket (rule_unresolved) inside resolveTrainingContentFilter, not via synthetic.
   const legacyEnts = entitlements.filter(e => {
     const meta = (e.meta || {}) as Record<string, any>;
-    return !meta.scope_resolution_mode && e.product_id;
+    if (meta.scope_resolution_mode) return false;
+    if (!e.product_id) return false;
+    const tid = meta.tariff_id;
+    if (tid && typeof tid === 'string' && UUID_RE_LOCAL.test(tid)) return false;
+    if (productsWithDbRules.has(e.product_id)) return false;
+    return true;
   });
 
   const allRelevantEnts = [...scopedEnts, ...legacyEnts];
