@@ -29,6 +29,8 @@ interface ClubMembershipRow {
   club_id: string;
   club_name: string;
   is_active_club: boolean;
+  club_has_chat?: boolean | null;
+  club_has_channel?: boolean | null;
   in_chat: boolean | null;
   in_channel: boolean | null;
   access_status: string | null;
