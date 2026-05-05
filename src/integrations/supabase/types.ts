@@ -14135,6 +14135,8 @@ export type Database = {
         Args: { p_profile_id: string }
         Returns: {
           access_status: string
+          club_has_channel: boolean
+          club_has_chat: boolean
           club_id: string
           club_last_members_sync_at: string
           club_last_status_check_at: string

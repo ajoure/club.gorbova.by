@@ -29,6 +29,8 @@ interface ClubMembershipRow {
   club_id: string;
   club_name: string;
   is_active_club: boolean;
+  club_has_chat?: boolean | null;
+  club_has_channel?: boolean | null;
   in_chat: boolean | null;
   in_channel: boolean | null;
   access_status: string | null;
@@ -128,6 +130,22 @@ function ago(ts: string | null) {
   if (!ts) return "никогда";
   try {
     return formatDistanceToNow(new Date(ts), { addSuffix: true, locale: ru });
+  } catch {
+    return "—";
+  }
+}
+
+// Короткое время: сегодня → "HH:mm", иначе → "dd.MM HH:mm"
+function fmtShort(ts: string | null) {
+  if (!ts) return "—";
+  try {
+    const d = new Date(ts);
+    const now = new Date();
+    const sameDay =
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate();
+    return format(d, sameDay ? "HH:mm" : "dd.MM HH:mm", { locale: ru });
   } catch {
     return "—";
   }
@@ -269,19 +287,30 @@ export function ContactClubMembershipsList({ profileId, enabled }: Props) {
                         <span className={cn("w-2 h-2 rounded-full", meta.dot)} />
                       </span>
                     </TooltipTrigger>
-                    <TooltipContent side="top" className="max-w-xs text-xs">
+                    <TooltipContent side="top" className="max-w-[260px] text-xs">
                       <div className="font-medium mb-1">{meta.label}</div>
                       {sync === "partial" && (
-                        <div className="text-muted-foreground">{partialReason(row)}</div>
+                        <div className="space-y-1 text-muted-foreground">
+                          <div>
+                            Cron обходит участников батчами по 200. Часть уже проверена,
+                            остаток догонится в ближайшие тики (раз в час).
+                          </div>
+                          <div>
+                            Полный обход: {row.club_last_members_sync_at ? fmtShort(row.club_last_members_sync_at) : "ещё не было"}
+                          </div>
+                          <div>
+                            Последняя batch-проверка: {fmtShort(row.club_last_status_check_at)}
+                          </div>
+                        </div>
                       )}
                       {sync === "full" && (
                         <div className="text-muted-foreground">
-                          Полный обход: {fmt(row.club_last_members_sync_at)} ({ago(row.club_last_members_sync_at)})
+                          Полный обход: {fmtShort(row.club_last_members_sync_at)} ({ago(row.club_last_members_sync_at)})
                         </div>
                       )}
                       {sync === "stale" && (
                         <div className="text-muted-foreground">
-                          Последний обход: {fmt(row.club_last_members_sync_at)} ({ago(row.club_last_members_sync_at)}).
+                          Последний обход: {fmtShort(row.club_last_members_sync_at)} ({ago(row.club_last_members_sync_at)}).
                           Cron не доходит до клуба — нужна диагностика.
                         </div>
                       )}
@@ -293,10 +322,14 @@ export function ContactClubMembershipsList({ profileId, enabled }: Props) {
                     {row.club_name}
                   </span>
 
-                  {/* Presence icons (chat/channel) */}
+                  {/* Presence icons (chat/channel) — channel hidden if club has no channel */}
                   <div className="flex items-center gap-1 shrink-0">
-                    <PresenceIcon present={row.in_chat} Icon={MessageSquare} label="В чате" />
-                    <PresenceIcon present={row.in_channel} Icon={Megaphone} label="В канале" />
+                    {row.club_has_chat !== false && (
+                      <PresenceIcon present={row.in_chat} Icon={MessageSquare} label="В чате" />
+                    )}
+                    {row.club_has_channel === true && (
+                      <PresenceIcon present={row.in_channel} Icon={Megaphone} label="В канале" />
+                    )}
                   </div>
                 </div>
 
@@ -335,17 +368,21 @@ export function ContactClubMembershipsList({ profileId, enabled }: Props) {
                   )}
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <span className="inline-flex items-center gap-1 cursor-help">
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 cursor-help",
+                          memberFresh === "stale" && "text-amber-700",
+                          memberFresh === "never" && "text-muted-foreground",
+                        )}
+                      >
                         <Clock className="w-3 h-3" />
-                        {memberFresh === "fresh"
-                          ? "проверен недавно"
-                          : memberFresh === "stale"
-                            ? "проверка устарела"
-                            : "не проверялся"}
+                        {row.last_telegram_check_at
+                          ? `проверен ${fmtShort(row.last_telegram_check_at)}`
+                          : "не проверялся"}
                       </span>
                     </TooltipTrigger>
                     <TooltipContent side="top" className="text-xs">
-                      <div>Последняя проверка: {fmt(row.last_telegram_check_at)}</div>
+                      <div>Точное время: {fmt(row.last_telegram_check_at)}</div>
                       <div className="text-muted-foreground">{ago(row.last_telegram_check_at)}</div>
                     </TooltipContent>
                   </Tooltip>
