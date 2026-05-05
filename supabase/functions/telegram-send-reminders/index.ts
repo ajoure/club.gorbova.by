@@ -242,20 +242,36 @@ Deno.serve(async (req) => {
       const expiryDate = new Date(access.active_until!);
       const formattedDate = formatMinskDateTime(expiryDate) || '';
 
-      // Резолвим next_charge_at из subscriptions_v2 (если у юзера есть активная подписка)
+      // PATCH CHARGE-TIME-SOT v1 (2026-05-05): SOT = provider_subscriptions.next_charge_at.
+      // subscriptions_v2.next_charge_at не используется (часто = access_end_at, не реальное списание).
+      // Если provider next_charge_at нет ИЛИ |provider.next - access_end| <= 60s — строку не показываем.
       let nextChargeLine = '';
       try {
         const { data: subRow } = await supabase
           .from('subscriptions_v2')
-          .select('next_charge_at, status, auto_renew, tariff_id')
+          .select('id, status, auto_renew, tariff_id')
           .eq('user_id', access.user_id)
           .in('status', ['active', 'trial'])
           .order('access_end_at', { ascending: false })
           .limit(1)
           .maybeSingle();
-        if (subRow?.next_charge_at && subRow.auto_renew) {
-          const nc = formatMinskDateTime(subRow.next_charge_at);
-          if (nc) nextChargeLine = `\n\n⚡ Списание: ${nc}`;
+        if (subRow?.id && subRow.auto_renew) {
+          const { data: ps } = await supabase
+            .from('provider_subscriptions')
+            .select('next_charge_at')
+            .eq('subscription_v2_id', subRow.id)
+            .eq('state', 'active')
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (ps?.next_charge_at) {
+            const ncDate = new Date(ps.next_charge_at);
+            const diffSec = Math.abs((ncDate.getTime() - expiryDate.getTime()) / 1000);
+            if (diffSec > 60) {
+              const nc = formatMinskDateTime(ps.next_charge_at);
+              if (nc) nextChargeLine = `\n\n⚡ Списание: ${nc}`;
+            }
+          }
         }
       } catch (_e) { /* non-blocking */ }
 

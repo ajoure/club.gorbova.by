@@ -128,6 +128,44 @@ async function hasActiveSBS(supabase: any, userId: string, productId: string | n
 }
 
 /**
+ * PATCH CHARGE-TIME-SOT v1 (2026-05-05):
+ * Resolve provider-side next_charge_at for the «⚡ Списание» line.
+ * SOT = provider_subscriptions.next_charge_at (active state) ONLY.
+ * subscriptions_v2.next_charge_at must NOT be used (often equals access_end_at and is not a real charge time).
+ *
+ * Returns null when:
+ *  - no active provider_subscription found,
+ *  - provider_subscription has no next_charge_at,
+ *  - |provider.next_charge_at - access_end_at| <= 60 seconds (looks like access boundary, not charge).
+ */
+async function resolveProviderNextChargeAt(
+  supabase: any,
+  subscriptionV2Id: string,
+  accessEndAt: Date | null,
+): Promise<Date | null> {
+  try {
+    const { data: ps } = await supabase
+      .from('provider_subscriptions')
+      .select('next_charge_at, state')
+      .eq('subscription_v2_id', subscriptionV2Id)
+      .eq('state', 'active')
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!ps?.next_charge_at) return null;
+    const nc = new Date(ps.next_charge_at);
+    if (isNaN(nc.getTime())) return null;
+    if (accessEndAt) {
+      const diffSec = Math.abs((nc.getTime() - accessEndAt.getTime()) / 1000);
+      if (diffSec <= 60) return null;
+    }
+    return nc;
+  } catch (_e) {
+    return null;
+  }
+}
+
+/**
  * PATCH ONE-TIME-CLASSIFIER v1: ID-first detection of one-time products.
  * Returns true ONLY when:
  *  1) tariff_id has at least one active offer, AND
@@ -1398,7 +1436,7 @@ Deno.serve(async (req) => {
           result.telegram_sent = true;
           result.telegram_logged = true;
         } else {
-          const nextChargeAt = (sub as any).next_charge_at ? new Date((sub as any).next_charge_at) : null;
+          const nextChargeAt = await resolveProviderNextChargeAt(supabase, sub.id, expiryDate);
           const telegramResult = await sendTelegramReminder(
             supabase, botToken, userId,
             productName, tariffName, expiryDate, daysLeft,
@@ -1435,7 +1473,7 @@ Deno.serve(async (req) => {
               productName, tariffName, expiryDate, daysLeft,
               amount, currency, userHasSBS, oneTimeUrl, subscriptionUrl,
               sub.id, sub.order_id, sub.tariff_id, productIsOneTime,
-              (sub as any).next_charge_at ? new Date((sub as any).next_charge_at) : null,
+              await resolveProviderNextChargeAt(supabase, sub.id, expiryDate),
             );
             // PATCH OUTCOME-PARITY v1: write canonical email outcome.
             // send-email writes its OWN row with status='sent' on actual SMTP accept.
