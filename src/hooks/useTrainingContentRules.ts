@@ -508,40 +508,33 @@ export function resolveTrainingContentFilter(
   // tariff context. Default-deny (empty allowlist), NEVER full access. This catches the
   // case where entitlement.meta.tariff_id does not align with any DB tariff rule.
   if (!bestRule && dbRules.length > 0) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
-      const diag = require("@/lib/trainingContentDiag") as typeof import("@/lib/trainingContentDiag");
-      diag.logTrainingContentDiag({
-        user_id: null,
-        product_id: productId,
-        training_module_id: trainingModuleId,
-        entitlement_tariff_id: productEntTariffs[0] ?? null,
-        subscription_tariff_ids: userTariffIds,
-        matched_rule_id: null,
-        rule_source: "rule_unresolved",
-        fallback_reason: "no_db_rule_matched_user_tariff_context",
-      });
-    } catch { /* diag is best-effort */ }
+    logTrainingContentDiag({
+      user_id: null,
+      product_id: productId,
+      training_module_id: trainingModuleId,
+      entitlement_tariff_id: productEntTariffs[0] ?? null,
+      subscription_tariff_ids: userTariffIds,
+      matched_rule_id: null,
+      rule_source: "rule_unresolved",
+      fallback_reason: "no_db_rule_matched_user_tariff_context",
+    });
     return { mode: "partial", allowedModuleIds: new Set(), allowedLessonIds: new Set() };
   }
 
   if (!bestRule) return null;
 
   // Diagnostic log for matched rule (only when flag enabled)
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
-    const diag = require("@/lib/trainingContentDiag") as typeof import("@/lib/trainingContentDiag");
-    diag.logTrainingContentDiag({
-      user_id: null,
-      product_id: productId,
-      training_module_id: trainingModuleId,
-      entitlement_tariff_id: productEntTariffs[0] ?? null,
-      subscription_tariff_ids: userTariffIds,
-      matched_rule_id: bestRule.id,
-      rule_source: ruleSource,
-      allowed_module_count: (bestRule.conditions.allowed_module_ids || []).length,
-    });
-  } catch { /* diag is best-effort */ }
+  logTrainingContentDiag({
+    user_id: null,
+    product_id: productId,
+    training_module_id: trainingModuleId,
+    entitlement_tariff_id: productEntTariffs[0] ?? null,
+    subscription_tariff_ids: userTariffIds,
+    matched_rule_id: bestRule.id,
+    rule_source: ruleSource,
+    allowed_module_count: (bestRule.conditions.allowed_module_ids || []).length,
+  });
+
 
   const cond = bestRule.conditions;
   if (cond.access_mode === "full") {
