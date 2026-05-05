@@ -14,23 +14,32 @@ function Calendar({
   showOutsideDays = true,
   fixedWeeks = true,
   locale: localeProp,
+  captionLayout,
   ...props
 }: CalendarProps) {
+  const isDropdown =
+    captionLayout === "dropdown" || captionLayout === "dropdown-buttons";
+
   return (
     <DayPicker
       locale={localeProp ?? ru}
       showOutsideDays={showOutsideDays}
       fixedWeeks={fixedWeeks}
+      captionLayout={captionLayout}
       className={cn("p-3 pointer-events-auto", className)}
       classNames={{
         months: "flex flex-col sm:flex-row space-y-4 sm:space-x-4 sm:space-y-0",
         month: "space-y-4",
-        caption: "flex justify-center pt-1 relative items-center",
-        caption_label: "text-sm font-semibold",
+        caption: "flex justify-center pt-1 relative items-center min-h-[2.25rem]",
+        // In dropdown mode hide the duplicate "January 2026" label
+        caption_label: isDropdown
+          ? "sr-only"
+          : "text-sm font-semibold",
+        caption_dropdowns: "flex gap-2 justify-center items-center w-full px-9",
         nav: "space-x-1 flex items-center",
         nav_button: cn(
-          buttonVariants({ variant: "outline" }),
-          "h-8 w-8 bg-background/60 backdrop-blur-sm p-0 opacity-70 hover:opacity-100 hover:bg-background/80 rounded-xl border-border/50 transition-all duration-200",
+          buttonVariants({ variant: "ghost" }),
+          "h-7 w-7 p-0 opacity-70 hover:opacity-100 rounded-lg transition-all duration-200",
         ),
         nav_button_previous: "absolute left-1",
         nav_button_next: "absolute right-1",
@@ -48,7 +57,7 @@ function Calendar({
           "focus-within:relative focus-within:z-20"
         ),
         day: cn(
-          buttonVariants({ variant: "ghost" }), 
+          buttonVariants({ variant: "ghost" }),
           "h-9 w-9 p-0 font-normal aria-selected:opacity-100 rounded-xl transition-all duration-200 hover:bg-muted/60"
         ),
         day_range_end: "day-range-end",
@@ -63,18 +72,18 @@ function Calendar({
         day_disabled: "text-muted-foreground/40 opacity-40",
         day_range_middle: "aria-selected:bg-accent/60 aria-selected:text-accent-foreground",
         day_hidden: "invisible",
-        // Caption dropdowns (month / year)
-        caption_dropdowns: "flex gap-1.5 justify-center items-center",
+        // Frosted-glass dropdowns (month / year). Wrapper holds the <select>.
+        dropdown_month: "relative flex-1",
+        dropdown_year: "relative flex-1",
         dropdown: cn(
-          "h-8 px-2 rounded-lg text-xs font-medium",
-          "bg-muted/40 border border-border/40",
-          "hover:bg-muted/60 hover:border-border/60",
-          "focus:outline-none focus:ring-2 focus:ring-primary/30",
-          "transition-colors cursor-pointer",
+          "absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10",
           "appearance-none"
         ),
-        dropdown_month: "relative",
-        dropdown_year: "relative",
+        // Visible "button-like" representation of the current dropdown value.
+        // RDP renders caption_label inside each dropdown wrapper as the visible text.
+        // We re-style it as a glass pill so user sees full month/year names.
+        // Hide aria labels ("Month:", "Year:") that would otherwise leak in.
+        vhidden: "sr-only",
         ...classNames,
       }}
       components={{
