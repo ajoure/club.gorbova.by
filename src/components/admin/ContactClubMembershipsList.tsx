@@ -311,10 +311,14 @@ export function ContactClubMembershipsList({ profileId, enabled }: Props) {
                     {row.club_name}
                   </span>
 
-                  {/* Presence icons (chat/channel) */}
+                  {/* Presence icons (chat/channel) — channel hidden if club has no channel */}
                   <div className="flex items-center gap-1 shrink-0">
-                    <PresenceIcon present={row.in_chat} Icon={MessageSquare} label="В чате" />
-                    <PresenceIcon present={row.in_channel} Icon={Megaphone} label="В канале" />
+                    {row.club_has_chat !== false && (
+                      <PresenceIcon present={row.in_chat} Icon={MessageSquare} label="В чате" />
+                    )}
+                    {row.club_has_channel === true && (
+                      <PresenceIcon present={row.in_channel} Icon={Megaphone} label="В канале" />
+                    )}
                   </div>
                 </div>
 
