@@ -128,6 +128,44 @@ async function hasActiveSBS(supabase: any, userId: string, productId: string | n
 }
 
 /**
+ * PATCH CHARGE-TIME-SOT v1 (2026-05-05):
+ * Resolve provider-side next_charge_at for the «⚡ Списание» line.
+ * SOT = provider_subscriptions.next_charge_at (active state) ONLY.
+ * subscriptions_v2.next_charge_at must NOT be used (often equals access_end_at and is not a real charge time).
+ *
+ * Returns null when:
+ *  - no active provider_subscription found,
+ *  - provider_subscription has no next_charge_at,
+ *  - |provider.next_charge_at - access_end_at| <= 60 seconds (looks like access boundary, not charge).
+ */
+async function resolveProviderNextChargeAt(
+  supabase: any,
+  subscriptionV2Id: string,
+  accessEndAt: Date | null,
+): Promise<Date | null> {
+  try {
+    const { data: ps } = await supabase
+      .from('provider_subscriptions')
+      .select('next_charge_at, state')
+      .eq('subscription_v2_id', subscriptionV2Id)
+      .eq('state', 'active')
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!ps?.next_charge_at) return null;
+    const nc = new Date(ps.next_charge_at);
+    if (isNaN(nc.getTime())) return null;
+    if (accessEndAt) {
+      const diffSec = Math.abs((nc.getTime() - accessEndAt.getTime()) / 1000);
+      if (diffSec <= 60) return null;
+    }
+    return nc;
+  } catch (_e) {
+    return null;
+  }
+}
+
+/**
  * PATCH ONE-TIME-CLASSIFIER v1: ID-first detection of one-time products.
  * Returns true ONLY when:
  *  1) tariff_id has at least one active offer, AND
