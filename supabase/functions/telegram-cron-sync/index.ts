@@ -359,29 +359,69 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Update club last sync time
-      await supabase.from('telegram_clubs').update({
-        last_status_check_at: new Date().toISOString(),
-      }).eq('id', club.id);
+      const durationMs = Date.now() - clubStartedAt;
+      const processedIds = members.map((m: any) => m.id);
+      const lastProcessedMemberId = processedIds[processedIds.length - 1] ?? null;
+      const remainingEstimate = Math.max((eligibleCount ?? 0) - checkedCount, 0);
+      const isPartial = remainingEstimate > 0;
 
-      // Log sync event
+      // P2: write-back sync timestamps
+      // last_status_check_at — always; last_members_sync_at — only when full pass (no remaining)
+      const clubUpdate: Record<string, unknown> = {
+        last_status_check_at: new Date().toISOString(),
+      };
+      if (!isPartial) {
+        clubUpdate.last_members_sync_at = new Date().toISOString();
+      }
+      await supabase.from('telegram_clubs').update(clubUpdate).eq('id', club.id);
+
+      // Legacy audit (existing dashboards depend on it)
       await logAudit(supabase, {
         club_id: club.id,
         event_type: 'CRON_SYNC',
         actor_type: 'cron',
-        meta: { checked_count: checkedCount, kicked_count: kickedCount, guard_skip_count: guardSkipCount, error_count: errorCount },
+        meta: { checked_count: checkedCount, kicked_count: kickedCount, guard_skip_count: guardSkipCount, error_count: errorCount, batch_limit: BATCH_LIMIT, is_partial: isPartial },
+      });
+
+      // P3: structured batch audit
+      await supabase.from('audit_logs').insert({
+        action: 'telegram.cron_sync.batch',
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'telegram-cron-sync',
+        meta: {
+          club_id: club.id,
+          club_name: club.club_name,
+          processed: members.length,
+          updated: checkedCount,
+          kicked: kickedCount,
+          guard_skips: guardSkipCount,
+          errors: errorCount,
+          duration_ms: durationMs,
+          batch_limit: BATCH_LIMIT,
+          is_partial: isPartial,
+          remaining_estimate: remainingEstimate,
+          last_processed_member_id: lastProcessedMemberId,
+          eligible_total: eligibleCount ?? null,
+        },
       });
 
       results.push({
         club_id: club.id,
         club_name: club.club_name,
+        processed: members.length,
         checked: checkedCount,
         kicked: kickedCount,
         guard_skips: guardSkipCount,
         errors: errorCount,
+        batch_limit: BATCH_LIMIT,
+        is_partial: isPartial,
+        remaining_estimate: remainingEstimate,
+        duration_ms: durationMs,
+        last_processed_member_id: lastProcessedMemberId,
       });
 
-      console.log(`Club ${club.club_name}: checked ${checkedCount}, kicked ${kickedCount}, guard_skips ${guardSkipCount}, errors ${errorCount}`);
+      console.log(`Club ${club.club_name}: processed=${members.length} checked=${checkedCount} kicked=${kickedCount} guard_skips=${guardSkipCount} errors=${errorCount} partial=${isPartial} remaining=${remainingEstimate} duration_ms=${durationMs}`);
     }
 
     console.log('Cron sync completed');
