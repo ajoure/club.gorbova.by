@@ -122,6 +122,7 @@ import { RefundDialog } from "./RefundDialog";
 import { AccessHistorySheet } from "./AccessHistorySheet";
 import { EditContactDialog } from "./EditContactDialog";
 import { ContactTelegramChat } from "./ContactTelegramChat";
+import { ContactClubMembershipsList } from "./ContactClubMembershipsList";
 import { ContactEmailHistory } from "./ContactEmailHistory";
 import { EditSubscriptionDialog } from "./EditSubscriptionDialog";
 import { EditDealDialog } from "./EditDealDialog";
