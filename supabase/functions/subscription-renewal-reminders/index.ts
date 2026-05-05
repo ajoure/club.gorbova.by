@@ -1473,7 +1473,7 @@ Deno.serve(async (req) => {
               productName, tariffName, expiryDate, daysLeft,
               amount, currency, userHasSBS, oneTimeUrl, subscriptionUrl,
               sub.id, sub.order_id, sub.tariff_id, productIsOneTime,
-              (sub as any).next_charge_at ? new Date((sub as any).next_charge_at) : null,
+              await resolveProviderNextChargeAt(supabase, sub.id, expiryDate),
             );
             // PATCH OUTCOME-PARITY v1: write canonical email outcome.
             // send-email writes its OWN row with status='sent' on actual SMTP accept.
