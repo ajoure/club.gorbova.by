@@ -135,6 +135,22 @@ function ago(ts: string | null) {
   }
 }
 
+// Короткое время: сегодня → "HH:mm", иначе → "dd.MM HH:mm"
+function fmtShort(ts: string | null) {
+  if (!ts) return "—";
+  try {
+    const d = new Date(ts);
+    const now = new Date();
+    const sameDay =
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate();
+    return format(d, sameDay ? "HH:mm" : "dd.MM HH:mm", { locale: ru });
+  } catch {
+    return "—";
+  }
+}
+
 function partialReason(row: ClubMembershipRow): string {
   const parts: string[] = [];
   const m = row.club_last_members_sync_at;
