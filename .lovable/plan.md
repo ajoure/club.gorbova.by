@@ -1,176 +1,160 @@
 да, согласен, с учетом правок:
 
-1. **Patch 1 подтверждаю**
-  - Новый `orders_v2` создавать **начиная со второго успешного rebill-платежа**.
-  - Первый платёж остаётся в исходной link-сделке.
-  - Каждый следующий успешный rebill → отдельная новая сделка.
-  - Старые «толстые» сделки не трогать в этом патче.
-2. **Не использовать суффикс** `-RB{n}`**, если есть общий генератор order_number**
-  - Использовать существующий канонический генератор номеров.
-  - В `meta` новой сделки писать:
-    - `parent_order_id`;
-    - `source='subscription_rebill'`;
-    - `source_payment_id`;
-    - `subscription_id`;
-    - `rebill_sequence`.
-3. **Refund-row должен быть совместим с legacy**
-  - Для новых refund:
-    - `transaction_type='refund'`;
-    - `status='refunded'`;
-    - `amount=-actualRefundAmount`;
-    - `meta.type='refund'`;
-    - `meta.parent_payment_id`;
-  - На parent payment обновлять:
-    - `refunded_amount = COALESCE(refunded_amount, 0) + actualRefundAmount`.
-4. **Order status при partial refund**
-  - Если refund < paidSum: `orders_v2.status` оставить `paid`.
-  - Если refund >= paidSum: `orders_v2.status='refunded'`.
-  - В `meta` добавить:
-    - `partial_refund_total`;
-    - `refund_status='partial' | 'full'`.
-5. **DealDetailSheet должен поддерживать оба формата**
-  - новый формат через `transaction_type='refund'`;
-  - legacy формат через `meta.type='refund'` и отрицательный `amount`;
-  - не считать refund-row в paidSum;
-  - partial refund показывать amber даже если `deal.status='paid'`.
-6. **Добавить диагностику в webhook**
-  - Audit/log для rebill split:
-    - `bepaid.webhook.rebill_order_spawned`;
-    - `parent_order_id`;
-    - `new_order_id`;
-    - `provider_payment_id`;
-    - `rebill_sequence`.
-  - Если split не выполнен из-за guard — audit:
-    - `bepaid.webhook.rebill_order_spawn_skipped`.
-7. **Добавить idempotency**
-  - По `provider_payment_id` не должно создаваться две сделки.
-  - Если webhook повторился — найти уже созданный order/payment и вернуть idempotent success.
-  - Никаких duplicate `orders_v2` на один provider payment.
-8. **Memory rules — да**  
-Создать/обновить правила:
-  - `1 successful payment = 1 commercial deal`;
-  - exception: refund-row может жить в той же сделке, что и parent payment;
-  - partial refund state: parent `refunded_amount` + refund-row.
-9. **Что не делать**
-  - Не мигрировать исторические сделки сейчас.
-  - Не трогать `grant-access`, Telegram, subscriptions repair.
-  - Не запускать webhook replay.
-  - Не менять `bepaid-process-refunds`, если он уже пишет корректный формат.
+1. **Не менять Phase E**
+  - Не оставлять root-карточку видимой при rule_unresolved с пустым списком уроков.
+  - Если rule_unresolved — это default-deny, карточка может быть скрыта.
+  - Для Татьяны цель не обходить Phase E, а добиться корректного db_tariff match на 18 модулей.
+2. **Fix делать точечно в resolver**
+  - entitlement.meta.tariff_id должен участвовать в tariff-rule matching наравне с subscriptions_v2.tariff_id.
+  - Entitlement с meta.tariff_id нельзя относить к legacyEnts.
+  - synthetic-legacy-safe не должен создаваться для entitlement, у которого есть meta.tariff_id.
+3. **Synthetic legacy не отключать глобально по product_id**
+  - Если у продукта есть DB rules, но entitlement вообще без tariff_id и без scope — не открывать full access.
+  - Такой случай должен идти в rule_unresolved / safe-deny, а не в full access.
+  - Нельзя ломать bonus/module_scope_only сценарии.
+4. **Сначала подтвердить runtime**
+  - Под debug flag показать для Татьяны:
+    - product_id=7101ed3c;
+    - entitlement_tariff_id=543940b1;
+    - subscription_tariff_id=543940b1;
+    - выбранный rule_id;
+    - rule_source;
+    - количество allowed_module_ids.
+  - Без ФИО/email.
+5. **Диагностическую панель не делать**
+  - Достаточно debug-лога под localStorage.getItem('[debug.training](http://debug.training)_content') === '1'.
+  - Новую UI-панель не добавлять.
+6. **SQL-аудит обязателен**
+  - До фикса: список пользователей, где entitlement.meta.tariff_id совпадает с tariff-level DB rule, но карточка может схлопываться.
+  - После фикса: подтвердить, что такие пользователи получают db_tariff, а не synthetic_legacy.
+7. **Проверить cb20-маппинг**
+  - Реальные условия в runtime не должны зависеть от строки 'cb20', если можно использовать product_id.
+  - Комментарии и справочники названий не трогать.
+8. **Writers не трогать**  
 
-Можно выполнять fix причины.
+  - grant-access-for-order;
+  - subscriptions_v2;
+  - entitlements;
+  - payments;
+  - Telegram  
+  не изменять.
+9. **DoD уточнить**
+  - Татьяна видит Ценный бухгалтер | 1 ступень 2.0.
+  - Доступно ровно 18 модулей по tariff-rule 543940b1.
+  - rule_source=db_tariff.
+  - synthetic-legacy-safe не выбран.
+  - module_scope_only не получает лишний доступ.
+  - rule_unresolved не открывает full access.
+  - Debug-лог выключен по умолчанию.
+  - Memory rule добавлен.
 
 &nbsp;
 
-План: Diagnose → почему не сработали существующие правила «1 платёж = 1 сделка» и «частичный возврат» на сделке `#SUB-LINK-MNIQS4P0`
+Можно выполнять build mode.
 
-## 0. Контекст по конкретному кейсу (read-only из БД, подтверждено)
+&nbsp;
 
-`orders_v2` `4eaa9e40-…` (`SUB-LINK-MNIQS4P0`, status=`refunded`, final_price=250):
+## План: фикс training_content resolver + аудит cb20 хардкодов
 
-- payment 03.04.26  +250  status=`succeeded` transaction_type=`Платеж`  refunded_amount=`0`
-- payment 03.05.26  +250  status=`succeeded` transaction_type=`payment` refunded_amount=`0`  meta.source=`link_order_subscription_webhook`
-- payment 04.05.26  −80   status=`succeeded` transaction_type=`payment` refunded_amount=`0`  meta.type=`refund` meta.parent_payment_id=…
+### Diagnose (read-only факты)
 
-То есть в одной сделке три платежа (баг #1), а refund записан как обычный «успешный» платёж с отрицательной суммой и `meta.type=refund` (баг #2). Бейдж UI считает paidSum/refundedSum по полям `status` и `refunded_amount` — и получает `refundedSum=0`, поэтому НЕ показывает «Частичный возврат».
+Татьяна `4870dfc5-6609-4e0c-96a9-20fbd2d05928`:
 
-## 1. Diagnose — что именно сломано
+- entitlement cb20: `393fe515`, product_id=`7101ed3c…`, `meta.tariff_id=543940b1…`
+- subscription cb20: tariff_id=`543940b1…`, status=active, access_end_at=2026-05-08
+- DB rules training_content для cb20: 3 шт., tariff-level (`543940b1`/18 mod, `adbe94e8`/25, `9bc81736`/28), все is_active=true, target_ref=root `c9f7e9b8`
+- параллельно у неё есть 2 entitlement на business-продукты (`c153c811`, `11c9f1b8`) — без meta.scope_resolution_mode → попадают в `legacyEnts`. Сам cb20-entitlement тоже legacyEnt (нет scope_resolution_mode).
 
-### Баг A. «1 платёж = 1 сделка» не существует для recurring rebill
+**Ожидаемый путь резолвера** (`resolveTrainingContentFilter`):
+P1 tariff-DB rule матчится по `effectiveTariffIds = userTariffIds ∪ entitlementTariffsByProduct[7101ed3c]` → должен дать 18 модулей и НЕ доходить до P4.
 
-Файл: `supabase/functions/bepaid-webhook/index.ts`, ветка `WEBHOOK-LINK-ORDER`, строки 2325–2385.
+**Гипотеза root cause:**
 
-Логика жёстко прибивает все recurring-платежи к **исходному** `linkOrder.id`:
+1. `synthetic-legacy-safe-7101ed3c` всё-таки создаётся для cb20-ent (нет `scope_resolution_mode`) — он живёт в массиве и при любом срыве P1 (например: rules ещё не приехали, race на refresh, partial cache, фильтрация по product_id уронила DB-rule, или DB-rules грузятся пустыми из-за RLS) → P4 даёт `allowed_module_ids=[]` → корень с 18 детьми → 0 видимых → root убирается (Phase E STOP-guard в `useTrainingModules`).
+2. В `useSidebarModules` filter применяется только когда `tcData.rules.length>0`, но в `useTrainingModules` фильтр применяется всегда при `tcRules.length>0` → расхождение поведения.
 
-```
-const p5OrderId = (existingPayForP5?.order_id) ? existingPayForP5.order_id : linkOrder.id;
-const paymentPayload = { order_id: p5OrderId, ... is_recurring: true, ... };
-```
+Подтверждение root cause требует runtime — это первый шаг build-mode (см. ниже), без логирования PII.
 
-Никакого спавна нового `orders_v2` под каждое списание. Декларированного «patch: payment-per-order» в репозитории нет: `rg "payment.*deal\|one-payment-one-deal\|rebill.*new.*order"` пусто, мемори-файла на эту тему тоже нет (только `Rebill Idempotency` про дедуп, не про спавн заказа).
+---
 
-→ Поэтому в сделке оказывается 2 успешных платежа за разные даты.
+### Изменения (build mode)
 
-### Баг B. UI-классификатор «Частичный возврат» неконсистентен с writer-ом refund
+**A. `src/hooks/useTrainingContentRules.ts` — устранить опасный fallback**
 
-Файл: `src/components/admin/DealDetailSheet.tsx`, строки 460–478. Условие:
+1. **Запретить synthetic-legacy перебивать DB-rule.** В `resolveBonusScopeRules`: если для `productId` уже есть **хоть одна активная DB tariff/product-level rule** (передать `dbRules` параметром), НЕ генерировать `synthetic-legacy-safe-{productId}`.
+2. `**entitlement.meta.tariff_id` — first-class источник matching.** Уже учитывается через `entitlementTariffsByProduct` в P1. Дополнительно: если у entitlement есть `meta.tariff_id` И этот tariff совпадает с каким-то `dbRules[].tariff_id` → ни в коем случае не уходить в P4 даже если subscription по этому продукту нет.
+3. **No-fallback в full access.** Не менять P3/P4 на full. Если ни один DB-rule не матчится И есть entitlement.meta.tariff_id, который НЕ совпадает с DB rules → вернуть **diagnostic bucket**: `mode='partial', allowed_module_ids=[], rule_purpose='rule_unresolved'`. Это сохраняет default-deny (никакого расширения доступа).
+4. **Убрать synthetic-legacy для product-linked entitlement, у которого есть `meta.tariff_id`.** Такие entitlement НЕ legacy — ими должен заниматься tariff-DB-path.
 
-```
-status === 'paid' || status === 'succeeded' || status === 'refunded'  → paidSum += amount
-refundedSum += refunded_amount
-isPartialRefund = refundedSum > 0 && paidSum > 0 && refundedSum + 0.01 < paidSum
-```
+**B. `src/hooks/useTrainingModules.tsx` + `src/hooks/useSidebarModules.ts` — выровнять поведение**
 
-Но writer refund-а (`subscription-admin-actions/index.ts` стр. 432–454) пишет refund так:
+- Вынести единое условие применения tc-фильтра: применять только когда `tcLoading=false` И `tcData!==null`. Не применять при `rules.length===0` (текущий sidebar так делает; library — нет → выровнять).
+- Не вызывать Phase E STOP-guard (скрытие root с visibleRecursive=0), если выбранный фильтр — `rule_purpose='rule_unresolved'`. Вместо этого оставить root видимым с пустым списком уроков и логом diagnostic bucket. Альтернатива: оставить как есть, но фильтр `rule_unresolved` гарантирует, что это сработает только в реально кривом состоянии данных, не у Татьяны.
 
-```
-amount: -actualRefundAmount,
-status: 'succeeded',
-meta.type: 'refund',
-meta.parent_payment_id: ...
-// refunded_amount НЕ заполняется ни здесь, ни на родительском платеже
-```
+**C. Диагностический логгер (под flag)**
 
-Получаем:
+- Новый util `src/lib/trainingContentDiag.ts`. Лог только при `localStorage.getItem('debug.training_content')==='1'`.
+- Поля: `user_id`, `product_id`, `entitlement_tariff_id`, `subscription_tariff_id`, `matched_rule_id`, `rule_source` (`db_tariff|db_product|synthetic_bonus|synthetic_legacy|rule_unresolved`), `fallback_reason`. Без ФИО/email.
+- Вызов в `resolveTrainingContentFilter` (вернуть meta вместе с filter, вызвать в hook).
 
-- refund-row с `amount=-80` попадает в `paidSum` (т.к. status='succeeded') → paidSum завышается, partial-логика всё равно бы упала
-- `refunded_amount` нигде не выставляется → `refundedSum=0` → `isPartialRefund=false`
-- бейдж берёт `STATUS_CONFIG['refunded']` = «Возврат», красный — то, что мы видим на скриншоте.
+**D. SQL-аудит когорты (read-only, перед фиксом)**
 
-То есть писатель refund-а и читатель partial-state используют разные модели данных. Patch в memory-индексе («Partial Refund State — Amber badge for refunded < paidSum commercial status») заявлен, но writer не обновлён, поэтому условие никогда не срабатывает на реальных данных.
+Найти всех users, у которых:
 
-### Баг C. (вытекает из A) Возврат всегда применяется к «всей сделке»
+- есть active entitlement по продукту с tariff-level training_content rules;
+- entitlement.meta.tariff_id есть и совпадает с rule.tariff_id;
+- subscription отсутствует ИЛИ subscription.tariff_id не совпадает.
 
-Так как сделка содержит несколько списаний (250+250), а UI/refund считает `final_price=250` против `paidSum>=500`, классификация бейджа дополнительно искажена. Корень — баг A.
+Ожидание: эти users были бы схлопнуты synthetic-legacy. После фикса они увидят корректный scope.
 
-## 2. Что НЕ нужно создавать заново
+**E. Аудит «cb20» как код vs id продукта**
 
-- `RefundDialog`, `subscription-admin-actions` (action=`refund`), `bepaid-webhook` (`WEBHOOK-LINK-ORDER`), `DealDetailSheet` partial-логика — всё уже есть. Чинятся, не пересоздаются.
-- Memory-файла «one-payment-one-deal» нет → его создание потребуется, но на этапе fix, не сейчас.
-- Backup/SQL-репейр истории — НЕ в этом плане. Только починка причины.
+Хардкоды найдены:
 
-## 3. Plan фикса (сам fix будет в default-mode после approve этого плана)
+- `supabase/functions/admin-entitlement-backfill-v23/index.ts` — резолвит cb20 через `.eq('code','cb20')`, далее использует `cb20Product.id`. ОК, не править (один-разовый backfill).
+- `supabase/functions/_shared/entitlement-sync.ts` — комментарий упоминает cb20 в mode_filter; проверить, нет ли реального условия `product_code==='cb20'` в логике, и если есть — переключить на product_id константу.
+- `supabase/functions/course-prereg-notify/index.ts` — отображение названия по product_code. ОК (UI-строка).
+- `src/hooks/useSidebarModules.ts` — только в комментарии. ОК.
+- `src/hooks/useTrainingContentRules.ts` — только в комментарии. ОК.
+- `src/lib/product-names.ts` — справочник кодов→названий. ОК.
+- `supabase/functions/repair-cb20-entitlements/index.ts` — название функции, внутри universal по product_id. ОК.
 
-### Patch 1 — bepaid-webhook: spawn нового orders_v2 на каждый rebill
+Реальный фикс нужен только если в `entitlement-sync.ts` есть рантайм-сравнение по строке. Прочитаю и при необходимости заменю на product_id-resolve.
 
-- В `WEBHOOK-LINK-ORDER` (после идемпотентного guard по `provider_payment_id`) определить, является ли событие первой оплатой ссылки или последующим rebill (есть ли уже `payments_v2` с этим subscription_id и статусом succeeded).
-- Если rebill: создать **новый** `orders_v2` со ссылкой `meta.parent_order_id = linkOrder.id`, `meta.source='subscription_rebill'`, тем же `product_id/tariff_id/user_id`, `final_price=paymentAmount`, `status='paid'`. Номер — текущий генератор + суффикс `-RB{n}` или новый канонический формат, если существует.
-- Платёж писать с `order_id = newOrder.id`, не `linkOrder.id`.
-- CRM-routing/payment_link consume вызывать только для первичной оплаты.
+**Writers НЕ трогать**: `grant-access-for-order`, `subscriptions_v2`, `entitlements`, payment, telegram.
 
-### Patch 2 — subscription-admin-actions: правильная запись refund
+---
 
-В блоке вставки refund-row (стр. 432–454):
+### Verify (после фикса, build mode)
 
-- `transaction_type: 'refund'` (явно), `status: 'refunded'`, `amount: -actualRefundAmount` (как сейчас).
-- В **родительском** `payments_v2` (по `provider_payment_id = parent_uid`) увеличить `refunded_amount += actualRefundAmount` (одной транзакцией с insert).
-- В `orders_v2.status` ставить `'refunded'` только если суммарный refund по сделке ≥ суммарного paid. Иначе оставить `'paid'` и положить в `meta.partial_refund_total`.
+1. **Татьяна** видит cb20 в библиотеке с 18 модулями (tariff `543940b1` → 18 allowed).
+2. Diagnostic-лог под flag показывает: `matched_rule_id=63fbef2a…`, `rule_source=db_tariff`, без PII.
+3. SQL-когорта (audit) — no-regression: все, кто был «схлопнут», теперь имеют корректный root + scope.
+4. Регрессии:
+  - `module_scope_only` (синтетика bonus) — НЕ получает full access, scope соблюдён.
+  - `no_scope`/`manual_review` — заблокированы как раньше.
+  - Бонусные/no-meta entitlement БЕЗ DB-rules — поведение прежнее (synthetic-legacy продолжает работать как safe-default).
+  - Root карточка не исчезает, если хотя бы один child разрешён.
+5. Memory rule обновить (см. ниже).
 
-### Patch 3 — DealDetailSheet: классификатор partial → согласован с writer
+---
 
-- `paidSum` считать только по платежам, у которых `transaction_type` НЕ refund **и** `meta?.type !== 'refund'` **и** `amount > 0`.
-- `refundedSum` считать как `Σ refunded_amount` по платежам **плюс** `Σ |amount|` по refund-rows (на случай legacy данных).
-- `isPartialRefund = refundedSum > 0 && refundedSum + 0.01 < paidSum` (без обязательного `deal.status==='refunded'` — partial может быть и при `paid`).
-- Бейдж жёлтый «Частичный возврат» как сейчас.
+### Memory rule (apply after Verify)
 
-### Patch 4 — Memory rules
+Файл `mem://architecture/access-control/training-content-resolver-rules` (новый):
 
-- `mem://commercial-logic/orders/one-payment-one-deal` — каждый успешный rebill должен порождать новый `orders_v2`; единственная допустимая множественность в одной сделке — пара «платёж + (частичный)возврат» по одному `provider_payment_id`.
-- Обновить существующее правило про partial refund: указать точные поля (`refunded_amount` на родительском, `transaction_type='refund'` + `status='refunded'` на refund-row).
+- `entitlement.meta.tariff_id` — допустимый источник tariff matching;
+- synthetic-legacy не создаётся, если по `product_id` есть активные DB training_content rules;
+- при отсутствии matching — diagnostic bucket `rule_unresolved` (default-deny), НЕ full access;
+- diagnostic-лог только под flag, без PII.
 
-### Что НЕ делается этим патчем
+---
 
-- Историческая миграция уже существующих «толстых» сделок с N платежами → отдельный repair-план после approve фикса причины.
-- Никаких grant/revoke/replay/webhook-replay.
-- Никаких изменений в `bepaid-process-refunds` (он работает с очередью; формат refund там корректный, проблема — в admin-инициированном пути).
+### DoD
 
-## 4. DoD после фикса
-
-1. На новой recurring-оплате через `WEBHOOK-LINK-ORDER` создаётся новый `orders_v2`, в нём ровно 1 успешный платёж.
-2. На новом частичном refund: `payments_v2` содержит refund-row с `transaction_type='refund'` + `status='refunded'`; на родительском `refunded_amount` = сумма возврата; `orders_v2.status='paid'` (если refund < paid).
-3. На сделке с partial-refund в `DealDetailSheet` бейдж = «Частичный возврат» (amber).
-4. На сделке с full-refund бейдж = «Возврат» (красный) — без регрессии.
-5. Memory-правила записаны.
-
-## 5. Вопрос на approve
-
-Подтверждаешь ли scope в Patch 1 (создавать новый `orders_v2` на каждый rebill начиная с момента деплоя; старые «толстые» сделки оставить как есть до отдельного repair-плана)? Или нужно чтобы новый order создавался начиная **со второго** платежа (тогда первый платёж остаётся в исходной link-сделке, как и было)?
+- Татьяна видит cb20/18 модулей.
+- SQL-когорта пуста после фикса (нет users с rule_unresolved при наличии валидного match).
+- Регрессии 4 сценариев — green.
+- Writers не изменены.
+- Memory rule добавлен.
+- Diag-логгер выключен по умолчанию (нет шума в проде).

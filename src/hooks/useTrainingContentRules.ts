@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { logTrainingContentDiag } from "@/lib/trainingContentDiag";
 
 // === Types ===
 
@@ -234,7 +235,8 @@ export function useActiveTrainingContentRules() {
       })) as TrainingContentRule[];
 
       // Phase C: Generate synthetic rules from entitlement.meta (bonus scope resolver)
-      const syntheticRules = await resolveBonusScopeRules(ents || [], supabase);
+      // Pass dbRules so synthetic-legacy is suppressed when DB rules exist for the product.
+      const syntheticRules = await resolveBonusScopeRules(ents || [], supabase, dbRules);
 
       return {
         rules: [...dbRules, ...syntheticRules],
@@ -262,23 +264,39 @@ export function useActiveTrainingContentRules() {
 async function resolveBonusScopeRules(
   entitlements: Array<{ product_id: string | null; meta: any }>,
   supabaseClient: typeof supabase,
+  dbRules: TrainingContentRule[] = [],
 ): Promise<TrainingContentRule[]> {
   const syntheticRules: TrainingContentRule[] = [];
 
+  // Set of product_ids that already have at least one active DB training_content rule.
+  // synthetic-legacy must NOT be generated for these — DB rules win, default-deny otherwise.
+  const productsWithDbRules = new Set<string>(
+    dbRules.filter(r => r.product_id && r.is_active).map(r => r.product_id as string),
+  );
+
   // Separate entitlements into two groups:
   // 1. Entitlements WITH scope_resolution_mode (explicit scope from write-side)
-  // 2. Entitlements WITHOUT meta (legacy — need safe default)
+  // 2. Entitlements WITHOUT meta (legacy — need safe default), AND without meta.tariff_id
+  //    (entitlement.meta.tariff_id is a first-class tariff matching source — such entitlements
+  //     are direct purchases, NOT legacy bonus, and must go through the DB tariff path.)
+  const UUID_RE_LOCAL = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const scopedEnts = entitlements.filter(e => {
     const meta = (e.meta || {}) as Record<string, any>;
     const mode = meta.scope_resolution_mode;
     return mode && mode !== 'full_tariff_scope';
   });
 
-  // Legacy entitlements without scope_resolution_mode that are product-linked
-  // These need a safe default to prevent silent full access
+  // Legacy entitlements without scope_resolution_mode AND without meta.tariff_id
+  // AND product has no DB rules. If DB rules exist, default-deny is enforced via P5
+  // diagnostic bucket (rule_unresolved) inside resolveTrainingContentFilter, not via synthetic.
   const legacyEnts = entitlements.filter(e => {
     const meta = (e.meta || {}) as Record<string, any>;
-    return !meta.scope_resolution_mode && e.product_id;
+    if (meta.scope_resolution_mode) return false;
+    if (!e.product_id) return false;
+    const tid = meta.tariff_id;
+    if (tid && typeof tid === 'string' && UUID_RE_LOCAL.test(tid)) return false;
+    if (productsWithDbRules.has(e.product_id)) return false;
+    return true;
   });
 
   const allRelevantEnts = [...scopedEnts, ...legacyEnts];
@@ -446,6 +464,7 @@ export function resolveTrainingContentFilter(
   const syntheticLegacyRules = matchingRules.filter(r => r.id.startsWith('synthetic-legacy-safe-'));
 
   let bestRule: TrainingContentRule | null = null;
+  let ruleSource: "db_tariff" | "db_product" | "synthetic_bonus" | "synthetic_legacy" | "rule_unresolved" | "no_rule" = "no_rule";
 
   // Priority 1: Tariff-level DB rules (most specific)
   // effectiveTariffIds = global subscription tariffs + product-scoped entitlement tariffs
@@ -458,27 +477,64 @@ export function resolveTrainingContentFilter(
   for (const rule of dbRules) {
     if (rule.tariff_id && effectiveTariffIds.includes(rule.tariff_id)) {
       bestRule = rule;
+      ruleSource = "db_tariff";
       break;
     }
   }
 
   // Priority 2: Product-level DB rules (no tariff specified)
   if (!bestRule) {
-    bestRule = dbRules.find(r => !r.tariff_id && r.product_id === productId) || null;
+    const prodRule = dbRules.find(r => !r.tariff_id && r.product_id === productId);
+    if (prodRule) {
+      bestRule = prodRule;
+      ruleSource = "db_product";
+    }
   }
 
   // Priority 3: Synthetic bonus rules (explicit scope_resolution_mode from meta)
   if (!bestRule && syntheticBonusRules.length > 0) {
     bestRule = syntheticBonusRules[0];
+    ruleSource = "synthetic_bonus";
   }
 
   // Priority 4: Synthetic legacy safe default (no meta → no_scope)
-  // This catches bonus entitlements without tariff context that would otherwise get full access
+  // Only generated when product has NO DB rules at all (see resolveBonusScopeRules).
   if (!bestRule && syntheticLegacyRules.length > 0) {
     bestRule = syntheticLegacyRules[0];
+    ruleSource = "synthetic_legacy";
+  }
+
+  // Priority 5 (NEW): Diagnostic bucket — product has DB rules but none matched user's
+  // tariff context. Default-deny (empty allowlist), NEVER full access. This catches the
+  // case where entitlement.meta.tariff_id does not align with any DB tariff rule.
+  if (!bestRule && dbRules.length > 0) {
+    logTrainingContentDiag({
+      user_id: null,
+      product_id: productId,
+      training_module_id: trainingModuleId,
+      entitlement_tariff_id: productEntTariffs[0] ?? null,
+      subscription_tariff_ids: userTariffIds,
+      matched_rule_id: null,
+      rule_source: "rule_unresolved",
+      fallback_reason: "no_db_rule_matched_user_tariff_context",
+    });
+    return { mode: "partial", allowedModuleIds: new Set(), allowedLessonIds: new Set() };
   }
 
   if (!bestRule) return null;
+
+  // Diagnostic log for matched rule (only when flag enabled)
+  logTrainingContentDiag({
+    user_id: null,
+    product_id: productId,
+    training_module_id: trainingModuleId,
+    entitlement_tariff_id: productEntTariffs[0] ?? null,
+    subscription_tariff_ids: userTariffIds,
+    matched_rule_id: bestRule.id,
+    rule_source: ruleSource,
+    allowed_module_count: (bestRule.conditions.allowed_module_ids || []).length,
+  });
+
 
   const cond = bestRule.conditions;
   if (cond.access_mode === "full") {
