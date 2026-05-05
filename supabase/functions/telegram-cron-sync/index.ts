@@ -200,6 +200,7 @@ Deno.serve(async (req) => {
               in_chat: inChat,
               in_channel: inChannel,
               last_telegram_check_at: new Date().toISOString(),
+              last_verified_at: new Date().toISOString(),
               last_telegram_check_result: { chat: chatResult, channel: 'derived_from_chat' },
               // ADMIN GUARD: if admin/creator, never set access_status to 'removed'
               ...(isAdminOrCreator && member.access_status === 'removed' ? { access_status: 'ok' } : {}),
