@@ -1243,42 +1243,6 @@ Deno.serve(async (req) => {
                 }
               }
             }
-                welcomeSent = true;
-                welcomeType = 'tariff';
-                console.log(`[telegram-grant-access] Sent TARIFF welcome (fallback) for tariff ${orderInfo.tariff_id}`);
-              }
-
-              // 3. GC link (last resort) — only if nothing sent
-              const gcUrl = tariffMeta?.getcourse_lesson_url as string | undefined;
-              const getcourseOfferId = tariffData?.getcourse_offer_id;
-              if (!welcomeSent && (getcourseOfferId || gcUrl)) {
-                const gcMessage = 
-                  `📚 Материалы доступны на GetCourse.\n\n` +
-                  `Письмо с доступом придёт на email в течение ~5 минут.\n\n` +
-                  (gcUrl ? `Ссылка: ${gcUrl}` : 'https://gorbova.getcourse.ru/teach');
-                await sendMessage(botToken, telegramUserId, gcMessage);
-                welcomeSent = true;
-                welcomeType = 'gc_link';
-                console.log(`[telegram-grant-access] Sent GC link (no welcome configured)`);
-              }
-
-              // 4. Log idempotency record
-              if (welcomeSent) {
-                try {
-                  await supabase.from('audit_logs').insert({
-                    action: 'telegram_welcome_sent',
-                    actor_type: 'system',
-                    actor_user_id: null,
-                    actor_label: 'telegram-grant-access',
-                    target_user_id: user_id,
-                    meta: { source_id, welcome_type: welcomeType, offer_id: offerId || null, tariff_id: orderInfo.tariff_id },
-                    created_at: new Date().toISOString(),
-                  });
-                } catch (auditErr) {
-                  console.error('[telegram-grant-access] Failed to log welcome audit:', auditErr);
-                }
-              }
-            }
           }
         } catch (gcError) {
           console.error('Error sending welcome message:', gcError);
