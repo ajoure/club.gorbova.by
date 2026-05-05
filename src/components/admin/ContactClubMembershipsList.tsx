@@ -25,6 +25,8 @@ import { format, formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 
+type EffectiveAccess = "active" | "expired" | "missing" | "unknown_product" | string;
+
 interface ClubMembershipRow {
   club_id: string;
   club_name: string;
@@ -33,7 +35,13 @@ interface ClubMembershipRow {
   club_has_channel?: boolean | null;
   in_chat: boolean | null;
   in_channel: boolean | null;
-  access_status: string | null;
+  telegram_access_status: string | null;
+  effective_access_status: EffectiveAccess | null;
+  linked_product_id: string | null;
+  linked_product_name: string | null;
+  entitlement_id: string | null;
+  entitlement_status: string | null;
+  entitlement_expires_at: string | null;
   link_status: string | null;
   invite_status: string | null;
   invite_sent_at: string | null;
@@ -42,6 +50,18 @@ interface ClubMembershipRow {
   member_updated_at: string | null;
   club_last_status_check_at: string | null;
   club_last_members_sync_at: string | null;
+}
+
+const EFFECTIVE_LABELS: Record<string, { label: string; tone: "ok" | "bad" | "muted" | "warn" }> = {
+  active: { label: "Доступ активен", tone: "ok" },
+  expired: { label: "Доступ истёк", tone: "bad" },
+  missing: { label: "Нет доступа", tone: "bad" },
+  unknown_product: { label: "Клуб не привязан к продукту", tone: "warn" },
+};
+
+function effectiveLabel(s: string | null) {
+  if (!s) return { label: "Нет данных", tone: "muted" as const };
+  return EFFECTIVE_LABELS[s] ?? { label: s, tone: "muted" as const };
 }
 
 interface Props {
