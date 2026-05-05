@@ -63,6 +63,18 @@ function Calendar({
         day_disabled: "text-muted-foreground/40 opacity-40",
         day_range_middle: "aria-selected:bg-accent/60 aria-selected:text-accent-foreground",
         day_hidden: "invisible",
+        // Caption dropdowns (month / year)
+        caption_dropdowns: "flex gap-1.5 justify-center items-center",
+        dropdown: cn(
+          "h-8 px-2 rounded-lg text-xs font-medium",
+          "bg-muted/40 border border-border/40",
+          "hover:bg-muted/60 hover:border-border/60",
+          "focus:outline-none focus:ring-2 focus:ring-primary/30",
+          "transition-colors cursor-pointer",
+          "appearance-none"
+        ),
+        dropdown_month: "relative",
+        dropdown_year: "relative",
         ...classNames,
       }}
       components={{
