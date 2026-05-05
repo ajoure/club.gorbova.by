@@ -1112,7 +1112,7 @@ Deno.serve(async (req) => {
           if (orderInfo?.tariff_id) {
             const { data: tariffData } = await supabase
               .from('tariffs')
-              .select('getcourse_offer_id, meta')
+              .select('meta')
               .eq('id', orderInfo.tariff_id)
               .maybeSingle();
             
