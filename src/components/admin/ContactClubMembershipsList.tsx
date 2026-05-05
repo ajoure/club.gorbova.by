@@ -242,7 +242,15 @@ export function ContactClubMembershipsList({ profileId, enabled }: Props) {
     );
   }
 
-  const rows = data ?? [];
+  const rows = (data && "rows" in data ? data.rows : []) as ClubMembershipRow[];
+
+  if (rpcErr) {
+    return (
+      <div className="flex items-center gap-2 text-xs text-amber-700">
+        <HelpCircle className="w-3 h-3" /> Не удалось загрузить клубы: {rpcErr}
+      </div>
+    );
+  }
 
   if (rows.length === 0) {
     return (
