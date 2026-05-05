@@ -1436,7 +1436,7 @@ Deno.serve(async (req) => {
           result.telegram_sent = true;
           result.telegram_logged = true;
         } else {
-          const nextChargeAt = (sub as any).next_charge_at ? new Date((sub as any).next_charge_at) : null;
+          const nextChargeAt = await resolveProviderNextChargeAt(supabase, sub.id, expiryDate);
           const telegramResult = await sendTelegramReminder(
             supabase, botToken, userId,
             productName, tariffName, expiryDate, daysLeft,
