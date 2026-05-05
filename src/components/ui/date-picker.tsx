@@ -33,16 +33,30 @@ const DISPLAY_FMT = "dd.MM.yyyy";
 function tryParseInput(raw: string): Date | null {
   const s = raw.trim();
   if (!s) return null;
-  // Try dd.MM.yyyy
   let d = parse(s, DISPLAY_FMT, new Date());
   if (isValid(d)) return d;
-  // Try yyyy-MM-dd
   d = parse(s, "yyyy-MM-dd", new Date());
   if (isValid(d)) return d;
-  // Tolerate dd/MM/yyyy
   d = parse(s, "dd/MM/yyyy", new Date());
   if (isValid(d)) return d;
+  // Tolerate raw 8-digit ddmmyyyy (no separators)
+  if (/^\d{8}$/.test(s)) {
+    d = parse(s, "ddMMyyyy", new Date());
+    if (isValid(d)) return d;
+  }
   return null;
+}
+
+/** Auto-mask raw user input into DD.MM.YYYY as they type (digits-only friendly). */
+function maskDateInput(raw: string): string {
+  const digits = raw.replace(/\D/g, "").slice(0, 8);
+  const dd = digits.slice(0, 2);
+  const mm = digits.slice(2, 4);
+  const yyyy = digits.slice(4, 8);
+  let out = dd;
+  if (digits.length >= 3) out += "." + mm;
+  if (digits.length >= 5) out += "." + yyyy;
+  return out;
 }
 
 export function DatePicker({
