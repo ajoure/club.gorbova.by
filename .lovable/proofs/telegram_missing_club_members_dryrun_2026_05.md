@@ -3,19 +3,17 @@
 **Mode:** read-only. Никакие queue items не создавались, telegram-grant-access не вызывался, cron не включался, telegram_club_members не менялся.
 
 ## Scope
-- Активная подписка (subscriptions_v2.status='active' AND access_end_at > now()) ИЛИ активный entitlement (entitlements.status='active' AND expires_at > now())
-- Через `access_rules.grant_target_type='club'` к telegram_clubs:
-  - Gorbova Club (`fa547c41…`) — продукты: Gorbova Club, Платная консультация (tariff `c1b4bb88…`)
-  - Бухгалтерия как бизнес (`4f8f9d8f…`) — продукт: Бухгалтерия как бизнес
-- Telegram linked: profiles.telegram_user_id IS NOT NULL AND telegram_link_status='active'
-- telegram_club_members: in_chat=false AND (channel отсутствует ИЛИ in_channel=false)
+- Active subscription (`subscriptions_v2.status='active' AND access_end_at > now()`) ИЛИ active entitlement (`entitlements.status='active' AND expires_at > now()`).
+- Клубные продукты определены через `access_rules.grant_target_type='club'` → `telegram_clubs`:
+  - **Gorbova Club** (`fa547c41…`) — продукты: `Gorbova Club`, `Платная консультация` (tariff `c1b4bb88…`).
+  - **Бухгалтерия как бизнес** (`4f8f9d8f…`) — продукт: `Бухгалтерия как бизнес`.
+- Telegram linked: `profiles.telegram_user_id IS NOT NULL AND telegram_link_status='active'` (can_dm=true для всех в выборке).
+- Membership: `telegram_club_members.in_chat=false` И (channel отсутствует ИЛИ `in_channel=false`).
+- Доступ ещё не истёк.
 
 ## Totals
 
-- **Всего к re-invite:** 37
-  - Gorbova Club: 34
-  - Бухгалтерия как бизнес: 2
-  - None: 1
+- **Всего к re-invite:** 37 (Gorbova Club: 34, Бухгалтерия как бизнес: 2)
 
 ### По reason_bucket
 
@@ -31,7 +29,7 @@
 
 ## Cohort A — Safe re-invite candidates (30)
 
-Критерий: `no_invite_ever_sent` ИЛИ `stale_invite_sent_not_joined` с invite_sent_at ≥ 3 дня назад. Доступ не истёк, Telegram активен, can_dm=true.
+Критерии: `no_invite_ever_sent` ИЛИ `stale_invite_sent_not_joined` с `invite_sent_at` ≥ 3 дня назад. Доступ активен, Telegram linked, can_dm=true. Никаких failed/no-effect в очереди.
 
 | email | name | user_id | club | product | access source | expires | invite | link | membership | last queue | queue meta | bucket |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -61,14 +59,43 @@
 | olga.yushchuk@gmail.com | Ольга Синяк | `44985cf1-9914-4447-ada7-53f37c2456f7` | Gorbova Club | Gorbova Club | subscription `d74b7dbb-b2ca-4ae7-ae7c-f3e2b659aafd` | 2026-05-27 20:59 | sent / 2026-04-27 04:34 | link=t | chat=f ch=f | completed/grant attempts=1 `-` (2026-04-27 04:33) | src=- intent=- | **stale_invite_sent_not_joined** |
 | makarevich.polina18@gmail.com | Полина Макаревич | `7a019b41-6193-4091-8cc3-f9b071e61976` | Gorbova Club | Gorbova Club | subscription `ccc67f24-dd58-466f-ab51-664441eec8c5` | 2026-05-29 20:59 | sent / 2026-04-29 08:02 | link=t | chat=f ch=f | completed/grant attempts=1 `-` (2026-04-29 08:01) | src=- intent=- | **stale_invite_sent_not_joined** |
 | vsl83@rambler.ru | Светлана Василевская | `56de61af-3e13-4ab9-b492-8287a3d3cd21` | Gorbova Club | Gorbova Club | subscription `efaeed28-91a3-4eb4-ab95-1e0bfa3efc7d` | 2026-05-29 20:59 | sent / 2026-04-29 07:07 | link=t | chat=f ch=f | completed/grant attempts=1 `-` (2026-04-29 07:06) | src=- intent=- | **stale_invite_sent_not_joined** |
-| pbourdon@tut.by | Юлия  Бурдон | `acd9116c-528f-44c9-9af2-cfe2ba804386` | Gorbova Club | Gorbova Club | subscription `6d123c1b-86ed-4a6c-a447-f9f2a4dd2aff` | 2026-05-31 20:59 |  /  | link=f | chat= ch= | completed/grant attempts=1 `-` (2026-04-01 10:35) | src=- intent=- | **no_invite_ever_sent** |
+| pbourdon@tut.by | Юлия  Бурдон | `acd9116c-528f-44c9-9af2-cfe2ba804386` | Gorbova Club | Gorbova Club | subscription `6d123c1b-86ed-4a6c-a447-f9f2a4dd2aff` | 2026-05-31 20:59 | - / - | link=f | chat= ch= | completed/grant attempts=1 `-` (2026-04-01 10:35) | src=- intent=- | **no_invite_ever_sent** |
 | lori-30@tut.by | Лариса Конобеева | `e748983f-8409-49b6-b5f5-88a7c95920b0` | Gorbova Club | Gorbova Club | entitlement `53a0616a-21e5-46fe-bce8-1555eec594e3` | 2026-06-12 12:00 | sent / 2026-04-23 11:31 | link=t | chat=f ch=f | completed/grant attempts=1 `-` (2026-04-14 03:00) | src=- intent=- | **stale_invite_sent_not_joined** |
 | kaplin@tut.by | Ксения Довыденко | `13c5a43d-a933-4155-88d6-97a9cf109319` | Gorbova Club | Gorbova Club | entitlement `c7356351-76a3-460d-a3f9-742f91026542` | 2026-06-18 12:00 | sent / 2026-04-17 21:13 | link=t | chat=f ch=f | completed/grant attempts=1 `-` (2026-04-17 21:12) | src=- intent=- | **stale_invite_sent_not_joined** |
 | iryna.troinich@gmail.com | Ирина Тройнич | `bddef8eb-170f-44b6-94a2-8a28a7d0fe9d` | Бухгалтерия как бизнес | Бухгалтерия как бизнес | entitlement `ea45ac55-cfe7-4d1d-8395-011c04614165` | 2026-05-31 20:59 | sent / 2026-05-01 10:54 | link=t | chat=f ch=t | completed/grant attempts=1 `-` (2026-03-30 16:15) | src=- intent=- | **stale_invite_sent_not_joined** |
 
 ## Cohort B — Manual review (7)
 
-Критерий: invite отправлен < 3 дней назад — пользователь мог ещё не успеть перейти. Перед re-invite дать время.
+Критерий: invite отправлен < 3 дней назад (пользователь ещё мог не успеть перейти) ИЛИ запись из failed/no-effect/unknown bucket.
 
 | email | name | user_id | club | product | access source | expires | invite | link | membership | last queue | queue meta | bucket |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
+| (36 rows) | None | `None` | None | None | None `None` | None | - / - | link=None | chat=None ch=None | -/- attempts=- `-` (-) | src=- intent=- | **None** |
+| nika.1900735@mail.ru | Вероника Матук | `341e6f46-79dd-4920-b500-da78e3574aab` | Gorbova Club | Gorbova Club | subscription `22576f44-0921-433d-95b3-ae58c9c57522` | 2026-05-11 12:19 | sent / 2026-05-05 08:37 | link=t | chat=f ch=f | completed/grant attempts=1 `-` (2026-05-05 08:37) | src=repair intent=manual_repair | **stale_invite_sent_not_joined** |
+| 790375111@mail.ru | Анастасия Жарко | `4a94ab96-4a10-48ef-9e7b-3737e9430dbc` | Gorbova Club | Gorbova Club | entitlement `6dd012ba-03b8-4565-843a-ea7ace37812c` | 2026-06-02 20:59 | sent / 2026-05-04 04:18 | link=t | chat=f ch=f | completed/grant attempts=1 `-` (2026-04-29 13:39) | src=- intent=- | **stale_invite_sent_not_joined** |
+| jkryshtopik@mail.ru | Криштопик Юлия | `d8127155-5ed3-42df-ac10-e4348b5ff641` | Gorbova Club | Gorbova Club | subscription `17a39859-4602-4138-8b8c-00b82d63686f` | 2026-06-02 20:59 | sent / 2026-05-04 08:14 | link=t | chat=f ch=f | completed/grant attempts=1 `-` (2026-04-05 15:15) | src=- intent=- | **stale_invite_sent_not_joined** |
+| sar8@mail.ru | Татьяна Ефимчик | `7d773d71-70de-44e1-899c-cbeaa8686c30` | Gorbova Club | Gorbova Club | subscription `09ee2e16-303e-4698-8d0b-b9a119a00fe4` | 2026-06-02 20:59 | sent / 2026-05-04 04:18 | link=t | chat=f ch=f | completed/grant attempts=1 `-` (2026-04-03 15:15) | src=- intent=- | **stale_invite_sent_not_joined** |
+| yuliyakisileva@yandex.ru | Юлия Киселева | `a33beb82-baae-4a7e-bc77-dcb31a63012d` | Gorbova Club | Gorbova Club | entitlement `061be89e-12df-4952-90a7-d0b77b3ed835` | 2026-07-04 12:00 | sent / 2026-05-05 07:23 | link=t | chat=f ch=f | completed/grant attempts=1 `-` (2026-04-07 11:57) | src=- intent=- | **stale_invite_sent_not_joined** |
+| iris.fess2020@gmail.com | Ирина Добровольская | `6b6001fd-6800-429a-ab60-d3dd37e18726` | Бухгалтерия как бизнес | Бухгалтерия как бизнес | entitlement `1d86a4dc-6d2b-4e85-801e-b01dc18547e3` | 2026-07-03 20:59 | sent / 2026-05-04 06:17 | link=t | chat=f ch=t | completed/grant attempts=1 `-` (2026-04-03 12:02) | src=- intent=- | **stale_invite_sent_not_joined** |
+
+## Excluded / Staff
+
+- `1@ajoure.by` (Тест Тестовый, `37e91f59…`) — внутренний тестовый аккаунт. Технически попадает в Cohort A, но из массового re-invite его лучше исключить.
+- Иных staff-исключений в выборке не обнаружено.
+
+## Veronika sanity check
+
+- `nika.1900735@mail.ru` (Вероника Матук, `341e6f46…`) — ей 2026-05-05 08:37 был отправлен новый invite через `MANUAL_REPAIR_REINVITE` (queue source=`repair`, intent=`manual_repair`, force_new_invite=true). Сейчас invite_status=sent, in_chat=false. Это ожидаемо — < 3 дней с последнего invite. Попадает в **Cohort B (manual review)**, повторный re-invite сейчас не нужен.
+
+## Notes / observations
+
+- Ни одной записи с `failed_grant_unrecovered` или `completed_without_effect` — после фикса процессора (effect-check guard) такие случаи будут видны явно.
+- 1 запись с `no_invite_ever_sent` — Юлия Бурдон (`pbourdon@tut.by`): queue completed 2026-04-01, но invite_link так и не был сохранён в `telegram_club_members`. Это legacy-кейс ровно того же класса, что был у Вероники.
+- У всех остальных 35 пользователей очередь показывает `completed/grant attempts=1 last_error=NULL` — стандартный legacy auto-grant, инвайт сохранён, но пользователь по нему не перешёл.
+
+## Recommendation (apply only after explicit approve)
+
+- **Cohort A (30 чел.)** — безопасны для bulk re-invite через canonical `telegram_access_queue` с `meta.source='reinvite'`. Если duplicate-DM-guard блокирует (как было у Вероники) — использовать `meta.source='repair'` + `intent='manual_repair'` + `force_new_invite=true`.
+- **Cohort B (7 чел.)** — отложить минимум на 72 часа после `invite_sent_at` или связаться индивидуально.
+- Тестовый аккаунт `1@ajoure.by` исключить из bulk.
+- Никаких действий не выполнять до отдельного approve на bulk repair.
