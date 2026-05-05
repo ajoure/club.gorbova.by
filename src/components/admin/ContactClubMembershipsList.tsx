@@ -357,17 +357,21 @@ export function ContactClubMembershipsList({ profileId, enabled }: Props) {
                   )}
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <span className="inline-flex items-center gap-1 cursor-help">
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 cursor-help",
+                          memberFresh === "stale" && "text-amber-700",
+                          memberFresh === "never" && "text-muted-foreground",
+                        )}
+                      >
                         <Clock className="w-3 h-3" />
-                        {memberFresh === "fresh"
-                          ? "проверен недавно"
-                          : memberFresh === "stale"
-                            ? "проверка устарела"
-                            : "не проверялся"}
+                        {row.last_telegram_check_at
+                          ? `проверен ${fmtShort(row.last_telegram_check_at)}`
+                          : "не проверялся"}
                       </span>
                     </TooltipTrigger>
                     <TooltipContent side="top" className="text-xs">
-                      <div>Последняя проверка: {fmt(row.last_telegram_check_at)}</div>
+                      <div>Точное время: {fmt(row.last_telegram_check_at)}</div>
                       <div className="text-muted-foreground">{ago(row.last_telegram_check_at)}</div>
                     </TooltipContent>
                   </Tooltip>
