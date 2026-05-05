@@ -142,8 +142,8 @@ async function sendTariffMedia(
   botToken: string,
   chatId: number,
   media: { type?: string; storage_path?: string }
-) {
-  if (!media.type || !media.storage_path) return;
+): Promise<{ ok: boolean; message_id?: number; media_type?: string; filename?: string }> {
+  if (!media.type || !media.storage_path) return { ok: false };
   
   try {
     // Download from Storage
@@ -153,7 +153,7 @@ async function sendTariffMedia(
     
     if (error || !data) {
       console.error('Failed to download tariff media:', error);
-      return;
+      return { ok: false };
     }
 
     // Get filename from path
@@ -187,12 +187,51 @@ async function sendTariffMedia(
     const result = await response.json();
     if (!result.ok) {
       console.error('Telegram send media error:', result);
-    } else {
-      console.log('Sent tariff media:', media.type);
+      return { ok: false };
     }
+    console.log('Sent tariff media:', media.type);
+    return {
+      ok: true,
+      message_id: result.result?.message_id,
+      media_type: media.type,
+      filename,
+    };
   } catch (err) {
     console.error('Error sending tariff media:', err);
+    return { ok: false };
   }
+}
+
+// Mirror welcome media to telegram_messages with placeholder text
+async function mirrorWelcomeMedia(params: {
+  supabase: any;
+  user_id: string;
+  telegram_user_id: number;
+  bot_id: string | null;
+  club_id: string;
+  source_id: string | null;
+  event: string;
+  media_result: { ok: boolean; message_id?: number; media_type?: string; filename?: string };
+}) {
+  const { media_result, event, ...rest } = params;
+  if (!media_result.ok || !media_result.message_id) return;
+  const placeholder = `[медиа: ${media_result.media_type}]${media_result.filename ? ' ' + media_result.filename : ''}`;
+  await logAutomatedTelegramMessage({
+    supabase: rest.supabase,
+    user_id: rest.user_id,
+    telegram_user_id: rest.telegram_user_id,
+    bot_id: rest.bot_id,
+    text: placeholder,
+    telegram_message_id: media_result.message_id,
+    source: 'telegram-grant-access',
+    extra_meta: {
+      club_id: rest.club_id,
+      source_id: rest.source_id,
+      event,
+      media_type: media_result.media_type,
+      telegram_message_id: media_result.message_id,
+    },
+  });
 }
 
 function getSiteUrl(): string {
