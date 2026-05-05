@@ -215,23 +215,24 @@ function PresenceIcon({
 }
 
 export function ContactClubMembershipsList({ profileId, enabled }: Props) {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error: queryError } = useQuery({
     queryKey: ["contact-club-memberships-all", profileId],
     queryFn: async () => {
-      if (!profileId) return [] as ClubMembershipRow[];
+      if (!profileId) return { rows: [] as ClubMembershipRow[], err: null as string | null };
       const { data, error } = await supabase.rpc("admin_get_club_memberships_all", {
         p_profile_id: profileId,
       });
       if (error) {
-        console.debug("admin_get_club_memberships_all error", error.message);
-        return [] as ClubMembershipRow[];
+        console.warn("[ContactClubMembershipsList] RPC error", error);
+        return { rows: [] as ClubMembershipRow[], err: error.message };
       }
-      return (data ?? []) as ClubMembershipRow[];
+      return { rows: (data ?? []) as ClubMembershipRow[], err: null };
     },
     enabled: !!profileId && enabled,
     staleTime: 0,
     refetchOnMount: true,
   });
+  const rpcErr = data?.err ?? (queryError ? String(queryError) : null);
 
   if (isLoading) {
     return (
