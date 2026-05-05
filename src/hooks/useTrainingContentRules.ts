@@ -234,7 +234,8 @@ export function useActiveTrainingContentRules() {
       })) as TrainingContentRule[];
 
       // Phase C: Generate synthetic rules from entitlement.meta (bonus scope resolver)
-      const syntheticRules = await resolveBonusScopeRules(ents || [], supabase);
+      // Pass dbRules so synthetic-legacy is suppressed when DB rules exist for the product.
+      const syntheticRules = await resolveBonusScopeRules(ents || [], supabase, dbRules);
 
       return {
         rules: [...dbRules, ...syntheticRules],
