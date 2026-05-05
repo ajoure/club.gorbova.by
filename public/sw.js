@@ -1,5 +1,6 @@
 // Service Worker for Web Push Notifications
 // gorbova.by
+// SW_VERSION: 2026-05-05.2 — bump to force re-activate; SW does NOT cache pages.
 
 self.addEventListener('push', function(event) {
   let data = { title: 'Новое уведомление', body: '', url: '/admin/communication' };
