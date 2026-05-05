@@ -14134,13 +14134,16 @@ export type Database = {
       admin_get_club_memberships_all: {
         Args: { p_profile_id: string }
         Returns: {
-          access_status: string
           club_has_channel: boolean
           club_has_chat: boolean
           club_id: string
           club_last_members_sync_at: string
           club_last_status_check_at: string
           club_name: string
+          effective_access_status: string
+          entitlement_expires_at: string
+          entitlement_id: string
+          entitlement_status: string
           in_channel: boolean
           in_chat: boolean
           invite_sent_at: string
@@ -14149,7 +14152,10 @@ export type Database = {
           last_telegram_check_at: string
           last_verified_at: string
           link_status: string
+          linked_product_id: string
+          linked_product_name: string
           member_updated_at: string
+          telegram_access_status: string
         }[]
       }
       admin_get_payments_page_v1: {
