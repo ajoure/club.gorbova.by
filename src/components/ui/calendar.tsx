@@ -72,17 +72,21 @@ function Calendar({
         day_disabled: "text-muted-foreground/40 opacity-40",
         day_range_middle: "aria-selected:bg-accent/60 aria-selected:text-accent-foreground",
         day_hidden: "invisible",
-        // Frosted-glass dropdowns (month / year). Wrapper holds the <select>.
-        dropdown_month: "relative flex-1",
-        dropdown_year: "relative flex-1",
+        // Frosted-glass native dropdowns (month / year)
+        dropdown_month: "relative",
+        dropdown_year: "relative",
         dropdown: cn(
-          "absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10",
-          "appearance-none"
+          "h-8 px-2.5 pr-7 rounded-lg text-sm font-medium",
+          "bg-background/40 backdrop-blur-md",
+          "border border-border/40",
+          "hover:bg-background/60 hover:border-border/60",
+          "focus:outline-none focus:ring-2 focus:ring-primary/30",
+          "transition-colors cursor-pointer",
+          "appearance-none",
+          // arrow indicator
+          "bg-[url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%226%22 viewBox=%220 0 10 6%22 fill=%22none%22><path d=%22M1 1l4 4 4-4%22 stroke=%22currentColor%22 stroke-width=%221.5%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/></svg>')]",
+          "bg-no-repeat bg-[right_0.5rem_center]"
         ),
-        // Visible "button-like" representation of the current dropdown value.
-        // RDP renders caption_label inside each dropdown wrapper as the visible text.
-        // We re-style it as a glass pill so user sees full month/year names.
-        // Hide aria labels ("Month:", "Year:") that would otherwise leak in.
         vhidden: "sr-only",
         ...classNames,
       }}
