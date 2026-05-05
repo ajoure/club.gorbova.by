@@ -204,6 +204,9 @@ export function IndividualDetailsForm({
                       value={field.value}
                       onChange={field.onChange}
                       placeholder={getPlaceholder("ind_birth_date", "")}
+                      fromYear={1920}
+                      toYear={new Date().getFullYear()}
+                      maxDate={new Date().toISOString().slice(0, 10)}
                     />
                   </FormControl>
                   <FormMessage />
