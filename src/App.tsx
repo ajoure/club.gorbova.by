@@ -12,6 +12,7 @@ import { SectionGuard } from "@/components/layout/SectionGuard";
 import { ScrollToTop } from "@/components/layout/ScrollToTop";
 import { GlobalPaymentHandler } from "@/components/payment/GlobalPaymentHandler";
 import { initExternalLinkKillSwitch, BUILD_MARKER } from "@/lib/externalLinkKillSwitch";
+import { LazyErrorBoundary } from "@/components/system/LazyErrorBoundary";
 
 import { Loader2 } from "lucide-react";
 
