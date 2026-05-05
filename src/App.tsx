@@ -142,7 +142,9 @@ const PageLoader = () => (
 
 // Wrapper for lazy routes with Suspense
 const LazyRoute = ({ children }: { children: React.ReactNode }) => (
-  <Suspense fallback={<PageLoader />}>{children}</Suspense>
+  <LazyErrorBoundary>
+    <Suspense fallback={<PageLoader />}>{children}</Suspense>
+  </LazyErrorBoundary>
 );
 
 const queryClient = new QueryClient({
