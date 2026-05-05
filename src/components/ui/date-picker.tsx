@@ -151,8 +151,8 @@ export function DatePicker({
           sideOffset={4}
           className={cn(
             "w-auto p-0 z-[100]",
-            "bg-background/95 backdrop-blur-xl",
-            "border-border/50 shadow-2xl",
+            "bg-background/70 backdrop-blur-2xl backdrop-saturate-150",
+            "border-border/40 shadow-2xl ring-1 ring-white/5",
             "rounded-2xl overflow-hidden",
             "animate-in fade-in-0 zoom-in-95"
           )}
