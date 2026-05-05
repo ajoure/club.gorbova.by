@@ -1158,11 +1158,16 @@ Deno.serve(async (req) => {
                 } | undefined;
                 
                 if (offerWelcomeMessage?.enabled) {
-                  // Send offer media first if present
+                  // Send offer media first if present + mirror
                   if (offerWelcomeMessage.media?.type && offerWelcomeMessage.media?.storage_path) {
-                    await sendTariffMedia(supabase, botToken, telegramUserId, offerWelcomeMessage.media);
+                    const mediaRes = await sendTariffMedia(supabase, botToken, telegramUserId, offerWelcomeMessage.media);
+                    await mirrorWelcomeMedia({
+                      supabase, user_id, telegram_user_id: telegramUserId, bot_id: bot?.id ?? null,
+                      club_id: club.id, source_id: source_id ?? null,
+                      event: 'offer_welcome_media', media_result: mediaRes,
+                    });
                   }
-                  // Send offer text with optional button
+                  // Send offer text with optional button — mirror always
                   if (offerWelcomeMessage.text) {
                     const keyboard = offerWelcomeMessage.button?.enabled && offerWelcomeMessage.button.url ? {
                       inline_keyboard: [[{
@@ -1171,7 +1176,7 @@ Deno.serve(async (req) => {
                       }]]
                     } : undefined;
                     const wRes = await sendMessage(botToken, telegramUserId, offerWelcomeMessage.text, keyboard);
-                    if (keyboard && wRes?.ok && wRes?.result?.message_id) {
+                    if (wRes?.ok && wRes?.result?.message_id) {
                       await logAutomatedTelegramMessage({
                         supabase, user_id, telegram_user_id: telegramUserId, bot_id: bot?.id ?? null,
                         text: offerWelcomeMessage.text, telegram_message_id: wRes.result.message_id,
@@ -1189,7 +1194,12 @@ Deno.serve(async (req) => {
               // 2. TARIFF welcome (fallback) — only if offer didn't send
               if (!welcomeSent && welcomeMessage?.enabled) {
                 if (welcomeMessage.media?.type && welcomeMessage.media?.storage_path) {
-                  await sendTariffMedia(supabase, botToken, telegramUserId, welcomeMessage.media);
+                  const mediaRes = await sendTariffMedia(supabase, botToken, telegramUserId, welcomeMessage.media);
+                  await mirrorWelcomeMedia({
+                    supabase, user_id, telegram_user_id: telegramUserId, bot_id: bot?.id ?? null,
+                    club_id: club.id, source_id: source_id ?? null,
+                    event: 'tariff_welcome_media', media_result: mediaRes,
+                  });
                 }
                 if (welcomeMessage.text) {
                   const keyboard = welcomeMessage.button?.enabled && welcomeMessage.button.url ? {
@@ -1199,7 +1209,7 @@ Deno.serve(async (req) => {
                     }]]
                   } : undefined;
                   const wRes = await sendMessage(botToken, telegramUserId, welcomeMessage.text, keyboard);
-                  if (keyboard && wRes?.ok && wRes?.result?.message_id) {
+                  if (wRes?.ok && wRes?.result?.message_id) {
                     await logAutomatedTelegramMessage({
                       supabase, user_id, telegram_user_id: telegramUserId, bot_id: bot?.id ?? null,
                       text: welcomeMessage.text, telegram_message_id: wRes.result.message_id,
@@ -1208,6 +1218,31 @@ Deno.serve(async (req) => {
                     });
                   }
                 }
+                welcomeSent = true;
+                welcomeType = 'tariff';
+                console.log(`[telegram-grant-access] Sent TARIFF welcome (fallback) for tariff ${orderInfo.tariff_id}`);
+              }
+
+              // 3. GC fallback DM — REMOVED. No fallback message sent if no welcome configured.
+              // Only the main "✅ Доступ открыт" DM is delivered in that case.
+
+              // 4. Log idempotency record
+              if (welcomeSent) {
+                try {
+                  await supabase.from('audit_logs').insert({
+                    action: 'telegram_welcome_sent',
+                    actor_type: 'system',
+                    actor_user_id: null,
+                    actor_label: 'telegram-grant-access',
+                    target_user_id: user_id,
+                    meta: { source_id, welcome_type: welcomeType, offer_id: offerId || null, tariff_id: orderInfo.tariff_id },
+                    created_at: new Date().toISOString(),
+                  });
+                } catch (auditErr) {
+                  console.error('[telegram-grant-access] Failed to log welcome audit:', auditErr);
+                }
+              }
+            }
                 welcomeSent = true;
                 welcomeType = 'tariff';
                 console.log(`[telegram-grant-access] Sent TARIFF welcome (fallback) for tariff ${orderInfo.tariff_id}`);
