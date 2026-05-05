@@ -241,10 +241,10 @@ export function DatePicker({
               size="sm"
               className="h-7 text-xs"
               onClick={() => {
-                const today = new Date();
-                if (minDateObj && today < minDateObj) return;
-                if (maxDateObj && today > maxDateObj) return;
-                onChange(format(today, "yyyy-MM-dd"));
+                let target = new Date();
+                if (minDateObj && target < minDateObj) target = minDateObj;
+                if (maxDateObj && target > maxDateObj) target = maxDateObj;
+                onChange(format(target, "yyyy-MM-dd"));
                 setOpen(false);
               }}
             >
