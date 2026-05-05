@@ -285,7 +285,10 @@ export function ContactClubMembershipsList({ profileId, enabled }: Props) {
           {rows.map((row) => {
             const sync = syncStateOf(row);
             const meta = SYNC_META[sync];
-            const access = accessLabel(row.access_status);
+            const access = effectiveLabel(row.effective_access_status);
+            const tgRaw = (row.telegram_access_status ?? "").toLowerCase();
+            const tgClaimsOk = tgRaw === "ok" || tgRaw === "active";
+            const showStaleWarn = tgClaimsOk && row.effective_access_status !== "active";
             const invite = inviteLabel(row);
             const memberFresh = freshnessOf(row.last_telegram_check_at);
 
@@ -355,23 +358,65 @@ export function ContactClubMembershipsList({ profileId, enabled }: Props) {
 
                 {/* Secondary line: access + invite + freshness — compact text */}
                 <div className="flex items-center gap-x-2 gap-y-0.5 flex-wrap text-[11px] text-muted-foreground mt-0.5 pl-4">
-                  {access && (
-                    <span
-                      className={cn(
-                        "inline-flex items-center gap-1",
-                        access.tone === "ok" && "text-emerald-700",
-                        access.tone === "bad" && "text-red-700",
-                      )}
-                    >
-                      {access.tone === "ok" ? (
-                        <ShieldCheck className="w-3 h-3" />
-                      ) : access.tone === "bad" ? (
-                        <ShieldAlert className="w-3 h-3" />
-                      ) : (
-                        <ShieldCheck className="w-3 h-3" />
-                      )}
-                      {access.label}
-                    </span>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 cursor-help",
+                          access.tone === "ok" && "text-emerald-700",
+                          access.tone === "bad" && "text-red-700",
+                          access.tone === "warn" && "text-amber-700",
+                        )}
+                      >
+                        {access.tone === "ok" ? (
+                          <ShieldCheck className="w-3 h-3" />
+                        ) : (
+                          <ShieldAlert className="w-3 h-3" />
+                        )}
+                        {access.label}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-[280px] text-xs">
+                      <div className="space-y-1">
+                        {row.linked_product_name ? (
+                          <div>Продукт клуба: <b>{row.linked_product_name}</b></div>
+                        ) : (
+                          <div className="text-amber-700">
+                            У клуба не настроена связь с продуктом — реальный доступ определить нельзя.
+                          </div>
+                        )}
+                        {row.entitlement_status && (
+                          <div>
+                            Entitlement: {row.entitlement_status}
+                            {row.entitlement_expires_at && ` · до ${fmt(row.entitlement_expires_at)}`}
+                          </div>
+                        )}
+                        {row.effective_access_status === "missing" && row.linked_product_id && (
+                          <div className="text-muted-foreground">
+                            У пользователя нет действующего entitlement по этому продукту.
+                          </div>
+                        )}
+                        <div className="text-muted-foreground">
+                          TG-статус (по chat): {row.telegram_access_status ?? "—"}
+                        </div>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+
+                  {showStaleWarn && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="inline-flex items-center gap-1 text-amber-700 cursor-help">
+                          <Info className="w-3 h-3" />
+                          TG-статус устарел
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-[280px] text-xs">
+                        В telegram_club_members значится «ok», но реального активного доступа
+                        нет (entitlement: {row.effective_access_status}). Источник истины —
+                        entitlements; поле в TG не обновлялось.
+                      </TooltipContent>
+                    </Tooltip>
                   )}
                   {invite && (
                     <span
