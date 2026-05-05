@@ -1,21 +1,21 @@
 import {
   require_react_dom
-} from "./chunk-LL4H3GAN.js";
+} from "./chunk-FKMA2RKD.js";
 import {
   require_react
-} from "./chunk-PHGPE5OU.js";
+} from "./chunk-UVNPGZG7.js";
 import {
   __toESM
 } from "./chunk-OL46QLBJ.js";
 
-// node_modules/.bun/react-router-dom@6.30.1+6dbf9a050bc9aadb/node_modules/react-router-dom/dist/index.js
+// node_modules/react-router-dom/dist/index.js
 var React2 = __toESM(require_react());
 var ReactDOM = __toESM(require_react_dom());
 
-// node_modules/.bun/react-router@6.30.1+f4eacebf2041cd4f/node_modules/react-router/dist/index.js
+// node_modules/react-router/dist/index.js
 var React = __toESM(require_react());
 
-// node_modules/.bun/@remix-run+router@1.23.0/node_modules/@remix-run/router/dist/router.js
+// node_modules/@remix-run/router/dist/router.js
 function _extends() {
   _extends = Object.assign ? Object.assign.bind() : function(target) {
     for (var i = 1; i < arguments.length; i++) {
@@ -3736,7 +3736,7 @@ function persistAppliedTransitions(_window, transitions) {
   }
 }
 
-// node_modules/.bun/react-router@6.30.1+f4eacebf2041cd4f/node_modules/react-router/dist/index.js
+// node_modules/react-router/dist/index.js
 function _extends2() {
   _extends2 = Object.assign ? Object.assign.bind() : function(target) {
     for (var i = 1; i < arguments.length; i++) {
@@ -4766,7 +4766,7 @@ function createMemoryRouter(routes, opts) {
   }).initialize();
 }
 
-// node_modules/.bun/react-router-dom@6.30.1+6dbf9a050bc9aadb/node_modules/react-router-dom/dist/index.js
+// node_modules/react-router-dom/dist/index.js
 function _extends3() {
   _extends3 = Object.assign ? Object.assign.bind() : function(target) {
     for (var i = 1; i < arguments.length; i++) {

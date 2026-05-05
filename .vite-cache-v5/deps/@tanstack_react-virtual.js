@@ -1,18 +1,18 @@
 import {
   require_react_dom
-} from "./chunk-LL4H3GAN.js";
+} from "./chunk-FKMA2RKD.js";
 import {
   require_react
-} from "./chunk-PHGPE5OU.js";
+} from "./chunk-UVNPGZG7.js";
 import {
   __toESM
 } from "./chunk-OL46QLBJ.js";
 
-// node_modules/.bun/@tanstack+react-virtual@3.13.18+6dbf9a050bc9aadb/node_modules/@tanstack/react-virtual/dist/esm/index.js
+// node_modules/@tanstack/react-virtual/dist/esm/index.js
 var React = __toESM(require_react());
 var import_react_dom = __toESM(require_react_dom());
 
-// node_modules/.bun/@tanstack+virtual-core@3.13.18/node_modules/@tanstack/virtual-core/dist/esm/utils.js
+// node_modules/@tanstack/virtual-core/dist/esm/utils.js
 function memo(getDeps, fn, opts) {
   let deps = opts.initialDeps ?? [];
   let result;
@@ -80,7 +80,7 @@ var debounce = (targetWindow, fn, ms) => {
   };
 };
 
-// node_modules/.bun/@tanstack+virtual-core@3.13.18/node_modules/@tanstack/virtual-core/dist/esm/index.js
+// node_modules/@tanstack/virtual-core/dist/esm/index.js
 var getRect = (element) => {
   const { offsetWidth, offsetHeight } = element;
   return { width: offsetWidth, height: offsetHeight };
@@ -951,7 +951,7 @@ function calculateRange({
   return { startIndex, endIndex };
 }
 
-// node_modules/.bun/@tanstack+react-virtual@3.13.18+6dbf9a050bc9aadb/node_modules/@tanstack/react-virtual/dist/esm/index.js
+// node_modules/@tanstack/react-virtual/dist/esm/index.js
 var useIsomorphicLayoutEffect = typeof document !== "undefined" ? React.useLayoutEffect : React.useEffect;
 function useVirtualizerBase({
   useFlushSync = true,

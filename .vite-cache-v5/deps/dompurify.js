@@ -1,6 +1,6 @@
 import "./chunk-OL46QLBJ.js";
 
-// node_modules/.bun/dompurify@3.3.1/node_modules/dompurify/dist/purify.es.mjs
+// node_modules/dompurify/dist/purify.es.mjs
 var {
   entries,
   setPrototypeOf,

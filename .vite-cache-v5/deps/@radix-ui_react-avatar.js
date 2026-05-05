@@ -1,36 +1,36 @@
 "use client";
 import {
   require_shim
-} from "./chunk-NW7Q4PH2.js";
+} from "./chunk-PU3CAANW.js";
 import {
   useCallbackRef
-} from "./chunk-63VN3SMU.js";
+} from "./chunk-AJAXRXMX.js";
 import {
   useLayoutEffect2
-} from "./chunk-TI4TVQLD.js";
+} from "./chunk-HU2Q2UQQ.js";
 import {
   createContextScope
-} from "./chunk-BBLCDK24.js";
+} from "./chunk-WPKJTQFJ.js";
 import {
   Primitive
-} from "./chunk-H77EGX3G.js";
-import "./chunk-5CEPKPQU.js";
-import "./chunk-ZJBOX5WU.js";
+} from "./chunk-CCRRWIJP.js";
+import "./chunk-ZWTUFU7O.js";
+import "./chunk-XHK52L4G.js";
 import {
   require_jsx_runtime
-} from "./chunk-USUZFPFN.js";
-import "./chunk-LL4H3GAN.js";
+} from "./chunk-NZAIND7N.js";
+import "./chunk-FKMA2RKD.js";
 import {
   require_react
-} from "./chunk-PHGPE5OU.js";
+} from "./chunk-UVNPGZG7.js";
 import {
   __toESM
 } from "./chunk-OL46QLBJ.js";
 
-// node_modules/.bun/@radix-ui+react-avatar@1.1.10+b41f8805ee63d2ff/node_modules/@radix-ui/react-avatar/dist/index.mjs
+// node_modules/@radix-ui/react-avatar/dist/index.mjs
 var React = __toESM(require_react(), 1);
 
-// node_modules/.bun/@radix-ui+react-use-is-hydrated@0.1.0+0e2fb8dbc083adda/node_modules/@radix-ui/react-use-is-hydrated/dist/index.mjs
+// node_modules/@radix-ui/react-use-is-hydrated/dist/index.mjs
 var import_shim = __toESM(require_shim(), 1);
 function useIsHydrated() {
   return (0, import_shim.useSyncExternalStore)(
@@ -44,7 +44,7 @@ function subscribe() {
   };
 }
 
-// node_modules/.bun/@radix-ui+react-avatar@1.1.10+b41f8805ee63d2ff/node_modules/@radix-ui/react-avatar/dist/index.mjs
+// node_modules/@radix-ui/react-avatar/dist/index.mjs
 var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
 var AVATAR_NAME = "Avatar";
 var [createAvatarContext, createAvatarScope] = createContextScope(AVATAR_NAME);

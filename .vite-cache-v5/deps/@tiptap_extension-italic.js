@@ -3,11 +3,11 @@ import {
   markInputRule,
   markPasteRule,
   mergeAttributes
-} from "./chunk-RHBABKPQ.js";
-import "./chunk-YGNF433N.js";
+} from "./chunk-SXIQHOR3.js";
+import "./chunk-YLIL3JKF.js";
 import "./chunk-OL46QLBJ.js";
 
-// node_modules/.bun/@tiptap+extension-italic@3.20.1+426911c3531ad19c/node_modules/@tiptap/extension-italic/dist/index.js
+// node_modules/@tiptap/extension-italic/dist/index.js
 var starInputRegex = /(?:^|\s)(\*(?!\s+\*)((?:[^*]+))\*(?!\s+\*))$/;
 var starPasteRegex = /(?:^|\s)(\*(?!\s+\*)((?:[^*]+))\*(?!\s+\*))/g;
 var underscoreInputRegex = /(?:^|\s)(_(?!\s+_)((?:[^_]+))_(?!\s+_))$/;

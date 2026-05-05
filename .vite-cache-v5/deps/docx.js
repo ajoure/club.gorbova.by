@@ -15,7 +15,7 @@ var require_buffer = __commonJS({
   }
 });
 
-// node_modules/.bun/docx@9.5.1/node_modules/docx/dist/index.mjs
+// node_modules/docx/dist/index.mjs
 var __defProp = Object.defineProperty;
 var __defProps = Object.defineProperties;
 var __getOwnPropDescs = Object.getOwnPropertyDescriptors;

@@ -1,14 +1,14 @@
 import {
   require_react
-} from "./chunk-PHGPE5OU.js";
+} from "./chunk-UVNPGZG7.js";
 import {
   __toESM
 } from "./chunk-OL46QLBJ.js";
 
-// node_modules/.bun/embla-carousel-react@8.6.0+f4eacebf2041cd4f/node_modules/embla-carousel-react/esm/embla-carousel-react.esm.js
+// node_modules/embla-carousel-react/esm/embla-carousel-react.esm.js
 var import_react = __toESM(require_react());
 
-// node_modules/.bun/embla-carousel-reactive-utils@8.6.0+3dde5556684c958d/node_modules/embla-carousel-reactive-utils/esm/embla-carousel-reactive-utils.esm.js
+// node_modules/embla-carousel-reactive-utils/esm/embla-carousel-reactive-utils.esm.js
 function isObject(subject) {
   return Object.prototype.toString.call(subject) === "[object Object]";
 }
@@ -46,7 +46,7 @@ function arePluginsEqual(pluginsA, pluginsB) {
   });
 }
 
-// node_modules/.bun/embla-carousel@8.6.0/node_modules/embla-carousel/esm/embla-carousel.esm.js
+// node_modules/embla-carousel/esm/embla-carousel.esm.js
 function isNumber(subject) {
   return typeof subject === "number";
 }
@@ -1674,7 +1674,7 @@ function EmblaCarousel(root, userOptions, userPlugins) {
 }
 EmblaCarousel.globalOptions = void 0;
 
-// node_modules/.bun/embla-carousel-react@8.6.0+f4eacebf2041cd4f/node_modules/embla-carousel-react/esm/embla-carousel-react.esm.js
+// node_modules/embla-carousel-react/esm/embla-carousel-react.esm.js
 function useEmblaCarousel(options = {}, plugins = []) {
   const storedOptions = (0, import_react.useRef)(options);
   const storedPlugins = (0, import_react.useRef)(plugins);

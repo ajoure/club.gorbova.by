@@ -2,9 +2,9 @@ import {
   __commonJS
 } from "./chunk-OL46QLBJ.js";
 
-// node_modules/.bun/file-saver@2.0.5/node_modules/file-saver/dist/FileSaver.min.js
+// node_modules/file-saver/dist/FileSaver.min.js
 var require_FileSaver_min = __commonJS({
-  "node_modules/.bun/file-saver@2.0.5/node_modules/file-saver/dist/FileSaver.min.js"(exports, module) {
+  "node_modules/file-saver/dist/FileSaver.min.js"(exports, module) {
     (function(a, b) {
       if ("function" == typeof define && define.amd) define([], b);
       else if ("undefined" != typeof exports) b();

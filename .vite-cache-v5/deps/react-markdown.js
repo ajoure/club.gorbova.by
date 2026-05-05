@@ -41,22 +41,22 @@ import {
   unreachable,
   values,
   visit
-} from "./chunk-6EE5KSQQ.js";
+} from "./chunk-4OCITFLB.js";
 import {
   require_jsx_runtime
-} from "./chunk-USUZFPFN.js";
+} from "./chunk-NZAIND7N.js";
 import {
   require_react
-} from "./chunk-PHGPE5OU.js";
+} from "./chunk-UVNPGZG7.js";
 import {
   __commonJS,
   __export,
   __toESM
 } from "./chunk-OL46QLBJ.js";
 
-// node_modules/.bun/inline-style-parser@0.2.7/node_modules/inline-style-parser/cjs/index.js
+// node_modules/inline-style-parser/cjs/index.js
 var require_cjs = __commonJS({
-  "node_modules/.bun/inline-style-parser@0.2.7/node_modules/inline-style-parser/cjs/index.js"(exports, module) {
+  "node_modules/inline-style-parser/cjs/index.js"(exports, module) {
     "use strict";
     var COMMENT_REGEX = /\/\*[^*]*\*+([^/*][^*]*\*+)*\//g;
     var NEWLINE_REGEX = /\n/g;
@@ -193,9 +193,9 @@ var require_cjs = __commonJS({
   }
 });
 
-// node_modules/.bun/style-to-object@1.0.14/node_modules/style-to-object/cjs/index.js
+// node_modules/style-to-object/cjs/index.js
 var require_cjs2 = __commonJS({
-  "node_modules/.bun/style-to-object@1.0.14/node_modules/style-to-object/cjs/index.js"(exports) {
+  "node_modules/style-to-object/cjs/index.js"(exports) {
     "use strict";
     var __importDefault = exports && exports.__importDefault || function(mod) {
       return mod && mod.__esModule ? mod : { "default": mod };
@@ -227,9 +227,9 @@ var require_cjs2 = __commonJS({
   }
 });
 
-// node_modules/.bun/style-to-js@1.1.21/node_modules/style-to-js/cjs/utilities.js
+// node_modules/style-to-js/cjs/utilities.js
 var require_utilities = __commonJS({
-  "node_modules/.bun/style-to-js@1.1.21/node_modules/style-to-js/cjs/utilities.js"(exports) {
+  "node_modules/style-to-js/cjs/utilities.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.camelCase = void 0;
@@ -266,9 +266,9 @@ var require_utilities = __commonJS({
   }
 });
 
-// node_modules/.bun/style-to-js@1.1.21/node_modules/style-to-js/cjs/index.js
+// node_modules/style-to-js/cjs/index.js
 var require_cjs3 = __commonJS({
-  "node_modules/.bun/style-to-js@1.1.21/node_modules/style-to-js/cjs/index.js"(exports, module) {
+  "node_modules/style-to-js/cjs/index.js"(exports, module) {
     "use strict";
     var __importDefault = exports && exports.__importDefault || function(mod) {
       return mod && mod.__esModule ? mod : { "default": mod };
@@ -292,9 +292,9 @@ var require_cjs3 = __commonJS({
   }
 });
 
-// node_modules/.bun/ms@2.1.3/node_modules/ms/index.js
+// node_modules/ms/index.js
 var require_ms = __commonJS({
-  "node_modules/.bun/ms@2.1.3/node_modules/ms/index.js"(exports, module) {
+  "node_modules/ms/index.js"(exports, module) {
     var s = 1e3;
     var m = s * 60;
     var h = m * 60;
@@ -408,9 +408,9 @@ var require_ms = __commonJS({
   }
 });
 
-// node_modules/.bun/debug@4.3.7/node_modules/debug/src/common.js
+// node_modules/debug/src/common.js
 var require_common = __commonJS({
-  "node_modules/.bun/debug@4.3.7/node_modules/debug/src/common.js"(exports, module) {
+  "node_modules/debug/src/common.js"(exports, module) {
     function setup(env2) {
       createDebug2.debug = createDebug2;
       createDebug2.default = createDebug2;
@@ -571,9 +571,9 @@ var require_common = __commonJS({
   }
 });
 
-// node_modules/.bun/debug@4.3.7/node_modules/debug/src/browser.js
+// node_modules/debug/src/browser.js
 var require_browser = __commonJS({
-  "node_modules/.bun/debug@4.3.7/node_modules/debug/src/browser.js"(exports, module) {
+  "node_modules/debug/src/browser.js"(exports, module) {
     exports.formatArgs = formatArgs;
     exports.save = save;
     exports.load = load;
@@ -741,9 +741,9 @@ var require_browser = __commonJS({
   }
 });
 
-// node_modules/.bun/extend@3.0.2/node_modules/extend/index.js
+// node_modules/extend/index.js
 var require_extend = __commonJS({
-  "node_modules/.bun/extend@3.0.2/node_modules/extend/index.js"(exports, module) {
+  "node_modules/extend/index.js"(exports, module) {
     "use strict";
     var hasOwn = Object.prototype.hasOwnProperty;
     var toStr = Object.prototype.toString;
@@ -832,7 +832,7 @@ var require_extend = __commonJS({
   }
 });
 
-// node_modules/.bun/comma-separated-tokens@2.0.3/node_modules/comma-separated-tokens/index.js
+// node_modules/comma-separated-tokens/index.js
 function stringify(values2, options) {
   const settings = options || {};
   const input = values2[values2.length - 1] === "" ? [...values2, ""] : values2;
@@ -841,7 +841,7 @@ function stringify(values2, options) {
   ).trim();
 }
 
-// node_modules/.bun/estree-util-is-identifier-name@3.0.0/node_modules/estree-util-is-identifier-name/lib/index.js
+// node_modules/estree-util-is-identifier-name/lib/index.js
 var nameRe = /^[$_\p{ID_Start}][$_\u{200C}\u{200D}\p{ID_Continue}]*$/u;
 var nameReJsx = /^[$_\p{ID_Start}][-$_\u{200C}\u{200D}\p{ID_Continue}]*$/u;
 var emptyOptions = {};
@@ -851,7 +851,7 @@ function name(name2, options) {
   return re2.test(name2);
 }
 
-// node_modules/.bun/hast-util-whitespace@3.0.0/node_modules/hast-util-whitespace/lib/index.js
+// node_modules/hast-util-whitespace/lib/index.js
 var re = /[ \t\n\f\r]/g;
 function whitespace(thing) {
   return typeof thing === "object" ? thing.type === "text" ? empty(thing.value) : false : empty(thing);
@@ -860,7 +860,7 @@ function empty(value) {
   return value.replace(re, "") === "";
 }
 
-// node_modules/.bun/property-information@7.1.0/node_modules/property-information/lib/util/schema.js
+// node_modules/property-information/lib/util/schema.js
 var Schema = class {
   /**
    * @param {SchemaType['property']} property
@@ -884,7 +884,7 @@ Schema.prototype.normal = {};
 Schema.prototype.property = {};
 Schema.prototype.space = void 0;
 
-// node_modules/.bun/property-information@7.1.0/node_modules/property-information/lib/util/merge.js
+// node_modules/property-information/lib/util/merge.js
 function merge(definitions, space2) {
   const property = {};
   const normal = {};
@@ -895,12 +895,12 @@ function merge(definitions, space2) {
   return new Schema(property, normal, space2);
 }
 
-// node_modules/.bun/property-information@7.1.0/node_modules/property-information/lib/normalize.js
+// node_modules/property-information/lib/normalize.js
 function normalize(value) {
   return value.toLowerCase();
 }
 
-// node_modules/.bun/property-information@7.1.0/node_modules/property-information/lib/util/info.js
+// node_modules/property-information/lib/util/info.js
 var Info = class {
   /**
    * @param {string} property
@@ -928,7 +928,7 @@ Info.prototype.property = "";
 Info.prototype.spaceSeparated = false;
 Info.prototype.space = void 0;
 
-// node_modules/.bun/property-information@7.1.0/node_modules/property-information/lib/util/types.js
+// node_modules/property-information/lib/util/types.js
 var types_exports = {};
 __export(types_exports, {
   boolean: () => boolean,
@@ -951,7 +951,7 @@ function increment() {
   return 2 ** ++powers;
 }
 
-// node_modules/.bun/property-information@7.1.0/node_modules/property-information/lib/util/defined-info.js
+// node_modules/property-information/lib/util/defined-info.js
 var checks = (
   /** @type {ReadonlyArray<keyof typeof types>} */
   Object.keys(types_exports)
@@ -989,7 +989,7 @@ function mark(values2, key, value) {
   }
 }
 
-// node_modules/.bun/property-information@7.1.0/node_modules/property-information/lib/util/create.js
+// node_modules/property-information/lib/util/create.js
 function create(definition2) {
   const properties = {};
   const normals = {};
@@ -1010,7 +1010,7 @@ function create(definition2) {
   return new Schema(properties, normals, definition2.space);
 }
 
-// node_modules/.bun/property-information@7.1.0/node_modules/property-information/lib/aria.js
+// node_modules/property-information/lib/aria.js
 var aria = create({
   properties: {
     ariaActiveDescendant: null,
@@ -1068,17 +1068,17 @@ var aria = create({
   }
 });
 
-// node_modules/.bun/property-information@7.1.0/node_modules/property-information/lib/util/case-sensitive-transform.js
+// node_modules/property-information/lib/util/case-sensitive-transform.js
 function caseSensitiveTransform(attributes, attribute) {
   return attribute in attributes ? attributes[attribute] : attribute;
 }
 
-// node_modules/.bun/property-information@7.1.0/node_modules/property-information/lib/util/case-insensitive-transform.js
+// node_modules/property-information/lib/util/case-insensitive-transform.js
 function caseInsensitiveTransform(attributes, property) {
   return caseSensitiveTransform(attributes, property.toLowerCase());
 }
 
-// node_modules/.bun/property-information@7.1.0/node_modules/property-information/lib/html.js
+// node_modules/property-information/lib/html.js
 var html = create({
   attributes: {
     acceptcharset: "accept-charset",
@@ -1442,7 +1442,7 @@ var html = create({
   transform: caseInsensitiveTransform
 });
 
-// node_modules/.bun/property-information@7.1.0/node_modules/property-information/lib/svg.js
+// node_modules/property-information/lib/svg.js
 var svg = create({
   attributes: {
     accentHeight: "accent-height",
@@ -2004,7 +2004,7 @@ var svg = create({
   transform: caseSensitiveTransform
 });
 
-// node_modules/.bun/property-information@7.1.0/node_modules/property-information/lib/xlink.js
+// node_modules/property-information/lib/xlink.js
 var xlink = create({
   properties: {
     xLinkActuate: null,
@@ -2021,7 +2021,7 @@ var xlink = create({
   }
 });
 
-// node_modules/.bun/property-information@7.1.0/node_modules/property-information/lib/xmlns.js
+// node_modules/property-information/lib/xmlns.js
 var xmlns = create({
   attributes: { xmlnsxlink: "xmlns:xlink" },
   properties: { xmlnsXLink: null, xmlns: null },
@@ -2029,7 +2029,7 @@ var xmlns = create({
   transform: caseInsensitiveTransform
 });
 
-// node_modules/.bun/property-information@7.1.0/node_modules/property-information/lib/xml.js
+// node_modules/property-information/lib/xml.js
 var xml = create({
   properties: { xmlBase: null, xmlLang: null, xmlSpace: null },
   space: "xml",
@@ -2038,7 +2038,7 @@ var xml = create({
   }
 });
 
-// node_modules/.bun/property-information@7.1.0/node_modules/property-information/lib/hast-to-react.js
+// node_modules/property-information/lib/hast-to-react.js
 var hastToReact = {
   classId: "classID",
   dataType: "datatype",
@@ -2059,7 +2059,7 @@ var hastToReact = {
   xmlnsXLink: "xmlnsXlink"
 };
 
-// node_modules/.bun/property-information@7.1.0/node_modules/property-information/lib/find.js
+// node_modules/property-information/lib/find.js
 var cap = /[A-Z]/g;
 var dash = /-[a-z]/g;
 var valid = /^data[-\w.:]+$/i;
@@ -2095,19 +2095,19 @@ function camelcase($0) {
   return $0.charAt(1).toUpperCase();
 }
 
-// node_modules/.bun/property-information@7.1.0/node_modules/property-information/index.js
+// node_modules/property-information/index.js
 var html2 = merge([aria, html, xlink, xmlns, xml], "html");
 var svg2 = merge([aria, svg, xlink, xmlns, xml], "svg");
 
-// node_modules/.bun/space-separated-tokens@2.0.2/node_modules/space-separated-tokens/index.js
+// node_modules/space-separated-tokens/index.js
 function stringify2(values2) {
   return values2.join(" ").trim();
 }
 
-// node_modules/.bun/hast-util-to-jsx-runtime@2.3.6/node_modules/hast-util-to-jsx-runtime/lib/index.js
+// node_modules/hast-util-to-jsx-runtime/lib/index.js
 var import_style_to_js = __toESM(require_cjs3(), 1);
 
-// node_modules/.bun/unist-util-position@5.0.0/node_modules/unist-util-position/lib/index.js
+// node_modules/unist-util-position/lib/index.js
 var pointEnd = point("end");
 var pointStart = point("start");
 function point(type) {
@@ -2131,7 +2131,7 @@ function position(node) {
   }
 }
 
-// node_modules/.bun/unist-util-stringify-position@4.0.0/node_modules/unist-util-stringify-position/lib/index.js
+// node_modules/unist-util-stringify-position/lib/index.js
 function stringifyPosition(value) {
   if (!value || typeof value !== "object") {
     return "";
@@ -2157,7 +2157,7 @@ function index(value) {
   return value && typeof value === "number" ? value : 1;
 }
 
-// node_modules/.bun/vfile-message@4.0.3/node_modules/vfile-message/lib/index.js
+// node_modules/vfile-message/lib/index.js
 var VFileMessage = class extends Error {
   /**
    * Create a message for `reason`.
@@ -2293,7 +2293,7 @@ VFileMessage.prototype.place = void 0;
 VFileMessage.prototype.ruleId = void 0;
 VFileMessage.prototype.source = void 0;
 
-// node_modules/.bun/hast-util-to-jsx-runtime@2.3.6/node_modules/hast-util-to-jsx-runtime/lib/index.js
+// node_modules/hast-util-to-jsx-runtime/lib/index.js
 var own = {}.hasOwnProperty;
 var emptyMap = /* @__PURE__ */ new Map();
 var cap2 = /[A-Z]/g;
@@ -2672,7 +2672,7 @@ function toDash($0) {
   return "-" + $0.toLowerCase();
 }
 
-// node_modules/.bun/html-url-attributes@3.0.1/node_modules/html-url-attributes/lib/index.js
+// node_modules/html-url-attributes/lib/index.js
 var urlAttributes = {
   action: ["form"],
   cite: ["blockquote", "del", "ins", "q"],
@@ -2697,14 +2697,14 @@ var urlAttributes = {
   ]
 };
 
-// node_modules/.bun/react-markdown@10.1.0+0e2fb8dbc083adda/node_modules/react-markdown/lib/index.js
+// node_modules/react-markdown/lib/index.js
 var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
 var import_react = __toESM(require_react(), 1);
 
-// node_modules/.bun/micromark@4.0.2/node_modules/micromark/dev/lib/compile.js
+// node_modules/micromark/dev/lib/compile.js
 var hasOwnProperty = {}.hasOwnProperty;
 
-// node_modules/.bun/micromark@4.0.2/node_modules/micromark/dev/lib/initialize/content.js
+// node_modules/micromark/dev/lib/initialize/content.js
 var content2 = { tokenize: initializeContent };
 function initializeContent(effects) {
   const contentStart = effects.attempt(
@@ -2764,7 +2764,7 @@ function initializeContent(effects) {
   }
 }
 
-// node_modules/.bun/micromark@4.0.2/node_modules/micromark/dev/lib/initialize/document.js
+// node_modules/micromark/dev/lib/initialize/document.js
 var document2 = { tokenize: initializeDocument };
 var containerConstruct = { tokenize: tokenizeContainer };
 function initializeDocument(effects) {
@@ -2999,7 +2999,7 @@ function tokenizeContainer(effects, ok2, nok) {
   );
 }
 
-// node_modules/.bun/micromark@4.0.2/node_modules/micromark/dev/lib/initialize/flow.js
+// node_modules/micromark/dev/lib/initialize/flow.js
 var flow = { tokenize: initializeFlow };
 function initializeFlow(effects) {
   const self2 = this;
@@ -3055,7 +3055,7 @@ function initializeFlow(effects) {
   }
 }
 
-// node_modules/.bun/micromark@4.0.2/node_modules/micromark/dev/lib/initialize/text.js
+// node_modules/micromark/dev/lib/initialize/text.js
 var resolver = { resolveAll: createResolver() };
 var string = initializeFactory("string");
 var text2 = initializeFactory("text");
@@ -3196,7 +3196,7 @@ function resolveAllLineSuffixes(events, context) {
   return events;
 }
 
-// node_modules/.bun/micromark@4.0.2/node_modules/micromark/dev/lib/constructs.js
+// node_modules/micromark/dev/lib/constructs.js
 var constructs_exports = {};
 __export(constructs_exports, {
   attentionMarkers: () => attentionMarkers,
@@ -3265,7 +3265,7 @@ var insideSpan = { null: [attention, resolver] };
 var attentionMarkers = { null: [codes.asterisk, codes.underscore] };
 var disable = { null: [] };
 
-// node_modules/.bun/micromark@4.0.2/node_modules/micromark/dev/lib/create-tokenizer.js
+// node_modules/micromark/dev/lib/create-tokenizer.js
 var import_debug = __toESM(require_browser(), 1);
 var debug = (0, import_debug.default)("micromark");
 function createTokenizer(parser, initialize, from) {
@@ -3622,7 +3622,7 @@ function serializeChunks(chunks, expandTabs) {
   return result.join("");
 }
 
-// node_modules/.bun/micromark@4.0.2/node_modules/micromark/dev/lib/parse.js
+// node_modules/micromark/dev/lib/parse.js
 function parse(options) {
   const settings = options || {};
   const constructs = (
@@ -3648,14 +3648,14 @@ function parse(options) {
   }
 }
 
-// node_modules/.bun/micromark@4.0.2/node_modules/micromark/dev/lib/postprocess.js
+// node_modules/micromark/dev/lib/postprocess.js
 function postprocess(events) {
   while (!subtokenize(events)) {
   }
   return events;
 }
 
-// node_modules/.bun/micromark@4.0.2/node_modules/micromark/dev/lib/preprocess.js
+// node_modules/micromark/dev/lib/preprocess.js
 var search = /[\0\t\n\r]/g;
 function preprocess() {
   let column = 1;
@@ -3734,7 +3734,7 @@ function preprocess() {
   }
 }
 
-// node_modules/.bun/mdast-util-from-markdown@2.0.3/node_modules/mdast-util-from-markdown/dev/lib/index.js
+// node_modules/mdast-util-from-markdown/dev/lib/index.js
 var own2 = {}.hasOwnProperty;
 function fromMarkdown(value, encoding, options) {
   if (encoding && typeof encoding === "object") {
@@ -4491,7 +4491,7 @@ function defaultOnError(left, right) {
   }
 }
 
-// node_modules/.bun/remark-parse@11.0.0/node_modules/remark-parse/lib/index.js
+// node_modules/remark-parse/lib/index.js
 function remarkParse(options) {
   const self2 = this;
   self2.parser = parser;
@@ -4508,7 +4508,7 @@ function remarkParse(options) {
   }
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/blockquote.js
+// node_modules/mdast-util-to-hast/lib/handlers/blockquote.js
 function blockquote(state, node) {
   const result = {
     type: "element",
@@ -4520,14 +4520,14 @@ function blockquote(state, node) {
   return state.applyData(node, result);
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/break.js
+// node_modules/mdast-util-to-hast/lib/handlers/break.js
 function hardBreak(state, node) {
   const result = { type: "element", tagName: "br", properties: {}, children: [] };
   state.patch(node, result);
   return [state.applyData(node, result), { type: "text", value: "\n" }];
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/code.js
+// node_modules/mdast-util-to-hast/lib/handlers/code.js
 function code(state, node) {
   const value = node.value ? node.value + "\n" : "";
   const properties = {};
@@ -4551,7 +4551,7 @@ function code(state, node) {
   return result;
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/delete.js
+// node_modules/mdast-util-to-hast/lib/handlers/delete.js
 function strikethrough(state, node) {
   const result = {
     type: "element",
@@ -4563,7 +4563,7 @@ function strikethrough(state, node) {
   return state.applyData(node, result);
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/emphasis.js
+// node_modules/mdast-util-to-hast/lib/handlers/emphasis.js
 function emphasis(state, node) {
   const result = {
     type: "element",
@@ -4575,7 +4575,7 @@ function emphasis(state, node) {
   return state.applyData(node, result);
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/footnote-reference.js
+// node_modules/mdast-util-to-hast/lib/handlers/footnote-reference.js
 function footnoteReference(state, node) {
   const clobberPrefix = typeof state.options.clobberPrefix === "string" ? state.options.clobberPrefix : "user-content-";
   const id = String(node.identifier).toUpperCase();
@@ -4614,7 +4614,7 @@ function footnoteReference(state, node) {
   return state.applyData(node, sup);
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/heading.js
+// node_modules/mdast-util-to-hast/lib/handlers/heading.js
 function heading(state, node) {
   const result = {
     type: "element",
@@ -4626,7 +4626,7 @@ function heading(state, node) {
   return state.applyData(node, result);
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/html.js
+// node_modules/mdast-util-to-hast/lib/handlers/html.js
 function html3(state, node) {
   if (state.options.allowDangerousHtml) {
     const result = { type: "raw", value: node.value };
@@ -4636,7 +4636,7 @@ function html3(state, node) {
   return void 0;
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/revert.js
+// node_modules/mdast-util-to-hast/lib/revert.js
 function revert(state, node) {
   const subtype = node.referenceType;
   let suffix = "]";
@@ -4664,7 +4664,7 @@ function revert(state, node) {
   return contents;
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/image-reference.js
+// node_modules/mdast-util-to-hast/lib/handlers/image-reference.js
 function imageReference(state, node) {
   const id = String(node.identifier).toUpperCase();
   const definition2 = state.definitionById.get(id);
@@ -4680,7 +4680,7 @@ function imageReference(state, node) {
   return state.applyData(node, result);
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/image.js
+// node_modules/mdast-util-to-hast/lib/handlers/image.js
 function image(state, node) {
   const properties = { src: normalizeUri(node.url) };
   if (node.alt !== null && node.alt !== void 0) {
@@ -4694,7 +4694,7 @@ function image(state, node) {
   return state.applyData(node, result);
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/inline-code.js
+// node_modules/mdast-util-to-hast/lib/handlers/inline-code.js
 function inlineCode(state, node) {
   const text5 = { type: "text", value: node.value.replace(/\r?\n|\r/g, " ") };
   state.patch(node, text5);
@@ -4708,7 +4708,7 @@ function inlineCode(state, node) {
   return state.applyData(node, result);
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/link-reference.js
+// node_modules/mdast-util-to-hast/lib/handlers/link-reference.js
 function linkReference(state, node) {
   const id = String(node.identifier).toUpperCase();
   const definition2 = state.definitionById.get(id);
@@ -4729,7 +4729,7 @@ function linkReference(state, node) {
   return state.applyData(node, result);
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/link.js
+// node_modules/mdast-util-to-hast/lib/handlers/link.js
 function link(state, node) {
   const properties = { href: normalizeUri(node.url) };
   if (node.title !== null && node.title !== void 0) {
@@ -4745,7 +4745,7 @@ function link(state, node) {
   return state.applyData(node, result);
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/list-item.js
+// node_modules/mdast-util-to-hast/lib/handlers/list-item.js
 function listItem(state, node, parent) {
   const results = state.all(node);
   const loose = parent ? listLoose(parent) : listItemLoose(node);
@@ -4808,7 +4808,7 @@ function listItemLoose(node) {
   return spread === null || spread === void 0 ? node.children.length > 1 : spread;
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/list.js
+// node_modules/mdast-util-to-hast/lib/handlers/list.js
 function list2(state, node) {
   const properties = {};
   const results = state.all(node);
@@ -4833,7 +4833,7 @@ function list2(state, node) {
   return state.applyData(node, result);
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/paragraph.js
+// node_modules/mdast-util-to-hast/lib/handlers/paragraph.js
 function paragraph(state, node) {
   const result = {
     type: "element",
@@ -4845,14 +4845,14 @@ function paragraph(state, node) {
   return state.applyData(node, result);
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/root.js
+// node_modules/mdast-util-to-hast/lib/handlers/root.js
 function root2(state, node) {
   const result = { type: "root", children: state.wrap(state.all(node)) };
   state.patch(node, result);
   return state.applyData(node, result);
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/strong.js
+// node_modules/mdast-util-to-hast/lib/handlers/strong.js
 function strong(state, node) {
   const result = {
     type: "element",
@@ -4864,7 +4864,7 @@ function strong(state, node) {
   return state.applyData(node, result);
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/table.js
+// node_modules/mdast-util-to-hast/lib/handlers/table.js
 function table(state, node) {
   const rows = state.all(node);
   const firstRow = rows.shift();
@@ -4901,7 +4901,7 @@ function table(state, node) {
   return state.applyData(node, result);
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/table-row.js
+// node_modules/mdast-util-to-hast/lib/handlers/table-row.js
 function tableRow(state, node, parent) {
   const siblings = parent ? parent.children : void 0;
   const rowIndex = siblings ? siblings.indexOf(node) : 1;
@@ -4935,7 +4935,7 @@ function tableRow(state, node, parent) {
   return state.applyData(node, result);
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/table-cell.js
+// node_modules/mdast-util-to-hast/lib/handlers/table-cell.js
 function tableCell(state, node) {
   const result = {
     type: "element",
@@ -4948,7 +4948,7 @@ function tableCell(state, node) {
   return state.applyData(node, result);
 }
 
-// node_modules/.bun/trim-lines@3.0.1/node_modules/trim-lines/index.js
+// node_modules/trim-lines/index.js
 var tab = 9;
 var space = 32;
 function trimLines(value) {
@@ -4988,14 +4988,14 @@ function trimLine(value, start2, end) {
   return endIndex > startIndex ? value.slice(startIndex, endIndex) : "";
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/text.js
+// node_modules/mdast-util-to-hast/lib/handlers/text.js
 function text4(state, node) {
   const result = { type: "text", value: trimLines(String(node.value)) };
   state.patch(node, result);
   return state.applyData(node, result);
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/thematic-break.js
+// node_modules/mdast-util-to-hast/lib/handlers/thematic-break.js
 function thematicBreak2(state, node) {
   const result = {
     type: "element",
@@ -5007,7 +5007,7 @@ function thematicBreak2(state, node) {
   return state.applyData(node, result);
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/index.js
+// node_modules/mdast-util-to-hast/lib/handlers/index.js
 var handlers = {
   blockquote,
   break: hardBreak,
@@ -5042,7 +5042,7 @@ function ignore() {
   return void 0;
 }
 
-// node_modules/.bun/@ungap+structured-clone@1.3.0/node_modules/@ungap/structured-clone/esm/types.js
+// node_modules/@ungap/structured-clone/esm/types.js
 var VOID = -1;
 var PRIMITIVE = 0;
 var ARRAY = 1;
@@ -5054,7 +5054,7 @@ var SET = 6;
 var ERROR = 7;
 var BIGINT = 8;
 
-// node_modules/.bun/@ungap+structured-clone@1.3.0/node_modules/@ungap/structured-clone/esm/deserialize.js
+// node_modules/@ungap/structured-clone/esm/deserialize.js
 var env = typeof self === "object" ? self : globalThis;
 var deserializer = ($, _) => {
   const as = (out, index2) => {
@@ -5120,7 +5120,7 @@ var deserializer = ($, _) => {
 };
 var deserialize = (serialized) => deserializer(/* @__PURE__ */ new Map(), serialized)(0);
 
-// node_modules/.bun/@ungap+structured-clone@1.3.0/node_modules/@ungap/structured-clone/esm/serialize.js
+// node_modules/@ungap/structured-clone/esm/serialize.js
 var EMPTY = "";
 var { toString: toString2 } = {};
 var { keys } = Object;
@@ -5253,13 +5253,13 @@ var serialize = (value, { json, lossy } = {}) => {
   return serializer(!(json || lossy), !!json, /* @__PURE__ */ new Map(), _)(value), _;
 };
 
-// node_modules/.bun/@ungap+structured-clone@1.3.0/node_modules/@ungap/structured-clone/esm/index.js
+// node_modules/@ungap/structured-clone/esm/index.js
 var esm_default = typeof structuredClone === "function" ? (
   /* c8 ignore start */
   (any, options) => options && ("json" in options || "lossy" in options) ? deserialize(serialize(any, options)) : structuredClone(any)
 ) : (any, options) => deserialize(serialize(any, options));
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/footer.js
+// node_modules/mdast-util-to-hast/lib/footer.js
 function defaultFootnoteBackContent(_, rereferenceIndex) {
   const result = [{ type: "text", value: "↩" }];
   if (rereferenceIndex > 1) {
@@ -5369,7 +5369,7 @@ function footer(state) {
   };
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/state.js
+// node_modules/mdast-util-to-hast/lib/state.js
 var own3 = {}.hasOwnProperty;
 var emptyOptions2 = {};
 function createState(tree, options) {
@@ -5511,7 +5511,7 @@ function trimMarkdownSpaceStart(value) {
   return value.slice(index2);
 }
 
-// node_modules/.bun/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/index.js
+// node_modules/mdast-util-to-hast/lib/index.js
 function toHast(tree, options) {
   const state = createState(tree, options);
   const node = state.one(tree, void 0);
@@ -5524,7 +5524,7 @@ function toHast(tree, options) {
   return result;
 }
 
-// node_modules/.bun/remark-rehype@11.1.2/node_modules/remark-rehype/lib/index.js
+// node_modules/remark-rehype/lib/index.js
 function remarkRehype(destination, options) {
   if (destination && "run" in destination) {
     return async function(tree, file) {
@@ -5543,17 +5543,17 @@ function remarkRehype(destination, options) {
   };
 }
 
-// node_modules/.bun/bail@2.0.2/node_modules/bail/index.js
+// node_modules/bail/index.js
 function bail(error) {
   if (error) {
     throw error;
   }
 }
 
-// node_modules/.bun/unified@11.0.5/node_modules/unified/lib/index.js
+// node_modules/unified/lib/index.js
 var import_extend = __toESM(require_extend(), 1);
 
-// node_modules/.bun/is-plain-obj@4.1.0/node_modules/is-plain-obj/index.js
+// node_modules/is-plain-obj/index.js
 function isPlainObject(value) {
   if (typeof value !== "object" || value === null) {
     return false;
@@ -5562,7 +5562,7 @@ function isPlainObject(value) {
   return (prototype === null || prototype === Object.prototype || Object.getPrototypeOf(prototype) === null) && !(Symbol.toStringTag in value) && !(Symbol.iterator in value);
 }
 
-// node_modules/.bun/trough@2.2.0/node_modules/trough/lib/index.js
+// node_modules/trough/lib/index.js
 function trough() {
   const fns = [];
   const pipeline = { run, use };
@@ -5646,7 +5646,7 @@ function wrap2(middleware, callback) {
   }
 }
 
-// node_modules/.bun/vfile@6.0.3/node_modules/vfile/lib/minpath.browser.js
+// node_modules/vfile/lib/minpath.browser.js
 var minpath = { basename, dirname, extname, join, sep: "/" };
 function basename(path, extname2) {
   if (extname2 !== void 0 && typeof extname2 !== "string") {
@@ -5859,13 +5859,13 @@ function assertPath(path) {
   }
 }
 
-// node_modules/.bun/vfile@6.0.3/node_modules/vfile/lib/minproc.browser.js
+// node_modules/vfile/lib/minproc.browser.js
 var minproc = { cwd };
 function cwd() {
   return "/";
 }
 
-// node_modules/.bun/vfile@6.0.3/node_modules/vfile/lib/minurl.shared.js
+// node_modules/vfile/lib/minurl.shared.js
 function isUrl(fileUrlOrPath) {
   return Boolean(
     fileUrlOrPath !== null && typeof fileUrlOrPath === "object" && "href" in fileUrlOrPath && fileUrlOrPath.href && "protocol" in fileUrlOrPath && fileUrlOrPath.protocol && // @ts-expect-error: indexing is fine.
@@ -5873,7 +5873,7 @@ function isUrl(fileUrlOrPath) {
   );
 }
 
-// node_modules/.bun/vfile@6.0.3/node_modules/vfile/lib/minurl.browser.js
+// node_modules/vfile/lib/minurl.browser.js
 function urlToPath(path) {
   if (typeof path === "string") {
     path = new URL(path);
@@ -5916,7 +5916,7 @@ function getPathFromURLPosix(url) {
   return decodeURIComponent(pathname);
 }
 
-// node_modules/.bun/vfile@6.0.3/node_modules/vfile/lib/index.js
+// node_modules/vfile/lib/index.js
 var order = (
   /** @type {const} */
   [
@@ -6372,7 +6372,7 @@ function isUint8Array(value) {
   );
 }
 
-// node_modules/.bun/unified@11.0.5/node_modules/unified/lib/callable-instance.js
+// node_modules/unified/lib/callable-instance.js
 var CallableInstance = (
   /**
    * @type {new <Parameters extends Array<unknown>, Result>(property: string | symbol) => (...parameters: Parameters) => Result}
@@ -6401,7 +6401,7 @@ var CallableInstance = (
   }
 );
 
-// node_modules/.bun/unified@11.0.5/node_modules/unified/lib/index.js
+// node_modules/unified/lib/index.js
 var own4 = {}.hasOwnProperty;
 var Processor = class _Processor extends CallableInstance {
   /**
@@ -7037,7 +7037,7 @@ function isUint8Array2(value) {
   );
 }
 
-// node_modules/.bun/react-markdown@10.1.0+0e2fb8dbc083adda/node_modules/react-markdown/lib/index.js
+// node_modules/react-markdown/lib/index.js
 var changelog = "https://github.com/remarkjs/react-markdown/blob/main/changelog.md";
 var emptyPlugins = [];
 var emptyRemarkRehypeOptions = { allowDangerousHtml: true };

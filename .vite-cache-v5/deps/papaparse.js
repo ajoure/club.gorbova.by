@@ -2,9 +2,9 @@ import {
   __commonJS
 } from "./chunk-OL46QLBJ.js";
 
-// node_modules/.bun/papaparse@5.5.3/node_modules/papaparse/papaparse.min.js
+// node_modules/papaparse/papaparse.min.js
 var require_papaparse_min = __commonJS({
-  "node_modules/.bun/papaparse@5.5.3/node_modules/papaparse/papaparse.min.js"(exports, module) {
+  "node_modules/papaparse/papaparse.min.js"(exports, module) {
     ((e, t) => {
       "function" == typeof define && define.amd ? define([], t) : "object" == typeof module && "undefined" != typeof exports ? module.exports = t() : e.Papa = t();
     })(exports, function r() {

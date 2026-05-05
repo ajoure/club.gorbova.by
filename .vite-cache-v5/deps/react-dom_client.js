@@ -1,14 +1,14 @@
 import {
   require_react_dom
-} from "./chunk-LL4H3GAN.js";
-import "./chunk-PHGPE5OU.js";
+} from "./chunk-FKMA2RKD.js";
+import "./chunk-UVNPGZG7.js";
 import {
   __commonJS
 } from "./chunk-OL46QLBJ.js";
 
-// node_modules/.bun/react-dom@18.3.1+f4eacebf2041cd4f/node_modules/react-dom/client.js
+// node_modules/react-dom/client.js
 var require_client = __commonJS({
-  "node_modules/.bun/react-dom@18.3.1+f4eacebf2041cd4f/node_modules/react-dom/client.js"(exports) {
+  "node_modules/react-dom/client.js"(exports) {
     var m = require_react_dom();
     if (false) {
       exports.createRoot = m.createRoot;

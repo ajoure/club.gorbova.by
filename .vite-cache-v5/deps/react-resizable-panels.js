@@ -1,11 +1,11 @@
 import {
   require_react
-} from "./chunk-PHGPE5OU.js";
+} from "./chunk-UVNPGZG7.js";
 import {
   __toESM
 } from "./chunk-OL46QLBJ.js";
 
-// node_modules/.bun/react-resizable-panels@2.1.9+6dbf9a050bc9aadb/node_modules/react-resizable-panels/dist/react-resizable-panels.browser.development.esm.js
+// node_modules/react-resizable-panels/dist/react-resizable-panels.browser.development.esm.js
 var React = __toESM(require_react());
 var import_react = __toESM(require_react());
 var PanelGroupContext = (0, import_react.createContext)(null);

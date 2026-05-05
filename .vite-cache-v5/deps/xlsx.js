@@ -1,6 +1,6 @@
 import "./chunk-OL46QLBJ.js";
 
-// node_modules/.bun/xlsx@0.18.5/node_modules/xlsx/xlsx.mjs
+// node_modules/xlsx/xlsx.mjs
 var XLSX = {};
 XLSX.version = "0.18.5";
 var current_codepage = 1200;

@@ -1,9 +1,9 @@
 import {
   clsx
-} from "./chunk-D6XHPC6E.js";
+} from "./chunk-KDVGFZWC.js";
 import "./chunk-OL46QLBJ.js";
 
-// node_modules/.bun/class-variance-authority@0.7.1/node_modules/class-variance-authority/dist/index.mjs
+// node_modules/class-variance-authority/dist/index.mjs
 var falsyToString = (value) => typeof value === "boolean" ? `${value}` : value === 0 ? "0" : value;
 var cx = clsx;
 var cva = (base, config) => (props) => {

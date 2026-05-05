@@ -1,10 +1,10 @@
 import {
   Extension
-} from "./chunk-RHBABKPQ.js";
-import "./chunk-YGNF433N.js";
+} from "./chunk-SXIQHOR3.js";
+import "./chunk-YLIL3JKF.js";
 import "./chunk-OL46QLBJ.js";
 
-// node_modules/.bun/@tiptap+extension-text-align@3.22.4+426911c3531ad19c/node_modules/@tiptap/extension-text-align/dist/index.js
+// node_modules/@tiptap/extension-text-align/dist/index.js
 var TextAlign = Extension.create({
   name: "textAlign",
   addOptions() {

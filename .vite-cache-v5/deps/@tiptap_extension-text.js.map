@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "sources": ["../../node_modules/.bun/@tiptap+extension-text@3.20.1+426911c3531ad19c/node_modules/@tiptap/extension-text/src/text.ts", "../../node_modules/.bun/@tiptap+extension-text@3.20.1+426911c3531ad19c/node_modules/@tiptap/extension-text/src/index.ts"],
+  "sources": ["../../node_modules/@tiptap/extension-text/src/text.ts", "../../node_modules/@tiptap/extension-text/src/index.ts"],
   "sourcesContent": ["import { Node } from '@tiptap/core'\n\n/**\n * This extension allows you to create text nodes.\n * @see https://www.tiptap.dev/api/nodes/text\n */\nexport const Text = Node.create({\n  name: 'text',\n  group: 'inline',\n\n  parseMarkdown: token => {\n    // Convert 'text' token to text node - text nodes are special as they store text directly\n    return {\n      type: 'text',\n      text: token.text || '',\n    }\n  },\n\n  renderMarkdown: node => node.text || '',\n})\n", "import { Text } from './text.js'\n\nexport * from './text.js'\n\nexport default Text\n"],
   "mappings": ";;;;;;;AAMO,IAAM,OAAO,MAAK,OAAO;EAC9B,MAAM;EACN,OAAO;EAEP,eAAe,CAAA,UAAS;AAEtB,WAAO;MACL,MAAM;MACN,MAAM,MAAM,QAAQ;IACtB;EACF;EAEA,gBAAgB,CAAA,SAAQ,KAAK,QAAQ;AACvC,CAAC;ACfD,IAAO,gBAAQ;",
   "names": []

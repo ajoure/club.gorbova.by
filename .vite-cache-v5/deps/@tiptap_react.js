@@ -1,6 +1,6 @@
 import {
   deepEqual
-} from "./chunk-Z7NM5QNZ.js";
+} from "./chunk-FX47Z3IB.js";
 import {
   CommandManager,
   Editor,
@@ -124,28 +124,28 @@ import {
   textblockTypeInputRule,
   updateMarkViewAttributes,
   wrappingInputRule
-} from "./chunk-RHBABKPQ.js";
-import "./chunk-YGNF433N.js";
+} from "./chunk-SXIQHOR3.js";
+import "./chunk-YLIL3JKF.js";
 import {
   require_shim
-} from "./chunk-NW7Q4PH2.js";
+} from "./chunk-PU3CAANW.js";
 import {
   require_jsx_runtime
-} from "./chunk-USUZFPFN.js";
+} from "./chunk-NZAIND7N.js";
 import {
   require_react_dom
-} from "./chunk-LL4H3GAN.js";
+} from "./chunk-FKMA2RKD.js";
 import {
   require_react
-} from "./chunk-PHGPE5OU.js";
+} from "./chunk-UVNPGZG7.js";
 import {
   __commonJS,
   __toESM
 } from "./chunk-OL46QLBJ.js";
 
-// node_modules/.bun/use-sync-external-store@1.5.0+f4eacebf2041cd4f/node_modules/use-sync-external-store/cjs/use-sync-external-store-shim/with-selector.development.js
+// node_modules/use-sync-external-store/cjs/use-sync-external-store-shim/with-selector.development.js
 var require_with_selector_development = __commonJS({
-  "node_modules/.bun/use-sync-external-store@1.5.0+f4eacebf2041cd4f/node_modules/use-sync-external-store/cjs/use-sync-external-store-shim/with-selector.development.js"(exports) {
+  "node_modules/use-sync-external-store/cjs/use-sync-external-store-shim/with-selector.development.js"(exports) {
     "use strict";
     (function() {
       function is(x, y) {
@@ -210,9 +210,9 @@ var require_with_selector_development = __commonJS({
   }
 });
 
-// node_modules/.bun/use-sync-external-store@1.5.0+f4eacebf2041cd4f/node_modules/use-sync-external-store/shim/with-selector.js
+// node_modules/use-sync-external-store/shim/with-selector.js
 var require_with_selector = __commonJS({
-  "node_modules/.bun/use-sync-external-store@1.5.0+f4eacebf2041cd4f/node_modules/use-sync-external-store/shim/with-selector.js"(exports, module) {
+  "node_modules/use-sync-external-store/shim/with-selector.js"(exports, module) {
     "use strict";
     if (false) {
       module.exports = null;
@@ -222,7 +222,7 @@ var require_with_selector = __commonJS({
   }
 });
 
-// node_modules/.bun/@tiptap+react@3.20.1+211cae91c9ca5674/node_modules/@tiptap/react/dist/index.js
+// node_modules/@tiptap/react/dist/index.js
 var import_react = __toESM(require_react());
 var import_react2 = __toESM(require_react());
 var import_react_dom = __toESM(require_react_dom());
