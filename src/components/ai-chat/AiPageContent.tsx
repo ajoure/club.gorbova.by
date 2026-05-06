@@ -11,6 +11,7 @@ import { AiDocumentsGenerateView } from "@/components/ai-documents/AiDocumentsGe
 import { AiDocumentsHistoryView } from "@/components/ai-documents/AiDocumentsHistoryView";
 import { CanonicalActGenerator } from "@/components/ai-documents/CanonicalActGenerator";
 import { CanonicalTemplateVersionsPanel } from "@/components/ai-documents/CanonicalTemplateVersionsPanel";
+import { AliasesTab } from "@/components/ai-documents/AliasesTab";
 import type { PersonRow } from "@/hooks/useAiPersons";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { cn } from "@/lib/utils";
@@ -55,7 +56,7 @@ const LazyExecutorsContent = lazy(() =>
 /* ─── Конфигурация секций и подменю ─── */
 
 type Section = "ai" | "documents" | "requisites";
-type SubTab = "chat" | "analysis-history" | "tutorials" | "prompts" | "generate" | "history" | "templates" | "executors" | "entities" | "persons" | "canonical-acts";
+type SubTab = "chat" | "analysis-history" | "tutorials" | "prompts" | "generate" | "history" | "templates" | "executors" | "entities" | "persons" | "canonical-acts" | "aliases";
 
 const SECTIONS: { id: Section; label: string; icon: React.ComponentType<{ className?: string }>; adminOnly?: boolean }[] = [
   { id: "ai", label: "Gorbova AI", icon: Bot },
