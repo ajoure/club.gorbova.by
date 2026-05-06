@@ -14,6 +14,42 @@ export type Database = {
   }
   public: {
     Tables: {
+      _backup_entitlement_tariff_id_backfill_2026_05: {
+        Row: {
+          backfill_run_id: string
+          created_at: string
+          entitlement_id: string
+          id: string
+          old_meta: Json
+          product_id: string
+          resolution_source: string
+          resolved_tariff_id: string
+          user_id: string
+        }
+        Insert: {
+          backfill_run_id: string
+          created_at?: string
+          entitlement_id: string
+          id?: string
+          old_meta: Json
+          product_id: string
+          resolution_source: string
+          resolved_tariff_id: string
+          user_id: string
+        }
+        Update: {
+          backfill_run_id?: string
+          created_at?: string
+          entitlement_id?: string
+          id?: string
+          old_meta?: Json
+          product_id?: string
+          resolution_source?: string
+          resolved_tariff_id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       _inv22_overshoot_snapshot: {
         Row: {
           cohort: string
