@@ -108,16 +108,48 @@ Deno.serve(async (req) => {
     const regSet = new Map<string, any>();
     for (const r of (registry || [])) regSet.set(r.token_key, r);
 
-    let mapped = 0, unmapped = 0;
+    // Aliases: alias_token -> canonical_token_key, scoped to (global | this template | this version)
+    const aliasMap = new Map<string, { canonical_token_key: string; scope: 'global' | 'template' | 'version' }>();
+    try {
+      const tplId = version?.template_id || templateId;
+      const verId = version?.id || null;
+      let q = supabase.from('document_token_aliases').select('alias_token, canonical_token_key, template_id, template_version_id');
+      if (tplId) q = q.or(`template_id.is.null,template_id.eq.${tplId}`);
+      else q = q.is('template_id', null);
+      const { data: aliasRows } = await q;
+      const score = (a: any) => (a.template_version_id ? 4 : 0) + (a.template_id ? 2 : 0);
+      const byAlias = new Map<string, any>();
+      for (const a of (aliasRows || [])) {
+        if (a.template_version_id && a.template_version_id !== verId) continue;
+        const ex = byAlias.get(a.alias_token);
+        if (!ex || score(a) > score(ex)) byAlias.set(a.alias_token, a);
+      }
+      for (const [k, v] of byAlias) {
+        if (regSet.has(v.canonical_token_key)) {
+          aliasMap.set(k, {
+            canonical_token_key: v.canonical_token_key,
+            scope: v.template_version_id ? 'version' : v.template_id ? 'template' : 'global',
+          });
+        }
+      }
+    } catch (_e) { /* aliases optional */ }
+
+    let mapped = 0, unmapped = 0, viaAlias = 0;
     const tokenManifest = parsed.manifest.map((m) => {
-      const reg = regSet.get(m.token);
+      const direct = regSet.get(m.token);
+      const alias = !direct ? aliasMap.get(m.token) : null;
+      const reg = direct || (alias ? regSet.get(alias.canonical_token_key) : null);
       const status = reg ? 'mapped' : 'unmapped';
-      if (reg) mapped += 1; else unmapped += 1;
+      if (reg) {
+        mapped += 1;
+        if (alias) viaAlias += 1;
+      } else unmapped += 1;
       return {
         token: m.token,
         locations: m.locations,
         total_count: m.total_count,
         status,
+        via_alias: alias ? { canonical_token_key: alias.canonical_token_key, scope: alias.scope } : null,
         registry: reg ? { token_key: reg.token_key, ui_label: reg.ui_label, category: reg.category, is_required: !!reg.is_required } : null,
       };
     });
