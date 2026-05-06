@@ -263,8 +263,10 @@ export async function resolveCanonicalPayload(
     'deal.product_name':  product?.name || '',
     'deal.tariff_name':   tariff?.name || '',
     'deal.amount':        order?.final_price != null ? String(order.final_price) : '',
-    'deal.amount_words':  '', // sprint 2: добавим утилиту
-    'deal.currency':      order?.currency || '',
+    'deal.amount_words':  order?.final_price != null ? numberToWordsRu(order.final_price, order?.currency) : '',
+    'deal.amount_in_words': order?.final_price != null ? numberToWordsRu(order.final_price, order?.currency) : '',
+    'deal.amount_formatted': order?.final_price != null ? formatMoney(order.final_price, order?.currency) : '',
+    'deal.currency':      order?.currency ? (normalizeCurrency(order.currency) === 'UNKNOWN' ? order.currency : normalizeCurrency(order.currency)) : '',
     'deal.paid_at':       order?.created_at ? new Date(order.created_at).toLocaleDateString('ru-RU') : '',
     'deal.access_days':   tariff?.access_days != null ? String(tariff.access_days) : '',
   };
