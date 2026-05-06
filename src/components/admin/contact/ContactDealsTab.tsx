@@ -90,20 +90,40 @@ function groupDealsByProduct(deals: AnyDeal[], moduleMetaMap?: Map<string, any>)
   const catMap = new Map<string, string | null>();
 
   for (const d of deals) {
+    const moduleMeta = moduleMetaMap?.get(d.id);
     const fullName = getDealDisplayName({
       productsV2: d.products_v2,
       purchaseSnapshot: d.purchase_snapshot,
-      moduleProduct: moduleMetaMap?.get(d.id)?.moduleProduct,
+      moduleProduct: moduleMeta?.moduleProduct,
       fallback: "Без продукта",
     });
-    const key = d.product_id || fullName;
-    if (!map.has(key)) {
-      map.set(key, []);
-      labelMap.set(key, fullName);
-      pidMap.set(key, d.product_id || null);
-      catMap.set(key, d.products_v2?.category ?? null);
+
+    // Grouping key MUST be the UUID that matches the displayed product, otherwise
+    // module_only_standalone deals (whose d.product_id = parent course id) get
+    // glued into the parent course's group and visually "eat" the parent.
+    // For module_only_standalone with a resolved module UUID — group by module UUID.
+    // For everything else — group by d.product_id, falling back to fullName.
+    const isModuleStandalone =
+      moduleMeta?.resolutionType === "direct_module" && !!moduleMeta.resolvedModuleProductId;
+    const groupKey = isModuleStandalone
+      ? (moduleMeta!.resolvedModuleProductId as string)
+      : (d.product_id || fullName);
+    const groupProductId = isModuleStandalone
+      ? (moduleMeta!.resolvedModuleProductId as string)
+      : (d.product_id || null);
+
+    if (!map.has(groupKey)) {
+      map.set(groupKey, []);
+      labelMap.set(groupKey, fullName);
+      pidMap.set(groupKey, groupProductId);
+      // For module_only_standalone, mark category as "module" so DealRow renders
+      // the short "Модуль: ..." label consistently.
+      catMap.set(
+        groupKey,
+        isModuleStandalone ? "module" : (d.products_v2?.category ?? null)
+      );
     }
-    map.get(key)!.push(d);
+    map.get(groupKey)!.push(d);
   }
 
   const groups: DealsGroup[] = [];
