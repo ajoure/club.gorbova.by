@@ -179,6 +179,35 @@ export async function resolveCanonicalPayload(
   const registryByKey = new Map<string, any>();
   for (const r of (registryRows || [])) registryByKey.set(r.token_key, r);
 
+  // 3b. Token aliases (global + scoped to this template/version)
+  // alias_token (как написано в DOCX) → canonical_token_key (registry)
+  const aliasMap = new Map<string, string>();
+  const aliasScopes: any[] = [];
+  try {
+    let q = supabase.from('document_token_aliases')
+      .select('alias_token, canonical_token_key, template_id, template_version_id')
+      .or(`template_id.is.null,template_id.eq.${tpl.id}`);
+    const { data: aliasRows } = await q;
+    for (const a of (aliasRows || [])) {
+      // version-specific overrides template-specific overrides global
+      // we accumulate, then resolve precedence
+      aliasScopes.push(a);
+    }
+    // precedence: version > template > global
+    const byAlias = new Map<string, any>();
+    for (const a of aliasScopes) {
+      const existing = byAlias.get(a.alias_token);
+      const score = (a.template_version_id ? 4 : 0) + (a.template_id ? 2 : 0);
+      const existingScore = existing ? ((existing.template_version_id ? 4 : 0) + (existing.template_id ? 2 : 0)) : -1;
+      if (!existing || score > existingScore) byAlias.set(a.alias_token, a);
+    }
+    for (const [k, v] of byAlias) {
+      // skip version-scoped aliases that don't match current version
+      if (v.template_version_id && v.template_version_id !== (version?.id || null)) continue;
+      if (registryByKey.has(v.canonical_token_key)) aliasMap.set(k, v.canonical_token_key);
+    }
+  } catch (_e) { /* aliases table optional */ }
+
   // 4. Executor
   let executor: any = null;
   if (input.executor_id) {
