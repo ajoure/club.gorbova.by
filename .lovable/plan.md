@@ -1,166 +1,179 @@
-## Да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-```text
-Дополнить план обязательными правками:
+1. В шаге 1 исправить термин:
+  - не `grant_target_type='training_module'`;
+  - правильно проверять `access_rules.grant_target_type='training_content'`.
+2. В proof обязательно разделить **3 разных уровня видимости**:
+  - `entitlement exists` — доступ как право;
+  - `training_content resolver visible` — продукт/модуль должен появиться в библиотеке;
+  - `UI filter visible` — реально отображается при текущем фильтре «Незавершённые».
+3. По ПВТ и Строительству отдельно проверить не только `access_rules`, но и наличие `training_modules`:
+  - есть ли root/module `training_modules.product_id = product_id`;
+  - есть ли уроки/visible lessons;
+  - не скрывает ли карточку `computeVisibleRecursiveLessonCount = 0`.
+4. Для каждого продукта добавить итоговую классификацию:
+  - `VISIBLE_BY_ACCESS`;
+  - `HIDDEN_BY_RESOLVER`;
+  - `HIDDEN_BY_NO_LESSONS`;
+  - `HIDDEN_BY_UI_FILTER`;
+  - `NOT_TRAINING_PRODUCT`.
+5. Для Gorbova Club и ZG явно указать:
+  - это training-продукт или нет;
+  - должен ли он вообще появляться в «Моя библиотека»;
+  - если нет — не считать это багом access-resolver.
+6. По `historical_module_product_ids=[]` не делать вывод заранее, что именно это ломает ПВТ/Строительство. В proof сначала доказать:
+  - есть ли DB-rule;
+  - какой rule_source выбирает resolver;
+  - есть ли visible lessons;
+  - только после этого фиксировать root cause.
+7. В audit_logs искать не только по `entity_id`, но и по meta:
 
-1. В новых артефактах запрещено использовать не только старый product code, но и любые производные от него:
-   - в именах файлов;
-   - в заголовках;
-   - в комментариях;
-   - в proof-тексте;
-   - в memory;
-   - в migration description;
-   - в audit meta;
-   - в console/log labels.
-
-2. В текущем repair использовать только:
-   - product_id;
-   - product_name;
-   - training_module_id;
-   - entitlement_id;
-   - tariff_id.
-
-3. В dry-run proof полностью удалить разделы, где старый product code классифицируется как “допустимый”. Такой категории больше нет.
-
-4. В backlog-файле по legacy-долгу также не использовать запрещённый product code в названии файла. Название заменить на:
-   `.lovable/backlog/remove_legacy_product_code_mentions_2026_05.md`
-
-5. В memory rule не приводить пример запрещённого кода. Формулировка должна быть общей:
-   “Запрещено использовать внутренние product code/slug как технический или текстовый идентификатор...”
-
-6. Перед Execute обязательно показать grep-gate:
-   - по dry-run proof;
-   - по execute proof;
-   - по новым/изменённым файлам текущего patch;
-   - результат должен быть 0 совпадений.
-
-7. Исторические совпадения не редактировать в этом Execute, но вынести отдельным legacy debt без выполнения.
-
-8. Repair-фильтр должен быть строго:
-   `product_id IN (...)`
-   плюс
-   `meta->>'scope_resolution_mode' = 'module_scope_only'`
-   Никаких условий по code/name/slug.
-
-9. После Execute в proof писать только:
-   - product_id;
-   - product_name;
-   - old historical_module_product_ids;
-   - new training_module_id;
-   - entitlement_id;
-   - audit id.
+```sql
+meta->>'order_id'
+meta->>'entitlement_id'
+meta->>'product_id'
+meta->>'tariff_id'
+target_user_id
 ```
 
-После внесения этих правок план можно выполнять.
+8. В proof добавить отдельный блок **«не выполнялось»**:
+  - no UPDATE / INSERT / DELETE;
+  - no grant/revoke/replay;
+  - no resolver/writer/UI changes;
+  - no entitlement repair.
+9. В рекомендации следующей задачи не предлагать сразу data-fix. Сначала разделить:
+  - если проблема writer — отдельный patch `grant-access-for-order admin_grant meta.tariff_id`;
+  - если проблема resolver — отдельный patch `training_content resolver product/module visibility`;
+  - если проблема UI-фильтра — отдельный patch по фильтрам библиотеки;
+  - если проблема отсутствия уроков — content/data task, не access task.
+10. Названия разделов и артефактов оставить без внутренних product code/slug. Только:
+
+- `product_id`;
+- `product_name`;
+- `tariff_id`;
+- `entitlement_id`;
+- `training_module_id`.
+
+Итоговый approve: можно выполнять **read-only диагностику** и создать `.lovable/proofs/finassist_access_resolver_diagnostic_2026_05.md`.
 
 &nbsp;
 
-План: PATCH 10 (жёсткая редакция) — полный запрет `cb20`/`CB20` в новых артефактах
+Диагностика: [finassist.by@gmail.com](mailto:finassist.by@gmail.com) — orders ≠ access ≠ training
 
-### Цель
+**Скоуп:** только proof-диагностика. Никаких write. Если нужны исправления — отдельная задача с approve.
 
-Убрать `cb20` / `CB20` из всех **новых и изменяемых** артефактов: proof, memory, планы, миграции, функции, комментарии, UI-описания. Допустимое отображаемое имя продукта — только `Ценный бухгалтер | 1 ступень 2.0`. Технические ссылки — только UUID.
-
-### Канонические ключи
-
-- `product_id` = `7101ed3c-7839-4a74-ad95-aa0660369b22`
-- `product_name` = `"Ценный бухгалтер | 1 ступень 2.0"` (только как отображаемое имя)
-- `training_module_id`, `tariff_id`, `entitlement_id`
-
-`cb20` / `CB20` запрещены даже как label, комментарий или текст.
+**Цель:** объяснить, почему не все купленные продукты появляются в «Моя библиотека», и где именно ломается цепочка `orders_v2 → grant-access-for-order → entitlements → training-content-resolver → UI`.
 
 ---
 
-### Шаг 1. Перепись `module_scope_ids_repair_dryrun_2026_05.md`
+### Что уже известно (из БД, без правок)
 
-- Удалить все `cb20` / `CB20` из текста (включая разделы 0, 2, 8, 10).
-- Раздел «допустимые совпадения cb20» — **удалить целиком** (допустимых нет).
-- Все технические ссылки → `product_id=<UUID>` (+ опционально `product_name="<label>"` для читаемости).
-- Заголовки таблиц переименовать: вместо «top-level module title» → `product_id | product_name | training_module_id | affected_count`.
-- Раздел 8 «NOT in this batch» переписать без упоминания `cb20`/`CB20` — оставить только `product_id=7101ed3c…` (20 ent — отдельный approve).
+`user_id = a832c11e-1715-4646-bfcb-859fff931a0e`
 
-### Шаг 2. Перепись имён артефактов
+**orders_v2 (paid, релевантные):**
 
 
-| Сущность        | Имя                                                           |
-| --------------- | ------------------------------------------------------------- |
-| Inline миграция | `module_scope_ids_repair_2026_05`                             |
-| Audit action    | `training_content.module_scope_ids_repaired`                  |
-| Backup          | `.lovable/proofs/module_scope_ids_repair_backup_2026_05.json` |
-| Execute proof   | `.lovable/proofs/module_scope_ids_repair_execute_2026_05.md`  |
+| order_number     | product_id | product_name                | tariff_id  | source      |
+| ---------------- | ---------- | --------------------------- | ---------- | ----------- |
+| GIFT-26-MOSCKHKU | `ea98d043` | Учет у ИП                   | `5d6b73f3` | admin_grant |
+| GIFT-26-MOSCJXYW | `f833c846` | Строительство               | `cbc9a3a2` | admin_grant |
+| GIFT-26-MOSCJLRV | `abee24cd` | Розничная торговля          | `0f5183d8` | admin_grant |
+| GIFT-26-MOSCJ3ZB | `064dd768` | Производство                | `c12acda3` | admin_grant |
+| GIFT-26-MOSCIYVC | `99f1f156` | ПВТ                         | `7f69656c` | admin_grant |
+| GIFT-26-MOSCIKFF | `9187db54` | Общепит                     | `c31bf65f` | admin_grant |
+| GIFT-26-MOSCIB2B | `64d9f812` | Грузо/пасс. перевозки       | `2c84e74c` | admin_grant |
+| GC-3811270       | `7101ed3c` | ЦБ | 1 ступень 2.0 (parent) | `9bc81736` | (legacy)    |
+| SUB-* (×4)       | `11c9f1b8` | Gorbova Club                | `7c748940` | bepaid      |
+| MIG-ZG-ROW-150   | `73c29914` | (ZG)                        | `56c35e86` | migration   |
 
 
-Без `cb20` нигде.
+**entitlements (12, все active):**
 
-### Шаг 3. Pre-execute grep gate
 
-Команда:
+| product                  | mode              | tariff_id (в meta) | hist_ids       | repaired     |
+| ------------------------ | ----------------- | ------------------ | -------------- | ------------ |
+| `7101ed3c` ЦБ parent     | full              | `9bc81736`         | `[d7effaf4]` ⚠ | —            |
+| `d7effaf4` Маркетплейсы  | module_scope_only | —                  | `[4c97d21c]`   | ✅ 2026-05-06 |
+| `99f1f156` ПВТ           | full              | `7f69656c`         | `[]`           | —            |
+| `f833c846` Строительство | full              | `cbc9a3a2`         | `[]`           | —            |
+| `ea98d043` Учет у ИП     | full              | `5d6b73f3`         | —              | —            |
+| `064dd768` Производство  | full              | **NULL** ⚠         | **NULL** ⚠     | —            |
+| `64d9f812` Грузо         | full              | **NULL** ⚠         | **NULL** ⚠     | —            |
+| `9187db54` Общепит       | full              | **NULL** ⚠         | **NULL** ⚠     | —            |
+| `abee24cd` Розница       | full              | **NULL** ⚠         | **NULL** ⚠     | —            |
+| `4fc18564` Подоходный    | full              | —                  | `[]`           | —            |
+| `c153c811` Деньги BY     | (null mode)       | —                  | —              | —            |
+| `11c9f1b8` Gorbova Club  | (null mode)       | —                  | —              | —            |
 
-```
-rg -n "cb20|CB20" .lovable/proofs/module_scope_ids_repair_dryrun_2026_05.md
-rg -n "cb20|CB20" .lovable/proofs/module_scope_ids_repair_execute_2026_05.md  # после Execute
-rg -n "cb20|CB20" <все новые/изменённые файлы этого PATCH-а>
-```
 
-**Ожидание: 0 совпадений в каждом.**
+**На скриншоте «Моя библиотека» (9 видимых строк):** Деньги BY, Подоходный, ЦБ parent, Грузо, Маркетплейсы, Общепит, Производство, Розница, Учёт у ИП. **Нет:** ПВТ (`99f1f156`), Строительство (`f833c846`), Gorbova Club как карточки тренинга, ZG (`73c29914`).
 
-Полный repo-скан `rg -n "cb20|CB20" src supabase .lovable` остаётся диагностическим: совпадения допускаются ТОЛЬКО в:
+---
 
-- исторических миграциях (`supabase/migrations/2026013*`, `2026010*`, `2026033*`, `2026040*`, `2026011*`),
-- legacy функциях (`repair-cb20-entitlements`, `admin-entitlement-backfill-v23`, `course-prereg-notify`, `split-multi-module-orders`),
-- legacy hooks-комментариях (`useTrainingContentRules.ts`, `useSidebarModules.ts`, `_shared/entitlement-sync.ts`, `_shared/access-resolver.ts`),
-- `src/lib/product-names.ts` (UI-mapping legacy slug),
-- `src/components/course/PreregistrationDialog.tsx` (другой продукт — предзапись),
-- исторических proof-файлах (`cb20_manual_grant_tariff_repair_2026_05.md`, `training_content_resolver_cb20_tatiana_2026_05.md`, `training_content_business_full_fix.md`, `access_rules_meta_backfill_a1.md`, `access_rules_full_dod_proof.md`, `.lovable/plan.md`).
+### Сразу видимые аномалии (требуют доказательной верификации)
 
-Все эти совпадения помечаются `legacy_existing_debt` и **не трогаются** в текущем Execute.
+**A. 4 admin_grant entitlements потеряли `meta.tariff_id`.**
+Производство / Грузо / Общепит / Розница — `mode=full_tariff_scope`, но `meta.tariff_id IS NULL`. По правилу `Training Content Resolver Rules` это попадает под P4.5 `admin_grant_full_fallback`. Они на скриншоте видны → P4.5 фактически срабатывает.
 
-### Шаг 4. Backlog
+**B. ПВТ (`99f1f156`) и Строительство (`f833c846`) НЕ видны.**
+У них `tariff_id` есть, но `historical_module_product_ids=[]` (пустой массив). Это, вероятно, ломает P1/P2 матч: резолвер ищет `tariff_id` в `access_rules`, а если правил нет — падает в `rule_unresolved` (default-deny). При этом 4 модуля без tariff_id проходят через P4.5 — поэтому они видны, а ПВТ/Строительство — нет.
 
-Создать отдельный backlog-кандидат (не выполнять):
+**C. ЦБ parent `7101ed3c` имеет `historical_module_product_ids=[d7effaf4]`.**
+Это кросс-ссылка с дочерним продуктом Маркетплейсы. Семантически странно (родитель ссылается на один из модулей). Не блокер, но требует комментария в proof.
 
-- `.lovable/backlog/remove_legacy_product_code_mentions_2026_05.md` — план поэтапного удаления `cb20`/`CB20` из legacy кода/комментариев/имён функций. Требует отдельного approve, в текущем repair не реализуется.
+**D. Сделок 8 свежих (7 GIFT + ЦБ parent), entitlements для них существуют, но 4 — без `meta.tariff_id`.**
+Гипотеза: `grant-access-for-order` для GIFT-orders писал entitlement, но не пробросил `tariff_id` в `meta` (или эти 4 entitlements созданы старым writer'ом до правки P4.5). Проверяется по `entitlements.created_at` vs `orders_v2.created_at`.
 
-### Шаг 5. Memory rule
+---
 
-Создать `mem://architecture/standard/no-product-code-in-new-artifacts` с текстом:
+### Шаги диагностики (read-only)
 
-> Запрещено использовать внутренние product code/slug вроде `cb20` как технический или текстовый идентификатор. В новых планах, proof, memory, runtime-коде, миграциях и комментариях используются только `product_id`, `tariff_id`, `training_module_id`, `entitlement_id` и отображаемое `product_name`. Исторические артефакты помечаются `legacy_existing_debt` и не редактируются ad-hoc.
+1. **Сводка orders ↔ entitlements ↔ rules.**
+  Для каждого продукта: order_id, order tariff_id, entitlement tariff_id, наличие `access_rules` для (product_id, tariff_id) с `grant_target_type='training_module'`.
+2. **Поднять `useTrainingContentRules` / `access-resolver` (read code).**
+  Зафиксировать, какой приоритет (P1..P4.5..P5) даёт visibility для каждого из 12 entitlements. Без правок.
+3. **Runtime resolver-симуляция.**
+  Для каждого entitlement запустить SQL-симуляцию резолвера (или edge call read-only) и записать `rule_source`, `matched_rule_id`, `allowed_module_count`. Сверить с UI-наблюдением «9 видимых».
+4. **Свериться, что entitlements 4 модулей (064dd768/64d9f812/9187db54/abee24cd) реально пришли через `grant-access-for-order` от admin_grant orders.**
+  Проверка `entitlements.created_at` ≈ `orders_v2.created_at` + аудит `audit_logs` (action='access_granted' или аналог) с order_id 7 GIFT-сделок.
+5. **Аудит `audit_logs` за 2026-05-05 08:07–08:09** для этого user_id: какие writer-вызовы реально были, какие `meta` они писали, есть ли `skip_extend_tariff_mismatch`, `recurring_snapshot_fallback_used`, `admin_grant_full_fallback`.
+6. **Тестовый кейс P4.5.**
+  Подтвердить (без write), что для `entitlement` без `tariff_id` и без `historical_module_product_ids` resolver выдаёт full visibility у соответствующего тренинга. Если выдаёт — почему 4 видны, а ПВТ/Строительство (которые наоборот, имеют tariff_id) — нет.
 
-В `mem://index.md` → секция Core, одной строкой.
+---
 
-### Шаг 6. Обновлённый DoD
+### Артефакт
 
-- `module_scope_ids_repair_dryrun_2026_05.md` переписан, `rg cb20|CB20` по нему = 0
-- `module_scope_ids_repair_execute_2026_05.md` создан, `rg cb20|CB20` по нему = 0
-- inline миграция, audit, backup-имена не содержат `cb20`
-- memory rule `no-product-code-in-new-artifacts` создан и в Core
-- backlog `remove_legacy_product_code_mentions_2026_05` зафиксирован (без выполнения)
-- writers (grant-access-for-order, retroapply, rule_engine, subscription writers) не тронуты
-- repair фильтр: `product_id IN (<6 UUIDs>) AND meta->>'scope_resolution_mode'='module_scope_only'` — без code-условий
-- post-execute: целевые 6 продуктов появляются в библиотеке у затронутых пользователей; `module_scope_only` сохранён; full-доступ не выдан
+Один proof-файл:
 
-### Шаг 7. Gate перед Execute
+`.lovable/proofs/finassist_access_resolver_diagnostic_2026_05.md`
 
-Execute не запускается, пока:
+Содержит:
 
-1. dry-run переписан и проверен grep-ом (0 совпадений в новых артефактах);
-2. backlog для legacy создан;
-3. этот обновлённый план получил отдельный approve.
+1. Таблицу orders_v2 (полную, по uuid).
+2. Таблицу entitlements (полную).
+3. Mapping order ↔ entitlement (по product_id+tariff_id; пометка `MISSING tariff_id in entitlement`).
+4. Для каждого entitlement — результат resolver-симуляции: `rule_source`, `matched_rule_id`, `allowed_module_count`, `expected_visible: yes/no`.
+5. Таблицу «UI ожидает vs UI показывает» (по 9 видимым на скриншоте + что не показано).
+6. Список конкретных гипотез root cause:
+  - H1: `grant-access-for-order` теряет `meta.tariff_id` для admin_grant orders (для 4 модулей).
+  - H2: P1/P2 в `useTrainingContentRules` падает в `rule_unresolved`, когда `historical_module_product_ids=[]` и нет `access_rules` под (product_id, tariff_id) → ПВТ/Строительство default-deny.
+  - H3: Какая-то часть карточек скрыта frontend-фильтром «Незавершённые» (на скриншоте этот фильтр включён) — это **не** проблема access, а UI-фильтра. Проверить unfiltered.
+7. **Ничего не предлагается фиксить в этом proof.** Только classification гипотез + рекомендация: какую из них чинить отдельной задачей и какой канонический writer/code path трогать.
 
-### Порядок исполнения после approve
+---
 
-1. Перепись dry-run (Шаг 1) → grep gate.
-2. Создание backlog (Шаг 4).
-3. Запрос финального approve на Execute.
-4. Execute миграции + backup + audit.
-5. Создание execute-proof + memory rule + index update.
-6. Post-execute grep gate + verify видимости в UI.
+### Технические детали
 
-### Что НЕ делается этим планом
+- Все запросы — `supabase--read_query` + `code--view` для resolver-кода.
+- `audit_logs` смотрим по `entity_id IN (order_ids)` и по `actor_id = user_id`.
+- Если потребуется resolver runtime — `supabase--curl_edge_functions` на read-only edge (если такой есть; иначе только SQL-симуляция).
+- Используем только UUID + `product_name` (правило `no-product-code-in-new-artifacts`).
 
-- Не редактируются исторические proof-файлы (`cb20_manual_grant_tariff_repair_2026_05.md`, `training_content_resolver_cb20_tatiana_2026_05.md`, `.lovable/plan.md`, и др.).
-- Не переименовывается `repair-cb20-entitlements` edge-функция.
-- Не изменяется `src/lib/product-names.ts`, `PreregistrationDialog.tsx`, `course-prereg-notify`.
-- Не трогается `7101ed3c…` (`module_scope_only` на product-main, 20 ent) — отдельный approve.
-- Не патчатся writers и retroapply.
+### DoD
+
+- proof-файл создан, содержит 7 разделов выше.
+- В proof нет запрещённых product code/slug (`rg` gate exit=1).
+- Чёткий список из ≤3 ранжированных root-cause гипотез с указанием конкретных entitlement_id / order_id, на которые ссылаемся.
+- Рекомендация по следующей задаче (какой fix, на какой write-path), но **без выполнения**.
+- Никаких write в БД, никаких правок resolver/writers/UI в этой задаче.
