@@ -920,6 +920,24 @@ Deno.serve(async (req) => {
         id: existingEntitlement.id,
       };
 
+      // Audit: tariff_id persisted (writer-fix 2026-05) — only when first set or actually changed
+      if (tariffId && (prevMeta as Record<string, unknown>)?.tariff_id !== tariffId) {
+        await supabase.from("audit_logs").insert({
+          action: "entitlement.tariff_id_persisted",
+          actor_type: "system",
+          actor_label: "grant-access-for-order",
+          target_user_id: userId,
+          meta: {
+            order_id: orderId,
+            entitlement_id: existingEntitlement.id,
+            product_id: productId,
+            tariff_id: tariffId,
+            previous_tariff_id: (prevMeta as Record<string, unknown>)?.tariff_id ?? null,
+            branch: "update",
+          },
+        });
+      }
+
       // Audit legacy backfill explicitly
       if (legacyBackfillNeeded) {
         await supabase.from("audit_logs").insert({
