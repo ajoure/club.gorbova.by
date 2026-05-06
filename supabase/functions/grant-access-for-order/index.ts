@@ -1888,11 +1888,34 @@ Deno.serve(async (req) => {
     }
   }
 
+    // ──────────────────────────────────────────────────────────────────────
+    // Sprint 3/4: canonical-document-payment-hook (fire-and-forget, fail-soft)
+    // Двойной флаг внутри hook'а гарантирует no-op при выключенных настройках.
+    // НИКОГДА не throw'ит наружу — оплата/доступ не должны ломаться.
+    // ──────────────────────────────────────────────────────────────────────
+    try {
+      const supabaseUrl = Deno.env.get('SUPABASE_URL');
+      const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+      if (supabaseUrl && serviceKey && orderId) {
+        // Не await'им результат — fire-and-forget. Hook сам всегда возвращает 200.
+        fetch(`${supabaseUrl}/functions/v1/canonical-document-payment-hook`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${serviceKey}`,
+          },
+          body: JSON.stringify({ order_id: orderId }),
+        }).catch((e) => console.warn('[grant-access-for-order] canonical-doc-hook fire-and-forget error:', e?.message || e));
+      }
+    } catch (hookErr) {
+      console.warn('[grant-access-for-order] canonical-doc-hook scheduling error (ignored):', hookErr);
+    }
+
     return new Response(
-      JSON.stringify({ 
-        success: true, 
+      JSON.stringify({
+        success: true,
         message: "Доступы успешно выданы",
-        results 
+        results
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
