@@ -1,185 +1,156 @@
-Да, согласен, с учетом правок:
+## Да, согласен, с учетом правок:
 
-1. **UI-фикс выполнить первым**, но только если он действительно presentation-only.  
-Обязательный guard: перед правкой подтвердить, что группировка сейчас идёт не по `product_id`, а по имени/префиксу/родительскому имени. Если уже по `product_id`, сначала остановиться и дать новый диагноз.
-2. **PATCH 1 dry-run — не смешивать с execute.**  
-На первом проходе только:
-  - cohort;
-  - buckets;
-  - source priority;
-  - список `safe_to_fix`;
-  - список `manual_review`;
-  - список `skip_*`;
-  - никаких UPDATE.
-3. `skip_scope_limited` **оставить жёстким.**  
-`module_scope_only`, `no_scope`, `union_scope` не чинить автоматически, даже если найден один `tariff_id`. Они могут менять смысл доступа.
-4. **Для** `safe_to_fix` **добавить обязательный стоп-гард:**
-  - один `entitlement_id`;
-  - один доказуемый `tariff_id`;
-  - один источник;
-  - нет конфликта между `orders_v2`, `subscriptions_v2`, `access_rules`, `audit_logs`;
-  - если конфликт — только `manual_review`.
-5. **PATCH 2 диагностику GIFT/admin_grant делать до execute PATCH 1**, чтобы не замазать первопричину.  
-Правильный порядок:
-  - UI-фикс;
-  - PATCH 2 read-only диагностика writer-path;
-  - PATCH 1 dry-run;
-  - approve;
-  - PATCH 1 execute;
-  - verify.
-6. **В PATCH 2 обязательно отделить два случая:**
-  - `orders_v2.tariff_id IS NULL` → проблема upstream при создании GIFT-order;
-  - `orders_v2.tariff_id IS NOT NULL`, но `entitlements.meta.tariff_id IS NULL` → проблема writer’а.
-7. **Grep gate по новым артефактам обязателен.**  
-В новых proof/plan/memory/audit labels не использовать legacy product code/slug. Только UUID + `product_name`.
-8. **UI-verify по Екатерине Иванченко:**  
-Проверить не только родитель/модуль, но и что старые сделки не попадают в чужие карточки из-за prefix-группировки.
+1. **Фильтр сделок**
+  - В карточке контакта показывать не только `paid`, но и `partial`, `pending`, `cancelled`, `refunded`.
+  - Сделка `PAY-26-MOTYSAZL` должна отображаться у Шуляк Дианы.
+2. **Битый entitlement**
+  - Удалить только конкретный некорректный entitlement с `expires_at IS NULL`.
+  - Перед удалением сделать backup строки в proof/audit.
+  - После удаления перевыдать доступ только через `grant-access-for-order`.
+3. **Дата доступа**
+  - Для этого кейса дата покупки = дата первого платежа.
+  - Не строить сейчас полноценную систему рассрочек.
+4. **EditDealDialog**
+  - Полностью убрать прямую запись в `entitlements` через `insert/update/upsert`.
+  - Все выдачи доступа после изменения сделки должны идти через canonical writer `grant-access-for-order`.
+5. **Audit**
+  - Должны быть audit-записи:
+    - удаление битого entitlement;
+    - canonical вызов/результат `grant-access-for-order`;
+    - подтверждение, что новый entitlement создан с корректным `expires_at`.
+6. **Scope guard**
+  - Не трогать `payments_v2`, `subscriptions_v2`, refund logic, Telegram access, retroapply/rule_engine, bePaid sync.
+  - Не добавлять систему рассрочек.
+  - Только UI-фильтр, удаление конкретного битого доступа, canonical re-grant, замена writer-path в `EditDealDialog`.
+7. **DoD**
+  - `PAY-26-MOTYSAZL` видна в карточке контакта.
+  - Некорректного entitlement с `expires_at IS NULL` больше нет.
+  - Новый доступ создан через `grant-access-for-order`.
+  - В `EditDealDialog` нет прямого `from('entitlements')`.
+  - Audit/proof подтверждают все действия.
+  - &nbsp;
+  - Контекст
 
-Итоговый порядок после правок:
+Кейс Шуляк Диана (`profile_id=0784a581-…`, `user_id=80afcb07-…`):
 
-```text
-1. UI-фикс группировки сделок по product_id.
-2. PATCH 2 — read-only диагностика GIFT/admin_grant writer-path.
-3. PATCH 1 — dry-run backfill meta.tariff_id.
-4. Отдельный approve safe_to_fix.
-5. PATCH 1 execute только по safe_to_fix.
-6. Verify + proof.
+- Сделка `PAY-26-MOTYSAZL` (`d5aca9de-4541-4666-b39a-b16fcfadf671`) — рассрочка по продукту «ЗАКРОЙ ГОД» (`73c29914-…`), `final_price=1035`, `paid_amount=345`, `status=partial`. К ней корректно привязаны 3 платежа bePaid по 345 BYN.
+- Текущий entitlement `d7081960-…` — `product_id=73c29914-…`, `expires_at=NULL`, `meta.source='admin_edit'` — «битый доступ».
+- В UI карточки контакта сделка не показывается, потому что фильтр пропускает только `['paid','canceled','refunded']`.
+- Прямой `entitlements.upsert` сделан в `EditDealDialog` (строки 387–402) — нарушение Core «Canonical Write Path».
+
+Систему рассрочек сейчас не строим. Только три точечных PATCH.
+
+## PATCH 1 — UI-фильтр сделок в карточке контакта
+
+Файл: `src/components/admin/ContactDetailSheet.tsx`, запрос `contact-deals` (строки 414–444).
+
+Заменить:
+
+```ts
+.in("status", ['paid', 'canceled', 'refunded'] as const)
 ```
 
-Execute PATCH 1 без отдельного dry-run approve не запускать.
+на:
 
-&nbsp;
+```ts
+.in("status", ['paid', 'partial', 'pending', 'cancelled', 'canceled', 'refunded'] as const)
+```
 
-План:
+Замечания:
 
-# Три задачи (раздельно, не смешивать)
+- Включаем `partial` (рассрочка / частичная оплата — реальные деньги, должны быть видны).
+- Включаем `pending` (заявка ждёт оплаты — админу нужно видеть).
+- Включаем оба написания `cancelled` и `canceled` — в схеме исторически встречаются оба, не теряем легаси.
+- `failed` / `draft` / `expired` остаются скрыты — это не сделки.
 
-## PATCH 1 — Backfill `meta.tariff_id` у active entitlements
+DoD: сделка `PAY-26-MOTYSAZL` появляется в карточке Шуляк Дианы под группой «ЗАКРОЙ ГОД» с бейджем «Частично».
 
-**Scope:** только `entitlements.meta` (read+write на одно поле) + `audit_logs`. Никаких касаний `subscriptions_v2`, `orders_v2`, `payments_v2`, `access_rules`, writers (`grant-access-for-order`, `retroapply`, `rule_engine`).
+## PATCH 2 — удалить битый entitlement и выдать доступ канонически
 
-### Шаг 1 — Diagnose / Dry-run (read-only)
+Шаг 2.1. Удалить мусорную запись миграцией:
 
-1. Найти все active entitlements без `meta.tariff_id`:
-  ```sql
-   SELECT id, user_id, product_id, expires_at,
-          meta->>'scope_resolution_mode' AS scope_mode,
-          source_type, source_rule_id, created_at, meta
-   FROM entitlements
-   WHERE status='active'
-     AND (meta->>'tariff_id') IS NULL
-     AND product_id IS NOT NULL;
-  ```
-2. Для каждой строки определить `tariff_id` через приоритеты:
-  - **P1:** `orders_v2` со связкой `(user_id, product_id)`, `status='paid'` или `source='admin_grant'`, у которых `tariff_id IS NOT NULL`. Если ровно один уникальный `tariff_id` — кандидат.
-  - **P2:** `subscriptions_v2` `(user_id, product_id)`, `status IN ('active','trial','canceled')` — `tariff_id`. Если ровно один — кандидат.
-  - **P3:** `access_rules` где `product_id` совпадает и `tariff_id IS NOT NULL` и применимо к этому entitlement (через `source_rule_id`, если есть).
-  - **P4:** `audit_logs` lineage `grant-access-for-order` по этому `entitlement_id`/`order_id`.
-3. Buckets:
-  - `safe_to_fix` — ровно один доказуемый `tariff_id` из P1/P2/P3/P4 (P1 имеет приоритет).
-  - `manual_review` — несколько разных `tariff_id` из источников.
-  - `skip_no_tariff_source` — никаких источников.
-  - `skip_scope_limited` — `scope_resolution_mode IN ('module_scope_only','no_scope','union_scope')` (backfill может изменить поведение P4.5/scope-логики). Они НЕ обновляются на этом шаге, идут отдельным review.
-4. Артефакт: `.lovable/proofs/entitlement_tariff_id_backfill_dryrun_2026_05.md` с counts по бакетам и полным списком `safe_to_fix` (entitlement_id → tariff_id + источник).
+```sql
+DELETE FROM entitlements
+WHERE id = 'd7081960-0066-463d-8d39-515ff83a47ec'
+  AND user_id = '80afcb07-3d07-40b8-aff7-c17e179e39f5'
+  AND product_id = '73c29914-63a3-4f4f-ac42-9f5287e58696'
+  AND expires_at IS NULL;
+```
 
-### Шаг 2 — Execute (только `safe_to_fix`)
+Перед DELETE — backup-вставка `old_meta` в `_backup_entitlement_delete_byn_2026_05_shulyak` для отката. Audit `entitlement.deleted.broken_admin_edit_no_expires_at` с `actor_type='system'`, target_user_id, причина.
 
-- Backup: `.lovable/proofs/entitlement_tariff_id_backfill_backup_2026_05.json` со всеми `meta` до изменения.
-- Миграция (`supabase--migration`): UPDATE только `meta = jsonb_set(meta, '{tariff_id}', to_jsonb(<uuid>))` + `meta.tariff_id_backfilled_at`, `meta.tariff_id_backfill_source` (P1/P2/P3/P4).
-- Не трогать: `status`, `expires_at`, `scope_resolution_mode`, `product_id`, `user_id`, `source_type`, `source_rule_id`.
-- Audit row на каждую строку:
-  - `action='training_content.entitlement_tariff_id_backfilled'`
-  - `actor_type='system'`
-  - `actor_label='entitlement_tariff_id_backfill_2026_05'`
-  - `meta = { entitlement_id, user_id, product_id, tariff_id, source }`
+Шаг 2.2. Перевыдать доступ через canonical writer одноразовым curl:
 
-### Шаг 3 — Verify
+```
+POST /functions/v1/grant-access-for-order
+{ "order_id": "d5aca9de-4541-4666-b39a-b16fcfadf671", "source": "admin_repair_2026_05_shulyak" }
+```
 
-- Counts active entitlements без `meta.tariff_id` до/после.
-- `audit rows = updated rows`.
-- Sample 5 affected user_id: симуляция `useTrainingContentRules` — карточки не исчезли, `module_scope_only` не превратился во `full`, P4.5 fallback не используется там, где теперь есть `tariff_id`.
-- `manual_review` и `skip_*` перечислены отдельно (не пытаемся фиксить).
-- Артефакт: `.lovable/proofs/entitlement_tariff_id_backfill_execute_2026_05.md`.
+Дата покупки в заказе уже = дате первого платежа (`deal_date = 2025-10-17`), поэтому writer возьмёт корректное окно от тарифа. Никаких ручных дат и прямых апдейтов — только writer.
 
-### DoD PATCH 1
+DoD:
 
-- 4 артефакта: dryrun, backup, execute, verify.
-- `audit_count = updated_count`.
-- Нет writes вне `entitlements.meta` + `audit_logs`.
-- Нет вызовов grant/revoke/retroapply/rule_engine.
-- Grep gate: запрещённые legacy product code/slug = 0 в новых артефактах.
+- В `entitlements` для `user_id=80afcb07-…` и `product_id=73c29914-…` нет записей с `expires_at IS NULL`.
+- Создан корректный entitlement через `grant-access-for-order`, `meta.tariff_id` присутствует, `expires_at` ненулевой.
+- Audit `entitlement.tariff_id_persisted` и стандартный access-grant audit зафиксированы.
 
----
+## PATCH 3 — запретить прямой writer в `EditDealDialog`
 
-## PATCH 2 — Read-only диагностика GIFT / admin_grant writer path
+Файл: `src/components/admin/EditDealDialog.tsx`, ветка `if (newStatus === 'paid' && deal.user_id)` — строки 361–419.
 
-**Scope:** только чтение БД + чтение кода. Никаких write.
+Заменить блок `entitlements.upsert(...)` + локальный audit `entitlement.saved_via_admin_edit` на вызов canonical writer:
 
-### Шаги
+```ts
+if (newStatus === 'paid' && deal.user_id) {
+  // UUID-guard на product_id оставить как есть (361–384).
 
-1. Выгрузить все `orders_v2` где `source='admin_grant' OR order_number LIKE 'GIFT-%'`:
-  `order_id, order_number, user_id, product_id, tariff_id, status, created_at, meta`.
-2. Для каждого ордера join с `entitlements` по `(user_id, product_id)`:
-  `entitlement_id, status, expires_at, meta->>'tariff_id', meta->>'scope_resolution_mode', source_type, source_rule_id, created_at`.
-3. По каждому order — `audit_logs` события:
-  - `grant-access-for-order` (entry/success/skip/failed/fallback);
-  - `recurring_snapshot_*`, `extend_*`, `tariff_mismatch_*`;
-  - какой writer был actor.
-4. Чтение кода:
-  - `supabase/functions/grant-access-for-order/index.ts` (резолв `tariff_id` для admin_grant ветки);
-  - upstream: где создаётся GIFT order (admin UI / RPC) и какие поля передаются в `grant-access-for-order` payload;
-  - entitlement writer внутри `grant-access-for-order` — точное место, где `meta.tariff_id` либо пишется, либо нет.
-5. Корреляция:
-  - admin_grant с `tariff_id IS NULL` в `orders_v2` → entitlement без `meta.tariff_id` (writer корректен, проблема upstream);
-  - admin_grant с `tariff_id IS NOT NULL` → entitlement без `meta.tariff_id` (writer теряет поле — root cause в writer).
-6. Артефакт `.lovable/proofs/gift_admin_grant_entitlement_diagnostic_2026_05.md`:
-  - таблица affected orders;
-  - таблица entitlements без `meta.tariff_id`;
-  - audit timeline по 3-5 примерам;
-  - **точная root-cause гипотеза** (файл:строка);
-  - **отдельный план writer-fix** (без выполнения).
+  const { error: grantError } = await supabase.functions.invoke(
+    'grant-access-for-order',
+    { body: { order_id: deal.id, source: 'admin_edit' } }
+  );
 
-### DoD PATCH 2
+  if (grantError) {
+    console.error('grant-access-for-order failed:', grantError);
+    toast.warning(
+      normalizeEdgeFunctionError(grantError, 'Сделка сохранена, но автоматическая выдача доступа не сработала. Используйте «Выдать доступ» вручную.')
+    );
+  }
+}
+```
 
-- Только proof, без write.
-- Точная root-cause локализация.
-- План фикса writer'а отдельным документом, ждёт approve.
+Что уходит:
 
----
+- `from('entitlements').upsert(...)` — полностью.
+- Локальный audit `entitlement.saved_via_admin_edit` — заменяется server-side audit-цепочкой writer-а (`entitlement.tariff_id_persisted` и др.).
 
-## UI-фикс — модуль скрыл родителя у Екатерины Иванченко
+Что остаётся:
 
-**Симптом (по скриншоту):** в карточке сделок продукт `"Ценный бухгалтер | 1 ступень 2.0 | Модуль: Маркетплейсы"` (модуль) и продукт `"Ценный бухгалтер | 1 ступень 2.0"` (родитель) рендерятся внутри одной карточки — модуль "поглотил" родителя. Это UI-группировка, бизнес-данные раздельные.
+- UUID-guard и audit `entitlement.upsert_blocked_no_product_id` — не про write-path.
+- `deal.deal_date.updated`, `deal.deal_month.updated` — это аудит метаданных сделки, не доступа.
+- Вся subscription-ветка (281–355) — она про `subscriptions_v2`, к entitlements не относится.
 
-### Diagnose
+Smoke-проверка после деплоя:
 
-1. Найти компонент, рендерящий список сделок в правой панели контакт-центра (вероятно `src/components/contacts/...` / `ContactDealsTab` / аналог).
-2. Найти логику группировки сделок по продукту: где сделки склеиваются в одну "коробку" (по `product_id`? по `product_name` startsWith? по `parent_product_id`?).
-3. Подтвердить, что `"...| Модуль: Маркетплейсы"` и `"Ценный бухгалтер | 1 ступень 2.0"` имеют **разные** `product_id` в `orders_v2.product_id` / `purchase_snapshot.product_id` — тогда это чистый UI-баг группировки.
+- `grep -n "from('entitlements').upsert\|from(\"entitlements\").upsert" src/components/admin/EditDealDialog.tsx` → пусто.
+- Перевод тестовой сделки в `paid` через `EditDealDialog` создаёт audit `entitlement.tariff_id_persisted` от writer-а.
+- Telegram-grant и tariff merge срабатывают унифицированно (writer уже это делает).
 
-### Fix
+## Scope guard (что НЕ трогаем)
 
-- Группировка строго по `product_id` (UUID), не по `product_name` / startsWith / common prefix.
-- Каждый `product_id` = отдельная карточка-аккордеон в списке сделок.
-- Сортировка карточек: по последней сделке `created_at desc`.
+- bePaid sync, `payments_v2`, `subscriptions_v2`, refund-логику, retroapply, rule_engine, partial-refund триггер.
+- `CreateDealFromPaymentDialog` (он уже работает корректно через `grant-access-for-order`).
+- Систему рассрочек как фичу — никаких installment-сущностей, графиков, объединения платежей.
+- Никаких массовых backfill «битых» entitlements за пределами Шуляк Дианы (если потребуется — отдельным PATCH с dry-run).
 
-### Verify
+## DoD сводный
 
-- На экране у `finassist.by@gmail.com`: `"Ценный бухгалтер | 1 ступень 2.0"` — отдельная карточка, `"... | Модуль: Маркетплейсы"` — отдельная карточка, `Бизнес-леди` (одна из старых сделок) — внутри своей правильной карточки, не подмешана в Маркетплейсы.
+- `PAY-26-MOTYSAZL` видна в карточке контакта Шуляк Дианы (группа «ЗАКРОЙ ГОД», бейдж «Частично»).
+- Entitlement `d7081960-…` удалён; в `entitlements` нет записей по `(user=80afcb07-…, product=73c29914-…)` с `expires_at IS NULL`.
+- Выполнен canonical вызов `grant-access-for-order` для `d5aca9de-…`, создан корректный entitlement с `meta.tariff_id` и ненулевым `expires_at`.
+- В `src/components/admin/EditDealDialog.tsx` нет `from('entitlements').upsert/insert/update` — только вызов `grant-access-for-order`.
+- В `audit_logs` есть строки: `entitlement.deleted.broken_admin_edit_no_expires_at` и canonical access-grant аудит для `d5aca9de-…`.
+- Никаких изменений в архитектуре рассрочек, bePaid, subscriptions_v2.
 
-### Scope guard
+## Артефакты
 
-- Только presentation-слой (компонент списка сделок).
-- Никаких изменений в `orders_v2`, `entitlements`, writers, resolver.
-
----
-
-## Порядок исполнения и approve gates
-
-1. **UI-фикс модуля** — выполняю сразу после approve плана (минимальный риск, presentation-only).
-2. **PATCH 2 (диагностика)** — выполняю read-only, выдаю proof.
-3. **PATCH 1 шаг 1 (dry-run)** — выдаю proof + список `safe_to_fix`.
-4. **PATCH 1 шаг 2 (execute)** — только после явного approve dry-run.
-5. **PATCH 1 шаг 3 (verify)** — proof.
-
-Каждый шаг с write-действием = отдельный approve. План writer-fix из PATCH 2 — отдельным сообщением, ждёт approve.
+Создать `.lovable/proofs/contact_deals_visibility_and_entitlement_repair_2026_05.md` с: SQL-снимком до/после по сделке и entitlement, ссылкой на миграцию DELETE, выводом curl-вызова `grant-access-for-order`, выписками из `audit_logs`, grep-доказательством отсутствия прямого writer в `EditDealDialog`.
