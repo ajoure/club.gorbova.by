@@ -342,3 +342,18 @@ body.impersonation-active .impersonation-offset {
 .live-events-table-scroll::-webkit-scrollbar-thumb:hover {
   background: hsl(var(--muted-foreground) / 0.6);
 }
+
+/* Canonical Calendar — center month/year native selects */
+.rdp-dropdown,
+.rdp-dropdown_month select,
+.rdp-dropdown_year select {
+  text-align: center;
+  text-align-last: center;
+  -moz-text-align-last: center;
+}
+.rdp-dropdown option {
+  text-align: center;
+}
+.rdp-caption_dropdowns {
+  justify-content: center;
+}
