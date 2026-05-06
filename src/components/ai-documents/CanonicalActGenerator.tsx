@@ -23,6 +23,24 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, FileText, Eye, Download, AlertTriangle, CheckCircle2, Lock } from "lucide-react";
 import { toast } from "sonner";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Info } from "lucide-react";
+import { DocumentsHowItWorks } from "./DocumentsHowItWorks";
+
+function FieldHint({ text }: { text: string }) {
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button type="button" className="inline-flex text-muted-foreground/70 hover:text-muted-foreground">
+            <Info className="h-3.5 w-3.5" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-xs text-xs">{text}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
 
 interface SourceTraceEntry {
   source: string;
@@ -144,7 +162,7 @@ export function CanonicalActGenerator() {
         toast.error(`Не удалось сформировать: ${data?.error || "unknown"}`);
         return;
       }
-      toast.success(`Документ сформирован: ${data.document_number}${data.reused ? " (из кэша)" : ""}`);
+      toast.success(`Документ сформирован: ${data.document_number}${data.reused ? " (загружен из истории)" : ""}`);
       if (data.download_url) {
         const a = document.createElement("a");
         a.href = data.download_url;
@@ -164,16 +182,17 @@ export function CanonicalActGenerator() {
 
   return (
     <div className="space-y-4">
+      <DocumentsHowItWorks />
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <FileText className="h-4 w-4 text-primary" />
-            Канонический генератор актов (Sprint 1 MVP)
+            Акты выполненных работ
             {featureEnabled ? (
-              <Badge variant="outline" className="ml-auto text-emerald-600 border-emerald-300">Feature flag: ON</Badge>
+              <Badge variant="outline" className="ml-auto text-emerald-600 border-emerald-300">Модуль включён</Badge>
             ) : (
               <Badge variant="outline" className="ml-auto text-amber-600 border-amber-300">
-                <Lock className="h-3 w-3 mr-1" /> Feature flag: OFF
+                <Lock className="h-3 w-3 mr-1" /> Модуль выключен
               </Badge>
             )}
           </CardTitle>
@@ -181,7 +200,10 @@ export function CanonicalActGenerator() {
         <CardContent className="space-y-4">
           <div className="grid gap-3 md:grid-cols-2">
             <div className="space-y-1.5">
-              <Label>Шаблон DOCX</Label>
+              <Label className="flex items-center gap-1.5">
+                Шаблон DOCX
+                <FieldHint text="Выберите Word-шаблон, по которому будет создан акт. В шаблоне должны быть плейсхолдеры вида {{customer.name}}, {{deal.amount}} и т.д." />
+              </Label>
               <Select value={templateId} onValueChange={setTemplateId}>
                 <SelectTrigger><SelectValue placeholder="Выберите шаблон" /></SelectTrigger>
                 <SelectContent>
@@ -193,43 +215,64 @@ export function CanonicalActGenerator() {
             </div>
 
             <div className="space-y-1.5">
-              <Label>Контекст</Label>
+              <Label className="flex items-center gap-1.5">
+                Источник данных
+                <FieldHint text="Откуда система возьмёт данные для заполнения документа: из заказа или вручную (по реквизитам клиента)." />
+              </Label>
               <Select value={contextType} onValueChange={(v) => setContextType(v as any)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">Без контекста (ручной)</SelectItem>
-                  <SelectItem value="order">Заказ (orders_v2)</SelectItem>
+                  <SelectItem value="none">Вручную (без заказа)</SelectItem>
+                  <SelectItem value="order">Из заказа</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
             {contextType === "order" && (
               <div className="space-y-1.5">
-                <Label>Order ID</Label>
-                <Input value={contextId} onChange={(e) => setContextId(e.target.value)} placeholder="UUID заказа" />
+                <Label className="flex items-center gap-1.5">
+                  Номер / ID заказа
+                  <FieldHint text="Укажите ID заказа, по которому нужно сформировать акт. Система возьмёт сумму, продукт, тариф и клиента из этого заказа." />
+                </Label>
+                <Input value={contextId} onChange={(e) => setContextId(e.target.value)} placeholder="ID заказа" />
               </div>
             )}
 
             <div className="space-y-1.5">
-              <Label>Customer Legal Details ID (опционально)</Label>
-              <Input value={legalDetailsId} onChange={(e) => setLegalDetailsId(e.target.value)} placeholder="UUID реквизитов" />
+              <Label className="flex items-center gap-1.5">
+                Реквизиты клиента (необязательно)
+                <FieldHint text="Можно указать конкретные реквизиты клиента, если у клиента их несколько." />
+              </Label>
+              <Input value={legalDetailsId} onChange={(e) => setLegalDetailsId(e.target.value)} placeholder="ID реквизитов" />
             </div>
           </div>
 
           <div className="flex gap-2">
-            <Button onClick={handlePreview} disabled={isLoading || !templateId} variant="outline">
-              {isLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Eye className="h-4 w-4 mr-2" />}
-              Предпросмотр данных
-            </Button>
-            <Button onClick={handleGenerate} disabled={!canGenerate || isGenerating}>
-              {isGenerating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Download className="h-4 w-4 mr-2" />}
-              Сформировать DOCX
-            </Button>
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button onClick={handlePreview} disabled={isLoading || !templateId} variant="outline">
+                    {isLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Eye className="h-4 w-4 mr-2" />}
+                    Предпросмотр данных
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent className="text-xs">Проверить, какие данные будут подставлены в документ, без создания файла.</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button onClick={handleGenerate} disabled={!canGenerate || isGenerating}>
+                    {isGenerating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Download className="h-4 w-4 mr-2" />}
+                    Сформировать DOCX
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent className="text-xs">Создать Word-файл акта и сохранить его в истории документов.</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
 
           {!featureEnabled && (
-            <div className="text-xs text-muted-foreground rounded-md bg-amber-50 border border-amber-200 p-2">
-              Генерация выключена feature-flag. Включите <code>documents_canonical_generation_enabled</code> в app_settings.
+            <div className="text-xs text-amber-900 rounded-md bg-amber-50 border border-amber-200 p-3">
+              <b>Новый генератор документов пока выключен.</b> Его можно тестировать в режиме предпросмотра, но создание файлов заблокировано до включения настройки администратором.
             </div>
           )}
         </CardContent>
@@ -242,9 +285,9 @@ export function CanonicalActGenerator() {
               {preview.missing_tokens.length === 0
                 ? <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                 : <AlertTriangle className="h-4 w-4 text-amber-600" />}
-              Резолв токенов
+              Предпросмотр данных
               <Badge variant="outline" className="ml-2">
-                version: {preview.template.version_number ?? "—"}
+                Версия шаблона: {preview.template.version_number ?? "—"}
               </Badge>
             </CardTitle>
           </CardHeader>
@@ -252,7 +295,7 @@ export function CanonicalActGenerator() {
             {preview.missing_tokens.length > 0 && (
               <div className="rounded-md bg-amber-50 border border-amber-200 p-3 text-sm space-y-2">
                 <div className="font-medium text-amber-800">
-                  Не хватает обязательных токенов ({preview.missing_tokens.length}). Документ нельзя сформировать.
+                  Не заполнены обязательные поля ({preview.missing_tokens.length}). Документ нельзя сформировать, пока их не заполнить.
                 </div>
                 <ul className="space-y-1">
                   {preview.missing_tokens.map((t) => {
@@ -272,7 +315,7 @@ export function CanonicalActGenerator() {
             {preview.unmapped_template_tokens.length > 0 && (
               <div className="rounded-md bg-slate-50 border border-slate-200 p-3 text-sm space-y-2">
                 <div className="font-medium text-slate-800">
-                  Токены DOCX без маппинга ({preview.unmapped_template_tokens.length}). Будут пустыми. Сопоставьте их с реестром или замените в файле.
+                  В шаблоне есть несопоставленные плейсхолдеры ({preview.unmapped_template_tokens.length}). Они будут пустыми в документе. Сопоставьте их с полями системы на вкладке «Связи плейсхолдеров» или замените в файле.
                 </div>
                 <div className="flex flex-wrap gap-1">
                   {preview.unmapped_template_tokens.map((t) => {
@@ -328,9 +371,9 @@ export function CanonicalActGenerator() {
                               {v ? (
                                 <span>{v}</span>
                               ) : isUnmapped ? (
-                                <span className="text-slate-500 italic">unmapped — нет в реестре</span>
+                                <span className="text-slate-500 italic">не сопоставлен — нет в реестре полей</span>
                               ) : isMissing ? (
-                                <span className="text-amber-700 italic">обязательное — пусто</span>
+                                <span className="text-amber-700 italic">обязательное поле — не заполнено</span>
                               ) : (
                                 <span className="text-muted-foreground italic">пусто</span>
                               )}

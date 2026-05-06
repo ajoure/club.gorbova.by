@@ -44,6 +44,12 @@ const SCOPE_BADGE: Record<string, string> = {
   version: "border-amber-300 text-amber-700",
 };
 
+const SCOPE_LABEL: Record<string, string> = {
+  global: "Во всех шаблонах",
+  template: "Только в этом шаблоне",
+  version: "Только в этой версии",
+};
+
 export function AliasesTab() {
   const qc = useQueryClient();
   const [filterAlias, setFilterAlias] = useState("");
@@ -95,7 +101,7 @@ export function AliasesTab() {
         actor_type: "user",
         meta: { alias_id: delTarget.id, alias_token: delTarget.alias_token, canonical_token_key: delTarget.canonical_token_key, scope: scopeOf(delTarget) },
       });
-      toast.success("Alias удалён");
+      toast.success("Связь удалена");
       setDelTarget(null);
       qc.invalidateQueries({ queryKey: ["doc-token-aliases"] });
     } catch (e: any) {
@@ -109,13 +115,13 @@ export function AliasesTab() {
     try {
       const versionId = a.template_version_id;
       const templateId = a.template_id;
-      if (!versionId && !templateId) { toast.error("Global alias — нет версии для перепроверки"); return; }
+      if (!versionId && !templateId) { toast.error("Глобальная связь — выберите конкретную версию для проверки"); return; }
       const { data, error } = await supabase.functions.invoke("canonical-template-validate", {
         body: versionId ? { template_version_id: versionId } : { template_id: templateId },
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
-      toast.success(`Перепроверка: mapped=${data.mapped_count}, unmapped=${data.unmapped_count}`);
+      toast.success(`Проверка завершена: сопоставлено ${data.mapped_count}, не сопоставлено ${data.unmapped_count}`);
     } catch (e: any) {
       toast.error(`Ошибка: ${e?.message || e}`);
     }
@@ -126,29 +132,33 @@ export function AliasesTab() {
       <CardHeader>
         <CardTitle className="text-base flex items-center gap-2">
           <Link2 className="h-4 w-4 text-primary" />
-          Алиасы токенов
+          Связи плейсхолдеров
           <Badge variant="outline" className="ml-2">{rows.length}</Badge>
           <div className="ml-auto flex items-center gap-2">
             <Button size="sm" variant="outline" onClick={() => refetch()}>
-              <RefreshCw className="h-3 w-3 mr-1" /> Обновить
+              <RefreshCw className="h-3 w-3 mr-1" /> Обновить список
             </Button>
             <Button size="sm" onClick={() => setCreateDlg(true)} disabled={!templates.length}>
-              <Plus className="h-3 w-3 mr-1" /> Создать alias
+              <Plus className="h-3 w-3 mr-1" /> Создать связь
             </Button>
           </div>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
+        <div className="text-xs text-muted-foreground rounded-md bg-blue-50/50 border border-blue-200 p-2">
+          Связи плейсхолдеров позволяют использовать в DOCX старые или удобные названия полей и сопоставлять их с правильными полями системы.
+          Например, плейсхолдер <code>{`{{client_name}}`}</code> можно связать с системным полем <code>{`{{customer.name}}`}</code>.
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-          <Input placeholder="Фильтр alias" value={filterAlias} onChange={(e) => setFilterAlias(e.target.value)} />
-          <Input placeholder="Фильтр canonical" value={filterCanonical} onChange={(e) => setFilterCanonical(e.target.value)} />
+          <Input placeholder="Поиск по плейсхолдеру" value={filterAlias} onChange={(e) => setFilterAlias(e.target.value)} />
+          <Input placeholder="Поиск по полю системы" value={filterCanonical} onChange={(e) => setFilterCanonical(e.target.value)} />
           <Select value={filterScope} onValueChange={setFilterScope}>
-            <SelectTrigger><SelectValue placeholder="Scope" /></SelectTrigger>
+            <SelectTrigger><SelectValue placeholder="Где действует" /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="any">Любой scope</SelectItem>
-              <SelectItem value="global">global</SelectItem>
-              <SelectItem value="template">template</SelectItem>
-              <SelectItem value="version">version</SelectItem>
+              <SelectItem value="any">Любая область</SelectItem>
+              <SelectItem value="global">Во всех шаблонах</SelectItem>
+              <SelectItem value="template">Только в этом шаблоне</SelectItem>
+              <SelectItem value="version">Только в этой версии</SelectItem>
             </SelectContent>
           </Select>
           <Select value={filterTemplate} onValueChange={setFilterTemplate}>
@@ -166,12 +176,12 @@ export function AliasesTab() {
           <table className="w-full text-xs">
             <thead className="bg-muted/40">
               <tr className="text-left">
-                <th className="px-2 py-1.5">alias_token</th>
-                <th className="px-2 py-1.5">canonical_token_key</th>
-                <th className="px-2 py-1.5">scope</th>
-                <th className="px-2 py-1.5">template</th>
-                <th className="px-2 py-1.5">version</th>
-                <th className="px-2 py-1.5">created_at</th>
+                <th className="px-2 py-1.5">Плейсхолдер в DOCX</th>
+                <th className="px-2 py-1.5">Поле системы</th>
+                <th className="px-2 py-1.5">Где действует</th>
+                <th className="px-2 py-1.5">Шаблон</th>
+                <th className="px-2 py-1.5">Версия</th>
+                <th className="px-2 py-1.5">Создано</th>
                 <th className="px-2 py-1.5"></th>
               </tr>
             </thead>
@@ -183,16 +193,16 @@ export function AliasesTab() {
                     <td className="px-2 py-1.5 font-mono">{`{{${a.alias_token}}}`}</td>
                     <td className="px-2 py-1.5 font-mono">{a.canonical_token_key}</td>
                     <td className="px-2 py-1.5">
-                      <Badge variant="outline" className={SCOPE_BADGE[sc]}>{sc}</Badge>
+                      <Badge variant="outline" className={SCOPE_BADGE[sc]}>{SCOPE_LABEL[sc]}</Badge>
                     </td>
                     <td className="px-2 py-1.5">{a.template?.name || "—"}</td>
                     <td className="px-2 py-1.5">{a.version?.version_number ? `v${a.version.version_number}` : "—"}</td>
                     <td className="px-2 py-1.5 text-muted-foreground">{new Date(a.created_at).toLocaleString("ru-RU")}</td>
                     <td className="px-2 py-1.5 text-right">
-                      <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => handleRevalidate(a)} title="Перепроверить версию">
+                      <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => handleRevalidate(a)} title="Проверить шаблон снова">
                         <RefreshCw className="h-3 w-3" />
                       </Button>
-                      <Button size="sm" variant="ghost" className="h-6 px-2 text-rose-600" onClick={() => setDelTarget(a)} title="Удалить">
+                      <Button size="sm" variant="ghost" className="h-6 px-2 text-rose-600" onClick={() => setDelTarget(a)} title="Удалить связь">
                         <Trash2 className="h-3 w-3" />
                       </Button>
                     </td>
@@ -200,7 +210,7 @@ export function AliasesTab() {
                 );
               })}
               {!filtered.length && !isFetching && (
-                <tr><td colSpan={7} className="px-2 py-4 text-center text-muted-foreground">Алиасов нет</td></tr>
+                <tr><td colSpan={7} className="px-2 py-4 text-center text-muted-foreground">Связей нет</td></tr>
               )}
             </tbody>
           </table>
@@ -209,9 +219,9 @@ export function AliasesTab() {
         <AlertDialog open={!!delTarget} onOpenChange={(o) => { if (!o) setDelTarget(null); }}>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Удалить alias?</AlertDialogTitle>
+              <AlertDialogTitle>Удалить связь?</AlertDialogTitle>
               <AlertDialogDescription>
-                После удаления токен <code>{`{{${delTarget?.alias_token}}}`}</code> снова станет unmapped в этом шаблоне. Действие будет залогировано.
+                После удаления плейсхолдер <code>{`{{${delTarget?.alias_token}}}`}</code> снова станет несопоставленным в этом шаблоне. Действие будет залогировано.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -225,11 +235,11 @@ export function AliasesTab() {
 
         {createDlg && (
           <div className="border rounded-md p-3 space-y-2 bg-muted/30">
-            <div className="text-xs font-semibold">Новый alias</div>
+            <div className="text-xs font-semibold">Новая связь плейсхолдера</div>
             <div className="grid grid-cols-2 gap-2">
-              <Input placeholder="alias_token (как в DOCX)" value={createToken} onChange={(e) => setCreateToken(e.target.value)} />
+              <Input placeholder="Плейсхолдер из DOCX (без {{ }})" value={createToken} onChange={(e) => setCreateToken(e.target.value)} />
               <Select value={createTemplateId} onValueChange={setCreateTemplateId}>
-                <SelectTrigger><SelectValue placeholder="Шаблон (для scope=template)" /></SelectTrigger>
+                <SelectTrigger><SelectValue placeholder="Шаблон" /></SelectTrigger>
                 <SelectContent>
                   {templates.map((t: any) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
                 </SelectContent>
@@ -237,8 +247,8 @@ export function AliasesTab() {
             </div>
             <div className="flex gap-2">
               <Button size="sm" variant="outline" onClick={() => { setCreateDlg(false); setCreateToken(""); }}>Отмена</Button>
-              <Button size="sm" onClick={() => { /* открывает универсальный диалог сопоставления */ }} disabled={!createToken || !createTemplateId}>
-                Открыть сопоставление
+              <Button size="sm" disabled={!createToken || !createTemplateId}>
+                Связать с полем системы
               </Button>
             </div>
             {createToken && createTemplateId && (
