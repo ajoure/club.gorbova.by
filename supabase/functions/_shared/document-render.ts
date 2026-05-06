@@ -157,13 +157,20 @@ export async function resolveCanonicalPayload(
   const storagePath = version?.storage_path || tpl.template_path;
   if (!storagePath) throw new Error('Template has no storage path');
 
-  // 2. Detect tokens used in DOCX (from version.tokens or live extract)
-  let templateTokens: string[] = Array.isArray(version?.tokens) ? version.tokens : [];
-  if (templateTokens.length === 0) {
+  // 2. Detect tokens used in DOCX (prefer manifest from saved version, else live extract)
+  let templateTokens: string[] = Array.isArray(version?.detected_tokens) && version.detected_tokens.length
+    ? version.detected_tokens.map((t: any) => typeof t === 'string' ? t : t?.token).filter(Boolean)
+    : (Array.isArray(version?.tokens) ? version.tokens : []);
+  let tokenManifest: TokenManifestEntry[] = Array.isArray(version?.token_manifest) && version.token_manifest.length
+    ? version.token_manifest as TokenManifestEntry[]
+    : [];
+  if (templateTokens.length === 0 || tokenManifest.length === 0) {
     const { data: file } = await supabase.storage.from(storageBucket).download(storagePath);
     if (file) {
       const buf = new Uint8Array(await file.arrayBuffer());
-      templateTokens = extractTokensFromBuffer(buf);
+      const ext = extractTokensFromBuffer(buf);
+      if (templateTokens.length === 0) templateTokens = ext.tokens;
+      if (tokenManifest.length === 0) tokenManifest = ext.manifest;
     }
   }
 
