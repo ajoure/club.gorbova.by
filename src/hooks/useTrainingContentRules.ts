@@ -215,8 +215,14 @@ export function useActiveTrainingContentRules() {
           if (!entitlementTariffsByProduct[e.product_id].includes(tid)) {
             entitlementTariffsByProduct[e.product_id].push(tid);
           }
-        } else if (!meta.scope_resolution_mode) {
-          productsWithManualEnt.add(e.product_id);
+        } else {
+          const mode = meta.scope_resolution_mode;
+          // No valid tariff_id, AND either no scope_mode (legacy/manual) OR
+          // scope_mode === 'full_tariff_scope' (declared full access without tariff_id).
+          // Both indicate manual/business product-grant → P4.5 full fallback.
+          if (!mode || mode === 'full_tariff_scope') {
+            productsWithManualEnt.add(e.product_id);
+          }
         }
       });
 
