@@ -459,8 +459,13 @@ export function resolveTrainingContentFilter(
   productId: string | null,
   userTariffIds: string[],
   entitlementTariffsByProduct: Record<string, string[]> = {},
+  productsWithManualEnt: Set<string> | string[] = [],
 ): TrainingContentFilter | null {
   if (!productId || rules.length === 0) return null;
+
+  const manualEntSet = productsWithManualEnt instanceof Set
+    ? productsWithManualEnt
+    : new Set(productsWithManualEnt);
 
   // Find rules targeting this training
   const matchingRules = rules.filter(r => r.target_ref === trainingModuleId && r.is_active);
