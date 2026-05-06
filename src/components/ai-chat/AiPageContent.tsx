@@ -9,6 +9,7 @@ import { PersonsTableView } from "@/components/ai-requisites/PersonsTableView";
 import { PersonRecordSheet } from "@/components/ai-requisites/PersonRecordSheet";
 import { AiDocumentsGenerateView } from "@/components/ai-documents/AiDocumentsGenerateView";
 import { AiDocumentsHistoryView } from "@/components/ai-documents/AiDocumentsHistoryView";
+import { CanonicalActGenerator } from "@/components/ai-documents/CanonicalActGenerator";
 import type { PersonRow } from "@/hooks/useAiPersons";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { cn } from "@/lib/utils";
@@ -53,7 +54,7 @@ const LazyExecutorsContent = lazy(() =>
 /* ─── Конфигурация секций и подменю ─── */
 
 type Section = "ai" | "documents" | "requisites";
-type SubTab = "chat" | "analysis-history" | "tutorials" | "prompts" | "generate" | "history" | "templates" | "executors" | "entities" | "persons";
+type SubTab = "chat" | "analysis-history" | "tutorials" | "prompts" | "generate" | "history" | "templates" | "executors" | "entities" | "persons" | "canonical-acts";
 
 const SECTIONS: { id: Section; label: string; icon: React.ComponentType<{ className?: string }>; adminOnly?: boolean }[] = [
   { id: "ai", label: "Gorbova AI", icon: Bot },
@@ -114,6 +115,16 @@ const AI_SUB_TABS: SubMenuItem[] = [
 ];
 
 const DOC_SUB_TABS: SubMenuItem[] = [
+  {
+    id: "canonical-acts",
+    label: "Акты (canonical)",
+    icon: FileText,
+    gradient: "from-cyan-500/10 to-sky-500/8",
+    activeGradient: "from-cyan-500/20 to-sky-500/15",
+    borderColor: "border-cyan-400/20",
+    iconColor: "text-cyan-600",
+    adminOnly: true,
+  },
   {
     id: "generate",
     label: "Создать документ",
@@ -827,6 +838,11 @@ export function AiPageContent({ mode }: AiPageContentProps) {
       {activeSubTab === "generate" && (
         <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
           <AiDocumentsGenerateView />
+        </div>
+      )}
+      {activeSubTab === "canonical-acts" && (
+        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
+          <CanonicalActGenerator />
         </div>
       )}
       {activeSubTab === "history" && (

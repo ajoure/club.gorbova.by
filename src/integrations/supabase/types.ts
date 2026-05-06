@@ -892,6 +892,8 @@ export type Database = {
       }
       ai_generated_documents: {
         Row: {
+          context_id: string | null
+          context_type: string | null
           created_at: string
           created_by: string | null
           deleted_at: string | null
@@ -901,6 +903,7 @@ export type Database = {
           generation_batch_id: string | null
           generation_error: string | null
           id: string
+          idempotency_key: string | null
           legal_details_id: string | null
           meta: Json
           missing_tokens: Json
@@ -922,12 +925,15 @@ export type Database = {
           template_source_path: string | null
           template_tokens_snapshot: Json | null
           template_version: string | null
+          template_version_id: string | null
           title: string
           token_manifest_snapshot: Json | null
           updated_at: string
           warnings_snapshot: Json | null
         }
         Insert: {
+          context_id?: string | null
+          context_type?: string | null
           created_at?: string
           created_by?: string | null
           deleted_at?: string | null
@@ -937,6 +943,7 @@ export type Database = {
           generation_batch_id?: string | null
           generation_error?: string | null
           id?: string
+          idempotency_key?: string | null
           legal_details_id?: string | null
           meta?: Json
           missing_tokens?: Json
@@ -958,12 +965,15 @@ export type Database = {
           template_source_path?: string | null
           template_tokens_snapshot?: Json | null
           template_version?: string | null
+          template_version_id?: string | null
           title: string
           token_manifest_snapshot?: Json | null
           updated_at?: string
           warnings_snapshot?: Json | null
         }
         Update: {
+          context_id?: string | null
+          context_type?: string | null
           created_at?: string
           created_by?: string | null
           deleted_at?: string | null
@@ -973,6 +983,7 @@ export type Database = {
           generation_batch_id?: string | null
           generation_error?: string | null
           id?: string
+          idempotency_key?: string | null
           legal_details_id?: string | null
           meta?: Json
           missing_tokens?: Json
@@ -994,6 +1005,7 @@ export type Database = {
           template_source_path?: string | null
           template_tokens_snapshot?: Json | null
           template_version?: string | null
+          template_version_id?: string | null
           title?: string
           token_manifest_snapshot?: Json | null
           updated_at?: string
@@ -1019,6 +1031,13 @@ export type Database = {
             columns: ["template_id"]
             isOneToOne: false
             referencedRelation: "document_templates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_generated_documents_template_version_id_fkey"
+            columns: ["template_version_id"]
+            isOneToOne: false
+            referencedRelation: "document_template_versions"
             referencedColumns: ["id"]
           },
         ]
@@ -3096,6 +3115,78 @@ export type Database = {
           },
         ]
       }
+      document_generation_sessions: {
+        Row: {
+          context_id: string | null
+          context_type: string | null
+          created_at: string
+          created_by: string | null
+          expires_at: string
+          id: string
+          legal_details_id: string | null
+          missing_tokens: Json
+          person_id: string | null
+          resolved_tokens: Json
+          signer_link_id: string | null
+          status: string
+          template_id: string | null
+          template_version_id: string | null
+          updated_at: string
+          warnings: Json
+        }
+        Insert: {
+          context_id?: string | null
+          context_type?: string | null
+          created_at?: string
+          created_by?: string | null
+          expires_at?: string
+          id?: string
+          legal_details_id?: string | null
+          missing_tokens?: Json
+          person_id?: string | null
+          resolved_tokens?: Json
+          signer_link_id?: string | null
+          status?: string
+          template_id?: string | null
+          template_version_id?: string | null
+          updated_at?: string
+          warnings?: Json
+        }
+        Update: {
+          context_id?: string | null
+          context_type?: string | null
+          created_at?: string
+          created_by?: string | null
+          expires_at?: string
+          id?: string
+          legal_details_id?: string | null
+          missing_tokens?: Json
+          person_id?: string | null
+          resolved_tokens?: Json
+          signer_link_id?: string | null
+          status?: string
+          template_id?: string | null
+          template_version_id?: string | null
+          updated_at?: string
+          warnings?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_generation_sessions_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "document_templates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_generation_sessions_template_version_id_fkey"
+            columns: ["template_version_id"]
+            isOneToOne: false
+            referencedRelation: "document_template_versions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       document_number_sequences: {
         Row: {
           created_at: string | null
@@ -3207,15 +3298,77 @@ export type Database = {
         }
         Relationships: []
       }
+      document_template_versions: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          file_name: string | null
+          file_sha256: string | null
+          file_size_bytes: number | null
+          id: string
+          is_current: boolean
+          notes: string | null
+          storage_bucket: string
+          storage_path: string
+          template_id: string
+          tokens: Json
+          unmapped_tokens: Json
+          version_number: number
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          file_name?: string | null
+          file_sha256?: string | null
+          file_size_bytes?: number | null
+          id?: string
+          is_current?: boolean
+          notes?: string | null
+          storage_bucket?: string
+          storage_path: string
+          template_id: string
+          tokens?: Json
+          unmapped_tokens?: Json
+          version_number: number
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          file_name?: string | null
+          file_sha256?: string | null
+          file_size_bytes?: number | null
+          id?: string
+          is_current?: boolean
+          notes?: string | null
+          storage_bucket?: string
+          storage_path?: string
+          template_id?: string
+          tokens?: Json
+          unmapped_tokens?: Json
+          version_number?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_template_versions_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "document_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       document_templates: {
         Row: {
+          category: string | null
           code: string
           created_at: string
+          current_version_id: string | null
           description: string | null
           document_type: string
           editor_draft_content: Json | null
           editor_mvp_enabled: boolean
           id: string
+          idempotency_scope: string | null
           is_active: boolean | null
           name: string
           placeholders: Json | null
@@ -3226,13 +3379,16 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          category?: string | null
           code: string
           created_at?: string
+          current_version_id?: string | null
           description?: string | null
           document_type?: string
           editor_draft_content?: Json | null
           editor_mvp_enabled?: boolean
           id?: string
+          idempotency_scope?: string | null
           is_active?: boolean | null
           name: string
           placeholders?: Json | null
@@ -3243,13 +3399,16 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          category?: string | null
           code?: string
           created_at?: string
+          current_version_id?: string | null
           description?: string | null
           document_type?: string
           editor_draft_content?: Json | null
           editor_mvp_enabled?: boolean
           id?: string
+          idempotency_scope?: string | null
           is_active?: boolean | null
           name?: string
           placeholders?: Json | null
@@ -3259,7 +3418,77 @@ export type Database = {
           template_status?: string
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "document_templates_current_version_id_fkey"
+            columns: ["current_version_id"]
+            isOneToOne: false
+            referencedRelation: "document_template_versions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      document_token_registry: {
+        Row: {
+          archived_at: string | null
+          category: string
+          created_at: string
+          data_type: string
+          description: string | null
+          display_order: number
+          example_value: string | null
+          field_id: string | null
+          id: string
+          is_required: boolean
+          resolver_key: string | null
+          source_type: string
+          token_key: string
+          ui_label: string
+          updated_at: string
+        }
+        Insert: {
+          archived_at?: string | null
+          category?: string
+          created_at?: string
+          data_type?: string
+          description?: string | null
+          display_order?: number
+          example_value?: string | null
+          field_id?: string | null
+          id?: string
+          is_required?: boolean
+          resolver_key?: string | null
+          source_type?: string
+          token_key: string
+          ui_label: string
+          updated_at?: string
+        }
+        Update: {
+          archived_at?: string | null
+          category?: string
+          created_at?: string
+          data_type?: string
+          description?: string | null
+          display_order?: number
+          example_value?: string | null
+          field_id?: string | null
+          id?: string
+          is_required?: boolean
+          resolver_key?: string | null
+          source_type?: string
+          token_key?: string
+          ui_label?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_token_registry_field_id_fkey"
+            columns: ["field_id"]
+            isOneToOne: false
+            referencedRelation: "fields_registry"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       domain_events: {
         Row: {
