@@ -93,15 +93,15 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: 'confirm_required' }), { status: 400, headers: corsHeaders });
     }
 
-    // Execute: bypass idempotency by switching context to 'manual'
-    // (document-render.ts only generates idempotency_key when context_type==='order')
-    const manualInput = { ...input, context_type: 'manual' as const };
+    // Execute: force a new document — bypass order-idempotency to avoid reusing the source row.
     const manualKey = `manual_regen:${orig.id}:${Date.now()}`;
-    const result = await generateCanonicalDocument(supabase, manualInput, {
+    const result = await generateCanonicalDocument(supabase, input, {
       profileId: orig.profile_id,
       userId,
       enforceFeatureFlag: true,
       storageBucketOutput: orig.storage_bucket || 'documents',
+      bypassIdempotency: true,
+      idempotencyKeyOverride: manualKey,
     });
 
     if (!result.success) {
@@ -113,15 +113,26 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: result.error || 'render_failed' }), { status: 400, headers: corsHeaders });
     }
 
-    // Если generateCanonicalDocument вернул reused — это не подойдёт для regenerate.
-    // Перезапишем idempotency_key и пометим связь со старым документом.
-    if (result.document_id) {
-      await supabase.from('ai_generated_documents').update({
-        regenerated_from_document_id: orig.id,
-        idempotency_key: manualKey,
-        meta: { ...(orig.meta || {}), regenerated_from: orig.id, regenerated_by: userId, regenerated_at: new Date().toISOString() },
-      }).eq('id', result.document_id);
+    // Hard guards — must NEVER mutate or return the source document.
+    if (result.reused === true || !result.document_id || result.document_id === orig.id) {
+      await supabase.from('audit_logs').insert({
+        actor_user_id: userId, actor_type: 'user',
+        action: 'document.regenerate_blocked_reused_source',
+        meta: {
+          source_document_id: orig.id,
+          returned_document_id: result.document_id,
+          reused: result.reused === true,
+        },
+      });
+      return new Response(JSON.stringify({ error: 'regenerate_reused_source_document' }), {
+        status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
+
+    await supabase.from('ai_generated_documents').update({
+      regenerated_from_document_id: orig.id,
+      meta: { canonical: true, regenerated_from: orig.id, regenerated_by: userId, regenerated_at: new Date().toISOString() },
+    }).eq('id', result.document_id);
 
     await supabase.from('audit_logs').insert({
       actor_user_id: userId, actor_type: 'user',
@@ -131,6 +142,7 @@ Deno.serve(async (req) => {
         new_document_id: result.document_id,
         diff_keys: Object.keys(diff),
         template_version_id: input.template_version_id,
+        idempotency_key: manualKey,
       },
     });
 
