@@ -76,7 +76,8 @@ function Calendar({
         dropdown_month: "relative",
         dropdown_year: "relative",
         dropdown: cn(
-          "h-8 px-2.5 pr-7 rounded-lg text-sm font-medium",
+          "h-8 pl-3 pr-7 rounded-lg text-sm font-medium",
+          "text-center",
           "bg-background/40 backdrop-blur-md",
           "border border-border/40",
           "hover:bg-background/60 hover:border-border/60",
@@ -85,7 +86,8 @@ function Calendar({
           "appearance-none",
           // arrow indicator
           "bg-[url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%226%22 viewBox=%220 0 10 6%22 fill=%22none%22><path d=%22M1 1l4 4 4-4%22 stroke=%22currentColor%22 stroke-width=%221.5%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/></svg>')]",
-          "bg-no-repeat bg-[right_0.5rem_center]"
+          "bg-no-repeat bg-[right_0.5rem_center]",
+          "[text-align-last:center]"
         ),
         vhidden: "sr-only",
         ...classNames,
