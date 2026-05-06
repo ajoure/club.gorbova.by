@@ -35,6 +35,19 @@ export interface AiGeneratedDocument {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  // canonical pipeline (Sprint 1+)
+  template_version_id?: string | null;
+  template_version?: number | null;
+  context_type?: string | null;
+  context_id?: string | null;
+  idempotency_key?: string | null;
+  regenerated_from_document_id?: string | null;
+  source_trace?: Record<string, any> | null;
+  token_manifest_snapshot?: any[] | null;
+  template_tokens_snapshot?: string[] | null;
+  warnings_snapshot?: string[] | null;
+  registry_version?: string | null;
+  resolver_version?: string | null;
 }
 
 export function useAiDocuments() {
