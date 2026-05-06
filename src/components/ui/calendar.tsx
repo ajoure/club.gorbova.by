@@ -76,7 +76,7 @@ function Calendar({
         dropdown_month: "relative",
         dropdown_year: "relative",
         dropdown: cn(
-          "h-8 pl-3 pr-7 rounded-lg text-sm font-medium",
+          "h-8 pl-7 pr-7 rounded-lg text-sm font-medium",
           "text-center",
           "bg-background/40 backdrop-blur-md",
           "border border-border/40",
