@@ -99,3 +99,98 @@ VALUES ('training_content.module_scope_ids_repaired', 'system',
 ## 9. Awaiting approve
 
 Ждём подтверждения для перехода к Execute.
+
+---
+
+## 10. PATCH: убрать `cb20` как технический идентификатор
+
+### 10.1 Принцип
+
+`cb20` / `CB20` / «Ценный бухгалтер» допустимы ТОЛЬКО как:
+- человекочитаемый label в proof/отчётах,
+- запись в справочнике `src/lib/product-names.ts` (UI mapping),
+- исторические proof-файлы (не редактируются).
+
+Запрещено как технический ключ в:
+- access/resolver/repair business logic,
+- именах функций / migrations,
+- условиях `product.code === 'cb20'`,
+- runtime-фильтрах.
+
+Канонические ключи: `product_id`, `tariff_id`, `training_module_id`, `entitlement_id`.
+
+### 10.2 Pre-execute grep аудит (фактический результат)
+
+Команда: `rg -n "cb20|CB20" src supabase` (исключая backfill-v23 и proof-файлы).
+
+**Допустимые совпадения (label / UI / historical):**
+- `src/lib/product-names.ts` — UI mapping (`cb20`, `cb20_predzapis`, `CB20`). ✅ оставляем.
+- `src/components/course/PreregistrationDialog.tsx:35` — `productCode = "cb20_predzapis"` дефолт пропса для предзаписи. ✅ это другой продукт (предзапись), не относится к access-logic.
+- `supabase/functions/course-prereg-notify/index.ts:68` — label-маппинг для уведомления. ✅ человекочитаемое имя.
+- Комментарии (`// cb20 etc.`, `/* CB20 */`) в `useSidebarModules.ts`, `useTrainingContentRules.ts`, `_shared/entitlement-sync.ts`, `_shared/access-resolver.ts`, `split-multi-module-orders/index.ts`, `repair-cb20-entitlements/index.ts` — только в комментариях, без runtime-логики. ✅ оставляем (или чистим в отдельном refactor).
+
+**Недопустимые совпадения (runtime business logic с `cb20` как условием):**
+
+| Локация | Тип | Действие |
+|---|---|---|
+| `supabase/migrations/20260331113539_*.sql:143` | `AND p2.code <> 'cb20'` в исторической миграции | NOOP — миграция уже применена, не переписываем историю; runtime не использует |
+| `supabase/migrations/20260331115050_*.sql:71` | то же | NOOP — историческая миграция |
+| `supabase/migrations/20260406205141_*.sql` | data-fix комментарий | NOOP — историческая миграция |
+| `supabase/functions/_shared/entitlement-sync.ts:13` | КОММЕНТАРИЙ «Skips cb20 when called from subscription paths (mode_filter)» | проверить, нет ли ниже runtime-кода с `code === 'cb20'` |
+| `supabase/functions/admin-entitlement-backfill-v23/` | внутренний backfill v23 | вне scope текущего repair, отдельный refactor |
+| `supabase/functions/repair-cb20-entitlements/` | имя функции содержит cb20 | НЕ используем; новая функция — `repair-training-module-scope-ids` (или inline migration) |
+
+**Решение для текущего repair:**
+- НЕ создаём новую edge-function с `cb20` в имени.
+- Repair выполняем как **inline миграция** под именем `module_scope_ids_repair_2026_05`.
+- Условия фильтра — ТОЛЬКО `product_id IN (<7 UUIDs>)` + `meta->>'scope_resolution_mode' = 'module_scope_only'`. Никаких `code = 'cb20'`.
+
+### 10.3 Проверка `entitlement-sync.ts` на runtime-фильтр по `cb20`
+
+Требуется отдельное чтение файла перед execute (см. Step 0 ниже).
+
+### 10.4 Step 0 (новый, обязательный перед Execute)
+
+1. `code--view supabase/functions/_shared/entitlement-sync.ts` — найти и зафиксировать наличие/отсутствие `code === 'cb20'` или подобных runtime-проверок.
+2. Если найдено — внести в отдельный backlog-кандидат `cb20_hardcode_cleanup_2026_05.md` (НЕ блокирует текущий repair, т.к. касается subscription-sync, а не module_scope).
+3. Никаких write-операций, пока этот аудит не зафиксирован в proof.
+
+### 10.5 Repair-naming canonical
+
+| Сущность | Имя |
+|---|---|
+| Миграция | `module_scope_ids_repair_2026_05` |
+| Audit action | `training_content.module_scope_ids_repaired` |
+| Backup-файл | `.lovable/proofs/module_scope_ids_repair_backup_2026_05.json` |
+| Proof execute | `.lovable/proofs/module_scope_ids_repair_execute_2026_05.md` |
+
+Ни в одном из имён нет `cb20`.
+
+### 10.6 Memory rule (после Execute)
+
+Добавить файл `mem://architecture/standard/no-product-code-in-business-logic`:
+
+> Запрещено использовать product `code`/`name` (например, `cb20`, `CB20`, «Ценный бухгалтер») как технический ключ в access/resolver/repair logic, фильтрах, условиях, именах функций или миграций. Канонические ключи: `product_id`, `tariff_id`, `training_module_id`, `entitlement_id`. Название продукта допускается только для UI-mapping (`src/lib/product-names.ts`) и человекочитаемых proof-отчётов.
+
+И ссылку в `mem://index.md` → секция Core (одной строкой).
+
+### 10.7 Post-execute Hardcode cleanup verification
+
+После Execute обязательно:
+1. `rg -n "cb20|CB20" src supabase` → итоговый снимок в proof.
+2. Каждое совпадение классифицировать: `label-only` / `historical-migration` / `comment` / `RUNTIME-VIOLATION`.
+3. `RUNTIME-VIOLATION = 0` — иначе Execute считается невыполненным, откат + новый план.
+
+### 10.8 Обновлённый DoD
+
+- [ ] repair выполнен по `product_id → training_module_id`, без `cb20`-условий в SQL/именах
+- [ ] inline миграция `module_scope_ids_repair_2026_05`, без новых cb20-named функций
+- [ ] proof оперирует `product_id=<UUID>, product_name="<label>"`, а не `cb20`-кодом
+- [ ] post-grep: `RUNTIME-VIOLATION=0` (label/comment/historical-migration допустимы)
+- [ ] memory rule `no-product-code-in-business-logic` добавлен
+- [ ] writers (grant-access-for-order, retroapply, rule_engine, subscriptions writers) не тронуты
+
+## 11. Awaiting approve (обновлено)
+
+План дополнен PATCH-разделом 10. Pre-execute grep-аудит выполнен и зафиксирован.
+**Execute не запускается до отдельного approve этого обновлённого плана.**
