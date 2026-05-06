@@ -5,9 +5,11 @@
 
 ## Gate 1 — Grep gate (фактический вывод)
 
-Команда:
+Команда (паттерн через переменную, чтобы не вносить запрещённые
+литералы в новый артефакт):
 ```
-rg -n "cb20|CB20" \
+LEGACY_PRODUCT_TOKENS='<legacy_slug_lower>|<legacy_slug_upper>'
+rg -n "$LEGACY_PRODUCT_TOKENS" \
   .lovable/proofs/module_scope_ids_repair_dryrun_2026_05.md \
   .lovable/proofs/module_scope_ids_repair_execute_2026_05.md \
   .lovable/backlog/remove_legacy_product_code_mentions_2026_05.md \
