@@ -128,6 +128,16 @@ const DOC_SUB_TABS: SubMenuItem[] = [
     adminOnly: true,
   },
   {
+    id: "aliases",
+    label: "Алиасы токенов",
+    icon: FileStack,
+    gradient: "from-fuchsia-500/10 to-pink-500/8",
+    activeGradient: "from-fuchsia-500/20 to-pink-500/15",
+    borderColor: "border-fuchsia-400/20",
+    iconColor: "text-fuchsia-600",
+    adminOnly: true,
+  },
+  {
     id: "generate",
     label: "Создать документ",
     icon: FileText,
