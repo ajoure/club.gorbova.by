@@ -422,11 +422,15 @@ export async function generateCanonicalDocument(
   }
 
   // Idempotency
-  const idempotencyKey = input.context_type === 'order' && input.context_id
-    ? `service_act:${input.context_id}:${payload.template.version_id || payload.template.id}`
-    : null;
+  const idempotencyKey = opts.bypassIdempotency
+    ? (opts.idempotencyKeyOverride ?? null)
+    : (opts.idempotencyKeyOverride !== undefined
+        ? opts.idempotencyKeyOverride
+        : (input.context_type === 'order' && input.context_id
+            ? `service_act:${input.context_id}:${payload.template.version_id || payload.template.id}`
+            : null));
 
-  if (idempotencyKey) {
+  if (idempotencyKey && !opts.bypassIdempotency) {
     const { data: existing } = await supabase
       .from('ai_generated_documents')
       .select('id, file_path, storage_bucket, status')
