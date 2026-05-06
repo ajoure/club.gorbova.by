@@ -48,7 +48,7 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json();
-    const mode = (body.mode || 'preview') as 'preview' | 'generate';
+    const mode = (body.mode || 'preview') as 'preview' | 'generate' | 'activate_version';
     const input = {
       template_id: body.template_id,
       template_version_id: body.template_version_id || null,
@@ -59,6 +59,29 @@ Deno.serve(async (req) => {
       signer_link_id: body.signer_link_id || null,
       overrides: body.overrides || undefined,
     };
+
+    if (mode === 'activate_version') {
+      if (!input.template_version_id) {
+        return new Response(JSON.stringify({ error: 'template_version_id required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const { data: ver } = await supabase.from('document_template_versions')
+        .select('id, template_id, validation_status').eq('id', input.template_version_id).maybeSingle();
+      if (!ver) return new Response(JSON.stringify({ error: 'version_not_found' }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      if (ver.validation_status === 'invalid_unknown_required') {
+        return new Response(JSON.stringify({ error: 'cannot_activate_invalid_version' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      // demote others, promote this
+      await supabase.from('document_template_versions').update({ is_current: false }).eq('template_id', ver.template_id).neq('id', ver.id);
+      await supabase.from('document_template_versions').update({ is_current: true }).eq('id', ver.id);
+      await supabase.from('document_templates').update({ current_version_id: ver.id }).eq('id', ver.template_id);
+      await supabase.from('audit_logs').insert({
+        actor_user_id: userId, actor_type: 'user', action: 'document.template_version_activated',
+        meta: { template_version_id: ver.id, template_id: ver.template_id },
+      });
+      return new Response(JSON.stringify({ success: true, template_version_id: ver.id }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     if (!input.template_id) {
       return new Response(JSON.stringify({ error: 'template_id required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
