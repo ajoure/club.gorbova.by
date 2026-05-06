@@ -97,7 +97,7 @@ export function TokenMappingDialog({ open, onOpenChange, token, templateId, temp
   }, [tab, newLabel, newKey, registry]);
 
   const handleCreateAlias = async () => {
-    if (!selectedCanonical) { toast.error("Выберите canonical token"); return; }
+    if (!selectedCanonical) { toast.error("Выберите поле системы"); return; }
     setBusy(true);
     try {
       const row: any = {
@@ -109,25 +109,25 @@ export function TokenMappingDialog({ open, onOpenChange, token, templateId, temp
       if (scope === "version") { row.template_id = templateId; row.template_version_id = templateVersionId; }
       const { error } = await supabase.from("document_token_aliases").insert(row);
       if (error) throw error;
-      toast.success("Alias создан. Перепроверьте версию шаблона.");
+      toast.success("Связь создана. Проверьте версию шаблона снова.");
       onMapped?.();
       qc.invalidateQueries({ queryKey: ["doc-template-versions", templateId] });
       onOpenChange(false);
     } catch (e: any) {
-      toast.error(`Не удалось создать alias: ${e?.message || e}`);
+      toast.error(`Не удалось создать связь: ${e?.message || e}`);
     } finally {
       setBusy(false);
     }
   };
 
   const handleCreateRegistry = async () => {
-    if (!newKey || !newLabel) { toast.error("Укажите canonical_key и ui_label"); return; }
+    if (!newKey || !newLabel) { toast.error("Заполните название поля и подпись для UI"); return; }
     setBusy(true);
     try {
       // exact-key dup check
       const { data: dup } = await supabase.from("document_token_registry")
         .select("token_key").eq("token_key", newKey).maybeSingle();
-      if (dup) { toast.error("Токен с таким token_key уже есть"); setBusy(false); return; }
+      if (dup) { toast.error("Поле системы с таким именем уже есть"); setBusy(false); return; }
       const { error } = await supabase.from("document_token_registry").insert({
         token_key: newKey,
         ui_label: newLabel,
@@ -138,7 +138,6 @@ export function TokenMappingDialog({ open, onOpenChange, token, templateId, temp
         resolver_key: newKey,
       });
       if (error) throw error;
-      // immediately also create alias if alias_token != canonical
       if (newKey !== token) {
         await supabase.from("document_token_aliases").insert({
           alias_token: token,
@@ -147,13 +146,13 @@ export function TokenMappingDialog({ open, onOpenChange, token, templateId, temp
           notes: `Auto-created from new registry token`,
         });
       }
-      toast.success("Новый токен создан и сопоставлен.");
+      toast.success("Поле системы создано и связано с плейсхолдером.");
       qc.invalidateQueries({ queryKey: ["doc-token-registry-all"] });
       qc.invalidateQueries({ queryKey: ["doc-template-versions", templateId] });
       onMapped?.();
       onOpenChange(false);
     } catch (e: any) {
-      toast.error(`Не удалось создать токен: ${e?.message || e}`);
+      toast.error(`Не удалось создать поле: ${e?.message || e}`);
     } finally {
       setBusy(false);
     }
@@ -163,21 +162,21 @@ export function TokenMappingDialog({ open, onOpenChange, token, templateId, temp
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Сопоставить токен <code className="text-sm bg-muted px-1.5 py-0.5 rounded">{`{{${token}}}`}</code></DialogTitle>
+          <DialogTitle>Связать плейсхолдер <code className="text-sm bg-muted px-1.5 py-0.5 rounded">{`{{${token}}}`}</code></DialogTitle>
           <DialogDescription>
-            Можно сопоставить с существующим canonical-токеном, создать новый или просто скопировать имя для ручной правки DOCX.
+            Свяжите этот плейсхолдер из DOCX с готовым полем системы, создайте новое поле или скопируйте имя для ручной правки шаблона.
           </DialogDescription>
         </DialogHeader>
 
         <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
           <TabsList>
-            <TabsTrigger value="map">Сопоставить</TabsTrigger>
-            <TabsTrigger value="create">Создать токен</TabsTrigger>
-            <TabsTrigger value="copy">Скопировать</TabsTrigger>
+            <TabsTrigger value="map">Связать с полем</TabsTrigger>
+            <TabsTrigger value="create">Создать новое поле</TabsTrigger>
+            <TabsTrigger value="copy">Скопировать имя</TabsTrigger>
           </TabsList>
 
           <TabsContent value="map" className="space-y-3">
-            <Input placeholder="Поиск по token_key или label…" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <Input placeholder="Поиск по имени или подписи поля…" value={search} onChange={(e) => setSearch(e.target.value)} />
             <div className="max-h-72 overflow-auto border rounded-md divide-y">
               {filtered.map((g) => (
                 <div key={g.category} className="p-2">
@@ -191,7 +190,7 @@ export function TokenMappingDialog({ open, onOpenChange, token, templateId, temp
                     >
                       <code className="font-mono text-[11px]">{r.token_key}</code>
                       <span className="text-muted-foreground truncate">— {r.ui_label}</span>
-                      {r.is_required && <Badge variant="outline" className="border-rose-300 text-rose-700 ml-auto text-[10px]">required</Badge>}
+                      {r.is_required && <Badge variant="outline" className="border-rose-300 text-rose-700 ml-auto text-[10px]">обязательное</Badge>}
                     </button>
                   ))}
                 </div>
@@ -199,13 +198,13 @@ export function TokenMappingDialog({ open, onOpenChange, token, templateId, temp
               {filtered.length === 0 && <div className="p-3 text-xs text-muted-foreground">Ничего не найдено</div>}
             </div>
             <div className="flex items-center gap-2 text-xs">
-              <Label>Scope:</Label>
+              <Label>Где действует связь:</Label>
               <Select value={scope} onValueChange={(v) => setScope(v as any)}>
-                <SelectTrigger className="w-44 h-8"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="w-56 h-8"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="version">Только эта версия</SelectItem>
-                  <SelectItem value="template">Весь шаблон</SelectItem>
-                  <SelectItem value="global">Глобально</SelectItem>
+                  <SelectItem value="version">Только в этой версии</SelectItem>
+                  <SelectItem value="template">Только в этом шаблоне</SelectItem>
+                  <SelectItem value="global">Во всех шаблонах</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -214,15 +213,15 @@ export function TokenMappingDialog({ open, onOpenChange, token, templateId, temp
           <TabsContent value="create" className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label className="text-xs">canonical_key</Label>
+                <Label className="text-xs">Имя поля (system_key)</Label>
                 <Input value={newKey} onChange={(e) => setNewKey(e.target.value)} className="font-mono text-xs" />
               </div>
               <div>
-                <Label className="text-xs">ui_label</Label>
-                <Input value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="Название для UI" />
+                <Label className="text-xs">Подпись для UI</Label>
+                <Input value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="Например: Название клиента" />
               </div>
               <div>
-                <Label className="text-xs">category</Label>
+                <Label className="text-xs">Категория</Label>
                 <Select value={newCategory} onValueChange={setNewCategory}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -231,7 +230,7 @@ export function TokenMappingDialog({ open, onOpenChange, token, templateId, temp
                 </Select>
               </div>
               <div>
-                <Label className="text-xs">data_type</Label>
+                <Label className="text-xs">Тип данных</Label>
                 <Select value={newDataType} onValueChange={setNewDataType}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -242,12 +241,12 @@ export function TokenMappingDialog({ open, onOpenChange, token, templateId, temp
             </div>
             <label className="flex items-center gap-2 text-xs">
               <input type="checkbox" checked={newRequired} onChange={(e) => setNewRequired(e.target.checked)} />
-              is_required
+              Обязательное поле
             </label>
             {fuzzyDuplicates.length > 0 && (
               <div className="border border-amber-300 bg-amber-50/40 rounded-md p-2 text-xs">
                 <div className="flex items-center gap-1 text-amber-800 font-semibold mb-1">
-                  <AlertTriangle className="h-3 w-3" /> Возможные дубли — рассмотрите сопоставление вместо создания:
+                  <AlertTriangle className="h-3 w-3" /> Похожие поля уже есть — рассмотрите связь вместо создания нового:
                 </div>
                 {fuzzyDuplicates.map((r: any) => (
                   <div key={r.token_key} className="text-amber-900">
@@ -259,7 +258,7 @@ export function TokenMappingDialog({ open, onOpenChange, token, templateId, temp
           </TabsContent>
 
           <TabsContent value="copy" className="space-y-2">
-            <div className="text-sm">Скопируйте токен, чтобы заменить его в DOCX вручную:</div>
+            <div className="text-sm">Скопируйте плейсхолдер, чтобы заменить его в DOCX вручную:</div>
             <div className="flex items-center gap-2">
               <code className="flex-1 font-mono text-sm bg-muted px-3 py-2 rounded">{`{{${token}}}`}</code>
               <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(`{{${token}}}`); toast.success("Скопировано"); }}>
@@ -274,13 +273,13 @@ export function TokenMappingDialog({ open, onOpenChange, token, templateId, temp
           {tab === "map" && (
             <Button onClick={handleCreateAlias} disabled={busy || !selectedCanonical}>
               {busy && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
-              Создать alias
+              Создать связь
             </Button>
           )}
           {tab === "create" && (
             <Button onClick={handleCreateRegistry} disabled={busy || !newKey || !newLabel}>
               {busy && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
-              Создать токен
+              Создать поле
             </Button>
           )}
         </DialogFooter>

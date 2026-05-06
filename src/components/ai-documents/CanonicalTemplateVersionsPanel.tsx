@@ -36,10 +36,10 @@ interface VersionRow {
 }
 
 const STATUS_BADGE: Record<string, { label: string; className: string; icon: any }> = {
-  valid: { label: "Готово", className: "border-emerald-300 text-emerald-700", icon: CheckCircle2 },
-  valid_with_warnings: { label: "С предупреждениями", className: "border-amber-300 text-amber-700", icon: AlertTriangle },
-  invalid_unknown_required: { label: "Не валидна", className: "border-rose-300 text-rose-700", icon: AlertTriangle },
-  unchecked: { label: "Не проверена", className: "border-slate-300 text-slate-600", icon: AlertTriangle },
+  valid: { label: "Готов к генерации", className: "border-emerald-300 text-emerald-700", icon: CheckCircle2 },
+  valid_with_warnings: { label: "Есть предупреждения", className: "border-amber-300 text-amber-700", icon: AlertTriangle },
+  invalid_unknown_required: { label: "Есть ошибки", className: "border-rose-300 text-rose-700", icon: AlertTriangle },
+  unchecked: { label: "Не проверен", className: "border-slate-300 text-slate-600", icon: AlertTriangle },
 };
 
 export function CanonicalTemplateVersionsPanel() {
@@ -60,10 +60,10 @@ export function CanonicalTemplateVersionsPanel() {
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
       setBackfillResult(data.summary);
-      toast.success(dryRun ? `Dry-run: ${data.summary.total_to_process} версий, ${data.summary.total_unmapped} unmapped` : `Готово: обновлено ${data.summary.would_update}`);
+      toast.success(dryRun ? `Проверка без изменений: ${data.summary.total_to_process} версий, не сопоставлено ${data.summary.total_unmapped}` : `Готово: обновлено ${data.summary.would_update}`);
       if (!dryRun && templateId) qc.invalidateQueries({ queryKey: ["doc-template-versions", templateId] });
     } catch (e: any) {
-      toast.error(`Backfill ошибка: ${e?.message || e}`);
+      toast.error(`Ошибка проверки шаблонов: ${e?.message || e}`);
     } finally {
       setBackfillBusy(false);
     }
@@ -102,7 +102,7 @@ export function CanonicalTemplateVersionsPanel() {
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
-      toast.success(`Проверка завершена: detected=${data.detected_count}, mapped=${data.mapped_count}, unmapped=${data.unmapped_count}`);
+      toast.success(`Проверка завершена: найдено ${data.detected_count}, сопоставлено ${data.mapped_count}, не сопоставлено ${data.unmapped_count}`);
       qc.invalidateQueries({ queryKey: ["doc-template-versions", templateId] });
     } catch (e: any) {
       toast.error(`Ошибка проверки: ${e?.message || e}`);
@@ -113,7 +113,7 @@ export function CanonicalTemplateVersionsPanel() {
 
   const handleActivate = async (v: VersionRow) => {
     if (v.validation_status === "invalid_unknown_required") {
-      toast.error("Нельзя активировать версию с обязательными ошибками");
+      toast.error("Нельзя активировать версию: есть ошибки в обязательных полях");
       return;
     }
     setBusyId(v.id);
@@ -138,10 +138,13 @@ export function CanonicalTemplateVersionsPanel() {
       <CardHeader>
         <CardTitle className="text-base flex items-center gap-2">
           <FileText className="h-4 w-4 text-primary" />
-          Версии шаблонов (canonical)
+          Версии Word-шаблонов
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        <div className="text-xs text-muted-foreground rounded-md bg-blue-50/50 border border-blue-200 p-2">
+          Здесь система проверяет Word-шаблоны: какие плейсхолдеры найдены, какие уже связаны с полями системы, а какие нужно сопоставить вручную.
+        </div>
         <div className="flex items-center gap-2">
           <Select value={templateId} onValueChange={setTemplateId}>
             <SelectTrigger className="max-w-md"><SelectValue placeholder="Выберите шаблон" /></SelectTrigger>
@@ -154,16 +157,16 @@ export function CanonicalTemplateVersionsPanel() {
           <div className="ml-auto flex items-center gap-2">
             <Button size="sm" variant="outline" disabled={backfillBusy} onClick={() => runBackfill(true)}>
               {backfillBusy && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
-              Dry-run все версии
+              Проверить все без изменений
             </Button>
             <Button size="sm" disabled={backfillBusy || !backfillResult} onClick={() => runBackfill(false)}>
-              Перепроверить все версии
+              Проверить и обновить все версии
             </Button>
           </div>
         </div>
         {backfillResult && (
           <div className="text-xs rounded-md border bg-muted/40 p-2">
-            <div>Всего: <b>{backfillResult.total_to_process}</b> · обновится: <b>{backfillResult.would_update}</b> · файлы missing: <b>{backfillResult.missing_files}</b> · unmapped: <b>{backfillResult.total_unmapped}</b> · режим: <b>{backfillResult.dry_run ? "dry-run" : "execute"}</b></div>
+            <div>Всего: <b>{backfillResult.total_to_process}</b> · обновится: <b>{backfillResult.would_update}</b> · файлы не найдены: <b>{backfillResult.missing_files}</b> · не сопоставлено: <b>{backfillResult.total_unmapped}</b> · режим: <b>{backfillResult.dry_run ? "проверка без изменений" : "выполнение"}</b></div>
           </div>
         )}
 
@@ -171,7 +174,7 @@ export function CanonicalTemplateVersionsPanel() {
 
         {templateId && versions.length === 0 && !isFetching && (
           <div className="text-sm text-muted-foreground rounded-md bg-muted/40 p-3">
-            У шаблона пока нет версий в <code>document_template_versions</code>. Загрузите DOCX через менеджер шаблонов или создайте версию вручную.
+            У шаблона пока нет версий. Загрузите DOCX через менеджер шаблонов или создайте версию вручную.
           </div>
         )}
 
@@ -196,22 +199,22 @@ export function CanonicalTemplateVersionsPanel() {
                     <Icon className="h-3 w-3 mr-1" /> {status.label}
                   </Badge>
                   <div className="text-xs text-muted-foreground">
-                    detected: <b>{detected}</b> · mapped: <b>{mapped}</b> · unmapped: <b className={unmapped > 0 ? "text-amber-700" : ""}>{unmapped}</b>
+                    найдено: <b>{detected}</b> · сопоставлено: <b>{mapped}</b> · не сопоставлено: <b className={unmapped > 0 ? "text-amber-700" : ""}>{unmapped}</b>
                   </div>
                   <div className="ml-auto flex items-center gap-2">
                     <Button size="sm" variant="outline" onClick={() => handleValidate(v)} disabled={busyId === v.id}>
                       {busyId === v.id ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <RefreshCw className="h-3 w-3 mr-1" />}
-                      Перепроверить
+                      Проверить шаблон снова
                     </Button>
                     <Button
                       size="sm"
                       onClick={() => handleActivate(v)}
                       disabled={busyId === v.id || v.is_current || v.validation_status === "invalid_unknown_required"}
                     >
-                      Активировать
+                      Сделать текущей
                     </Button>
                     <Button size="sm" variant="ghost" onClick={() => setExpanded(expanded === v.id ? null : v.id)}>
-                      {expanded === v.id ? "Скрыть" : "Токены"}
+                      {expanded === v.id ? "Скрыть" : "Плейсхолдеры"}
                     </Button>
                   </div>
                 </div>
@@ -221,16 +224,16 @@ export function CanonicalTemplateVersionsPanel() {
                       <div key={m.token} className="flex items-start gap-2 py-0.5">
                         <code className="font-mono text-[11px]">{m.token}</code>
                         <Badge variant="outline" className={m.status === "mapped" ? "border-emerald-300 text-emerald-700" : "border-amber-300 text-amber-700"}>
-                          {m.status}
+                          {m.status === "mapped" ? "Сопоставлен" : "Не сопоставлен"}
                         </Badge>
                         {m.registry?.ui_label && <span className="text-muted-foreground">— {m.registry.ui_label}</span>}
-                        <span className="ml-auto text-muted-foreground">
+                        <span className="ml-auto text-muted-foreground" title="Где найден плейсхолдер в DOCX">
                           {(m.locations || []).map((l: any) => `${l.part.replace("word/", "")} ×${l.count}`).join(", ")}
                         </span>
                         {m.status === "unmapped" && (
                           <>
                             <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => setMapDlg({ token: m.token, versionId: v.id })}>
-                              <Wand2 className="h-3 w-3 mr-1" /> Сопоставить
+                              <Wand2 className="h-3 w-3 mr-1" /> Связать с полем системы
                             </Button>
                             <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => { navigator.clipboard.writeText(`{{${m.token}}}`); toast.success("Скопировано"); }}>
                               <Copy className="h-3 w-3" />
