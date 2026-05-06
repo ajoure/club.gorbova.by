@@ -14,6 +14,48 @@ export type Database = {
   }
   public: {
     Tables: {
+      _backup_entitlement_delete_byn_2026_05_shulyak: {
+        Row: {
+          backed_up_at: string
+          created_at: string | null
+          expires_at: string | null
+          id: string | null
+          meta: Json | null
+          order_id: string | null
+          product_code: string | null
+          product_id: string | null
+          profile_id: string | null
+          status: string | null
+          user_id: string | null
+        }
+        Insert: {
+          backed_up_at?: string
+          created_at?: string | null
+          expires_at?: string | null
+          id?: string | null
+          meta?: Json | null
+          order_id?: string | null
+          product_code?: string | null
+          product_id?: string | null
+          profile_id?: string | null
+          status?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          backed_up_at?: string
+          created_at?: string | null
+          expires_at?: string | null
+          id?: string | null
+          meta?: Json | null
+          order_id?: string | null
+          product_code?: string | null
+          product_id?: string | null
+          profile_id?: string | null
+          status?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       _backup_entitlement_tariff_id_backfill_2026_05: {
         Row: {
           backfill_run_id: string
