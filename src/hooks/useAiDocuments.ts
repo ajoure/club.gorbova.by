@@ -83,7 +83,7 @@ export function useAiDocuments() {
         .is("deleted_at", null)
         .order("created_at", { ascending: false });
       if (error) throw error;
-      return data as AiGeneratedDocument[];
+      return (data || []) as unknown as AiGeneratedDocument[];
     },
     enabled: !!profileId,
   });
