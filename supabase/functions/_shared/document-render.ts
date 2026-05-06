@@ -285,19 +285,46 @@ export async function resolveCanonicalPayload(
     for (const [k, v] of Object.entries(input.overrides)) resolverValues[k] = v ?? '';
   }
 
-  // 10. Build resolved_tokens (only registered keys) + missing
+  // 10. Build resolved_tokens (only registered keys) + missing + source_trace
   const resolved: Record<string, string> = {};
   const missing: string[] = [];
+  const sourceTrace: ResolvedPayload['source_trace'] = {};
+
+  function sourceFor(row: any): string {
+    if (row.source_type === 'custom_field') return `client_legal_details.${row.token_key.replace(/^legal_details\./, '')}`;
+    const k: string = row.resolver_key || row.token_key;
+    if (k.startsWith('executor.')) return 'executors';
+    if (k.startsWith('customer.')) return 'client_legal_details / orders_v2';
+    if (k.startsWith('deal.')) return 'orders_v2';
+    if (k.startsWith('document.')) return 'system.generated';
+    if (k.startsWith('system.')) return 'system';
+    return 'resolver';
+  }
+
   for (const [tokenKey, row] of registryByKey) {
     const v = resolverValues[tokenKey];
     const str = v == null || v === '' ? '' : String(v);
     resolved[tokenKey] = str;
+    const status: 'resolved' | 'missing' = str ? 'resolved' : 'missing';
     if (row.is_required && !str) missing.push(tokenKey);
+    // Only emit source_trace for tokens actually present in template — keeps payload tight.
+    if (templateTokens.length === 0 || templateTokens.includes(tokenKey)) {
+      sourceTrace[tokenKey] = {
+        source: sourceFor(row),
+        resolver_key: row.resolver_key || row.token_key,
+        field_id: row.field_id || null,
+        status,
+        required: !!row.is_required,
+      };
+    }
   }
 
   // 11. Detect template tokens that are NOT in registry
   const unmapped = templateTokens.filter(t => !registryByKey.has(t));
   if (unmapped.length) warnings.push(`unmapped_tokens:${unmapped.length}`);
+  for (const t of unmapped) {
+    sourceTrace[t] = { source: 'unmapped', status: 'unmapped', required: false };
+  }
 
   // 12. Snapshot
   const snapshot: Record<string, unknown> = {
@@ -308,6 +335,7 @@ export async function resolveCanonicalPayload(
     customer: customer ? { id: customer.id, client_type: customer.client_type, name: buildCustomerName(customer), unp: customer.ent_unp || customer.leg_unp } : null,
     order: order ? { id: order.id, order_number: order.order_number, product_id: order.product_id, tariff_id: order.tariff_id, final_price: order.final_price, currency: order.currency, status: order.status } : null,
     document: { number: docNumber, date: now.toISOString() },
+    token_manifest: tokenManifest,
   };
 
   return {
@@ -318,6 +346,8 @@ export async function resolveCanonicalPayload(
     snapshot,
     template: { id: tpl.id, name: tpl.name, version_id: version?.id || null, version_number: version?.version_number || null },
     template_tokens: templateTokens,
+    token_manifest: tokenManifest,
+    source_trace: sourceTrace,
   };
 }
 
