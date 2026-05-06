@@ -57,6 +57,8 @@ export interface ResolvedPayload {
   snapshot: Record<string, unknown>;
   template: { id: string; name: string; version_id: string | null; version_number: number | null };
   template_tokens: string[];
+  token_manifest: TokenManifestEntry[];
+  source_trace: Record<string, { source: string; resolver_key?: string; field_id?: string | null; status: 'resolved' | 'missing' | 'unmapped'; required: boolean }>;
 }
 
 export interface CanonicalGenerateResult {
