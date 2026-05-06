@@ -199,17 +199,24 @@ export function useActiveTrainingContentRules() {
       // Scoped per product_id to prevent overgrant across products
       const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       const entitlementTariffsByProduct: Record<string, string[]> = {};
+      // P4.5: products that have an active entitlement WITHOUT meta.tariff_id and
+      // WITHOUT scope_resolution_mode → admin/business manual product-grant.
+      // Used by resolver as full-access fallback when no tariff DB rule matches.
+      const productsWithManualEnt = new Set<string>();
       (ents || []).forEach(e => {
         if (!e.product_id) return;
         const meta = (e.meta || {}) as Record<string, any>;
         const tid = meta.tariff_id;
-        if (tid && typeof tid === 'string' && UUID_RE.test(tid)) {
+        const hasValidTid = tid && typeof tid === 'string' && UUID_RE.test(tid);
+        if (hasValidTid) {
           if (!entitlementTariffsByProduct[e.product_id]) {
             entitlementTariffsByProduct[e.product_id] = [];
           }
           if (!entitlementTariffsByProduct[e.product_id].includes(tid)) {
             entitlementTariffsByProduct[e.product_id].push(tid);
           }
+        } else if (!meta.scope_resolution_mode) {
+          productsWithManualEnt.add(e.product_id);
         }
       });
 
