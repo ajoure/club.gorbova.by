@@ -399,6 +399,10 @@ export interface CanonicalGenerateOptions {
   userId: string;
   enforceFeatureFlag?: boolean;
   storageBucketOutput?: string;
+  /** Skip idempotency lookup/key — used by manual regeneration to force a new row. */
+  bypassIdempotency?: boolean;
+  /** Explicit idempotency key override (mutually exclusive with bypassIdempotency). */
+  idempotencyKeyOverride?: string | null;
 }
 
 export async function generateCanonicalDocument(
