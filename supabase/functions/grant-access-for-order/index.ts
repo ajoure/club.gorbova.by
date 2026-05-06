@@ -783,15 +783,15 @@ Deno.serve(async (req) => {
     //   • only access-window fields are touched on merge
 
     // Step (a): primary lookup by product_id
-    let existingEntitlement: { id: string; expires_at: string | null; product_code: string | null; product_id: string | null } | null = null;
+    let existingEntitlement: { id: string; expires_at: string | null; product_code: string | null; product_id: string | null; meta: Record<string, unknown> | null } | null = null;
     {
       const { data } = await supabase
         .from("entitlements")
-        .select("id, expires_at, product_code, product_id")
+        .select("id, expires_at, product_code, product_id, meta")
         .eq("user_id", userId)
         .eq("product_id", productId)
         .maybeSingle();
-      existingEntitlement = data;
+      existingEntitlement = data as any;
     }
 
     // Step (b): legacy fallback — only if no row by product_id AND we have product_code
@@ -799,7 +799,7 @@ Deno.serve(async (req) => {
     if (!existingEntitlement && productCode) {
       const { data: legacy } = await supabase
         .from("entitlements")
-        .select("id, expires_at, product_code, product_id")
+        .select("id, expires_at, product_code, product_id, meta")
         .eq("user_id", userId)
         .eq("product_code", productCode)
         .is("product_id", null)
@@ -809,7 +809,7 @@ Deno.serve(async (req) => {
         // Safe to merge: product_id IS NULL, product_code matches expected.
         // Refuse merge if product_id is set to ANYTHING (even matching) — primary lookup
         // already handles the matching case; non-matching is a foreign row.
-        existingEntitlement = legacy;
+        existingEntitlement = legacy as any;
         legacyBackfillNeeded = true;
         console.log(`[grant-access] LEGACY BACKFILL: found entitlement ${legacy.id} (user=${userId}, code=${productCode}, product_id=NULL) → will backfill product_id=${productId}`);
       }
