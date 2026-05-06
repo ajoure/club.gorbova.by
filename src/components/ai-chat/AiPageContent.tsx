@@ -9,6 +9,7 @@ import { PersonsTableView } from "@/components/ai-requisites/PersonsTableView";
 import { PersonRecordSheet } from "@/components/ai-requisites/PersonRecordSheet";
 import { AiDocumentsGenerateView } from "@/components/ai-documents/AiDocumentsGenerateView";
 import { AiDocumentsHistoryView } from "@/components/ai-documents/AiDocumentsHistoryView";
+import { CanonicalActGenerator } from "@/components/ai-documents/CanonicalActGenerator";
 import type { PersonRow } from "@/hooks/useAiPersons";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { cn } from "@/lib/utils";
