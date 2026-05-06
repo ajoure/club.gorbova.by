@@ -43,6 +43,7 @@ const OrderPayment = lazy(() => import("./pages/OrderPayment"));
 const Offer = lazy(() => import("./pages/Offer"));
 const Privacy = lazy(() => import("./pages/Privacy"));
 const Consent = lazy(() => import("./pages/Consent"));
+const Instruction = lazy(() => import("./pages/Instruction"));
 const Contacts = lazy(() => import("./pages/Contacts"));
 const MnsResponseService = lazy(() => import("./pages/audits/MnsResponseService"));
 const MnsDocumentHistory = lazy(() => import("./pages/audits/MnsDocumentHistory"));
@@ -188,6 +189,7 @@ const App = () => {
               <Route path="/payment/result" element={<LazyRoute><PaymentResultPage /></LazyRoute>} />
               <Route path="/privacy" element={<LazyRoute><Privacy /></LazyRoute>} />
               <Route path="/consent" element={<LazyRoute><Consent /></LazyRoute>} />
+              <Route path="/instruction" element={<LazyRoute><Instruction /></LazyRoute>} />
               <Route path="/contacts" element={<LazyRoute><Contacts /></LazyRoute>} />
               <Route path="/help" element={<LazyRoute><Help /></LazyRoute>} />
               <Route path="/consultation" element={<LazyRoute><Consultation /></LazyRoute>} />
