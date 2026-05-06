@@ -911,6 +911,7 @@ export type Database = {
           package_template_id: string | null
           person_id: string | null
           profile_id: string
+          regenerated_from_document_id: string | null
           registry_version: string | null
           resolver_version: string | null
           signer_link_id: string | null
@@ -951,6 +952,7 @@ export type Database = {
           package_template_id?: string | null
           person_id?: string | null
           profile_id: string
+          regenerated_from_document_id?: string | null
           registry_version?: string | null
           resolver_version?: string | null
           signer_link_id?: string | null
@@ -991,6 +993,7 @@ export type Database = {
           package_template_id?: string | null
           person_id?: string | null
           profile_id?: string
+          regenerated_from_document_id?: string | null
           registry_version?: string | null
           resolver_version?: string | null
           signer_link_id?: string | null
@@ -1024,6 +1027,13 @@ export type Database = {
             columns: ["profile_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_generated_documents_regenerated_from_document_id_fkey"
+            columns: ["regenerated_from_document_id"]
+            isOneToOne: false
+            referencedRelation: "ai_generated_documents"
             referencedColumns: ["id"]
           },
           {

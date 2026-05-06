@@ -11,6 +11,7 @@ import { AiDocumentsGenerateView } from "@/components/ai-documents/AiDocumentsGe
 import { AiDocumentsHistoryView } from "@/components/ai-documents/AiDocumentsHistoryView";
 import { CanonicalActGenerator } from "@/components/ai-documents/CanonicalActGenerator";
 import { CanonicalTemplateVersionsPanel } from "@/components/ai-documents/CanonicalTemplateVersionsPanel";
+import { AliasesTab } from "@/components/ai-documents/AliasesTab";
 import type { PersonRow } from "@/hooks/useAiPersons";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { cn } from "@/lib/utils";
@@ -55,7 +56,7 @@ const LazyExecutorsContent = lazy(() =>
 /* ─── Конфигурация секций и подменю ─── */
 
 type Section = "ai" | "documents" | "requisites";
-type SubTab = "chat" | "analysis-history" | "tutorials" | "prompts" | "generate" | "history" | "templates" | "executors" | "entities" | "persons" | "canonical-acts";
+type SubTab = "chat" | "analysis-history" | "tutorials" | "prompts" | "generate" | "history" | "templates" | "executors" | "entities" | "persons" | "canonical-acts" | "aliases";
 
 const SECTIONS: { id: Section; label: string; icon: React.ComponentType<{ className?: string }>; adminOnly?: boolean }[] = [
   { id: "ai", label: "Gorbova AI", icon: Bot },
@@ -124,6 +125,16 @@ const DOC_SUB_TABS: SubMenuItem[] = [
     activeGradient: "from-cyan-500/20 to-sky-500/15",
     borderColor: "border-cyan-400/20",
     iconColor: "text-cyan-600",
+    adminOnly: true,
+  },
+  {
+    id: "aliases",
+    label: "Алиасы токенов",
+    icon: FileStack,
+    gradient: "from-fuchsia-500/10 to-pink-500/8",
+    activeGradient: "from-fuchsia-500/20 to-pink-500/15",
+    borderColor: "border-fuchsia-400/20",
+    iconColor: "text-fuchsia-600",
     adminOnly: true,
   },
   {
@@ -839,6 +850,11 @@ export function AiPageContent({ mode }: AiPageContentProps) {
       {activeSubTab === "generate" && (
         <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
           <AiDocumentsGenerateView />
+        </div>
+      )}
+      {activeSubTab === "aliases" && (
+        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner">
+          <AliasesTab />
         </div>
       )}
       {activeSubTab === "canonical-acts" && (
