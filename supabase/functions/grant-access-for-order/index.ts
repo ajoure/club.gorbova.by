@@ -783,15 +783,15 @@ Deno.serve(async (req) => {
     //   • only access-window fields are touched on merge
 
     // Step (a): primary lookup by product_id
-    let existingEntitlement: { id: string; expires_at: string | null; product_code: string | null; product_id: string | null } | null = null;
+    let existingEntitlement: { id: string; expires_at: string | null; product_code: string | null; product_id: string | null; meta: Record<string, unknown> | null } | null = null;
     {
       const { data } = await supabase
         .from("entitlements")
-        .select("id, expires_at, product_code, product_id")
+        .select("id, expires_at, product_code, product_id, meta")
         .eq("user_id", userId)
         .eq("product_id", productId)
         .maybeSingle();
-      existingEntitlement = data;
+      existingEntitlement = data as any;
     }
 
     // Step (b): legacy fallback — only if no row by product_id AND we have product_code
@@ -799,7 +799,7 @@ Deno.serve(async (req) => {
     if (!existingEntitlement && productCode) {
       const { data: legacy } = await supabase
         .from("entitlements")
-        .select("id, expires_at, product_code, product_id")
+        .select("id, expires_at, product_code, product_id, meta")
         .eq("user_id", userId)
         .eq("product_code", productCode)
         .is("product_id", null)
@@ -809,7 +809,7 @@ Deno.serve(async (req) => {
         // Safe to merge: product_id IS NULL, product_code matches expected.
         // Refuse merge if product_id is set to ANYTHING (even matching) — primary lookup
         // already handles the matching case; non-matching is a foreign row.
-        existingEntitlement = legacy;
+        existingEntitlement = legacy as any;
         legacyBackfillNeeded = true;
         console.log(`[grant-access] LEGACY BACKFILL: found entitlement ${legacy.id} (user=${userId}, code=${productCode}, product_id=NULL) → will backfill product_id=${productId}`);
       }
@@ -873,16 +873,26 @@ Deno.serve(async (req) => {
           ? existingEntitlement.expires_at
           : accessEndAt.toISOString();
 
+      const prevMeta = (existingEntitlement.meta && typeof existingEntitlement.meta === 'object')
+        ? existingEntitlement.meta as Record<string, unknown>
+        : {};
+      const mergedMeta: Record<string, unknown> = {
+        ...prevMeta,
+        granted_by: legacyBackfillNeeded ? "legacy_product_id_backfill" : "primary_order_fulfillment",
+        granted_at: now.toISOString(),
+        ...(legacyBackfillNeeded ? { legacy_product_id_backfilled: true } : {}),
+      };
+      // Persist tariff_id if order has one (writer-fix 2026-05; preserves existing tariff_id otherwise).
+      if (tariffId) {
+        mergedMeta.tariff_id = tariffId;
+      }
+
       const updatePayload: Record<string, unknown> = {
         status: "active",
         expires_at: newExpiresAt,
         order_id: orderId,
         updated_at: now.toISOString(),
-        meta: {
-          granted_by: legacyBackfillNeeded ? "legacy_product_id_backfill" : "primary_order_fulfillment",
-          granted_at: now.toISOString(),
-          ...(legacyBackfillNeeded ? { legacy_product_id_backfilled: true } : {}),
-        },
+        meta: mergedMeta,
       };
       // Backfill product_id ONLY if the legacy row had it as NULL.
       if (legacyBackfillNeeded) {
@@ -942,6 +952,7 @@ Deno.serve(async (req) => {
           meta: {
             granted_by: "primary_order_fulfillment",
             granted_at: now.toISOString(),
+            ...(tariffId ? { tariff_id: tariffId } : {}),
           },
         })
         .select("id")
@@ -959,7 +970,7 @@ Deno.serve(async (req) => {
 
           const { data: dupRow } = await supabase
             .from("entitlements")
-            .select("id, expires_at, product_id, product_code")
+            .select("id, expires_at, product_id, product_code, meta")
             .eq("user_id", userId)
             .eq("product_code", productCode)
             .maybeSingle();
@@ -1001,16 +1012,24 @@ Deno.serve(async (req) => {
               : accessEndAt.toISOString();
 
           const wasLegacy = dupRow.product_id === null;
+          const dupPrevMeta = (dupRow.meta && typeof dupRow.meta === 'object')
+            ? dupRow.meta as Record<string, unknown>
+            : {};
+          const dupMergedMeta: Record<string, unknown> = {
+            ...dupPrevMeta,
+            granted_by: "idempotent_replay_merge",
+            granted_at: now.toISOString(),
+            ...(wasLegacy ? { legacy_product_id_backfilled: true } : {}),
+          };
+          if (tariffId) {
+            dupMergedMeta.tariff_id = tariffId;
+          }
           const mergePayload: Record<string, unknown> = {
             status: "active",
             expires_at: mergedExpires,
             order_id: orderId,
             updated_at: now.toISOString(),
-            meta: {
-              granted_by: "idempotent_replay_merge",
-              granted_at: now.toISOString(),
-              ...(wasLegacy ? { legacy_product_id_backfilled: true } : {}),
-            },
+            meta: dupMergedMeta,
           };
           if (wasLegacy) mergePayload.product_id = productId;
 
