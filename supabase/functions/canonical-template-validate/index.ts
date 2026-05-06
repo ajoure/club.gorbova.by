@@ -30,11 +30,10 @@ const corsHeaders = {
 
 function audit(supabase: any, userId: string | null, event: string, payload: any) {
   return supabase.from('audit_logs').insert({
-    actor_id: userId,
+    actor_user_id: userId,
+    actor_type: userId ? 'user' : 'system',
     action: event,
-    entity_type: 'document_template_version',
-    entity_id: payload?.template_version_id || payload?.template_id || null,
-    metadata: payload,
+    meta: payload,
   }).then(() => undefined).catch(() => undefined);
 }
 
