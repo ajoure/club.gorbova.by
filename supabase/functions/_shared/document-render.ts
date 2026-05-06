@@ -459,6 +459,10 @@ export async function generateCanonicalDocument(
     const docx = new Docxtemplater(zip, { delimiters: { start: '{{', end: '}}' }, paragraphLoop: true, linebreaks: true });
     // Pass both registered tokens and unmapped (empty for safety)
     const renderData: Record<string, string> = { ...payload.resolved_tokens };
+    const aliases: Record<string, string> = (payload as any).aliases || {};
+    for (const [alias, canonical] of Object.entries(aliases)) {
+      if (!(alias in renderData)) renderData[alias] = payload.resolved_tokens[canonical] ?? '';
+    }
     for (const t of payload.unmapped_template_tokens) if (!(t in renderData)) renderData[t] = '';
     docx.render(renderData);
     docBuffer = docx.getZip().generate({ type: 'uint8array' });
