@@ -142,14 +142,30 @@ export function CanonicalTemplateVersionsPanel() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <Select value={templateId} onValueChange={setTemplateId}>
-          <SelectTrigger className="max-w-md"><SelectValue placeholder="Выберите шаблон" /></SelectTrigger>
-          <SelectContent>
-            {templates.map((t: any) => (
-              <SelectItem key={t.id} value={t.id}>{t.name}{t.code ? ` · ${t.code}` : ""}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex items-center gap-2">
+          <Select value={templateId} onValueChange={setTemplateId}>
+            <SelectTrigger className="max-w-md"><SelectValue placeholder="Выберите шаблон" /></SelectTrigger>
+            <SelectContent>
+              {templates.map((t: any) => (
+                <SelectItem key={t.id} value={t.id}>{t.name}{t.code ? ` · ${t.code}` : ""}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="ml-auto flex items-center gap-2">
+            <Button size="sm" variant="outline" disabled={backfillBusy} onClick={() => runBackfill(true)}>
+              {backfillBusy && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
+              Dry-run все версии
+            </Button>
+            <Button size="sm" disabled={backfillBusy || !backfillResult} onClick={() => runBackfill(false)}>
+              Перепроверить все версии
+            </Button>
+          </div>
+        </div>
+        {backfillResult && (
+          <div className="text-xs rounded-md border bg-muted/40 p-2">
+            <div>Всего: <b>{backfillResult.total_to_process}</b> · обновится: <b>{backfillResult.would_update}</b> · файлы missing: <b>{backfillResult.missing_files}</b> · unmapped: <b>{backfillResult.total_unmapped}</b> · режим: <b>{backfillResult.dry_run ? "dry-run" : "execute"}</b></div>
+          </div>
+        )}
 
         {isFetching && <div className="text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin inline mr-1" /> Загружаем версии…</div>}
 
