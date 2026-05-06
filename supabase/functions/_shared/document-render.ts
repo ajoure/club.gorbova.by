@@ -376,6 +376,7 @@ export async function resolveCanonicalPayload(
     order: order ? { id: order.id, order_number: order.order_number, product_id: order.product_id, tariff_id: order.tariff_id, final_price: order.final_price, currency: order.currency, status: order.status } : null,
     document: { number: docNumber, date: now.toISOString() },
     token_manifest: tokenManifest,
+    aliases: Object.fromEntries(aliasMap),
   };
 
   return {
