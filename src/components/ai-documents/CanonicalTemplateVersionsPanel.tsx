@@ -47,6 +47,27 @@ export function CanonicalTemplateVersionsPanel() {
   const [templateId, setTemplateId] = useState<string>("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [mapDlg, setMapDlg] = useState<{ token: string; versionId: string } | null>(null);
+  const [backfillBusy, setBackfillBusy] = useState(false);
+  const [backfillResult, setBackfillResult] = useState<any | null>(null);
+
+  const runBackfill = async (dryRun: boolean) => {
+    setBackfillBusy(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("canonical-template-backfill-validation", {
+        body: { dry_run: dryRun, limit: 50, force: !dryRun ? false : true },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      setBackfillResult(data.summary);
+      toast.success(dryRun ? `Dry-run: ${data.summary.total_to_process} версий, ${data.summary.total_unmapped} unmapped` : `Готово: обновлено ${data.summary.would_update}`);
+      if (!dryRun && templateId) qc.invalidateQueries({ queryKey: ["doc-template-versions", templateId] });
+    } catch (e: any) {
+      toast.error(`Backfill ошибка: ${e?.message || e}`);
+    } finally {
+      setBackfillBusy(false);
+    }
+  };
 
   const { data: templates = [] } = useQuery({
     queryKey: ["doc-templates-canonical-vers"],
