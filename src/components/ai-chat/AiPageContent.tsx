@@ -116,6 +116,16 @@ const AI_SUB_TABS: SubMenuItem[] = [
 
 const DOC_SUB_TABS: SubMenuItem[] = [
   {
+    id: "canonical-acts",
+    label: "Акты (canonical)",
+    icon: FileText,
+    gradient: "from-cyan-500/10 to-sky-500/8",
+    activeGradient: "from-cyan-500/20 to-sky-500/15",
+    borderColor: "border-cyan-400/20",
+    iconColor: "text-cyan-600",
+    adminOnly: true,
+  },
+  {
     id: "generate",
     label: "Создать документ",
     icon: FileText,
