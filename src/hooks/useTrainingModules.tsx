@@ -232,6 +232,7 @@ export function useTrainingModules() {
       const tcRules = tcData?.rules || [];
       const tcUserTariffIds = tcData?.userTariffIds || [];
       const tcEntTariffsByProduct = tcData?.entitlementTariffsByProduct || {};
+      const tcManualEntProducts = (tcData as any)?.productsWithManualEnt || [];
 
       // Build parent product_id map for inheritance
       const parentProductMap = new Map<string, string>();
