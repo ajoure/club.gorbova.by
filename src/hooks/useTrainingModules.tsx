@@ -232,6 +232,7 @@ export function useTrainingModules() {
       const tcRules = tcData?.rules || [];
       const tcUserTariffIds = tcData?.userTariffIds || [];
       const tcEntTariffsByProduct = tcData?.entitlementTariffsByProduct || {};
+      const tcManualEntProducts = (tcData as any)?.productsWithManualEnt || [];
 
       // Build parent product_id map for inheritance
       const parentProductMap = new Map<string, string>();
@@ -263,7 +264,7 @@ export function useTrainingModules() {
             ? enrichedModules.find(rm => rm.id === m.parent_module_id && !rm.parent_module_id)?.id || m.parent_module_id
             : m.id;
           
-          const filter = resolveTrainingContentFilter(tcRules, rootId, m.product_id, tcUserTariffIds, tcEntTariffsByProduct);
+          const filter = resolveTrainingContentFilter(tcRules, rootId, m.product_id, tcUserTariffIds, tcEntTariffsByProduct, tcManualEntProducts);
           if (filter && filter.mode === "partial") {
             if (m.parent_module_id === null) {
               return m; // Root: keep visible, children filtered individually

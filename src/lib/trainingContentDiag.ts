@@ -8,6 +8,7 @@ export type RuleSource =
   | "db_product"
   | "synthetic_bonus"
   | "synthetic_legacy"
+  | "admin_grant_full_fallback"
   | "rule_unresolved"
   | "no_rule";
 

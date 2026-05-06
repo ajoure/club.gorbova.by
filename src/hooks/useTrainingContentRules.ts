@@ -199,16 +199,29 @@ export function useActiveTrainingContentRules() {
       // Scoped per product_id to prevent overgrant across products
       const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       const entitlementTariffsByProduct: Record<string, string[]> = {};
+      // P4.5: products that have an active entitlement WITHOUT meta.tariff_id and
+      // WITHOUT scope_resolution_mode → admin/business manual product-grant.
+      // Used by resolver as full-access fallback when no tariff DB rule matches.
+      const productsWithManualEnt = new Set<string>();
       (ents || []).forEach(e => {
         if (!e.product_id) return;
         const meta = (e.meta || {}) as Record<string, any>;
         const tid = meta.tariff_id;
-        if (tid && typeof tid === 'string' && UUID_RE.test(tid)) {
+        const hasValidTid = tid && typeof tid === 'string' && UUID_RE.test(tid);
+        if (hasValidTid) {
           if (!entitlementTariffsByProduct[e.product_id]) {
             entitlementTariffsByProduct[e.product_id] = [];
           }
           if (!entitlementTariffsByProduct[e.product_id].includes(tid)) {
             entitlementTariffsByProduct[e.product_id].push(tid);
+          }
+        } else {
+          const mode = meta.scope_resolution_mode;
+          // No valid tariff_id, AND either no scope_mode (legacy/manual) OR
+          // scope_mode === 'full_tariff_scope' (declared full access without tariff_id).
+          // Both indicate manual/business product-grant → P4.5 full fallback.
+          if (!mode || mode === 'full_tariff_scope') {
+            productsWithManualEnt.add(e.product_id);
           }
         }
       });
@@ -242,6 +255,7 @@ export function useActiveTrainingContentRules() {
         rules: [...dbRules, ...syntheticRules],
         userTariffIds: tariffIds,
         entitlementTariffsByProduct,
+        productsWithManualEnt: [...productsWithManualEnt],
       };
     },
     enabled: !!user,
@@ -451,8 +465,13 @@ export function resolveTrainingContentFilter(
   productId: string | null,
   userTariffIds: string[],
   entitlementTariffsByProduct: Record<string, string[]> = {},
+  productsWithManualEnt: Set<string> | string[] = [],
 ): TrainingContentFilter | null {
   if (!productId || rules.length === 0) return null;
+
+  const manualEntSet = productsWithManualEnt instanceof Set
+    ? productsWithManualEnt
+    : new Set(productsWithManualEnt);
 
   // Find rules targeting this training
   const matchingRules = rules.filter(r => r.target_ref === trainingModuleId && r.is_active);
@@ -504,9 +523,27 @@ export function resolveTrainingContentFilter(
     ruleSource = "synthetic_legacy";
   }
 
-  // Priority 5 (NEW): Diagnostic bucket — product has DB rules but none matched user's
-  // tariff context. Default-deny (empty allowlist), NEVER full access. This catches the
-  // case where entitlement.meta.tariff_id does not align with any DB tariff rule.
+  // Priority 4.5: Admin/business product-grant fallback.
+  // User has an active entitlement for THIS product without meta.tariff_id and without
+  // scope_resolution_mode (= manual full-product grant by admin/business). Product has
+  // tariff-only DB rules that don't match user → without this fallback the product
+  // disappears from the cabinet despite being granted. Returns full access.
+  if (!bestRule && dbRules.length > 0 && manualEntSet.has(productId)) {
+    logTrainingContentDiag({
+      user_id: null,
+      product_id: productId,
+      training_module_id: trainingModuleId,
+      entitlement_tariff_id: null,
+      subscription_tariff_ids: userTariffIds,
+      matched_rule_id: null,
+      rule_source: "admin_grant_full_fallback",
+      fallback_reason: "manual_product_grant_without_tariff_id",
+    });
+    return { mode: "full", allowedModuleIds: new Set(), allowedLessonIds: new Set() };
+  }
+
+  // Priority 5: Diagnostic bucket — product has DB rules but none matched user's
+  // tariff context. Default-deny (empty allowlist), NEVER full access.
   if (!bestRule && dbRules.length > 0) {
     logTrainingContentDiag({
       user_id: null,

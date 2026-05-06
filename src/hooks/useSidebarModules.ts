@@ -189,7 +189,7 @@ export function useSidebarModules() {
         ? (modules.find(rm => rm.id === m.parent_module_id && !rm.parent_module_id)?.id || m.parent_module_id)
         : m.id;
 
-      const filter = resolveTrainingContentFilter(tcData.rules, rootId, effectiveProductId, tcData.userTariffIds, tcData.entitlementTariffsByProduct || {});
+      const filter = resolveTrainingContentFilter(tcData.rules, rootId, effectiveProductId, tcData.userTariffIds, tcData.entitlementTariffsByProduct || {}, (tcData as any).productsWithManualEnt || []);
       if (!filter || filter.mode === "full") return true;
 
       // For root modules: check if any children survived filtering
