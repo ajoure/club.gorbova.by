@@ -2,55 +2,63 @@
 
 **Date:** 2026-05-06 (Minsk)
 **Scope:** entitlements c `meta.scope_resolution_mode='module_scope_only'`,
-у которых `historical_module_product_ids` ошибочно содержит **product_id**
-(элементы существуют в `products_v2`) вместо реальных `training_modules.id`.
+у которых `historical_module_product_ids` ошибочно содержит `product_id`
+(элемент существует в `products_v2`) вместо реального `training_modules.id`.
+
+> **Convention.** В этом документе запрещено упоминание внутренних product
+> code/slug и их регистровых вариантов. Если потребуется сослаться на
+> запрещённый токен — использовать placeholder `<legacy_slug>`. Все
+> технические ссылки — UUID. Отображаемое имя — `product_name`.
 
 ## 0. Hypothesis
 
-Retroapply / rule_engine при формировании `historical_module_product_ids` для
-standalone-модульных продуктов записал туда сам `product_id`, а не `module_id`
-корневого тренинга. В resolver (`useTrainingContentRules.ts`) сверка идёт по
-`training_modules.id` ⇒ ни один модуль не матчится ⇒ карточка скрыта в ЛК
-(симптом «Маркетплейсы не видно»).
+Retroapply / rule_engine при формировании `historical_module_product_ids`
+для standalone-модульных продуктов записал туда сам `product_id`, а не
+`training_module_id` корневого тренинга. В resolver
+(`useTrainingContentRules.ts`) сверка идёт по `training_modules.id` ⇒ ни
+один модуль не матчится ⇒ карточка скрыта в ЛК (симптом: продукт не
+виден в «Моя библиотека»).
 
 ## 1. Affected cohort (read-only)
 
-| product_id | top-level module title | proposed module_id | affected entitlements |
+| product_id | product_name | training_module_id (target) | affected entitlements |
 |---|---|---|---|
-| 064dd768… ПРОИЗВОДСТВО | a4a5102d… | 15 |
-| 64d9f812… Грузо/пасс.перевозки | 8f71d4a8… | 8 |
-| 9187db54… ОБЩ. ПИТАНИЕ | 841650a9… | 5 |
-| 99f1f156… ПВТ | b1199440… | 1 |
-| abee24cd… РОЗН. ТОРГОВЛЯ | 1ede03b4… | 7 |
-| d7effaf4… **Маркетплейсы** | 4c97d21c… | 16 |
-| f833c846… Строительство | b7bae7fd… | 8 |
+| `064dd768-…` | Производство | `a4a5102d-…` | 15 |
+| `64d9f812-…` | Грузо/пасс. перевозки | `8f71d4a8-…` | 8 |
+| `9187db54-…` | Общественное питание | `841650a9-…` | 5 |
+| `99f1f156-…` | ПВТ | `b1199440-…` | 1 |
+| `abee24cd-…` | Розничная торговля | `1ede03b4-…` | 7 |
+| `d7effaf4-…` | Маркетплейсы | `4c97d21c-…` | 16 |
+| `f833c846-…` | Строительство | `b7bae7fd-…` | 8 |
 
-**Всего к патчу: 60 entitlements по 7 standalone-модулям CB20.**
+**Всего к патчу: 60 entitlements по 7 standalone-модульным продуктам.**
 
 ## 2. Excluded from auto-fix
 
-- `7101ed3c-7839-4a74-ad95-aa0660369b22` (CB20 main, 20 entitlements).
-  Это сам родительский продукт тренинга, не standalone-модуль. Если
-  `module_scope_only` стоит на CB20-main с `hist=[cb20_product_id]` — это
-  отдельная семантическая ошибка (вероятно должно быть `full_tariff_scope`,
-  либо явный module_scope с конкретным историческим модулем). **Решается
-  отдельным approve, в этом батче НЕ трогаем.**
+- `product_id = 7101ed3c-7839-4a74-ad95-aa0660369b22`
+  (`product_name="Ценный бухгалтер | 1 ступень 2.0"`, 20 entitlements).
+  Это родительский продукт тренинга, не standalone-модуль. Если на нём
+  стоит `module_scope_only` с `historical_module_product_ids=[product_id]`
+  — это отдельная семантическая ошибка (вероятно, должно быть
+  `full_tariff_scope`, либо явный `module_scope` с конкретным историческим
+  `training_module_id`). **Решается отдельным approve, в этом батче НЕ
+  трогаем.**
 
 ## 3. Batch source
 
-`source_type` распределение на 60 affected: смесь `retroapply`, `rule_engine`
-и NULL. `meta.source_event_key` отсутствует у всех ⇒ привязка к конкретному
-RETROAPPLY-2026-04-10-66d2d335 не подтверждается. Это более широкий
-исторический баг, а не один батч.
+`source_type` распределение на 60 affected: смесь `retroapply`,
+`rule_engine` и NULL. `meta.source_event_key` отсутствует у всех ⇒
+привязка к конкретному `RETROAPPLY-2026-04-10-66d2d335` не подтверждается.
+Это более широкий исторический баг, а не один батч.
 
 ## 4. Proposed change (per entitlement)
 
-```
+```sql
 UPDATE entitlements
 SET meta = jsonb_set(
   jsonb_set(meta,
     '{historical_module_product_ids}',
-    to_jsonb(ARRAY[<top_module_id_for_product>]::uuid[]), true),
+    to_jsonb(ARRAY[<target_training_module_id>]::uuid[]), true),
   '{module_scope_ids_repaired_at}',
   to_jsonb(now()::text), true)
 WHERE id = <entitlement_id>;
@@ -61,9 +69,16 @@ WHERE id = <entitlement_id>;
 - `source_type` / `source_rule_id` lineage — **не меняется**
 - Никаких `full_tariff_scope`, никакого расширения доступа.
 
+Фильтр строго:
+```sql
+product_id IN (<7 product UUIDs>)
+AND meta->>'scope_resolution_mode' = 'module_scope_only'
+```
+Никаких условий по product `code` / `slug` / `name`.
+
 ## 5. Audit log entry per row
 
-```
+```sql
 INSERT INTO audit_logs(action, actor_type, actor_label, target_user_id, meta)
 VALUES ('training_content.module_scope_ids_repaired', 'system',
   'module_scope_ids_repair_2026_05', <user_id>,
@@ -71,30 +86,32 @@ VALUES ('training_content.module_scope_ids_repaired', 'system',
     'entitlement_id', <id>,
     'product_id', <product_id>,
     'old_historical_module_product_ids', <old>,
-    'new_historical_module_product_ids', <new>));
+    'new_historical_module_product_ids', <new_training_module_id_array>));
 ```
 
 ## 6. Backup before write
 
 Перед UPDATE — селект полного `meta` всех 60 entitlements в текстовый
-снапшот в proof-файл `module_scope_ids_repair_backup_2026_05.json` (через
-`COPY ... TO STDOUT`).
+снапшот `.lovable/proofs/module_scope_ids_repair_backup_2026_05.json`
+(через `COPY ... TO STDOUT`).
 
 ## 7. Expected post-verify
 
 - `useTrainingContentRules` для каждого user-а резолвит синтетическое
-  `module_scope_only` правило с `allowed_module_ids = [top_module_id]`.
-- Модуль (Маркетплейсы / Производство / …) появляется в библиотеке.
+  `module_scope_only` правило с
+  `allowed_module_ids = [target_training_module_id]`.
+- Карточка целевого продукта появляется в библиотеке.
 - `module_scope_only` остаётся — full-доступ не выдаётся.
 - P4.5 fallback не используется (mode уже задан).
 
 ## 8. NOT in this batch
 
-- `7101ed3c` CB20 main (20 ent) — отдельный approve.
-- `d7effaf4` Маркетплейсы попадает в этот батч (16 ent, включая жалобу
-  пользователя).
-- Writers (`grant-access-for-order`, retroapply, rule_engine) НЕ патчатся.
-  Корневой fix retroapply — отдельная задача после стабилизации данных.
+- `product_id = 7101ed3c-7839-4a74-ad95-aa0660369b22` (20 ent) —
+  отдельный approve.
+- Writers (`grant-access-for-order`, retroapply, rule_engine) НЕ
+  патчатся. Корневой fix retroapply — отдельная задача после
+  стабилизации данных.
+- Legacy artefacts (см. раздел 10) — не редактируются.
 
 ## 9. Awaiting approve
 
@@ -102,95 +119,104 @@ VALUES ('training_content.module_scope_ids_repaired', 'system',
 
 ---
 
-## 10. PATCH: убрать `cb20` как технический идентификатор
+## 10. Hardcode policy (strict edition)
 
 ### 10.1 Принцип
 
-`cb20` / `CB20` / «Ценный бухгалтер» допустимы ТОЛЬКО как:
-- человекочитаемый label в proof/отчётах,
-- запись в справочнике `src/lib/product-names.ts` (UI mapping),
-- исторические proof-файлы (не редактируются).
+Внутренние product code/slug запрещены к использованию как технический
+или текстовый идентификатор в **новых артефактах**: planах, proof,
+memory, runtime-коде, миграциях, audit meta, console/log labels,
+комментариях, именах файлов и функций.
 
-Запрещено как технический ключ в:
-- access/resolver/repair business logic,
-- именах функций / migrations,
-- условиях `product.code === 'cb20'`,
-- runtime-фильтрах.
+Канонические ключи:
+- `product_id`, `tariff_id`, `training_module_id`, `entitlement_id`
+- `product_name` — только как отображаемое имя для UI/proof readability.
 
-Канонические ключи: `product_id`, `tariff_id`, `training_module_id`, `entitlement_id`.
-
-### 10.2 Pre-execute grep аудит (фактический результат)
-
-Команда: `rg -n "cb20|CB20" src supabase` (исключая backfill-v23 и proof-файлы).
-
-**Допустимые совпадения (label / UI / historical):**
-- `src/lib/product-names.ts` — UI mapping (`cb20`, `cb20_predzapis`, `CB20`). ✅ оставляем.
-- `src/components/course/PreregistrationDialog.tsx:35` — `productCode = "cb20_predzapis"` дефолт пропса для предзаписи. ✅ это другой продукт (предзапись), не относится к access-logic.
-- `supabase/functions/course-prereg-notify/index.ts:68` — label-маппинг для уведомления. ✅ человекочитаемое имя.
-- Комментарии (`// cb20 etc.`, `/* CB20 */`) в `useSidebarModules.ts`, `useTrainingContentRules.ts`, `_shared/entitlement-sync.ts`, `_shared/access-resolver.ts`, `split-multi-module-orders/index.ts`, `repair-cb20-entitlements/index.ts` — только в комментариях, без runtime-логики. ✅ оставляем (или чистим в отдельном refactor).
-
-**Недопустимые совпадения (runtime business logic с `cb20` как условием):**
-
-| Локация | Тип | Действие |
-|---|---|---|
-| `supabase/migrations/20260331113539_*.sql:143` | `AND p2.code <> 'cb20'` в исторической миграции | NOOP — миграция уже применена, не переписываем историю; runtime не использует |
-| `supabase/migrations/20260331115050_*.sql:71` | то же | NOOP — историческая миграция |
-| `supabase/migrations/20260406205141_*.sql` | data-fix комментарий | NOOP — историческая миграция |
-| `supabase/functions/_shared/entitlement-sync.ts:13` | КОММЕНТАРИЙ «Skips cb20 when called from subscription paths (mode_filter)» | проверить, нет ли ниже runtime-кода с `code === 'cb20'` |
-| `supabase/functions/admin-entitlement-backfill-v23/` | внутренний backfill v23 | вне scope текущего repair, отдельный refactor |
-| `supabase/functions/repair-cb20-entitlements/` | имя функции содержит cb20 | НЕ используем; новая функция — `repair-training-module-scope-ids` (или inline migration) |
-
-**Решение для текущего repair:**
-- НЕ создаём новую edge-function с `cb20` в имени.
-- Repair выполняем как **inline миграция** под именем `module_scope_ids_repair_2026_05`.
-- Условия фильтра — ТОЛЬКО `product_id IN (<7 UUIDs>)` + `meta->>'scope_resolution_mode' = 'module_scope_only'`. Никаких `code = 'cb20'`.
-
-### 10.3 Проверка `entitlement-sync.ts` на runtime-фильтр по `cb20`
-
-Требуется отдельное чтение файла перед execute (см. Step 0 ниже).
-
-### 10.4 Step 0 (новый, обязательный перед Execute)
-
-1. `code--view supabase/functions/_shared/entitlement-sync.ts` — найти и зафиксировать наличие/отсутствие `code === 'cb20'` или подобных runtime-проверок.
-2. Если найдено — внести в отдельный backlog-кандидат `cb20_hardcode_cleanup_2026_05.md` (НЕ блокирует текущий repair, т.к. касается subscription-sync, а не module_scope).
-3. Никаких write-операций, пока этот аудит не зафиксирован в proof.
-
-### 10.5 Repair-naming canonical
+### 10.2 Naming canon
 
 | Сущность | Имя |
 |---|---|
-| Миграция | `module_scope_ids_repair_2026_05` |
+| Inline миграция | `module_scope_ids_repair_2026_05` |
 | Audit action | `training_content.module_scope_ids_repaired` |
-| Backup-файл | `.lovable/proofs/module_scope_ids_repair_backup_2026_05.json` |
-| Proof execute | `.lovable/proofs/module_scope_ids_repair_execute_2026_05.md` |
+| Backup | `.lovable/proofs/module_scope_ids_repair_backup_2026_05.json` |
+| Execute proof | `.lovable/proofs/module_scope_ids_repair_execute_2026_05.md` |
+| Backlog (legacy debt) | `.lovable/backlog/remove_legacy_product_code_mentions_2026_05.md` |
 
-Ни в одном из имён нет `cb20`.
+### 10.3 Pre-execute grep gate
+
+Команда (по новым/изменённым артефактам этого PATCH); конкретные
+запрещённые токены передаются через переменную окружения, чтобы они не
+попадали в репозиторий:
+```
+TOKENS="${LEGACY_PRODUCT_TOKENS:?set externally}"
+rg -n "$TOKENS" \
+  .lovable/proofs/module_scope_ids_repair_dryrun_2026_05.md \
+  .lovable/backlog/remove_legacy_product_code_mentions_2026_05.md
+```
+**Ожидание: 0 совпадений.**
+
+После Execute — добавить:
+```
+rg -n "$TOKENS" .lovable/proofs/module_scope_ids_repair_execute_2026_05.md
+```
+**Ожидание: 0 совпадений.**
+
+Полный repo-скан остаётся диагностическим. Существующие совпадения в
+исторических миграциях, legacy edge-функциях, legacy hooks/комментариях,
+`src/lib/product-names.ts` и исторических proof-файлах помечены
+`legacy_existing_debt` и **не трогаются** в этом Execute. Списком они
+ведутся в backlog-файле через placeholder-нотацию.
+
+### 10.4 Repair filter (canonical)
+
+```sql
+WHERE product_id IN (
+  '064dd768-…','64d9f812-…','9187db54-…','99f1f156-…',
+  'abee24cd-…','d7effaf4-…','f833c846-…'
+)
+AND meta->>'scope_resolution_mode' = 'module_scope_only'
+AND <historical_module_product_ids contains the product_id itself>
+```
+
+### 10.5 Post-execute proof contract
+
+В execute-proof разрешено писать только:
+- `product_id`,
+- `product_name` (отображаемое),
+- `entitlement_id`,
+- `old historical_module_product_ids`,
+- `new training_module_id`,
+- `audit_log id`.
 
 ### 10.6 Memory rule (после Execute)
 
-Добавить файл `mem://architecture/standard/no-product-code-in-business-logic`:
+Создать `mem://architecture/standard/no-product-code-in-new-artifacts`:
 
-> Запрещено использовать product `code`/`name` (например, `cb20`, `CB20`, «Ценный бухгалтер») как технический ключ в access/resolver/repair logic, фильтрах, условиях, именах функций или миграций. Канонические ключи: `product_id`, `tariff_id`, `training_module_id`, `entitlement_id`. Название продукта допускается только для UI-mapping (`src/lib/product-names.ts`) и человекочитаемых proof-отчётов.
+> Запрещено использовать внутренние product code/slug как технический
+> или текстовый идентификатор. В новых планах, proof, memory,
+> runtime-коде, миграциях, audit meta, комментариях и именах файлов
+> используются только `product_id`, `tariff_id`, `training_module_id`,
+> `entitlement_id` и отображаемое `product_name`. Исторические артефакты
+> помечаются `legacy_existing_debt` и не редактируются ad-hoc.
 
-И ссылку в `mem://index.md` → секция Core (одной строкой).
+В `mem://index.md` → секция Core, одной строкой.
 
-### 10.7 Post-execute Hardcode cleanup verification
+## 11. DoD (final)
 
-После Execute обязательно:
-1. `rg -n "cb20|CB20" src supabase` → итоговый снимок в proof.
-2. Каждое совпадение классифицировать: `label-only` / `historical-migration` / `comment` / `RUNTIME-VIOLATION`.
-3. `RUNTIME-VIOLATION = 0` — иначе Execute считается невыполненным, откат + новый план.
+- [ ] dry-run переписан, grep по нему = 0
+- [ ] backlog `remove_legacy_product_code_mentions_2026_05.md` создан
+- [ ] execute-proof не содержит запрещённых code/slug, grep = 0
+- [ ] inline миграция, audit, backup-имена не содержат product code/slug
+- [ ] memory rule `no-product-code-in-new-artifacts` создан и в Core
+- [ ] writers (`grant-access-for-order`, retroapply, rule_engine,
+      subscription writers) не тронуты
+- [ ] repair фильтр строго `product_id IN (...) AND
+      meta->>'scope_resolution_mode'='module_scope_only'`
+- [ ] post-execute: целевые 7 продуктов появляются в библиотеке
+      затронутых пользователей; `module_scope_only` сохранён; full-доступ
+      не выдан
 
-### 10.8 Обновлённый DoD
+## 12. Awaiting Execute approve
 
-- [ ] repair выполнен по `product_id → training_module_id`, без `cb20`-условий в SQL/именах
-- [ ] inline миграция `module_scope_ids_repair_2026_05`, без новых cb20-named функций
-- [ ] proof оперирует `product_id=<UUID>, product_name="<label>"`, а не `cb20`-кодом
-- [ ] post-grep: `RUNTIME-VIOLATION=0` (label/comment/historical-migration допустимы)
-- [ ] memory rule `no-product-code-in-business-logic` добавлен
-- [ ] writers (grant-access-for-order, retroapply, rule_engine, subscriptions writers) не тронуты
-
-## 11. Awaiting approve (обновлено)
-
-План дополнен PATCH-разделом 10. Pre-execute grep-аудит выполнен и зафиксирован.
-**Execute не запускается до отдельного approve этого обновлённого плана.**
+План переписан. Pre-execute grep gate выполняется в следующем шаге.
+**Execute не запускается до отдельного approve.**

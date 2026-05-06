@@ -1,108 +1,166 @@
-## >'tariff_id' as tariff_id, status, expires_at, created_at FROM entitlements WHERE user_id='a832c11e-1715-4646-bfcb-859fff931a0e' AND status='active' ORDER BY created_at DESC\"}">
+## Да, согласен, с учетом правок:
 
-Диагностика:
+```text
+Дополнить план обязательными правками:
 
-Корень бага (cb20 «1 ступень 2.0» не виден):
+1. В новых артефактах запрещено использовать не только старый product code, но и любые производные от него:
+   - в именах файлов;
+   - в заголовках;
+   - в комментариях;
+   - в proof-тексте;
+   - в memory;
+   - в migration description;
+   - в audit meta;
+   - в console/log labels.
 
-Пользователь Екатерина (a832c11e…) имеет:
+2. В текущем repair использовать только:
+   - product_id;
+   - product_name;
+   - training_module_id;
+   - entitlement_id;
+   - tariff_id.
 
-- entitlement cb20 (product 7101ed3c…), активный, `meta.tariff_id = NULL` (выдан админом «через BUSINESS» 31.03.26).
+3. В dry-run proof полностью удалить разделы, где старый product code классифицируется как “допустимый”. Такой категории больше нет.
 
-- subscriptions_v2 — только клуб (tariff 7c748940…), нет тарифа cb20.
+4. В backlog-файле по legacy-долгу также не использовать запрещённый product code в названии файла. Название заменить на:
+   `.lovable/backlog/remove_legacy_product_code_mentions_2026_05.md`
 
-- access_rules для cb20 (training_content) — ровно 3 правила, все привязаны к `tariff_id` (543940b1, adbe94e8, 9bc81736). Product-level правила (без tariff_id) нет.
+5. В memory rule не приводить пример запрещённого кода. Формулировка должна быть общей:
+   “Запрещено использовать внутренние product code/slug как технический или текстовый идентификатор...”
 
-Резолвер `resolveTrainingContentFilter` идёт по приоритетам:
+6. Перед Execute обязательно показать grep-gate:
+   - по dry-run proof;
+   - по execute proof;
+   - по новым/изменённым файлам текущего patch;
+   - результат должен быть 0 совпадений.
 
-- P1 db_tariff — её tariff_ids `[7c748940 (клуб)] ∪ entitlementTariffs[cb20]=[]` ни с одним из правил cb20 не совпадают.
+7. Исторические совпадения не редактировать в этом Execute, но вынести отдельным legacy debt без выполнения.
 
-- P2 db_product — нет product-only правила.
+8. Repair-фильтр должен быть строго:
+   `product_id IN (...)`
+   плюс
+   `meta->>'scope_resolution_mode' = 'module_scope_only'`
+   Никаких условий по code/name/slug.
 
-- P3 synthetic_bonus — нет `scope_resolution_mode` в meta.
+9. После Execute в proof писать только:
+   - product_id;
+   - product_name;
+   - old historical_module_product_ids;
+   - new training_module_id;
+   - entitlement_id;
+   - audit id.
+```
 
-- P4 synthetic_legacy — подавлен, потому что для cb20 уже есть DB-rules `productsWithDbRules`).
-
-- P5 rule_unresolved → default-deny `partial` с пустым allowlist).
-
-Дальше в `useTrainingModules`: root остаётся с `has_access=true`, но все дети получают `has_access=false`, `computeVisibleRecursiveLessonCount(root)=0` → root скрывается строкой `if (visibleRecursive === 0) return false`. Это и есть исчезновение «Ценный бухгалтер | 1 ступень 2.0» из «Моя библиотека», хотя в «Доступах» он значится «Активен».
-
-То же ловит других пользователей: любой ручной/business-grant без `meta.tariff_id` на продукт, у которого DB-правила только tariff-scoped, получит default-deny.
-
-Это противоречит UX-ожиданию: админ выдал доступ к продукту целиком — пользователь должен увидеть продукт целиком. Сейчас память говорит «rule_unresolved = default-deny», но фактически нет канона для «product-grant без tariff_id».
-
-План решения готов:
-
- `— формируется в` useActiveTrainingContentRule `из` entitlement`, где` meta.tariff_i `отсутствует **и**` meta.scope_resolution_mod `отсутствует (т.е. это не bonus, а полный ручной доступ).\\n\\n### Технические детали\\n\\nФайлы:\\n-` src/hooks/useTrainingContentRules.t`\\n  -` useActiveTrainingContentRule`: собрать` productsWithManualEn `(ent.meta пустой по` tariff_i `и` scope_resolution_mod`), вернуть в общем объекте.\\n  -` resolveTrainingContentFilte`: принять` productsWithManualEn`; вставить новый блок между P4 и P5; включить в diag-лог` admin_grant_full_fallbac`.\\n-` src/hooks/useTrainingModules.ts`,` src/hooks/useSidebarModules.t`,` src/hooks/useContainerLessons.t `— пробросить новый параметр в вызовы` resolveTrainingContentFilte`.\\n- Migration: апдейт ent + audit row.\\n- Memory update: добавить пункт в` mem://architecture/access-control/training-content-resolver-rule `про P4.5 admin-grant fallback и канон «product-grant без tariff_id ⇒ full».\\n\\n### DoD\\n\\n1. У` [finassist.by@gmail.co](mailto:finassist.by@gmail.com) `карточка «Ценный бухгалтер | 1 ступень 2.0» появляется в «Моя библиотека», содержит модули согласно тарифу 9bc81736 (28 модулей), модули открываются.\\n2. Регрессия: пользователь с partial-bonus (`scope_resolution_mod`) по-прежнему видит только bonus-модули (P3 синтетика приоритетнее P4.5).\\n3. Регрессия: пользователь без entitlement и без подписки — не получает доступ (P4.5 не срабатывает без ent).\\n4. Регрессия: пользователь с tariff-подпиской на cb20 — продолжает идти через P1.\\n5. Аудит-запись` admin_grant_full_fallbac `появляется в` audit_log`/diag-логе при срабатывании fallback.\\n6. Память обновлена.\\n\\n### Verify\\n\\n- SQL:` SELECT meta FROM entitlements WHERE id='155ed99b… `показывает` tariff_id='9bc81736…`.\\n- UI runtime у клиента: карточка видна, модули открываются.\\n-` localStorage.setItem('[debug.training](http://debug.training)_content','1' `→ лог` rule_source=db_tarif `(после data-fix) ИЛИ` rule_source=admin_grant_full_fallback` (если data-fix откатить — system-фикс).\\n\"}">
+После внесения этих правок план можно выполнять.
 
 &nbsp;
 
-План: Видимость продукта для admin/business grants без tariff_id
+План: PATCH 10 (жёсткая редакция) — полный запрет `cb20`/`CB20` в новых артефактах
 
-### Diagnose (готово)
+### Цель
 
-Кейс: Екатерина Иванченко (`a832c11e…`), продукт «Ценный бухгалтер | 1 ступень 2.0» (cb20, `7101ed3c…`).
+Убрать `cb20` / `CB20` из всех **новых и изменяемых** артефактов: proof, memory, планы, миграции, функции, комментарии, UI-описания. Допустимое отображаемое имя продукта — только `Ценный бухгалтер | 1 ступень 2.0`. Технические ссылки — только UUID.
 
-- В админке «Доступы»: ent активен, выдан 31.03.26 через BUSINESS, `meta.tariff_id = NULL`.
-- В кабинете «Обучение → Моя библиотека» (11 карточек) карточки cb20 нет.
-- Причина: `access_rules` для cb20 существуют только tariff-scoped (3 шт.). У ent нет `meta.tariff_id`, нет совпадающей подписки → резолвер уходит в P5 `rule_unresolved` → `partial` c пустым allowlist → root прячется.
+### Канонические ключи
 
-Это системная дыра: любой ручной/business-grant продукта без `meta.tariff_id` для продукта с tariff-only правилами → пользователь не видит продукт.
+- `product_id` = `7101ed3c-7839-4a74-ad95-aa0660369b22`
+- `product_name` = `"Ценный бухгалтер | 1 ступень 2.0"` (только как отображаемое имя)
+- `training_module_id`, `tariff_id`, `entitlement_id`
 
-### Решение (двухшаговое)
+`cb20` / `CB20` запрещены даже как label, комментарий или текст.
 
-**Шаг 1. Точечный data-fix для Екатерины (немедленно).**
+---
 
-Проставить `meta.tariff_id` в её cb20 entitlement, чтобы резолвер ушёл в P1 `db_tariff`. Канонический «полный» тариф 1 ступени 2.0 — `9bc81736-e7e5-48db-9925-b866427a98e1` (правило открывает 28 модулей; максимально полный набор). Это согласуется с памятью «entitlement.meta.tariff_id = first-class match».
+### Шаг 1. Перепись `module_scope_ids_repair_dryrun_2026_05.md`
 
-Migration:
+- Удалить все `cb20` / `CB20` из текста (включая разделы 0, 2, 8, 10).
+- Раздел «допустимые совпадения cb20» — **удалить целиком** (допустимых нет).
+- Все технические ссылки → `product_id=<UUID>` (+ опционально `product_name="<label>"` для читаемости).
+- Заголовки таблиц переименовать: вместо «top-level module title» → `product_id | product_name | training_module_id | affected_count`.
+- Раздел 8 «NOT in this batch» переписать без упоминания `cb20`/`CB20` — оставить только `product_id=7101ed3c…` (20 ent — отдельный approve).
 
-```sql
-UPDATE entitlements
-SET meta = COALESCE(meta,'{}'::jsonb)
-       || jsonb_build_object('tariff_id','9bc81736-e7e5-48db-9925-b866427a98e1',
-                             'tariff_id_source','admin_business_grant_repair_2026_05')
-WHERE id='155ed99b-829b-4118-9136-1e08f0527896';
+### Шаг 2. Перепись имён артефактов
+
+
+| Сущность        | Имя                                                           |
+| --------------- | ------------------------------------------------------------- |
+| Inline миграция | `module_scope_ids_repair_2026_05`                             |
+| Audit action    | `training_content.module_scope_ids_repaired`                  |
+| Backup          | `.lovable/proofs/module_scope_ids_repair_backup_2026_05.json` |
+| Execute proof   | `.lovable/proofs/module_scope_ids_repair_execute_2026_05.md`  |
+
+
+Без `cb20` нигде.
+
+### Шаг 3. Pre-execute grep gate
+
+Команда:
+
+```
+rg -n "cb20|CB20" .lovable/proofs/module_scope_ids_repair_dryrun_2026_05.md
+rg -n "cb20|CB20" .lovable/proofs/module_scope_ids_repair_execute_2026_05.md  # после Execute
+rg -n "cb20|CB20" <все новые/изменённые файлы этого PATCH-а>
 ```
 
-- запись в `audit_logs` (action `entitlement.meta.tariff_id_repair`, actor=system, reason=`business_grant_missing_tariff_id`).
+**Ожидание: 0 совпадений в каждом.**
 
-**Шаг 2. Системный фикс в резолвере (canonical).**
+Полный repo-скан `rg -n "cb20|CB20" src supabase .lovable` остаётся диагностическим: совпадения допускаются ТОЛЬКО в:
 
-В `resolveTrainingContentFilter` (src/hooks/useTrainingContentRules.ts) перед P5 добавить **P4.5 «admin/business product-grant fallback»**:
+- исторических миграциях (`supabase/migrations/2026013*`, `2026010*`, `2026033*`, `2026040*`, `2026011*`),
+- legacy функциях (`repair-cb20-entitlements`, `admin-entitlement-backfill-v23`, `course-prereg-notify`, `split-multi-module-orders`),
+- legacy hooks-комментариях (`useTrainingContentRules.ts`, `useSidebarModules.ts`, `_shared/entitlement-sync.ts`, `_shared/access-resolver.ts`),
+- `src/lib/product-names.ts` (UI-mapping legacy slug),
+- `src/components/course/PreregistrationDialog.tsx` (другой продукт — предзапись),
+- исторических proof-файлах (`cb20_manual_grant_tariff_repair_2026_05.md`, `training_content_resolver_cb20_tatiana_2026_05.md`, `training_content_business_full_fix.md`, `access_rules_meta_backfill_a1.md`, `access_rules_full_dod_proof.md`, `.lovable/plan.md`).
 
-Условие срабатывания:
+Все эти совпадения помечаются `legacy_existing_debt` и **не трогаются** в текущем Execute.
 
-- DB rules для продукта существуют, но ни одно tariff-rule не матчит,
-- product-level rule отсутствует,
-- у пользователя есть **активная entitlement для этого продукта без `meta.tariff_id**` (= признак ручного/business grant), 
-- продукт **не имеет** активной recurring-подписки пользователя на этот продукт (чтобы не маскировать рассинхрон оплаты).
+### Шаг 4. Backlog
 
-Поведение: вернуть `mode: "full"` + audit `rule_source = "admin_grant_full_fallback"`. Это закрывает дыру для всех будущих manual grants без необходимости каждый раз чинить данные руками.
+Создать отдельный backlog-кандидат (не выполнять):
 
-Чтобы помечать «admin/business grant» точно, ввести в резолвер новый параметр `productsWithManualEnt: Set<string>` — формируется в `useActiveTrainingContentRules` из `entitlements`, где `meta.tariff_id` отсутствует **и** `meta.scope_resolution_mode` отсутствует (т.е. это не bonus, а полный ручной доступ).
+- `.lovable/backlog/remove_legacy_product_code_mentions_2026_05.md` — план поэтапного удаления `cb20`/`CB20` из legacy кода/комментариев/имён функций. Требует отдельного approve, в текущем repair не реализуется.
 
-### Технические детали
+### Шаг 5. Memory rule
 
-Файлы:
+Создать `mem://architecture/standard/no-product-code-in-new-artifacts` с текстом:
 
-- `src/hooks/useTrainingContentRules.ts`
-  - `useActiveTrainingContentRules`: собрать `productsWithManualEnt` (ent.meta пустой по `tariff_id` и `scope_resolution_mode`), вернуть в общем объекте.
-  - `resolveTrainingContentFilter`: принять `productsWithManualEnt`; вставить новый блок между P4 и P5; включить в diag-лог `admin_grant_full_fallback`.
-- `src/hooks/useTrainingModules.tsx`, `src/hooks/useSidebarModules.ts`, `src/hooks/useContainerLessons.ts` — пробросить новый параметр в вызовы `resolveTrainingContentFilter`.
-- Migration: апдейт ent + audit row.
-- Memory update: добавить пункт в `mem://architecture/access-control/training-content-resolver-rules` про P4.5 admin-grant fallback и канон «product-grant без tariff_id ⇒ full».
+> Запрещено использовать внутренние product code/slug вроде `cb20` как технический или текстовый идентификатор. В новых планах, proof, memory, runtime-коде, миграциях и комментариях используются только `product_id`, `tariff_id`, `training_module_id`, `entitlement_id` и отображаемое `product_name`. Исторические артефакты помечаются `legacy_existing_debt` и не редактируются ad-hoc.
 
-### DoD
+В `mem://index.md` → секция Core, одной строкой.
 
-1. У `finassist.by@gmail.com` карточка «Ценный бухгалтер | 1 ступень 2.0» появляется в «Моя библиотека», содержит модули согласно тарифу 9bc81736 (28 модулей), модули открываются.
-2. Регрессия: пользователь с partial-bonus (`scope_resolution_mode`) по-прежнему видит только bonus-модули (P3 синтетика приоритетнее P4.5).
-3. Регрессия: пользователь без entitlement и без подписки — не получает доступ (P4.5 не срабатывает без ent).
-4. Регрессия: пользователь с tariff-подпиской на cb20 — продолжает идти через P1.
-5. Аудит-запись `admin_grant_full_fallback` появляется в `audit_logs`/diag-логе при срабатывании fallback.
-6. Память обновлена.
+### Шаг 6. Обновлённый DoD
 
-### Verify
+- `module_scope_ids_repair_dryrun_2026_05.md` переписан, `rg cb20|CB20` по нему = 0
+- `module_scope_ids_repair_execute_2026_05.md` создан, `rg cb20|CB20` по нему = 0
+- inline миграция, audit, backup-имена не содержат `cb20`
+- memory rule `no-product-code-in-new-artifacts` создан и в Core
+- backlog `remove_legacy_product_code_mentions_2026_05` зафиксирован (без выполнения)
+- writers (grant-access-for-order, retroapply, rule_engine, subscription writers) не тронуты
+- repair фильтр: `product_id IN (<6 UUIDs>) AND meta->>'scope_resolution_mode'='module_scope_only'` — без code-условий
+- post-execute: целевые 6 продуктов появляются в библиотеке у затронутых пользователей; `module_scope_only` сохранён; full-доступ не выдан
 
-- SQL: `SELECT meta FROM entitlements WHERE id='155ed99b…'` показывает `tariff_id='9bc81736…'`.
-- UI runtime у клиента: карточка видна, модули открываются.
-- `localStorage.setItem('debug.training_content','1')` → лог `rule_source=db_tariff` (после data-fix) ИЛИ `rule_source=admin_grant_full_fallback` (если data-fix откатить — system-фикс).
+### Шаг 7. Gate перед Execute
+
+Execute не запускается, пока:
+
+1. dry-run переписан и проверен grep-ом (0 совпадений в новых артефактах);
+2. backlog для legacy создан;
+3. этот обновлённый план получил отдельный approve.
+
+### Порядок исполнения после approve
+
+1. Перепись dry-run (Шаг 1) → grep gate.
+2. Создание backlog (Шаг 4).
+3. Запрос финального approve на Execute.
+4. Execute миграции + backup + audit.
+5. Создание execute-proof + memory rule + index update.
+6. Post-execute grep gate + verify видимости в UI.
+
+### Что НЕ делается этим планом
+
+- Не редактируются исторические proof-файлы (`cb20_manual_grant_tariff_repair_2026_05.md`, `training_content_resolver_cb20_tatiana_2026_05.md`, `.lovable/plan.md`, и др.).
+- Не переименовывается `repair-cb20-entitlements` edge-функция.
+- Не изменяется `src/lib/product-names.ts`, `PreregistrationDialog.tsx`, `course-prereg-notify`.
+- Не трогается `7101ed3c…` (`module_scope_only` на product-main, 20 ent) — отдельный approve.
+- Не патчатся writers и retroapply.
