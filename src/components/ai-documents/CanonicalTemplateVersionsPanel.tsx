@@ -227,6 +227,16 @@ export function CanonicalTemplateVersionsPanel() {
                         <span className="ml-auto text-muted-foreground">
                           {(m.locations || []).map((l: any) => `${l.part.replace("word/", "")} ×${l.count}`).join(", ")}
                         </span>
+                        {m.status === "unmapped" && (
+                          <>
+                            <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => setMapDlg({ token: m.token, versionId: v.id })}>
+                              <Wand2 className="h-3 w-3 mr-1" /> Сопоставить
+                            </Button>
+                            <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => { navigator.clipboard.writeText(`{{${m.token}}}`); toast.success("Скопировано"); }}>
+                              <Copy className="h-3 w-3" />
+                            </Button>
+                          </>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -244,6 +254,16 @@ export function CanonicalTemplateVersionsPanel() {
             );
           })}
         </div>
+        {mapDlg && (
+          <TokenMappingDialog
+            open={!!mapDlg}
+            onOpenChange={(o) => { if (!o) setMapDlg(null); }}
+            token={mapDlg.token}
+            templateId={templateId}
+            templateVersionId={mapDlg.versionId}
+            onMapped={() => qc.invalidateQueries({ queryKey: ["doc-template-versions", templateId] })}
+          />
+        )}
       </CardContent>
     </Card>
   );
