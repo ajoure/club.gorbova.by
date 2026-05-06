@@ -16,8 +16,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, RefreshCw, CheckCircle2, AlertTriangle, FileText, Star } from "lucide-react";
+import { Loader2, RefreshCw, CheckCircle2, AlertTriangle, FileText, Star, Wand2, Copy } from "lucide-react";
 import { toast } from "sonner";
+import { TokenMappingDialog } from "./TokenMappingDialog";
 
 interface VersionRow {
   id: string;
@@ -46,6 +47,27 @@ export function CanonicalTemplateVersionsPanel() {
   const [templateId, setTemplateId] = useState<string>("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [mapDlg, setMapDlg] = useState<{ token: string; versionId: string } | null>(null);
+  const [backfillBusy, setBackfillBusy] = useState(false);
+  const [backfillResult, setBackfillResult] = useState<any | null>(null);
+
+  const runBackfill = async (dryRun: boolean) => {
+    setBackfillBusy(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("canonical-template-backfill-validation", {
+        body: { dry_run: dryRun, limit: 50, force: !dryRun ? false : true },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      setBackfillResult(data.summary);
+      toast.success(dryRun ? `Dry-run: ${data.summary.total_to_process} версий, ${data.summary.total_unmapped} unmapped` : `Готово: обновлено ${data.summary.would_update}`);
+      if (!dryRun && templateId) qc.invalidateQueries({ queryKey: ["doc-template-versions", templateId] });
+    } catch (e: any) {
+      toast.error(`Backfill ошибка: ${e?.message || e}`);
+    } finally {
+      setBackfillBusy(false);
+    }
+  };
 
   const { data: templates = [] } = useQuery({
     queryKey: ["doc-templates-canonical-vers"],
@@ -120,14 +142,30 @@ export function CanonicalTemplateVersionsPanel() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <Select value={templateId} onValueChange={setTemplateId}>
-          <SelectTrigger className="max-w-md"><SelectValue placeholder="Выберите шаблон" /></SelectTrigger>
-          <SelectContent>
-            {templates.map((t: any) => (
-              <SelectItem key={t.id} value={t.id}>{t.name}{t.code ? ` · ${t.code}` : ""}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex items-center gap-2">
+          <Select value={templateId} onValueChange={setTemplateId}>
+            <SelectTrigger className="max-w-md"><SelectValue placeholder="Выберите шаблон" /></SelectTrigger>
+            <SelectContent>
+              {templates.map((t: any) => (
+                <SelectItem key={t.id} value={t.id}>{t.name}{t.code ? ` · ${t.code}` : ""}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="ml-auto flex items-center gap-2">
+            <Button size="sm" variant="outline" disabled={backfillBusy} onClick={() => runBackfill(true)}>
+              {backfillBusy && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
+              Dry-run все версии
+            </Button>
+            <Button size="sm" disabled={backfillBusy || !backfillResult} onClick={() => runBackfill(false)}>
+              Перепроверить все версии
+            </Button>
+          </div>
+        </div>
+        {backfillResult && (
+          <div className="text-xs rounded-md border bg-muted/40 p-2">
+            <div>Всего: <b>{backfillResult.total_to_process}</b> · обновится: <b>{backfillResult.would_update}</b> · файлы missing: <b>{backfillResult.missing_files}</b> · unmapped: <b>{backfillResult.total_unmapped}</b> · режим: <b>{backfillResult.dry_run ? "dry-run" : "execute"}</b></div>
+          </div>
+        )}
 
         {isFetching && <div className="text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin inline mr-1" /> Загружаем версии…</div>}
 
@@ -189,6 +227,16 @@ export function CanonicalTemplateVersionsPanel() {
                         <span className="ml-auto text-muted-foreground">
                           {(m.locations || []).map((l: any) => `${l.part.replace("word/", "")} ×${l.count}`).join(", ")}
                         </span>
+                        {m.status === "unmapped" && (
+                          <>
+                            <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => setMapDlg({ token: m.token, versionId: v.id })}>
+                              <Wand2 className="h-3 w-3 mr-1" /> Сопоставить
+                            </Button>
+                            <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => { navigator.clipboard.writeText(`{{${m.token}}}`); toast.success("Скопировано"); }}>
+                              <Copy className="h-3 w-3" />
+                            </Button>
+                          </>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -206,6 +254,16 @@ export function CanonicalTemplateVersionsPanel() {
             );
           })}
         </div>
+        {mapDlg && (
+          <TokenMappingDialog
+            open={!!mapDlg}
+            onOpenChange={(o) => { if (!o) setMapDlg(null); }}
+            token={mapDlg.token}
+            templateId={templateId}
+            templateVersionId={mapDlg.versionId}
+            onMapped={() => qc.invalidateQueries({ queryKey: ["doc-template-versions", templateId] })}
+          />
+        )}
       </CardContent>
     </Card>
   );

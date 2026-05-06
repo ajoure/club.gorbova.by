@@ -179,6 +179,35 @@ export async function resolveCanonicalPayload(
   const registryByKey = new Map<string, any>();
   for (const r of (registryRows || [])) registryByKey.set(r.token_key, r);
 
+  // 3b. Token aliases (global + scoped to this template/version)
+  // alias_token (как написано в DOCX) → canonical_token_key (registry)
+  const aliasMap = new Map<string, string>();
+  const aliasScopes: any[] = [];
+  try {
+    let q = supabase.from('document_token_aliases')
+      .select('alias_token, canonical_token_key, template_id, template_version_id')
+      .or(`template_id.is.null,template_id.eq.${tpl.id}`);
+    const { data: aliasRows } = await q;
+    for (const a of (aliasRows || [])) {
+      // version-specific overrides template-specific overrides global
+      // we accumulate, then resolve precedence
+      aliasScopes.push(a);
+    }
+    // precedence: version > template > global
+    const byAlias = new Map<string, any>();
+    for (const a of aliasScopes) {
+      const existing = byAlias.get(a.alias_token);
+      const score = (a.template_version_id ? 4 : 0) + (a.template_id ? 2 : 0);
+      const existingScore = existing ? ((existing.template_version_id ? 4 : 0) + (existing.template_id ? 2 : 0)) : -1;
+      if (!existing || score > existingScore) byAlias.set(a.alias_token, a);
+    }
+    for (const [k, v] of byAlias) {
+      // skip version-scoped aliases that don't match current version
+      if (v.template_version_id && v.template_version_id !== (version?.id || null)) continue;
+      if (registryByKey.has(v.canonical_token_key)) aliasMap.set(k, v.canonical_token_key);
+    }
+  } catch (_e) { /* aliases table optional */ }
+
   // 4. Executor
   let executor: any = null;
   if (input.executor_id) {
@@ -319,11 +348,22 @@ export async function resolveCanonicalPayload(
     }
   }
 
-  // 11. Detect template tokens that are NOT in registry
-  const unmapped = templateTokens.filter(t => !registryByKey.has(t));
+  // 11. Detect template tokens that are NOT in registry (after alias mapping)
+  const unmapped = templateTokens.filter(t => !registryByKey.has(t) && !aliasMap.has(t));
   if (unmapped.length) warnings.push(`unmapped_tokens:${unmapped.length}`);
   for (const t of unmapped) {
     sourceTrace[t] = { source: 'unmapped', status: 'unmapped', required: false };
+  }
+  // For aliased tokens — emit source_trace pointing to canonical
+  for (const [alias, canonical] of aliasMap) {
+    if (!templateTokens.includes(alias)) continue;
+    sourceTrace[alias] = {
+      source: `alias→${canonical}`,
+      resolver_key: canonical,
+      field_id: registryByKey.get(canonical)?.field_id || null,
+      status: resolved[canonical] ? 'resolved' : 'missing',
+      required: !!registryByKey.get(canonical)?.is_required,
+    };
   }
 
   // 12. Snapshot
@@ -336,6 +376,7 @@ export async function resolveCanonicalPayload(
     order: order ? { id: order.id, order_number: order.order_number, product_id: order.product_id, tariff_id: order.tariff_id, final_price: order.final_price, currency: order.currency, status: order.status } : null,
     document: { number: docNumber, date: now.toISOString() },
     token_manifest: tokenManifest,
+    aliases: Object.fromEntries(aliasMap),
   };
 
   return {
@@ -418,6 +459,10 @@ export async function generateCanonicalDocument(
     const docx = new Docxtemplater(zip, { delimiters: { start: '{{', end: '}}' }, paragraphLoop: true, linebreaks: true });
     // Pass both registered tokens and unmapped (empty for safety)
     const renderData: Record<string, string> = { ...payload.resolved_tokens };
+    const aliases: Record<string, string> = (payload as any).aliases || {};
+    for (const [alias, canonical] of Object.entries(aliases)) {
+      if (!(alias in renderData)) renderData[alias] = payload.resolved_tokens[canonical] ?? '';
+    }
     for (const t of payload.unmapped_template_tokens) if (!(t in renderData)) renderData[t] = '';
     docx.render(renderData);
     docBuffer = docx.getZip().generate({ type: 'uint8array' });

@@ -3443,6 +3443,64 @@ export type Database = {
           },
         ]
       }
+      document_token_aliases: {
+        Row: {
+          alias_token: string
+          canonical_token_key: string
+          created_at: string
+          created_by: string | null
+          id: string
+          metadata: Json
+          notes: string | null
+          template_id: string | null
+          template_version_id: string | null
+        }
+        Insert: {
+          alias_token: string
+          canonical_token_key: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          metadata?: Json
+          notes?: string | null
+          template_id?: string | null
+          template_version_id?: string | null
+        }
+        Update: {
+          alias_token?: string
+          canonical_token_key?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          metadata?: Json
+          notes?: string | null
+          template_id?: string | null
+          template_version_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_token_aliases_canonical_token_key_fkey"
+            columns: ["canonical_token_key"]
+            isOneToOne: false
+            referencedRelation: "document_token_registry"
+            referencedColumns: ["token_key"]
+          },
+          {
+            foreignKeyName: "document_token_aliases_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "document_templates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_token_aliases_template_version_id_fkey"
+            columns: ["template_version_id"]
+            isOneToOne: false
+            referencedRelation: "document_template_versions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       document_token_registry: {
         Row: {
           archived_at: string | null
