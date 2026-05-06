@@ -44,6 +44,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MonthYearPicker } from "@/components/ui/month-year-picker";
+import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 
 interface EditDealDialogProps {
   deal: any | null;
@@ -383,40 +384,22 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
           throw new Error('Невозможно сохранить доступ: у сделки нет корректного product_id (UUID). Выберите продукт.');
         }
 
-        // Create or update entitlement — product_id from canonical product selection (ID-first)
-        await supabase.from('entitlements').upsert({
-          user_id: deal.user_id,
-          profile_id: deal.profile_id,
-          order_id: deal.id,
-          product_code: productCode,
-          product_id: formData.product_id,
-          status: 'active',
-          expires_at: formData.access_end_at?.toISOString() || subscription?.access_end_at,
-          meta: {
-            source: 'admin_edit',
-            tariff_id: formData.tariff_id,
-            product_id: formData.product_id,
-            product_code: productCode,
-            order_id: deal.id,
-          }
-        }, { onConflict: 'user_id,product_code' });
+        // Canonical write-path: ВСЕГДА через grant-access-for-order.
+        // Прямой entitlements.upsert запрещён (mem://architecture/fulfillment/canonical-write-path-standard).
+        const { error: grantError } = await supabase.functions.invoke(
+          'grant-access-for-order',
+          { body: { order_id: deal.id, source: 'admin_edit' } }
+        );
 
-        // Audit trail for entitlement create/update via admin edit
-        await supabase.from('audit_logs').insert({
-          action: 'entitlement.saved_via_admin_edit',
-          actor_type: 'admin',
-          actor_user_id: (await supabase.auth.getUser()).data.user?.id || null,
-          target_user_id: deal.user_id,
-          meta: {
-            deal_id: deal.id,
-            product_id: formData.product_id,
-            product_code: productCode,
-            tariff_id: formData.tariff_id,
-            order_id: deal.id,
-            profile_id: deal.profile_id,
-            expires_at: formData.access_end_at?.toISOString() || subscription?.access_end_at,
-          },
-        });
+        if (grantError) {
+          console.error('[EditDealDialog] grant-access-for-order failed:', grantError);
+          toast.warning(
+            normalizeEdgeFunctionError(
+              grantError,
+              'Сделка сохранена, но автоматическая выдача доступа не сработала. Используйте «Выдать доступ» вручную.'
+            )
+          );
+        }
       }
 
       // 4. Handle status change to cancelled/refunded - check for other active deals before revoking
