@@ -24,6 +24,20 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Loader2, FileText, Eye, Download, AlertTriangle, CheckCircle2, Lock } from "lucide-react";
 import { toast } from "sonner";
 
+interface SourceTraceEntry {
+  source: string;
+  resolver_key?: string;
+  field_id?: string | null;
+  status: "resolved" | "missing" | "unmapped";
+  required: boolean;
+}
+
+interface TokenManifestEntry {
+  token: string;
+  locations: { part: string; count: number; raw_example?: string }[];
+  total_count: number;
+}
+
 interface PreviewPayload {
   success: boolean;
   feature_enabled?: boolean;
@@ -33,7 +47,31 @@ interface PreviewPayload {
   warnings: string[];
   template: { id: string; name: string; version_id: string | null; version_number: number | null };
   template_tokens: string[];
+  token_manifest?: TokenManifestEntry[];
+  source_trace?: Record<string, SourceTraceEntry>;
 }
+
+const TOKEN_GROUPS: { key: string; label: string; match: (t: string) => boolean }[] = [
+  { key: "executor", label: "Исполнитель", match: (t) => t.startsWith("executor.") },
+  { key: "customer", label: "Заказчик", match: (t) => t.startsWith("customer.") },
+  { key: "deal", label: "Сделка", match: (t) => t.startsWith("deal.") },
+  { key: "document", label: "Документ", match: (t) => t.startsWith("document.") },
+  { key: "system", label: "Системные", match: (t) => t.startsWith("system.") },
+  { key: "legal_details", label: "Реквизиты (custom)", match: (t) => t.startsWith("legal_details.") },
+  { key: "unknown", label: "Неизвестные", match: () => true },
+];
+
+const MISSING_HINTS: Record<string, string> = {
+  "deal.product_name": "Заполните продукт в сделке (orders_v2.product_id).",
+  "deal.amount": "Заполните сумму сделки (orders_v2.final_price).",
+  "deal.amount_words": "Сумма прописью считается из deal.amount + deal.currency.",
+  "customer.name": "Выберите реквизиты клиента или добавьте подписанта.",
+  "customer.unp": "Заполните УНП клиента в его юридических реквизитах.",
+  "executor.name": "Не задан исполнитель по умолчанию (executors.is_default).",
+  "executor.unp": "Заполните УНП в карточке исполнителя.",
+  "document.number": "Номер генерируется автоматически — обратитесь к админу.",
+  "document.date": "Дата документа генерируется автоматически.",
+};
 
 export function CanonicalActGenerator() {
   const [templateId, setTemplateId] = useState<string>("");
@@ -212,48 +250,99 @@ export function CanonicalActGenerator() {
           </CardHeader>
           <CardContent className="space-y-4">
             {preview.missing_tokens.length > 0 && (
-              <div className="rounded-md bg-amber-50 border border-amber-200 p-2 text-sm">
-                <div className="font-medium text-amber-800 mb-1">Не хватает обязательных токенов:</div>
-                <div className="flex flex-wrap gap-1">
-                  {preview.missing_tokens.map((t) => (
-                    <Badge key={t} variant="outline" className="border-amber-300 text-amber-700">{t}</Badge>
-                  ))}
+              <div className="rounded-md bg-amber-50 border border-amber-200 p-3 text-sm space-y-2">
+                <div className="font-medium text-amber-800">
+                  Не хватает обязательных токенов ({preview.missing_tokens.length}). Документ нельзя сформировать.
                 </div>
+                <ul className="space-y-1">
+                  {preview.missing_tokens.map((t) => {
+                    const trace = preview.source_trace?.[t];
+                    return (
+                      <li key={t} className="text-xs text-amber-900">
+                        <code className="font-mono">{t}</code>
+                        {trace?.source && <span className="text-amber-700"> ← {trace.source}</span>}
+                        {MISSING_HINTS[t] && <div className="text-amber-700/90 italic mt-0.5">{MISSING_HINTS[t]}</div>}
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
             )}
 
             {preview.unmapped_template_tokens.length > 0 && (
-              <div className="rounded-md bg-slate-50 border border-slate-200 p-2 text-sm">
-                <div className="font-medium text-slate-800 mb-1">Токены в шаблоне без маппинга в реестре (передадутся пустыми):</div>
+              <div className="rounded-md bg-slate-50 border border-slate-200 p-3 text-sm space-y-2">
+                <div className="font-medium text-slate-800">
+                  Токены DOCX без маппинга ({preview.unmapped_template_tokens.length}). Будут пустыми. Сопоставьте их с реестром или замените в файле.
+                </div>
                 <div className="flex flex-wrap gap-1">
-                  {preview.unmapped_template_tokens.map((t) => (
-                    <Badge key={t} variant="outline" className="border-slate-300 text-slate-700">{t}</Badge>
-                  ))}
+                  {preview.unmapped_template_tokens.map((t) => {
+                    const loc = preview.token_manifest?.find((m) => m.token === t)?.locations;
+                    return (
+                      <Badge key={t} variant="outline" className="border-slate-300 text-slate-700" title={loc?.map(l => `${l.part} ×${l.count}`).join(", ")}>
+                        {t}
+                      </Badge>
+                    );
+                  })}
                 </div>
               </div>
             )}
 
-            <div className="overflow-auto max-h-[400px] border rounded-md">
-              <table className="w-full text-xs">
-                <thead className="bg-muted/40 sticky top-0">
-                  <tr>
-                    <th className="text-left p-2 font-medium">Токен</th>
-                    <th className="text-left p-2 font-medium">Значение</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.entries(preview.resolved_tokens)
-                    .filter(([k]) => preview.template_tokens.length === 0 || preview.template_tokens.includes(k))
-                    .sort(([a], [b]) => a.localeCompare(b))
-                    .map(([k, v]) => (
-                      <tr key={k} className="border-t">
-                        <td className="p-2 font-mono text-[11px] text-muted-foreground">{k}</td>
-                        <td className="p-2">{v || <span className="text-muted-foreground italic">пусто</span>}</td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
+            {TOKEN_GROUPS.map((group, gi) => {
+              // Distribute tokens to first matching group; "unknown" catches the rest
+              const seen = new Set<string>();
+              for (let i = 0; i < gi; i++) {
+                for (const t of preview.template_tokens) if (TOKEN_GROUPS[i].match(t)) seen.add(t);
+              }
+              const tokens = (preview.template_tokens.length
+                ? preview.template_tokens
+                : Object.keys(preview.resolved_tokens)
+              ).filter((t) => !seen.has(t) && group.match(t));
+              if (!tokens.length) return null;
+              return (
+                <div key={group.key} className="border rounded-md overflow-hidden">
+                  <div className="bg-muted/40 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide">
+                    {group.label} <span className="text-muted-foreground">({tokens.length})</span>
+                  </div>
+                  <table className="w-full text-xs">
+                    <tbody>
+                      {tokens.sort().map((k) => {
+                        const v = preview.resolved_tokens[k];
+                        const trace = preview.source_trace?.[k];
+                        const loc = preview.token_manifest?.find((m) => m.token === k)?.locations;
+                        const isMissing = trace?.status === "missing" && trace.required;
+                        const isUnmapped = trace?.status === "unmapped";
+                        return (
+                          <tr key={k} className="border-t">
+                            <td className="p-2 align-top w-1/3">
+                              <div className="font-mono text-[11px] text-muted-foreground break-all">{k}</div>
+                              {trace?.source && (
+                                <div className="text-[10px] text-muted-foreground mt-0.5">← {trace.source}</div>
+                              )}
+                              {loc?.length ? (
+                                <div className="text-[10px] text-muted-foreground/80 mt-0.5">
+                                  {loc.map((l) => `${l.part.replace("word/", "")} ×${l.count}`).join(", ")}
+                                </div>
+                              ) : null}
+                            </td>
+                            <td className="p-2 align-top">
+                              {v ? (
+                                <span>{v}</span>
+                              ) : isUnmapped ? (
+                                <span className="text-slate-500 italic">unmapped — нет в реестре</span>
+                              ) : isMissing ? (
+                                <span className="text-amber-700 italic">обязательное — пусто</span>
+                              ) : (
+                                <span className="text-muted-foreground italic">пусто</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })}
           </CardContent>
         </Card>
       )}

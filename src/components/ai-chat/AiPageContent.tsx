@@ -10,6 +10,7 @@ import { PersonRecordSheet } from "@/components/ai-requisites/PersonRecordSheet"
 import { AiDocumentsGenerateView } from "@/components/ai-documents/AiDocumentsGenerateView";
 import { AiDocumentsHistoryView } from "@/components/ai-documents/AiDocumentsHistoryView";
 import { CanonicalActGenerator } from "@/components/ai-documents/CanonicalActGenerator";
+import { CanonicalTemplateVersionsPanel } from "@/components/ai-documents/CanonicalTemplateVersionsPanel";
 import type { PersonRow } from "@/hooks/useAiPersons";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { cn } from "@/lib/utils";
@@ -841,8 +842,9 @@ export function AiPageContent({ mode }: AiPageContentProps) {
         </div>
       )}
       {activeSubTab === "canonical-acts" && (
-        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
+        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto space-y-4">
           <CanonicalActGenerator />
+          <CanonicalTemplateVersionsPanel />
         </div>
       )}
       {activeSubTab === "history" && (

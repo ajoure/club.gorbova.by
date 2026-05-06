@@ -3302,6 +3302,7 @@ export type Database = {
         Row: {
           created_at: string
           created_by: string | null
+          detected_tokens: Json
           file_name: string | null
           file_sha256: string | null
           file_size_bytes: number | null
@@ -3311,13 +3312,18 @@ export type Database = {
           storage_bucket: string
           storage_path: string
           template_id: string
+          token_manifest: Json
           tokens: Json
           unmapped_tokens: Json
+          validation_checked_at: string | null
+          validation_errors: Json
+          validation_status: string | null
           version_number: number
         }
         Insert: {
           created_at?: string
           created_by?: string | null
+          detected_tokens?: Json
           file_name?: string | null
           file_sha256?: string | null
           file_size_bytes?: number | null
@@ -3327,13 +3333,18 @@ export type Database = {
           storage_bucket?: string
           storage_path: string
           template_id: string
+          token_manifest?: Json
           tokens?: Json
           unmapped_tokens?: Json
+          validation_checked_at?: string | null
+          validation_errors?: Json
+          validation_status?: string | null
           version_number: number
         }
         Update: {
           created_at?: string
           created_by?: string | null
+          detected_tokens?: Json
           file_name?: string | null
           file_sha256?: string | null
           file_size_bytes?: number | null
@@ -3343,8 +3354,12 @@ export type Database = {
           storage_bucket?: string
           storage_path?: string
           template_id?: string
+          token_manifest?: Json
           tokens?: Json
           unmapped_tokens?: Json
+          validation_checked_at?: string | null
+          validation_errors?: Json
+          validation_status?: string | null
           version_number?: number
         }
         Relationships: [

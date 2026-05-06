@@ -21,6 +21,13 @@
 // deno-lint-ignore-file no-explicit-any
 import Docxtemplater from 'npm:docxtemplater@3.47.1';
 import PizZip from 'npm:pizzip@3.1.6';
+import {
+  numberToWordsRu,
+  formatMoney,
+  normalizeCurrency,
+  extractDocxTokensWithLocations,
+  type TokenManifestEntry,
+} from './docx-helpers.ts';
 
 export const CANONICAL_RESOLVER_VERSION = '1.0.0';
 export const CANONICAL_FEATURE_FLAG_KEY = 'documents_canonical_generation_enabled';
@@ -50,6 +57,8 @@ export interface ResolvedPayload {
   snapshot: Record<string, unknown>;
   template: { id: string; name: string; version_id: string | null; version_number: number | null };
   template_tokens: string[];
+  token_manifest: TokenManifestEntry[];
+  source_trace: Record<string, { source: string; resolver_key?: string; field_id?: string | null; status: 'resolved' | 'missing' | 'unmapped'; required: boolean }>;
 }
 
 export interface CanonicalGenerateResult {
@@ -105,21 +114,12 @@ function generateDocNumber(prefix = 'AKT'): string {
   return `${prefix}-${y}${m}${d}-${r}`;
 }
 
-function extractTokensFromBuffer(buffer: Uint8Array): string[] {
+function extractTokensFromBuffer(buffer: Uint8Array): { tokens: string[]; manifest: TokenManifestEntry[] } {
   try {
-    const zip = new PizZip(buffer);
-    const tokens = new Set<string>();
-    const re = /\{\{\s*([^}]+?)\s*\}\}/g;
-    for (const path of ['word/document.xml','word/header1.xml','word/footer1.xml']) {
-      const file = zip.file(path);
-      if (!file) continue;
-      const txt = file.asText();
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(txt)) !== null) tokens.add(m[1].trim());
-    }
-    return Array.from(tokens).sort();
+    const r = extractDocxTokensWithLocations(buffer);
+    return { tokens: r.tokens, manifest: r.manifest };
   } catch {
-    return [];
+    return { tokens: [], manifest: [] };
   }
 }
 
@@ -157,13 +157,20 @@ export async function resolveCanonicalPayload(
   const storagePath = version?.storage_path || tpl.template_path;
   if (!storagePath) throw new Error('Template has no storage path');
 
-  // 2. Detect tokens used in DOCX (from version.tokens or live extract)
-  let templateTokens: string[] = Array.isArray(version?.tokens) ? version.tokens : [];
-  if (templateTokens.length === 0) {
+  // 2. Detect tokens used in DOCX (prefer manifest from saved version, else live extract)
+  let templateTokens: string[] = Array.isArray(version?.detected_tokens) && version.detected_tokens.length
+    ? version.detected_tokens.map((t: any) => typeof t === 'string' ? t : t?.token).filter(Boolean)
+    : (Array.isArray(version?.tokens) ? version.tokens : []);
+  let tokenManifest: TokenManifestEntry[] = Array.isArray(version?.token_manifest) && version.token_manifest.length
+    ? version.token_manifest as TokenManifestEntry[]
+    : [];
+  if (templateTokens.length === 0 || tokenManifest.length === 0) {
     const { data: file } = await supabase.storage.from(storageBucket).download(storagePath);
     if (file) {
       const buf = new Uint8Array(await file.arrayBuffer());
-      templateTokens = extractTokensFromBuffer(buf);
+      const ext = extractTokensFromBuffer(buf);
+      if (templateTokens.length === 0) templateTokens = ext.tokens;
+      if (tokenManifest.length === 0) tokenManifest = ext.manifest;
     }
   }
 
@@ -256,8 +263,10 @@ export async function resolveCanonicalPayload(
     'deal.product_name':  product?.name || '',
     'deal.tariff_name':   tariff?.name || '',
     'deal.amount':        order?.final_price != null ? String(order.final_price) : '',
-    'deal.amount_words':  '', // sprint 2: добавим утилиту
-    'deal.currency':      order?.currency || '',
+    'deal.amount_words':  order?.final_price != null ? numberToWordsRu(order.final_price, order?.currency) : '',
+    'deal.amount_in_words': order?.final_price != null ? numberToWordsRu(order.final_price, order?.currency) : '',
+    'deal.amount_formatted': order?.final_price != null ? formatMoney(order.final_price, order?.currency) : '',
+    'deal.currency':      order?.currency ? (normalizeCurrency(order.currency) === 'UNKNOWN' ? order.currency : normalizeCurrency(order.currency)) : '',
     'deal.paid_at':       order?.created_at ? new Date(order.created_at).toLocaleDateString('ru-RU') : '',
     'deal.access_days':   tariff?.access_days != null ? String(tariff.access_days) : '',
   };
@@ -276,19 +285,46 @@ export async function resolveCanonicalPayload(
     for (const [k, v] of Object.entries(input.overrides)) resolverValues[k] = v ?? '';
   }
 
-  // 10. Build resolved_tokens (only registered keys) + missing
+  // 10. Build resolved_tokens (only registered keys) + missing + source_trace
   const resolved: Record<string, string> = {};
   const missing: string[] = [];
+  const sourceTrace: ResolvedPayload['source_trace'] = {};
+
+  function sourceFor(row: any): string {
+    if (row.source_type === 'custom_field') return `client_legal_details.${row.token_key.replace(/^legal_details\./, '')}`;
+    const k: string = row.resolver_key || row.token_key;
+    if (k.startsWith('executor.')) return 'executors';
+    if (k.startsWith('customer.')) return 'client_legal_details / orders_v2';
+    if (k.startsWith('deal.')) return 'orders_v2';
+    if (k.startsWith('document.')) return 'system.generated';
+    if (k.startsWith('system.')) return 'system';
+    return 'resolver';
+  }
+
   for (const [tokenKey, row] of registryByKey) {
     const v = resolverValues[tokenKey];
     const str = v == null || v === '' ? '' : String(v);
     resolved[tokenKey] = str;
+    const status: 'resolved' | 'missing' = str ? 'resolved' : 'missing';
     if (row.is_required && !str) missing.push(tokenKey);
+    // Only emit source_trace for tokens actually present in template — keeps payload tight.
+    if (templateTokens.length === 0 || templateTokens.includes(tokenKey)) {
+      sourceTrace[tokenKey] = {
+        source: sourceFor(row),
+        resolver_key: row.resolver_key || row.token_key,
+        field_id: row.field_id || null,
+        status,
+        required: !!row.is_required,
+      };
+    }
   }
 
   // 11. Detect template tokens that are NOT in registry
   const unmapped = templateTokens.filter(t => !registryByKey.has(t));
   if (unmapped.length) warnings.push(`unmapped_tokens:${unmapped.length}`);
+  for (const t of unmapped) {
+    sourceTrace[t] = { source: 'unmapped', status: 'unmapped', required: false };
+  }
 
   // 12. Snapshot
   const snapshot: Record<string, unknown> = {
@@ -299,6 +335,7 @@ export async function resolveCanonicalPayload(
     customer: customer ? { id: customer.id, client_type: customer.client_type, name: buildCustomerName(customer), unp: customer.ent_unp || customer.leg_unp } : null,
     order: order ? { id: order.id, order_number: order.order_number, product_id: order.product_id, tariff_id: order.tariff_id, final_price: order.final_price, currency: order.currency, status: order.status } : null,
     document: { number: docNumber, date: now.toISOString() },
+    token_manifest: tokenManifest,
   };
 
   return {
@@ -309,6 +346,8 @@ export async function resolveCanonicalPayload(
     snapshot,
     template: { id: tpl.id, name: tpl.name, version_id: version?.id || null, version_number: version?.version_number || null },
     template_tokens: templateTokens,
+    token_manifest: tokenManifest,
+    source_trace: sourceTrace,
   };
 }
 
@@ -411,10 +450,16 @@ export async function generateCanonicalDocument(
     storage_bucket: outBucket,
     snapshot: payload.snapshot,
     missing_tokens: payload.missing_tokens,
-    template_tokens_snapshot: payload.template_tokens,
+    template_tokens_snapshot: { tokens: payload.template_tokens, manifest: payload.token_manifest },
     token_manifest_snapshot: payload.resolved_tokens,
     warnings_snapshot: payload.warnings,
-    source_trace: { resolver_version: CANONICAL_RESOLVER_VERSION, idempotency_key: idempotencyKey, context_type: input.context_type, context_id: input.context_id },
+    source_trace: {
+      resolver_version: CANONICAL_RESOLVER_VERSION,
+      idempotency_key: idempotencyKey,
+      context_type: input.context_type,
+      context_id: input.context_id,
+      tokens: payload.source_trace,
+    },
     resolver_version: CANONICAL_RESOLVER_VERSION,
     context_type: input.context_type || null,
     context_id: input.context_id || null,
