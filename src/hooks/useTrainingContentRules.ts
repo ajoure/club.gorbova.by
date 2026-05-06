@@ -249,6 +249,7 @@ export function useActiveTrainingContentRules() {
         rules: [...dbRules, ...syntheticRules],
         userTariffIds: tariffIds,
         entitlementTariffsByProduct,
+        productsWithManualEnt: [...productsWithManualEnt],
       };
     },
     enabled: !!user,
