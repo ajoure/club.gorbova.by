@@ -3,6 +3,9 @@ import { useAiDocuments, type AiGeneratedDocument } from "@/hooks/useAiDocuments
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import {
   Table,
   TableBody,
@@ -21,9 +24,23 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Download, Trash2, FileText, Loader2, Clock, Package, ChevronRight, ChevronDown } from "lucide-react";
+import {
+  Download,
+  Trash2,
+  FileText,
+  Loader2,
+  Clock,
+  Package,
+  ChevronRight,
+  ChevronDown,
+  Eye,
+  RefreshCw,
+  Sparkles,
+} from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import { DocumentSnapshotDialog } from "./DocumentSnapshotDialog";
+import { RegenerateDocumentDialog } from "./RegenerateDocumentDialog";
 
 /* ── Types for grouped rendering ── */
 
@@ -73,19 +90,50 @@ function statusBadge(status: string) {
   }
 }
 
+function isCanonical(doc: AiGeneratedDocument): boolean {
+  return Boolean(doc.template_version_id || doc.context_type || doc.idempotency_key);
+}
+
+function sourceLabel(doc: AiGeneratedDocument): string {
+  if (doc.context_type === "order") return "Заказ";
+  if (doc.context_type === "manual") return "Ручной";
+  if (doc.generation_batch_id) return "Пакет";
+  if (isCanonical(doc)) return "Новый генератор";
+  return "Старый генератор";
+}
+
 /* ── Component ── */
 
 export function AiDocumentsHistoryView() {
   const { documents, isLoading, deleteDocument, isDeleting, getDownloadUrl } = useAiDocuments();
   const [deletingDoc, setDeletingDoc] = useState<AiGeneratedDocument | null>(null);
+  const [snapshotDoc, setSnapshotDoc] = useState<AiGeneratedDocument | null>(null);
+  const [regenDoc, setRegenDoc] = useState<AiGeneratedDocument | null>(null);
   const [expandedBatches, setExpandedBatches] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState("");
+  const [showTechnical, setShowTechnical] = useState(false);
+  const [onlyCanonical, setOnlyCanonical] = useState(false);
 
   /* Build grouped + sorted list */
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return documents.filter((d) => {
+      if (onlyCanonical && !isCanonical(d)) return false;
+      if (!q) return true;
+      return (
+        d.title?.toLowerCase().includes(q) ||
+        d.template_name?.toLowerCase().includes(q) ||
+        d.context_id?.toLowerCase().includes(q) ||
+        d.id.toLowerCase().includes(q)
+      );
+    });
+  }, [documents, search, onlyCanonical]);
+
   const entries = useMemo<HistoryEntry[]>(() => {
     const batchMap = new Map<string, AiGeneratedDocument[]>();
     const standalone: AiGeneratedDocument[] = [];
 
-    for (const doc of documents) {
+    for (const doc of filtered) {
       if (doc.generation_batch_id) {
         const arr = batchMap.get(doc.generation_batch_id) || [];
         arr.push(doc);
@@ -117,7 +165,7 @@ export function AiDocumentsHistoryView() {
       new Date(b.maxCreatedAt).getTime() - new Date(a.maxCreatedAt).getTime()
     );
     return result;
-  }, [documents]);
+  }, [filtered]);
 
   /* Handlers */
 
@@ -172,8 +220,26 @@ export function AiDocumentsHistoryView() {
 
   const renderDocActions = (doc: AiGeneratedDocument) => (
     <div className="flex items-center justify-end gap-1">
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={() => setSnapshotDoc(doc)}
+        title="Слепок данных и источники"
+      >
+        <Eye className="h-4 w-4" />
+      </Button>
+      {isCanonical(doc) && (
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => setRegenDoc(doc)}
+          title="Перегенерировать"
+        >
+          <RefreshCw className="h-4 w-4" />
+        </Button>
+      )}
       {doc.file_path && doc.status === "generated" && (
-        <Button variant="ghost" size="icon" onClick={() => handleDownload(doc)} title="Скачать">
+        <Button variant="ghost" size="icon" onClick={() => handleDownload(doc)} title="Скачать DOCX">
           <Download className="h-4 w-4" />
         </Button>
       )}
@@ -189,6 +255,20 @@ export function AiDocumentsHistoryView() {
     </div>
   );
 
+  const renderTechCells = (doc: AiGeneratedDocument) => (
+    <>
+      <TableCell className="text-[11px] text-muted-foreground font-mono whitespace-nowrap">
+        {doc.template_version_id ? `v${doc.template_version ?? "?"}` : "—"}
+      </TableCell>
+      <TableCell className="text-[11px] text-muted-foreground font-mono truncate max-w-[140px]">
+        {doc.context_id ?? "—"}
+      </TableCell>
+      <TableCell className="text-[11px] text-muted-foreground font-mono truncate max-w-[100px]">
+        {doc.created_by ?? "—"}
+      </TableCell>
+    </>
+  );
+
   const renderStandaloneRow = (doc: AiGeneratedDocument) => (
     <TableRow key={doc.id}>
       <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
@@ -198,15 +278,24 @@ export function AiDocumentsHistoryView() {
         <div className="flex items-center gap-2">
           <FileText className="h-4 w-4 text-primary shrink-0" />
           <span className="text-sm font-medium truncate max-w-[200px]">{doc.title}</span>
+          {isCanonical(doc) && (
+            <Sparkles className="h-3 w-3 text-cyan-500 shrink-0" aria-label="Новый генератор" />
+          )}
         </div>
       </TableCell>
       <TableCell className="text-sm text-muted-foreground truncate max-w-[150px]">
         {doc.template_name}
       </TableCell>
+      <TableCell className="text-xs text-muted-foreground">
+        {sourceLabel(doc)}
+      </TableCell>
+      {showTechnical && renderTechCells(doc)}
       <TableCell>{statusBadge(doc.status)}</TableCell>
       <TableCell className="text-right">{renderDocActions(doc)}</TableCell>
     </TableRow>
   );
+
+  const colSpan = showTechnical ? 7 : 4;
 
   const renderBatchGroup = (entry: BatchGroup) => {
     const isOpen = expandedBatches.has(entry.batchId);
@@ -215,7 +304,6 @@ export function AiDocumentsHistoryView() {
 
     return (
       <TableBody key={entry.batchId}>
-        {/* Batch header row */}
         <TableRow
           className="cursor-pointer hover:bg-muted/50"
           onClick={() => toggleBatch(entry.batchId)}
@@ -236,11 +324,18 @@ export function AiDocumentsHistoryView() {
             </div>
           </TableCell>
           <TableCell />
+          <TableCell />
+          {showTechnical && (
+            <>
+              <TableCell />
+              <TableCell />
+              <TableCell />
+            </>
+          )}
           <TableCell>{statusBadge(aggStatus)}</TableCell>
           <TableCell />
         </TableRow>
 
-        {/* Child rows */}
         {isOpen &&
           entry.docs.map((doc) => (
             <TableRow key={doc.id} className="bg-muted/20">
@@ -254,6 +349,10 @@ export function AiDocumentsHistoryView() {
               <TableCell className="text-sm text-muted-foreground truncate max-w-[150px]">
                 {doc.template_name}
               </TableCell>
+              <TableCell className="text-xs text-muted-foreground">
+                {sourceLabel(doc)}
+              </TableCell>
+              {showTechnical && renderTechCells(doc)}
               <TableCell>{statusBadge(doc.status)}</TableCell>
               <TableCell className="text-right">{renderDocActions(doc)}</TableCell>
             </TableRow>
@@ -264,6 +363,27 @@ export function AiDocumentsHistoryView() {
 
   return (
     <>
+      <div className="flex flex-wrap items-center gap-3 mb-3">
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Поиск по названию, шаблону, ID источника…"
+          className="max-w-sm"
+        />
+        <div className="flex items-center gap-2">
+          <Switch id="canonical-only" checked={onlyCanonical} onCheckedChange={setOnlyCanonical} />
+          <Label htmlFor="canonical-only" className="text-xs cursor-pointer">
+            Только новый генератор
+          </Label>
+        </div>
+        <div className="flex items-center gap-2 ml-auto">
+          <Switch id="tech-history" checked={showTechnical} onCheckedChange={setShowTechnical} />
+          <Label htmlFor="tech-history" className="text-xs cursor-pointer">
+            Показать технические данные
+          </Label>
+        </div>
+      </div>
+
       <GlassCard className="p-0 overflow-hidden">
         <Table>
           <TableHeader>
@@ -271,22 +391,52 @@ export function AiDocumentsHistoryView() {
               <TableHead>Дата</TableHead>
               <TableHead>Документ</TableHead>
               <TableHead>Шаблон</TableHead>
+              <TableHead>Источник</TableHead>
+              {showTechnical && (
+                <>
+                  <TableHead>Версия</TableHead>
+                  <TableHead>ID источника</TableHead>
+                  <TableHead>Кто создал</TableHead>
+                </>
+              )}
               <TableHead>Статус</TableHead>
               <TableHead className="text-right">Действия</TableHead>
             </TableRow>
           </TableHeader>
 
-          {entries.map((entry) =>
-            entry.kind === "batch" ? (
-              renderBatchGroup(entry)
-            ) : (
-              <TableBody key={entry.doc.id}>
-                {renderStandaloneRow(entry.doc)}
-              </TableBody>
-            ),
+          {entries.length === 0 ? (
+            <TableBody>
+              <TableRow>
+                <TableCell colSpan={colSpan + 2} className="text-center text-sm text-muted-foreground py-8">
+                  Ничего не найдено по этим фильтрам.
+                </TableCell>
+              </TableRow>
+            </TableBody>
+          ) : (
+            entries.map((entry) =>
+              entry.kind === "batch" ? (
+                renderBatchGroup(entry)
+              ) : (
+                <TableBody key={entry.doc.id}>
+                  {renderStandaloneRow(entry.doc)}
+                </TableBody>
+              ),
+            )
           )}
         </Table>
       </GlassCard>
+
+      <DocumentSnapshotDialog
+        open={!!snapshotDoc}
+        onOpenChange={(v) => !v && setSnapshotDoc(null)}
+        doc={snapshotDoc}
+      />
+
+      <RegenerateDocumentDialog
+        open={!!regenDoc}
+        onOpenChange={(v) => !v && setRegenDoc(null)}
+        doc={regenDoc}
+      />
 
       <AlertDialog open={!!deletingDoc} onOpenChange={() => setDeletingDoc(null)}>
         <AlertDialogContent>
