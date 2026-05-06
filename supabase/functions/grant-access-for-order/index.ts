@@ -970,7 +970,7 @@ Deno.serve(async (req) => {
 
           const { data: dupRow } = await supabase
             .from("entitlements")
-            .select("id, expires_at, product_id, product_code")
+            .select("id, expires_at, product_id, product_code, meta")
             .eq("user_id", userId)
             .eq("product_code", productCode)
             .maybeSingle();
