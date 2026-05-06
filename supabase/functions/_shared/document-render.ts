@@ -114,21 +114,12 @@ function generateDocNumber(prefix = 'AKT'): string {
   return `${prefix}-${y}${m}${d}-${r}`;
 }
 
-function extractTokensFromBuffer(buffer: Uint8Array): string[] {
+function extractTokensFromBuffer(buffer: Uint8Array): { tokens: string[]; manifest: TokenManifestEntry[] } {
   try {
-    const zip = new PizZip(buffer);
-    const tokens = new Set<string>();
-    const re = /\{\{\s*([^}]+?)\s*\}\}/g;
-    for (const path of ['word/document.xml','word/header1.xml','word/footer1.xml']) {
-      const file = zip.file(path);
-      if (!file) continue;
-      const txt = file.asText();
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(txt)) !== null) tokens.add(m[1].trim());
-    }
-    return Array.from(tokens).sort();
+    const r = extractDocxTokensWithLocations(buffer);
+    return { tokens: r.tokens, manifest: r.manifest };
   } catch {
-    return [];
+    return { tokens: [], manifest: [] };
   }
 }
 
