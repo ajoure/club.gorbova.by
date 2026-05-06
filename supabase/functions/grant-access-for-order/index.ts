@@ -873,16 +873,26 @@ Deno.serve(async (req) => {
           ? existingEntitlement.expires_at
           : accessEndAt.toISOString();
 
+      const prevMeta = (existingEntitlement.meta && typeof existingEntitlement.meta === 'object')
+        ? existingEntitlement.meta as Record<string, unknown>
+        : {};
+      const mergedMeta: Record<string, unknown> = {
+        ...prevMeta,
+        granted_by: legacyBackfillNeeded ? "legacy_product_id_backfill" : "primary_order_fulfillment",
+        granted_at: now.toISOString(),
+        ...(legacyBackfillNeeded ? { legacy_product_id_backfilled: true } : {}),
+      };
+      // Persist tariff_id if order has one (writer-fix 2026-05; preserves existing tariff_id otherwise).
+      if (tariffId) {
+        mergedMeta.tariff_id = tariffId;
+      }
+
       const updatePayload: Record<string, unknown> = {
         status: "active",
         expires_at: newExpiresAt,
         order_id: orderId,
         updated_at: now.toISOString(),
-        meta: {
-          granted_by: legacyBackfillNeeded ? "legacy_product_id_backfill" : "primary_order_fulfillment",
-          granted_at: now.toISOString(),
-          ...(legacyBackfillNeeded ? { legacy_product_id_backfilled: true } : {}),
-        },
+        meta: mergedMeta,
       };
       // Backfill product_id ONLY if the legacy row had it as NULL.
       if (legacyBackfillNeeded) {
