@@ -348,11 +348,22 @@ export async function resolveCanonicalPayload(
     }
   }
 
-  // 11. Detect template tokens that are NOT in registry
-  const unmapped = templateTokens.filter(t => !registryByKey.has(t));
+  // 11. Detect template tokens that are NOT in registry (after alias mapping)
+  const unmapped = templateTokens.filter(t => !registryByKey.has(t) && !aliasMap.has(t));
   if (unmapped.length) warnings.push(`unmapped_tokens:${unmapped.length}`);
   for (const t of unmapped) {
     sourceTrace[t] = { source: 'unmapped', status: 'unmapped', required: false };
+  }
+  // For aliased tokens — emit source_trace pointing to canonical
+  for (const [alias, canonical] of aliasMap) {
+    if (!templateTokens.includes(alias)) continue;
+    sourceTrace[alias] = {
+      source: `alias→${canonical}`,
+      resolver_key: canonical,
+      field_id: registryByKey.get(canonical)?.field_id || null,
+      status: resolved[canonical] ? 'resolved' : 'missing',
+      required: !!registryByKey.get(canonical)?.is_required,
+    };
   }
 
   // 12. Snapshot
