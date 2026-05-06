@@ -517,9 +517,27 @@ export function resolveTrainingContentFilter(
     ruleSource = "synthetic_legacy";
   }
 
-  // Priority 5 (NEW): Diagnostic bucket — product has DB rules but none matched user's
-  // tariff context. Default-deny (empty allowlist), NEVER full access. This catches the
-  // case where entitlement.meta.tariff_id does not align with any DB tariff rule.
+  // Priority 4.5: Admin/business product-grant fallback.
+  // User has an active entitlement for THIS product without meta.tariff_id and without
+  // scope_resolution_mode (= manual full-product grant by admin/business). Product has
+  // tariff-only DB rules that don't match user → without this fallback the product
+  // disappears from the cabinet despite being granted. Returns full access.
+  if (!bestRule && dbRules.length > 0 && manualEntSet.has(productId)) {
+    logTrainingContentDiag({
+      user_id: null,
+      product_id: productId,
+      training_module_id: trainingModuleId,
+      entitlement_tariff_id: null,
+      subscription_tariff_ids: userTariffIds,
+      matched_rule_id: null,
+      rule_source: "admin_grant_full_fallback",
+      fallback_reason: "manual_product_grant_without_tariff_id",
+    });
+    return { mode: "full", allowedModuleIds: new Set(), allowedLessonIds: new Set() };
+  }
+
+  // Priority 5: Diagnostic bucket — product has DB rules but none matched user's
+  // tariff context. Default-deny (empty allowlist), NEVER full access.
   if (!bestRule && dbRules.length > 0) {
     logTrainingContentDiag({
       user_id: null,
