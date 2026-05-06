@@ -37,7 +37,7 @@ export interface AiGeneratedDocument {
   updated_at: string;
   // canonical pipeline (Sprint 1+)
   template_version_id?: string | null;
-  template_version?: number | null;
+  template_version?: number | string | null;
   context_type?: string | null;
   context_id?: string | null;
   idempotency_key?: string | null;
