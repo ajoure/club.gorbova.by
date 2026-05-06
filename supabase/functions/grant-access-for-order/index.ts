@@ -1119,6 +1119,24 @@ Deno.serve(async (req) => {
         }
       } else {
         results.entitlement = { action: "created", id: newEntitlement?.id };
+
+        // Audit: tariff_id persisted on fresh insert
+        if (tariffId && newEntitlement?.id) {
+          await supabase.from("audit_logs").insert({
+            action: "entitlement.tariff_id_persisted",
+            actor_type: "system",
+            actor_label: "grant-access-for-order",
+            target_user_id: userId,
+            meta: {
+              order_id: orderId,
+              entitlement_id: newEntitlement.id,
+              product_id: productId,
+              tariff_id: tariffId,
+              previous_tariff_id: null,
+              branch: "insert",
+            },
+          });
+        }
       }
     }
 
