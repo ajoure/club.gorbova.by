@@ -24,6 +24,20 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Loader2, FileText, Eye, Download, AlertTriangle, CheckCircle2, Lock } from "lucide-react";
 import { toast } from "sonner";
 
+interface SourceTraceEntry {
+  source: string;
+  resolver_key?: string;
+  field_id?: string | null;
+  status: "resolved" | "missing" | "unmapped";
+  required: boolean;
+}
+
+interface TokenManifestEntry {
+  token: string;
+  locations: { part: string; count: number; raw_example?: string }[];
+  total_count: number;
+}
+
 interface PreviewPayload {
   success: boolean;
   feature_enabled?: boolean;
@@ -33,7 +47,31 @@ interface PreviewPayload {
   warnings: string[];
   template: { id: string; name: string; version_id: string | null; version_number: number | null };
   template_tokens: string[];
+  token_manifest?: TokenManifestEntry[];
+  source_trace?: Record<string, SourceTraceEntry>;
 }
+
+const TOKEN_GROUPS: { key: string; label: string; match: (t: string) => boolean }[] = [
+  { key: "executor", label: "Исполнитель", match: (t) => t.startsWith("executor.") },
+  { key: "customer", label: "Заказчик", match: (t) => t.startsWith("customer.") },
+  { key: "deal", label: "Сделка", match: (t) => t.startsWith("deal.") },
+  { key: "document", label: "Документ", match: (t) => t.startsWith("document.") },
+  { key: "system", label: "Системные", match: (t) => t.startsWith("system.") },
+  { key: "legal_details", label: "Реквизиты (custom)", match: (t) => t.startsWith("legal_details.") },
+  { key: "unknown", label: "Неизвестные", match: () => true },
+];
+
+const MISSING_HINTS: Record<string, string> = {
+  "deal.product_name": "Заполните продукт в сделке (orders_v2.product_id).",
+  "deal.amount": "Заполните сумму сделки (orders_v2.final_price).",
+  "deal.amount_words": "Сумма прописью считается из deal.amount + deal.currency.",
+  "customer.name": "Выберите реквизиты клиента или добавьте подписанта.",
+  "customer.unp": "Заполните УНП клиента в его юридических реквизитах.",
+  "executor.name": "Не задан исполнитель по умолчанию (executors.is_default).",
+  "executor.unp": "Заполните УНП в карточке исполнителя.",
+  "document.number": "Номер генерируется автоматически — обратитесь к админу.",
+  "document.date": "Дата документа генерируется автоматически.",
+};
 
 export function CanonicalActGenerator() {
   const [templateId, setTemplateId] = useState<string>("");
