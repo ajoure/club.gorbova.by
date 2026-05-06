@@ -1012,16 +1012,24 @@ Deno.serve(async (req) => {
               : accessEndAt.toISOString();
 
           const wasLegacy = dupRow.product_id === null;
+          const dupPrevMeta = (dupRow.meta && typeof dupRow.meta === 'object')
+            ? dupRow.meta as Record<string, unknown>
+            : {};
+          const dupMergedMeta: Record<string, unknown> = {
+            ...dupPrevMeta,
+            granted_by: "idempotent_replay_merge",
+            granted_at: now.toISOString(),
+            ...(wasLegacy ? { legacy_product_id_backfilled: true } : {}),
+          };
+          if (tariffId) {
+            dupMergedMeta.tariff_id = tariffId;
+          }
           const mergePayload: Record<string, unknown> = {
             status: "active",
             expires_at: mergedExpires,
             order_id: orderId,
             updated_at: now.toISOString(),
-            meta: {
-              granted_by: "idempotent_replay_merge",
-              granted_at: now.toISOString(),
-              ...(wasLegacy ? { legacy_product_id_backfilled: true } : {}),
-            },
+            meta: dupMergedMeta,
           };
           if (wasLegacy) mergePayload.product_id = productId;
 
