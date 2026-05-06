@@ -48,6 +48,7 @@ export const LEGAL_LINKS: FooterNavItem[] = [
   { label: "Заказ и оплата услуг", href: "/order-payment" },
   { label: "Политика конфиденциальности", href: "/privacy" },
   { label: "Согласие на обработку данных", href: "/consent" },
+  { label: "Инструкция по оформлению расходов", href: "/instruction" },
 ];
 
 export interface FooterSocialItem {
