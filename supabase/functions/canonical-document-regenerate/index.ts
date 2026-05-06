@@ -93,9 +93,11 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: 'confirm_required' }), { status: 400, headers: corsHeaders });
     }
 
-    // Execute: bypass idempotency by using a unique manual key
+    // Execute: bypass idempotency by switching context to 'manual'
+    // (document-render.ts only generates idempotency_key when context_type==='order')
+    const manualInput = { ...input, context_type: 'manual' as const };
     const manualKey = `manual_regen:${orig.id}:${Date.now()}`;
-    const result = await generateCanonicalDocument(supabase, input, {
+    const result = await generateCanonicalDocument(supabase, manualInput, {
       profileId: orig.profile_id,
       userId,
       enforceFeatureFlag: true,
