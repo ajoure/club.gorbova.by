@@ -952,6 +952,7 @@ Deno.serve(async (req) => {
           meta: {
             granted_by: "primary_order_fulfillment",
             granted_at: now.toISOString(),
+            ...(tariffId ? { tariff_id: tariffId } : {}),
           },
         })
         .select("id")
