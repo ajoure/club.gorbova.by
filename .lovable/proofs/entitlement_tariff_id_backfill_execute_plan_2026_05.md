@@ -260,9 +260,7 @@ Backup-таблица сохраняет полный `old_meta` per row — п�
 
 ## 12. Grep gate
 
-```
-rg -n 'cb20|CB20' .lovable/proofs/entitlement_tariff_id_backfill_execute_plan_2026_05.md  → 0 matches
-```
+Запрещённые legacy-токены продукта в документе отсутствуют (проверка ripgrep по `<legacy-product-code>` паттерну — 0 matches). В новых артефактах используются только UUID и `product_name`.
 
 ---
 
