@@ -5,6 +5,11 @@
 у которых `historical_module_product_ids` ошибочно содержит `product_id`
 (элемент существует в `products_v2`) вместо реального `training_modules.id`.
 
+> **Convention.** В этом документе запрещено упоминание внутренних product
+> code/slug и их регистровых вариантов. Если потребуется сослаться на
+> запрещённый токен — использовать placeholder `<legacy_slug>`. Все
+> технические ссылки — UUID. Отображаемое имя — `product_name`.
+
 ## 0. Hypothesis
 
 Retroapply / rule_engine при формировании `historical_module_product_ids`
@@ -66,7 +71,7 @@ WHERE id = <entitlement_id>;
 
 Фильтр строго:
 ```sql
-product_id IN (<6–7 product UUIDs>)
+product_id IN (<7 product UUIDs>)
 AND meta->>'scope_resolution_mode' = 'module_scope_only'
 ```
 Никаких условий по product `code` / `slug` / `name`.
@@ -114,7 +119,7 @@ VALUES ('training_content.module_scope_ids_repaired', 'system',
 
 ---
 
-## 10. Hardcode policy (PATCH — strict edition)
+## 10. Hardcode policy (strict edition)
 
 ### 10.1 Принцип
 
@@ -139,9 +144,12 @@ memory, runtime-коде, миграциях, audit meta, console/log labels,
 
 ### 10.3 Pre-execute grep gate
 
-Команда (по новым/изменённым артефактам этого PATCH):
+Команда (по новым/изменённым артефактам этого PATCH); конкретные
+запрещённые токены передаются через переменную окружения, чтобы они не
+попадали в репозиторий:
 ```
-rg -n "cb20|CB20" \
+TOKENS="${LEGACY_PRODUCT_TOKENS:?set externally}"
+rg -n "$TOKENS" \
   .lovable/proofs/module_scope_ids_repair_dryrun_2026_05.md \
   .lovable/backlog/remove_legacy_product_code_mentions_2026_05.md
 ```
@@ -149,15 +157,15 @@ rg -n "cb20|CB20" \
 
 После Execute — добавить:
 ```
-rg -n "cb20|CB20" .lovable/proofs/module_scope_ids_repair_execute_2026_05.md
+rg -n "$TOKENS" .lovable/proofs/module_scope_ids_repair_execute_2026_05.md
 ```
 **Ожидание: 0 совпадений.**
 
-Полный repo-скан `rg -n "cb20|CB20" src supabase .lovable` остаётся
-диагностическим. Существующие совпадения в исторических миграциях,
-legacy edge-функциях, legacy hooks/комментариях, `src/lib/product-names.ts`
-и исторических proof-файлах помечены `legacy_existing_debt` и **не
-трогаются** в этом Execute. См. backlog.
+Полный repo-скан остаётся диагностическим. Существующие совпадения в
+исторических миграциях, legacy edge-функциях, legacy hooks/комментариях,
+`src/lib/product-names.ts` и исторических proof-файлах помечены
+`legacy_existing_debt` и **не трогаются** в этом Execute. Списком они
+ведутся в backlog-файле через placeholder-нотацию.
 
 ### 10.4 Repair filter (canonical)
 
