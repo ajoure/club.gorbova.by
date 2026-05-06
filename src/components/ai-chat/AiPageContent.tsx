@@ -119,7 +119,7 @@ const AI_SUB_TABS: SubMenuItem[] = [
 const DOC_SUB_TABS: SubMenuItem[] = [
   {
     id: "canonical-acts",
-    label: "Акты (canonical)",
+    label: "Акты выполненных работ",
     icon: FileText,
     gradient: "from-cyan-500/10 to-sky-500/8",
     activeGradient: "from-cyan-500/20 to-sky-500/15",
@@ -129,7 +129,7 @@ const DOC_SUB_TABS: SubMenuItem[] = [
   },
   {
     id: "aliases",
-    label: "Алиасы токенов",
+    label: "Связи плейсхолдеров",
     icon: FileStack,
     gradient: "from-fuchsia-500/10 to-pink-500/8",
     activeGradient: "from-fuchsia-500/20 to-pink-500/15",
