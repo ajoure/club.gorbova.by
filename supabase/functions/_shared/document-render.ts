@@ -355,14 +355,21 @@ export async function generateCanonicalDocument(
     }
   }
 
-  // Download + render
-  const { data: file, error: dlErr } = await supabase.storage
-    .from('documents-templates').download(
-      // resolve again from version/path
-      (payload as any)._storage_path
-        || (await supabase.from('document_template_versions').select('storage_path').eq('id', payload.template.version_id).maybeSingle()).data?.storage_path
-        || (await supabase.from('document_templates').select('template_path').eq('id', payload.template.id).maybeSingle()).data?.template_path
-    );
+  // Resolve storage path from version (or fallback to template.template_path)
+  let dlBucket = 'documents-templates';
+  let dlPath: string | null = null;
+  if (payload.template.version_id) {
+    const { data: v } = await supabase.from('document_template_versions')
+      .select('storage_bucket, storage_path').eq('id', payload.template.version_id).maybeSingle();
+    if (v) { dlBucket = v.storage_bucket || dlBucket; dlPath = v.storage_path; }
+  }
+  if (!dlPath) {
+    const { data: t } = await supabase.from('document_templates')
+      .select('template_path').eq('id', payload.template.id).maybeSingle();
+    dlPath = t?.template_path || null;
+  }
+  if (!dlPath) return { success: false, payload, error: 'template_storage_path_missing' };
+  const { data: file, error: dlErr } = await supabase.storage.from(dlBucket).download(dlPath);
   if (dlErr || !file) return { success: false, payload, error: 'template_file_download_failed' };
 
   let docBuffer: Uint8Array;
