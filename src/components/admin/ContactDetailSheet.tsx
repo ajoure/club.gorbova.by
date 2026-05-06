@@ -435,7 +435,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           payments_v2(id, status, paid_at, created_at, provider_response)
         `)
         .or(`profile_id.eq.${contact.id},user_id.in.(${userIds.join(',')})`)
-        .in("status", ['paid', 'partial', 'pending', 'cancelled', 'canceled', 'refunded'] as const)
+        .in("status", ['paid', 'partial', 'pending', 'canceled', 'refunded'] as const)
         .order("deal_date", { ascending: false });
       if (error) throw error;
       return data;
