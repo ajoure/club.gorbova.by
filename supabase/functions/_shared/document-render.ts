@@ -21,6 +21,13 @@
 // deno-lint-ignore-file no-explicit-any
 import Docxtemplater from 'npm:docxtemplater@3.47.1';
 import PizZip from 'npm:pizzip@3.1.6';
+import {
+  numberToWordsRu,
+  formatMoney,
+  normalizeCurrency,
+  extractDocxTokensWithLocations,
+  type TokenManifestEntry,
+} from './docx-helpers.ts';
 
 export const CANONICAL_RESOLVER_VERSION = '1.0.0';
 export const CANONICAL_FEATURE_FLAG_KEY = 'documents_canonical_generation_enabled';
