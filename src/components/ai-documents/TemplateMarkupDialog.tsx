@@ -207,10 +207,9 @@ function renderInteractiveHtml(
         const idx = s.indexOf(text, from);
         if (idx < 0) break;
         const thisOccurrence = occurrenceCounter++;
-        // Find replacement that targets this occurrence (or any if only one and no idx specified)
-        const target =
-          list.find((r) => r.occurrence_index === thisOccurrence) ??
-          (list.length === 1 && list[0].occurrence_index == null ? list[0] : undefined);
+        // Match strictly by occurrence_index. Без fallback'а на «единственный с null»,
+        // иначе одна замена «съедала» все вхождения слова в документе.
+        const target = list.find((r) => r.occurrence_index === thisOccurrence);
         if (idx > from) frag.appendChild(doc.createTextNode(s.slice(from, idx)));
         if (target) {
           const chip = doc.createElement("span");
@@ -311,8 +310,8 @@ export function TemplateMarkupDialog({
   const [pickerAnchor, setPickerAnchor] = useState<{ x: number; y: number } | null>(null);
   /** Контекст того, для чего открыт picker. */
   const [pickerContext, setPickerContext] = useState<
-    | { kind: "selection"; text: string }
-    | { kind: "legacy"; text: string }
+    | { kind: "selection"; text: string; occurrenceIndex: number }
+    | { kind: "legacy"; text: string; occurrenceIndex: number }
     | { kind: "chip"; replacementId: string }
     | null
   >(null);
@@ -452,6 +451,61 @@ export function TemplateMarkupDialog({
     setReplacements((prev) => prev.filter((x) => x.id !== id));
   }, []);
 
+  /**
+   * Определяет 0-based индекс вхождения `needle` в исходном тексте документа,
+   * соответствующий позиции `range.startContainer/startOffset` в живом DOM.
+   *
+   * Учитывает уже вставленные chips: каждый chip считается за свой `original_text`,
+   * а не за визуальный label. Это даёт ту же нумерацию, что и `renderInteractiveHtml`,
+   * который работает по исходному `previewHtml` (без chips).
+   */
+  const computeOccurrenceIndexAtRange = useCallback((needle: string, range: Range): number => {
+    const root = previewRef.current;
+    if (!root || !needle) return 0;
+    let buffer = "";
+    let stop = false;
+    const walk = (node: Node) => {
+      if (stop) return;
+      if (node.nodeType === Node.TEXT_NODE) {
+        const text = node.nodeValue ?? "";
+        if (node === range.startContainer) {
+          buffer += text.slice(0, range.startOffset);
+          stop = true;
+          return;
+        }
+        buffer += text;
+        return;
+      }
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        const el = node as HTMLElement;
+        const chipId = el.getAttribute?.("data-chip-id");
+        if (chipId) {
+          const r = replacements.find((x) => x.id === chipId);
+          if (r) buffer += r.original_text;
+          return;
+        }
+        // Если выделение начинается на границе элемента (startContainer === элемент,
+        // startOffset = индекс ребёнка), берём только первые startOffset детей.
+        const children = Array.from(el.childNodes);
+        const limit = node === range.startContainer ? range.startOffset : children.length;
+        for (let i = 0; i < limit; i++) {
+          if (stop) return;
+          walk(children[i]);
+        }
+        if (node === range.startContainer) stop = true;
+      }
+    };
+    walk(root);
+    let count = 0; let from = 0;
+    while (true) {
+      const idx = buffer.indexOf(needle, from);
+      if (idx < 0) break;
+      count++;
+      from = idx + needle.length;
+    }
+    return count;
+  }, [replacements]);
+
   /** Применяет результат picker'а к контексту. */
   const applyPickerResult = useCallback((
     fld: string,
@@ -473,13 +527,13 @@ export function TemplateMarkupDialog({
         case_modifier: opts.caseModifier,
         data_type: opts.data_type ?? fieldRef?.data_type ?? null,
         status: "manually_added",
-        occurrence_index: occ <= 1 ? 0 : null,
+        // Жёстко привязываемся к конкретной позиции выделения,
+        // чтобы chip встал ИМЕННО там, а не на все вхождения слова.
+        occurrence_index: Math.min(pickerContext.occurrenceIndex, Math.max(0, occ - 1)),
         occurrences_total: occ,
       };
       upsertReplacement(newR);
-      toast.success(occ > 1
-        ? `Поле вставлено. Найдено вхождений: ${occ} — выберите конкретное в «Заменах»`
-        : "Поле вставлено");
+      toast.success("Поле вставлено в выбранную позицию");
       window.getSelection()?.removeAllRanges();
     } else if (pickerContext.kind === "chip") {
       patch(pickerContext.replacementId, {
@@ -514,11 +568,14 @@ export function TemplateMarkupDialog({
       return;
     }
     let anchor: { x: number; y: number } | null = null;
+    let occurrenceIndex = 0;
     if (sel?.rangeCount) {
-      const rect = sel.getRangeAt(0).getBoundingClientRect();
+      const range = sel.getRangeAt(0);
+      const rect = range.getBoundingClientRect();
       anchor = { x: rect.left + rect.width / 2, y: rect.bottom };
+      occurrenceIndex = computeOccurrenceIndexAtRange(text, range);
     }
-    setPickerContext({ kind: "selection", text });
+    setPickerContext({ kind: "selection", text, occurrenceIndex });
     setPickerAnchor(anchor);
     setPickerOpen(true);
   };
@@ -551,7 +608,12 @@ export function TemplateMarkupDialog({
     if (legacy) {
       const text = legacy.getAttribute("data-legacy-text") ?? legacy.textContent ?? "";
       const rect = legacy.getBoundingClientRect();
-      setPickerContext({ kind: "legacy", text });
+      // Range, начинающийся перед элементом legacy → даст индекс этого вхождения.
+      const range = document.createRange();
+      range.setStartBefore(legacy);
+      range.collapse(true);
+      const occurrenceIndex = computeOccurrenceIndexAtRange(text, range);
+      setPickerContext({ kind: "legacy", text, occurrenceIndex });
       setPickerAnchor({ x: rect.left + rect.width / 2, y: rect.bottom });
       setPickerOpen(true);
     }
