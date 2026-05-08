@@ -482,6 +482,53 @@ export async function generateCanonicalDocument(
   const fileName = `${docNumber}.docx`;
   const filePath = `canonical/${opts.profileId}/${fileName}`;
   const outBucket = opts.storageBucketOutput || 'documents';
+
+  // ── DOCX post-render check (Sprint 9) ─────────────────────────────────────
+  // Проверяем размер, MIME, и сканируем оставшиеся {{...}} плейсхолдеры
+  // в собранном document.xml. Не блокирует генерацию — пишет warning.
+  const MIN_DOCX_SIZE = 1024; // bytes — пустой DOCX < ~1KB
+  const docxCheck: {
+    file_size: number;
+    mime: string;
+    min_size_ok: boolean;
+    unresolved_tokens: string[];
+    unresolved_count: number;
+    checked_at: string;
+    ok: boolean;
+  } = {
+    file_size: docBuffer.byteLength,
+    mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    min_size_ok: docBuffer.byteLength >= MIN_DOCX_SIZE,
+    unresolved_tokens: [],
+    unresolved_count: 0,
+    checked_at: new Date().toISOString(),
+    ok: true,
+  };
+  try {
+    const zipCheck = new PizZip(docBuffer);
+    const partsToScan = ['word/document.xml', 'word/header1.xml', 'word/header2.xml', 'word/footer1.xml', 'word/footer2.xml'];
+    const found = new Set<string>();
+    for (const p of partsToScan) {
+      const f = zipCheck.file(p);
+      if (!f) continue;
+      const xml: string = f.asText();
+      // XML may split {{...}} across runs; strip tags first
+      const text = xml.replace(/<[^>]+>/g, '');
+      const re = /\{\{\s*([^{}]+?)\s*\}\}/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(text)) !== null) found.add(m[1].trim());
+    }
+    docxCheck.unresolved_tokens = Array.from(found).sort();
+    docxCheck.unresolved_count = found.size;
+  } catch (_e) {
+    // не валим генерацию — оставляем check.ok=false без подробностей
+    docxCheck.ok = false;
+  }
+  docxCheck.ok = docxCheck.ok && docxCheck.min_size_ok && docxCheck.unresolved_count === 0;
+  const checkWarnings: string[] = [];
+  if (!docxCheck.min_size_ok) checkWarnings.push(`docx_check:file_too_small:${docBuffer.byteLength}`);
+  if (docxCheck.unresolved_count > 0) checkWarnings.push(`docx_check:unresolved_tokens:${docxCheck.unresolved_tokens.join(',')}`);
+
   const { error: upErr } = await supabase.storage.from(outBucket).upload(filePath, docBuffer, {
     contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     upsert: true,
