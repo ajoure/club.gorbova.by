@@ -95,11 +95,17 @@ const MISSING_HINTS: Record<string, string> = {
 export function CanonicalActGenerator() {
   const [templateId, setTemplateId] = useState<string>("");
   const [contextType, setContextType] = useState<"none" | "order">("none");
-  const [contextId, setContextId] = useState<string>("");
-  const [legalDetailsId, setLegalDetailsId] = useState<string>("");
+  const [orderPick, setOrderPick] = useState<OrderPickResult | null>(null);
+  const [legalPick, setLegalPick] = useState<LegalDetailsPickResult | null>(null);
+  const [orderPickerOpen, setOrderPickerOpen] = useState(false);
+  const [legalPickerOpen, setLegalPickerOpen] = useState(false);
   const [preview, setPreview] = useState<PreviewPayload | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [lastGenerated, setLastGenerated] = useState<{ document_number: string; download_url?: string; reused?: boolean } | null>(null);
+
+  const contextId = orderPick?.id ?? "";
+  const legalDetailsId = legalPick?.id ?? "";
 
   const { data: flagRow } = useQuery({
     queryKey: ["docs-canonical-flag"],
