@@ -199,7 +199,7 @@ export function TemplateMarkupDialog({
   // ── autosave draft (debounced) ──
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (!draftLoaded || !templateVersion || replacements.length === 0) return;
+    if (!draftLoaded || !templateVersion) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       const draft: MarkupDraft = {
