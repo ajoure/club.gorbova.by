@@ -182,8 +182,28 @@ export function AiDocumentsHistoryView() {
     if (!doc.file_path) return;
     const url = await getDownloadUrl(doc.file_path, doc.storage_bucket);
     if (url) {
-      window.open(url, "_blank");
+      // download attribute via temp anchor
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = doc.file_name || `${doc.title || "document"}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
     }
+  };
+
+  const handlePreview = async (doc: AiGeneratedDocument) => {
+    if (!doc.file_path) return;
+    const url = await getDownloadUrl(doc.file_path, doc.storage_bucket);
+    if (url) window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  const getDocxCheck = (doc: AiGeneratedDocument): {
+    file_size?: number; unresolved_count?: number; ok?: boolean;
+    unresolved_tokens?: string[];
+  } | null => {
+    const m: any = doc.meta || {};
+    return m.docx_check ?? null;
   };
 
   const handleDelete = async () => {
