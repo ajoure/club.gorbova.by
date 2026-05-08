@@ -2503,9 +2503,10 @@ export default function AdminProductDetailV2() {
               </div>
             )}
             </TabsContent>
+            </div>
           </Tabs>
 
-          <DialogFooter>
+          <DialogFooter className="px-4 sm:px-6 py-3 border-t shrink-0">
             <Button variant="outline" onClick={() => setOfferDialog({ open: false, editing: null })}>
               Отмена
             </Button>
@@ -2513,7 +2514,6 @@ export default function AdminProductDetailV2() {
               {offerDialog.editing ? "Сохранить" : "Создать"}
             </Button>
           </DialogFooter>
-          </div>
         </DialogContent>
       </Dialog>
 
