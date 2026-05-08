@@ -319,11 +319,17 @@ Deno.serve(async (req) => {
     // --- apply replacements
     const zip = new PizZip(buf);
     const paths = listScannablePaths(zip);
-    const placeholderMap = accepted.map((r) => ({
-      original_text: r.original_text,
-      placeholder: `{{field:${r.field_public_id}}}`,
-      field_public_id: r.field_public_id,
-    }));
+    const placeholderMap = accepted.map((r) => {
+      const fmt = (r.format && ALLOWED_FORMATS.has(r.format)) ? r.format : null;
+      const cs = (r.case_modifier && ALLOWED_CASES.has(r.case_modifier)) ? r.case_modifier : null;
+      return {
+        original_text: r.original_text,
+        placeholder: buildPlaceholder(r.field_public_id, fmt, cs),
+        field_public_id: r.field_public_id,
+        format: fmt,
+        case_modifier: cs,
+      };
+    });
     const totalApplied = new Map<string, number>();
     for (const p of paths) {
       const file = zip.file(p);
