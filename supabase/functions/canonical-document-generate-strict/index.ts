@@ -33,7 +33,7 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const RESOLVER_VERSION = 'strict-1.2.0-c5a';
+const RESOLVER_VERSION = 'strict-1.3.0-c5b';
 
 // ─── Русские числительные / даты «прописью» (C5-A) ─────────────────────────
 const RU_UNITS_M = ['','один','два','три','четыре','пять','шесть','семь','восемь','девять'];
