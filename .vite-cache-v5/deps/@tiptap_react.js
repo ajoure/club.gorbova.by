@@ -2,6 +2,9 @@ import {
   deepEqual
 } from "./chunk-FX47Z3IB.js";
 import {
+  require_shim
+} from "./chunk-PU3CAANW.js";
+import {
   CommandManager,
   Editor,
   Extendable,
@@ -124,11 +127,8 @@ import {
   textblockTypeInputRule,
   updateMarkViewAttributes,
   wrappingInputRule
-} from "./chunk-SXIQHOR3.js";
-import "./chunk-YLIL3JKF.js";
-import {
-  require_shim
-} from "./chunk-PU3CAANW.js";
+} from "./chunk-EZQQYADT.js";
+import "./chunk-C3BKHWUU.js";
 import {
   require_jsx_runtime
 } from "./chunk-NZAIND7N.js";
