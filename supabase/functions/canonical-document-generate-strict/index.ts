@@ -32,7 +32,155 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const RESOLVER_VERSION = 'strict-1.1.0-c4b';
+const RESOLVER_VERSION = 'strict-1.2.0-c5a';
+
+// ─── Русские числительные / даты «прописью» (C5-A) ─────────────────────────
+const RU_UNITS_M = ['','один','два','три','четыре','пять','шесть','семь','восемь','девять'];
+const RU_UNITS_F = ['','одна','две','три','четыре','пять','шесть','семь','восемь','девять'];
+const RU_TEENS = ['десять','одиннадцать','двенадцать','тринадцать','четырнадцать','пятнадцать','шестнадцать','семнадцать','восемнадцать','девятнадцать'];
+const RU_TENS = ['','','двадцать','тридцать','сорок','пятьдесят','шестьдесят','семьдесят','восемьдесят','девяносто'];
+const RU_HUNDREDS = ['','сто','двести','триста','четыреста','пятьсот','шестьсот','семьсот','восемьсот','девятьсот'];
+const RU_MONTHS_GEN = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+
+function ruTriad(n: number, female: boolean): string {
+  const out: string[] = [];
+  const h = Math.floor(n/100), t = Math.floor((n%100)/10), u = n%10;
+  if (h) out.push(RU_HUNDREDS[h]);
+  if (t === 1) { out.push(RU_TEENS[u]); }
+  else {
+    if (t) out.push(RU_TENS[t]);
+    if (u) out.push((female ? RU_UNITS_F : RU_UNITS_M)[u]);
+  }
+  return out.join(' ');
+}
+function ruPlural(n: number, forms: [string,string,string]): string {
+  const a = Math.abs(n) % 100, b = a % 10;
+  if (a > 10 && a < 20) return forms[2];
+  if (b > 1 && b < 5) return forms[1];
+  if (b === 1) return forms[0];
+  return forms[2];
+}
+function ruIntToWords(num: number, female = false): string {
+  if (!Number.isFinite(num)) return '';
+  num = Math.trunc(num);
+  if (num === 0) return 'ноль';
+  const neg = num < 0; num = Math.abs(num);
+  const parts: string[] = [];
+  const billions = Math.floor(num/1_000_000_000); num %= 1_000_000_000;
+  const millions = Math.floor(num/1_000_000); num %= 1_000_000;
+  const thousands = Math.floor(num/1000); num %= 1000;
+  const rest = num;
+  if (billions) parts.push(ruTriad(billions, false), ruPlural(billions, ['миллиард','миллиарда','миллиардов']));
+  if (millions) parts.push(ruTriad(millions, false), ruPlural(millions, ['миллион','миллиона','миллионов']));
+  if (thousands) parts.push(ruTriad(thousands, true), ruPlural(thousands, ['тысяча','тысячи','тысяч']));
+  if (rest) parts.push(ruTriad(rest, female));
+  return (neg ? 'минус ' : '') + parts.filter(Boolean).join(' ').replace(/\s+/g,' ').trim();
+}
+function ruMoneyWords(amount: number, currency = 'BYN'): string {
+  if (!Number.isFinite(amount)) return '';
+  const sign = amount < 0 ? 'минус ' : '';
+  amount = Math.abs(amount);
+  const rub = Math.floor(amount);
+  const cop = Math.round((amount - rub) * 100);
+  const cur = (currency || '').toUpperCase();
+  const rubForms: [string,string,string] =
+    cur === 'BYN' ? ['белорусский рубль','белорусских рубля','белорусских рублей']
+    : cur === 'RUB' ? ['рубль','рубля','рублей']
+    : cur === 'USD' ? ['доллар США','доллара США','долларов США']
+    : cur === 'EUR' ? ['евро','евро','евро']
+    : ['рубль','рубля','рублей'];
+  const copForms: [string,string,string] = ['копейка','копейки','копеек'];
+  const rubWords = ruIntToWords(rub, false);
+  const copStr = String(cop).padStart(2,'0');
+  return `${sign}${rubWords} ${ruPlural(rub, rubForms)} ${copStr} ${ruPlural(cop, copForms)}`.trim();
+}
+function ruOrdinalDay(d: number): string {
+  const map: Record<number,string> = {
+    1:'первое',2:'второе',3:'третье',4:'четвёртое',5:'пятое',6:'шестое',7:'седьмое',8:'восьмое',
+    9:'девятое',10:'десятое',11:'одиннадцатое',12:'двенадцатое',13:'тринадцатое',14:'четырнадцатое',
+    15:'пятнадцатое',16:'шестнадцатое',17:'семнадцатое',18:'восемнадцатое',19:'девятнадцатое',
+    20:'двадцатое',30:'тридцатое',
+  };
+  if (map[d]) return map[d];
+  if (d > 20 && d < 30) return 'двадцать ' + map[d-20];
+  if (d === 31) return 'тридцать первое';
+  return String(d);
+}
+function ruYearGenitive(y: number): string {
+  // «две тысячи двадцать пятого года»: основа = ruIntToWords(y) с заменой последнего слова на порядковый-Р.п.
+  // Ограничимся типичным случаем (год 4-значный).
+  const base = ruIntToWords(y, true).replace(/\s+/g,' ').trim();
+  const lastSpace = base.lastIndexOf(' ');
+  const head = lastSpace > 0 ? base.slice(0, lastSpace) : '';
+  const tail = lastSpace > 0 ? base.slice(lastSpace+1) : base;
+  const ordTail: Record<string,string> = {
+    'один':'первого','одна':'первого','два':'второго','две':'второго','три':'третьего','четыре':'четвёртого',
+    'пять':'пятого','шесть':'шестого','семь':'седьмого','восемь':'восьмого','девять':'девятого',
+    'десять':'десятого','одиннадцать':'одиннадцатого','двенадцать':'двенадцатого','тринадцать':'тринадцатого',
+    'четырнадцать':'четырнадцатого','пятнадцать':'пятнадцатого','шестнадцать':'шестнадцатого',
+    'семнадцать':'семнадцатого','восемнадцать':'восемнадцатого','девятнадцать':'девятнадцатого',
+    'двадцать':'двадцатого','тридцать':'тридцатого','сорок':'сорокового','пятьдесят':'пятидесятого',
+    'шестьдесят':'шестидесятого','семьдесят':'семидесятого','восемьдесят':'восьмидесятого','девяносто':'девяностого',
+    'сто':'сотого','двести':'двухсотого','триста':'трёхсотого','четыреста':'четырёхсотого',
+    'пятьсот':'пятисотого','шестьсот':'шестисотого','семьсот':'семисотого','восемьсот':'восьмисотого',
+    'девятьсот':'девятисотого',
+    'тысяча':'тысячного','тысячи':'тысячного','тысяч':'тысячного',
+  };
+  const ord = ordTail[tail] || (tail + 'ого');
+  return (head ? head + ' ' : '') + ord;
+}
+function parseDateLoose(s: string): Date | null {
+  if (!s) return null;
+  const t = s.trim();
+  let m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return new Date(Date.UTC(+m[1], +m[2]-1, +m[3]));
+  m = t.match(/^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})/);
+  if (m) return new Date(Date.UTC(+m[3], +m[2]-1, +m[1]));
+  const d = new Date(t);
+  return isNaN(d.getTime()) ? null : d;
+}
+function ruDateWords(s: string): string | null {
+  const d = parseDateLoose(s);
+  if (!d) return null;
+  const day = d.getUTCDate();
+  const month = d.getUTCMonth();
+  const year = d.getUTCFullYear();
+  return `${ruOrdinalDay(day)} ${RU_MONTHS_GEN[month]} ${ruYearGenitive(year)} года`;
+}
+function parseNumberLoose(v: any): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v !== 'string') return null;
+  const cleaned = v.replace(/\s+/g,'').replace(',', '.').replace(/[^0-9.\-]/g,'');
+  if (!cleaned) return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+function applyFormat(rawValue: any, dataType: string, currency: string | null, format: string | null): { value: string; applied: boolean } {
+  const baseStr = fmtVal(rawValue);
+  if (!format) return { value: baseStr, applied: false };
+  if (format === 'text' && dataType === 'boolean') {
+    const truthy = rawValue === true || rawValue === 'true' || rawValue === 1 || rawValue === '1' || rawValue === 'yes' || rawValue === 'да';
+    return { value: truthy ? 'да' : 'нет', applied: true };
+  }
+  if (format === 'words') {
+    if (dataType === 'money') {
+      const n = parseNumberLoose(rawValue);
+      if (n === null) return { value: baseStr, applied: false };
+      return { value: ruMoneyWords(n, currency || 'BYN'), applied: true };
+    }
+    if (dataType === 'number') {
+      const n = parseNumberLoose(rawValue);
+      if (n === null) return { value: baseStr, applied: false };
+      return { value: ruIntToWords(n, false), applied: true };
+    }
+    if (dataType === 'date' || dataType === 'datetime') {
+      const w = ruDateWords(baseStr);
+      if (!w) return { value: baseStr, applied: false };
+      return { value: w, applied: true };
+    }
+  }
+  return { value: baseStr, applied: false };
+}
 const FLD_RE = /^FLD-\d+$/;
 const ALLOWED_CASES = new Set([
   'nominative', 'genitive', 'dative', 'accusative', 'instrumental', 'prepositional',
