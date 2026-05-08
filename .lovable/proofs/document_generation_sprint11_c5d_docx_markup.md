@@ -211,3 +211,10 @@ POST /functions/v1/canonical-template-apply-markup
 - [x] Apply вызывает существующую edge function без изменений контракта.
 - [x] TipTap (`TemplateVisualEditor`) в DOCX-flow не импортируется.
 - [ ] Ручная проверка пользователем: скачанный после apply DOCX сохраняет таблицу счёт-акта.
+
+### Runtime hotfix (2026-05-08)
+
+- **Problem:** активная backend-версия вернула `400 no_accepted_replacements`, хотя UI отправлял ручные замены.
+- **Diagnose:** network-proof показал payload с `status:"manually_added"`; для совместимости с уже задеплоенной apply-функцией UI-only статус нельзя отправлять через backend boundary.
+- **Execute:** `TemplateMarkupDialog.buildPayload()` нормализует `manually_added → accepted` перед вызовом `canonical-template-apply-markup`.
+- **DoD:** ручные chips остаются в UI как «Вручную», но backend получает accepted replacement и не должен возвращать `no_accepted_replacements` из-за статуса.
