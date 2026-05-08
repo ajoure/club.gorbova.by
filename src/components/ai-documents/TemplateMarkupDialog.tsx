@@ -134,7 +134,11 @@ export function TemplateMarkupDialog({
     }
     setStatus(s.id, {
       status: "accepted",
-      placeholder: `{{field:${s.field_public_id}}}`,
+      placeholder: buildFieldPlaceholder(
+        s.field_public_id,
+        (s.format ?? null) as FieldFormat | null,
+        (s.case_modifier ?? null) as FieldCase | null,
+      ),
     });
   };
 
@@ -142,10 +146,17 @@ export function TemplateMarkupDialog({
     setStatus(s.id, { status: "skipped" });
   };
 
-  const onChangeField = (s: MarkupSuggestion, fld: string) => {
+  const onChangeField = (
+    s: MarkupSuggestion,
+    fld: string,
+    opts: { format: FieldFormat | null; caseModifier: FieldCase | null; data_type?: string | null },
+  ) => {
     setStatus(s.id, {
       field_public_id: fld,
-      placeholder: `{{field:${fld}}}`,
+      format: opts.format,
+      case_modifier: opts.caseModifier,
+      data_type: opts.data_type ?? null,
+      placeholder: buildFieldPlaceholder(fld, opts.format, opts.caseModifier),
       status: s.status === "suggested" ? "changed" : s.status,
     });
   };
