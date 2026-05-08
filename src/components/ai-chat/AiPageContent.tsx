@@ -115,27 +115,9 @@ const AI_SUB_TABS: SubMenuItem[] = [
   },
 ];
 
+// Sprint 11 C1: оставлены только strict-вкладки. Legacy (canonical-acts, aliases,
+// generate=AiDocumentsGenerateView, history=AiDocumentsHistoryView) убраны из меню.
 const DOC_SUB_TABS: SubMenuItem[] = [
-  {
-    id: "canonical-acts",
-    label: "Акты выполненных работ",
-    icon: FileText,
-    gradient: "from-cyan-500/10 to-sky-500/8",
-    activeGradient: "from-cyan-500/20 to-sky-500/15",
-    borderColor: "border-cyan-400/20",
-    iconColor: "text-cyan-600",
-    adminOnly: true,
-  },
-  {
-    id: "aliases",
-    label: "Связи плейсхолдеров",
-    icon: FileStack,
-    gradient: "from-fuchsia-500/10 to-pink-500/8",
-    activeGradient: "from-fuchsia-500/20 to-pink-500/15",
-    borderColor: "border-fuchsia-400/20",
-    iconColor: "text-fuchsia-600",
-    adminOnly: true,
-  },
   {
     id: "placeholders",
     label: "Плейсхолдеры",
@@ -147,13 +129,13 @@ const DOC_SUB_TABS: SubMenuItem[] = [
     adminOnly: true,
   },
   {
-    id: "generate",
-    label: "Создать документ",
-    icon: FileText,
-    gradient: "from-emerald-500/10 to-teal-500/8",
-    activeGradient: "from-emerald-500/20 to-teal-500/15",
-    borderColor: "border-emerald-400/20",
-    iconColor: "text-emerald-500",
+    id: "templates",
+    label: "Шаблоны документов",
+    icon: FileStack,
+    gradient: "from-orange-500/10 to-amber-500/8",
+    activeGradient: "from-orange-500/20 to-amber-500/15",
+    borderColor: "border-orange-400/20",
+    iconColor: "text-orange-500",
   },
   {
     id: "history",
@@ -163,15 +145,6 @@ const DOC_SUB_TABS: SubMenuItem[] = [
     activeGradient: "from-slate-500/20 to-gray-500/15",
     borderColor: "border-slate-400/20",
     iconColor: "text-slate-500",
-  },
-  {
-    id: "templates",
-    label: "Шаблоны документов",
-    icon: FileStack,
-    gradient: "from-orange-500/10 to-amber-500/8",
-    activeGradient: "from-orange-500/20 to-amber-500/15",
-    borderColor: "border-orange-400/20",
-    iconColor: "text-orange-500",
   },
   {
     id: "executors",
