@@ -15,13 +15,16 @@ import { supabase } from "@/integrations/supabase/client";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
-  Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+  Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem,
+} from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
+import { ChevronsUpDown, Check } from "lucide-react";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -359,62 +362,88 @@ function FieldPicker({
   value: string | null;
   onChange: (v: string) => void;
 }) {
-  const [search, setSearch] = useState("");
-  const filtered = useMemo(() => {
-    if (!search.trim()) return null;
-    const q = search.toLowerCase();
-    return refs.filter(
-      (r) =>
-        r.field_public_id.toLowerCase().includes(q) ||
-        r.token_key.toLowerCase().includes(q) ||
-        r.ui_label.toLowerCase().includes(q),
-    ).slice(0, 50);
-  }, [refs, search]);
+  const [open, setOpen] = useState(false);
+  const selected = useMemo(
+    () => refs.find((r) => r.field_public_id === value) ?? null,
+    [refs, value],
+  );
 
   return (
-    <Select value={value ?? undefined} onValueChange={onChange}>
-      <SelectTrigger className="h-7 text-[11px]">
-        <SelectValue placeholder="Выбрать поле…" />
-      </SelectTrigger>
-      <SelectContent className="max-h-[400px]">
-        <div className="sticky top-0 bg-popover z-10 p-1.5 border-b">
-          <div className="relative">
-            <Search className="absolute left-2 top-1.5 h-3 w-3 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Поиск по FLD, key, label…"
-              className="pl-7 h-7 text-[11px]"
-              onKeyDown={(e) => e.stopPropagation()}
-            />
-          </div>
-        </div>
-        {filtered ? (
-          filtered.length === 0 ? (
-            <div className="p-3 text-[11px] text-muted-foreground">Ничего не найдено</div>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="h-8 w-full justify-between text-xs font-normal px-2"
+        >
+          {selected ? (
+            <span className="flex items-center gap-2 min-w-0 truncate">
+              <span className="font-mono text-[10px] text-muted-foreground shrink-0">
+                {selected.field_public_id}
+              </span>
+              <span className="truncate">{selected.ui_label}</span>
+            </span>
           ) : (
-            filtered.map((r) => (
-              <SelectItem key={r.field_public_id} value={r.field_public_id} className="text-[11px]">
-                <span className="font-mono mr-2">{r.field_public_id}</span>
-                {r.ui_label}
-              </SelectItem>
-            ))
-          )
-        ) : (
-          Array.from(refsByCategory.entries()).map(([cat, items]) => (
-            <SelectGroup key={cat}>
-              <SelectLabel className="text-[10px] uppercase tracking-wide">{cat}</SelectLabel>
-              {items.map((r) => (
-                <SelectItem key={r.field_public_id} value={r.field_public_id} className="text-[11px]">
-                  <span className="font-mono mr-2">{r.field_public_id}</span>
-                  {r.ui_label}
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          ))
-        )}
-      </SelectContent>
-    </Select>
+            <span className="text-muted-foreground">Выбрать поле…</span>
+          )}
+          <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        sideOffset={4}
+        className="w-[var(--radix-popover-trigger-width)] min-w-[420px] p-0 bg-popover border shadow-lg z-[60]"
+      >
+        <Command
+          filter={(itemValue, search) => {
+            if (!search) return 1;
+            return itemValue.toLowerCase().includes(search.toLowerCase()) ? 1 : 0;
+          }}
+        >
+          <CommandInput
+            placeholder="Поиск по FLD, key, label…"
+            className="h-9 text-xs"
+          />
+          <CommandList className="max-h-[360px]">
+            <CommandEmpty className="py-6 text-center text-xs text-muted-foreground">
+              Ничего не найдено
+            </CommandEmpty>
+            {Array.from(refsByCategory.entries()).map(([cat, items]) => (
+              <CommandGroup key={cat} heading={cat}>
+                {items.map((r) => {
+                  const searchKey = `${r.field_public_id} ${r.token_key} ${r.ui_label}`;
+                  const isSelected = value === r.field_public_id;
+                  return (
+                    <CommandItem
+                      key={r.field_public_id}
+                      value={searchKey}
+                      onSelect={() => {
+                        onChange(r.field_public_id);
+                        setOpen(false);
+                      }}
+                      className="text-xs py-1.5 gap-2"
+                    >
+                      <Check
+                        className={cn(
+                          "h-3.5 w-3.5 shrink-0",
+                          isSelected ? "opacity-100" : "opacity-0",
+                        )}
+                      />
+                      <span className="font-mono text-[10px] text-muted-foreground shrink-0 w-[88px]">
+                        {r.field_public_id}
+                      </span>
+                      <span className="flex-1 truncate">{r.ui_label}</span>
+                    </CommandItem>
+                  );
+                })}
+              </CommandGroup>
+            ))}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }
 
