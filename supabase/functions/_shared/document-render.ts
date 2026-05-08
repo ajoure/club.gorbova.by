@@ -69,6 +69,15 @@ export interface CanonicalGenerateResult {
   download_url?: string;
   storage_path?: string;
   reused?: boolean;
+  docx_check?: {
+    file_size: number;
+    mime: string;
+    min_size_ok: boolean;
+    unresolved_tokens: string[];
+    unresolved_count: number;
+    checked_at: string;
+    ok: boolean;
+  };
   error?: string;
 }
 
