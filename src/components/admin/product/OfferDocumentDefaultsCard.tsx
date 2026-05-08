@@ -1,21 +1,30 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/date-picker";
-import { FileText } from "lucide-react";
+import { FileText, RotateCcw, Info } from "lucide-react";
 import type { OfferDocumentDefaults } from "@/hooks/useTariffOffers";
 
 interface Props {
   value: OfferDocumentDefaults | undefined;
   onChange: (next: OfferDocumentDefaults) => void;
+  /** Сумма кнопки оплаты (offer.amount) — основной источник суммы акта */
+  offerAmount?: number;
+  /** Валюта кнопки (если есть). Сейчас в системе BYN. */
+  offerCurrency?: string;
 }
+
+/** Системный список валют. НЕ создаём отдельную таблицу, переиспользуем плоский enum. */
+const CURRENCIES = ["BYN", "USD", "EUR", "RUB"] as const;
+const DEFAULT_CURRENCY = "BYN";
 
 const num = (s: string): number | null => (s === "" ? null : (Number(s) || 0));
 
@@ -30,33 +39,106 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function OfferDocumentDefaultsCard({ value, onChange }: Props) {
+export function OfferDocumentDefaultsCard({ value, onChange, offerAmount, offerCurrency }: Props) {
   const v = value ?? {};
   const set = (patch: Partial<OfferDocumentDefaults>) => onChange({ ...v, ...patch });
 
   const [templates, setTemplates] = useState<TemplateOpt[]>([]);
   const [executors, setExecutors] = useState<ExecutorOpt[]>([]);
   const [showTechIds, setShowTechIds] = useState(false);
+  const initRef = useRef(false);
+  const lastOfferAmount = useRef<number | undefined>(offerAmount);
+  const lastOfferCurrency = useRef<string | undefined>(offerCurrency);
 
+  // PATCH DOC-OFFER-1/2: первичный авто-fill при открытии вкладки.
   useEffect(() => {
-    (async () => {
-      const [{ data: tpl }, { data: exec }] = await Promise.all([
-        supabase
-          .from("document_templates")
-          .select("id, name, code")
-          .eq("is_active", true)
-          .order("name", { ascending: true }),
-        supabase
-          .from("executors")
-          .select("id, short_name, full_name, is_default")
-          .eq("is_active", true)
-          .order("is_default", { ascending: false })
-          .order("short_name", { ascending: true }),
-      ]);
-      setTemplates((tpl ?? []) as TemplateOpt[]);
-      setExecutors((exec ?? []) as ExecutorOpt[]);
-    })();
+    if (initRef.current) return;
+    initRef.current = true;
+    const patch: Partial<OfferDocumentDefaults> = {};
+    if ((v.unit_price ?? null) === null && typeof offerAmount === "number") patch.unit_price = offerAmount;
+    if ((v.quantity ?? null) === null) patch.quantity = 1;
+    const up = patch.unit_price ?? v.unit_price ?? offerAmount ?? null;
+    const qty = patch.quantity ?? v.quantity ?? 1;
+    if ((v.amount ?? null) === null && typeof up === "number") patch.amount = Number((up * qty).toFixed(2));
+    if ((v.currency ?? null) === null) patch.currency = offerCurrency || DEFAULT_CURRENCY;
+    if (Object.keys(patch).length > 0) onChange({ ...v, ...patch });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // PATCH DOC-OFFER-2: реакция на смену суммы кнопки.
+  useEffect(() => {
+    if (!initRef.current) return;
+    if (offerAmount === lastOfferAmount.current) return;
+    lastOfferAmount.current = offerAmount;
+    if (typeof offerAmount !== "number") return;
+    if (v.amount_manual_override) return; // уважаем ручной override — не перетираем
+    const qty = v.quantity ?? 1;
+    onChange({
+      ...v,
+      unit_price: offerAmount,
+      quantity: qty,
+      amount: Number((offerAmount * qty).toFixed(2)),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [offerAmount]);
+
+  // PATCH DOC-OFFER-3: реакция на смену валюты кнопки.
+  useEffect(() => {
+    if (!initRef.current) return;
+    if (offerCurrency === lastOfferCurrency.current) return;
+    lastOfferCurrency.current = offerCurrency;
+    if (!offerCurrency) return;
+    if (v.currency_manual_override) return;
+    onChange({ ...v, currency: offerCurrency });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [offerCurrency]);
+
+  const handleQuantityChange = (raw: string) => {
+    const qty = num(raw);
+    const up = v.unit_price ?? null;
+    const next: Partial<OfferDocumentDefaults> = { quantity: qty };
+    if (!v.amount_manual_override && typeof up === "number" && typeof qty === "number") {
+      next.amount = Number((up * qty).toFixed(2));
+    }
+    set(next);
+  };
+
+  const handleUnitPriceChange = (raw: string) => {
+    const up = num(raw);
+    const qty = v.quantity ?? 1;
+    const next: Partial<OfferDocumentDefaults> = { unit_price: up };
+    if (!v.amount_manual_override && typeof up === "number") {
+      next.amount = Number((up * qty).toFixed(2));
+    }
+    set(next);
+  };
+
+  const handleAmountChange = (raw: string) => {
+    set({ amount: num(raw), amount_manual_override: true });
+  };
+
+  const handleResetAmountFromOffer = () => {
+    if (typeof offerAmount !== "number") return;
+    const qty = v.quantity ?? 1;
+    onChange({
+      ...v,
+      unit_price: offerAmount,
+      quantity: qty,
+      amount: Number((offerAmount * qty).toFixed(2)),
+      amount_manual_override: false,
+    });
+  };
+
+  const handleCurrencyChange = (val: string) => {
+    set({ currency: val, currency_manual_override: val !== (offerCurrency || DEFAULT_CURRENCY) });
+  };
+
+  const computedAmount =
+    typeof v.unit_price === "number" && typeof v.quantity === "number"
+      ? Number((v.unit_price * v.quantity).toFixed(2))
+      : null;
+  const amountMismatch =
+    v.amount_manual_override && computedAmount !== null && computedAmount !== v.amount;
 
   return (
     <Card>
@@ -67,6 +149,13 @@ export function OfferDocumentDefaultsCard({ value, onChange }: Props) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-5">
+        <div className="rounded-md bg-muted/40 border border-border/40 p-2.5 text-xs text-muted-foreground flex gap-2">
+          <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-indigo-500" />
+          <span>
+            По умолчанию сумма акта берётся из суммы кнопки оплаты. Количество = 1.
+            Если изменить количество или цену за единицу, сумма акта пересчитается автоматически.
+          </span>
+        </div>
         <div className="flex items-center justify-between">
           <div>
             <Label>Формировать акт</Label>
@@ -165,25 +254,50 @@ export function OfferDocumentDefaultsCard({ value, onChange }: Props) {
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">Количество</Label>
-            <Input type="number" value={v.quantity ?? ""} onChange={(e) => set({ quantity: num(e.target.value) })} />
+            <Input type="number" value={v.quantity ?? ""} onChange={(e) => handleQuantityChange(e.target.value)} />
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">Цена за единицу</Label>
-            <Input type="number" value={v.unit_price ?? ""} onChange={(e) => set({ unit_price: num(e.target.value) })} />
+            <Input type="number" value={v.unit_price ?? ""} onChange={(e) => handleUnitPriceChange(e.target.value)} />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">Сумма акта</Label>
-            <Input type="number" value={v.amount ?? ""} onChange={(e) => set({ amount: num(e.target.value) })} />
+            <Label className="text-xs">
+              Сумма акта
+              {v.amount_manual_override && <span className="ml-1 text-amber-600">(вручную)</span>}
+            </Label>
+            <Input type="number" value={v.amount ?? ""} onChange={(e) => handleAmountChange(e.target.value)} />
+            <p className="text-[10px] text-muted-foreground">
+              Рассчитывается автоматически: цена × количество. Можно изменить вручную.
+            </p>
+            {amountMismatch && (
+              <p className="text-[10px] text-amber-600">
+                Расчёт: {computedAmount}. Сейчас сохранено вручную.
+              </p>
+            )}
           </div>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
           <div className="space-y-1.5">
             <Label className="text-xs">Валюта</Label>
-            <Input
-              value={v.currency ?? ""}
-              onChange={(e) => set({ currency: e.target.value || null })}
-              placeholder="BYN"
-            />
+            <Select value={v.currency ?? DEFAULT_CURRENCY} onValueChange={handleCurrencyChange}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {CURRENCIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="sm:col-span-2 flex justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleResetAmountFromOffer}
+              disabled={typeof offerAmount !== "number"}
+              className="gap-1.5"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Пересчитать из цены кнопки {typeof offerAmount === "number" ? `(${offerAmount})` : ""}
+            </Button>
           </div>
         </div>
 

@@ -107,6 +107,9 @@ export interface OfferDocumentDefaults {
   final_payment?: number | null;
   executor_id?: string | null;
   comment?: string | null;
+  // Sprint 10 PATCH DOC-OFFER-1/2/3 — overrides flags for amount/currency auto-fill.
+  amount_manual_override?: boolean;
+  currency_manual_override?: boolean;
 }
 
 export interface TariffOffer {
