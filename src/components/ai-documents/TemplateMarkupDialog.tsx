@@ -1,23 +1,28 @@
 /**
- * TemplateMarkupDialog — Sprint 11 C5-D
+ * TemplateMarkupDialog — Sprint 11 C5-D-UX
  *
- * DOCX-разметчик. НЕ редактор. DOCX-файл = source of truth.
- *  - LEFT: Word-like preview через mammoth.convertToHtml (таблицы/жирный/списки сохраняются).
- *  - RIGHT: единый список replacements (auto + manual), picker FLD, format/case, occurrence picker.
- *  - Manual replacement = выделить текст в preview → «Разметить выделенное».
- *  - Состояние единое (markupState), не сбрасывается при действиях.
- *  - Autosave в document_template_versions.markup_draft (debounced 1.5s).
- *  - Apply создаёт новую версию НЕ активной по умолчанию. Кнопка «Применить и активировать»
- *    активирует только при validation=valid.
+ * Визуальный редактор разметки DOCX. DOCX-файл = исходный шаблон.
+ *  - Основная область: Word-like preview через mammoth.convertToHtml (на всю ширину).
+ *  - Inline chips: вставленные поля показываются прямо в тексте как
+ *      [Название поля · FLD-XXXXXX]. Сырой `{{field:FLD-…}}` пользователю не показывается.
+ *  - Старые legacy-плейсхолдеры (`{{ld-…}}`, `{{document.…}}`, `{{cf:…}}` и т.п.)
+ *      подсвечиваются жёлтым и кликабельны → открывают picker.
+ *  - Выделение текста + кнопка «Вставить поле» → picker → chip.
+ *  - Правая панель «Замены» и Sheet «Авторазметка» скрыты по умолчанию.
+ *  - Autosave черновика в `document_template_versions.markup_draft` (debounced 1.5s).
+ *  - Apply отдаёт backend контракт без изменений: original_text + occurrence_index +
+ *      field_public_id + format + case_modifier. Backend сам строит {{field:FLD-…}}.
  *
- * Strict rule: единственный допустимый плейсхолдер — `{{field:FLD-XXXXXX}}` с опциональными
- * `|format=...|case=...`.
+ * Backend (canonical-template-apply-markup) НЕ менялся.
  */
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback, type MouseEvent as ReactMouseEvent } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle,
+} from "@/components/ui/sheet";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem,
@@ -26,13 +31,15 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import { ChevronsUpDown, Check, Loader2, CheckCircle2, X, Pencil, Sparkles, Plus, Trash2, AlertTriangle } from "lucide-react";
+import {
+  ChevronsUpDown, Check, Loader2, CheckCircle2, X, Pencil, Sparkles, Plus, Trash2,
+  AlertTriangle, ListChecks, Wand2,
+} from "lucide-react";
 import { toast } from "sonner";
 import mammoth from "mammoth";
 import {
   buildAutoSuggestions,
   loadRegistryRefs,
-  type MarkupSuggestion,
   type RegistryFieldRef,
 } from "@/utils/templateAutoSuggest";
 import { FieldFormatPicker } from "./FieldFormatPicker";
@@ -40,18 +47,22 @@ import { buildFieldPlaceholder, type FieldCase, type FieldFormat } from "./exten
 
 // ───────────────────────── types ─────────────────────────
 
+type ReplacementStatus = "suggested" | "accepted" | "changed" | "skipped" | "manually_added";
+
 interface Replacement {
   id: string;
   source: "auto" | "manual";
   original_text: string;
   field_public_id: string | null;
+  /** Русское название поля для отображения внутри chip. */
+  visual_label: string | null;
   format: FieldFormat | null;
   case_modifier: FieldCase | null;
   data_type: string | null;
-  placeholder: string | null;
-  status: "suggested" | "accepted" | "changed" | "skipped" | "manually_added";
+  status: ReplacementStatus;
+  /** N-е вхождение original_text в plainText (0-based). null = ещё не выбрано или одно. */
   occurrence_index: number | null;
-  /** total occurrences in document (computed locally from preview text) */
+  /** Всего вхождений в plainText. */
   occurrences_total: number;
   reason?: string;
   confidence?: "high" | "medium" | "low";
@@ -83,8 +94,24 @@ const CATEGORY_LABELS_RU: Record<string, string> = {
   product: "Продукт", tariff: "Тариф", offer: "Оффер",
   legal_details: "Реквизиты", order: "Заказ", subscription: "Подписка",
   payment: "Платёж", company: "Компания", telegram_member: "Telegram-участник",
-  custom: "Пользовательские", deal: "Сделка",
+  custom: "Пользовательские", deal: "Сделка", document: "Документ", system: "Системные поля",
 };
+
+const STATUS_LABEL_RU: Record<ReplacementStatus, string> = {
+  suggested: "Предложено",
+  accepted: "Принято",
+  changed: "Изменено",
+  skipped: "Пропущено",
+  manually_added: "Вручную",
+};
+
+const SOURCE_LABEL_RU: Record<Replacement["source"], string> = {
+  auto: "Авто",
+  manual: "Вручную",
+};
+
+const ACCEPTED: ReplacementStatus[] = ["accepted", "changed", "manually_added"];
+const isAccepted = (s: ReplacementStatus) => ACCEPTED.includes(s);
 
 // ───────────────────── utilities ─────────────────────
 
@@ -104,9 +131,148 @@ function countOccurrences(haystack: string, needle: string): number {
   return count;
 }
 
-/** Sanitize HTML produced by mammoth: drop scripts, inline styles preserved by mammoth. */
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]!));
+}
+
 function sanitizeMammothHtml(html: string): string {
   return html.replace(/<script[\s\S]*?<\/script>/gi, "");
+}
+
+/** Все известные шаблоны legacy-плейсхолдеров, которые нужно подсветить как кликабельные. */
+const LEGACY_PLACEHOLDER_RE = /\{\{(?!field:)[^{}]+\}\}/g;
+
+/** Короткое русское название формата/падежа для подписи под chip. */
+function formatSuffix(format: FieldFormat | null, caseModifier: FieldCase | null): string {
+  const parts: string[] = [];
+  if (format === "words") parts.push("прописью");
+  else if (format === "text") parts.push("текстом");
+  if (caseModifier) {
+    const map: Record<FieldCase, string> = {
+      nominative: "И.п.", genitive: "Р.п.", dative: "Д.п.",
+      accusative: "В.п.", instrumental: "Т.п.", prepositional: "П.п.",
+    };
+    parts.push(map[caseModifier]);
+  }
+  return parts.join(" · ");
+}
+
+/**
+ * Строит итоговый HTML для отображения:
+ *  - все принятые replacements заменяются на chip <span data-chip-id>;
+ *  - все необработанные legacy-плейсхолдеры → <mark data-legacy-text>.
+ *
+ * Идёт по text-нодам, не ломая теги таблиц/абзацев.
+ */
+function renderInteractiveHtml(
+  baseHtml: string,
+  replacements: Replacement[],
+): string {
+  if (!baseHtml) return "";
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<div id="root">${baseHtml}</div>`, "text/html");
+  const root = doc.getElementById("root");
+  if (!root) return baseHtml;
+
+  // 1) Replace accepted replacements (Nth occurrence) with chips.
+  //    Counter per original_text across the whole document text content.
+  const acceptedByText = new Map<string, Replacement[]>();
+  for (const r of replacements) {
+    if (!isAccepted(r.status) || !r.original_text) continue;
+    if (!acceptedByText.has(r.original_text)) acceptedByText.set(r.original_text, []);
+    acceptedByText.get(r.original_text)!.push(r);
+  }
+
+  for (const [text, list] of acceptedByText.entries()) {
+    // Walker collects fresh each pass since DOM mutates.
+    let occurrenceCounter = 0;
+    const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    const textNodes: Text[] = [];
+    let n: Node | null;
+    while ((n = walker.nextNode())) textNodes.push(n as Text);
+
+    for (const node of textNodes) {
+      if (!node.parentNode) continue;
+      // Skip if inside an existing chip
+      if ((node.parentNode as Element).closest?.("[data-chip-id]")) continue;
+      let s = node.nodeValue ?? "";
+      if (!s.includes(text)) continue;
+      const frag = doc.createDocumentFragment();
+      let from = 0;
+      while (true) {
+        const idx = s.indexOf(text, from);
+        if (idx < 0) break;
+        const thisOccurrence = occurrenceCounter++;
+        // Find replacement that targets this occurrence (or any if only one and no idx specified)
+        const target =
+          list.find((r) => r.occurrence_index === thisOccurrence) ??
+          (list.length === 1 && list[0].occurrence_index == null ? list[0] : undefined);
+        if (idx > from) frag.appendChild(doc.createTextNode(s.slice(from, idx)));
+        if (target) {
+          const chip = doc.createElement("span");
+          chip.className = "docx-chip";
+          chip.setAttribute("data-chip-id", target.id);
+          chip.setAttribute("data-fld", target.field_public_id ?? "");
+          chip.setAttribute("data-status", target.status);
+          chip.setAttribute("contenteditable", "false");
+          const labelEl = doc.createElement("span");
+          labelEl.className = "docx-chip-label";
+          labelEl.textContent = target.visual_label ?? target.field_public_id ?? "поле";
+          chip.appendChild(labelEl);
+          const fldEl = doc.createElement("span");
+          fldEl.className = "docx-chip-fld";
+          fldEl.textContent = target.field_public_id ?? "";
+          chip.appendChild(fldEl);
+          const suf = formatSuffix(target.format, target.case_modifier);
+          if (suf) {
+            const sufEl = doc.createElement("span");
+            sufEl.className = "docx-chip-suffix";
+            sufEl.textContent = suf;
+            chip.appendChild(sufEl);
+          }
+          frag.appendChild(chip);
+        } else {
+          // Не наша occurrence — оставляем текст как есть
+          frag.appendChild(doc.createTextNode(text));
+        }
+        from = idx + text.length;
+      }
+      if (from < s.length) frag.appendChild(doc.createTextNode(s.slice(from)));
+      node.parentNode.replaceChild(frag, node);
+    }
+  }
+
+  // 2) Highlight legacy placeholders not yet handled.
+  const walker2 = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  const legacyNodes: Text[] = [];
+  let m: Node | null;
+  while ((m = walker2.nextNode())) {
+    if ((m.parentNode as Element)?.closest?.("[data-chip-id]")) continue;
+    if ((m.nodeValue ?? "").match(LEGACY_PLACEHOLDER_RE)) legacyNodes.push(m as Text);
+  }
+  for (const node of legacyNodes) {
+    if (!node.parentNode) continue;
+    const s = node.nodeValue ?? "";
+    LEGACY_PLACEHOLDER_RE.lastIndex = 0;
+    const frag = doc.createDocumentFragment();
+    let last = 0;
+    let match: RegExpExecArray | null;
+    while ((match = LEGACY_PLACEHOLDER_RE.exec(s))) {
+      if (match.index > last) frag.appendChild(doc.createTextNode(s.slice(last, match.index)));
+      const mark = doc.createElement("mark");
+      mark.className = "docx-legacy";
+      mark.setAttribute("data-legacy-text", match[0]);
+      mark.textContent = match[0];
+      frag.appendChild(mark);
+      last = match.index + match[0].length;
+    }
+    if (last < s.length) frag.appendChild(doc.createTextNode(s.slice(last)));
+    node.parentNode.replaceChild(frag, node);
+  }
+
+  return root.innerHTML;
 }
 
 // ───────────────────── component ─────────────────────
@@ -124,9 +290,23 @@ export function TemplateMarkupDialog({
   const [draftLoaded, setDraftLoaded] = useState(false);
   const [hasDraftSaved, setHasDraftSaved] = useState(false);
   const [autoSuggesting, setAutoSuggesting] = useState(false);
+  const [showReplacements, setShowReplacements] = useState(false);
+  const [showAutoSuggest, setShowAutoSuggest] = useState(false);
+  const [hasSelection, setHasSelection] = useState(false);
   const previewRef = useRef<HTMLDivElement | null>(null);
 
-  // ── load DOCX, build preview HTML, load draft or build auto-suggestions ──
+  // Picker state — single FieldPickerPopover used for: header button, legacy click, chip click
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerAnchor, setPickerAnchor] = useState<{ x: number; y: number } | null>(null);
+  /** Контекст того, для чего открыт picker. */
+  const [pickerContext, setPickerContext] = useState<
+    | { kind: "selection"; text: string }
+    | { kind: "legacy"; text: string }
+    | { kind: "chip"; replacementId: string }
+    | null
+  >(null);
+
+  // ── load DOCX, build preview HTML, load draft ──
   useEffect(() => {
     if (!open || !templateVersion) return;
     let cancelled = false;
@@ -136,6 +316,8 @@ export function TemplateMarkupDialog({
       setPlainText("");
       setPreviewHtml("");
       setDraftLoaded(false);
+      setShowReplacements(false);
+      setShowAutoSuggest(false);
       try {
         const { data: blob, error } = await supabase.storage
           .from(templateVersion.storage_bucket)
@@ -159,13 +341,13 @@ export function TemplateMarkupDialog({
         if (draft && Array.isArray(draft.replacements) && draft.replacements.length > 0) {
           setReplacements(draft.replacements.map((r) => ({
             ...r,
+            visual_label: r.visual_label ?? r.field_public_id ?? null,
             occurrences_total: countOccurrences(txt, r.original_text),
           })));
           toast.message("Восстановлен черновик разметки", {
-            description: `Replacements: ${draft.replacements.length}. Сохранён ${new Date(draft.updated_at).toLocaleString("ru-RU")}`,
+            description: `Замен: ${draft.replacements.length}. Сохранён ${new Date(draft.updated_at).toLocaleString("ru-RU")}`,
           });
         } else {
-          // По умолчанию правая панель пустая. Auto-suggest запускается явной кнопкой.
           setReplacements([]);
         }
         setDraftLoaded(true);
@@ -186,7 +368,7 @@ export function TemplateMarkupDialog({
     return () => { cancelled = true; };
   }, [open, templateVersion]);
 
-  // ── derived: refs by category ──
+  // ── derived: refs by category, label by FLD ──
   const refsByCategory = useMemo(() => {
     const m = new Map<string, RegistryFieldRef[]>();
     for (const r of refs) {
@@ -195,6 +377,17 @@ export function TemplateMarkupDialog({
     }
     return m;
   }, [refs]);
+  const refByFld = useMemo(() => {
+    const m = new Map<string, RegistryFieldRef>();
+    for (const r of refs) m.set(r.field_public_id, r);
+    return m;
+  }, [refs]);
+
+  // ── render interactive HTML with chips + legacy marks ──
+  const interactiveHtml = useMemo(
+    () => renderInteractiveHtml(previewHtml, replacements),
+    [previewHtml, replacements],
+  );
 
   // ── autosave draft (debounced) ──
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -205,7 +398,7 @@ export function TemplateMarkupDialog({
       const draft: MarkupDraft = {
         version: 1,
         updated_at: new Date().toISOString(),
-        replacements: replacements.map((r) => ({ ...r, occurrences_total: 0 })), // recompute on load
+        replacements: replacements.map((r) => ({ ...r, occurrences_total: 0 })),
       };
       const { error } = await supabase.from("document_template_versions")
         .update({ markup_draft: draft as any })
@@ -215,96 +408,167 @@ export function TemplateMarkupDialog({
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
   }, [replacements, draftLoaded, templateVersion]);
 
+  // ── selection tracking ──
+  useEffect(() => {
+    const handler = () => {
+      const sel = window.getSelection();
+      const txt = sel?.toString().trim() ?? "";
+      const inside = sel?.rangeCount
+        ? previewRef.current?.contains(sel.getRangeAt(0).commonAncestorContainer) ?? false
+        : false;
+      setHasSelection(!!txt && inside && txt.length <= 200);
+    };
+    document.addEventListener("selectionchange", handler);
+    return () => document.removeEventListener("selectionchange", handler);
+  }, []);
+
   // ── ops ──
-  const patch = (id: string, p: Partial<Replacement>) =>
-    setReplacements((prev) => prev.map((r) => (r.id === id ? { ...r, ...p } : r)));
-
-  const onAccept = (r: Replacement) => {
-    if (!r.field_public_id) { toast.error("Сначала выберите поле"); return; }
-    patch(r.id, {
-      status: r.source === "manual" ? "manually_added" : "accepted",
-      placeholder: buildFieldPlaceholder(r.field_public_id, r.format, r.case_modifier),
+  const upsertReplacement = useCallback((r: Replacement) => {
+    setReplacements((prev) => {
+      const idx = prev.findIndex((x) => x.id === r.id);
+      if (idx < 0) return [r, ...prev];
+      const next = prev.slice();
+      next[idx] = r;
+      return next;
     });
-  };
-  const onSkip = (r: Replacement) => patch(r.id, { status: "skipped" });
-  const onRemove = (r: Replacement) =>
-    setReplacements((prev) => prev.filter((x) => x.id !== r.id));
+  }, []);
 
-  const onChangeField = (
-    r: Replacement, fld: string,
+  const patch = useCallback((id: string, p: Partial<Replacement>) => {
+    setReplacements((prev) => prev.map((r) => (r.id === id ? { ...r, ...p } : r)));
+  }, []);
+
+  const removeReplacement = useCallback((id: string) => {
+    setReplacements((prev) => prev.filter((x) => x.id !== id));
+  }, []);
+
+  /** Применяет результат picker'а к контексту. */
+  const applyPickerResult = useCallback((
+    fld: string,
     opts: { format: FieldFormat | null; caseModifier: FieldCase | null; data_type?: string | null },
   ) => {
-    patch(r.id, {
-      field_public_id: fld,
-      format: opts.format,
-      case_modifier: opts.caseModifier,
-      data_type: opts.data_type ?? null,
-      placeholder: buildFieldPlaceholder(fld, opts.format, opts.caseModifier),
-      status: r.status === "suggested" ? "changed" : (r.source === "manual" ? "manually_added" : r.status),
-    });
-  };
+    const fieldRef = refByFld.get(fld);
+    const visual = fieldRef?.ui_label ?? fld;
+    if (!pickerContext) return;
+    if (pickerContext.kind === "selection" || pickerContext.kind === "legacy") {
+      const text = pickerContext.text;
+      const occ = countOccurrences(plainText, text);
+      const newR: Replacement = {
+        id: uid(),
+        source: "manual",
+        original_text: text,
+        field_public_id: fld,
+        visual_label: visual,
+        format: opts.format,
+        case_modifier: opts.caseModifier,
+        data_type: opts.data_type ?? fieldRef?.data_type ?? null,
+        status: "manually_added",
+        occurrence_index: occ <= 1 ? 0 : null,
+        occurrences_total: occ,
+      };
+      upsertReplacement(newR);
+      toast.success(occ > 1
+        ? `Поле вставлено. Найдено вхождений: ${occ} — выберите конкретное в «Заменах»`
+        : "Поле вставлено");
+      window.getSelection()?.removeAllRanges();
+    } else if (pickerContext.kind === "chip") {
+      patch(pickerContext.replacementId, {
+        field_public_id: fld,
+        visual_label: visual,
+        format: opts.format,
+        case_modifier: opts.caseModifier,
+        data_type: opts.data_type ?? fieldRef?.data_type ?? null,
+        status: "changed",
+      });
+      toast.success("Поле обновлено");
+    }
+    setPickerOpen(false);
+    setPickerContext(null);
+    setPickerAnchor(null);
+  }, [pickerContext, plainText, refByFld, upsertReplacement, patch]);
 
-  // ── manual replacement from preview selection ──
-  const onAddFromSelection = () => {
+  /** Открыть picker для выделения. */
+  const openPickerForSelection = () => {
     const sel = window.getSelection();
     const text = sel?.toString().trim();
     if (!text) {
-      toast.error("Выделите текст в preview, который нужно заменить на поле");
+      toast.error("Сначала выделите текст в документе");
       return;
     }
     if (text.length > 200) {
-      toast.error("Слишком длинное выделение (>200 симв.)");
+      toast.error("Слишком длинное выделение (>200 символов)");
       return;
     }
-    const occ = countOccurrences(plainText, text);
-    if (occ === 0) {
-      toast.error("Текст не найден в plain-text DOCX. Возможно вы выделили часть таблицы — попробуйте короче.");
+    if (countOccurrences(plainText, text) === 0) {
+      toast.error("Текст не найден в документе. Попробуйте короче (без переносов строк).");
       return;
     }
-    const newR: Replacement = {
-      id: uid(),
-      source: "manual",
-      original_text: text,
-      field_public_id: null,
-      format: null,
-      case_modifier: null,
-      data_type: null,
-      placeholder: null,
-      status: "suggested",
-      occurrence_index: occ === 1 ? 0 : null,
-      occurrences_total: occ,
-    };
-    setReplacements((prev) => [newR, ...prev]);
-    toast.success(`Добавлено: «${text.slice(0, 40)}${text.length > 40 ? "…" : ""}»${occ > 1 ? ` (${occ} вхождений — выберите конкретное)` : ""}`);
-    sel?.removeAllRanges();
+    let anchor: { x: number; y: number } | null = null;
+    if (sel?.rangeCount) {
+      const rect = sel.getRangeAt(0).getBoundingClientRect();
+      anchor = { x: rect.left + rect.width / 2, y: rect.bottom };
+    }
+    setPickerContext({ kind: "selection", text });
+    setPickerAnchor(anchor);
+    setPickerOpen(true);
   };
 
-  // ── auto-suggest (явный запуск по кнопке) ──
+  /** Делегированный обработчик кликов внутри preview. */
+  const handlePreviewClick = (e: ReactMouseEvent<HTMLDivElement>) => {
+    const t = e.target as HTMLElement;
+    const chip = t.closest<HTMLElement>("[data-chip-id]");
+    if (chip) {
+      // Клик на крестик — удалить
+      if (t.classList.contains("docx-chip-remove")) {
+        removeReplacement(chip.getAttribute("data-chip-id")!);
+        return;
+      }
+      const id = chip.getAttribute("data-chip-id")!;
+      const rect = chip.getBoundingClientRect();
+      setPickerContext({ kind: "chip", replacementId: id });
+      setPickerAnchor({ x: rect.left + rect.width / 2, y: rect.bottom });
+      setPickerOpen(true);
+      return;
+    }
+    const legacy = t.closest<HTMLElement>("mark.docx-legacy");
+    if (legacy) {
+      const text = legacy.getAttribute("data-legacy-text") ?? legacy.textContent ?? "";
+      const rect = legacy.getBoundingClientRect();
+      setPickerContext({ kind: "legacy", text });
+      setPickerAnchor({ x: rect.left + rect.width / 2, y: rect.bottom });
+      setPickerOpen(true);
+    }
+  };
+
+  // ── auto-suggest ──
   const runAutoSuggest = async () => {
     if (!plainText) return;
     setAutoSuggesting(true);
     try {
       const sug = await buildAutoSuggestions(plainText);
-      const existingTexts = new Set(replacements.map((r) => `${r.original_text}::${r.field_public_id ?? ""}`));
+      const existing = new Set(replacements.map((r) => `${r.original_text}::${r.field_public_id ?? ""}`));
       const fresh: Replacement[] = sug
-        .filter((s) => !existingTexts.has(`${s.original_text}::${s.field_public_id ?? ""}`))
-        .map((s) => ({
-          id: s.id,
-          source: "auto",
-          original_text: s.original_text,
-          field_public_id: s.field_public_id,
-          format: (s.format ?? null) as FieldFormat | null,
-          case_modifier: (s.case_modifier ?? null) as FieldCase | null,
-          data_type: s.data_type ?? null,
-          placeholder: s.placeholder,
-          status: s.status as Replacement["status"],
-          occurrence_index: null,
-          occurrences_total: countOccurrences(plainText, s.original_text),
-          reason: s.reason,
-          confidence: s.confidence,
-        }));
+        .filter((s) => !existing.has(`${s.original_text}::${s.field_public_id ?? ""}`))
+        .map((s) => {
+          const fr = s.field_public_id ? refByFld.get(s.field_public_id) : undefined;
+          return {
+            id: s.id,
+            source: "auto",
+            original_text: s.original_text,
+            field_public_id: s.field_public_id,
+            visual_label: fr?.ui_label ?? s.field_public_id ?? null,
+            format: (s.format ?? null) as FieldFormat | null,
+            case_modifier: (s.case_modifier ?? null) as FieldCase | null,
+            data_type: s.data_type ?? null,
+            status: s.status as ReplacementStatus,
+            occurrence_index: null,
+            occurrences_total: countOccurrences(plainText, s.original_text),
+            reason: s.reason,
+            confidence: s.confidence,
+          };
+        });
       setReplacements((prev) => [...prev, ...fresh]);
-      toast.success(`Авторазметка: добавлено ${fresh.length} предложений`);
+      toast.success(`Авторазметка: добавлено предложений — ${fresh.length}`);
+      setShowAutoSuggest(true);
     } catch (e: any) {
       toast.error(`Ошибка авторазметки: ${e?.message ?? e}`);
     } finally {
@@ -312,23 +576,22 @@ export function TemplateMarkupDialog({
     }
   };
 
-  const clearReplacements = () => {
+  const clearAll = () => {
     if (replacements.length === 0) return;
-    if (!confirm("Очистить все разметки? Черновик будет очищен.")) return;
+    if (!confirm("Очистить весь черновик разметки? Действие нельзя отменить.")) return;
     setReplacements([]);
+    toast.success("Черновик очищен");
   };
 
-  const acceptedCount = replacements.filter((r) =>
-    r.status === "accepted" || r.status === "changed" || r.status === "manually_added"
-  ).length;
+  const acceptedCount = replacements.filter((r) => isAccepted(r.status)).length;
   const ambiguousCount = replacements.filter((r) =>
-    (r.status === "accepted" || r.status === "changed" || r.status === "manually_added") &&
-    r.occurrences_total > 1 && r.occurrence_index == null
+    isAccepted(r.status) && r.occurrences_total > 1 && r.occurrence_index == null
   ).length;
+  const suggestedCount = replacements.filter((r) => r.status === "suggested").length;
   const canApply = acceptedCount > 0 && ambiguousCount === 0;
 
   const buildPayload = () => replacements
-    .filter((r) => (r.status === "accepted" || r.status === "changed" || r.status === "manually_added") && r.field_public_id)
+    .filter((r) => isAccepted(r.status) && r.field_public_id)
     .map((r) => ({
       original_text: r.original_text,
       field_public_id: r.field_public_id!,
@@ -342,8 +605,12 @@ export function TemplateMarkupDialog({
   const apply = async (activate: boolean) => {
     if (!templateVersion) return;
     if (!canApply) {
-      if (ambiguousCount > 0) toast.error(`Есть ${ambiguousCount} неоднозначных совпадений — выберите occurrence`);
-      else toast.error("Нет принятых разметок");
+      if (ambiguousCount > 0) {
+        toast.error(`Есть ${ambiguousCount} неоднозначных замен — выберите конкретное вхождение в «Заменах»`);
+        setShowReplacements(true);
+      } else {
+        toast.error("Нет принятых замен. Вставьте поля или нажмите «Авторазметка».");
+      }
       return;
     }
     activate ? setActivating(true) : setApplying(true);
@@ -357,10 +624,10 @@ export function TemplateMarkupDialog({
       const ambiguous = r?.ambiguous?.length ?? 0;
       const missed = r?.missed?.length ?? 0;
       toast.success(
-        `Создана v${r?.new_version_number}: применено ${r?.applied_count}` +
+        `Создана версия v${r?.new_version_number}: применено ${r?.applied_count}` +
         (missed ? `, не найдено: ${missed}` : "") +
         (ambiguous ? `, неоднозначных: ${ambiguous}` : "") +
-        (r?.activated ? " · АКТИВНА" : valid ? " · valid (не активна)" : ` · ${r?.validation?.status}`),
+        (r?.activated ? " · активирована" : valid ? " · валидна (не активирована)" : ` · ${r?.validation?.status}`),
         { duration: 8000 },
       );
       onApplied?.();
@@ -372,155 +639,343 @@ export function TemplateMarkupDialog({
     }
   };
 
+  // ── picker virtual trigger position ──
+  const pickerAnchorStyle: React.CSSProperties = pickerAnchor
+    ? { position: "fixed", left: pickerAnchor.x, top: pickerAnchor.y, width: 1, height: 1 }
+    : { position: "fixed", left: -9999, top: -9999, width: 1, height: 1 };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-7xl w-[calc(100vw-2rem)] max-h-[calc(100dvh-2rem)] flex flex-col">
-        <DialogHeader className="flex-shrink-0">
-          <DialogTitle className="flex items-center gap-2">
+      <DialogContent
+        className="max-w-[1400px] w-[calc(100vw-1.5rem)] h-[92vh] flex flex-col p-0 gap-0 overflow-hidden"
+      >
+        <DialogHeader className="flex-shrink-0 px-5 pt-4 pb-3 border-b">
+          <DialogTitle className="flex items-center gap-2 text-base">
             <Pencil className="h-4 w-4" /> Разметка шаблона: {templateName}
           </DialogTitle>
-          <DialogDescription>
-            DOCX = source of truth. Размечайте исходный документ, не пересобирайте его.
-            Strict ID-first: только <code className="font-mono">{`{{field:FLD-XXXXXX}}`}</code>.
-            Формат/падеж — внутри placeholder.
-            {hasDraftSaved && <span className="ml-2 text-emerald-600">· draft autosaved</span>}
+          <DialogDescription className="text-xs">
+            DOCX — исходный шаблон. Выделите текст в документе и нажмите «Вставить поле»,
+            либо кликните по жёлтому плейсхолдеру, чтобы заменить его на FLD-поле.
+            {hasDraftSaved && <span className="ml-2 text-emerald-600">· Черновик сохранён</span>}
           </DialogDescription>
         </DialogHeader>
 
-        {loading ? (
-          <div className="flex items-center justify-center py-16 flex-1">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        {/* Toolbar */}
+        <div className="flex-shrink-0 px-5 py-2 border-b bg-muted/30 flex items-center gap-2 flex-wrap">
+          <Button
+            size="sm"
+            variant={hasSelection ? "default" : "outline"}
+            onClick={openPickerForSelection}
+            disabled={!hasSelection}
+            title={hasSelection ? "Заменить выделенный текст на FLD-поле" : "Сначала выделите текст в документе"}
+          >
+            <Plus className="h-3.5 w-3.5 mr-1" /> Вставить поле
+          </Button>
+          <Button size="sm" variant="outline" onClick={runAutoSuggest} disabled={autoSuggesting || !plainText}>
+            {autoSuggesting
+              ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+              : <Wand2 className="h-3.5 w-3.5 mr-1" />}
+            Авторазметка
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setShowReplacements(true)}>
+            <ListChecks className="h-3.5 w-3.5 mr-1" /> Показать замены
+            <Badge variant="secondary" className="ml-1.5 h-4 text-[10px] px-1">
+              {acceptedCount}/{replacements.length}
+            </Badge>
+          </Button>
+          {suggestedCount > 0 && (
+            <Button size="sm" variant="outline" onClick={() => setShowAutoSuggest(true)}>
+              <Sparkles className="h-3.5 w-3.5 mr-1 text-amber-500" /> Предложений: {suggestedCount}
+            </Button>
+          )}
+          <div className="ml-auto flex items-center gap-2">
+            {ambiguousCount > 0 && (
+              <Badge variant="outline" className="border-amber-400/60 text-amber-700 text-[10px]">
+                <AlertTriangle className="h-3 w-3 mr-0.5" /> Неоднозначных: {ambiguousCount}
+              </Badge>
+            )}
+            <span className="text-[11px] text-muted-foreground">
+              v{templateVersion?.version_number} · {templateVersion?.file_name}
+            </span>
+            <Button size="sm" variant="ghost" onClick={clearAll} disabled={replacements.length === 0}>
+              <Trash2 className="h-3.5 w-3.5 mr-1" /> Очистить черновик
+            </Button>
           </div>
-        ) : (
-          <div className="grid lg:grid-cols-2 gap-4 flex-1 min-h-0">
-            {/* LEFT: Word-like preview */}
-            <div className="flex flex-col min-h-0">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-medium">DOCX preview (Word-like)</span>
-                <span className="text-[11px] text-muted-foreground">
-                  v{templateVersion?.version_number} · {templateVersion?.file_name}
-                </span>
-              </div>
-              <ScrollArea className="flex-1 border rounded bg-card">
+        </div>
+
+        {/* Document area */}
+        <div className="flex-1 min-h-0 overflow-hidden bg-muted/20">
+          {loading ? (
+            <div className="flex items-center justify-center py-16 h-full">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <ScrollArea className="h-full">
+              <div className="mx-auto max-w-[920px] p-6">
                 <div
                   ref={previewRef}
-                  className="docx-preview p-4 text-sm select-text"
-                  dangerouslySetInnerHTML={{ __html: previewHtml || "<p class='text-muted-foreground'>Пусто</p>" }}
+                  className="docx-preview bg-card rounded shadow-sm border p-8 select-text min-h-[60vh]"
+                  onClick={handlePreviewClick}
+                  dangerouslySetInnerHTML={{ __html: interactiveHtml || "<p class='text-muted-foreground'>Документ пуст</p>" }}
                 />
-              </ScrollArea>
-              <div className="mt-2 flex items-center gap-2">
-                <Button size="sm" variant="outline" onClick={onAddFromSelection}>
-                  <Plus className="h-3.5 w-3.5 mr-1" /> Разметить выделенное
-                </Button>
-                <span className="text-[11px] text-muted-foreground">
-                  Выделите текст в preview → нажмите кнопку → выберите FLD-поле справа.
-                </span>
               </div>
-            </div>
+            </ScrollArea>
+          )}
+        </div>
 
-            {/* RIGHT: replacements panel */}
-            <div className="flex flex-col min-h-0">
-              <div className="flex items-center justify-between mb-2 gap-2">
-                <div className="flex items-center gap-2 text-xs">
-                  <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-                  Всего: <b>{replacements.length}</b> · принято: <b>{acceptedCount}</b>
-                  {ambiguousCount > 0 && (
-                    <Badge variant="outline" className="border-amber-400/60 text-amber-700 text-[10px]">
-                      ambig: {ambiguousCount}
-                    </Badge>
-                  )}
-                </div>
-                <div className="flex items-center gap-1">
-                  <Button size="sm" variant="outline" className="h-7 text-[11px]"
-                    onClick={runAutoSuggest} disabled={autoSuggesting || !plainText}>
-                    {autoSuggesting ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Sparkles className="h-3 w-3 mr-1" />}
-                    Найти автоматически
-                  </Button>
-                  <Button size="sm" variant="ghost" className="h-7 text-[11px] text-muted-foreground"
-                    onClick={clearReplacements} disabled={replacements.length === 0}>
-                    <Trash2 className="h-3 w-3 mr-1" /> Очистить
-                  </Button>
-                </div>
-              </div>
-              <ScrollArea className="flex-1 border rounded">
-                <div className="divide-y">
-                  {replacements.length === 0 ? (
-                    <div className="text-center text-xs text-muted-foreground py-10 px-4 space-y-2">
-                      <p className="font-medium text-foreground">Разметка пустая</p>
-                      <p>
-                        Выделите текст в preview слева → нажмите <b>«Разметить выделенное»</b> →
-                        выберите FLD-поле.
-                      </p>
-                      <p className="opacity-70">
-                        Или нажмите <b>«Найти автоматически»</b> для предварительных предложений.
-                      </p>
-                    </div>
-                  ) : replacements.map((r) => (
-                    <ReplacementRow
-                      key={r.id}
-                      r={r}
-                      refs={refs}
-                      refsByCategory={refsByCategory}
-                      onAccept={() => onAccept(r)}
-                      onSkip={() => onSkip(r)}
-                      onRemove={() => onRemove(r)}
-                      onChangeField={(fld, opts) => onChangeField(r, fld, opts)}
-                      onChangeOccurrence={(idx) => patch(r.id, { occurrence_index: idx })}
-                    />
-                  ))}
-                </div>
-              </ScrollArea>
-            </div>
+        <DialogFooter className="flex-shrink-0 px-5 py-3 border-t bg-background sm:justify-between">
+          <div className="text-[11px] text-muted-foreground">
+            Используются только поля FLD. Принято: <b>{acceptedCount}</b> · всего: <b>{replacements.length}</b>
           </div>
-        )}
-
-        <DialogFooter className="flex-shrink-0">
-          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={applying || activating}>
-            Закрыть
-          </Button>
-          <Button variant="outline" onClick={() => apply(false)} disabled={!canApply || applying || activating}>
-            {applying ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Sparkles className="h-4 w-4 mr-1" />}
-            Применить (создать версию)
-          </Button>
-          <Button onClick={() => apply(true)} disabled={!canApply || applying || activating}>
-            {activating ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />}
-            Применить и активировать
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={applying || activating}>
+              Закрыть
+            </Button>
+            <Button variant="outline" onClick={() => apply(false)} disabled={!canApply || applying || activating}>
+              {applying ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Sparkles className="h-4 w-4 mr-1" />}
+              Применить (создать версию)
+            </Button>
+            <Button onClick={() => apply(true)} disabled={!canApply || applying || activating}>
+              {activating ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />}
+              Применить и активировать
+            </Button>
+          </div>
         </DialogFooter>
+
+        {/* Picker (общий) — virtual anchor у выделения / chip / legacy */}
+        <Popover
+          open={pickerOpen}
+          onOpenChange={(o) => {
+            setPickerOpen(o);
+            if (!o) setPickerContext(null);
+          }}
+        >
+          <PopoverTrigger asChild>
+            <span style={pickerAnchorStyle} aria-hidden="true" />
+          </PopoverTrigger>
+          <PopoverContent
+            align="start"
+            sideOffset={8}
+            className="p-0 bg-popover border shadow-lg z-[60] overflow-hidden"
+            style={{
+              width: 440,
+              maxHeight: "min(520px, calc(100vh - 160px))",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <PickerBody
+              context={pickerContext}
+              refs={refs}
+              refsByCategory={refsByCategory}
+              currentReplacement={
+                pickerContext?.kind === "chip"
+                  ? replacements.find((r) => r.id === pickerContext.replacementId) ?? null
+                  : null
+              }
+              onConfirm={applyPickerResult}
+              onCancel={() => { setPickerOpen(false); setPickerContext(null); }}
+            />
+          </PopoverContent>
+        </Popover>
+
+        {/* Sheet: Замены */}
+        <Sheet open={showReplacements} onOpenChange={setShowReplacements}>
+          <SheetContent side="right" className="w-[460px] sm:max-w-none flex flex-col p-0">
+            <SheetHeader className="px-5 py-3 border-b">
+              <SheetTitle className="text-sm">Замены ({replacements.length})</SheetTitle>
+              <SheetDescription className="text-xs">
+                Принято: {acceptedCount} · предложено: {suggestedCount}
+                {ambiguousCount > 0 && <span className="text-amber-600"> · неоднозначных: {ambiguousCount}</span>}
+              </SheetDescription>
+            </SheetHeader>
+            <ScrollArea className="flex-1">
+              <div className="divide-y">
+                {replacements.length === 0 ? (
+                  <div className="text-center text-xs text-muted-foreground py-10 px-4">
+                    Замен пока нет. Выделите текст в документе → «Вставить поле».
+                  </div>
+                ) : replacements.map((r) => (
+                  <ReplacementRow
+                    key={r.id}
+                    r={r}
+                    onRemove={() => removeReplacement(r.id)}
+                    onSkip={() => patch(r.id, { status: "skipped" })}
+                    onAccept={() => patch(r.id, {
+                      status: r.source === "manual" ? "manually_added" : "accepted",
+                    })}
+                    onChangeOccurrence={(idx) => patch(r.id, { occurrence_index: idx })}
+                    onEditField={() => {
+                      setPickerContext({ kind: "chip", replacementId: r.id });
+                      setPickerAnchor({ x: window.innerWidth - 460, y: 200 });
+                      setPickerOpen(true);
+                    }}
+                  />
+                ))}
+              </div>
+            </ScrollArea>
+          </SheetContent>
+        </Sheet>
+
+        {/* Sheet: Авторазметка */}
+        <Sheet open={showAutoSuggest} onOpenChange={setShowAutoSuggest}>
+          <SheetContent side="right" className="w-[460px] sm:max-w-none flex flex-col p-0">
+            <SheetHeader className="px-5 py-3 border-b">
+              <SheetTitle className="text-sm">Предложения авторазметки</SheetTitle>
+              <SheetDescription className="text-xs">
+                Принимайте по одному. После принятия фрагмент превращается в chip в документе.
+              </SheetDescription>
+            </SheetHeader>
+            <ScrollArea className="flex-1">
+              <div className="divide-y">
+                {replacements.filter((r) => r.status === "suggested").length === 0 ? (
+                  <div className="text-center text-xs text-muted-foreground py-10 px-4">
+                    Предложений нет. Нажмите «Авторазметка» в шапке.
+                  </div>
+                ) : replacements.filter((r) => r.status === "suggested").map((r) => (
+                  <SuggestionRow
+                    key={r.id}
+                    r={r}
+                    onAccept={() => patch(r.id, { status: "accepted" })}
+                    onSkip={() => patch(r.id, { status: "skipped" })}
+                    onPick={() => {
+                      setPickerContext({ kind: "chip", replacementId: r.id });
+                      setPickerAnchor({ x: window.innerWidth - 460, y: 200 });
+                      setPickerOpen(true);
+                    }}
+                  />
+                ))}
+              </div>
+            </ScrollArea>
+          </SheetContent>
+        </Sheet>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ─────────────────── PickerBody ───────────────────
+
+function PickerBody({
+  context, refs, refsByCategory, currentReplacement, onConfirm, onCancel,
+}: {
+  context:
+    | { kind: "selection"; text: string }
+    | { kind: "legacy"; text: string }
+    | { kind: "chip"; replacementId: string }
+    | null;
+  refs: RegistryFieldRef[];
+  refsByCategory: Map<string, RegistryFieldRef[]>;
+  currentReplacement: Replacement | null;
+  onConfirm: (fld: string, opts: { format: FieldFormat | null; caseModifier: FieldCase | null; data_type?: string | null }) => void;
+  onCancel: () => void;
+}) {
+  const [pickedField, setPickedField] = useState<RegistryFieldRef | null>(null);
+
+  useEffect(() => { setPickedField(null); }, [context]);
+
+  const headerText =
+    context?.kind === "selection" ? `Выделено: «${context.text.slice(0, 60)}${context.text.length > 60 ? "…" : ""}»` :
+    context?.kind === "legacy" ? `Старый плейсхолдер: ${context.text}` :
+    context?.kind === "chip" ? `Изменить поле: ${currentReplacement?.visual_label ?? currentReplacement?.field_public_id ?? ""}` :
+    "";
+
+  if (pickedField) {
+    return (
+      <div className="flex flex-col">
+        <div className="px-3 py-2 border-b text-[11px] text-muted-foreground truncate">
+          {headerText}
+        </div>
+        <FieldFormatPicker
+          dataType={pickedField.data_type}
+          fieldPublicId={pickedField.field_public_id}
+          fieldLabel={pickedField.ui_label}
+          onCancel={() => setPickedField(null)}
+          onConfirm={(sel) => {
+            onConfirm(pickedField.field_public_id, {
+              format: sel.format, caseModifier: sel.caseModifier,
+              data_type: pickedField.data_type,
+            });
+          }}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <Command
+      className="flex flex-col h-full overflow-hidden"
+      filter={(itemValue, search) =>
+        !search ? 1 : itemValue.toLowerCase().includes(search.toLowerCase()) ? 1 : 0
+      }
+    >
+      <div className="px-3 py-2 border-b text-[11px] text-muted-foreground truncate">
+        {headerText}
+      </div>
+      <CommandInput placeholder="Поиск по названию, FLD или ключу…" className="h-9 text-xs" />
+      <CommandList
+        className="overflow-y-auto overscroll-contain flex-1"
+        style={{ maxHeight: 420 }}
+      >
+        <CommandEmpty className="py-6 text-center text-xs text-muted-foreground">
+          Ничего не найдено
+        </CommandEmpty>
+        {Array.from(refsByCategory.entries()).map(([cat, items]) => (
+          <CommandGroup key={cat} heading={CATEGORY_LABELS_RU[cat] ?? cat}>
+            {items.map((r) => {
+              const searchKey = `${r.field_public_id} ${r.token_key} ${r.ui_label}`;
+              const isSelected = currentReplacement?.field_public_id === r.field_public_id;
+              return (
+                <CommandItem
+                  key={r.field_public_id}
+                  value={searchKey}
+                  onSelect={() => setPickedField(r)}
+                  className="text-xs py-1.5 gap-2"
+                >
+                  <Check className={cn("h-3.5 w-3.5 shrink-0", isSelected ? "opacity-100" : "opacity-0")} />
+                  <span className="font-mono text-[10px] text-muted-foreground shrink-0 w-[88px]">{r.field_public_id}</span>
+                  <span className="flex-1 truncate">{r.ui_label}</span>
+                  <span className="text-[10px] text-muted-foreground shrink-0">{r.data_type}</span>
+                </CommandItem>
+              );
+            })}
+          </CommandGroup>
+        ))}
+      </CommandList>
+      <div className="px-3 py-2 border-t flex justify-end">
+        <Button size="sm" variant="ghost" onClick={onCancel}>Отмена</Button>
+      </div>
+    </Command>
   );
 }
 
 // ─────────────────── ReplacementRow ───────────────────
 
 function ReplacementRow({
-  r, refs, refsByCategory,
-  onAccept, onSkip, onRemove, onChangeField, onChangeOccurrence,
+  r, onAccept, onSkip, onRemove, onChangeOccurrence, onEditField,
 }: {
   r: Replacement;
-  refs: RegistryFieldRef[];
-  refsByCategory: Map<string, RegistryFieldRef[]>;
   onAccept: () => void;
   onSkip: () => void;
   onRemove: () => void;
-  onChangeField: (fld: string, opts: { format: FieldFormat | null; caseModifier: FieldCase | null; data_type?: string | null }) => void;
   onChangeOccurrence: (idx: number | null) => void;
+  onEditField: () => void;
 }) {
-  const ambiguous = r.occurrences_total > 1 && r.occurrence_index == null &&
-    (r.status === "accepted" || r.status === "changed" || r.status === "manually_added");
+  const ambiguous = r.occurrences_total > 1 && r.occurrence_index == null && isAccepted(r.status);
+  const statusColor =
+    isAccepted(r.status) ? "border-emerald-400/50 text-emerald-700 bg-emerald-50" :
+    r.status === "skipped" ? "border-muted-foreground/30 text-muted-foreground" :
+    "border-amber-300 text-amber-700 bg-amber-50";
+
   return (
-    <div className="p-2.5 text-xs space-y-1.5 hover:bg-muted/30">
+    <div className="p-3 text-xs space-y-1.5 hover:bg-muted/30">
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
-          <div className="font-mono text-[11px] line-clamp-2">{r.original_text}</div>
+          <div className="font-medium line-clamp-2">«{r.original_text}»</div>
           <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1.5 flex-wrap">
-            <Badge variant="outline" className="text-[9px] py-0">
-              {r.source === "manual" ? "manual" : "auto"}
-            </Badge>
-            {r.reason && <span>{r.reason}</span>}
-            {r.confidence && <span className="opacity-70">· {r.confidence}</span>}
-            <span className="opacity-70">· вхождений: {r.occurrences_total}</span>
+            <Badge variant="outline" className="text-[9px] py-0">{SOURCE_LABEL_RU[r.source]}</Badge>
+            <Badge variant="outline" className={cn("text-[9px] py-0", statusColor)}>{STATUS_LABEL_RU[r.status]}</Badge>
+            <span className="opacity-70">Вхождений: {r.occurrences_total}</span>
           </div>
         </div>
         <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={onRemove} title="Удалить">
@@ -528,23 +983,24 @@ function ReplacementRow({
         </Button>
       </div>
 
-      <FieldPicker
-        refs={refs}
-        refsByCategory={refsByCategory}
-        value={r.field_public_id}
-        onChange={onChangeField}
-      />
+      <Button size="sm" variant="outline" className="h-7 w-full justify-between text-[11px]" onClick={onEditField}>
+        {r.field_public_id ? (
+          <span className="flex items-center gap-2 min-w-0 truncate">
+            <span className="font-mono text-[10px] text-muted-foreground shrink-0">{r.field_public_id}</span>
+            <span className="truncate">{r.visual_label ?? ""}</span>
+          </span>
+        ) : (
+          <span className="text-muted-foreground">Выбрать поле…</span>
+        )}
+        <ChevronsUpDown className="h-3 w-3 opacity-50" />
+      </Button>
 
-      {(r.format || r.case_modifier || r.placeholder) && (
-        <div className="flex flex-wrap items-center gap-1 text-[10px]">
-          {r.format && <span className="px-1.5 rounded bg-sky-100 text-sky-700">{r.format === "words" ? "прописью" : "текстом"}</span>}
-          {r.case_modifier && <span className="px-1.5 rounded bg-amber-100 text-amber-700 font-mono">{r.case_modifier}</span>}
-          {r.placeholder && <span className="font-mono text-muted-foreground truncate">{r.placeholder}</span>}
-        </div>
+      {(r.format || r.case_modifier) && (
+        <div className="text-[10px] text-muted-foreground">{formatSuffix(r.format, r.case_modifier)}</div>
       )}
 
       {r.occurrences_total > 1 && (
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-[10px] text-muted-foreground">Вхождение:</span>
           {Array.from({ length: r.occurrences_total }, (_, i) => (
             <Button
@@ -558,120 +1014,56 @@ function ReplacementRow({
             </Button>
           ))}
           {ambiguous && (
-            <span className="text-[10px] text-amber-600 inline-flex items-center gap-0.5">
-              <AlertTriangle className="h-3 w-3" /> выберите вхождение
+            <span className="text-[10px] text-amber-700 inline-flex items-center gap-0.5">
+              <AlertTriangle className="h-3 w-3" /> Выберите вхождение
             </span>
           )}
         </div>
       )}
 
-      <div className="flex items-center gap-1">
-        {(r.status === "accepted" || r.status === "changed" || r.status === "manually_added") ? (
-          <Badge variant="outline" className="text-[10px] border-emerald-400/50 text-emerald-600">
-            <CheckCircle2 className="h-3 w-3 mr-0.5" /> {r.status}
-          </Badge>
-        ) : r.status === "skipped" ? (
-          <Badge variant="outline" className="text-[10px] border-muted-foreground/30 text-muted-foreground">skipped</Badge>
-        ) : (
-          <>
-            <Button size="sm" variant="default" className="h-6 px-2 text-[10px]" onClick={onAccept}>
-              Принять
-            </Button>
-            <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px]" onClick={onSkip}>
-              <X className="h-3 w-3" />
-            </Button>
-          </>
-        )}
-      </div>
+      {r.status === "suggested" && (
+        <div className="flex items-center gap-1">
+          <Button size="sm" variant="default" className="h-6 px-2 text-[10px]" onClick={onAccept}>
+            Принять
+          </Button>
+          <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px]" onClick={onSkip}>
+            <X className="h-3 w-3 mr-0.5" /> Пропустить
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
 
-// ─────────────────── FieldPicker (reused) ───────────────────
+// ─────────────────── SuggestionRow (Auto-suggest sheet) ───────────────────
 
-function FieldPicker({
-  refs, refsByCategory, value, onChange,
+function SuggestionRow({
+  r, onAccept, onSkip, onPick,
 }: {
-  refs: RegistryFieldRef[];
-  refsByCategory: Map<string, RegistryFieldRef[]>;
-  value: string | null;
-  onChange: (v: string, opts: { format: FieldFormat | null; caseModifier: FieldCase | null; data_type?: string | null }) => void;
+  r: Replacement;
+  onAccept: () => void;
+  onSkip: () => void;
+  onPick: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [pickedField, setPickedField] = useState<RegistryFieldRef | null>(null);
-  const selected = useMemo(
-    () => refs.find((r) => r.field_public_id === value) ?? null,
-    [refs, value],
-  );
-  useEffect(() => { if (!open) setPickedField(null); }, [open]);
-
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button type="button" variant="outline" role="combobox" aria-expanded={open}
-          className="h-8 w-full justify-between text-xs font-normal px-2">
-          {selected ? (
-            <span className="flex items-center gap-2 min-w-0 truncate">
-              <span className="font-mono text-[10px] text-muted-foreground shrink-0">{selected.field_public_id}</span>
-              <span className="truncate">{selected.ui_label}</span>
-            </span>
-          ) : (
-            <span className="text-muted-foreground">Выбрать поле…</span>
-          )}
-          <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+    <div className="p-3 text-xs space-y-1.5">
+      <div className="font-medium line-clamp-2">«{r.original_text}»</div>
+      <div className="text-[11px] text-muted-foreground">
+        → {r.visual_label ?? r.field_public_id}
+        {r.field_public_id && <span className="ml-1 font-mono text-[10px]">({r.field_public_id})</span>}
+      </div>
+      {r.reason && <div className="text-[10px] text-muted-foreground italic">{r.reason}</div>}
+      <div className="flex items-center gap-1 pt-1">
+        <Button size="sm" variant="default" className="h-6 px-2 text-[10px]" onClick={onAccept}>
+          Принять
         </Button>
-      </PopoverTrigger>
-      <PopoverContent
-        align="start"
-        sideOffset={4}
-        className="w-[var(--radix-popover-trigger-width)] min-w-[420px] p-0 bg-popover border shadow-lg z-[60] overflow-hidden"
-        style={{ maxHeight: "min(520px, var(--radix-popover-content-available-height))" }}
-      >
-        {pickedField ? (
-          <FieldFormatPicker
-            dataType={pickedField.data_type}
-            fieldPublicId={pickedField.field_public_id}
-            fieldLabel={pickedField.ui_label}
-            onCancel={() => setPickedField(null)}
-            onConfirm={(sel) => {
-              onChange(pickedField.field_public_id, {
-                format: sel.format, caseModifier: sel.caseModifier,
-                data_type: pickedField.data_type,
-              });
-              setPickedField(null); setOpen(false);
-            }}
-          />
-        ) : (
-          <Command
-            className="flex flex-col h-full max-h-full overflow-hidden"
-            filter={(itemValue, search) =>
-              !search ? 1 : itemValue.toLowerCase().includes(search.toLowerCase()) ? 1 : 0
-            }
-          >
-            <CommandInput placeholder="Поиск по FLD, key, label…" className="h-9 text-xs" />
-            <CommandList className="overflow-y-auto overscroll-contain flex-1" style={{ maxHeight: "440px" }}>
-              <CommandEmpty className="py-6 text-center text-xs text-muted-foreground">Ничего не найдено</CommandEmpty>
-              {Array.from(refsByCategory.entries()).map(([cat, items]) => (
-                <CommandGroup key={cat} heading={CATEGORY_LABELS_RU[cat] ?? cat}>
-                  {items.map((r) => {
-                    const searchKey = `${r.field_public_id} ${r.token_key} ${r.ui_label}`;
-                    const isSelected = value === r.field_public_id;
-                    return (
-                      <CommandItem key={r.field_public_id} value={searchKey}
-                        onSelect={() => setPickedField(r)} className="text-xs py-1.5 gap-2">
-                        <Check className={cn("h-3.5 w-3.5 shrink-0", isSelected ? "opacity-100" : "opacity-0")} />
-                        <span className="font-mono text-[10px] text-muted-foreground shrink-0 w-[88px]">{r.field_public_id}</span>
-                        <span className="flex-1 truncate">{r.ui_label}</span>
-                        <span className="text-[10px] text-muted-foreground shrink-0">{r.data_type}</span>
-                      </CommandItem>
-                    );
-                  })}
-                </CommandGroup>
-              ))}
-            </CommandList>
-          </Command>
-        )}
-      </PopoverContent>
-    </Popover>
+        <Button size="sm" variant="outline" className="h-6 px-2 text-[10px]" onClick={onPick}>
+          Выбрать другое
+        </Button>
+        <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px]" onClick={onSkip}>
+          Пропустить
+        </Button>
+      </div>
+    </div>
   );
 }
