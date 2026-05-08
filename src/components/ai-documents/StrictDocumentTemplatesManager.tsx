@@ -325,6 +325,10 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
     setPreviewText("");
     setPreviewTokens([]);
     setPreviewValidation(null);
+    auditEvent("document_template.preview_opened", {
+      template_id: tpl.id,
+      template_version_id: ver.id,
+    });
     try {
       const { data, error } = await supabase.storage
         .from(ver.storage_bucket)
@@ -353,6 +357,21 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
           detected_tokens: tokens as any,
         })
         .eq("id", ver.id);
+      auditEvent(
+        validation.status === "valid"
+          ? "document_template.validation_passed"
+          : "document_template.validation_failed",
+        {
+          template_id: tpl.id,
+          template_version_id: ver.id,
+          meta: {
+            errors_count: validation.errors.length,
+            recognized_count: validation.recognized.length,
+            raw_tokens_count: validation.raw_tokens.length,
+            error_codes: Array.from(new Set(validation.errors.map((e) => e.code))),
+          },
+        },
+      );
       await fetchAll();
     } catch (e: any) {
       console.error(e);
@@ -362,6 +381,11 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
         errors: [{ code: "docx_unreadable", message: String(e.message ?? e) }],
         recognized: [],
         raw_tokens: [],
+      });
+      auditEvent("document_template.validation_failed", {
+        template_id: tpl.id,
+        template_version_id: ver.id,
+        meta: { error_codes: ["docx_unreadable"], detail: String(e.message ?? e) },
       });
     } finally {
       setPreviewLoading(false);
@@ -373,14 +397,14 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
       toast.error("Активация заблокирована: validation_status != valid");
       return;
     }
+    // TODO C3: server-side activation via edge `canonical-template-activate-version`
+    // (RLS уже ограничивает доступ ролями admin/super_admin — см. proof C2).
     try {
-      // Снять флаг с прежней current
       await supabase
         .from("document_template_versions")
         .update({ is_current: false })
         .eq("template_id", tpl.id)
         .neq("id", ver.id);
-      // Поставить новую current
       const { error: e1 } = await supabase
         .from("document_template_versions")
         .update({ is_current: true })
@@ -392,10 +416,20 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
         .eq("id", tpl.id);
       if (e2) throw e2;
       toast.success("Шаблон активирован как текущий");
+      auditEvent("document_template.version_activated", {
+        template_id: tpl.id,
+        template_version_id: ver.id,
+        meta: { version_number: ver.version_number },
+      });
       await fetchAll();
     } catch (e: any) {
       toast.error(`Ошибка активации: ${e.message ?? e}`);
     }
+  };
+
+  const openMarkup = (tpl: TemplateRow, ver: VersionRow) => {
+    setMarkupTemplateName(tpl.name);
+    setMarkupVersion(ver);
   };
 
   const deleteTemplate = async (id: string) => {
