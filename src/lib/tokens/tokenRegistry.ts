@@ -592,6 +592,27 @@ export function getTokenGroupsForContext(context: TokenContext): Array<{ heading
     groups.push({ heading: "Документ", tokens: _documentFieldsCache });
   }
 
+  if (context === "documents:act") {
+    const ACT_GROUP_ORDER: Array<{ key: string; heading: string }> = [
+      { key: "contact",         heading: "Контакт / профиль" },
+      { key: "customer",        heading: "Реквизиты клиента" },
+      { key: "customer.signer", heading: "Подписант клиента" },
+      { key: "executor",        heading: "Исполнитель" },
+      { key: "deal",            heading: "Сделка / заказ" },
+      { key: "product",         heading: "Продукт" },
+      { key: "tariff",          heading: "Тариф" },
+      { key: "offer",           heading: "Кнопка оплаты" },
+      { key: "document",        heading: "Документ / акт" },
+      { key: "system",          heading: "Системные" },
+      { key: "legal_details",   heading: "Реквизиты (custom fields)" },
+    ];
+    for (const { key, heading } of ACT_GROUP_ORDER) {
+      const tokens = _actTokensByCategoryCache[key];
+      if (tokens && tokens.length > 0) groups.push({ heading, tokens });
+    }
+    return groups;
+  }
+
   if (context !== "documents:annual_meeting") return groups;
 
   // Annual meeting specific
