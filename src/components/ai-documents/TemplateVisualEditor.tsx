@@ -1,6 +1,12 @@
 /**
  * TemplateVisualEditor — Sprint 11 C4-A.
  *
+ * ⚠️ NOT FOR DOCX TEMPLATES.
+ * TipTap WYSIWYG разрушает структуру DOCX (таблицы/стили/реквизиты).
+ * Для DOCX-шаблонов используется TemplateMarkupDialog (C5-D), который
+ * размечает исходный DOCX поверх его XML, не пересобирая документ.
+ * Этот редактор оставлен только для будущих text-only / staging сценариев.
+ *
  * Встроенный визуальный редактор шаблона документа на TipTap.
  * НЕ использует Google Docs/Drive/OnlyOffice.
  *
