@@ -714,9 +714,10 @@ export function TemplateMarkupDialog({
           <DialogTitle className="flex items-center gap-2 text-base">
             <Pencil className="h-4 w-4" /> Разметка шаблона: {templateName}
           </DialogTitle>
-          <DialogDescription className="text-xs">
-            DOCX — исходный шаблон. Выделите текст в документе и нажмите «Вставить поле»,
-            либо кликните по жёлтому плейсхолдеру, чтобы заменить его на FLD-поле.
+          <DialogDescription className="text-xs leading-relaxed">
+            Это <b>режим разметки шаблона</b>: здесь вы заменяете старые плейсхолдеры на FLD-поля.
+            Чтобы изменить текст, таблицы, отступы или форматирование — отредактируйте DOCX в Word
+            и загрузите новую версию шаблона.
             {hasDraftSaved && <span className="ml-2 text-emerald-600">· Черновик сохранён</span>}
           </DialogDescription>
         </DialogHeader>
