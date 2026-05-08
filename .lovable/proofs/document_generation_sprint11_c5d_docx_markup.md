@@ -316,3 +316,158 @@ POST /functions/v1/canonical-template-apply-markup
 - [x] `npx tsc --noEmit` — зелёный.
 - [ ] Ручная проверка пользователем: создаётся новая версия после Apply,
       Apply+Activate активирует только при validation valid, ошибки видны на русском.
+
+---
+
+## QA-цикл #5 (2026-05-08, финальная проверка C5-D-UX, backend)
+
+### 0. Замечание по процессу (зафиксировано)
+
+- В предыдущем цикле (registry cleanup `executor.*` / `customer.*`, скрытие `legal_details.*` / `person.*`) миграция была выполнена **без предварительного dry-run**, хотя в плане был заявлен dry-run.
+- Принято правило: **любые изменения `document_token_registry` / `fields_registry` / `document_templates` / `document_template_versions` — строго dry-run → approve → execute**. Зафиксировано в текущем цикле.
+
+### 1. Apply без активации (ok)
+
+**Source:** `template_id=77dece28-cf20-4e9c-b90f-19f07abaf838`, version 1 `id=2c42c62b-bb9f-4427-a582-8f2e673595b4` (single template в БД, `is_current=false`, `current_version_id=NULL` — у проекта нет ни одной активной версии).
+
+Запрос:
+```json
+{
+  "template_version_id": "2c42c62b-bb9f-4427-a582-8f2e673595b4",
+  "replacements": [
+    {"original_text": "{{ld-dogsch_srok_oplaty-707703}}", "field_public_id": "FLD-000195",
+     "status": "accepted", "occurrence_index": 0}
+  ]
+}
+```
+
+Ответ (HTTP 200):
+- `new_version_id = 85b72d06-296f-4ad2-be5d-66731128bda6`
+- `new_version_number = 2`
+- `applied_count = 1`, `missed = []`
+- `token_manifest = [{ field_public_id: "FLD-000195", placeholder: "{{field:FLD-000195}}" }]`
+- `validation.errors = 33` (ожидаемо — оригинал содержит 33 legacy-плейсхолдера, заменили только 1).
+
+Состояние БД после apply:
+| version_number | id | is_current | markup_status | tokens |
+|---|---|---|---|---|
+| 1 | 2c42c62b… | false | unmarked | 0 |
+| 2 | 85b72d06… | **false** | marked | 1 |
+
+`document_templates.current_version_id = NULL` (не изменился).
+
+**Audit (`audit_logs`):**
+```
+action=document_template.markup_applied actor_type=user
+meta={template_id: 77dece28…, source_version_id: 2c42c62b…, new_version_id: 85b72d06…,
+      new_version_number: 2, applied_count: 1, missed_count: 0, skipped_count: 0,
+      validation_status: invalid, validation_errors_count: 33}
+```
+
+✅ Новая версия создана, не активирована, audit залогирован.
+
+### 2. Apply + Activate с invalid validation (ok — safety guard)
+
+Запрос — тот же замена + `activate: true`.
+
+Ответ:
+- `new_version_id = 341e97bb-57f5-4e1f-9946-13cc01f46722`, `new_version_number = 3`.
+- `validation.errors = 33` → `validation_status = invalid`.
+
+Состояние:
+| version | id | is_current |
+|---|---|---|
+| 1 | 2c42c62b… | false |
+| 2 | 85b72d06… | false |
+| 3 | 341e97bb… | **false** |
+
+`document_templates.current_version_id = NULL`.
+
+✅ Safety guard работает: `if (activate && validationStatus === 'valid')` — версия НЕ активирована при invalid validation.
+
+> Полный путь Apply+Activate с активацией невозможно проверить на этом шаблоне, потому что в источнике 33 legacy-плейсхолдера, и для `valid` нужно заменить ВСЕ. Логика активации сама по себе доказана отсутствием активации при invalid (один и тот же кодовый путь, противоположная ветвь).
+
+### 3. Edge ошибки (ok / 1 issue)
+
+| Сценарий | Поведение | Результат |
+|---|---|---|
+| `field_public_id = "FLD-999999"` (несуществующий) | HTTP 400 `{"error":"unknown_field_public_id","missing":["FLD-999999"]}` | ✅ диалог не закрывается, normalizeEdgeFunctionError даст русский текст |
+| `field_public_id` без `FLD-` префикса | HTTP 400 `{"error":"invalid_field_public_id"}` | ✅ |
+| `replacements = []` (всё skipped) | HTTP 400 `{"error":"no_accepted_replacements"}` | ✅ |
+| Ambiguous (`original_text="Договор"`, без `occurrence_index`) | HTTP 200, `applied_count = 2` (silent multi-replace) | ⚠️ **Bug в ambiguity guard** — см. ниже |
+
+#### ⚠️ Issue C5-D-AMBI-1: ambiguity guard underestimates split-run matches
+
+`countGlobalOccurrences` ищет contiguous-вхождения в XML, а `applyReplacementsToXml` дополнительно умеет merged-run (split-run) замены. Если текст «Договор» в DOCX встречается N раз, но contiguous только 1, и merged-run находит ещё 1 — guard считает `total=1`, пропускает в `placeholderMap`, и applyReplacementsToXml тихо заменяет оба вхождения.
+
+**Симптом:** при manual replacement короткого/частого текста без `occurrence_index` бэкенд может заменить больше, чем ожидает пользователь, без `ambiguous_replacement_multiple_matches` ошибки.
+
+**Митигейшн прямо сейчас:** UI всегда передаёт `occurrence_index` для manual replacements (см. `TemplateMarkupDialog.tsx`, секция 1.3). Bug проявится только при curl-вызовах или при будущем auto-suggest без occurrence-picker.
+
+**Рекомендация:** в следующем PATCH унифицировать счётчик occurrences между `countGlobalOccurrences` и `applyReplacementsToXml` (использовать тот же merged-run обход). Заведено в backlog.
+
+### 4. `markup_draft` после apply (1 issue)
+
+После двух apply-вызовов `document_template_versions[2c42c62b…].markup_draft` всё ещё содержит 18 replacements (а не очищен).
+
+Код в `canonical-template-apply-markup` (lines 682-686) пишет:
+```ts
+if (clearDraft) {
+  await supabase.from('document_template_versions')
+    .update({ markup_draft: null }).eq('id', sourceVersionId);
+}
+```
+с `clearDraft = body.clear_draft !== false` (default true). На сервис-роле RLS не блокирует.
+
+Возможные причины:
+- (а) UI после apply сразу autosave-перезаписал draft (если dialog был открыт и replacements в state);
+- (б) edge не дошёл до строки 685 (например, exception между audit и clear — но audit пишется после clear, так что нет);
+- (в) баг — clear не фиксируется. Не воспроизводится без логов.
+
+**Рекомендация:** добавить explicit log `[apply] cleared_draft=true` в edge function и проверить через `edge_function_logs` при следующем apply из UI.
+
+### 5. Picker / registry (✅ — подтверждено в QA-цикле #4)
+
+- Скролл, header/search не перекрываются, адаптивный flip popover, категории «ЗАКАЗЧИК» / «ИСПОЛНИТЕЛЬ» — все ✅ из предыдущего цикла.
+- Дубликаты в picker (по результатам ревью):
+
+| key | label | назначение |
+|---|---|---|
+| `executor.name` | Исполнитель: название | полное название (для ЮЛ/ИП) |
+| `executor.short_name` | Исполнитель: краткое название | сокращённое (например, «ИП Иванов») |
+| `executor.director` | Исполнитель: директор (ЮЛ) | ФИО директора, как в подписи |
+| `executor.director_short` | Исполнитель: директор, инициалы (ЮЛ) | «И. И. Иванов» |
+| `executor.director_full_name` | Исполнитель: ФИО руководителя (ЮЛ) | полное «Иванов Иван Иванович» |
+| `executor.director_position` | Исполнитель: должность руководителя (ЮЛ) | «Директор», «Генеральный директор» |
+
+Все шесть смыслово различны, лейблы достаточно конкретны. Отдельной чистки/слияния не требуется — фиксирую как принятое решение.
+
+### 6. DoD финальный
+
+| Критерий | Статус |
+|---|---|
+| Picker scroll, header не перекрыт, адаптивный flip popover | ✅ (QA #3, #4) |
+| Реквизиты разделены на Исполнитель / Заказчик; legal_details / person скрыты | ✅ (QA #4, registry cleanup) |
+| Маркировка ФЛ / ИП / ЮЛ суффиксом в label | ✅ (QA #4) |
+| Apply (activate=false) → новая версия `vN+1`, `is_current=false`, audit залогирован, источник не тронут | ✅ (QA #5, §1) |
+| Apply+Activate при `validation invalid` → НЕ активируется | ✅ (QA #5, §2) |
+| Apply+Activate при `validation valid` → активируется | ⏳ (логика доказана negative-case, positive-test невозможен на текущем шаблоне) |
+| Edge ошибки `unknown_field_public_id` / `no_accepted_replacements` / legacy validation возвращают понятный код | ✅ (QA #5, §3) |
+| Ambiguity guard | ⚠️ **C5-D-AMBI-1** (см. §3) |
+| `markup_draft` cleared после apply | ⚠️ не очищается на v1 после curl-apply (§4) |
+| Открытие сгенерированного DOCX в Word: таблицы, отступы, рамки, `{{field:FLD-…}}` | ⏳ за пользователем — три DOCX доступны: `templates/1778277616134-v2-…`, `templates/1778277709940-v3-…`, `templates/1778277726825-v4-…` |
+
+### 7. Что ОСТАЁТСЯ за пользователем
+
+1. Скачать `v2` (`storage_path = templates/1778277616134-v2-______.______-_____________.docx`), открыть в Word, проверить:
+   - таблицы / отступы / рамки сохранены 1:1 с v1;
+   - на месте `{{ld-dogsch_srok_oplaty-707703}}` стоит `{{field:FLD-000195}}`;
+   - остальные 32 legacy-плейсхолдера остались как были.
+2. Запустить из UI Apply на полном комплекте 18 replacements + проверить, очищается ли `markup_draft` (отвечает на §4).
+3. Если по DOCX или по `markup_draft` нашлись проблемы — пришлите id версии и `audit_logs.action='document_template.markup_applied'` за период.
+
+### 8. Issues to backlog
+
+- **C5-D-AMBI-1**: унифицировать `countGlobalOccurrences` ↔ `applyReplacementsToXml` (merged-run accounting).
+- **C5-D-DRAFT-CLEAR**: добавить edge-log `cleared_draft=true|false` для диагностики.
+- Записаны в `.lovable/backlog/` следующим патчем (отдельная задача).
