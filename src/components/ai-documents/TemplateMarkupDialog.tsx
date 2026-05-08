@@ -406,12 +406,12 @@ function FieldPicker({
             placeholder="Поиск по FLD, key, label…"
             className="h-9 text-xs"
           />
-          <CommandList className="max-h-[360px]">
+          <CommandList className="max-h-[360px] overflow-y-auto overscroll-contain">
             <CommandEmpty className="py-6 text-center text-xs text-muted-foreground">
               Ничего не найдено
             </CommandEmpty>
             {Array.from(refsByCategory.entries()).map(([cat, items]) => (
-              <CommandGroup key={cat} heading={cat}>
+              <CommandGroup key={cat} heading={CATEGORY_LABELS_RU[cat] ?? cat}>
                 {items.map((r) => {
                   const searchKey = `${r.field_public_id} ${r.token_key} ${r.ui_label}`;
                   const isSelected = value === r.field_public_id;
