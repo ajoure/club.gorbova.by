@@ -102,7 +102,20 @@ export function CanonicalActGenerator() {
   const [preview, setPreview] = useState<PreviewPayload | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [lastGenerated, setLastGenerated] = useState<{ document_number: string; download_url?: string; reused?: boolean } | null>(null);
+  const [lastGenerated, setLastGenerated] = useState<{
+    document_number: string;
+    document_id?: string;
+    download_url?: string;
+    reused?: boolean;
+    docx_check?: {
+      file_size: number;
+      mime: string;
+      min_size_ok: boolean;
+      unresolved_tokens: string[];
+      unresolved_count: number;
+      ok: boolean;
+    };
+  } | null>(null);
 
   const contextId = orderPick?.id ?? "";
   const legalDetailsId = legalPick?.id ?? "";
