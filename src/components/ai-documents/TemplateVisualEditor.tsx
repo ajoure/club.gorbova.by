@@ -95,10 +95,12 @@ export function TemplateVisualEditor({
 }: Props) {
   const editor = useEditor({
     extensions: [
-      StarterKit.configure({}),
-      Underline,
-      TextAlign.configure({ types: ["heading", "paragraph"] }),
-      Placeholder.configure({
+      // StarterKit поставляет свой @tiptap/core; кастуем в any, чтобы обойти
+      // дублирование типов с корневым @tiptap/core.
+      (StarterKit as any).configure({}),
+      Underline as any,
+      (TextAlign as any).configure({ types: ["heading", "paragraph"] }),
+      (Placeholder as any).configure({
         placeholder: "Введите текст шаблона или вставьте поле через кнопку [ ]",
       }),
       FieldChipNode,
