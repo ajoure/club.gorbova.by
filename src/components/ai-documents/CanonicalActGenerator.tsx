@@ -433,6 +433,45 @@ export function CanonicalActGenerator() {
           </CardContent>
         </Card>
       )}
+
+      {lastGenerated && (
+        <Card className="border-emerald-200 bg-emerald-50/40">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+              Документ сформирован
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex items-center gap-3 flex-wrap">
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium font-mono">{lastGenerated.document_number}.docx</div>
+              <div className="text-xs text-muted-foreground">
+                {lastGenerated.reused ? "Загружен из истории (повторная генерация по тому же ключу)." : "Сохранён в истории документов."}
+              </div>
+            </div>
+            {lastGenerated.download_url && (
+              <Button asChild>
+                <a href={lastGenerated.download_url} download={`${lastGenerated.document_number}.docx`}>
+                  <Download className="h-4 w-4 mr-2" /> Скачать DOCX
+                </a>
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" onClick={() => setLastGenerated(null)}>Скрыть</Button>
+          </CardContent>
+        </Card>
+      )}
+
+      <OrderPickerDialog
+        open={orderPickerOpen}
+        onOpenChange={setOrderPickerOpen}
+        onSelect={(o) => { setOrderPick(o); setPreview(null); }}
+      />
+      <LegalDetailsPickerDialog
+        open={legalPickerOpen}
+        onOpenChange={setLegalPickerOpen}
+        profileId={null}
+        onSelect={(l) => { setLegalPick(l); setPreview(null); }}
+      />
     </div>
   );
 }
