@@ -279,6 +279,9 @@ let _packageArraysCache: TokenDef[] = [];
 let _agendaFieldsCache: TokenDef[] = [];
 let _decisionFieldsCache: TokenDef[] = [];
 
+// Sprint 10: act-context tokens (sourced from public.document_token_registry)
+let _actTokensByCategoryCache: Record<string, TokenDef[]> = {};
+
 export function setProductFieldsCache(fields: TokenDef[]) {
   _productFieldsCache = fields;
 }
