@@ -44,6 +44,7 @@ import {
 } from "@/utils/templateAutoSuggest";
 import { FieldFormatPicker } from "./FieldFormatPicker";
 import { buildFieldPlaceholder, type FieldCase, type FieldFormat } from "./extensions/FieldChipNode";
+import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 
 // ───────────────────────── types ─────────────────────────
 
