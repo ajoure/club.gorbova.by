@@ -65,6 +65,7 @@ export interface VisualEditorSavePayload {
   token_manifest: {
     field_public_id: string;
     case_modifier: string | null;
+    format: string | null;
     label: string;
     placeholder: string;
   }[];
