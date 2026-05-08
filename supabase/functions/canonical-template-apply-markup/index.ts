@@ -407,23 +407,48 @@ Deno.serve(async (req) => {
     // --- apply replacements
     const zip = new PizZip(buf);
     const paths = listScannablePaths(zip);
-    const placeholderMap = accepted.map((r) => {
+
+    // C5-D ambiguity guard: count global occurrences per replacement first.
+    const ambiguous: Array<{ original_text: string; field_public_id: string; occurrences: number }> = [];
+    const placeholderMap: Array<{
+      original_text: string;
+      placeholder: string;
+      field_public_id: string;
+      format: string | null;
+      case_modifier: string | null;
+      occurrence_index: number | null;
+    }> = [];
+    for (const r of accepted) {
       const fmt = (r.format && ALLOWED_FORMATS.has(r.format)) ? r.format : null;
       const cs = (r.case_modifier && ALLOWED_CASES.has(r.case_modifier)) ? r.case_modifier : null;
-      return {
+      const occIdx = (typeof r.occurrence_index === 'number' && r.occurrence_index >= 0)
+        ? r.occurrence_index : null;
+      const total = countGlobalOccurrences(zip, paths, r.original_text);
+      if (total > 1 && occIdx == null) {
+        ambiguous.push({
+          original_text: r.original_text,
+          field_public_id: r.field_public_id,
+          occurrences: total,
+        });
+        continue;
+      }
+      placeholderMap.push({
         original_text: r.original_text,
         placeholder: buildPlaceholder(r.field_public_id, fmt, cs),
         field_public_id: r.field_public_id,
         format: fmt,
         case_modifier: cs,
-      };
-    });
+        occurrence_index: occIdx,
+      });
+    }
+
     const totalApplied = new Map<string, number>();
+    const stateByOriginal = { seen: new Map<string, number>() };
     for (const p of paths) {
       const file = zip.file(p);
       if (!file) continue;
       const xml = file.asText();
-      const { xml: out, appliedByOriginal } = applyReplacementsToXml(xml, placeholderMap);
+      const { xml: out, appliedByOriginal } = applyReplacementsToXml(xml, placeholderMap, stateByOriginal);
       if (out !== xml) zip.file(p, out);
       for (const [k, v] of appliedByOriginal) totalApplied.set(k, (totalApplied.get(k) ?? 0) + v);
     }
