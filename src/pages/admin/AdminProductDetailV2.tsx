@@ -1699,9 +1699,9 @@ export default function AdminProductDetailV2() {
 
       {/* Offer Dialog */}
       <Dialog open={offerDialog.open} onOpenChange={(open) => setOfferDialog({ ...offerDialog, open })}>
-        <DialogContent className="max-w-4xl w-[calc(100vw-1.5rem)] sm:w-full overflow-hidden p-0 bg-background">
-          <div className="max-h-[calc(100dvh-4rem)] overflow-y-auto overflow-x-hidden scrollbar-none p-4 sm:p-6">
-          <DialogHeader className="pr-8">
+        <DialogContent className="max-w-5xl w-[calc(100vw-1.5rem)] sm:w-full p-0 bg-background h-[86vh] max-h-[86vh] flex flex-col overflow-hidden">
+          {/* PATCH UI-BLOCKER-2: fixed size dialog */}
+          <DialogHeader className="px-4 sm:px-6 pt-4 sm:pt-6 pb-3 pr-10 border-b shrink-0">
             <DialogTitle>
               {offerDialog.editing ? "Редактировать кнопку" : "Новая кнопка оплаты"}
             </DialogTitle>
@@ -1710,15 +1710,19 @@ export default function AdminProductDetailV2() {
             </DialogDescription>
           </DialogHeader>
 
-          <Tabs defaultValue="main" className="w-full">
-            <TabsList className="grid w-full grid-cols-5">
-              <TabsTrigger value="main">Основное</TabsTrigger>
-              <TabsTrigger value="payment">Оплата</TabsTrigger>
-              <TabsTrigger value="renewal">Автопродление</TabsTrigger>
-              <TabsTrigger value="documents">Документы</TabsTrigger>
-              <TabsTrigger value="extra">Дополнительно</TabsTrigger>
-            </TabsList>
+          <Tabs defaultValue="main" className="flex-1 flex flex-col min-h-0">
+            <div className="px-4 sm:px-6 pt-3 shrink-0">
+              <TabsList className="grid w-full grid-cols-5">
+                <TabsTrigger value="main">Основное</TabsTrigger>
+                <TabsTrigger value="payment">Оплата</TabsTrigger>
+                <TabsTrigger value="renewal">Автопродление</TabsTrigger>
+                <TabsTrigger value="documents">Документы</TabsTrigger>
+                <TabsTrigger value="extra">Дополнительно</TabsTrigger>
+              </TabsList>
+            </div>
+            <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 sm:px-6 py-4 min-h-0">
 
+            <TabsContent value="main" className="space-y-4 mt-0">
             <TabsContent value="main" className="space-y-4 mt-4">
             {/* Основное */}
             <Card>
