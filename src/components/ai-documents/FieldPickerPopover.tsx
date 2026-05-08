@@ -11,7 +11,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Check, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { RegistryFieldRef } from "@/utils/templateAutoSuggest";
@@ -92,11 +91,10 @@ export function FieldPickerPopover({
       <PopoverContent
         align="start"
         sideOffset={8}
-        className="p-0 bg-popover border shadow-lg z-[100] overflow-hidden flex flex-col"
-        style={{
-          width: 460,
-          maxHeight: "min(560px, calc(100vh - 120px))",
-        }}
+        avoidCollisions
+        collisionPadding={16}
+        onWheelCapture={(e) => e.stopPropagation()}
+        className="docx-field-picker-popover p-0 bg-popover border shadow-lg z-[100] overflow-hidden flex flex-col"
       >
         {/* Header — контекст */}
         <div className="shrink-0 px-3 py-2 border-b bg-muted/40">
@@ -145,9 +143,8 @@ export function FieldPickerPopover({
             </div>
 
             {/* Список — единственная скроллируемая область */}
-            <div className="flex-1 min-h-0 overflow-hidden">
-              <ScrollArea className="h-full">
-                <div className="overscroll-contain">
+            <div className="docx-field-picker-list min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain">
+                <div>
                   {totalFiltered === 0 ? (
                     <div className="py-8 text-center text-xs text-muted-foreground">
                       Ничего не найдено
@@ -185,7 +182,6 @@ export function FieldPickerPopover({
                     ))
                   )}
                 </div>
-              </ScrollArea>
             </div>
 
             {/* Footer */}
