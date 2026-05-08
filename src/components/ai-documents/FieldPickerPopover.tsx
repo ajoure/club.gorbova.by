@@ -7,7 +7,7 @@
  *  - 2 шага: сначала выбор поля, затем формат/падеж через FieldFormatPicker.
  *  - Все строки на русском.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -79,7 +79,7 @@ export function FieldPickerPopover({
   const totalFiltered = filteredGroups.reduce((acc, [, items]) => acc + items.length, 0);
 
   // Виртуальный якорь для Popover
-  const anchorStyle: React.CSSProperties = anchor
+  const anchorStyle: CSSProperties = anchor
     ? { position: "fixed", left: anchor.x, top: anchor.y, width: 1, height: 1 }
     : { position: "fixed", left: -9999, top: -9999, width: 1, height: 1 };
 
