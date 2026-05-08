@@ -1,21 +1,30 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/date-picker";
-import { FileText } from "lucide-react";
+import { FileText, RotateCcw, Info } from "lucide-react";
 import type { OfferDocumentDefaults } from "@/hooks/useTariffOffers";
 
 interface Props {
   value: OfferDocumentDefaults | undefined;
   onChange: (next: OfferDocumentDefaults) => void;
+  /** Сумма кнопки оплаты (offer.amount) — основной источник суммы акта */
+  offerAmount?: number;
+  /** Валюта кнопки (если есть). Сейчас в системе BYN. */
+  offerCurrency?: string;
 }
+
+/** Системный список валют. НЕ создаём отдельную таблицу, переиспользуем плоский enum. */
+const CURRENCIES = ["BYN", "USD", "EUR", "RUB"] as const;
+const DEFAULT_CURRENCY = "BYN";
 
 const num = (s: string): number | null => (s === "" ? null : (Number(s) || 0));
 
