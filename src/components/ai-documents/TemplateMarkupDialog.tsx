@@ -411,9 +411,11 @@ function FieldPicker({
       <PopoverContent
         align="start"
         sideOffset={4}
-        className="w-[var(--radix-popover-trigger-width)] min-w-[420px] p-0 bg-popover border shadow-lg z-[60]"
+        className="w-[var(--radix-popover-trigger-width)] min-w-[420px] p-0 bg-popover border shadow-lg z-[60] overflow-hidden"
+        style={{ maxHeight: "min(420px, var(--radix-popover-content-available-height))" }}
       >
         <Command
+          className="flex flex-col h-full max-h-full overflow-hidden"
           filter={(itemValue, search) => {
             if (!search) return 1;
             return itemValue.toLowerCase().includes(search.toLowerCase()) ? 1 : 0;
@@ -423,7 +425,10 @@ function FieldPicker({
             placeholder="Поиск по FLD, key, label…"
             className="h-9 text-xs"
           />
-          <CommandList className="max-h-[360px] overflow-y-auto overscroll-contain">
+          <CommandList
+            className="overflow-y-auto overscroll-contain flex-1"
+            style={{ maxHeight: "360px" }}
+          >
             <CommandEmpty className="py-6 text-center text-xs text-muted-foreground">
               Ничего не найдено
             </CommandEmpty>
