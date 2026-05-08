@@ -306,6 +306,20 @@ export function AiDocumentsHistoryView() {
           {isCanonical(doc) && (
             <Sparkles className="h-3 w-3 text-cyan-500 shrink-0" aria-label="Новый генератор" />
           )}
+          {(() => {
+            const chk = getDocxCheck(doc);
+            if (!chk) return null;
+            const hasUnresolved = (chk.unresolved_count || 0) > 0;
+            return hasUnresolved ? (
+              <Badge variant="outline" className="text-amber-700 border-amber-300 text-[10px] px-1.5 py-0" title={`Незаменённые плейсхолдеры: ${chk.unresolved_tokens?.join(", ") || ""}`}>
+                <AlertTriangle className="h-2.5 w-2.5 mr-1" /> Проверка
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="text-emerald-700 border-emerald-300 text-[10px] px-1.5 py-0" title="DOCX проверен: все плейсхолдеры заменены">
+                <CheckCircle2 className="h-2.5 w-2.5 mr-1" /> OK
+              </Badge>
+            );
+          })()}
         </div>
       </TableCell>
       <TableCell className="text-sm text-muted-foreground truncate max-w-[150px]">
