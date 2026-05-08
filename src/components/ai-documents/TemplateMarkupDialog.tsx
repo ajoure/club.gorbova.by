@@ -310,8 +310,8 @@ export function TemplateMarkupDialog({
   const [pickerAnchor, setPickerAnchor] = useState<{ x: number; y: number } | null>(null);
   /** Контекст того, для чего открыт picker. */
   const [pickerContext, setPickerContext] = useState<
-    | { kind: "selection"; text: string }
-    | { kind: "legacy"; text: string }
+    | { kind: "selection"; text: string; occurrenceIndex: number }
+    | { kind: "legacy"; text: string; occurrenceIndex: number }
     | { kind: "chip"; replacementId: string }
     | null
   >(null);
