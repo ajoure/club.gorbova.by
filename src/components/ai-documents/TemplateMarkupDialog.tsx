@@ -484,10 +484,15 @@ export function TemplateMarkupDialog({
           if (r) buffer += r.original_text;
           return;
         }
-        for (const child of Array.from(el.childNodes)) {
+        // Если выделение начинается на границе элемента (startContainer === элемент,
+        // startOffset = индекс ребёнка), берём только первые startOffset детей.
+        const children = Array.from(el.childNodes);
+        const limit = node === range.startContainer ? range.startOffset : children.length;
+        for (let i = 0; i < limit; i++) {
           if (stop) return;
-          walk(child);
+          walk(children[i]);
         }
+        if (node === range.startContainer) stop = true;
       }
     };
     walk(root);
