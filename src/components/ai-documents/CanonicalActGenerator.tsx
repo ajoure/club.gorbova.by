@@ -452,32 +452,88 @@ export function CanonicalActGenerator() {
         </Card>
       )}
 
-      {lastGenerated && (
-        <Card className="border-emerald-200 bg-emerald-50/40">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-              Документ сформирован
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex items-center gap-3 flex-wrap">
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium font-mono">{lastGenerated.document_number}.docx</div>
-              <div className="text-xs text-muted-foreground">
-                {lastGenerated.reused ? "Загружен из истории (повторная генерация по тому же ключу)." : "Сохранён в истории документов."}
+      {lastGenerated && (() => {
+        const chk = lastGenerated.docx_check;
+        const hasUnresolved = !!chk && chk.unresolved_count > 0;
+        const checkOk = !!chk && chk.ok;
+        const sizeKb = chk ? (chk.file_size / 1024).toFixed(1) : null;
+        const cardCls = hasUnresolved
+          ? "border-amber-300 bg-amber-50/50"
+          : "border-emerald-200 bg-emerald-50/40";
+        return (
+          <Card className={cardCls}>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                {hasUnresolved
+                  ? <AlertTriangle className="h-4 w-4 text-amber-600" />
+                  : <CheckCircle2 className="h-4 w-4 text-emerald-600" />}
+                Документ сформирован
+                {chk && (
+                  <Badge variant="outline" className={`ml-2 ${checkOk ? "text-emerald-700 border-emerald-300" : "text-amber-700 border-amber-300"}`}>
+                    {checkOk ? "Проверка пройдена" : "Есть предупреждения"}
+                  </Badge>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium font-mono">{lastGenerated.document_number}.docx</div>
+                  <div className="text-xs text-muted-foreground">
+                    {lastGenerated.reused ? "Загружен из истории (повторная генерация по тому же ключу)." : "Сохранён в истории документов."}
+                  </div>
+                </div>
+                {lastGenerated.download_url && (
+                  <>
+                    <Button asChild>
+                      <a href={lastGenerated.download_url} download={`${lastGenerated.document_number}.docx`}>
+                        <Download className="h-4 w-4 mr-2" /> Скачать DOCX
+                      </a>
+                    </Button>
+                    <Button asChild variant="outline">
+                      <a href={lastGenerated.download_url} target="_blank" rel="noopener noreferrer">
+                        <Eye className="h-4 w-4 mr-2" /> Открыть предпросмотр
+                      </a>
+                    </Button>
+                  </>
+                )}
+                <Button variant="ghost" size="sm" onClick={() => setLastGenerated(null)}>Скрыть</Button>
               </div>
-            </div>
-            {lastGenerated.download_url && (
-              <Button asChild>
-                <a href={lastGenerated.download_url} download={`${lastGenerated.document_number}.docx`}>
-                  <Download className="h-4 w-4 mr-2" /> Скачать DOCX
-                </a>
-              </Button>
-            )}
-            <Button variant="ghost" size="sm" onClick={() => setLastGenerated(null)}>Скрыть</Button>
-          </CardContent>
-        </Card>
-      )}
+
+              {chk && (
+                <div className="rounded-md border bg-background/60 p-3 text-xs space-y-1.5">
+                  <div className="font-medium text-sm mb-1">Проверка документа</div>
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                    Файл создан, размер {sizeKb} КБ
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {chk.min_size_ok
+                      ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                      : <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />}
+                    Размер {chk.min_size_ok ? "в норме" : "слишком маленький"}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {!hasUnresolved
+                      ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                      : <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />}
+                    {hasUnresolved
+                      ? `Незаменённые плейсхолдеры: ${chk.unresolved_count}`
+                      : "Все плейсхолдеры заменены"}
+                  </div>
+                  {hasUnresolved && (
+                    <div className="mt-2 rounded bg-amber-100/70 border border-amber-200 p-2 text-amber-900">
+                      В документе остались незаполненные плейсхолдеры:{" "}
+                      <span className="font-mono">{chk.unresolved_tokens.join(", ")}</span>.
+                      Проверьте связи плейсхолдеров или заполните недостающие данные.
+                    </div>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       <OrderPickerDialog
         open={orderPickerOpen}
