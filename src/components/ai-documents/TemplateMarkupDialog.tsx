@@ -528,3 +528,92 @@ function HighlightedText({
     </pre>
   );
 }
+
+// ─────────────────────── VisualEditorPane (C4-A) ───────────────────────
+
+const LEGACY_PLACEHOLDER_RE = /\{\{\s*(document|executor|customer|deal|cf)\.[^}]+\}\}/i;
+
+function VisualEditorPane({
+  templateVersion,
+  initialPlainText,
+  onSaved,
+}: {
+  templateVersion: Props["templateVersion"];
+  initialPlainText: string;
+  onSaved?: () => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [initialJSON, setInitialJSON] = useState<any | null>(null);
+  const [loadedFromDb, setLoadedFromDb] = useState(false);
+
+  useEffect(() => {
+    if (!templateVersion) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from("document_template_versions")
+        .select("editor_json")
+        .eq("id", templateVersion.id)
+        .maybeSingle();
+      if (cancelled) return;
+      if (data?.editor_json) setInitialJSON(data.editor_json);
+      setLoadedFromDb(true);
+    })();
+    return () => { cancelled = true; };
+  }, [templateVersion?.id]);
+
+  const handleSave = async (payload: VisualEditorSavePayload) => {
+    if (!templateVersion) return;
+    if (LEGACY_PLACEHOLDER_RE.test(payload.plain_text)) {
+      toast.error("Найдены legacy-плейсхолдеры (document.*, executor.*, customer.*, deal.*, cf.*). Используйте только {{field:FLD-XXXXXX}}.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from("document_template_versions")
+        .update({
+          editor_html: payload.editor_html,
+          editor_json: payload.editor_json,
+        })
+        .eq("id", templateVersion.id);
+      if (error) throw error;
+
+      await supabase.functions.invoke("canonical-template-audit", {
+        body: {
+          event: "document_template.visual_editor_saved",
+          template_id: templateVersion.template_id,
+          template_version_id: templateVersion.id,
+          meta: {
+            chip_count: payload.token_manifest.length,
+            unique_fields: Array.from(new Set(payload.token_manifest.map(t => t.field_public_id))).length,
+          },
+        },
+      }).catch(() => undefined);
+
+      toast.success(`Визуальная версия сохранена · полей: ${payload.token_manifest.length}`);
+      onSaved?.();
+    } catch (e: any) {
+      toast.error(`Ошибка сохранения: ${e.message ?? e}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!loadedFromDb) {
+    return (
+      <div className="flex items-center justify-center py-12 text-muted-foreground">
+        <Loader2 className="h-5 w-5 animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <TemplateVisualEditor
+      initialJSON={initialJSON}
+      initialPlainText={initialPlainText}
+      onSave={handleSave}
+      saving={saving}
+    />
+  );
+}
