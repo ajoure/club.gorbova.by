@@ -185,9 +185,14 @@ export function CanonicalActGenerator() {
       toast.success(`Документ сформирован: ${data.document_number}${data.reused ? " (загружен из истории)" : ""}`);
       setLastGenerated({
         document_number: data.document_number,
+        document_id: data.document_id,
         download_url: data.download_url,
         reused: !!data.reused,
+        docx_check: data.docx_check,
       });
+      if (data.docx_check && data.docx_check.unresolved_count > 0) {
+        toast.warning(`В документе остались незаполненные плейсхолдеры (${data.docx_check.unresolved_count}). Проверьте связи плейсхолдеров.`);
+      }
     } catch (e: any) {
       toast.error(`Ошибка генерации: ${e?.message || e}`);
     } finally {
