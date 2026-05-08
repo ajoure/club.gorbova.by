@@ -583,7 +583,7 @@ export function TemplateMarkupDialog({
     toast.success("Черновик очищен");
   };
 
-  const acceptedCount = replacements.filter((r) => isAccepted(r.status)).length;
+  const acceptedCount = replacements.filter((r) => isAccepted(r.status) && !!r.field_public_id).length;
   const ambiguousCount = replacements.filter((r) =>
     isAccepted(r.status) && r.occurrences_total > 1 && r.occurrence_index == null
   ).length;
