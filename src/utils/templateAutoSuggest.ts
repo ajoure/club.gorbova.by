@@ -8,11 +8,16 @@
  */
 import { supabase } from "@/integrations/supabase/client";
 
+export type FieldDataType =
+  | "string" | "text" | "number" | "money" | "date" | "datetime" | "boolean"
+  | "enum" | "json" | "email" | "phone";
+
 export interface RegistryFieldRef {
   field_public_id: string;
   token_key: string;
   ui_label: string;
   category: string;
+  data_type: FieldDataType | string;
 }
 
 export type SuggestionStatus = "suggested" | "accepted" | "changed" | "skipped";
@@ -24,6 +29,10 @@ export interface MarkupSuggestion {
   suggested_label: string | null;
   field_public_id: string | null; // финальное (после accept/changed)
   placeholder: string | null;
+  /** Опциональные модификаторы (Sprint 11 C4-B). */
+  case_modifier?: string | null;
+  format?: string | null;
+  data_type?: string | null;
   confidence: "high" | "medium" | "low";
   reason: string;
   status: SuggestionStatus;
@@ -38,7 +47,7 @@ export async function loadRegistryRefs(): Promise<RegistryFieldRef[]> {
   if (_registryCache) return _registryCache;
   const { data } = await supabase
     .from("document_token_registry")
-    .select("token_key, ui_label, category, fields_registry!document_token_registry_field_id_fkey(public_id)")
+    .select("token_key, ui_label, category, fields_registry!document_token_registry_field_id_fkey(public_id, data_type)")
     .is("archived_at", null);
   const refs: RegistryFieldRef[] = [];
   for (const row of (data ?? []) as any[]) {
@@ -49,6 +58,7 @@ export async function loadRegistryRefs(): Promise<RegistryFieldRef[]> {
       token_key: row.token_key,
       ui_label: row.ui_label,
       category: row.category,
+      data_type: row.fields_registry?.data_type ?? "string",
     });
   }
   _registryCache = refs;

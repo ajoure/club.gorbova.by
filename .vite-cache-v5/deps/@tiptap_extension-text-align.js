@@ -1,7 +1,7 @@
 import {
   Extension
-} from "./chunk-SXIQHOR3.js";
-import "./chunk-YLIL3JKF.js";
+} from "./chunk-EZQQYADT.js";
+import "./chunk-C3BKHWUU.js";
 import "./chunk-OL46QLBJ.js";
 
 // node_modules/@tiptap/extension-text-align/dist/index.js

@@ -35,13 +35,65 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const STRICT_RE = /^field:FLD-\d+$/;
+// Strict ID-first token формат:
+//   field:FLD-XXXXXX
+//   field:FLD-XXXXXX|format=words
+//   field:FLD-XXXXXX|format=text
+//   field:FLD-XXXXXX|case=<allowed>
+//   field:FLD-XXXXXX|format=words|case=<allowed>
+const ALLOWED_CASES = new Set([
+  'nominative', 'genitive', 'dative', 'accusative', 'instrumental', 'prepositional',
+]);
+const ALLOWED_FORMATS = new Set(['words', 'text']);
+const STRICT_FIELD_RE = /^field:(FLD-\d+)((?:\|[a-z_]+=[a-z_]+)*)$/;
 const ANY_TOKEN_RE = /\{\{([^}]+)\}\}/g;
 
 interface Replacement {
   original_text: string;
   field_public_id: string;
   status: 'accepted' | 'changed' | 'skipped';
+  /** опционально — Sprint 11 C4-B */
+  format?: 'words' | 'text' | null;
+  case_modifier?:
+    | 'nominative' | 'genitive' | 'dative' | 'accusative'
+    | 'instrumental' | 'prepositional' | null;
+  /** опционально — клиент может прислать готовый placeholder (доверяем после strict-валидации) */
+  placeholder?: string;
+}
+
+function parseStrictToken(inside: string): {
+  field_public_id: string;
+  format: string | null;
+  case_modifier: string | null;
+  unknown_modifier?: string;
+  invalid_value?: string;
+} | null {
+  const m = inside.match(STRICT_FIELD_RE);
+  if (!m) return null;
+  const fld = m[1];
+  let format: string | null = null;
+  let cs: string | null = null;
+  const tail = (m[2] || '').split('|').filter(Boolean);
+  for (const part of tail) {
+    const [k, v] = part.split('=');
+    if (k === 'format') {
+      if (!ALLOWED_FORMATS.has(v)) return { field_public_id: fld, format: null, case_modifier: null, invalid_value: `format=${v}` };
+      format = v;
+    } else if (k === 'case') {
+      if (!ALLOWED_CASES.has(v)) return { field_public_id: fld, format: null, case_modifier: null, invalid_value: `case=${v}` };
+      cs = v;
+    } else {
+      return { field_public_id: fld, format: null, case_modifier: null, unknown_modifier: k };
+    }
+  }
+  return { field_public_id: fld, format, case_modifier: cs };
+}
+
+function buildPlaceholder(fld: string, format: string | null, cs: string | null): string {
+  const parts = [`field:${fld}`];
+  if (format) parts.push(`format=${format}`);
+  if (cs) parts.push(`case=${cs}`);
+  return `{{${parts.join('|')}}}`;
 }
 
 function escXml(s: string): string {
@@ -267,11 +319,17 @@ Deno.serve(async (req) => {
     // --- apply replacements
     const zip = new PizZip(buf);
     const paths = listScannablePaths(zip);
-    const placeholderMap = accepted.map((r) => ({
-      original_text: r.original_text,
-      placeholder: `{{field:${r.field_public_id}}}`,
-      field_public_id: r.field_public_id,
-    }));
+    const placeholderMap = accepted.map((r) => {
+      const fmt = (r.format && ALLOWED_FORMATS.has(r.format)) ? r.format : null;
+      const cs = (r.case_modifier && ALLOWED_CASES.has(r.case_modifier)) ? r.case_modifier : null;
+      return {
+        original_text: r.original_text,
+        placeholder: buildPlaceholder(r.field_public_id, fmt, cs),
+        field_public_id: r.field_public_id,
+        format: fmt,
+        case_modifier: cs,
+      };
+    });
     const totalApplied = new Map<string, number>();
     for (const p of paths) {
       const file = zip.file(p);
@@ -314,37 +372,109 @@ Deno.serve(async (req) => {
     // --- re-extract tokens & validate strict
     const parsed = extractDocxTokensWithLocations(outBytes);
     const validationErrors: any[] = [];
-    const recognized: Array<{ placeholder: string; field_public_id: string }> = [];
+    const recognizedTokens: Array<{
+      placeholder: string;
+      field_public_id: string;
+      format: string | null;
+      case_modifier: string | null;
+    }> = [];
     const allFldInDoc: string[] = [];
     for (const tk of parsed.tokens) {
-      if (!STRICT_RE.test(tk)) {
+      const inside = tk.trim();
+      // Legacy формат: document.*, executor.*, customer.*, deal.*, cf.*
+      if (/^(document|executor|customer|deal|cf)\./i.test(inside)) {
         validationErrors.push({
           code: 'legacy_placeholder_format_detected',
-          placeholder: `{{${tk}}}`,
-          message: `Найден старый формат «{{${tk}}}». Допустим только {{field:FLD-XXXXXX}}.`,
+          placeholder: `{{${inside}}}`,
+          message: `В шаблоне найден старый формат плейсхолдера «{{${inside}}}». Используйте только {{field:FLD-XXXXXX}}.`,
         });
         continue;
       }
-      const fld = tk.slice('field:'.length);
-      allFldInDoc.push(fld);
-      recognized.push({ placeholder: `{{${tk}}}`, field_public_id: fld });
+      const parsedTok = parseStrictToken(inside);
+      if (!parsedTok) {
+        validationErrors.push({
+          code: 'legacy_placeholder_format_detected',
+          placeholder: `{{${inside}}}`,
+          message: `Невалидный плейсхолдер «{{${inside}}}». Допустим только {{field:FLD-XXXXXX}}.`,
+        });
+        continue;
+      }
+      if (parsedTok.unknown_modifier) {
+        validationErrors.push({
+          code: 'unknown_modifier',
+          placeholder: `{{${inside}}}`,
+          message: `Неподдерживаемый модификатор «${parsedTok.unknown_modifier}». Допустимы только format=words, format=text и case=...`,
+        });
+        continue;
+      }
+      if (parsedTok.invalid_value) {
+        validationErrors.push({
+          code: 'unknown_modifier',
+          placeholder: `{{${inside}}}`,
+          message: `Недопустимое значение модификатора «${parsedTok.invalid_value}».`,
+        });
+        continue;
+      }
+      allFldInDoc.push(parsedTok.field_public_id);
+      recognizedTokens.push({
+        placeholder: `{{${inside}}}`,
+        field_public_id: parsedTok.field_public_id,
+        format: parsedTok.format,
+        case_modifier: parsedTok.case_modifier,
+      });
     }
-    // verify all FLD exist
+    // verify all FLD exist + load data_type for warnings/manifest
+    const fieldMeta = new Map<string, { data_type: string; label: string; required: boolean }>();
     if (allFldInDoc.length > 0) {
       const { data: chk } = await supabase
         .from('fields_registry')
-        .select('public_id')
+        .select('public_id, data_type, label, is_required')
         .in('public_id', allFldInDoc)
         .is('archived_at', null);
-      const known2 = new Set((chk ?? []).map((x: any) => x.public_id));
+      for (const row of (chk ?? []) as any[]) {
+        fieldMeta.set(row.public_id, {
+          data_type: (row.data_type ?? 'string').toLowerCase(),
+          label: row.label ?? '',
+          required: !!row.is_required,
+        });
+      }
       for (const fld of allFldInDoc) {
-        if (!known2.has(fld)) {
+        if (!fieldMeta.has(fld)) {
           validationErrors.push({
             code: 'unknown_field_public_id',
             placeholder: `{{field:${fld}}}`,
             message: `Field ID ${fld} не найден в каталоге полей.`,
           });
         }
+      }
+    }
+    // Warnings (не блокируют валидацию)
+    const validationWarnings: any[] = [];
+    const TEXT_DT = new Set(['string', 'text', 'email', 'phone']);
+    const NUM_DT = new Set(['number', 'money', 'date', 'datetime']);
+    for (const t of recognizedTokens) {
+      const meta = fieldMeta.get(t.field_public_id);
+      if (!meta) continue;
+      if (t.format === 'words' && TEXT_DT.has(meta.data_type)) {
+        validationWarnings.push({
+          code: 'format_words_on_text_field',
+          placeholder: t.placeholder,
+          message: 'format=words применяется к суммам/числам/датам. Для текстового поля используйте падеж без format=words.',
+        });
+      }
+      if (t.format === 'text' && meta.data_type !== 'boolean') {
+        validationWarnings.push({
+          code: 'format_text_on_non_boolean_field',
+          placeholder: t.placeholder,
+          message: 'format=text применим только к boolean-полям.',
+        });
+      }
+      if (!t.format && t.case_modifier && NUM_DT.has(meta.data_type)) {
+        validationWarnings.push({
+          code: 'case_on_non_text_field_without_words',
+          placeholder: t.placeholder,
+          message: 'Падеж для числа/даты/суммы корректно работает только вместе с format=words.',
+        });
       }
     }
     if (parsed.tokens.length === 0) {
@@ -355,10 +485,25 @@ Deno.serve(async (req) => {
     }
     const validationStatus = validationErrors.length === 0 ? 'valid' : 'invalid';
 
-    // --- token_manifest: ТОЛЬКО field_public_id
-    const manifestSet = new Set<string>();
-    for (const r of recognized) manifestSet.add(r.field_public_id);
-    const tokenManifest = Array.from(manifestSet).map((fld) => ({ field_public_id: fld }));
+    // --- token_manifest: field_public_id + format + case_modifier + label + data_type
+    const manifestKey = (t: typeof recognizedTokens[number]) =>
+      `${t.field_public_id}|${t.format ?? ''}|${t.case_modifier ?? ''}`;
+    const manifestMap = new Map<string, any>();
+    for (const t of recognizedTokens) {
+      const k = manifestKey(t);
+      if (manifestMap.has(k)) continue;
+      const meta = fieldMeta.get(t.field_public_id);
+      manifestMap.set(k, {
+        field_public_id: t.field_public_id,
+        placeholder: t.placeholder,
+        format: t.format,
+        case_modifier: t.case_modifier,
+        label: meta?.label ?? null,
+        data_type: meta?.data_type ?? null,
+        required: meta?.required ?? false,
+      });
+    }
+    const tokenManifest = Array.from(manifestMap.values());
 
     // --- insert new version row
     const { data: newVer, error: insErr } = await supabase
@@ -403,6 +548,7 @@ Deno.serve(async (req) => {
         skipped_count: replacementsRaw.length - accepted.length,
         validation_status: validationStatus,
         validation_errors_count: validationErrors.length,
+        validation_warnings_count: validationWarnings.length,
       },
     });
 
@@ -414,7 +560,7 @@ Deno.serve(async (req) => {
         new_storage_path: newStoragePath,
         applied_count: Array.from(totalApplied.values()).reduce((a, b) => a + b, 0),
         missed: missedReplacements.map((r) => ({ original_text: r.original_text, field_public_id: r.field_public_id })),
-        validation: { status: validationStatus, errors: validationErrors, recognized },
+        validation: { status: validationStatus, errors: validationErrors, warnings: validationWarnings, recognized: recognizedTokens },
         token_manifest: tokenManifest,
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },

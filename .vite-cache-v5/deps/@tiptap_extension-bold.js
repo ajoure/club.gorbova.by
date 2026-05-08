@@ -1,26 +1,14 @@
 import {
+  h
+} from "./chunk-DBLFZ5FW.js";
+import {
   Mark,
   markInputRule,
   markPasteRule,
   mergeAttributes
-} from "./chunk-SXIQHOR3.js";
-import "./chunk-YLIL3JKF.js";
+} from "./chunk-EZQQYADT.js";
+import "./chunk-C3BKHWUU.js";
 import "./chunk-OL46QLBJ.js";
-
-// node_modules/@tiptap/core/dist/jsx-runtime/jsx-runtime.js
-var h = (tag, attributes) => {
-  if (tag === "slot") {
-    return 0;
-  }
-  if (tag instanceof Function) {
-    return tag(attributes);
-  }
-  const { children, ...rest } = attributes != null ? attributes : {};
-  if (tag === "svg") {
-    throw new Error("SVG elements are not supported in the JSX syntax, use the array syntax instead");
-  }
-  return [tag, rest, children];
-};
 
 // node_modules/@tiptap/extension-bold/dist/index.js
 var starInputRegex = /(?:^|\s)(\*\*(?!\s+\*\*)((?:[^*]+))\*\*(?!\s+\*\*))$/;
