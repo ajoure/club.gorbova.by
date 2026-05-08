@@ -599,7 +599,9 @@ export function TemplateMarkupDialog({
       format: r.format,
       case_modifier: r.case_modifier,
       placeholder: buildFieldPlaceholder(r.field_public_id!, r.format, r.case_modifier),
-      status: r.status,
+      // Runtime compatibility: deployed apply-markup may only accept accepted/changed.
+      // UI-only `manually_added` is normalized before crossing the backend boundary.
+      status: r.status === "manually_added" ? "accepted" : r.status,
       occurrence_index: r.occurrence_index,
     }));
 
