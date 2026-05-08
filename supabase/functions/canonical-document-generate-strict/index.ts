@@ -32,10 +32,43 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const RESOLVER_VERSION = 'strict-1.0.0';
+const RESOLVER_VERSION = 'strict-1.1.0-c4b';
 const FLD_RE = /^FLD-\d+$/;
-const STRICT_TOKEN_RE = /\{\{\s*field:(FLD-\d+)\s*\}\}/g;
+const ALLOWED_CASES = new Set([
+  'nominative', 'genitive', 'dative', 'accusative', 'instrumental', 'prepositional',
+]);
+const ALLOWED_FORMATS = new Set(['words', 'text']);
+const STRICT_FIELD_RE = /^field:(FLD-\d+)((?:\|[a-z_]+=[a-z_]+)*)$/;
 const ANY_TOKEN_RE = /\{\{([^}]+)\}\}/g;
+
+interface ParsedToken {
+  raw_inside: string;            // 'field:FLD-1|format=words|case=genitive'
+  field_public_id: string;
+  format: string | null;         // 'words' | 'text' | null
+  case_modifier: string | null;
+}
+
+function parseStrictTokenInside(inside: string): ParsedToken | { error: string; raw_inside: string } {
+  const m = inside.match(STRICT_FIELD_RE);
+  if (!m) return { error: 'legacy_or_invalid', raw_inside: inside };
+  const fld = m[1];
+  let format: string | null = null;
+  let cs: string | null = null;
+  const tail = (m[2] || '').split('|').filter(Boolean);
+  for (const part of tail) {
+    const [k, v] = part.split('=');
+    if (k === 'format') {
+      if (!ALLOWED_FORMATS.has(v)) return { error: 'unknown_modifier', raw_inside: inside };
+      format = v;
+    } else if (k === 'case') {
+      if (!ALLOWED_CASES.has(v)) return { error: 'unknown_modifier', raw_inside: inside };
+      cs = v;
+    } else {
+      return { error: 'unknown_modifier', raw_inside: inside };
+    }
+  }
+  return { raw_inside: inside, field_public_id: fld, format, case_modifier: cs };
+}
 
 function json(b: unknown, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -48,8 +81,6 @@ function extractDocumentXmlText(zip: PizZip): string {
 }
 
 function stripXml(xml: string): string {
-  // crude: collapse runs broken by formatting. Sufficient for token detection because
-  // `_shared/document-render` already merges runs at validation; we re-check on raw text.
   return xml.replace(/<[^>]+>/g, '');
 }
 
@@ -59,6 +90,9 @@ function fmtVal(v: any): string {
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
   try { return JSON.stringify(v); } catch { return ''; }
 }
+
+const TEXT_DT = new Set(['string', 'text', 'email', 'phone']);
+const NUM_DT = new Set(['number', 'money', 'date', 'datetime']);
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
