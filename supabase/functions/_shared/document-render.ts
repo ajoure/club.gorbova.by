@@ -309,6 +309,47 @@ export async function resolveCanonicalPayload(
     'deal.access_days':   tariff?.access_days != null ? String(tariff.access_days) : '',
   };
 
+  // 7b. Sprint 10 — overlay orders_v2.meta.document_data snapshot.
+  // Priority chain: snapshot → input.overrides → live → computed fallback.
+  // The snapshot is treated as SOT for reproducibility once it exists.
+  const docData: any = (order as any)?.meta?.document_data || null;
+  if (input.context_type === 'order' && input.context_id) {
+    if (!docData) {
+      warnings.push('document_data_snapshot_missing');
+      warnings.push('document_data_live_fallback_used');
+    } else {
+      // Map snapshot fields into deal.* tokens.
+      if (docData.amount != null) {
+        resolverValues['deal.amount'] = String(docData.amount);
+        resolverValues['deal.amount_formatted'] = formatMoney(docData.amount, docData.currency || order?.currency);
+      }
+      if (docData.amount_words) {
+        resolverValues['deal.amount_words'] = docData.amount_words;
+        resolverValues['deal.amount_in_words'] = docData.amount_words;
+      }
+      if (docData.currency) resolverValues['deal.currency'] = docData.currency;
+      if (docData.currency_major) resolverValues['deal.currency_major'] = docData.currency_major;
+      if (docData.currency_minor) resolverValues['deal.currency_minor'] = docData.currency_minor;
+      if (docData.service_name) resolverValues['deal.service_name'] = docData.service_name;
+      if (docData.service_description) resolverValues['deal.service_description'] = docData.service_description;
+      if (docData.unit) resolverValues['deal.unit'] = docData.unit;
+      if (docData.quantity != null) resolverValues['deal.quantity'] = String(docData.quantity);
+      if (docData.unit_price != null) resolverValues['deal.unit_price'] = String(docData.unit_price);
+      if (docData.payment_due_days != null) resolverValues['deal.payment_due_days'] = String(docData.payment_due_days);
+      if (docData.execution_days != null) resolverValues['deal.execution_days'] = String(docData.execution_days);
+      if (docData.service_period_from) resolverValues['deal.service_period_from'] = docData.service_period_from;
+      if (docData.service_period_to) resolverValues['deal.service_period_to'] = docData.service_period_to;
+      if (docData.months_count != null) resolverValues['deal.months_count'] = String(docData.months_count);
+      if (docData.prepayment_percent != null) resolverValues['deal.prepayment_percent'] = String(docData.prepayment_percent);
+      if (docData.prepayment_amount != null) resolverValues['deal.prepayment_amount'] = String(docData.prepayment_amount);
+      if (docData.discount_amount != null) resolverValues['deal.discount_amount'] = String(docData.discount_amount);
+      if (docData.first_payment != null) resolverValues['deal.first_payment'] = String(docData.first_payment);
+      if (docData.bank_credit_price != null) resolverValues['deal.bank_credit_price'] = String(docData.bank_credit_price);
+      if (docData.final_payment != null) resolverValues['deal.final_payment'] = String(docData.final_payment);
+      if (docData.comment) resolverValues['deal.comment'] = docData.comment;
+    }
+  }
+
   // 8. legal_details.* (custom_field) — read from customer columns directly via key suffix
   if (customer) {
     for (const [key, row] of registryByKey) {
@@ -318,7 +359,7 @@ export async function resolveCanonicalPayload(
     }
   }
 
-  // 9. Apply overrides
+  // 9. Apply overrides (highest priority — manual ad-hoc inputs)
   if (input.overrides) {
     for (const [k, v] of Object.entries(input.overrides)) resolverValues[k] = v ?? '';
   }
