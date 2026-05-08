@@ -828,38 +828,22 @@ export function AiPageContent({ mode }: AiPageContentProps) {
         </div>
       )}
 
-      {/* Documents */}
-      {activeSubTab === "generate" && (
-        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
-          <AiDocumentsGenerateView />
-        </div>
-      )}
-      {activeSubTab === "aliases" && (
-        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner">
-          <AliasesTab />
-        </div>
-      )}
-      {activeSubTab === "canonical-acts" && (
-        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto space-y-4">
-          <CanonicalActGenerator />
-          <CanonicalTemplateVersionsPanel />
-        </div>
-      )}
+      {/* Documents — Sprint 11 C1: только strict-вкладки */}
       {activeSubTab === "placeholders" && (
         <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
           <PlaceholdersCatalogTab />
         </div>
       )}
-      {activeSubTab === "history" && (
+      {activeSubTab === "templates" && (
         <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
-          <AiDocumentsHistoryView />
+          <StrictDocumentTemplatesManager embedded />
         </div>
       )}
-      {activeSubTab === "templates" && (
-        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner">
-          <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}>
-            <LazyDocumentTemplatesContent embedded />
-          </Suspense>
+      {activeSubTab === "history" && (
+        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
+          <div className="text-center py-12 text-sm text-muted-foreground">
+            История генераций (canonical) появится после реализации генерации из сделки в C3.
+          </div>
         </div>
       )}
       {activeSubTab === "executors" && (
