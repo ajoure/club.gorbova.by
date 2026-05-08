@@ -80,6 +80,33 @@ export interface OfferMetaConfig {
   installment?: InstallmentConfig;
   // CRM routing — связь с воронкой продаж (Layer A: только offer-driven первичная оплата)
   crm_routing?: CrmRoutingConfig;
+  // Sprint 10 — defaults for document generation (act). Stored in meta to keep schema unchanged.
+  document_defaults?: OfferDocumentDefaults;
+}
+
+export interface OfferDocumentDefaults {
+  generate_act?: boolean;
+  template_id?: string | null;
+  service_name?: string | null;
+  service_description?: string | null;
+  unit?: string | null;
+  quantity?: number | null;
+  unit_price?: number | null;
+  amount?: number | null;
+  currency?: string | null;
+  payment_due_days?: number | null;
+  execution_days?: number | null;
+  service_period_from?: string | null;
+  service_period_to?: string | null;
+  months_count?: number | null;
+  prepayment_percent?: number | null;
+  prepayment_amount?: number | null;
+  discount_amount?: number | null;
+  first_payment?: number | null;
+  bank_credit_price?: number | null;
+  final_payment?: number | null;
+  executor_id?: string | null;
+  comment?: string | null;
 }
 
 export interface TariffOffer {
