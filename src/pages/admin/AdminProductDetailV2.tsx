@@ -1351,10 +1351,21 @@ export default function AdminProductDetailV2() {
                   </GlassCard>
           </TabsContent>
 
-          {/* Custom Fields Tab */}
-          <TabsContent value="custom_fields" className="mt-6">
-            {productId && <ProductCustomFields entityId={productId} />}
+          {/* Documents Tab — Sprint 11 PATCH PRODUCT-DOCS-1..10 */}
+          <TabsContent value="custom_fields" className="mt-6 space-y-6">
+            {productId && <ProductDocumentsOverview productId={productId} />}
+            {productId && (
+              <details className="group rounded-lg border border-border/40 bg-card">
+                <summary className="cursor-pointer px-4 py-2 text-sm text-muted-foreground hover:text-foreground select-none">
+                  Дополнительные поля продукта (custom fields)
+                </summary>
+                <div className="px-4 pb-4 pt-2">
+                  <ProductCustomFields entityId={productId} />
+                </div>
+              </details>
+            )}
           </TabsContent>
+
 
           {/* Composition Tab */}
           <TabsContent value="composition" className="space-y-4 mt-6">
