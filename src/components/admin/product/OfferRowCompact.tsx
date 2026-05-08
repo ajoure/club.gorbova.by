@@ -41,6 +41,7 @@ export function OfferRowCompact({
   onSetPrimary,
   onEdit,
   onDelete,
+  onCopy,
   hasPrimaryInTariff = false,
 }: OfferRowCompactProps) {
   const [isEditing, setIsEditing] = useState(false);
