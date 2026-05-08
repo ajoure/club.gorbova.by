@@ -282,6 +282,41 @@ let _decisionFieldsCache: TokenDef[] = [];
 // Sprint 10: act-context tokens (sourced from public.document_token_registry)
 let _actTokensByCategoryCache: Record<string, TokenDef[]> = {};
 
+export function setActTokensByCategoryCache(byCategory: Record<string, TokenDef[]>) {
+  _actTokensByCategoryCache = byCategory;
+}
+
+/**
+ * Sprint 10: load all canonical act-context tokens from `public.document_token_registry`.
+ * Groups by `category` so the picker can render one heading per group.
+ * Token string format: `{{<token_key>}}` (Class B canonical).
+ */
+export async function loadActDocumentTokens(): Promise<Record<string, TokenDef[]>> {
+  const { data, error } = await supabase
+    .from("document_token_registry")
+    .select("token_key, ui_label, category, data_type, description")
+    .is("archived_at", null)
+    .order("display_order");
+
+  if (error || !data) return {};
+
+  const byCategory: Record<string, TokenDef[]> = {};
+  for (const row of data) {
+    const groupKey = `act_${(row.category ?? "system").replace(/[^a-z_]/gi, "_")}` as TokenDef["group"];
+    const def: TokenDef = {
+      key: row.token_key,
+      label: row.ui_label,
+      tokenString: `{{${row.token_key}}}`,
+      group: groupKey,
+      badge: DATA_TYPE_BADGES[row.data_type] ?? row.data_type ?? "Текст",
+      searchKeywords: `${row.ui_label} ${row.token_key} ${row.description ?? ""}`,
+    };
+    const cat = row.category ?? "system";
+    (byCategory[cat] ||= []).push(def);
+  }
+  return byCategory;
+}
+
 export function setProductFieldsCache(fields: TokenDef[]) {
   _productFieldsCache = fields;
 }
