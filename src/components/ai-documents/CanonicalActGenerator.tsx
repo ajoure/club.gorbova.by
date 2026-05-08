@@ -17,15 +17,16 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, FileText, Eye, Download, AlertTriangle, CheckCircle2, Lock } from "lucide-react";
+import { Loader2, FileText, Eye, Download, AlertTriangle, CheckCircle2, Lock, Search, X, Package, User, Building2 } from "lucide-react";
 import { toast } from "sonner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Info } from "lucide-react";
 import { DocumentsHowItWorks } from "./DocumentsHowItWorks";
+import { OrderPickerDialog, type OrderPickResult } from "./OrderPickerDialog";
+import { LegalDetailsPickerDialog, type LegalDetailsPickResult } from "./LegalDetailsPickerDialog";
 
 function FieldHint({ text }: { text: string }) {
   return (
@@ -94,11 +95,17 @@ const MISSING_HINTS: Record<string, string> = {
 export function CanonicalActGenerator() {
   const [templateId, setTemplateId] = useState<string>("");
   const [contextType, setContextType] = useState<"none" | "order">("none");
-  const [contextId, setContextId] = useState<string>("");
-  const [legalDetailsId, setLegalDetailsId] = useState<string>("");
+  const [orderPick, setOrderPick] = useState<OrderPickResult | null>(null);
+  const [legalPick, setLegalPick] = useState<LegalDetailsPickResult | null>(null);
+  const [orderPickerOpen, setOrderPickerOpen] = useState(false);
+  const [legalPickerOpen, setLegalPickerOpen] = useState(false);
   const [preview, setPreview] = useState<PreviewPayload | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [lastGenerated, setLastGenerated] = useState<{ document_number: string; download_url?: string; reused?: boolean } | null>(null);
+
+  const contextId = orderPick?.id ?? "";
+  const legalDetailsId = legalPick?.id ?? "";
 
   const { data: flagRow } = useQuery({
     queryKey: ["docs-canonical-flag"],
@@ -163,14 +170,11 @@ export function CanonicalActGenerator() {
         return;
       }
       toast.success(`Документ сформирован: ${data.document_number}${data.reused ? " (загружен из истории)" : ""}`);
-      if (data.download_url) {
-        const a = document.createElement("a");
-        a.href = data.download_url;
-        a.download = `${data.document_number}.docx`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-      }
+      setLastGenerated({
+        document_number: data.document_number,
+        download_url: data.download_url,
+        reused: !!data.reused,
+      });
     } catch (e: any) {
       toast.error(`Ошибка генерации: ${e?.message || e}`);
     } finally {
@@ -231,19 +235,59 @@ export function CanonicalActGenerator() {
             {contextType === "order" && (
               <div className="space-y-1.5">
                 <Label className="flex items-center gap-1.5">
-                  Номер / ID заказа
-                  <FieldHint text="Укажите ID заказа, по которому нужно сформировать акт. Система возьмёт сумму, продукт, тариф и клиента из этого заказа." />
+                  Заказ
+                  <FieldHint text="Найдите заказ по номеру или email клиента. Система возьмёт сумму, продукт, тариф и клиента из этого заказа." />
                 </Label>
-                <Input value={contextId} onChange={(e) => setContextId(e.target.value)} placeholder="ID заказа" />
+                {orderPick ? (
+                  <div className="flex items-start gap-2 rounded-md border bg-muted/30 p-2">
+                    <Package className="h-4 w-4 mt-0.5 text-indigo-500" />
+                    <div className="flex-1 min-w-0 text-xs">
+                      <div className="font-mono font-medium">{orderPick.order_number}</div>
+                      <div className="text-muted-foreground truncate">
+                        {orderPick.product_name || "—"} · {orderPick.final_price.toFixed(2)} {orderPick.currency}
+                        {orderPick.customer_email ? ` · ${orderPick.customer_email}` : ""}
+                      </div>
+                    </div>
+                    <Button size="sm" variant="ghost" onClick={() => setOrderPickerOpen(true)}>Изменить</Button>
+                    <Button size="sm" variant="ghost" onClick={() => { setOrderPick(null); setPreview(null); }}>
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ) : (
+                  <Button variant="outline" className="w-full justify-start" onClick={() => setOrderPickerOpen(true)}>
+                    <Search className="h-4 w-4 mr-2" /> Выбрать заказ
+                  </Button>
+                )}
               </div>
             )}
 
             <div className="space-y-1.5">
               <Label className="flex items-center gap-1.5">
                 Реквизиты клиента (необязательно)
-                <FieldHint text="Можно указать конкретные реквизиты клиента, если у клиента их несколько." />
+                <FieldHint text="Если у клиента несколько комплектов реквизитов — выберите нужный. Иначе система возьмёт реквизиты по умолчанию." />
               </Label>
-              <Input value={legalDetailsId} onChange={(e) => setLegalDetailsId(e.target.value)} placeholder="ID реквизитов" />
+              {legalPick ? (
+                <div className="flex items-start gap-2 rounded-md border bg-muted/30 p-2">
+                  {legalPick.client_type === "individual"
+                    ? <User className="h-4 w-4 mt-0.5 text-muted-foreground" />
+                    : <Building2 className="h-4 w-4 mt-0.5 text-indigo-500" />}
+                  <div className="flex-1 min-w-0 text-xs">
+                    <div className="font-medium truncate">{legalPick.display_name}</div>
+                    <div className="text-muted-foreground truncate">
+                      {legalPick.display_unp ? `УНП ${legalPick.display_unp}` : ""}
+                      {legalPick.email ? ` · ${legalPick.email}` : ""}
+                    </div>
+                  </div>
+                  <Button size="sm" variant="ghost" onClick={() => setLegalPickerOpen(true)}>Изменить</Button>
+                  <Button size="sm" variant="ghost" onClick={() => { setLegalPick(null); setPreview(null); }}>
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ) : (
+                <Button variant="outline" className="w-full justify-start" onClick={() => setLegalPickerOpen(true)}>
+                  <Search className="h-4 w-4 mr-2" /> Выбрать реквизиты
+                </Button>
+              )}
             </div>
           </div>
 
@@ -389,6 +433,45 @@ export function CanonicalActGenerator() {
           </CardContent>
         </Card>
       )}
+
+      {lastGenerated && (
+        <Card className="border-emerald-200 bg-emerald-50/40">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+              Документ сформирован
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex items-center gap-3 flex-wrap">
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium font-mono">{lastGenerated.document_number}.docx</div>
+              <div className="text-xs text-muted-foreground">
+                {lastGenerated.reused ? "Загружен из истории (повторная генерация по тому же ключу)." : "Сохранён в истории документов."}
+              </div>
+            </div>
+            {lastGenerated.download_url && (
+              <Button asChild>
+                <a href={lastGenerated.download_url} download={`${lastGenerated.document_number}.docx`}>
+                  <Download className="h-4 w-4 mr-2" /> Скачать DOCX
+                </a>
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" onClick={() => setLastGenerated(null)}>Скрыть</Button>
+          </CardContent>
+        </Card>
+      )}
+
+      <OrderPickerDialog
+        open={orderPickerOpen}
+        onOpenChange={setOrderPickerOpen}
+        onSelect={(o) => { setOrderPick(o); setPreview(null); }}
+      />
+      <LegalDetailsPickerDialog
+        open={legalPickerOpen}
+        onOpenChange={setLegalPickerOpen}
+        profileId={null}
+        onSelect={(l) => { setLegalPick(l); setPreview(null); }}
+      />
     </div>
   );
 }
