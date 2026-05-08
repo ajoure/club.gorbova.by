@@ -207,8 +207,8 @@ export function PlaceholdersCatalogTab() {
                 filtered.map(t => {
                   const isOpen = expanded.has(t.id);
                   return (
-                    <>
-                      <TableRow key={t.id} className="hover:bg-muted/40">
+                    <Fragment key={t.id}>
+                      <TableRow className="hover:bg-muted/40">
                         <TableCell className="p-1">
                           <Button
                             size="icon" variant="ghost" className="h-6 w-6"
