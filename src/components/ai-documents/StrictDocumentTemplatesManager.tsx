@@ -175,7 +175,8 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
   const [uploading, setUploading] = useState(false);
 
   const [deleteId, setDeleteId] = useState<string | null>(null);
-
+  const [markupVersion, setMarkupVersion] = useState<VersionRow | null>(null);
+  const [markupTemplateName, setMarkupTemplateName] = useState<string>("");
   const fetchAll = async () => {
     setLoading(true);
     const [{ data: t }, { data: v }, { data: f }] = await Promise.all([
