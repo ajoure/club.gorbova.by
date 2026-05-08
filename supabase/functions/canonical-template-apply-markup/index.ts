@@ -522,7 +522,6 @@ Deno.serve(async (req) => {
         tokens: parsed.tokens as any,
         validation_status: validationStatus,
         validation_errors: validationErrors as any,
-        validation_warnings: validationWarnings as any,
         validation_checked_at: new Date().toISOString(),
         markup_status: 'marked',
         notes: body.new_version_notes ?? null,
