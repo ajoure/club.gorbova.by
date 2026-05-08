@@ -385,6 +385,20 @@ export function AiDocumentsHistoryView() {
                 <div className="flex items-center gap-2 pl-6">
                   <FileText className="h-4 w-4 text-primary shrink-0" />
                   <span className="text-sm font-medium truncate max-w-[200px]">{doc.title}</span>
+                  {(() => {
+                    const chk = getDocxCheck(doc);
+                    if (!chk) return null;
+                    const hasUnresolved = (chk.unresolved_count || 0) > 0;
+                    return hasUnresolved ? (
+                      <Badge variant="outline" className="text-amber-700 border-amber-300 text-[10px] px-1.5 py-0">
+                        <AlertTriangle className="h-2.5 w-2.5 mr-1" /> Проверка
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-emerald-700 border-emerald-300 text-[10px] px-1.5 py-0">
+                        <CheckCircle2 className="h-2.5 w-2.5 mr-1" /> OK
+                      </Badge>
+                    );
+                  })()}
                 </div>
               </TableCell>
               <TableCell className="text-sm text-muted-foreground truncate max-w-[150px]">
