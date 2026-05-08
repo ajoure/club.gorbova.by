@@ -43,7 +43,33 @@ export interface TokenDef {
   key: string;
   label: string;
   tokenString: string;
-  group: "contact" | "datetime" | "product" | "legal_details" | "person" | "entity_person" | "document" | "meeting" | "entity" | "package_role" | "package_default" | "package_array" | "agenda" | "decision";
+  group:
+    | "contact"
+    | "datetime"
+    | "product"
+    | "legal_details"
+    | "person"
+    | "entity_person"
+    | "document"
+    | "meeting"
+    | "entity"
+    | "package_role"
+    | "package_default"
+    | "package_array"
+    | "agenda"
+    | "decision"
+    // Sprint 10: act-document context groups (loaded from document_token_registry by category)
+    | "act_contact"
+    | "act_customer"
+    | "act_customer_signer"
+    | "act_executor"
+    | "act_order"
+    | "act_product"
+    | "act_tariff"
+    | "act_offer"
+    | "act_document"
+    | "act_system"
+    | "act_legal_details";
   badge: string;
   searchKeywords: string;
 }
