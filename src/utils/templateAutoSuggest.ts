@@ -8,11 +8,16 @@
  */
 import { supabase } from "@/integrations/supabase/client";
 
+export type FieldDataType =
+  | "string" | "text" | "number" | "money" | "date" | "datetime" | "boolean"
+  | "enum" | "json" | "email" | "phone";
+
 export interface RegistryFieldRef {
   field_public_id: string;
   token_key: string;
   ui_label: string;
   category: string;
+  data_type: FieldDataType | string;
 }
 
 export type SuggestionStatus = "suggested" | "accepted" | "changed" | "skipped";
