@@ -43,7 +43,7 @@ export async function loadRegistryRefs(): Promise<RegistryFieldRef[]> {
   if (_registryCache) return _registryCache;
   const { data } = await supabase
     .from("document_token_registry")
-    .select("token_key, ui_label, category, fields_registry!document_token_registry_field_id_fkey(public_id)")
+    .select("token_key, ui_label, category, fields_registry!document_token_registry_field_id_fkey(public_id, data_type)")
     .is("archived_at", null);
   const refs: RegistryFieldRef[] = [];
   for (const row of (data ?? []) as any[]) {
@@ -54,6 +54,7 @@ export async function loadRegistryRefs(): Promise<RegistryFieldRef[]> {
       token_key: row.token_key,
       ui_label: row.ui_label,
       category: row.category,
+      data_type: row.fields_registry?.data_type ?? "string",
     });
   }
   _registryCache = refs;
