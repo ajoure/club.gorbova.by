@@ -295,3 +295,4 @@ DialogContent  (h-[86vh] max-w-5xl, flex flex-col, overflow-hidden)
 - Флаги `documents_canonical_generation_enabled` и `documents_service_act_auto_generation_enabled` не трогали — остаются `false`.
 - Email/Telegram/auto-send/batch — не трогали.
 - Новых таблиц/колонок не
+ создавали.
