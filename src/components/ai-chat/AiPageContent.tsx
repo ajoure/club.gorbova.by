@@ -47,9 +47,7 @@ import {
 } from "lucide-react";
 
 /* ─── Lazy-loaded content components ─── */
-const LazyDocumentTemplatesContent = lazy(() =>
-  import("@/pages/admin/AdminDocumentTemplates").then(m => ({ default: m.DocumentTemplatesContent }))
-);
+// Sprint 11 C1: legacy AdminDocumentTemplates отключён, новый strict flow — ниже.
 const LazyExecutorsContent = lazy(() =>
   import("@/pages/admin/AdminExecutors").then(m => ({ default: m.ExecutorsContent }))
 );
