@@ -789,18 +789,35 @@ export function TemplateMarkupDialog({
         </div>
 
         <DialogFooter className="flex-shrink-0 px-5 py-3 border-t bg-background sm:justify-between">
-          <div className="text-[11px] text-muted-foreground">
-            Используются только поля FLD. Принято: <b>{acceptedCount}</b> · всего: <b>{replacements.length}</b>
+          <div className="text-[11px] text-muted-foreground space-y-0.5 max-w-[60%]">
+            <div>
+              Используются только поля FLD. Принято: <b>{acceptedCount}</b> · всего: <b>{replacements.length}</b>
+            </div>
+            {disabledReason && (
+              <div className="text-amber-700 inline-flex items-center gap-1">
+                <AlertTriangle className="h-3 w-3 shrink-0" />
+                <span>{disabledReason}</span>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={applying || activating}>
               Закрыть
             </Button>
-            <Button variant="outline" onClick={() => apply(false)} disabled={!canApply || applying || activating}>
+            <Button
+              variant="outline"
+              onClick={() => apply(false)}
+              disabled={!canApply || applying || activating}
+              title={disabledReason ?? "Создать новую версию шаблона с применёнными заменами"}
+            >
               {applying ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Sparkles className="h-4 w-4 mr-1" />}
               Применить (создать версию)
             </Button>
-            <Button onClick={() => apply(true)} disabled={!canApply || applying || activating}>
+            <Button
+              onClick={() => apply(true)}
+              disabled={!canApply || applying || activating}
+              title={disabledReason ?? "Создать версию и сделать её активной (если валидна)"}
+            >
               {activating ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />}
               Применить и активировать
             </Button>
