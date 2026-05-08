@@ -165,23 +165,8 @@ export function TemplateMarkupDialog({
             description: `Replacements: ${draft.replacements.length}. Сохранён ${new Date(draft.updated_at).toLocaleString("ru-RU")}`,
           });
         } else {
-          const sug = await buildAutoSuggestions(txt);
-          if (cancelled) return;
-          setReplacements(sug.map<Replacement>((s) => ({
-            id: s.id,
-            source: "auto",
-            original_text: s.original_text,
-            field_public_id: s.field_public_id,
-            format: (s.format ?? null) as FieldFormat | null,
-            case_modifier: (s.case_modifier ?? null) as FieldCase | null,
-            data_type: s.data_type ?? null,
-            placeholder: s.placeholder,
-            status: s.status as Replacement["status"],
-            occurrence_index: null,
-            occurrences_total: countOccurrences(txt, s.original_text),
-            reason: s.reason,
-            confidence: s.confidence,
-          })));
+          // По умолчанию правая панель пустая. Auto-suggest запускается явной кнопкой.
+          setReplacements([]);
         }
         setDraftLoaded(true);
         await supabase.functions.invoke("canonical-template-audit", {
