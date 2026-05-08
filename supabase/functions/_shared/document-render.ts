@@ -552,7 +552,7 @@ export async function generateCanonicalDocument(
     missing_tokens: payload.missing_tokens,
     template_tokens_snapshot: { tokens: payload.template_tokens, manifest: payload.token_manifest },
     token_manifest_snapshot: payload.resolved_tokens,
-    warnings_snapshot: payload.warnings,
+    warnings_snapshot: [...payload.warnings, ...checkWarnings],
     source_trace: {
       resolver_version: CANONICAL_RESOLVER_VERSION,
       idempotency_key: idempotencyKey,
@@ -565,10 +565,33 @@ export async function generateCanonicalDocument(
     context_id: input.context_id || null,
     idempotency_key: idempotencyKey,
     created_by: opts.userId,
-    meta: { canonical: true },
+    meta: { canonical: true, docx_check: docxCheck },
   }).select('id').single();
 
   if (insErr) return { success: false, payload, error: `insert_failed:${insErr.message}` };
+
+  // Audit logs (Sprint 9)
+  try {
+    await supabase.from('audit_logs').insert([
+      {
+        action: 'document.generated_docx_checked',
+        entity_type: 'ai_generated_document',
+        entity_id: insertRow.id,
+        meta: {
+          file_size: docxCheck.file_size,
+          mime: docxCheck.mime,
+          unresolved_count: docxCheck.unresolved_count,
+          ok: docxCheck.ok,
+        },
+      },
+      ...(docxCheck.unresolved_count > 0 ? [{
+        action: 'document.generated_docx_has_unresolved_tokens',
+        entity_type: 'ai_generated_document',
+        entity_id: insertRow.id,
+        meta: { unresolved_tokens: docxCheck.unresolved_tokens },
+      }] : []),
+    ]);
+  } catch (_e) { /* audit best-effort */ }
 
   const { data: signed } = await supabase.storage.from(outBucket).createSignedUrl(filePath, 86400);
   return {
@@ -579,5 +602,6 @@ export async function generateCanonicalDocument(
     download_url: signed?.signedUrl,
     storage_path: filePath,
     reused: false,
-  };
+    docx_check: docxCheck,
+  } as any;
 }
