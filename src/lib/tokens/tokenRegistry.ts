@@ -508,7 +508,7 @@ export type ArrayTokenResolverContract = {
  * 
  * New integrations MUST use tokenContext. Do NOT use extraTokenGroups for new features.
  */
-export type TokenContext = "messages" | "documents" | "documents:annual_meeting";
+export type TokenContext = "messages" | "documents" | "documents:annual_meeting" | "documents:act";
 
 /**
  * Load and cache all token groups required by a given context.
@@ -545,6 +545,12 @@ export async function loadTokensForContext(context: TokenContext): Promise<void>
       }),
       loadAgendaFields().then(setAgendaFieldsCache),
       loadDecisionFields().then(setDecisionFieldsCache),
+    );
+  }
+
+  if (context === "documents:act") {
+    promises.push(
+      loadActDocumentTokens().then(setActTokensByCategoryCache),
     );
   }
 
