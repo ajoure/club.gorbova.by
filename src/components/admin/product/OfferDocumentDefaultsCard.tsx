@@ -39,33 +39,106 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function OfferDocumentDefaultsCard({ value, onChange }: Props) {
+export function OfferDocumentDefaultsCard({ value, onChange, offerAmount, offerCurrency }: Props) {
   const v = value ?? {};
   const set = (patch: Partial<OfferDocumentDefaults>) => onChange({ ...v, ...patch });
 
   const [templates, setTemplates] = useState<TemplateOpt[]>([]);
   const [executors, setExecutors] = useState<ExecutorOpt[]>([]);
   const [showTechIds, setShowTechIds] = useState(false);
+  const initRef = useRef(false);
+  const lastOfferAmount = useRef<number | undefined>(offerAmount);
+  const lastOfferCurrency = useRef<string | undefined>(offerCurrency);
 
+  // PATCH DOC-OFFER-1/2: первичный авто-fill при открытии вкладки.
   useEffect(() => {
-    (async () => {
-      const [{ data: tpl }, { data: exec }] = await Promise.all([
-        supabase
-          .from("document_templates")
-          .select("id, name, code")
-          .eq("is_active", true)
-          .order("name", { ascending: true }),
-        supabase
-          .from("executors")
-          .select("id, short_name, full_name, is_default")
-          .eq("is_active", true)
-          .order("is_default", { ascending: false })
-          .order("short_name", { ascending: true }),
-      ]);
-      setTemplates((tpl ?? []) as TemplateOpt[]);
-      setExecutors((exec ?? []) as ExecutorOpt[]);
-    })();
+    if (initRef.current) return;
+    initRef.current = true;
+    const patch: Partial<OfferDocumentDefaults> = {};
+    if ((v.unit_price ?? null) === null && typeof offerAmount === "number") patch.unit_price = offerAmount;
+    if ((v.quantity ?? null) === null) patch.quantity = 1;
+    const up = patch.unit_price ?? v.unit_price ?? offerAmount ?? null;
+    const qty = patch.quantity ?? v.quantity ?? 1;
+    if ((v.amount ?? null) === null && typeof up === "number") patch.amount = Number((up * qty).toFixed(2));
+    if ((v.currency ?? null) === null) patch.currency = offerCurrency || DEFAULT_CURRENCY;
+    if (Object.keys(patch).length > 0) onChange({ ...v, ...patch });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // PATCH DOC-OFFER-2: реакция на смену суммы кнопки.
+  useEffect(() => {
+    if (!initRef.current) return;
+    if (offerAmount === lastOfferAmount.current) return;
+    lastOfferAmount.current = offerAmount;
+    if (typeof offerAmount !== "number") return;
+    if (v.amount_manual_override) return; // уважаем ручной override — не перетираем
+    const qty = v.quantity ?? 1;
+    onChange({
+      ...v,
+      unit_price: offerAmount,
+      quantity: qty,
+      amount: Number((offerAmount * qty).toFixed(2)),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [offerAmount]);
+
+  // PATCH DOC-OFFER-3: реакция на смену валюты кнопки.
+  useEffect(() => {
+    if (!initRef.current) return;
+    if (offerCurrency === lastOfferCurrency.current) return;
+    lastOfferCurrency.current = offerCurrency;
+    if (!offerCurrency) return;
+    if (v.currency_manual_override) return;
+    onChange({ ...v, currency: offerCurrency });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [offerCurrency]);
+
+  const handleQuantityChange = (raw: string) => {
+    const qty = num(raw);
+    const up = v.unit_price ?? null;
+    const next: Partial<OfferDocumentDefaults> = { quantity: qty };
+    if (!v.amount_manual_override && typeof up === "number" && typeof qty === "number") {
+      next.amount = Number((up * qty).toFixed(2));
+    }
+    set(next);
+  };
+
+  const handleUnitPriceChange = (raw: string) => {
+    const up = num(raw);
+    const qty = v.quantity ?? 1;
+    const next: Partial<OfferDocumentDefaults> = { unit_price: up };
+    if (!v.amount_manual_override && typeof up === "number") {
+      next.amount = Number((up * qty).toFixed(2));
+    }
+    set(next);
+  };
+
+  const handleAmountChange = (raw: string) => {
+    set({ amount: num(raw), amount_manual_override: true });
+  };
+
+  const handleResetAmountFromOffer = () => {
+    if (typeof offerAmount !== "number") return;
+    const qty = v.quantity ?? 1;
+    onChange({
+      ...v,
+      unit_price: offerAmount,
+      quantity: qty,
+      amount: Number((offerAmount * qty).toFixed(2)),
+      amount_manual_override: false,
+    });
+  };
+
+  const handleCurrencyChange = (val: string) => {
+    set({ currency: val, currency_manual_override: val !== (offerCurrency || DEFAULT_CURRENCY) });
+  };
+
+  const computedAmount =
+    typeof v.unit_price === "number" && typeof v.quantity === "number"
+      ? Number((v.unit_price * v.quantity).toFixed(2))
+      : null;
+  const amountMismatch =
+    v.amount_manual_override && computedAmount !== null && computedAmount !== v.amount;
 
   return (
     <Card>
@@ -76,6 +149,13 @@ export function OfferDocumentDefaultsCard({ value, onChange }: Props) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-5">
+        <div className="rounded-md bg-muted/40 border border-border/40 p-2.5 text-xs text-muted-foreground flex gap-2">
+          <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-indigo-500" />
+          <span>
+            По умолчанию сумма акта берётся из суммы кнопки оплаты. Количество = 1.
+            Если изменить количество или цену за единицу, сумма акта пересчитается автоматически.
+          </span>
+        </div>
         <div className="flex items-center justify-between">
           <div>
             <Label>Формировать акт</Label>
