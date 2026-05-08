@@ -824,42 +824,38 @@ export function TemplateMarkupDialog({
           </div>
         </DialogFooter>
 
-        {/* Picker (общий) — virtual anchor у выделения / chip / legacy */}
-        <Popover
-          open={pickerOpen}
-          onOpenChange={(o) => {
-            setPickerOpen(o);
-            if (!o) setPickerContext(null);
-          }}
-        >
-          <PopoverTrigger asChild>
-            <span style={pickerAnchorStyle} aria-hidden="true" />
-          </PopoverTrigger>
-          <PopoverContent
-            align="start"
-            sideOffset={8}
-            className="p-0 bg-popover border shadow-lg z-[60] overflow-hidden"
-            style={{
-              width: 440,
-              maxHeight: "min(520px, calc(100vh - 160px))",
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            <PickerBody
-              context={pickerContext}
+        {/* Picker полей — стабильный, без cmdk */}
+        {(() => {
+          const currentChip = pickerContext?.kind === "chip"
+            ? replacements.find((r) => r.id === pickerContext.replacementId) ?? null
+            : null;
+          const contextLabel =
+            pickerContext?.kind === "selection"
+              ? `Заменяем выделенное: «${pickerContext.text.slice(0, 80)}${pickerContext.text.length > 80 ? "…" : ""}»`
+              : pickerContext?.kind === "legacy"
+                ? `Заменяем плейсхолдер: ${pickerContext.text}`
+                : pickerContext?.kind === "chip"
+                  ? `Изменить поле: ${currentChip?.visual_label ?? currentChip?.field_public_id ?? ""}`
+                  : "Выбор FLD-поля";
+          return (
+            <FieldPickerPopover
+              open={pickerOpen}
+              onOpenChange={(o) => {
+                setPickerOpen(o);
+                if (!o) setPickerContext(null);
+              }}
+              anchor={pickerAnchor}
+              contextLabel={contextLabel}
+              currentFld={currentChip?.field_public_id ?? null}
               refs={refs}
-              refsByCategory={refsByCategory}
-              currentReplacement={
-                pickerContext?.kind === "chip"
-                  ? replacements.find((r) => r.id === pickerContext.replacementId) ?? null
-                  : null
-              }
-              onConfirm={applyPickerResult}
-              onCancel={() => { setPickerOpen(false); setPickerContext(null); }}
+              onPick={(res) => applyPickerResult(res.fld, {
+                format: res.format,
+                caseModifier: res.caseModifier,
+                data_type: res.data_type,
+              })}
             />
-          </PopoverContent>
-        </Popover>
+          );
+        })()}
 
         {/* Sheet: Замены */}
         <Sheet open={showReplacements} onOpenChange={setShowReplacements}>
