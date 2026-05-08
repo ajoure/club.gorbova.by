@@ -12,6 +12,7 @@ import { AiDocumentsHistoryView } from "@/components/ai-documents/AiDocumentsHis
 import { CanonicalActGenerator } from "@/components/ai-documents/CanonicalActGenerator";
 import { CanonicalTemplateVersionsPanel } from "@/components/ai-documents/CanonicalTemplateVersionsPanel";
 import { AliasesTab } from "@/components/ai-documents/AliasesTab";
+import { PlaceholdersCatalogTab } from "@/components/ai-documents/PlaceholdersCatalogTab";
 import type { PersonRow } from "@/hooks/useAiPersons";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { cn } from "@/lib/utils";
@@ -43,6 +44,7 @@ import {
   Plus,
   Loader2,
   Paperclip,
+  Tag,
 } from "lucide-react";
 
 /* ─── Lazy-loaded content components ─── */
@@ -56,7 +58,7 @@ const LazyExecutorsContent = lazy(() =>
 /* ─── Конфигурация секций и подменю ─── */
 
 type Section = "ai" | "documents" | "requisites";
-type SubTab = "chat" | "analysis-history" | "tutorials" | "prompts" | "generate" | "history" | "templates" | "executors" | "entities" | "persons" | "canonical-acts" | "aliases";
+type SubTab = "chat" | "analysis-history" | "tutorials" | "prompts" | "generate" | "history" | "templates" | "executors" | "entities" | "persons" | "canonical-acts" | "aliases" | "placeholders";
 
 const SECTIONS: { id: Section; label: string; icon: React.ComponentType<{ className?: string }>; adminOnly?: boolean }[] = [
   { id: "ai", label: "Gorbova AI", icon: Bot },
@@ -135,6 +137,16 @@ const DOC_SUB_TABS: SubMenuItem[] = [
     activeGradient: "from-fuchsia-500/20 to-pink-500/15",
     borderColor: "border-fuchsia-400/20",
     iconColor: "text-fuchsia-600",
+    adminOnly: true,
+  },
+  {
+    id: "placeholders",
+    label: "Плейсхолдеры",
+    icon: Tag as any,
+    gradient: "from-indigo-500/10 to-violet-500/8",
+    activeGradient: "from-indigo-500/20 to-violet-500/15",
+    borderColor: "border-indigo-400/20",
+    iconColor: "text-indigo-500",
     adminOnly: true,
   },
   {
@@ -861,6 +873,11 @@ export function AiPageContent({ mode }: AiPageContentProps) {
         <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto space-y-4">
           <CanonicalActGenerator />
           <CanonicalTemplateVersionsPanel />
+        </div>
+      )}
+      {activeSubTab === "placeholders" && (
+        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
+          <PlaceholdersCatalogTab />
         </div>
       )}
       {activeSubTab === "history" && (

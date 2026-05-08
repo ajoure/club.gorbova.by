@@ -45,6 +45,7 @@ import { useDragSelect } from "@/hooks/useDragSelect";
 import { type TariffMetaConfig } from "@/components/admin/product/TariffWelcomeMessageEditor";
 import { OfferWelcomeMessageEditor } from "@/components/admin/product/OfferWelcomeMessageEditor";
 import { OfferCrmRoutingSection, validateCrmRoutingForSave } from "@/components/admin/OfferCrmRoutingSection";
+import { OfferDocumentDefaultsCard } from "@/components/admin/product/OfferDocumentDefaultsCard";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -686,6 +687,59 @@ export default function AdminProductDetailV2() {
     await updateOffer.mutateAsync({ id, button_label: label });
   };
 
+  // Sprint 10: copy a payment button (offer) as a new INACTIVE one.
+  // Copies all functional fields including meta.document_defaults; resets is_primary
+  // and forces is_active=false to avoid accidental publication / payment-link conflicts.
+  const handleCopyOffer = async (offer: any) => {
+    try {
+      const meta = (offer.meta ? { ...offer.meta } : {}) as OfferMetaConfig;
+      // Don't copy crm_routing payment-link conflicts: keep crm_routing but reset welcome message media path
+      const insert: TariffOfferInsert = {
+        tariff_id: offer.tariff_id,
+        offer_type: offer.offer_type,
+        button_label: `${offer.button_label} (копия)`,
+        amount: offer.amount,
+        reentry_amount: offer.reentry_amount ?? null,
+        trial_days: offer.trial_days ?? null,
+        auto_charge_after_trial: !!offer.auto_charge_after_trial,
+        auto_charge_amount: null,
+        auto_charge_delay_days: offer.auto_charge_delay_days ?? null,
+        auto_charge_offer_id: offer.auto_charge_offer_id ?? null,
+        requires_card_tokenization: !!offer.requires_card_tokenization,
+        is_active: false, // safety: never auto-activate
+        is_primary: false, // safety: never auto-promote
+        visible_from: null,
+        visible_to: null,
+        sort_order: (offer.sort_order ?? 0),
+        getcourse_offer_id: null, // do not copy provider-side ID
+        reject_virtual_cards: !!offer.reject_virtual_cards,
+        payment_method: offer.payment_method ?? "full_payment",
+        installment_count: offer.installment_count ?? null,
+        installment_interval_days: offer.installment_interval_days ?? null,
+        first_payment_delay_days: offer.first_payment_delay_days ?? null,
+        meta: Object.keys(meta).length > 0 ? meta : null,
+      };
+      await createOffer.mutateAsync(insert);
+      // Best-effort audit log; non-blocking
+      try {
+        await supabase.from("audit_logs").insert({
+          action: "offer.copied",
+          actor_type: "admin",
+          meta: {
+            source_offer_id: offer.id,
+            tariff_id: offer.tariff_id,
+            copied_document_defaults: !!meta.document_defaults,
+          },
+        });
+      } catch {
+        /* audit best-effort */
+      }
+      toast.success("Кнопка скопирована (выключена)");
+    } catch (e: any) {
+      toast.error(e?.message || "Не удалось скопировать кнопку");
+    }
+  };
+
   // Flow handlers
   const openFlowDialog = (flow?: any) => {
     if (flow) {
@@ -806,7 +860,7 @@ export default function AdminProductDetailV2() {
               </TabsTrigger>
               <TabsTrigger value="custom_fields" className="gap-1.5 text-xs">
                 <Settings2 className="h-3.5 w-3.5" />
-                Доп. поля
+                Документы
               </TabsTrigger>
               <TabsTrigger value="composition" className="gap-1.5 text-xs">
                 <FolderTree className="h-3.5 w-3.5" />
@@ -1011,6 +1065,7 @@ export default function AdminProductDetailV2() {
                                   onUpdateLabel={handleUpdateOfferLabel}
                                   onSetPrimary={(offerId) => setPrimaryOffer.mutate({ offerId, tariffId: tariff.id })}
                                   onEdit={() => openOfferDialog(offer)}
+                                  onCopy={() => handleCopyOffer(offer)}
                                   onDelete={() => setDeleteConfirm({ type: "offer", id: offer.id })}
                                   hasPrimaryInTariff={hasActivePayOffer}
                                 />
@@ -2392,6 +2447,15 @@ export default function AdminProductDetailV2() {
                   onChange={(next) => setOfferForm({
                     ...offerForm,
                     meta: { ...offerForm.meta, crm_routing: next },
+                  })}
+                />
+
+                {/* Sprint 10: defaults for document generation */}
+                <OfferDocumentDefaultsCard
+                  value={offerForm.meta?.document_defaults}
+                  onChange={(next) => setOfferForm({
+                    ...offerForm,
+                    meta: { ...offerForm.meta, document_defaults: next },
                   })}
                 />
               </CollapsibleContent>

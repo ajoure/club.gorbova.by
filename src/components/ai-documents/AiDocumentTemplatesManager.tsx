@@ -379,7 +379,7 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
                       onChange={(v) => setForm({ ...form, template_notes: v })}
                       placeholder="Например: В этом шаблоне используется [Дата собрания] и [ФИО подписанта]..."
                       rows={3}
-                      tokenContext="documents:annual_meeting"
+                      tokenContext="documents:act"
                     />
                   </div>
                   <div className="flex items-center justify-between">

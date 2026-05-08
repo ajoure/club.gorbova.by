@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
-import { Pencil, Trash2, Check, X, Star, CreditCard, Calendar } from "lucide-react";
+import { Pencil, Trash2, Check, X, Star, CreditCard, Calendar, Copy } from "lucide-react";
 import type { PaymentMethod, OfferMetaConfig } from "@/hooks/useTariffOffers";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -30,6 +30,7 @@ interface OfferRowCompactProps {
   onSetPrimary?: (id: string) => void;
   onEdit: () => void;
   onDelete: () => void;
+  onCopy?: () => void;
   hasPrimaryInTariff?: boolean;
 }
 
@@ -40,6 +41,7 @@ export function OfferRowCompact({
   onSetPrimary,
   onEdit,
   onDelete,
+  onCopy,
   hasPrimaryInTariff = false,
 }: OfferRowCompactProps) {
   const [isEditing, setIsEditing] = useState(false);
@@ -199,6 +201,11 @@ export function OfferRowCompact({
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onEdit}>
           <Pencil className="h-4 w-4" />
         </Button>
+        {onCopy && (
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onCopy} title="Копировать кнопку">
+            <Copy className="h-4 w-4" />
+          </Button>
+        )}
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onDelete}>
           <Trash2 className="h-4 w-4 text-destructive" />
         </Button>
