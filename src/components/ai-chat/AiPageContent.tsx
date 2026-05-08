@@ -180,7 +180,7 @@ const REQ_SUB_TABS: SubMenuItem[] = [
 
 const DEFAULT_SUB: Record<Section, SubTab> = {
   ai: "chat",
-  documents: "generate",
+  documents: "placeholders",
   requisites: "entities",
 };
 
