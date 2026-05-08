@@ -563,11 +563,14 @@ export function TemplateMarkupDialog({
       return;
     }
     let anchor: { x: number; y: number } | null = null;
+    let occurrenceIndex = 0;
     if (sel?.rangeCount) {
-      const rect = sel.getRangeAt(0).getBoundingClientRect();
+      const range = sel.getRangeAt(0);
+      const rect = range.getBoundingClientRect();
       anchor = { x: rect.left + rect.width / 2, y: rect.bottom };
+      occurrenceIndex = computeOccurrenceIndexAtRange(text, range);
     }
-    setPickerContext({ kind: "selection", text });
+    setPickerContext({ kind: "selection", text, occurrenceIndex });
     setPickerAnchor(anchor);
     setPickerOpen(true);
   };
