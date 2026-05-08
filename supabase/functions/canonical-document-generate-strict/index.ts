@@ -24,6 +24,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import Docxtemplater from 'npm:docxtemplater@3.47.1';
 import PizZip from 'npm:pizzip@3.1.6';
+import { inflectRu, type RuCase } from '../_shared/ru-inflection.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -32,7 +33,7 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const RESOLVER_VERSION = 'strict-1.2.0-c5a';
+const RESOLVER_VERSION = 'strict-1.3.0-c5b';
 
 // ─── Русские числительные / даты «прописью» (C5-A) ─────────────────────────
 const RU_UNITS_M = ['','один','два','три','четыре','пять','шесть','семь','восемь','девять'];
@@ -386,6 +387,8 @@ Deno.serve(async (req) => {
     // case=… пока не применяется (C5-B) — оставляем warning.
     const orderCurrency = (order as any)?.currency || null;
     const appliedFormatByPlaceholder: Record<string, boolean> = {};
+    const appliedCaseByPlaceholder: Record<string, boolean> = {};
+    const caseReasonByPlaceholder: Record<string, string | null> = {};
     const seenPlaceholders = new Set<string>();
     for (const t of parsedTokens) {
       if (seenPlaceholders.has(t.raw_inside)) continue;
@@ -394,9 +397,25 @@ Deno.serve(async (req) => {
       const reg: any = regMap.get(t.field_public_id);
       const dt = ((reg?.data_type as string) || '').toLowerCase();
       const rawValue = entry?.value;
-      const { value: outVal, applied } = applyFormat(rawValue, dt, orderCurrency, t.format);
+      const fmt = applyFormat(rawValue, dt, orderCurrency, t.format);
+      let outVal = fmt.value;
+      let caseApplied = false;
+      let caseReason: string | null = null;
+      if (t.case_modifier) {
+        const allowText = TEXT_DT.has(dt) || dt === '' || dt === 'enum';
+        const wordsApplied = fmt.applied && t.format === 'words';
+        if (allowText || wordsApplied) {
+          const inf = inflectRu(outVal, t.case_modifier as RuCase);
+          if (inf.applied) { outVal = inf.value; caseApplied = true; }
+          else { caseReason = inf.reason || 'inflection_unsafe'; }
+        } else {
+          caseReason = 'case_on_non_text_field_without_words';
+        }
+      }
       resolved[t.raw_inside] = outVal;
-      appliedFormatByPlaceholder[t.raw_inside] = applied;
+      appliedFormatByPlaceholder[t.raw_inside] = fmt.applied;
+      appliedCaseByPlaceholder[t.raw_inside] = caseApplied;
+      caseReasonByPlaceholder[t.raw_inside] = caseReason;
     }
 
     for (const fid of allIds) {
@@ -413,6 +432,7 @@ Deno.serve(async (req) => {
         seenV.add(v.raw_inside);
         const w: string[] = [];
         const applied = appliedFormatByPlaceholder[v.raw_inside] === true;
+        const caseApplied = appliedCaseByPlaceholder[v.raw_inside] === true;
         if (v.format === 'words') {
           if (!applied) w.push('format_words_not_applied');
           if (TEXT_DT.has(dataType)) w.push('format_words_on_text_field');
@@ -422,8 +442,7 @@ Deno.serve(async (req) => {
           if (dataType !== 'boolean') w.push('format_text_on_non_boolean_field');
         }
         if (v.case_modifier) {
-          // C5-B: реальное склонение ещё не реализовано.
-          w.push('case_modifier_not_applied');
+          if (!caseApplied) w.push('case_modifier_not_applied');
           if (NUM_DT.has(dataType) && v.format !== 'words') {
             w.push('case_on_non_text_field_without_words');
           }
@@ -434,6 +453,8 @@ Deno.serve(async (req) => {
           format: v.format,
           case: v.case_modifier,
           format_applied: applied,
+          case_applied: caseApplied,
+          case_reason: caseReasonByPlaceholder[v.raw_inside] ?? null,
           rendered_value: resolved[v.raw_inside] ?? '',
           warnings: w,
         });
