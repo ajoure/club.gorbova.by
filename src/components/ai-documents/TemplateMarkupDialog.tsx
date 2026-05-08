@@ -279,6 +279,45 @@ export function TemplateMarkupDialog({
     sel?.removeAllRanges();
   };
 
+  // ── auto-suggest (явный запуск по кнопке) ──
+  const runAutoSuggest = async () => {
+    if (!plainText) return;
+    setAutoSuggesting(true);
+    try {
+      const sug = await buildAutoSuggestions(plainText);
+      const existingTexts = new Set(replacements.map((r) => `${r.original_text}::${r.field_public_id ?? ""}`));
+      const fresh: Replacement[] = sug
+        .filter((s) => !existingTexts.has(`${s.original_text}::${s.field_public_id ?? ""}`))
+        .map((s) => ({
+          id: s.id,
+          source: "auto",
+          original_text: s.original_text,
+          field_public_id: s.field_public_id,
+          format: (s.format ?? null) as FieldFormat | null,
+          case_modifier: (s.case_modifier ?? null) as FieldCase | null,
+          data_type: s.data_type ?? null,
+          placeholder: s.placeholder,
+          status: s.status as Replacement["status"],
+          occurrence_index: null,
+          occurrences_total: countOccurrences(plainText, s.original_text),
+          reason: s.reason,
+          confidence: s.confidence,
+        }));
+      setReplacements((prev) => [...prev, ...fresh]);
+      toast.success(`Авторазметка: добавлено ${fresh.length} предложений`);
+    } catch (e: any) {
+      toast.error(`Ошибка авторазметки: ${e?.message ?? e}`);
+    } finally {
+      setAutoSuggesting(false);
+    }
+  };
+
+  const clearReplacements = () => {
+    if (replacements.length === 0) return;
+    if (!confirm("Очистить все разметки? Черновик будет очищен.")) return;
+    setReplacements([]);
+  };
+
   const acceptedCount = replacements.filter((r) =>
     r.status === "accepted" || r.status === "changed" || r.status === "manually_added"
   ).length;
