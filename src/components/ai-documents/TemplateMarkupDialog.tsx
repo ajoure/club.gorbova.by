@@ -33,7 +33,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import {
   ChevronsUpDown, Check, Loader2, CheckCircle2, X, Pencil, Sparkles, Plus, Trash2,
-  AlertTriangle, ListChecks, Wand2,
+  AlertTriangle, ListChecks, Wand2, Download,
 } from "lucide-react";
 import { toast } from "sonner";
 import mammoth from "mammoth";
@@ -45,6 +45,7 @@ import {
 import { FieldFormatPicker } from "./FieldFormatPicker";
 import { buildFieldPlaceholder, type FieldCase, type FieldFormat } from "./extensions/FieldChipNode";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { FieldPickerPopover } from "./FieldPickerPopover";
 
 // ───────────────────────── types ─────────────────────────
 
@@ -218,6 +219,7 @@ function renderInteractiveHtml(
           chip.setAttribute("data-fld", target.field_public_id ?? "");
           chip.setAttribute("data-status", target.status);
           chip.setAttribute("contenteditable", "false");
+          chip.setAttribute("title", "Клик — изменить поле, ✕ — отменить замену");
           const labelEl = doc.createElement("span");
           labelEl.className = "docx-chip-label";
           labelEl.textContent = target.visual_label ?? target.field_public_id ?? "поле";
@@ -233,6 +235,14 @@ function renderInteractiveHtml(
             sufEl.textContent = suf;
             chip.appendChild(sufEl);
           }
+          const rm = doc.createElement("button");
+          rm.className = "docx-chip-remove";
+          rm.setAttribute("type", "button");
+          rm.setAttribute("data-chip-action", "remove");
+          rm.setAttribute("aria-label", "Отменить замену");
+          rm.setAttribute("title", "Отменить замену");
+          rm.textContent = "×";
+          chip.appendChild(rm);
           frag.appendChild(chip);
         } else {
           // Не наша occurrence — оставляем текст как есть
@@ -516,13 +526,20 @@ export function TemplateMarkupDialog({
   /** Делегированный обработчик кликов внутри preview. */
   const handlePreviewClick = (e: ReactMouseEvent<HTMLDivElement>) => {
     const t = e.target as HTMLElement;
+    // Крестик удаления внутри chip
+    const removeBtn = t.closest<HTMLElement>('[data-chip-action="remove"]');
+    if (removeBtn) {
+      const ownerChip = removeBtn.closest<HTMLElement>("[data-chip-id]");
+      if (ownerChip) {
+        e.preventDefault();
+        e.stopPropagation();
+        removeReplacement(ownerChip.getAttribute("data-chip-id")!);
+        toast.success("Замена отменена");
+      }
+      return;
+    }
     const chip = t.closest<HTMLElement>("[data-chip-id]");
     if (chip) {
-      // Клик на крестик — удалить
-      if (t.classList.contains("docx-chip-remove")) {
-        removeReplacement(chip.getAttribute("data-chip-id")!);
-        return;
-      }
       const id = chip.getAttribute("data-chip-id")!;
       const rect = chip.getBoundingClientRect();
       setPickerContext({ kind: "chip", replacementId: id });
@@ -537,6 +554,27 @@ export function TemplateMarkupDialog({
       setPickerContext({ kind: "legacy", text });
       setPickerAnchor({ x: rect.left + rect.width / 2, y: rect.bottom });
       setPickerOpen(true);
+    }
+  };
+
+  /** Скачать исходный DOCX из storage. */
+  const downloadOriginalDocx = async () => {
+    if (!templateVersion) return;
+    try {
+      const { data: blob, error } = await supabase.storage
+        .from(templateVersion.storage_bucket)
+        .download(templateVersion.storage_path);
+      if (error) throw error;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = templateVersion.file_name ?? `template-v${templateVersion.version_number}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e: any) {
+      toast.error(`Не удалось скачать DOCX: ${e?.message ?? e}`);
     }
   };
 
@@ -588,8 +626,18 @@ export function TemplateMarkupDialog({
   const ambiguousCount = replacements.filter((r) =>
     isAccepted(r.status) && r.occurrences_total > 1 && r.occurrence_index == null
   ).length;
+  const withoutFldCount = replacements.filter((r) => isAccepted(r.status) && !r.field_public_id).length;
   const suggestedCount = replacements.filter((r) => r.status === "suggested").length;
-  const canApply = acceptedCount > 0 && ambiguousCount === 0;
+  const canApply = acceptedCount > 0 && ambiguousCount === 0 && withoutFldCount === 0;
+
+  /** Причина, по которой кнопка «Применить» недоступна. */
+  const disabledReason = (() => {
+    if (canApply) return null;
+    if (acceptedCount === 0) return "Нет принятых замен с выбранным полем. Кликните по жёлтому плейсхолдеру или выделите текст и выберите поле.";
+    if (ambiguousCount > 0) return `Есть неоднозначные вхождения — укажите номер вхождения для ${ambiguousCount} замен.`;
+    if (withoutFldCount > 0) return `Есть замены без FLD-поля: ${withoutFldCount}. Откройте «Замены» и выберите поле.`;
+    return null;
+  })();
 
   const buildPayload = () => replacements
     .filter((r) => isAccepted(r.status) && r.field_public_id)
@@ -608,12 +656,8 @@ export function TemplateMarkupDialog({
   const apply = async (activate: boolean) => {
     if (!templateVersion) return;
     if (!canApply) {
-      if (ambiguousCount > 0) {
-        toast.error(`Есть ${ambiguousCount} неоднозначных замен — выберите конкретное вхождение в «Заменах»`);
-        setShowReplacements(true);
-      } else {
-        toast.error("Нет принятых замен. Вставьте поля или нажмите «Авторазметка».");
-      }
+      toast.error(disabledReason ?? "Замены не готовы к применению");
+      if (ambiguousCount > 0 || withoutFldCount > 0) setShowReplacements(true);
       return;
     }
     activate ? setActivating(true) : setApplying(true);
@@ -623,6 +667,15 @@ export function TemplateMarkupDialog({
         toast.error("Нет принятых замен с выбранным полем FLD. Выберите поле для каждой замены.");
         return;
       }
+      console.debug("[markup-apply]", {
+        template_version_id: templateVersion.id,
+        total: replacements.length,
+        accepted: acceptedCount,
+        ambiguous: ambiguousCount,
+        without_fld: withoutFldCount,
+        activate,
+        payload_preview: payload.slice(0, 3),
+      });
       const { data, error } = await supabase.functions.invoke("canonical-template-apply-markup", {
         body: { template_version_id: templateVersion.id, replacements: payload, activate },
       });
@@ -662,9 +715,10 @@ export function TemplateMarkupDialog({
           <DialogTitle className="flex items-center gap-2 text-base">
             <Pencil className="h-4 w-4" /> Разметка шаблона: {templateName}
           </DialogTitle>
-          <DialogDescription className="text-xs">
-            DOCX — исходный шаблон. Выделите текст в документе и нажмите «Вставить поле»,
-            либо кликните по жёлтому плейсхолдеру, чтобы заменить его на FLD-поле.
+          <DialogDescription className="text-xs leading-relaxed">
+            Это <b>режим разметки шаблона</b>: здесь вы заменяете старые плейсхолдеры на FLD-поля.
+            Чтобы изменить текст, таблицы, отступы или форматирование — отредактируйте DOCX в Word
+            и загрузите новую версию шаблона.
             {hasDraftSaved && <span className="ml-2 text-emerald-600">· Черновик сохранён</span>}
           </DialogDescription>
         </DialogHeader>
@@ -706,6 +760,9 @@ export function TemplateMarkupDialog({
             <span className="text-[11px] text-muted-foreground">
               v{templateVersion?.version_number} · {templateVersion?.file_name}
             </span>
+            <Button size="sm" variant="outline" onClick={downloadOriginalDocx} disabled={!templateVersion}>
+              <Download className="h-3.5 w-3.5 mr-1" /> Скачать исходный DOCX
+            </Button>
             <Button size="sm" variant="ghost" onClick={clearAll} disabled={replacements.length === 0}>
               <Trash2 className="h-3.5 w-3.5 mr-1" /> Очистить черновик
             </Button>
@@ -733,60 +790,73 @@ export function TemplateMarkupDialog({
         </div>
 
         <DialogFooter className="flex-shrink-0 px-5 py-3 border-t bg-background sm:justify-between">
-          <div className="text-[11px] text-muted-foreground">
-            Используются только поля FLD. Принято: <b>{acceptedCount}</b> · всего: <b>{replacements.length}</b>
+          <div className="text-[11px] text-muted-foreground space-y-0.5 max-w-[60%]">
+            <div>
+              Используются только поля FLD. Принято: <b>{acceptedCount}</b> · всего: <b>{replacements.length}</b>
+            </div>
+            {disabledReason && (
+              <div className="text-amber-700 inline-flex items-center gap-1">
+                <AlertTriangle className="h-3 w-3 shrink-0" />
+                <span>{disabledReason}</span>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={applying || activating}>
               Закрыть
             </Button>
-            <Button variant="outline" onClick={() => apply(false)} disabled={!canApply || applying || activating}>
+            <Button
+              variant="outline"
+              onClick={() => apply(false)}
+              disabled={!canApply || applying || activating}
+              title={disabledReason ?? "Создать новую версию шаблона с применёнными заменами"}
+            >
               {applying ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Sparkles className="h-4 w-4 mr-1" />}
               Применить (создать версию)
             </Button>
-            <Button onClick={() => apply(true)} disabled={!canApply || applying || activating}>
+            <Button
+              onClick={() => apply(true)}
+              disabled={!canApply || applying || activating}
+              title={disabledReason ?? "Создать версию и сделать её активной (если валидна)"}
+            >
               {activating ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />}
               Применить и активировать
             </Button>
           </div>
         </DialogFooter>
 
-        {/* Picker (общий) — virtual anchor у выделения / chip / legacy */}
-        <Popover
-          open={pickerOpen}
-          onOpenChange={(o) => {
-            setPickerOpen(o);
-            if (!o) setPickerContext(null);
-          }}
-        >
-          <PopoverTrigger asChild>
-            <span style={pickerAnchorStyle} aria-hidden="true" />
-          </PopoverTrigger>
-          <PopoverContent
-            align="start"
-            sideOffset={8}
-            className="p-0 bg-popover border shadow-lg z-[60] overflow-hidden"
-            style={{
-              width: 440,
-              maxHeight: "min(520px, calc(100vh - 160px))",
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            <PickerBody
-              context={pickerContext}
+        {/* Picker полей — стабильный, без cmdk */}
+        {(() => {
+          const currentChip = pickerContext?.kind === "chip"
+            ? replacements.find((r) => r.id === pickerContext.replacementId) ?? null
+            : null;
+          const contextLabel =
+            pickerContext?.kind === "selection"
+              ? `Заменяем выделенное: «${pickerContext.text.slice(0, 80)}${pickerContext.text.length > 80 ? "…" : ""}»`
+              : pickerContext?.kind === "legacy"
+                ? `Заменяем плейсхолдер: ${pickerContext.text}`
+                : pickerContext?.kind === "chip"
+                  ? `Изменить поле: ${currentChip?.visual_label ?? currentChip?.field_public_id ?? ""}`
+                  : "Выбор FLD-поля";
+          return (
+            <FieldPickerPopover
+              open={pickerOpen}
+              onOpenChange={(o) => {
+                setPickerOpen(o);
+                if (!o) setPickerContext(null);
+              }}
+              anchor={pickerAnchor}
+              contextLabel={contextLabel}
+              currentFld={currentChip?.field_public_id ?? null}
               refs={refs}
-              refsByCategory={refsByCategory}
-              currentReplacement={
-                pickerContext?.kind === "chip"
-                  ? replacements.find((r) => r.id === pickerContext.replacementId) ?? null
-                  : null
-              }
-              onConfirm={applyPickerResult}
-              onCancel={() => { setPickerOpen(false); setPickerContext(null); }}
+              onPick={(res) => applyPickerResult(res.fld, {
+                format: res.format,
+                caseModifier: res.caseModifier,
+                data_type: res.data_type,
+              })}
             />
-          </PopoverContent>
-        </Popover>
+          );
+        })()}
 
         {/* Sheet: Замены */}
         <Sheet open={showReplacements} onOpenChange={setShowReplacements}>

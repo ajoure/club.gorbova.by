@@ -218,3 +218,101 @@ POST /functions/v1/canonical-template-apply-markup
 - **Diagnose:** network-proof показал payload с `status:"manually_added"`; для совместимости с уже задеплоенной apply-функцией UI-only статус нельзя отправлять через backend boundary.
 - **Execute:** `TemplateMarkupDialog.buildPayload()` нормализует `manually_added → accepted` перед вызовом `canonical-template-apply-markup`.
 - **DoD:** ручные chips остаются в UI как «Вручную», но backend получает accepted replacement и не должен возвращать `no_accepted_replacements` из-за статуса.
+
+---
+
+## C5-D PATCH (2026-05-08): рабочий режим разметки, не Word-редактор
+
+### Принципиальная позиция
+**C5-D — это режим разметки DOCX, а НЕ полноценный Word-редактор.**
+Окно `TemplateMarkupDialog` решает одну задачу: заменить старые legacy-плейсхолдеры
+(`{{ld-…}}`, `{{document.…}}`, `{{cf:…}}`) на FLD-поля и создать новую версию шаблона.
+Изменение текста, таблиц, отступов и форматирования делается в Word, после чего
+загружается новая версия DOCX через основной upload.
+
+### Почему mammoth/HTML не подходит для редактирования DOCX
+- `mammoth.convertToHtml` — однонаправленный конвертер (DOCX → HTML). Обратной операции,
+  которая бы сохранила исходное OOXML-форматирование, не существует.
+- Стили рантайма Word (нумерация, секции, поля, колонтитулы, table layout, рамки, шрифты)
+  не доходят до HTML и не могут быть восстановлены из него.
+- `contentEditable` поверх mammoth-HTML создаёт ложное ощущение «редактирования»: всё, что
+  пользователь поменяет в DOM, не записывается обратно в OOXML; при сохранении изменения
+  пропадают, либо весь DOCX пришлось бы пересобирать с нуля и терять форматирование.
+- Вывод: для разметки FLD-полей mammoth-HTML — приемлемый **read-only preview** с
+  оверлеем chips. Для настоящего редактирования нужен встроенный office-движок
+  (см. backlog `.lovable/backlog/document_generation_full_docx_editor.md`).
+
+### Что починили в этом PATCH
+
+1. **Перепозиционирование UX**
+   - `DialogDescription` явно говорит: «Это режим разметки шаблона. Чтобы изменить
+     текст/таблицы/форматирование — отредактируйте DOCX в Word и загрузите новую версию.»
+   - Никаких «Word-like edit» обещаний.
+
+2. **Новый `FieldPickerPopover`** (`src/components/ai-documents/FieldPickerPopover.tsx`)
+   - Полностью без `cmdk/Command/CommandList` — у них хронически ломался вертикальный скролл.
+   - Структура `flex flex-col` с фиксированным header + фиксированным `Input` поиска +
+     единственной скроллируемой областью `ScrollArea` + `overflow-hidden` на корне.
+   - Категории и статусы только на русском (через `CATEGORY_LABELS_RU`).
+   - Двухшаговый flow: список полей → `FieldFormatPicker` (формат/падеж) → `onPick`.
+   - z-index `z-[100]`, `max-height: min(560px, calc(100vh - 120px))` — header/search никогда
+     не перекрываются полем поиска.
+
+3. **Inline chips в DOCX-preview**
+   - В `renderInteractiveHtml` chip получает встроенную кнопку `× (data-chip-action="remove")`.
+   - Клик по `×` → удаление replacement (исходный текст возвращается в preview).
+   - Клик по самому chip → открытие picker в режиме `chip` (смена FLD/формата).
+   - `title` chip-а: «Клик — изменить поле, ✕ — отменить замену».
+
+4. **Длинные chips в таблицах больше не ломают вёрстку**
+   - В `src/index.css`:
+     - `.docx-chip`: `display: inline-flex; flex-wrap: wrap; max-width: 100%;
+       white-space: normal; word-break: break-word; overflow-wrap: anywhere;`
+     - таблицы preview уже имеют `table-layout: fixed; word-break: break-word`.
+   - Кейс из скриншота пользователя («Кнопка оплаты валюта FLD-…» вылезала за ячейку)
+     теперь переносится по строкам внутри ячейки.
+   - `.docx-chip-remove` стилизован отдельно: 14×14, hover красный.
+
+5. **Apply-кнопки и причины disabled**
+   - `acceptedCount` = accepted/changed/manually_added c заполненным `field_public_id`.
+   - `ambiguousCount` = accepted с `occurrences_total > 1 && occurrence_index == null`.
+   - `withoutFldCount` = accepted без FLD.
+   - `canApply = acceptedCount > 0 && ambiguousCount === 0 && withoutFldCount === 0`.
+   - Если `canApply === false` — в футере под счётчиком видна **конкретная причина** на русском
+     (`disabledReason`), а в `title` обеих кнопок та же причина.
+   - Перед вызовом edge — `console.debug("[markup-apply]", { template_version_id, total,
+     accepted, ambiguous, without_fld, activate, payload_preview })`.
+   - Нормализация `manually_added → accepted` для backend сохраняется.
+   - Ошибки edge — через `normalizeEdgeFunctionError`.
+
+6. **Скачивание исходного DOCX**
+   - В тулбаре кнопка `Скачать исходный DOCX` (`Download` icon).
+   - Скачивает blob из `templateVersion.storage_bucket/storage_path` под именем
+     `templateVersion.file_name ?? template-v{n}.docx`.
+   - Это основной путь для правки текста/таблиц/форматирования вне платформы.
+
+7. **Backlog для настоящего DOCX-редактора**
+   - Заведён `.lovable/backlog/document_generation_full_docx_editor.md`: OnlyOffice DS,
+     Collabora, схема callback-сохранения, FLD-плагин внутри редактора.
+   - Это отдельный future sprint, в C5 не входит.
+
+### Файлы PATCH
+- **новый** `src/components/ai-documents/FieldPickerPopover.tsx`
+- **новый** `.lovable/backlog/document_generation_full_docx_editor.md`
+- изменены: `src/components/ai-documents/TemplateMarkupDialog.tsx`, `src/index.css`,
+  `.lovable/plan.md`, этот proof.
+
+### DoD PATCH
+- [x] Picker скроллится; header / search input не перекрываются.
+- [x] Все строки UI русские (кроме технических `FLD-…`, `{{field:…}}`).
+- [x] Клик по `{{ld-…}}` → picker → chip появляется в документе.
+- [x] Клик по `×` на chip отменяет замену и возвращает исходный текст в preview.
+- [x] Длинный chip в ячейке таблицы переносится по строкам и не выходит за границы.
+- [x] Apply disabled → видна конкретная причина на русском (под счётчиком и в `title`).
+- [x] Apply активен при наличии accepted replacement c FLD без неоднозначностей.
+- [x] Кнопка «Скачать исходный DOCX» сохраняет файл из storage.
+- [x] Backend (`canonical-template-apply-markup`) не трогали.
+- [x] Заведён backlog «Полноценный DOCX-редактор внутри платформы» (OnlyOffice/Collabora).
+- [x] `npx tsc --noEmit` — зелёный.
+- [ ] Ручная проверка пользователем: создаётся новая версия после Apply,
+      Apply+Activate активирует только при validation valid, ошибки видны на русском.
