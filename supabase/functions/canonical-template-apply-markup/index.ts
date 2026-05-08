@@ -51,14 +51,16 @@ const ANY_TOKEN_RE = /\{\{([^}]+)\}\}/g;
 interface Replacement {
   original_text: string;
   field_public_id: string;
-  status: 'accepted' | 'changed' | 'skipped';
-  /** опционально — Sprint 11 C4-B */
+  status: 'accepted' | 'changed' | 'skipped' | 'manually_added';
   format?: 'words' | 'text' | null;
   case_modifier?:
     | 'nominative' | 'genitive' | 'dative' | 'accusative'
     | 'instrumental' | 'prepositional' | null;
   /** опционально — клиент может прислать готовый placeholder (доверяем после strict-валидации) */
   placeholder?: string;
+  /** Sprint 11 C5-D: 0-based индекс occurrence в документе. Если не задан и
+   * вхождений больше одного — возвращается ambiguous_replacement_multiple_matches. */
+  occurrence_index?: number | null;
 }
 
 function parseStrictToken(inside: string): {
