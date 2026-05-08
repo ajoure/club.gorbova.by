@@ -337,6 +337,15 @@ Deno.serve(async (req) => {
       delimiters: { start: '{{', end: '}}' },
       paragraphLoop: true,
       linebreaks: true,
+      // Кастомный parser: трактуем весь tag как имя переменной (включая `|format=…|case=…`),
+      // чтобы docxtemplater не интерпретировал `|` как filter.
+      parser: (tag: string) => ({
+        get: (scope: any) => {
+          const key = (tag || '').trim();
+          if (scope && Object.prototype.hasOwnProperty.call(scope, key)) return scope[key];
+          return '';
+        },
+      }) as any,
     });
     try {
       docx.render(resolved);
