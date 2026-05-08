@@ -30,6 +30,7 @@ interface OfferRowCompactProps {
   onSetPrimary?: (id: string) => void;
   onEdit: () => void;
   onDelete: () => void;
+  onCopy?: () => void;
   hasPrimaryInTariff?: boolean;
 }
 
