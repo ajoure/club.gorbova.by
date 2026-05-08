@@ -3313,6 +3313,8 @@ export type Database = {
           created_at: string
           created_by: string | null
           detected_tokens: Json
+          editor_html: string | null
+          editor_json: Json | null
           file_name: string | null
           file_sha256: string | null
           file_size_bytes: number | null
@@ -3335,6 +3337,8 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           detected_tokens?: Json
+          editor_html?: string | null
+          editor_json?: Json | null
           file_name?: string | null
           file_sha256?: string | null
           file_size_bytes?: number | null
@@ -3357,6 +3361,8 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           detected_tokens?: Json
+          editor_html?: string | null
+          editor_json?: Json | null
           file_name?: string | null
           file_sha256?: string | null
           file_size_bytes?: number | null

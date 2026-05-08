@@ -28,6 +28,7 @@ import { ChevronsUpDown, Check } from "lucide-react";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2, CheckCircle2, X, Pencil, Sparkles, Search } from "lucide-react";
 import { toast } from "sonner";
 import mammoth from "mammoth";
@@ -37,6 +38,7 @@ import {
   type MarkupSuggestion,
   type RegistryFieldRef,
 } from "@/utils/templateAutoSuggest";
+import { TemplateVisualEditor, type VisualEditorSavePayload } from "./TemplateVisualEditor";
 
 interface Props {
   open: boolean;
@@ -207,102 +209,119 @@ export function TemplateMarkupDialog({
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
         ) : (
-          <div className="grid lg:grid-cols-2 gap-4">
-            {/* LEFT: text + highlights */}
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-medium">Текст документа</span>
-                <span className="text-[11px] text-muted-foreground">
-                  v{templateVersion?.version_number} · {templateVersion?.file_name}
-                </span>
-              </div>
-              <ScrollArea className="h-[480px] border rounded p-2 bg-muted/20">
-                <HighlightedText text={text} suggestions={suggestions} />
-              </ScrollArea>
-            </div>
+          <Tabs defaultValue="markup" className="w-full">
+            <TabsList>
+              <TabsTrigger value="markup">Авто-разметка</TabsTrigger>
+              <TabsTrigger value="visual">Визуальный редактор</TabsTrigger>
+            </TabsList>
 
-            {/* RIGHT: suggestions table */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2 text-xs">
-                  <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-                  Найдено: <b>{suggestions.length}</b> · принято: <b>{acceptedCount}</b>
+            <TabsContent value="markup" className="mt-3">
+              <div className="grid lg:grid-cols-2 gap-4">
+                {/* LEFT: text + highlights */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-medium">Текст документа</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      v{templateVersion?.version_number} · {templateVersion?.file_name}
+                    </span>
+                  </div>
+                  <ScrollArea className="h-[480px] border rounded p-2 bg-muted/20">
+                    <HighlightedText text={text} suggestions={suggestions} />
+                  </ScrollArea>
                 </div>
-                <div className="flex items-center gap-1 text-[11px]">
-                  {(["all", "suggested", "accepted", "skipped"] as const).map((f) => (
-                    <Button
-                      key={f}
-                      size="sm"
-                      variant={filter === f ? "secondary" : "ghost"}
-                      className="h-6 px-2 text-[10px]"
-                      onClick={() => setFilter(f)}
-                    >
-                      {f}
-                    </Button>
-                  ))}
+
+                {/* RIGHT: suggestions table */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2 text-xs">
+                      <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+                      Найдено: <b>{suggestions.length}</b> · принято: <b>{acceptedCount}</b>
+                    </div>
+                    <div className="flex items-center gap-1 text-[11px]">
+                      {(["all", "suggested", "accepted", "skipped"] as const).map((f) => (
+                        <Button
+                          key={f}
+                          size="sm"
+                          variant={filter === f ? "secondary" : "ghost"}
+                          className="h-6 px-2 text-[10px]"
+                          onClick={() => setFilter(f)}
+                        >
+                          {f}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                  <ScrollArea className="h-[480px] border rounded">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-[36%]">Найденный текст</TableHead>
+                          <TableHead>Поле</TableHead>
+                          <TableHead className="w-[60px]">Conf</TableHead>
+                          <TableHead className="w-[140px]">Действия</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {visible.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={4} className="text-center text-xs text-muted-foreground py-6">
+                              Нет suggestions. Auto-suggest не нашёл якорных полей в тексте.
+                              Можно загрузить шаблон с уже размеченными <code>{`{{field:FLD-…}}`}</code>.
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          visible.map((s) => (
+                            <TableRow key={s.id} className="text-xs align-top">
+                              <TableCell className="font-mono text-[11px] py-2">
+                                <div className="line-clamp-2">{s.original_text}</div>
+                                <div className="text-[10px] text-muted-foreground mt-0.5">{s.reason}</div>
+                              </TableCell>
+                              <TableCell>
+                                <FieldPicker
+                                  refs={refs}
+                                  refsByCategory={refsByCategory}
+                                  value={s.field_public_id}
+                                  onChange={(v) => onChangeField(s, v)}
+                                />
+                                {s.placeholder && (
+                                  <div className="text-[10px] font-mono text-muted-foreground mt-1">
+                                    {s.placeholder}
+                                  </div>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                <Badge
+                                  variant="outline"
+                                  className={
+                                    s.confidence === "high" ? "text-[9px] border-emerald-400/50 text-emerald-600" :
+                                    s.confidence === "medium" ? "text-[9px] border-amber-400/50 text-amber-600" :
+                                    "text-[9px] border-muted-foreground/30 text-muted-foreground"
+                                  }
+                                >
+                                  {s.confidence}
+                                </Badge>
+                              </TableCell>
+                              <TableCell>
+                                <StatusActions s={s} onAccept={() => onAccept(s)} onSkip={() => onSkip(s)} />
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </ScrollArea>
                 </div>
               </div>
-              <ScrollArea className="h-[480px] border rounded">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-[36%]">Найденный текст</TableHead>
-                      <TableHead>Поле</TableHead>
-                      <TableHead className="w-[60px]">Conf</TableHead>
-                      <TableHead className="w-[140px]">Действия</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {visible.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={4} className="text-center text-xs text-muted-foreground py-6">
-                          Нет suggestions. Auto-suggest не нашёл якорных полей в тексте.
-                          Можно загрузить шаблон с уже размеченными <code>{`{{field:FLD-…}}`}</code>.
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      visible.map((s) => (
-                        <TableRow key={s.id} className="text-xs align-top">
-                          <TableCell className="font-mono text-[11px] py-2">
-                            <div className="line-clamp-2">{s.original_text}</div>
-                            <div className="text-[10px] text-muted-foreground mt-0.5">{s.reason}</div>
-                          </TableCell>
-                          <TableCell>
-                            <FieldPicker
-                              refs={refs}
-                              refsByCategory={refsByCategory}
-                              value={s.field_public_id}
-                              onChange={(v) => onChangeField(s, v)}
-                            />
-                            {s.placeholder && (
-                              <div className="text-[10px] font-mono text-muted-foreground mt-1">
-                                {s.placeholder}
-                              </div>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <Badge
-                              variant="outline"
-                              className={
-                                s.confidence === "high" ? "text-[9px] border-emerald-400/50 text-emerald-600" :
-                                s.confidence === "medium" ? "text-[9px] border-amber-400/50 text-amber-600" :
-                                "text-[9px] border-muted-foreground/30 text-muted-foreground"
-                              }
-                            >
-                              {s.confidence}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <StatusActions s={s} onAccept={() => onAccept(s)} onSkip={() => onSkip(s)} />
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </ScrollArea>
-            </div>
-          </div>
+            </TabsContent>
+
+            <TabsContent value="visual" className="mt-3">
+              <VisualEditorPane
+                templateVersion={templateVersion}
+                initialPlainText={text}
+                onSaved={onApplied}
+              />
+            </TabsContent>
+          </Tabs>
         )}
 
         <DialogFooter>
@@ -411,9 +430,11 @@ function FieldPicker({
       <PopoverContent
         align="start"
         sideOffset={4}
-        className="w-[var(--radix-popover-trigger-width)] min-w-[420px] p-0 bg-popover border shadow-lg z-[60]"
+        className="w-[var(--radix-popover-trigger-width)] min-w-[420px] p-0 bg-popover border shadow-lg z-[60] overflow-hidden"
+        style={{ maxHeight: "min(420px, var(--radix-popover-content-available-height))" }}
       >
         <Command
+          className="flex flex-col h-full max-h-full overflow-hidden"
           filter={(itemValue, search) => {
             if (!search) return 1;
             return itemValue.toLowerCase().includes(search.toLowerCase()) ? 1 : 0;
@@ -423,7 +444,10 @@ function FieldPicker({
             placeholder="Поиск по FLD, key, label…"
             className="h-9 text-xs"
           />
-          <CommandList className="max-h-[360px] overflow-y-auto overscroll-contain">
+          <CommandList
+            className="overflow-y-auto overscroll-contain flex-1"
+            style={{ maxHeight: "360px" }}
+          >
             <CommandEmpty className="py-6 text-center text-xs text-muted-foreground">
               Ничего не найдено
             </CommandEmpty>
@@ -502,5 +526,94 @@ function HighlightedText({
         p.cls ? <span key={i} className={p.cls}>{p.s}</span> : <span key={i}>{p.s}</span>,
       )}
     </pre>
+  );
+}
+
+// ─────────────────────── VisualEditorPane (C4-A) ───────────────────────
+
+const LEGACY_PLACEHOLDER_RE = /\{\{\s*(document|executor|customer|deal|cf)\.[^}]+\}\}/i;
+
+function VisualEditorPane({
+  templateVersion,
+  initialPlainText,
+  onSaved,
+}: {
+  templateVersion: Props["templateVersion"];
+  initialPlainText: string;
+  onSaved?: () => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [initialJSON, setInitialJSON] = useState<any | null>(null);
+  const [loadedFromDb, setLoadedFromDb] = useState(false);
+
+  useEffect(() => {
+    if (!templateVersion) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from("document_template_versions")
+        .select("editor_json")
+        .eq("id", templateVersion.id)
+        .maybeSingle();
+      if (cancelled) return;
+      if (data?.editor_json) setInitialJSON(data.editor_json);
+      setLoadedFromDb(true);
+    })();
+    return () => { cancelled = true; };
+  }, [templateVersion?.id]);
+
+  const handleSave = async (payload: VisualEditorSavePayload) => {
+    if (!templateVersion) return;
+    if (LEGACY_PLACEHOLDER_RE.test(payload.plain_text)) {
+      toast.error("Найдены legacy-плейсхолдеры (document.*, executor.*, customer.*, deal.*, cf.*). Используйте только {{field:FLD-XXXXXX}}.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from("document_template_versions")
+        .update({
+          editor_html: payload.editor_html,
+          editor_json: payload.editor_json,
+        })
+        .eq("id", templateVersion.id);
+      if (error) throw error;
+
+      await supabase.functions.invoke("canonical-template-audit", {
+        body: {
+          event: "document_template.visual_editor_saved",
+          template_id: templateVersion.template_id,
+          template_version_id: templateVersion.id,
+          meta: {
+            chip_count: payload.token_manifest.length,
+            unique_fields: Array.from(new Set(payload.token_manifest.map(t => t.field_public_id))).length,
+          },
+        },
+      }).catch(() => undefined);
+
+      toast.success(`Визуальная версия сохранена · полей: ${payload.token_manifest.length}`);
+      onSaved?.();
+    } catch (e: any) {
+      toast.error(`Ошибка сохранения: ${e.message ?? e}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!loadedFromDb) {
+    return (
+      <div className="flex items-center justify-center py-12 text-muted-foreground">
+        <Loader2 className="h-5 w-5 animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <TemplateVisualEditor
+      initialJSON={initialJSON}
+      initialPlainText={initialPlainText}
+      onSave={handleSave}
+      saving={saving}
+    />
   );
 }
