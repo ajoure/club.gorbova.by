@@ -571,12 +571,21 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
             </div>
           ) : (
             <div className="space-y-3">
-              <div>
-                <div className="text-sm font-medium">{activeTemplate?.name}</div>
-                <div className="text-[11px] text-muted-foreground">
-                  v{activeVersion.version_number} · {activeVersion.file_name} ·{" "}
-                  {((activeVersion.file_size_bytes ?? 0) / 1024).toFixed(1)} KB
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="text-sm font-medium">{activeTemplate?.name}</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    v{activeVersion.version_number} · {activeVersion.file_name} ·{" "}
+                    {((activeVersion.file_size_bytes ?? 0) / 1024).toFixed(1)} KB
+                  </div>
                 </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => openMarkup(activeTemplate!, activeVersion)}
+                >
+                  <Pencil className="h-3.5 w-3.5 mr-1" /> Разметить
+                </Button>
               </div>
 
               {previewValidation && (
