@@ -59,7 +59,7 @@ export function OrderPickerDialog({ open, onOpenChange, onSelect }: Props) {
         query = query.or(`order_number.ilike.%${term}%,customer_email.ilike.%${term}%`);
       } else {
         // default: show recent paid first
-        query = query.in("status", ["paid", "pending", "partial_refund"]);
+        query = query.in("status", ["paid", "pending"]);
       }
       const { data, error } = await query;
       if (error) throw error;
