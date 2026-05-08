@@ -625,8 +625,18 @@ export function TemplateMarkupDialog({
   const ambiguousCount = replacements.filter((r) =>
     isAccepted(r.status) && r.occurrences_total > 1 && r.occurrence_index == null
   ).length;
+  const withoutFldCount = replacements.filter((r) => isAccepted(r.status) && !r.field_public_id).length;
   const suggestedCount = replacements.filter((r) => r.status === "suggested").length;
-  const canApply = acceptedCount > 0 && ambiguousCount === 0;
+  const canApply = acceptedCount > 0 && ambiguousCount === 0 && withoutFldCount === 0;
+
+  /** Причина, по которой кнопка «Применить» недоступна. */
+  const disabledReason = (() => {
+    if (canApply) return null;
+    if (acceptedCount === 0) return "Нет принятых замен с выбранным полем. Кликните по жёлтому плейсхолдеру или выделите текст и выберите поле.";
+    if (ambiguousCount > 0) return `Есть неоднозначные вхождения — укажите номер вхождения для ${ambiguousCount} замен.`;
+    if (withoutFldCount > 0) return `Есть замены без FLD-поля: ${withoutFldCount}. Откройте «Замены» и выберите поле.`;
+    return null;
+  })();
 
   const buildPayload = () => replacements
     .filter((r) => isAccepted(r.status) && r.field_public_id)
@@ -645,12 +655,8 @@ export function TemplateMarkupDialog({
   const apply = async (activate: boolean) => {
     if (!templateVersion) return;
     if (!canApply) {
-      if (ambiguousCount > 0) {
-        toast.error(`Есть ${ambiguousCount} неоднозначных замен — выберите конкретное вхождение в «Заменах»`);
-        setShowReplacements(true);
-      } else {
-        toast.error("Нет принятых замен. Вставьте поля или нажмите «Авторазметка».");
-      }
+      toast.error(disabledReason ?? "Замены не готовы к применению");
+      if (ambiguousCount > 0 || withoutFldCount > 0) setShowReplacements(true);
       return;
     }
     activate ? setActivating(true) : setApplying(true);
@@ -660,6 +666,15 @@ export function TemplateMarkupDialog({
         toast.error("Нет принятых замен с выбранным полем FLD. Выберите поле для каждой замены.");
         return;
       }
+      console.debug("[markup-apply]", {
+        template_version_id: templateVersion.id,
+        total: replacements.length,
+        accepted: acceptedCount,
+        ambiguous: ambiguousCount,
+        without_fld: withoutFldCount,
+        activate,
+        payload_preview: payload.slice(0, 3),
+      });
       const { data, error } = await supabase.functions.invoke("canonical-template-apply-markup", {
         body: { template_version_id: templateVersion.id, replacements: payload, activate },
       });
