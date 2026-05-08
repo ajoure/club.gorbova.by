@@ -665,6 +665,26 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: 'version_insert_failed', detail: insErr.message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
+    // C5-D: opt-in activation. Default off — user must press "Сделать текущей".
+    let activated = false;
+    if (activate && validationStatus === 'valid') {
+      await supabase.from('document_template_versions')
+        .update({ is_current: false }).eq('template_id', srcVer.template_id);
+      const { error: actErr } = await supabase.from('document_template_versions')
+        .update({ is_current: true }).eq('id', newVer.id);
+      if (!actErr) {
+        await supabase.from('document_templates')
+          .update({ current_version_id: newVer.id }).eq('id', srcVer.template_id);
+        activated = true;
+      }
+    }
+
+    // C5-D: clear markup_draft on source version after successful apply
+    if (clearDraft) {
+      await supabase.from('document_template_versions')
+        .update({ markup_draft: null }).eq('id', sourceVersionId);
+    }
+
     // --- audit
     await supabase.from('audit_logs').insert({
       actor_user_id: userId,
@@ -677,10 +697,12 @@ Deno.serve(async (req) => {
         new_version_number: nextVersion,
         applied_count: Array.from(totalApplied.values()).reduce((a, b) => a + b, 0),
         missed_count: missedReplacements.length,
+        ambiguous_count: ambiguous.length,
         skipped_count: replacementsRaw.length - accepted.length,
         validation_status: validationStatus,
         validation_errors_count: validationErrors.length,
         validation_warnings_count: validationWarnings.length,
+        activated,
       },
     });
 
@@ -692,6 +714,8 @@ Deno.serve(async (req) => {
         new_storage_path: newStoragePath,
         applied_count: Array.from(totalApplied.values()).reduce((a, b) => a + b, 0),
         missed: missedReplacements.map((r) => ({ original_text: r.original_text, field_public_id: r.field_public_id })),
+        ambiguous,
+        activated,
         validation: { status: validationStatus, errors: validationErrors, warnings: validationWarnings, recognized: recognizedTokens },
         token_manifest: tokenManifest,
       }),
