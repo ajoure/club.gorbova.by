@@ -100,6 +100,9 @@ autoweb-resolve-sessions
 autoweb-create-personal-session
 autoweb-generate-occurrences
 
-# Sprint 11 C2 — strict templates
+# Sprint 11 C2/C3 — strict templates & deal-level generation
 canonical-template-audit
 canonical-template-apply-markup
+canonical-template-activate-version
+canonical-deal-fields-update
+canonical-document-generate-strict

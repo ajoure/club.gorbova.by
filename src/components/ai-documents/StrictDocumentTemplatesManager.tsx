@@ -397,30 +397,15 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
       toast.error("Активация заблокирована: validation_status != valid");
       return;
     }
-    // TODO C3: server-side activation via edge `canonical-template-activate-version`
-    // (RLS уже ограничивает доступ ролями admin/super_admin — см. proof C2).
+    // C3: server-side activation (admin-only, audit included)
     try {
-      await supabase
-        .from("document_template_versions")
-        .update({ is_current: false })
-        .eq("template_id", tpl.id)
-        .neq("id", ver.id);
-      const { error: e1 } = await supabase
-        .from("document_template_versions")
-        .update({ is_current: true })
-        .eq("id", ver.id);
-      if (e1) throw e1;
-      const { error: e2 } = await supabase
-        .from("document_templates")
-        .update({ current_version_id: ver.id, template_status: "active" })
-        .eq("id", tpl.id);
-      if (e2) throw e2;
+      const { data, error } = await supabase.functions.invoke(
+        "canonical-template-activate-version",
+        { body: { template_version_id: ver.id } },
+      );
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
       toast.success("Шаблон активирован как текущий");
-      auditEvent("document_template.version_activated", {
-        template_id: tpl.id,
-        template_version_id: ver.id,
-        meta: { version_number: ver.version_number },
-      });
       await fetchAll();
     } catch (e: any) {
       toast.error(`Ошибка активации: ${e.message ?? e}`);
