@@ -1723,7 +1723,6 @@ export default function AdminProductDetailV2() {
             <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 sm:px-6 py-4 min-h-0">
 
             <TabsContent value="main" className="space-y-4 mt-0">
-            <TabsContent value="main" className="space-y-4 mt-4">
             {/* Основное */}
             <Card>
               <CardHeader className="pb-2">
