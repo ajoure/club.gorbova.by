@@ -28,6 +28,7 @@ import { ChevronsUpDown, Check } from "lucide-react";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2, CheckCircle2, X, Pencil, Sparkles, Search } from "lucide-react";
 import { toast } from "sonner";
 import mammoth from "mammoth";
@@ -37,6 +38,7 @@ import {
   type MarkupSuggestion,
   type RegistryFieldRef,
 } from "@/utils/templateAutoSuggest";
+import { TemplateVisualEditor, type VisualEditorSavePayload } from "./TemplateVisualEditor";
 
 interface Props {
   open: boolean;
