@@ -548,6 +548,7 @@ Deno.serve(async (req) => {
         skipped_count: replacementsRaw.length - accepted.length,
         validation_status: validationStatus,
         validation_errors_count: validationErrors.length,
+        validation_warnings_count: validationWarnings.length,
       },
     });
 
@@ -559,7 +560,7 @@ Deno.serve(async (req) => {
         new_storage_path: newStoragePath,
         applied_count: Array.from(totalApplied.values()).reduce((a, b) => a + b, 0),
         missed: missedReplacements.map((r) => ({ original_text: r.original_text, field_public_id: r.field_public_id })),
-        validation: { status: validationStatus, errors: validationErrors, recognized },
+        validation: { status: validationStatus, errors: validationErrors, warnings: validationWarnings, recognized: recognizedTokens },
         token_manifest: tokenManifest,
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
