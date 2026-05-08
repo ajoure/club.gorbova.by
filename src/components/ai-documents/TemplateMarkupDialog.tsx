@@ -207,102 +207,119 @@ export function TemplateMarkupDialog({
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
         ) : (
-          <div className="grid lg:grid-cols-2 gap-4">
-            {/* LEFT: text + highlights */}
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-medium">Текст документа</span>
-                <span className="text-[11px] text-muted-foreground">
-                  v{templateVersion?.version_number} · {templateVersion?.file_name}
-                </span>
-              </div>
-              <ScrollArea className="h-[480px] border rounded p-2 bg-muted/20">
-                <HighlightedText text={text} suggestions={suggestions} />
-              </ScrollArea>
-            </div>
+          <Tabs defaultValue="markup" className="w-full">
+            <TabsList>
+              <TabsTrigger value="markup">Авто-разметка</TabsTrigger>
+              <TabsTrigger value="visual">Визуальный редактор</TabsTrigger>
+            </TabsList>
 
-            {/* RIGHT: suggestions table */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2 text-xs">
-                  <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-                  Найдено: <b>{suggestions.length}</b> · принято: <b>{acceptedCount}</b>
+            <TabsContent value="markup" className="mt-3">
+              <div className="grid lg:grid-cols-2 gap-4">
+                {/* LEFT: text + highlights */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-medium">Текст документа</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      v{templateVersion?.version_number} · {templateVersion?.file_name}
+                    </span>
+                  </div>
+                  <ScrollArea className="h-[480px] border rounded p-2 bg-muted/20">
+                    <HighlightedText text={text} suggestions={suggestions} />
+                  </ScrollArea>
                 </div>
-                <div className="flex items-center gap-1 text-[11px]">
-                  {(["all", "suggested", "accepted", "skipped"] as const).map((f) => (
-                    <Button
-                      key={f}
-                      size="sm"
-                      variant={filter === f ? "secondary" : "ghost"}
-                      className="h-6 px-2 text-[10px]"
-                      onClick={() => setFilter(f)}
-                    >
-                      {f}
-                    </Button>
-                  ))}
+
+                {/* RIGHT: suggestions table */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2 text-xs">
+                      <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+                      Найдено: <b>{suggestions.length}</b> · принято: <b>{acceptedCount}</b>
+                    </div>
+                    <div className="flex items-center gap-1 text-[11px]">
+                      {(["all", "suggested", "accepted", "skipped"] as const).map((f) => (
+                        <Button
+                          key={f}
+                          size="sm"
+                          variant={filter === f ? "secondary" : "ghost"}
+                          className="h-6 px-2 text-[10px]"
+                          onClick={() => setFilter(f)}
+                        >
+                          {f}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                  <ScrollArea className="h-[480px] border rounded">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-[36%]">Найденный текст</TableHead>
+                          <TableHead>Поле</TableHead>
+                          <TableHead className="w-[60px]">Conf</TableHead>
+                          <TableHead className="w-[140px]">Действия</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {visible.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={4} className="text-center text-xs text-muted-foreground py-6">
+                              Нет suggestions. Auto-suggest не нашёл якорных полей в тексте.
+                              Можно загрузить шаблон с уже размеченными <code>{`{{field:FLD-…}}`}</code>.
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          visible.map((s) => (
+                            <TableRow key={s.id} className="text-xs align-top">
+                              <TableCell className="font-mono text-[11px] py-2">
+                                <div className="line-clamp-2">{s.original_text}</div>
+                                <div className="text-[10px] text-muted-foreground mt-0.5">{s.reason}</div>
+                              </TableCell>
+                              <TableCell>
+                                <FieldPicker
+                                  refs={refs}
+                                  refsByCategory={refsByCategory}
+                                  value={s.field_public_id}
+                                  onChange={(v) => onChangeField(s, v)}
+                                />
+                                {s.placeholder && (
+                                  <div className="text-[10px] font-mono text-muted-foreground mt-1">
+                                    {s.placeholder}
+                                  </div>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                <Badge
+                                  variant="outline"
+                                  className={
+                                    s.confidence === "high" ? "text-[9px] border-emerald-400/50 text-emerald-600" :
+                                    s.confidence === "medium" ? "text-[9px] border-amber-400/50 text-amber-600" :
+                                    "text-[9px] border-muted-foreground/30 text-muted-foreground"
+                                  }
+                                >
+                                  {s.confidence}
+                                </Badge>
+                              </TableCell>
+                              <TableCell>
+                                <StatusActions s={s} onAccept={() => onAccept(s)} onSkip={() => onSkip(s)} />
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </ScrollArea>
                 </div>
               </div>
-              <ScrollArea className="h-[480px] border rounded">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-[36%]">Найденный текст</TableHead>
-                      <TableHead>Поле</TableHead>
-                      <TableHead className="w-[60px]">Conf</TableHead>
-                      <TableHead className="w-[140px]">Действия</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {visible.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={4} className="text-center text-xs text-muted-foreground py-6">
-                          Нет suggestions. Auto-suggest не нашёл якорных полей в тексте.
-                          Можно загрузить шаблон с уже размеченными <code>{`{{field:FLD-…}}`}</code>.
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      visible.map((s) => (
-                        <TableRow key={s.id} className="text-xs align-top">
-                          <TableCell className="font-mono text-[11px] py-2">
-                            <div className="line-clamp-2">{s.original_text}</div>
-                            <div className="text-[10px] text-muted-foreground mt-0.5">{s.reason}</div>
-                          </TableCell>
-                          <TableCell>
-                            <FieldPicker
-                              refs={refs}
-                              refsByCategory={refsByCategory}
-                              value={s.field_public_id}
-                              onChange={(v) => onChangeField(s, v)}
-                            />
-                            {s.placeholder && (
-                              <div className="text-[10px] font-mono text-muted-foreground mt-1">
-                                {s.placeholder}
-                              </div>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <Badge
-                              variant="outline"
-                              className={
-                                s.confidence === "high" ? "text-[9px] border-emerald-400/50 text-emerald-600" :
-                                s.confidence === "medium" ? "text-[9px] border-amber-400/50 text-amber-600" :
-                                "text-[9px] border-muted-foreground/30 text-muted-foreground"
-                              }
-                            >
-                              {s.confidence}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <StatusActions s={s} onAccept={() => onAccept(s)} onSkip={() => onSkip(s)} />
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </ScrollArea>
-            </div>
-          </div>
+            </TabsContent>
+
+            <TabsContent value="visual" className="mt-3">
+              <VisualEditorPane
+                templateVersion={templateVersion}
+                initialPlainText={text}
+                onSaved={onApplied}
+              />
+            </TabsContent>
+          </Tabs>
         )}
 
         <DialogFooter>
