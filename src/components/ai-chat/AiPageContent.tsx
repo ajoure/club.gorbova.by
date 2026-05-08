@@ -7,12 +7,11 @@ import { EntityTableView } from "@/components/ai-requisites/EntityTableView";
 import { EntityRecordSheet, type RecordSheetMode } from "@/components/ai-requisites/EntityRecordSheet";
 import { PersonsTableView } from "@/components/ai-requisites/PersonsTableView";
 import { PersonRecordSheet } from "@/components/ai-requisites/PersonRecordSheet";
-import { AiDocumentsGenerateView } from "@/components/ai-documents/AiDocumentsGenerateView";
-import { AiDocumentsHistoryView } from "@/components/ai-documents/AiDocumentsHistoryView";
-import { CanonicalActGenerator } from "@/components/ai-documents/CanonicalActGenerator";
-import { CanonicalTemplateVersionsPanel } from "@/components/ai-documents/CanonicalTemplateVersionsPanel";
-import { AliasesTab } from "@/components/ai-documents/AliasesTab";
+// Sprint 11 C1: legacy документный UI отключён из роутинга.
+// AiDocumentsGenerateView / AiDocumentsHistoryView / CanonicalActGenerator /
+// CanonicalTemplateVersionsPanel / AliasesTab оставлены как dead-code до cleanup-коммита.
 import { PlaceholdersCatalogTab } from "@/components/ai-documents/PlaceholdersCatalogTab";
+import { StrictDocumentTemplatesManager } from "@/components/ai-documents/StrictDocumentTemplatesManager";
 import type { PersonRow } from "@/hooks/useAiPersons";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { cn } from "@/lib/utils";
