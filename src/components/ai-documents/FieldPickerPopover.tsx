@@ -89,12 +89,14 @@ export function FieldPickerPopover({
         <span style={anchorStyle} aria-hidden="true" />
       </PopoverTrigger>
       <PopoverContent
+        side="bottom"
         align="start"
         sideOffset={8}
         avoidCollisions
         collisionPadding={16}
+        sticky="always"
         onWheelCapture={(e) => e.stopPropagation()}
-        className="docx-field-picker-popover p-0 bg-popover border shadow-lg z-[100] overflow-hidden flex flex-col"
+        className="docx-field-picker-popover p-0 bg-popover border shadow-lg z-[100] overflow-hidden"
       >
         {/* Header — контекст */}
         <div className="shrink-0 px-3 py-2 border-b bg-muted/40">
