@@ -238,19 +238,59 @@ export function CanonicalActGenerator() {
             {contextType === "order" && (
               <div className="space-y-1.5">
                 <Label className="flex items-center gap-1.5">
-                  Номер / ID заказа
-                  <FieldHint text="Укажите ID заказа, по которому нужно сформировать акт. Система возьмёт сумму, продукт, тариф и клиента из этого заказа." />
+                  Заказ
+                  <FieldHint text="Найдите заказ по номеру или email клиента. Система возьмёт сумму, продукт, тариф и клиента из этого заказа." />
                 </Label>
-                <Input value={contextId} onChange={(e) => setContextId(e.target.value)} placeholder="ID заказа" />
+                {orderPick ? (
+                  <div className="flex items-start gap-2 rounded-md border bg-muted/30 p-2">
+                    <Package className="h-4 w-4 mt-0.5 text-indigo-500" />
+                    <div className="flex-1 min-w-0 text-xs">
+                      <div className="font-mono font-medium">{orderPick.order_number}</div>
+                      <div className="text-muted-foreground truncate">
+                        {orderPick.product_name || "—"} · {orderPick.final_price.toFixed(2)} {orderPick.currency}
+                        {orderPick.customer_email ? ` · ${orderPick.customer_email}` : ""}
+                      </div>
+                    </div>
+                    <Button size="sm" variant="ghost" onClick={() => setOrderPickerOpen(true)}>Изменить</Button>
+                    <Button size="sm" variant="ghost" onClick={() => { setOrderPick(null); setPreview(null); }}>
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ) : (
+                  <Button variant="outline" className="w-full justify-start" onClick={() => setOrderPickerOpen(true)}>
+                    <Search className="h-4 w-4 mr-2" /> Выбрать заказ
+                  </Button>
+                )}
               </div>
             )}
 
             <div className="space-y-1.5">
               <Label className="flex items-center gap-1.5">
                 Реквизиты клиента (необязательно)
-                <FieldHint text="Можно указать конкретные реквизиты клиента, если у клиента их несколько." />
+                <FieldHint text="Если у клиента несколько комплектов реквизитов — выберите нужный. Иначе система возьмёт реквизиты по умолчанию." />
               </Label>
-              <Input value={legalDetailsId} onChange={(e) => setLegalDetailsId(e.target.value)} placeholder="ID реквизитов" />
+              {legalPick ? (
+                <div className="flex items-start gap-2 rounded-md border bg-muted/30 p-2">
+                  {legalPick.client_type === "individual"
+                    ? <User className="h-4 w-4 mt-0.5 text-muted-foreground" />
+                    : <Building2 className="h-4 w-4 mt-0.5 text-indigo-500" />}
+                  <div className="flex-1 min-w-0 text-xs">
+                    <div className="font-medium truncate">{legalPick.display_name}</div>
+                    <div className="text-muted-foreground truncate">
+                      {legalPick.display_unp ? `УНП ${legalPick.display_unp}` : ""}
+                      {legalPick.email ? ` · ${legalPick.email}` : ""}
+                    </div>
+                  </div>
+                  <Button size="sm" variant="ghost" onClick={() => setLegalPickerOpen(true)}>Изменить</Button>
+                  <Button size="sm" variant="ghost" onClick={() => { setLegalPick(null); setPreview(null); }}>
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ) : (
+                <Button variant="outline" className="w-full justify-start" onClick={() => setLegalPickerOpen(true)}>
+                  <Search className="h-4 w-4 mr-2" /> Выбрать реквизиты
+                </Button>
+              )}
             </div>
           </div>
 
