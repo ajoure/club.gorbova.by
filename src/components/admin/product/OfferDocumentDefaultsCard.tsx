@@ -238,10 +238,15 @@ export function OfferDocumentDefaultsCard({ value, onChange, offerAmount, offerC
               <SelectTrigger><SelectValue placeholder="Выберите шаблон" /></SelectTrigger>
               <SelectContent>
                 {templates.length === 0 ? (
-                  <div className="p-2 text-sm text-muted-foreground">Нет активных шаблонов</div>
+                  <div className="p-2 text-sm text-muted-foreground">
+                    Нет активных шаблонов. Добавьте шаблон в Нейросеть → Документы → Шаблоны.
+                  </div>
                 ) : templates.map(t => (
-                  <SelectItem key={t.id} value={t.id}>
-                    {t.name}{t.code ? ` (${t.code})` : ""}
+                  <SelectItem key={t.id} value={t.id} disabled={!t.has_active_version}>
+                    {t.name}
+                    {t.code ? ` · ${t.code}` : ""}
+                    {t.current_version != null ? ` · v${t.current_version}` : ""}
+                    {!t.has_active_version ? " · нет активной версии" : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -259,7 +264,9 @@ export function OfferDocumentDefaultsCard({ value, onChange, offerAmount, offerC
               <SelectTrigger><SelectValue placeholder="Выберите исполнителя" /></SelectTrigger>
               <SelectContent>
                 {executors.length === 0 ? (
-                  <div className="p-2 text-sm text-muted-foreground">Нет активных исполнителей</div>
+                  <div className="p-2 text-sm text-muted-foreground">
+                    Нет активных исполнителей. Добавьте в Нейросеть → Документы → Исполнители.
+                  </div>
                 ) : executors.map(ex => (
                   <SelectItem key={ex.id} value={ex.id}>
                     {ex.short_name || ex.full_name}{ex.is_default ? " · по умолчанию" : ""}
