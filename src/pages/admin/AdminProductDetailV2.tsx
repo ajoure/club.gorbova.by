@@ -1947,7 +1947,9 @@ export default function AdminProductDetailV2() {
                 </CardContent>
               </Card>
             )}
+            </TabsContent>
 
+            <TabsContent value="renewal" className="space-y-4 mt-4">
             {offerForm.offer_type === "pay_now" && offerForm.payment_method === "full_payment" && (
               <Card>
                 <CardHeader className="pb-2">
