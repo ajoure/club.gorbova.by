@@ -144,10 +144,9 @@ export function TemplateVisualEditor({
     const token_manifest = chips.map((c) => ({
       field_public_id: c.field_public_id,
       case_modifier: c.case_modifier,
+      format: c.format,
       label: c.label,
-      placeholder: c.case_modifier
-        ? `{{field:${c.field_public_id}|case=${c.case_modifier}}}`
-        : `{{field:${c.field_public_id}}}`,
+      placeholder: buildFieldPlaceholder(c.field_public_id, c.format, c.case_modifier),
     }));
     await onSave({ editor_html: html, editor_json: json, plain_text: plain, token_manifest });
   };
