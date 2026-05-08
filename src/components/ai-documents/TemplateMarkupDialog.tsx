@@ -422,13 +422,21 @@ function FieldPicker({
   refs: RegistryFieldRef[];
   refsByCategory: Map<string, RegistryFieldRef[]>;
   value: string | null;
-  onChange: (v: string) => void;
+  onChange: (
+    v: string,
+    opts: { format: FieldFormat | null; caseModifier: FieldCase | null; data_type?: string | null },
+  ) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [pickedField, setPickedField] = useState<RegistryFieldRef | null>(null);
   const selected = useMemo(
     () => refs.find((r) => r.field_public_id === value) ?? null,
     [refs, value],
   );
+
+  useEffect(() => {
+    if (!open) setPickedField(null);
+  }, [open]);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -457,58 +465,74 @@ function FieldPicker({
         align="start"
         sideOffset={4}
         className="w-[var(--radix-popover-trigger-width)] min-w-[420px] p-0 bg-popover border shadow-lg z-[60] overflow-hidden"
-        style={{ maxHeight: "min(420px, var(--radix-popover-content-available-height))" }}
+        style={{ maxHeight: "min(520px, var(--radix-popover-content-available-height))" }}
       >
-        <Command
-          className="flex flex-col h-full max-h-full overflow-hidden"
-          filter={(itemValue, search) => {
-            if (!search) return 1;
-            return itemValue.toLowerCase().includes(search.toLowerCase()) ? 1 : 0;
-          }}
-        >
-          <CommandInput
-            placeholder="Поиск по FLD, key, label…"
-            className="h-9 text-xs"
+        {pickedField ? (
+          <FieldFormatPicker
+            dataType={pickedField.data_type}
+            fieldPublicId={pickedField.field_public_id}
+            fieldLabel={pickedField.ui_label}
+            onCancel={() => setPickedField(null)}
+            onConfirm={(sel) => {
+              onChange(pickedField.field_public_id, {
+                format: sel.format,
+                caseModifier: sel.caseModifier,
+                data_type: pickedField.data_type,
+              });
+              setPickedField(null);
+              setOpen(false);
+            }}
           />
-          <CommandList
-            className="overflow-y-auto overscroll-contain flex-1"
-            style={{ maxHeight: "360px" }}
+        ) : (
+          <Command
+            className="flex flex-col h-full max-h-full overflow-hidden"
+            filter={(itemValue, search) => {
+              if (!search) return 1;
+              return itemValue.toLowerCase().includes(search.toLowerCase()) ? 1 : 0;
+            }}
           >
-            <CommandEmpty className="py-6 text-center text-xs text-muted-foreground">
-              Ничего не найдено
-            </CommandEmpty>
-            {Array.from(refsByCategory.entries()).map(([cat, items]) => (
-              <CommandGroup key={cat} heading={CATEGORY_LABELS_RU[cat] ?? cat}>
-                {items.map((r) => {
-                  const searchKey = `${r.field_public_id} ${r.token_key} ${r.ui_label}`;
-                  const isSelected = value === r.field_public_id;
-                  return (
-                    <CommandItem
-                      key={r.field_public_id}
-                      value={searchKey}
-                      onSelect={() => {
-                        onChange(r.field_public_id);
-                        setOpen(false);
-                      }}
-                      className="text-xs py-1.5 gap-2"
-                    >
-                      <Check
-                        className={cn(
-                          "h-3.5 w-3.5 shrink-0",
-                          isSelected ? "opacity-100" : "opacity-0",
-                        )}
-                      />
-                      <span className="font-mono text-[10px] text-muted-foreground shrink-0 w-[88px]">
-                        {r.field_public_id}
-                      </span>
-                      <span className="flex-1 truncate">{r.ui_label}</span>
-                    </CommandItem>
-                  );
-                })}
-              </CommandGroup>
-            ))}
-          </CommandList>
-        </Command>
+            <CommandInput
+              placeholder="Поиск по FLD, key, label…"
+              className="h-9 text-xs"
+            />
+            <CommandList
+              className="overflow-y-auto overscroll-contain flex-1"
+              style={{ maxHeight: "440px" }}
+            >
+              <CommandEmpty className="py-6 text-center text-xs text-muted-foreground">
+                Ничего не найдено
+              </CommandEmpty>
+              {Array.from(refsByCategory.entries()).map(([cat, items]) => (
+                <CommandGroup key={cat} heading={CATEGORY_LABELS_RU[cat] ?? cat}>
+                  {items.map((r) => {
+                    const searchKey = `${r.field_public_id} ${r.token_key} ${r.ui_label}`;
+                    const isSelected = value === r.field_public_id;
+                    return (
+                      <CommandItem
+                        key={r.field_public_id}
+                        value={searchKey}
+                        onSelect={() => setPickedField(r)}
+                        className="text-xs py-1.5 gap-2"
+                      >
+                        <Check
+                          className={cn(
+                            "h-3.5 w-3.5 shrink-0",
+                            isSelected ? "opacity-100" : "opacity-0",
+                          )}
+                        />
+                        <span className="font-mono text-[10px] text-muted-foreground shrink-0 w-[88px]">
+                          {r.field_public_id}
+                        </span>
+                        <span className="flex-1 truncate">{r.ui_label}</span>
+                        <span className="text-[10px] text-muted-foreground shrink-0">{r.data_type}</span>
+                      </CommandItem>
+                    );
+                  })}
+                </CommandGroup>
+              ))}
+            </CommandList>
+          </Command>
+        )}
       </PopoverContent>
     </Popover>
   );
