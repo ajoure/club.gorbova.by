@@ -2395,6 +2395,15 @@ export default function AdminProductDetailV2() {
                     meta: { ...offerForm.meta, crm_routing: next },
                   })}
                 />
+
+                {/* Sprint 10: defaults for document generation */}
+                <OfferDocumentDefaultsCard
+                  value={offerForm.meta?.document_defaults}
+                  onChange={(next) => setOfferForm({
+                    ...offerForm,
+                    meta: { ...offerForm.meta, document_defaults: next },
+                  })}
+                />
               </CollapsibleContent>
             </Collapsible>
 
