@@ -1,11 +1,20 @@
-# Sprint 11 · C5-C — Smoke-test (тех. часть, синтетический акт)
+# Sprint 11 · C5-C / C5-D — Smoke + UI Markup
+
+## ✅ C5-C Backend Smoke: GREEN
+End-to-end strict ID-first генерации DOCX (синтетический акт): подтверждено ниже.
+
+## 🟡 C5-D UI DOCX Markup: IN PROGRESS
+Pending user visual test on real DOCX (см. `document_generation_sprint11_c5d_docx_markup.md`).
+
+> **Архитектурный вывод (зафиксировано):** TipTap-подход для DOCX-шаблонов признан **неправильным**.
+> WYSIWYG-редактор разрушает структуру DOCX (таблицы, стили, реквизиты, выравнивания).
+> Для DOCX используется новый разметчик `TemplateMarkupDialog` (C5-D) — DOCX = source of truth,
+> mammoth = read-only Word-like preview, замены применяются точечно к `<w:t>` исходного XML.
+> `TemplateVisualEditor` помечен `NOT FOR DOCX TEMPLATES` и в DOCX-flow не импортируется.
 
 **Дата:** 2026-05-08
 **Resolver version:** `strict-1.3.0-c5b` (с патчем парсера: `field:FLD-…|<bare>` → `unknown_modifier`)
 **Сценарий:** end-to-end проверка strict ID-first сценария на синтетическом DOCX-акте (без UI).
-**UI-часть (шаги 1–3 из плана C5-C):** не пройдена, остаётся за пользователем (загрузка реального .docx и разметка через picker в `/admin/ai → Документы`).
-
----
 
 ## 1. Шаблон и активная версия
 

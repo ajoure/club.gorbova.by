@@ -1,229 +1,237 @@
-# Да, согласен, с учетом правок:
+# Да, по этому шаблону проблема очевидная: в Word документ содержит нормальную структуру счёт-акта с таблицей, реквизитами, подписями и старыми плейсхолдерами вида `{{ld-...}}`, `{{cn-...}}`  . В Lovable сейчас preview превращает DOCX почти в обычный текст: таблица визуально разваливается, ширины/ячейки/структура не сохраняются. Так **нельзя** использовать как рабочий редактор разметки.
 
-1. **Не активировать новую версию автоматически после apply-markup.**  
-Apply-markup должен:
-  - создать новую DOCX-версию;
-  - сохранить `token_manifest`;
-  - выполнить strict validation;
-  - если `validation_status='valid'` — показать кнопку **«Сделать текущей»** / **«Активировать версию»**.
-  Автоактивация допустима только если пользователь явно нажал отдельную кнопку **«Применить и активировать»**. Иначе рискованно.
-2. **Нужна защита от одинакового текста в документе.**  
-Нельзя заменять просто все совпадения `original_text`, если одинаковая фраза встречается несколько раз.  
-В `replacement` добавить:
-  &nbsp;
-  ```json
-  {
-    "original_text": "250 BYN",
-    "occurrence_index": 2,
-    "field_public_id": "FLD-000191",
-    "placeholder": "{{field:FLD-000191|format=words}}"
-  }
-  ```
-  Если `occurrence_index` не задан и найдено больше одного совпадения — вернуть warning:
-  ```text
-  ambiguous_replacement_multiple_matches
-  ```
-  и не применять замену автоматически.
-3. **Использовать существующий ZIP-инструмент, не тащить новый без необходимости.**  
-Если уже используется `PizZip` в `canonical-template-apply-markup`, оставить его.  
-`jszip` подключать только если текущий `PizZip` реально не покрывает задачу. Не плодить зависимости.
-4. **Preview через Mammoth — только для отображения, не для сохранения.**  
-Зафиксировать жёстко:
-5. **Manual replacement должен работать через выделение текста в preview.**  
-Добавить UX:
-  - пользователь выделяет текст в preview;
-  - нажимает «Разметить выделенное»;
-  - система создаёт manual replacement с `original_text`;
-  - если найдено несколько совпадений — просит выбрать конкретное occurrence.
-6. **Autosave draft обязателен.**  
-Добавить миграцию:
-  &nbsp;
-  ```sql
-  ALTER TABLE document_template_versions
-  ADD COLUMN IF NOT EXISTS markup_draft jsonb;
-  ```
-  Draft хранит:
-  - replacements;
-  - statuses;
-  - выбранные FLD;
-  - format;
-  - case_modifier;
-  - occurrence_index;
-  - last_saved_at.
-7. **Переключение вкладок не должно размонтировать state.**  
-`TemplateMarkupDialog` должен держать единый `markupState` на уровне dialog, а не внутри вкладок.  
-Вкладки только отображают одно и то же состояние разными способами.
-8. **TipTap убрать из DOCX-flow полностью.**  
-Не просто «не использовать как canonical», а:
-  - не показывать вкладку TipTap для DOCX;
-  - не предлагать редактировать DOCX через TipTap;
-  - оставить файл только как future/non-DOCX, с явным комментарием:
-9. **Backend apply-markup должен сохранять исходный DOCX максимально неизменным.**  
-Правило:
-10. **Proof C5-C нужно переименовать по смыслу.**  
-Текущий результат — это только:
-  &nbsp;
-  ```text
-  C5-C backend smoke: GREEN
-  ```
-  А UI:
-11. **В C5-D proof добавить обязательный реальный DOCX-чек.**  
-DoD должен включать не только grep, но и визуальную проверку:
-  - таблица осталась таблицей;
-  - шрифты/жирный/подчёркивание не исчезли;
-  - ширины колонок не разрушены;
-  - итоговый DOCX открывается в Word/LibreOffice;
-  - клиентский акт выглядит как исходный шаблон.
-12. **Не писать “полный green”, пока пользователь сам не проверит UI.**  
-После backend-проверок писать только:
+Дай Lovable такие правки:
 
 ```text
-Backend green. UI validation pending user test.
+Продолжай C5-D, но сначала исправь критический UI-блокер DOCX preview/markup.
+
+Проблема:
+Загруженный DOCX-шаблон «Шаблон. Счёт-акт на услуги.docx» в Microsoft Word отображается как нормальный документ: есть таблица, выравнивание, структура счёт-акта, реквизиты, подписи. В текущем TemplateMarkupDialog preview отображается как упрощённый текст/каша: таблица и форматирование теряются. Это недопустимо.
+
+Правильная архитектура:
+DOCX остаётся source of truth.
+Никакого TipTap/WYSIWYG-пересобирания документа для DOCX.
+Mammoth/HTML preview используется только для визуального просмотра и выбора текста.
+Apply-markup должен менять исходный DOCX XML, а не пересоздавать документ из HTML/текста.
+
+PATCH C5-D-BLOCKER-1 — нормальный DOCX preview
+
+1. Улучшить Word-like preview:
+   - preview должен сохранять таблицы как таблицы;
+   - ячейки должны иметь видимые borders;
+   - отступы, жирный текст, списки, заголовки должны отображаться максимально близко к Word;
+   - preview не должен превращать таблицу в плоский текст.
+
+2. Добавить scoped CSS только для preview:
+   .docx-preview table {
+     border-collapse: collapse;
+     width: 100%;
+     table-layout: fixed;
+   }
+   .docx-preview td,
+   .docx-preview th {
+     border: 1px solid hsl(var(--border));
+     padding: 4px 8px;
+     vertical-align: top;
+     word-break: break-word;
+   }
+   .docx-preview p {
+     margin: 0 0 6px;
+   }
+   .docx-preview strong,
+   .docx-preview b {
+     font-weight: 700;
+   }
+   .docx-preview ul,
+   .docx-preview ol {
+     margin-left: 20px;
+   }
+
+3. Проверить, что mammoth.convertToHtml реально отдаёт table/tr/td.
+   Если таблица в HTML есть — проблема только CSS.
+   Если mammoth не отдаёт таблицу корректно — зафиксировать это в proof и предложить альтернативу: использовать LibreOffice headless / docx-preview library для read-only preview, но apply-markup всё равно должен работать по DOCX XML.
+
+PATCH C5-D-BLOCKER-2 — не показывать авторазметку по умолчанию
+
+Сейчас справа сразу появляются auto-suggestions и выглядят как будто система уже что-то сама решила. Это мешает.
+
+Нужно:
+- при открытии разметки правая панель пустая;
+- кнопка «Найти автоматически» отдельно запускает auto-suggest;
+- основной сценарий — ручная разметка:
+  1) выделил текст в preview;
+  2) нажал «Разметить выделенное»;
+  3) выбрал FLD-поле;
+  4) выбрал формат/падеж при необходимости;
+  5) replacement появился справа как active/manual.
+
+PATCH C5-D-BLOCKER-3 — черновик не должен сбрасываться
+
+Если пользователь:
+- разметил несколько полей;
+- переключился внутри dialog;
+- закрыл/открыл dialog;
+- нажал preview/auto-suggest,
+
+то replacements не должны пропадать.
+
+Требования:
+- использовать document_template_versions.markup_draft;
+- autosave каждые 1.5 секунды после изменения replacements;
+- при открытии dialog сначала загружать markup_draft;
+- если draft есть — не запускать auto-suggest автоматически;
+- кнопка «Очистить разметку» должна явно очищать draft.
+
+PATCH C5-D-BLOCKER-4 — apply должен сохранять исходный вид DOCX
+
+После Apply:
+- таблица должна остаться таблицей;
+- ширины/ячейки/границы не должны исчезать;
+- меняется только текст в w:t, где выбранный original_text заменён на {{field:FLD-...}};
+- документ не должен пересобираться из HTML/plain text.
+
+Smoke-test:
+1. Загрузить реальный файл «Шаблон. Счёт-акт на услуги.docx».
+2. Открыть разметку.
+3. Убедиться, что preview показывает таблицу как таблицу.
+4. Выделить в таблице старый placeholder, например сумму или наименование услуги.
+5. Назначить FLD-поле.
+6. Apply создать новую версию.
+7. Скачать новую версию.
+8. Открыть в Word.
+9. Подтвердить:
+   - таблица сохранена;
+   - форматирование сохранено;
+   - заменён только выбранный текст;
+   - старые {{ld-...}} остаются там, где их ещё не разметили вручную;
+   - новые вставки имеют формат {{field:FLD-XXXXXX}}.
+
+PATCH C5-D-BLOCKER-5 — legacy placeholders в загруженном старом шаблоне
+
+Важно:
+Старый шаблон содержит много legacy placeholder-ов вида {{ld-...}} и {{cn-...}}.
+На этапе ручной разметки это допустимо как исходный материал.
+Но активация финальной версии должна быть заблокирована, пока в DOCX остаются любые legacy placeholders.
+
+Правило:
+- Draft/markup version может содержать старые {{ld-...}} до полной разметки.
+- Apply может создать новую draft-version даже если часть legacy осталась.
+- Activate должен быть запрещён, если validation нашёл legacy placeholders.
+- UI должен показывать список оставшихся legacy placeholders и прогресс:
+  Размечено: X / Всего legacy placeholders: Y.
+
+Proof:
+Обновить .lovable/proofs/document_generation_sprint11_c5d_docx_markup.md:
+- приложить факт, что реальный шаблон содержит таблицу и legacy placeholders;
+- показать, что preview отображает таблицу;
+- показать, что manual replacement сохраняется в markup_draft;
+- показать, что apply создаёт новую версию;
+- показать, что скачанный DOCX после apply сохраняет таблицу;
+- показать, что activate блокируется, пока есть legacy placeholders;
+- подтвердить: TipTap не используется для DOCX-flow;
+- подтвердить: email/Telegram/auto-generation/batch OFF.
+
+Финальная формулировка отчёта:
+Backend C5-C green. C5-D UI DOCX markup fixed for real DOCX preview and manual markup, pending final user visual test on real template.
 ```
 
-Итоговое решение правильное: **не строим Word-редактор**, строим **DOCX-разметчик**, который работает поверх исходного файла и сохраняет его внешний вид.
+Ключевой вывод: **не надо сейчас делать “редактор Word в браузере”**. Нужно сделать нормальный read-only preview документа + ручную замену выбранных фрагментов в исходном DOCX. Это сохранит таблицы и форматирование.
 
 &nbsp;
 
-План: C5-D — DOCX Markup (разметчик поверх исходного DOCX)
+План: C5-D DOCX Markup — переработка UI + финальная проверка
 
 ## Контекст
 
-Текущий `TemplateVisualEditor` (TipTap) для DOCX-актов — blocker. `mammoth.extractRawText` теряет таблицы/стили/шрифты, переключение вкладок сбрасывает выбор, разметка пересобирает документ из HTML вместо правки исходного XML.
+Текущий `TemplateMarkupDialog` отображает плейсхолдеры в виде «сырых» `{{ld-...}}` токенов внутри preview, таблицы не рендерятся, авторазметка засоряет правую панель десятками карточек. Пользователь хочет:
 
-Решение: DOCX = source of truth. UI = разметчик, не редактор.
+- preview как настоящий Word-документ (включая таблицы);
+- авторазметку **скрыть по умолчанию** (оставить как опциональную кнопку);
+- основной флоу — ручной: выделить текст → присвоить FLD-поле;
+- TipTap не использовать в DOCX-разметке.
 
----
+## Что делаем
 
-## Архитектура
+### 1. Build / runtime sanity
 
-```text
-┌──────────────────────────────────────────────────────────┐
-│ TemplateMarkupDialog (state: markupState — общий)        │
-│ ┌──────────────────────┬─────────────────────────────┐  │
-│ │ Word-like Preview    │ Replacements panel           │  │
-│ │ (mammoth HTML)       │  - auto suggestions          │  │
-│ │ + подсветка          │  - manual add (find + FLD)   │  │
-│ │   replacements       │  - format/case picker        │  │
-│ └──────────────────────┴─────────────────────────────┘  │
-│  [Сохранить draft]  [Применить разметку]                 │
-└──────────────────────────────────────────────────────────┘
-                         ↓
-   apply-markup edge fn: правит word/document.xml + headers/footers,
-   заменяет original_text → {{field:FLD-...|format=...|case=...}},
-   сохраняет новый .docx в storage, обновляет token_manifest.
-```
+- `npm run build` (через харнес).
+- Открыть `/admin/ai → Документы → Шаблоны → Разметить` и убедиться, что dialog открывается без ошибок (console + network).
 
-`editor_html` / `editor_json` / TipTap — больше **не** canonical source для DOCX-шаблонов. Оставляем код, но не используем в DOCX-flow (помечаем как deprecated для актов).
+### 2. Переработка `TemplateMarkupDialog`
 
----
+- **Preview (mammoth.convertToHtml)**: рендерить полноценный HTML с таблицами/жирным/списками. Не подменять токены `<mark>`-обёртками — оставить чистый Word-like вид.
+- **Минимальный CSS** для `.docx-preview`: `table { border-collapse; border }`, `td/th { border; padding }`, `strong/b`, `ul/ol`, заголовки.
+- **Auto-suggest по умолчанию OFF**:
+  - При открытии dialog `markupState.replacements = []`.
+  - Кнопка «Найти автоматически» в toolbar — по клику запускает существующий auto-detect и наполняет правую панель.
+  - Кнопка «Очистить разметку» рядом — сбрасывает `replacements = []`.
+- **Ручной флоу (главный)**:
+  - Пользователь выделяет текст в preview → жмёт «Разметить выделенное» → открывается компактный selector (Popover) с поиском по FLD-полям + format/case.
+  - Выбор поля создаёт `replacement` со `status: 'manually_added'`, `original_text`, `occurrence_index` (вычислять по позиции выделения относительно всего текста preview).
+- **Правая панель = журнал замен**: компактные карточки (FLD-код, format/case, occurrence, кнопки Skip/Remove). Без массовых «Принять/X» — manual-замены автоматически активны, авто-замены требуют Accept.
+- **Occurrence-picker**: оставить, но показывать только если `total_occurrences > 1`.
+- **Кнопки apply**:
+  - «Применить (создать версию)» — `activate=false`.
+  - «Применить и активировать» — `activate=true`, дисейблить если есть `critical` warnings.
 
-## Изменения
+### 3. Backend `canonical-template-apply-markup`
 
-### 1. БД (migration)
+Уже поддерживает `activate`, `occurrence_index`, ambiguity guard. Добавить только Deno-тесты (`index_test.ts`):
 
-```sql
-ALTER TABLE document_template_versions
-  ADD COLUMN IF NOT EXISTS markup_draft jsonb;
-```
+- 1 occurrence → заменено;
+- 2 occurrences без index → warning `ambiguous_replacement_multiple_matches`, замен нет;
+- 2 occurrences c `occurrence_index=1` → заменено только второе;
+- legacy `{{document.amount}}` в FLD-плейсхолдере → critical;
+- `activate=false` → версия создана, не активна;
+- `activate=true` + valid → активна.
 
-Структура `markup_draft`:
+### 4. TipTap cleanup
 
-```json
-{
-  "version": 1,
-  "updated_at": "...",
-  "replacements": [
-    {
-      "id": "uuid",
-      "source": "auto" | "manual",
-      "original_text": "...",
-      "field_public_id": "FLD-XXXXXX",
-      "placeholder": "{{field:FLD-XXXXXX|format=words|case=genitive}}",
-      "format": "as_is" | "words" | "text",
-      "case_modifier": null | "genitive" | ...,
-      "status": "suggested" | "accepted" | "changed" | "skipped" | "manually_added",
-      "location": { "part": "word/document.xml", "paragraph_index": 12, "run_index": 3 }
-    }
-  ]
-}
-```
+- Убедиться, что `TemplateVisualEditor` не импортируется из DOCX-flow.
+- Добавить header-комментарий «NOT FOR DOCX TEMPLATES — staging only».
 
-### 2. Frontend
+### 5. Proofs
 
-`**TemplateMarkupDialog.tsx**` — переработать:
+- Переименовать секции в `.lovable/proofs/document_generation_sprint11_c5c_smoke_real_act.md`:
+  - `## C5-C Backend Smoke: GREEN`
+  - `## C5-D UI DOCX Markup: IN PROGRESS`
+  - явно зафиксировать «TipTap-подход признан неправильным для DOCX-шаблонов».
+- Создать `.lovable/proofs/document_generation_sprint11_c5d_docx_markup.md`:
+  - архитектура (DOCX = SOT, mammoth = preview only, XML replace внутри `<w:t>`);
+  - `markup_draft` autosave;
+  - `occurrence_index` + ambiguity guard;
+  - manual-only по умолчанию, auto-suggest опциональный;
+  - `apply` без autoactivate, `apply+activate` отдельная кнопка;
+  - список изменённых файлов;
+  - DoD.
 
-- единый `markupState` (replacements + html preview + raw text), хранится в Dialog-уровне;
-- убрать вкладки «Визуальный редактор» / «Авто-разметка», заменить на 2-колоночный layout: Preview слева, Replacements справа;
-- автозагрузка `markup_draft` при открытии; toast «Восстановить черновик?» если есть;
-- autosave draft (debounced 1.5s) в `markup_draft` через update;
-- кнопка «Применить разметку» вызывает `canonical-template-apply-markup`.
+### 6. Manual smoke (UI пользователем)
 
-**Новые компоненты:**
+- Документ из скрина (`Шаблон. Счёт-акт на услуги.docx`):
+  - открыть Разметку → preview показывает таблицу;
+  - правая панель пустая;
+  - выделить «{{ld-d_opf-706429-upper_first_letter}}» в ячейке → присвоить FLD-поле;
+  - Apply → скачать → открыть в Word → таблица сохранена.
 
-- `DocxPreviewPane.tsx` — рендерит HTML через `mammoth.convertToHtml` + sanitize, оборачивает совпадения `original_text` в `<mark data-replacement-id="...">` с цветовой подсветкой по статусу.
-- `ReplacementsPanel.tsx` — список replacements (auto+manual), per-row: FLD picker, format select, case select, status badge, кнопки Accept/Skip/Remove. Кнопка «Добавить вручную» → ввод find-text + picker.
-- `useDocxMarkupState.ts` — state management + autosave + load/reset draft.
+## Что НЕ делаем
 
-**Удалить из DOCX-flow:**
-
-- `TemplateVisualEditor` больше не открывается из `TemplateMarkupDialog`. Файл оставляем (для будущих non-DOCX), помечаем JSDoc-ом «not for DOCX templates».
-
-### 3. Backend — `canonical-template-apply-markup`
-
-Принимает `replacements[]` с `original_text` + `placeholder`. Логика:
-
-1. Скачать DOCX из storage по `storage_path`.
-2. Распаковать ZIP (использовать `jszip` через esm.sh в Deno).
-3. Для каждой XML-части (`word/document.xml`, `word/header*.xml`, `word/footer*.xml`, `word/footnotes.xml`, `word/endnotes.xml`) — выполнить безопасную замену `original_text` → `placeholder` в текстовых нодах `<w:t>`. Учитывать split runs: если фрагмент разбит между `<w:r>`, склеить смежные runs одного `<w:rPr>` перед заменой.
-4. Если фрагмент не найден — вернуть warning `replacement_not_found` для этой записи, не падать.
-5. Strict-validator: после замены — отказать, если в документе остались legacy `{{document.*|executor.*|customer.*|deal.*|cf.*}}`.
-6. Запаковать обратно, загрузить новую версию в storage, инкрементировать `version_number`, сохранить `token_manifest`, активировать новую версию.
-
-### 4. Proof
-
-Обновить `.lovable/proofs/document_generation_sprint11_c5c_smoke_real_act.md`:
-
-- переименовать секции: **C5-C backend smoke: GREEN**, **C5-D UI DOCX markup: PENDING/IN-PROGRESS**.
-
-Создать `.lovable/proofs/document_generation_sprint11_c5d_docx_markup.md` с:
-
-- архитектурным описанием;
-- списком файлов;
-- чек-листом DoD;
-- инструкцией для UI-проверки (загрузить реальный акт, разметить, applied, generate).
-
----
-
-## Технические детали
-
-- `mammoth@1.x` уже в проекте (`useCorporateTemplateEditor`).
-- В Deno edge fn — `jszip` через `https://esm.sh/jszip@3.10.1`.
-- XML парсинг — простой regex по `<w:t[^>]*>([^<]+)</w:t>` достаточно для MVP замены; для split-runs делаем pre-merge соседних `<w:r>` с идентичным `<w:rPr>`.
-- Подсветка в preview: после `convertToHtml` пробегаем DOM-парсером и оборачиваем text-nodes, содержащие `original_text`, в `<mark>` с data-id.
-- Autosave: `useDebouncedCallback` 1500ms, не блокирует UI.
-
----
+- Не делаем сложную inline-подсветку `<mark>` (отдельный PATCH).
+- Не удаляем `TemplateVisualEditor` (оставляем для будущего).
+- Не трогаем backend strict-generate (C5-C принят).
 
 ## DoD
 
-- `markup_draft` колонка добавлена.
-- Preview рендерит таблицы/стили/жирный/списки (mammoth HTML).
-- Auto + manual replacements в едином state, переключение/добавление не теряет данные.
-- Autosave draft работает; восстановление при повторном открытии.
-- `apply-markup` правит исходный DOCX XML, не пересобирает из HTML.
-- Generated DOCX сохраняет таблицы и форматирование, не содержит `{{...}}`.
-- Legacy `{{document.*}}` блокируются.
-- TipTap-редактор не используется как canonical для DOCX.
-- Email/Telegram/auto-gen/batch — OFF.
-- Два proof-файла: C5-C (backend GREEN) + C5-D (UI markup).
+- Dialog открывается без ошибок.
+- Preview показывает таблицы и форматирование как Word.
+- Правая панель пустая до явного «Найти автоматически».
+- Ручная разметка через выделение работает.
+- `apply-markup` тесты зелёные.
+- Оба proof-файла обновлены.
+- Финальная формулировка: **Backend C5-C green. C5-D UI DOCX markup implemented, pending user visual test on real DOCX.**
 
----
+## Технические детали (для разработчика)
 
-## Что НЕ делаем сейчас
-
-- Полноценный WYSIWYG Word-редактор.
-- Inline-edit DOCX-структуры (правка таблиц/стилей в браузере).
-- Замены в нескольких run-spans с разным форматированием (только pre-merge с идентичным `<w:rPr>`; иначе → warning «split-run, разметить вручную в Word»).
-
-После approve — приступаю к C5-D-1 → C5-D-9 в одном проходе.
+- `TemplateMarkupDialog.tsx`: state machine `{ replacements, autoSuggested: boolean }`. Auto-suggest вызывается лениво.
+- Selection → `window.getSelection()` → `range.toString()` + `getCharacterOffset` относительно preview контейнера для вычисления `occurrence_index`.
+- CSS scope: `.docx-preview table, .docx-preview td, .docx-preview th { border: 1px solid hsl(var(--border)); padding: 4px 8px; }` + `border-collapse: collapse`.
+- FLD-picker внутри Popover с `Command` (cmdk) — поиск по `field_code` + label.

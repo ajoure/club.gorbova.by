@@ -123,6 +123,7 @@ export function TemplateMarkupDialog({
   const [activating, setActivating] = useState(false);
   const [draftLoaded, setDraftLoaded] = useState(false);
   const [hasDraftSaved, setHasDraftSaved] = useState(false);
+  const [autoSuggesting, setAutoSuggesting] = useState(false);
   const previewRef = useRef<HTMLDivElement | null>(null);
 
   // ── load DOCX, build preview HTML, load draft or build auto-suggestions ──
@@ -164,23 +165,8 @@ export function TemplateMarkupDialog({
             description: `Replacements: ${draft.replacements.length}. Сохранён ${new Date(draft.updated_at).toLocaleString("ru-RU")}`,
           });
         } else {
-          const sug = await buildAutoSuggestions(txt);
-          if (cancelled) return;
-          setReplacements(sug.map<Replacement>((s) => ({
-            id: s.id,
-            source: "auto",
-            original_text: s.original_text,
-            field_public_id: s.field_public_id,
-            format: (s.format ?? null) as FieldFormat | null,
-            case_modifier: (s.case_modifier ?? null) as FieldCase | null,
-            data_type: s.data_type ?? null,
-            placeholder: s.placeholder,
-            status: s.status as Replacement["status"],
-            occurrence_index: null,
-            occurrences_total: countOccurrences(txt, s.original_text),
-            reason: s.reason,
-            confidence: s.confidence,
-          })));
+          // По умолчанию правая панель пустая. Auto-suggest запускается явной кнопкой.
+          setReplacements([]);
         }
         setDraftLoaded(true);
         await supabase.functions.invoke("canonical-template-audit", {
@@ -213,7 +199,7 @@ export function TemplateMarkupDialog({
   // ── autosave draft (debounced) ──
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (!draftLoaded || !templateVersion || replacements.length === 0) return;
+    if (!draftLoaded || !templateVersion) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       const draft: MarkupDraft = {
@@ -291,6 +277,45 @@ export function TemplateMarkupDialog({
     setReplacements((prev) => [newR, ...prev]);
     toast.success(`Добавлено: «${text.slice(0, 40)}${text.length > 40 ? "…" : ""}»${occ > 1 ? ` (${occ} вхождений — выберите конкретное)` : ""}`);
     sel?.removeAllRanges();
+  };
+
+  // ── auto-suggest (явный запуск по кнопке) ──
+  const runAutoSuggest = async () => {
+    if (!plainText) return;
+    setAutoSuggesting(true);
+    try {
+      const sug = await buildAutoSuggestions(plainText);
+      const existingTexts = new Set(replacements.map((r) => `${r.original_text}::${r.field_public_id ?? ""}`));
+      const fresh: Replacement[] = sug
+        .filter((s) => !existingTexts.has(`${s.original_text}::${s.field_public_id ?? ""}`))
+        .map((s) => ({
+          id: s.id,
+          source: "auto",
+          original_text: s.original_text,
+          field_public_id: s.field_public_id,
+          format: (s.format ?? null) as FieldFormat | null,
+          case_modifier: (s.case_modifier ?? null) as FieldCase | null,
+          data_type: s.data_type ?? null,
+          placeholder: s.placeholder,
+          status: s.status as Replacement["status"],
+          occurrence_index: null,
+          occurrences_total: countOccurrences(plainText, s.original_text),
+          reason: s.reason,
+          confidence: s.confidence,
+        }));
+      setReplacements((prev) => [...prev, ...fresh]);
+      toast.success(`Авторазметка: добавлено ${fresh.length} предложений`);
+    } catch (e: any) {
+      toast.error(`Ошибка авторазметки: ${e?.message ?? e}`);
+    } finally {
+      setAutoSuggesting(false);
+    }
+  };
+
+  const clearReplacements = () => {
+    if (replacements.length === 0) return;
+    if (!confirm("Очистить все разметки? Черновик будет очищен.")) return;
+    setReplacements([]);
   };
 
   const acceptedCount = replacements.filter((r) =>
@@ -395,7 +420,7 @@ export function TemplateMarkupDialog({
 
             {/* RIGHT: replacements panel */}
             <div className="flex flex-col min-h-0">
-              <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center justify-between mb-2 gap-2">
                 <div className="flex items-center gap-2 text-xs">
                   <Sparkles className="h-3.5 w-3.5 text-amber-500" />
                   Всего: <b>{replacements.length}</b> · принято: <b>{acceptedCount}</b>
@@ -405,13 +430,30 @@ export function TemplateMarkupDialog({
                     </Badge>
                   )}
                 </div>
+                <div className="flex items-center gap-1">
+                  <Button size="sm" variant="outline" className="h-7 text-[11px]"
+                    onClick={runAutoSuggest} disabled={autoSuggesting || !plainText}>
+                    {autoSuggesting ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Sparkles className="h-3 w-3 mr-1" />}
+                    Найти автоматически
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-7 text-[11px] text-muted-foreground"
+                    onClick={clearReplacements} disabled={replacements.length === 0}>
+                    <Trash2 className="h-3 w-3 mr-1" /> Очистить
+                  </Button>
+                </div>
               </div>
               <ScrollArea className="flex-1 border rounded">
                 <div className="divide-y">
                   {replacements.length === 0 ? (
-                    <div className="text-center text-xs text-muted-foreground py-8 px-4">
-                      Нет replacements. Auto-suggest ничего не нашёл.
-                      Выделите текст в preview слева → «Разметить выделенное».
+                    <div className="text-center text-xs text-muted-foreground py-10 px-4 space-y-2">
+                      <p className="font-medium text-foreground">Разметка пустая</p>
+                      <p>
+                        Выделите текст в preview слева → нажмите <b>«Разметить выделенное»</b> →
+                        выберите FLD-поле.
+                      </p>
+                      <p className="opacity-70">
+                        Или нажмите <b>«Найти автоматически»</b> для предварительных предложений.
+                      </p>
                     </div>
                   ) : replacements.map((r) => (
                     <ReplacementRow
