@@ -1,13 +1,13 @@
 /**
- * FieldChipNode — inline atom node для TipTap (Sprint 11 C4).
+ * FieldChipNode — inline atom node для TipTap (Sprint 11 C4-A/B).
  *
- * Внутренний JSON хранит { fieldPublicId, caseModifier, label }.
+ * Внутренний JSON хранит { fieldPublicId, caseModifier, format, label }.
  * renderText даёт строго ID-first плейсхолдер:
- *   {{field:FLD-XXXXXX}}                       (без падежа)
- *   {{field:FLD-XXXXXX|case=<allowed>}}        (с падежом, C4-B)
- *
- * В DOM рисуется как chip: «<label>  FLD-XXXXXX  (П)», поэтому пользователь
- * не видит сырых фигурных скобок в обычном режиме редактирования.
+ *   {{field:FLD-XXXXXX}}
+ *   {{field:FLD-XXXXXX|case=<allowed>}}
+ *   {{field:FLD-XXXXXX|format=words}}
+ *   {{field:FLD-XXXXXX|format=words|case=<allowed>}}
+ *   {{field:FLD-XXXXXX|format=text}}                       (для boolean)
  */
 import { Node, mergeAttributes } from "@tiptap/core";
 
@@ -19,6 +19,8 @@ export type FieldCase =
   | "instrumental"
   | "prepositional";
 
+export type FieldFormat = "words" | "text";
+
 export const FIELD_CASE_SHORT: Record<FieldCase, string> = {
   nominative: "И",
   genitive: "Р",
@@ -28,9 +30,24 @@ export const FIELD_CASE_SHORT: Record<FieldCase, string> = {
   prepositional: "П",
 };
 
+export const FIELD_CASE_LABEL: Record<FieldCase, string> = {
+  nominative: "Именительный — кто? что?",
+  genitive: "Родительный — кого? чего?",
+  dative: "Дательный — кому? чему?",
+  accusative: "Винительный — кого? что?",
+  instrumental: "Творительный — кем? чем?",
+  prepositional: "Предложный — о ком? о чём?",
+};
+
+export const FIELD_FORMAT_LABEL: Record<FieldFormat, string> = {
+  words: "прописью",
+  text: "текстом",
+};
+
 export interface FieldChipAttrs {
   fieldPublicId: string;
   caseModifier: FieldCase | null;
+  format: FieldFormat | null;
   label: string;
 }
 
@@ -40,6 +57,17 @@ declare module "@tiptap/core" {
       insertFieldChip: (attrs: FieldChipAttrs) => ReturnType;
     };
   }
+}
+
+export function buildFieldPlaceholder(
+  fieldPublicId: string,
+  format: FieldFormat | null,
+  caseModifier: FieldCase | null,
+): string {
+  const parts: string[] = [`field:${fieldPublicId}`];
+  if (format) parts.push(`format=${format}`);
+  if (caseModifier) parts.push(`case=${caseModifier}`);
+  return `{{${parts.join("|")}}}`;
 }
 
 export const FieldChipNode = Node.create({
@@ -66,6 +94,14 @@ export const FieldChipNode = Node.create({
         renderHTML: (attrs) =>
           attrs.caseModifier ? { "data-case-modifier": attrs.caseModifier } : {},
       },
+      format: {
+        default: null,
+        parseHTML: (el) => {
+          const v = (el as HTMLElement).getAttribute("data-format");
+          return v === "words" || v === "text" ? v : null;
+        },
+        renderHTML: (attrs) => (attrs.format ? { "data-format": attrs.format } : {}),
+      },
       label: {
         default: "",
         parseHTML: (el) => (el as HTMLElement).getAttribute("data-label") ?? "",
@@ -80,19 +116,19 @@ export const FieldChipNode = Node.create({
 
   renderHTML({ HTMLAttributes, node }) {
     const attrs = node.attrs as FieldChipAttrs;
+    const formatLabel = attrs.format ? FIELD_FORMAT_LABEL[attrs.format] : null;
     const caseShort =
       attrs.caseModifier && FIELD_CASE_SHORT[attrs.caseModifier]
-        ? ` (${FIELD_CASE_SHORT[attrs.caseModifier]})`
-        : "";
-    return [
-      "span",
-      mergeAttributes(HTMLAttributes, {
-        "data-field-chip": "true",
-        contenteditable: "false",
-        class:
-          "inline-flex items-center gap-1 align-baseline rounded-md border border-primary/30 bg-primary/10 px-1.5 py-0.5 mx-0.5 text-[12px] font-medium text-primary leading-none",
-        title: `${attrs.label} · ${attrs.fieldPublicId}${caseShort}`,
-      }),
+        ? FIELD_CASE_SHORT[attrs.caseModifier]
+        : null;
+    const titleParts = [
+      attrs.label,
+      attrs.fieldPublicId,
+      formatLabel,
+      caseShort ? `падеж: ${caseShort}` : null,
+    ].filter(Boolean);
+
+    const children: any[] = [
       ["span", { class: "truncate max-w-[220px]" }, attrs.label || attrs.fieldPublicId],
       [
         "span",
@@ -102,26 +138,45 @@ export const FieldChipNode = Node.create({
         },
         attrs.fieldPublicId,
       ],
-      ...(attrs.caseModifier
-        ? [
-            [
-              "span",
-              {
-                class:
-                  "font-mono text-[10px] text-amber-600 bg-amber-100 dark:bg-amber-900/30 rounded px-1 ml-0.5 border border-amber-400/40",
-              },
-              FIELD_CASE_SHORT[attrs.caseModifier],
-            ] as any,
-          ]
-        : []),
+    ];
+    if (formatLabel) {
+      children.push([
+        "span",
+        {
+          class:
+            "text-[10px] text-sky-700 bg-sky-100 dark:bg-sky-900/30 rounded px-1 ml-0.5 border border-sky-400/40",
+        },
+        formatLabel,
+      ]);
+    }
+    if (caseShort) {
+      children.push([
+        "span",
+        {
+          class:
+            "font-mono text-[10px] text-amber-700 bg-amber-100 dark:bg-amber-900/30 rounded px-1 ml-0.5 border border-amber-400/40",
+        },
+        caseShort,
+      ]);
+    }
+
+    return [
+      "span",
+      mergeAttributes(HTMLAttributes, {
+        "data-field-chip": "true",
+        contenteditable: "false",
+        class:
+          "inline-flex items-center gap-1 align-baseline rounded-md border border-primary/30 bg-primary/10 px-1.5 py-0.5 mx-0.5 text-[12px] font-medium text-primary leading-none",
+        title: titleParts.join(" · "),
+      }),
+      ...children,
     ];
   },
 
   renderText({ node }) {
     const attrs = node.attrs as FieldChipAttrs;
     if (!attrs.fieldPublicId) return "";
-    const suffix = attrs.caseModifier ? `|case=${attrs.caseModifier}` : "";
-    return `{{field:${attrs.fieldPublicId}${suffix}}}`;
+    return buildFieldPlaceholder(attrs.fieldPublicId, attrs.format, attrs.caseModifier);
   },
 
   addCommands() {
@@ -137,19 +192,22 @@ export const FieldChipNode = Node.create({
   },
 });
 
-/**
- * Вытягивает chip-узлы из TipTap JSON для построения token_manifest.
- */
-export function extractFieldChipsFromJSON(
-  doc: any,
-): { field_public_id: string; case_modifier: FieldCase | null; label: string }[] {
-  const out: { field_public_id: string; case_modifier: FieldCase | null; label: string }[] = [];
+export interface ExtractedChip {
+  field_public_id: string;
+  case_modifier: FieldCase | null;
+  format: FieldFormat | null;
+  label: string;
+}
+
+export function extractFieldChipsFromJSON(doc: any): ExtractedChip[] {
+  const out: ExtractedChip[] = [];
   const walk = (n: any) => {
     if (!n) return;
     if (n.type === "fieldChip" && n.attrs?.fieldPublicId) {
       out.push({
         field_public_id: n.attrs.fieldPublicId,
         case_modifier: (n.attrs.caseModifier as FieldCase | null) ?? null,
+        format: (n.attrs.format as FieldFormat | null) ?? null,
         label: n.attrs.label ?? "",
       });
     }
@@ -159,17 +217,14 @@ export function extractFieldChipsFromJSON(
   return out;
 }
 
-/**
- * Сериализует TipTap doc в plain text c подставленными ID-first плейсхолдерами.
- * Используется для strict-валидации перед сохранением версии.
- */
 export function serializeEditorToPlaceholderText(doc: any): string {
   const lines: string[] = [];
   const walkBlock = (n: any, buf: string[]) => {
     if (!n) return;
     if (n.type === "fieldChip" && n.attrs?.fieldPublicId) {
-      const suffix = n.attrs.caseModifier ? `|case=${n.attrs.caseModifier}` : "";
-      buf.push(`{{field:${n.attrs.fieldPublicId}${suffix}}}`);
+      buf.push(
+        buildFieldPlaceholder(n.attrs.fieldPublicId, n.attrs.format ?? null, n.attrs.caseModifier ?? null),
+      );
       return;
     }
     if (n.type === "text" && typeof n.text === "string") {
