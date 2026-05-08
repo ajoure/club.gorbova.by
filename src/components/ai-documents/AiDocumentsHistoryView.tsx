@@ -258,10 +258,15 @@ export function AiDocumentsHistoryView() {
           <RefreshCw className="h-4 w-4" />
         </Button>
       )}
-      {doc.file_path && doc.status === "generated" && (
-        <Button variant="ghost" size="icon" onClick={() => handleDownload(doc)} title="Скачать DOCX">
-          <Download className="h-4 w-4" />
-        </Button>
+      {doc.file_path && (doc.status === "generated" || doc.status === "success") && (
+        <>
+          <Button variant="ghost" size="icon" onClick={() => handlePreview(doc)} title="Открыть предпросмотр">
+            <Eye className="h-4 w-4" />
+          </Button>
+          <Button variant="ghost" size="icon" onClick={() => handleDownload(doc)} title="Скачать DOCX">
+            <Download className="h-4 w-4" />
+          </Button>
+        </>
       )}
       <Button
         variant="ghost"
