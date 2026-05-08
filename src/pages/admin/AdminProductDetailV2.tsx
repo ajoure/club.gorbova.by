@@ -2413,6 +2413,8 @@ export default function AdminProductDetailV2() {
             <TabsContent value="documents" className="space-y-4 mt-4">
               <OfferDocumentDefaultsCard
                 value={offerForm.meta?.document_defaults}
+                offerAmount={Number(offerForm.amount) || 0}
+                offerCurrency="BYN"
                 onChange={(next) => setOfferForm({
                   ...offerForm,
                   meta: { ...offerForm.meta, document_defaults: next },
