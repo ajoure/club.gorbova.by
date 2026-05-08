@@ -207,13 +207,8 @@ function renderInteractiveHtml(
         const idx = s.indexOf(text, from);
         if (idx < 0) break;
         const thisOccurrence = occurrenceCounter++;
-        // Find replacement that targets this occurrence (or any if only one and no idx specified)
-        const target =
-          list.find((r) => r.occurrence_index === thisOccurrence) ??
-          (list.length === 1 && list[0].occurrence_index == null ? list[0] : undefined);
-        if (idx > from) frag.appendChild(doc.createTextNode(s.slice(from, idx)));
-        // Match strictly by occurrence_index. No "single null fallback":
-        // null означает «не выбрано» — не подменяем все вхождения.
+        // Match strictly by occurrence_index. Без fallback'а на «единственный с null»,
+        // иначе одна замена «съедала» все вхождения слова в документе.
         const target = list.find((r) => r.occurrence_index === thisOccurrence);
         if (idx > from) frag.appendChild(doc.createTextNode(s.slice(from, idx)));
         if (target) {
