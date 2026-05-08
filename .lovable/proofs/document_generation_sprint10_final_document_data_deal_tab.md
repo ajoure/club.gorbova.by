@@ -242,3 +242,42 @@ Preview документа по заказу без snapshot:
 - Авто-рассылка сгенерированных документов клиенту (email/Telegram/cabinet).
 - Batch-генерация по фильтру заказов.
 - Drift-detection: предупреждение, если live-данные сильно разошлись со snapshot.
+
+---
+
+## Sprint 11 — UI BLOCKERS (PATCH UI-BLOCKER-1, UI-BLOCKER-2)
+
+### PATCH UI-BLOCKER-1 — выбор шаблона и исполнителя
+
+**Проблема (root cause):** В `OfferDocumentDefaultsCard.tsx` массивы `templates` и `executors` объявлялись через `useState([])`, но никогда не загружались — отсутствовал `useEffect` с запросом к Supabase. Поэтому select всегда показывал «Нет активных…».
+
+**Фикс:** Добавлен `useEffect` (см. PATCH UI-BLOCKER-1), который параллельно читает:
+- `document_templates` где `is_active=true` + join на `document_template_versions` через `current_version_id` (с fallback без версии, если relation недоступен) — тот же источник, что и `/admin/ai → Документы → Шаблоны документов`.
+- `executors` где `is_active=true`, отсортированы `is_default DESC, short_name ASC` — тот же источник, что и `/admin/ai → Документы → Исполнители`.
+
+**SelectItem:**
+- Шаблон: `{name} · {code} · v{version}`. Если `current_version_id IS NULL` → пункт `disabled` + пометка `· нет активной версии`.
+- Исполнитель: `{short_name|full_name}` + `· по умолчанию` для `is_default`.
+- Empty state: понятное сообщение со ссылкой на нужный раздел.
+
+**Технические ID** (UUID `template_id`/`executor_id`) показаны только под toggle «Показывать технические ID» — ручной ввод UUID отсутствует.
+
+**SQL proof:**
+```
+SELECT id, name, code, is_active, current_version_id FROM document_templates WHERE is_active=true LIMIT 5;
+SELECT id, short_name, full_name, is_default, is_active FROM executors WHERE is_active=true ORDER BY is_default DESC;
+-- → executor d0c7fe75-1192-40a9-bbae-b652b69e6882 ЗАО "АЖУР инкам" (default) виден
+-- → template 11111111-... act_test_sprint6 (active) виден
+```
+
+### PATCH UI-BLOCKER-2 — фиксированный размер окна кнопки оплаты
+
+**Проблема:** `DialogContent` оборачивал весь контент (header + tabs + footer) в один скроллящийся `<div>`, поэтому при переключении вкладок высота окна менялась, header/footer прыгали.
+
+**Фикс:** Перестроена структура `Dialog` на оплату (`AdminProductDetailV2.tsx`):
+```
+DialogContent  (h-[86vh] max-w-5xl, flex flex-col, overflow-hidden)
+├── DialogHeader        shrink-0, border-b
+├── Tabs                flex-1 flex flex-col min-h-0
+│   ├── div TabsList    shrink-0
+│   └── div             flex-1 overflow-y-auto min-h-0   ← единственная scroll-area
