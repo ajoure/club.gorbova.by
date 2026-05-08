@@ -1,490 +1,633 @@
-# да, согласен, с учетом правок:
-
-1. **Не создавать** `document_token_registry` **как полностью новую параллельную систему без mapping к** `fields_registry`**.**  
-Правильно: `document_token_registry` = document-specific catalog над существующим `fields_registry`, где возможно.  
-Нужно явно добавить:
-  - если токен связан с existing custom field → хранить `field_id`;
-  - если токен computed/system → `field_id = null`, но `resolver_key` обязателен;
-  - запрет дублировать уже существующие `fields_registry`-поля.
-2. `document_templates += current_version_id` **делать осторожно.**  
-Нужно добавить STOP-guard:
-  - если `document_templates` уже используется старым AI-flow, миграция не должна ломать старые строки;
-  - `current_version_id` сначала nullable;
-  - backfill только для новых шаблонов MVP;
-  - NOT NULL — только отдельным follow-up после миграции старых шаблонов.
-3. **Не помечать deprecated-функции слишком агрессивно.**  
-Формулировку заменить:
-  - не “410”;
-  - а “deprecated for new document templates, legacy calls remain active”.
-  Иначе можно сломать текущие счета/акты/автогенерацию.
-4. `ai_generated_documents` **не должен становиться единственным canonical ledger без проверки.**  
-В dry-run нужно проверить, нет ли уже таблицы/журнала генераций. Если есть — расширять existing. Если нет — тогда использовать `ai_generated_documents`.
-5. `source_trace` **должен быть машинно проверяемым.**  
-Добавить формат:
-6. **Для** `orders_v2` **лучше не добавлять много колонок в MVP без discovery.**  
-Предварительный предпочтительный вариант:
-  - `contract_number`, `contract_date`, `act_number`, `act_date` — можно как structured поля, если это core-сценарий;
-  - `service_period`, `service_description`, `services[]` — лучше через `field_values`/metadata/session, потому что структура услуг может меняться.
-7. **Нужно добавить отдельный dry-run preview endpoint / mode без записи мусора.**  
-`mode=preview` не должен создавать полноценные генерации. Максимум:
-  - `document_generation_sessions`;
-  - TTL/cleanup status;
-  - без файла, если не нужен preview-file.
-8. **Нужно добавить защиту от DOCX-токенов, которых нет в registry.**  
-Правило:
-  - unknown required tokens блокируют публикацию шаблона;
-  - unknown optional tokens требуют ручного mapping/create;
-  - автосоздание токена запрещено без duplicate-check и подтверждения админа.
-9. **Нужно явно добавить поддержку loops не в Sprint 1, но не сломать будущую модель.**  
-В registry сразу предусмотреть:
-  - `is_array`;
-  - `array_item_schema`;
-  - `parent_scope`;
-  - пример будущего `deal.services[]`.
-10. `TokenizedRichInput` **может не подходить для DOCX напрямую.**  
-Уточнить: в MVP он используется только для UI-подсказок/copy token/sidebar, а не как редактор самого DOCX.
-11. **Audit должен писать не только successful generation, но и preview/block.**  
-Добавить:
-
-- `document.generation_previewed`;
-- `document.generation_blocked_missing_required`;
-- `document.template_token_mapping_updated`;
-- `document.template_version_activated`.
-
-12. **Storage path должен быть детерминированным.**  
-Добавить формат:
+Да, согласен, с учетом правок:
 
 ```text
-document-templates/{workspace_id}/{template_id}/v{version}/template.docx
-generated-documents/{workspace_id}/{context_type}/{context_entity_id}/{generated_document_id}.docx
+Дополни и скорректируй план Sprint 10.
+
+Общее направление подтверждаю:
+
+- сделать discovery плейсхолдеров;
+- подключить общий placeholder picker из контакт-центра;
+- добавить context `documents:act`;
+- заполнить полный document registry;
+- добавить вкладку “Плейсхолдеры”;
+- сохранять `document_data` в сделке.
+
+Но текущий план нужно изменить по продуктам/тарифам/кнопкам и сделке.
+
+---
+
+# Ключевые правки к плану
+
+## 1. В продукте НЕ создавать новую вкладку “Документы” отдельным компонентом
+
+В редакторе продукта уже есть вкладка:
+
+“Доп. поля”
+
+Её нужно переиспользовать и переименовать в:
+
+“Документы”
+
+Именно в этой вкладке должны быть поля, которые используются для документов.
+
+То есть:
+
+Было:
+- Доп. поля
+
+Должно стать:
+- Документы
+
+Внутри этой вкладки:
+- список полей для документов;
+- возможность добавить поле;
+- возможность редактировать поле;
+- возможность удалить поле;
+- возможность скопировать плейсхолдер;
+- отображение token_key / field_id только в техническом режиме;
+- человекочитаемое название поля как основной UI.
+
+Не создавать параллельную систему “document fields”, если уже есть custom fields / fields_registry.
+
+---
+
+## 2. Логику “Данные для акта” делать НЕ в тарифе, а в кнопке оплаты / offer
+
+Предыдущий план предлагал:
+
+“В редакторе тарифа — секция Данные для акта”
+
+Это неправильно.
+
+Основные условия сделки зависят не от тарифа, а от конкретной кнопки оплаты / offer, потому что именно в кнопке есть:
+
+- конкретная сумма;
+- тип оплаты;
+- полная оплата / рассрочка / trial;
+- цена;
+- повторное вступление;
+- условия оплаты;
+- срок оплаты;
+- override услуги.
+
+Поэтому:
+
+### В тарифе
+
+Хранить только базовые настройки:
+
+- название тарифа;
+- срок доступа;
+- базовая цена;
+- валюта;
+- базовое описание, если уже есть;
+- default значения, если они нужны.
+
+Но НЕ делать тариф главным источником данных для акта.
+
+### В кнопке оплаты / offer
+
+Добавить секцию:
+
+“Данные для документов”
+
+Именно здесь заполняются:
+
+- формировать акт: да/нет;
+- шаблон акта;
+- наименование услуги;
+- описание услуги;
+- единица измерения;
+- количество;
+- цена за единицу;
+- сумма акта;
+- валюта;
+- срок оплаты;
+- срок оказания услуги;
+- период оказания услуг;
+- количество месяцев;
+- предоплата, %;
+- предоплата, сумма;
+- скидка, сумма;
+- первый платеж;
+- цена для банковского кредита / рассрочки;
+- окончательный расчет;
+- исполнитель;
+- комментарий для документа.
+
+Именно эти данные затем должны попадать в сделку / заказ как `document_data`.
+
+---
+
+## 3. Добавить копирование кнопки оплаты
+
+Чтобы не заполнять каждый раз поля заново, в разделе кнопок оплаты нужно добавить действие:
+
+“Копировать кнопку”
+
+Логика:
+
+1. Админ нажимает “Копировать”.
+2. Создается новая кнопка оплаты на основе существующей.
+3. Копируются:
+   - название;
+   - тип кнопки;
+   - цена;
+   - валюта;
+   - настройки оплаты;
+   - настройки автопродления;
+   - document_data / данные для документов;
+   - template_id;
+   - service_name;
+   - service_description;
+   - payment_due_days;
+   - execution_days;
+   - unit;
+   - quantity;
+   - все override-поля для акта.
+4. Новая кнопка создается выключенной / inactive по умолчанию.
+5. Админ редактирует нужные поля и включает её вручную.
+
+STOP-guard:
+- не копировать payment link provider id как активную ссылку, если это может создать конфликт;
+- новая кнопка должна иметь новый public_id/code;
+- audit `offer.copied`;
+- старая кнопка не изменяется.
+
+---
+
+## 4. Сделка: вкладка “Документы”
+
+В карточке сделки / заказа добавить вкладку:
+
+“Документы”
+
+Внутри неё сделать две подвкладки:
+
+1. “Поля”
+2. “Документы”
+
+---
+
+# Подвкладка сделки: “Поля”
+
+Показывает все document_data, которые были перенесены из продукта / кнопки оплаты в сделку.
+
+Там должны быть:
+
+## Договор
+
+- номер договора;
+- дата договора;
+- валюта сделки;
+- курс USD/BYN;
+- дата оплаты / дата ведения.
+
+## Услуга
+
+- наименование услуги;
+- описание услуги;
+- единица измерения;
+- цена за единицу;
+- количество;
+- сумма акта;
+- сумма прописью;
+- валюта целая часть;
+- валюта дробная часть.
+
+## Сроки
+
+- срок оплаты;
+- срок оказания услуг;
+- период с;
+- период по;
+- количество месяцев.
+
+## Расчеты
+
+- предоплата, %;
+- предоплата, сумма;
+- скидка, сумма;
+- первый платеж;
+- цена для банковского кредита / рассрочки;
+- окончательный расчет.
+
+## Шаблоны и исполнитель
+
+- шаблон акта;
+- исполнитель;
+- реквизиты клиента;
+- подписант клиента.
+
+Поля можно редактировать вручную в сделке.
+
+Важно:
+если поле пришло из кнопки оплаты, показывать источник:
+
+“Заполнено из кнопки оплаты CHAT”
+
+Если админ изменил поле вручную, показывать:
+
+“Изменено вручную”
+
+---
+
+# Подвкладка сделки: “Документы”
+
+Показывает документы, сгенерированные по этой сделке:
+
+- акт выполненных работ;
+- дата генерации;
+- статус;
+- шаблон;
+- версия шаблона;
+- скачать DOCX;
+- открыть предпросмотр;
+- посмотреть слепок данных;
+- перегенерировать.
+
+Действия:
+
+- “Предпросмотр акта”
+- “Сформировать акт”
+- “Перегенерировать”
+- “Открыть историю”
+
+Пока ожидается один основной документ:
+
+“Акт выполненных работ”
+
+Но архитектура должна позволять потом добавить:
+- договор;
+- счет;
+- приложение;
+- протокол;
+- письмо.
+
+---
+
+## 5. Snapshot document_data
+
+При создании заказа / сделки document_data должен собираться в таком порядке:
+
+1. Данные кнопки оплаты / offer — главный источник.
+2. Если в кнопке поля нет — fallback на тариф.
+3. Если в тарифе поля нет — fallback на продукт.
+4. Если нет нигде — поле пустое + warning.
+
+Сохранять в:
+
+`orders_v2.meta.document_data`
+
+или если discovery покажет, что по архитектуре лучше отдельная таблица, предложить:
+
+`order_document_data`
+
+Но по умолчанию использовать safe jsonb:
+
+`orders_v2.meta.document_data`
+
+Snapshot не должен автоматически перезаписываться после изменения кнопки оплаты или продукта.
+
+Если нужно обновить — только вручную через кнопку:
+
+“Обновить поля из кнопки оплаты”
+
+С подтверждением:
+
+“Это перезапишет данные для документов в этой сделке. Старые сгенерированные документы не изменятся.”
+
+---
+
+## 6. Resolver документов
+
+При генерации акта resolver должен брать данные в таком порядке:
+
+1. `orders_v2.meta.document_data`
+2. overrides из формы генерации
+3. fallback live offer/tariff/product
+4. computed fields
+
+Если используется fallback, писать warning:
+
+`document_data_missing_using_live_fallback`
+
+---
+
+## 7. Плейсхолдеры
+
+Плейсхолдеры должны использовать existing placeholder picker из контакт-центра / рассылок.
+
+Не создавать второй независимый picker.
+
+Нужно:
+
+- расширить существующий `TokenizedRichInput` / token registry;
+- добавить context `documents:act`;
+- показывать полный каталог;
+- использовать человекочитаемые названия;
+- технические token_key/field_id показывать только в техрежиме;
+- добавить вкладку `/admin/ai → Документы → Плейсхолдеры`.
+
+---
+
+## 8. Исправить текущую вкладку “Доступные плейсхолдеры”
+
+Сейчас там 5 полей. Это неправильно.
+
+Нужно заменить на полный каталог из `document_token_registry` + existing placeholder registry.
+
+Там должны быть группы:
+
+- Контакт / профиль
+- Реквизиты клиента
+- Подписант клиента
+- Исполнитель
+- Сделка / заказ
+- Продукт
+- Тариф
+- Кнопка оплаты
+- Документ / акт
+- Системные поля
+- Пользовательские поля
+
+---
+
+## 9. Нормализованный набор полей акта из amoCRM/GetDoc
+
+На основе старого шаблона акта и полей amoCRM добавить базовые document fields:
+
+### Договор
+
+- contract_number — Номер договора
+- contract_date — Дата договора
+- deal_currency — Валюта сделки
+- usd_byn_rate — Курс USD/BYN
+- payment_date — Дата оплаты / дата ведения
+
+### Услуга
+
+- service_name — Наименование услуги
+- service_description — Описание услуги
+- service_unit — Единица измерения
+- service_price — Цена за единицу
+- service_quantity — Количество
+- service_amount — Сумма акта
+- service_amount_words — Сумма прописью
+- currency_major — Валюта, целая часть
+- currency_minor — Валюта, дробная часть
+
+### Сроки
+
+- payment_due_days — Срок оплаты
+- execution_days — Срок оказания услуг
+- service_period_from — Период с
+- service_period_to — Период по
+- months_count — Количество месяцев
+
+### Расчеты
+
+- prepayment_percent — Предоплата, %
+- prepayment_amount — Предоплата, сумма
+- discount_amount — Скидка, сумма
+- first_payment — Первый платеж
+- bank_credit_price — Цена для банковского кредита / рассрочки
+- final_payment_amount — Окончательный расчет
+
+### Шаблон / исполнитель
+
+- act_template_id — Шаблон акта
+- executor_id — Исполнитель
+- customer_legal_details_id — Реквизиты клиента
+- customer_signer_id — Подписант клиента
+
+Все эти поля должны быть:
+- в registry;
+- доступны как плейсхолдеры;
+- видны в product/offer document settings;
+- копироваться в сделку;
+- редактироваться в сделке;
+- участвовать в генерации акта.
+
+---
+
+## 10. Обновленный DoD Sprint 10
+
+Sprint 10 считается выполненным, если:
+
+1. Сделан discovery существующего placeholder picker из контакт-центра.
+2. Добавлен context `documents:act`.
+3. `document_token_registry` заполнен полным набором токенов.
+4. Вкладка “Плейсхолдеры” показывает полный каталог, а не 5 полей.
+5. В продукте вкладка “Доп. поля” переименована в “Документы”.
+6. В карточке кнопки оплаты добавлена секция “Данные для документов”.
+7. Добавлена функция “Копировать кнопку оплаты”.
+8. При создании заказа/сделки данные кнопки оплаты копируются в `orders_v2.meta.document_data`.
+9. В сделке появилась вкладка “Документы” с двумя подвкладками:
+   - “Поля”
+   - “Документы”
+10. Подвкладка “Поля” показывает document_data и позволяет редактировать.
+11. Подвкладка “Документы” показывает документы по сделке и позволяет сформировать акт.
+12. Resolver акта берет данные из `orders_v2.meta.document_data`.
+13. Legacy не сломан.
+14. Email/Telegram/auto-send не включались.
+
+---
+
+## 11. Что НЕ делать
+
+- Не создавать новую вкладку продукта параллельно существующей “Доп. поля”.
+- Не делать тариф главным источником данных для акта.
+- Не включать auto-generation.
+- Не отправлять email/Telegram.
+- Не делать массовую генерацию.
+- Не удалять старые flows.
+- Не перезаписывать document_data в старых сделках автоматически.
+
+---
+
+## 12. Финальный отчет
+
+Отчет должен начинаться:
+
+Отчет о выполненной работе: Sprint 10 — модель данных, плейсхолдеры и document_data сделки
+
+В отчете указать:
+
+1. Что найдено по existing placeholder picker.
+2. Как переиспользован picker.
+3. Сколько токенов теперь в registry.
+4. Какие группы плейсхолдеров созданы.
+5. Что изменено в продукте.
+6. Что изменено в кнопке оплаты.
+7. Как работает копирование кнопки.
+8. Как document_data попадает в сделку.
+9. Как устроена вкладка “Документы” в сделке.
+10. Как resolver использует document_data.
+11. Что НЕ делалось: email, Telegram, auto-send, production auto-generation.
 ```
 
-13. **Нужен антивирус/безопасность файла хотя бы на уровне ограничений MVP.**  
-Добавить:
-
-- принимать только `.docx`;
-- MIME/type check;
-- лимит размера;
-- запрет macro-enabled форматов `.docm`;
-- не принимать `.zip`, `.rtf`, `.doc`.
-
-14. **Нужно добавить rollback/compatibility plan.**  
-Если новый render core падает:
-
-- старые AI-функции не трогаются;
-- новые таблицы add-only;
-- feature flag `documents_canonical_generation_enabled`;
-- UI вкладка скрывается, если feature flag выключен.
-
-15. **DoD по smoke старых вызовов усилить.**  
-Нужно проверить:
-
-- старый `ai-generate-document` без `context_type`;
-- старый template upload;
-- corporate package wizard;
-- document-auto-generate;
-- invoice/act legacy flow, если он production.
-
-16. **Memory-пункт заменить на обычный архитектурный файл/заметку, если в Lovable нет mem://.**  
-Формулировка:
-
-- если есть memory-механизм — сохранить `mem://...`;
-- если нет — создать `.lovable/architecture/documents_canonical_render_engine.md`.
-
-17. **Добавить юридико-делопроизводственный формат DOCX.**  
-В MVP не нужно валидировать весь СТБ, но нужно сохранить:
-
-- поля страницы;
-- нумерацию;
-- шрифты;
-- таблицы;
-- подписи;
-- разрывы страниц;
-- колонтитулы.
-
-18. **Добавить правило: AI не участвует в MVP render.**  
-Функция называется `ai-generate-document`, но фактически MVP должен быть deterministic document generation. AI можно оставить только для будущего Sprint 5.
-19. **Название shared core лучше сделать без AI.**  
-Например:
-
-```text
-supabase/functions/_shared/document-render.ts
-supabase/functions/_shared/document-context-resolver.ts
-supabase/functions/_shared/document-token-resolver.ts
-supabase/functions/_shared/docx-renderer.ts
-```
-
-20. **Добавить финальный machine-check.**  
-В proof должны быть SQL-запросы:
-
-- шаблон имеет active version;
-- все detected tokens имеют registry mapping;
-- generated document имеет snapshot;
-- snapshot содержит `source_trace`;
-- audit_logs содержит `document.generated`;
-- old functions smoke OK.
-
-В остальном план хороший: правильный MVP, правильный отказ от Google Docs/ONLYOFFICE в первом спринте, правильный акцент на registry-first, versioning, snapshot и единый render core.
+Главное изменение: **центр данных для акта — не тариф, а кнопка оплаты / offer**, потому что именно она определяет конкретные условия покупки.
 
 &nbsp;
 
-План: Генерация документов DOCX — MVP «Акт выполненных работ»
+План: Sprint 10 — модель данных и плейсхолдеров для документов
 
-## Жёсткие правила исполнения
+Главная идея: не создавать второй picker для документов. Расширить уже существующую систему `TokenizedRichInput` + `src/lib/tokens/tokenRegistry.ts` (та же квадратная скобка → выпадающий список → чип с человеческим названием → внутри `{{token}}`), и подвесить на неё нормальную модель document_data в продукте/тарифе/offer/сделке.
 
-1. Все коммуникации, отчёты, DoD, SQL, имена, proof — на русском.
-2. Add-only. Ничего не ломать без dependency audit.
-3. Discovery → Plan → Dry-run → Execute → Verify. Пропуски запрещены.
-4. Запрещено создавать новый параллельный генератор, если можно переиспользовать.
-5. Все связи через UUID. Никаких email/name/slug для бизнес-логики.
-6. Все критические действия — в `audit_logs`.
-7. Каждая новая таблица: `id`, `public_id`, `workspace_id` (если применимо), `created_at`, `updated_at`, `created_by`, `updated_by`, `metadata`.
-8. Перед созданием новой сущности — duplicate/discovery check (exact key + exact token + fuzzy label).
-9. Финальный отчёт — список изменённых файлов, миграций, таблиц, функций, UI, тестов и diff-summary.
+Email/Telegram/auto-send/batch/production auto-generation в Sprint 10 НЕ трогаем.
 
 ---
 
-## Часть 0. Цель и принципиальное решение
+## 0. Что уже есть (discovery, факт)
 
-**Цель MVP:** администратор может (1) загрузить DOCX «Акт выполненных работ», (2) увидеть найденные плейсхолдеры, (3) сопоставить их с единым token registry, (4) выбрать сделку/контакт/юрлицо как контекст, (5) увидеть preview/missing fields, (6) сгенерировать DOCX, (7) скачать, (8) увидеть историю + snapshot.
+- `src/lib/tokens/tokenRegistry.ts` — единый registry с группами: contact, datetime, product, legal_details, person, entity_person, entity, document, meeting, package_*, agenda, decision. API: `loadTokensForContext("messages" | "documents" | ...)`, `getTokenGroupsForContext(...)`.
+- `src/components/admin/TokenizedRichInput.tsx` — TipTap-редактор с `[`-триггером, поиском, группировкой, чипами, `tokenStringToLabel`. Используется в:
+  - `BroadcastTemplateDialog`, `BroadcastsTabContent`, `CommunicationSettingsTabContent` (контакт-центр / рассылки),
+  - `MassBroadcastDialog` (Telegram),
+  - `AdminEmail`,
+  - `AiDocumentTemplatesManager` (уже!).
+- Таблица `fields_registry` — 47 legal_details, 12 person, 6 entity, 6 entity_person, 15 meeting, 3 document, 3 product, 8 package, 1 agenda, 1 decision.
+- Таблица `document_token_registry` (отдельная, уже есть): 9 customer, 10 executor, 8 deal, 47 legal_details, 3 document, 2 system. То есть параллельный реестр под акт уже существует, но он не подключён к picker'у.
+- Канонические форматы токенов:
+  - Class A: `{{cf.<entity>.<PUBLIC_ID>}}` (legal_details FLD-…),
+  - Class B: `{{canonical.key}}` (contact, datetime, document.*, meeting.*, и т.д.).
 
-**Архитектурное решение:**
-
-- **Платформа = SOT** для шаблонов, токенов, данных, генерации, истории.
-- **DOCX + Docxtemplater** = canonical engine генерации (уже стоит в проекте).
-- **Supabase Storage** = хранилище шаблонов и результатов.
-- **Google Docs / Google Drive** — НЕ ядро. Только опциональная точка расширения (поля в схеме, без UI и без runtime-веток в MVP).
-- **ONLYOFFICE embedded editor** — НЕ в MVP. Только архитектурная точка расширения (template editor adapter). Sprint 2.
-- **AI** — не SOT. Только helper (предложить текст, объяснить missing). В MVP не задействуем.
-
----
-
-## Часть 1. Discovery (первый и обязательный шаг)
-
-### 1.1. Edge functions генерации (текущая инвентаризация)
-
-Все используют связку `Docxtemplater@3.47.1 + PizZip@3.1.6`. Различаются источником payload и обвязкой.
-
-
-| Функция                                           | Кто зовёт                                | Назначение                                                                                              | Решение                                                                                              |
-| ------------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `ai-generate-document`                            | UI «Создать документ» (`useAiDocuments`) | Один документ для произвольного клиента (legal_details_id + person + signer) → `ai_generated_documents` | **Кандидат №1 в canonical**, расширяем под `context_type = deal/order`                               |
-| `ai-generate-document-package`                    | UI «Сформировать пакет»                  | Цикл по списку шаблонов поверх `ai-generate-document`                                                   | Оставляем как обёртку поверх canonical                                                               |
-| `ai-generate-corporate-package`                   | Corporate wizard (closing-year)          | Специализированный 3-layer manifest для protocols/notices                                               | **Не трогаем** в MVP. Позже — переиспользование `_shared/document-render.ts` без изменения поведения |
-| `document-auto-generate`                          | UI кнопок «Перегенерировать»             | Старая ветка билинговых счёт-актов → `generated_documents`                                              | **Deprecated после MVP**. Поведение покрывает canonical                                              |
-| `generate-from-template`                          | Никем (мёртвая)                          | Дубль `document-auto-generate`                                                                          | **Deprecated сразу**                                                                                 |
-| `generate-invoice-act`                            | Никем (мёртвая)                          | Второй дубль счёт-актов с собственным email-стеком                                                      | **Deprecated сразу**                                                                                 |
-| `generate-document-pdf`                           | Никем (изолирована)                      | Захардкоженный шаблон в файле функции                                                                   | **Deprecated сразу**                                                                                 |
-| `bepaid-docs-backfill`, `bepaid-get-payment-docs` | bePaid                                   | Чеки от bePaid                                                                                          | Другой домен. Не трогаем                                                                             |
-
-
-### 1.2. Хелперы
-
-`supabase/functions/_shared/`:
-
-- `docx-helpers.ts` — `dateToRussianFormat`, `fullNameToInitials`, `generateDocumentNumber`, `buildAddress`, `entityName`, `sanitizeFileName`. Используется только `ai-generate-corporate-package`.
-- В `ai-generate-document`, `document-auto-generate`, `generate-from-template`, `generate-invoice-act` — **3-4 копии** `numberToWordsRu`, `dateToRussianFormat` и пр. Консолидировать в `_shared/docx-helpers.ts`.
-- `systemTokens.ts` (`{{today}}`, `{{tomorrow}}`) — переиспользовать.
-
-### 1.3. Таблицы
-
-
-| Таблица                                                                              | Текущее состояние                                                                            | Роль в MVP                                                          |
-| ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `document_templates`                                                                 | 20 шаблонов, `template_path`, `placeholders` jsonb, `template_scope`, `editor_draft_content` | Расширить полями версионирования и snapshot                         |
-| `ai_generated_documents`                                                             | История AI-конструктора                                                                      | Canonical таблица результатов в MVP                                 |
-| `generated_documents`                                                                | 216 строк, билинговые счёт-акты                                                              | Не трогаем, остаётся за `document-auto-generate` до его deprecation |
-| `document_generation_rules`                                                          | 0 строк                                                                                      | Не используем в MVP                                                 |
-| `product_document_templates`                                                         | 0 строк                                                                                      | Не используем в MVP                                                 |
-| `executors` (1)                                                                      | Наше юрлицо                                                                                  | Источник полей исполнителя                                          |
-| `client_legal_details`, `legal_details_persons`, `legal_details_entity_person_links` | 26 + персоны                                                                                 | Источник полей заказчика                                            |
-| `fields_registry`, `field_values`                                                    | Существуют                                                                                   | Реюз для resolver полей                                             |
-| `orders_v2`                                                                          | SOT сделок                                                                                   | Источник `contract_*`, `act_*`, сумм, валюты                        |
-| `document_number_sequences`                                                          | Используется частично                                                                        | Сквозная нумерация актов                                            |
-
-
-### 1.4. UI
-
-`/admin/ai → Документы → Шаблоны документов` (`AdminDocumentTemplates → DocumentTemplatesContent`):
-
-1. **Шаблоны** — `AiDocumentTemplatesManager`. CRUD + загрузка DOCX в bucket `documents-templates` + парсинг `extractDocxPlaceholders`. Открывает `CorporateTemplateEditorDialog` (просмотр с подсветкой токенов через `templateEditorMapper`).
-2. **Правила генерации** — пустая.
-3. **Журнал документов** — `generated_documents` + `ai_generated_documents`.
-4. **Плейсхолдеры** — справочник.
-
-`CorporateTemplateEditorDialog + EditorModeView/PreviewModeView` — декоративный preview через mammoth (не настоящий редактор; форматирование теряется при импорте). Это staging, runtime его не использует — оставляем, в MVP не расширяем.
-
-### 1.5. Существующие хуки/утилиты для переиспользования
-
-- `src/hooks/useAiDocuments.ts` — CRUD + `generate` через `ai-generate-document`. **Расширяем**, не дублируем.
-- `src/hooks/useAiDocumentPackageGeneration.ts` — пакеты. Не трогаем.
-- `src/hooks/useLegalDetailsFields.ts` — токены `{{cf.legal_details.<public_id>}}` через `fields_registry`. Реюз в registry MVP.
-- `src/utils/extractDocxPlaceholders.ts` — парсер `{{...}}` из DOCX через mammoth. Реюз.
-- `src/lib/corporate/templateEditorMapper.ts` + `tokenRegistry.ts` — отображение `{{...}}` → `[Человекочитаемое]`. **Расширяем до полноценного registry.**
-- `src/components/admin/TokenizedRichInput.tsx` — UI вставки токенов. Реюз для token sidebar в MVP.
+Вывод: новый picker не нужен. Нужно (а) подключить документный контекст к существующему picker'у с полным набором групп, (б) докрутить registry, (в) добавить snapshot document_data в сделке.
 
 ---
 
-## Часть 2. Архитектура canonical pipeline
+## 1. Discovery-отчёт (доставляется как первый артефакт)
 
-```text
-                   document_templates (+versioning, +snapshot fields)
-                           │
-                           ▼
-              document_template_versions (новая)
-                           │
-                           ▼
-              document_token_registry (новая, или расширение existing token map)
-                           │
-                           ▼
-   ┌───────── _shared/document-render.ts (НОВЫЙ canonical core) ─────────┐
-   │  1. fetchTemplateBuffer(template_version)                            │
-   │  2. resolveContext(context_type, context_entity_id)                  │
-   │       → executor + customer + signer + deal/order + computed         │
-   │  3. validatePayload → missing[], warnings[]                          │
-   │  4. renderDocx(buffer, payload) via Docxtemplater                    │
-   │  5. writeStorage('documents/...')                                    │
-   │  6. writeSnapshot + writeAudit                                       │
-   └─────┬───────────────────────────────────────────────────────┬───────┘
-         │                                                       │
-   ai-generate-document                                ai-generate-corporate-package
-   (расширен под context = deal/order/contact)         (без изменений в MVP)
-         │
-   ai-generate-document-package (loop wrapper)
-```
+Файл `.lovable/proofs/document_generation_sprint10_placeholder_discovery.md`:
 
-**Single canonical writer** = `_shared/document-render.ts`. Все будущие документы — через него.
+- Inventory компонентов (TokenizedRichInput + потребители).
+- Inventory таблиц (fields_registry по entity_type, document_token_registry по category).
+- Маппинг «человеческое название → token string → resolver» по слоям.
+- Решение: документный picker = `TokenizedRichInput` + новый `tokenContext = "documents:act"`.
+- Что уже есть, что недокручено, что отсутствует.
 
----
+## 2. Расширение существующего picker'а под документы (без второго picker'а)
 
-## Часть 3. Token registry (registry-first модель)
+В `src/lib/tokens/tokenRegistry.ts`:
 
-### 3.1. Принципы
+- Добавить `TokenContext = "documents:act"`.
+- В `loadTokensForContext("documents:act")` догружать новые группы:
+  - `executor.*` (читаем из `document_token_registry` category=executor, и/или `fields_registry` entity_type='executor', если её нет — заводим в registry без БД-таблицы как Class B computed),
+  - `customer.*` и `customer.signer.*` (резолвится через legal_details + entity_person_links, токены человекочитаемые),
+  - `order.*`, `product.*`, `tariff.*`, `offer.*`, `document.*` (включая `amount_words`, `currency_major/minor`, `service_*`, `payment_due_days`, `execution_days`, `service_period_*`, `prepayment_*`, `discount_amount`, `final_payment_amount`),
+  - `system.*` (today_ru, year, month, now).
+- `getTokenGroupsForContext("documents:act")` → 11 групп ровно как в ТЗ пункта 2.
 
-- В DOCX-шаблоне физически написано `{{legal_entity.short_name}}` — canonical token (как сейчас, не меняем).
-- В UI админ видит `[Название компании]` — UI label.
-- Mapping `canonical_key ↔ system_token ↔ ui_label ↔ resolver_key` лежит в **одной таблице** `document_token_registry`.
-- Запрещены локальные списки токенов «по месту». Текущие константы в `src/lib/tokens/tokenRegistry.ts` мигрируем в БД.
+В `AiDocumentTemplatesManager` и `CanonicalActGenerator` поменять контекст с `"documents"` на `"documents:act"` (бэк-совместимо: старый `"documents"` остаётся как есть для уже работающих шаблонов).
 
-### 3.2. Группы токенов MVP (минимум для акта)
+## 3. Backfill `document_token_registry`
 
+Миграция, идемпотентная по `token_key`:
 
-| Группа                          | Примеры canonical_key                                                                                                                                                                                                   | Resolver                                                                                |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `executor`                      | `executor.legal_name`, `executor.unp`, `executor.legal_address`, `executor.director_full_name`, `executor.director_initials`, `executor.basis`, `executor.bank_*`                                                       | `executors` (default = наше юрлицо)                                                     |
-| `customer`                      | `customer.short_name`, `customer.unp`, `customer.address`, `customer.signer_full_name`, `customer.signer_basis`, `customer.passport_*`                                                                                  | `client_legal_details` + `legal_details_persons` через `legal_details_id` / `person_id` |
-| `deal`                          | `deal.contract_number`, `deal.contract_date`, `deal.act_number`, `deal.act_date`, `deal.service_period_from`, `deal.service_period_to`, `deal.amount`, `deal.amount_in_words`, `deal.currency`, `deal.services` (array) | `orders_v2` + `field_values`                                                            |
-| `system`                        | `today`, `today_full_ru`, `tomorrow`                                                                                                                                                                                    | `_shared/systemTokens.ts` (реюз)                                                        |
-| `cf.legal_details.<FLD-XXXXXX>` | Кастомные поля юрлица через `fields_registry`                                                                                                                                                                           | Реюз `useLegalDetailsFields` логики на серверной стороне                                |
+- ON CONFLICT (token_key) DO NOTHING.
+- Заливаем полный базовый набор из ТЗ пункта 4 (contact, customer, customer.signer, executor, order, product, tariff, offer, document, system).
+- Для полей, у которых есть запись в `fields_registry`, заполняем `field_id`. Для computed — `field_id = null`, ставим `resolver_key`.
+- Заполняем `ui_label`, `category`, `source_type`, `data_type`, `is_required`, `example_value`, `display_order`.
+- Никаких удалений; уже существующие 79 строк не трогаем.
 
+## 4. Вкладка «Плейсхолдеры» в /admin/ai → Документы
 
-### 3.3. Поля сделки (audit перед добавлением)
+Новый компонент `src/components/ai-documents/PlaceholdersCatalogTab.tsx`:
 
-Проверить `orders_v2`/связанные таблицы на наличие:
-`contract_number`, `contract_date`, `act_number`, `act_date`, `service_period_from`, `service_period_to`, `service_description`, `service_amount`, `currency`.
+- Источник = `document_token_registry` + резолв `ui_label/data_type` через registry.
+- Группировка по category (11 групп).
+- На каждую строку: человеческое название, badge типа, источник, обязательность, пример, кнопки «Скопировать токен» и «Использовать в шаблоне» (последняя пока only-copy + toast «Вставьте в открытый шаблон»).
+- Поиск по названию/группе.
+- Полный список, не 5 штук.
 
-Если отсутствуют — НЕ хардкодить в генераторе. Решение в dry-run:
+## 5. document_data на продукте / тарифе / offer (safe-модель, без новых таблиц)
 
-- (A) добавить structured колонки в `orders_v2` (миграция);
-- (B) использовать `fields_registry`/`field_values` как универсальный механизм;
-- (C) хранить в `orders_v2.metadata` jsonb.
+Без новых таблиц на этом этапе — храним в существующих jsonb-meta:
 
-Финальный выбор фиксируется в proof после проверки реального состояния таблиц.
+- `products_v2.meta.document_defaults` — нужно ли формировать акт, дефолтный template_id, base service_name/description, unit, payment_due_days, execution_days, currency, executor_id.
+- `tariffs.meta.document_defaults` — service_name/description, unit, quantity, price, currency, access_days, execution_days, service_period_*, template_id override.
+- `tariff_offers.meta.document_defaults` — amount, payment_type, override service_name/description/payment_due_days/quantity/unit/template_id.
 
----
+UI:
 
-## Часть 4. Миграции БД
+- В редакторе продукта добавить вкладку «Документы» (новый компонент `ProductDocumentsTab.tsx`), не «Доп. поля».
+- В редакторе тарифа — секция «Данные для акта».
+- В редакторе offer'а — секция «Override для акта».
+- Все поля — те же, что станут плейсхолдерами (ui-метки совпадают с picker'ом).
 
-```text
-1. document_templates  +=  current_version_id, document_type (enum включая 'service_act'),
-                            template_code, status
+Никаких миграций структуры не нужно (jsonb уже есть). Только UI + чтение/запись в meta.
 
-2. document_template_versions (новая)
-   id, template_id, version_number, file_path, token_manifest jsonb,
-   detected_tokens text[], validation_status, created_at, created_by, metadata
+## 6. Snapshot document_data в сделке
 
-3. document_token_registry (новая)
-   id, public_id, canonical_key UNIQUE, system_token UNIQUE, ui_label,
-   entity_scope, data_type, resolver_key, is_required, is_array,
-   metadata, created_at, updated_at, created_by, updated_by
+В `orders_v2.meta.document_data` (не новая колонка, не новая таблица — соответствует «Subscriptions V2 Schema Contract» / «meta-only»):
 
-4. document_generation_sessions (новая, draft preview)
-   id, template_id, template_version_id, context_type, context_entity_id,
-   status, resolved_data jsonb, missing_fields jsonb, warnings jsonb,
-   preview_file_path, created_at, created_by, metadata
+- При создании заказа edge function `grant-access-for-order` (или существующий хук создания заказа, если он отдельный) собирает snapshot:
+  - читает `tariff_offers.meta.document_defaults` → `tariffs.meta.document_defaults` → `products_v2.meta.document_defaults` (override-цепочка),
+  - вычисляет `amount`, `currency_major`, `currency_minor`, `amount_words`, `service_period_from/to` от paid_at,
+  - сохраняет в `orders_v2.meta.document_data` с `snapshot_version` и `snapshotted_at`.
+- Идемпотентно: если snapshot уже есть — не перезаписывать (ручное «Обновить из продукта/тарифа» в UI сделки делает write с подтверждением).
+- Resolver документа сначала читает `orders_v2.meta.document_data`. Если поля нет — fallback на live tariff/offer + warning в `warnings_snapshot`.
+- Auto-generation остаётся выключенной флагами; snapshot пишется при создании заказа независимо от флагов (это просто сбор данных, документ не генерируется).
 
-5. ai_generated_documents  +=  template_version_id, generation_session_id,
-                                context_type, context_entity_id
+## 7. Вкладка «Документы» в сделке
 
-6. document_generation_snapshots (новая)
-   id, generated_document_id, template_snapshot, token_manifest_snapshot,
-   placeholder_data_snapshot, warnings_snapshot, source_trace,
-   resolver_version, registry_version, created_at
+Новая вкладка в drawer/странице сделки:
 
-7. (опционально) orders_v2 +=  contract_number, contract_date, act_number,
-                                act_date, service_period_from, service_period_to,
-                                service_description, service_amount, currency
-   — финальное решение по результатам discovery
-```
+- Шапка: выбранный template_id, исполнитель, базовые дата/номер договора и акта.
+- Поля snapshot'а: реквизиты клиента, услуга, цена, кол-во, сумма, сумма прописью, валюта, срок оплаты/оказания, период.
+- История документов из `ai_generated_documents` по `context_id = order.id`.
+- Действия: Предпросмотр, Сформировать (через уже существующий `canonical-document-generate` за флагом), Перегенерировать (через `canonical-document-regenerate`), История, «Обновить data из продукта/тарифа/offer» с подтверждением.
 
-RLS на всех новых таблицах: чтение/запись только админам через `has_role`.
+## 8. Разметка DOCX (MVP без редактора)
 
----
+Описание flow на странице «Плейсхолдеры»: открыть каталог → скопировать → вставить в Word → загрузить новую версию шаблона → автоматическая валидация через уже существующий `canonical-template-validate`. Если в шаблоне 0 токенов — показывать «Шаблон ещё не размечен», не ошибку.
 
-## Часть 5. Edge functions
+## 9. AI-подсказки
 
-### 5.1. Новый shared core
+Только UI-заглушка в каталоге плейсхолдеров: кнопка «Предложить плейсхолдеры (скоро)», disabled, с пояснением. Никаких автозамен в DOCX.
 
-`supabase/functions/_shared/document-render.ts`
+## 10. Что НЕ делаем
 
-- `fetchTemplateBuffer(versionRow)` — Storage.download.
-- `resolveContext({context_type, context_entity_id, executor_id?, signer_id?})` — собирает payload из всех источников.
-- `validatePayload(payload, tokenManifest)` → `{missing[], warnings[]}`.
-- `renderDocx(buffer, payload)` — Docxtemplater.
-- `writeOutput({buffer, fileName, bucket})` → `{file_path, file_url}`.
-- `writeSnapshot(generatedDocId, payload, manifest, warnings, sources)`.
+- Не делаем второй placeholder picker.
+- Не включаем `documents_canonical_generation_enabled`, `documents_service_act_auto_generation_enabled`.
+- Не трогаем legacy `generated_documents` и `document-auto-generate`.
+- Не отправляем email/Telegram, нет batch и нет массовой регенерации старых документов.
+- Не добавляем новые таблицы (только jsonb meta + backfill в существующий `document_token_registry`).
 
-### 5.2. Расширение `ai-generate-document`
+## 11. DoD
 
-Принимает дополнительно:
+1. Discovery-отчёт по существующему picker'у создан.
+2. `documents:act` контекст добавлен в `tokenRegistry`, `TokenizedRichInput` им пользуется.
+3. `document_token_registry` дозаполнен полным базовым набором (≥120 токенов, 11 групп).
+4. Вкладка «Плейсхолдеры» с полным каталогом и копированием.
+5. Вкладка «Документы» в продукте + секции document_defaults в тарифе и offer.
+6. Snapshot `orders_v2.meta.document_data` пишется при создании заказа, идемпотентно.
+7. Вкладка «Документы» в сделке отображает snapshot + историю + ручные действия.
+8. Resolver приоритезирует snapshot; fallback пишет warning, но не падает.
+9. Legacy потоки (рассылки, существующие шаблоны, `generated_documents`) не сломаны.
+10. Все feature flags автогенерации остаются `false`.
 
-- `context_type` ∈ {`adhoc` | `deal` | `order` | `contact`},
-- `context_entity_id`,
-- `mode` ∈ {`preview` | `generate`} — в `preview` пишет в `document_generation_sessions` без файла; в `generate` — пишет в `ai_generated_documents` + snapshot.
-- `allow_blank` (boolean) — если `true`, отсутствующие необязательные поля заменяются `__________`; обязательные всё равно блокируют.
+## 12. Финальный отчёт
 
-Полностью переходит на `_shared/document-render.ts` и `_shared/docx-helpers.ts`. Поведение для существующих вызовов (без `context_type`) — обратно совместимо (`adhoc`).
-
-### 5.3. Deprecated сразу
-
-- `generate-from-template` — header-комментарий + 410 в README, не удаляем файл.
-- `generate-invoice-act` — то же.
-- `generate-document-pdf` — то же.
-
-### 5.4. Без изменений
-
-- `ai-generate-corporate-package` — corporate flow остаётся.
-- `document-auto-generate` — оставляем активным до отдельного спринта миграции счёт-актов на canonical.
+Файл `.lovable/proofs/document_generation_sprint10_placeholder_model.md` со структурой ровно как в ТЗ пункта 12.
 
 ---
 
-## Часть 6. UI MVP
+## Технические детали (для не обязательного чтения)
 
-### 6.1. `/admin/ai → Документы` — три подвкладки
+- Файлы, которые правим:
+  - `src/lib/tokens/tokenRegistry.ts` — `TokenContext`, новые loaders для executor/order/product/tariff/offer/document.act/customer.
+  - `src/components/admin/TokenizedRichInput.tsx` — без правок, просто получает новые группы через context.
+  - `src/components/ai-documents/AiDocumentTemplatesManager.tsx`, `CanonicalActGenerator.tsx` — context = `"documents:act"`.
+  - Новый: `src/components/ai-documents/PlaceholdersCatalogTab.tsx`.
+  - Новый: `src/components/products/ProductDocumentsTab.tsx`.
+  - Правка: редактор тарифа и offer'а — секции document_defaults.
+  - Правка: drawer сделки — вкладка «Документы».
+  - Edge: `grant-access-for-order` (или хук создания заказа) — сбор snapshot в `meta.document_data`. Idempotency by presence.
+  - Resolver `_shared/document-render.ts` — приоритет `order.meta.document_data` > live.
+- Миграция: только `INSERT ... ON CONFLICT DO NOTHING` в `document_token_registry`. Никаких ALTER TABLE, никаких новых колонок.
+- Соответствует mem://architecture/data-layer/subscriptions-v2-schema-contract — meta-only хранение.
+- Соответствует mem://architecture/standard/id-first-contract — UUID/public_id внутри, человеческие лейблы снаружи.
 
-**Шаблоны (расширение существующего `AiDocumentTemplatesManager`):**
-
-- Загрузка `.docx` (как сейчас) → создаёт `document_templates` + первую `document_template_versions`.
-- Парсинг токенов через `extractDocxPlaceholders`.
-- Каждый найденный токен сопоставляется с `document_token_registry`:
-  - matched → зелёная плашка с UI label;
-  - unknown → жёлтая плашка с кнопкой «Создать токен в registry» (после duplicate check).
-- Показ версии шаблона, дата, автор. Загрузка нового `.docx` → новая версия (старые не удаляются, история сохраняется).
-
-**Генерация (новый раздел или расширение `GenerateAiDocumentDialog`):**
-
-1. Выбор шаблона (фильтр по `document_type`).
-2. Выбор контекста: `Сделка` / `Заказ` / `Контакт + юрлицо` / `Adhoc`.
-3. Подгрузка кандидатов (autocomplete по `orders_v2` / `client_legal_details`).
-4. Preview: список найденных токенов с подставленными значениями, missing required (красное, блокирует), missing optional (можно «оставить пустую линию»).
-5. Кнопка «Сгенерировать DOCX» → вызов `ai-generate-document` (mode=generate). Скачивание + редирект в Историю.
-
-**История (расширение существующего журнала):**
-
-- Дата, шаблон, версия, контекст (с deeplink на сделку/контакт), кто сгенерировал, скачать DOCX, открыть snapshot (модалка с jsonb-deep-view).
-
-### 6.2. Token Sidebar (для будущих editor-режимов)
-
-В MVP — компактная панель в шаблоне и в генерации: группы токенов (Исполнитель / Заказчик / Сделка / Системные / Кастомные поля), кнопка copy `{{token}}`, отображение UI label.
-
-Реюз `TokenizedRichInput` где применимо.
-
-### 6.3. Что НЕ делаем в UI
-
-- ONLYOFFICE / Word-like editor.
-- Google Docs link/embed.
-- Авторассылка.
-- Конвертация в PDF.
-- Личный кабинет клиента «Мои документы».
-
----
-
-## Часть 7. Snapshot и audit
-
-### 7.1. Snapshot (обязателен на каждой генерации)
-
-Сохраняем в `document_generation_snapshots`:
-
-- `template_id`, `template_version_id`, `template_code`, `template_version`,
-- `registry_version` (хеш registry на момент рендера), `resolver_version` (semver `_shared/document-render.ts`),
-- `context_type`, `context_entity_id`,
-- `placeholder_data_snapshot` (полный payload как ушёл в Docxtemplater),
-- `token_manifest_snapshot` (что в шаблоне),
-- `template_tokens_snapshot` (что реально было подставлено),
-- `warnings_snapshot`, `source_trace` (по каждому полю — откуда взято: таблица + UUID + колонка).
-
-### 7.2. Audit
-
-В `audit_logs`:
-
-- `document_template.created`, `document_template.version_uploaded`,
-- `document_token_registry.token_created/updated`,
-- `document.generated` с `meta = {template_id, version_id, context, generated_doc_id, missing_count, warnings_count}`,
-- `document.generation_blocked_missing_required`.
-
----
-
-## Часть 8. Точки расширения (готовим, но не реализуем)
-
-В схеме `document_templates` и `ai_generated_documents` сразу резервируем:
-
-- `storage_provider` text default `'supabase_storage'` (`'supabase_storage' | 'google_drive'`),
-- `external_file_id` text NULL,
-- `external_file_url` text NULL,
-- `sync_status` text NULL.
-
-В UI этих полей не показываем. Это исключительно future-ready для Sprint 3 (Google Drive sync).
-
-ONLYOFFICE — никакой инфраструктуры в MVP. В архитектурный заметках фиксируем «template editor adapter» как будущий слой над `document_template_versions`.
-
----
-
-## Часть 9. Roadmap
-
-
-| Sprint            | Содержание                                                                                                                  |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| **1 (этот план)** | DOCX upload + versioning + token registry + canonical render core + generate UI + snapshot + history. Только `service_act`. |
-| 2                 | ONLYOFFICE embedded editor + token sidebar внутри редактора.                                                                |
-| 3                 | Google Drive export/sync (через уже зарезервированные поля).                                                                |
-| 4                 | Loops в DOCX (массивы услуг/участников), правила генерации, миграция `document-auto-generate` на canonical.                 |
-| 5                 | AI-помощник (предложение текста шаблона, объяснение missing).                                                               |
-| 6                 | Авто-триггеры из `grant-access-for-order`, PDF, авторассылка email/Telegram.                                                |
-
-
----
-
-## DoD первого спринта (MVP)
-
-1. Discovery-отчёт по существующим генераторам, таблицам, UI приложен в proof. Дублирующий генератор не создан.
-2. Миграции применены: `document_template_versions`, `document_token_registry`, `document_generation_sessions`, `document_generation_snapshots`, расширение `document_templates` и `ai_generated_documents`. RLS настроены.
-3. Token registry заполнен минимальным набором (executor + customer + deal + system) через миграцию-seed.
-4. `_shared/document-render.ts` создан. `_shared/docx-helpers.ts` собрал все копии форматтеров.
-5. `ai-generate-document` расширен под `context_type` и `mode=preview/generate`. Старые вызовы работают (smoke).
-6. `generate-from-template`, `generate-invoice-act`, `generate-document-pdf` помечены deprecated.
-7. UI: вкладки «Шаблоны / Генерация / История» работают. Загружен тестовый шаблон «Акт выполненных работ.docx». Распознаны токены, сопоставлены с registry.
-8. Сгенерирован акт по реальному заказу: preview показал все поля, missing проверены, DOCX скачан, форматирование сохранено.
-9. `ai_generated_documents` содержит запись с `template_version_id`, `context_type='order'`, `context_entity_id=<UUID>`. `document_generation_snapshots` содержит полный snapshot.
-10. `audit_logs` содержит `document.generated`.
-11. `ai-generate-corporate-package` (closing-year wizard) проверен smoke — без регрессий.
-12. Proof-файл `.lovable/proofs/document_generation_mvp_service_act_2026_05.md` с SQL, скриншотами UI, snapshot-выгрузкой, diff-summary, списком архивированных функций.
-13. Memory `mem://architecture/documents/canonical-render-engine` фиксирует canonical writer + запрет на дубли + registry-first контракт + правила deprecation.
-
----
-
-## Открытые вопросы (решить в dry-run перед execute)
-
-1. **Поля сделки для акта** — добавить колонки в `orders_v2`, или использовать `fields_registry`/`field_values`, или `orders_v2.metadata`. Решение фиксируется после реального discovery текущей схемы.
-2. **Versioning стратегии** — каждая загрузка DOCX = новая версия (`version_number++`). При этом активной всегда одна (`current_version_id`). Старые остаются read-only для воспроизводимости snapshot. Подтвердить.
-3. **Numbering актов** — реюз `document_number_sequences` или новая последовательность для `service_act`. По умолчанию — реюз.
-4. **Deprecation `document-auto-generate**` — оставляем активным до Sprint 4 (миграция счёт-актов). В MVP только пометка «не использовать для новых шаблонов».
+После одобрения плана начну с пункта 1 (discovery-отчёт) и пункта 2 (расширение `tokenRegistry`).

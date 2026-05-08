@@ -43,7 +43,33 @@ export interface TokenDef {
   key: string;
   label: string;
   tokenString: string;
-  group: "contact" | "datetime" | "product" | "legal_details" | "person" | "entity_person" | "document" | "meeting" | "entity" | "package_role" | "package_default" | "package_array" | "agenda" | "decision";
+  group:
+    | "contact"
+    | "datetime"
+    | "product"
+    | "legal_details"
+    | "person"
+    | "entity_person"
+    | "document"
+    | "meeting"
+    | "entity"
+    | "package_role"
+    | "package_default"
+    | "package_array"
+    | "agenda"
+    | "decision"
+    // Sprint 10: act-document context groups (loaded from document_token_registry by category)
+    | "act_contact"
+    | "act_customer"
+    | "act_customer_signer"
+    | "act_executor"
+    | "act_order"
+    | "act_product"
+    | "act_tariff"
+    | "act_offer"
+    | "act_document"
+    | "act_system"
+    | "act_legal_details";
   badge: string;
   searchKeywords: string;
 }
@@ -253,6 +279,44 @@ let _packageArraysCache: TokenDef[] = [];
 let _agendaFieldsCache: TokenDef[] = [];
 let _decisionFieldsCache: TokenDef[] = [];
 
+// Sprint 10: act-context tokens (sourced from public.document_token_registry)
+let _actTokensByCategoryCache: Record<string, TokenDef[]> = {};
+
+export function setActTokensByCategoryCache(byCategory: Record<string, TokenDef[]>) {
+  _actTokensByCategoryCache = byCategory;
+}
+
+/**
+ * Sprint 10: load all canonical act-context tokens from `public.document_token_registry`.
+ * Groups by `category` so the picker can render one heading per group.
+ * Token string format: `{{<token_key>}}` (Class B canonical).
+ */
+export async function loadActDocumentTokens(): Promise<Record<string, TokenDef[]>> {
+  const { data, error } = await supabase
+    .from("document_token_registry")
+    .select("token_key, ui_label, category, data_type, description")
+    .is("archived_at", null)
+    .order("display_order");
+
+  if (error || !data) return {};
+
+  const byCategory: Record<string, TokenDef[]> = {};
+  for (const row of data) {
+    const groupKey = `act_${(row.category ?? "system").replace(/[^a-z_]/gi, "_")}` as TokenDef["group"];
+    const def: TokenDef = {
+      key: row.token_key,
+      label: row.ui_label,
+      tokenString: `{{${row.token_key}}}`,
+      group: groupKey,
+      badge: DATA_TYPE_BADGES[row.data_type] ?? row.data_type ?? "Текст",
+      searchKeywords: `${row.ui_label} ${row.token_key} ${row.description ?? ""}`,
+    };
+    const cat = row.category ?? "system";
+    (byCategory[cat] ||= []).push(def);
+  }
+  return byCategory;
+}
+
 export function setProductFieldsCache(fields: TokenDef[]) {
   _productFieldsCache = fields;
 }
@@ -317,8 +381,8 @@ export function tokenStringToLabel(tokenString: string): string | null {
     _packageArraysCache,
     _agendaFieldsCache,
     _decisionFieldsCache,
+    ...Object.values(_actTokensByCategoryCache),
   ];
-
   for (const cache of allCaches) {
     const found = cache.find((t) => t.tokenString === tokenString);
     if (found) return found.label;
@@ -444,7 +508,7 @@ export type ArrayTokenResolverContract = {
  * 
  * New integrations MUST use tokenContext. Do NOT use extraTokenGroups for new features.
  */
-export type TokenContext = "messages" | "documents" | "documents:annual_meeting";
+export type TokenContext = "messages" | "documents" | "documents:annual_meeting" | "documents:act";
 
 /**
  * Load and cache all token groups required by a given context.
@@ -484,6 +548,12 @@ export async function loadTokensForContext(context: TokenContext): Promise<void>
     );
   }
 
+  if (context === "documents:act") {
+    promises.push(
+      loadActDocumentTokens().then(setActTokensByCategoryCache),
+    );
+  }
+
   await Promise.all(promises);
 }
 
@@ -520,6 +590,27 @@ export function getTokenGroupsForContext(context: TokenContext): Array<{ heading
   }
   if (_documentFieldsCache.length > 0) {
     groups.push({ heading: "Документ", tokens: _documentFieldsCache });
+  }
+
+  if (context === "documents:act") {
+    const ACT_GROUP_ORDER: Array<{ key: string; heading: string }> = [
+      { key: "contact",         heading: "Контакт / профиль" },
+      { key: "customer",        heading: "Реквизиты клиента" },
+      { key: "customer.signer", heading: "Подписант клиента" },
+      { key: "executor",        heading: "Исполнитель" },
+      { key: "deal",            heading: "Сделка / заказ" },
+      { key: "product",         heading: "Продукт" },
+      { key: "tariff",          heading: "Тариф" },
+      { key: "offer",           heading: "Кнопка оплаты" },
+      { key: "document",        heading: "Документ / акт" },
+      { key: "system",          heading: "Системные" },
+      { key: "legal_details",   heading: "Реквизиты (custom fields)" },
+    ];
+    for (const { key, heading } of ACT_GROUP_ORDER) {
+      const tokens = _actTokensByCategoryCache[key];
+      if (tokens && tokens.length > 0) groups.push({ heading, tokens });
+    }
+    return groups;
   }
 
   if (context !== "documents:annual_meeting") return groups;
