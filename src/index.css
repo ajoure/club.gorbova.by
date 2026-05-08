@@ -357,3 +357,49 @@ body.impersonation-active .impersonation-offset {
 .rdp-caption_dropdowns {
   justify-content: center;
 }
+
+/* ───────────── DOCX Word-like preview (TemplateMarkupDialog) ───────────── */
+.docx-preview {
+  font-family: 'Times New Roman', Georgia, serif;
+  color: hsl(var(--foreground));
+  line-height: 1.45;
+}
+.docx-preview p {
+  margin: 0 0 6px;
+}
+.docx-preview h1, .docx-preview h2, .docx-preview h3,
+.docx-preview h4, .docx-preview h5, .docx-preview h6 {
+  font-weight: 700;
+  margin: 12px 0 6px;
+  line-height: 1.25;
+}
+.docx-preview h1 { font-size: 1.4em; }
+.docx-preview h2 { font-size: 1.2em; }
+.docx-preview h3 { font-size: 1.05em; }
+.docx-preview strong, .docx-preview b { font-weight: 700; }
+.docx-preview em, .docx-preview i { font-style: italic; }
+.docx-preview u { text-decoration: underline; }
+.docx-preview ul, .docx-preview ol {
+  margin: 4px 0 8px 24px;
+  padding: 0;
+}
+.docx-preview li { margin: 2px 0; }
+.docx-preview table {
+  border-collapse: collapse;
+  width: 100%;
+  table-layout: fixed;
+  margin: 8px 0;
+}
+.docx-preview td, .docx-preview th {
+  border: 1px solid hsl(var(--border));
+  padding: 6px 8px;
+  vertical-align: top;
+  word-break: break-word;
+}
+.docx-preview th {
+  background: hsl(var(--muted));
+  font-weight: 700;
+  text-align: left;
+}
+.docx-preview img { max-width: 100%; height: auto; }
+.docx-preview a { color: hsl(var(--primary)); text-decoration: underline; }
