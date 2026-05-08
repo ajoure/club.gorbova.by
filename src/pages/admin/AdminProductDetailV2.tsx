@@ -2408,7 +2408,19 @@ export default function AdminProductDetailV2() {
                 </CardContent>
               </Card>
             )}
+            </TabsContent>
 
+            <TabsContent value="documents" className="space-y-4 mt-4">
+              <OfferDocumentDefaultsCard
+                value={offerForm.meta?.document_defaults}
+                onChange={(next) => setOfferForm({
+                  ...offerForm,
+                  meta: { ...offerForm.meta, document_defaults: next },
+                })}
+              />
+            </TabsContent>
+
+            <TabsContent value="extra" className="space-y-4 mt-4">
             {/* Advanced Settings - Collapsible */}
             <Collapsible className="border-t pt-4">
               <CollapsibleTrigger asChild>
