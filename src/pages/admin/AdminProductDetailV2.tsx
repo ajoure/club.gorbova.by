@@ -1012,6 +1012,7 @@ export default function AdminProductDetailV2() {
                                   onUpdateLabel={handleUpdateOfferLabel}
                                   onSetPrimary={(offerId) => setPrimaryOffer.mutate({ offerId, tariffId: tariff.id })}
                                   onEdit={() => openOfferDialog(offer)}
+                                  onCopy={() => handleCopyOffer(offer)}
                                   onDelete={() => setDeleteConfirm({ type: "offer", id: offer.id })}
                                   hasPrimaryInTariff={hasActivePayOffer}
                                 />
