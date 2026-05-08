@@ -281,3 +281,17 @@ DialogContent  (h-[86vh] max-w-5xl, flex flex-col, overflow-hidden)
 ├── Tabs                flex-1 flex flex-col min-h-0
 │   ├── div TabsList    shrink-0
 │   └── div             flex-1 overflow-y-auto min-h-0   ← единственная scroll-area
+│       └── TabsContent main/payment/renewal/documents/extra
+└── DialogFooter        shrink-0, border-t
+```
+
+Теперь header (TabsList) и footer (Отмена/Сохранить) фиксированы; скроллится только содержимое активной вкладки. Высота окна `86vh` → не меняется при переключении табов.
+
+### Не сделано в этом проходе (отложено на следующий шаг Sprint 11)
+- PATCH DRIFT-1 (бейдж drift snapshot vs live в карточке сделки → Документы → Поля).
+- Полный e2e-тест регенерации DOCX из сделки.
+
+### Безопасность
+- Флаги `documents_canonical_generation_enabled` и `documents_service_act_auto_generation_enabled` не трогали — остаются `false`.
+- Email/Telegram/auto-send/batch — не трогали.
+- Новых таблиц/колонок не
