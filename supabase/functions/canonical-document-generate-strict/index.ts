@@ -158,23 +158,47 @@ Deno.serve(async (req) => {
     if (dl.error) return json({ error: `download_failed:${dl.error.message}` }, 500);
     const buf = await dl.data.arrayBuffer();
 
-    // Parse tokens
+    // Parse tokens — допустимы:
+    //   field:FLD-XXXXXX
+    //   field:FLD-XXXXXX|format=words
+    //   field:FLD-XXXXXX|format=text
+    //   field:FLD-XXXXXX|case=<allowed>
+    //   field:FLD-XXXXXX|format=words|case=<allowed>
     const zip = new PizZip(buf);
     const rawXml = extractDocumentXmlText(zip);
     const flat = stripXml(rawXml);
     const foundIds = new Set<string>();
     const legacyTokens: string[] = [];
+    const unknownModifierTokens: string[] = [];
+    const parsedTokens: ParsedToken[] = [];
     for (const m of flat.matchAll(ANY_TOKEN_RE)) {
       const inside = m[1].trim();
-      const sm = inside.match(/^field:(FLD-\d+)$/);
-      if (sm) foundIds.add(sm[1]);
-      else legacyTokens.push(`{{${inside}}}`);
+      if (/^(document|executor|customer|deal|cf)\./i.test(inside)) {
+        legacyTokens.push(`{{${inside}}}`);
+        continue;
+      }
+      const p = parseStrictTokenInside(inside);
+      if ('error' in p) {
+        if (p.error === 'unknown_modifier') unknownModifierTokens.push(`{{${inside}}}`);
+        else legacyTokens.push(`{{${inside}}}`);
+        continue;
+      }
+      foundIds.add(p.field_public_id);
+      parsedTokens.push(p);
     }
 
     if (legacyTokens.length > 0) {
       return json({
         error: 'legacy_placeholders_in_active_version',
+        code: 'legacy_placeholder_format_detected',
         legacy_tokens: Array.from(new Set(legacyTokens)),
+      }, 400);
+    }
+    if (unknownModifierTokens.length > 0) {
+      return json({
+        error: 'unknown_modifier_in_active_version',
+        code: 'unknown_modifier',
+        unknown_modifier_tokens: Array.from(new Set(unknownModifierTokens)),
       }, 400);
     }
 
@@ -198,27 +222,77 @@ Deno.serve(async (req) => {
       .from('fields_registry')
       .select('public_id, label, entity_type, data_type')
       .in('public_id', allIds.length > 0 ? allIds : ['__none__']);
-    const regMap = new Map((regRows || []).map((r: any) => [r.public_id, r]));
+    const regMap = new Map((regRows || []).map((r: any) => [r.public_id, (r as any)]));
 
+    // Базовое значение для каждого FLD (без модификаторов).
+    const baseValueByFld: Record<string, string> = {};
+    const baseEntryByFld: Record<string, any> = {};
     for (const fid of allIds) {
       const entry = docFields[fid];
-      const reg = regMap.get(fid);
+      baseEntryByFld[fid] = entry;
+      baseValueByFld[fid] = entry ? fmtVal(entry.value) : '';
+    }
+
+    // Заполняем resolved для каждого уникального плейсхолдера (с учётом modifiers).
+    // На C4-B реальное склонение/прописью НЕ выполняется — подставляем базовое значение
+    // и пишем warnings.
+    const seenPlaceholders = new Set<string>();
+    for (const t of parsedTokens) {
+      if (seenPlaceholders.has(t.raw_inside)) continue;
+      seenPlaceholders.add(t.raw_inside);
+      resolved[t.raw_inside] = baseValueByFld[t.field_public_id] ?? '';
+    }
+
+    for (const fid of allIds) {
+      const entry = baseEntryByFld[fid];
+      const reg: any = regMap.get(fid);
       const required = requiredIds.has(fid);
+      const dataType = ((reg?.data_type as string) || '').toLowerCase();
+      // Все варианты модификаторов для этого FLD
+      const variants = parsedTokens.filter((t) => t.field_public_id === fid);
+      const modifierWarnings: string[] = [];
+      const variantsTrace: any[] = [];
+      for (const v of variants) {
+        const w: string[] = [];
+        if (v.format === 'words') {
+          w.push('format_words_not_applied');
+          if (TEXT_DT.has(dataType)) w.push('format_words_on_text_field');
+        }
+        if (v.format === 'text') {
+          w.push('format_text_not_applied');
+          if (dataType !== 'boolean') w.push('format_text_on_non_boolean_field');
+        }
+        if (v.case_modifier) {
+          w.push('case_modifier_not_applied');
+          if (NUM_DT.has(dataType) && v.format !== 'words') {
+            w.push('case_on_non_text_field_without_words');
+          }
+        }
+        if (w.length > 0) modifierWarnings.push(...w);
+        variantsTrace.push({
+          placeholder: `{{${v.raw_inside}}}`,
+          format: v.format,
+          case: v.case_modifier,
+          warnings: w,
+        });
+      }
+
       if (!entry) {
-        resolved[`field:${fid}`] = '';
         sourceTrace[fid] = {
           status: 'missing',
           source: 'none',
           field_public_id: fid,
           label: reg?.label ?? null,
+          data_type: dataType || null,
           required,
+          variants: variantsTrace,
+          warnings: Array.from(new Set(modifierWarnings)),
         };
         missing.push(fid);
         if (required) requiredEmpty.push(fid);
         continue;
       }
-      const val = fmtVal(entry.value);
-      resolved[`field:${fid}`] = val;
+      const val = baseValueByFld[fid];
       sourceTrace[fid] = {
         status: val === '' ? 'empty' : 'resolved',
         source: entry.source ?? 'manual_override',
@@ -227,7 +301,11 @@ Deno.serve(async (req) => {
         updated_by: entry.updated_by ?? null,
         field_public_id: fid,
         label: reg?.label ?? null,
+        data_type: dataType || null,
+        value: val,
         required,
+        variants: variantsTrace,
+        warnings: Array.from(new Set(modifierWarnings)),
       };
       if (required && val === '') requiredEmpty.push(fid);
     }
