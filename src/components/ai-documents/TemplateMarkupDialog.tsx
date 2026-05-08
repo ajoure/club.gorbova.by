@@ -603,7 +603,12 @@ export function TemplateMarkupDialog({
     if (legacy) {
       const text = legacy.getAttribute("data-legacy-text") ?? legacy.textContent ?? "";
       const rect = legacy.getBoundingClientRect();
-      setPickerContext({ kind: "legacy", text });
+      // Range, начинающийся перед элементом legacy → даст индекс этого вхождения.
+      const range = document.createRange();
+      range.setStartBefore(legacy);
+      range.collapse(true);
+      const occurrenceIndex = computeOccurrenceIndexAtRange(text, range);
+      setPickerContext({ kind: "legacy", text, occurrenceIndex });
       setPickerAnchor({ x: rect.left + rect.width / 2, y: rect.bottom });
       setPickerOpen(true);
     }
