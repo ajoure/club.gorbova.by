@@ -525,13 +525,20 @@ export function TemplateMarkupDialog({
   /** Делегированный обработчик кликов внутри preview. */
   const handlePreviewClick = (e: ReactMouseEvent<HTMLDivElement>) => {
     const t = e.target as HTMLElement;
+    // Крестик удаления внутри chip
+    const removeBtn = t.closest<HTMLElement>('[data-chip-action="remove"]');
+    if (removeBtn) {
+      const ownerChip = removeBtn.closest<HTMLElement>("[data-chip-id]");
+      if (ownerChip) {
+        e.preventDefault();
+        e.stopPropagation();
+        removeReplacement(ownerChip.getAttribute("data-chip-id")!);
+        toast.success("Замена отменена");
+      }
+      return;
+    }
     const chip = t.closest<HTMLElement>("[data-chip-id]");
     if (chip) {
-      // Клик на крестик — удалить
-      if (t.classList.contains("docx-chip-remove")) {
-        removeReplacement(chip.getAttribute("data-chip-id")!);
-        return;
-      }
       const id = chip.getAttribute("data-chip-id")!;
       const rect = chip.getBoundingClientRect();
       setPickerContext({ kind: "chip", replacementId: id });
@@ -546,6 +553,27 @@ export function TemplateMarkupDialog({
       setPickerContext({ kind: "legacy", text });
       setPickerAnchor({ x: rect.left + rect.width / 2, y: rect.bottom });
       setPickerOpen(true);
+    }
+  };
+
+  /** Скачать исходный DOCX из storage. */
+  const downloadOriginalDocx = async () => {
+    if (!templateVersion) return;
+    try {
+      const { data: blob, error } = await supabase.storage
+        .from(templateVersion.storage_bucket)
+        .download(templateVersion.storage_path);
+      if (error) throw error;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = templateVersion.file_name ?? `template-v${templateVersion.version_number}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e: any) {
+      toast.error(`Не удалось скачать DOCX: ${e?.message ?? e}`);
     }
   };
 
