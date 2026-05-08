@@ -33,7 +33,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import {
   ChevronsUpDown, Check, Loader2, CheckCircle2, X, Pencil, Sparkles, Plus, Trash2,
-  AlertTriangle, ListChecks, Wand2,
+  AlertTriangle, ListChecks, Wand2, Download,
 } from "lucide-react";
 import { toast } from "sonner";
 import mammoth from "mammoth";
