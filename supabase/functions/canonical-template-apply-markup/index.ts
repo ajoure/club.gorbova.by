@@ -128,47 +128,127 @@ function listScannablePaths(zip: any): string[] {
 }
 
 /**
- * Замена в одной XML-части.
- * Стратегия:
- *  (A) Для каждого <w:t ...>BODY</w:t>: если BODY содержит original_text — заменить literal substring на placeholder (один проход — каждое вхождение).
- *  (B) Fallback на уровне <w:p>...</w:p>: если ни один <w:t> в одиночку не содержит,
- *     склеить тексты всех <w:t> в параграфе, найти positions, и выполнить
- *     "first-run replace + clear tail" разметку.
- * Возвращает { content, applied: number, missed: Replacement[] }.
+ * Подсчитать общее количество вхождений `original_text` во всех видимых частях.
+ * Используется для ambiguity-guard и для resolve `occurrence_index`.
+ */
+function countGlobalOccurrences(zip: any, paths: string[], original_text: string): number {
+  if (!original_text) return 0;
+  let count = 0;
+  for (const p of paths) {
+    const file = zip.file(p);
+    if (!file) continue;
+    const xml = file.asText();
+    const wtRe = /<w:t(\s[^>]*)?>([^<]*)<\/w:t>/g;
+    let m: RegExpExecArray | null;
+    while ((m = wtRe.exec(xml)) !== null) {
+      const decoded = m[2]
+        .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+      let from = 0;
+      while (true) {
+        const idx = decoded.indexOf(original_text, from);
+        if (idx < 0) break;
+        count++;
+        from = idx + original_text.length;
+      }
+    }
+    // Add merged-run extras (split-run occurrences)
+    const paraRe = /<w:p\b[^>]*>[\s\S]*?<\/w:p>/g;
+    let pm: RegExpExecArray | null;
+    while ((pm = paraRe.exec(xml)) !== null) {
+      const para = pm[0];
+      const tRe = /<w:t(\s[^>]*)?>([^<]*)<\/w:t>/g;
+      const decodedRuns: string[] = [];
+      let tm: RegExpExecArray | null;
+      while ((tm = tRe.exec(para)) !== null) {
+        decodedRuns.push(
+          tm[2]
+            .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+            .replace(/&quot;/g, '"').replace(/&apos;/g, "'"),
+        );
+      }
+      if (decodedRuns.length < 2) continue;
+      const concatenated = decodedRuns.join('');
+      let f = 0; let cc = 0;
+      while (true) {
+        const idx = concatenated.indexOf(original_text, f);
+        if (idx < 0) break;
+        cc++;
+        f = idx + original_text.length;
+      }
+      let sc = 0;
+      for (const dr of decodedRuns) {
+        let g = 0;
+        while (true) {
+          const idx = dr.indexOf(original_text, g);
+          if (idx < 0) break;
+          sc++;
+          g = idx + original_text.length;
+        }
+      }
+      count += Math.max(0, cc - sc);
+    }
+  }
+  return count;
+}
+
+/**
+ * Замена в одной XML-части. Если задан occurrence_index — меняет только N-е
+ * вхождение (по running counter в state), иначе все.
  */
 function applyReplacementsToXml(
   xml: string,
-  replacements: Array<{ original_text: string; placeholder: string }>,
+  replacements: Array<{ original_text: string; placeholder: string; occurrence_index: number | null }>,
+  state: { seen: Map<string, number> },
 ): { xml: string; appliedByOriginal: Map<string, number> } {
   const appliedByOriginal = new Map<string, number>();
   let content = xml;
 
-  // --- pass A: single <w:t> replacement
+  const shouldReplaceAt = (key: string, target: number | null): boolean => {
+    const cur = state.seen.get(key) ?? 0;
+    if (target == null) return true;
+    return cur === target;
+  };
+  const incSeen = (key: string) => {
+    state.seen.set(key, (state.seen.get(key) ?? 0) + 1);
+  };
+
+  // pass A: single <w:t>
   for (const r of replacements) {
     const wtRe = /<w:t(\s[^>]*)?>([^<]*)<\/w:t>/g;
     let totalApplied = 0;
     content = content.replace(wtRe, (full, attrs, body) => {
-      if (!body || !body.includes(escXml(r.original_text)) && !body.includes(r.original_text)) return full;
-      // try unescaped substring search using HTML-decoded view
-      const decoded = body
+      const decoded = (body as string)
         .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
         .replace(/&quot;/g, '"').replace(/&apos;/g, "'");
       if (!decoded.includes(r.original_text)) return full;
-      const replaced = decoded.split(r.original_text).join(r.placeholder);
-      totalApplied += decoded.split(r.original_text).length - 1;
+      let out = '';
+      let cursor = 0;
+      while (true) {
+        const idx = decoded.indexOf(r.original_text, cursor);
+        if (idx < 0) { out += decoded.slice(cursor); break; }
+        out += decoded.slice(cursor, idx);
+        if (shouldReplaceAt(r.original_text, r.occurrence_index)) {
+          out += r.placeholder;
+          totalApplied++;
+        } else {
+          out += r.original_text;
+        }
+        incSeen(r.original_text);
+        cursor = idx + r.original_text.length;
+      }
       const safeAttrs = attrs ?? '';
-      // ensure xml:space="preserve" so spaces inside placeholder survive
       const attrsWithSpace = / xml:space="preserve"/.test(safeAttrs)
         ? safeAttrs
         : `${safeAttrs} xml:space="preserve"`;
-      return `<w:t${attrsWithSpace}>${escXml(replaced)}</w:t>`;
+      return `<w:t${attrsWithSpace}>${escXml(out)}</w:t>`;
     });
     if (totalApplied > 0) {
       appliedByOriginal.set(r.original_text, (appliedByOriginal.get(r.original_text) ?? 0) + totalApplied);
     }
   }
 
-  // --- pass B: paragraph-level merge for remaining unmatched
+  // pass B: paragraph-level merge for split runs
   const remaining = replacements.filter((r) => !appliedByOriginal.has(r.original_text));
   if (remaining.length > 0) {
     const paraRe = /<w:p\b[^>]*>[\s\S]*?<\/w:p>/g;
@@ -196,8 +276,12 @@ function applyReplacementsToXml(
         const concatenated = decodedTexts.join('');
         const idx = concatenated.indexOf(r.original_text);
         if (idx < 0) continue;
+        if (!shouldReplaceAt(r.original_text, r.occurrence_index)) {
+          incSeen(r.original_text);
+          continue;
+        }
+        incSeen(r.original_text);
 
-        // Найти диапазон runs, перекрывающих [idx, idx + len)
         const endIdx = idx + r.original_text.length;
         let cursor = 0;
         let firstRunIdx = -1;
@@ -214,7 +298,6 @@ function applyReplacementsToXml(
         }
         if (firstRunIdx < 0 || lastRunIdx < 0) continue;
 
-        // Build new bodies
         const newBodies = decodedTexts.slice();
         const before = decodedTexts[firstRunIdx].slice(0, idx - offsets[firstRunIdx]);
         const afterFromLast = decodedTexts[lastRunIdx].slice(endIdx - offsets[lastRunIdx]);
@@ -226,12 +309,11 @@ function applyReplacementsToXml(
           newBodies[lastRunIdx] = afterFromLast;
         }
 
-        // Перестроить параграф, заменяя runs от последнего к первому
         let rebuilt = para;
         for (let i = runs.length - 1; i >= 0; i--) {
           if (newBodies[i] === decodedTexts[i]) continue;
           const rr = runs[i];
-          const openTag = rr.openTag.endsWith('>') && / xml:space="preserve"/.test(rr.openTag)
+          const openTag = / xml:space="preserve"/.test(rr.openTag)
             ? rr.openTag
             : rr.openTag.replace(/>$/, ' xml:space="preserve">');
           const newRun = `${openTag}${escXml(newBodies[i])}${rr.closeTag}`;
