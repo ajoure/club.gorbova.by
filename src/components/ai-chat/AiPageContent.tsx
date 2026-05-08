@@ -55,6 +55,8 @@ const LazyExecutorsContent = lazy(() =>
 /* ─── Конфигурация секций и подменю ─── */
 
 type Section = "ai" | "documents" | "requisites";
+// Sprint 11 C1: legacy ids ("generate", "canonical-acts", "aliases") оставлены в типе,
+// чтобы старые ссылки не падали; рендер их игнорирует — guard сбросит на DEFAULT_SUB.
 type SubTab = "chat" | "analysis-history" | "tutorials" | "prompts" | "generate" | "history" | "templates" | "executors" | "entities" | "persons" | "canonical-acts" | "aliases" | "placeholders";
 
 const SECTIONS: { id: Section; label: string; icon: React.ComponentType<{ className?: string }>; adminOnly?: boolean }[] = [
