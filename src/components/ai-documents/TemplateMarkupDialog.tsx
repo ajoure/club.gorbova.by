@@ -177,6 +177,13 @@ export function TemplateMarkupDialog({
         .map((s) => ({
           original_text: s.original_text,
           field_public_id: s.field_public_id!,
+          format: (s.format ?? null) as FieldFormat | null,
+          case_modifier: (s.case_modifier ?? null) as FieldCase | null,
+          placeholder: buildFieldPlaceholder(
+            s.field_public_id!,
+            (s.format ?? null) as FieldFormat | null,
+            (s.case_modifier ?? null) as FieldCase | null,
+          ),
           status: s.status,
         }));
       const { data, error } = await supabase.functions.invoke("canonical-template-apply-markup", {
