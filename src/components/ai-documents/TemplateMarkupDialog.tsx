@@ -39,6 +39,8 @@ import {
   type RegistryFieldRef,
 } from "@/utils/templateAutoSuggest";
 import { TemplateVisualEditor, type VisualEditorSavePayload } from "./TemplateVisualEditor";
+import { FieldFormatPicker } from "./FieldFormatPicker";
+import { buildFieldPlaceholder, type FieldCase, type FieldFormat } from "./extensions/FieldChipNode";
 
 interface Props {
   open: boolean;
