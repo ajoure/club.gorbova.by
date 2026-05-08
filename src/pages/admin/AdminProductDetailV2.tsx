@@ -1699,7 +1699,7 @@ export default function AdminProductDetailV2() {
 
       {/* Offer Dialog */}
       <Dialog open={offerDialog.open} onOpenChange={(open) => setOfferDialog({ ...offerDialog, open })}>
-        <DialogContent className="max-w-lg w-[calc(100vw-1.5rem)] sm:w-full overflow-hidden p-0 bg-background">
+        <DialogContent className="max-w-4xl w-[calc(100vw-1.5rem)] sm:w-full overflow-hidden p-0 bg-background">
           <div className="max-h-[calc(100dvh-4rem)] overflow-y-auto overflow-x-hidden scrollbar-none p-4 sm:p-6">
           <DialogHeader className="pr-8">
             <DialogTitle>
@@ -1710,7 +1710,16 @@ export default function AdminProductDetailV2() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4">
+          <Tabs defaultValue="main" className="w-full">
+            <TabsList className="grid w-full grid-cols-5">
+              <TabsTrigger value="main">Основное</TabsTrigger>
+              <TabsTrigger value="payment">Оплата</TabsTrigger>
+              <TabsTrigger value="renewal">Автопродление</TabsTrigger>
+              <TabsTrigger value="documents">Документы</TabsTrigger>
+              <TabsTrigger value="extra">Дополнительно</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="main" className="space-y-4 mt-4">
             {/* Основное */}
             <Card>
               <CardHeader className="pb-2">
@@ -1840,7 +1849,9 @@ export default function AdminProductDetailV2() {
                 </div>
               </CardContent>
             </Card>
+            </TabsContent>
 
+            <TabsContent value="payment" className="space-y-4 mt-4">
             {offerForm.offer_type === "pay_now" && offerForm.payment_method !== "internal_installment" && (
               <Card>
                 <CardHeader className="pb-2">
@@ -1936,7 +1947,9 @@ export default function AdminProductDetailV2() {
                 </CardContent>
               </Card>
             )}
+            </TabsContent>
 
+            <TabsContent value="renewal" className="space-y-4 mt-4">
             {offerForm.offer_type === "pay_now" && offerForm.payment_method === "full_payment" && (
               <Card>
                 <CardHeader className="pb-2">
@@ -2395,7 +2408,19 @@ export default function AdminProductDetailV2() {
                 </CardContent>
               </Card>
             )}
+            </TabsContent>
 
+            <TabsContent value="documents" className="space-y-4 mt-4">
+              <OfferDocumentDefaultsCard
+                value={offerForm.meta?.document_defaults}
+                onChange={(next) => setOfferForm({
+                  ...offerForm,
+                  meta: { ...offerForm.meta, document_defaults: next },
+                })}
+              />
+            </TabsContent>
+
+            <TabsContent value="extra" className="space-y-4 mt-4">
             {/* Advanced Settings - Collapsible */}
             <Collapsible className="border-t pt-4">
               <CollapsibleTrigger asChild>
@@ -2449,15 +2474,6 @@ export default function AdminProductDetailV2() {
                     meta: { ...offerForm.meta, crm_routing: next },
                   })}
                 />
-
-                {/* Sprint 10: defaults for document generation */}
-                <OfferDocumentDefaultsCard
-                  value={offerForm.meta?.document_defaults}
-                  onChange={(next) => setOfferForm({
-                    ...offerForm,
-                    meta: { ...offerForm.meta, document_defaults: next },
-                  })}
-                />
               </CollapsibleContent>
             </Collapsible>
 
@@ -2480,7 +2496,8 @@ export default function AdminProductDetailV2() {
                 <Label>Основная цена</Label>
               </div>
             )}
-          </div>
+            </TabsContent>
+          </Tabs>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setOfferDialog({ open: false, editing: null })}>
