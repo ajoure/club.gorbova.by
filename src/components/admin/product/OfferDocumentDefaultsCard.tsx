@@ -28,7 +28,13 @@ const DEFAULT_CURRENCY = "BYN";
 
 const num = (s: string): number | null => (s === "" ? null : (Number(s) || 0));
 
-interface TemplateOpt { id: string; name: string; code: string; }
+interface TemplateOpt {
+  id: string;
+  name: string;
+  code: string;
+  current_version: number | string | null;
+  has_active_version: boolean;
+}
 interface ExecutorOpt { id: string; short_name: string | null; full_name: string; is_default: boolean; }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
