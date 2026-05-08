@@ -212,6 +212,10 @@ function renderInteractiveHtml(
           list.find((r) => r.occurrence_index === thisOccurrence) ??
           (list.length === 1 && list[0].occurrence_index == null ? list[0] : undefined);
         if (idx > from) frag.appendChild(doc.createTextNode(s.slice(from, idx)));
+        // Match strictly by occurrence_index. No "single null fallback":
+        // null означает «не выбрано» — не подменяем все вхождения.
+        const target = list.find((r) => r.occurrence_index === thisOccurrence);
+        if (idx > from) frag.appendChild(doc.createTextNode(s.slice(from, idx)));
         if (target) {
           const chip = doc.createElement("span");
           chip.className = "docx-chip";
