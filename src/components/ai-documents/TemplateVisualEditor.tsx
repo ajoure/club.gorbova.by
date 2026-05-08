@@ -34,8 +34,12 @@ import {
   FieldChipNode,
   extractFieldChipsFromJSON,
   serializeEditorToPlaceholderText,
+  buildFieldPlaceholder,
+  type FieldCase,
+  type FieldFormat,
 } from "./extensions/FieldChipNode";
 import { loadRegistryRefs, type RegistryFieldRef } from "@/utils/templateAutoSuggest";
+import { FieldFormatPicker } from "./FieldFormatPicker";
 
 const CATEGORY_LABELS_RU: Record<string, string> = {
   executor: "Исполнитель",
