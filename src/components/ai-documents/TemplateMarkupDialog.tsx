@@ -354,6 +354,23 @@ function StatusActions({
   );
 }
 
+const CATEGORY_LABELS_RU: Record<string, string> = {
+  executor: "Исполнитель",
+  customer: "Заказчик",
+  client: "Клиент",
+  product: "Продукт",
+  tariff: "Тариф",
+  offer: "Оффер",
+  legal_details: "Реквизиты",
+  order: "Заказ",
+  subscription: "Подписка",
+  payment: "Платёж",
+  company: "Компания",
+  telegram_member: "Telegram-участник",
+  custom: "Пользовательские",
+  deal: "Сделка",
+};
+
 function FieldPicker({
   refs, refsByCategory, value, onChange,
 }: {
