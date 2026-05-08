@@ -218,6 +218,7 @@ function renderInteractiveHtml(
           chip.setAttribute("data-fld", target.field_public_id ?? "");
           chip.setAttribute("data-status", target.status);
           chip.setAttribute("contenteditable", "false");
+          chip.setAttribute("title", "Клик — изменить поле, ✕ — отменить замену");
           const labelEl = doc.createElement("span");
           labelEl.className = "docx-chip-label";
           labelEl.textContent = target.visual_label ?? target.field_public_id ?? "поле";
@@ -233,6 +234,14 @@ function renderInteractiveHtml(
             sufEl.textContent = suf;
             chip.appendChild(sufEl);
           }
+          const rm = doc.createElement("button");
+          rm.className = "docx-chip-remove";
+          rm.setAttribute("type", "button");
+          rm.setAttribute("data-chip-action", "remove");
+          rm.setAttribute("aria-label", "Отменить замену");
+          rm.setAttribute("title", "Отменить замену");
+          rm.textContent = "×";
+          chip.appendChild(rm);
           frag.appendChild(chip);
         } else {
           // Не наша occurrence — оставляем текст как есть
