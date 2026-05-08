@@ -270,7 +270,7 @@ export function PlaceholdersCatalogTab() {
                           </TableCell>
                         </TableRow>
                       )}
-                    </>
+                    </Fragment>
                   );
                 })
               )}
