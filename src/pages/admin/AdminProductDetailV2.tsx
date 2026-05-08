@@ -806,7 +806,7 @@ export default function AdminProductDetailV2() {
               </TabsTrigger>
               <TabsTrigger value="custom_fields" className="gap-1.5 text-xs">
                 <Settings2 className="h-3.5 w-3.5" />
-                Доп. поля
+                Документы
               </TabsTrigger>
               <TabsTrigger value="composition" className="gap-1.5 text-xs">
                 <FolderTree className="h-3.5 w-3.5" />
