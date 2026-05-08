@@ -188,6 +188,9 @@ const ALLOWED_CASES = new Set([
 ]);
 const ALLOWED_FORMATS = new Set(['words', 'text']);
 const STRICT_FIELD_RE = /^field:(FLD-\d+)((?:\|[a-z_]+=[a-z_]+)*)$/;
+// Префикс «правильного контракта» — `field:FLD-…` (с любым хвостом). Если префикс совпал,
+// но STRICT_FIELD_RE — нет, классифицируем как `unknown_modifier`, а не как legacy.
+const FIELD_PREFIX_RE = /^field:FLD-\d+(\||$)/;
 const ANY_TOKEN_RE = /\{\{([^}]+)\}\}/g;
 
 interface ParsedToken {
@@ -199,7 +202,11 @@ interface ParsedToken {
 
 function parseStrictTokenInside(inside: string): ParsedToken | { error: string; raw_inside: string } {
   const m = inside.match(STRICT_FIELD_RE);
-  if (!m) return { error: 'legacy_or_invalid', raw_inside: inside };
+  if (!m) {
+    // `field:FLD-…|upper` — правильный префикс, неправильные модификаторы → unknown_modifier.
+    if (FIELD_PREFIX_RE.test(inside)) return { error: 'unknown_modifier', raw_inside: inside };
+    return { error: 'legacy_or_invalid', raw_inside: inside };
+  }
   const fld = m[1];
   let format: string | null = null;
   let cs: string | null = null;
