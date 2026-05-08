@@ -44,6 +44,7 @@ import {
   Plus,
   Loader2,
   Paperclip,
+  Tag,
 } from "lucide-react";
 
 /* ─── Lazy-loaded content components ─── */
