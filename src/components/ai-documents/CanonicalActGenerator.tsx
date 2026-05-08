@@ -170,14 +170,11 @@ export function CanonicalActGenerator() {
         return;
       }
       toast.success(`Документ сформирован: ${data.document_number}${data.reused ? " (загружен из истории)" : ""}`);
-      if (data.download_url) {
-        const a = document.createElement("a");
-        a.href = data.download_url;
-        a.download = `${data.document_number}.docx`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-      }
+      setLastGenerated({
+        document_number: data.document_number,
+        download_url: data.download_url,
+        reused: !!data.reused,
+      });
     } catch (e: any) {
       toast.error(`Ошибка генерации: ${e?.message || e}`);
     } finally {
