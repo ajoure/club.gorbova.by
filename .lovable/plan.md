@@ -1,237 +1,308 @@
-# Да, по этому шаблону проблема очевидная: в Word документ содержит нормальную структуру счёт-акта с таблицей, реквизитами, подписями и старыми плейсхолдерами вида `{{ld-...}}`, `{{cn-...}}`  . В Lovable сейчас preview превращает DOCX почти в обычный текст: таблица визуально разваливается, ширины/ячейки/структура не сохраняются. Так **нельзя** использовать как рабочий редактор разметки.
-
-Дай Lovable такие правки:
+# да, согласен, с учетом правок:
 
 ```text
-Продолжай C5-D, но сначала исправь критический UI-блокер DOCX preview/markup.
+Принять этот план как C5-D-UX rework и реализовать без изменения backend-контракта.
 
-Проблема:
-Загруженный DOCX-шаблон «Шаблон. Счёт-акт на услуги.docx» в Microsoft Word отображается как нормальный документ: есть таблица, выравнивание, структура счёт-акта, реквизиты, подписи. В текущем TemplateMarkupDialog preview отображается как упрощённый текст/каша: таблица и форматирование теряются. Это недопустимо.
+Главный приоритет:
+не правая таблица replacements, а визуальная разметка прямо в DOCX-preview.
 
-Правильная архитектура:
-DOCX остаётся source of truth.
-Никакого TipTap/WYSIWYG-пересобирания документа для DOCX.
-Mammoth/HTML preview используется только для визуального просмотра и выбора текста.
-Apply-markup должен менять исходный DOCX XML, а не пересоздавать документ из HTML/текста.
+Обязательные правки к реализации:
 
-PATCH C5-D-BLOCKER-1 — нормальный DOCX preview
+1. Inline chips в документе
+- После выбора FLD-поля выделенный текст должен сразу заменяться в preview на человекочитаемый chip.
+- Chip должен показывать русское название поля + мелкий FLD-ID.
+- Сырой `{{field:FLD-...}}` пользователь в документе видеть не должен.
+- Сырой placeholder используется только при сохранении/применении в DOCX XML.
 
-1. Улучшить Word-like preview:
-   - preview должен сохранять таблицы как таблицы;
-   - ячейки должны иметь видимые borders;
-   - отступы, жирный текст, списки, заголовки должны отображаться максимально близко к Word;
-   - preview не должен превращать таблицу в плоский текст.
+2. Старые placeholders кликабельны
+- Все старые `{{ld-...}}`, `{{document...}}`, `{{executor...}}`, `{{customer...}}`, `{{deal...}}`, `{{cf...}}` в preview должны быть подсвечены.
+- Клик по старому placeholder открывает picker.
+- После выбора поля старый placeholder превращается в chip.
 
-2. Добавить scoped CSS только для preview:
-   .docx-preview table {
-     border-collapse: collapse;
-     width: 100%;
-     table-layout: fixed;
-   }
-   .docx-preview td,
-   .docx-preview th {
-     border: 1px solid hsl(var(--border));
-     padding: 4px 8px;
-     vertical-align: top;
-     word-break: break-word;
-   }
-   .docx-preview p {
-     margin: 0 0 6px;
-   }
-   .docx-preview strong,
-   .docx-preview b {
-     font-weight: 700;
-   }
-   .docx-preview ul,
-   .docx-preview ol {
-     margin-left: 20px;
-   }
+3. Правая панель замен скрыта
+- Replacements panel не показывать по умолчанию.
+- Добавить кнопку «Показать замены».
+- Панель нужна только как служебный журнал, не как основной рабочий интерфейс.
 
-3. Проверить, что mammoth.convertToHtml реально отдаёт table/tr/td.
-   Если таблица в HTML есть — проблема только CSS.
-   Если mammoth не отдаёт таблицу корректно — зафиксировать это в proof и предложить альтернативу: использовать LibreOffice headless / docx-preview library для read-only preview, но apply-markup всё равно должен работать по DOCX XML.
+4. Auto-suggest скрыт
+- Авторазметка не должна запускаться при открытии окна.
+- Только кнопка «Авторазметка».
+- Результаты авторазметки показывать в Sheet/Drawer справа.
+- После принятия предложения chip должен появиться прямо в документе.
 
-PATCH C5-D-BLOCKER-2 — не показывать авторазметку по умолчанию
+5. Picker плейсхолдеров
+- Вынести в отдельный `FieldPickerPopover`.
+- Использовать один и тот же picker для:
+  - выделенного текста;
+  - клика по legacy placeholder;
+  - редактирования существующего chip;
+  - auto-suggest.
+- Починить скролл окончательно:
+  - `PopoverContent`: `max-h-[min(520px,calc(100vh-160px))] w-[420px] p-0 flex flex-col`;
+  - `CommandList`: `flex-1 overflow-y-auto overscroll-contain max-h-[420px]`;
+  - при необходимости использовать `ScrollArea`.
 
-Сейчас справа сразу появляются auto-suggestions и выглядят как будто система уже что-то сама решила. Это мешает.
+6. Полная русификация
+- В TemplateMarkupDialog, FieldPickerPopover, ReplacementRow, toast и статусах не должно быть английских слов.
+- Заменить:
+  - `changed` → `Изменено`
+  - `auto` → `Авто`
+  - `manual/manually_added` → `Вручную`
+  - `accepted` → `Принято`
+  - `suggested` → `Предложено`
+  - `skipped` → `Пропущено`
+  - `draft autosaved` → `Черновик сохранён`
+  - `DOCX source of truth` → `DOCX — исходный шаблон`
+  - `Strict ID-first` → `Используются только поля FLD`
+- Технические `FLD-...` и `{{field:...}}` не переводить.
 
-Нужно:
-- при открытии разметки правая панель пустая;
-- кнопка «Найти автоматически» отдельно запускает auto-suggest;
-- основной сценарий — ручная разметка:
-  1) выделил текст в preview;
-  2) нажал «Разметить выделенное»;
-  3) выбрал FLD-поле;
-  4) выбрал формат/падеж при необходимости;
-  5) replacement появился справа как active/manual.
+7. Draft без потерь
+- Все chips, выбранные поля, format/case, occurrence_index и visual_label сохранять в `markup_draft`.
+- Переключение авторазметки, скрытие панели, закрытие/открытие окна не должно сбрасывать chips.
 
-PATCH C5-D-BLOCKER-3 — черновик не должен сбрасываться
+8. Apply
+- Backend не менять.
+- Использовать существующий контракт `canonical-template-apply-markup`.
+- На apply отправлять `original_text + occurrence_index + field_public_id + format + case_modifier`.
+- Backend продолжает менять только XML исходного DOCX, не пересобирает документ из HTML.
 
-Если пользователь:
-- разметил несколько полей;
-- переключился внутри dialog;
-- закрыл/открыл dialog;
-- нажал preview/auto-suggest,
+9. Proof
+Обновить `.lovable/proofs/document_generation_sprint11_c5d_docx_markup.md`:
+- показать, что DOCX-preview занимает основную область;
+- правая панель скрыта;
+- legacy placeholder кликается и заменяется на chip;
+- picker скроллится;
+- весь UI на русском;
+- draft сохраняется;
+- auto-suggest скрыт по умолчанию;
+- apply создаёт DOCX с сохранённой таблицей;
+- TipTap не используется в DOCX-flow.
 
-то replacements не должны пропадать.
-
-Требования:
-- использовать document_template_versions.markup_draft;
-- autosave каждые 1.5 секунды после изменения replacements;
-- при открытии dialog сначала загружать markup_draft;
-- если draft есть — не запускать auto-suggest автоматически;
-- кнопка «Очистить разметку» должна явно очищать draft.
-
-PATCH C5-D-BLOCKER-4 — apply должен сохранять исходный вид DOCX
-
-После Apply:
-- таблица должна остаться таблицей;
-- ширины/ячейки/границы не должны исчезать;
-- меняется только текст в w:t, где выбранный original_text заменён на {{field:FLD-...}};
-- документ не должен пересобираться из HTML/plain text.
-
-Smoke-test:
-1. Загрузить реальный файл «Шаблон. Счёт-акт на услуги.docx».
-2. Открыть разметку.
-3. Убедиться, что preview показывает таблицу как таблицу.
-4. Выделить в таблице старый placeholder, например сумму или наименование услуги.
-5. Назначить FLD-поле.
-6. Apply создать новую версию.
-7. Скачать новую версию.
-8. Открыть в Word.
-9. Подтвердить:
-   - таблица сохранена;
-   - форматирование сохранено;
-   - заменён только выбранный текст;
-   - старые {{ld-...}} остаются там, где их ещё не разметили вручную;
-   - новые вставки имеют формат {{field:FLD-XXXXXX}}.
-
-PATCH C5-D-BLOCKER-5 — legacy placeholders в загруженном старом шаблоне
-
-Важно:
-Старый шаблон содержит много legacy placeholder-ов вида {{ld-...}} и {{cn-...}}.
-На этапе ручной разметки это допустимо как исходный материал.
-Но активация финальной версии должна быть заблокирована, пока в DOCX остаются любые legacy placeholders.
-
-Правило:
-- Draft/markup version может содержать старые {{ld-...}} до полной разметки.
-- Apply может создать новую draft-version даже если часть legacy осталась.
-- Activate должен быть запрещён, если validation нашёл legacy placeholders.
-- UI должен показывать список оставшихся legacy placeholders и прогресс:
-  Размечено: X / Всего legacy placeholders: Y.
-
-Proof:
-Обновить .lovable/proofs/document_generation_sprint11_c5d_docx_markup.md:
-- приложить факт, что реальный шаблон содержит таблицу и legacy placeholders;
-- показать, что preview отображает таблицу;
-- показать, что manual replacement сохраняется в markup_draft;
-- показать, что apply создаёт новую версию;
-- показать, что скачанный DOCX после apply сохраняет таблицу;
-- показать, что activate блокируется, пока есть legacy placeholders;
-- подтвердить: TipTap не используется для DOCX-flow;
-- подтвердить: email/Telegram/auto-generation/batch OFF.
-
-Финальная формулировка отчёта:
-Backend C5-C green. C5-D UI DOCX markup fixed for real DOCX preview and manual markup, pending final user visual test on real template.
+DoD:
+- Диалог открывается на ~92vh.
+- Документ занимает основную область.
+- Старые placeholders подсвечены и кликабельны.
+- Выделение текста → picker → chip в тексте.
+- Chip показывает русское название поля + FLD-ID.
+- Picker нормально скроллится.
+- Весь UI на русском.
+- Правая панель скрыта по умолчанию.
+- Auto-suggest только по кнопке.
+- Закрытие/открытие не теряет chips.
+- Apply использует существующую edge-функцию.
+- Скачанный DOCX сохраняет таблицу и форматирование.
 ```
 
-Ключевой вывод: **не надо сейчас делать “редактор Word в браузере”**. Нужно сделать нормальный read-only preview документа + ручную замену выбранных фрагментов в исходном DOCX. Это сохранит таблицы и форматирование.
+Backend не трогать. Сейчас проблема именно в UX-разметке DOCX.
 
 &nbsp;
 
-План: C5-D DOCX Markup — переработка UI + финальная проверка
+План: PATCH C5-D-UX — Визуальный редактор разметки DOCX
 
-## Контекст
+## Цель
 
-Текущий `TemplateMarkupDialog` отображает плейсхолдеры в виде «сырых» `{{ld-...}}` токенов внутри preview, таблицы не рендерятся, авторазметка засоряет правую панель десятками карточек. Пользователь хочет:
+Превратить окно «Разметка шаблона» из «две панели: документ + таблица замен» в **визуальный редактор разметки**, где пользователь работает прямо с документом: выделяет фрагмент → выбирает поле → в тексте появляется человекочитаемый chip. Backend (`canonical-template-apply-markup`, `markup_draft`, схема) НЕ трогаем — он уже принят как зелёный.
 
-- preview как настоящий Word-документ (включая таблицы);
-- авторазметку **скрыть по умолчанию** (оставить как опциональную кнопку);
-- основной флоу — ручной: выделить текст → присвоить FLD-поле;
-- TipTap не использовать в DOCX-разметке.
+## Объём (только UI / фронтенд)
 
-## Что делаем
+Все изменения локализованы в:
 
-### 1. Build / runtime sanity
+- `src/components/ai-documents/TemplateMarkupDialog.tsx` (главный рефактор)
+- `src/components/ai-documents/FieldFormatPicker.tsx` (русификация + скролл)
+- `src/index.css` (стили `.docx-preview` + chip-слой)
+- `src/utils/templateAutoSuggest.ts` (без изменений логики; используется только из drawer)
+- `.lovable/proofs/document_generation_sprint11_c5d_docx_markup.md` (обновление proof)
 
-- `npm run build` (через харнес).
-- Открыть `/admin/ai → Документы → Шаблоны → Разметить` и убедиться, что dialog открывается без ошибок (console + network).
+Backend, edge functions, миграции, типы — **не трогаются**.
 
-### 2. Переработка `TemplateMarkupDialog`
+---
 
-- **Preview (mammoth.convertToHtml)**: рендерить полноценный HTML с таблицами/жирным/списками. Не подменять токены `<mark>`-обёртками — оставить чистый Word-like вид.
-- **Минимальный CSS** для `.docx-preview`: `table { border-collapse; border }`, `td/th { border; padding }`, `strong/b`, `ul/ol`, заголовки.
-- **Auto-suggest по умолчанию OFF**:
-  - При открытии dialog `markupState.replacements = []`.
-  - Кнопка «Найти автоматически» в toolbar — по клику запускает существующий auto-detect и наполняет правую панель.
-  - Кнопка «Очистить разметку» рядом — сбрасывает `replacements = []`.
-- **Ручной флоу (главный)**:
-  - Пользователь выделяет текст в preview → жмёт «Разметить выделенное» → открывается компактный selector (Popover) с поиском по FLD-полям + format/case.
-  - Выбор поля создаёт `replacement` со `status: 'manually_added'`, `original_text`, `occurrence_index` (вычислять по позиции выделения относительно всего текста preview).
-- **Правая панель = журнал замен**: компактные карточки (FLD-код, format/case, occurrence, кнопки Skip/Remove). Без массовых «Принять/X» — manual-замены автоматически активны, авто-замены требуют Accept.
-- **Occurrence-picker**: оставить, но показывать только если `total_occurrences > 1`.
-- **Кнопки apply**:
-  - «Применить (создать версию)» — `activate=false`.
-  - «Применить и активировать» — `activate=true`, дисейблить если есть `critical` warnings.
+## 1. Новая раскладка диалога (UX-1)
 
-### 3. Backend `canonical-template-apply-markup`
+Dialog становится почти full-screen (`max-w-[1400px] h-[92vh]`).
 
-Уже поддерживает `activate`, `occurrence_index`, ambiguity guard. Добавить только Deno-тесты (`index_test.ts`):
+```text
+┌─────────────────────────────────────────────────────────────────────┐
+│ Разметка шаблона: Шаблон. Счёт-акт на услуги                    [×] │
+│ DOCX — исходный шаблон. Выделите текст в документе и вставьте поле. │
+├─────────────────────────────────────────────────────────────────────┤
+│ [Вставить поле] [Авторазметка] [Показать замены ▸] │  Черновик ✓    │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│   ДОКУМЕНТ (Word-like preview, на всю ширину)                       │
+│   ─ таблицы, границы, жирный, абзацы                                │
+│   ─ старые {{ld-...}} подсвечены жёлтым (кликабельны)               │
+│   ─ принятые/вставленные поля = chip [Срок оплаты · FLD-000195]     │
+│                                                                     │
+├─────────────────────────────────────────────────────────────────────┤
+│ [Очистить черновик]              [Закрыть] [Применить] [+Активир.]  │
+└─────────────────────────────────────────────────────────────────────┘
+```
 
-- 1 occurrence → заменено;
-- 2 occurrences без index → warning `ambiguous_replacement_multiple_matches`, замен нет;
-- 2 occurrences c `occurrence_index=1` → заменено только второе;
-- legacy `{{document.amount}}` в FLD-плейсхолдере → critical;
-- `activate=false` → версия создана, не активна;
-- `activate=true` + valid → активна.
+Правая панель замен — **скрыта по умолчанию**, открывается как Sheet/Drawer справа по кнопке «Показать замены».
 
-### 4. TipTap cleanup
+## 2. Inline chips прямо в документе (UX-1, UX-4)
 
-- Убедиться, что `TemplateVisualEditor` не импортируется из DOCX-flow.
-- Добавить header-комментарий «NOT FOR DOCX TEMPLATES — staging only».
+Технически: поверх HTML от `mammoth.convertToHtml` накладываем **chip-overlay** через DOM-замены в строке HTML (без TipTap).
 
-### 5. Proofs
+Алгоритм рендера preview:
 
-- Переименовать секции в `.lovable/proofs/document_generation_sprint11_c5c_smoke_real_act.md`:
-  - `## C5-C Backend Smoke: GREEN`
-  - `## C5-D UI DOCX Markup: IN PROGRESS`
-  - явно зафиксировать «TipTap-подход признан неправильным для DOCX-шаблонов».
-- Создать `.lovable/proofs/document_generation_sprint11_c5d_docx_markup.md`:
-  - архитектура (DOCX = SOT, mammoth = preview only, XML replace внутри `<w:t>`);
-  - `markup_draft` autosave;
-  - `occurrence_index` + ambiguity guard;
-  - manual-only по умолчанию, auto-suggest опциональный;
-  - `apply` без autoactivate, `apply+activate` отдельная кнопка;
-  - список изменённых файлов;
-  - DoD.
+1. `mammoth.convertToHtml({ arrayBuffer })` → `previewHtml`.
+2. Извлекаем `plainText` (для подсчёта occurrence_index).
+3. Для каждого `replacement` в `markupState.replacements` со статусом `accepted | manually_added | changed`:
+  - находим N-е вхождение `original_text` в `previewHtml` (с учётом тегов — поиск в текстовых нодах через `DOMParser`);
+  - заменяем на:
+    ```html
+    <span class="docx-chip" data-replacement-id="..." 
+          data-fld="FLD-000195" data-status="accepted">
+      <span class="docx-chip-label">Срок оплаты (рабочих дней)</span>
+      <span class="docx-chip-fld">FLD-000195</span>
+      <button class="docx-chip-remove" aria-label="Удалить">×</button>
+    </span>
+    ```
+4. Все ещё **необработанные** legacy-плейсхолдеры (`{{ld-…}}`, `{{document.…}}`) подсвечиваем как `<mark class="docx-legacy">` — кликабельны (открывают picker для замены).
 
-### 6. Manual smoke (UI пользователем)
+Chip-стили в `index.css` под scope `.docx-preview`:
 
-- Документ из скрина (`Шаблон. Счёт-акт на услуги.docx`):
-  - открыть Разметку → preview показывает таблицу;
-  - правая панель пустая;
-  - выделить «{{ld-d_opf-706429-upper_first_letter}}» в ячейке → присвоить FLD-поле;
-  - Apply → скачать → открыть в Word → таблица сохранена.
+- inline-block, нежёлто-зелёный фон, border, мелкий FLD вторично.
+- При `data-status="suggested"` — пунктирная рамка (предложение).
+- Hover → показывает кнопку удаления.
 
-## Что НЕ делаем
+Клик на chip → открывает popover «Изменить поле / Удалить».
+Клик на legacy `<mark>` → открывает picker, после выбора — превращается в chip.
 
-- Не делаем сложную inline-подсветку `<mark>` (отдельный PATCH).
-- Не удаляем `TemplateVisualEditor` (оставляем для будущего).
-- Не трогаем backend strict-generate (C5-C принят).
+## 3. Flow вставки поля (UX-1)
+
+**Вариант A — выделение текста:**
+
+1. Пользователь выделяет фрагмент в `.docx-preview`.
+2. Над выделением появляется небольшой floating toolbar: `[Вставить поле]`.
+3. Клик → открывается Picker (popover у выделения).
+4. После выбора поля и формата/падежа → создаётся replacement со статусом `manually_added`, в документе появляется chip на месте выделения.
+
+**Вариант B — кнопка «Вставить поле» в шапке:**
+
+- Открывает picker без привязки к выделению (для случая, когда нужно вставить поле в курсор / в конец абзаца). MVP: требовать предварительного выделения, иначе toast «Сначала выделите текст в документе».
+
+**Вариант C — клик по legacy `<mark>`:**
+
+- Picker открывается с предзаполненным `original_text` = текст плейсхолдера.
+
+## 4. Picker полей — финальный фикс скролла (UX-3)
+
+`FieldFormatPicker` (или новый компактный `FieldPickerPopover`):
+
+- `PopoverContent`: `max-h-[min(520px,calc(100vh-160px))] w-[420px] p-0 flex flex-col`.
+- `CommandInput` фиксированный сверху.
+- `CommandList`: `flex-1 overflow-y-auto overscroll-contain max-h-[420px]`.
+- Категории — только русские (из `CATEGORY_LABELS_RU`).
+- Поиск работает по `label`, `public_id`, `description`.
+- После выбора поля — второй шаг: формат (как есть / прописью / текстом) + падеж (И/Р/Д/В/Т/П, скрывается если не применимо) + кнопка «Вставить».
+
+## 5. Auto-suggest как опциональный Drawer (UX-5)
+
+Кнопка «Авторазметка»:
+
+- Запускает `buildAutoSuggestions(plainText, refs)`.
+- Открывает Sheet справа со списком предложений.
+- Каждое предложение в Sheet: `[Принять] [Выбрать другое] [Пропустить]`.
+- При «Принять» → suggestion превращается в `accepted` replacement → chip сразу появляется в документе → элемент исчезает из Sheet.
+- Параллельно: в самом тексте можно подсвечивать предложения как `<mark class="docx-suggestion">` (опционально, MVP — только Sheet).
+
+Sheet НЕ открыт по умолчанию.
+
+## 6. Полная русификация (UX-2)
+
+Заменить все английские строки в `TemplateMarkupDialog.tsx` и связанных компонентах:
+
+
+| Сейчас                  | Должно быть                  |
+| ----------------------- | ---------------------------- |
+| DOCX source of truth    | DOCX — исходный шаблон       |
+| Strict ID-first         | Используются только поля FLD |
+| draft autosaved         | Черновик сохранён            |
+| changed                 | Изменено                     |
+| auto                    | Авто                         |
+| manual / manually_added | Вручную                      |
+| accepted                | Принято                      |
+| suggested               | Предложено                   |
+| skipped                 | Пропущено                    |
+| occurrence / вхождений  | Вхождение N из M             |
+| replacement             | Замена                       |
+| preview                 | Предпросмотр                 |
+| apply                   | Применить                    |
+| activate                | Активировать                 |
+| Всего: N · принято: M   | Полей: N · принято: M        |
+
+
+Все toast-сообщения — на русском (`Поле вставлено`, `Черновик сохранён`, `Не удалось применить разметку` и т.д.).
+
+Технические FLD-идентификаторы (`FLD-000195`, `{{field:FLD-…}}`) — остаются как есть, это идентификаторы.
+
+## 7. Сохранение состояния (UX-4, без потерь)
+
+`markupState.replacements` остаётся single source of truth. Каждая правка (вставка chip, удаление, изменение формата, принятие suggestion) → обновляет state → debounced 1.5s autosave в `markup_draft` (как сейчас).
+
+`Replacement` дополняется полем `visual_label` (то, что пишется внутри chip) — вычисляется из `field.label + format + case`. Хранится в draft, чтобы при reopen chips показывались мгновенно без повторного резолва registry.
+
+## 8. Apply (UX-7, без изменений backend)
+
+Кнопка «Применить» / «Применить и активировать»:
+
+- собирает `replacements` со статусом `accepted | manually_added | changed`;
+- отправляет в существующую edge `canonical-template-apply-markup` ровно тем же контрактом (`activate: false | true`);
+- backend сам строит `{{field:FLD-…}}` из `field_public_id + format + case_modifier` и точечно правит XML;
+- успех → toast «Создана версия vN» / «Версия активирована», `onApplied()`, закрыть диалог.
+
+Никаких изменений в edge function. Никаких изменений в схеме.
+
+## 9. Гарантия сохранности DOCX (UX-8)
+
+В коде явно: HTML-preview используется ТОЛЬКО для отображения и подсчёта occurrence_index. На apply отправляются `original_text + occurrence_index + field_public_id` — backend меняет только `<w:t>` в исходном XML, таблицы/стили не пересобираются. Это уже так в C5-D backend, фронт ничего лишнего не делает.
+
+В `TemplateVisualEditor.tsx` остаётся deprecation-баннер «NOT FOR DOCX TEMPLATES».
+
+## 10. Proof (UX-6)
+
+Обновить `.lovable/proofs/document_generation_sprint11_c5d_docx_markup.md`, добавить раздел `## C5-D UX rework`:
+
+- скриншот-описание: Word-like preview с таблицей счёт-акта;
+- chips отображаются как `[Срок оплаты (рабочих дней) · FLD-000195]`;
+- picker скроллится (max-h 520, CommandList overflow-y-auto);
+- весь UI на русском (таблица замен терминов);
+- legacy `{{ld-…}}` подсвечен и заменяется через клик;
+- draft сохраняется при каждом действии;
+- auto-suggest скрыт по умолчанию, открывается через Drawer;
+- скачанный после apply DOCX сохраняет таблицу (ручная проверка пользователем);
+- в XML записан `{{field:FLD-…}}` (видно из логов edge функции);
+- TipTap не используется в DOCX-flow (`TemplateVisualEditor` не импортируется).
+
+---
+
+## Технические заметки
+
+- **Без новых зависимостей.** Используем существующие `mammoth`, shadcn `Popover`, `Sheet`, `Command`, `ScrollArea`.
+- **DOM-замены** в `previewHtml` делаем через `DOMParser` + `TreeWalker` по текстовым нодам (надёжнее regex по HTML, не ломает теги таблиц).
+- **Floating toolbar** над выделением: `window.getSelection()` + `getBoundingClientRect()` относительно контейнера preview, position absolute. MVP — без позиционирования: при наличии выделения показываем кнопку «Вставить поле» в шапке как «активную», клик → popover у `selection.focusNode`.
+- **occurrence_index** считаем по `plainText` (textContent контейнера), сохраняя совместимость с backend ambiguity-guard.
+- **Picker** — выносим в отдельный компонент `FieldPickerPopover` для переиспользования (шапка + клик по chip + клик по legacy).
 
 ## DoD
 
-- Dialog открывается без ошибок.
-- Preview показывает таблицы и форматирование как Word.
-- Правая панель пустая до явного «Найти автоматически».
-- Ручная разметка через выделение работает.
-- `apply-markup` тесты зелёные.
-- Оба proof-файла обновлены.
-- Финальная формулировка: **Backend C5-C green. C5-D UI DOCX markup implemented, pending user visual test on real DOCX.**
+- Диалог открывается на ~92vh, документ занимает основную область.
+- Правая панель замен скрыта; открывается через «Показать замены».
+- Старые `{{ld-…}}` подсвечены, кликабельны, превращаются в chips.
+- Выделение текста + «Вставить поле» → picker → chip в тексте.
+- Chips показывают русское название поля + мелкий FLD.
+- Picker скроллится при длинном списке полей.
+- Все статусы и подписи на русском (английские термины только внутри FLD-ID и `{{field:…}}`).
+- Переключение «Авторазметка» / закрытие-открытие не теряет chips.
+- «Применить» вызывает существующую edge function без изменений контракта.
+- Proof обновлён.
 
-## Технические детали (для разработчика)
+## Что НЕ делаем
 
-- `TemplateMarkupDialog.tsx`: state machine `{ replacements, autoSuggested: boolean }`. Auto-suggest вызывается лениво.
-- Selection → `window.getSelection()` → `range.toString()` + `getCharacterOffset` относительно preview контейнера для вычисления `occurrence_index`.
-- CSS scope: `.docx-preview table, .docx-preview td, .docx-preview th { border: 1px solid hsl(var(--border)); padding: 4px 8px; }` + `border-collapse: collapse`.
-- FLD-picker внутри Popover с `Command` (cmdk) — поиск по `field_code` + label.
+- Не трогаем backend / edge functions / схему БД / типы.
+- Не возвращаем TipTap в DOCX-flow.
+- Не добавляем новые edge functions, миграции, секреты.
+- Не меняем формат placeholders (`{{field:FLD-XXXXXX|format=…|case=…}}` остаётся каноном).
