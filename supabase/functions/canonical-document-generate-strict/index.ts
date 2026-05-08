@@ -382,13 +382,21 @@ Deno.serve(async (req) => {
     }
 
     // Заполняем resolved для каждого уникального плейсхолдера (с учётом modifiers).
-    // На C4-B реальное склонение/прописью НЕ выполняется — подставляем базовое значение
-    // и пишем warnings.
+    // C5-A: реально применяем format=words (number/money/date) и format=text (boolean).
+    // case=… пока не применяется (C5-B) — оставляем warning.
+    const orderCurrency = (order as any)?.currency || null;
+    const appliedFormatByPlaceholder: Record<string, boolean> = {};
     const seenPlaceholders = new Set<string>();
     for (const t of parsedTokens) {
       if (seenPlaceholders.has(t.raw_inside)) continue;
       seenPlaceholders.add(t.raw_inside);
-      resolved[t.raw_inside] = baseValueByFld[t.field_public_id] ?? '';
+      const entry = baseEntryByFld[t.field_public_id];
+      const reg: any = regMap.get(t.field_public_id);
+      const dt = ((reg?.data_type as string) || '').toLowerCase();
+      const rawValue = entry?.value;
+      const { value: outVal, applied } = applyFormat(rawValue, dt, orderCurrency, t.format);
+      resolved[t.raw_inside] = outVal;
+      appliedFormatByPlaceholder[t.raw_inside] = applied;
     }
 
     for (const fid of allIds) {
@@ -396,21 +404,25 @@ Deno.serve(async (req) => {
       const reg: any = regMap.get(fid);
       const required = requiredIds.has(fid);
       const dataType = ((reg?.data_type as string) || '').toLowerCase();
-      // Все варианты модификаторов для этого FLD
       const variants = parsedTokens.filter((t) => t.field_public_id === fid);
       const modifierWarnings: string[] = [];
       const variantsTrace: any[] = [];
+      const seenV = new Set<string>();
       for (const v of variants) {
+        if (seenV.has(v.raw_inside)) continue;
+        seenV.add(v.raw_inside);
         const w: string[] = [];
+        const applied = appliedFormatByPlaceholder[v.raw_inside] === true;
         if (v.format === 'words') {
-          w.push('format_words_not_applied');
+          if (!applied) w.push('format_words_not_applied');
           if (TEXT_DT.has(dataType)) w.push('format_words_on_text_field');
         }
         if (v.format === 'text') {
-          w.push('format_text_not_applied');
+          if (!applied) w.push('format_text_not_applied');
           if (dataType !== 'boolean') w.push('format_text_on_non_boolean_field');
         }
         if (v.case_modifier) {
+          // C5-B: реальное склонение ещё не реализовано.
           w.push('case_modifier_not_applied');
           if (NUM_DT.has(dataType) && v.format !== 'words') {
             w.push('case_on_non_text_field_without_words');
@@ -421,6 +433,8 @@ Deno.serve(async (req) => {
           placeholder: `{{${v.raw_inside}}}`,
           format: v.format,
           case: v.case_modifier,
+          format_applied: applied,
+          rendered_value: resolved[v.raw_inside] ?? '',
           warnings: w,
         });
       }
