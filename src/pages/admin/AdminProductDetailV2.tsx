@@ -724,10 +724,8 @@ export default function AdminProductDetailV2() {
       try {
         await supabase.from("audit_logs").insert({
           action: "offer.copied",
-          entity_type: "tariff_offer",
-          entity_id: offer.id,
           actor_type: "admin",
-          metadata: {
+          meta: {
             source_offer_id: offer.id,
             tariff_id: offer.tariff_id,
             copied_document_defaults: !!meta.document_defaults,
