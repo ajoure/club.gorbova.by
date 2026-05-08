@@ -254,25 +254,50 @@ export function OfferDocumentDefaultsCard({ value, onChange, offerAmount, offerC
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">Количество</Label>
-            <Input type="number" value={v.quantity ?? ""} onChange={(e) => set({ quantity: num(e.target.value) })} />
+            <Input type="number" value={v.quantity ?? ""} onChange={(e) => handleQuantityChange(e.target.value)} />
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">Цена за единицу</Label>
-            <Input type="number" value={v.unit_price ?? ""} onChange={(e) => set({ unit_price: num(e.target.value) })} />
+            <Input type="number" value={v.unit_price ?? ""} onChange={(e) => handleUnitPriceChange(e.target.value)} />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">Сумма акта</Label>
-            <Input type="number" value={v.amount ?? ""} onChange={(e) => set({ amount: num(e.target.value) })} />
+            <Label className="text-xs">
+              Сумма акта
+              {v.amount_manual_override && <span className="ml-1 text-amber-600">(вручную)</span>}
+            </Label>
+            <Input type="number" value={v.amount ?? ""} onChange={(e) => handleAmountChange(e.target.value)} />
+            <p className="text-[10px] text-muted-foreground">
+              Рассчитывается автоматически: цена × количество. Можно изменить вручную.
+            </p>
+            {amountMismatch && (
+              <p className="text-[10px] text-amber-600">
+                Расчёт: {computedAmount}. Сейчас сохранено вручную.
+              </p>
+            )}
           </div>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
           <div className="space-y-1.5">
             <Label className="text-xs">Валюта</Label>
-            <Input
-              value={v.currency ?? ""}
-              onChange={(e) => set({ currency: e.target.value || null })}
-              placeholder="BYN"
-            />
+            <Select value={v.currency ?? DEFAULT_CURRENCY} onValueChange={handleCurrencyChange}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {CURRENCIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="sm:col-span-2 flex justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleResetAmountFromOffer}
+              disabled={typeof offerAmount !== "number"}
+              className="gap-1.5"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Пересчитать из цены кнопки {typeof offerAmount === "number" ? `(${offerAmount})` : ""}
+            </Button>
           </div>
         </div>
 
