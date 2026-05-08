@@ -1,0 +1,425 @@
+// ============================================================================
+// canonical-template-apply-markup — Sprint 11 C2
+// ----------------------------------------------------------------------------
+// Применяет ручную разметку к DOCX-версии шаблона:
+//   1. Читает исходный DOCX из storage.
+//   2. Для каждого replacement (status='accepted'|'changed') заменяет
+//      original_text на {{field:FLD-XXXXXX}} в word/document.xml и других
+//      видимых частях (header*, footer*, footnotes, endnotes, comments).
+//   3. Сохраняет новый DOCX как новую version_number+1.
+//   4. Проставляет token_manifest = [{ field_public_id }] (только FLD).
+//   5. Запускает strict validation и пишет результат в новую версию.
+//   6. Audit: document_template.markup_applied.
+//
+// Body:
+//   {
+//     template_version_id: uuid,                       // источник
+//     replacements: [
+//       { original_text: string, field_public_id: 'FLD-000123', status: 'accepted'|'changed'|'skipped' }
+//     ],
+//     new_version_notes?: string
+//   }
+//
+// Response: { new_version_id, applied_count, skipped_count, missed_count, validation }
+// ============================================================================
+
+// deno-lint-ignore-file no-explicit-any
+import { createClient } from 'npm:@supabase/supabase-js@2';
+import PizZip from 'npm:pizzip@3.1.6';
+import { extractDocxTokensWithLocations } from '../_shared/docx-helpers.ts';
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers':
+    'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
+
+const STRICT_RE = /^field:FLD-\d+$/;
+const ANY_TOKEN_RE = /\{\{([^}]+)\}\}/g;
+
+interface Replacement {
+  original_text: string;
+  field_public_id: string;
+  status: 'accepted' | 'changed' | 'skipped';
+}
+
+function escXml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function listScannablePaths(zip: any): string[] {
+  return Object.keys(zip.files || {}).filter((p) => {
+    if (!p.startsWith('word/')) return false;
+    if (!p.endsWith('.xml')) return false;
+    if (p.startsWith('word/_rels/')) return false;
+    if (p.startsWith('word/theme/')) return false;
+    if (/word\/(styles|settings|webSettings|fontTable|numbering|stylesWithEffects)\.xml$/.test(p)) return false;
+    if (p.endsWith('.xml.rels')) return false;
+    return (
+      p === 'word/document.xml' ||
+      /^word\/header\d*\.xml$/.test(p) ||
+      /^word\/footer\d*\.xml$/.test(p) ||
+      p === 'word/footnotes.xml' ||
+      p === 'word/endnotes.xml' ||
+      p === 'word/comments.xml' ||
+      /^word\/glossary\/document\.xml$/.test(p)
+    );
+  });
+}
+
+/**
+ * Замена в одной XML-части.
+ * Стратегия:
+ *  (A) Для каждого <w:t ...>BODY</w:t>: если BODY содержит original_text — заменить literal substring на placeholder (один проход — каждое вхождение).
+ *  (B) Fallback на уровне <w:p>...</w:p>: если ни один <w:t> в одиночку не содержит,
+ *     склеить тексты всех <w:t> в параграфе, найти positions, и выполнить
+ *     "first-run replace + clear tail" разметку.
+ * Возвращает { content, applied: number, missed: Replacement[] }.
+ */
+function applyReplacementsToXml(
+  xml: string,
+  replacements: Array<{ original_text: string; placeholder: string }>,
+): { xml: string; appliedByOriginal: Map<string, number> } {
+  const appliedByOriginal = new Map<string, number>();
+  let content = xml;
+
+  // --- pass A: single <w:t> replacement
+  for (const r of replacements) {
+    const wtRe = /<w:t(\s[^>]*)?>([^<]*)<\/w:t>/g;
+    let totalApplied = 0;
+    content = content.replace(wtRe, (full, attrs, body) => {
+      if (!body || !body.includes(escXml(r.original_text)) && !body.includes(r.original_text)) return full;
+      // try unescaped substring search using HTML-decoded view
+      const decoded = body
+        .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+      if (!decoded.includes(r.original_text)) return full;
+      const replaced = decoded.split(r.original_text).join(r.placeholder);
+      totalApplied += decoded.split(r.original_text).length - 1;
+      const safeAttrs = attrs ?? '';
+      // ensure xml:space="preserve" so spaces inside placeholder survive
+      const attrsWithSpace = / xml:space="preserve"/.test(safeAttrs)
+        ? safeAttrs
+        : `${safeAttrs} xml:space="preserve"`;
+      return `<w:t${attrsWithSpace}>${escXml(replaced)}</w:t>`;
+    });
+    if (totalApplied > 0) {
+      appliedByOriginal.set(r.original_text, (appliedByOriginal.get(r.original_text) ?? 0) + totalApplied);
+    }
+  }
+
+  // --- pass B: paragraph-level merge for remaining unmatched
+  const remaining = replacements.filter((r) => !appliedByOriginal.has(r.original_text));
+  if (remaining.length > 0) {
+    const paraRe = /<w:p\b[^>]*>[\s\S]*?<\/w:p>/g;
+    content = content.replace(paraRe, (paragraph) => {
+      let para = paragraph;
+      for (const r of remaining) {
+        const tRe = /<w:t(\s[^>]*)?>([^<]*)<\/w:t>/g;
+        const runs: Array<{ start: number; end: number; body: string; openTag: string; closeTag: string }> = [];
+        let m: RegExpExecArray | null;
+        while ((m = tRe.exec(para)) !== null) {
+          runs.push({
+            start: m.index,
+            end: m.index + m[0].length,
+            body: m[2],
+            openTag: `<w:t${m[1] ?? ''}>`,
+            closeTag: '</w:t>',
+          });
+        }
+        if (runs.length === 0) continue;
+        const decodedTexts = runs.map((rr) =>
+          rr.body
+            .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+            .replace(/&quot;/g, '"').replace(/&apos;/g, "'"),
+        );
+        const concatenated = decodedTexts.join('');
+        const idx = concatenated.indexOf(r.original_text);
+        if (idx < 0) continue;
+
+        // Найти диапазон runs, перекрывающих [idx, idx + len)
+        const endIdx = idx + r.original_text.length;
+        let cursor = 0;
+        let firstRunIdx = -1;
+        let lastRunIdx = -1;
+        const offsets: number[] = [];
+        for (let i = 0; i < decodedTexts.length; i++) {
+          const len = decodedTexts[i].length;
+          offsets.push(cursor);
+          const runStart = cursor;
+          const runEnd = cursor + len;
+          if (firstRunIdx < 0 && runEnd > idx) firstRunIdx = i;
+          if (runStart < endIdx) lastRunIdx = i;
+          cursor += len;
+        }
+        if (firstRunIdx < 0 || lastRunIdx < 0) continue;
+
+        // Build new bodies
+        const newBodies = decodedTexts.slice();
+        const before = decodedTexts[firstRunIdx].slice(0, idx - offsets[firstRunIdx]);
+        const afterFromLast = decodedTexts[lastRunIdx].slice(endIdx - offsets[lastRunIdx]);
+        if (firstRunIdx === lastRunIdx) {
+          newBodies[firstRunIdx] = before + r.placeholder + afterFromLast;
+        } else {
+          newBodies[firstRunIdx] = before + r.placeholder;
+          for (let i = firstRunIdx + 1; i < lastRunIdx; i++) newBodies[i] = '';
+          newBodies[lastRunIdx] = afterFromLast;
+        }
+
+        // Перестроить параграф, заменяя runs от последнего к первому
+        let rebuilt = para;
+        for (let i = runs.length - 1; i >= 0; i--) {
+          if (newBodies[i] === decodedTexts[i]) continue;
+          const rr = runs[i];
+          const openTag = rr.openTag.endsWith('>') && / xml:space="preserve"/.test(rr.openTag)
+            ? rr.openTag
+            : rr.openTag.replace(/>$/, ' xml:space="preserve">');
+          const newRun = `${openTag}${escXml(newBodies[i])}${rr.closeTag}`;
+          rebuilt = rebuilt.slice(0, rr.start) + newRun + rebuilt.slice(rr.end);
+        }
+        para = rebuilt;
+        appliedByOriginal.set(r.original_text, (appliedByOriginal.get(r.original_text) ?? 0) + 1);
+      }
+      return para;
+    });
+  }
+
+  return { xml: content, appliedByOriginal };
+}
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
+  try {
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+
+    // --- auth: JWT + admin role
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+    const { data: authData } = await supabase.auth.getUser(authHeader.replace('Bearer ', ''));
+    const userId = authData?.user?.id;
+    if (!userId) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+    const { data: roleRows } = await supabase.from('user_roles_v2').select('roles!inner(code)').eq('user_id', userId);
+    const codes = (roleRows || []).map((r: any) => r.roles?.code);
+    if (!codes.some((c: string) => ['admin', 'super_admin', 'owner'].includes(c))) {
+      return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // --- input
+    const body = await req.json().catch(() => ({}));
+    const sourceVersionId: string | null = body.template_version_id || null;
+    const replacementsRaw: Replacement[] = Array.isArray(body.replacements) ? body.replacements : [];
+    if (!sourceVersionId) {
+      return new Response(JSON.stringify({ error: 'template_version_id required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+    const accepted = replacementsRaw.filter((r) => r && (r.status === 'accepted' || r.status === 'changed'));
+    if (accepted.length === 0) {
+      return new Response(JSON.stringify({ error: 'no_accepted_replacements' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // validate FLD ids
+    const fldIds = Array.from(new Set(accepted.map((r) => r.field_public_id).filter(Boolean)));
+    for (const fid of fldIds) {
+      if (!/^FLD-\d+$/.test(fid)) {
+        return new Response(JSON.stringify({ error: 'invalid_field_public_id', field_public_id: fid }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+    }
+    const { data: knownFields } = await supabase
+      .from('fields_registry')
+      .select('public_id')
+      .in('public_id', fldIds)
+      .is('archived_at', null);
+    const knownSet = new Set((knownFields ?? []).map((x: any) => x.public_id));
+    const missing = fldIds.filter((id) => !knownSet.has(id));
+    if (missing.length > 0) {
+      return new Response(JSON.stringify({ error: 'unknown_field_public_id', missing }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // --- load source version
+    const { data: srcVer, error: srcErr } = await supabase
+      .from('document_template_versions')
+      .select('*')
+      .eq('id', sourceVersionId)
+      .maybeSingle();
+    if (srcErr || !srcVer) {
+      return new Response(JSON.stringify({ error: 'version_not_found' }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // --- download DOCX
+    const { data: blob, error: dlErr } = await supabase.storage.from(srcVer.storage_bucket).download(srcVer.storage_path);
+    if (dlErr || !blob) {
+      return new Response(JSON.stringify({ error: 'download_failed', detail: dlErr?.message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+    const buf = new Uint8Array(await blob.arrayBuffer());
+
+    // --- apply replacements
+    const zip = new PizZip(buf);
+    const paths = listScannablePaths(zip);
+    const placeholderMap = accepted.map((r) => ({
+      original_text: r.original_text,
+      placeholder: `{{field:${r.field_public_id}}}`,
+      field_public_id: r.field_public_id,
+    }));
+    const totalApplied = new Map<string, number>();
+    for (const p of paths) {
+      const file = zip.file(p);
+      if (!file) continue;
+      const xml = file.asText();
+      const { xml: out, appliedByOriginal } = applyReplacementsToXml(xml, placeholderMap);
+      if (out !== xml) zip.file(p, out);
+      for (const [k, v] of appliedByOriginal) totalApplied.set(k, (totalApplied.get(k) ?? 0) + v);
+    }
+    const missedReplacements = placeholderMap.filter((r) => !totalApplied.has(r.original_text));
+
+    // --- pack new docx
+    const outBytes = zip.generate({ type: 'uint8array', compression: 'DEFLATE' }) as Uint8Array;
+
+    // --- next version_number
+    const { data: maxRow } = await supabase
+      .from('document_template_versions')
+      .select('version_number')
+      .eq('template_id', srcVer.template_id)
+      .order('version_number', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const nextVersion = (maxRow?.version_number ?? 0) + 1;
+
+    // --- upload new file
+    const ts = Date.now();
+    const baseName = (srcVer.file_name ?? 'template.docx').replace(/\.docx$/i, '');
+    const newStoragePath = `templates/${ts}-v${nextVersion}-${baseName.replace(/[^a-zA-Z0-9._-]/g, '_')}.docx`;
+    const { error: upErr } = await supabase.storage
+      .from(srcVer.storage_bucket)
+      .upload(newStoragePath, outBytes, {
+        cacheControl: '3600',
+        upsert: false,
+        contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      });
+    if (upErr) {
+      return new Response(JSON.stringify({ error: 'upload_failed', detail: upErr.message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // --- re-extract tokens & validate strict
+    const parsed = extractDocxTokensWithLocations(outBytes);
+    const validationErrors: any[] = [];
+    const recognized: Array<{ placeholder: string; field_public_id: string }> = [];
+    const allFldInDoc: string[] = [];
+    for (const tk of parsed.tokens) {
+      if (!STRICT_RE.test(tk)) {
+        validationErrors.push({
+          code: 'legacy_placeholder_format_detected',
+          placeholder: `{{${tk}}}`,
+          message: `Найден старый формат «{{${tk}}}». Допустим только {{field:FLD-XXXXXX}}.`,
+        });
+        continue;
+      }
+      const fld = tk.slice('field:'.length);
+      allFldInDoc.push(fld);
+      recognized.push({ placeholder: `{{${tk}}}`, field_public_id: fld });
+    }
+    // verify all FLD exist
+    if (allFldInDoc.length > 0) {
+      const { data: chk } = await supabase
+        .from('fields_registry')
+        .select('public_id')
+        .in('public_id', allFldInDoc)
+        .is('archived_at', null);
+      const known2 = new Set((chk ?? []).map((x: any) => x.public_id));
+      for (const fld of allFldInDoc) {
+        if (!known2.has(fld)) {
+          validationErrors.push({
+            code: 'unknown_field_public_id',
+            placeholder: `{{field:${fld}}}`,
+            message: `Field ID ${fld} не найден в каталоге полей.`,
+          });
+        }
+      }
+    }
+    if (parsed.tokens.length === 0) {
+      validationErrors.push({
+        code: 'no_placeholders_in_template',
+        message: 'В шаблоне не найдено ни одного плейсхолдера.',
+      });
+    }
+    const validationStatus = validationErrors.length === 0 ? 'valid' : 'invalid';
+
+    // --- token_manifest: ТОЛЬКО field_public_id
+    const manifestSet = new Set<string>();
+    for (const r of recognized) manifestSet.add(r.field_public_id);
+    const tokenManifest = Array.from(manifestSet).map((fld) => ({ field_public_id: fld }));
+
+    // --- insert new version row
+    const { data: newVer, error: insErr } = await supabase
+      .from('document_template_versions')
+      .insert({
+        template_id: srcVer.template_id,
+        version_number: nextVersion,
+        storage_bucket: srcVer.storage_bucket,
+        storage_path: newStoragePath,
+        file_name: `${baseName}.v${nextVersion}.docx`,
+        file_size_bytes: outBytes.byteLength,
+        is_current: false,
+        detected_tokens: parsed.tokens as any,
+        token_manifest: tokenManifest as any,
+        unmapped_tokens: [],
+        tokens: parsed.tokens as any,
+        validation_status: validationStatus,
+        validation_errors: validationErrors as any,
+        validation_checked_at: new Date().toISOString(),
+        markup_status: 'marked',
+        notes: body.new_version_notes ?? null,
+        created_by: userId,
+      })
+      .select('id')
+      .single();
+    if (insErr) {
+      return new Response(JSON.stringify({ error: 'version_insert_failed', detail: insErr.message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // --- audit
+    await supabase.from('audit_logs').insert({
+      actor_user_id: userId,
+      actor_type: 'user',
+      action: 'document_template.markup_applied',
+      meta: {
+        template_id: srcVer.template_id,
+        source_version_id: sourceVersionId,
+        new_version_id: newVer.id,
+        new_version_number: nextVersion,
+        applied_count: Array.from(totalApplied.values()).reduce((a, b) => a + b, 0),
+        missed_count: missedReplacements.length,
+        skipped_count: replacementsRaw.length - accepted.length,
+        validation_status: validationStatus,
+        validation_errors_count: validationErrors.length,
+      },
+    });
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        new_version_id: newVer.id,
+        new_version_number: nextVersion,
+        new_storage_path: newStoragePath,
+        applied_count: Array.from(totalApplied.values()).reduce((a, b) => a + b, 0),
+        missed: missedReplacements.map((r) => ({ original_text: r.original_text, field_public_id: r.field_public_id })),
+        validation: { status: validationStatus, errors: validationErrors, recognized },
+        token_manifest: tokenManifest,
+      }),
+      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    );
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: String(e?.message ?? e) }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+});
