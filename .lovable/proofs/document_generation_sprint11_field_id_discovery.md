@@ -95,7 +95,32 @@ SELECT MAX(public_id), COUNT(*) FROM fields_registry;
 
 ### 2.4. `needs_manual_review` (0)
 
-Все 110 удалось разнести по A/B. Финальная цифра подтвердится после миграции через SQL count в Этапе 2.
+Все 110 удалось разнести по A/B.
+
+### 2.5. Результат миграции (выполнено)
+
+```sql
+SELECT COUNT(*) total, COUNT(field_id) with_field_id
+FROM document_token_registry WHERE archived_at IS NULL;
+-- total | with_field_id
+-- ------+--------------
+--   157 |           157
+```
+
+Счётчик `public_id_sequences[entity_type='field']`: `last_value=212` (был 50, синхронизирован до фактического `MAX` перед INSERT).
+
+Примеры новых `FLD-XXXXXX`:
+
+| token_key | ui_label | public_id |
+|---|---|---|
+| system.month | Текущий месяц (01-12) | FLD-000212 |
+| system.year | Текущий год | FLD-000211 |
+| system.now | Сейчас (дата+время) | FLD-000210 |
+| system.today_ru | Сегодня прописью | FLD-000209 |
+| document.payment_date | Дата оплаты / дата ведения | FLD-000208 |
+| document.usd_byn_rate | Курс USD/BYN | FLD-000207 |
+| document.deal_currency | Сделка: валюта | FLD-000206 |
+| document.final_payment_amount | Окончательный расчёт, сумма | FLD-000205 |
 
 ## 3. Текущие точки runtime, которые читают старые `token_key`
 
