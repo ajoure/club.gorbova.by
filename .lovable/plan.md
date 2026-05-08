@@ -1,3 +1,11 @@
+## Статус Sprint 11
+
+- C5-C backend smoke: GREEN
+- C5-D UI DOCX markup: PATCH applied (2026-05-08) — picker scroll fixed, chip ×, download DOCX, disabled-reasons, FieldPickerPopover, table-cell wrap. Pending пользовательская QA на реальном шаблоне (создание новой версии + activate).
+- Backlog: `.lovable/backlog/document_generation_full_docx_editor.md` — настоящий Word-редактор (OnlyOffice/Collabora), отдельный future sprint.
+
+---
+
 ## да, согласен, с учетом правок:
 
 1. **Добавить подсветку заменяемых мест прямо в документе**
