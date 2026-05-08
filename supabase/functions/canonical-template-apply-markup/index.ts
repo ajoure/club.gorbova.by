@@ -590,6 +590,25 @@ Deno.serve(async (req) => {
         });
       }
     }
+    // C5-D: surface ambiguity warnings (skipped pre-replacement)
+    for (const a of ambiguous) {
+      validationWarnings.push({
+        code: 'ambiguous_replacement_multiple_matches',
+        original_text: a.original_text,
+        field_public_id: a.field_public_id,
+        occurrences: a.occurrences,
+        message: `Текст «${a.original_text}» встречается в шаблоне ${a.occurrences} раз — выберите конкретное вхождение в UI (occurrence_index).`,
+      });
+    }
+    // C5-D: surface missed (text not found at all)
+    for (const r of missedReplacements) {
+      validationWarnings.push({
+        code: 'replacement_not_found',
+        original_text: r.original_text,
+        field_public_id: r.field_public_id,
+        message: `Текст «${r.original_text}» не найден в DOCX — возможно изменён исходный документ.`,
+      });
+    }
     if (parsed.tokens.length === 0) {
       validationErrors.push({
         code: 'no_placeholders_in_template',
