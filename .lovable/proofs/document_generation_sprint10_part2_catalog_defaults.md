@@ -1,135 +1,51 @@
-# Sprint 10 part 2 — каталог плейсхолдеров и данные кнопки оплаты
+# Sprint 10 part 2 PATCH — UI каталога и кнопки оплаты
 
-Дата: 2026-05-08
-Тип: UI + конфиг (без миграций схемы, без авторассылки).
+## PATCH UI-1 — Каталог плейсхолдеров: канонический Table
+- `src/components/ai-documents/PlaceholdersCatalogTab.tsx` переписан с грид-карточек на системную `Table` из `@/components/ui/table` (та же, что используется в админке: участники клуба, payments, broadcasts).
+- Колонки: Группа · Название · Плейсхолдер · Тип · Источник · Обяз. · Пример · Действия.
+- Фильтры: поиск (label/token/description/category), Select по группе, Select по типу данных, Switch «только обязательные».
+- Действия в строке: copy `{{token_key}}`.
+- Технические данные (`field_id`, `resolver_key`, `source_type`, `category`) — раскрытие строки через chevron + глобальный toggle «Технические данные».
+- 157 токенов из `document_token_registry` отображаются в плотной таблице.
 
-## 1. Каталог токенов в БД
+## PATCH UI-2 — Окно кнопки оплаты: шире + Tabs
+- `src/pages/admin/AdminProductDetailV2.tsx`:
+  - `DialogContent` расширен до `max-w-4xl`.
+  - Содержимое разделено на `Tabs` с 5 вкладками:
+    1. **Основное** — тариф, тип кнопки, текст, сумма, цена повторного вступления.
+    2. **Оплата** — Способ оплаты (full/bank), Настройка рассрочки.
+    3. **Автопродление** — Подписка card (billing_period, grace, attempts, timezone, charge_times, reminders), Trial, Preregistration.
+    4. **Документы** — `OfferDocumentDefaultsCard` (вынесен из Collapsible).
+    5. **Дополнительно** — Расширенные настройки (virtual cards, getCourse, welcome msg, CRM routing) + Активна / Основная цена.
+- Бизнес-логика сохранения не тронута: `handleSaveOffer` пишет всё тот же `offerForm` в `tariff_offers` (включая `meta.document_defaults`).
 
-Таблица: `public.document_token_registry` (`archived_at IS NULL`).
+## PATCH UI-3 — Понятные подписи и группировка «Документов»
+- `OfferDocumentDefaultsCard` пересобран по группам с заголовками:
+  - **Шаблон и исполнитель**
+  - **Услуга**
+  - **Стоимость**
+  - **Сроки**
+  - **Расчёты**
+  - **Комментарий**
+- Все технические ярлыки заменены на человеческие («Срок оказания услуги, дней», «Цена для банковской рассрочки», «Окончательный расчёт» и т.д.).
+- Хранение по-прежнему: `tariff_offers.meta.document_defaults` (тот же `OfferDocumentDefaults` тип из `useTariffOffers`).
 
-```
-SELECT category, COUNT(*) FROM document_token_registry
-WHERE archived_at IS NULL GROUP BY category ORDER BY category;
-```
+## PATCH UI-4 — Канонический календарь
+- `service_period_from` и `service_period_to` теперь используют системный `DatePicker` из `@/components/ui/date-picker` (тот же компонент, что в Tariff Dialog → Flow и в Preregistration).
+- Формат отображения — `дд.мм.гггг` (русская локаль), хранение — `yyyy-MM-dd`.
 
-| category          | count |
-|-------------------|-------|
-| contact           | 6     |
-| customer          | 14    |
-| customer.signer   | 4     |
-| deal              | 18    |
-| document          | 30    |
-| executor          | 15    |
-| legal_details     | 47    |
-| offer             | 7     |
-| product           | 4     |
-| system            | 6     |
-| tariff            | 6     |
-| **итого**         | **157** |
+## PATCH UI-5 — Шаблон акта и Исполнитель — Select из БД
+- `template_id` → `<Select>` из `document_templates` (фильтр `is_active=true`, отображается `name (code)`).
+- `executor_id` → `<Select>` из `executors` (фильтр `is_active=true`, дефолтный сверху, отображается `short_name|full_name`).
+- UUID не вводится руками. Опциональный toggle «Показывать технические ID» открывает реальные id под селектами (для отладки).
 
-Группы (11) → отображаются в указанном порядке в каталоге и в `documents:act` picker’е
-(см. `src/lib/tokens/tokenRegistry.ts → ACT_GROUP_ORDER`).
+## PATCH UI-6 — Что НЕ менялось
+- Schema БД, миграции — не трогались.
+- Email / Telegram / auto-send / production auto-generation — выключены, флаги остались `false`.
+- Legacy `generated_documents`, `documents:annual_meeting` контекст — не трогались.
+- `handleSaveOffer`, `useTariffOffers`, `OfferDocumentDefaults` тип — без изменений в логике, только UI-обёртка.
 
-## 2. Вкладка «Плейсхолдеры»
-
-Файл: `src/components/ai-documents/PlaceholdersCatalogTab.tsx`.
-Точка входа: `/admin/ai → Документы → Плейсхолдеры`
-(`AiPageContent.tsx → DOC_SUB_TABS.id = "placeholders"`).
-
-UI:
-
-- Поиск по `ui_label / token_key / description / category`.
-- Группировка по 11 группам с заголовками 1..11 (порядок согласно ТЗ).
-- Карточка токена: человекочитаемое название, бейдж типа данных,
-  бейдж «обяз.», `{{token_key}}` мелким моно, описание, пример значения,
-  кнопка копирования.
-- Тогл «Показать технические данные» открывает `field_id`,
-  `resolver_key`, `source_type` (моно-шрифт).
-
-## 3. Копирование токена
-
-Кнопка `Copy` копирует строку `{{<token_key>}}` через `navigator.clipboard`,
-toast `Скопировано: {{...}}`.
-
-Пример: для строки реестра
-`token_key = document.service_name` копируется ровно
-`{{document.service_name}}`.
-
-## 4. `documents:act` в шаблонах документов
-
-- `src/lib/tokens/tokenRegistry.ts` уже содержит `documents:act`
-  (Sprint 10 part 1) и подгружает 11 групп из `document_token_registry`.
-- `src/components/ai-documents/AiDocumentTemplatesManager.tsx`:
-  `TokenizedRichInput` инструкций к шаблону переключён с
-  `documents:annual_meeting` → `documents:act`.
-- Контекст `documents:annual_meeting` сохранён в registry для legacy-шаблонов
-  собраний; рассылки и контакт-центр (`messages`) не затронуты.
-
-## 5. Продукт: вкладка «Документы»
-
-Файл: `src/pages/admin/AdminProductDetailV2.tsx` —
-`TabsTrigger value="custom_fields"` переименована: `Доп. поля` → `Документы`.
-Сам компонент `ProductCustomFields` дополнен пояснительной шапкой
-«Поля для документов» с подсказкой об их использовании и ссылкой на
-каталог плейсхолдеров. Логика хранения (`entity_custom_fields`) и
-существующие поля продуктов **не тронуты**.
-
-## 6. Кнопка оплаты: «Данные для документов»
-
-Файлы:
-
-- `src/hooks/useTariffOffers.tsx` — добавлен интерфейс
-  `OfferDocumentDefaults` (≈22 поля) и поле `document_defaults?` в
-  `OfferMetaConfig`. Хранится в `tariff_offers.meta.document_defaults`
-  (jsonb). Схема таблицы НЕ менялась.
-- `src/components/admin/product/OfferDocumentDefaultsCard.tsx` — новая
-  карточка в диалоге кнопки оплаты, вынесена отдельно.
-- `src/pages/admin/AdminProductDetailV2.tsx` — карточка добавлена в
-  `Collapsible` блок настроек оффера сразу после `OfferCrmRoutingSection`.
-
-Поля:
-`generate_act, template_id, service_name, service_description, unit,
-quantity, unit_price, amount, currency, payment_due_days, execution_days,
-service_period_from, service_period_to, months_count, prepayment_percent,
-prepayment_amount, discount_amount, first_payment, bank_credit_price,
-final_payment, executor_id, comment`.
-
-Сохранение: `handleSaveOffer` инициализирует `metaToSave` через
-`{ ...offerForm.meta }` — `document_defaults` проходит насквозь,
-существующие `recurring/installment/preregistration/welcome_message/crm_routing`
-не затрагиваются. Старые офферы без `meta.document_defaults` корректно
-открываются с пустыми значениями.
-
-## 7. Копирование кнопки оплаты
-
-Файлы:
-
-- `src/components/admin/product/OfferRowCompact.tsx` — добавлена
-  опциональная кнопка `Copy` (lucide) с подсказкой «Копировать кнопку».
-- `src/pages/admin/AdminProductDetailV2.tsx` — `handleCopyOffer`:
-  - Копирует все функциональные поля + `meta` (включая `document_defaults`).
-  - Принудительно `is_active = false`, `is_primary = false`.
-  - `getcourse_offer_id = null` (не копируем provider-side ID, чтобы не
-    создавать конфликт активной ссылки).
-  - Меняет `button_label` → `"<original> (копия)"`.
-  - Лог: `audit_logs.action = "offer.copied"`,
-    `actor_type = "admin"`, `meta = { source_offer_id, tariff_id,
-    copied_document_defaults }`.
-
-## 8. Что НЕ делалось
-
-- Email не отправлялся; шаблоны и edge-функции рассылок не трогались.
-- Telegram не отправлялся; queue не затронут.
-- Auto-generation документов остаётся выключенной
-  (`documents_canonical_generation_enabled = false`).
-- Production auto-generation (по оплате) не включалась.
-- Legacy `generated_documents` не трогалась.
-- Схема БД не менялась (только UI/типы); миграций в этой части не было.
-
-## 9. Что осталось на следующий этап (Sprint 10 part 3)
-
-- Snapshot `orders_v2.meta.document_data` при оплате
-  (`grant-access-for-order`).
-- Вкладка «Документы» в карточке сделки (history + snapshot).
-- Resolver priority: `orders_v2.meta.document_data` → live data в
-  `_shared/document-render.ts`.
+## Файлы
+- changed: `src/components/ai-documents/PlaceholdersCatalogTab.tsx`
+- changed: `src/components/admin/product/OfferDocumentDefaultsCard.tsx`
+- changed: `src/pages/admin/AdminProductDetailV2.tsx`
