@@ -759,6 +759,9 @@ export function TemplateMarkupDialog({
             <span className="text-[11px] text-muted-foreground">
               v{templateVersion?.version_number} · {templateVersion?.file_name}
             </span>
+            <Button size="sm" variant="outline" onClick={downloadOriginalDocx} disabled={!templateVersion}>
+              <Download className="h-3.5 w-3.5 mr-1" /> Скачать исходный DOCX
+            </Button>
             <Button size="sm" variant="ghost" onClick={clearAll} disabled={replacements.length === 0}>
               <Trash2 className="h-3.5 w-3.5 mr-1" /> Очистить черновик
             </Button>
