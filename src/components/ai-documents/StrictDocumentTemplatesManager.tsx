@@ -695,6 +695,18 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Markup dialog */}
+      <TemplateMarkupDialog
+        open={!!markupVersion}
+        onOpenChange={(o) => !o && setMarkupVersion(null)}
+        templateName={markupTemplateName}
+        templateVersion={markupVersion}
+        onApplied={async () => {
+          setMarkupVersion(null);
+          await fetchAll();
+        }}
+      />
     </div>
   );
 }
