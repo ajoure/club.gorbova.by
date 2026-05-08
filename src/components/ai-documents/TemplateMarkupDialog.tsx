@@ -619,7 +619,7 @@ export function TemplateMarkupDialog({
     }
   };
 
-  /** Скачать исходный DOCX из storage. */
+  /** Скачать исходный DOCX из storage (без правок разметки). */
   const downloadOriginalDocx = async () => {
     if (!templateVersion) return;
     try {
@@ -637,6 +637,64 @@ export function TemplateMarkupDialog({
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (e: any) {
       toast.error(`Не удалось скачать DOCX: ${e?.message ?? e}`);
+    }
+  };
+
+  const [downloadingMarked, setDownloadingMarked] = useState(false);
+
+  /**
+   * Скачать DOCX с применённой разметкой: вызывает apply (без активации),
+   * получает новую версию и скачивает её файл из storage.
+   * ВАЖНО: каждый клик создаёт новую версию шаблона в БД.
+   */
+  const downloadMarkedDocx = async () => {
+    if (!templateVersion) return;
+    if (!canApply) {
+      toast.error(disabledReason ?? "Нечего применять");
+      if (ambiguousCount > 0 || withoutFldCount > 0) setShowReplacements(true);
+      return;
+    }
+    setDownloadingMarked(true);
+    try {
+      const payload = buildPayload();
+      if (payload.length === 0) {
+        toast.error("Нет принятых замен с FLD-полем");
+        return;
+      }
+      const { data, error } = await supabase.functions.invoke("canonical-template-apply-markup", {
+        body: { template_version_id: templateVersion.id, replacements: payload, activate: false },
+      });
+      if (error) throw error;
+      const r = data as any;
+      const newVersionId: string | undefined = r?.new_version_id;
+      if (!newVersionId) throw new Error("Backend не вернул new_version_id");
+
+      const { data: row, error: rowErr } = await supabase
+        .from("document_template_versions")
+        .select("storage_bucket, storage_path, file_name, version_number")
+        .eq("id", newVersionId)
+        .maybeSingle();
+      if (rowErr || !row) throw rowErr ?? new Error("Не удалось получить новую версию");
+
+      const { data: blob, error: dlErr } = await supabase.storage
+        .from(row.storage_bucket)
+        .download(row.storage_path);
+      if (dlErr || !blob) throw dlErr ?? new Error("Не удалось скачать файл новой версии");
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = row.file_name ?? `template-v${row.version_number}-marked.docx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast.success(`Скачана v${row.version_number} с разметкой (создана новая версия, не активирована)`);
+      onApplied?.();
+    } catch (e: any) {
+      toast.error(`Не удалось скачать DOCX с разметкой: ${normalizeEdgeFunctionError(e)}`);
+    } finally {
+      setDownloadingMarked(false);
     }
   };
 
@@ -822,8 +880,30 @@ export function TemplateMarkupDialog({
             <span className="text-[11px] text-muted-foreground">
               v{templateVersion?.version_number} · {templateVersion?.file_name}
             </span>
-            <Button size="sm" variant="outline" onClick={downloadOriginalDocx} disabled={!templateVersion}>
-              <Download className="h-3.5 w-3.5 mr-1" /> Скачать исходный DOCX
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={downloadOriginalDocx}
+              disabled={!templateVersion}
+              title="Скачать исходный DOCX без вставленных placeholder'ов (как был загружен)"
+            >
+              <Download className="h-3.5 w-3.5 mr-1" /> Оригинал (без правок)
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={downloadMarkedDocx}
+              disabled={!templateVersion || !canApply || downloadingMarked || applying || activating}
+              title={
+                !canApply
+                  ? (disabledReason ?? "Нет применимых замен")
+                  : "Создать новую версию шаблона с применённой разметкой и скачать её. Версия НЕ активируется."
+              }
+            >
+              {downloadingMarked
+                ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                : <Download className="h-3.5 w-3.5 mr-1" />}
+              С разметкой
             </Button>
             <Button size="sm" variant="ghost" onClick={clearAll} disabled={replacements.length === 0}>
               <Trash2 className="h-3.5 w-3.5 mr-1" /> Очистить черновик
