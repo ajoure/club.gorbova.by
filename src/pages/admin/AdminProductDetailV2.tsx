@@ -27,6 +27,7 @@ import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type D
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { SortableTariffItem } from "@/components/admin/product/SortableTariffItem";
 import { ProductCustomFields } from "@/components/products/ProductCustomFields";
+import { ProductDocumentsOverview } from "@/components/admin/product/ProductDocumentsOverview";
 import { ProductCompositionTab } from "@/components/products/ProductCompositionTab";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { TariffFeaturesEditor } from "@/components/admin/TariffFeaturesEditor";
