@@ -28,7 +28,13 @@ const DEFAULT_CURRENCY = "BYN";
 
 const num = (s: string): number | null => (s === "" ? null : (Number(s) || 0));
 
-interface TemplateOpt { id: string; name: string; code: string; }
+interface TemplateOpt {
+  id: string;
+  name: string;
+  code: string;
+  current_version: number | string | null;
+  has_active_version: boolean;
+}
 interface ExecutorOpt { id: string; short_name: string | null; full_name: string; is_default: boolean; }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
@@ -49,6 +55,57 @@ export function OfferDocumentDefaultsCard({ value, onChange, offerAmount, offerC
   const initRef = useRef(false);
   const lastOfferAmount = useRef<number | undefined>(offerAmount);
   const lastOfferCurrency = useRef<string | undefined>(offerCurrency);
+
+  // PATCH UI-BLOCKER-1: реально подтягиваем шаблоны и исполнителей из тех же таблиц,
+  // что и разделы /admin/ai → Документы → Шаблоны / Исполнители. Никакого хардкода.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [tpl, exe] = await Promise.all([
+        supabase
+          .from("document_templates")
+          .select("id, name, code, is_active, current_version_id, document_template_versions:document_template_versions!document_templates_current_version_id_fkey(version)")
+          .eq("is_active", true)
+          .order("name", { ascending: true }),
+        supabase
+          .from("executors")
+          .select("id, short_name, full_name, is_default, is_active")
+          .eq("is_active", true)
+          .order("is_default", { ascending: false })
+          .order("short_name", { ascending: true }),
+      ]);
+      if (cancelled) return;
+      if (!tpl.error && tpl.data) {
+        setTemplates(
+          (tpl.data as any[]).map((t) => ({
+            id: t.id,
+            name: t.name,
+            code: t.code,
+            current_version: t.document_template_versions?.version ?? null,
+            has_active_version: !!t.current_version_id,
+          })),
+        );
+      } else if (tpl.error) {
+        // Fallback: канонические версии могут отсутствовать как relation — берём без версий.
+        const fallback = await supabase
+          .from("document_templates")
+          .select("id, name, code, is_active")
+          .eq("is_active", true)
+          .order("name", { ascending: true });
+        if (!cancelled && !fallback.error && fallback.data) {
+          setTemplates(
+            (fallback.data as any[]).map((t) => ({
+              id: t.id, name: t.name, code: t.code, current_version: null, has_active_version: true,
+            })),
+          );
+        }
+      }
+      if (!exe.error && exe.data) {
+        setExecutors(exe.data as ExecutorOpt[]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // PATCH DOC-OFFER-1/2: первичный авто-fill при открытии вкладки.
   useEffect(() => {
@@ -181,10 +238,15 @@ export function OfferDocumentDefaultsCard({ value, onChange, offerAmount, offerC
               <SelectTrigger><SelectValue placeholder="Выберите шаблон" /></SelectTrigger>
               <SelectContent>
                 {templates.length === 0 ? (
-                  <div className="p-2 text-sm text-muted-foreground">Нет активных шаблонов</div>
+                  <div className="p-2 text-sm text-muted-foreground">
+                    Нет активных шаблонов. Добавьте шаблон в Нейросеть → Документы → Шаблоны.
+                  </div>
                 ) : templates.map(t => (
-                  <SelectItem key={t.id} value={t.id}>
-                    {t.name}{t.code ? ` (${t.code})` : ""}
+                  <SelectItem key={t.id} value={t.id} disabled={!t.has_active_version}>
+                    {t.name}
+                    {t.code ? ` · ${t.code}` : ""}
+                    {t.current_version != null ? ` · v${t.current_version}` : ""}
+                    {!t.has_active_version ? " · нет активной версии" : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -202,7 +264,9 @@ export function OfferDocumentDefaultsCard({ value, onChange, offerAmount, offerC
               <SelectTrigger><SelectValue placeholder="Выберите исполнителя" /></SelectTrigger>
               <SelectContent>
                 {executors.length === 0 ? (
-                  <div className="p-2 text-sm text-muted-foreground">Нет активных исполнителей</div>
+                  <div className="p-2 text-sm text-muted-foreground">
+                    Нет активных исполнителей. Добавьте в Нейросеть → Документы → Исполнители.
+                  </div>
                 ) : executors.map(ex => (
                   <SelectItem key={ex.id} value={ex.id}>
                     {ex.short_name || ex.full_name}{ex.is_default ? " · по умолчанию" : ""}
