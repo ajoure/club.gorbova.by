@@ -359,6 +359,17 @@ body.impersonation-active .impersonation-offset {
 }
 
 /* ───────────── DOCX Word-like preview (TemplateMarkupDialog) ───────────── */
+.docx-field-picker-popover {
+  width: min(460px, calc(100vw - 32px));
+  max-height: min(560px, calc(100vh - 120px));
+}
+
+.docx-field-picker-list {
+  height: min(430px, calc(100vh - 250px));
+  scrollbar-gutter: stable;
+  -webkit-overflow-scrolling: touch;
+}
+
 .docx-preview {
   font-family: 'Times New Roman', Georgia, serif;
   color: hsl(var(--foreground));
