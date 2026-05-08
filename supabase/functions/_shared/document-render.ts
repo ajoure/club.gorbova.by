@@ -427,6 +427,8 @@ export async function resolveCanonicalPayload(
     document: { number: docNumber, date: now.toISOString() },
     token_manifest: tokenManifest,
     aliases: Object.fromEntries(aliasMap),
+    document_data: (order as any)?.meta?.document_data || null,
+    document_data_source: (order as any)?.meta?.document_data ? 'order_snapshot' : 'live_fallback',
   };
 
   return {
