@@ -382,7 +382,7 @@ export function tokenStringToLabel(tokenString: string): string | null {
     _agendaFieldsCache,
     _decisionFieldsCache,
     ...Object.values(_actTokensByCategoryCache),
-
+  ];
   for (const cache of allCaches) {
     const found = cache.find((t) => t.tokenString === tokenString);
     if (found) return found.label;
