@@ -295,6 +295,15 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
       if (verErr) throw verErr;
 
       toast.success(`Шаблон загружен (${detected.length} плейсхолдеров найдено)`);
+      auditEvent("document_template.uploaded", {
+        template_id: tmplIns.id,
+        meta: {
+          file_name: uploadFile.name,
+          file_size_bytes: uploadFile.size,
+          detected_tokens_count: detected.length,
+          storage_path: storagePath,
+        },
+      });
       setUploadOpen(false);
       setUploadFile(null);
       setUploadName("");
