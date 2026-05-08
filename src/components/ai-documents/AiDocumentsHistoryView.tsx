@@ -36,6 +36,8 @@ import {
   Eye,
   RefreshCw,
   Sparkles,
+  AlertTriangle,
+  CheckCircle2,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
