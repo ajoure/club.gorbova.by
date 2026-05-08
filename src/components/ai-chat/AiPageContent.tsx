@@ -12,6 +12,7 @@ import { AiDocumentsHistoryView } from "@/components/ai-documents/AiDocumentsHis
 import { CanonicalActGenerator } from "@/components/ai-documents/CanonicalActGenerator";
 import { CanonicalTemplateVersionsPanel } from "@/components/ai-documents/CanonicalTemplateVersionsPanel";
 import { AliasesTab } from "@/components/ai-documents/AliasesTab";
+import { PlaceholdersCatalogTab } from "@/components/ai-documents/PlaceholdersCatalogTab";
 import type { PersonRow } from "@/hooks/useAiPersons";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { cn } from "@/lib/utils";
