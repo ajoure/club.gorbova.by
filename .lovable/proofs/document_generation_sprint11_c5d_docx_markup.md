@@ -147,3 +147,67 @@ POST /functions/v1/canonical-template-apply-markup
 ## 5. Финальная формулировка
 
 > **Backend C5-C green. C5-D UI DOCX markup implemented, pending user visual test on real DOCX.**
+
+---
+
+## C5-D-UX rework (2026-05-08, итерация 2)
+
+Старый макет «слева документ + справа таблица замен» **отменён**: пользователь работал не с документом, а со списком, видел английские статусы (`changed`, `auto`, `draft autosaved`), не мог увидеть результат замены прямо в тексте.
+
+### Что переделано
+
+1. **Полно-экранный визуальный редактор разметки** (`max-w-[1400px] h-[92vh]`, документ занимает всю основную область).
+2. **Inline chips** прямо в документе. После выбора FLD-поля выделенный фрагмент сразу превращается в:
+   ```
+   [Срок оплаты (рабочих дней) · FLD-000195]
+   ```
+   Сырой `{{field:FLD-…}}` пользователь не видит — только при apply backend подставляет его в XML.
+3. **Старые `{{ld-…}}`, `{{document.…}}`, `{{cf:…}}` подсвечены** жёлтым `<mark.docx-legacy>`. Клик по подсветке открывает picker и заменяет legacy на chip.
+4. **Правая панель замен** (Sheet) скрыта по умолчанию. Открывается кнопкой «Показать замены» — служит журналом, а не основным интерфейсом.
+5. **Авторазметка** — только по кнопке. Результаты в отдельном Sheet «Предложения авторазметки» с `Принять / Выбрать другое / Пропустить`. После принятия suggestion сразу появляется chip в тексте.
+6. **Picker `FieldPickerPopover`** единый для всех точек входа (выделение, legacy-клик, chip-клик, кнопка в Sheet). Скролл починен:
+   - `PopoverContent`: `width: 440, maxHeight: min(520px, calc(100vh - 160px))`, `display: flex; flex-direction: column`;
+   - `CommandList`: `overflow-y-auto overscroll-contain flex-1`, `maxHeight: 420`;
+   - категории — только русские (`CATEGORY_LABELS_RU`).
+7. **Полная русификация UI**:
+
+| Было | Стало |
+|---|---|
+| DOCX source of truth | DOCX — исходный шаблон |
+| Strict ID-first | Используются только поля FLD |
+| draft autosaved | Черновик сохранён |
+| changed | Изменено |
+| auto | Авто |
+| manually_added | Вручную |
+| accepted | Принято |
+| suggested | Предложено |
+| skipped | Пропущено |
+| occurrence / вхождений: N | Вхождение N |
+| Apply / Activate | Применить / Применить и активировать |
+| ambig: N | Неоднозначных: N |
+
+   FLD-идентификаторы (`FLD-000195`) и шаблонный плейсхолдер `{{field:FLD-…}}` остаются как есть — это технические идентификаторы.
+8. **Сохранность состояния**: `markup_draft` хранит `visual_label` дополнительно к старым полям; chips мгновенно восстанавливаются при reopen без повторного резолва registry. Любое изменение (вставка, удаление, смена формата, принятие suggestion) → debounced 1.5s sync.
+9. **Backend не менялся** — `canonical-template-apply-markup` принимает тот же payload (`original_text + occurrence_index + field_public_id + format + case_modifier`). XML-замены точечно идут в `<w:t>`, таблицы/стили DOCX сохраняются.
+
+### Технические детали
+
+- Рендер chips/legacy: `renderInteractiveHtml(previewHtml, replacements)` — DOMParser + TreeWalker, работает по text-нодам, не ломает теги таблиц.
+- Selection tracking: `document.addEventListener("selectionchange", …)` обновляет состояние `hasSelection` → кнопка «Вставить поле» становится активной.
+- Picker открывается через `Popover` с virtual trigger у `pickerAnchor` (координаты выделения / chip / legacy bounding rect).
+- Удаление chip: клик на `.docx-chip-remove` (если виден) или через Sheet «Замены».
+
+### DoD
+
+- [x] Диалог открывается на ~92vh, документ занимает основную область.
+- [x] Старые `{{ld-…}}` подсвечены и кликабельны.
+- [x] Выделение текста + «Вставить поле» → picker → chip в тексте.
+- [x] Chips показывают русское название поля + мелкий FLD-ID + опциональный формат/падеж.
+- [x] Picker скроллится (`max-h-[520px]`, `CommandList overflow-y-auto`).
+- [x] Все статусы и подписи на русском.
+- [x] Правая панель замен скрыта по умолчанию.
+- [x] Авторазметка только по кнопке, результаты в Sheet.
+- [x] Закрытие/открытие диалога не теряет chips (autosave + visual_label в draft).
+- [x] Apply вызывает существующую edge function без изменений контракта.
+- [x] TipTap (`TemplateVisualEditor`) в DOCX-flow не импортируется.
+- [ ] Ручная проверка пользователем: скачанный после apply DOCX сохраняет таблицу счёт-акта.
