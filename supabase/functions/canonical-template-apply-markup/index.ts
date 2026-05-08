@@ -35,13 +35,65 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const STRICT_RE = /^field:FLD-\d+$/;
+// Strict ID-first token формат:
+//   field:FLD-XXXXXX
+//   field:FLD-XXXXXX|format=words
+//   field:FLD-XXXXXX|format=text
+//   field:FLD-XXXXXX|case=<allowed>
+//   field:FLD-XXXXXX|format=words|case=<allowed>
+const ALLOWED_CASES = new Set([
+  'nominative', 'genitive', 'dative', 'accusative', 'instrumental', 'prepositional',
+]);
+const ALLOWED_FORMATS = new Set(['words', 'text']);
+const STRICT_FIELD_RE = /^field:(FLD-\d+)((?:\|[a-z_]+=[a-z_]+)*)$/;
 const ANY_TOKEN_RE = /\{\{([^}]+)\}\}/g;
 
 interface Replacement {
   original_text: string;
   field_public_id: string;
   status: 'accepted' | 'changed' | 'skipped';
+  /** опционально — Sprint 11 C4-B */
+  format?: 'words' | 'text' | null;
+  case_modifier?:
+    | 'nominative' | 'genitive' | 'dative' | 'accusative'
+    | 'instrumental' | 'prepositional' | null;
+  /** опционально — клиент может прислать готовый placeholder (доверяем после strict-валидации) */
+  placeholder?: string;
+}
+
+function parseStrictToken(inside: string): {
+  field_public_id: string;
+  format: string | null;
+  case_modifier: string | null;
+  unknown_modifier?: string;
+  invalid_value?: string;
+} | null {
+  const m = inside.match(STRICT_FIELD_RE);
+  if (!m) return null;
+  const fld = m[1];
+  let format: string | null = null;
+  let cs: string | null = null;
+  const tail = (m[2] || '').split('|').filter(Boolean);
+  for (const part of tail) {
+    const [k, v] = part.split('=');
+    if (k === 'format') {
+      if (!ALLOWED_FORMATS.has(v)) return { field_public_id: fld, format: null, case_modifier: null, invalid_value: `format=${v}` };
+      format = v;
+    } else if (k === 'case') {
+      if (!ALLOWED_CASES.has(v)) return { field_public_id: fld, format: null, case_modifier: null, invalid_value: `case=${v}` };
+      cs = v;
+    } else {
+      return { field_public_id: fld, format: null, case_modifier: null, unknown_modifier: k };
+    }
+  }
+  return { field_public_id: fld, format, case_modifier: cs };
+}
+
+function buildPlaceholder(fld: string, format: string | null, cs: string | null): string {
+  const parts = [`field:${fld}`];
+  if (format) parts.push(`format=${format}`);
+  if (cs) parts.push(`case=${cs}`);
+  return `{{${parts.join('|')}}}`;
 }
 
 function escXml(s: string): string {
