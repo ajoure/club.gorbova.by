@@ -615,8 +615,13 @@ export function TemplateMarkupDialog({
     }
     activate ? setActivating(true) : setApplying(true);
     try {
+      const payload = buildPayload();
+      if (payload.length === 0) {
+        toast.error("Нет принятых замен с выбранным полем FLD. Выберите поле для каждой замены.");
+        return;
+      }
       const { data, error } = await supabase.functions.invoke("canonical-template-apply-markup", {
-        body: { template_version_id: templateVersion.id, replacements: buildPayload(), activate },
+        body: { template_version_id: templateVersion.id, replacements: payload, activate },
       });
       if (error) throw error;
       const r = data as any;
@@ -633,7 +638,8 @@ export function TemplateMarkupDialog({
       onApplied?.();
       onOpenChange(false);
     } catch (e: any) {
-      toast.error(`Ошибка применения: ${e?.message ?? e}`);
+      const msg = normalizeEdgeFunctionError(e);
+      toast.error(`Ошибка применения: ${msg}`);
     } finally {
       setApplying(false); setActivating(false);
     }
