@@ -64,6 +64,7 @@ import { cn } from "@/lib/utils";
 import { EditDealDialog } from "./EditDealDialog";
 import { LinkPaymentDialog } from "./payments/LinkPaymentDialog";
 import { GrantAccessFromDealDialog } from "./GrantAccessFromDealDialog";
+import { DealDocumentsCard } from "./DealDocumentsCard";
 
 interface DealDetailSheetProps {
   deal: any | null;
@@ -1147,6 +1148,12 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                 )}
               </CardContent>
             </Card>
+
+            {/* Documents (Sprint 10) */}
+            <DealDocumentsCard
+              orderId={deal.id}
+              documentData={(deal.meta as any)?.document_data || null}
+            />
 
             {/* Audit */}
             <Card>

@@ -24,6 +24,7 @@ import {
   isCanonicalEnabled,
   CANONICAL_FEATURE_FLAG_KEY,
 } from '../_shared/document-render.ts';
+import { snapshotOrderDocumentData } from '../_shared/document-data-snapshot.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -57,12 +58,16 @@ Deno.serve(async (req) => {
     const dryRun: boolean = body.dry_run === true;
     if (!orderId) return ok({ status: 'skipped', reason: 'no_order_id' });
 
+    // ── Sprint 10: idempotent snapshot of orders_v2.meta.document_data ──
+    // Runs independently of canonical/auto-gen flags. Never throws.
+    const snap = await snapshotOrderDocumentData(supabase, orderId);
+
     // Flag #1
     const canonicalEnabled = await isCanonicalEnabled(supabase);
-    if (!canonicalEnabled) return ok({ status: 'noop', reason: `flag:${CANONICAL_FEATURE_FLAG_KEY}=false` });
+    if (!canonicalEnabled) return ok({ status: 'noop', reason: `flag:${CANONICAL_FEATURE_FLAG_KEY}=false`, snapshot: snap.status });
     // Flag #2 — separate auto-gen flag
     const autoEnabled = await isAutoEnabled(supabase);
-    if (!autoEnabled && !dryRun) return ok({ status: 'noop', reason: `flag:${AUTO_FLAG_KEY}=false` });
+    if (!autoEnabled && !dryRun) return ok({ status: 'noop', reason: `flag:${AUTO_FLAG_KEY}=false`, snapshot: snap.status });
 
     // Order context
     const { data: order } = await supabase.from('orders_v2')
