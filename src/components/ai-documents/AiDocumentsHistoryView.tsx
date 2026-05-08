@@ -36,6 +36,8 @@ import {
   Eye,
   RefreshCw,
   Sparkles,
+  AlertTriangle,
+  CheckCircle2,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -182,8 +184,28 @@ export function AiDocumentsHistoryView() {
     if (!doc.file_path) return;
     const url = await getDownloadUrl(doc.file_path, doc.storage_bucket);
     if (url) {
-      window.open(url, "_blank");
+      // download attribute via temp anchor
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = doc.file_name || `${doc.title || "document"}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
     }
+  };
+
+  const handlePreview = async (doc: AiGeneratedDocument) => {
+    if (!doc.file_path) return;
+    const url = await getDownloadUrl(doc.file_path, doc.storage_bucket);
+    if (url) window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  const getDocxCheck = (doc: AiGeneratedDocument): {
+    file_size?: number; unresolved_count?: number; ok?: boolean;
+    unresolved_tokens?: string[];
+  } | null => {
+    const m: any = doc.meta || {};
+    return m.docx_check ?? null;
   };
 
   const handleDelete = async () => {
@@ -238,10 +260,15 @@ export function AiDocumentsHistoryView() {
           <RefreshCw className="h-4 w-4" />
         </Button>
       )}
-      {doc.file_path && doc.status === "generated" && (
-        <Button variant="ghost" size="icon" onClick={() => handleDownload(doc)} title="Скачать DOCX">
-          <Download className="h-4 w-4" />
-        </Button>
+      {doc.file_path && (doc.status === "generated" || doc.status === "success") && (
+        <>
+          <Button variant="ghost" size="icon" onClick={() => handlePreview(doc)} title="Открыть предпросмотр">
+            <Eye className="h-4 w-4" />
+          </Button>
+          <Button variant="ghost" size="icon" onClick={() => handleDownload(doc)} title="Скачать DOCX">
+            <Download className="h-4 w-4" />
+          </Button>
+        </>
       )}
       <Button
         variant="ghost"
@@ -281,6 +308,20 @@ export function AiDocumentsHistoryView() {
           {isCanonical(doc) && (
             <Sparkles className="h-3 w-3 text-cyan-500 shrink-0" aria-label="Новый генератор" />
           )}
+          {(() => {
+            const chk = getDocxCheck(doc);
+            if (!chk) return null;
+            const hasUnresolved = (chk.unresolved_count || 0) > 0;
+            return hasUnresolved ? (
+              <Badge variant="outline" className="text-amber-700 border-amber-300 text-[10px] px-1.5 py-0" title={`Незаменённые плейсхолдеры: ${chk.unresolved_tokens?.join(", ") || ""}`}>
+                <AlertTriangle className="h-2.5 w-2.5 mr-1" /> Проверка
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="text-emerald-700 border-emerald-300 text-[10px] px-1.5 py-0" title="DOCX проверен: все плейсхолдеры заменены">
+                <CheckCircle2 className="h-2.5 w-2.5 mr-1" /> OK
+              </Badge>
+            );
+          })()}
         </div>
       </TableCell>
       <TableCell className="text-sm text-muted-foreground truncate max-w-[150px]">
@@ -344,6 +385,20 @@ export function AiDocumentsHistoryView() {
                 <div className="flex items-center gap-2 pl-6">
                   <FileText className="h-4 w-4 text-primary shrink-0" />
                   <span className="text-sm font-medium truncate max-w-[200px]">{doc.title}</span>
+                  {(() => {
+                    const chk = getDocxCheck(doc);
+                    if (!chk) return null;
+                    const hasUnresolved = (chk.unresolved_count || 0) > 0;
+                    return hasUnresolved ? (
+                      <Badge variant="outline" className="text-amber-700 border-amber-300 text-[10px] px-1.5 py-0">
+                        <AlertTriangle className="h-2.5 w-2.5 mr-1" /> Проверка
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-emerald-700 border-emerald-300 text-[10px] px-1.5 py-0">
+                        <CheckCircle2 className="h-2.5 w-2.5 mr-1" /> OK
+                      </Badge>
+                    );
+                  })()}
                 </div>
               </TableCell>
               <TableCell className="text-sm text-muted-foreground truncate max-w-[150px]">
