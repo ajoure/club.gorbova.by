@@ -381,7 +381,7 @@ export function tokenStringToLabel(tokenString: string): string | null {
     _packageArraysCache,
     _agendaFieldsCache,
     _decisionFieldsCache,
-  ];
+    ...Object.values(_actTokensByCategoryCache),
 
   for (const cache of allCaches) {
     const found = cache.find((t) => t.tokenString === tokenString);
