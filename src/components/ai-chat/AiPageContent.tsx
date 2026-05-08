@@ -7,12 +7,11 @@ import { EntityTableView } from "@/components/ai-requisites/EntityTableView";
 import { EntityRecordSheet, type RecordSheetMode } from "@/components/ai-requisites/EntityRecordSheet";
 import { PersonsTableView } from "@/components/ai-requisites/PersonsTableView";
 import { PersonRecordSheet } from "@/components/ai-requisites/PersonRecordSheet";
-import { AiDocumentsGenerateView } from "@/components/ai-documents/AiDocumentsGenerateView";
-import { AiDocumentsHistoryView } from "@/components/ai-documents/AiDocumentsHistoryView";
-import { CanonicalActGenerator } from "@/components/ai-documents/CanonicalActGenerator";
-import { CanonicalTemplateVersionsPanel } from "@/components/ai-documents/CanonicalTemplateVersionsPanel";
-import { AliasesTab } from "@/components/ai-documents/AliasesTab";
+// Sprint 11 C1: legacy документный UI отключён из роутинга.
+// AiDocumentsGenerateView / AiDocumentsHistoryView / CanonicalActGenerator /
+// CanonicalTemplateVersionsPanel / AliasesTab оставлены как dead-code до cleanup-коммита.
 import { PlaceholdersCatalogTab } from "@/components/ai-documents/PlaceholdersCatalogTab";
+import { StrictDocumentTemplatesManager } from "@/components/ai-documents/StrictDocumentTemplatesManager";
 import type { PersonRow } from "@/hooks/useAiPersons";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { cn } from "@/lib/utils";
@@ -48,9 +47,7 @@ import {
 } from "lucide-react";
 
 /* ─── Lazy-loaded content components ─── */
-const LazyDocumentTemplatesContent = lazy(() =>
-  import("@/pages/admin/AdminDocumentTemplates").then(m => ({ default: m.DocumentTemplatesContent }))
-);
+// Sprint 11 C1: legacy AdminDocumentTemplates отключён, новый strict flow — ниже.
 const LazyExecutorsContent = lazy(() =>
   import("@/pages/admin/AdminExecutors").then(m => ({ default: m.ExecutorsContent }))
 );
@@ -58,6 +55,8 @@ const LazyExecutorsContent = lazy(() =>
 /* ─── Конфигурация секций и подменю ─── */
 
 type Section = "ai" | "documents" | "requisites";
+// Sprint 11 C1: legacy ids ("generate", "canonical-acts", "aliases") оставлены в типе,
+// чтобы старые ссылки не падали; рендер их игнорирует — guard сбросит на DEFAULT_SUB.
 type SubTab = "chat" | "analysis-history" | "tutorials" | "prompts" | "generate" | "history" | "templates" | "executors" | "entities" | "persons" | "canonical-acts" | "aliases" | "placeholders";
 
 const SECTIONS: { id: Section; label: string; icon: React.ComponentType<{ className?: string }>; adminOnly?: boolean }[] = [
@@ -118,27 +117,9 @@ const AI_SUB_TABS: SubMenuItem[] = [
   },
 ];
 
+// Sprint 11 C1: оставлены только strict-вкладки. Legacy (canonical-acts, aliases,
+// generate=AiDocumentsGenerateView, history=AiDocumentsHistoryView) убраны из меню.
 const DOC_SUB_TABS: SubMenuItem[] = [
-  {
-    id: "canonical-acts",
-    label: "Акты выполненных работ",
-    icon: FileText,
-    gradient: "from-cyan-500/10 to-sky-500/8",
-    activeGradient: "from-cyan-500/20 to-sky-500/15",
-    borderColor: "border-cyan-400/20",
-    iconColor: "text-cyan-600",
-    adminOnly: true,
-  },
-  {
-    id: "aliases",
-    label: "Связи плейсхолдеров",
-    icon: FileStack,
-    gradient: "from-fuchsia-500/10 to-pink-500/8",
-    activeGradient: "from-fuchsia-500/20 to-pink-500/15",
-    borderColor: "border-fuchsia-400/20",
-    iconColor: "text-fuchsia-600",
-    adminOnly: true,
-  },
   {
     id: "placeholders",
     label: "Плейсхолдеры",
@@ -150,13 +131,13 @@ const DOC_SUB_TABS: SubMenuItem[] = [
     adminOnly: true,
   },
   {
-    id: "generate",
-    label: "Создать документ",
-    icon: FileText,
-    gradient: "from-emerald-500/10 to-teal-500/8",
-    activeGradient: "from-emerald-500/20 to-teal-500/15",
-    borderColor: "border-emerald-400/20",
-    iconColor: "text-emerald-500",
+    id: "templates",
+    label: "Шаблоны документов",
+    icon: FileStack,
+    gradient: "from-orange-500/10 to-amber-500/8",
+    activeGradient: "from-orange-500/20 to-amber-500/15",
+    borderColor: "border-orange-400/20",
+    iconColor: "text-orange-500",
   },
   {
     id: "history",
@@ -166,15 +147,6 @@ const DOC_SUB_TABS: SubMenuItem[] = [
     activeGradient: "from-slate-500/20 to-gray-500/15",
     borderColor: "border-slate-400/20",
     iconColor: "text-slate-500",
-  },
-  {
-    id: "templates",
-    label: "Шаблоны документов",
-    icon: FileStack,
-    gradient: "from-orange-500/10 to-amber-500/8",
-    activeGradient: "from-orange-500/20 to-amber-500/15",
-    borderColor: "border-orange-400/20",
-    iconColor: "text-orange-500",
   },
   {
     id: "executors",
@@ -210,7 +182,7 @@ const REQ_SUB_TABS: SubMenuItem[] = [
 
 const DEFAULT_SUB: Record<Section, SubTab> = {
   ai: "chat",
-  documents: "generate",
+  documents: "placeholders",
   requisites: "entities",
 };
 
@@ -858,38 +830,22 @@ export function AiPageContent({ mode }: AiPageContentProps) {
         </div>
       )}
 
-      {/* Documents */}
-      {activeSubTab === "generate" && (
-        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
-          <AiDocumentsGenerateView />
-        </div>
-      )}
-      {activeSubTab === "aliases" && (
-        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner">
-          <AliasesTab />
-        </div>
-      )}
-      {activeSubTab === "canonical-acts" && (
-        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto space-y-4">
-          <CanonicalActGenerator />
-          <CanonicalTemplateVersionsPanel />
-        </div>
-      )}
+      {/* Documents — Sprint 11 C1: только strict-вкладки */}
       {activeSubTab === "placeholders" && (
         <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
           <PlaceholdersCatalogTab />
         </div>
       )}
-      {activeSubTab === "history" && (
+      {activeSubTab === "templates" && (
         <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
-          <AiDocumentsHistoryView />
+          <StrictDocumentTemplatesManager embedded />
         </div>
       )}
-      {activeSubTab === "templates" && (
-        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner">
-          <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}>
-            <LazyDocumentTemplatesContent embedded />
-          </Suspense>
+      {activeSubTab === "history" && (
+        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
+          <div className="text-center py-12 text-sm text-muted-foreground">
+            История генераций (canonical) появится после реализации генерации из сделки в C3.
+          </div>
         </div>
       )}
       {activeSubTab === "executors" && (
