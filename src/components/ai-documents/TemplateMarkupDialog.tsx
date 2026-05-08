@@ -154,7 +154,7 @@ export function TemplateMarkupDialog({
         setPreviewHtml(sanitizeMammothHtml(htmlRes.value));
         setRefs(registry);
 
-        const draft = draftRow.data?.markup_draft as MarkupDraft | null | undefined;
+        const draft = (draftRow.data?.markup_draft ?? null) as unknown as MarkupDraft | null;
         if (draft && Array.isArray(draft.replacements) && draft.replacements.length > 0) {
           setReplacements(draft.replacements.map((r) => ({
             ...r,
