@@ -420,7 +420,7 @@ export function TemplateMarkupDialog({
 
             {/* RIGHT: replacements panel */}
             <div className="flex flex-col min-h-0">
-              <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center justify-between mb-2 gap-2">
                 <div className="flex items-center gap-2 text-xs">
                   <Sparkles className="h-3.5 w-3.5 text-amber-500" />
                   Всего: <b>{replacements.length}</b> · принято: <b>{acceptedCount}</b>
@@ -430,13 +430,30 @@ export function TemplateMarkupDialog({
                     </Badge>
                   )}
                 </div>
+                <div className="flex items-center gap-1">
+                  <Button size="sm" variant="outline" className="h-7 text-[11px]"
+                    onClick={runAutoSuggest} disabled={autoSuggesting || !plainText}>
+                    {autoSuggesting ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Sparkles className="h-3 w-3 mr-1" />}
+                    Найти автоматически
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-7 text-[11px] text-muted-foreground"
+                    onClick={clearReplacements} disabled={replacements.length === 0}>
+                    <Trash2 className="h-3 w-3 mr-1" /> Очистить
+                  </Button>
+                </div>
               </div>
               <ScrollArea className="flex-1 border rounded">
                 <div className="divide-y">
                   {replacements.length === 0 ? (
-                    <div className="text-center text-xs text-muted-foreground py-8 px-4">
-                      Нет replacements. Auto-suggest ничего не нашёл.
-                      Выделите текст в preview слева → «Разметить выделенное».
+                    <div className="text-center text-xs text-muted-foreground py-10 px-4 space-y-2">
+                      <p className="font-medium text-foreground">Разметка пустая</p>
+                      <p>
+                        Выделите текст в preview слева → нажмите <b>«Разметить выделенное»</b> →
+                        выберите FLD-поле.
+                      </p>
+                      <p className="opacity-70">
+                        Или нажмите <b>«Найти автоматически»</b> для предварительных предложений.
+                      </p>
                     </div>
                   ) : replacements.map((r) => (
                     <ReplacementRow
