@@ -687,6 +687,61 @@ export default function AdminProductDetailV2() {
     await updateOffer.mutateAsync({ id, button_label: label });
   };
 
+  // Sprint 10: copy a payment button (offer) as a new INACTIVE one.
+  // Copies all functional fields including meta.document_defaults; resets is_primary
+  // and forces is_active=false to avoid accidental publication / payment-link conflicts.
+  const handleCopyOffer = async (offer: any) => {
+    try {
+      const meta = (offer.meta ? { ...offer.meta } : {}) as OfferMetaConfig;
+      // Don't copy crm_routing payment-link conflicts: keep crm_routing but reset welcome message media path
+      const insert: TariffOfferInsert = {
+        tariff_id: offer.tariff_id,
+        offer_type: offer.offer_type,
+        button_label: `${offer.button_label} (копия)`,
+        amount: offer.amount,
+        reentry_amount: offer.reentry_amount ?? null,
+        trial_days: offer.trial_days ?? null,
+        auto_charge_after_trial: !!offer.auto_charge_after_trial,
+        auto_charge_amount: null,
+        auto_charge_delay_days: offer.auto_charge_delay_days ?? null,
+        auto_charge_offer_id: offer.auto_charge_offer_id ?? null,
+        requires_card_tokenization: !!offer.requires_card_tokenization,
+        is_active: false, // safety: never auto-activate
+        is_primary: false, // safety: never auto-promote
+        visible_from: null,
+        visible_to: null,
+        sort_order: (offer.sort_order ?? 0),
+        getcourse_offer_id: null, // do not copy provider-side ID
+        reject_virtual_cards: !!offer.reject_virtual_cards,
+        payment_method: offer.payment_method ?? "full_payment",
+        installment_count: offer.installment_count ?? null,
+        installment_interval_days: offer.installment_interval_days ?? null,
+        first_payment_delay_days: offer.first_payment_delay_days ?? null,
+        meta: Object.keys(meta).length > 0 ? meta : null,
+      };
+      await createOffer.mutateAsync(insert);
+      // Best-effort audit log; non-blocking
+      try {
+        await supabase.from("audit_logs").insert({
+          action: "offer.copied",
+          entity_type: "tariff_offer",
+          entity_id: offer.id,
+          actor_type: "admin",
+          metadata: {
+            source_offer_id: offer.id,
+            tariff_id: offer.tariff_id,
+            copied_document_defaults: !!meta.document_defaults,
+          },
+        });
+      } catch {
+        /* audit best-effort */
+      }
+      toast.success("Кнопка скопирована (выключена)");
+    } catch (e: any) {
+      toast.error(e?.message || "Не удалось скопировать кнопку");
+    }
+  };
+
   // Flow handlers
   const openFlowDialog = (flow?: any) => {
     if (flow) {
