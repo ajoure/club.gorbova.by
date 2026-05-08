@@ -123,6 +123,7 @@ export function TemplateMarkupDialog({
   const [activating, setActivating] = useState(false);
   const [draftLoaded, setDraftLoaded] = useState(false);
   const [hasDraftSaved, setHasDraftSaved] = useState(false);
+  const [autoSuggesting, setAutoSuggesting] = useState(false);
   const previewRef = useRef<HTMLDivElement | null>(null);
 
   // ── load DOCX, build preview HTML, load draft or build auto-suggestions ──
