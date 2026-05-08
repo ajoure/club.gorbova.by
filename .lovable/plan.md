@@ -1,178 +1,229 @@
-# да, согласен, с учетом правок:
+# Да, согласен, с учетом правок:
 
-1. **Сначала обязательно сделать Hotfix-PICKER отдельным коммитом**
-  - scroll внутри picker;
-  - русские группы;
-  - не трогать C4-логику в этом коммите;
-  - proof: скрин/описание, что список скроллится и группы русские.
-2. **TipTap использовать, если он уже есть в проекте**
-  - если TipTap уже подключён — переиспользовать;
-  - если не подключён — сначала добавить минимальный пакет только для редактора;
-  - не использовать Google Docs / Drive / OnlyOffice.
-3. **Важно по DOCX vs visual editor**
-  - не писать, что DOCX остаётся единственным source-of-truth, если мы вводим визуальный редактор;
-  - правильная модель:
-    - `editor_json` = source для визуального редактирования;
-    - `editor_html` = preview/staging;
-    - DOCX-версия = экспортируемый/генерируемый файл для финальной генерации;
-    - `token_manifest` и validation = обязательный контроль перед активацией.
-  - То есть визуальный редактор не должен быть “декорацией”, он должен реально сохранять структуру шаблона.
-4. **Field chip**
-  - в редакторе пользователь видит человеческое название поля, например `Сумма акта`;
-  - рядом маленький бейдж `FLD-000123`;
-  - сырой `{{field:FLD-000123}}` пользователь не должен видеть в обычном режиме;
-  - технический режим можно оставить через toggle.
-5. **Падежи**
-  - да, делать сразу в C4-B;
-  - формат утвердить:
-    - `{{field:FLD-000123}}`
-    - `{{field:FLD-000123|case=genitive}}`
-  - в UI показывать кратко:
-    - И — кто? что?
-    - Р — кого? чего?
-    - Д — кому? чему?
-    - В — кого? что?
-    - Т — кем? чем?
-    - П — о ком? о чём?
-  - если склонение пока не реализовано, generation не блокировать, но писать warning `case_modifier_not_applied`.
-6. **Strict validator**
-  - оставить жёстко:
-    - старые `{{document.*}}`, `{{executor.*}}`, `{{customer.*}}`, `{{deal.*}}`, `{{cf.*}}` = critical error;
-  - новый формат с `case` разрешить;
-  - неизвестные модификаторы типа `|upper`, `|format=` = critical `unknown_modifier`.
-7. **Сохранение**
-  - миграция только в `document_template_versions`:
-    - `editor_html text`
-    - `editor_json jsonb`
-  - новых таблиц не создавать.
-  - `token_manifest` собирать из chip-node, а не из старых token_key.
-8. **Очередность правильная**
-  - Коммит 1: Hotfix-PICKER.
-  - Коммит 2: C4-A — editor scaffold + field-chip + вставка FLD-полей.
-  - Коммит 3: C4-B — падежи + backend validator/generator + proof.
-9. **В proof добавить обязательную проверку**
+1. **Не активировать новую версию автоматически после apply-markup.**  
+Apply-markup должен:
+  - создать новую DOCX-версию;
+  - сохранить `token_manifest`;
+  - выполнить strict validation;
+  - если `validation_status='valid'` — показать кнопку **«Сделать текущей»** / **«Активировать версию»**.
+  Автоактивация допустима только если пользователь явно нажал отдельную кнопку **«Применить и активировать»**. Иначе рискованно.
+2. **Нужна защита от одинакового текста в документе.**  
+Нельзя заменять просто все совпадения `original_text`, если одинаковая фраза встречается несколько раз.  
+В `replacement` добавить:
   &nbsp;
-  ```bash
-  rg -n "document\.|executor\.|customer\.|deal\.|cf\." src/components/ai-documents supabase/functions/canonical-document-generate-strict supabase/functions/canonical-template-apply-markup
+  ```json
+  {
+    "original_text": "250 BYN",
+    "occurrence_index": 2,
+    "field_public_id": "FLD-000191",
+    "placeholder": "{{field:FLD-000191|format=words}}"
+  }
   ```
-  Результат должен быть пустой либо только в тексте ошибок/валидации, где эти форматы запрещаются.
-10. **Не задерживаться на полноценном склонении**  
-Сейчас главное — правильная архитектура placeholder с `case`. Реальное склонение ФИО/названий можно вынести в следующий PATCH после рабочего цикла генерации.
-11. &nbsp;
-12. План: Sprint 11 C4 — визуальный редактор шаблонов
+  Если `occurrence_index` не задан и найдено больше одного совпадения — вернуть warning:
+  ```text
+  ambiguous_replacement_multiple_matches
+  ```
+  и не применять замену автоматически.
+3. **Использовать существующий ZIP-инструмент, не тащить новый без необходимости.**  
+Если уже используется `PizZip` в `canonical-template-apply-markup`, оставить его.  
+`jszip` подключать только если текущий `PizZip` реально не покрывает задачу. Не плодить зависимости.
+4. **Preview через Mammoth — только для отображения, не для сохранения.**  
+Зафиксировать жёстко:
+5. **Manual replacement должен работать через выделение текста в preview.**  
+Добавить UX:
+  - пользователь выделяет текст в preview;
+  - нажимает «Разметить выделенное»;
+  - система создаёт manual replacement с `original_text`;
+  - если найдено несколько совпадений — просит выбрать конкретное occurrence.
+6. **Autosave draft обязателен.**  
+Добавить миграцию:
+  &nbsp;
+  ```sql
+  ALTER TABLE document_template_versions
+  ADD COLUMN IF NOT EXISTS markup_draft jsonb;
+  ```
+  Draft хранит:
+  - replacements;
+  - statuses;
+  - выбранные FLD;
+  - format;
+  - case_modifier;
+  - occurrence_index;
+  - last_saved_at.
+7. **Переключение вкладок не должно размонтировать state.**  
+`TemplateMarkupDialog` должен держать единый `markupState` на уровне dialog, а не внутри вкладок.  
+Вкладки только отображают одно и то же состояние разными способами.
+8. **TipTap убрать из DOCX-flow полностью.**  
+Не просто «не использовать как canonical», а:
+  - не показывать вкладку TipTap для DOCX;
+  - не предлагать редактировать DOCX через TipTap;
+  - оставить файл только как future/non-DOCX, с явным комментарием:
+9. **Backend apply-markup должен сохранять исходный DOCX максимально неизменным.**  
+Правило:
+10. **Proof C5-C нужно переименовать по смыслу.**  
+Текущий результат — это только:
+  &nbsp;
+  ```text
+  C5-C backend smoke: GREEN
+  ```
+  А UI:
+11. **В C5-D proof добавить обязательный реальный DOCX-чек.**  
+DoD должен включать не только grep, но и визуальную проверку:
+  - таблица осталась таблицей;
+  - шрифты/жирный/подчёркивание не исчезли;
+  - ширины колонок не разрушены;
+  - итоговый DOCX открывается в Word/LibreOffice;
+  - клиентский акт выглядит как исходный шаблон.
+12. **Не писать “полный green”, пока пользователь сам не проверит UI.**  
+После backend-проверок писать только:
+
+```text
+Backend green. UI validation pending user test.
+```
+
+Итоговое решение правильное: **не строим Word-редактор**, строим **DOCX-разметчик**, который работает поверх исходного файла и сохраняет его внешний вид.
+
+&nbsp;
+
+План: C5-D — DOCX Markup (разметчик поверх исходного DOCX)
 
 ## Контекст
 
-TipTap уже подключён (`@tiptap/react`, `@tiptap/core`, StarterKit-набор частично). Используется в `src/components/admin/TokenizedRichInput.tsx` — переиспользуем этот опыт. Google Docs/Drive не подключаем.
+Текущий `TemplateVisualEditor` (TipTap) для DOCX-актов — blocker. `mammoth.extractRawText` теряет таблицы/стили/шрифты, переключение вкладок сбрасывает выбор, разметка пересобирает документ из HTML вместо правки исходного XML.
 
-Перед C4 — два срочных фикса в `FieldPicker` (TemplateMarkupDialog.tsx).
+Решение: DOCX = source of truth. UI = разметчик, не редактор.
 
-## Срочные фиксы (выкатываем первыми, отдельно от C4)
+---
 
-1. **Скролл в выпадающем списке.** Заменить `<CommandList className="max-h-[360px]">` на сочетание с `overflow-y-auto` явно (cmdk сам не всегда даёт scroll внутри `PopoverContent`). Также закрепить высоту `PopoverContent` и добавить `overscroll-contain`.
-2. **Русские заголовки групп.** Сейчас `CommandGroup heading={cat}` рендерит `executor` / `customer` / `product` / `tariff` / `offer` / `legal_details` / `order` / `subscription` / `payment` / `company` / `telegram_member` / `custom`. Завести `CATEGORY_LABELS_RU` и переводить.
+## Архитектура
 
 ```text
-executor       → Исполнитель
-customer       → Заказчик
-product        → Продукт
-tariff         → Тариф
-offer          → Оффер
-legal_details  → Реквизиты
-order          → Заказ
-subscription   → Подписка
-payment        → Платёж
-company        → Компания
-telegram_member→ Telegram-участник
-client         → Клиент
-custom         → Пользовательские
+┌──────────────────────────────────────────────────────────┐
+│ TemplateMarkupDialog (state: markupState — общий)        │
+│ ┌──────────────────────┬─────────────────────────────┐  │
+│ │ Word-like Preview    │ Replacements panel           │  │
+│ │ (mammoth HTML)       │  - auto suggestions          │  │
+│ │ + подсветка          │  - manual add (find + FLD)   │  │
+│ │   replacements       │  - format/case picker        │  │
+│ └──────────────────────┴─────────────────────────────┘  │
+│  [Сохранить draft]  [Применить разметку]                 │
+└──────────────────────────────────────────────────────────┘
+                         ↓
+   apply-markup edge fn: правит word/document.xml + headers/footers,
+   заменяет original_text → {{field:FLD-...|format=...|case=...}},
+   сохраняет новый .docx в storage, обновляет token_manifest.
 ```
 
-## C4-1 — TipTap editor scaffold
+`editor_html` / `editor_json` / TipTap — больше **не** canonical source для DOCX-шаблонов. Оставляем код, но не используем в DOCX-flow (помечаем как deprecated для актов).
 
-Новый компонент `src/components/ai-documents/TemplateVisualEditor.tsx`:
+---
 
-- Extensions: `StarterKit`, `Underline`, `TextAlign`, `Placeholder`, `Link` (если уже есть в проекте), таблицы — отложить до пилота (риск со стилями).
-- Тулбар: B / I / U, выравнивание, заголовки H1–H3, списки ul/ol, undo/redo, кнопка «Вставить поле» `[ ]`.
-- Кастомный inline node `field-chip` (atom, `inline: true`, `selectable: true`) с атрибутами `field_public_id`, `case_modifier`, `label`. Renders как `<span class="inline-flex ... bg-primary/10 ...">label <Badge>FLD-XXXXXX</Badge> <Badge>case=…</Badge></span>`.
-- Сериализация: при сохранении узел рендерится как текст `{{field:FLD-XXXXXX}}` или `{{field:FLD-XXXXXX|case=genitive}}`.
+## Изменения
 
-## C4-2 — Интеграция в `StrictDocumentTemplatesManager`
+### 1. БД (migration)
 
-Tabs внутри markup flow: `Preview DOCX` | `Visual editor` | `Suggestions / Fields`. Текст из mammoth → editor.setContent (paragraphs).
+```sql
+ALTER TABLE document_template_versions
+  ADD COLUMN IF NOT EXISTS markup_draft jsonb;
+```
 
-## C4-3 — Field picker внутри редактора
+Структура `markup_draft`:
 
-Кнопка тулбара открывает тот же `FieldPicker` (вынесем в отдельный файл `src/components/ai-documents/FieldPicker.tsx`, переиспользует `TemplateMarkupDialog`). При выборе — вставка узла `field-chip`.
+```json
+{
+  "version": 1,
+  "updated_at": "...",
+  "replacements": [
+    {
+      "id": "uuid",
+      "source": "auto" | "manual",
+      "original_text": "...",
+      "field_public_id": "FLD-XXXXXX",
+      "placeholder": "{{field:FLD-XXXXXX|format=words|case=genitive}}",
+      "format": "as_is" | "words" | "text",
+      "case_modifier": null | "genitive" | ...,
+      "status": "suggested" | "accepted" | "changed" | "skipped" | "manually_added",
+      "location": { "part": "word/document.xml", "paragraph_index": 12, "run_index": 3 }
+    }
+  ]
+}
+```
 
-## C4-4 — Падежи
+### 2. Frontend
 
-Подменю в picker (RadioGroup): И / Р / Д / В / Т / П (`nominative`, `genitive`, `dative`, `accusative`, `instrumental`, `prepositional`). Дефолт — без падежа.
+`**TemplateMarkupDialog.tsx**` — переработать:
 
-- Падеж только для `data_type ∈ {string,text}` (для number/date/money — disable + tooltip).
-- В chip — пометка `(Р)`.
+- единый `markupState` (replacements + html preview + raw text), хранится в Dialog-уровне;
+- убрать вкладки «Визуальный редактор» / «Авто-разметка», заменить на 2-колоночный layout: Preview слева, Replacements справа;
+- автозагрузка `markup_draft` при открытии; toast «Восстановить черновик?» если есть;
+- autosave draft (debounced 1.5s) в `markup_draft` через update;
+- кнопка «Применить разметку» вызывает `canonical-template-apply-markup`.
 
-## C4-5 — Backend `canonical-document-generate-strict`
+**Новые компоненты:**
 
-Регэксп заменить на `\{\{field:(FLD-\d{6})(?:\|case=(nominative|genitive|dative|accusative|instrumental|prepositional))?\}\}`.
+- `DocxPreviewPane.tsx` — рендерит HTML через `mammoth.convertToHtml` + sanitize, оборачивает совпадения `original_text` в `<mark data-replacement-id="...">` с цветовой подсветкой по статусу.
+- `ReplacementsPanel.tsx` — список replacements (auto+manual), per-row: FLD picker, format select, case select, status badge, кнопки Accept/Skip/Remove. Кнопка «Добавить вручную» → ввод find-text + picker.
+- `useDocxMarkupState.ts` — state management + autosave + load/reset draft.
 
-- Если `case` указан и значение строковое — TODO-stub применения (пока identity), `source_trace.warnings.push("case_modifier_not_applied")`.
-- Generation НЕ блокировать.
+**Удалить из DOCX-flow:**
 
-## C4-6 — Сохранение
+- `TemplateVisualEditor` больше не открывается из `TemplateMarkupDialog`. Файл оставляем (для будущих non-DOCX), помечаем JSDoc-ом «not for DOCX templates».
 
-В `document_template_versions` добавить (миграция) колонки:
+### 3. Backend — `canonical-template-apply-markup`
 
-- `editor_html text NULL` — TipTap HTML.
-- `editor_json jsonb NULL` — TipTap JSON (приоритет при reload).
-Никаких новых таблиц. `token_manifest` собирается из `field-chip` узлов (id+case).
+Принимает `replacements[]` с `original_text` + `placeholder`. Логика:
 
-## C4-7 — Strict validator (canonical-template-apply-markup + где валидируется upload)
+1. Скачать DOCX из storage по `storage_path`.
+2. Распаковать ZIP (использовать `jszip` через esm.sh в Deno).
+3. Для каждой XML-части (`word/document.xml`, `word/header*.xml`, `word/footer*.xml`, `word/footnotes.xml`, `word/endnotes.xml`) — выполнить безопасную замену `original_text` → `placeholder` в текстовых нодах `<w:t>`. Учитывать split runs: если фрагмент разбит между `<w:r>`, склеить смежные runs одного `<w:rPr>` перед заменой.
+4. Если фрагмент не найден — вернуть warning `replacement_not_found` для этой записи, не падать.
+5. Strict-validator: после замены — отказать, если в документе остались legacy `{{document.*|executor.*|customer.*|deal.*|cf.*}}`.
+6. Запаковать обратно, загрузить новую версию в storage, инкрементировать `version_number`, сохранить `token_manifest`, активировать новую версию.
 
-- ALLOW: `{{field:FLD-\d{6}}}` и `{{field:FLD-\d{6}\|case=<allowed>}}`.
-- BLOCK (critical): legacy формы (`{{document.*}}`, `{{executor.*}}`, `{{customer.*}}`, `{{deal.*}}`, `{{cf.*}}`).
-- BLOCK: неизвестный modifier (`|format=`, `|upper`, …) → critical `unknown_modifier`.
-- WARNING (не block на C4): `case` на нестроковом поле → `case_on_non_text_field`.
+### 4. Proof
 
-## C4-8 — Proof
+Обновить `.lovable/proofs/document_generation_sprint11_c5c_smoke_real_act.md`:
 
-`.lovable/proofs/document_generation_sprint11_c4_visual_editor.md`:
+- переименовать секции: **C5-C backend smoke: GREEN**, **C5-D UI DOCX markup: PENDING/IN-PROGRESS**.
 
-- выбор TipTap (уже в стеке, нет Google Docs);
-- список изменённых файлов;
-- grep `google` / `docs.google` / `drive` → 0;
-- скрин редактора + chip + chip с падежом (описание UI, реальные скрины снимет пользователь);
-- пример сохранённого `{{field:FLD-000123|case=genitive}}`;
-- validator: valid для нового, critical для `{{document.amount}}`;
-- `source_trace` пример с `case_modifier_not_applied`;
-- email/Telegram/auto-generation flags = OFF.
+Создать `.lovable/proofs/document_generation_sprint11_c5d_docx_markup.md` с:
+
+- архитектурным описанием;
+- списком файлов;
+- чек-листом DoD;
+- инструкцией для UI-проверки (загрузить реальный акт, разметить, applied, generate).
+
+---
 
 ## Технические детали
 
-- TipTap node spec для `field-chip`:
+- `mammoth@1.x` уже в проекте (`useCorporateTemplateEditor`).
+- В Deno edge fn — `jszip` через `https://esm.sh/jszip@3.10.1`.
+- XML парсинг — простой regex по `<w:t[^>]*>([^<]+)</w:t>` достаточно для MVP замены; для split-runs делаем pre-merge соседних `<w:r>` с идентичным `<w:rPr>`.
+- Подсветка в preview: после `convertToHtml` пробегаем DOM-парсером и оборачиваем text-nodes, содержащие `original_text`, в `<mark>` с data-id.
+- Autosave: `useDebouncedCallback` 1500ms, не блокирует UI.
 
-```text
-name: 'fieldChip', group: 'inline', inline: true, atom: true, selectable: true,
-attrs: { fieldPublicId, caseModifier, label }
-parseHTML: span[data-field-public-id]
-renderHTML: span с data-* + chip-разметка
-renderText: '{{field:'+id+(case?'|case='+case:'')+'}}'
-```
+---
 
-- `editor.getText({ blockSeparator: '\n' })` будет возвращать строку с подставленными плейсхолдерами благодаря `renderText`. Эту строку прокидываем в существующий strict validator + используем для DOCX генерации (на C4 — DOCX из storage остаётся канонической версией; HTML — staging для редактора, как в `useCorporateTemplateEditor` уже принято).
-- `canonical-template-apply-markup` дополним: принимает `editor_html`, `editor_json`, делает strict-валидацию текста, обновляет колонки версии.
+## DoD
 
-## Очерёдность коммитов
+- `markup_draft` колонка добавлена.
+- Preview рендерит таблицы/стили/жирный/списки (mammoth HTML).
+- Auto + manual replacements в едином state, переключение/добавление не теряет данные.
+- Autosave draft работает; восстановление при повторном открытии.
+- `apply-markup` правит исходный DOCX XML, не пересобирает из HTML.
+- Generated DOCX сохраняет таблицы и форматирование, не содержит `{{...}}`.
+- Legacy `{{document.*}}` блокируются.
+- TipTap-редактор не используется как canonical для DOCX.
+- Email/Telegram/auto-gen/batch — OFF.
+- Два proof-файла: C5-C (backend GREEN) + C5-D (UI markup).
 
-1. **Hotfix-PICKER**: scroll + русские группы (отдельный коммит, без C4).
-2. **C4-A**: миграция (editor_html/json) + TipTap-редактор + chip-node + интеграция в markup-диалог + reused FieldPicker.
-3. **C4-B**: падежи (UI + сериализация) + backend + strict validator + proof.
+---
 
-## Что не делаем
+## Что НЕ делаем сейчас
 
-- Google Docs/Drive/OnlyOffice;
-- auto-generation, email, telegram отправку;
-- batch;
-- alias-layer / token_key как runtime placeholder;
-- новые таблицы;
-- редактирование DOCX-XML напрямую — DOCX остаётся source-of-truth для финальной генерации, editor_html — staging.
+- Полноценный WYSIWYG Word-редактор.
+- Inline-edit DOCX-структуры (правка таблиц/стилей в браузере).
+- Замены в нескольких run-spans с разным форматированием (только pre-merge с идентичным `<w:rPr>`; иначе → warning «split-run, разметить вручную в Word»).
+
+После approve — приступаю к C5-D-1 → C5-D-9 в одном проходе.
