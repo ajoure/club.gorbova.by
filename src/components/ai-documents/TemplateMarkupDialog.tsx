@@ -301,8 +301,14 @@ export function TemplateMarkupDialog({
                                   refs={refs}
                                   refsByCategory={refsByCategory}
                                   value={s.field_public_id}
-                                  onChange={(v) => onChangeField(s, v)}
+                                  onChange={(v, opts) => onChangeField(s, v, opts)}
                                 />
+                                {(s.format || s.case_modifier) && (
+                                  <div className="text-[10px] text-muted-foreground mt-1 flex flex-wrap gap-1">
+                                    {s.format && <span className="px-1 rounded bg-sky-100 text-sky-700">{s.format === "words" ? "прописью" : "текстом"}</span>}
+                                    {s.case_modifier && <span className="px-1 rounded bg-amber-100 text-amber-700 font-mono">{s.case_modifier}</span>}
+                                  </div>
+                                )}
                                 {s.placeholder && (
                                   <div className="text-[10px] font-mono text-muted-foreground mt-1">
                                     {s.placeholder}
