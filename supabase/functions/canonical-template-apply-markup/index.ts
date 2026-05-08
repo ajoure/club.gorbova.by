@@ -357,10 +357,14 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const sourceVersionId: string | null = body.template_version_id || null;
     const replacementsRaw: Replacement[] = Array.isArray(body.replacements) ? body.replacements : [];
+    const activate: boolean = !!body.activate;
+    const clearDraft: boolean = body.clear_draft !== false; // default true
     if (!sourceVersionId) {
       return new Response(JSON.stringify({ error: 'template_version_id required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
-    const accepted = replacementsRaw.filter((r) => r && (r.status === 'accepted' || r.status === 'changed'));
+    const accepted = replacementsRaw.filter(
+      (r) => r && (r.status === 'accepted' || r.status === 'changed' || r.status === 'manually_added'),
+    );
     if (accepted.length === 0) {
       return new Response(JSON.stringify({ error: 'no_accepted_replacements' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
