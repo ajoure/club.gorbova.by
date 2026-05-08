@@ -17,15 +17,16 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, FileText, Eye, Download, AlertTriangle, CheckCircle2, Lock } from "lucide-react";
+import { Loader2, FileText, Eye, Download, AlertTriangle, CheckCircle2, Lock, Search, X, Package, User, Building2 } from "lucide-react";
 import { toast } from "sonner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Info } from "lucide-react";
 import { DocumentsHowItWorks } from "./DocumentsHowItWorks";
+import { OrderPickerDialog, type OrderPickResult } from "./OrderPickerDialog";
+import { LegalDetailsPickerDialog, type LegalDetailsPickResult } from "./LegalDetailsPickerDialog";
 
 function FieldHint({ text }: { text: string }) {
   return (
