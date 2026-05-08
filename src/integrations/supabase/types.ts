@@ -3318,6 +3318,7 @@ export type Database = {
           file_size_bytes: number | null
           id: string
           is_current: boolean
+          markup_status: string
           notes: string | null
           storage_bucket: string
           storage_path: string
@@ -3339,6 +3340,7 @@ export type Database = {
           file_size_bytes?: number | null
           id?: string
           is_current?: boolean
+          markup_status?: string
           notes?: string | null
           storage_bucket?: string
           storage_path: string
@@ -3360,6 +3362,7 @@ export type Database = {
           file_size_bytes?: number | null
           id?: string
           is_current?: boolean
+          markup_status?: string
           notes?: string | null
           storage_bucket?: string
           storage_path?: string

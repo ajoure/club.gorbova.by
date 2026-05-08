@@ -27,12 +27,27 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Loader2, Upload, FileText, Trash2, CheckCircle2, AlertTriangle, Sparkles } from "lucide-react";
+import { Loader2, Upload, FileText, Trash2, CheckCircle2, AlertTriangle, Sparkles, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import mammoth from "mammoth";
 import { extractDocxPlaceholders } from "@/utils/extractDocxPlaceholders";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import { TemplateMarkupDialog } from "./TemplateMarkupDialog";
+
+// Server-side audit (best-effort, never throws to UI)
+async function auditEvent(
+  event: string,
+  payload: { template_id?: string | null; template_version_id?: string | null; meta?: Record<string, unknown> },
+) {
+  try {
+    await supabase.functions.invoke("canonical-template-audit", {
+      body: { event, ...payload },
+    });
+  } catch {
+    /* swallow */
+  }
+}
 
 // ───────────── strict validator ─────────────
 
@@ -160,7 +175,8 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
   const [uploading, setUploading] = useState(false);
 
   const [deleteId, setDeleteId] = useState<string | null>(null);
-
+  const [markupVersion, setMarkupVersion] = useState<VersionRow | null>(null);
+  const [markupTemplateName, setMarkupTemplateName] = useState<string>("");
   const fetchAll = async () => {
     setLoading(true);
     const [{ data: t }, { data: v }, { data: f }] = await Promise.all([
@@ -279,6 +295,15 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
       if (verErr) throw verErr;
 
       toast.success(`Шаблон загружен (${detected.length} плейсхолдеров найдено)`);
+      auditEvent("document_template.uploaded", {
+        template_id: tmplIns.id,
+        meta: {
+          file_name: uploadFile.name,
+          file_size_bytes: uploadFile.size,
+          detected_tokens_count: detected.length,
+          storage_path: storagePath,
+        },
+      });
       setUploadOpen(false);
       setUploadFile(null);
       setUploadName("");
@@ -300,6 +325,10 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
     setPreviewText("");
     setPreviewTokens([]);
     setPreviewValidation(null);
+    auditEvent("document_template.preview_opened", {
+      template_id: tpl.id,
+      template_version_id: ver.id,
+    });
     try {
       const { data, error } = await supabase.storage
         .from(ver.storage_bucket)
@@ -328,6 +357,21 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
           detected_tokens: tokens as any,
         })
         .eq("id", ver.id);
+      auditEvent(
+        validation.status === "valid"
+          ? "document_template.validation_passed"
+          : "document_template.validation_failed",
+        {
+          template_id: tpl.id,
+          template_version_id: ver.id,
+          meta: {
+            errors_count: validation.errors.length,
+            recognized_count: validation.recognized.length,
+            raw_tokens_count: validation.raw_tokens.length,
+            error_codes: Array.from(new Set(validation.errors.map((e) => e.code))),
+          },
+        },
+      );
       await fetchAll();
     } catch (e: any) {
       console.error(e);
@@ -337,6 +381,11 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
         errors: [{ code: "docx_unreadable", message: String(e.message ?? e) }],
         recognized: [],
         raw_tokens: [],
+      });
+      auditEvent("document_template.validation_failed", {
+        template_id: tpl.id,
+        template_version_id: ver.id,
+        meta: { error_codes: ["docx_unreadable"], detail: String(e.message ?? e) },
       });
     } finally {
       setPreviewLoading(false);
@@ -348,14 +397,14 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
       toast.error("Активация заблокирована: validation_status != valid");
       return;
     }
+    // TODO C3: server-side activation via edge `canonical-template-activate-version`
+    // (RLS уже ограничивает доступ ролями admin/super_admin — см. proof C2).
     try {
-      // Снять флаг с прежней current
       await supabase
         .from("document_template_versions")
         .update({ is_current: false })
         .eq("template_id", tpl.id)
         .neq("id", ver.id);
-      // Поставить новую current
       const { error: e1 } = await supabase
         .from("document_template_versions")
         .update({ is_current: true })
@@ -367,10 +416,20 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
         .eq("id", tpl.id);
       if (e2) throw e2;
       toast.success("Шаблон активирован как текущий");
+      auditEvent("document_template.version_activated", {
+        template_id: tpl.id,
+        template_version_id: ver.id,
+        meta: { version_number: ver.version_number },
+      });
       await fetchAll();
     } catch (e: any) {
       toast.error(`Ошибка активации: ${e.message ?? e}`);
     }
+  };
+
+  const openMarkup = (tpl: TemplateRow, ver: VersionRow) => {
+    setMarkupTemplateName(tpl.name);
+    setMarkupVersion(ver);
   };
 
   const deleteTemplate = async (id: string) => {
@@ -512,12 +571,21 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
             </div>
           ) : (
             <div className="space-y-3">
-              <div>
-                <div className="text-sm font-medium">{activeTemplate?.name}</div>
-                <div className="text-[11px] text-muted-foreground">
-                  v{activeVersion.version_number} · {activeVersion.file_name} ·{" "}
-                  {((activeVersion.file_size_bytes ?? 0) / 1024).toFixed(1)} KB
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="text-sm font-medium">{activeTemplate?.name}</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    v{activeVersion.version_number} · {activeVersion.file_name} ·{" "}
+                    {((activeVersion.file_size_bytes ?? 0) / 1024).toFixed(1)} KB
+                  </div>
                 </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => openMarkup(activeTemplate!, activeVersion)}
+                >
+                  <Pencil className="h-3.5 w-3.5 mr-1" /> Разметить
+                </Button>
               </div>
 
               {previewValidation && (
@@ -627,6 +695,18 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Markup dialog */}
+      <TemplateMarkupDialog
+        open={!!markupVersion}
+        onOpenChange={(o) => !o && setMarkupVersion(null)}
+        templateName={markupTemplateName}
+        templateVersion={markupVersion}
+        onApplied={async () => {
+          setMarkupVersion(null);
+          await fetchAll();
+        }}
+      />
     </div>
   );
 }

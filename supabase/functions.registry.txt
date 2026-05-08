@@ -99,3 +99,7 @@ access-rules-nightly-reconcile
 autoweb-resolve-sessions
 autoweb-create-personal-session
 autoweb-generate-occurrences
+
+# Sprint 11 C2 — strict templates
+canonical-template-audit
+canonical-template-apply-markup
