@@ -27,12 +27,27 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Loader2, Upload, FileText, Trash2, CheckCircle2, AlertTriangle, Sparkles } from "lucide-react";
+import { Loader2, Upload, FileText, Trash2, CheckCircle2, AlertTriangle, Sparkles, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import mammoth from "mammoth";
 import { extractDocxPlaceholders } from "@/utils/extractDocxPlaceholders";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import { TemplateMarkupDialog } from "./TemplateMarkupDialog";
+
+// Server-side audit (best-effort, never throws to UI)
+async function auditEvent(
+  event: string,
+  payload: { template_id?: string | null; template_version_id?: string | null; meta?: Record<string, unknown> },
+) {
+  try {
+    await supabase.functions.invoke("canonical-template-audit", {
+      body: { event, ...payload },
+    });
+  } catch {
+    /* swallow */
+  }
+}
 
 // ───────────── strict validator ─────────────
 
