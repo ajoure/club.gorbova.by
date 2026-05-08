@@ -1849,7 +1849,9 @@ export default function AdminProductDetailV2() {
                 </div>
               </CardContent>
             </Card>
+            </TabsContent>
 
+            <TabsContent value="payment" className="space-y-4 mt-4">
             {offerForm.offer_type === "pay_now" && offerForm.payment_method !== "internal_installment" && (
               <Card>
                 <CardHeader className="pb-2">
