@@ -139,6 +139,16 @@ const DOC_SUB_TABS: SubMenuItem[] = [
     adminOnly: true,
   },
   {
+    id: "placeholders",
+    label: "Плейсхолдеры",
+    icon: Tag as any,
+    gradient: "from-indigo-500/10 to-violet-500/8",
+    activeGradient: "from-indigo-500/20 to-violet-500/15",
+    borderColor: "border-indigo-400/20",
+    iconColor: "text-indigo-500",
+    adminOnly: true,
+  },
+  {
     id: "generate",
     label: "Создать документ",
     icon: FileText,
