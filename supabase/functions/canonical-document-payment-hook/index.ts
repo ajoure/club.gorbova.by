@@ -24,6 +24,7 @@ import {
   isCanonicalEnabled,
   CANONICAL_FEATURE_FLAG_KEY,
 } from '../_shared/document-render.ts';
+import { snapshotOrderDocumentData } from '../_shared/document-data-snapshot.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
