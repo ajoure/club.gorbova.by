@@ -29,6 +29,10 @@ export interface MarkupSuggestion {
   suggested_label: string | null;
   field_public_id: string | null; // финальное (после accept/changed)
   placeholder: string | null;
+  /** Опциональные модификаторы (Sprint 11 C4-B). */
+  case_modifier?: string | null;
+  format?: string | null;
+  data_type?: string | null;
   confidence: "high" | "medium" | "low";
   reason: string;
   status: SuggestionStatus;
