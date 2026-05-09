@@ -733,14 +733,14 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
                 <div className="flex flex-col items-end gap-0.5">
                   <Button
                     size="sm"
-                    variant="ghost"
-                    className="text-muted-foreground h-7 text-xs"
+                    variant="outline"
+                    className="h-7 text-xs"
                     onClick={() => openMarkup(activeTemplate!, activeVersion)}
                   >
-                    <Pencil className="h-3 w-3 mr-1" /> Расширенная разметка (legacy)
+                    <Pencil className="h-3 w-3 mr-1" /> Проверка и исправление плейсхолдеров
                   </Button>
                   <span className="text-[10px] text-muted-foreground">
-                    Не рекомендуется — редактируйте в Word
+                    Открывайте, только если в шаблоне есть ошибки
                   </span>
                 </div>
               </div>
@@ -749,45 +749,27 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
                 <ValidationSummary
                   validation={previewValidation}
                   onActivate={() => activateVersion(activeTemplate!, activeVersion)}
+                  onCopyPlaceholders={() => {
+                    const list = (previewValidation.recognized || [])
+                      .map((r) => r.placeholder)
+                      .join("\n");
+                    if (!list) {
+                      toast.error("В шаблоне нет валидных FLD-плейсхолдеров");
+                      return;
+                    }
+                    navigator.clipboard.writeText(list).then(
+                      () => toast.success(`Скопировано плейсхолдеров: ${previewValidation.recognized.length}`),
+                      () => toast.error("Не удалось скопировать"),
+                    );
+                  }}
                   alreadyCurrent={activeVersion.is_current}
                 />
               )}
 
-              <div>
-                <Label className="text-xs">Найдено плейсхолдеров: {previewTokens.length}</Label>
-                {previewTokens.length === 0 ? (
-                  <div className="text-xs text-amber-600 mt-1">
-                    Шаблон ещё не размечен. Выберите поля и примените разметку.
-                  </div>
-                ) : (
-                  <ScrollArea className="h-32 border rounded mt-1 p-2">
-                    <div className="flex flex-wrap gap-1">
-                      {previewTokens.map(tk => {
-                        const isStrict = STRICT_PLACEHOLDER_RE.test(tk);
-                        return (
-                          <Badge
-                            key={tk}
-                            variant={isStrict ? "secondary" : "destructive"}
-                            className="font-mono text-[10px]"
-                          >
-                            {`{{${tk}}}`}
-                          </Badge>
-                        );
-                      })}
-                    </div>
-                  </ScrollArea>
-                )}
-              </div>
-
-              <div>
-                <Label className="text-xs">Текст документа (первые 3000 символов)</Label>
-                <ScrollArea className="h-64 border rounded mt-1 p-2 bg-muted/20">
-                  <pre className="text-[11px] whitespace-pre-wrap font-sans">
-                    {previewText.slice(0, 3000)}
-                    {previewText.length > 3000 && "\n…"}
-                  </pre>
-                </ScrollArea>
-              </div>
+              {/* C5-I: блоки «Найдено плейсхолдеров» и «Текст документа»
+                  убраны с основного экрана. При невалидной версии ошибки
+                  уже видны в ValidationSummary; полный документ открывается
+                  через «Проверка и исправление плейсхолдеров». */}
             </div>
           )}
         </div>
