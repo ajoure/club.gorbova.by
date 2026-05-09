@@ -165,30 +165,41 @@ function nthIndexOf(haystack: string, needle: string, occurrenceIndex: number): 
 
 function resolveMissingOccurrenceIndexes(items: Replacement[], fullText: string): { next: Replacement[]; changed: number } {
   const used = new Map<string, Set<number>>();
-  for (const r of items) {
-    if (r.occurrence_index == null) continue;
-    if (!used.has(r.original_text)) used.set(r.original_text, new Set());
-    used.get(r.original_text)!.add(r.occurrence_index);
-  }
-
   let changed = 0;
-  const next = items.map((r) => {
+
+  const next = items.flatMap((r) => {
     const total = countOccurrences(fullText, r.original_text);
-    if (!isAccepted(r.status) || !r.field_public_id || total <= 1 || r.occurrence_index != null) {
-      return { ...r, occurrences_total: total };
-    }
+    const base = { ...r, occurrences_total: total };
+    if (!isAccepted(r.status) || !r.field_public_id || total <= 0) return [base];
 
     const occupied = used.get(r.original_text) ?? new Set<number>();
-    let idx = occurrenceIndexFromMatchStart(fullText, r.original_text, r.match_start);
-    if (idx == null || occupied.has(idx)) {
+    let idx = (typeof r.occurrence_index === "number" && r.occurrence_index >= 0 && r.occurrence_index < total)
+      ? r.occurrence_index
+      : null;
+
+    // If two draft rows point to the same occurrence, keep only one concrete target.
+    // This prevents a stale duplicate chip from blocking save with impossible ambiguity.
+    if (idx != null && occupied.has(idx)) idx = null;
+
+    const byMatchStart = occurrenceIndexFromMatchStart(fullText, r.original_text, r.match_start);
+    if (idx == null && byMatchStart != null && byMatchStart < total && !occupied.has(byMatchStart)) {
+      idx = byMatchStart;
+    }
+    if (idx == null) {
       idx = Array.from({ length: total }, (_, i) => i).find((i) => !occupied.has(i)) ?? null;
     }
-    if (idx == null) return { ...r, occurrences_total: total };
+
+    if (idx == null) {
+      // There are more accepted draft rows than real occurrences in the DOCX.
+      // Drop the unplaceable duplicate: backend can only replace real occurrences.
+      changed++;
+      return [];
+    }
 
     if (!used.has(r.original_text)) used.set(r.original_text, occupied);
     occupied.add(idx);
-    changed++;
-    return { ...r, occurrences_total: total, occurrence_index: idx };
+    if (r.occurrence_index !== idx || r.occurrences_total !== total) changed++;
+    return [{ ...base, occurrence_index: idx }];
   });
 
   return { next, changed };
@@ -260,7 +271,7 @@ function renderInteractiveHtml(
       if (!node.parentNode) continue;
       // Skip if inside an existing chip
       if ((node.parentNode as Element).closest?.("[data-chip-id]")) continue;
-      let s = node.nodeValue ?? "";
+      const s = node.nodeValue ?? "";
       if (!s.includes(text)) continue;
       const frag = doc.createDocumentFragment();
       let from = 0;
