@@ -683,6 +683,16 @@ export function TemplateMarkupDialog({
         toast.error("Нет принятых замен с FLD-полем");
         return;
       }
+
+      // Защита от дублей в текущей сессии
+      const payloadHash = hashPayload(payload);
+      if (lastAppliedPayloadHash === payloadHash) {
+        const okDup = window.confirm(
+          "Версия с такой же разметкой уже была создана в этой сессии. Создать ещё одну?"
+        );
+        if (!okDup) return;
+      }
+
       const { data, error } = await supabase.functions.invoke("canonical-template-apply-markup", {
         body: { template_version_id: templateVersion.id, replacements: payload, activate: false },
       });
@@ -713,13 +723,22 @@ export function TemplateMarkupDialog({
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
 
-      if (validationStatus === "invalid") {
-        toast.warning(
-          `Создана версия v${row.version_number}, но она невалидна: остались незаменённые старые плейсхолдеры. Версия не активирована.`
-        );
-      } else {
-        toast.success(`Создана версия v${row.version_number} и скачана. Версия не активирована.`);
-      }
+      setLastAppliedPayloadHash(payloadHash);
+      setLastCreatedVersion({ id: newVersionId, n: row.version_number });
+
+      const msg =
+        validationStatus === "invalid"
+          ? `Создана версия v${row.version_number}, но она невалидна: остались незаменённые старые плейсхолдеры. Версия не активирована.`
+          : `Создана версия v${row.version_number} и скачана. Версия не активирована.`;
+      const toastFn = validationStatus === "invalid" ? toast.warning : toast.success;
+      toastFn(msg, {
+        duration: 8000,
+        action: {
+          label: "Обновить список версий",
+          onClick: () => onApplied?.(),
+        },
+      });
+      // Обновляем список версий снаружи, но НЕ сбрасываем текущий draft/replacements/chips
       onApplied?.();
       // ВАЖНО: диалог НЕ закрываем — пользователь продолжает работу с шаблоном
     } catch (e: any) {
