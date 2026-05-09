@@ -519,3 +519,27 @@ if (clearDraft) {
 
 ### Open
 - Реальная Word-проверка скачанного DOCX — за пользователем (offline).
+
+---
+
+## QA Cycle #8 — C5-D-UX2 save-disabled после заполнения всех chips
+
+### Problem
+После заполнения всех 36 замен UI показывал `Принято: 36 · всего: 36`, но кнопки «Создать версию и скачать» / «Применить» / «Применить и активировать» оставались disabled.
+
+### Diagnose
+Внизу диалога оставался guard: `Есть неоднозначные вхождения — укажите номер вхождения для 6 замен.` Причина: часть восстановленных из `markup_draft` / auto-suggest замен имела `occurrences_total > 1`, но `occurrence_index == null`, хотя пользователь уже выбрал FLD-поля.
+
+### Execute
+- `TemplateMarkupDialog.tsx` теперь сохраняет `match_start/match_end` для manual и auto replacements.
+- При восстановлении draft выполняется безопасный client-side resolve: если replacement уже принят, имеет FLD и текст повторяется, но `occurrence_index` пустой — индекс восстанавливается по `match_start`; если его нет, назначается первый свободный индекс для такого `original_text`.
+- Новые auto-suggest replacements сразу получают `occurrence_index` из `match_start`, поэтому не блокируют apply только из-за повторяющегося текста.
+
+### Verify
+- Dry-run по коду: `canApply = acceptedCount > 0 && ambiguousCount === 0 && withoutFldCount === 0`; после автозаполнения missing `occurrence_index` для 6 accepted replacements `ambiguousCount` должен стать `0`, кнопки apply/download становятся доступны.
+- Backend-контракт не изменён: в payload по-прежнему уходит `original_text + field_public_id + occurrence_index + format + case_modifier`.
+
+### DoD
+- [x] Уже заполненные chips не требуют ручного повторного выбора номера вхождения, если позицию можно восстановить.
+- [x] Apply не должен оставаться disabled при `36/36`, если все FLD выбраны и ambiguity resolved.
+- [x] Точечная замена сохранена: backend получает `occurrence_index`, а не глобальный search/replace.
