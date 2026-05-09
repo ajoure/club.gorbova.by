@@ -72,11 +72,13 @@ interface HistoryDoc {
   id: string;
   title: string;
   file_path: string | null;
+  file_mime: string | null;
   storage_bucket: string;
   template_version: number | string | null;
   created_at: string;
   document_number: string | null;
   document_date: string | null;
+  meta: Record<string, any> | null;
 }
 
 export function DealDocumentsPanel({ orderId }: { orderId: string }) {
