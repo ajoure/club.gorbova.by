@@ -17,6 +17,7 @@
  *   - Email/Telegram/auto-generation НЕ триггерятся.
  */
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,12 +28,20 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Loader2, FileText, Download, Eye, Sparkles, RefreshCw, AlertCircle, FileType2 } from "lucide-react";
+import { Loader2, FileText, Download, Eye, Sparkles, RefreshCw, AlertCircle, FileType2, UserCog, Wand2, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 import { useHasRoleV2 } from "@/hooks/useHasRoleV2";
+
+// Executor FLD-IDs (entity_type='executor'). Hardcoded fast path; UI also
+// filters by entity_type from fields_registry as the registry-driven SOT.
+const EXECUTOR_FLD_IDS = new Set([
+  "FLD-000103","FLD-000104","FLD-000105","FLD-000106","FLD-000107",
+  "FLD-000108","FLD-000109","FLD-000110","FLD-000111","FLD-000112",
+  "FLD-000150","FLD-000151","FLD-000152","FLD-000153","FLD-000154",
+]);
 
 interface TemplateOption {
   id: string;
@@ -96,6 +105,19 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [history, setHistory] = useState<HistoryDoc[]>([]);
+  const [executorInfo, setExecutorInfo] = useState<{
+    id: string | null;
+    name: string;
+    source: string | null;
+    hasManualOverrideHistory: boolean;
+  } | null>(null);
+  const [rebuildingExecutor, setRebuildingExecutor] = useState(false);
+  const [testingExecutor, setTestingExecutor] = useState(false);
+  const [executorTestResult, setExecutorTestResult] = useState<null | {
+    found: string[];
+    resolved: { fid: string; label: string; value: string }[];
+    empty: { fid: string; label: string }[];
+  }>(null);
 
   const { hasRole: isAdmin } = useHasRoleV2("admin");
   const { hasRole: isSuperAdmin } = useHasRoleV2("super_admin");
@@ -181,21 +203,97 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
     }
     const uniq = new Map<string, { id: string; required: boolean }>();
     for (const x of ids) if (!uniq.has(x.id)) uniq.set(x.id, x);
-    return Array.from(uniq.values()).map(({ id, required }) => {
-      const reg = fieldRegistry.get(id);
-      const v = docFields[id];
-      return {
-        field_public_id: id,
-        label: reg?.label || id,
-        data_type: reg?.data_type ?? null,
-        required,
-        value: v?.value ?? null,
-        source: v?.source ?? null,
-        manual_override: !!v?.manual_override,
-        updated_at: v?.updated_at ?? null,
-      };
-    }).sort((a, b) => a.field_public_id.localeCompare(b.field_public_id));
+    return Array.from(uniq.values())
+      // HIDE-EXECUTOR: executor.* (entity_type='executor') не редактируется вручную.
+      .filter(({ id }) => {
+        if (EXECUTOR_FLD_IDS.has(id)) return false;
+        const reg = fieldRegistry.get(id);
+        if (reg?.entity_type === "executor") return false;
+        return true;
+      })
+      .map(({ id, required }) => {
+        const reg = fieldRegistry.get(id);
+        const v = docFields[id];
+        return {
+          field_public_id: id,
+          label: reg?.label || id,
+          data_type: reg?.data_type ?? null,
+          required,
+          value: v?.value ?? null,
+          source: v?.source ?? null,
+          manual_override: !!v?.manual_override,
+          updated_at: v?.updated_at ?? null,
+        };
+      }).sort((a, b) => a.field_public_id.localeCompare(b.field_public_id));
   }, [activeVersion, orderMeta, fieldRegistry]);
+
+  // List of executor FLDs present in active version's manifest (for plate + test).
+  const executorFldsInTemplate = useMemo<string[]>(() => {
+    if (!activeVersion) return [];
+    const ids: string[] = [];
+    const manifest = activeVersion.token_manifest;
+    if (Array.isArray(manifest) && manifest.length > 0) {
+      for (const m of manifest) {
+        const fid = (m as any)?.field_public_id;
+        if (typeof fid === "string" && EXECUTOR_FLD_IDS.has(fid) && !ids.includes(fid)) ids.push(fid);
+      }
+    } else {
+      for (const tok of activeVersion.detected_tokens || []) {
+        const inside = typeof tok === "string" ? tok : (tok as any)?.token ?? "";
+        const m = String(inside).match(/^field:(FLD-\d+)$/);
+        if (m && EXECUTOR_FLD_IDS.has(m[1]) && !ids.includes(m[1])) ids.push(m[1]);
+      }
+    }
+    return ids.sort();
+  }, [activeVersion]);
+
+  // Detect any historical manual_override on executor.* (warning trigger).
+  const executorManualOverrideHistory = useMemo<string[]>(() => {
+    const docFields = ((orderMeta?.document_data?.fields) || {}) as Record<string, any>;
+    const arr: string[] = [];
+    for (const fid of EXECUTOR_FLD_IDS) {
+      const e = docFields[fid];
+      if (e?.manual_override === true) arr.push(fid);
+    }
+    return arr;
+  }, [orderMeta]);
+
+  // Load executor display info when orderMeta changes.
+  useEffect(() => {
+    const docFields = ((orderMeta?.document_data?.fields) || {}) as Record<string, any>;
+    const dd = orderMeta?.document_data || {};
+    // Prefer executor_id stored at document_data root, fallback to FLD-000103 entry.
+    const execId: string | null =
+      (dd.executor_id as string | null) ||
+      (docFields["FLD-000103"]?.executor_id as string | null) ||
+      null;
+    const execSource: string | null =
+      (dd.executor_source as string | null) ||
+      (docFields["FLD-000103"]?.source as string | null) ||
+      null;
+    if (!execId) {
+      setExecutorInfo({
+        id: null,
+        name: "",
+        source: execSource,
+        hasManualOverrideHistory: executorManualOverrideHistory.length > 0,
+      });
+      return;
+    }
+    (async () => {
+      const { data } = await supabase
+        .from("executors")
+        .select("id, full_name, short_name")
+        .eq("id", execId)
+        .maybeSingle();
+      setExecutorInfo({
+        id: execId,
+        name: (data?.short_name || data?.full_name || "(не найден)") as string,
+        source: execSource,
+        hasManualOverrideHistory: executorManualOverrideHistory.length > 0,
+      });
+    })();
+  }, [orderMeta, executorManualOverrideHistory]);
 
   // ── actions ────────────────────────────────────────────────────────
   const setEdit = (fid: string, v: string) => setEdits((p) => ({ ...p, [fid]: v }));
@@ -266,6 +364,60 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
     window.open(data.signedUrl, "_blank");
   };
 
+  const rebuildExecutor = async () => {
+    setRebuildingExecutor(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("canonical-deal-fields-update", {
+        body: { order_id: orderId, mode: "rebuild_executor" },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+      toast.success("Поля исполнителя пересобраны");
+      setExecutorTestResult(null);
+      setPreview(null);
+      await fetchAll();
+    } catch (e: any) {
+      toast.error(`Пересборка: ${normalizeEdgeFunctionError(e, e?.context?.body ?? null)}`);
+    } finally {
+      setRebuildingExecutor(false);
+    }
+  };
+
+  const testExecutor = async () => {
+    if (!selectedTemplateId) { toast.error("Сначала выберите шаблон"); return; }
+    setTestingExecutor(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("canonical-document-generate-strict", {
+        body: { mode: "preview", order_id: orderId, template_id: selectedTemplateId },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+      const pv = data as PreviewResult;
+      setPreview(pv);
+      const found = (pv.found_field_ids || []).filter((f) => EXECUTOR_FLD_IDS.has(f));
+      const resolved: { fid: string; label: string; value: string }[] = [];
+      const empty: { fid: string; label: string }[] = [];
+      for (const fid of found) {
+        const reg = fieldRegistry.get(fid);
+        const label = reg?.label || fid;
+        const trace = (pv.source_trace as any)?.[fid];
+        const status = trace?.status;
+        const val = trace?.rendered_value ?? trace?.value ?? "";
+        if (status === "resolved" && String(val).trim().length > 0) {
+          resolved.push({ fid, label, value: String(val) });
+        } else {
+          empty.push({ fid, label });
+        }
+      }
+      setExecutorTestResult({ found, resolved, empty });
+      toast.success(`Executor FLDs: ${found.length} в шаблоне, ${resolved.length} заполнено, ${empty.length} пусто`);
+    } catch (e: any) {
+      toast.error(`Тест исполнителя: ${normalizeEdgeFunctionError(e, e?.context?.body ?? null)}`);
+    } finally {
+      setTestingExecutor(false);
+    }
+  };
+
   if (loading) {
     return <div className="p-4 flex items-center gap-2 text-sm text-muted-foreground">
       <Loader2 className="h-4 w-4 animate-spin" /> Загрузка…
@@ -295,6 +447,75 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
 
       {selectedTemplateId && activeVersion && (
         <>
+          {/* Executor plate (read-only) */}
+          <div className="border rounded-lg p-3 bg-muted/20 space-y-2">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div className="flex items-start gap-2 min-w-0">
+                <UserCog className="h-4 w-4 mt-0.5 text-primary shrink-0" />
+                <div className="min-w-0">
+                  <div className="text-sm font-medium">
+                    Исполнитель: {executorInfo?.name || <span className="text-muted-foreground">не определён</span>}
+                  </div>
+                  <div className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap mt-0.5">
+                    {executorInfo?.source === "executor_offer" && <Badge variant="outline" className="text-[10px]">из настроек оффера</Badge>}
+                    {executorInfo?.source === "executor_default" && <Badge variant="outline" className="text-[10px]">по умолчанию</Badge>}
+                    {executorInfo?.source && executorInfo.source !== "executor_offer" && executorInfo.source !== "executor_default" && (
+                      <Badge variant="outline" className="text-[10px]">{executorInfo.source}</Badge>
+                    )}
+                    {executorInfo?.id && <code className="text-[10px] font-mono">{executorInfo.id}</code>}
+                    <span>Поля исполнителя подставляются автоматически.</span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <Button size="sm" variant="outline" onClick={testExecutor} disabled={testingExecutor}>
+                  {testingExecutor ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Eye className="h-3 w-3 mr-1" />}
+                  Протестировать
+                </Button>
+                <Button size="sm" variant="outline" onClick={rebuildExecutor} disabled={rebuildingExecutor}>
+                  {rebuildingExecutor ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Wand2 className="h-3 w-3 mr-1" />}
+                  Пересобрать
+                </Button>
+                <Button size="sm" variant="ghost" asChild>
+                  <Link to="/admin/ai" title="Открыть исполнителей">
+                    <ExternalLink className="h-3 w-3 mr-1" /> Исполнители
+                  </Link>
+                </Button>
+              </div>
+            </div>
+            {executorInfo?.hasManualOverrideHistory && (
+              <div className="text-xs text-amber-700 dark:text-amber-300 flex items-center gap-1">
+                <AlertCircle className="h-3 w-3" />
+                В этой сделке есть исторические manual_override на executor.* — пересборка их пропустит. Очистите вручную при необходимости.
+              </div>
+            )}
+            {executorFldsInTemplate.length > 0 && (
+              <div className="text-[11px] text-muted-foreground">
+                В шаблоне используется {executorFldsInTemplate.length} executor-полей: {executorFldsInTemplate.join(", ")}
+              </div>
+            )}
+            {executorTestResult && (
+              <div className="border-t pt-2 mt-1 space-y-1 text-xs">
+                <div className="font-medium">Результат теста:</div>
+                <div>Найдено в шаблоне: {executorTestResult.found.length}; заполнено: {executorTestResult.resolved.length}; пусто: {executorTestResult.empty.length}</div>
+                {executorTestResult.resolved.length > 0 && (
+                  <ul className="text-emerald-700 dark:text-emerald-400 space-y-0.5">
+                    {executorTestResult.resolved.map((r) => (
+                      <li key={r.fid}><code className="font-mono">{r.fid}</code> · {r.label}: {r.value}</li>
+                    ))}
+                  </ul>
+                )}
+                {executorTestResult.empty.length > 0 && (
+                  <ul className="text-amber-700 dark:text-amber-400 space-y-0.5">
+                    {executorTestResult.empty.map((r) => (
+                      <li key={r.fid}><code className="font-mono">{r.fid}</code> · {r.label}: пусто</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Fields editor */}
           <div className="border rounded-lg">
             <div className="px-3 py-2 border-b flex items-center justify-between">

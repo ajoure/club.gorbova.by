@@ -122,6 +122,20 @@ export function OfferDocumentDefaultsCard({ value, onChange, offerAmount, offerC
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // PATCH HIDE-EXECUTOR: автопреселект default-исполнителя при первом
+  // появлении списка, ТОЛЬКО если значение ещё не выставлено. Ручной выбор
+  // пользователя никогда не перетирается.
+  const executorPreselectRef = useRef(false);
+  useEffect(() => {
+    if (executorPreselectRef.current) return;
+    if (executors.length === 0) return;
+    executorPreselectRef.current = true;
+    if (v.executor_id) return;
+    const def = executors.find((e) => e.is_default);
+    if (def) onChange({ ...v, executor_id: def.id });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [executors]);
+
   // PATCH DOC-OFFER-2: реакция на смену суммы кнопки.
   useEffect(() => {
     if (!initRef.current) return;
@@ -276,6 +290,11 @@ export function OfferDocumentDefaultsCard({ value, onChange, offerAmount, offerC
             </Select>
             {showTechIds && v.executor_id && (
               <p className="text-[10px] font-mono text-muted-foreground">{v.executor_id}</p>
+            )}
+            {executors.length > 0 && !executors.some((e) => e.is_default) && (
+              <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                Исполнитель по умолчанию не задан. Откройте Нейросеть → Документы → Исполнители и отметьте одного как «по умолчанию».
+              </p>
             )}
           </div>
         </div>

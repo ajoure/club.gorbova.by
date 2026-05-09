@@ -19,8 +19,9 @@
 
 // deno-lint-ignore-file no-explicit-any
 import { numberToWordsRu, normalizeCurrency } from './docx-helpers.ts';
+import { resolveExecutorForOrder, buildExecutorFieldValues, mergeExecutorIntoFields } from './executor-fields.ts';
 
-export const SNAPSHOT_VERSION = '1.0';
+export const SNAPSHOT_VERSION = '1.1';
 
 const CURRENCY_WORDS: Record<string, { major: string; minor: string }> = {
   BYN: { major: 'рублей', minor: 'копеек' },
@@ -194,6 +195,31 @@ export async function snapshotOrderDocumentData(
       },
     };
 
+    // Resolve executor and pre-populate executor.* FLD fields (entity_type='executor').
+    // These FLDs are NEVER user-editable (see canonical-deal-fields-update guard).
+    const explicitExecutorId = (offerDefaults?.executor_id
+      ?? tariffDefaults?.executor_id
+      ?? productDefaults?.executor_id
+      ?? null) as string | null;
+    const { executor, source: execSource, executor_id: resolvedExecutorId } =
+      await resolveExecutorForOrder(supabase, explicitExecutorId);
+    const fields: Record<string, any> = {};
+    let executorTrace: Record<string, string> | null = null;
+    if (executor && execSource && resolvedExecutorId) {
+      const values = buildExecutorFieldValues(executor);
+      const merged = mergeExecutorIntoFields(fields, values, execSource, resolvedExecutorId, new Date().toISOString());
+      Object.assign(fields, merged.fields);
+      executorTrace = merged.trace;
+      (documentData as any).executor_id = resolvedExecutorId;
+      (documentData as any).executor_source = execSource;
+    } else {
+      await safeAudit(supabase, 'document_data.snapshot_executor_missing', {
+        order_id: orderId,
+        explicit_executor_id: explicitExecutorId,
+      });
+    }
+    (documentData as any).fields = fields;
+
     const newMeta = { ...(order.meta || {}), document_data: documentData };
     const { error: upErr } = await supabase
       .from('orders_v2').update({ meta: newMeta }).eq('id', orderId);
@@ -208,7 +234,9 @@ export async function snapshotOrderDocumentData(
       order_id: orderId,
       snapshot_version: SNAPSHOT_VERSION,
       template_id: documentData.template_id,
-      executor_id: documentData.executor_id,
+      executor_id: (documentData as any).executor_id || null,
+      executor_source: (documentData as any).executor_source || null,
+      executor_trace: executorTrace,
       amount: documentData.amount,
       currency: documentData.currency,
       provenance: documentData._provenance,
