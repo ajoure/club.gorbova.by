@@ -291,6 +291,11 @@ export function OfferDocumentDefaultsCard({ value, onChange, offerAmount, offerC
             {showTechIds && v.executor_id && (
               <p className="text-[10px] font-mono text-muted-foreground">{v.executor_id}</p>
             )}
+            {executors.length > 0 && !executors.some((e) => e.is_default) && (
+              <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                Исполнитель по умолчанию не задан. Откройте Нейросеть → Документы → Исполнители и отметьте одного как «по умолчанию».
+              </p>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2">
