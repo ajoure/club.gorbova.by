@@ -12,10 +12,13 @@ interface GotenbergStatus {
   configured: boolean;
   enabled: boolean;
   url: string | null;
-  basic_auth: boolean;
+  url_source: "db" | "env" | "none";
   basic_user_last4: string | null;
-  basic_pass_last4: string | null;
-  last_health_check: { ok?: boolean; http_status?: number; latency_ms?: number; at?: string; error?: string } | null;
+  basic_user_source: "db" | "env" | "none";
+  password_configured: boolean;
+  password_last4: string | null;
+  password_source: "env" | "none";
+  last_health_check: { ok?: boolean; http_status?: number; latency_ms?: number; at?: string; error?: string; modules?: { chromium?: string; libreoffice?: string } } | null;
   last_test_convert: { ok?: boolean; pdf_size?: number; latency_ms?: number; at?: string; code?: string; error?: string } | null;
 }
 
