@@ -63,7 +63,7 @@ export async function snapshotOrderDocumentData(
   try {
     const { data: order, error: orderErr } = await supabase
       .from('orders_v2')
-      .select('id, status, product_id, tariff_id, offer_id, final_price, base_price, currency, deal_date, updated_at, created_at, meta')
+      .select('id, order_number, status, profile_id, user_id, product_id, tariff_id, offer_id, final_price, base_price, currency, customer_email, customer_phone, deal_date, updated_at, created_at, meta')
       .eq('id', orderId)
       .maybeSingle();
     if (orderErr) {
