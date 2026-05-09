@@ -979,10 +979,10 @@ export function TemplateMarkupDialog({
       >
         <DialogHeader className="flex-shrink-0 px-5 pt-4 pb-3 border-b">
           <DialogTitle className="flex items-center gap-2 text-base">
-            <Pencil className="h-4 w-4" /> Разметка шаблона: {templateName}
+            <Pencil className="h-4 w-4" /> Проверка и исправление плейсхолдеров: {templateName}
           </DialogTitle>
           <DialogDescription className="text-xs leading-relaxed">
-            Это <b>режим разметки шаблона</b>: здесь вы заменяете старые плейсхолдеры на FLD-поля.
+            Здесь вы заменяете старые/неправильные плейсхолдеры на FLD-поля.
             Чтобы изменить текст, таблицы, отступы или форматирование — отредактируйте DOCX в Word
             и загрузите новую версию шаблона.
             {hasDraftSaved && <span className="ml-2 text-emerald-600">· Черновик сохранён</span>}
