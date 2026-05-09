@@ -455,9 +455,27 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
                         {format(new Date(d.created_at), "dd.MM.yyyy HH:mm", { locale: ru })}
                       </TableCell>
                       <TableCell>
-                        <Button size="sm" variant="ghost" onClick={() => downloadDoc(d)} disabled={!d.file_path}>
-                          <Download className="h-3 w-3" />
-                        </Button>
+                        <div className="flex gap-1">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => d.file_path && downloadFile(d.storage_bucket, d.file_path)}
+                            disabled={!d.file_path}
+                            title="Скачать PDF"
+                          >
+                            <Download className="h-3 w-3 mr-1" /> PDF
+                          </Button>
+                          {canSeeDocx && d.meta?.docx_storage_path && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => downloadFile(d.storage_bucket, d.meta!.docx_storage_path)}
+                              title="Скачать DOCX (только для админов)"
+                            >
+                              <FileType2 className="h-3 w-3 mr-1" /> DOCX
+                            </Button>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
