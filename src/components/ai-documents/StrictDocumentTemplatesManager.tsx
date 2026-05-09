@@ -564,13 +564,19 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
                     {((activeVersion.file_size_bytes ?? 0) / 1024).toFixed(1)} KB
                   </div>
                 </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => openMarkup(activeTemplate!, activeVersion)}
-                >
-                  <Pencil className="h-3.5 w-3.5 mr-1" /> Разметить
-                </Button>
+                <div className="flex flex-col items-end gap-0.5">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-muted-foreground h-7 text-xs"
+                    onClick={() => openMarkup(activeTemplate!, activeVersion)}
+                  >
+                    <Pencil className="h-3 w-3 mr-1" /> Расширенная разметка (legacy)
+                  </Button>
+                  <span className="text-[10px] text-muted-foreground">
+                    Не рекомендуется — редактируйте в Word
+                  </span>
+                </div>
               </div>
 
               {previewValidation && (

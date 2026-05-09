@@ -1,12 +1,16 @@
 /**
- * PlaceholdersCatalogTab — FLD-only каталог плейсхолдеров (Sprint 11, C1).
+ * PlaceholdersCatalogTab — Sprint 11 C5-E.
+ *
+ * Каталог FLD-плейсхолдеров для копирования в Microsoft Word.
+ * Inline-настройки формата/падежа прямо в строке таблицы.
  *
  * SOT: fields_registry.public_id (FLD-XXXXXX).
- * Единственный допустимый плейсхолдер: {{field:FLD-XXXXXX}}.
- *
- * token_key показывается ТОЛЬКО в технических деталях/поиске, кнопки копирования
- * старого формата нет. Строки без field_id или без public_id скрыты — иначе их
- * нельзя использовать в strict-pipeline.
+ * Формат placeholder строго whitelisted:
+ *   {{field:FLD-XXXXXX}}
+ *   {{field:FLD-XXXXXX|format=words}}
+ *   {{field:FLD-XXXXXX|format=text}}
+ *   {{field:FLD-XXXXXX|case=<падеж>}}
+ *   {{field:FLD-XXXXXX|format=words|case=<падеж>}}
  */
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -21,9 +25,20 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Copy, Search, ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
+  Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Loader2, Copy, Search, ChevronDown, ChevronRight, AlertTriangle, Info, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import {
+  buildFieldPlaceholder,
+  type FieldCase,
+  type FieldFormat,
+} from "./extensions/FieldChipNode";
+import { classifyDataType } from "./FieldFormatPicker";
+import { copyToClipboard } from "@/utils/clipboardUtils";
 
 interface CatalogRow {
   id: string;
@@ -43,6 +58,11 @@ interface CatalogRow {
   field_data_type: string | null;
 }
 
+interface RowSettings {
+  format: FieldFormat | null;
+  caseModifier: FieldCase | null;
+}
+
 const GROUP_LABELS: Record<string, string> = {
   contact: "Контакт",
   customer: "Заказчик",
@@ -59,11 +79,22 @@ const GROUP_LABELS: Record<string, string> = {
 
 const DATA_TYPE_LABEL: Record<string, string> = {
   text: "Текст", string: "Текст", number: "Число", currency: "Сумма",
-  date: "Дата", datetime: "Дата/время", boolean: "Да/Нет", uuid: "UUID",
+  money: "Сумма", date: "Дата", datetime: "Дата/время", boolean: "Да/Нет",
+  uuid: "UUID", email: "Email", phone: "Телефон", enum: "Список", json: "JSON",
 };
 
-function buildPlaceholder(publicId: string): string {
-  return `{{field:${publicId}}}`;
+const CASE_OPTIONS: { value: "none" | FieldCase; label: string }[] = [
+  { value: "none", label: "Без падежа" },
+  { value: "nominative", label: "Именительный" },
+  { value: "genitive", label: "Родительный" },
+  { value: "dative", label: "Дательный" },
+  { value: "accusative", label: "Винительный" },
+  { value: "instrumental", label: "Творительный" },
+  { value: "prepositional", label: "Предложный" },
+];
+
+function isDefault(s: RowSettings | undefined): boolean {
+  return !s || (s.format === null && s.caseModifier === null);
 }
 
 export function PlaceholdersCatalogTab() {
@@ -76,12 +107,12 @@ export function PlaceholdersCatalogTab() {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [onlyRequired, setOnlyRequired] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [rowSettings, setRowSettings] = useState<Map<string, RowSettings>>(new Map());
 
   useEffect(() => {
     let mounted = true;
     (async () => {
       setLoading(true);
-      // Strict join: только токены с привязкой к fields_registry, у которого есть public_id.
       const { data, error } = await supabase
         .from("document_token_registry")
         .select(`
@@ -149,14 +180,31 @@ export function PlaceholdersCatalogTab() {
     });
   }, [rows, search, groupFilter, typeFilter, onlyRequired]);
 
-  const copyPlaceholder = async (publicId: string) => {
-    const tokenString = buildPlaceholder(publicId);
-    try {
-      await navigator.clipboard.writeText(tokenString);
-      toast.success(`Скопировано: ${tokenString}`);
-    } catch {
-      toast.error("Не удалось скопировать");
-    }
+  const updateRowSettings = (id: string, patch: Partial<RowSettings>) => {
+    setRowSettings(prev => {
+      const next = new Map(prev);
+      const current = next.get(id) ?? { format: null, caseModifier: null };
+      const merged: RowSettings = { ...current, ...patch };
+      if (merged.format === null && merged.caseModifier === null) {
+        next.delete(id);
+      } else {
+        next.set(id, merged);
+      }
+      return next;
+    });
+  };
+
+  const resetRow = (id: string) => {
+    setRowSettings(prev => {
+      if (!prev.has(id)) return prev;
+      const next = new Map(prev);
+      next.delete(id);
+      return next;
+    });
+  };
+
+  const copyPlaceholder = async (text: string) => {
+    await copyToClipboard(text, "Плейсхолдер скопирован");
   };
 
   const toggleRow = (id: string) => {
@@ -168,177 +216,335 @@ export function PlaceholdersCatalogTab() {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
-        <div>
-          <h2 className="text-lg font-semibold">Каталог плейсхолдеров</h2>
-          <p className="text-sm text-muted-foreground">
-            ID-first. Единственный допустимый формат:&nbsp;
-            <code className="text-foreground">{`{{field:FLD-XXXXXX}}`}</code>.
-            Всего: <span className="font-medium text-foreground">{rows.length}</span>,
-            показано: <span className="font-medium text-foreground">{filtered.length}</span>.
-            {skippedNoField > 0 && (
-              <span className="ml-2 inline-flex items-center gap-1 text-amber-600">
-                <AlertTriangle className="h-3.5 w-3.5" /> скрыто без field_id: {skippedNoField}
-              </span>
-            )}
-          </p>
+    <TooltipProvider delayDuration={200}>
+      <div className="space-y-4">
+        {/* Инструктивный баннер */}
+        <div className="flex gap-3 rounded-lg border border-blue-200 bg-blue-50/60 dark:bg-blue-950/30 dark:border-blue-900 p-3">
+          <Info className="h-4 w-4 text-blue-600 mt-0.5 flex-shrink-0" />
+          <div className="text-xs text-blue-900 dark:text-blue-100 leading-relaxed">
+            Редактируйте шаблон в Microsoft Word. Найдите нужное поле, при необходимости
+            настройте формат и падеж прямо в строке, скопируйте плейсхолдер и вставьте
+            его в DOCX. После загрузки система проверит корректность всех плейсхолдеров.
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Label htmlFor="tech-toggle" className="text-xs text-muted-foreground">
-            Технические данные
-          </Label>
-          <Switch id="tech-toggle" checked={showTechnical} onCheckedChange={setShowTechnical} />
-        </div>
-      </div>
 
-      <div className="grid gap-2 sm:grid-cols-12">
-        <div className="relative sm:col-span-5">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Поиск по FLD, названию, описанию…"
-            className="pl-9"
-          />
-        </div>
-        <div className="sm:col-span-3">
-          <Select value={groupFilter} onValueChange={setGroupFilter}>
-            <SelectTrigger><SelectValue placeholder="Группа" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Все группы</SelectItem>
-              {groupOptions.map(g => (
-                <SelectItem key={g} value={g}>{GROUP_LABELS[g] ?? g}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="sm:col-span-3">
-          <Select value={typeFilter} onValueChange={setTypeFilter}>
-            <SelectTrigger><SelectValue placeholder="Тип" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Все типы</SelectItem>
-              {typeOptions.map(t => (
-                <SelectItem key={t} value={t}>{DATA_TYPE_LABEL[t] ?? t}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="sm:col-span-1 flex items-center justify-end gap-2">
-          <Switch id="req-toggle" checked={onlyRequired} onCheckedChange={setOnlyRequired} />
-          <Label htmlFor="req-toggle" className="text-xs text-muted-foreground whitespace-nowrap">обяз.</Label>
-        </div>
-      </div>
-
-      {loading ? (
-        <div className="flex justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
-      ) : (
-        <div className="border rounded-lg overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-8"></TableHead>
-                <TableHead className="w-[140px]">Группа</TableHead>
-                <TableHead>Название</TableHead>
-                <TableHead className="w-[120px]">Field ID</TableHead>
-                <TableHead>Плейсхолдер</TableHead>
-                <TableHead className="w-[110px]">Тип</TableHead>
-                <TableHead className="w-[80px] text-center">Обяз.</TableHead>
-                <TableHead className="w-[60px] text-right">Действия</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-8">
-                    Ничего не найдено
-                  </TableCell>
-                </TableRow>
-              ) : (
-                filtered.map(t => {
-                  const isOpen = expanded.has(t.id);
-                  const placeholder = t.field_public_id ? buildPlaceholder(t.field_public_id) : null;
-                  return (
-                    <Fragment key={t.id}>
-                      <TableRow className="hover:bg-muted/40">
-                        <TableCell className="p-1">
-                          <Button
-                            size="icon" variant="ghost" className="h-6 w-6"
-                            onClick={() => toggleRow(t.id)}
-                          >
-                            {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                          </Button>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="text-[10px] font-normal">
-                            {GROUP_LABELS[t.category] ?? t.category}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="font-medium text-sm">
-                          {t.ui_label}
-                          {t.field_label && t.field_label !== t.ui_label && (
-                            <span className="block text-[10px] text-muted-foreground">{t.field_label}</span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="secondary" className="font-mono text-[10px]">
-                            {t.field_public_id}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <code className="text-[11px] text-foreground/80 break-all">
-                            {placeholder}
-                          </code>
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground">
-                          {t.data_type ? (DATA_TYPE_LABEL[t.data_type] ?? t.data_type) : "—"}
-                        </TableCell>
-                        <TableCell className="text-center">
-                          {t.is_required ? (
-                            <Badge variant="outline" className="text-[10px] border-amber-400/40 text-amber-600">да</Badge>
-                          ) : <span className="text-xs text-muted-foreground">—</span>}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            size="icon" variant="ghost" className="h-7 w-7"
-                            onClick={() => placeholder && copyPlaceholder(t.field_public_id!)}
-                            title={`Скопировать ${placeholder}`}
-                          >
-                            <Copy className="h-3.5 w-3.5" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                      {(isOpen || showTechnical) && (
-                        <TableRow key={`${t.id}-detail`} className={cn("bg-muted/20", !isOpen && !showTechnical && "hidden")}>
-                          <TableCell></TableCell>
-                          <TableCell colSpan={7} className="py-2">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-[11px] font-mono text-muted-foreground">
-                              {t.description && (
-                                <div className="md:col-span-2 font-sans text-xs text-foreground/80 mb-1">
-                                  {t.description}
-                                </div>
-                              )}
-                              <div>field_public_id: <span className="text-foreground/80">{t.field_public_id ?? "—"}</span></div>
-                              <div>field_id: <span className="text-foreground/80">{t.field_id ?? "—"}</span></div>
-                              <div>category: <span className="text-foreground/80">{t.category ?? "—"}</span></div>
-                              <div>source_type: <span className="text-foreground/80">{t.source_type ?? "—"}</span></div>
-                              <div className="md:col-span-2 text-muted-foreground/70">
-                                token_key (legacy, только для поиска):{" "}
-                                <span className="text-foreground/60">{t.token_key}</span>
-                              </div>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      )}
-                    </Fragment>
-                  );
-                })
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">Плейсхолдеры для Word</h2>
+            <p className="text-sm text-muted-foreground">
+              Формат:&nbsp;
+              <code className="text-foreground">{`{{field:FLD-XXXXXX}}`}</code>.
+              Всего: <span className="font-medium text-foreground">{rows.length}</span>,
+              показано: <span className="font-medium text-foreground">{filtered.length}</span>.
+              {skippedNoField > 0 && (
+                <span className="ml-2 inline-flex items-center gap-1 text-amber-600">
+                  <AlertTriangle className="h-3.5 w-3.5" /> скрыто без field_id: {skippedNoField}
+                </span>
               )}
-            </TableBody>
-          </Table>
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Label htmlFor="tech-toggle" className="text-xs text-muted-foreground">
+              Технические данные
+            </Label>
+            <Switch id="tech-toggle" checked={showTechnical} onCheckedChange={setShowTechnical} />
+          </div>
         </div>
+
+        <div className="grid gap-2 sm:grid-cols-12">
+          <div className="relative sm:col-span-5">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Поиск по названию, FLD-ID, категории, token_key…"
+              className="pl-9"
+            />
+          </div>
+          <div className="sm:col-span-3">
+            <Select value={groupFilter} onValueChange={setGroupFilter}>
+              <SelectTrigger><SelectValue placeholder="Группа" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Все группы</SelectItem>
+                {groupOptions.map(g => (
+                  <SelectItem key={g} value={g}>{GROUP_LABELS[g] ?? g}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="sm:col-span-3">
+            <Select value={typeFilter} onValueChange={setTypeFilter}>
+              <SelectTrigger><SelectValue placeholder="Тип" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Все типы</SelectItem>
+                {typeOptions.map(t => (
+                  <SelectItem key={t} value={t}>{DATA_TYPE_LABEL[t] ?? t}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="sm:col-span-1 flex items-center justify-end gap-2">
+            <Switch id="req-toggle" checked={onlyRequired} onCheckedChange={setOnlyRequired} />
+            <Label htmlFor="req-toggle" className="text-xs text-muted-foreground whitespace-nowrap">обяз.</Label>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="flex justify-center py-12">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <div className="border rounded-lg overflow-hidden">
+            <div className="max-h-[70vh] overflow-y-auto">
+              <Table>
+                <TableHeader className="sticky top-0 bg-background z-10 shadow-[0_1px_0_0_hsl(var(--border))]">
+                  <TableRow>
+                    <TableHead className="w-8"></TableHead>
+                    <TableHead className="w-[120px]">Группа</TableHead>
+                    <TableHead className="min-w-[180px]">Название</TableHead>
+                    <TableHead className="w-[110px]">FLD-ID</TableHead>
+                    <TableHead className="w-[90px]">Тип</TableHead>
+                    <TableHead className="w-[280px]">Настройки</TableHead>
+                    <TableHead className="min-w-[260px]">Плейсхолдер</TableHead>
+                    <TableHead className="w-[90px] text-right">Действия</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filtered.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-8">
+                        Ничего не найдено
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    filtered.map(t => {
+                      const isOpen = expanded.has(t.id);
+                      const settings = rowSettings.get(t.id) ?? { format: null, caseModifier: null };
+                      const dirty = !isDefault(rowSettings.get(t.id));
+                      const placeholder = buildFieldPlaceholder(
+                        t.field_public_id!,
+                        settings.format,
+                        settings.caseModifier,
+                      );
+                      const kind = classifyDataType(t.field_data_type ?? t.data_type);
+
+                      return (
+                        <Fragment key={t.id}>
+                          <TableRow className="hover:bg-muted/40 align-top">
+                            <TableCell className="p-1">
+                              <Button
+                                size="icon" variant="ghost" className="h-6 w-6"
+                                onClick={() => toggleRow(t.id)}
+                              >
+                                {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                              </Button>
+                            </TableCell>
+                            <TableCell className="py-2">
+                              <Badge variant="outline" className="text-[10px] font-normal">
+                                {GROUP_LABELS[t.category] ?? t.category}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="font-medium text-sm py-2">
+                              {t.ui_label}
+                              {t.field_label && t.field_label !== t.ui_label && (
+                                <span className="block text-[10px] text-muted-foreground">{t.field_label}</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="py-2">
+                              <Badge variant="secondary" className="font-mono text-[10px]">
+                                {t.field_public_id}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground py-2">
+                              {(() => {
+                                const dt = t.field_data_type ?? t.data_type;
+                                return dt ? (DATA_TYPE_LABEL[dt] ?? dt) : "—";
+                              })()}
+                            </TableCell>
+                            <TableCell className="py-2">
+                              <RowSettingsCell
+                                kind={kind}
+                                settings={settings}
+                                onChange={(patch) => updateRowSettings(t.id, patch)}
+                              />
+                            </TableCell>
+                            <TableCell className="py-2">
+                              <code className="text-[11px] text-foreground/90 break-all font-mono">
+                                {placeholder}
+                              </code>
+                            </TableCell>
+                            <TableCell className="text-right py-2">
+                              <div className="flex justify-end gap-0.5">
+                                {dirty && (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        size="icon" variant="ghost" className="h-7 w-7"
+                                        onClick={() => resetRow(t.id)}
+                                      >
+                                        <RotateCcw className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Сбросить настройки</TooltipContent>
+                                  </Tooltip>
+                                )}
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      size="icon" variant="ghost" className="h-7 w-7"
+                                      onClick={() => copyPlaceholder(placeholder)}
+                                    >
+                                      <Copy className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Копировать плейсхолдер</TooltipContent>
+                                </Tooltip>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                          {(isOpen || showTechnical) && (
+                            <TableRow key={`${t.id}-detail`} className={cn("bg-muted/20", !isOpen && !showTechnical && "hidden")}>
+                              <TableCell></TableCell>
+                              <TableCell colSpan={7} className="py-2">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-[11px] font-mono text-muted-foreground">
+                                  {t.description && (
+                                    <div className="md:col-span-2 font-sans text-xs text-foreground/80 mb-1">
+                                      {t.description}
+                                    </div>
+                                  )}
+                                  <div>field_public_id: <span className="text-foreground/80">{t.field_public_id ?? "—"}</span></div>
+                                  <div>field_id: <span className="text-foreground/80">{t.field_id ?? "—"}</span></div>
+                                  <div>category: <span className="text-foreground/80">{t.category ?? "—"}</span></div>
+                                  <div>source_type: <span className="text-foreground/80">{t.source_type ?? "—"}</span></div>
+                                  <div className="md:col-span-2 text-muted-foreground/70">
+                                    token_key (legacy, только для поиска):{" "}
+                                    <span className="text-foreground/60">{t.token_key}</span>
+                                  </div>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </Fragment>
+                      );
+                    })
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        )}
+      </div>
+    </TooltipProvider>
+  );
+}
+
+/** Inline настройки формата/падежа для одной строки. */
+function RowSettingsCell({
+  kind,
+  settings,
+  onChange,
+}: {
+  kind: ReturnType<typeof classifyDataType>;
+  settings: RowSettings;
+  onChange: (patch: Partial<RowSettings>) => void;
+}) {
+  // Для прочих типов модификаторы недоступны.
+  if (kind === "other") {
+    return <span className="text-[10px] text-muted-foreground italic">Без модификаторов</span>;
+  }
+
+  const showFormatToggle = kind === "numeric" || kind === "boolean";
+  // Падеж: text — всегда; numeric — только при words; boolean — никогда.
+  const caseEnabled =
+    kind === "text" || (kind === "numeric" && settings.format === "words");
+
+  // Значение для format toggle
+  const formatValue =
+    kind === "numeric"
+      ? settings.format === "words" ? "words" : "asis"
+      : kind === "boolean"
+        ? settings.format === "text" ? "text" : "asis"
+        : "asis";
+
+  const handleFormatChange = (val: string) => {
+    if (!val) return; // ToggleGroup может вернуть "" при дабл-клике
+    if (kind === "numeric") {
+      const fmt: FieldFormat | null = val === "words" ? "words" : null;
+      // Если уходим с words — сбрасываем падеж
+      onChange({
+        format: fmt,
+        ...(fmt === null ? { caseModifier: null } : {}),
+      });
+    } else if (kind === "boolean") {
+      const fmt: FieldFormat | null = val === "text" ? "text" : null;
+      onChange({ format: fmt });
+    }
+  };
+
+  const handleCaseChange = (val: string) => {
+    const next: FieldCase | null = val === "none" ? null : (val as FieldCase);
+    onChange({ caseModifier: next });
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {showFormatToggle && (
+        <ToggleGroup
+          type="single"
+          size="sm"
+          value={formatValue}
+          onValueChange={handleFormatChange}
+          className="h-7"
+        >
+          <ToggleGroupItem value="asis" className="h-7 px-2 text-[10px]">
+            Обычный
+          </ToggleGroupItem>
+          {kind === "numeric" && (
+            <ToggleGroupItem value="words" className="h-7 px-2 text-[10px]">
+              Прописью
+            </ToggleGroupItem>
+          )}
+          {kind === "boolean" && (
+            <ToggleGroupItem value="text" className="h-7 px-2 text-[10px]">
+              Текстом
+            </ToggleGroupItem>
+          )}
+        </ToggleGroup>
+      )}
+
+      {(kind === "text" || kind === "numeric") && (
+        caseEnabled ? (
+          <Select
+            value={settings.caseModifier ?? "none"}
+            onValueChange={handleCaseChange}
+          >
+            <SelectTrigger className="h-7 w-[140px] text-[10px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {CASE_OPTIONS.map(opt => (
+                <SelectItem key={opt.value} value={opt.value} className="text-xs">
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="text-[10px] text-muted-foreground italic cursor-help">
+                Падеж недоступен
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              Падеж доступен только для значения «прописью»
+            </TooltipContent>
+          </Tooltip>
+        )
+      )}
+
+      {kind === "boolean" && (
+        <span className="text-[10px] text-muted-foreground italic">Падеж недоступен</span>
       )}
     </div>
   );

@@ -1,246 +1,148 @@
-## Статус Sprint 11
+&nbsp;
 
-- C5-C backend smoke: GREEN
-- C5-D UI DOCX markup: PATCH applied (2026-05-08) — picker scroll fixed, chip ×, download DOCX, disabled-reasons, FieldPickerPopover, table-cell wrap. Pending пользовательская QA на реальном шаблоне (создание новой версии + activate).
-- Backlog: `.lovable/backlog/document_generation_full_docx_editor.md` — настоящий Word-редактор (OnlyOffice/Collabora), отдельный future sprint.
+Да, согласен, с учетом правок:
 
----
+1. **Каталог плейсхолдеров сделать главным рабочим сценарием**
+  - Основной путь: пользователь редактирует DOCX в Word → копирует нужный {{field:FLD-...}} из каталога → вставляет в Word → загружает готовый DOCX в систему.
+  - Вверху каталога добавить явный баннер:
+2. **В таблице плейсхолдеров сделать inline-настройки прямо в строке**
+  - Не открывать отдельное окно/wizard для настройки.
+  - В каждой строке:
+    - формат: Обычный / Прописью / Текстом;
+    - падеж: Без падежа / Именительный / Родительный / Дательный / Винительный / Творительный / Предложный;
+    - готовый placeholder;
+    - кнопка Копировать;
+    - кнопка Сбросить, только если настройки строки отличаются от дефолта.
+3. **Правила формирования placeholder**
+  - Без настроек:
+  - Только падеж:
+  - Только прописью:
+  - Прописью + падеж:
+  - Boolean текстом:
+4. **Важная UX-правка по падежу**
+  - Без падежа = вообще не добавлять case.
+  - Если выбран Именительный, тогда добавлять:
+  - То есть Именительный и Без падежа — разные состояния.
+5. **Кнопка копирования**
+  - Копирует именно текущий placeholder из строки с учетом выбранных настроек.
+  - Использовать navigator.clipboard.writeText(...).
+  - Добавить fallback через временный textarea, если Clipboard API недоступен.
+  - Toast строго на русском:
+6. **Поиск**
+  - Фильтровать по:
+    - названию поля;
+    - FLD-ID;
+    - категории;
+    - token_key;
+    - описанию, если есть.
+  - Поиск должен работать без сброса настроек уже изменённых строк.
+7. **Состояние строк**
+  - Per-row state хранить только для изменённых строк.
+  - Если нажали Сбросить, удалять запись строки из state и возвращать дефолтный placeholder.
+  - Не сохранять эти настройки в backend — это временная UI-настройка для копирования.
+8. **Типы полей**
+  - Для string/text/email/phone: доступен только падеж.
+  - Для number/money/date/datetime: доступен Обычный / Прописью; падеж показывать только если выбран Прописью.
+  - Для boolean: доступен Обычный / Текстом; падеж недоступен.
+  - Для прочих типов: показывать Без модификаторов.
+9. **Старую разметку по DOCX понизить**
+  - Кнопку переименовать:
+  - Рядом подпись:
+  - Сам TemplateMarkupDialog пока не удалять.
+10. **Proof / QA добавить**
 
-## да, согласен, с учетом правок:
+- Обновить proof по C5-E:
+  - каталог placeholder стал основным способом работы;
+  - DOCX редактируется в Word;
+  - placeholder копируется из таблицы;
+  - backend генерации не изменён;
+  - формат {{field:FLD-...}} сохранён.
+- QA:
+  - скопировать обычный placeholder;
+  - скопировать placeholder с падежом;
+  - скопировать format=words;
+  - скопировать format=words + case;
+  - скопировать format=text для boolean;
+  - вставить в Word;
+  - загрузить DOCX;
+  - проверить, что валидатор принимает шаблон;
+  - сгенерировать документ и проверить, что таблицы/формат Word не ломаются.
 
-1. **Добавить подсветку заменяемых мест прямо в документе**
-  - Legacy `{{ld-…}}` / старые плейсхолдеры — жёлтая подсветка.
-  - Уже выбранные replacement/chip — зелёный/голубой chip.
-  - Ошибочные/неоднозначные replacement — красная/оранжевая подсветка.
-  - Подсветка не должна ломать таблицы и переносы.
-2. **Добавить валидацию прямо в документе**
-  - Если replacement без FLD — показывать красную подсказку рядом/chip.
-  - Если несколько одинаковых вхождений и не выбран occurrence — показывать предупреждение.
-  - Если legacy placeholder не заменён — подсвечивать как «требует разметки».
-  - Apply disabled должен иметь видимую причину на русском.
-3. **Добавить diff перед Apply**
-  - Перед применением показывать modal:
-    - что будет заменено;
-    - какой старый текст;
-    - на какое FLD-поле;
-    - format/case;
-    - occurrence index, если есть.
-  - Кнопки:
-    - «Отмена»
-    - «Создать версию»
-    - «Создать и активировать»
-  - Без подтверждения в modal apply не выполнять.
-4. **Историю замен не делать отдельной большой функцией сейчас**
-  - Пока достаточно:
-    - текущий Sheet «Замены»;
-    - `markup_draft`;
-    - audit после apply.
-  - Полную историю действий внутри редактора вынести в backlog, если понадобится.
-5. **Кнопку “Скачать исходный DOCX” сделать обязательно**
-  - Это критично, потому что правка текста/таблиц/форматирования выполняется в Word, а не в разметчике.
-6. **Picker заменить на обычный controlled list без cmdk**
-  - Если скролл снова ломается, полностью убрать `Command/CommandList`.
-  - Использовать простой `input + filtered array + ScrollArea`.
-  - Главный критерий: вертикальный скролл работает всегда.
+Backend, edge-функции, формат placeholder и БД не менять.
 
-Готовый текст для Lovable:
+## План: C5-E — Каталог FLD-плейсхолдеров для копирования в Word
+
+### Контекст (что уже есть, не трогаем)
+
+- `src/components/ai-documents/PlaceholdersCatalogTab.tsx` — рабочий каталог FLD, уже с поиском, фильтрами по группе/типу/обязательности, технической раскрывашкой и кнопкой «Copy». Подключён вкладкой в `src/components/ai-chat/AiPageContent.tsx`.
+- `TemplateMarkupDialog` (C5-D, mammoth/HTML-разметчик) — открывается из `StrictDocumentTemplatesManager.tsx` (line 685). Backend/strict-validator/`canonical-template-apply-markup` остаются нетронутыми.
+- Контракт placeholder уже задокументирован в memory `architecture/documents/field-id-first-canon` и реализован в `FieldFormatPicker` + `extensions/FieldChipNode` (`buildFieldPlaceholder` уже существует).
+
+### Цель
+
+Сделать таблицу каталога рабочим инструментом «найти → настроить формат/падеж прямо в строке → скопировать → вставить в Word», без отдельных модалок-визардов. Старый DOCX-разметчик (C5-D) остаётся, но прячется за вторичную кнопку «Расширенная разметка (legacy)».
+
+### Объём работ (frontend-only, без миграций и edge-функций)
+
+**1. `PlaceholdersCatalogTab.tsx` — inline-настройки в строке таблицы**
+
+- Хранить per-row state `Map<row.id, { format: 'words'|'text'|null, caseModifier: FieldCase|null }>` (по умолчанию пусто).
+- Вычислять `placeholderText` из `field_public_id` + текущих per-row настроек через уже существующий `buildFieldPlaceholder` (импорт из `extensions/FieldChipNode`). Никаких новых билдеров.
+- Применять правила доступности к контролам в строке (на основе `field_data_type`, классификация через уже существующий `classifyDataType` из `FieldFormatPicker.tsx`):
+  - `text/string/email/phone` → доступен dropdown «Падеж».
+  - `number/money/date/datetime` → toggle «Обычный / Прописью»; при «Прописью» появляется dropdown «Падеж».
+  - `boolean` → toggle «Обычный / Текстом»; падеж недоступен.
+  - `enum/json/uuid/прочее` → контролов нет, видна короткая русская подсказка «Без модификаторов».
+- В колонке «Плейсхолдер» рендерим `placeholderText` живьём, он мгновенно обновляется при изменении формата/падежа.
+- Кнопка «Copy» в строке копирует именно текущий `placeholderText` (с учётом per-row настроек). Toast: `Плейсхолдер скопирован`.
+- Появляется кнопка «Сбросить» в строке только если в per-row state есть отличия от дефолта.
+- Поиск уже фильтрует по `field_public_id / token_key / ui_label / description / category` — оставляем как есть (соответствует требованиям, включая `token_key`).
+
+**2. Реструктуризация колонок таблицы**
 
 ```text
-Да, согласен с планом, с обязательными правками:
-
-1. Добавить подсветку заменяемых мест прямо в документе:
-- legacy-плейсхолдеры `{{ld-…}}`, `{{document.…}}`, `{{cf.…}}` — жёлтая подсветка;
-- принятые replacement/chip — зелёный/голубой chip;
-- replacement с ошибкой/неоднозначным occurrence — красная/оранжевая подсветка;
-- подсветка не должна ломать таблицы, переносы и структуру DOCX-preview.
-
-2. Добавить inline-валидацию прямо в документе:
-- replacement без выбранного FLD → красная подсказка;
-- несколько одинаковых вхождений без occurrence_index → предупреждение;
-- незаменённый legacy placeholder → статус «требует разметки»;
-- если Apply disabled — рядом должна быть конкретная причина на русском языке.
-
-3. Добавить modal diff перед Apply:
-Перед вызовом `canonical-template-apply-markup` показать подтверждение:
-- старый текст;
-- выбранное FLD-поле;
-- человекочитаемое название поля;
-- format/case;
-- occurrence_index, если есть;
-- количество замен.
-Кнопки:
-- «Отмена»;
-- «Создать версию»;
-- «Создать и активировать».
-Без подтверждения в modal apply не выполнять.
-
-4. Историю замен как отдельную большую функцию сейчас не делать.
-Пока достаточно:
-- текущего Sheet «Замены»;
-- autosave в `markup_draft`;
-- audit после apply.
-Полную историю действий внутри редактора вынести в backlog.
-
-5. Кнопку «Скачать исходный DOCX» сделать обязательно.
-Это основной путь для изменения текста, таблиц, отступов и форматирования в Word.
-
-6. Picker полей заменить на стабильный обычный список без `Command/CommandList`, если cmdk продолжает ломать скролл.
-Использовать:
-- controlled input;
-- filtered array;
-- ScrollArea / div с `overflow-y-auto`;
-- фиксированный header;
-- фиксированный search input;
-- список с нормальным вертикальным скроллом.
-Главный критерий: скролл работает всегда, header/search не перекрываются.
-
-7. Все пользовательские строки — только на русском.
-Английские слова допустимы только в технических идентификаторах `FLD-...` и `{{field:...}}`.
-
-После реализации обязательно обновить proof:
-- picker scroll fixed;
-- inline validation работает;
-- diff modal перед apply работает;
-- chip delete работает;
-- download original DOCX работает;
-- apply создаёт новую версию;
-- apply+activate активирует только valid-версию;
-- все строки UI на русском.
-
-План: C5-D PATCH — рабочий режим разметки DOCX
+| ▸ | Группа | Название | FLD-ID | Тип | Настройки | Плейсхолдер | Копировать |
 ```
 
-### Принципиальная позиция
+- «Настройки»: компактные toggle-группа (Обычный/Прописью/Текстом — где применимо) + select «Падеж» (Без падежа / Именительный / Родительный / Дательный / Винительный / Творительный / Предложный).
+- Лейблы падежей берём из существующих констант `FIELD_CASE_LABEL` в `extensions/FieldChipNode.ts`.
+- Sticky header, вертикальный скролл контейнера таблицы (`max-h-[70vh] overflow-y-auto`).
 
-TemplateMarkupDialog перестаёт притворяться Word-редактором. Это **режим разметки шаблона**: заменить старые legacy-плейсхолдеры на FLD-поля, посмотреть результат, создать новую версию. Полноценное редактирование текста/таблиц/форматирования делается в Word, после чего загружается новая версия DOCX. Backend (`canonical-template-apply-markup`) не трогаем.
+**3. Инструктивный баннер сверху каталога**
 
----
+Краткий блок (Alert/Card) с текстом:
 
-### 1. Перепозиционирование UX (`TemplateMarkupDialog.tsx`)
+> Редактируйте шаблон в Microsoft Word. Найдите нужное поле, скопируйте плейсхолдер и вставьте его в DOCX. После загрузки система проверит корректность всех плейсхолдеров.
 
-- Переписать заголовок и `DialogDescription`:
-  > «Режим разметки шаблона. Здесь вы заменяете старые плейсхолдеры на FLD-поля. Чтобы изменить текст, таблицы или форматирование — отредактируйте DOCX в Word и загрузите новую версию.»
-- Убрать `contentEditable`/намёки на инструменты форматирования из preview (оставить read-only выделение текста + клик по chip/legacy).
-- Добавить в шапке кнопку **«Скачать исходный DOCX»** (`supabase.storage…createSignedUrl` или `download` → blob → save). Подпись на русском.
-- Лейблы в UI: «Замены», «Авторазметка», «Применить (создать версию)», «Применить и активировать», «Очистить черновик», «Закрыть» — проверить, что нигде не осталось `apply/activate/replacement/preview/draft autosaved/source of truth/manual/auto/changed`. Бейджи статусов используют `STATUS_LABEL_RU`, источник — `SOURCE_LABEL_RU`. Тосты — на русском (через `normalizeEdgeFunctionError` для ошибок edge).
+**4. `StrictDocumentTemplatesManager.tsx` — понизить C5-D до legacy**
 
-### 2. Новый компонент `FieldPickerPopover`
+- Кнопка, которая сейчас открывает `TemplateMarkupDialog`, переименовывается в «Расширенная разметка (legacy)» и стилизуется как `variant="outline"`/`size="sm"` с пониженной визуальной значимостью (рядом подпись «Не рекомендуется — редактируйте в Word»).
+- Сам компонент `TemplateMarkupDialog` и его flow не трогаем.
 
-Файл: `src/components/ai-documents/FieldPickerPopover.tsx`. Принимает `{ open, anchor, contextLabel, refsByCategory, onPick(fld, label, format, case) }`.
+### Что НЕ делаем
 
-Структура:
+- Не меняем backend (`canonical-template-apply-markup`, `canonical-template-validate`, `canonical-document-generate-strict`).
+- Не меняем формат placeholder и whitelist модификаторов.
+- Не трогаем `document_token_registry` / `fields_registry` / любые миграции.
+- Не вводим новых edge-функций.
+- Не используем TipTap/contentEditable как редактор DOCX.
 
-```
-PopoverContent  w-[460px] max-h-[min(560px,calc(100vh-120px))]
-                p-0 flex flex-col overflow-hidden z-[100]
-├── Header      shrink-0 px-3 py-2 border-b   ("Заменяем: …")
-├── Input       shrink-0 px-3 py-2 border-b   (controlled value)
-└── List wrap   flex-1 min-h-0 overflow-y-auto overscroll-contain
-    └── ScrollArea / простой filtered list по категориям
-```
+### Технические детали реализации
 
-- Не использовать `Command/CommandList` — фильтрация ручная (`useMemo` по query), категории/поля рендерятся как обычные кнопки → гарантированный скролл.
-- Категории на русском через `CATEGORY_LABELS_RU`.
-- TemplateMarkupDialog заменяет внутренний picker на `FieldPickerPopover` для всех 3 точек входа (selection / legacy / chip-edit).
-- `pickerContext` отдаёт человекочитаемый `contextLabel` («Заменяем: `{{ld-…}}`» / «Заменяем выделенное: …» / «Изменить поле для chip»).
+- Per-row state — единый `useState<Map<string, RowSettings>>` с иммутабельным обновлением (`new Map(prev).set(id, next)`).
+- `buildFieldPlaceholder(publicId, format, caseModifier)` уже возвращает строки вида `{{field:FLD-…|format=words|case=genitive}}` — переиспользуем без изменений. Локальный `buildPlaceholder(publicId)` в файле удаляем.
+- `classifyDataType` импортируется из `./FieldFormatPicker` (он уже экспортируется).
+- Для toggle используем `ToggleGroup` из `@/components/ui/toggle-group`, для select — существующий `Select`.
+- Disabled-состояния контролов сопровождаются tooltip с русским пояснением (например, «Падеж недоступен для числовых полей в обычном формате»).
 
-### 3. Логика chips и удаления
+### DoD
 
-- Chip получает кнопку-крестик (svg внутри `.docx-chip`, `data-chip-action="remove"`). Делегированный `onClick` в preview:
-  - клик по `[data-chip-action="remove"]` → удалить replacement из state, текст вернётся (renderInteractiveHtml перерисует исходный текст);
-  - клик по самому chip → открыть picker в режиме `chip` (поменять FLD/формат);
-  - клик по `mark.docx-legacy` → picker в режиме `legacy`.
-- Tooltip на chip: «Клик — изменить поле, ✕ — отменить замену».
-
-### 4. Длинные chips в таблицах ломают вёрстку
-
-В `src/index.css` для `.docx-chip` добавить:
-
-```
-display: inline-flex; max-width: 100%;
-flex-wrap: wrap; align-items: baseline;
-white-space: normal; word-break: break-word; overflow-wrap: anywhere;
-```
-
-Для preview-таблиц:
-
-```
-.docx-preview table { table-layout: fixed; width: 100%; }
-.docx-preview td, .docx-preview th { word-break: break-word; overflow-wrap: anywhere; vertical-align: top; }
-```
-
-Это решает ситуацию «Кнопка оплаты валюта FLD-…» вылезает за ячейку. Скрытый `data-fld` оставляем как `font-size: 0.7em` + `opacity: .6`, чтобы не доминировал.
-
-### 5. Кнопки Apply
-
-- `acceptedCount` уже фильтрует `field_public_id`. Добавить `ambiguousCount` (replacements с `occurrences_total > 1 && occurrence_index == null`) и `withoutFld` (accepted без FLD).
-- Кнопка **«Применить (создать версию)»** активна, если `acceptedCount > 0 && ambiguousCount === 0 && withoutFld === 0`.
-- Под кнопкой — строка с конкретной причиной, если `disabled`:
-  - «Нет принятых замен с выбранным полем»
-  - «Есть неоднозначные вхождения — укажите номер вхождения для N замен»
-  - «Есть замены без FLD-поля: N»
-- Перед `supabase.functions.invoke` логировать `console.debug("[markup-apply]", { template_version_id, total, accepted, ambiguous, payloadPreview })`.
-- В `apply` нормализация `manually_added → accepted` уже стоит, оставляем.
-- `applyAndActivate` (`activate: true`) — тот же payload, но при невалидной версии backend вернёт ошибки → показать через `normalizeEdgeFunctionError` и НЕ закрывать диалог. На успехе вызвать `onApplied()`.
-
-### 6. После Apply
-
-- Закрыть диалог (или оставить с обновлённым `templateVersion`), `onApplied()` дёргает родителя для рефетча списка версий.
-- Тост: «Создана новая версия v{n}. {активирована/требует ручной активации}».
-
-### 7. Backlog (отдельным файлом, не в этом sprint)
-
-`.lovable/backlog/document_generation_full_docx_editor.md`:
-
-- Цель: настоящий WYSIWYG DOCX-редактор внутри платформы.
-- Кандидаты: OnlyOffice Docs, Collabora Online, ONLYOFFICE Document Server self-hosted.
-- Архитектура: DOCX в Supabase Storage → editor iframe → callback save → новая версия.
-- Интеграция FLD-полей как кастомного плагина редактора.
-- Это отдельный sprint, не часть C5.
-
-### 8. Proof обновление
-
-`.lovable/proofs/document_generation_sprint11_c5d_docx_markup.md`:
-
-- Раздел **«C5-D — это режим разметки DOCX, не Word-редактор»**: явная формулировка ограничений.
-- Раздел **«Почему mammoth/HTML не подходит для редактирования DOCX»**: mammoth — однонаправленный конвертер DOCX→HTML, не сохраняет стили/нумерацию/секции/поля; обратной операции HTML→DOCX с сохранением исходной структуры нет; попытка эмулировать Word через `contentEditable` ломает таблицы и теряет форматирование при сохранении.
-- Список proof-пунктов:
-  - picker scroll работает (отдельный `FieldPickerPopover`, ручной список + ScrollArea);
-  - apply активен при наличии accepted replacement c FLD;
-  - apply создаёт новую версию (audit + edge);
-  - apply+activate активирует только при validation valid;
-  - chip × отменяет replacement;
-  - кнопка «Скачать исходный DOCX» работает;
-  - все строки UI на русском;
-  - chips в таблицах переносятся, не ломают ячейки.
-- Ссылка на backlog «Полноценный DOCX-редактор».
-- Обновить `.lovable/plan.md`: C5-D = IN PROGRESS → DONE после QA.
-
----
-
-### Файлы
-
-**Новые**
-
-- `src/components/ai-documents/FieldPickerPopover.tsx`
-- `.lovable/backlog/document_generation_full_docx_editor.md`
-
-**Изменяются**
-
-- `src/components/ai-documents/TemplateMarkupDialog.tsx` — заголовок, скачать DOCX, использование FieldPickerPopover, chip × delete, причины disabled, debug log.
-- `src/index.css` — `.docx-chip` flex-wrap/break-word, table-layout fixed для `.docx-preview`.
-- `.lovable/proofs/document_generation_sprint11_c5d_docx_markup.md` — новые разделы и DoD.
-- `.lovable/plan.md` — статус C5-D.
-
-### DoD (проверка после реализации)
-
-- `npm run build` зелёный.
-- `/admin/ai → Документы → Шаблоны → Разметка` открывается без ошибок.
-- Picker скроллится, header/input не перекрываются.
-- Клик по `{{ld-…}}` → picker → chip; chip × отменяет замену.
-- Длинный chip в ячейке таблицы переносится, не выходит за границы.
-- Apply disabled → видна конкретная причина на русском.
-- Apply создаёт новую версию; Apply+Activate активирует только valid.
-- Кнопка «Скачать исходный DOCX» сохраняет файл.
-- Все строки UI на русском, английских технических терминов нет (кроме `FLD-…` и `{{field:…}}`).
-- Proof и backlog обновлены.
+- В таблице каждое поле имеет inline-настройки формата/падежа согласно его типу.
+- Колонка «Плейсхолдер» обновляется мгновенно после изменения настроек.
+- Кнопка «Копировать» копирует текущий placeholder строки; виден toast «Плейсхолдер скопирован».
+- Появляется «Сбросить» только при изменённых настройках строки.
+- Сверху каталога виден баннер-инструкция «редактируйте в Word».
+- Старая кнопка разметки переименована в «Расширенная разметка (legacy)» и визуально вторична; сам диалог продолжает работать.
+- Все надписи на русском.
+- Backend и контракт placeholder не изменены.
+- Формат placeholder остаётся строго: `{{field:FLD-XXXXXX}}`, `|format=words`, `|format=text`, `|case=<падеж>`, и комбинация `|format=words|case=<падеж>`.
