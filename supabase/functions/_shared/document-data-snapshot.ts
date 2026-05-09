@@ -20,6 +20,7 @@
 // deno-lint-ignore-file no-explicit-any
 import { numberToWordsRu, normalizeCurrency } from './docx-helpers.ts';
 import { resolveExecutorForOrder, buildExecutorFieldValues, mergeExecutorIntoFields } from './executor-fields.ts';
+import { buildStandardFieldValues, mergeStandardIntoFields } from './standard-fields.ts';
 
 export const SNAPSHOT_VERSION = '1.1';
 
