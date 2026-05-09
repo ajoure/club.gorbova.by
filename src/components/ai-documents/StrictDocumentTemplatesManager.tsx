@@ -50,13 +50,28 @@ async function auditEvent(
 }
 
 // ───────────── strict validator ─────────────
+//
+// Канонический контракт (синхронно с backend `canonical-template-apply-markup`
+// и `canonical-document-generate-strict`):
+//   {{field:FLD-XXXXXX}}
+//   {{field:FLD-XXXXXX|format=words}}
+//   {{field:FLD-XXXXXX|format=text}}
+//   {{field:FLD-XXXXXX|case=<allowed>}}
+//   {{field:FLD-XXXXXX|format=words|case=<allowed>}}
 
-const STRICT_PLACEHOLDER_RE = /^field:FLD-\d+$/;
+const ALLOWED_CASES = new Set([
+  "nominative", "genitive", "dative", "accusative", "instrumental", "prepositional",
+]);
+const ALLOWED_FORMATS = new Set(["words", "text"]);
+const STRICT_FIELD_RE = /^field:(FLD-\d+)((?:\|[a-z_]+=[a-z_]+)*)$/;
+const FIELD_PREFIX_RE = /^field:FLD-\d+(\||$)/;
+export const STRICT_PLACEHOLDER_RE = STRICT_FIELD_RE;
 const ANY_PLACEHOLDER_RE = /\{\{([^}]+)\}\}/g;
 
 interface ValidationError {
   code:
     | "legacy_placeholder_format_detected"
+    | "unknown_modifier"
     | "unknown_field_public_id"
     | "no_placeholders_in_template"
     | "docx_unreadable";
@@ -64,20 +79,51 @@ interface ValidationError {
   message: string;
 }
 
+interface RecognizedToken {
+  placeholder: string;
+  field_public_id: string;
+  format: "words" | "text" | null;
+  case_modifier:
+    | "nominative" | "genitive" | "dative" | "accusative"
+    | "instrumental" | "prepositional" | null;
+}
+
 interface ValidationResult {
   status: "valid" | "invalid";
   errors: ValidationError[];
-  recognized: Array<{ placeholder: string; field_public_id: string }>;
+  recognized: RecognizedToken[];
   raw_tokens: string[];
 }
 
-function buildStrict(publicId: string) {
-  return `{{field:${publicId}}}`;
+function parseStrictInside(inside: string):
+  | { ok: true; field_public_id: string; format: RecognizedToken["format"]; case_modifier: RecognizedToken["case_modifier"] }
+  | { ok: false; error: "legacy_or_invalid" | "unknown_modifier" } {
+  const m = inside.match(STRICT_FIELD_RE);
+  if (!m) {
+    if (FIELD_PREFIX_RE.test(inside)) return { ok: false, error: "unknown_modifier" };
+    return { ok: false, error: "legacy_or_invalid" };
+  }
+  const fld = m[1];
+  let format: RecognizedToken["format"] = null;
+  let cs: RecognizedToken["case_modifier"] = null;
+  for (const part of (m[2] || "").split("|").filter(Boolean)) {
+    const [k, v] = part.split("=");
+    if (k === "format") {
+      if (!ALLOWED_FORMATS.has(v)) return { ok: false, error: "unknown_modifier" };
+      format = v as "words" | "text";
+    } else if (k === "case") {
+      if (!ALLOWED_CASES.has(v)) return { ok: false, error: "unknown_modifier" };
+      cs = v as RecognizedToken["case_modifier"];
+    } else {
+      return { ok: false, error: "unknown_modifier" };
+    }
+  }
+  return { ok: true, field_public_id: fld, format, case_modifier: cs };
 }
 
 async function strictValidate(rawText: string, knownPublicIds: Set<string>): Promise<ValidationResult> {
   const errors: ValidationError[] = [];
-  const recognized: Array<{ placeholder: string; field_public_id: string }> = [];
+  const recognized: RecognizedToken[] = [];
   const raw_tokens: string[] = [];
 
   const seen = new Set<string>();
@@ -87,7 +133,8 @@ async function strictValidate(rawText: string, knownPublicIds: Set<string>): Pro
     seen.add(inside);
     raw_tokens.push(inside);
 
-    if (!STRICT_PLACEHOLDER_RE.test(inside)) {
+    // Явный legacy-префикс — отдельная ошибка.
+    if (/^(document|executor|customer|deal|cf)\./i.test(inside)) {
       errors.push({
         code: "legacy_placeholder_format_detected",
         placeholder: `{{${inside}}}`,
@@ -98,17 +145,43 @@ async function strictValidate(rawText: string, knownPublicIds: Set<string>): Pro
       continue;
     }
 
-    const publicId = inside.slice("field:".length);
-    if (!knownPublicIds.has(publicId)) {
+    const parsed = parseStrictInside(inside);
+    if (parsed.ok === false) {
+      if (parsed.error === "unknown_modifier") {
+        errors.push({
+          code: "unknown_modifier",
+          placeholder: `{{${inside}}}`,
+          message:
+            `Неподдерживаемый модификатор в «{{${inside}}}». ` +
+            `Допустимы format=words, format=text и case=nominative|genitive|dative|accusative|instrumental|prepositional.`,
+        });
+      } else {
+        errors.push({
+          code: "legacy_placeholder_format_detected",
+          placeholder: `{{${inside}}}`,
+          message:
+            `Невалидный плейсхолдер «{{${inside}}}». Допустим только {{field:FLD-XXXXXX}} ` +
+            `с опциональными |format=...|case=...`,
+        });
+      }
+      continue;
+    }
+
+    if (!knownPublicIds.has(parsed.field_public_id)) {
       errors.push({
         code: "unknown_field_public_id",
         placeholder: `{{${inside}}}`,
-        message: `Field ID ${publicId} не найден в каталоге полей.`,
+        message: `Field ID ${parsed.field_public_id} не найден в каталоге полей.`,
       });
       continue;
     }
 
-    recognized.push({ placeholder: `{{${inside}}}`, field_public_id: publicId });
+    recognized.push({
+      placeholder: `{{${inside}}}`,
+      field_public_id: parsed.field_public_id,
+      format: parsed.format,
+      case_modifier: parsed.case_modifier,
+    });
   }
 
   if (raw_tokens.length === 0) {
@@ -347,7 +420,40 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
       const validation = await strictValidate(text, knownPublicIds);
       setPreviewValidation(validation);
 
-      // Persist validation snapshot (best-effort)
+      // Build token_manifest (canonical shape, used by DealDocumentsPanel + strict generator).
+      // Дедупликация по (field_public_id|format|case) — каждое уникальное сочетание = одна запись.
+      const fieldMetaMap = new Map<string, { label: string; data_type: string | null }>();
+      if (validation.recognized.length > 0) {
+        const ids = Array.from(new Set(validation.recognized.map((r) => r.field_public_id)));
+        const { data: regs } = await supabase
+          .from("fields_registry")
+          .select("public_id, label, data_type, is_required")
+          .in("public_id", ids)
+          .is("archived_at", null);
+        for (const r of (regs ?? []) as any[]) {
+          fieldMetaMap.set(r.public_id, { label: r.label ?? "", data_type: r.data_type ?? null });
+        }
+      }
+      const manifestKey = (t: { field_public_id: string; format: string | null; case_modifier: string | null }) =>
+        `${t.field_public_id}|${t.format ?? ""}|${t.case_modifier ?? ""}`;
+      const manifestMap = new Map<string, any>();
+      for (const t of validation.recognized) {
+        const k = manifestKey(t);
+        if (manifestMap.has(k)) continue;
+        const meta = fieldMetaMap.get(t.field_public_id);
+        manifestMap.set(k, {
+          field_public_id: t.field_public_id,
+          placeholder: t.placeholder,
+          format: t.format,
+          case_modifier: t.case_modifier,
+          label: meta?.label ?? null,
+          data_type: meta?.data_type ?? null,
+          required: false,
+        });
+      }
+      const tokenManifest = Array.from(manifestMap.values());
+
+      // Persist validation snapshot + manifest (best-effort)
       await supabase
         .from("document_template_versions")
         .update({
@@ -355,6 +461,7 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
           validation_errors: validation.errors as any,
           validation_checked_at: new Date().toISOString(),
           detected_tokens: tokens as any,
+          token_manifest: tokenManifest as any,
         })
         .eq("id", ver.id);
       auditEvent(
