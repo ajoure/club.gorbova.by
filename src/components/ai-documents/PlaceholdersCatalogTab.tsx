@@ -84,13 +84,13 @@ const DATA_TYPE_LABEL: Record<string, string> = {
 };
 
 const CASE_OPTIONS: { value: "none" | FieldCase; label: string }[] = [
-  { value: "none", label: "Без падежа" },
-  { value: "nominative", label: "Именительный" },
-  { value: "genitive", label: "Родительный" },
-  { value: "dative", label: "Дательный" },
-  { value: "accusative", label: "Винительный" },
-  { value: "instrumental", label: "Творительный" },
-  { value: "prepositional", label: "Предложный" },
+  { value: "none", label: "— без падежа" },
+  { value: "nominative", label: "И — кто? что?" },
+  { value: "genitive", label: "Р — кого? чего?" },
+  { value: "dative", label: "Д — кому? чему?" },
+  { value: "accusative", label: "В — кого? что?" },
+  { value: "instrumental", label: "Т — кем? чем?" },
+  { value: "prepositional", label: "П — о ком? о чём?" },
 ];
 
 function isDefault(s: RowSettings | undefined): boolean {
