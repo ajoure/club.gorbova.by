@@ -309,6 +309,10 @@ Deno.serve(async (req) => {
 
     const docFields = (((order.meta as any)?.document_data?.fields) || {}) as Record<string, any>;
 
+    // C5-G: канонические FLD для номера и даты документа
+    const FLD_DOC_NUMBER = 'FLD-000069';  // document.number
+    const FLD_DOC_DATE   = 'FLD-000070';  // document.date
+
     // Download DOCX from storage
     const dl = await supabase.storage.from(ver.storage_bucket).download(ver.storage_path);
     if (dl.error) return json({ error: `download_failed:${dl.error.message}` }, 500);
