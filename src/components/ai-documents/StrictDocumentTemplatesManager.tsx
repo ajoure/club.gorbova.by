@@ -404,6 +404,37 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
       setUploadFile(null);
       setUploadName("");
       await fetchAll();
+
+      // C5-I: автопроверка сразу после загрузки.
+      // Берём только что созданную версию по storage_path и запускаем strict validation,
+      // чтобы пользователь сразу увидел статус (valid / есть ошибки), а не «pending».
+      try {
+        const { data: freshVer } = await supabase
+          .from("document_template_versions")
+          .select("id, template_id, version_number, storage_bucket, storage_path, file_name, file_size_bytes, is_current, validation_status, validation_errors, validation_checked_at, detected_tokens, token_manifest, created_at")
+          .eq("template_id", tmplIns.id)
+          .eq("storage_path", storagePath)
+          .maybeSingle();
+        if (freshVer) {
+          const verRow: VersionRow = {
+            ...(freshVer as any),
+            validation_errors: (freshVer as any).validation_errors ?? [],
+            detected_tokens: (freshVer as any).detected_tokens ?? [],
+            token_manifest: (freshVer as any).token_manifest ?? [],
+          };
+          const tplRow: TemplateRow = {
+            id: tmplIns.id,
+            name: uploadName.trim(),
+            description: null,
+            template_status: "draft",
+            current_version_id: null,
+            created_at: new Date().toISOString(),
+          };
+          await openPreview(tplRow, verRow);
+        }
+      } catch (e) {
+        console.warn("[c5i] auto-validate after upload failed (non-blocking)", e);
+      }
     } catch (e: any) {
       console.error(e);
       toast.error(`Ошибка загрузки: ${e.message ?? e}`);
