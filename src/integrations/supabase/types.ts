@@ -3525,6 +3525,7 @@ export type Database = {
       }
       document_token_registry: {
         Row: {
+          archive_reason: string | null
           archived_at: string | null
           category: string
           created_at: string
@@ -3542,6 +3543,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          archive_reason?: string | null
           archived_at?: string | null
           category?: string
           created_at?: string
@@ -3559,6 +3561,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          archive_reason?: string | null
           archived_at?: string | null
           category?: string
           created_at?: string
