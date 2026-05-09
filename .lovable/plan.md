@@ -1,590 +1,316 @@
-Да, согласен, с учетом правок:
-
-Жёсткие правила исполнения для [Lovable.dev](http://Lovable.dev)
-
-&nbsp;
-
-1. Ничего не ломать и не трогать лишнее.
-
-2. Работать add-only / soft-archive: никаких DELETE.
-
-3. Сначала discovery + dry-run, затем execute.
-
-4. Не создавать новые FLD-ID, если можно переиспользовать существующий field_id.
-
-5. При конфликте alias/token_key — STOP и отчёт, без частичного применения.
-
-6. Все изменения должны быть доказуемы: SQL до/после, UI-факт, список файлов, diff-summary.
-
-7. Все тексты UI — только на русском языке.
-
-8. Backend генерации DOCX не менять, если для задачи достаточно каталога/алиасов.
-
-9. Email / Telegram / auto-generation / batch — не трогать.
-
-10. Финальный proof обязателен.
-
-&nbsp;
-
-Задача: доработать каталог плейсхолдеров и миграцию токенов для Word-шаблонов
-
-&nbsp;
-
-Цель:
-
-Сделать удобный и безопасный сценарий:
-
-пользователь редактирует DOCX в Microsoft Word → в каталоге находит нужное поле → выбирает формат/падеж → копирует готовый placeholder → вставляет в Word → загружает DOCX в систему → система валидирует и генерирует документ без поломки таблиц/форматирования.
-
-&nbsp;
-
----
-
-&nbsp;
-
-## 1. Миграция токенов / alias
-
-&nbsp;
-
-### 1.1 Discovery / dry-run
-
-&nbsp;
-
-Сначала выполнить read-only диагностику:
-
-&nbsp;
-
-1. Найти все существующие token/alias записи, связанные с legacy / deal / legal_details / customer / executor.
-
-2. Проверить таблицу alias-логики:
-
-   - template-level alias;
-
-   - version-level alias;
-
-   - global alias.
-
-3. Подтвердить правило приоритета:
-
-   template_version > template > global.
-
-4. Глобальный alias должен определяться как:
-
-   template_id IS NULL AND template_version_id IS NULL.
-
-5. Найти конфликты:
-
-   - один alias указывает на разные field_id;
-
-   - один token_key дублируется в одной области видимости;
-
-   - archived_at IS NULL конфликтует с новой записью;
-
-   - field_id отсутствует в fields_registry;
-
-   - public_id отсутствует или не формата FLD-XXXXXX.
-
-&nbsp;
-
-Если есть конфликт — STOP, миграцию не выполнять, выдать список проблем.
-
-&nbsp;
-
-### 1.2 Execute
-
-&nbsp;
-
-После чистого dry-run:
-
-&nbsp;
-
-1. Архивировать устаревшие token/alias записи мягко:
-
-   archived_at = now()
-
-   archived_by = current user / system actor
-
-   archive_reason = 'replaced_by_canonical_deal_token'
-
-   
-
-   Никаких DELETE.
-
-&nbsp;
-
-2. Для новых deal.* / customer.* / executor.* token использовать существующий field_id, если поле уже есть в fields_registry.
-
-&nbsp;
-
-   Важно:
-
-   - не плодить новые FLD-ID;
-
-   - если нужный field_id уже существует — переиспользовать его;
-
-   - новый FLD создавать только если доказано, что подходящего field_id нет.
-
-&nbsp;
-
-3. Для глобальных alias:
-
-   template_id = NULL
-
-   template_version_id = NULL
-
-&nbsp;
-
-4. Для template-specific alias:
-
-   template_id заполнен
-
-   template_version_id = NULL
-
-&nbsp;
-
-5. Для version-specific alias:
-
-   template_version_id заполнен
-
-&nbsp;
-
-6. Приоритет резолва:
-
-   template_version alias → template alias → global alias → canonical field.
-
-&nbsp;
-
-7. После миграции обновить audit_logs:
-
-   action: document_tokens.migration_applied
-
-   meta:
-
-   - archived_count
-
-   - inserted_count
-
-   - reused_field_ids_count
-
-   - created_field_ids_count
-
-   - conflicts_count
-
-   - dry_run_snapshot_id / case_id
-
-&nbsp;
-
----
-
-&nbsp;
-
-## 2. UI каталога плейсхолдеров
-
-&nbsp;
-
-Обновить каталог так, чтобы он стал основным инструментом подготовки Word-шаблонов.
-
-&nbsp;
-
-### 2.1 Таблица
-
-&nbsp;
-
-Колонки:
-
-&nbsp;
-
-| Группа | Название | FLD-ID | Тип | Настройки | Плейсхолдер | Действия |
-
-&nbsp;
-
-В строке:
-
-&nbsp;
-
-1. Название поля — человекочитаемое.
-
-2. FLD-ID — технический идентификатор.
-
-3. Тип — текст / число / сумма / дата / да-нет.
-
-4. Настройки:
-
-   - для text/string/email/phone:
-
-     dropdown «Падеж»;
-
-   - для number/money/date/datetime:
-
-     toggle «Обычный / Прописью»;
-
-     если выбрано «Прописью» — доступен dropdown «Падеж»;
-
-   - для boolean:
-
-     toggle «Обычный / Текстом»;
-
-   - для прочих типов:
-
-     текст «Без модификаторов».
-
-5. Плейсхолдер обновляется мгновенно:
-
-   {{field:FLD-XXXXXX}}
-
-   {{field:FLD-XXXXXX|case=genitive}}
-
-   {{field:FLD-XXXXXX|format=words}}
-
-   {{field:FLD-XXXXXX|format=words|case=genitive}}
-
-   {{field:FLD-XXXXXX|format=text}}
-
-&nbsp;
-
-6. Кнопка «Копировать» копирует текущий placeholder.
-
-7. Кнопка «Сбросить» появляется только если строка изменена.
-
-&nbsp;
-
-### 2.2 Подсказка групп
-
-&nbsp;
-
-Добавить рядом с группами краткие русские подсказки:
-
-&nbsp;
-
-- Исполнитель — данные нашей стороны / продавца / исполнителя.
-
-- Заказчик — данные клиента / покупателя / второй стороны.
-
-- Сделка — сумма, валюта, сроки, заказ, оплата.
-
-- Документ — дата, номер, служебные поля документа.
-
-- Продукт — название продукта / услуги.
-
-- Тариф — тариф, срок доступа, условия.
-
-- Кнопка оплаты — данные payment link / offer.
-
-- Системные поля — технические значения.
-
-- Пользовательские — использовать только если нет подходящего стандартного поля.
-
-&nbsp;
-
-Подсказки должны быть в UI, но не перегружать таблицу: tooltip или маленький info-icon.
-
-&nbsp;
-
----
-
-&nbsp;
-
-## 3. Проверка DOCX-рендера
-
-&nbsp;
-
-Не менять backend без необходимости.
-
-&nbsp;
-
-Проверить текущий путь:
-
-&nbsp;
-
-1. В Word вставить несколько placeholder:
-
-   - обычный текст;
-
-   - ФИО с падежом;
-
-   - сумма прописью;
-
-   - сумма прописью + падеж;
-
-   - дата прописью;
-
-   - boolean текстом.
-
-&nbsp;
-
-2. Загрузить DOCX как шаблон.
-
-&nbsp;
-
-3. Проверить validation:
-
-   - все {{field:FLD-...}} распознаны;
-
-   - legacy placeholder отсутствуют;
-
-   - unknown_modifier отсутствует;
-
-   - token_manifest корректный.
-
-&nbsp;
-
-4. Сгенерировать документ из сделки.
-
-&nbsp;
-
-5. Скачать результат и проверить:
-
-   - таблицы сохранены;
-
-   - стили Word не сломаны;
-
-   - placeholder заменены;
-
-   - остаточных {{...}} нет;
-
-   - значения с format/case отработали.
-
-&nbsp;
-
----
-
-&nbsp;
-
-## 4. Proof
-
-&nbsp;
-
-Создать/обновить proof:
-
-&nbsp;
-
-.lovable/proofs/document_generation_sprint11_c5e_placeholder_[catalog.md](http://catalog.md)
-
-&nbsp;
-
-В proof включить:
-
-&nbsp;
-
-1. Dry-run миграции:
-
-   - сколько token/alias найдено;
-
-   - сколько будет archived;
-
-   - сколько будет inserted/updated;
-
-   - сколько field_id переиспользуется;
-
-   - conflicts = 0.
-
-&nbsp;
-
-2. Execute:
-
-   - SQL before/after;
-
-   - archived_count;
-
-   - inserted_count;
-
-   - reused_field_ids_count;
-
-   - audit_logs action.
-
-&nbsp;
-
-3. UI:
-
-   - скрин/описание каталога;
-
-   - строка с обычным placeholder;
-
-   - строка с падежом;
-
-   - строка с format=words;
-
-   - строка с format=words + case;
-
-   - строка с format=text;
-
-   - кнопка «Копировать» работает;
-
-   - «Сбросить» появляется только при изменениях;
-
-   - подсказки групп есть.
-
-&nbsp;
-
-4. DOCX render:
-
-   - список использованных placeholder;
-
-   - validation_status;
-
-   - generated document id;
-
-   - grep/check: остаточных {{...}} нет;
-
-   - legacy generated_documents untouched;
-
-   - email/telegram/auto-generation/batch untouched.
-
-&nbsp;
-
-5. Финальный статус:
-
-   C5-E Placeholder Catalog for Word templates — DONE, pending user final Word visual check.
-
-&nbsp;
-
----
-
-&nbsp;
-
-## Что не делать
-
-&nbsp;
-
-1. Не внедрять ONLYOFFICE / Google Docs / Collabora сейчас.
-
-2. Не возвращать TipTap/contentEditable в DOCX-flow.
-
-3. Не менять canonical-document-generate-strict без отдельного blocker.
-
-4. Не менять формат placeholder.
-
-5. Не удалять старые записи физически.
-
-6. Не создавать новые FLD-ID без доказанной необходимости.
-
-Следующий шаг: пусть Lovable сначала отдаст **dry-run миграции**. Не запускать execute, пока не покажет список архивируемых и создаваемых token/alias.
-
-&nbsp;
-
-## План: канонизация групп плейсхолдеров «Документ» / «Продукт» / «Тариф» / «Кнопка»
-
-### Диагноз
-
-Сейчас в `document_token_registry` (всего 116 токенов) одни и те же бизнес-смыслы лежат в трёх местах:
-
-
-| Смысл                                                                | Дубль 1 (`document.*`)                    | Дубль 2 (`offer/tariff/product.*`)                                | Реальный источник в резолвере                                                |
-| -------------------------------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Название услуги                                                      | FLD-000186 `document.service_name`        | FLD-000176 `offer.name`, FLD-000170 `tariff.name`                 | `deal.service_name` ← `orders_v2.meta.document_data` ← offer/tariff defaults |
-| Описание услуги                                                      | FLD-000187 `document.service_description` | FLD-000174 `tariff.description`, FLD-000168 `product.description` | `deal.service_description`                                                   |
-| Цена/сумма                                                           | FLD-000190/191                            | FLD-000171 `tariff.price`, FLD-000178 `offer.amount`              | `deal.amount` (live `orders_v2.final_price`)                                 |
-| Валюта                                                               | FLD-000206 `document.deal_currency`       | FLD-000172 `tariff.currency`, FLD-000179 `offer.currency`         | `deal.currency`                                                              |
-| Сумма прописью / валюта major-minor                                  | FLD-000192/193/194                        | —                                                                 | `deal.amount_words`, `deal.currency_major/minor` (computed в snapshot)       |
-| Условия (срок оплаты, период услуг, предоплата %, скидка, рассрочка) | FLD-000195…205                            | —                                                                 | `deal.*` через `tariff_offers.meta.document_defaults`                        |
-
-
-То есть `document.*` сегодня — это «свалка», которая повторяет либо параметры кнопки тарифа, либо вычисляемые поля. Резолвер всё равно тянет значения через `deal.*`, и пользователь имеет 2-3 разных плейсхолдера для одного и того же значения.
-
-### Целевая модель (SOT по группам)
+## Да, согласен, с учетом правок:
 
 ```text
-Группа «Документ»  → только то, что рождается в момент генерации/подписания
-   document.number, document.date, document.date_short
-   document.contract_number, document.contract_date   (если договор отдельный)
-   document.act_number,      document.act_date        (если акт ≠ договору)
+Дополнить C5-G перед execute:
 
-Группа «Продукт»   → метаданные продукта   (product.id/name/code/description)
-Группа «Тариф»     → параметры тарифа      (tariff.id/name/price/currency/access_days/description)
-Группа «Кнопка»    → параметры оффера      (offer.id/name/type/amount/currency/reentry/is_subscription)
+1. UNIQUE по idempotency_key
+- Проверить, есть ли уже unique index на `ai_generated_documents.idempotency_key`.
+- Если нет — добавить partial unique index:
+  `unique (idempotency_key) where idempotency_key is not null`.
+- Это обязательно, иначе retry/двойной клик теоретически может создать два документа до reuse-проверки.
 
-Группа «Сделка»    → состояние конкретного заказа + computed
-   deal.amount, deal.amount_words, deal.currency, deal.currency_major/minor,
-   deal.service_name, deal.service_description, deal.unit, deal.quantity,
-   deal.unit_price, deal.payment_due_days, deal.execution_days,
-   deal.service_period_from/to, deal.months_count,
-   deal.prepayment_percent/amount, deal.discount_amount,
-   deal.first_payment, deal.bank_credit_price, deal.final_payment
+2. Тестовая дата для проверки `1005/1`
+- Не менять системное время.
+- Для тестов добавить внутренний параметр RPC:
+  `allocate_document_number(p_document_id uuid, p_now timestamptz default null)`.
+- В production используется `coalesce(p_now, now())`.
+- Вызов с `p_now` разрешить только service_role / тестовому контексту, не из UI.
+- Это нужно для proof `09.05 → 0905/N`, `10.05 → 1005/1`.
+
+3. Concurrency test
+- Не полагаться на `pg_background`, если расширение недоступно в Supabase.
+- Основной proof делать через edge/script: 10 параллельных вызовов RPC/генерации.
+- В SQL-proof оставить только проверку результата:
+  - count=10
+  - count(distinct document_number)=10
+  - min/max seq = 1/10
+  - last_seq=10
+  - no gaps через `generate_series`.
+
+4. Проверить имена колонок audit_logs
+- В проекте встречались `meta` и `metadata`.
+- Перед миграцией сделать discovery schema `audit_logs`.
+- Использовать фактическую колонку, чтобы миграция не упала.
+- Для system actor обязательно:
+  `actor_type='system'`,
+  `actor_user_id=NULL`,
+  `actor_label='document_numbering_v2'`.
+
+5. Immutability trigger
+- Trigger должен блокировать не только изменение, но и очистку:
+  `document_number -> NULL`, `document_date -> NULL`, `document_seq -> NULL`.
+- Первичное заполнение разрешено только если OLD.* IS NULL.
+- Override только через `SET LOCAL app.allow_document_number_override='1'`.
+
+6. Генерация документа
+- Порядок строго такой:
+  1) найти existing по `idempotency_key`;
+  2) если existing есть и номер есть → вернуть existing;
+  3) если existing есть без номера → вызвать `allocate_document_number(existing.id)`;
+  4) если existing нет → создать row `ai_generated_documents` с `idempotency_key`;
+  5) вызвать `allocate_document_number(new.id)`;
+  6) только после этого render DOCX.
+- Если render/upload после выдачи номера упал — номер не откатывать. Документ остаётся с ошибочным статусом/логом, номер считается занятым. Это нормально для неизменяемой нумерации.
+
+7. Single-number per document
+- В `source_trace` явно показать:
+  `document.number` / `FLD-000069` source=`system_generated`, value=`0905/1`.
+- Если `FLD-000069` встречается 3 раза — counter увеличивается только на 1.
+
+8. Каталог плейсхолдеров
+- После архивации legacy в основной таблице активными должны остаться только:
+  - `document.number`
+  - `document.date`
+- Legacy act/contract/invoice/date_short не показывать в обычном режиме.
+- В техническом режиме показать archived + alias badge.
+
+9. Поиск
+- Поиск `0905` должен искать prefix:
+  `document_number ILIKE '0905/%'` или `ILIKE '0905%'`.
+- Поиск `0905/1` — exact/normalized.
+- Не использовать `orders_v2.meta.document_numbers` как обязательный источник.
+
+10. Proof
+- В proof отдельно зафиксировать:
+  - `preview` не вызывает `allocate_document_number`;
+  - `validate` не вызывает `allocate_document_number`;
+  - `download original / draft / template markup` не вызывают `allocate_document_number`;
+  - только `generate` создаёт номер.
 ```
 
-«Услуга: …» больше не существует как самостоятельная группа. В акте `service_name` — это `offer.name` (либо переопределение через `tariff_offers.meta.document_defaults.service_name`, как уже работает snapshot).
+После этих уточнений план можно отдавать в execute.
 
-### Что и куда переносим
+&nbsp;
 
-Архивируем в `document_token_registry` (ставим `archived_at = now()`) и заводим запись в `document_token_aliases` со ссылкой на канонический токен:
+C5-G — Единая нумерация документов (финальная версия с дополнениями)
+
+Цель: единая модель `**document.number**` + `**document.date**`, формат строго `**DDMM/N**` (без точек/тире/дефисов), дневной счётчик по `Europe/Minsk`, сброс в 00:00 Минска. Номер выдаётся **один раз на документ**, сохраняется в `ai_generated_documents` навсегда и **immutable**. Совместимость со старой нумерацией не делаем — реальной эксплуатации не было.
+
+### Dry-run (фактические данные)
+
+- `ai_generated_documents`: 1 строка (тестовый документ от 2026-05-08), без `document_number`.
+- Шаблонов с legacy number/date FLDs (FLD-000071/182/183/184/185): 1 версия, `is_current=false`. Активных боевых — **0**.
+- Clean-slate безопасен. FLD-remap не нужен.
+
+---
+
+### 1. Канонические поля (уже существуют)
+
+- `document.number` — text, FLD-000069, label «Номер документа».
+- `document.date` — date, FLD-000070, label «Дата документа». Прописью — `|format=words` → `09 мая 2026 года`.
+
+### 2. Архивация legacy (idempotent, whitelist)
+
+`archived_at=now()`, `archive_reason='replaced_by_document_numbering_v2'`, только active:
+`document.act_number`, `document.act_date`, `document.contract_number`, `document.contract_date`, `document.date_short`.
+
+Token_key aliases (`document.act_number → document.number` и т.п.) — добавим в `document_token_aliases` для отображения в каталоге. Никакого FLD-remap в runtime.
+
+### 3. Таблица счётчиков
 
 ```text
-FLD-000186 document.service_name        →  alias → deal.service_name
-FLD-000187 document.service_description →  alias → deal.service_description
-FLD-000188 document.service_unit        →  alias → deal.unit
-FLD-000189 document.service_quantity    →  alias → deal.quantity
-FLD-000190 document.service_price       →  alias → deal.unit_price
-FLD-000191 document.service_amount      →  alias → deal.amount
-FLD-000192 document.amount_words        →  alias → deal.amount_words
-FLD-000193 document.currency_major      →  alias → deal.currency_major
-FLD-000194 document.currency_minor      →  alias → deal.currency_minor
-FLD-000195 document.payment_due_days    →  alias → deal.payment_due_days
-FLD-000196 document.execution_days      →  alias → deal.execution_days
-FLD-000197 document.service_period_from →  alias → deal.service_period_from
-FLD-000198 document.service_period_to   →  alias → deal.service_period_to
-FLD-000199 document.months_count        →  alias → deal.months_count
-FLD-000200 document.prepayment_percent  →  alias → deal.prepayment_percent
-FLD-000201 document.prepayment_amount   →  alias → deal.prepayment_amount
-FLD-000202 document.discount_amount     →  alias → deal.discount_amount
-FLD-000203 document.first_payment       →  alias → deal.first_payment
-FLD-000204 document.bank_credit_price   →  alias → deal.bank_credit_price
-FLD-000205 document.final_payment_amount→  alias → deal.final_payment
-FLD-000206 document.deal_currency       →  alias → deal.currency
-FLD-000207 document.usd_byn_rate        →  alias → deal.usd_byn_rate (создать в deal.*, если нет)
-FLD-000208…211 (если относятся к сделке) →  alias → соответствующий deal.*
+public.document_number_counters
+  id uuid pk default gen_random_uuid()
+  document_date date not null
+  document_timezone text not null default 'Europe/Minsk'
+  last_seq integer not null default 0
+  created_at timestamptz default now()
+  updated_at timestamptz default now()
+  unique (document_date, document_timezone)
 ```
 
-В группе **«Документ»** остаются (по подтверждённому решению):
+RLS: enabled, deny-all для anon/authenticated. Запись только через SECURITY DEFINER RPC.
+
+### 4. Поля в `ai_generated_documents`
+
+Новые столбцы:
+
+- `document_number text`
+- `document_date date`
+- `document_seq integer`
+- `document_timezone text default 'Europe/Minsk'`
+- `document_number_assigned_at timestamptz`
+
+Индексы:
+
+- `unique (document_number)`
+- `unique (document_timezone, document_date, document_seq)`
+- `index (context_type, context_id, document_number)`
+
+### 5. RPC `allocate_document_number(p_document_id uuid)` — concurrency-safe
+
+`SECURITY DEFINER`, returns `(document_number, document_date, document_seq, document_timezone)`. Одна транзакция:
+
+1. `SELECT ... FOR UPDATE` строки `ai_generated_documents WHERE id=p_document_id`. Если уже есть `document_number` → вернуть существующий (idempotent retry).
+2. `today := (now() AT TIME ZONE 'Europe/Minsk')::date`.
+3. Атомарный upsert:
+  ```sql
+   INSERT INTO document_number_counters(document_date, document_timezone, last_seq)
+   VALUES (today, 'Europe/Minsk', 1)
+   ON CONFLICT (document_date, document_timezone)
+   DO UPDATE SET last_seq = document_number_counters.last_seq + 1, updated_at = now()
+   RETURNING last_seq
+  ```
+4. `number := to_char(today, 'DDMM') || '/' || seq::text` (строго `DDMM/N`).
+5. UPDATE `ai_generated_documents` (заполнение нулевых полей; immutable trigger пропускает первое заполнение, см. §6).
+6. INSERT в `audit_logs`: `action='document_number.assigned'`, `actor_type='system'`, `actor_label='document_numbering_v2'`, meta={document_id, context_type, context_id, order_id, template_id, template_version_id, document_number, document_date, document_seq, timezone='Europe/Minsk'}.
+
+### 6. Immutability guard (DB-level)
+
+BEFORE UPDATE trigger на `ai_generated_documents`:
 
 ```text
-document.number, document.date, document.date_short          (FLD-000069/070/071)
-document.contract_number, document.contract_date             (FLD-000182/183)
-document.act_number,      document.act_date                  (FLD-000184/185)
-document.signature_*  (если уже есть — оставить, относится к подписанту/печати)
+IF OLD.document_number IS NOT NULL AND NEW.document_number IS DISTINCT FROM OLD.document_number THEN RAISE 'document_number_is_immutable';
+IF OLD.document_date   IS NOT NULL AND NEW.document_date   IS DISTINCT FROM OLD.document_date   THEN RAISE 'document_number_is_immutable';
+IF OLD.document_seq    IS NOT NULL AND NEW.document_seq    IS DISTINCT FROM OLD.document_seq    THEN RAISE 'document_number_is_immutable';
 ```
 
-Группы `product.*`, `tariff.*`, `offer.*` остаются без изменений — они уже корректны и являются SOT для коммерческих параметров.
+Bypass — только через отдельную SECURITY DEFINER RPC `admin_override_document_number(p_document_id, p_new_number, p_reason)`:
 
-### Что НЕ меняем
+- доступна только super_admin (в RPC проверка `has_role_v2`);
+- внутри устанавливает `SET LOCAL app.allow_document_number_override='1'`, trigger пропускает изменение, если эта setting='1';
+- обязательно пишет audit `document_number.override` с `actor_type='user'`, `actor_user_id=auth.uid()`, meta включая `old`, `new`, `reason`.
 
-- DOCX-формат плейсхолдеров `{{field:FLD-XXXXXX|format=…|case=…}}` — без изменений (контракт C4-B).
-- Резолвер `document-render.ts` уже умеет обрабатывать `document_token_aliases` (alias → canonical, см. строки 200-218): новые алиасы автоматически продолжат работать в уже залитых DOCX-шаблонах. Никакой поломки старых шаблонов не будет.
-- `document-data-snapshot.ts` и `tariff_offers.meta.document_defaults` — оставляем: это и есть машина, которая наполняет `deal.*`.
-- Edge functions `canonical-template-validate`, `canonical-document-generate-strict` — без правок.
+### 7. Точка вызова
 
-### Итоговый объём изменений
+Только `canonical-document-generate-strict` (mode=`generate`), **до** DOCX render. Никогда из preview/validate/draft/template-save/markup-save/source-download.
 
-```text
-1. Миграция данных (data-only, через insert tool):
-   - UPDATE document_token_registry SET archived_at = now() WHERE token_key IN (...22 шт.)
-   - INSERT INTO document_token_aliases (alias_token, canonical_token_key) VALUES …
-   - INSERT в document_token_registry недостающих deal.* токенов (deal.unit,
-     deal.quantity, deal.unit_price, deal.usd_byn_rate и пр.), привязанных к тем
-     же fields_registry FLD-ID (чтобы FLD-номера не плодились).
-2. UI:
-   - PlaceholdersCatalogTab.tsx: добавить колонку «Канон. токен» / бейдж
-     «Алиас → deal.*» у архивных строк; по умолчанию скрыты, открываются
-     тумблером «Технические данные» (он уже есть).
-   - В баннер добавить строку: «"Услуга", "Сумма прописью" и т.п. — берите
-     из группы "Сделка"; группы "Продукт/Тариф/Кнопка" — для метаданных».
-3. Документация:
-   - .lovable/proofs/document_generation_sprint11_c5f_placeholder_canonization.md
-   - mem://architecture/documents/placeholder-groups-sot — новая memory:
-     «Документ = только реквизиты документа; коммерческие значения — deal.*;
-      offer/tariff/product.* — SOT для метаданных».
+### 8. **Один номер на документ** (резерв на уровне факта генерации, не плейсхолдера)
+
+В `canonical-document-generate-strict` (mode=`generate`):
+
+```ts
+// 1. Idempotency: если документ с таким idempotency_key уже есть → reuse
+const existing = await findByIdempotencyKey(key);
+if (existing?.document_number) return existing;
+
+// 2. Создание/получение ai_generated_documents row
+const docId = existing?.id ?? await createDoc(...);
+
+// 3. ОДИН вызов allocate_document_number на документ
+const allocated = await rpc.allocate_document_number(docId);  // вне resolver
+
+// 4. Запись в snapshot ОДИН раз
+resolvedTokens['FLD-000069'] = { value: allocated.document_number, source: 'system_generated' };
+resolvedTokens['FLD-000070'] = { value: allocated.document_date,   source: 'system_generated' };
+
+// 5. Render — Docxtemplater подставит одно значение во все вхождения
 ```
 
-### DoD
+**Запрещено:**
 
-- В каталоге плейсхолдеров группа «Документ» содержит ≤ 8 токенов (только реквизиты).
-- Все 22 архивированных токена видны под тумблером «Технические данные» с пометкой `alias → deal.*`.
-- Существующие DOCX-шаблоны, использующие `{{field:FLD-000186}}`, продолжают рендериться (через alias).
-- Резолвер не выдаёт `unmapped_tokens` для legacy `document.service_*` плейсхолдеров.
-- Memory-файл создан, индекс обновлён.
-- Proof-файл с before/after выкладкой по 22 FLD создан.
+```ts
+// НЕЛЬЗЯ:
+resolvePlaceholder('document.number') { return rpc.allocate_document_number(); }
+```
 
-### Технические детали (для разработки)
+В `_shared/document-render.ts` — никаких вызовов RPC. Resolver только читает уже-заполненный snapshot. Если в DOCX `{{field:FLD-000069}}` встречается N раз — все N вхождений получают одно значение.
 
-- Таблица `document_token_aliases` уже существует (используется в `document-render.ts` lines 200-218: precedence version > template > global). Глобальный alias = `template_id IS NULL AND template_version_id IS NULL`.
-- Архивация делается мягко (`archived_at`), а не `DELETE` — это сохраняет аудит и позволяет откатиться.
-- Поскольку `field_id` (FLD-XXXXXX) у архивируемых токенов — те же, что в `fields_registry`, можно либо переиспользовать FLD-номер для нового `deal.*` токена (рекомендуется), либо завести новый. План — переиспользовать, чтобы не плодить FLD-IDs.
+Idempotency:
+
+- request содержит `idempotency_key` (per-click UUID из UI);
+- UI: button `disabled` на время mutation;
+- технический retry → reuse документа и его номера.
+
+### 9. Поиск сделок по номеру документа
+
+Расширить `useDealsSearch` / `search_deals` RPC:
+
+```sql
+OR EXISTS (
+  SELECT 1 FROM ai_generated_documents d
+  WHERE d.context_type IN ('order','deal')
+    AND d.context_id   = orders_v2.id
+    AND d.document_number = :q
+)
+OR EXISTS (
+  SELECT 1 FROM ai_generated_documents d
+  WHERE d.context_type IN ('order','deal')
+    AND d.context_id   = orders_v2.id
+    AND d.document_number ILIKE :q || '%'   -- частичный ввод '0905' → все за 09.05
+)
+```
+
+Запрос нормализуется (trim, без пробелов). В строке результата бейдж: `Документ № 0905/1`. SOT — только `ai_generated_documents.document_number`. `orders_v2.meta.document_numbers` как mirror/cache — опционально, не primary.
+
+### 10. UI
+
+`**PlaceholdersCatalogTab.tsx`:**
+
+- Группа «Документ» = ровно 2 active токена (data-driven).
+- Archived legacy — только под тогглом «Технические данные», бейдж «archived (replaced_by_document_numbering_v2)».
+
+`**DealDocumentsPanel**` (история документов сделки):
+
+- Колонки: `№ документа` (крупно), `Дата документа`, `Шаблон`, `Версия`, `Создан`, `Скачать`.
+- Если `document_number IS NULL` → показывать `—`.
+- Кнопка copy рядом с номером.
+- Сортировка `created_at DESC`.
+- После generate список инвалидируется и номер виден сразу.
+
+**Новая admin-страница `/admin/documents/numbering**` (`Нумерация документов`, RBAC: admin/super_admin):
+
+- Read-only таблица: `№ документа`, `Дата документа`, `seq`, `timezone`, `Шаблон`, `Версия`, `Сделка/заказ`, `Клиент`, `Кто/что создал`, `created_at`, `document_id`, кнопки «Открыть документ» / «Открыть сделку».
+- Фильтры: дата документа, номер документа, клиент, шаблон, сделка/order, диапазон дат, тоггл «только сегодняшние».
+- Никакого редактирования номеров из UI.
+
+### 11. Что НЕ трогается
+
+- Формат placeholder `{{field:FLD-XXXXXX}}`.
+- Формат номера — строго `DDMM/N`. Не возвращать act/invoice/contract отдельные номера. Не делать сквозную годовую нумерацию.
+- `fields_registry`, `document-data-snapshot.ts`, `tariff_offers.meta.document_defaults`.
+- Email/Telegram delivery, batch generation, auto-generation triggers.
+- Legacy `generated_documents` (Sprint 10).
+
+### 12. DoD (consolidated)
+
+1. Dry-run: 0 продакшн-шаблонов с legacy number/date FLD.
+2. Каталог группа «Документ» — 2 active токена.
+3. Legacy токены архивированы с правильным `archive_reason`.
+4. Первый generate 09.05 → `0905/1`; второй → `0905/2`; первый 10.05 → `1005/1`.
+5. Preview/validate **не** меняет `last_seq`.
+6. Idempotency: повтор generate с тем же `idempotency_key` → тот же номер.
+7. **Single-number per document:** в шаблоне 3× `{{field:FLD-000069}}` → все 3 вхождения = `0905/1`; counter +1.
+8. **Concurrency test:** 10 параллельных `allocate_document_number` за один день → строго `0905/1..0905/10`, без дублей и пропусков, `last_seq=10`, `unique(document_number)` не нарушается.
+9. **Immutability:** прямой UPDATE `document_number/date/seq` падает с `document_number_is_immutable`. RPC `admin_override_document_number` работает только для super_admin и пишет audit `document_number.override`.
+10. Поиск `0905/1` находит сделку; `0905` находит все документы за 09.05; обычный поиск (клиент/email/order_number) не сломан.
+11. `audit_logs.document_number.assigned` для каждого нового номера, system actor, со всеми meta.
+12. `DealDocumentsPanel`: после generate номер виден, копируется, скачивается, версия видна.
+13. Admin-страница `/admin/documents/numbering` доступна только admin/super_admin, read-only, фильтры работают.
+14. Email/Telegram/batch/auto-generation код не изменён.
+
+### 13. Proof
+
+`.lovable/proofs/document_generation_sprint11_c5g_document_numbering.md` — разделы:
+
+1. **Dry-run** — usage старой нумерации = 0.
+2. **Schema** — DDL counters + новые колонки + индексы + immutability trigger.
+3. **Sequential allocation** — `0905/1`, `0905/2`, синтетический сдвиг даты → `1005/1`.
+4. **Preview no-op** — counter не изменился после preview.
+5. **Idempotency** — повтор с тем же ключом → тот же номер.
+6. **Single-number per document** — 3× плейсхолдер → одно значение во всех вхождениях; counter +1.
+7. **Concurrent allocation test** — 10 параллельных вызовов (DO-block с `pg_background`/edge test script): результат `0905/1..0905/10`, нет дублей, `last_seq=10`.
+8. **Immutable number guard** — UPDATE падает; admin_override работает + audit.
+9. **Documents numbering audit UI** — список полей страницы, RBAC.
+10. **Deal documents panel** — скрин/HTML с номером в истории.
+11. **Search by document number** — `0905/1` → сделка, `0905` → список, обычный поиск работает.
+12. **Audit logs** — примеры `document_number.assigned` и `document_number.override`.
+13. **Untouched** — git-diff список изменённых файлов; email/TG/batch/auto-generate не тронуты.
+
+---
+
+### Технические детали (для разработчика)
+
+**Изменяемые файлы:**
+
+- `supabase/migrations/<ts>_c5g_document_numbering.sql` — counters + столбцы + индексы + immutability trigger + RPC `allocate_document_number` + RPC `admin_override_document_number` + RLS deny-all + архивация 5 токенов + token_key aliases.
+- `supabase/functions/canonical-document-generate-strict/index.ts` — single-call RPC до render, idempotency_key reuse.
+- `supabase/functions/_shared/document-render.ts` — read-only из snapshot, **никаких** RPC вызовов в resolver.
+- `src/components/ai-documents/PlaceholdersCatalogTab.tsx` — текстовка/бейджи (data-driven).
+- `src/components/ai-documents/DealDocumentsPanel.tsx` — колонка «№ документа», copy.
+- `src/hooks/useAiDocuments.ts` — типы новых полей.
+- `src/pages/admin/AdminDocumentsNumbering.tsx` (новый) + роут в admin.
+- `src/components/admin/AdminDocumentsNumberingTable.tsx` (новый).
+- Расширение поиска Deals (`useDealsSearch` или `search_deals` RPC).
+
+**Не изменяемые:** `fields_registry`, формат placeholder, email/TG/batch/auto-generate, legacy `generated_documents`.
