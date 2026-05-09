@@ -267,10 +267,26 @@ export async function snapshotOrderDocumentData(
     const { executor, source: execSource, executor_id: resolvedExecutorId } =
       await resolveExecutorForOrder(supabase, explicitExecutorId);
     const fields: Record<string, any> = {};
+    const nowIso = new Date().toISOString();
+
+    // Standard (non-executor) field values: customer.*, deal.*, order.*,
+    // system.*, product.*, tariff.*, offer.*, document.service_*.
+    const standardValues = buildStandardFieldValues({
+      order,
+      product: productRow,
+      tariff: tariffRow,
+      offer: offerRow,
+      customer: customerRow,
+      documentData,
+    });
+    const stdMerged = mergeStandardIntoFields(fields, standardValues, nowIso);
+    Object.assign(fields, stdMerged.fields);
+
+    // Executor.* (entity_type='executor') — never user-editable.
     let executorTrace: Record<string, string> | null = null;
     if (executor && execSource && resolvedExecutorId) {
       const values = buildExecutorFieldValues(executor);
-      const merged = mergeExecutorIntoFields(fields, values, execSource, resolvedExecutorId, new Date().toISOString());
+      const merged = mergeExecutorIntoFields(fields, values, execSource, resolvedExecutorId, nowIso);
       Object.assign(fields, merged.fields);
       executorTrace = merged.trace;
       (documentData as any).executor_id = resolvedExecutorId;
@@ -282,6 +298,14 @@ export async function snapshotOrderDocumentData(
       });
     }
     (documentData as any).fields = fields;
+    (documentData as any)._provenance = {
+      ...(documentData as any)._provenance,
+      customer_legal_details_id: customerRow?.id || null,
+      customer_legal_details_present: !!customerRow,
+      standard_fields_written: stdMerged.written,
+      standard_fields_skipped_manual: stdMerged.skipped_manual,
+    };
+
 
     const newMeta = { ...(order.meta || {}), document_data: documentData };
     const { error: upErr } = await supabase
