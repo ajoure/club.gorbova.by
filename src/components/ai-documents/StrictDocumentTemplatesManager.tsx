@@ -283,7 +283,7 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
         .order("created_at", { ascending: false }),
       supabase
         .from("document_template_versions")
-        .select("id, template_id, version_number, storage_bucket, storage_path, file_name, file_size_bytes, is_current, validation_status, validation_errors, validation_checked_at, detected_tokens, token_manifest, created_at")
+        .select("id, template_id, version_number, storage_bucket, storage_path, file_name, file_size_bytes, is_current, validation_status, validation_errors, validation_checked_at, markup_status, detected_tokens, token_manifest, created_at")
         .order("created_at", { ascending: false }),
       supabase
         .from("fields_registry")
