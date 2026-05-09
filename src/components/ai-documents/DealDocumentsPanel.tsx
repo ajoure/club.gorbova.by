@@ -27,10 +27,12 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Loader2, FileText, Download, Eye, Sparkles, RefreshCw, AlertCircle } from "lucide-react";
+import { Loader2, FileText, Download, Eye, Sparkles, RefreshCw, AlertCircle, FileType2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { useHasRoleV2 } from "@/hooks/useHasRoleV2";
 
 interface TemplateOption {
   id: string;
