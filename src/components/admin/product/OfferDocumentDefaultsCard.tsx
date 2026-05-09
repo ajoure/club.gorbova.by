@@ -122,6 +122,20 @@ export function OfferDocumentDefaultsCard({ value, onChange, offerAmount, offerC
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // PATCH HIDE-EXECUTOR: автопреселект default-исполнителя при первом
+  // появлении списка, ТОЛЬКО если значение ещё не выставлено. Ручной выбор
+  // пользователя никогда не перетирается.
+  const executorPreselectRef = useRef(false);
+  useEffect(() => {
+    if (executorPreselectRef.current) return;
+    if (executors.length === 0) return;
+    executorPreselectRef.current = true;
+    if (v.executor_id) return;
+    const def = executors.find((e) => e.is_default);
+    if (def) onChange({ ...v, executor_id: def.id });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [executors]);
+
   // PATCH DOC-OFFER-2: реакция на смену суммы кнопки.
   useEffect(() => {
     if (!initRef.current) return;
