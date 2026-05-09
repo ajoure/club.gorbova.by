@@ -245,6 +245,7 @@ interface VersionRow {
   validation_status: string | null;
   validation_errors: any[];
   validation_checked_at: string | null;
+  markup_status: string | null;
   detected_tokens: any[];
   token_manifest: any[];
   created_at: string;
