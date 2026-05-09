@@ -34,6 +34,29 @@ import { extractDocxPlaceholders } from "@/utils/extractDocxPlaceholders";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { TemplateMarkupDialog } from "./TemplateMarkupDialog";
+import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+
+// C5-I: понятные сообщения для ошибок activation backend
+function mapActivationError(raw: string | undefined | null, data?: any): string {
+  const code = (data?.error || raw || "").toString();
+  const s = code.toLowerCase();
+  if (s.includes("cannot_activate_invalid_version")) {
+    return "Шаблон содержит ошибки в плейсхолдерах. Откройте «Проверка и исправление плейсхолдеров» и исправьте их.";
+  }
+  if (s.includes("cannot_activate_unmarked_version")) {
+    return "Шаблон не размечен. Откройте «Проверка и исправление плейсхолдеров».";
+  }
+  if (s.includes("forbidden")) {
+    return "Недостаточно прав для активации шаблона.";
+  }
+  if (s.includes("unauthorized")) {
+    return "Сессия истекла. Войдите заново.";
+  }
+  if (s.includes("version_not_found")) {
+    return "Версия шаблона не найдена. Обновите список.";
+  }
+  return normalizeEdgeFunctionError(raw, data);
+}
 
 // Server-side audit (best-effort, never throws to UI)
 async function auditEvent(
