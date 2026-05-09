@@ -1,186 +1,94 @@
-## Да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. **Выбираем модель хранения: DB + ENV fallback.**  
-Это правильно, потому что уже есть админка интеграций. ENV-only не нужен.
-2. **Но пароль в DB хранить только если уже есть безопасное хранение секретов.**  
-Если `integration_instances.config` — обычный JSONB без шифрования, пароль туда класть нельзя. Тогда схема такая:
-  - DB: `gotenberg_url`, `enabled`, `username`, `password_secret_ref` или `password_last4`;
-  - ENV/secrets: реальный `GOTENBERG_PASSWORD`;
-  - helper: DB config + password из ENV/secrets.
-3. **Не писать реальный пароль в Lovable logs / proof / markdown.**  
-В proof указывать только:
-  - `password_configured=true`;
-  - `password_last4`;
-  - `auth_test=ok`.
-4. **Проверить Caddy Basic Auth.**  
-В текущем сервере всё уже работает, но в проекте нужно использовать именно:
-  - `GOTENBERG_BASE_URL=https://pdf.gorbova.by`
-  - `GOTENBERG_USERNAME=gotenberg`
-  - `GOTENBERG_PASSWORD` через secret, не через frontend.
-5. **Нумератор C5-G — критический момент.**  
-В плане написано: «после рендеринга DOCX и присвоения C5-G номера → конвертация». Но также написано: «если Gotenberg недоступен — документ НЕ создаётся, нумератор НЕ инкрементится».  
-Это конфликт. Нужно явно сделать так:
-  &nbsp;
-  &nbsp;
-  - сначала dry-run/health-check Gotenberg;
-  - затем рендер DOCX;
-  - затем конвертация в PDF;
-  - только после успешной PDF-конвертации — финальная запись документа и commit номера C5-G.  
-  Либо весь процесс должен быть в одной транзакционной/idempotent-логике, чтобы при ошибке PDF номер не терялся.
-6. **PDF primary, DOCX secondary — согласен.**  
-Но добавить: если DOCX сохранён в `meta.docx_storage_path`, доступ к нему только admin/super_admin, не клиенту.
-7. **Добавить explicit SSRF allowlist.**  
-В helper разрешить только:
-  - `https://pdf.gorbova.by`
-  - возможно `http://127.0.0.1:3000` только для local/dev.  
-  Любые другие URL — STOP.
-8. **Добавить retry policy.**  
-Для Gotenberg:
-  - health: без retry или 1 retry;
-  - convert: 1 retry только на network/5xx/timeout, не на 401/403/4xx;
-  - audit каждой ошибки без секрета.
-9. **DoD дополнить реальным curl-proof из Edge Function, а не только с сервера.**  
-Нужно доказать, что именно Lovable/Supabase Edge Function достучалась до `https://pdf.gorbova.by/health` и сделала конвертацию.
+1. **Добавить guard на реальные ошибки PostgREST**
+  - В `document-data-snapshot.ts` нельзя превращать ошибку запроса к `orders_v2` в `skipped_no_order`.
+  - Логика должна различать:
+    - `order not found` → `skipped_no_order`;
+    - SQL/PostgREST error → `snapshot_error`.
+  - В `audit_logs` писать `document_data.snapshot_error` с `error.message`, `table`, `stage`.
+2. **Проверить все select-поля в snapshot helper**
+  - Перед фиксом сделать grep/quick audit по `document-data-snapshot.ts` на несуществующие поля/таблицы:
+    - `paid_at`;
+    - `product_tariffs`;
+    - любые поля `tariff_offers/products/tariffs/orders_v2`, которых нет в live schema.
+  - Исправить не только найденные 2 места, а все аналогичные ошибки в helper.
+3. **Fallback offer_id сделать строго доказуемым**
+  - Порядок резолва:
+    1. `orders_v2.offer_id`;
+    2. `orders_v2.meta.offer_id`;
+    3. если есть уже существующий recurring resolver — использовать его только если он уже безопасно подключён.
+  - В `document_data._provenance` записывать:
+    - `offer_id`;
+    - `offer_id_source`;
+    - `tariff_id`;
+    - `product_id`;
+    - `document_defaults_source`.
+4. **Не перезаписывать ручные override**
+  - При backfill/rebuild snapshot не перетирать `fields[FLD].manual_override=true`.
+  - Это особенно важно для старых сделок, если кто-то уже вручную правил поля.
+5. **UI auto-select шаблона**
+  - `useEffect` должен срабатывать только один раз после загрузки `orderMeta + templates`.
+  - Не перетирать ручной выбор пользователя.
+  - Если `template_id` из `document_data` отсутствует в списке активных шаблонов — показать warning, но не падать.
+6. **Backfill только для одной тестовой сделки**
+  - Не запускать массовый backfill.
+  - Только:
+  - После backfill проверить `auto_generated=false` / документ не создан автоматически.
+7. **DoD дополнить**
+  - `canonical-document-payment-hook` больше не возвращает `skipped_no_order` для существующего paid order.
+  - `document_data._provenance.offer_id_source='order_meta'` для этой тестовой сделки.
+  - `audit_logs` не содержит новых `snapshot_error` после фикса.
+  - Preview по этой сделке показывает выбранный template_id из `document_data`.
+  - Повторный вызов hook идемпотентен: не ломает существующий `document_data`, не создаёт документ, не дублирует audit сверх ожидаемого.
+  - &nbsp;
+  - План: устранить причины, по которым тестовая сделка не получила document_data и шаблон не выбрался автоматически.
 
-&nbsp;
+## Diagnose (что нашёл)
 
-Копируемый ответ для Lovable:
+Проверил тестовую сделку `ORD-TEST-MOYVTVB1` (id=`0f910225...`):
 
-```text
-Да, согласен, выбираем модель DB + ENV fallback.
+- `meta.document_data` = `null`.
+- В `audit_logs` нет ни одной записи `document_data.snapshot_*` за всё время — снапшот НИКОГДА не отрабатывал успешно.
+- Прямой вызов `canonical-document-payment-hook` для этого order_id вернул `"snapshot": "skipped_no_order"`, хотя заказ существует и `status='paid'`.
 
-Правки к плану:
+Корневые причины в `supabase/functions/_shared/document-data-snapshot.ts`:
 
-1. Пароль нельзя хранить в обычном JSONB, если integration_instances.config не шифруется.
-   Правильная схема:
-   - DB: gotenberg_url, enabled, username, password_secret_ref/password_last4;
-   - ENV/secrets: реальный GOTENBERG_PASSWORD;
-   - helper читает DB config, но реальный пароль берет из secrets/ENV.
-   Если в проекте уже есть безопасное encrypted secret storage — можно использовать его, но proof должен подтвердить, что пароль не лежит plain-text в DB.
+1. **Несуществующая колонка `paid_at`.** Снапшот делает
+  `select('id, status, ..., paid_at, created_at, meta')` из `orders_v2`. В таблице такой колонки нет (есть `paid_amount`, `created_at`, `updated_at`, `deal_date`). PostgREST возвращает ошибку → `data` = `null` → ранний выход `skipped_no_order`. Снапшот никогда не доходит до записи.
+2. **Несуществующая таблица `product_tariffs`.** Запрос `from('product_tariffs')` падает (таблица называется `tariffs`). Даже если снапшот починим — defaults тарифа всегда будут пустые.
+3. **Не используется `meta.offer_id` как fallback.** Для admin-test и для подписок `orders_v2.offer_id` часто `NULL`, а реальный оффер хранится в `meta.offer_id` (или резолвится recurring snapshot resolver). Сейчас, при `offer_id=NULL`, ВСЕ `document_defaults` оффера (включая `template_id` и `executor_id`) игнорируются. У тестовой сделки именно этот случай: `offer_id=NULL`, но `meta.offer_id=6f306cbc...` с полностью заполненным `document_defaults`.
+4. **UI не подставляет шаблон автоматически.** В `src/components/ai-documents/DealDocumentsPanel.tsx` `selectedTemplateId` инициализируется как `null` и нигде не читает `orderMeta.document_data.template_id`. Даже когда снапшот починится, пользователь продолжит видеть пустой селектор.
 
-2. В proof/logs/audit/markdown не выводить реальный пароль.
-   Разрешено только:
-   - password_configured=true;
-   - password_last4;
-   - auth_test=ok.
+## Fix (минимальный, точечный)
 
-3. Исправить конфликт по C5-G нумерации:
-   Сейчас в плане одновременно указано “после присвоения C5-G → конвертация” и “если Gotenberg упал — нумератор не инкрементится”.
-   Нужно гарантировать, что при ошибке Gotenberg номер C5-G не теряется.
-   Реализация:
-   - сначала проверить Gotenberg/конфиг;
-   - затем сформировать DOCX;
-   - затем успешно сконвертировать PDF;
-   - только после успешной PDF-конвертации финально создать ai_generated_documents и закрепить номер C5-G;
-   - либо обеспечить весь процесс транзакционно/idempotent так, чтобы failed conversion не создавала дырку/дубль в C5-G.
+### 1) `supabase/functions/_shared/document-data-snapshot.ts`
 
-4. PDF остается primary-файлом:
-   - storage_path/file_mime/file_name = PDF;
-   - DOCX только в meta.docx_storage_path/meta.docx_file_name;
-   - DOCX download строго admin/super_admin only.
+- Заменить `paid_at` → использовать существующие колонки. Выбираем `updated_at, deal_date` дополнительно. `paidAt = order.deal_date || order.updated_at || order.created_at`.
+- В select убрать `paid_at`, добавить `updated_at, deal_date`.
+- Исправить имя таблицы: `from('product_tariffs')` → `from('tariffs')`.
+- Резолв оффера: если `order.offer_id` пуст — взять `(order.meta as any)?.offer_id` как fallback и использовать его и для загрузки `tariff_offers.meta.document_defaults`, и для записи в `document_data.source.offer_id`.
+- Аудит-провенанс: добавить флаг `offer_id_source: 'order'|'order_meta'|'none'` в `_provenance` для последующей диагностики.
 
-5. SSRF guard сделать явным:
-   allowlist production: https://pdf.gorbova.by
-   allowlist dev/local: http://127.0.0.1:3000 только для local/dev.
-   Любой другой GOTENBERG_BASE_URL — STOP с кодом GOTENBERG_URL_NOT_ALLOWED.
+### 2) `src/components/ai-documents/DealDocumentsPanel.tsx`
 
-6. Retry policy:
-   - health-check: максимум 1 retry;
-   - convert DOCX/HTML: максимум 1 retry только на network/5xx/timeout;
-   - не retry на 401/403/4xx;
-   - audit без секретов.
+- Добавить `useEffect`, который при первой загрузке `orderMeta` и непустом `templates`, если `selectedTemplateId === null` и `orderMeta.document_data.template_id` существует и есть в `templates` — вызывает `setSelectedTemplateId(orderMeta.document_data.template_id)`.
+- Никаких дополнительных кнопок и UI — только тихая авто-подстановка. Пользователь всё ещё может сменить шаблон вручную.
 
-7. DoD дополнить:
-   - proof, что именно Edge Function вызывает https://pdf.gorbova.by/health;
-   - proof успешной DOCX→PDF конвертации из Edge Function;
-   - grep proof, что пароль не попал в src/, audit_logs, frontend bundle, responses;
-   - proof, что при mode=preview строка в ai_generated_documents не создается;
-   - proof, что при ошибке Gotenberg документ не создается и номер C5-G не теряется/не дублируется.
+### 3) Backfill для уже созданной тестовой сделки
 
-Остальное по плану согласовано.
+- После деплоя — вручную дернуть `canonical-document-payment-hook` с `{ order_id: '0f910225-0922-4608-b089-69bb8561f809' }`, чтобы построить снапшот для существующей сделки (флаг auto-gen остаётся `false`, поэтому документ не сгенерируется, но `document_data` запишется).
 
-План: подключение внешнего Gotenberg + завершение C5-J (DOCX→PDF)
-```
+## DoD
 
-### Контекст
+1. SQL: `SELECT meta->'document_data' FROM orders_v2 WHERE id='0f910225-...'` возвращает объект с `template_id=b8aa7b9c-...`, `executor_id=d0c7fe75-...`, `executor_source='executor_offer'`, и непустым `fields` для `FLD-000103…FLD-000154`.
+2. `audit_logs` содержит `document_data.snapshot_created` для этого order_id.
+3. В карточке сделки `#ORD-TEST-MOYVTVB1` селектор шаблона при открытии вкладки документов автоматически показывает «Акт оказанных услуг» (или соответствующий template_id из оффера).
+4. Плашка «Исполнитель» показывает имя из executor по умолчанию/из оффера и источник.
+5. Новый payment flow (создание новой тестовой сделки) — `document_data` появляется автоматически без ручных действий.
 
-Gotenberg уже поднят на `https://pdf.gorbova.by` (Basic Auth `gotenberg / F1Ua…`), `/health` отвечает 200. На прошлом шаге C5-J мы уже сделали:
+## Что НЕ трогаем
 
-- `supabase/functions/_shared/gotenberg.ts` — helper с `convertDocxToPdf`, `gotenbergHealthCheck`, `buildTestDocx`, `GotenbergError`.
-- 4 action в `hosterby-api`: `gotenberg_get_status / save_config / check_health / test_convert`.
-- UI карточка `GotenbergSettingsCard` + `GotenbergSetupDialog` в `/admin/integrations/other`.
-- Конфиг хранится в `integration_instances.config` (`gotenberg_url`, `gotenberg_basic_user`, `gotenberg_basic_pass`, `gotenberg_enabled`) — защищён super_admin guard, в UI — только masked `*_last4`.
-
-Сейчас задача снимает STOP-gate: ввести креды и довести интеграцию до прод-использования (DOCX→PDF в strict generator + HTML→PDF helper).
-
-### Решение по хранению секретов
-
-Вы предложили `GOTENBERG_BASE_URL/USERNAME/PASSWORD` как Supabase secrets. У нас уже работает альтернативная (и тоже безопасная) модель — DB-конфиг в `integration_instances`, аналогично `egress_token`/`hosterby_*`. Чтобы не плодить два источника правды и не противоречить **«Single Sources of Truth»** + **«Canonical Write Path»**, предлагаем:
-
-- **Канон:** `integration_instances` (super_admin only, никогда не уходит в client). Это совпадает с существующей моделью hoster.by/BY-egress.
-- **Fallback:** helper читает ENV `GOTENBERG_BASE_URL/USERNAME/PASSWORD`, если в DB пусто. Это даёт совместимость с тем, что вы хотите положить в secrets, и не требует UI для активации.
-- Приоритет: DB > ENV. Если ни там, ни там — `GOTENBERG_NOT_CONFIGURED`.
-
-Если жёстко нужен ENV-only (без DB-карточки) — скажите, переключим, но это шаг назад от уже сделанной админки.
-
-### Шаги
-
-1. **Ввод кредов (вы делаете один раз в UI):**
-  `/admin/integrations/other` → карточка Gotenberg → «Настроить» → URL `https://pdf.gorbova.by`, user `gotenberg`, password из задания, Включён ✅ → «Сохранить».
-   Затем кнопки **Health-check** (ожидание HTTP 200) и **Test DOCX→PDF** (ожидание `pdf_size > 10 KB`).
-2. **Параллельно — secrets как fallback:** добавить через `secrets--add_secret` три ключа `GOTENBERG_BASE_URL`, `GOTENBERG_USERNAME`, `GOTENBERG_PASSWORD`. Helper будет читать их, если в DB пусто.
-3. **Расширить health-check** (`gotenberg_check_health`): кроме HTTP-статуса возвращать парсинг `status / chromium / libreoffice` (Gotenberg `/health` отдаёт JSON с этими полями) и кэшировать в `gotenberg_last_health_check.modules`.
-4. **Helper `_shared/gotenberg.ts`:**
-  - Добавить `convertHtmlToPdf(cfg, html, opts?)` через `POST /forms/chromium/convert/html` (multipart, `index.html`). Та же валидация: `application/pdf`, `> 10 KB`, timeout 120s, маппинг ошибок.
-  - В `loadGotenbergConfig` добавить ENV-fallback (DB > ENV).
-  - Все вызовы остаются server-side, Basic Auth собирается через `btoa(user:pass)` только в edge function.
-5. **Интеграция в `canonical-document-generate-strict` (только `mode=generate`):**
-  - После рендеринга DOCX и присвоения C5-G номера → `convertDocxToPdf(cfg, docxBuffer, fileName)`.
-  - Сохранение в bucket `documents`: PDF — primary файл (`storage_path`, `file_mime='application/pdf'`, `file_name=*.pdf`), DOCX — в `meta.docx_storage_path / meta.docx_file_name / meta.docx_mime` (admin-only download).
-  - Если Gotenberg выключен/недоступен → ошибка с нормализованным `code` (через `normalizeEdgeFunctionError` на клиенте), документ НЕ создаётся, нумератор НЕ инкрементится (idempotency C5-G сохраняется).
-  - `mode=preview` остаётся no-op.
-6. **UI `DealDocumentsPanel.tsx`:**
-  - Кнопка «Создать PDF» (была «Создать документ») — основной поток.
-  - Кнопка «Тест» — превью без записи (как раньше).
-  - Скачивание показывает PDF; admin видит дополнительную ссылку «Скачать DOCX» только если `meta.docx_storage_path` есть.
-  - Все ошибки — через `normalizeEdgeFunctionError` (по правилу UI/UX Error Handling).
-7. **Безопасность (DoD):**
-  - Пароль/Basic Auth никогда не возвращаются клиенту (только `*_last4`, проверим grep'ом по `hosterby-api` и helper).
-  - Запрос к Gotenberg только из edge functions (`hosterby-api`, `canonical-document-generate-strict`), не из браузера.
-  - SSRF guard уже есть в `gotenberg.ts` (наследован от BY-egress паттерна).
-  - Audit без секретов: в `audit_logs` пишем только `gotenberg_url`, `http_status`, `latency_ms`, `pdf_size`, `error_code` — без auth.
-8. **Proof — обновить `.lovable/proofs/document_generation_sprint11_c5j_pdf_conversion.md`:**
-  - Скриншот/JSON `gotenberg_get_status` после ввода кредов: `configured=true, enabled=true, last_health.ok=true, modules={chromium:up, libreoffice:up}`.
-  - JSON `gotenberg_test_convert`: `ok=true, pdf_size>10240`.
-  - Запись `ai_generated_documents` после реальной генерации: `file_mime='application/pdf'`, `meta.docx_storage_path` присутствует, нумерация C5-G не дублируется (повторный вызов идемпотентен).
-  - `mode=preview` не создаёт строки в `ai_generated_documents`.
-  - Grep proof: `GOTENBERG_PASSWORD` / `gotenberg_basic_pass` не встречаются ни в одном файле под `src/`.
-
-### Технические детали
-
-
-| Что              | Где                                                                                                             |
-| ---------------- | --------------------------------------------------------------------------------------------------------------- |
-| Helper           | `supabase/functions/_shared/gotenberg.ts` (+ `convertHtmlToPdf`, ENV-fallback)                                  |
-| DOCX→PDF route   | `POST {base}/forms/libreoffice/convert`                                                                         |
-| HTML→PDF route   | `POST {base}/forms/chromium/convert/html`                                                                       |
-| Health           | `GET {base}/health` (парсим `status / chromium / libreoffice`)                                                  |
-| Timeout          | 120 s (DOCX/HTML), 10 s (health)                                                                                |
-| Auth             | `Authorization: Basic ${btoa(user:pass)}` собирается в edge function                                            |
-| Конфиг           | `integration_instances.config.gotenberg_*` (canon) + ENV fallback                                               |
-| Strict generator | `supabase/functions/canonical-document-generate-strict/index.ts` — только `mode=generate`, после C5-G нумерации |
-| Storage          | bucket `documents`, primary = PDF, DOCX в `meta`                                                                |
-| UI               | `DealDocumentsPanel.tsx` — «Создать PDF» / «Тест», admin-only DOCX-link                                         |
-| Error mapping    | `GOTENBERG_*` коды → `normalizeEdgeFunctionError` на клиенте                                                    |
-
-
-### Что НЕ трогаем
-
-- Legacy `generate-document-pdf` — остаётся deprecated (отдельным шагом потом помечу в registry).
-- C5-G нумерация (`allocate_document_number`) — без изменений, просто вызов остаётся ДО конвертации.
-- Email/Telegram/batch/auto-generation потоки.
-- Существующая карточка hoster.by / BY-egress.
-
-### Открытый вопрос
-
-Подтвердите модель хранения секретов: **DB+ENV-fallback (рекомендуем, без даунгрейда уже сделанной админки)** или **строго ENV-only (удалить карточку и DB-конфиг)**.
+- Schema/миграции — багов в DB нет, проблема в коде функции.
+- `grant-access-for-order`, `canonical-document-payment-hook` логика — только snapshot helper.
+- Generation/email/telegram — auto-gen flag остаётся `false`.
+- Executor-поля в UI — остаются скрытыми, плашка как реализована в Sprint 11.
