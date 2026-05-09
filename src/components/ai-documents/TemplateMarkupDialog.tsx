@@ -586,6 +586,7 @@ export function TemplateMarkupDialog({
       const text = pickerContext.text;
       const occ = countOccurrences(plainText, text);
       const occurrenceIndex = Math.min(pickerContext.occurrenceIndex, Math.max(0, occ - 1));
+      const matchStart = occurrenceIndex >= 0 ? nthIndexOf(plainText, text, occurrenceIndex) : -1;
       const newR: Replacement = {
         id: uid(),
         source: "manual",
@@ -600,8 +601,8 @@ export function TemplateMarkupDialog({
         // чтобы chip встал ИМЕННО там, а не на все вхождения слова.
         occurrence_index: occurrenceIndex,
         occurrences_total: occ,
-        match_start: occurrenceIndex >= 0 ? nthIndexOf(plainText, text, occurrenceIndex) : null,
-        match_end: occurrenceIndex >= 0 ? nthIndexOf(plainText, text, occurrenceIndex) + text.length : null,
+        match_start: matchStart >= 0 ? matchStart : null,
+        match_end: matchStart >= 0 ? matchStart + text.length : null,
       };
       upsertReplacement(newR);
       toast.success("Поле вставлено в выбранную позицию");
