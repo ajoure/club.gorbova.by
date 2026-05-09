@@ -14564,7 +14564,6 @@ export type Database = {
       }
     }
     Functions: {
-      _c5g_qa_runner_v2: { Args: never; Returns: Json }
       admin_dedup_bepaid_subscriptions: {
         Args: { p_mode?: string }
         Returns: Json
