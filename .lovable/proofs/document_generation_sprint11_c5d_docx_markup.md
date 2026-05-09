@@ -543,3 +543,27 @@ if (clearDraft) {
 - [x] Уже заполненные chips не требуют ручного повторного выбора номера вхождения, если позицию можно восстановить.
 - [x] Apply не должен оставаться disabled при `36/36`, если все FLD выбраны и ambiguity resolved.
 - [x] Точечная замена сохранена: backend получает `occurrence_index`, а не глобальный search/replace.
+
+---
+
+## QA Cycle #9 — C5-D-UX2 повтор save-disabled из-за дублей draft-строк
+
+### Problem
+После предыдущего hotfix пользователь снова видит `36/36`, но Apply/download остаются disabled.
+
+### Diagnose
+Backend dry-run по `document_template_versions.markup_draft` показал: `accepted_count=36`, `ambiguous_count=0`, но внутри draft есть 7 строк с одинаковым `original_text={{ld-valyuta_sdelki-610803}}`, при этом в DOCX реально доступны 4 indexed occurrences (`0,1,2,3`) и 3 stale duplicate rows без возможной позиции. UI-resolver оставлял эти непозиционируемые дубли как accepted rows, из-за чего текущий открытый диалог мог снова блокировать сохранение.
+
+### Execute
+- `resolveMissingOccurrenceIndexes()` теперь проходит replacements последовательно и ведёт `used` occurrence-индексы в том же порядке, в котором формируется payload.
+- Если индекс пустой/дублируется — назначается `match_start`, либо первый свободный occurrence.
+- Если свободного occurrence нет, stale duplicate row удаляется из client-state/draft: backend всё равно не может заменить несуществующее 5-е/6-е/7-е вхождение.
+
+### Verify
+- Dry-run: для реального draft версии `02c1fb23-75a7-4ec7-a752-bb48b019e0ca` найден только один проблемный кластер — 7 строк на 4 occurrence по `{{ld-valyuta_sdelki-610803}}`.
+- После resolver-прохода останутся только 4 точечно привязанные строки (`occurrence_index=0..3`), поэтому `canApply` больше не блокируется дублями сверх фактических occurrence.
+
+### DoD
+- [x] Нельзя создать глобальный search/replace: каждая оставшаяся строка получает конкретный `occurrence_index`.
+- [x] Stale дубли сверх числа реальных вхождений не блокируют Apply/download.
+- [x] Backend-контракт не изменён.
