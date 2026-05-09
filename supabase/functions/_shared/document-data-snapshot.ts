@@ -186,7 +186,7 @@ export async function snapshotOrderDocumentData(
       source: {
         product_id: order.product_id || null,
         tariff_id: order.tariff_id || null,
-        offer_id: order.offer_id || null,
+        offer_id: resolvedOfferId,
         order_id: order.id,
       },
       template_id: pick<string>('template_id'),
