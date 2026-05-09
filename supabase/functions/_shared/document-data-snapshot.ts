@@ -165,7 +165,7 @@ export async function snapshotOrderDocumentData(
 
     const cm = currencyMajorMinor(normCurrency);
 
-    const paidAt = order.paid_at || order.created_at || new Date().toISOString();
+    const paidAt = (order as any).deal_date || (order as any).updated_at || order.created_at || new Date().toISOString();
     const actDate = paidAt;
 
     // Service period — use offer/tariff defaults if present; else fallback to
