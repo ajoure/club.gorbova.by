@@ -75,6 +75,8 @@ interface HistoryDoc {
   storage_bucket: string;
   template_version: number | string | null;
   created_at: string;
+  document_number: string | null;
+  document_date: string | null;
 }
 
 export function DealDocumentsPanel({ orderId }: { orderId: string }) {
