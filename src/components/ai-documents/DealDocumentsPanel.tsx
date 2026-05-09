@@ -295,16 +295,16 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
               <div className="flex gap-2">
                 <Button size="sm" variant="outline" onClick={runPreview} disabled={previewLoading}>
                   {previewLoading ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Eye className="h-3 w-3 mr-1" />}
-                  Preview
+                  Тест
                 </Button>
                 <Button
                   size="sm"
                   onClick={runGenerate}
                   disabled={generating || !preview?.can_generate}
-                  title={!preview ? "Сначала Preview" : !preview.can_generate ? "Заполните required" : ""}
+                  title={!preview ? "Сначала «Тест»" : !preview.can_generate ? "Заполните обязательные поля" : "Сформировать документ"}
                 >
                   {generating ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Sparkles className="h-3 w-3 mr-1" />}
-                  Сформировать DOCX
+                  Сформировать документ
                 </Button>
               </div>
             </div>
