@@ -559,6 +559,13 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
       toast.error("Шаблон содержит ошибки. Откройте «Проверка и исправление плейсхолдеров».");
       return;
     }
+    if (ver.markup_status && ver.markup_status !== "marked") {
+      toast.message("Сначала примените разметку плейсхолдеров.", {
+        description: "Открываю «Проверка и исправление плейсхолдеров».",
+      });
+      openMarkup(tpl, ver);
+      return;
+    }
     try {
       const { data, error } = await supabase.functions.invoke(
         "canonical-template-activate-version",
