@@ -370,6 +370,87 @@ Deno.serve(async (req) => {
         .map((m: any) => m.field_public_id),
     );
 
+
+    // ── C5-G: Document numbering v2 ─────────────────────────────────────────
+    // Резервируем номер ОДИН раз на документ (mode=generate), до резолва.
+    // Все вхождения {{field:FLD-000069}} получат одно значение из docFields.
+    const needsNumbering = foundIds.has(FLD_DOC_NUMBER) || foundIds.has(FLD_DOC_DATE);
+    const idempotencyKey: string = (typeof body?.idempotency_key === 'string' && body.idempotency_key.trim())
+      ? String(body.idempotency_key).trim()
+      : `strict:${tpl.id}:${ver.id}:${order.id}`;
+    let preCreatedDocId: string | null = null;
+    let allocatedNumber: string | null = null;
+    let allocatedDate: string | null = null;
+    let allocatedSeq: number | null = null;
+
+    if (mode === 'generate') {
+      const { data: existing } = await supabase
+        .from('ai_generated_documents')
+        .select('id, document_number, document_date, document_seq, file_path, status')
+        .eq('idempotency_key', idempotencyKey)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (existing) {
+        preCreatedDocId = existing.id;
+        allocatedNumber = existing.document_number ?? null;
+        allocatedDate = existing.document_date ?? null;
+        allocatedSeq = existing.document_seq ?? null;
+      } else if (needsNumbering) {
+        const { data: pre, error: preErr } = await supabase
+          .from('ai_generated_documents')
+          .insert({
+            profile_id: order.profile_id,
+            template_id: tpl.id,
+            template_name: tpl.name,
+            template_source_path: ver.storage_path,
+            template_version_id: ver.id,
+            template_version: ver.version_number,
+            title: `${tpl.name} — ${order.order_number || order.id.slice(0, 8)}`,
+            status: 'pending',
+            storage_bucket: 'documents',
+            snapshot: {},
+            missing_tokens: [],
+            meta: { strict: true, c5g_pre_created: true },
+            context_type: 'order',
+            context_id: order.id,
+            idempotency_key: idempotencyKey,
+            created_by: userId,
+          })
+          .select('id')
+          .single();
+        if (preErr) return json({ error: `pre_create_failed:${preErr.message}` }, 500);
+        preCreatedDocId = pre.id;
+      }
+
+      if (needsNumbering && preCreatedDocId && !allocatedNumber) {
+        const { data: alloc, error: allocErr } = await supabase.rpc('allocate_document_number', {
+          p_document_id: preCreatedDocId,
+        });
+        if (allocErr) return json({ error: `allocate_failed:${allocErr.message}` }, 500);
+        const row: any = Array.isArray(alloc) ? alloc[0] : alloc;
+        allocatedNumber = row?.document_number ?? null;
+        allocatedDate = row?.document_date ?? null;
+        allocatedSeq = row?.document_seq ?? null;
+      }
+
+      // Inject in docFields ONCE — все вхождения плейсхолдеров возьмут это значение.
+      if (allocatedNumber && foundIds.has(FLD_DOC_NUMBER)) {
+        docFields[FLD_DOC_NUMBER] = {
+          value: allocatedNumber,
+          source: 'system_generated',
+          updated_at: new Date().toISOString(),
+        };
+      }
+      if (allocatedDate && foundIds.has(FLD_DOC_DATE)) {
+        docFields[FLD_DOC_DATE] = {
+          value: allocatedDate,
+          source: 'system_generated',
+          updated_at: new Date().toISOString(),
+        };
+      }
+    }
+
     // Resolve fields
     const allIds = Array.from(foundIds);
     const resolved: Record<string, string> = {};
