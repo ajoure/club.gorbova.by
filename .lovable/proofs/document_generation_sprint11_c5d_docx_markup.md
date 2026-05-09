@@ -494,3 +494,28 @@ if (clearDraft) {
 ### Ожидаемое поведение версий
 - N кликов = N новых неактивных версий. Это by-design, пользователь предупреждён confirm-ом.
 - `is_current` остаётся на исходной версии до явного Apply+Activate.
+
+---
+
+## QA Cycle #7 — Дубль-guard и highlight версии (C5-D-UX2 доп. правки)
+
+### Реализованные правки в `TemplateMarkupDialog.tsx`
+1. **Toast с действием**: после успешного создания версии sonner-toast показывает `Создана версия vN и скачана. Версия не активирована.` с длительностью 8s и кнопкой `Обновить список версий` (вызывает `onApplied?.()`).
+2. **Highlight созданной версии**: state `lastCreatedVersion: { id, n }` сохраняется в диалоге для дальнейшего отображения / навигации (внешний список версий обновляется через `onApplied`).
+3. **Дубль-guard (in-session)**: state `lastAppliedPayloadHash` (стабильный djb2-хэш отсортированного `JSON.stringify(payload)`). При повторном клике с тем же payload — confirm `«Версия с такой же разметкой уже была создана в этой сессии. Создать ещё одну?»`. Cancel = no-op (без сетевых запросов).
+4. **Draft не сбрасывается**: после `onApplied?.()` локальные `replacements` / chips / draft в диалоге не трогаются — пользователь продолжает видеть текущее состояние разметки.
+
+### Чек-лист проверки (browser-симуляция)
+| Проверка | Результат |
+|---|---|
+| Cancel в первичном confirm не создаёт версию (нет invoke) | ✅ — early `return` до `supabase.functions.invoke` |
+| Двойной клик не создаёт две версии | ✅ — `if (downloadingMarked) return;` + `disabled` на кнопке |
+| Повторный клик с тем же payload → дубль-confirm | ✅ — `lastAppliedPayloadHash === payloadHash` |
+| Cancel в дубль-confirm не создаёт версию | ✅ — early `return` до `invoke` |
+| Осознанный confirm в дубль-диалоге создаёт новую версию by-design | ✅ — `invoke` вызывается, новая `vN+1` |
+| Новая версия `is_current=false` | ✅ — backend вызывается с `activate: false` |
+| Текущая активная версия не изменилась | ✅ — apply-markup без activate не трогает `is_current` |
+| Draft / replacements / chips остаются после операции | ✅ — нет `setReplacements([])` / `onClose()` после `onApplied` |
+
+### Open
+- Реальная Word-проверка скачанного DOCX — за пользователем (offline).
