@@ -630,13 +630,58 @@ Deno.serve(async (req) => {
     }
     const out = docx.getZip().generate({ type: 'uint8array' });
 
+    // ── C5-J: DOCX → PDF через Gotenberg ──────────────────────────────────
+    // ВАЖНО для C5-G: если Gotenberg падает, мы НЕ обновляем pre-created row
+    // и НЕ откатываем номер. На повторный вызов с тем же idempotency_key
+    // строка переиспользуется (тот же document_number), Gotenberg ретраится.
+    let pdfBuffer: Uint8Array;
+    let gotenbergMeta: Record<string, unknown> = {};
+    try {
+      const cfg = await loadGotenbergConfig(supabase);
+      if (!cfg.enabled) {
+        return json({ error: 'gotenberg_disabled', code: 'GOTENBERG_DISABLED' }, 503);
+      }
+      const t0 = Date.now();
+      pdfBuffer = await convertDocxToPdf(cfg, out, `${tpl.name}.docx`);
+      gotenbergMeta = {
+        gotenberg_url: cfg.url,
+        gotenberg_latency_ms: Date.now() - t0,
+        gotenberg_pdf_size: pdfBuffer.length,
+        gotenberg_docx_size: out.length,
+      };
+      await supabase.from('audit_logs').insert({
+        actor_user_id: userId,
+        actor_type: 'user',
+        action: 'document.pdf_converted',
+        meta: { template_id: tpl.id, order_id: order.id, ...gotenbergMeta },
+      });
+    } catch (e: any) {
+      const code = e instanceof GotenbergError ? e.code : 'GOTENBERG_UNREACHABLE';
+      const msg = e?.message || 'gotenberg_failed';
+      await supabase.from('audit_logs').insert({
+        actor_user_id: userId,
+        actor_type: 'user',
+        action: 'document.pdf_failed',
+        meta: { template_id: tpl.id, order_id: order.id, code, error: msg, idempotency_key: idempotencyKey },
+      });
+      return json({ error: 'pdf_conversion_failed', code, message: msg }, 502);
+    }
+
     const ts = Date.now();
-    const outPath = `generated/${order.id}/${ts}-${tpl.id.slice(0, 8)}.docx`;
-    const upRes = await supabase.storage.from('documents').upload(outPath, out, {
+    const docxPath = `generated/${order.id}/${ts}-${tpl.id.slice(0, 8)}.docx`;
+    const pdfPath = `generated/${order.id}/${ts}-${tpl.id.slice(0, 8)}.pdf`;
+
+    const upPdf = await supabase.storage.from('documents').upload(pdfPath, pdfBuffer, {
+      contentType: 'application/pdf',
+      upsert: false,
+    });
+    if (upPdf.error) return json({ error: `upload_pdf_failed:${upPdf.error.message}` }, 500);
+
+    const upDocx = await supabase.storage.from('documents').upload(docxPath, out, {
       contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       upsert: false,
     });
-    if (upRes.error) return json({ error: `upload_failed:${upRes.error.message}` }, 500);
+    if (upDocx.error) return json({ error: `upload_docx_failed:${upDocx.error.message}` }, 500);
 
     const docCommon = {
       profile_id: order.profile_id,
@@ -647,9 +692,10 @@ Deno.serve(async (req) => {
       template_version: ver.version_number,
       title: `${tpl.name} — ${order.order_number || order.id.slice(0, 8)}`,
       status: 'generated',
-      file_path: outPath,
-      file_name: `${tpl.name}.docx`,
-      file_mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      // PRIMARY = PDF (клиент видит только его)
+      file_path: pdfPath,
+      file_name: `${tpl.name}.pdf`,
+      file_mime: 'application/pdf',
       storage_bucket: 'documents',
       snapshot: { fields: docFields },
       missing_tokens: missing,
@@ -662,7 +708,14 @@ Deno.serve(async (req) => {
       context_id: order.id,
       idempotency_key: idempotencyKey,
       created_by: userId,
-      meta: { strict: true },
+      meta: {
+        strict: true,
+        // SECONDARY = DOCX (admin-only download через UI guard)
+        docx_storage_path: docxPath,
+        docx_file_name: `${tpl.name}.docx`,
+        docx_mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        ...gotenbergMeta,
+      },
     } as any;
 
     let documentId: string;
@@ -684,7 +737,7 @@ Deno.serve(async (req) => {
       documentId = insRow.id;
     }
 
-    const sig = await supabase.storage.from('documents').createSignedUrl(outPath, 3600);
+    const sig = await supabase.storage.from('documents').createSignedUrl(pdfPath, 3600);
 
     await supabase.from('audit_logs').insert({
       actor_user_id: userId,
@@ -701,6 +754,8 @@ Deno.serve(async (req) => {
         document_number: allocatedNumber,
         document_date: allocatedDate,
         document_seq: allocatedSeq,
+        file_mime: 'application/pdf',
+        ...gotenbergMeta,
       },
     });
 
@@ -708,7 +763,9 @@ Deno.serve(async (req) => {
       success: true,
       mode: 'generate',
       document_id: documentId,
-      storage_path: outPath,
+      storage_path: pdfPath,
+      file_mime: 'application/pdf',
+      docx_storage_path: docxPath,
       download_url: sig.data?.signedUrl || null,
       template: { id: tpl.id, version_id: ver.id, version_number: ver.version_number },
       resolver_version: RESOLVER_VERSION,
