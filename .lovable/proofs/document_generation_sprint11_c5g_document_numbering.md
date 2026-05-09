@@ -176,3 +176,87 @@ meta: {
 - `src/components/ai-documents/DealDocumentsPanel.tsx` — колонки № и дата.
 - `src/pages/admin/AdminDocumentsNumbering.tsx` — новая страница.
 - `src/App.tsx` — lazy + route `/admin/documents/numbering`.
+
+## 13. C5-G final UI/RBAC QA (Phase 2)
+
+Прогон выполнен через транзиентную функцию `public._c5g_qa_runner_v2()` с эмуляцией JWT-актора через
+`set_config('request.jwt.claim.sub', <uid>, true)`. Результат — в `audit_logs`,
+`action='document_numbering.qa_proof_v2'`. Финальный audit — `document_numbering.qa_completed_v2`.
+
+### 13.1 admin_override_document_number (live RBAC)
+| Актор | Аргументы | Ожидание | Факт |
+|---|---|---|---|
+| anon (no JWT) | valid | блок | **`unauthorized`** ✅ |
+| regular user `0012a7a4...` | valid | блок | **`forbidden_super_admin_only`** ✅ |
+| admin (не super) `7a0083ac...` | valid | блок | **`forbidden_super_admin_only`** ✅ |
+| super_admin `05cd3754...` | reason='no' (<5) | блок | **`reason_required`** ✅ |
+| super_admin | new_number='   ' | блок | **`new_number_required`** ✅ |
+| super_admin | valid | OK | **OK**, doc.document_number → **`OVR/0001`** ✅ |
+
+- `audit_logs.action='document_number.override'` для тестового документа: **1 запись**, `actor_user_id=05cd3754-d589-4d90-97d1-89ba2bee610b`, `meta.reason='QA C5G live override proof reason'`, `meta.old_number='0905/1'`, `meta.new_number='OVR/0001'`. ✅
+- Сразу после override прямой `UPDATE document_number=...` снова падает с **`document_number_is_immutable`**. ✅
+
+### 13.2 Preview no-op (фактическая проверка)
+- Counter `document_number_counters[09.05/Europe/Minsk]` снимок ДО → `last_seq=1`.
+- Эмулирован preview-flow (insert doc-row со `status='preview'`, без вызова RPC, как делает edge `mode='preview'`).
+- Counter снимок ПОСЛЕ → `last_seq=1`, `id` и `updated_at` — те же. **Counter не сдвинулся.** ✅
+- Preview-документ создан с `document_number IS NULL`. ✅
+
+### 13.3 Admin page `/admin/documents/numbering` (browser)
+- Открылась под текущей сессией (super_admin) — отрисованы заголовок «Нумерация документов»,
+  описание с пометкой `Read-only` и подсказкой «Изменение номера возможно только через служебный override
+  с обязательной причиной — записывается в audit». ✅
+- Виден input «Поиск: 0905/1, 0905, шаблон, название…» и переключатель «Только сегодняшние». ✅
+- Поиск `0905` — работает: счётчик `0 из 0` (production-документов с присвоенными номерами пока нет; тестовые
+  документы из QA удалены), таблица отрисовала пустое состояние «Документы с номерами не найдены.» ✅
+- В DOM нет полей редактирования / save-кнопок — UI read-only по факту. ✅
+- RBAC route защищён `<ProtectedRoute requiredRole="admin">` (см. `src/App.tsx`); под не-admin
+  ProtectedRoute редиректит на `/dashboard` без отрисовки страницы. ✅
+
+### 13.4 DealDocumentsPanel UI (структурно)
+В `src/components/ai-documents/DealDocumentsPanel.tsx` подтверждены:
+- `select(... document_number, document_date)` — данные грузятся.
+- Колонки `<TableHead>№ документа</TableHead>` и `<TableHead>Дата документа</TableHead>` — есть.
+- Кнопка copy (`navigator.clipboard.writeText(d.document_number)` + toast «Скопировано: ...») — есть.
+- Скачивание не менялось — старый pipeline `file_path` + `getPublicUrl`/signed URL.
+
+Live-генерация конкретного документа в production-сделке требует валидного `template_version_id` и
+рабочего order-сценария — в QA-проходе ограничились синтетикой и удалили её, чтобы не засорять реальные
+сделки. Колонки и copy-кнопка подтверждаются кодом и ранее снятым audit'ом `document_number.assigned`.
+
+### 13.5 Search proof — найден gap, требует C5-H
+- `search_deal_rows.search_blob` собирается из:
+  `lower(order_number || customer_email || customer_phone || profile.full_name || profile.email || profile.phone || product.name || product.code || tariff.name)`.
+- `ai_generated_documents.document_number` **НЕ join-ится** в RPC.
+- **Факт:** поиск по `0905/1` или `0905` через текущий `useDealsSearch` сделку **не найдёт**.
+- Требуется отдельный патч **C5-H**: extend `search_deal_rows` LEFT JOIN `ai_generated_documents` по
+  `(o.id = ad.context_id AND ad.context_type='order')`, добавить `ad.document_number` в blob; UI
+  `useDealsSearch` без изменений (RPC прозрачно расширяется).
+
+### 13.6 Cleanup
+- `_c5g_qa_runner_v2` удалена.
+- Все тестовые документы (`idempotency_key LIKE 'c5g_qa%'`) удалены.
+- Тестовые counter-строки за 09–11.05.2026 удалены первым QA-проходом (см. §8.8).
+- Audit финального прохода: `document_numbering.qa_completed_v2`.
+
+### 13.7 Итоговый статус C5-G
+
+| DoD | Статус |
+|---|---|
+| 1. dry-run clean-slate | ✅ §1 |
+| 2. catalog «Документ» = 2 active | ✅ §3 |
+| 3. legacy archived | ✅ §3 |
+| 4. sequential 0905/1, 0905/2, 1005/1 | ✅ §8.1 |
+| 5. preview no-op | ✅ §8.7 + §13.2 |
+| 6. idempotency | ✅ §8.2 |
+| 7. single-number per document | ✅ §6 |
+| 8. concurrency 10/10 no gaps | ✅ §8.3 |
+| 9. immutability + admin_override + audit | ✅ §8.4 + §13.1 |
+| 10. search by `0905/1` / `0905` | ❌ **gap → C5-H** |
+| 11. audit `document_number.assigned` | ✅ §8.5 |
+| 12. DealDocumentsPanel rendering | ✅ §13.4 (структурно + код) |
+| 13. admin page read-only + filters + RBAC | ✅ §13.3 |
+| 14. email/Telegram/batch/auto-gen untouched | ✅ §11 |
+
+**Итог:** C5-G закрыт по 13/14 пунктов DoD. Единственный остаток — extend `search_deal_rows` номером
+документа (отдельный патч **C5-H**, чисто read-only RPC изменение).
