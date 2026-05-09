@@ -410,6 +410,8 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead>№ документа</TableHead>
+                    <TableHead>Дата документа</TableHead>
                     <TableHead>Название</TableHead>
                     <TableHead>Версия</TableHead>
                     <TableHead>Создан</TableHead>
@@ -419,6 +421,27 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
                 <TableBody>
                   {history.map((d) => (
                     <TableRow key={d.id}>
+                      <TableCell className="text-sm font-mono font-semibold">
+                        {d.document_number ? (
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(d.document_number!);
+                              toast.success(`Скопировано: ${d.document_number}`);
+                            }}
+                            className="hover:text-primary transition-colors"
+                            title="Копировать номер"
+                          >
+                            {d.document_number}
+                          </button>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {d.document_date
+                          ? format(new Date(d.document_date), "dd.MM.yyyy", { locale: ru })
+                          : "—"}
+                      </TableCell>
                       <TableCell className="text-sm">{d.title}</TableCell>
                       <TableCell className="text-xs">v{d.template_version ?? "—"}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">
