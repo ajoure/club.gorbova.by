@@ -637,38 +637,51 @@ Deno.serve(async (req) => {
     });
     if (upRes.error) return json({ error: `upload_failed:${upRes.error.message}` }, 500);
 
-    const idemKey = `strict:${tpl.id}:${ver.id}:${order.id}:${ts}`;
-    const { data: insRow, error: insErr } = await supabase
-      .from('ai_generated_documents')
-      .insert({
-        profile_id: order.profile_id,
-        template_id: tpl.id,
-        template_name: tpl.name,
-        template_source_path: ver.storage_path,
-        template_version_id: ver.id,
-        template_version: ver.version_number,
-        title: `${tpl.name} — ${order.order_number || order.id.slice(0, 8)}`,
-        status: 'generated',
-        file_path: outPath,
-        file_name: `${tpl.name}.docx`,
-        file_mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        storage_bucket: 'documents',
-        snapshot: { fields: docFields },
-        missing_tokens: missing,
-        token_manifest_snapshot: manifest,
-        template_tokens_snapshot: allIds.map((f) => `field:${f}`),
-        warnings_snapshot: [],
-        source_trace: sourceTrace,
-        resolver_version: RESOLVER_VERSION,
-        context_type: 'order',
-        context_id: order.id,
-        idempotency_key: idemKey,
-        created_by: userId,
-        meta: { strict: true },
-      })
-      .select('id')
-      .single();
-    if (insErr) return json({ error: `insert_failed:${insErr.message}` }, 500);
+    const docCommon = {
+      profile_id: order.profile_id,
+      template_id: tpl.id,
+      template_name: tpl.name,
+      template_source_path: ver.storage_path,
+      template_version_id: ver.id,
+      template_version: ver.version_number,
+      title: `${tpl.name} — ${order.order_number || order.id.slice(0, 8)}`,
+      status: 'generated',
+      file_path: outPath,
+      file_name: `${tpl.name}.docx`,
+      file_mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      storage_bucket: 'documents',
+      snapshot: { fields: docFields },
+      missing_tokens: missing,
+      token_manifest_snapshot: manifest,
+      template_tokens_snapshot: allIds.map((f) => `field:${f}`),
+      warnings_snapshot: [],
+      source_trace: sourceTrace,
+      resolver_version: RESOLVER_VERSION,
+      context_type: 'order',
+      context_id: order.id,
+      idempotency_key: idempotencyKey,
+      created_by: userId,
+      meta: { strict: true },
+    } as any;
+
+    let documentId: string;
+    if (preCreatedDocId) {
+      // immutability trigger пропускает doc_number/date/seq (OLD=NEW)
+      const { error: updErr } = await supabase
+        .from('ai_generated_documents')
+        .update(docCommon)
+        .eq('id', preCreatedDocId);
+      if (updErr) return json({ error: `update_failed:${updErr.message}` }, 500);
+      documentId = preCreatedDocId;
+    } else {
+      const { data: insRow, error: insErr } = await supabase
+        .from('ai_generated_documents')
+        .insert(docCommon)
+        .select('id')
+        .single();
+      if (insErr) return json({ error: `insert_failed:${insErr.message}` }, 500);
+      documentId = insRow.id;
+    }
 
     const sig = await supabase.storage.from('documents').createSignedUrl(outPath, 3600);
 
@@ -677,24 +690,29 @@ Deno.serve(async (req) => {
       actor_type: 'user',
       action: 'document.generated',
       meta: {
-        document_id: insRow.id,
+        document_id: documentId,
         order_id: order.id,
         template_id: tpl.id,
         template_version_id: ver.id,
         version_number: ver.version_number,
         field_ids: allIds,
         resolver_version: RESOLVER_VERSION,
+        document_number: allocatedNumber,
+        document_date: allocatedDate,
+        document_seq: allocatedSeq,
       },
     });
 
     return json({
       success: true,
       mode: 'generate',
-      document_id: insRow.id,
+      document_id: documentId,
       storage_path: outPath,
       download_url: sig.data?.signedUrl || null,
       template: { id: tpl.id, version_id: ver.id, version_number: ver.version_number },
       resolver_version: RESOLVER_VERSION,
+      document_number: allocatedNumber,
+      document_date: allocatedDate,
     });
   } catch (e: any) {
     console.error('canonical-document-generate-strict error:', e);
