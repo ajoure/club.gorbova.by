@@ -106,7 +106,7 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
       supabase.from("orders_v2").select("meta").eq("id", orderId).maybeSingle(),
       supabase
         .from("ai_generated_documents")
-        .select("id, title, file_path, storage_bucket, template_version, created_at")
+        .select("id, title, file_path, storage_bucket, template_version, created_at, document_number, document_date")
         .eq("context_type", "order")
         .eq("context_id", orderId)
         .is("deleted_at", null)
