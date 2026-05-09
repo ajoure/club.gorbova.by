@@ -105,6 +105,19 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [history, setHistory] = useState<HistoryDoc[]>([]);
+  const [executorInfo, setExecutorInfo] = useState<{
+    id: string | null;
+    name: string;
+    source: string | null;
+    hasManualOverrideHistory: boolean;
+  } | null>(null);
+  const [rebuildingExecutor, setRebuildingExecutor] = useState(false);
+  const [testingExecutor, setTestingExecutor] = useState(false);
+  const [executorTestResult, setExecutorTestResult] = useState<null | {
+    found: string[];
+    resolved: { fid: string; label: string; value: string }[];
+    empty: { fid: string; label: string }[];
+  }>(null);
 
   const { hasRole: isAdmin } = useHasRoleV2("admin");
   const { hasRole: isSuperAdmin } = useHasRoleV2("super_admin");
