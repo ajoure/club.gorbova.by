@@ -322,3 +322,106 @@ Backend (`canonical-template-apply-markup`, `canonical-document-generate-strict`
   product_id` (resolver уже есть, но не подключён к `grant-access-for-order`).
 - Автогенерацию + отправку клиенту включать только после QA, чтобы не сломать
   email/Telegram потоки.
+
+---
+
+## 15. C5-H — Search by document number
+
+**Цель:** добавить поиск сделок в RPC `search_deal_rows` по
+`ai_generated_documents.document_number` (формат `DDMM/N`, exact + prefix), не
+меняя UI и не трогая C5-G артефакты.
+
+### 15.1 Captured pre-state
+
+```text
+prosecdef = false        -- SECURITY INVOKER
+owner     = postgres
+grants    = EXECUTE TO PUBLIC
+args      = (text, uuid, timestamptz, timestamptz, text, integer, integer)
+```
+
+### 15.2 Migration
+
+`supabase/migrations/<ts>_search_deal_rows_with_document_number.sql`:
+
+- `CREATE INDEX IF NOT EXISTS idx_ai_gen_docs_context_active_doc_number
+   ON ai_generated_documents (context_type, context_id, document_number)
+   WHERE deleted_at IS NULL AND document_number IS NOT NULL;`
+- `DROP FUNCTION ... CREATE FUNCTION public.search_deal_rows(...)` —
+  сигнатура и колонки 1:1.
+- `search_blob` дополнен через `LEFT JOIN LATERAL` с
+  `string_agg(DISTINCT ad.document_number, ' ')` по
+  `ad.context_type IN ('order','deal') AND ad.context_id = o.id
+   AND ad.deleted_at IS NULL AND ad.document_number IS NOT NULL`.
+- `ALTER FUNCTION ... OWNER TO postgres;`
+- `GRANT EXECUTE ... TO PUBLIC;`
+
+### 15.3 Post-state verification
+
+```text
+prosecdef = false        -- SECURITY INVOKER (unchanged)
+owner     = postgres     -- unchanged
+grants    = EXECUTE TO PUBLIC (unchanged)
+args      = (text, uuid, timestamptz, timestamptz, text, integer, integer) (unchanged)
+```
+
+### 15.4 Test fixtures (isolated, cleaned up)
+
+Вставлены 3 временных документа с `template_name='C5H_TEST'`:
+
+| id suffix | order                                    | document_number | deleted_at |
+|-----------|------------------------------------------|-----------------|-----------|
+| ...001    | 5ed0de65 (`7-club-ЕИ-SECV7A`)            | `C5H/0905/1`    | NULL      |
+| ...002    | 5ed0de65 (`7-club-ЕИ-SECV7A`)            | `C5H/0905/2`    | NULL      |
+| ...003    | 7610475c (`8-club-ЕИ-SECVLB`)            | `C5H/0905/9`    | now()     |
+
+После всех тестов — `DELETE`. Контрольный `count(*) WHERE
+template_name='C5H_TEST'` = **0**.
+
+### 15.5 Test results
+
+| # | Test                                | Expected         | Actual                        | Pass |
+|---|-------------------------------------|------------------|-------------------------------|------|
+| 1 | search `C5H/0905/1` (exact)         | 1 row            | 1 row → `7-club-ЕИ-SECV7A`    | ✅    |
+| 2 | search `C5H/0905` (prefix, 2 docs)  | 1 row, no dupes  | 1 row → `7-club-ЕИ-SECV7A`    | ✅    |
+| 3 | search `C5H/0905/9` (soft-deleted)  | 0 rows           | 0 rows                        | ✅    |
+| 4 | regression: `finassist.by@gmail.com`| matches baseline | RPC=38, baseline=38           | ✅    |
+| 5 | regression: order_number lookup     | 1 row            | 1 row → `7-club-ЕИ-SECV7A`    | ✅    |
+
+### 15.6 Scope: input normalization
+
+Не добавлена. Поддерживается только:
+- exact `DDMM/N` (`0905/1`),
+- prefix по дате (`0905`).
+
+Варианты с пробелами вокруг слэша (`0905 / 1`), альтернативные
+разделители (`0905-1`) и регистровые трюки в этот патч **не входят** —
+по согласованию плана.
+
+### 15.7 C5-G untouched
+
+Подтверждаю — в рамках C5-H **не менялись**:
+
+- `supabase/functions/canonical-document-generate-strict/index.ts`
+- RPC `allocate_document_number`
+- триггер `trg_ai_generated_documents_immutable_number` и его функция
+- таблица `document_number_counters` (схема и данные)
+- таблица `ai_generated_documents` (схема; данные — только тестовые
+  фикстуры, удалены)
+- UI `src/pages/admin/AdminDeals.tsx`
+- UI `src/components/ai-documents/DealDocumentsPanel.tsx`
+- UI `src/pages/admin/AdminDocumentsNumbering.tsx`
+
+### 15.8 DoD
+
+- [x] Миграция применена, сигнатура / security mode / owner / grants
+      идентичны pre-state.
+- [x] Тесты 1–5 (точный, префикс, soft-delete, регрессия email,
+      регрессия order_number) пройдены.
+- [x] No-duplicates: сделка с двумя номерами `C5H/0905/1`+`C5H/0905/2`
+      возвращается одной строкой по запросу `C5H/0905`.
+- [x] Тестовые фикстуры удалены, leftover = 0.
+- [x] AdminDeals не правился; `types.ts` не требует обновления
+      (колонки RPC не изменились).
+- [x] Раздел **15. C5-H** добавлен в proof-файл.
+- [x] C5-G артефакты не тронуты.
