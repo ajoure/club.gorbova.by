@@ -16,7 +16,7 @@
  *   - Никогда не редактирует product/tariff/order_number/final_price.
  *   - Email/Telegram/auto-generation НЕ триггерятся.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
