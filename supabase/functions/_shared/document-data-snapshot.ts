@@ -60,11 +60,17 @@ export async function snapshotOrderDocumentData(
   orderId: string,
 ): Promise<SnapshotResult> {
   try {
-    const { data: order } = await supabase
+    const { data: order, error: orderErr } = await supabase
       .from('orders_v2')
-      .select('id, status, product_id, tariff_id, offer_id, final_price, base_price, currency, paid_at, created_at, meta')
+      .select('id, status, product_id, tariff_id, offer_id, final_price, base_price, currency, deal_date, updated_at, created_at, meta')
       .eq('id', orderId)
       .maybeSingle();
+    if (orderErr) {
+      await safeAudit(supabase, 'document_data.snapshot_error', {
+        order_id: orderId, table: 'orders_v2', stage: 'load_order', error: orderErr.message,
+      });
+      return { status: 'failed', reason: `orders_v2:${orderErr.message}` };
+    }
     if (!order) return { status: 'skipped_no_order' };
 
     const existing = (order.meta as any)?.document_data;
