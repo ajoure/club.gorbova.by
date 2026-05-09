@@ -364,6 +364,60 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
     window.open(data.signedUrl, "_blank");
   };
 
+  const rebuildExecutor = async () => {
+    setRebuildingExecutor(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("canonical-deal-fields-update", {
+        body: { order_id: orderId, mode: "rebuild_executor" },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+      toast.success("Поля исполнителя пересобраны");
+      setExecutorTestResult(null);
+      setPreview(null);
+      await fetchAll();
+    } catch (e: any) {
+      toast.error(`Пересборка: ${normalizeEdgeFunctionError(e, e?.context?.body ?? null)}`);
+    } finally {
+      setRebuildingExecutor(false);
+    }
+  };
+
+  const testExecutor = async () => {
+    if (!selectedTemplateId) { toast.error("Сначала выберите шаблон"); return; }
+    setTestingExecutor(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("canonical-document-generate-strict", {
+        body: { mode: "preview", order_id: orderId, template_id: selectedTemplateId },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+      const pv = data as PreviewResult;
+      setPreview(pv);
+      const found = (pv.found_field_ids || []).filter((f) => EXECUTOR_FLD_IDS.has(f));
+      const resolved: { fid: string; label: string; value: string }[] = [];
+      const empty: { fid: string; label: string }[] = [];
+      for (const fid of found) {
+        const reg = fieldRegistry.get(fid);
+        const label = reg?.label || fid;
+        const trace = (pv.source_trace as any)?.[fid];
+        const status = trace?.status;
+        const val = trace?.rendered_value ?? trace?.value ?? "";
+        if (status === "resolved" && String(val).trim().length > 0) {
+          resolved.push({ fid, label, value: String(val) });
+        } else {
+          empty.push({ fid, label });
+        }
+      }
+      setExecutorTestResult({ found, resolved, empty });
+      toast.success(`Executor FLDs: ${found.length} в шаблоне, ${resolved.length} заполнено, ${empty.length} пусто`);
+    } catch (e: any) {
+      toast.error(`Тест исполнителя: ${normalizeEdgeFunctionError(e, e?.context?.body ?? null)}`);
+    } finally {
+      setTestingExecutor(false);
+    }
+  };
+
   if (loading) {
     return <div className="p-4 flex items-center gap-2 text-sm text-muted-foreground">
       <Loader2 className="h-4 w-4 animate-spin" /> Загрузка…
