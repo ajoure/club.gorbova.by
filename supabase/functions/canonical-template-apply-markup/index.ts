@@ -365,8 +365,80 @@ Deno.serve(async (req) => {
     const accepted = replacementsRaw.filter(
       (r) => r && (r.status === 'accepted' || r.status === 'changed' || r.status === 'manually_added'),
     );
+
+    // --- load source version before replacement validation
+    // A version that already contains strict FLD placeholders can have zero replacements.
+    // In that case this function is still the canonical markup workflow: it marks the
+    // existing validated version as `marked` and can activate it without creating a copy.
+    const { data: srcVer, error: srcErr } = await supabase
+      .from('document_template_versions')
+      .select('*')
+      .eq('id', sourceVersionId)
+      .maybeSingle();
+    if (srcErr || !srcVer) {
+      return new Response(JSON.stringify({ error: 'version_not_found' }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     if (accepted.length === 0) {
-      return new Response(JSON.stringify({ error: 'no_accepted_replacements' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      if (srcVer.validation_status !== 'valid') {
+        return new Response(JSON.stringify({ error: 'no_accepted_replacements', validation_status: srcVer.validation_status }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      const { error: markErr } = await supabase
+        .from('document_template_versions')
+        .update({ markup_status: 'marked' })
+        .eq('id', srcVer.id);
+      if (markErr) {
+        return new Response(JSON.stringify({ error: 'markup_mark_failed', detail: markErr.message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      let activated = false;
+      if (activate) {
+        const { error: demoteErr } = await supabase.from('document_template_versions')
+          .update({ is_current: false }).eq('template_id', srcVer.template_id).neq('id', srcVer.id);
+        if (demoteErr) {
+          return new Response(JSON.stringify({ error: 'activation_demote_failed', detail: demoteErr.message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+        const { error: promoteErr } = await supabase.from('document_template_versions')
+          .update({ is_current: true }).eq('id', srcVer.id);
+        if (promoteErr) {
+          return new Response(JSON.stringify({ error: 'activation_promote_failed', detail: promoteErr.message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+        const { error: tplErr } = await supabase.from('document_templates')
+          .update({ current_version_id: srcVer.id, template_status: 'active', is_active: true }).eq('id', srcVer.template_id);
+        if (tplErr) {
+          return new Response(JSON.stringify({ error: 'activation_template_update_failed', detail: tplErr.message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+        activated = true;
+      }
+
+      await supabase.from('audit_logs').insert({
+        actor_user_id: userId,
+        actor_type: 'user',
+        action: 'document_template.markup_marked_without_replacements',
+        meta: {
+          template_id: srcVer.template_id,
+          template_version_id: srcVer.id,
+          version_number: srcVer.version_number,
+          activated,
+        },
+      });
+
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          new_version_id: srcVer.id,
+          new_version_number: srcVer.version_number,
+          applied_count: 0,
+          missed: [],
+          ambiguous: [],
+          activated,
+          marked_existing_version: true,
+          validation: { status: 'valid', errors: srcVer.validation_errors ?? [], warnings: [], recognized: srcVer.token_manifest ?? [] },
+          token_manifest: srcVer.token_manifest ?? [],
+        }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
     }
 
     // validate FLD ids
@@ -385,16 +457,6 @@ Deno.serve(async (req) => {
     const missing = fldIds.filter((id) => !knownSet.has(id));
     if (missing.length > 0) {
       return new Response(JSON.stringify({ error: 'unknown_field_public_id', missing }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-    }
-
-    // --- load source version
-    const { data: srcVer, error: srcErr } = await supabase
-      .from('document_template_versions')
-      .select('*')
-      .eq('id', sourceVersionId)
-      .maybeSingle();
-    if (srcErr || !srcVer) {
-      return new Response(JSON.stringify({ error: 'version_not_found' }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // --- download DOCX

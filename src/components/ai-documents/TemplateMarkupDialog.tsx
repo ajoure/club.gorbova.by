@@ -895,6 +895,7 @@ export function TemplateMarkupDialog({
   const withoutFldCount = replacements.filter((r) => isAccepted(r.status) && !r.field_public_id).length;
   const suggestedCount = replacements.filter((r) => r.status === "suggested").length;
   const canApply = acceptedCount > 0 && ambiguousCount === 0 && withoutFldCount === 0;
+  const canMarkExistingVersion = templateVersion?.validation_status === "valid" && acceptedCount === 0;
 
   /** Причина, по которой кнопка «Применить» недоступна. */
   const disabledReason = (() => {
@@ -921,7 +922,7 @@ export function TemplateMarkupDialog({
 
   const apply = async (activate: boolean) => {
     if (!templateVersion) return;
-    if (!canApply) {
+    if (!canApply && !(activate && canMarkExistingVersion)) {
       toast.error(disabledReason ?? "Замены не готовы к применению");
       if (ambiguousCount > 0 || withoutFldCount > 0) setShowReplacements(true);
       return;
@@ -929,7 +930,7 @@ export function TemplateMarkupDialog({
     activate ? setActivating(true) : setApplying(true);
     try {
       const payload = buildPayload();
-      if (payload.length === 0) {
+      if (payload.length === 0 && !canMarkExistingVersion) {
         toast.error("Нет принятых замен с выбранным полем FLD. Выберите поле для каждой замены.");
         return;
       }
@@ -951,7 +952,9 @@ export function TemplateMarkupDialog({
       const ambiguous = r?.ambiguous?.length ?? 0;
       const missed = r?.missed?.length ?? 0;
       toast.success(
-        `Создана версия v${r?.new_version_number}: применено ${r?.applied_count}` +
+        (r?.marked_existing_version
+          ? `Текущая версия v${r?.new_version_number} размечена`
+          : `Создана версия v${r?.new_version_number}: применено ${r?.applied_count}`) +
         (missed ? `, не найдено: ${missed}` : "") +
         (ambiguous ? `, неоднозначных: ${ambiguous}` : "") +
         (r?.activated ? " · активирована" : valid ? " · валидна (не активирована)" : ` · ${r?.validation?.status}`),
@@ -1101,38 +1104,12 @@ export function TemplateMarkupDialog({
             </Button>
             {templateVersion?.validation_status === "valid" && acceptedCount === 0 && (
               <Button
-                onClick={async () => {
-                  if (!templateVersion) return;
-                  if (templateVersion.is_current) {
-                    toast.info("Этот шаблон уже активен");
-                    return;
-                  }
-                  setActivating(true);
-                  try {
-                    const { data, error } = await supabase.functions.invoke(
-                      "canonical-template-activate-version",
-                      { body: { template_version_id: templateVersion.id } },
-                    );
-                    if (error) {
-                      toast.error(`Не удалось активировать: ${normalizeEdgeFunctionError(error?.message, (error as any)?.context?.body ?? data)}`);
-                      return;
-                    }
-                    if ((data as any)?.error) {
-                      toast.error(`Не удалось активировать: ${normalizeEdgeFunctionError((data as any).error, data)}`);
-                      return;
-                    }
-                    toast.success("Шаблон активирован");
-                    onApplied?.();
-                    onOpenChange(false);
-                  } finally {
-                    setActivating(false);
-                  }
-                }}
+                onClick={() => apply(true)}
                 disabled={activating || !!templateVersion?.is_current}
-                title={templateVersion?.is_current ? "Уже активен" : "Активировать текущую версию без замен"}
+                title={templateVersion?.is_current ? "Уже активен" : "Подтвердить разметку и активировать текущую версию"}
               >
                 {activating ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />}
-                {templateVersion?.is_current ? "Уже активен" : "Активировать шаблон"}
+                {templateVersion?.is_current ? "Уже активен" : "Разметить и активировать"}
               </Button>
             )}
             <Button
