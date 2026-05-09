@@ -245,6 +245,7 @@ interface VersionRow {
   validation_status: string | null;
   validation_errors: any[];
   validation_checked_at: string | null;
+  markup_status: string | null;
   detected_tokens: any[];
   token_manifest: any[];
   created_at: string;
@@ -282,7 +283,7 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
         .order("created_at", { ascending: false }),
       supabase
         .from("document_template_versions")
-        .select("id, template_id, version_number, storage_bucket, storage_path, file_name, file_size_bytes, is_current, validation_status, validation_errors, validation_checked_at, detected_tokens, token_manifest, created_at")
+        .select("id, template_id, version_number, storage_bucket, storage_path, file_name, file_size_bytes, is_current, validation_status, validation_errors, validation_checked_at, markup_status, detected_tokens, token_manifest, created_at")
         .order("created_at", { ascending: false }),
       supabase
         .from("fields_registry")
@@ -556,6 +557,13 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
   const activateVersion = async (tpl: TemplateRow, ver: VersionRow) => {
     if (ver.validation_status !== "valid") {
       toast.error("Шаблон содержит ошибки. Откройте «Проверка и исправление плейсхолдеров».");
+      return;
+    }
+    if (ver.markup_status && ver.markup_status !== "marked") {
+      toast.message("Сначала примените разметку плейсхолдеров.", {
+        description: "Открываю «Проверка и исправление плейсхолдеров».",
+      });
+      openMarkup(tpl, ver);
       return;
     }
     try {
