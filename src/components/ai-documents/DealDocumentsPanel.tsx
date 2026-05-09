@@ -308,10 +308,10 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
                   size="sm"
                   onClick={runGenerate}
                   disabled={generating || !preview?.can_generate}
-                  title={!preview ? "Сначала «Тест»" : !preview.can_generate ? "Заполните обязательные поля" : "Сформировать документ"}
+                  title={!preview ? "Сначала «Тест»" : !preview.can_generate ? "Заполните обязательные поля" : "Создать PDF"}
                 >
                   {generating ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Sparkles className="h-3 w-3 mr-1" />}
-                  Сформировать документ
+                  Создать PDF
                 </Button>
               </div>
             </div>
