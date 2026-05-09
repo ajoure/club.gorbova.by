@@ -127,6 +127,51 @@ async function sendToGetCourse(
   }
 }
 
+async function mergeOrderV2Meta(supabase: any, orderId: string, patch: Record<string, any>) {
+  const { data: fresh, error: loadError } = await supabase
+    .from('orders_v2')
+    .select('meta')
+    .eq('id', orderId)
+    .maybeSingle();
+  if (loadError) throw loadError;
+  const currentMeta = (fresh?.meta || {}) as Record<string, any>;
+  return supabase
+    .from('orders_v2')
+    .update({ meta: { ...currentMeta, ...patch }, updated_at: new Date().toISOString() })
+    .eq('id', orderId);
+}
+
+async function ensureDocumentDataSnapshot(supabase: any, supabaseUrl: string, serviceKey: string, orderId: string) {
+  try {
+    const resp = await fetch(`${supabaseUrl}/functions/v1/canonical-document-payment-hook`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${serviceKey}`,
+      },
+      body: JSON.stringify({ order_id: orderId }),
+    });
+    const body = await resp.json().catch(() => ({}));
+    const { data: after } = await supabase
+      .from('orders_v2')
+      .select('meta')
+      .eq('id', orderId)
+      .maybeSingle();
+    return {
+      invoked: true,
+      status: resp.status,
+      hook_status: body?.status ?? null,
+      hook_snapshot: body?.snapshot ?? null,
+      has_document_data: !!(after?.meta as any)?.document_data,
+      template_id: (after?.meta as any)?.document_data?.template_id ?? null,
+      executor_id: (after?.meta as any)?.document_data?.executor_id ?? null,
+      executor_source: (after?.meta as any)?.document_data?.executor_source ?? null,
+    };
+  } catch (e) {
+    return { invoked: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 // Simulate payment completion for testing purposes
 // Only accessible by super admins
 
@@ -303,20 +348,13 @@ Deno.serve(async (req) => {
       if (!paymentError && paymentV2?.id) {
         results.payment_created = true;
         // Link payment id into order meta
-        await supabase
-          .from('orders_v2')
-          .update({
-            meta: {
-              ...(orderV2.meta || {}),
-              payment_id: paymentV2.id,
-              test_payment: true,
-              test_payment_by: user.email,
-              test_payment_at: now.toISOString(),
-              bepaid_uid: testUid,
-            },
-            updated_at: now.toISOString(),
-          })
-          .eq('id', orderV2.id);
+        await mergeOrderV2Meta(supabase, orderV2.id, {
+          payment_id: paymentV2.id,
+          test_payment: true,
+          test_payment_by: user.email,
+          test_payment_at: now.toISOString(),
+          bepaid_uid: testUid,
+        });
       }
 
       // PATCH-SIMULATION-CANONICAL:
@@ -351,6 +389,15 @@ Deno.serve(async (req) => {
         results.grant_access_invoked = false;
         results.subscription_error = grantErr instanceof Error ? grantErr.message : String(grantErr);
       }
+
+      // The grant hook is fire-and-forget, but test simulation must be deterministic
+      // and must not leave the deal UI without document_data.
+      results.document_data_snapshot = await ensureDocumentDataSnapshot(
+        supabase,
+        supabaseUrl,
+        supabaseServiceKey,
+        orderV2.id,
+      );
 
       // Resolve profile_id (used by GetCourse sync below)
       const { data: profileData } = await supabase
@@ -417,18 +464,12 @@ Deno.serve(async (req) => {
         if (gcResult.gcOrderId) results.getcourse_order_id = gcResult.gcOrderId;
 
         // Update order meta with GC sync result
-        await supabase
-          .from('orders_v2')
-          .update({
-            meta: {
-              ...(orderV2.meta || {}),
-              gc_sync: gcResult.success,
-              gc_sync_at: now.toISOString(),
-              getcourse_order_id: gcResult.gcOrderId || null,
-              gc_error: gcResult.error || null,
-            },
-          })
-          .eq('id', orderV2.id);
+        await mergeOrderV2Meta(supabase, orderV2.id, {
+          gc_sync: gcResult.success,
+          gc_sync_at: now.toISOString(),
+          getcourse_order_id: gcResult.gcOrderId || null,
+          gc_error: gcResult.error || null,
+        });
       } else {
         results.getcourse_sync = false;
         results.getcourse_error = 'No user profile found';
