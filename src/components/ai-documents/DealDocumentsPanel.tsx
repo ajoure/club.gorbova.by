@@ -232,7 +232,7 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
       if ((data as any)?.error) throw new Error((data as any).error);
       setPreview(data as PreviewResult);
     } catch (e: any) {
-      toast.error(`Preview: ${e.message ?? e}`);
+      toast.error(`Preview: ${normalizeEdgeFunctionError(e, e?.context?.body ?? null)}`);
     } finally {
       setPreviewLoading(false);
     }
@@ -247,22 +247,21 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
       });
       if (error) throw error;
       if ((data as any)?.error) throw new Error((data as any).error);
-      toast.success("Документ сформирован");
+      toast.success("PDF создан");
       const url = (data as any).download_url;
       if (url) window.open(url, "_blank");
       await fetchAll();
     } catch (e: any) {
-      toast.error(`Генерация: ${e.message ?? e}`);
+      toast.error(`Создание PDF: ${normalizeEdgeFunctionError(e, e?.context?.body ?? null)}`);
     } finally {
       setGenerating(false);
     }
   };
 
-  const downloadDoc = async (doc: HistoryDoc) => {
-    if (!doc.file_path) return;
+  const downloadFile = async (bucket: string, path: string) => {
     const { data, error } = await supabase.storage
-      .from(doc.storage_bucket)
-      .createSignedUrl(doc.file_path, 3600);
+      .from(bucket)
+      .createSignedUrl(path, 3600);
     if (error || !data?.signedUrl) { toast.error("Не удалось получить ссылку"); return; }
     window.open(data.signedUrl, "_blank");
   };
