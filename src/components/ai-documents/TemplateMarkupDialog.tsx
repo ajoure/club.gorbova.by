@@ -397,11 +397,18 @@ export function TemplateMarkupDialog({
 
         const draft = (draftRow.data?.markup_draft ?? null) as unknown as MarkupDraft | null;
         if (draft && Array.isArray(draft.replacements) && draft.replacements.length > 0) {
-          setReplacements(draft.replacements.map((r) => ({
+          const restored = draft.replacements.map((r) => ({
             ...r,
             visual_label: r.visual_label ?? r.field_public_id ?? null,
             occurrences_total: countOccurrences(txt, r.original_text),
-          })));
+          }));
+          const resolved = resolveMissingOccurrenceIndexes(restored, txt);
+          setReplacements(resolved.next);
+          if (resolved.changed > 0) {
+            toast.message("Уточнены повторяющиеся вхождения", {
+              description: `Автоматически привязано замен: ${resolved.changed}. Проверьте список замен перед применением.`,
+            });
+          }
           toast.message("Восстановлен черновик разметки", {
             description: `Замен: ${draft.replacements.length}. Сохранён ${new Date(draft.updated_at).toLocaleString("ru-RU")}`,
           });
@@ -807,6 +814,7 @@ export function TemplateMarkupDialog({
         .filter((s) => !existing.has(`${s.original_text}::${s.field_public_id ?? ""}`))
         .map((s) => {
           const fr = s.field_public_id ? refByFld.get(s.field_public_id) : undefined;
+          const total = countOccurrences(plainText, s.original_text);
           return {
             id: s.id,
             source: "auto",
@@ -817,8 +825,10 @@ export function TemplateMarkupDialog({
             case_modifier: (s.case_modifier ?? null) as FieldCase | null,
             data_type: s.data_type ?? null,
             status: s.status as ReplacementStatus,
-            occurrence_index: null,
-            occurrences_total: countOccurrences(plainText, s.original_text),
+            occurrence_index: occurrenceIndexFromMatchStart(plainText, s.original_text, s.match_start) ?? (total === 1 ? 0 : null),
+            occurrences_total: total,
+            match_start: s.match_start ?? null,
+            match_end: s.match_end ?? null,
             reason: s.reason,
             confidence: s.confidence,
           };
