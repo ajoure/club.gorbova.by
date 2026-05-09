@@ -13,15 +13,18 @@ interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   status: {
-    configured: boolean; enabled: boolean; url: string | null;
-    basic_user_last4: string | null; basic_pass_last4: string | null;
+    configured: boolean;
+    enabled: boolean;
+    url: string | null;
+    basic_user_last4: string | null;
+    password_configured: boolean;
+    password_last4: string | null;
   } | null;
 }
 
 export function GotenbergSetupDialog({ open, onOpenChange, status }: Props) {
   const [url, setUrl] = useState("");
   const [user, setUser] = useState("");
-  const [pass, setPass] = useState("");
   const [enabled, setEnabled] = useState(true);
   const [saving, setSaving] = useState(false);
   const qc = useQueryClient();
@@ -30,7 +33,6 @@ export function GotenbergSetupDialog({ open, onOpenChange, status }: Props) {
     if (open) {
       setUrl(status?.url ?? "https://pdf.gorbova.by");
       setUser("");
-      setPass("");
       setEnabled(status?.enabled ?? true);
     }
   }, [open, status]);
@@ -45,7 +47,6 @@ export function GotenbergSetupDialog({ open, onOpenChange, status }: Props) {
           payload: {
             gotenberg_url: url,
             gotenberg_basic_user: user || undefined,
-            gotenberg_basic_pass: pass || undefined,
             gotenberg_enabled: enabled,
           },
         },
@@ -69,7 +70,7 @@ export function GotenbergSetupDialog({ open, onOpenChange, status }: Props) {
         <DialogHeader>
           <DialogTitle>Настройка Gotenberg</DialogTitle>
           <DialogDescription>
-            Подключение к DOCX→PDF конвертеру на VPS hoster.by. После сохранения запустите Health-check и Test DOCX→PDF.
+            Подключение к DOCX→PDF конвертеру на VPS hoster.by. Пароль Basic Auth хранится <strong>только в ENV</strong> (<code>GOTENBERG_PASSWORD</code>) и не попадает в DB. URL ограничен allowlist (<code>pdf.gorbova.by</code>).
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -79,11 +80,11 @@ export function GotenbergSetupDialog({ open, onOpenChange, status }: Props) {
           </div>
           <div>
             <Label>Basic Auth — пользователь</Label>
-            <Input value={user} onChange={(e) => setUser(e.target.value)} placeholder={status?.basic_user_last4 ? `сейчас: …${status.basic_user_last4}` : "опционально"} />
+            <Input value={user} onChange={(e) => setUser(e.target.value)} placeholder={status?.basic_user_last4 ? `сейчас: …${status.basic_user_last4}` : "напр. gotenberg (если не указано — берётся из ENV GOTENBERG_USERNAME)"} />
           </div>
-          <div>
-            <Label>Basic Auth — пароль</Label>
-            <Input type="password" value={pass} onChange={(e) => setPass(e.target.value)} placeholder={status?.basic_pass_last4 ? `сейчас: …${status.basic_pass_last4} (оставьте пустым чтобы не менять)` : "опционально"} />
+          <div className="rounded-md border p-3 text-xs text-muted-foreground space-y-1">
+            <div><strong>Пароль:</strong> {status?.password_configured ? `задан в ENV (…${status?.password_last4})` : "❗ не задан в ENV — добавьте секрет GOTENBERG_PASSWORD"}</div>
+            <div>Пароль изменяется только через Supabase Secrets (никогда не через эту форму).</div>
           </div>
           <div className="flex items-center justify-between rounded-md border p-3">
             <div>
