@@ -127,6 +127,51 @@ async function sendToGetCourse(
   }
 }
 
+async function mergeOrderV2Meta(supabase: any, orderId: string, patch: Record<string, any>) {
+  const { data: fresh, error: loadError } = await supabase
+    .from('orders_v2')
+    .select('meta')
+    .eq('id', orderId)
+    .maybeSingle();
+  if (loadError) throw loadError;
+  const currentMeta = (fresh?.meta || {}) as Record<string, any>;
+  return supabase
+    .from('orders_v2')
+    .update({ meta: { ...currentMeta, ...patch }, updated_at: new Date().toISOString() })
+    .eq('id', orderId);
+}
+
+async function ensureDocumentDataSnapshot(supabase: any, supabaseUrl: string, serviceKey: string, orderId: string) {
+  try {
+    const resp = await fetch(`${supabaseUrl}/functions/v1/canonical-document-payment-hook`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${serviceKey}`,
+      },
+      body: JSON.stringify({ order_id: orderId }),
+    });
+    const body = await resp.json().catch(() => ({}));
+    const { data: after } = await supabase
+      .from('orders_v2')
+      .select('meta')
+      .eq('id', orderId)
+      .maybeSingle();
+    return {
+      invoked: true,
+      status: resp.status,
+      hook_status: body?.status ?? null,
+      hook_snapshot: body?.snapshot ?? null,
+      has_document_data: !!(after?.meta as any)?.document_data,
+      template_id: (after?.meta as any)?.document_data?.template_id ?? null,
+      executor_id: (after?.meta as any)?.document_data?.executor_id ?? null,
+      executor_source: (after?.meta as any)?.document_data?.executor_source ?? null,
+    };
+  } catch (e) {
+    return { invoked: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 // Simulate payment completion for testing purposes
 // Only accessible by super admins
 
