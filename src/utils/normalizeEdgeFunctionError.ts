@@ -103,6 +103,24 @@ function extractMeaningful(body: unknown): string | null {
 function mapKnown(raw: string): string | null {
   const s = raw.toLowerCase();
 
+  // Gotenberg / PDF conversion
+  if (s.includes('gotenberg_not_configured')) return 'Gotenberg не настроен';
+  if (s.includes('gotenberg_disabled')) return 'Конвертация PDF отключена';
+  if (s.includes('gotenberg_auth_failed')) return 'Ошибка авторизации Gotenberg';
+  if (s.includes('gotenberg_timeout')) return 'Превышено время ожидания конвертации';
+  if (s.includes('gotenberg_url_not_allowed') || s.includes('gotenberg_ssrf_blocked')) {
+    return 'URL запрещён настройками безопасности';
+  }
+  if (s.includes('gotenberg_pdf_too_small') || s.includes('gotenberg_not_pdf')) {
+    return 'Gotenberg вернул некорректный PDF';
+  }
+  if (s.includes('gotenberg_unreachable') || s.includes('gotenberg_http_error')) {
+    return 'Gotenberg недоступен. Попробуйте позже.';
+  }
+  if (s.includes('pdf_conversion_failed')) {
+    return 'Не удалось сконвертировать документ в PDF';
+  }
+
   if (s.includes('resume_blocked_no_payment_method')) {
     return 'Нужно заново привязать карту или оформить новую подписку.';
   }
