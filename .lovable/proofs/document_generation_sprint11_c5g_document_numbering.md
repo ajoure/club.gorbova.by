@@ -260,3 +260,65 @@ Live-генерация конкретного документа в production-
 
 **Итог:** C5-G закрыт по 13/14 пунктов DoD. Единственный остаток — extend `search_deal_rows` номером
 документа (отдельный патч **C5-H**, чисто read-only RPC изменение).
+
+## §14. C5-H — Strict UI validator alignment с backend (PATCH)
+
+**Проблема.** Загруженный шаблон `Шаблон. Счёт-акт на услуги ИП - Исполнитель.docx`
+содержит корректные ID-first плейсхолдеры с разрешёнными модификаторами:
+`{{field:FLD-000070|format=words}}`, `{{field:FLD-000153|case=genitive}}`,
+`{{field:FLD-000195|format=words}}`, `{{field:FLD-000196|format=words}}`,
+`{{field:FLD-000112|case=genitive}}`, `{{field:FLD-000217|case=genitive}}`.
+UI-валидатор в `StrictDocumentTemplatesManager.tsx` принимал только `^field:FLD-\d+$`
+(без модификаторов) и помечал такие токены как `legacy_placeholder_format_detected`.
+Backend (`canonical-template-apply-markup`, `canonical-document-generate-strict`)
+модификаторы уже поддерживал — фронт и бэк расходились по контракту.
+
+**Извлечённые токены (text-level, dry-run).**
+- 31 уникальный плейсхолдер, 42 вхождения.
+- 0 legacy `document.*|deal.*|cf.*|executor.*|customer.*`.
+- Все 28 уникальных `FLD-*` присутствуют в `fields_registry` (archived_at IS NULL).
+
+**Изменения.**
+- `STRICT_FIELD_RE = /^field:(FLD-\d+)((?:\|[a-z_]+=[a-z_]+)*)$/` — синхронно с
+  backend.
+- Разбор `field_public_id`, `format ∈ {words,text}`, `case ∈
+  {nominative,genitive,dative,accusative,instrumental,prepositional}`.
+- `legacy_placeholder_format_detected` оставлен только для `document.*|deal.*|cf.*|executor.*|customer.*`
+  и токенов без префикса `field:FLD-`. Для нераспознанных модификаторов отдельный
+  `unknown_modifier`.
+- При preview сохраняем canonical `token_manifest` (`field_public_id`, `placeholder`,
+  `format`, `case_modifier`, `label`, `data_type`) — `DealDocumentsPanel` и
+  `canonical-document-generate-strict` получают полный набор полей.
+- Активация по-прежнему через `canonical-template-activate-version` (server-side,
+  JWT, требует `validation_status='valid'`).
+
+**Не изменено.**
+- DOCX не трогаем — файл корректный.
+- Генерация номера `DDMM/N`, immutability trigger, RPC — без изменений.
+- Email/Telegram/batch/auto-generation — без изменений.
+- Привязка шаблона к тарифу/кнопке оплаты — отдельный следующий патч (see §10
+  плана: `document_generation_rules` уже содержит `offer_id/tariff_id/product_id`,
+  переиспользуем).
+
+**DoD (ожидается на ручном QA в UI).**
+1. После refresh каталога версия загруженного шаблона показывает
+   `validation_status='valid'`, `validation_errors=[]`.
+2. Бейджи плейсхолдеров с `|format=words` и `|case=genitive` — нейтральные
+   (secondary), не destructive.
+3. Кнопка «Сделать текущей» доступна, активация проходит через
+   `canonical-template-activate-version` (audit `document_template.version_activated`).
+4. В `DealDocumentsPanel` шаблон появляется в селекте активных шаблонов;
+   `token_manifest` содержит 28 уникальных FLD.
+5. Preview по сделке: 0 legacy errors, 0 строк в `ai_generated_documents`,
+   counter `document_number_counters` не двигается.
+6. Generate: создаётся `ai_generated_documents` с `document_number = DDMM/N`,
+   `document_date = today (Europe/Minsk)`, скачивание DOCX работает.
+
+**Следующий шаг — отдельный план (вне C5-H).**
+- Привязать шаблон к offer/tariff/product через существующую
+  `document_generation_rules` (`trigger_type='payment_success'`).
+- В UI продукта/тарифа/offer добавить выбор активного шаблона.
+- При успешной оплате выбирать шаблон по приоритету `offer_id → tariff_id →
+  product_id` (resolver уже есть, но не подключён к `grant-access-for-order`).
+- Автогенерацию + отправку клиенту включать только после QA, чтобы не сломать
+  email/Telegram потоки.
