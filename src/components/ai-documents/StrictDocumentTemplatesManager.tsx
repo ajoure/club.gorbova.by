@@ -146,7 +146,7 @@ async function strictValidate(rawText: string, knownPublicIds: Set<string>): Pro
     }
 
     const parsed = parseStrictInside(inside);
-    if (!parsed.ok) {
+    if (parsed.ok === false) {
       if (parsed.error === "unknown_modifier") {
         errors.push({
           code: "unknown_modifier",
