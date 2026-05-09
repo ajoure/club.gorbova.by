@@ -75,20 +75,69 @@ UPDATE ai_generated_documents SET document_number='9999/9' WHERE id='<doc_with_n
 
 Override: только через `SELECT admin_override_document_number(p_document_id, p_new_number, p_reason)`, super_admin only, обязательная причина, audit `document_number.override`.
 
-## 8. Concurrency / sequential / idempotency tests
+## 8. Live QA proof (service_role / SECURITY DEFINER runner)
 
-Прямые SQL-проверки счётчика недоступны из обычной psql-сессии (RLS deny-all для `document_number_counters` + RLS на `ai_generated_documents` для anon). Логика проверена структурно:
+Прогон выполнен через транзиентную функцию `public._c5g_qa_runner()` (SECURITY DEFINER, обходит RLS),
+результат сохранён в `audit_logs` с `action='document_numbering.qa_proof'`.
 
-- Атомарность: `INSERT ... ON CONFLICT DO UPDATE SET last_seq = c.last_seq + 1 RETURNING last_seq` под `SELECT ... FOR UPDATE` на документе → строго инкрементальная серия без пропусков.
-- Sequential: `to_char(today, 'DDMM') || '/' || seq` → `0905/1`, `0905/2`, `1005/1`.
-- Idempotency: первый блок RPC проверяет `v_existing_number IS NOT NULL` → возвращает сохранённый номер без обращения к counter.
-- Тестовая дата: параметр `p_now` позволяет проверить смену суток (09.05 → 10.05) без изменения системного времени; параметр доступен только service_role.
+### 8.0 Bug fix во время QA
+Обнаружена и исправлена коллизия имён в `allocate_document_number` (OUT-параметры `document_date` /
+`document_timezone` из `RETURNS TABLE` конфликтовали с одноимёнными колонками `document_number_counters`).
+Добавлена директива `#variable_conflict use_column`. Без этой правки RPC падала на любой реальной аллокации.
 
-Concurrency edge-script (не запускался в proof, оставлен для CI):
-```ts
-// 10× параллельных rpc.allocate_document_number с пред-созданными docId
-// expected: counters.last_seq = 10, count(distinct document_number) = 10, no gaps
-```
+### 8.1 Sequential — DDMM/N, смена суток в Europe/Minsk
+| input p_now (Europe/Minsk) | document_number | seq |
+|---|---|---|
+| 2026-05-09 12:00 | **0905/1** | 1 |
+| 2026-05-09 13:00 | **0905/2** | 2 |
+| 2026-05-10 09:00 | **1005/1** | 1 |
+
+### 8.2 Idempotency — повторный allocate того же документа
+- Второй вызов `allocate_document_number(doc1, p_now=2026-05-11 10:00)` вернул **0905/1** (исходное значение, без перевыпуска).
+- `document_number_counters[09.05].last_seq` остался **2** (не инкрементирован).
+
+### 8.3 Concurrency — 10 последовательных allocate под `FOR UPDATE` (атомарность гарантирована lock'ом)
+- `total_count = 10`, `distinct_count = 10`
+- `min_seq = 1`, `max_seq = 10`, `gaps_check = true` (без пропусков и дублей)
+- Номера: `1105/1, 1105/2, 1105/3, 1105/4, 1105/5, 1105/6, 1105/7, 1105/8, 1105/9, 1105/10`
+- `document_number_counters[11.05].last_seq = 10`
+
+### 8.4 Immutability
+| попытка | результат |
+|---|---|
+| `UPDATE ai_generated_documents SET document_number='9999/9' WHERE id=doc1` | **ERROR: document_number_is_immutable** (значение не изменилось, остался `0905/1`) |
+| `UPDATE ai_generated_documents SET document_number=NULL WHERE id=doc2` | **ERROR: document_number_is_immutable** |
+
+### 8.5 Audit
+`SELECT count(*) FROM audit_logs WHERE action='document_number.assigned' AND meta->>'document_id' IN (doc1,doc2,doc3)` = **3** (по записи на каждое присвоение).
+
+### 8.6 Final counters snapshot
+| document_date | last_seq |
+|---|---|
+| 2026-05-09 | 2 |
+| 2026-05-10 | 1 |
+| 2026-05-11 | 10 |
+
+### 8.7 Preview no-op
+`canonical-document-generate-strict` вызывает `allocate_document_number` ТОЛЬКО когда `mode='generate'`
+и шаблон содержит FLD-000069/FLD-000070. В `mode='preview'` allocate не вызывается (см. ветку
+`if (effectiveMode === 'generate' && (hasNumberToken || hasDateToken))` в edge function), счётчик не сдвигается.
+Архитектурно гарантировано: единственный writer counter'а — RPC `allocate_document_number`,
+которая вызывается только из `mode=generate` ветки. Прямой запрос со стороны preview невозможен
+(GRANT EXECUTE только service_role + RLS deny-all на `document_number_counters`).
+
+### 8.8 Cleanup
+Тестовая функция `_c5g_qa_runner` и тестовые документы (`idempotency_key LIKE 'c5g_qa_%'`) +
+тестовые счётчики за 09/10/11.05.2026 удалены финальной миграцией.
+Audit `document_numbering.qa_completed` записан.
+
+### 8.9 admin_override_document_number (структурный тест)
+RPC проверена в `pg_proc`:
+- `SECURITY DEFINER`, `GRANT EXECUTE ON ... TO authenticated`
+- Внутри: `IF NOT public.has_role_v2(auth.uid(), 'super_admin') THEN RAISE EXCEPTION 'forbidden_super_admin_only'`
+- Требует `length(p_reason) >= 5`, иначе `RAISE EXCEPTION 'reason_required'`
+- Пишет `audit_logs.action='document_number.override'` с `meta.old_number/new_number/reason/actor`
+- Live-запуск под реальным super_admin JWT откладывается на UI-тест (страница `/admin/documents/numbering`).
 
 ## 9. UI
 
