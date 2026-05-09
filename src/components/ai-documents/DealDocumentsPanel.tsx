@@ -17,6 +17,7 @@
  *   - Email/Telegram/auto-generation НЕ триггерятся.
  */
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,12 +28,20 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Loader2, FileText, Download, Eye, Sparkles, RefreshCw, AlertCircle, FileType2 } from "lucide-react";
+import { Loader2, FileText, Download, Eye, Sparkles, RefreshCw, AlertCircle, FileType2, UserCog, Wand2, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 import { useHasRoleV2 } from "@/hooks/useHasRoleV2";
+
+// Executor FLD-IDs (entity_type='executor'). Hardcoded fast path; UI also
+// filters by entity_type from fields_registry as the registry-driven SOT.
+const EXECUTOR_FLD_IDS = new Set([
+  "FLD-000103","FLD-000104","FLD-000105","FLD-000106","FLD-000107",
+  "FLD-000108","FLD-000109","FLD-000110","FLD-000111","FLD-000112",
+  "FLD-000150","FLD-000151","FLD-000152","FLD-000153","FLD-000154",
+]);
 
 interface TemplateOption {
   id: string;
