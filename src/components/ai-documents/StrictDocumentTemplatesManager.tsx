@@ -420,7 +420,40 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
       const validation = await strictValidate(text, knownPublicIds);
       setPreviewValidation(validation);
 
-      // Persist validation snapshot (best-effort)
+      // Build token_manifest (canonical shape, used by DealDocumentsPanel + strict generator).
+      // Дедупликация по (field_public_id|format|case) — каждое уникальное сочетание = одна запись.
+      const fieldMetaMap = new Map<string, { label: string; data_type: string | null }>();
+      if (validation.recognized.length > 0) {
+        const ids = Array.from(new Set(validation.recognized.map((r) => r.field_public_id)));
+        const { data: regs } = await supabase
+          .from("fields_registry")
+          .select("public_id, label, data_type, is_required")
+          .in("public_id", ids)
+          .is("archived_at", null);
+        for (const r of (regs ?? []) as any[]) {
+          fieldMetaMap.set(r.public_id, { label: r.label ?? "", data_type: r.data_type ?? null });
+        }
+      }
+      const manifestKey = (t: { field_public_id: string; format: string | null; case_modifier: string | null }) =>
+        `${t.field_public_id}|${t.format ?? ""}|${t.case_modifier ?? ""}`;
+      const manifestMap = new Map<string, any>();
+      for (const t of validation.recognized) {
+        const k = manifestKey(t);
+        if (manifestMap.has(k)) continue;
+        const meta = fieldMetaMap.get(t.field_public_id);
+        manifestMap.set(k, {
+          field_public_id: t.field_public_id,
+          placeholder: t.placeholder,
+          format: t.format,
+          case_modifier: t.case_modifier,
+          label: meta?.label ?? null,
+          data_type: meta?.data_type ?? null,
+          required: false,
+        });
+      }
+      const tokenManifest = Array.from(manifestMap.values());
+
+      // Persist validation snapshot + manifest (best-effort)
       await supabase
         .from("document_template_versions")
         .update({
@@ -428,6 +461,7 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
           validation_errors: validation.errors as any,
           validation_checked_at: new Date().toISOString(),
           detected_tokens: tokens as any,
+          token_manifest: tokenManifest as any,
         })
         .eq("id", ver.id);
       auditEvent(
