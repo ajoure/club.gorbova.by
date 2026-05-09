@@ -447,6 +447,75 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
 
       {selectedTemplateId && activeVersion && (
         <>
+          {/* Executor plate (read-only) */}
+          <div className="border rounded-lg p-3 bg-muted/20 space-y-2">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div className="flex items-start gap-2 min-w-0">
+                <UserCog className="h-4 w-4 mt-0.5 text-primary shrink-0" />
+                <div className="min-w-0">
+                  <div className="text-sm font-medium">
+                    Исполнитель: {executorInfo?.name || <span className="text-muted-foreground">не определён</span>}
+                  </div>
+                  <div className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap mt-0.5">
+                    {executorInfo?.source === "executor_offer" && <Badge variant="outline" className="text-[10px]">из настроек оффера</Badge>}
+                    {executorInfo?.source === "executor_default" && <Badge variant="outline" className="text-[10px]">по умолчанию</Badge>}
+                    {executorInfo?.source && executorInfo.source !== "executor_offer" && executorInfo.source !== "executor_default" && (
+                      <Badge variant="outline" className="text-[10px]">{executorInfo.source}</Badge>
+                    )}
+                    {executorInfo?.id && <code className="text-[10px] font-mono">{executorInfo.id}</code>}
+                    <span>Поля исполнителя подставляются автоматически.</span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <Button size="sm" variant="outline" onClick={testExecutor} disabled={testingExecutor}>
+                  {testingExecutor ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Eye className="h-3 w-3 mr-1" />}
+                  Протестировать
+                </Button>
+                <Button size="sm" variant="outline" onClick={rebuildExecutor} disabled={rebuildingExecutor}>
+                  {rebuildingExecutor ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Wand2 className="h-3 w-3 mr-1" />}
+                  Пересобрать
+                </Button>
+                <Button size="sm" variant="ghost" asChild>
+                  <Link to="/admin/ai" title="Открыть исполнителей">
+                    <ExternalLink className="h-3 w-3 mr-1" /> Исполнители
+                  </Link>
+                </Button>
+              </div>
+            </div>
+            {executorInfo?.hasManualOverrideHistory && (
+              <div className="text-xs text-amber-700 dark:text-amber-300 flex items-center gap-1">
+                <AlertCircle className="h-3 w-3" />
+                В этой сделке есть исторические manual_override на executor.* — пересборка их пропустит. Очистите вручную при необходимости.
+              </div>
+            )}
+            {executorFldsInTemplate.length > 0 && (
+              <div className="text-[11px] text-muted-foreground">
+                В шаблоне используется {executorFldsInTemplate.length} executor-полей: {executorFldsInTemplate.join(", ")}
+              </div>
+            )}
+            {executorTestResult && (
+              <div className="border-t pt-2 mt-1 space-y-1 text-xs">
+                <div className="font-medium">Результат теста:</div>
+                <div>Найдено в шаблоне: {executorTestResult.found.length}; заполнено: {executorTestResult.resolved.length}; пусто: {executorTestResult.empty.length}</div>
+                {executorTestResult.resolved.length > 0 && (
+                  <ul className="text-emerald-700 dark:text-emerald-400 space-y-0.5">
+                    {executorTestResult.resolved.map((r) => (
+                      <li key={r.fid}><code className="font-mono">{r.fid}</code> · {r.label}: {r.value}</li>
+                    ))}
+                  </ul>
+                )}
+                {executorTestResult.empty.length > 0 && (
+                  <ul className="text-amber-700 dark:text-amber-400 space-y-0.5">
+                    {executorTestResult.empty.map((r) => (
+                      <li key={r.fid}><code className="font-mono">{r.fid}</code> · {r.label}: пусто</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Fields editor */}
           <div className="border rounded-lg">
             <div className="px-3 py-2 border-b flex items-center justify-between">
