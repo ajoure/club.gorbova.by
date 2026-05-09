@@ -91,19 +91,41 @@ export async function snapshotOrderDocumentData(
     let tariffDefaults: any = null;
     let productDefaults: any = null;
 
-    if (order.offer_id) {
-      const { data } = await supabase
-        .from('tariff_offers').select('meta').eq('id', order.offer_id).maybeSingle();
+    // Resolve offer_id with fallback to meta.offer_id (admin_test, recurring resolver paths).
+    const orderMetaAny: any = order.meta || {};
+    const offerIdFromMeta = typeof orderMetaAny.offer_id === 'string' ? orderMetaAny.offer_id : null;
+    const resolvedOfferId: string | null = order.offer_id || offerIdFromMeta;
+    const offerIdSource: 'order' | 'order_meta' | 'none' =
+      order.offer_id ? 'order' : (offerIdFromMeta ? 'order_meta' : 'none');
+
+    if (resolvedOfferId) {
+      const { data, error } = await supabase
+        .from('tariff_offers').select('meta').eq('id', resolvedOfferId).maybeSingle();
+      if (error) {
+        await safeAudit(supabase, 'document_data.snapshot_error', {
+          order_id: orderId, table: 'tariff_offers', stage: 'load_offer', error: error.message,
+        });
+      }
       offerDefaults = data?.meta?.document_defaults || null;
     }
     if (order.tariff_id) {
-      const { data } = await supabase
-        .from('product_tariffs').select('meta').eq('id', order.tariff_id).maybeSingle();
+      const { data, error } = await supabase
+        .from('tariffs').select('meta').eq('id', order.tariff_id).maybeSingle();
+      if (error) {
+        await safeAudit(supabase, 'document_data.snapshot_error', {
+          order_id: orderId, table: 'tariffs', stage: 'load_tariff', error: error.message,
+        });
+      }
       tariffDefaults = data?.meta?.document_defaults || null;
     }
     if (order.product_id) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('products_v2').select('meta').eq('id', order.product_id).maybeSingle();
+      if (error) {
+        await safeAudit(supabase, 'document_data.snapshot_error', {
+          order_id: orderId, table: 'products_v2', stage: 'load_product', error: error.message,
+        });
+      }
       productDefaults = data?.meta?.document_defaults || null;
     }
 
