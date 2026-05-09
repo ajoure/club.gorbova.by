@@ -911,13 +911,13 @@ export function TemplateMarkupDialog({
               title={
                 !canApply
                   ? (disabledReason ?? "Нет применимых замен")
-                  : "Создать новую версию шаблона с применённой разметкой и скачать её. Версия НЕ активируется."
+                  : "Создаёт новую версию DOCX с применённой разметкой, не активирует её и сразу скачивает файл"
               }
             >
               {downloadingMarked
                 ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
                 : <Download className="h-3.5 w-3.5 mr-1" />}
-              С разметкой
+              Создать версию и скачать
             </Button>
             <Button size="sm" variant="ghost" onClick={clearAll} disabled={replacements.length === 0}>
               <Trash2 className="h-3.5 w-3.5 mr-1" /> Очистить черновик
