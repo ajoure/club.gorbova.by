@@ -641,6 +641,23 @@ export function TemplateMarkupDialog({
   };
 
   const [downloadingMarked, setDownloadingMarked] = useState(false);
+  const [lastAppliedPayloadHash, setLastAppliedPayloadHash] = useState<string | null>(null);
+  const [lastCreatedVersion, setLastCreatedVersion] = useState<{ id: string; n: number } | null>(null);
+
+  // Стабильный хэш payload (порядок ключей не важен) — для защиты от дублей в текущей сессии
+  const hashPayload = (payload: any[]): string => {
+    try {
+      const norm = payload
+        .map((p) => JSON.stringify(p, Object.keys(p).sort()))
+        .sort()
+        .join("|");
+      let h = 5381;
+      for (let i = 0; i < norm.length; i++) h = ((h << 5) + h + norm.charCodeAt(i)) | 0;
+      return String(h);
+    } catch {
+      return String(Date.now());
+    }
+  };
 
   /**
    * Скачать DOCX с применённой разметкой: вызывает apply (без активации),
