@@ -97,8 +97,9 @@ export function GotenbergSettingsCard() {
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-1 text-sm">
-          <div className="flex justify-between"><span className="text-muted-foreground">URL</span><span className="font-mono">{status?.url ?? "—"}</span></div>
-          <div className="flex justify-between"><span className="text-muted-foreground">Basic Auth</span><span>{status?.basic_auth ? `да (…${status.basic_pass_last4})` : "нет"}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">URL</span><span className="font-mono">{status?.url ?? "—"} {status?.url_source === "env" && <span className="text-xs text-muted-foreground">(ENV)</span>}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">Basic user</span><span>{status?.basic_user_last4 ? `…${status.basic_user_last4}` : "—"} {status?.basic_user_source === "env" && <span className="text-xs text-muted-foreground">(ENV)</span>}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">Пароль</span><span>{status?.password_configured ? `задан (…${status.password_last4}) · ENV` : <span className="text-destructive">не задан в ENV</span>}</span></div>
           <div className="flex justify-between"><span className="text-muted-foreground">Включено</span><span>{status?.enabled ? "да" : "нет"}</span></div>
           {status?.last_health_check && (
             <div className="flex justify-between">
@@ -106,6 +107,8 @@ export function GotenbergSettingsCard() {
               <span className="flex items-center gap-1">
                 {status.last_health_check.ok ? <Check className="h-3 w-3 text-emerald-600" /> : <X className="h-3 w-3 text-destructive" />}
                 HTTP {status.last_health_check.http_status ?? "—"} · {status.last_health_check.latency_ms ?? "—"} мс
+                {status.last_health_check.modules?.chromium && <span className="text-xs text-muted-foreground">· chromium:{status.last_health_check.modules.chromium}</span>}
+                {status.last_health_check.modules?.libreoffice && <span className="text-xs text-muted-foreground">· libre:{status.last_health_check.modules.libreoffice}</span>}
               </span>
             </div>
           )}
