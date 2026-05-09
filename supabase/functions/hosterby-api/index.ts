@@ -1089,6 +1089,112 @@ serve(async (req) => {
         return jsonResp({ success: true, data: (res.data as Record<string, unknown>)?.payload ?? res.data });
       }
 
+      // ================================================================
+      // Gotenberg DOCX→PDF actions (C5-J)
+      // ================================================================
+      case "gotenberg_get_status": {
+        const { maskGotenbergConfig } = await import("../_shared/gotenberg.ts");
+        return jsonResp({ success: true, status: maskGotenbergConfig(instanceConfig) });
+      }
+
+      case "gotenberg_save_config": {
+        const url = (payload.gotenberg_url as string | undefined)?.trim();
+        const basicUser = (payload.gotenberg_basic_user as string | undefined)?.trim();
+        const basicPassNew = payload.gotenberg_basic_pass as string | undefined;
+        const enabled = payload.gotenberg_enabled !== false;
+        if (!url) return jsonResp({ success: false, error: "gotenberg_url обязателен" });
+        try {
+          const u = new URL(url);
+          if (u.protocol !== "https:" && u.protocol !== "http:") {
+            return jsonResp({ success: false, error: "URL должен быть http(s)" });
+          }
+        } catch {
+          return jsonResp({ success: false, error: "Некорректный URL" });
+        }
+        if (!isSsrfSafe(url)) {
+          return jsonResp({ success: false, error: "SSRF_BLOCKED: URL внутренний" });
+        }
+        const basicPass = basicPassNew && basicPassNew.length > 0
+          ? basicPassNew
+          : (instanceConfig.gotenberg_basic_pass as string | undefined);
+
+        const newConfig: Record<string, unknown> = {
+          ...instanceConfig,
+          gotenberg_url: url,
+          gotenberg_enabled: enabled,
+        };
+        if (basicUser !== undefined) newConfig.gotenberg_basic_user = basicUser || undefined;
+        if (basicPass !== undefined) newConfig.gotenberg_basic_pass = basicPass;
+
+        if (hosterInstance?.id) {
+          await supabaseAdmin.from("integration_instances").update({ config: newConfig }).eq("id", hosterInstance.id);
+        } else {
+          await supabaseAdmin.from("integration_instances").insert({
+            provider: "hosterby", category: "other", status: "configured", config: newConfig,
+          });
+        }
+        await writeAuditLog(supabaseAdmin, "hosterby.gotenberg_config_saved", {
+          gotenberg_url: url, enabled, basic_auth_set: Boolean(basicUser && basicPass),
+        }, userId);
+        return jsonResp({ success: true });
+      }
+
+      case "gotenberg_check_health": {
+        const { loadGotenbergConfig, gotenbergHealthCheck } = await import("../_shared/gotenberg.ts");
+        try {
+          const cfg = await loadGotenbergConfig(supabaseAdmin);
+          const result = await gotenbergHealthCheck(cfg);
+          if (hosterInstance?.id) {
+            await supabaseAdmin.from("integration_instances").update({
+              config: { ...instanceConfig, gotenberg_last_health_check: { ...result, at: new Date().toISOString() } },
+            }).eq("id", hosterInstance.id);
+          }
+          return jsonResp({ success: result.ok, ...result });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          return jsonResp({ success: false, error: msg });
+        }
+      }
+
+      case "gotenberg_test_convert": {
+        const { loadGotenbergConfig, convertDocxToPdf, buildTestDocx, GotenbergError } = await import("../_shared/gotenberg.ts");
+        const t0 = performance.now();
+        try {
+          const cfg = await loadGotenbergConfig(supabaseAdmin);
+          if (!cfg.enabled) {
+            return jsonResp({ success: false, code: "GOTENBERG_DISABLED", error: "Gotenberg отключён в конфигурации" });
+          }
+          const docx = await buildTestDocx();
+          const pdf = await convertDocxToPdf(cfg, docx, "test.docx");
+          const latency = Math.round(performance.now() - t0);
+          const result = {
+            ok: true, latency_ms: latency,
+            docx_size: docx.length, pdf_size: pdf.length,
+            content_type: "application/pdf",
+            at: new Date().toISOString(),
+          };
+          if (hosterInstance?.id) {
+            await supabaseAdmin.from("integration_instances").update({
+              config: { ...instanceConfig, gotenberg_last_test_convert: result },
+            }).eq("id", hosterInstance.id);
+          }
+          await writeAuditLog(supabaseAdmin, "hosterby.gotenberg_test_convert_ok", result, userId);
+          return jsonResp({ success: true, ...result });
+        } catch (e) {
+          const latency = Math.round(performance.now() - t0);
+          const code = e instanceof GotenbergError ? e.code : "GOTENBERG_UNREACHABLE";
+          const msg = e instanceof Error ? e.message : String(e);
+          const result = { ok: false, latency_ms: latency, code, error: msg, at: new Date().toISOString() };
+          if (hosterInstance?.id) {
+            await supabaseAdmin.from("integration_instances").update({
+              config: { ...instanceConfig, gotenberg_last_test_convert: result },
+            }).eq("id", hosterInstance.id);
+          }
+          await writeAuditLog(supabaseAdmin, "hosterby.gotenberg_test_convert_failed", result, userId);
+          return jsonResp({ success: false, ...result });
+        }
+      }
+
       default:
         return jsonResp({ success: false, error: `Неизвестное действие: ${action}` }, 400);
     }
