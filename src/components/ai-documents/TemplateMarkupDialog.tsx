@@ -150,6 +150,19 @@ function occurrenceIndexFromMatchStart(haystack: string, needle: string, matchSt
   }
 }
 
+function nthIndexOf(haystack: string, needle: string, occurrenceIndex: number): number {
+  if (!needle || occurrenceIndex < 0) return -1;
+  let count = 0;
+  let from = 0;
+  while (true) {
+    const idx = haystack.indexOf(needle, from);
+    if (idx < 0) return -1;
+    if (count === occurrenceIndex) return idx;
+    count++;
+    from = idx + needle.length;
+  }
+}
+
 function resolveMissingOccurrenceIndexes(items: Replacement[], fullText: string): { next: Replacement[]; changed: number } {
   const used = new Map<string, Set<number>>();
   for (const r of items) {
