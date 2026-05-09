@@ -271,7 +271,7 @@ function renderInteractiveHtml(
       if (!node.parentNode) continue;
       // Skip if inside an existing chip
       if ((node.parentNode as Element).closest?.("[data-chip-id]")) continue;
-      let s = node.nodeValue ?? "";
+      const s = node.nodeValue ?? "";
       if (!s.includes(text)) continue;
       const frag = doc.createDocumentFragment();
       let from = 0;
