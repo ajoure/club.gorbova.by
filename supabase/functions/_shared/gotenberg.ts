@@ -1,25 +1,27 @@
-// Shared helper: DOCX → PDF через Gotenberg на VPS hoster.by
-// Конфиг читается из integration_instances (provider='hosterby', category='other')
-// Ключи в config:
-//   gotenberg_url           — https://pdf.gorbova.by
-//   gotenberg_basic_user    — Basic Auth username (опционально)
-//   gotenberg_basic_pass    — Basic Auth password (опционально)
-//   gotenberg_enabled       — boolean
+// Shared helper: DOCX/HTML → PDF через Gotenberg на VPS hoster.by
 //
-// Хранение: super_admin-only AUTH GUARD в hosterby-api защищает чтение config.
-// Сервер-side helper берёт config напрямую через service_role (RLS не применяется).
-// Клиенту никогда не возвращаются gotenberg_basic_user / gotenberg_basic_pass —
-// только *_last4 / masked-флаги (см. gotenberg_get_status).
+// Source of truth for credentials:
+//   url:        DB integration_instances.config.gotenberg_url  ||  ENV GOTENBERG_BASE_URL
+//   user:       DB                                  basic_user ||  ENV GOTENBERG_USERNAME
+//   password:   ONLY ENV GOTENBERG_PASSWORD (никогда не хранится в DB plain-text)
+//   enabled:    DB.gotenberg_enabled (default: true если url задан хотя бы где-то)
+//
+// SSRF: жёсткий allowlist (`pdf.gorbova.by` в prod, `127.0.0.1` только если ALLOW_LOCAL=true).
+// Сетевые retry: 1 retry на network/timeout/5xx, никогда на 4xx.
 
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
 
-export const GOTENBERG_TIMEOUT_MS = 60_000;
+export const GOTENBERG_TIMEOUT_MS = 120_000;
 export const GOTENBERG_HEALTH_TIMEOUT_MS = 10_000;
 export const PDF_MIN_SIZE_BYTES = 10 * 1024;
+
+const ALLOWED_HOSTS_PROD = new Set<string>(["pdf.gorbova.by"]);
+const ALLOWED_HOSTS_DEV = new Set<string>(["127.0.0.1", "localhost"]);
 
 export type GotenbergErrorCode =
   | "GOTENBERG_NOT_CONFIGURED"
   | "GOTENBERG_DISABLED"
+  | "GOTENBERG_URL_NOT_ALLOWED"
   | "GOTENBERG_SSRF_BLOCKED"
   | "GOTENBERG_UNREACHABLE"
   | "GOTENBERG_AUTH_FAILED"
@@ -33,6 +35,7 @@ export interface GotenbergConfig {
   basicUser?: string;
   basicPass?: string;
   enabled: boolean;
+  source: { url: "db" | "env" | "none"; user: "db" | "env" | "none"; pass: "env" | "none" };
 }
 
 export class GotenbergError extends Error {
@@ -45,41 +48,76 @@ export class GotenbergError extends Error {
   }
 }
 
-function isSsrfSafeUrl(url: string): boolean {
+function isUrlAllowed(url: string): { ok: true } | { ok: false; reason: GotenbergErrorCode; msg: string } {
+  let parsed: URL;
   try {
-    const p = new URL(url);
-    const h = p.hostname.toLowerCase();
-    if (h === "localhost" || h === "::1") return false;
-    if (/^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h)) return false;
-    if (/^172\.(1[6-9]|2[0-9]|3[01])\./.test(h)) return false;
-    if (/^169\.254\./.test(h) || /^100\.64\./.test(h)) return false;
-    if (h === "metadata.google.internal") return false;
-    if (p.protocol !== "https:" && p.protocol !== "http:") return false;
-    return true;
+    parsed = new URL(url);
   } catch {
-    return false;
+    return { ok: false, reason: "GOTENBERG_URL_NOT_ALLOWED", msg: "Некорректный URL" };
   }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    return { ok: false, reason: "GOTENBERG_URL_NOT_ALLOWED", msg: "Только http(s)" };
+  }
+  const host = parsed.hostname.toLowerCase();
+  const allowLocal = (Deno.env.get("GOTENBERG_ALLOW_LOCAL") ?? "").toLowerCase() === "true";
+  if (ALLOWED_HOSTS_PROD.has(host)) return { ok: true };
+  if (allowLocal && ALLOWED_HOSTS_DEV.has(host)) return { ok: true };
+  // SSRF guard для не-allowlisted
+  if (
+    /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2[0-9]|3[01])\./.test(host) || /^169\.254\./.test(host) ||
+    /^100\.64\./.test(host) || host === "::1" || host === "metadata.google.internal" || host === "localhost"
+  ) {
+    return { ok: false, reason: "GOTENBERG_SSRF_BLOCKED", msg: `SSRF: ${host} запрещён` };
+  }
+  return { ok: false, reason: "GOTENBERG_URL_NOT_ALLOWED", msg: `Хост ${host} не в allowlist (разрешён только pdf.gorbova.by)` };
 }
 
 export async function loadGotenbergConfig(adminClient: SupabaseClient): Promise<GotenbergConfig> {
-  const { data, error } = await adminClient
-    .from("integration_instances")
-    .select("config")
-    .eq("provider", "hosterby")
-    .eq("category", "other")
-    .maybeSingle();
-  if (error || !data) {
-    throw new GotenbergError("GOTENBERG_NOT_CONFIGURED", "Интеграция hoster.by не найдена");
+  const envUrl = (Deno.env.get("GOTENBERG_BASE_URL") ?? "").trim();
+  const envUser = (Deno.env.get("GOTENBERG_USERNAME") ?? "").trim();
+  const envPass = (Deno.env.get("GOTENBERG_PASSWORD") ?? "").trim();
+
+  let dbUrl: string | undefined;
+  let dbUser: string | undefined;
+  let dbEnabled: boolean | undefined;
+  try {
+    const { data } = await adminClient
+      .from("integration_instances")
+      .select("config")
+      .eq("provider", "hosterby")
+      .eq("category", "other")
+      .maybeSingle();
+    const cfg = (data?.config ?? {}) as Record<string, unknown>;
+    dbUrl = (cfg.gotenberg_url as string | undefined)?.trim() || undefined;
+    dbUser = (cfg.gotenberg_basic_user as string | undefined)?.trim() || undefined;
+    dbEnabled = typeof cfg.gotenberg_enabled === "boolean" ? cfg.gotenberg_enabled : undefined;
+  } catch {
+    // нет инстанса — fallback только на ENV
   }
-  const cfg = (data.config ?? {}) as Record<string, unknown>;
-  const url = cfg.gotenberg_url as string | undefined;
-  if (!url) throw new GotenbergError("GOTENBERG_NOT_CONFIGURED", "gotenberg_url не задан");
-  const enabled = cfg.gotenberg_enabled === true;
+
+  const url = dbUrl || envUrl;
+  if (!url) {
+    throw new GotenbergError("GOTENBERG_NOT_CONFIGURED", "GOTENBERG_BASE_URL не задан (ни в DB, ни в ENV)");
+  }
+  const basicUser = dbUser || envUser || undefined;
+  const basicPass = envPass || undefined; // ВАЖНО: пароль ТОЛЬКО из ENV
+
+  // Если URL/user задан, но пароль — нет, и URL требует Basic Auth → fail при первом запросе с AUTH_FAILED.
+  // Здесь не падаем, чтобы health-check мог отработать и сообщить осмысленно.
+
+  const enabled = dbEnabled ?? true;
+
   return {
     url: url.replace(/\/+$/, ""),
-    basicUser: cfg.gotenberg_basic_user as string | undefined,
-    basicPass: cfg.gotenberg_basic_pass as string | undefined,
+    basicUser,
+    basicPass,
     enabled,
+    source: {
+      url: dbUrl ? "db" : envUrl ? "env" : "none",
+      user: dbUser ? "db" : envUser ? "env" : "none",
+      pass: envPass ? "env" : "none",
+    },
   };
 }
 
@@ -101,28 +139,58 @@ async function fetchWithTimeout(url: string, init: RequestInit, ms: number): Pro
   }
 }
 
+// Один retry на network error / timeout / HTTP 5xx. НЕТ retry на 4xx.
+async function fetchWithRetry(url: string, init: RequestInit, ms: number): Promise<Response> {
+  try {
+    const r = await fetchWithTimeout(url, init, ms);
+    if (r.status >= 500 && r.status <= 599) {
+      await r.text().catch(() => {});
+      return await fetchWithTimeout(url, init, ms);
+    }
+    return r;
+  } catch (e) {
+    // network/timeout → 1 retry
+    return await fetchWithTimeout(url, init, ms);
+  }
+}
+
 export interface HealthCheckResult {
   ok: boolean;
   http_status?: number;
   latency_ms: number;
   error?: string;
   code?: GotenbergErrorCode;
+  modules?: { status?: string; chromium?: string; libreoffice?: string };
 }
 
 export async function gotenbergHealthCheck(cfg: GotenbergConfig): Promise<HealthCheckResult> {
-  if (!isSsrfSafeUrl(cfg.url)) {
-    return { ok: false, latency_ms: 0, code: "GOTENBERG_SSRF_BLOCKED", error: "URL указывает на внутренний адрес" };
-  }
+  const allow = isUrlAllowed(cfg.url);
+  if (!allow.ok) return { ok: false, latency_ms: 0, code: allow.reason, error: allow.msg };
   const t0 = performance.now();
   try {
     const resp = await fetchWithTimeout(`${cfg.url}/health`, { headers: authHeader(cfg) }, GOTENBERG_HEALTH_TIMEOUT_MS);
     const latency = Math.round(performance.now() - t0);
+    const text = await resp.text().catch(() => "");
     if (resp.status === 401 || resp.status === 403) {
-      await resp.text();
       return { ok: false, http_status: resp.status, latency_ms: latency, code: "GOTENBERG_AUTH_FAILED", error: `Auth failed: HTTP ${resp.status}` };
     }
-    await resp.text();
-    return { ok: resp.ok, http_status: resp.status, latency_ms: latency, error: resp.ok ? undefined : `HTTP ${resp.status}` };
+    let modules: HealthCheckResult["modules"] | undefined;
+    try {
+      const parsed = JSON.parse(text);
+      const details = (parsed?.details ?? parsed) as Record<string, unknown>;
+      modules = {
+        status: parsed?.status as string | undefined,
+        chromium: (details?.chromium as { status?: string } | undefined)?.status,
+        libreoffice: (details?.libreoffice as { status?: string } | undefined)?.status,
+      };
+    } catch { /* not JSON, ignore */ }
+    return {
+      ok: resp.ok,
+      http_status: resp.status,
+      latency_ms: latency,
+      modules,
+      error: resp.ok ? undefined : `HTTP ${resp.status}`,
+    };
   } catch (e) {
     const latency = Math.round(performance.now() - t0);
     const isTimeout = e instanceof Error && e.name === "AbortError";
@@ -130,17 +198,13 @@ export async function gotenbergHealthCheck(cfg: GotenbergConfig): Promise<Health
   }
 }
 
-// Конвертация DOCX → PDF через Gotenberg LibreOffice route
-export async function convertDocxToPdf(cfg: GotenbergConfig, docxBuffer: Uint8Array, fileName = "document.docx"): Promise<Uint8Array> {
-  if (!cfg.enabled) throw new GotenbergError("GOTENBERG_DISABLED", "Gotenberg integration отключена");
-  if (!isSsrfSafeUrl(cfg.url)) throw new GotenbergError("GOTENBERG_SSRF_BLOCKED", "URL внутренний");
-
-  const form = new FormData();
-  form.append("files", new Blob([docxBuffer], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }), fileName);
-
+async function postFormForPdf(cfg: GotenbergConfig, path: string, form: FormData): Promise<Uint8Array> {
+  if (!cfg.enabled) throw new GotenbergError("GOTENBERG_DISABLED", "Gotenberg отключён");
+  const allow = isUrlAllowed(cfg.url);
+  if (!allow.ok) throw new GotenbergError(allow.reason, allow.msg);
   let resp: Response;
   try {
-    resp = await fetchWithTimeout(`${cfg.url}/forms/libreoffice/convert`, {
+    resp = await fetchWithRetry(`${cfg.url}${path}`, {
       method: "POST",
       headers: authHeader(cfg),
       body: form,
@@ -152,28 +216,39 @@ export async function convertDocxToPdf(cfg: GotenbergConfig, docxBuffer: Uint8Ar
       isTimeout ? "Превышен таймаут конвертации" : `Сетевая ошибка: ${String(e)}`,
     );
   }
-
   if (resp.status === 401 || resp.status === 403) {
-    await resp.text();
+    await resp.text().catch(() => {});
     throw new GotenbergError("GOTENBERG_AUTH_FAILED", `Auth failed: HTTP ${resp.status}`);
   }
   if (!resp.ok) {
     const txt = await resp.text().catch(() => "");
     throw new GotenbergError("GOTENBERG_HTTP_ERROR", `HTTP ${resp.status}`, { body: txt.slice(0, 500) });
   }
-
-  const ct = resp.headers.get("content-type") || "";
-  if (!ct.toLowerCase().includes("application/pdf")) {
+  const ct = (resp.headers.get("content-type") || "").toLowerCase();
+  if (!ct.includes("application/pdf")) {
     await resp.arrayBuffer().catch(() => {});
     throw new GotenbergError("GOTENBERG_NOT_PDF", `Ожидался application/pdf, получен ${ct}`);
   }
-
   const ab = await resp.arrayBuffer();
   const pdf = new Uint8Array(ab);
   if (pdf.length < PDF_MIN_SIZE_BYTES) {
     throw new GotenbergError("GOTENBERG_PDF_TOO_SMALL", `PDF слишком маленький: ${pdf.length} байт`);
   }
   return pdf;
+}
+
+// DOCX → PDF (LibreOffice route)
+export async function convertDocxToPdf(cfg: GotenbergConfig, docxBuffer: Uint8Array, fileName = "document.docx"): Promise<Uint8Array> {
+  const form = new FormData();
+  form.append("files", new Blob([docxBuffer], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }), fileName);
+  return await postFormForPdf(cfg, "/forms/libreoffice/convert", form);
+}
+
+// HTML → PDF (Chromium route). HTML должен быть полным документом (`<!doctype html><html>…`).
+export async function convertHtmlToPdf(cfg: GotenbergConfig, html: string): Promise<Uint8Array> {
+  const form = new FormData();
+  form.append("files", new Blob([html], { type: "text/html" }), "index.html");
+  return await postFormForPdf(cfg, "/forms/chromium/convert/html", form);
 }
 
 // Минимальный тестовый DOCX (кириллица + таблица), собирается через npm:docx
@@ -211,19 +286,27 @@ export async function buildTestDocx(): Promise<Uint8Array> {
   return new Uint8Array(buf);
 }
 
-// Маскирование значений конфига для возврата клиенту (UI status)
+// Маскирование значений конфига для возврата клиенту (UI status).
+// Никогда не возвращает реальный пароль (его и нет в DB) — только источник + last4 ENV-пароля.
 export function maskGotenbergConfig(cfg: Record<string, unknown> | null | undefined) {
   const c = cfg ?? {};
-  const url = (c.gotenberg_url as string | undefined) ?? null;
-  const basicUser = c.gotenberg_basic_user as string | undefined;
-  const basicPass = c.gotenberg_basic_pass as string | undefined;
+  const dbUrl = (c.gotenberg_url as string | undefined) ?? null;
+  const dbUser = c.gotenberg_basic_user as string | undefined;
+  const envUrl = (Deno.env.get("GOTENBERG_BASE_URL") ?? "").trim() || null;
+  const envUser = (Deno.env.get("GOTENBERG_USERNAME") ?? "").trim() || null;
+  const envPass = (Deno.env.get("GOTENBERG_PASSWORD") ?? "").trim() || "";
+  const effectiveUrl = dbUrl || envUrl;
+  const effectiveUser = dbUser || envUser;
   return {
-    configured: Boolean(url),
-    enabled: c.gotenberg_enabled === true,
-    url,
-    basic_auth: Boolean(basicUser && basicPass),
-    basic_user_last4: basicUser ? basicUser.slice(-4) : null,
-    basic_pass_last4: basicPass ? basicPass.slice(-4) : null,
+    configured: Boolean(effectiveUrl),
+    enabled: c.gotenberg_enabled !== false,
+    url: effectiveUrl,
+    url_source: dbUrl ? "db" : envUrl ? "env" : "none",
+    basic_user_last4: effectiveUser ? effectiveUser.slice(-4) : null,
+    basic_user_source: dbUser ? "db" : envUser ? "env" : "none",
+    password_configured: envPass.length > 0,
+    password_last4: envPass ? envPass.slice(-4) : null,
+    password_source: envPass ? "env" : "none",
     last_health_check: (c.gotenberg_last_health_check as Record<string, unknown> | undefined) ?? null,
     last_test_convert: (c.gotenberg_last_test_convert as Record<string, unknown> | undefined) ?? null,
   };
