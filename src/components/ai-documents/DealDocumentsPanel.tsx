@@ -16,7 +16,7 @@
  *   - Никогда не редактирует product/tariff/order_number/final_price.
  *   - Email/Telegram/auto-generation НЕ триггерятся.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -155,6 +155,25 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
     setLoading(false);
   };
   useEffect(() => { fetchAll(); /* eslint-disable-next-line */ }, [orderId]);
+
+  // Auto-select template from snapshot (one-shot, never overrides user choice)
+  const autoSelectAppliedRef = useRef(false);
+  useEffect(() => {
+    if (autoSelectAppliedRef.current) return;
+    if (selectedTemplateId) return;
+    if (!templates.length) return;
+    const snapshotTemplateId = orderMeta?.document_data?.template_id;
+    if (!snapshotTemplateId) return;
+    const exists = templates.some((t) => t.id === snapshotTemplateId);
+    if (exists) {
+      setSelectedTemplateId(snapshotTemplateId);
+      autoSelectAppliedRef.current = true;
+    } else {
+      // Mark as attempted so we don't keep re-checking; warn once.
+      autoSelectAppliedRef.current = true;
+      console.warn("[DealDocumentsPanel] snapshot template_id not in active templates list", snapshotTemplateId);
+    }
+  }, [orderMeta, templates, selectedTemplateId]);
 
   // load active version when template selected
   useEffect(() => {

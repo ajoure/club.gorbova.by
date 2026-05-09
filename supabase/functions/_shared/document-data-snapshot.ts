@@ -60,11 +60,17 @@ export async function snapshotOrderDocumentData(
   orderId: string,
 ): Promise<SnapshotResult> {
   try {
-    const { data: order } = await supabase
+    const { data: order, error: orderErr } = await supabase
       .from('orders_v2')
-      .select('id, status, product_id, tariff_id, offer_id, final_price, base_price, currency, paid_at, created_at, meta')
+      .select('id, status, product_id, tariff_id, offer_id, final_price, base_price, currency, deal_date, updated_at, created_at, meta')
       .eq('id', orderId)
       .maybeSingle();
+    if (orderErr) {
+      await safeAudit(supabase, 'document_data.snapshot_error', {
+        order_id: orderId, table: 'orders_v2', stage: 'load_order', error: orderErr.message,
+      });
+      return { status: 'failed', reason: `orders_v2:${orderErr.message}` };
+    }
     if (!order) return { status: 'skipped_no_order' };
 
     const existing = (order.meta as any)?.document_data;
@@ -85,19 +91,41 @@ export async function snapshotOrderDocumentData(
     let tariffDefaults: any = null;
     let productDefaults: any = null;
 
-    if (order.offer_id) {
-      const { data } = await supabase
-        .from('tariff_offers').select('meta').eq('id', order.offer_id).maybeSingle();
+    // Resolve offer_id with fallback to meta.offer_id (admin_test, recurring resolver paths).
+    const orderMetaAny: any = order.meta || {};
+    const offerIdFromMeta = typeof orderMetaAny.offer_id === 'string' ? orderMetaAny.offer_id : null;
+    const resolvedOfferId: string | null = order.offer_id || offerIdFromMeta;
+    const offerIdSource: 'order' | 'order_meta' | 'none' =
+      order.offer_id ? 'order' : (offerIdFromMeta ? 'order_meta' : 'none');
+
+    if (resolvedOfferId) {
+      const { data, error } = await supabase
+        .from('tariff_offers').select('meta').eq('id', resolvedOfferId).maybeSingle();
+      if (error) {
+        await safeAudit(supabase, 'document_data.snapshot_error', {
+          order_id: orderId, table: 'tariff_offers', stage: 'load_offer', error: error.message,
+        });
+      }
       offerDefaults = data?.meta?.document_defaults || null;
     }
     if (order.tariff_id) {
-      const { data } = await supabase
-        .from('product_tariffs').select('meta').eq('id', order.tariff_id).maybeSingle();
+      const { data, error } = await supabase
+        .from('tariffs').select('meta').eq('id', order.tariff_id).maybeSingle();
+      if (error) {
+        await safeAudit(supabase, 'document_data.snapshot_error', {
+          order_id: orderId, table: 'tariffs', stage: 'load_tariff', error: error.message,
+        });
+      }
       tariffDefaults = data?.meta?.document_defaults || null;
     }
     if (order.product_id) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('products_v2').select('meta').eq('id', order.product_id).maybeSingle();
+      if (error) {
+        await safeAudit(supabase, 'document_data.snapshot_error', {
+          order_id: orderId, table: 'products_v2', stage: 'load_product', error: error.message,
+        });
+      }
       productDefaults = data?.meta?.document_defaults || null;
     }
 
@@ -137,7 +165,7 @@ export async function snapshotOrderDocumentData(
 
     const cm = currencyMajorMinor(normCurrency);
 
-    const paidAt = order.paid_at || order.created_at || new Date().toISOString();
+    const paidAt = (order as any).deal_date || (order as any).updated_at || order.created_at || new Date().toISOString();
     const actDate = paidAt;
 
     // Service period — use offer/tariff defaults if present; else fallback to
@@ -158,7 +186,7 @@ export async function snapshotOrderDocumentData(
       source: {
         product_id: order.product_id || null,
         tariff_id: order.tariff_id || null,
-        offer_id: order.offer_id || null,
+        offer_id: resolvedOfferId,
         order_id: order.id,
       },
       template_id: pick<string>('template_id'),
@@ -190,6 +218,10 @@ export async function snapshotOrderDocumentData(
         offer_defaults_present: !!offerDefaults,
         tariff_defaults_present: !!tariffDefaults,
         product_defaults_present: !!productDefaults,
+        offer_id: resolvedOfferId,
+        offer_id_source: offerIdSource,
+        tariff_id: order.tariff_id || null,
+        product_id: order.product_id || null,
         order_paid_at: paidAt,
         order_currency: liveCurrencyRaw,
       },
