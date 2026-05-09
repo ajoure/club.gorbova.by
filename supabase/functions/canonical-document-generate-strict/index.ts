@@ -309,6 +309,10 @@ Deno.serve(async (req) => {
 
     const docFields = (((order.meta as any)?.document_data?.fields) || {}) as Record<string, any>;
 
+    // C5-G: канонические FLD для номера и даты документа
+    const FLD_DOC_NUMBER = 'FLD-000069';  // document.number
+    const FLD_DOC_DATE   = 'FLD-000070';  // document.date
+
     // Download DOCX from storage
     const dl = await supabase.storage.from(ver.storage_bucket).download(ver.storage_path);
     if (dl.error) return json({ error: `download_failed:${dl.error.message}` }, 500);
@@ -365,6 +369,87 @@ Deno.serve(async (req) => {
         .filter((m: any) => m?.required === true && typeof m?.field_public_id === 'string')
         .map((m: any) => m.field_public_id),
     );
+
+
+    // ── C5-G: Document numbering v2 ─────────────────────────────────────────
+    // Резервируем номер ОДИН раз на документ (mode=generate), до резолва.
+    // Все вхождения {{field:FLD-000069}} получат одно значение из docFields.
+    const needsNumbering = foundIds.has(FLD_DOC_NUMBER) || foundIds.has(FLD_DOC_DATE);
+    const idempotencyKey: string = (typeof body?.idempotency_key === 'string' && body.idempotency_key.trim())
+      ? String(body.idempotency_key).trim()
+      : `strict:${tpl.id}:${ver.id}:${order.id}`;
+    let preCreatedDocId: string | null = null;
+    let allocatedNumber: string | null = null;
+    let allocatedDate: string | null = null;
+    let allocatedSeq: number | null = null;
+
+    if (mode === 'generate') {
+      const { data: existing } = await supabase
+        .from('ai_generated_documents')
+        .select('id, document_number, document_date, document_seq, file_path, status')
+        .eq('idempotency_key', idempotencyKey)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (existing) {
+        preCreatedDocId = existing.id;
+        allocatedNumber = existing.document_number ?? null;
+        allocatedDate = existing.document_date ?? null;
+        allocatedSeq = existing.document_seq ?? null;
+      } else if (needsNumbering) {
+        const { data: pre, error: preErr } = await supabase
+          .from('ai_generated_documents')
+          .insert({
+            profile_id: order.profile_id,
+            template_id: tpl.id,
+            template_name: tpl.name,
+            template_source_path: ver.storage_path,
+            template_version_id: ver.id,
+            template_version: ver.version_number,
+            title: `${tpl.name} — ${order.order_number || order.id.slice(0, 8)}`,
+            status: 'pending',
+            storage_bucket: 'documents',
+            snapshot: {},
+            missing_tokens: [],
+            meta: { strict: true, c5g_pre_created: true },
+            context_type: 'order',
+            context_id: order.id,
+            idempotency_key: idempotencyKey,
+            created_by: userId,
+          })
+          .select('id')
+          .single();
+        if (preErr) return json({ error: `pre_create_failed:${preErr.message}` }, 500);
+        preCreatedDocId = pre.id;
+      }
+
+      if (needsNumbering && preCreatedDocId && !allocatedNumber) {
+        const { data: alloc, error: allocErr } = await supabase.rpc('allocate_document_number', {
+          p_document_id: preCreatedDocId,
+        });
+        if (allocErr) return json({ error: `allocate_failed:${allocErr.message}` }, 500);
+        const row: any = Array.isArray(alloc) ? alloc[0] : alloc;
+        allocatedNumber = row?.document_number ?? null;
+        allocatedDate = row?.document_date ?? null;
+        allocatedSeq = row?.document_seq ?? null;
+      }
+
+      // Inject in docFields ONCE — все вхождения плейсхолдеров возьмут это значение.
+      if (allocatedNumber && foundIds.has(FLD_DOC_NUMBER)) {
+        docFields[FLD_DOC_NUMBER] = {
+          value: allocatedNumber,
+          source: 'system_generated',
+          updated_at: new Date().toISOString(),
+        };
+      }
+      if (allocatedDate && foundIds.has(FLD_DOC_DATE)) {
+        docFields[FLD_DOC_DATE] = {
+          value: allocatedDate,
+          source: 'system_generated',
+          updated_at: new Date().toISOString(),
+        };
+      }
+    }
 
     // Resolve fields
     const allIds = Array.from(foundIds);
@@ -552,38 +637,51 @@ Deno.serve(async (req) => {
     });
     if (upRes.error) return json({ error: `upload_failed:${upRes.error.message}` }, 500);
 
-    const idemKey = `strict:${tpl.id}:${ver.id}:${order.id}:${ts}`;
-    const { data: insRow, error: insErr } = await supabase
-      .from('ai_generated_documents')
-      .insert({
-        profile_id: order.profile_id,
-        template_id: tpl.id,
-        template_name: tpl.name,
-        template_source_path: ver.storage_path,
-        template_version_id: ver.id,
-        template_version: ver.version_number,
-        title: `${tpl.name} — ${order.order_number || order.id.slice(0, 8)}`,
-        status: 'generated',
-        file_path: outPath,
-        file_name: `${tpl.name}.docx`,
-        file_mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        storage_bucket: 'documents',
-        snapshot: { fields: docFields },
-        missing_tokens: missing,
-        token_manifest_snapshot: manifest,
-        template_tokens_snapshot: allIds.map((f) => `field:${f}`),
-        warnings_snapshot: [],
-        source_trace: sourceTrace,
-        resolver_version: RESOLVER_VERSION,
-        context_type: 'order',
-        context_id: order.id,
-        idempotency_key: idemKey,
-        created_by: userId,
-        meta: { strict: true },
-      })
-      .select('id')
-      .single();
-    if (insErr) return json({ error: `insert_failed:${insErr.message}` }, 500);
+    const docCommon = {
+      profile_id: order.profile_id,
+      template_id: tpl.id,
+      template_name: tpl.name,
+      template_source_path: ver.storage_path,
+      template_version_id: ver.id,
+      template_version: ver.version_number,
+      title: `${tpl.name} — ${order.order_number || order.id.slice(0, 8)}`,
+      status: 'generated',
+      file_path: outPath,
+      file_name: `${tpl.name}.docx`,
+      file_mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      storage_bucket: 'documents',
+      snapshot: { fields: docFields },
+      missing_tokens: missing,
+      token_manifest_snapshot: manifest,
+      template_tokens_snapshot: allIds.map((f) => `field:${f}`),
+      warnings_snapshot: [],
+      source_trace: sourceTrace,
+      resolver_version: RESOLVER_VERSION,
+      context_type: 'order',
+      context_id: order.id,
+      idempotency_key: idempotencyKey,
+      created_by: userId,
+      meta: { strict: true },
+    } as any;
+
+    let documentId: string;
+    if (preCreatedDocId) {
+      // immutability trigger пропускает doc_number/date/seq (OLD=NEW)
+      const { error: updErr } = await supabase
+        .from('ai_generated_documents')
+        .update(docCommon)
+        .eq('id', preCreatedDocId);
+      if (updErr) return json({ error: `update_failed:${updErr.message}` }, 500);
+      documentId = preCreatedDocId;
+    } else {
+      const { data: insRow, error: insErr } = await supabase
+        .from('ai_generated_documents')
+        .insert(docCommon)
+        .select('id')
+        .single();
+      if (insErr) return json({ error: `insert_failed:${insErr.message}` }, 500);
+      documentId = insRow.id;
+    }
 
     const sig = await supabase.storage.from('documents').createSignedUrl(outPath, 3600);
 
@@ -592,24 +690,29 @@ Deno.serve(async (req) => {
       actor_type: 'user',
       action: 'document.generated',
       meta: {
-        document_id: insRow.id,
+        document_id: documentId,
         order_id: order.id,
         template_id: tpl.id,
         template_version_id: ver.id,
         version_number: ver.version_number,
         field_ids: allIds,
         resolver_version: RESOLVER_VERSION,
+        document_number: allocatedNumber,
+        document_date: allocatedDate,
+        document_seq: allocatedSeq,
       },
     });
 
     return json({
       success: true,
       mode: 'generate',
-      document_id: insRow.id,
+      document_id: documentId,
       storage_path: outPath,
       download_url: sig.data?.signedUrl || null,
       template: { id: tpl.id, version_id: ver.id, version_number: ver.version_number },
       resolver_version: RESOLVER_VERSION,
+      document_number: allocatedNumber,
+      document_date: allocatedDate,
     });
   } catch (e: any) {
     console.error('canonical-document-generate-strict error:', e);

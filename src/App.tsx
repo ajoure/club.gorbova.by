@@ -108,6 +108,7 @@ const AdminFormsHub = lazy(() => import("./pages/admin/AdminFormsHub"));
 // AdminInbox removed - redirects to /admin/communication
 const AdminExecutors = lazy(() => import("./pages/admin/AdminExecutors"));
 const AdminDocumentTemplates = lazy(() => import("./pages/admin/AdminDocumentTemplates"));
+const AdminDocumentsNumbering = lazy(() => import("./pages/admin/AdminDocumentsNumbering"));
 // AdminBroadcasts removed - redirects to /admin/communication?tab=broadcasts
 const AdminTrainingModules = lazy(() => import("./pages/admin/AdminTrainingModules"));
 const AdminTrainingLessons = lazy(() => import("./pages/admin/AdminTrainingLessons"));
@@ -286,6 +287,7 @@ const App = () => {
               <Route path="/admin/entitlements" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminEntitlements /></AdminLayout></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/executors" element={<ProtectedRoute><LazyRoute><AdminExecutors /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/document-templates" element={<ProtectedRoute><LazyRoute><AdminDocumentTemplates /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/documents/numbering" element={<ProtectedRoute><LazyRoute><AdminDocumentsNumbering /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/training-modules" element={<ProtectedRoute><LazyRoute><AdminTrainingModules /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/training-modules/:moduleId/lessons" element={<ProtectedRoute><LazyRoute><AdminTrainingLessons /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/training-lessons/:moduleId/edit/:lessonId" element={<ProtectedRoute><LazyRoute><AdminLessonBlockEditor /></LazyRoute></ProtectedRoute>} />

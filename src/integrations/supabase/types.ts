@@ -897,6 +897,11 @@ export type Database = {
           created_at: string
           created_by: string | null
           deleted_at: string | null
+          document_date: string | null
+          document_number: string | null
+          document_number_assigned_at: string | null
+          document_seq: number | null
+          document_timezone: string | null
           file_mime: string | null
           file_name: string | null
           file_path: string | null
@@ -938,6 +943,11 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           deleted_at?: string | null
+          document_date?: string | null
+          document_number?: string | null
+          document_number_assigned_at?: string | null
+          document_seq?: number | null
+          document_timezone?: string | null
           file_mime?: string | null
           file_name?: string | null
           file_path?: string | null
@@ -979,6 +989,11 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           deleted_at?: string | null
+          document_date?: string | null
+          document_number?: string | null
+          document_number_assigned_at?: string | null
+          document_seq?: number | null
+          document_timezone?: string | null
           file_mime?: string | null
           file_name?: string | null
           file_path?: string | null
@@ -3196,6 +3211,33 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      document_number_counters: {
+        Row: {
+          created_at: string
+          document_date: string
+          document_timezone: string
+          id: string
+          last_seq: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          document_date: string
+          document_timezone?: string
+          id?: string
+          last_seq?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          document_date?: string
+          document_timezone?: string
+          id?: string
+          last_seq?: number
+          updated_at?: string
+        }
+        Relationships: []
       }
       document_number_sequences: {
         Row: {
@@ -14582,6 +14624,10 @@ export type Database = {
         Args: { p_from: string; p_provider?: string; p_to: string }
         Returns: Json
       }
+      admin_override_document_number: {
+        Args: { p_document_id: string; p_new_number: string; p_reason: string }
+        Returns: undefined
+      }
       admin_reconcile_bepaid_legacy_subscriptions: {
         Args: {
           p_dry_run?: boolean
@@ -14646,6 +14692,15 @@ export type Database = {
         Returns: {
           sample_ids: string[]
           updated_count: number
+        }[]
+      }
+      allocate_document_number: {
+        Args: { p_document_id: string; p_now?: string }
+        Returns: {
+          document_date: string
+          document_number: string
+          document_seq: number
+          document_timezone: string
         }[]
       }
       apply_rev_7101ed3c: { Args: { _batch_id: string }; Returns: Json }
