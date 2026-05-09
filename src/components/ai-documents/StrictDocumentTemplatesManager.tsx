@@ -555,21 +555,26 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
 
   const activateVersion = async (tpl: TemplateRow, ver: VersionRow) => {
     if (ver.validation_status !== "valid") {
-      toast.error("Активация заблокирована: validation_status != valid");
+      toast.error("Шаблон содержит ошибки. Откройте «Проверка и исправление плейсхолдеров».");
       return;
     }
-    // C3: server-side activation (admin-only, audit included)
     try {
       const { data, error } = await supabase.functions.invoke(
         "canonical-template-activate-version",
         { body: { template_version_id: ver.id } },
       );
-      if (error) throw error;
-      if ((data as any)?.error) throw new Error((data as any).error);
-      toast.success("Шаблон активирован как текущий");
+      if (error) {
+        toast.error(mapActivationError(error?.message, (error as any)?.context?.body ?? data));
+        return;
+      }
+      if ((data as any)?.error) {
+        toast.error(mapActivationError((data as any).error, data));
+        return;
+      }
+      toast.success("Шаблон активирован");
       await fetchAll();
     } catch (e: any) {
-      toast.error(`Ошибка активации: ${e.message ?? e}`);
+      toast.error(mapActivationError(e?.message, e));
     }
   };
 
