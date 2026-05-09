@@ -1098,9 +1098,10 @@ serve(async (req) => {
       }
 
       case "gotenberg_save_config": {
+        // ВАЖНО: пароль не сохраняем в DB. Он живёт ТОЛЬКО в ENV GOTENBERG_PASSWORD.
+        // В DB кладём только url, username (last4-аналог в UI), enabled.
         const url = (payload.gotenberg_url as string | undefined)?.trim();
         const basicUser = (payload.gotenberg_basic_user as string | undefined)?.trim();
-        const basicPassNew = payload.gotenberg_basic_pass as string | undefined;
         const enabled = payload.gotenberg_enabled !== false;
         if (!url) return jsonResp({ success: false, error: "gotenberg_url обязателен" });
         try {
@@ -1111,20 +1112,27 @@ serve(async (req) => {
         } catch {
           return jsonResp({ success: false, error: "Некорректный URL" });
         }
-        if (!isSsrfSafe(url)) {
+        // allowlist: только pdf.gorbova.by (или ALLOW_LOCAL=true → 127.0.0.1)
+        const host = new URL(url).hostname.toLowerCase();
+        const allowLocal = (Deno.env.get("GOTENBERG_ALLOW_LOCAL") ?? "").toLowerCase() === "true";
+        const allowed = host === "pdf.gorbova.by" || (allowLocal && (host === "127.0.0.1" || host === "localhost"));
+        if (!allowed) {
+          return jsonResp({ success: false, error: `URL_NOT_ALLOWED: ${host} не в allowlist (только pdf.gorbova.by)` });
+        }
+        if (!isSsrfSafe(url) && !allowLocal) {
           return jsonResp({ success: false, error: "SSRF_BLOCKED: URL внутренний" });
         }
-        const basicPass = basicPassNew && basicPassNew.length > 0
-          ? basicPassNew
-          : (instanceConfig.gotenberg_basic_pass as string | undefined);
+
+        // Сносим любой ранее сохранённый password (если был — чистим)
+        const cleanCfg: Record<string, unknown> = { ...instanceConfig };
+        delete cleanCfg.gotenberg_basic_pass;
 
         const newConfig: Record<string, unknown> = {
-          ...instanceConfig,
+          ...cleanCfg,
           gotenberg_url: url,
           gotenberg_enabled: enabled,
         };
         if (basicUser !== undefined) newConfig.gotenberg_basic_user = basicUser || undefined;
-        if (basicPass !== undefined) newConfig.gotenberg_basic_pass = basicPass;
 
         if (hosterInstance?.id) {
           await supabaseAdmin.from("integration_instances").update({ config: newConfig }).eq("id", hosterInstance.id);
@@ -1134,7 +1142,8 @@ serve(async (req) => {
           });
         }
         await writeAuditLog(supabaseAdmin, "hosterby.gotenberg_config_saved", {
-          gotenberg_url: url, enabled, basic_auth_set: Boolean(basicUser && basicPass),
+          gotenberg_url: url, enabled, basic_user_set: Boolean(basicUser),
+          password_source: (Deno.env.get("GOTENBERG_PASSWORD") ?? "").trim() ? "env" : "none",
         }, userId);
         return jsonResp({ success: true });
       }
