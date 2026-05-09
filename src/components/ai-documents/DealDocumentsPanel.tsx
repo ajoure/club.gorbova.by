@@ -97,6 +97,10 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
   const [generating, setGenerating] = useState(false);
   const [history, setHistory] = useState<HistoryDoc[]>([]);
 
+  const { hasRole: isAdmin } = useHasRoleV2("admin");
+  const { hasRole: isSuperAdmin } = useHasRoleV2("super_admin");
+  const canSeeDocx = isAdmin || isSuperAdmin;
+
   // ── load templates + history ─────────────────────────────────────────
   const fetchAll = async () => {
     setLoading(true);
