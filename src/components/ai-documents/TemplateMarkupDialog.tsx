@@ -90,6 +90,8 @@ interface Props {
     storage_path: string;
     file_name: string | null;
     version_number: number;
+    validation_status?: string | null;
+    is_current?: boolean;
   } | null;
   onApplied?: () => void;
 }
