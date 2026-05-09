@@ -863,36 +863,52 @@ function ValidationBadge({ status }: { status: string | null }) {
 function ValidationSummary({
   validation,
   onActivate,
+  onCopyPlaceholders,
   alreadyCurrent,
 }: {
   validation: ValidationResult;
   onActivate: () => void;
+  onCopyPlaceholders?: () => void;
   alreadyCurrent: boolean;
 }) {
   const isValid = validation.status === "valid";
   return (
     <div className={`border rounded p-3 ${isValid ? "border-emerald-400/40 bg-emerald-500/5" : "border-destructive/40 bg-destructive/5"}`}>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-2 text-sm">
           {isValid
-            ? <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-            : <AlertTriangle className="h-4 w-4 text-destructive" />}
-          <span className="font-medium">
-            {isValid ? "Validation: valid" : `Validation: invalid (${validation.errors.length})`}
-          </span>
-          <span className="text-xs text-muted-foreground">
-            recognized: {validation.recognized.length} · raw: {validation.raw_tokens.length}
-          </span>
+            ? <CheckCircle2 className="h-4 w-4 text-emerald-600 mt-0.5" />
+            : <AlertTriangle className="h-4 w-4 text-destructive mt-0.5" />}
+          <div className="flex flex-col">
+            <span className="font-medium">
+              {isValid
+                ? "Шаблон проверен — можно активировать"
+                : `Найдено ошибок: ${validation.errors.length}`}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              FLD-полей: {validation.recognized.length}
+              {validation.raw_tokens.length !== validation.recognized.length
+                ? ` · всего плейсхолдеров: ${validation.raw_tokens.length}`
+                : ""}
+            </span>
+          </div>
         </div>
-        <Button
-          size="sm"
-          variant={isValid && !alreadyCurrent ? "default" : "outline"}
-          disabled={!isValid || alreadyCurrent}
-          onClick={onActivate}
-        >
-          <Sparkles className="h-3.5 w-3.5 mr-1" />
-          {alreadyCurrent ? "Уже текущая" : "Сделать текущей"}
-        </Button>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {isValid && onCopyPlaceholders && (
+            <Button size="sm" variant="outline" className="h-8" onClick={onCopyPlaceholders}>
+              Скопировать плейсхолдеры
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant={isValid && !alreadyCurrent ? "default" : "outline"}
+            disabled={!isValid || alreadyCurrent}
+            onClick={onActivate}
+          >
+            <Sparkles className="h-3.5 w-3.5 mr-1" />
+            {alreadyCurrent ? "Уже активен" : "Активировать шаблон"}
+          </Button>
+        </div>
       </div>
       {!isValid && (
         <ul className="mt-2 space-y-1 text-xs">
