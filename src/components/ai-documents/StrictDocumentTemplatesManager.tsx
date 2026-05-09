@@ -34,6 +34,29 @@ import { extractDocxPlaceholders } from "@/utils/extractDocxPlaceholders";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { TemplateMarkupDialog } from "./TemplateMarkupDialog";
+import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+
+// C5-I: понятные сообщения для ошибок activation backend
+function mapActivationError(raw: string | undefined | null, data?: any): string {
+  const code = (data?.error || raw || "").toString();
+  const s = code.toLowerCase();
+  if (s.includes("cannot_activate_invalid_version")) {
+    return "Шаблон содержит ошибки в плейсхолдерах. Откройте «Проверка и исправление плейсхолдеров» и исправьте их.";
+  }
+  if (s.includes("cannot_activate_unmarked_version")) {
+    return "Шаблон не размечен. Откройте «Проверка и исправление плейсхолдеров».";
+  }
+  if (s.includes("forbidden")) {
+    return "Недостаточно прав для активации шаблона.";
+  }
+  if (s.includes("unauthorized")) {
+    return "Сессия истекла. Войдите заново.";
+  }
+  if (s.includes("version_not_found")) {
+    return "Версия шаблона не найдена. Обновите список.";
+  }
+  return normalizeEdgeFunctionError(raw, data);
+}
 
 // Server-side audit (best-effort, never throws to UI)
 async function auditEvent(
@@ -381,6 +404,37 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
       setUploadFile(null);
       setUploadName("");
       await fetchAll();
+
+      // C5-I: автопроверка сразу после загрузки.
+      // Берём только что созданную версию по storage_path и запускаем strict validation,
+      // чтобы пользователь сразу увидел статус (valid / есть ошибки), а не «pending».
+      try {
+        const { data: freshVer } = await supabase
+          .from("document_template_versions")
+          .select("id, template_id, version_number, storage_bucket, storage_path, file_name, file_size_bytes, is_current, validation_status, validation_errors, validation_checked_at, detected_tokens, token_manifest, created_at")
+          .eq("template_id", tmplIns.id)
+          .eq("storage_path", storagePath)
+          .maybeSingle();
+        if (freshVer) {
+          const verRow: VersionRow = {
+            ...(freshVer as any),
+            validation_errors: (freshVer as any).validation_errors ?? [],
+            detected_tokens: (freshVer as any).detected_tokens ?? [],
+            token_manifest: (freshVer as any).token_manifest ?? [],
+          };
+          const tplRow: TemplateRow = {
+            id: tmplIns.id,
+            name: uploadName.trim(),
+            description: null,
+            template_status: "draft",
+            current_version_id: null,
+            created_at: new Date().toISOString(),
+          };
+          await openPreview(tplRow, verRow);
+        }
+      } catch (e) {
+        console.warn("[c5i] auto-validate after upload failed (non-blocking)", e);
+      }
     } catch (e: any) {
       console.error(e);
       toast.error(`Ошибка загрузки: ${e.message ?? e}`);
@@ -501,21 +555,26 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
 
   const activateVersion = async (tpl: TemplateRow, ver: VersionRow) => {
     if (ver.validation_status !== "valid") {
-      toast.error("Активация заблокирована: validation_status != valid");
+      toast.error("Шаблон содержит ошибки. Откройте «Проверка и исправление плейсхолдеров».");
       return;
     }
-    // C3: server-side activation (admin-only, audit included)
     try {
       const { data, error } = await supabase.functions.invoke(
         "canonical-template-activate-version",
         { body: { template_version_id: ver.id } },
       );
-      if (error) throw error;
-      if ((data as any)?.error) throw new Error((data as any).error);
-      toast.success("Шаблон активирован как текущий");
+      if (error) {
+        toast.error(mapActivationError(error?.message, (error as any)?.context?.body ?? data));
+        return;
+      }
+      if ((data as any)?.error) {
+        toast.error(mapActivationError((data as any).error, data));
+        return;
+      }
+      toast.success("Шаблон активирован");
       await fetchAll();
     } catch (e: any) {
-      toast.error(`Ошибка активации: ${e.message ?? e}`);
+      toast.error(mapActivationError(e?.message, e));
     }
   };
 
@@ -674,14 +733,14 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
                 <div className="flex flex-col items-end gap-0.5">
                   <Button
                     size="sm"
-                    variant="ghost"
-                    className="text-muted-foreground h-7 text-xs"
+                    variant="outline"
+                    className="h-7 text-xs"
                     onClick={() => openMarkup(activeTemplate!, activeVersion)}
                   >
-                    <Pencil className="h-3 w-3 mr-1" /> Расширенная разметка (legacy)
+                    <Pencil className="h-3 w-3 mr-1" /> Проверка и исправление плейсхолдеров
                   </Button>
                   <span className="text-[10px] text-muted-foreground">
-                    Не рекомендуется — редактируйте в Word
+                    Открывайте, только если в шаблоне есть ошибки
                   </span>
                 </div>
               </div>
@@ -690,45 +749,27 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
                 <ValidationSummary
                   validation={previewValidation}
                   onActivate={() => activateVersion(activeTemplate!, activeVersion)}
+                  onCopyPlaceholders={() => {
+                    const list = (previewValidation.recognized || [])
+                      .map((r) => r.placeholder)
+                      .join("\n");
+                    if (!list) {
+                      toast.error("В шаблоне нет валидных FLD-плейсхолдеров");
+                      return;
+                    }
+                    navigator.clipboard.writeText(list).then(
+                      () => toast.success(`Скопировано плейсхолдеров: ${previewValidation.recognized.length}`),
+                      () => toast.error("Не удалось скопировать"),
+                    );
+                  }}
                   alreadyCurrent={activeVersion.is_current}
                 />
               )}
 
-              <div>
-                <Label className="text-xs">Найдено плейсхолдеров: {previewTokens.length}</Label>
-                {previewTokens.length === 0 ? (
-                  <div className="text-xs text-amber-600 mt-1">
-                    Шаблон ещё не размечен. Выберите поля и примените разметку.
-                  </div>
-                ) : (
-                  <ScrollArea className="h-32 border rounded mt-1 p-2">
-                    <div className="flex flex-wrap gap-1">
-                      {previewTokens.map(tk => {
-                        const isStrict = STRICT_PLACEHOLDER_RE.test(tk);
-                        return (
-                          <Badge
-                            key={tk}
-                            variant={isStrict ? "secondary" : "destructive"}
-                            className="font-mono text-[10px]"
-                          >
-                            {`{{${tk}}}`}
-                          </Badge>
-                        );
-                      })}
-                    </div>
-                  </ScrollArea>
-                )}
-              </div>
-
-              <div>
-                <Label className="text-xs">Текст документа (первые 3000 символов)</Label>
-                <ScrollArea className="h-64 border rounded mt-1 p-2 bg-muted/20">
-                  <pre className="text-[11px] whitespace-pre-wrap font-sans">
-                    {previewText.slice(0, 3000)}
-                    {previewText.length > 3000 && "\n…"}
-                  </pre>
-                </ScrollArea>
-              </div>
+              {/* C5-I: блоки «Найдено плейсхолдеров» и «Текст документа»
+                  убраны с основного экрана. При невалидной версии ошибки
+                  уже видны в ValidationSummary; полный документ открывается
+                  через «Проверка и исправление плейсхолдеров». */}
             </div>
           )}
         </div>
@@ -822,36 +863,52 @@ function ValidationBadge({ status }: { status: string | null }) {
 function ValidationSummary({
   validation,
   onActivate,
+  onCopyPlaceholders,
   alreadyCurrent,
 }: {
   validation: ValidationResult;
   onActivate: () => void;
+  onCopyPlaceholders?: () => void;
   alreadyCurrent: boolean;
 }) {
   const isValid = validation.status === "valid";
   return (
     <div className={`border rounded p-3 ${isValid ? "border-emerald-400/40 bg-emerald-500/5" : "border-destructive/40 bg-destructive/5"}`}>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-2 text-sm">
           {isValid
-            ? <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-            : <AlertTriangle className="h-4 w-4 text-destructive" />}
-          <span className="font-medium">
-            {isValid ? "Validation: valid" : `Validation: invalid (${validation.errors.length})`}
-          </span>
-          <span className="text-xs text-muted-foreground">
-            recognized: {validation.recognized.length} · raw: {validation.raw_tokens.length}
-          </span>
+            ? <CheckCircle2 className="h-4 w-4 text-emerald-600 mt-0.5" />
+            : <AlertTriangle className="h-4 w-4 text-destructive mt-0.5" />}
+          <div className="flex flex-col">
+            <span className="font-medium">
+              {isValid
+                ? "Шаблон проверен — можно активировать"
+                : `Найдено ошибок: ${validation.errors.length}`}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              FLD-полей: {validation.recognized.length}
+              {validation.raw_tokens.length !== validation.recognized.length
+                ? ` · всего плейсхолдеров: ${validation.raw_tokens.length}`
+                : ""}
+            </span>
+          </div>
         </div>
-        <Button
-          size="sm"
-          variant={isValid && !alreadyCurrent ? "default" : "outline"}
-          disabled={!isValid || alreadyCurrent}
-          onClick={onActivate}
-        >
-          <Sparkles className="h-3.5 w-3.5 mr-1" />
-          {alreadyCurrent ? "Уже текущая" : "Сделать текущей"}
-        </Button>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {isValid && onCopyPlaceholders && (
+            <Button size="sm" variant="outline" className="h-8" onClick={onCopyPlaceholders}>
+              Скопировать плейсхолдеры
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant={isValid && !alreadyCurrent ? "default" : "outline"}
+            disabled={!isValid || alreadyCurrent}
+            onClick={onActivate}
+          >
+            <Sparkles className="h-3.5 w-3.5 mr-1" />
+            {alreadyCurrent ? "Уже активен" : "Активировать шаблон"}
+          </Button>
+        </div>
       </div>
       {!isValid && (
         <ul className="mt-2 space-y-1 text-xs">

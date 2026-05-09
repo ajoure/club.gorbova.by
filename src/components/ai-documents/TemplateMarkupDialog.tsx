@@ -90,6 +90,8 @@ interface Props {
     storage_path: string;
     file_name: string | null;
     version_number: number;
+    validation_status?: string | null;
+    is_current?: boolean;
   } | null;
   onApplied?: () => void;
 }
@@ -977,10 +979,10 @@ export function TemplateMarkupDialog({
       >
         <DialogHeader className="flex-shrink-0 px-5 pt-4 pb-3 border-b">
           <DialogTitle className="flex items-center gap-2 text-base">
-            <Pencil className="h-4 w-4" /> Разметка шаблона: {templateName}
+            <Pencil className="h-4 w-4" /> Проверка и исправление плейсхолдеров: {templateName}
           </DialogTitle>
           <DialogDescription className="text-xs leading-relaxed">
-            Это <b>режим разметки шаблона</b>: здесь вы заменяете старые плейсхолдеры на FLD-поля.
+            Здесь вы заменяете старые/неправильные плейсхолдеры на FLD-поля.
             Чтобы изменить текст, таблицы, отступы или форматирование — отредактируйте DOCX в Word
             и загрузите новую версию шаблона.
             {hasDraftSaved && <span className="ml-2 text-emerald-600">· Черновик сохранён</span>}
@@ -1080,6 +1082,12 @@ export function TemplateMarkupDialog({
             <div>
               Используются только поля FLD. Принято: <b>{acceptedCount}</b> · всего: <b>{replacements.length}</b>
             </div>
+            {templateVersion?.validation_status === "valid" && replacements.length === 0 && (
+              <div className="text-emerald-700 inline-flex items-center gap-1">
+                <CheckCircle2 className="h-3 w-3 shrink-0" />
+                <span>Шаблон уже валиден — замены не требуются. Можно активировать напрямую.</span>
+              </div>
+            )}
             {disabledReason && (
               <div className="text-amber-700 inline-flex items-center gap-1">
                 <AlertTriangle className="h-3 w-3 shrink-0" />
@@ -1091,6 +1099,42 @@ export function TemplateMarkupDialog({
             <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={applying || activating}>
               Закрыть
             </Button>
+            {templateVersion?.validation_status === "valid" && acceptedCount === 0 && (
+              <Button
+                onClick={async () => {
+                  if (!templateVersion) return;
+                  if (templateVersion.is_current) {
+                    toast.info("Этот шаблон уже активен");
+                    return;
+                  }
+                  setActivating(true);
+                  try {
+                    const { data, error } = await supabase.functions.invoke(
+                      "canonical-template-activate-version",
+                      { body: { template_version_id: templateVersion.id } },
+                    );
+                    if (error) {
+                      toast.error(`Не удалось активировать: ${normalizeEdgeFunctionError(error?.message, (error as any)?.context?.body ?? data)}`);
+                      return;
+                    }
+                    if ((data as any)?.error) {
+                      toast.error(`Не удалось активировать: ${normalizeEdgeFunctionError((data as any).error, data)}`);
+                      return;
+                    }
+                    toast.success("Шаблон активирован");
+                    onApplied?.();
+                    onOpenChange(false);
+                  } finally {
+                    setActivating(false);
+                  }
+                }}
+                disabled={activating || !!templateVersion?.is_current}
+                title={templateVersion?.is_current ? "Уже активен" : "Активировать текущую версию без замен"}
+              >
+                {activating ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />}
+                {templateVersion?.is_current ? "Уже активен" : "Активировать шаблон"}
+              </Button>
+            )}
             <Button
               variant="outline"
               onClick={() => apply(false)}
