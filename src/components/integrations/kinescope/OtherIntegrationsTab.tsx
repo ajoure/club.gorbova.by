@@ -1,6 +1,7 @@
 import { useIntegrations } from "@/hooks/useIntegrations";
 import { KinescopeSettingsCard } from "./KinescopeSettingsCard";
 import { HosterBySettingsCard } from "@/components/integrations/hosterby/HosterBySettingsCard";
+import { GotenbergSettingsCard } from "@/components/integrations/gotenberg/GotenbergSettingsCard";
 import { GoogleMapsSettingsCard } from "@/components/integrations/google-maps/GoogleMapsSettingsCard";
 import { GrpLookupSettingsCard } from "@/components/integrations/grp-lookup/GrpLookupSettingsCard";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,6 +26,7 @@ export function OtherIntegrationsTab() {
       <div className="grid gap-6 md:grid-cols-2">
         <KinescopeSettingsCard instance={kinescopeInstance} />
         <HosterBySettingsCard instance={hosterByInstance} />
+        <GotenbergSettingsCard />
         <GoogleMapsSettingsCard />
         <GrpLookupSettingsCard />
       </div>

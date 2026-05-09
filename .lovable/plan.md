@@ -1,389 +1,252 @@
 да, согласен, с учетом правок:
 
-1. **Разделить C5-I и C5-J жёстко.**  
-C5-I можно выполнять сразу.  
-C5-J запускать только после dependency gate по PDF-конвертеру. Не смешивать UI-исправления шаблонов с PDF-конвертацией в один deploy.
-2. **C5-I должен быть основным sprint, C5-J — conditional.**  
-Формат статуса:
-3. **Добавить явную проверку валидного FLD-шаблона без разметки.**  
-В DoD добавить:
-4. **Не называть** `TemplateMarkupDialog` **настройками, если он не редактирует документ.**  
-Лучше название:
-  &nbsp;
-  ```text
-  Проверка и исправление плейсхолдеров
-  ```
-  Потому что «Настройки» звучит слишком широко и снова создаст ожидание полноценного редактора.
-5. **Кнопку legacy-разметки сделать вторичной.**  
-На основной панели:
-  &nbsp;
-  ```text
-  Проверка и исправление плейсхолдеров
-  ```
-  Подпись:
-6. **Добавить отдельную кнопку/действие “Скопировать плейсхолдеры”.**  
-В workflow шаблонов должен быть видимый путь:
-7. **PDF converter gate должен проверять не только secret, но и реальную конвертацию.**  
-Добавить dry-run:
-  &nbsp;
-  ```text
-  взять маленький тестовый DOCX;
-  отправить в converter;
-  получить application/pdf;
-  проверить размер > 10 KB;
-  сохранить временный PDF;
-  открыть/скачать;
-  удалить тестовый файл.
-  ```
-  Только после этого менять `canonical-document-generate-strict`.
-8. **C5-J не должен ломать уже созданные DOCX-документы.**  
-Добавить:
-9. **В** `ai_generated_documents.meta` **сохранить больше технических данных.**  
-Для PDF:
-10. **Добавить fallback STOP, но не fallback HTML-PDF.**  
-Если converter упал:
+1. **Обязательно добавить “dependency gate” после шага 3**  
+До интеграции в `canonical-document-generate-strict` не трогать генерацию документов, пока не будет подтверждено:
+  - `gotenberg_url` сохранён;
+  - `/health` отвечает из Edge runtime;
+  - тестовый DOCX реально конвертируется в PDF;
+  - PDF `content-type=application/pdf`;
+  - PDF размером больше 10 KB;
+  - endpoint защищён Basic Auth / токеном.
+2. **Не хранить Basic Auth в открытом** `config`**, если** `integration_instances.config` **виден admin UI**  
+Проверить текущую модель secrets:
+  - если `config` отображается в UI — хранить там только masked-флаги;
+  - реальные `gotenberg_basic_user/pass` хранить как Supabase secrets либо в зашифрованном storage, как уже сделано для hoster.by keys;
+  - в proof явно написать: “секреты не логируются и не возвращаются клиенту”.
+3. **Для Gotenberg добавить отдельный action** `gotenberg_get_status`  
+Чтобы UI мог показывать:
+  - настроен / не настроен;
+  - включён / выключен;
+  - последний health-check;
+  - последний test-convert;
+  - latency;
+  - last_error_code.
+4. **В** `gotenberg_test_convert` **использовать реальный минимальный DOCX, а не HTML**  
+Тест должен проверять именно DOCX→PDF через LibreOffice route:
+  - endpoint `/forms/libreoffice/convert`;
+  - multipart field `files`;
+  - test DOCX с кириллицей и простой таблицей;
+  - PDF не должен быть пустым.
+5. **В** `canonical-document-generate-strict` **не возвращать HTTP 200 при ошибке PDF-конвертации**  
+Лучше:
+  - возвращать `409/503` с понятным error code;
+  - не создавать “успешный” документ;
+  - если row уже pre-created для idempotency/numbering — статус `failed`, номер не терять, retry с тем же `idempotency_key` должен продолжить тот же документ и тот же номер.
+6. **Уточнить атомарность после C5-G**  
+Так как номер уже может быть выдан до PDF-конвертации:
+  - при падении converter нельзя выдавать новый номер при retry;
+  - retry должен брать тот же `ai_generated_documents.id`, тот же `document_number`, заново пытаться сделать PDF;
+  - статус документа: `generating_pdf` → `ready` / `failed`.
+7. **Добавить отдельный флаг** `pdf_conversion_status` **в** `meta`**, если без миграции**  
+Например:
+8. **UI** `DealDocumentsPanel` **должен показывать ошибку генерации PDF понятно**  
+Если PDF converter недоступен:
+  - “PDF-конвертер временно недоступен. Документ не создан.”
+  - не показывать клиенту DOCX как fallback;
+  - для admin можно показать техническую причину.
+9. **Legacy** `generate-document-pdf` **пометить deprecated, но не удалять**  
+Добавить header-comment:  
+`DEPRECATED: legacy HTML document generator, not used by strict DOCX/PDF workflow`.  
+Никаких маршрутов на него не переводить.
+10. **Proof дополнить проверкой кириллицы и таблицы**  
+В proof обязательно:
 
-```text
-generate должен завершиться ошибкой;
-document row не должен остаться как успешный PDF;
-номер документа не должен теряться;
-если номер уже выдан, документ должен получить status='failed' / meta.error, но повтор с тем же idempotency_key должен продолжить тот же документ и тот же номер.
-```
+- DOCX содержит русские буквы;
+- DOCX содержит таблицу;
+- PDF открывается;
+- таблица визуально сохранена;
+- кириллица не стала квадратиками.
 
-Это важно, потому что номер уже резервируется до render/conversion.
-
-11. **Уточнить порядок при ошибке PDF после выдачи номера.**  
-В C5-J добавить:
-
-```text
-номер выдан → DOCX создан → PDF conversion failed.
-Тогда ai_generated_documents остаётся с document_number, status='failed', file_path NULL или technical docx path only in meta.
-Повтор generate с тем же idempotency_key не выдаёт новый номер, а повторяет conversion для того же документа.
-```
-
-12. **Preview no-op проверить отдельно после C5-J.**  
-В verify добавить:
-
-```text
-preview не вызывает converter;
-preview не сохраняет DOCX;
-preview не сохраняет PDF;
-preview не пишет ai_generated_documents;
-preview не выдаёт номер.
-```
-
-13. **Activation error normalization должна показывать причину backend.**  
-Не просто `normalizeEdgeFunctionError`, а маппинг:
-
-```text
-validation_status != valid → «Шаблон содержит ошибки. Откройте проверку.»
-markup_status not marked → «Шаблон не размечен / не проверен.»
-role denied → «Недостаточно прав для активации шаблона.»
-missing JWT → «Сессия истекла. Войдите заново.»
-```
-
-14. **После upload нужна авто-валидация с видимым состоянием загрузки.**  
-В UI:
-
-```text
-Загружено → Проверяем шаблон… → Валиден / Есть ошибки
-```
-
-Нельзя оставлять pending без объяснения.
-
-15. **Proof лучше сделать отдельным, не дописывать в C5-G.**  
-Создать:
-
-```text
-.lovable/proofs/document_generation_sprint11_c5i_template_workflow.md
-.lovable/proofs/document_generation_sprint11_c5j_pdf_primary_output.md
-```
-
-C5-G оставить только для нумерации.
-
-16. **C5-H не трогать, но проверить регрессию.**  
-В proof C5-I/C5-J добавить строку:
-
-```text
-search_deal_rows / C5-H files untouched
-```
-
-Если C5-H ещё не закрыт — не смешивать.
-
-17. **C5-K вынесен правильно, но добавить stop-guard.**  
-В этом патче запрещено менять выбор шаблона по offer/tariff. Только общий активный шаблон.
-18. **Финальный порядок execute должен быть такой:**
-
-```text
-1. C5-I UI workflow шаблонов.
-2. QA C5-I на валидном и невалидном DOCX.
-3. Dependency gate PDF converter.
-4. Если converter OK → C5-J backend PDF.
-5. QA C5-J preview/generate/idempotency/PDF.
-6. Если converter отсутствует → C5-J статус BLOCKED, текущий DOCX generate не ломать.
-```
-
-Главная правка: **не начинать C5-J без реального converter proof**. C5-I можно делать сразу.
+Итог: план правильный. Главное — не начинать backend PDF-генерацию до зелёного Gotenberg health/test-convert и не делать fallback в HTML/PDF.
 
 &nbsp;
 
-План:
+План: C5-J — DOCX→PDF через Gotenberg на VPS hoster.by
 
-## 1. Проблема
+## 0. Discovery (предварительные находки)
 
-Сейчас раздел шаблонов документов технически работает кусками, но UX не объясняет нормальный путь:
+Существующая инфраструктура hoster.by / BY-egress найдена и будет переиспользована — отдельную интеграцию НЕ создаём.
 
-- после загрузки непонятно, что делать дальше;
-- кнопка «Сделать текущей» неочевидна и при ошибке показывает сырой `Edge Function returned a non-2xx status code`;
-- «Расширенная разметка» выглядит как основной путь, но для уже корректного FLD-шаблона там нечего применять, поэтому кнопки недоступны;
-- найденные плейсхолдеры и сырой текст документа занимают экран, но не помогают принять решение;
-- генерация сейчас создаёт DOCX, а нужен PDF как основной клиентский формат, чтобы клиент не редактировал документ.
+- **Таблица**: `integration_instances` с `provider='hosterby'`. Конфиг в `config` JSONB:
+  - `egress_base_url` — базовый URL fetch-сервиса на VPS
+  - `egress_token` — Bearer-токен (хранится в config, не в env)
+  - `egress_enabled` — флаг включения
+  - `egress_allowlist` — список разрешённых доменов
+- **Edge function**: `supabase/functions/hosterby-api/index.ts` — actions:
+  - `by_egress_check_health` (GET `${baseUrl}/health`)
+  - `by_egress_test_url` (GET `${baseUrl}/fetch` + `X-Target-URL`, Bearer auth)
+  - `by_egress_save_config`, `by_egress_toggle`
+  - SSRF-защита (`isSsrfSafe`) + allowlist (`isDomainAllowed`)
+- **UI**: `src/components/integrations/hosterby/*` (HosterByVmCard, HosterBySettingsCard, HosterByEgressDialog, HosterByConnectionDialog), статус-бэйдж `ByEgressStatusBadge.tsx` на админке.
+- **Текущий VPS**: `178.172.173.1`, 1 CPU / 1 GB RAM / 10 GB SSD.
 
-## 2. Диагностика
+Вывод: добавляем Gotenberg как **второй subaction** в `hosterby-api` (POST к `${gotenberg_url}/forms/libreoffice/convert`), а конфиг (`gotenberg_url`, `gotenberg_basic_user`, `gotenberg_basic_pass`) кладём в **тот же** `integration_instances.config` под provider `hosterby`. Никаких новых таблиц, новых edge-функций для конфига и параллельных env-переменных.
 
-Фактическое состояние по коду:
+---
 
-- Основной UI шаблонов: `src/components/ai-documents/StrictDocumentTemplatesManager.tsx`.
-- Загрузка создаёт:
-  - `document_templates` со статусом `draft`;
-  - `document_template_versions` со статусом `pending`;
-  - файл в private bucket `documents`.
-- Валидация сейчас запускается только при выборе версии через `openPreview`, а не сразу после загрузки.
-- Кнопка «Сделать текущей» вызывает `canonical-template-activate-version`.
-- Backend activation требует:
-  - JWT;
-  - роль `admin | super_admin | owner`;
-  - `validation_status='valid'`;
-  - `markup_status` отсутствует или `marked`.
-- Ошибка активации сейчас не нормализуется через `normalizeEdgeFunctionError`, поэтому пользователь видит технический toast.
-- `TemplateMarkupDialog.tsx` — это инструмент замены старых/выделенных фрагментов на FLD-поля, а не «настройки шаблона». Для уже валидного шаблона с готовыми `{{field:FLD-...}}` там часто нет accepted replacements, поэтому `Применить`/`Применить и активировать` закономерно выключены.
-- `DealDocumentsPanel.tsx` вызывает `canonical-document-generate-strict` в режимах:
-  - `preview` — без номера документа;
-  - `generate` — создаёт DOCX и пишет `ai_generated_documents`.
-- `canonical-document-generate-strict` сейчас сохраняет основной файл как DOCX:
-  - `file_path = generated/...docx`;
-  - `file_mime = application/vnd.openxmlformats-officedocument.wordprocessingml.document`.
-- Bucket `documents` уже разрешает `application/pdf`.
-- Есть legacy `generate-document-pdf`, но он генерирует HTML/старый счёт-акт, не конвертирует strict DOCX-шаблон в настоящий PDF и не должен становиться вторым workflow.
+## 1. Расширение интеграции hoster.by под Gotenberg
 
-## 3. Предлагаемое решение
+В `integration_instances.config` (provider=`hosterby`) добавить ключи (через `by_egress_save_config`-подобный action):
 
-Разделить задачу на два связанных патча.
+- `gotenberg_url` — например `https://pdf.gorbova.by`
+- `gotenberg_basic_user`, `gotenberg_basic_pass` — Basic Auth (опционально, но рекомендовано)
+- `gotenberg_enabled` — флаг
 
-### C5-I — человеческий workflow шаблонов
+Новые actions в `hosterby-api/index.ts`:
 
-Сделать простой путь:
+- `gotenberg_check_health` — `GET ${gotenberg_url}/health` + Basic Auth, SSRF-guard, timeout 10s
+- `gotenberg_test_convert` — отправить тестовый минимальный DOCX, проверить что:
+  - HTTP 200
+  - `content-type: application/pdf`
+  - `content-length > 10240`
+- `gotenberg_save_config` — обновить config в `integration_instances`
 
-```text
-1. Загрузить DOCX
-2. Автоматически проверить шаблон
-3. Если валиден — Активировать
-4. Если невалиден — открыть настройки и увидеть только ошибки
-5. В сделке — Тест / Создать PDF
+UI:
+
+- В `OtherIntegrationsTab.tsx` добавить карточку **Gotenberg (PDF Converter)** рядом с hoster.by, использующую те же hooks (`useIntegrations`).
+- В `ByEgressStatusBadge` добавить близнеца `GotenbergStatusBadge` (опционально, можно отложить).
+
+---
+
+## 2. Развёртывание Gotenberg на VPS (инструкция, не код)
+
+Документ-инструкция в `.lovable/docs/gotenberg-vps-setup.md`:
+
+```bash
+# 1. На VPS 178.172.173.1
+docker run -d --restart=always --name gotenberg \
+  -p 127.0.0.1:3000:3000 \
+  gotenberg/gotenberg:8 \
+  gotenberg --api-timeout=120s
+
+# 2. Caddy / nginx reverse proxy на pdf.gorbova.by:
+#    - HTTPS (Let's Encrypt)
+#    - Basic Auth
+#    - allowlist по IP Supabase Edge (опционально)
 ```
 
-Изменения UI:
+Не оставлять порт 3000 наружу. Только через HTTPS-домен с Basic Auth.
 
-- Переименовать «Сделать текущей» в понятное действие: `Активировать шаблон`.
-- Убрать с основной панели сырой список всех плейсхолдеров и «Текст документа первые 3000 символов».
-- На основной панели показывать только:
-  - статус проверки;
-  - количество FLD-полей;
-  - если есть ошибки — список неправильных плейсхолдеров с причиной;
-  - действия: `Проверить`, `Настройки`, `Активировать`.
-- «Расширенная разметка (legacy)» переименовать в `Настройки / исправление полей`.
-- Внутри настроек:
-  - показывать документ и подсвечивать только проблемные/legacy placeholders;
-  - для валидного шаблона показывать состояние «Шаблон уже валиден, можно активировать»;
-  - не заставлять пользователя делать replacements, если все placeholders уже FLD-valid;
-  - кнопка `Активировать` должна быть доступна для валидной версии даже без замен.
-- После загрузки автоматически выполнить ту же strict validation, которая сейчас запускается при клике по версии.
-- Все ошибки edge functions в этом UI пропускать через `normalizeEdgeFunctionError` и показывать человеческий текст.
+---
 
-### C5-J — PDF как основной результат генерации
+## 3. Health-check (полный набор проверок)
 
-Сделать PDF основным файлом для клиента, не создавая второй source of truth.
+В админке кнопка «Проверить Gotenberg» дёргает `gotenberg_check_health` + `gotenberg_test_convert`. Проверки:
 
-Канон:
+1. `gotenberg_url` задан в `integration_instances.config`.
+2. URL проходит `isSsrfSafe` (не внутренний).
+3. `${url}/health` отвечает 200.
+4. Тестовая DOCX→PDF конвертация возвращает `application/pdf`.
+5. Размер PDF > 10 KB.
 
-- `ai_generated_documents` остаётся единственной записью документа.
-- При `mode='preview'` ничего не сохраняется и номер не выдаётся.
-- При `mode='generate'`:
-  1. strict generator рендерит DOCX из активного шаблона;
-  2. выдаёт номер документа как сейчас;
-  3. конвертирует итоговый DOCX в PDF;
-  4. сохраняет PDF в bucket `documents`;
-  5. в `ai_generated_documents.file_path/file_mime/file_name` пишет PDF как основной файл;
-  6. технический DOCX сохраняет только в `meta.docx_storage_path`, `meta.docx_file_name`, `meta.docx_mime` для админского аудита/отладки;
-  7. download URL возвращает PDF.
+Если хоть один пункт не прошёл — STOP, дальше C5-J не идёт.
 
-UI сделки:
+---
 
-- `Preview` переименовать в `Тест`.
-- `Сформировать DOCX` заменить на `Создать PDF`.
-- В истории документов кнопка скачивания открывает PDF.
-- Если нужен админский DOCX для диагностики — добавить вторичное действие `DOCX` только для admin/super_admin, но не показывать клиенту.
+## 4. Shared helper для конвертации
 
-Важная зависимость по PDF:
+Файл: `supabase/functions/_shared/pdf-converter.ts`
 
-- Для качественного PDF «как в Word» нужен backend-конвертер DOCX→PDF. В Lovable Cloud function нельзя надёжно запускать LibreOffice как локальный процесс.
-- Поэтому реализация должна использовать один из безопасных вариантов:
-  - уже подключённый внешний converter endpoint, если он есть в secrets;
-  - либо запросить secret/URL для Gotenberg/CloudConvert/аналогичного сервиса;
-  - HTML-заглушку вместо PDF из DOCX не использовать, потому что она не сохранит Word-разметку и создаст параллельный шаблонный движок.
+```text
+docxToPdf(docxBuffer: Uint8Array): Promise<Uint8Array>
+  - читает gotenberg_url + auth из integration_instances (provider=hosterby)
+  - проверяет gotenberg_enabled
+  - multipart/form-data POST на /forms/libreoffice/convert
+  - timeout 60s
+  - валидирует content-type=application/pdf и size > 10KB
+  - бросает понятные ошибки: GOTENBERG_DISABLED, GOTENBERG_UNREACHABLE,
+    GOTENBERG_AUTH_FAILED, GOTENBERG_NOT_PDF, GOTENBERG_PDF_TOO_SMALL,
+    GOTENBERG_TIMEOUT
+```
 
-## 4. Изменяемые компоненты
+Никаких бросков в JSON клиенту в сыром виде — нормализация через существующий `normalizeEdgeFunctionError`.
 
-### UI
+---
 
-- `src/components/ai-documents/StrictDocumentTemplatesManager.tsx`
-  - новый основной workflow;
-  - авто-валидация после upload;
-  - понятные названия действий;
-  - скрытие шумных блоков;
-  - нормализация ошибок.
-- `src/components/ai-documents/TemplateMarkupDialog.tsx`
-  - превратить из «legacy-разметки» в понятные настройки/исправление полей;
-  - валидный шаблон можно активировать без replacements;
-  - убрать native `confirm`, заменить стандартным `AlertDialog` только если потребуется подтверждение.
-- `src/components/ai-documents/DealDocumentsPanel.tsx`
-  - `Тест` вместо `Preview`;
-  - `Создать PDF` вместо `Сформировать DOCX`;
-  - история скачивает PDF.
+## 5. Интеграция в `canonical-document-generate-strict`
 
-### Backend functions
+Только после успешного health-check (флаг `gotenberg_enabled=true` в config):
 
-- `supabase/functions/canonical-document-generate-strict/index.ts`
-  - оставить preview no-op;
-  - в generate добавить DOCX→PDF шаг;
-  - PDF сделать primary file в `ai_generated_documents`;
-  - DOCX-path сохранить в `meta`.
-- Возможна новая shared helper/function для конвертации DOCX→PDF, если в проекте нет существующего корректного конвертера.
-- `canonical-template-activate-version` менять только если диагностика подтвердит backend-дефект; текущая логика в целом правильная.
+- `mode=preview` — **не трогать**. Preview не создаёт документ, не выдаёт номер, PDF не делает.
+- `mode=generate`:
+  1. рендер DOCX (как сейчас).
+  2. C5-G: выдача номера (без изменений, идемпотентность сохраняется).
+  3. `docxToPdf(docxBuffer)` через shared helper.
+  4. Сохранение в `documents` bucket:
+    - `${profile_id}/${year}/${docNumber}.pdf` — primary
+    - `${profile_id}/${year}/${docNumber}.docx` — технический
+  5. Запись в `ai_generated_documents`:
+    - `file_path = ...pdf`, `file_mime = 'application/pdf'`, `file_name = ...pdf`
+    - `meta.docx_storage_path`, `meta.docx_file_name`, `meta.docx_mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'`
+  6. `download_url` = signed URL на PDF.
 
-### Database
+Idempotency: повторный вызов с тем же `idempotency_key` НЕ выдаёт новый номер и НЕ создаёт новый документ — возвращает существующую запись (как сейчас в C5-G).
 
-- Новую таблицу не создавать.
-- Предпочтительно не добавлять новые колонки, использовать `ai_generated_documents.meta` для технического DOCX-path.
-- Если dry-run покажет, что фильтрация/скачивание требует индексируемых PDF-полей, тогда отдельной миграцией добавить минимальные nullable columns, но это не основной путь.
+Если `gotenberg_enabled=false` или helper упал — `generate` возвращает 200 с понятной ошибкой и НЕ создаёт частичную запись (атомарность).
 
-### Proof
+---
 
-- Обновить `.lovable/proofs/document_generation_sprint11_c5g_document_numbering.md` или создать новый proof-раздел:
-  - `C5-I — Template workflow UX`;
-  - `C5-J — PDF generation as client output`.
+## 6. UI в `DealDocumentsPanel.tsx`
 
-## 5. Что не будет изменено
+- Кнопка генерации: **«Создать PDF»** (вместо «Сформировать документ»).
+- В истории документов: скачивание = PDF.
+- DOCX **не показывается** клиенту вообще.
+- Для admin / super_admin (через `useUserRole`) — вторичная кнопка **«Скачать DOCX (admin)»**, видна только если `meta.docx_storage_path` существует.
 
-- Не менять C5-G нумерацию:
-  - `allocate_document_number`;
-  - `document_number_counters`;
-  - immutable trigger;
-  - `admin_override_document_number`.
-- Не менять C5-H поиск сделок по номеру документа.
-- Не добавлять связь шаблонов с тарифами/кнопками оплаты в этом патче — это следующий отдельный C5-K, потому что там нужен отдельный source of truth для выбора шаблона на уровне конкретной кнопки/оффера.
-- Не показывать клиентам DOCX.
-- Не делать HTML-PDF как замену Word-шаблону.
+---
 
-## 6. Dry-run
+## 7. STOP-guards (жёсткие)
 
-Перед изменениями выполнить безопасные проверки:
+Прервать C5-J и не катить дальше, если:
 
-1. Проверить secrets/environment на наличие PDF-конвертера без вывода секретов.
-2. Проверить фактическую структуру `ai_generated_documents` и `document_template_versions`.
-3. Проверить, что bucket `documents` принимает PDF — уже подтверждено: `application/pdf` разрешён.
-4. Проверить текущий ответ `canonical-template-activate-version` на валидной версии и понять причину `non-2xx` из UI/логов.
-5. Взять один валидный template version и один order для теста preview/generate.
-6. Если converter отсутствует — остановиться перед PDF-патчем и запросить подключение converter secret, не ломая текущий DOCX generate.
+- Gotenberg не запустился на VPS;
+- `${gotenberg_url}/health` недоступен из Supabase Edge runtime;
+- нет Basic Auth / другой защиты;
+- converter возвращает `content-type` ≠ `application/pdf`;
+- размер PDF ≤ 10 KB;
+- C5-G `allocate_document_number` начал выдавать новые номера на повторе;
+- `mode=preview` начал создавать документ или резервировать номер;
+- legacy `generate-document-pdf` неожиданно используется.
 
-## 7. Execute
+---
 
-После approval:
+## 8. Proof
 
-1. UI-патч C5-I:
-  - переписать основной правый блок в `StrictDocumentTemplatesManager` в компактную панель состояния;
-  - добавить авто-валидацию после upload;
-  - переименовать действия;
-  - убрать raw placeholders/text с main screen;
-  - сделать activation action понятной и с нормальными ошибками;
-  - привести `TemplateMarkupDialog` к роли «Настройки / исправление полей».
-2. Backend PDF-патч C5-J:
-  - добавить helper вызова DOCX→PDF converter;
-  - в `canonical-document-generate-strict` после DOCX-render загрузить DOCX как technical artifact;
-  - сконвертировать DOCX в PDF;
-  - загрузить PDF;
-  - записать PDF в primary `file_path/file_mime/file_name`;
-  - сохранить DOCX metadata в `meta`;
-  - вернуть `download_url` на PDF.
-3. UI сделки:
-  - заменить тексты кнопок;
-  - показать, что создаётся именно PDF;
-  - история документов скачивает PDF.
-4. Proof:
-  - зафиксировать SQL/edge/UI проверки.
+Файл: `.lovable/proofs/document_generation_sprint11_c5j_pdf_conversion.md`
 
-## 8. STOP-guards
+Содержание:
 
-Остановиться и не продолжать, если:
+- ссылка на найденную интеграцию hoster.by / BY-egress (`integration_instances` provider=`hosterby`, `hosterby-api` actions);
+- список новых config-ключей (`gotenberg_url`, `gotenberg_basic_user`, `gotenberg_basic_pass`, `gotenberg_enabled`) **без значений**;
+- лог health-check Gotenberg (HTTP 200, latency);
+- тестовая DOCX→PDF (размер, content-type);
+- запись `ai_generated_documents` после `mode=generate`: `file_mime='application/pdf'`, `meta.docx_storage_path` присутствует;
+- повторный `mode=generate` с тем же `idempotency_key` → тот же `document_number`, новой записи нет;
+- `mode=preview` → no-op, ни записи, ни номера;
+- email/Telegram/batch/auto-generation НЕ менялись (diff пустой по этим путям);
+- `generate-document-pdf` НЕ вызывается (помечен deprecated в комментарии заголовка).
 
-- нет доступного PDF converter secret/endpoint для настоящего DOCX→PDF;
-- converter возвращает не `application/pdf`;
-- PDF пустой или меньше разумного размера;
-- после генерации `ai_generated_documents.file_mime` не `application/pdf`;
-- preview создаёт строку документа или выдаёт номер;
-- generate создаёт новый номер при повторе того же `idempotency_key`;
-- activation backend отклоняет валидную версию по неожиданной причине;
-- обнаружится, что текущий DOCX нужен клиентскому кабинету как primary download.
+---
 
-## 9. Verify
+## Жёсткие правила
 
-Проверки после выполнения:
+- НЕ создавать вторую интеграцию параллельно `hosterby` — расширяем существующий `integration_instances` row.
+- НЕ использовать legacy `generate-document-pdf`.
+- НЕ делать HTML→PDF заглушку.
+- НЕ создавать второй шаблонный движок — источник остаётся DOCX-шаблон + strict generator.
+- Gotenberg — ТОЛЬКО конвертер итогового DOCX в PDF, без бизнес-логики.
 
-### Шаблоны
+---
 
-- Загрузить валидный DOCX с `{{field:FLD-000069}}` / `{{field:FLD-000070}}`.
-- После upload статус автоматически становится `valid` без ручного клика по версии.
-- Main screen не показывает сырой текст документа и полный список placeholders.
-- `Активировать шаблон` активирует версию и пишет audit `document_template.version_activated`.
-- Невалидный placeholder показывает конкретную ошибку красным.
-- Валидный шаблон в настройках можно активировать без replacements.
+## Порядок выполнения
 
-### Генерация
+1. Discovery-проверка hoster.by config в `integration_instances` (read-only SQL).
+2. Расширение `hosterby-api` actions: `gotenberg_save_config`, `gotenberg_check_health`, `gotenberg_test_convert`.
+3. UI карточка Gotenberg в `OtherIntegrationsTab`.
+4. **STOP** до подтверждения, что Gotenberg на VPS поднят и health-check зелёный.
+5. Shared helper `_shared/pdf-converter.ts`.
+6. Интеграция в `canonical-document-generate-strict` (mode=generate only).
+7. UI `DealDocumentsPanel` («Создать PDF» + admin-DOCX).
+8. Proof.
 
-- `Тест` возвращает resolved tokens, не создаёт `ai_generated_documents`, не выдаёт номер.
-- `Создать PDF` создаёт одну запись `ai_generated_documents`.
-- `file_mime='application/pdf'`.
-- `file_path` указывает на `.pdf`.
-- `meta.docx_storage_path` содержит технический DOCX.
-- PDF скачивается и открывается.
-- Клиентский download получает PDF, не DOCX.
-- Номер документа остаётся DDMM/N и не меняется.
-- Повтор generate с тем же idempotency key не создаёт дубль и не выдаёт новый номер.
-
-## 10. DoD
-
-Задача считается закрытой, когда:
-
-- пользовательский путь понятен без чтения технических подсказок;
-- «Сделать текущей» заменено на понятную активацию;
-- валидный шаблон можно активировать без захода в legacy-разметку;
-- неправильные placeholders видны только как ошибки, а не вся техническая простыня;
-- генерация создаёт PDF как primary document;
-- DOCX не показывается клиентам как основной файл;
-- preview остаётся no-op;
-- C5-G/C5-H не затронуты;
-- proof содержит реальные результаты UI/backend проверок.
-
-## 11. Риски и зависимости
-
-- Главный риск — качественная DOCX→PDF конвертация. Без внешнего converter endpoint нельзя гарантировать PDF, совпадающий с Word-разметкой.
-- Нельзя подменять это HTML-генерацией: это будет второй шаблонный движок и расхождение с DOCX.
-- Если converter недоступен, можно выполнить C5-I UX сейчас, а C5-J PDF остановить на dependency gate до подключения converter secret.
-
-## 12. Следующий отдельный этап
-
-После стабилизации шаблонов и PDF нужен отдельный C5-K:
-
-- связать активный шаблон документа с конкретной кнопкой оплаты / offer / tariff offer;
-- source of truth должен быть ID-first: `offer_id/tariff_offer_id -> document_template_id`;
-- генерация при создании сделки должна брать шаблон из конкретной кнопки оплаты, а не из общего активного шаблона.
+После шага 3 жду от тебя подтверждения, что Gotenberg на VPS запущен и доступен по HTTPS — только тогда продолжаю шаги 4–8.
