@@ -572,6 +572,7 @@ export function TemplateMarkupDialog({
     if (pickerContext.kind === "selection" || pickerContext.kind === "legacy") {
       const text = pickerContext.text;
       const occ = countOccurrences(plainText, text);
+      const occurrenceIndex = Math.min(pickerContext.occurrenceIndex, Math.max(0, occ - 1));
       const newR: Replacement = {
         id: uid(),
         source: "manual",
@@ -584,8 +585,10 @@ export function TemplateMarkupDialog({
         status: "manually_added",
         // Жёстко привязываемся к конкретной позиции выделения,
         // чтобы chip встал ИМЕННО там, а не на все вхождения слова.
-        occurrence_index: Math.min(pickerContext.occurrenceIndex, Math.max(0, occ - 1)),
+        occurrence_index: occurrenceIndex,
         occurrences_total: occ,
+        match_start: occurrenceIndex >= 0 ? nthIndexOf(plainText, text, occurrenceIndex) : null,
+        match_end: occurrenceIndex >= 0 ? nthIndexOf(plainText, text, occurrenceIndex) + text.length : null,
       };
       upsertReplacement(newR);
       toast.success("Поле вставлено в выбранную позицию");
