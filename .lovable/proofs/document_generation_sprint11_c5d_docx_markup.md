@@ -471,3 +471,26 @@ if (clearDraft) {
 - **C5-D-AMBI-1**: унифицировать `countGlobalOccurrences` ↔ `applyReplacementsToXml` (merged-run accounting).
 - **C5-D-DRAFT-CLEAR**: добавить edge-log `cleared_draft=true|false` для диагностики.
 - Записаны в `.lovable/backlog/` следующим патчем (отдельная задача).
+
+---
+
+## QA Cycle #6 — UX кнопки «Создать версию и скачать» (C5-D-UX2)
+
+### Контракт двух кнопок
+| Кнопка | Действие | Side effect |
+|---|---|---|
+| **«Оригинал (без правок)»** | Скачивает исходный DOCX текущей версии из storage | НЕТ — только download |
+| **«Создать версию и скачать»** | Вызывает `canonical-template-apply-markup(activate=false)` → fetch new version row → download blob | **ДА — каждый клик создаёт новую версию `document_template_versions`** (это ожидаемое поведение) |
+
+### UX guard-rails (реализованы в `TemplateMarkupDialog.tsx`)
+1. Label: «Создать версию и скачать» (было «С разметкой»).
+2. Tooltip: «Создаёт новую версию DOCX с применённой разметкой, не активирует её и сразу скачивает файл».
+3. `window.confirm("Будет создана новая версия шаблона без активации. Продолжить?")` — отмена прерывает операцию без сетевых запросов.
+4. Toast success: `Создана версия vN и скачана. Версия не активирована.`
+5. Toast warning при `validation_status==='invalid'`: `Создана версия vN, но она невалидна: остались незаменённые старые плейсхолдеры. Версия не активирована.` — файл всё равно скачивается.
+6. Диалог НЕ закрывается после операции (закрывается только на обычном Apply / Apply+Activate).
+7. Двойной клик защищён: ранний `if (downloadingMarked) return;` + `disabled={downloadingMarked || applying || activating}`.
+
+### Ожидаемое поведение версий
+- N кликов = N новых неактивных версий. Это by-design, пользователь предупреждён confirm-ом.
+- `is_current` остаётся на исходной версии до явного Apply+Activate.

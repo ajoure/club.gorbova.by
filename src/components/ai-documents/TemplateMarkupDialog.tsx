@@ -649,11 +649,16 @@ export function TemplateMarkupDialog({
    */
   const downloadMarkedDocx = async () => {
     if (!templateVersion) return;
+    if (downloadingMarked) return; // защита от двойного клика
     if (!canApply) {
       toast.error(disabledReason ?? "Нечего применять");
       if (ambiguousCount > 0 || withoutFldCount > 0) setShowReplacements(true);
       return;
     }
+    // Confirm: пользователь должен понимать, что создаётся новая версия
+    const ok = window.confirm("Будет создана новая версия шаблона без активации. Продолжить?");
+    if (!ok) return;
+
     setDownloadingMarked(true);
     try {
       const payload = buildPayload();
@@ -668,6 +673,7 @@ export function TemplateMarkupDialog({
       const r = data as any;
       const newVersionId: string | undefined = r?.new_version_id;
       if (!newVersionId) throw new Error("Backend не вернул new_version_id");
+      const validationStatus: string | undefined = r?.validation_status ?? r?.validation?.status;
 
       const { data: row, error: rowErr } = await supabase
         .from("document_template_versions")
@@ -689,8 +695,16 @@ export function TemplateMarkupDialog({
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      toast.success(`Скачана v${row.version_number} с разметкой (создана новая версия, не активирована)`);
+
+      if (validationStatus === "invalid") {
+        toast.warning(
+          `Создана версия v${row.version_number}, но она невалидна: остались незаменённые старые плейсхолдеры. Версия не активирована.`
+        );
+      } else {
+        toast.success(`Создана версия v${row.version_number} и скачана. Версия не активирована.`);
+      }
       onApplied?.();
+      // ВАЖНО: диалог НЕ закрываем — пользователь продолжает работу с шаблоном
     } catch (e: any) {
       toast.error(`Не удалось скачать DOCX с разметкой: ${normalizeEdgeFunctionError(e)}`);
     } finally {
@@ -897,13 +911,13 @@ export function TemplateMarkupDialog({
               title={
                 !canApply
                   ? (disabledReason ?? "Нет применимых замен")
-                  : "Создать новую версию шаблона с применённой разметкой и скачать её. Версия НЕ активируется."
+                  : "Создаёт новую версию DOCX с применённой разметкой, не активирует её и сразу скачивает файл"
               }
             >
               {downloadingMarked
                 ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
                 : <Download className="h-3.5 w-3.5 mr-1" />}
-              С разметкой
+              Создать версию и скачать
             </Button>
             <Button size="sm" variant="ghost" onClick={clearAll} disabled={replacements.length === 0}>
               <Trash2 className="h-3.5 w-3.5 mr-1" /> Очистить черновик
