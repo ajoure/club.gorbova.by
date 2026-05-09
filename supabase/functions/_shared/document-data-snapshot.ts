@@ -19,8 +19,9 @@
 
 // deno-lint-ignore-file no-explicit-any
 import { numberToWordsRu, normalizeCurrency } from './docx-helpers.ts';
+import { resolveExecutorForOrder, buildExecutorFieldValues, mergeExecutorIntoFields } from './executor-fields.ts';
 
-export const SNAPSHOT_VERSION = '1.0';
+export const SNAPSHOT_VERSION = '1.1';
 
 const CURRENCY_WORDS: Record<string, { major: string; minor: string }> = {
   BYN: { major: 'рублей', minor: 'копеек' },
