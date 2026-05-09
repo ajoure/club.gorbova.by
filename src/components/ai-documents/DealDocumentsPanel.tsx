@@ -27,10 +27,12 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Loader2, FileText, Download, Eye, Sparkles, RefreshCw, AlertCircle } from "lucide-react";
+import { Loader2, FileText, Download, Eye, Sparkles, RefreshCw, AlertCircle, FileType2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { useHasRoleV2 } from "@/hooks/useHasRoleV2";
 
 interface TemplateOption {
   id: string;
@@ -72,11 +74,13 @@ interface HistoryDoc {
   id: string;
   title: string;
   file_path: string | null;
+  file_mime: string | null;
   storage_bucket: string;
   template_version: number | string | null;
   created_at: string;
   document_number: string | null;
   document_date: string | null;
+  meta: Record<string, any> | null;
 }
 
 export function DealDocumentsPanel({ orderId }: { orderId: string }) {
@@ -93,6 +97,10 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
   const [generating, setGenerating] = useState(false);
   const [history, setHistory] = useState<HistoryDoc[]>([]);
 
+  const { hasRole: isAdmin } = useHasRoleV2("admin");
+  const { hasRole: isSuperAdmin } = useHasRoleV2("super_admin");
+  const canSeeDocx = isAdmin || isSuperAdmin;
+
   // ── load templates + history ─────────────────────────────────────────
   const fetchAll = async () => {
     setLoading(true);
@@ -106,7 +114,7 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
       supabase.from("orders_v2").select("meta").eq("id", orderId).maybeSingle(),
       supabase
         .from("ai_generated_documents")
-        .select("id, title, file_path, storage_bucket, template_version, created_at, document_number, document_date")
+        .select("id, title, file_path, file_mime, storage_bucket, template_version, created_at, document_number, document_date, meta")
         .eq("context_type", "order")
         .eq("context_id", orderId)
         .is("deleted_at", null)
@@ -224,7 +232,7 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
       if ((data as any)?.error) throw new Error((data as any).error);
       setPreview(data as PreviewResult);
     } catch (e: any) {
-      toast.error(`Preview: ${e.message ?? e}`);
+      toast.error(`Preview: ${normalizeEdgeFunctionError(e, e?.context?.body ?? null)}`);
     } finally {
       setPreviewLoading(false);
     }
@@ -239,22 +247,21 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
       });
       if (error) throw error;
       if ((data as any)?.error) throw new Error((data as any).error);
-      toast.success("Документ сформирован");
+      toast.success("PDF создан");
       const url = (data as any).download_url;
       if (url) window.open(url, "_blank");
       await fetchAll();
     } catch (e: any) {
-      toast.error(`Генерация: ${e.message ?? e}`);
+      toast.error(`Создание PDF: ${normalizeEdgeFunctionError(e, e?.context?.body ?? null)}`);
     } finally {
       setGenerating(false);
     }
   };
 
-  const downloadDoc = async (doc: HistoryDoc) => {
-    if (!doc.file_path) return;
+  const downloadFile = async (bucket: string, path: string) => {
     const { data, error } = await supabase.storage
-      .from(doc.storage_bucket)
-      .createSignedUrl(doc.file_path, 3600);
+      .from(bucket)
+      .createSignedUrl(path, 3600);
     if (error || !data?.signedUrl) { toast.error("Не удалось получить ссылку"); return; }
     window.open(data.signedUrl, "_blank");
   };
@@ -301,10 +308,10 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
                   size="sm"
                   onClick={runGenerate}
                   disabled={generating || !preview?.can_generate}
-                  title={!preview ? "Сначала «Тест»" : !preview.can_generate ? "Заполните обязательные поля" : "Сформировать документ"}
+                  title={!preview ? "Сначала «Тест»" : !preview.can_generate ? "Заполните обязательные поля" : "Создать PDF"}
                 >
                   {generating ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Sparkles className="h-3 w-3 mr-1" />}
-                  Сформировать документ
+                  Создать PDF
                 </Button>
               </div>
             </div>
@@ -448,9 +455,27 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
                         {format(new Date(d.created_at), "dd.MM.yyyy HH:mm", { locale: ru })}
                       </TableCell>
                       <TableCell>
-                        <Button size="sm" variant="ghost" onClick={() => downloadDoc(d)} disabled={!d.file_path}>
-                          <Download className="h-3 w-3" />
-                        </Button>
+                        <div className="flex gap-1">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => d.file_path && downloadFile(d.storage_bucket, d.file_path)}
+                            disabled={!d.file_path}
+                            title="Скачать PDF"
+                          >
+                            <Download className="h-3 w-3 mr-1" /> PDF
+                          </Button>
+                          {canSeeDocx && d.meta?.docx_storage_path && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => downloadFile(d.storage_bucket, d.meta!.docx_storage_path)}
+                              title="Скачать DOCX (только для админов)"
+                            >
+                              <FileType2 className="h-3 w-3 mr-1" /> DOCX
+                            </Button>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
