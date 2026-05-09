@@ -66,6 +66,9 @@ interface Replacement {
   occurrence_index: number | null;
   /** Всего вхождений в plainText. */
   occurrences_total: number;
+  /** Позиция найденного фрагмента в plainText для auto-suggest/draft recovery. */
+  match_start?: number | null;
+  match_end?: number | null;
   reason?: string;
   confidence?: "high" | "medium" | "low";
 }
@@ -131,6 +134,64 @@ function countOccurrences(haystack: string, needle: string): number {
     from = idx + needle.length;
   }
   return count;
+}
+
+function occurrenceIndexFromMatchStart(haystack: string, needle: string, matchStart: number | null | undefined): number | null {
+  if (!needle || typeof matchStart !== "number" || matchStart < 0) return null;
+  let count = 0;
+  let from = 0;
+  while (true) {
+    const idx = haystack.indexOf(needle, from);
+    if (idx < 0) return null;
+    if (idx === matchStart) return count;
+    if (idx > matchStart) return null;
+    count++;
+    from = idx + needle.length;
+  }
+}
+
+function nthIndexOf(haystack: string, needle: string, occurrenceIndex: number): number {
+  if (!needle || occurrenceIndex < 0) return -1;
+  let count = 0;
+  let from = 0;
+  while (true) {
+    const idx = haystack.indexOf(needle, from);
+    if (idx < 0) return -1;
+    if (count === occurrenceIndex) return idx;
+    count++;
+    from = idx + needle.length;
+  }
+}
+
+function resolveMissingOccurrenceIndexes(items: Replacement[], fullText: string): { next: Replacement[]; changed: number } {
+  const used = new Map<string, Set<number>>();
+  for (const r of items) {
+    if (r.occurrence_index == null) continue;
+    if (!used.has(r.original_text)) used.set(r.original_text, new Set());
+    used.get(r.original_text)!.add(r.occurrence_index);
+  }
+
+  let changed = 0;
+  const next = items.map((r) => {
+    const total = countOccurrences(fullText, r.original_text);
+    if (!isAccepted(r.status) || !r.field_public_id || total <= 1 || r.occurrence_index != null) {
+      return { ...r, occurrences_total: total };
+    }
+
+    const occupied = used.get(r.original_text) ?? new Set<number>();
+    let idx = occurrenceIndexFromMatchStart(fullText, r.original_text, r.match_start);
+    if (idx == null || occupied.has(idx)) {
+      idx = Array.from({ length: total }, (_, i) => i).find((i) => !occupied.has(i)) ?? null;
+    }
+    if (idx == null) return { ...r, occurrences_total: total };
+
+    if (!used.has(r.original_text)) used.set(r.original_text, occupied);
+    occupied.add(idx);
+    changed++;
+    return { ...r, occurrences_total: total, occurrence_index: idx };
+  });
+
+  return { next, changed };
 }
 
 function escapeHtml(s: string): string {
@@ -349,11 +410,18 @@ export function TemplateMarkupDialog({
 
         const draft = (draftRow.data?.markup_draft ?? null) as unknown as MarkupDraft | null;
         if (draft && Array.isArray(draft.replacements) && draft.replacements.length > 0) {
-          setReplacements(draft.replacements.map((r) => ({
+          const restored = draft.replacements.map((r) => ({
             ...r,
             visual_label: r.visual_label ?? r.field_public_id ?? null,
             occurrences_total: countOccurrences(txt, r.original_text),
-          })));
+          }));
+          const resolved = resolveMissingOccurrenceIndexes(restored, txt);
+          setReplacements(resolved.next);
+          if (resolved.changed > 0) {
+            toast.message("Уточнены повторяющиеся вхождения", {
+              description: `Автоматически привязано замен: ${resolved.changed}. Проверьте список замен перед применением.`,
+            });
+          }
           toast.message("Восстановлен черновик разметки", {
             description: `Замен: ${draft.replacements.length}. Сохранён ${new Date(draft.updated_at).toLocaleString("ru-RU")}`,
           });
@@ -417,6 +485,14 @@ export function TemplateMarkupDialog({
     }, 1500);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
   }, [replacements, draftLoaded, templateVersion]);
+
+  // HMR/current-dialog safety: если draft уже открыт и в нём есть заполненные,
+  // но ещё неоднозначные replacements, снимаем блокировку без закрытия диалога.
+  useEffect(() => {
+    if (!draftLoaded || !plainText || replacements.length === 0) return;
+    const resolved = resolveMissingOccurrenceIndexes(replacements, plainText);
+    if (resolved.changed > 0) setReplacements(resolved.next);
+  }, [draftLoaded, plainText, replacements]);
 
   // ── selection tracking ──
   useEffect(() => {
@@ -517,6 +593,8 @@ export function TemplateMarkupDialog({
     if (pickerContext.kind === "selection" || pickerContext.kind === "legacy") {
       const text = pickerContext.text;
       const occ = countOccurrences(plainText, text);
+      const occurrenceIndex = Math.min(pickerContext.occurrenceIndex, Math.max(0, occ - 1));
+      const matchStart = occurrenceIndex >= 0 ? nthIndexOf(plainText, text, occurrenceIndex) : -1;
       const newR: Replacement = {
         id: uid(),
         source: "manual",
@@ -529,8 +607,10 @@ export function TemplateMarkupDialog({
         status: "manually_added",
         // Жёстко привязываемся к конкретной позиции выделения,
         // чтобы chip встал ИМЕННО там, а не на все вхождения слова.
-        occurrence_index: Math.min(pickerContext.occurrenceIndex, Math.max(0, occ - 1)),
+        occurrence_index: occurrenceIndex,
         occurrences_total: occ,
+        match_start: matchStart >= 0 ? matchStart : null,
+        match_end: matchStart >= 0 ? matchStart + text.length : null,
       };
       upsertReplacement(newR);
       toast.success("Поле вставлено в выбранную позицию");
@@ -759,6 +839,7 @@ export function TemplateMarkupDialog({
         .filter((s) => !existing.has(`${s.original_text}::${s.field_public_id ?? ""}`))
         .map((s) => {
           const fr = s.field_public_id ? refByFld.get(s.field_public_id) : undefined;
+          const total = countOccurrences(plainText, s.original_text);
           return {
             id: s.id,
             source: "auto",
@@ -769,8 +850,10 @@ export function TemplateMarkupDialog({
             case_modifier: (s.case_modifier ?? null) as FieldCase | null,
             data_type: s.data_type ?? null,
             status: s.status as ReplacementStatus,
-            occurrence_index: null,
-            occurrences_total: countOccurrences(plainText, s.original_text),
+            occurrence_index: occurrenceIndexFromMatchStart(plainText, s.original_text, s.match_start) ?? (total === 1 ? 0 : null),
+            occurrences_total: total,
+            match_start: s.match_start ?? null,
+            match_end: s.match_end ?? null,
             reason: s.reason,
             confidence: s.confidence,
           };
