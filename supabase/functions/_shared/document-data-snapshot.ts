@@ -20,8 +20,9 @@
 // deno-lint-ignore-file no-explicit-any
 import { numberToWordsRu, normalizeCurrency } from './docx-helpers.ts';
 import { resolveExecutorForOrder, buildExecutorFieldValues, mergeExecutorIntoFields } from './executor-fields.ts';
+import { buildStandardFieldValues, mergeStandardIntoFields } from './standard-fields.ts';
 
-export const SNAPSHOT_VERSION = '1.1';
+export const SNAPSHOT_VERSION = '1.2';
 
 const CURRENCY_WORDS: Record<string, { major: string; minor: string }> = {
   BYN: { major: 'рублей', minor: 'копеек' },
@@ -62,7 +63,7 @@ export async function snapshotOrderDocumentData(
   try {
     const { data: order, error: orderErr } = await supabase
       .from('orders_v2')
-      .select('id, status, product_id, tariff_id, offer_id, final_price, base_price, currency, deal_date, updated_at, created_at, meta')
+      .select('id, order_number, status, profile_id, user_id, product_id, tariff_id, offer_id, final_price, base_price, currency, customer_email, customer_phone, deal_date, updated_at, created_at, meta')
       .eq('id', orderId)
       .maybeSingle();
     if (orderErr) {
@@ -86,10 +87,14 @@ export async function snapshotOrderDocumentData(
       return { status: 'skipped_not_paid', reason: `order_status_${order.status}` };
     }
 
-    // Pull layered defaults (offer → tariff → product).
+    // Pull layered defaults (offer → tariff → product) and full rows for
+    // standard-fields resolver.
     let offerDefaults: any = null;
     let tariffDefaults: any = null;
     let productDefaults: any = null;
+    let offerRow: any = null;
+    let tariffRow: any = null;
+    let productRow: any = null;
 
     // Resolve offer_id with fallback to meta.offer_id (admin_test, recurring resolver paths).
     const orderMetaAny: any = order.meta || {};
@@ -100,33 +105,59 @@ export async function snapshotOrderDocumentData(
 
     if (resolvedOfferId) {
       const { data, error } = await supabase
-        .from('tariff_offers').select('meta').eq('id', resolvedOfferId).maybeSingle();
+        .from('tariff_offers')
+        .select('id, tariff_id, offer_type, button_label, amount, reentry_amount, meta')
+        .eq('id', resolvedOfferId).maybeSingle();
       if (error) {
         await safeAudit(supabase, 'document_data.snapshot_error', {
           order_id: orderId, table: 'tariff_offers', stage: 'load_offer', error: error.message,
         });
       }
+      offerRow = data || null;
       offerDefaults = data?.meta?.document_defaults || null;
     }
     if (order.tariff_id) {
       const { data, error } = await supabase
-        .from('tariffs').select('meta').eq('id', order.tariff_id).maybeSingle();
+        .from('tariffs')
+        .select('id, name, description, access_days, meta')
+        .eq('id', order.tariff_id).maybeSingle();
       if (error) {
         await safeAudit(supabase, 'document_data.snapshot_error', {
           order_id: orderId, table: 'tariffs', stage: 'load_tariff', error: error.message,
         });
       }
+      tariffRow = data || null;
       tariffDefaults = data?.meta?.document_defaults || null;
     }
     if (order.product_id) {
       const { data, error } = await supabase
-        .from('products_v2').select('meta').eq('id', order.product_id).maybeSingle();
+        .from('products_v2')
+        .select('id, name, slug, code, description, currency, meta')
+        .eq('id', order.product_id).maybeSingle();
       if (error) {
         await safeAudit(supabase, 'document_data.snapshot_error', {
           order_id: orderId, table: 'products_v2', stage: 'load_product', error: error.message,
         });
       }
+      productRow = data || null;
       productDefaults = data?.meta?.document_defaults || null;
+    }
+
+    // Customer legal_details (default for the buyer's profile).
+    let customerRow: any = null;
+    if (order.profile_id) {
+      const { data, error } = await supabase
+        .from('client_legal_details')
+        .select('*')
+        .eq('profile_id', order.profile_id)
+        .eq('is_default', true)
+        .maybeSingle();
+      if (error) {
+        await safeAudit(supabase, 'document_data.snapshot_error', {
+          order_id: orderId, table: 'client_legal_details', stage: 'load_customer', error: error.message,
+        });
+      }
+      customerRow = data || null;
     }
 
     // Layered pick (offer wins, then tariff, then product).
@@ -236,10 +267,26 @@ export async function snapshotOrderDocumentData(
     const { executor, source: execSource, executor_id: resolvedExecutorId } =
       await resolveExecutorForOrder(supabase, explicitExecutorId);
     const fields: Record<string, any> = {};
+    const nowIso = new Date().toISOString();
+
+    // Standard (non-executor) field values: customer.*, deal.*, order.*,
+    // system.*, product.*, tariff.*, offer.*, document.service_*.
+    const standardValues = buildStandardFieldValues({
+      order,
+      product: productRow,
+      tariff: tariffRow,
+      offer: offerRow,
+      customer: customerRow,
+      documentData,
+    });
+    const stdMerged = mergeStandardIntoFields(fields, standardValues, nowIso);
+    Object.assign(fields, stdMerged.fields);
+
+    // Executor.* (entity_type='executor') — never user-editable.
     let executorTrace: Record<string, string> | null = null;
     if (executor && execSource && resolvedExecutorId) {
       const values = buildExecutorFieldValues(executor);
-      const merged = mergeExecutorIntoFields(fields, values, execSource, resolvedExecutorId, new Date().toISOString());
+      const merged = mergeExecutorIntoFields(fields, values, execSource, resolvedExecutorId, nowIso);
       Object.assign(fields, merged.fields);
       executorTrace = merged.trace;
       (documentData as any).executor_id = resolvedExecutorId;
@@ -251,6 +298,14 @@ export async function snapshotOrderDocumentData(
       });
     }
     (documentData as any).fields = fields;
+    (documentData as any)._provenance = {
+      ...(documentData as any)._provenance,
+      customer_legal_details_id: customerRow?.id || null,
+      customer_legal_details_present: !!customerRow,
+      standard_fields_written: stdMerged.written,
+      standard_fields_skipped_manual: stdMerged.skipped_manual,
+    };
+
 
     const newMeta = { ...(order.meta || {}), document_data: documentData };
     const { error: upErr } = await supabase

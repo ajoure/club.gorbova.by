@@ -1,0 +1,1 @@
+UPDATE orders_v2 SET meta = (meta - 'document_data') WHERE id = 'dceab6e5-caad-4388-8153-8b0240aac56c';
