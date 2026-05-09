@@ -108,6 +108,7 @@ const AdminFormsHub = lazy(() => import("./pages/admin/AdminFormsHub"));
 // AdminInbox removed - redirects to /admin/communication
 const AdminExecutors = lazy(() => import("./pages/admin/AdminExecutors"));
 const AdminDocumentTemplates = lazy(() => import("./pages/admin/AdminDocumentTemplates"));
+const AdminDocumentsNumbering = lazy(() => import("./pages/admin/AdminDocumentsNumbering"));
 // AdminBroadcasts removed - redirects to /admin/communication?tab=broadcasts
 const AdminTrainingModules = lazy(() => import("./pages/admin/AdminTrainingModules"));
 const AdminTrainingLessons = lazy(() => import("./pages/admin/AdminTrainingLessons"));
