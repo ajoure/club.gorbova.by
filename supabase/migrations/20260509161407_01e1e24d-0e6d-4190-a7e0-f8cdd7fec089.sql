@@ -1,0 +1,1 @@
+ALTER TABLE public.document_token_registry ADD COLUMN IF NOT EXISTS archive_reason text;
