@@ -87,10 +87,14 @@ export async function snapshotOrderDocumentData(
       return { status: 'skipped_not_paid', reason: `order_status_${order.status}` };
     }
 
-    // Pull layered defaults (offer → tariff → product).
+    // Pull layered defaults (offer → tariff → product) and full rows for
+    // standard-fields resolver.
     let offerDefaults: any = null;
     let tariffDefaults: any = null;
     let productDefaults: any = null;
+    let offerRow: any = null;
+    let tariffRow: any = null;
+    let productRow: any = null;
 
     // Resolve offer_id with fallback to meta.offer_id (admin_test, recurring resolver paths).
     const orderMetaAny: any = order.meta || {};
@@ -101,33 +105,59 @@ export async function snapshotOrderDocumentData(
 
     if (resolvedOfferId) {
       const { data, error } = await supabase
-        .from('tariff_offers').select('meta').eq('id', resolvedOfferId).maybeSingle();
+        .from('tariff_offers')
+        .select('id, tariff_id, offer_type, button_label, amount, reentry_amount, meta')
+        .eq('id', resolvedOfferId).maybeSingle();
       if (error) {
         await safeAudit(supabase, 'document_data.snapshot_error', {
           order_id: orderId, table: 'tariff_offers', stage: 'load_offer', error: error.message,
         });
       }
+      offerRow = data || null;
       offerDefaults = data?.meta?.document_defaults || null;
     }
     if (order.tariff_id) {
       const { data, error } = await supabase
-        .from('tariffs').select('meta').eq('id', order.tariff_id).maybeSingle();
+        .from('tariffs')
+        .select('id, name, description, access_days, meta')
+        .eq('id', order.tariff_id).maybeSingle();
       if (error) {
         await safeAudit(supabase, 'document_data.snapshot_error', {
           order_id: orderId, table: 'tariffs', stage: 'load_tariff', error: error.message,
         });
       }
+      tariffRow = data || null;
       tariffDefaults = data?.meta?.document_defaults || null;
     }
     if (order.product_id) {
       const { data, error } = await supabase
-        .from('products_v2').select('meta').eq('id', order.product_id).maybeSingle();
+        .from('products_v2')
+        .select('id, name, slug, code, description, currency, meta')
+        .eq('id', order.product_id).maybeSingle();
       if (error) {
         await safeAudit(supabase, 'document_data.snapshot_error', {
           order_id: orderId, table: 'products_v2', stage: 'load_product', error: error.message,
         });
       }
+      productRow = data || null;
       productDefaults = data?.meta?.document_defaults || null;
+    }
+
+    // Customer legal_details (default for the buyer's profile).
+    let customerRow: any = null;
+    if (order.profile_id) {
+      const { data, error } = await supabase
+        .from('client_legal_details')
+        .select('*')
+        .eq('profile_id', order.profile_id)
+        .eq('is_default', true)
+        .maybeSingle();
+      if (error) {
+        await safeAudit(supabase, 'document_data.snapshot_error', {
+          order_id: orderId, table: 'client_legal_details', stage: 'load_customer', error: error.message,
+        });
+      }
+      customerRow = data || null;
     }
 
     // Layered pick (offer wins, then tariff, then product).
