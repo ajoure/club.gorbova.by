@@ -486,6 +486,14 @@ export function TemplateMarkupDialog({
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
   }, [replacements, draftLoaded, templateVersion]);
 
+  // HMR/current-dialog safety: если draft уже открыт и в нём есть заполненные,
+  // но ещё неоднозначные replacements, снимаем блокировку без закрытия диалога.
+  useEffect(() => {
+    if (!draftLoaded || !plainText || replacements.length === 0) return;
+    const resolved = resolveMissingOccurrenceIndexes(replacements, plainText);
+    if (resolved.changed > 0) setReplacements(resolved.next);
+  }, [draftLoaded, plainText, replacements]);
+
   // ── selection tracking ──
   useEffect(() => {
     const handler = () => {
