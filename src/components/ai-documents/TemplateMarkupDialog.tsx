@@ -1104,38 +1104,12 @@ export function TemplateMarkupDialog({
             </Button>
             {templateVersion?.validation_status === "valid" && acceptedCount === 0 && (
               <Button
-                onClick={async () => {
-                  if (!templateVersion) return;
-                  if (templateVersion.is_current) {
-                    toast.info("Этот шаблон уже активен");
-                    return;
-                  }
-                  setActivating(true);
-                  try {
-                    const { data, error } = await supabase.functions.invoke(
-                      "canonical-template-activate-version",
-                      { body: { template_version_id: templateVersion.id } },
-                    );
-                    if (error) {
-                      toast.error(`Не удалось активировать: ${normalizeEdgeFunctionError(error?.message, (error as any)?.context?.body ?? data)}`);
-                      return;
-                    }
-                    if ((data as any)?.error) {
-                      toast.error(`Не удалось активировать: ${normalizeEdgeFunctionError((data as any).error, data)}`);
-                      return;
-                    }
-                    toast.success("Шаблон активирован");
-                    onApplied?.();
-                    onOpenChange(false);
-                  } finally {
-                    setActivating(false);
-                  }
-                }}
+                onClick={() => apply(true)}
                 disabled={activating || !!templateVersion?.is_current}
-                title={templateVersion?.is_current ? "Уже активен" : "Активировать текущую версию без замен"}
+                title={templateVersion?.is_current ? "Уже активен" : "Подтвердить разметку и активировать текущую версию"}
               >
                 {activating ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />}
-                {templateVersion?.is_current ? "Уже активен" : "Активировать шаблон"}
+                {templateVersion?.is_current ? "Уже активен" : "Разметить и активировать"}
               </Button>
             )}
             <Button
