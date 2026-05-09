@@ -203,21 +203,97 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
     }
     const uniq = new Map<string, { id: string; required: boolean }>();
     for (const x of ids) if (!uniq.has(x.id)) uniq.set(x.id, x);
-    return Array.from(uniq.values()).map(({ id, required }) => {
-      const reg = fieldRegistry.get(id);
-      const v = docFields[id];
-      return {
-        field_public_id: id,
-        label: reg?.label || id,
-        data_type: reg?.data_type ?? null,
-        required,
-        value: v?.value ?? null,
-        source: v?.source ?? null,
-        manual_override: !!v?.manual_override,
-        updated_at: v?.updated_at ?? null,
-      };
-    }).sort((a, b) => a.field_public_id.localeCompare(b.field_public_id));
+    return Array.from(uniq.values())
+      // HIDE-EXECUTOR: executor.* (entity_type='executor') не редактируется вручную.
+      .filter(({ id }) => {
+        if (EXECUTOR_FLD_IDS.has(id)) return false;
+        const reg = fieldRegistry.get(id);
+        if (reg?.entity_type === "executor") return false;
+        return true;
+      })
+      .map(({ id, required }) => {
+        const reg = fieldRegistry.get(id);
+        const v = docFields[id];
+        return {
+          field_public_id: id,
+          label: reg?.label || id,
+          data_type: reg?.data_type ?? null,
+          required,
+          value: v?.value ?? null,
+          source: v?.source ?? null,
+          manual_override: !!v?.manual_override,
+          updated_at: v?.updated_at ?? null,
+        };
+      }).sort((a, b) => a.field_public_id.localeCompare(b.field_public_id));
   }, [activeVersion, orderMeta, fieldRegistry]);
+
+  // List of executor FLDs present in active version's manifest (for plate + test).
+  const executorFldsInTemplate = useMemo<string[]>(() => {
+    if (!activeVersion) return [];
+    const ids: string[] = [];
+    const manifest = activeVersion.token_manifest;
+    if (Array.isArray(manifest) && manifest.length > 0) {
+      for (const m of manifest) {
+        const fid = (m as any)?.field_public_id;
+        if (typeof fid === "string" && EXECUTOR_FLD_IDS.has(fid) && !ids.includes(fid)) ids.push(fid);
+      }
+    } else {
+      for (const tok of activeVersion.detected_tokens || []) {
+        const inside = typeof tok === "string" ? tok : (tok as any)?.token ?? "";
+        const m = String(inside).match(/^field:(FLD-\d+)$/);
+        if (m && EXECUTOR_FLD_IDS.has(m[1]) && !ids.includes(m[1])) ids.push(m[1]);
+      }
+    }
+    return ids.sort();
+  }, [activeVersion]);
+
+  // Detect any historical manual_override on executor.* (warning trigger).
+  const executorManualOverrideHistory = useMemo<string[]>(() => {
+    const docFields = ((orderMeta?.document_data?.fields) || {}) as Record<string, any>;
+    const arr: string[] = [];
+    for (const fid of EXECUTOR_FLD_IDS) {
+      const e = docFields[fid];
+      if (e?.manual_override === true) arr.push(fid);
+    }
+    return arr;
+  }, [orderMeta]);
+
+  // Load executor display info when orderMeta changes.
+  useEffect(() => {
+    const docFields = ((orderMeta?.document_data?.fields) || {}) as Record<string, any>;
+    const dd = orderMeta?.document_data || {};
+    // Prefer executor_id stored at document_data root, fallback to FLD-000103 entry.
+    const execId: string | null =
+      (dd.executor_id as string | null) ||
+      (docFields["FLD-000103"]?.executor_id as string | null) ||
+      null;
+    const execSource: string | null =
+      (dd.executor_source as string | null) ||
+      (docFields["FLD-000103"]?.source as string | null) ||
+      null;
+    if (!execId) {
+      setExecutorInfo({
+        id: null,
+        name: "",
+        source: execSource,
+        hasManualOverrideHistory: executorManualOverrideHistory.length > 0,
+      });
+      return;
+    }
+    (async () => {
+      const { data } = await supabase
+        .from("executors")
+        .select("id, full_name, short_name")
+        .eq("id", execId)
+        .maybeSingle();
+      setExecutorInfo({
+        id: execId,
+        name: (data?.short_name || data?.full_name || "(не найден)") as string,
+        source: execSource,
+        hasManualOverrideHistory: executorManualOverrideHistory.length > 0,
+      });
+    })();
+  }, [orderMeta, executorManualOverrideHistory]);
 
   // ── actions ────────────────────────────────────────────────────────
   const setEdit = (fid: string, v: string) => setEdits((p) => ({ ...p, [fid]: v }));
