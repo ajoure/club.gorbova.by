@@ -22,7 +22,7 @@ import { numberToWordsRu, normalizeCurrency } from './docx-helpers.ts';
 import { resolveExecutorForOrder, buildExecutorFieldValues, mergeExecutorIntoFields } from './executor-fields.ts';
 import { buildStandardFieldValues, mergeStandardIntoFields } from './standard-fields.ts';
 
-export const SNAPSHOT_VERSION = '1.1';
+export const SNAPSHOT_VERSION = '1.2';
 
 const CURRENCY_WORDS: Record<string, { major: string; minor: string }> = {
   BYN: { major: 'рублей', minor: 'копеек' },
