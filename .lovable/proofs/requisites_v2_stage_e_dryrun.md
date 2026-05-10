@@ -111,7 +111,7 @@ Add-only действие: к существующим записям `fields_re
 
 | Поле формы D.1 | Канонический key | Тип |
 |---|---|---|
-| **Legal (ЮЛ/ИП), 19 полей** | | |
+| **Legal (ЮЛ/ИП), 20 полей (16 базовых + 4 GRP)** | | |
 | Полное наименование | `user_requisites.legal.name_full` | string |
 | Краткое наименование | `user_requisites.legal.name_short` | string |
 | Тип ЮЛ | `user_requisites.legal.entity_kind` | enum |
@@ -132,7 +132,7 @@ Add-only действие: к существующим записям `fields_re
 | GRP: дата регистрации | `user_requisites.legal.grp_registered_at` | date (RO) |
 | GRP: проверено | `user_requisites.legal.grp_verified_at` | datetime (RO) |
 | GRP: исходник | `user_requisites.legal.grp_source` | string (RO) |
-| **Individual (ФЛ), 16 полей** | | |
+| **Individual (ФЛ), 17 полей** | | |
 | Фамилия | `user_requisites.individual.last_name` | string |
 | Имя | `user_requisites.individual.first_name` | string |
 | Отчество | `user_requisites.individual.middle_name` | string |
@@ -151,9 +151,9 @@ Add-only действие: к существующим записям `fields_re
 | Email | `user_requisites.individual.email` | email |
 | Телефон | `user_requisites.individual.phone` | phone |
 
-Ожидаемые новые FLD: **19 + 16 = 35** записей в `fields_registry` с
-`entity_type='user_requisites'` и `meta.scope='user_requisites'`,
-`meta.subject_type ∈ {legal, individual}`.
+Ожидаемые новые FLD: **20 + 17 = 37** записей в `fields_registry` с
+`entity_type='user_requisites'` и `options.scope='user_requisites'`,
+`options.subject_type ∈ {legal, individual}`.
 
 ### 1.3. scope = `platform_executor` (исполнитель платформы)
 
@@ -161,18 +161,18 @@ Add-only действие: к существующим записям `fields_re
 
 Канонический `entity_type` — **существующий** `executor`
 (FLD-000103…FLD-000154, 15 записей). Add-only: добавляется
-`meta.scope='platform_executor'`. Resolver запрещает читать executor.*
+`options.scope='platform_executor'`. Resolver запрещает читать executor.*
 из `legal_entities_requisites` или `individual_requisites`.
 
 Ожидаемый count update: **15** записей получат
-`meta.scope='platform_executor'`. Новых FLD: **0**.
+`options.scope='platform_executor'`. Новых FLD: **0**.
 
 ### 1.4. Итоги по §1
 
-- Новых FLD создаётся: **35** (только `user_requisites.*`).
-- Существующих FLD получит `meta.scope`: **24 customer + 15 executor = 39**.
+- Новых FLD создаётся: **37** (только `user_requisites.*`).
+- Существующих FLD получит `options.scope`: **24 customer + 15 executor = 39**.
 - Старые `entity / entity_person / person / legal_details` (47+6+6+12 = 71)
-  **не трогаются** в этап E, помечаются `meta.deprecated_at` без архивации.
+  **не трогаются** в этап E, помечаются `options.deprecated_at` без архивации.
 
 ---
 
