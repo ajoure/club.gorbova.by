@@ -257,11 +257,14 @@ export function LegalEntityDetailsForm({
   }, []);
 
   const handleSubmit = async (data: FormData) => {
-    // If "Другое" — use custom full form as canonical value
     const orgForm = data.leg_org_form === OTHER_VALUE ? customFullForm : data.leg_org_form;
     const addressFields = LegalEntityAddressAdapter.toLegacyFields(address, addressSource);
+    const sanitized: Record<string, unknown> = { ...data };
+    for (const key of Object.keys(sanitized)) {
+      if (/_date$/.test(key) && sanitized[key] === "") sanitized[key] = null;
+    }
     await onSubmit({
-      ...data,
+      ...(sanitized as Partial<FormData>),
       leg_org_form: orgForm,
       ...addressFields,
       client_type: "legal_entity",
