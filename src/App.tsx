@@ -83,6 +83,7 @@ const AdminContacts = lazy(() => import("./pages/admin/AdminContacts"));
 const AdminDeals = lazy(() => import("./pages/admin/AdminDeals"));
 const AdminRoles = lazy(() => import("./pages/admin/AdminRoles"));
 const AdminAudit = lazy(() => import("./pages/admin/AdminAudit"));
+const AdminTenants = lazy(() => import("./pages/admin/AdminTenants"));
 const AdminEntitlements = lazy(() => import("./pages/admin/AdminEntitlements"));
 const AdminContent = lazy(() => import("./pages/admin/AdminContent"));
 const AdminDuplicates = lazy(() => import("./pages/admin/AdminDuplicates"));
@@ -253,6 +254,7 @@ const App = () => {
               {/* Admin routes - Service */}
               <Route path="/admin/roles" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminRoles /></AdminLayout></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/audit" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminAudit /></AdminLayout></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/tenants" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminTenants /></AdminLayout></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/content" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminContent /></AdminLayout></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/sections" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminSections /></AdminLayout></LazyRoute></ProtectedRoute>} />
               
