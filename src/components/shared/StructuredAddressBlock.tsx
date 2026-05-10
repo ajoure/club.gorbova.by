@@ -309,6 +309,13 @@ export function StructuredAddressBlock({
             merged.apartment = stripApartmentPrefix(merged.apartment);
           }
 
+          // Postal-code fallback: Google often omits postal_code for street-level
+          // (route) selections. Reverse-geocode by lat/lng to fill the gap.
+          if (!merged.postal_code && merged.lat != null && merged.lng != null) {
+            const pc = await reverseGeocodePostalCode(merged.lat, merged.lng);
+            if (pc) merged.postal_code = pc;
+          }
+
           onChange(merged);
         }
       } catch (err) {
