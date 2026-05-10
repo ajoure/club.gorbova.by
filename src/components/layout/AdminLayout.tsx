@@ -42,6 +42,7 @@ const routeToTitle: Record<string, string> = {
   '/admin/ai': 'Нейросеть',
   '/admin/live-events': 'Эфиры',
   '/admin/docs': 'Документация системы',
+  '/admin/tenants': 'Tenants',
 };
 
 /**
