@@ -1,13 +1,16 @@
 /**
- * LegalEntityRequisitesForm — unified form for V2 requisites of legal_entity / entrepreneur.
+ * LegalEntityRequisitesForm — unified form for v2 requisites of
+ * legal_entity / entrepreneur. Behavior driven by props.
  *
- * One component, behavior driven by props:
- *  - scope: 'system_customer' | 'user_requisites'
- *  - subject_type: 'legal_entity' | 'entrepreneur'
- *  - tenant_id (resolved by parent / hook)
+ * Stores all fields under `data` jsonb under canonical keys. Legacy keys
+ * (leg_*, ent_*) coming from the B+C migration are normalized on read via
+ * `normalizeLegacyData`. On save we strip any legacy/service keys and
+ * preserve GRP fields (read-only) plus any unknown keys.
  *
- * Stores all fields under `data` jsonb. No 'AI' wording anywhere.
- * Default is a record-level property; never a label group.
+ * Default is a record-level property. The actual default switch is done
+ * via the transactional RPC `set_default_legal_entity_requisites`.
+ *
+ * No artificial-intelligence wording allowed in this module.
  */
 
 import { useForm } from "react-hook-form";
@@ -25,23 +28,31 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Save } from "lucide-react";
+import { Loader2, Save, ShieldCheck } from "lucide-react";
 import type {
   LegalEntityRequisitesRow,
   RequisitesScope,
 } from "@/hooks/useRequisitesV2";
+import {
+  normalizeLegacyData,
+  sanitizeForWrite,
+  pickGrpSummary,
+  GRP_LABELS,
+} from "@/lib/requisites-v2/fieldMap";
 
 const schema = z.object({
   org_form: z.string().optional().or(z.literal("")),
-  full_name: z.string().min(2, "Введите наименование"),
+  name: z.string().min(2, "Введите наименование"),
+  short_name: z.string().optional().or(z.literal("")),
   unp: z
     .string()
     .min(9, "УНП — 9 цифр")
     .max(9, "УНП — 9 цифр")
     .regex(/^\d{9}$/, "Только цифры"),
-  legal_address: z.string().optional().or(z.literal("")),
+  address: z.string().optional().or(z.literal("")),
   director_position: z.string().optional().or(z.literal("")),
-  director_name: z.string().optional().or(z.literal("")),
+  director_full_name: z.string().optional().or(z.literal("")),
+  director_short_name: z.string().optional().or(z.literal("")),
   acts_on_basis: z.string().optional().or(z.literal("")),
   bank_account: z.string().optional().or(z.literal("")),
   bank_name: z.string().optional().or(z.literal("")),
@@ -78,7 +89,14 @@ export function LegalEntityRequisitesForm({
   onSubmit,
   onCancel,
 }: LegalEntityRequisitesFormProps) {
-  const data = (initialData?.data ?? {}) as Record<string, string | undefined>;
+  const rawData = (initialData?.data ?? {}) as Record<string, unknown>;
+  // Read-side normalization: legacy leg_*/ent_* → canonical keys.
+  const data = normalizeLegacyData(subjectType, rawData) as Record<
+    string,
+    string | undefined
+  >;
+  const grpRows = pickGrpSummary(rawData);
+
   const subjectLabel = subjectType === "legal_entity" ? "ЮЛ" : "ИП";
   const prefix = `[${SCOPE_LABEL[scope]}] [${subjectLabel}]`;
 
@@ -86,11 +104,13 @@ export function LegalEntityRequisitesForm({
     resolver: zodResolver(schema),
     defaultValues: {
       org_form: data.org_form ?? "",
-      full_name: data.full_name ?? "",
+      name: data.name ?? "",
+      short_name: data.short_name ?? "",
       unp: data.unp ?? "",
-      legal_address: data.legal_address ?? "",
+      address: data.address ?? "",
       director_position: data.director_position ?? "",
-      director_name: data.director_name ?? "",
+      director_full_name: data.director_full_name ?? "",
+      director_short_name: data.director_short_name ?? "",
       acts_on_basis: data.acts_on_basis ?? "",
       bank_account: data.bank_account ?? "",
       bank_name: data.bank_name ?? "",
@@ -103,17 +123,17 @@ export function LegalEntityRequisitesForm({
 
   const submit = async (v: FormValues) => {
     const { is_default, ...rest } = v;
-    const cleaned: Record<string, unknown> = {};
-    for (const [k, val] of Object.entries(rest)) {
-      if (val !== undefined && val !== "") cleaned[k] = val;
-    }
+    // Sanitize: keep only canonical + GRP + unknown keys; drop legacy/service.
+    const cleaned = sanitizeForWrite(subjectType, rest as Record<string, unknown>, rawData);
     await onSubmit({ data: cleaned, is_default: !!is_default });
   };
+
+  const showDirectorBlock = subjectType === "legal_entity";
 
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(submit)} className="space-y-5">
-        {subjectType === "legal_entity" && (
+        {showDirectorBlock && (
           <FormField
             control={form.control}
             name="org_form"
@@ -129,25 +149,40 @@ export function LegalEntityRequisitesForm({
           />
         )}
 
-        <FormField
-          control={form.control}
-          name="full_name"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>
-                {prefix}{" "}
-                {subjectType === "legal_entity"
-                  ? "Полное наименование"
-                  : "Наименование ИП"}{" "}
-                *
-              </FormLabel>
-              <FormControl>
-                <Input {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+        <div className="grid gap-4 md:grid-cols-2">
+          <FormField
+            control={form.control}
+            name="name"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>
+                  {prefix}{" "}
+                  {subjectType === "legal_entity"
+                    ? "Полное наименование"
+                    : "Наименование ИП"}{" "}
+                  *
+                </FormLabel>
+                <FormControl>
+                  <Input {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="short_name"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{prefix} Краткое наименование</FormLabel>
+                <FormControl>
+                  <Input {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
 
         <FormField
           control={form.control}
@@ -165,20 +200,24 @@ export function LegalEntityRequisitesForm({
 
         <FormField
           control={form.control}
-          name="legal_address"
+          name="address"
           render={({ field }) => (
             <FormItem>
               <FormLabel>{prefix} Юридический адрес</FormLabel>
               <FormControl>
                 <Input {...field} />
               </FormControl>
+              <FormDescription>
+                Структурированный адрес (address_structured) сохраняется без
+                изменений из исходной записи.
+              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
         />
 
-        {subjectType === "legal_entity" && (
-          <div className="grid gap-4 md:grid-cols-2">
+        {showDirectorBlock && (
+          <div className="grid gap-4 md:grid-cols-3">
             <FormField
               control={form.control}
               name="director_position"
@@ -194,12 +233,25 @@ export function LegalEntityRequisitesForm({
             />
             <FormField
               control={form.control}
-              name="director_name"
+              name="director_full_name"
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>{prefix} ФИО руководителя</FormLabel>
                   <FormControl>
                     <Input {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="director_short_name"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{prefix} ФИО (кратко)</FormLabel>
+                  <FormControl>
+                    <Input placeholder="И. И. Иванов" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -291,6 +343,25 @@ export function LegalEntityRequisitesForm({
           )}
         />
 
+        {grpRows.length > 0 && (
+          <div className="rounded-md border bg-muted/30 p-4 space-y-2">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <ShieldCheck className="h-4 w-4 text-primary" />
+              {prefix} GRP — обогащение из ЕГР (read-only)
+            </div>
+            <div className="grid gap-1 md:grid-cols-2 text-xs">
+              {grpRows.map(({ key, value }) => (
+                <div key={key} className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">
+                    {GRP_LABELS[key as keyof typeof GRP_LABELS] ?? key}
+                  </span>
+                  <span className="truncate">{String(value)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <FormField
           control={form.control}
           name="is_default"
@@ -307,8 +378,9 @@ export function LegalEntityRequisitesForm({
                   Использовать по умолчанию
                 </FormLabel>
                 <FormDescription>
-                  Свойство записи. Только одна запись может быть отмечена как
-                  default в пределах tenant + scope + subject_type.
+                  Свойство записи. Уникальность default — в пределах
+                  tenant + scope + subject_type. Переключение default —
+                  через транзакционную RPC.
                 </FormDescription>
               </div>
             </FormItem>

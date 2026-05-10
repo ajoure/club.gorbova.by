@@ -5,7 +5,7 @@
  *  - scope="system_customer" — Settings → Requisites (system customer)
  *  - scope="user_requisites" — Documents / Personal user requisites
  *
- * The component is fully scope-driven; no AI wording.
+ * The component is fully scope-driven. No artificial-intelligence wording.
  */
 
 import { useState } from "react";
@@ -52,6 +52,7 @@ import {
 } from "@/hooks/useRequisitesV2";
 import { LegalEntityRequisitesForm } from "./LegalEntityRequisitesForm";
 import { IndividualRequisitesForm } from "./IndividualRequisitesForm";
+import { normalizeLegacyData } from "@/lib/requisites-v2/fieldMap";
 
 type SubjectTab = "legal_entity" | "entrepreneur" | "individual";
 
@@ -374,13 +375,16 @@ function LegalSection({
         ) : (
           <div className="space-y-3">
             {rows.map((row) => {
-              const d = row.data as Record<string, string | undefined>;
+              const d = normalizeLegacyData(
+                subjectType,
+                row.data as Record<string, unknown>,
+              ) as Record<string, string | undefined>;
               const title =
                 subjectType === "legal_entity"
-                  ? [d.org_form, d.full_name && `«${d.full_name}»`]
+                  ? [d.org_form, d.name && `«${d.name}»`]
                       .filter(Boolean)
                       .join(" ") || "Юрлицо"
-                  : d.full_name || "ИП";
+                  : d.name || "ИП";
               return (
                 <div
                   key={row.id}
@@ -478,7 +482,10 @@ function IndividualSection({
         ) : (
           <div className="space-y-3">
             {rows.map((row) => {
-              const d = row.data as Record<string, string | undefined>;
+              const d = normalizeLegacyData(
+                "individual",
+                row.data as Record<string, unknown>,
+              ) as Record<string, string | undefined>;
               return (
                 <div
                   key={row.id}
