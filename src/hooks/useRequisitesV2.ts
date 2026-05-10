@@ -100,6 +100,14 @@ export function useRequisitesV2({ scope }: UseRequisitesV2Options) {
   const profileId = ctxQuery.data?.profileId ?? null;
   const tenantId = ctxQuery.data?.tenantId ?? null;
 
+  // Explicit column lists — never `.select("*")` / `.select("")`.
+  const LEGAL_COLS =
+    "id, tenant_id, owner_user_id, owner_profile_id, scope, subject_type, " +
+    "is_default, data, source_legacy_id, created_by, updated_by, created_at, updated_at";
+  const INDIVIDUAL_COLS =
+    "id, tenant_id, owner_user_id, owner_profile_id, scope, " +
+    "is_default, data, source_legacy_id, created_by, updated_by, created_at, updated_at";
+
   // Legal entities (LE + IE)
   const legalQuery = useQuery({
     queryKey: ["requisites-v2", "legal", scope, tenantId],
@@ -107,7 +115,7 @@ export function useRequisitesV2({ scope }: UseRequisitesV2Options) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("legal_entities_requisites")
-        .select("*")
+        .select(LEGAL_COLS)
         .eq("scope", scope)
         .order("is_default", { ascending: false })
         .order("created_at", { ascending: false });
@@ -123,7 +131,7 @@ export function useRequisitesV2({ scope }: UseRequisitesV2Options) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("individual_requisites")
-        .select("*")
+        .select(INDIVIDUAL_COLS)
         .eq("scope", scope)
         .order("is_default", { ascending: false })
         .order("created_at", { ascending: false });
