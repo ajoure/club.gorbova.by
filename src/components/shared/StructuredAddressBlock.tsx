@@ -28,6 +28,7 @@ import type { StructuredAddress } from '@/lib/address/types';
 import { AUTOCOMPLETE_FIELDS } from '@/lib/address/types';
 import { buildAutocompleteQuery, emptyAddress } from '@/lib/address/utils';
 import { parseStreetInput, stripApartmentPrefix } from '@/lib/address/parseStreetInput';
+import { reverseGeocodePostalCode } from '@/lib/address/googlePlaceDetails';
 import { cn } from '@/lib/utils';
 
 export interface StructuredAddressBlockProps {
