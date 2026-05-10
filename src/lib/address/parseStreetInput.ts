@@ -42,7 +42,7 @@ export function parseStreetInput(input: string): ParsedStreetInput {
 
   // Pattern 1: "... 19 кв. 306" / "... 19, кв 306" / "... 19 кв 306"
   const kvMatch = trimmed.match(
-    /^(.+?)\s+(\d+[а-яА-Яa-zA-Z]?)\s*,?\s*(?:кв\.?|квартира|пом\.?|помещение|оф\.?|офис)\s*([\wа-яА-Я-]+)\s*$/i
+    /^(.+?)(?:\s*,\s*|\s+)(\d+[а-яА-Яa-zA-Z]?(?:\/\d+[а-яА-Яa-zA-Z]?)?)\s*,?\s*(?:кв\.?|квартира|пом\.?|помещение|оф\.?|офис)\s*([\wа-яА-Я-]+)\s*$/i
   );
   if (kvMatch) {
     return {
@@ -56,7 +56,7 @@ export function parseStreetInput(input: string): ParsedStreetInput {
   // Must ensure the dash is NOT part of the street name
   // Strategy: the number before dash must be preceded by whitespace (separating it from street name)
   const dashMatch = trimmed.match(
-    /^(.+?)\s+(\d+[а-яА-Яa-zA-Z]?)\s*[-–—]\s*([\wа-яА-Я]+)\s*$/
+    /^(.+?)(?:\s*,\s*|\s+)(\d+[а-яА-Яa-zA-Z]?(?:\/\d+[а-яА-Яa-zA-Z]?)?)\s*[-–—]\s*([\wа-яА-Я]+)\s*$/
   );
   if (dashMatch) {
     return {
@@ -68,7 +68,7 @@ export function parseStreetInput(input: string): ParsedStreetInput {
 
   // Pattern 3: "... 19" / "... 19А" / "... 19/1" — house at the tail
   const houseMatch = trimmed.match(
-    /^(.+?)\s+(\d+[а-яА-Яa-zA-Z]?(?:\/\d+[а-яА-Яa-zA-Z]?)?)\s*$/
+    /^(.+?)(?:\s*,\s*|\s+)(\d+[а-яА-Яa-zA-Z]?(?:\/\d+[а-яА-Яa-zA-Z]?)?)\s*$/
   );
   if (houseMatch) {
     return {
