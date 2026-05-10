@@ -27,8 +27,8 @@ import { GooglePlacesAdapter } from '@/lib/address/adapters/GooglePlacesAdapter'
 import type { StructuredAddress } from '@/lib/address/types';
 import { AUTOCOMPLETE_FIELDS } from '@/lib/address/types';
 import { buildAutocompleteQuery, emptyAddress } from '@/lib/address/utils';
-import { parseStreetInput, stripApartmentPrefix } from '@/lib/address/parseStreetInput';
-import { reverseGeocodePostalCode } from '@/lib/address/googlePlaceDetails';
+import { parseHousePremiseInput, parseStreetInput, stripApartmentPrefix } from '@/lib/address/parseStreetInput';
+import { geocodePostalCodeByAddress, reverseGeocodePostalCode } from '@/lib/address/googlePlaceDetails';
 import { cn } from '@/lib/utils';
 
 export interface StructuredAddressBlockProps {
@@ -210,6 +210,8 @@ export function StructuredAddressBlock({
   const handleFieldChange = useCallback(
     (field: keyof StructuredAddress, val: string) => {
       let updated = { ...value, [field]: val };
+      const parsedStreetInput = field === 'street' ? parseStreetInput(val) : null;
+      const parsedHouseInput = field === 'house' ? parseHousePremiseInput(val) : null;
 
       // Hierarchical clearing — when editing city (= населённый пункт), clear child fields
       if (field === 'city') {
@@ -227,9 +229,20 @@ export function StructuredAddressBlock({
       } else if (field === 'street') {
         updated = {
           ...updated,
-          house: '',
+          street: parsedStreetInput?.street || val,
+          house: parsedStreetInput?.house || '',
           building: '',
-          apartment: '',
+          apartment: parsedStreetInput?.apartment || '',
+          postal_code: '',
+          google_place_id: null,
+          lat: null,
+          lng: null,
+        };
+      } else if (field === 'house' && parsedHouseInput) {
+        updated = {
+          ...updated,
+          house: parsedHouseInput.house,
+          apartment: parsedHouseInput.apartment || value.apartment,
           postal_code: '',
           google_place_id: null,
           lat: null,
@@ -241,7 +254,14 @@ export function StructuredAddressBlock({
 
       if (AUTOCOMPLETE_FIELDS.includes(field) && isReady) {
         setActiveField(field);
-        const query = buildAutocompleteQuery(updated, field, val);
+        const queryValue = field === 'street'
+          ? [parsedStreetInput?.street || val, parsedStreetInput?.house, parsedStreetInput?.apartment && `пом ${parsedStreetInput.apartment}`]
+              .filter(Boolean)
+              .join(' ')
+          : field === 'house'
+            ? parsedHouseInput?.house || val
+            : val;
+        const query = buildAutocompleteQuery(updated, field, queryValue);
         fetchPredictions(query);
         setHighlightIndex(-1);
       }
