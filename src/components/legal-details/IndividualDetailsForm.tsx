@@ -144,7 +144,7 @@ export function IndividualDetailsForm({
     // Empty strings to null for date columns to avoid Postgres "invalid input syntax for type date"
     const sanitized: Record<string, unknown> = { ...data };
     for (const key of Object.keys(sanitized)) {
-      if (/_date$/.test(key) && sanitized[key] === "") {
+      if (/(_date|_until)$/.test(key) && sanitized[key] === "") {
         sanitized[key] = null;
       }
     }
