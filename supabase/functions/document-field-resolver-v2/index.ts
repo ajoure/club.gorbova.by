@@ -32,20 +32,16 @@ Deno.serve(async (req) => {
   try {
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
-    const proofSecret = req.headers.get('x-admin-proof-secret');
-    const cronSecret = Deno.env.get('CRON_SECRET') || '';
-    if (!(proofSecret && cronSecret && proofSecret === cronSecret)) {
-      const auth = req.headers.get('Authorization');
-      if (!auth?.startsWith('Bearer ')) return json({ error: 'unauthorized' }, 401);
-      const { data: ud } = await supabase.auth.getUser(auth.slice(7));
-      if (!ud?.user) return json({ error: 'unauthorized' }, 401);
-      const userId = ud.user.id;
-      const { data: roleRows } = await supabase
-        .from('user_roles_v2').select('roles!inner(code)').eq('user_id', userId);
-      const codes = (roleRows || []).map((r: any) => r.roles?.code);
-      const isAdmin = codes.includes('admin') || codes.includes('super_admin') || codes.includes('owner');
-      if (!isAdmin) return json({ error: 'forbidden' }, 403);
-    }
+    const auth = req.headers.get('Authorization');
+    if (!auth?.startsWith('Bearer ')) return json({ error: 'unauthorized' }, 401);
+    const { data: ud } = await supabase.auth.getUser(auth.slice(7));
+    if (!ud?.user) return json({ error: 'unauthorized' }, 401);
+    const userId = ud.user.id;
+    const { data: roleRows } = await supabase
+      .from('user_roles_v2').select('roles!inner(code)').eq('user_id', userId);
+    const codes = (roleRows || []).map((r: any) => r.roles?.code);
+    const isAdmin = codes.includes('admin') || codes.includes('super_admin') || codes.includes('owner');
+    if (!isAdmin) return json({ error: 'forbidden' }, 403);
 
     const body = await req.json().catch(() => ({}));
     const orderId: string | null = body?.order_id || null;
