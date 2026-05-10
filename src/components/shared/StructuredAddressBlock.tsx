@@ -410,7 +410,7 @@ export function StructuredAddressBlock({
           }}
           className="pointer-events-auto rounded-md border border-border bg-popover text-popover-foreground shadow-lg overflow-hidden"
         >
-          <ul className="py-1 max-h-60 overflow-y-auto">
+          <ul className="py-1 overflow-y-auto" style={{ maxHeight: dropdownPos.maxHeight }}>
             {predictions.map((p, index) => (
               <li
                 key={p.placeId}
