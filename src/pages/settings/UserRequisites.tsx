@@ -2,7 +2,7 @@
  * UserRequisites — page for personal user requisites (scope=user_requisites).
  *
  * Reachable when REQUISITES_V2_UI_ENABLED. Always renders the V2 manager.
- * No AI wording in route, file, or labels.
+ * No artificial-intelligence wording in route, file, or labels.
  */
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
