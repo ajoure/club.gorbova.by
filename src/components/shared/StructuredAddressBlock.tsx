@@ -164,7 +164,24 @@ export function StructuredAddressBlock({
       return;
     }
     const rect = el.getBoundingClientRect();
-    setDropdownPos({ top: rect.bottom + 2, left: rect.left, width: rect.width });
+    // Use visualViewport when available (excludes mobile on-screen keyboard area)
+    const vv = (window as any).visualViewport as VisualViewport | undefined;
+    const viewportTop = vv ? vv.offsetTop : 0;
+    const viewportHeight = vv ? vv.height : window.innerHeight;
+    const viewportBottom = viewportTop + viewportHeight;
+    const GAP = 4;
+    const MIN_HEIGHT = 120;
+    const MAX_HEIGHT = 240;
+    const spaceBelow = viewportBottom - rect.bottom - GAP;
+    const spaceAbove = rect.top - viewportTop - GAP;
+    let placement: 'below' | 'above' = 'below';
+    let maxHeight = Math.min(MAX_HEIGHT, Math.max(0, spaceBelow));
+    if (spaceBelow < MIN_HEIGHT && spaceAbove > spaceBelow) {
+      placement = 'above';
+      maxHeight = Math.min(MAX_HEIGHT, Math.max(0, spaceAbove));
+    }
+    const top = placement === 'below' ? rect.bottom + GAP : Math.max(viewportTop, rect.top - GAP - maxHeight);
+    setDropdownPos({ top, left: rect.left, width: rect.width, maxHeight, placement });
   }, [activeField]);
 
   useEffect(() => {
