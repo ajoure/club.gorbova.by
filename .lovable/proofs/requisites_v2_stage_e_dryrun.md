@@ -352,7 +352,7 @@ user_requisites / customer / customer_signer». В строке `Settings`
 2. **platform_executor читается только из executors:**
    ```sql
    SELECT COUNT(*) FROM fields_registry
-   WHERE meta->>'scope' = 'platform_executor'
+   WHERE options->>'scope' = 'platform_executor'
      AND entity_type <> 'executor';
    -- expected: 0
    ```
