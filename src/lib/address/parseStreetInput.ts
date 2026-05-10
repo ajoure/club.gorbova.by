@@ -27,6 +27,11 @@ export interface ParsedStreetInput {
   apartment?: string;
 }
 
+export interface ParsedHousePremiseInput {
+  house: string;
+  apartment?: string;
+}
+
 /**
  * Try to extract house and apartment from a street string.
  * Returns parsed result only if confident; otherwise returns { street: input }.
@@ -84,4 +89,20 @@ export function parseStreetInput(input: string): ParsedStreetInput {
 export function stripApartmentPrefix(value: string): string {
   if (!value) return value;
   return value.replace(/^(кв\.?|квартира|пом\.?|помещение|оф\.?|офис)\s*/i, '').trim();
+}
+
+/** Parse a house-field value like "19-306" or "19 пом. 306". */
+export function parseHousePremiseInput(input: string): ParsedHousePremiseInput {
+  const trimmed = input.trim();
+  const explicitMatch = trimmed.match(
+    /^(\d+[а-яА-Яa-zA-Z]?(?:\/\d+[а-яА-Яa-zA-Z]?)?)\s*,?\s*(?:кв\.?|квартира|пом\.?|помещение|оф\.?|офис)\s*([\wа-яА-Я-]+)\s*$/i
+  );
+  if (explicitMatch) return { house: explicitMatch[1], apartment: explicitMatch[2] };
+
+  const dashMatch = trimmed.match(
+    /^(\d+[а-яА-Яa-zA-Z]?(?:\/\d+[а-яА-Яa-zA-Z]?)?)\s*[-–—]\s*([\wа-яА-Я]+)\s*$/
+  );
+  if (dashMatch) return { house: dashMatch[1], apartment: dashMatch[2] };
+
+  return { house: trimmed };
 }
