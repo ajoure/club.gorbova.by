@@ -379,7 +379,7 @@ user_requisites / customer / customer_signer». В строке `Settings`
 5. **Каталог без визуальных дублей:**
    ```sql
    SELECT label, COUNT(*) c FROM fields_registry
-   WHERE archived_at IS NULL AND (meta->>'deprecated_at') IS NULL
+   WHERE archived_at IS NULL AND (options->>'deprecated_at') IS NULL
    GROUP BY label HAVING COUNT(*) > 1;
    -- expected: 0 rows
    ```
