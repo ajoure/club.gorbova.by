@@ -5163,6 +5163,59 @@ export type Database = {
           },
         ]
       }
+      individual_requisites: {
+        Row: {
+          created_at: string
+          created_by: string
+          data: Json
+          id: string
+          is_default: boolean
+          owner_profile_id: string
+          owner_user_id: string
+          scope: string
+          source_legacy_id: string | null
+          tenant_id: string
+          updated_at: string
+          updated_by: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          data?: Json
+          id?: string
+          is_default?: boolean
+          owner_profile_id: string
+          owner_user_id: string
+          scope: string
+          source_legacy_id?: string | null
+          tenant_id: string
+          updated_at?: string
+          updated_by: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          data?: Json
+          id?: string
+          is_default?: boolean
+          owner_profile_id?: string
+          owner_user_id?: string
+          scope?: string
+          source_legacy_id?: string | null
+          tenant_id?: string
+          updated_at?: string
+          updated_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "individual_requisites_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       instagram_accounts: {
         Row: {
           created_at: string
@@ -6008,6 +6061,62 @@ export type Database = {
           sort_order?: number
         }
         Relationships: []
+      }
+      legal_entities_requisites: {
+        Row: {
+          created_at: string
+          created_by: string
+          data: Json
+          id: string
+          is_default: boolean
+          owner_profile_id: string
+          owner_user_id: string
+          scope: string
+          source_legacy_id: string | null
+          subject_type: string
+          tenant_id: string
+          updated_at: string
+          updated_by: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          data?: Json
+          id?: string
+          is_default?: boolean
+          owner_profile_id: string
+          owner_user_id: string
+          scope: string
+          source_legacy_id?: string | null
+          subject_type: string
+          tenant_id: string
+          updated_at?: string
+          updated_by: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          data?: Json
+          id?: string
+          is_default?: boolean
+          owner_profile_id?: string
+          owner_user_id?: string
+          scope?: string
+          source_legacy_id?: string | null
+          subject_type?: string
+          tenant_id?: string
+          updated_at?: string
+          updated_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_entities_requisites_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       lesson_attachments: {
         Row: {
@@ -13305,6 +13414,71 @@ export type Database = {
           },
         ]
       }
+      tenant_memberships: {
+        Row: {
+          created_at: string
+          id: string
+          is_active: boolean
+          role: string
+          tenant_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          role?: string
+          tenant_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          role?: string
+          tenant_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tenant_memberships_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tenants: {
+        Row: {
+          created_at: string
+          id: string
+          is_personal: boolean
+          name: string
+          owner_user_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_personal?: boolean
+          name: string
+          owner_user_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_personal?: boolean
+          name?: string
+          owner_user_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       tg_chat_messages: {
         Row: {
           chat_id: number
@@ -15728,6 +15902,7 @@ export type Database = {
         Args: { _live_event_id: string; _user_id: string }
         Returns: boolean
       }
+      user_tenant_ids: { Args: { _user_id: string }; Returns: string[] }
       validate_club_product_linkage: {
         Args: {
           p_club_id: string
