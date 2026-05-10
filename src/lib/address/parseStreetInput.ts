@@ -61,7 +61,18 @@ export function parseStreetInput(input: string): ParsedStreetInput {
     };
   }
 
-  // No apartment pattern found — return unchanged
+  // Pattern 3: "... 19" / "... 19А" / "... 19/1" — house at the tail
+  const houseMatch = trimmed.match(
+    /^(.+?)\s+(\d+[а-яА-Яa-zA-Z]?(?:\/\d+[а-яА-Яa-zA-Z]?)?)\s*$/
+  );
+  if (houseMatch) {
+    return {
+      street: houseMatch[1].trim(),
+      house: houseMatch[2],
+    };
+  }
+
+  // No confident street/house/apartment pattern found — return unchanged
   return { street: trimmed };
 }
 
