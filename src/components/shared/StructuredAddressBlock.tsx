@@ -229,10 +229,10 @@ export function StructuredAddressBlock({
       } else if (field === 'street') {
         updated = {
           ...updated,
-          street: parsedStreetInput?.street || val,
-          house: parsedStreetInput?.house || '',
+          street: val,
+          house: '',
           building: '',
-          apartment: parsedStreetInput?.apartment || '',
+          apartment: '',
           postal_code: '',
           google_place_id: null,
           lat: null,
