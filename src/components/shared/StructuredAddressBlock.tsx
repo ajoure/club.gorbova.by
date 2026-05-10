@@ -27,8 +27,8 @@ import { GooglePlacesAdapter } from '@/lib/address/adapters/GooglePlacesAdapter'
 import type { StructuredAddress } from '@/lib/address/types';
 import { AUTOCOMPLETE_FIELDS } from '@/lib/address/types';
 import { buildAutocompleteQuery, emptyAddress } from '@/lib/address/utils';
-import { parseStreetInput, stripApartmentPrefix } from '@/lib/address/parseStreetInput';
-import { reverseGeocodePostalCode } from '@/lib/address/googlePlaceDetails';
+import { parseHousePremiseInput, parseStreetInput, stripApartmentPrefix } from '@/lib/address/parseStreetInput';
+import { geocodePostalCodeByAddress, reverseGeocodePostalCode } from '@/lib/address/googlePlaceDetails';
 import { cn } from '@/lib/utils';
 
 export interface StructuredAddressBlockProps {
@@ -210,6 +210,8 @@ export function StructuredAddressBlock({
   const handleFieldChange = useCallback(
     (field: keyof StructuredAddress, val: string) => {
       let updated = { ...value, [field]: val };
+      const parsedStreetInput = field === 'street' ? parseStreetInput(val) : null;
+      const parsedHouseInput = field === 'house' ? parseHousePremiseInput(val) : null;
 
       // Hierarchical clearing — when editing city (= населённый пункт), clear child fields
       if (field === 'city') {
@@ -227,9 +229,20 @@ export function StructuredAddressBlock({
       } else if (field === 'street') {
         updated = {
           ...updated,
+          street: val,
           house: '',
           building: '',
           apartment: '',
+          postal_code: '',
+          google_place_id: null,
+          lat: null,
+          lng: null,
+        };
+      } else if (field === 'house' && parsedHouseInput) {
+        updated = {
+          ...updated,
+          house: parsedHouseInput.house,
+          apartment: parsedHouseInput.apartment || value.apartment,
           postal_code: '',
           google_place_id: null,
           lat: null,
@@ -241,7 +254,14 @@ export function StructuredAddressBlock({
 
       if (AUTOCOMPLETE_FIELDS.includes(field) && isReady) {
         setActiveField(field);
-        const query = buildAutocompleteQuery(updated, field, val);
+        const queryValue = field === 'street'
+          ? [parsedStreetInput?.street || val, parsedStreetInput?.house, parsedStreetInput?.apartment && `пом ${parsedStreetInput.apartment}`]
+              .filter(Boolean)
+              .join(' ')
+          : field === 'house'
+            ? parsedHouseInput?.house || val
+            : val;
+        const query = buildAutocompleteQuery(updated, field, queryValue);
         fetchPredictions(query);
         setHighlightIndex(-1);
       }
@@ -274,12 +294,19 @@ export function StructuredAddressBlock({
         const details = await fetchPlaceDetails(prediction);
 
         if (details) {
-          const parsed = GooglePlacesAdapter.parseComponents(details.addressComponents as any[]);
+          const parsed = details.structuredAddress || GooglePlacesAdapter.parseComponents(details.addressComponents as any[]);
+          const currentStreetText = [
+            value.street,
+            value.house && (value.apartment ? `${value.house}-${value.apartment}` : value.house),
+          ].filter(Boolean).join(' ');
+          const typedParsed = parseStreetInput(currentStreetText || prediction.mainText || prediction.description.split(',')[0] || '');
           const merged: StructuredAddress = {
             ...emptyAddress(),
             building: value.building,
-            apartment: value.apartment,
             ...parsed,
+            street: typedParsed.street || parsed.street || value.street,
+            house: typedParsed.house || parsed.house || value.house,
+            apartment: typedParsed.apartment || parsed.apartment || value.apartment,
             google_place_id: details.placeId,
             lat: details.lat,
             lng: details.lng,
@@ -288,19 +315,17 @@ export function StructuredAddressBlock({
           // Apartment parser fallback: only if Google didn't provide apartment
           // and the description or street contains apartment-like patterns.
           // NOT used in GRP/UNP enrichment path (that sets address directly).
-          if (!merged.apartment && prediction.description) {
-            const streetForParse = merged.street
-              ? `${merged.street} ${merged.house || ''}`.trim()
-              : prediction.description;
+          if ((!merged.apartment || !merged.house) && prediction.description) {
+            const streetForParse = prediction.description.split(',')[0] || prediction.description;
             const parsed2 = parseStreetInput(streetForParse);
             if (parsed2.apartment) {
               merged.apartment = parsed2.apartment;
-              if (parsed2.house && !merged.house) {
-                merged.house = parsed2.house;
-              }
-              if (parsed2.street && !merged.street) {
-                merged.street = parsed2.street;
-              }
+            }
+            if (parsed2.house && !merged.house) {
+              merged.house = parsed2.house;
+            }
+            if (parsed2.street && !merged.street) {
+              merged.street = parsed2.street;
             }
           }
 
@@ -316,6 +341,14 @@ export function StructuredAddressBlock({
             if (pc) merged.postal_code = pc;
           }
 
+          if (!merged.postal_code) {
+            const pc = await geocodePostalCodeByAddress(
+              buildAutocompleteQuery(merged, 'house', merged.house || merged.street),
+              merged.country_code || countries?.[0]
+            );
+            if (pc) merged.postal_code = pc;
+          }
+
           onChange(merged);
         }
       } catch (err) {
@@ -326,7 +359,7 @@ export function StructuredAddressBlock({
         isSelectingRef.current = false;
       }
     },
-    [fetchPlaceDetails, clearPredictions, onChange, value]
+    [fetchPlaceDetails, clearPredictions, onChange, value, countries]
   );
 
   const handleKeyDown = useCallback(

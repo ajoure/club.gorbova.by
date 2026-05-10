@@ -21,6 +21,7 @@ export interface PlaceDetails {
   lat: number | null;
   lng: number | null;
   addressComponents: google.maps.places.AddressComponent[];
+  structuredAddress: ReturnType<typeof mapGooglePlaceDetails>['structuredAddress'];
 }
 
 interface UsePlaceAutocompleteOptions {
@@ -130,6 +131,7 @@ export function usePlaceAutocomplete(options: UsePlaceAutocompleteOptions = {}) 
           lat: details.lat,
           lng: details.lng,
           addressComponents: details.addressComponents,
+          structuredAddress: details.structuredAddress,
         };
       } catch (err) {
         console.error('[usePlaceAutocomplete] fetchFields error:', err);
