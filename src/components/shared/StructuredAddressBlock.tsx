@@ -131,7 +131,7 @@ export function StructuredAddressBlock({
 
   const [activeField, setActiveField] = useState<keyof StructuredAddress | null>(null);
   const [highlightIndex, setHighlightIndex] = useState(-1);
-  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number; maxHeight: number; placement: 'below' | 'above' } | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -164,26 +164,47 @@ export function StructuredAddressBlock({
       return;
     }
     const rect = el.getBoundingClientRect();
-    setDropdownPos({ top: rect.bottom + 2, left: rect.left, width: rect.width });
+    // Use visualViewport when available (excludes mobile on-screen keyboard area)
+    const vv = (window as any).visualViewport as VisualViewport | undefined;
+    const viewportTop = vv ? vv.offsetTop : 0;
+    const viewportHeight = vv ? vv.height : window.innerHeight;
+    const viewportBottom = viewportTop + viewportHeight;
+    const GAP = 4;
+    const MIN_HEIGHT = 120;
+    const MAX_HEIGHT = 240;
+    const spaceBelow = viewportBottom - rect.bottom - GAP;
+    const spaceAbove = rect.top - viewportTop - GAP;
+    let placement: 'below' | 'above' = 'below';
+    let maxHeight = Math.min(MAX_HEIGHT, Math.max(0, spaceBelow));
+    if (spaceBelow < MIN_HEIGHT && spaceAbove > spaceBelow) {
+      placement = 'above';
+      maxHeight = Math.min(MAX_HEIGHT, Math.max(0, spaceAbove));
+    }
+    const top = placement === 'below' ? rect.bottom + GAP : Math.max(viewportTop, rect.top - GAP - maxHeight);
+    setDropdownPos({ top, left: rect.left, width: rect.width, maxHeight, placement });
   }, [activeField]);
 
   useEffect(() => {
     updateDropdownPosition();
   }, [activeField, predictions, updateDropdownPosition]);
 
+  // Reposition dropdown on viewport changes (mobile keyboard open/close, scroll, resize)
+  // Do NOT close — closing on resize made the dropdown disappear when iOS keyboard opened.
   useEffect(() => {
     if (!isOpen) return;
-    const close = () => {
-      if (isSelectingRef.current) return;
-      clearPredictions();
-    };
-    window.addEventListener('scroll', close, true);
-    window.addEventListener('resize', close);
+    const reposition = () => updateDropdownPosition();
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    const vv = (window as any).visualViewport as VisualViewport | undefined;
+    vv?.addEventListener('resize', reposition);
+    vv?.addEventListener('scroll', reposition);
     return () => {
-      window.removeEventListener('scroll', close, true);
-      window.removeEventListener('resize', close);
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+      vv?.removeEventListener('resize', reposition);
+      vv?.removeEventListener('scroll', reposition);
     };
-  }, [isOpen, clearPredictions]);
+  }, [isOpen, updateDropdownPosition]);
 
   const handleFieldChange = useCallback(
     (field: keyof StructuredAddress, val: string) => {
@@ -389,7 +410,7 @@ export function StructuredAddressBlock({
           }}
           className="pointer-events-auto rounded-md border border-border bg-popover text-popover-foreground shadow-lg overflow-hidden"
         >
-          <ul className="py-1 max-h-60 overflow-y-auto">
+          <ul className="py-1 overflow-y-auto" style={{ maxHeight: dropdownPos.maxHeight }}>
             {predictions.map((p, index) => (
               <li
                 key={p.placeId}
