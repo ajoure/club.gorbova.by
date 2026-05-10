@@ -141,8 +141,15 @@ export function IndividualDetailsForm({
 
   const handleSubmit = async (data: FormData) => {
     const addressFields = IndividualAddressAdapter.toLegacyFields(address, addressSource);
+    // Empty strings to null for date columns to avoid Postgres "invalid input syntax for type date"
+    const sanitized: Record<string, unknown> = { ...data };
+    for (const key of Object.keys(sanitized)) {
+      if (/_date$/.test(key) && sanitized[key] === "") {
+        sanitized[key] = null;
+      }
+    }
     await onSubmit({
-      ...data,
+      ...(sanitized as Partial<FormData>),
       ...addressFields,
       client_type: "individual",
     });
