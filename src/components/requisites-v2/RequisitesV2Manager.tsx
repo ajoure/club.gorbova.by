@@ -482,7 +482,10 @@ function IndividualSection({
         ) : (
           <div className="space-y-3">
             {rows.map((row) => {
-              const d = row.data as Record<string, string | undefined>;
+              const d = normalizeLegacyData(
+                "individual",
+                row.data as Record<string, unknown>,
+              ) as Record<string, string | undefined>;
               return (
                 <div
                   key={row.id}
