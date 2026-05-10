@@ -306,9 +306,11 @@ export function useRequisitesV2({ scope }: UseRequisitesV2Options) {
     }) => {
       const ctx = ensureCtx();
 
-      // 1) Unset others
-      let unsetQ = supabase
-        .from(input.table)
+      // 1) Unset previous default(s) in same scope (+subject_type for legal).
+      // We cast to `any` because the table name is dynamic and the typed
+      // builder cannot narrow both branches at once.
+      const fromAny = supabase.from(input.table as any) as any;
+      let unsetQ = fromAny
         .update({ is_default: false, updated_by: ctx.userId })
         .eq("tenant_id", ctx.tenantId)
         .eq("scope", scope)
@@ -321,8 +323,7 @@ export function useRequisitesV2({ scope }: UseRequisitesV2Options) {
       if (unsetRes.error) throw unsetRes.error;
 
       // 2) Set target
-      const setRes = await supabase
-        .from(input.table)
+      const setRes = await (supabase.from(input.table as any) as any)
         .update({ is_default: true, updated_by: ctx.userId })
         .eq("id", input.id);
       if (setRes.error) throw setRes.error;
