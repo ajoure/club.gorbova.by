@@ -52,6 +52,7 @@ import {
 } from "@/hooks/useRequisitesV2";
 import { LegalEntityRequisitesForm } from "./LegalEntityRequisitesForm";
 import { IndividualRequisitesForm } from "./IndividualRequisitesForm";
+import { normalizeLegacyData } from "@/lib/requisites-v2/fieldMap";
 
 type SubjectTab = "legal_entity" | "entrepreneur" | "individual";
 
