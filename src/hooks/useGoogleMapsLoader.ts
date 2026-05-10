@@ -4,8 +4,9 @@
  * Uses Google's recommended Dynamic Library Import (bootstrap loader) pattern.
  */
 import { useEffect, useState } from "react";
+import { GOOGLE_MAPS_API_KEY as CONFIGURED_GOOGLE_MAPS_API_KEY } from "@/config/googleMaps";
 
-const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
+const GOOGLE_MAPS_API_KEY: string | undefined = CONFIGURED_GOOGLE_MAPS_API_KEY || undefined;
 
 type LoaderState = "idle" | "loading" | "ready" | "error";
 
