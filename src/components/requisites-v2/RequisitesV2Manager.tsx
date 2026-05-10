@@ -5,7 +5,7 @@
  *  - scope="system_customer" — Settings → Requisites (system customer)
  *  - scope="user_requisites" — Documents / Personal user requisites
  *
- * The component is fully scope-driven; no AI wording.
+ * The component is fully scope-driven. No artificial-intelligence wording.
  */
 
 import { useState } from "react";
