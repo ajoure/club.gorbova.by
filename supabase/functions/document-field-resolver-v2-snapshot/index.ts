@@ -158,7 +158,7 @@ Deno.serve(async (req) => {
     await supabase.from('audit_logs').insert({
       actor_user_id: userId,
       actor_type: actorType,
-      actor_label: actorType === 'system' ? 'document_field_resolver_v2_proof' : 'document_field_resolver_v2',
+      actor_label: 'document_field_resolver_v2',
       action: dryRun ? 'document_field_resolver_v2.snapshot_dry_run' : 'document_field_resolver_v2.snapshot_applied',
       meta: {
         order_id: orderId,
