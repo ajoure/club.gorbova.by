@@ -412,22 +412,22 @@ user_requisites / customer / customer_signer». В строке `Settings`
 BEGIN;
 
 -- Step 1: scope=system_customer для customer + customer_signer (24 строки)
-UPDATE fields_registry SET meta = meta || jsonb_build_object('scope','system_customer')
+UPDATE fields_registry SET options = COALESCE(options,'{}'::jsonb) || jsonb_build_object('scope','system_customer')
 WHERE entity_type IN ('customer','customer_signer') AND archived_at IS NULL;
 -- guard: count = 24
 
 -- Step 2: scope=platform_executor для executor (15 строк)
-UPDATE fields_registry SET meta = meta || jsonb_build_object('scope','platform_executor')
+UPDATE fields_registry SET options = COALESCE(options,'{}'::jsonb) || jsonb_build_object('scope','platform_executor')
 WHERE entity_type = 'executor' AND archived_at IS NULL;
 -- guard: count = 15
 
--- Step 3: seed 35 новых FLD для user_requisites
-INSERT INTO fields_registry (entity_type, key, label, data_type, public_id, meta, ...)
-VALUES (... 35 rows ...);
--- guard: count = 35, все public_id уникальны
+-- Step 3: seed 37 новых FLD для user_requisites (Legal=20, Individual=17)
+INSERT INTO fields_registry (entity_type, key, label, data_type, options, ...)
+VALUES (... 37 rows ...);
+-- guard: count = 37, все public_id уникальны (генерируются триггером)
 
 -- Step 4: deprecate 71 legacy FLD
-UPDATE fields_registry SET meta = meta || jsonb_build_object(
+UPDATE fields_registry SET options = COALESCE(options,'{}'::jsonb) || jsonb_build_object(
   'deprecated_at', now()::text,
   'deprecated_reason', 'requisites_v2_stage_e',
   'replaced_by', '<map>'
@@ -435,15 +435,15 @@ UPDATE fields_registry SET meta = meta || jsonb_build_object(
 WHERE entity_type IN ('legal_details','entity','entity_person','person') AND archived_at IS NULL;
 -- guard: count = 71, archived_at = NULL во всех
 
--- Step 5: deploy edge function `document-field-resolver-v2` (add-only)
--- Step 6: расширить scope_lock в snapshot pipeline (только для новых генераций)
+-- Step 5: deploy edge function `document-field-resolver-v2` (add-only) — отдельный шаг E.2
+-- Step 6: расширить scope_lock в snapshot pipeline (только для новых генераций) — отдельный шаг E.2
 
 -- STOP-guards:
 DO $$ BEGIN
-  IF (SELECT COUNT(*) FROM fields_registry WHERE entity_type='user_requisites') <> 35 THEN RAISE EXCEPTION 'E.guard.1 user_requisites count mismatch'; END IF;
-  IF (SELECT COUNT(*) FROM fields_registry WHERE meta->>'scope'='system_customer') <> 24 THEN RAISE EXCEPTION 'E.guard.2 system_customer scope mismatch'; END IF;
-  IF (SELECT COUNT(*) FROM fields_registry WHERE meta->>'scope'='platform_executor') <> 15 THEN RAISE EXCEPTION 'E.guard.3 platform_executor scope mismatch'; END IF;
-  IF (SELECT COUNT(*) FROM fields_registry WHERE meta->>'deprecated_at' IS NOT NULL) <> 71 THEN RAISE EXCEPTION 'E.guard.4 deprecated count mismatch'; END IF;
+  IF (SELECT COUNT(*) FROM fields_registry WHERE options->>'scope'='system_customer') <> 24 THEN RAISE EXCEPTION 'E.guard.1 system_customer scope mismatch'; END IF;
+  IF (SELECT COUNT(*) FROM fields_registry WHERE options->>'scope'='platform_executor') <> 15 THEN RAISE EXCEPTION 'E.guard.2 platform_executor scope mismatch'; END IF;
+  IF (SELECT COUNT(*) FROM fields_registry WHERE entity_type='user_requisites') <> 37 THEN RAISE EXCEPTION 'E.guard.3 user_requisites count mismatch (expected 37)'; END IF;
+  IF (SELECT COUNT(*) FROM fields_registry WHERE options->>'deprecated_at' IS NOT NULL) <> 71 THEN RAISE EXCEPTION 'E.guard.4 deprecated count mismatch'; END IF;
 END $$;
 
 COMMIT;
