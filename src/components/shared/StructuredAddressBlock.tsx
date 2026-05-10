@@ -131,7 +131,7 @@ export function StructuredAddressBlock({
 
   const [activeField, setActiveField] = useState<keyof StructuredAddress | null>(null);
   const [highlightIndex, setHighlightIndex] = useState(-1);
-  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number; maxHeight: number; placement: 'below' | 'above' } | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
