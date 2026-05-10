@@ -345,7 +345,7 @@ user_requisites / customer / customer_signer». В строке `Settings`
 1. **Нет смешивания system_customer и user_requisites:**
    ```sql
    SELECT COUNT(*) FROM fields_registry
-   WHERE meta->>'scope' = 'system_customer'
+   WHERE options->>'scope' = 'system_customer'
      AND entity_type = 'user_requisites';
    -- expected: 0
    ```
