@@ -67,3 +67,35 @@ export async function reverseGeocodePostalCode(
   }
 }
 
+/** Geocode a full textual address to recover postal_code for house-level selections. */
+export async function geocodePostalCodeByAddress(
+  address: string,
+  countryCode?: string
+): Promise<string | null> {
+  const query = address.trim();
+  if (!query) return null;
+  try {
+    const gm = (window as any).google;
+    if (!gm?.maps) return null;
+    if (!gm.maps.Geocoder && gm.maps.importLibrary) {
+      await gm.maps.importLibrary('geocoding');
+    }
+    if (!gm.maps.Geocoder) return null;
+    const geocoder = new gm.maps.Geocoder();
+    const request: google.maps.GeocoderRequest = { address: query };
+    if (countryCode) request.componentRestrictions = { country: countryCode.toLowerCase() };
+    const { results } = await geocoder.geocode(request);
+    if (!Array.isArray(results) || results.length === 0) return null;
+    for (const res of results) {
+      const comp = (res.address_components || []).find((c: any) =>
+        Array.isArray(c.types) && c.types.includes('postal_code')
+      );
+      if (comp?.long_name) return String(comp.long_name);
+    }
+    return null;
+  } catch (err) {
+    console.warn('[geocodePostalCodeByAddress] failed:', err);
+    return null;
+  }
+}
+
