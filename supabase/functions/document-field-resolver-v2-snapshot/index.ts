@@ -72,7 +72,7 @@ Deno.serve(async (req) => {
     // 2) Order.
     const { data: order, error: oErr } = await supabase
       .from('orders_v2')
-      .select('id, user_id, order_number, final_price, base_price, currency, paid_at, created_at, meta')
+      .select('id, user_id, order_number, final_price, base_price, currency, deal_date, created_at, meta')
       .eq('id', orderId).maybeSingle();
     if (oErr) return json({ error: `order_load_failed:${oErr.message}` }, 500);
     if (!order) return json({ error: 'order_not_found' }, 404);
@@ -121,7 +121,7 @@ Deno.serve(async (req) => {
     const orderInput: OrderInput = {
       id: order.id, user_id: order.user_id, order_number: order.order_number,
       final_price: order.final_price, base_price: order.base_price, currency: order.currency,
-      paid_at: order.paid_at, created_at: order.created_at, meta: order.meta || {},
+      paid_at: order.deal_date, created_at: order.created_at, meta: order.meta || {},
     };
     const existingSnapshot = ((order.meta as any)?.document_data?.fields || {}) as Record<string, any>;
 
