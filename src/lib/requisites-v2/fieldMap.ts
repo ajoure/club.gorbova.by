@@ -15,7 +15,7 @@
  * legacy keys and write back ONLY canonical ones. Unknown keys are preserved
  * to avoid silent data loss.
  *
- * No AI / ai wording allowed in this module (new code).
+ * No artificial-intelligence wording allowed in this module (new code).
  */
 
 export const LEGAL_ENTITY_CANONICAL_KEYS = [
