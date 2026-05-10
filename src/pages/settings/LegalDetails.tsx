@@ -8,11 +8,13 @@ import { useLegalDetails, ClientType, ClientLegalDetails } from "@/hooks/useLega
 import { PayerTypeSelector, type PayerUiType } from "@/components/legal-details/PayerTypeSelector";
 import { IndividualDetailsForm } from "@/components/legal-details/IndividualDetailsForm";
 import { OrganizationDetailsForm } from "@/components/legal-details/OrganizationDetailsForm";
-import { 
-  FileText, 
-  Plus, 
-  Trash2, 
-  Star, 
+import { REQUISITES_V2_UI_ENABLED } from "@/lib/featureFlags";
+import { RequisitesV2Manager } from "@/components/requisites-v2/RequisitesV2Manager";
+import {
+  FileText,
+  Plus,
+  Trash2,
+  Star,
   ChevronLeft,
   User,
   Building2,
@@ -36,6 +38,21 @@ function clientTypeToUiType(ct: ClientType): PayerUiType {
 }
 
 export default function LegalDetailsSettings() {
+  // Feature flag: when enabled, render new V2 manager backed by tenant model.
+  if (REQUISITES_V2_UI_ENABLED) {
+    return (
+      <DashboardLayout>
+        <div className="max-w-4xl mx-auto">
+          <RequisitesV2Manager
+            scope="system_customer"
+            title="Реквизиты для документов"
+            description="Системные реквизиты заказчика для счёт-актов и закрывающих документов"
+          />
+        </div>
+      </DashboardLayout>
+    );
+  }
+
   const {
     legalDetails,
     isLoading,
