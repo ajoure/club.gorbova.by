@@ -1,6 +1,22 @@
 # Stage E — Dry-run report (add-only)
 
-**Статус:** DRY-RUN. Никаких миграций, INSERT/UPDATE/DELETE, изменений
+**Статус:** DRY-RUN (revision 2 — variant B applied). Никаких миграций, INSERT/UPDATE/DELETE, изменений
+
+> **Revision 2 (variant B).** Первая попытка execute была откачена STOP-guard'ом
+> (ожидал 35, нашёл 37 — арифметическая ошибка dry-run rev1).
+> Канон сверен с фактическим содержимым форм D.1 и таблицами:
+> Legal = **20** полей (16 базовых + 4 GRP read-only), Individual = **17**
+> полей (включая computed `passport_number_full` и shadow `address_structured`).
+> Итого новых `user_requisites` FLD = **37**. STOP-guards и текст ниже
+> соответствуют variant B.
+>
+> **JSONB-колонка.** Логическое поле «meta», упоминаемое ниже по тексту,
+> физически хранится в колонке `fields_registry.options jsonb`. Все SQL
+> ниже используют именно `options` (а «meta» — словесный синоним).
+>
+> **Терминология.** Используется `scope_lock` (snapshot_lock запрещён).
+>
+**(rev1 statement, sохраняется как историческая запись)** Никаких миграций, INSERT/UPDATE/DELETE, изменений
 resolver, fields_registry или старых таблиц **не выполнено**. Этот отчёт
 описывает план execute-этапа E и ожидаемые counts; execute запускается
 отдельным шагом только после явного approve.
