@@ -1,321 +1,294 @@
-Да, согласен, с учетом правок:
+План:
 
-1. **tenant_id не оставлять только как резервную колонку**
-  - Не просто добавить nullable tenant_id.
-  - В рамках этого же спринта добавить отдельный PATCH: **Tenant/Workspace foundation для реквизитов**.
-  - Реализовать минимально, без полной workspace-логики во всём проекте, но так, чтобы модель не потерялась.
-2. **Добавить в план отдельный этап / PATCH в конце спринта**  
-**PATCH: Tenant foundation для реквизитов**  
-Цель: заложить рабочую tenant-модель именно для реквизитов, без масштабного внедрения tenants во все модули.  
-Что сделать:
-  - создать/использовать таблицу tenants, если она уже есть — не дублировать;
-  - добавить связь пользователя с tenant/workspace, если уже есть tenant_memberships — использовать её;
-  - если tenant-модель уже частично существует в проекте — провести discovery и подключить реквизиты к существующей модели;
-  - legal_entities_requisites.tenant_id и individual_requisites.tenant_id должны реально заполняться, а не висеть NULL;
-  - для каждого пользователя должен определяться active/default tenant;
-  - RLS проверяет не только owner_user_id, но и принадлежность пользователя к tenant_id;
-  - owner-поля оставить:
-    - owner_user_id
-    - owner_profile_id
-    - tenant_id
-  - tenant используется как основная граница будущего workspace-доступа.
-3. **Правило для RLS**
-  - Пользователь видит реквизиты, если:
-    - он владелец записи через owner_user_id = auth.uid(), **или**
-    - он состоит в соответствующем tenant_id с разрешённой ролью,
-    - либо он admin/super_admin.
-  - Чужие tenant-записи без membership недоступны.
-4. **Правило для resolver**
-  - В контекст resolver добавить обязательный tenant_id.
-  - Резолвер не должен читать реквизиты только по owner_user_id, если в записи есть tenant_id.
-  - Для системных документов:
-    - заказчик = scope='system_customer' в tenant клиента;
-    - исполнитель = platform_executor;
-    - пользовательские реквизиты запрещены.
-  - Для пользовательских документов:
-    - только scope='user_requisites' внутри текущего tenant;
-    - без fallback на системные реквизиты.
-5. **Discovery перед PATCH tenant**
-  - Проверить, какие tenant-таблицы уже есть:
-    - tenants
-    - tenant_memberships
-    - любые текущие workspace/tenant связи
-  - Если они уже используются в проекте — не создавать новые сущности, а встроиться в существующую архитектуру.
-6. **DoD tenant PATCH**
-  - У нового ЮЛ/ИП/ФЛ реквизита заполнен tenant_id.
-  - Пользователь из другого tenant не видит эти реквизиты.
-  - Пользователь внутри того же tenant с разрешённой ролью видит/редактирует по правилам.
-  - Resolver получает tenant_id и не подставляет реквизиты из другого tenant.
-  - SQL-proof + RLS-proof двумя пользователями/двумя tenant.
-  - В отчёте отдельно показать: tenant_id реально используется, а не просто добавлен в схему.
-7. **Остальные ранее утверждённые правки сохранить**
-  - Убрать все упоминания AI.
-  - Использовать только:
-    - system_customer
-    - user_requisites
-    - platform_executor
-  - Старые тестовые реквизиты удалить после dry-run без архива.
-  - Системные и пользовательские поля должны иметь одинаковый смысловой состав, но разные FLD-ID.
-  - platform_executor завести как полноценную группу FLD-ID поверх executors.
-  - Labels без Основное.
-  - Default — только свойство записи, не часть label.
+# PATCH E.2 — document-field-resolver-v2 + scope_lock в snapshot pipeline (rev 2)
 
-&nbsp;
+Add-only к предыдущей редакции. Все ранее заявленные DoD, файлы, proof и zero-touch list сохранены. Ниже выделены изменения rev 2 (E2.x.A — E2.x.G).
 
-## План: каноническая система реквизитов (system_customer / user_requisites / platform_executor) + tenant foundation
-
-## 0. Жёсткие правила
-
-1. Никакого AI-нейминга нигде: ни в БД, ни в UI, ни в labels, ни в комментариях, ни в docs.
-2. Используются только три домена: `system_customer`, `user_requisites`, `platform_executor`.
-3. Перед SQL — read-only discovery (см. §3) с явным отчётом по дублированию таблиц/функций/UI.
-4. Старые тестовые/неиспользуемые реквизиты удаляются после dry-run без архива и без compatibility layer (если dry-run не нашёл production-зависимостей).
-5. Поля ЮЛ/ИП/ФЛ канонически совпадают по смыслу между `system_customer` и `user_requisites`. Различие — только FLD-ID, `domain/scope` и источник.
-6. Запрещены визуально одинаковые labels с разными FLD-ID.
-7. Запрещено слово «Основное» в labels. `is_default=true` — только свойство записи.
-8. Каждый этап имеет DoD: SQL-proof, RLS-proof, resolver-proof, UI-proof.
-9. Discovery подтверждает финальный канонический состав полей — никаких «минимумов» как финал.
+## Цели
+1. Новый резолвер как **отдельный безопасный слой** (shadow mode), без переключения production.
+2. Зафиксировать scope/source/priority в snapshot через `scope_lock=true`, чтобы повторный rebuild не переопределял поля.
+3. Резолв строго по `field_id` / `public_id` (`FLD-XXXXXX`); label — display only.
+4. Корректная классификация коллизий labels (см. §E2.x.A).
+5. Полный `source_trace` для диагностики, включая sample no-label-resolution.
 
 ---
 
-## 1. Discovery как первый этап спринта (read-only)
+## E2.x.A — Дубли labels: warning vs conflict (исправлено противоречие)
 
-Артефакт: `docs/audits/requisites-fields-discovery.md`.
+| Случай | Классификация | Поведение резолвера | Запись в snapshot |
+|---|---|---|---|
+| Один и тот же label в разных `scope` (например «Сделка: валюта» в `scope=deal/null` и `scope=document/null`) | `label_collision_cross_scope` — **diagnostic warning** | НЕ блокирует резолв. Шаблон ссылается на конкретный `FLD-XXXXXX`, поле резолвится строго по `field_public_id`. | Записывается |
+| Один и тот же label внутри одного `(scope, subject_type)` | `label_collision_within_scope` — **реальный conflict** | Блокирует резолв. value НЕ записывается. | НЕ записывается, status=`conflict` |
+| Шаблон ссылается на FLD, которого нет в catalog | `field_unknown` | НЕ резолвится | НЕ записывается, status=`missing` |
 
-### 1.1. Текущее состояние (уже подтверждено беглым осмотром)
-
-- Таблицы реквизитов: `client_legal_details`, `legal_details_persons`, `legal_details_entity_person_links`, `legal_details_positions_catalog`, `legal_details_roles_catalog`, `executors`.
-- `fields_registry`: `legal_details=47`, `executor=15`, `entity=6`, `person=12`, `entity_person=6`.
-- UI: `OrganizationDetailsForm`, `LegalEntityDetailsForm`, `EntrepreneurDetailsForm`, `IndividualDetailsForm` (system); `EntityRecordSheet`, `PersonRecordSheet`, `PersonFieldsForm` (user/AI). Все читают через `useLegalDetailsFields` + `LEGAL_DETAILS_FIELD_MAP` → `client_legal_details`.
-- Резолвер: `src/lib/token-resolver.ts` — формат `{{cf.legal_details.<FLD-…|UUID>}}`.
-- **Tenant**: таблиц `tenants`/`tenant_memberships` в БД нет. Совпадения `tenant`/`workspace` в коде — это **не сущность**, а текстовые поля (теги, сайт-страницы, интеграции). Дублирования архитектуры избегаем — tenant-сущности придётся создавать впервые.
-
-### 1.2. Что зафиксировать в отчёте
-
-1. Полный список колонок `client_legal_details`, `legal_details_persons`, `executors` → один к одному в каноническую таблицу.
-2. Все записи `fields_registry` (`legal_details`, `executor`, `entity`, `person`, `entity_person`) с public_id и label.
-3. Карта совпадений «системное поле ↔ executor-поле ↔ entity/person-поле» по смыслу — для подтверждения, что мы не теряем поля и не плодим дубли.
-4. Все читатели/писатели: `useLegalDetailsFields`, `useLegalDetails`, `useAiEntities`, `useAiPersons`, `useEntityPersonLinks`, `useGrpRefresh`, `LegalDetailsPickerDialog`, `AiPageContent`, `tokenRegistry`, `token-resolver`, `LegalDetails.tsx` (settings).
-5. RLS текущих таблиц.
-6. Dry-run кандидатов на удаление: какие записи `client_legal_details`/`legal_details_persons`/`legal_details_entity_person_links` не используются в production-документах (`document_data`, `documents`, оплаченных актах) и могут быть удалены безвозвратно.
-7. **Анти-дубликат-чек спринта**: подтверждение, что новые `legal_entities_requisites`/`individual_requisites`/`tenants`/`tenant_memberships` не дублируют существующие — со ссылкой на каждый проверенный объект.
-
-DoD discovery: финальный канон полей по каждому subject_type зафиксирован в отчёте. Только после этого начинается этап B.
-
----
-
-## 2. Бизнес-логика (закрепление)
-
-- **system_customer** — клиент платформы как Заказчик в документах платформа↔клиент. Источник — настройки профиля.
-- **platform_executor** — наши реквизиты как Исполнителя. Источник — `executors`. Клиент не редактирует. **Заводим зеркальные FLD-ID в `fields_registry` поверх `executors**`, чтобы Исполнитель был полноценной группой каталога и резолвер работал по тому же field-id-first принципу.
-- **user_requisites** — реквизиты, которые клиент создаёт для своих документов (протоколы, решения, доверенности, договоры с третьими лицами).
-
-Запрещено смешивать домены в одном документе.
-
----
-
-## 3. Каноническая модель полей
-
-Состав по subject_type — финализируется discovery, но обязательно совпадает по смыслу:
-
-- `system_customer.legal_entity` ≡ `user_requisites.legal_entity`
-- `system_customer.entrepreneur` ≡ `user_requisites.entrepreneur`
-- `system_customer.individual` ≡ `user_requisites.individual`
-
-Различия — только FLD-ID, domain/scope, источник. `platform_executor.legal_entity` зеркалит ту же структуру, но читает из `executors`.
-
-Поля «банк/расчётный счёт/адрес/паспорт» у разных subject_type — **разные FLD-ID** (никаких общих полей между ЮЛ и ФЛ).
-
----
-
-## 4. Labels (финал)
-
-- Системные: `Сист. заказчик · ЮЛ · Полное наименование`, `Сист. заказчик · ФЛ · Расчётный счёт`.
-- Исполнитель: `Исполнитель · ЮЛ · Расчётный счёт`, `Исполнитель · ЮЛ · Руководитель ФИО`.
-- Пользовательские: `ЮЛ · Расчётный счёт`, `ФЛ · Расчётный счёт`.
-- Слово «Основное» в labels запрещено. `is_default=true` — только свойство записи.
-
-`label = label_short`. `metadata`:
-
-```json
+Response payload:
+```jsonc
 {
-  "domain": "system_customer | user_requisites | platform_executor",
-  "scope":  "system_customer | user_requisites | platform_executor",
-  "subject_type": "legal_entity | entrepreneur | individual",
-  "field_key": "bank_account",
-  "label_short": "Сист. заказчик · ЮЛ · Расчётный счёт",
-  "label_full":  "Системные реквизиты клиента → Заказчик → ЮЛ → Расчётный счёт",
-  "aliases": ["юрлицо","юл","банк","расчётный счёт","iban","р/с"]
+  "warnings":  [ { "type":"label_collision_cross_scope", "label":"Сделка: валюта",
+                   "candidates":[ {field_public_id, scope, subject_type} ] } ],
+  "conflicts": [ { "type":"label_collision_within_scope", "label":"...",
+                   "scope":"...", "subject_type":"...",
+                   "candidates":[ {field_public_id} ] } ]
 }
 ```
 
----
-
-## 5. Структура БД
-
-### 5.1. `legal_entities_requisites` (ЮЛ + ИП)
-
-- `id uuid pk`, `owner_user_id uuid not null`, `owner_profile_id uuid not null`, `tenant_id uuid not null` (см. §8)
-- `scope text not null check (scope in ('system_customer','user_requisites'))`
-- `subject_type text not null check (subject_type in ('legal_entity','entrepreneur'))`
-- `is_default boolean default false`
-- все канонические поля ЮЛ/ИП после discovery
-- `created_by`, `updated_by`, `created_at`, `updated_at`
-
-### 5.2. `individual_requisites` (ФЛ)
-
-- те же служебные + `subject_type` default `'individual'`
-- `scope` тот же check
-- все канонические поля ФЛ после discovery
-
-### 5.3. Default
-
-Partial unique `(owner_user_id, scope, subject_type) where is_default`. Default не влияет на label.
-
-### 5.4. Триггеры
-
-`set_updated_at`, `set_updated_by`, `enforce_single_default_per_scope_subject`, `audit_logs` на insert/update/delete.
-
-### 5.5. `platform_executor` хранения **не получает** — это виртуальный scope поверх `executors`. В `fields_registry` создаются зеркальные FLD-ID для каталога/резолвера.
+DoD «Сделка: валюта» переформулирован: **diagnostics возвращают warning** `label_collision_cross_scope`, поля корректно резолвятся по `field_public_id` в обе стороны (deal- и document-scope шаблоны), value записывается в snapshot. Blocking conflict для этого кейса быть НЕ должно.
 
 ---
 
-## 6. RLS
+## E2.x.B — UI диагностики: страница зафиксирована сейчас
 
-Пользователь видит запись, если:
+Вкладка **«Resolver v2 (диагностика)»** добавляется в **`src/pages/admin/AdminProductsDocs.tsx`** (Documents Hub) как новая под-вкладка рядом с существующими. Admin-only, RBAC enforced, не production UI.
 
-- `owner_user_id = auth.uid()`, **или**
-- состоит в `tenant_memberships` для `tenant_id` записи с разрешённой ролью, **или**
-- `has_role_v2(auth.uid(),'admin'|'super_admin')`.
+Файлы:
+- `src/components/admin/resolver-v2/ResolverV2DiagnosticsCard.tsx` (NEW) — основной компонент.
+- `src/pages/admin/AdminProductsDocs.tsx` (MODIFIED, минимально) — регистрация под-вкладки.
 
-`platform_executor` доступен на чтение всем authenticated; правка — только admin (как сейчас в `executors`).
+Никаких других UI-страниц не трогаем. Открытый пункт «подтвердить в execute» — снят.
 
 ---
 
-## 7. Resolver (жёсткие правила)
+## E2.x.C — Contract для manual_override
 
-Контекст вызова:
+`document-field-resolver-v2-snapshot` ОБЯЗАН до записи прочитать текущий `orders_v2.meta.document_data.fields[FLD-...]`. Логика:
 
-```json
+| Текущее состояние поля | mode=`apply` | mode=`rebuild` (default) | mode=`rebuild` + `include_manual_overrides=true` |
+|---|---|---|---|
+| `manual_override=true` | НЕ трогать | НЕ трогать | Перезаписать |
+| `scope_lock=true`, `manual_override=false` | НЕ трогать | Перезаписать | Перезаписать |
+| Пусто / нет поля | Записать | Записать | Записать |
+
+В `source_trace` статус для manual-override полей: **`locked_manual_override`** (отдельно от `locked` для scope_lock без manual). Контракт `canonical-deal-fields-update` остаётся каноническим writer'ом для manual override — резолвер его не дублирует.
+
+---
+
+## E2.x.D — Naming canon: `scope_lock`
+
+Единственно допустимое имя — **`scope_lock`** (snake_case). Запрещено: `snapshot_lock`, `scope_locked`, `scopeLock` (в новом коде/proof/audit/snapshot-payload).
+
+- В snapshot: `"scope_lock": true`.
+- В response: `"scope_lock": true` (тот же ключ, без второго термина).
+- В audit meta: `"scope_lock_term": "scope_lock"` (как в Stage E).
+- STOP-guard E2.guard.2 (без изменений): `rg -n "snapshot_lock" supabase/functions/document-field-resolver-v2* src/components/admin/resolver-v2/ .lovable/proofs/requisites_v2_stage_e2*` → **0**.
+- Доп. STOP-guard E2.guard.6: `rg -n "scope_locked|scopeLock" <те же пути>` → **0**.
+
+---
+
+## E2.x.E — Dry-run режим в snapshot-функции
+
+`document-field-resolver-v2-snapshot` режимы (расширено):
+
+| mode | dry_run | Запись в DB | Возврат |
+|---|---|---|---|
+| `apply` | `false` (default) | да | counts + diff |
+| `apply` | `true` | **нет** | counts + diff (для proof до execute) |
+| `rebuild` | `false` | да | counts + diff |
+| `rebuild` | `true` | **нет** | counts + diff |
+
+Counts payload:
+```jsonc
 {
-  "tenant_id": "...",
-  "owner_user_id": "...",
-  "source": "system_customer.legal_entity | system_customer.individual | platform_executor.legal_entity | user_requisites.legal_entity | user_requisites.entrepreneur | user_requisites.individual",
-  "selected_requisites_id": "..."
+  "would_write": 12, "would_skip_locked": 3, "would_skip_manual_override": 2,
+  "would_warn_collision": 1, "would_conflict": 0,
+  "fields_changed":   [ "FLD-000123", ... ],
+  "fields_skipped":   [ { "FLD-...":"locked" }, { "FLD-...":"locked_manual_override" } ]
 }
 ```
 
-Правила:
-
-- **Системные документы платформы**: Заказчик — только `scope='system_customer'` в `tenant_id` клиента; Исполнитель — только `platform_executor` (из `executors`); `user_requisites` запрещён.
-- **Пользовательские документы**: только `scope='user_requisites'` внутри текущего `tenant_id`; `system_customer` и `platform_executor` запрещены; запись не выбрана и default отсутствует → ошибка `REQUISITES_NOT_SELECTED`.
-- Несовпадение source/scope → `REQUISITES_SCOPE_MISMATCH`. Никаких fallback между доменами/тенантами.
-- Резолвер не читает запись только по `owner_user_id`, если у неё есть `tenant_id` — обязательная проверка принадлежности.
+Dry-run обязателен перед execute — proof `requisites_v2_stage_e2_dryrun.md` строится на dry_run-вызовах.
 
 ---
 
-## 8. PATCH: Tenant foundation для реквизитов (внутри этого же спринта)
+## E2.x.F — Audit без PII (явный whitelist)
 
-Цель — заложить рабочую tenant-модель именно для реквизитов, не разворачивая tenants во всём проекте.
+В `audit_logs.meta` для `document_field_resolver_v2.*` пишем ТОЛЬКО:
 
-### 8.1. Discovery (внутри §1)
-
-Подтвердить отсутствие сущностей `tenants`/`tenant_memberships`/`workspaces` (текстовые `tenant`/`workspace` в коде не считаются). Если в discovery всплывёт скрытая сущность — встроиться в неё, не дублировать.
-
-### 8.2. Минимальные таблицы (создаём только если discovery подтвердит отсутствие)
-
-- `tenants`: `id uuid pk`, `name text`, `slug text unique`, `owner_user_id uuid`, `created_at`, `updated_at`.
-- `tenant_memberships`: `id uuid pk`, `tenant_id uuid fk`, `user_id uuid`, `role text check (role in ('owner','admin','member','viewer'))`, `is_active boolean`, `unique (tenant_id, user_id)`.
-- На каждого существующего пользователя — backfill: личный tenant (`role='owner'`), он же дефолтный.
-
-### 8.3. Резолюция активного tenant
-
-- RPC/хелпер `get_active_tenant_for(user_id)`: возвращает явно выбранный (из `profiles.active_tenant_id`, если введём) либо личный tenant.
-- В UI — пока без полноценного переключателя; в скрытом виде записываем в реквизиты `tenant_id` активного tenant.
-
-### 8.4. Связка с реквизитами
-
-- `legal_entities_requisites.tenant_id NOT NULL` и `individual_requisites.tenant_id NOT NULL` — заполняются при insert; backfill сделанных в спринте записей через `get_active_tenant_for(owner_user_id)`.
-- RLS-политики реквизитов читают `tenant_memberships` (см. §6).
-
-### 8.5. DoD tenant-PATCH
-
-- У каждой новой записи реквизитов реально записан `tenant_id`, не NULL.
-- Пользователь из другого tenant без membership не видит реквизиты — RLS-proof двумя пользователями.
-- Пользователь того же tenant с разрешённой ролью видит/редактирует.
-- Резолвер получает `tenant_id` и не подмешивает реквизиты другого tenant.
-- В отчёте отдельный раздел: «tenant_id реально используется», с примерами SQL-выборок.
-
----
-
-## 9. Удаление старых данных (clean reset, без архива и compatibility layer)
-
-После dry-run отчёта (§1.2 п.6):
-
-- удалить старые **пользовательские/тестовые** реквизиты из `client_legal_details`;
-- удалить старые ФЛ из `legal_details_persons`;
-- удалить связи `legal_details_entity_person_links`, относящиеся к удаляемым;
-- старые неполные `entity`/`person`/`entity_person` записи `fields_registry` — удалить (deprecated не нужен).
-
-Если dry-run найдёт production-зависимости (оплаченные акты, активные заказы, prod generation flow) — сузить удаление до строго неиспользуемых. Compatibility layer не делаем.
-
----
-
-## 10. UI
-
-### 10.1. Настройки профиля → Реквизиты
-
-Назначение — `system_customer`. Заголовки: «Системные реквизиты заказчика», «Юридическое лицо», «Индивидуальный предприниматель», «Физическое лицо».
-
-### 10.2. Документы / Нейросеть → Реквизиты
-
-Назначение — `user_requisites`. Заголовки: «Пользовательские юрлица», «Пользовательские ИП», «Пользовательские физлица». Слова «AI» нет.
-
-### 10.3. Единые формы
-
-`LegalEntityRequisitesForm`, `IndividualRequisitesForm` — используются в обоих разделах. Различие — props: `scope`, `subjectType`. Заменяют `OrganizationDetailsForm`, `LegalEntityDetailsForm`, `EntrepreneurDetailsForm`, `IndividualDetailsForm`, `EntityRecordSheet`, `PersonRecordSheet`, `PersonFieldsForm` — старые компоненты удаляются.
-
----
-
-## 11. Каталог плейсхолдеров
-
-Группы: `Системный заказчик`, `Исполнитель`, `Пользовательские ЮЛ`, `Пользовательские ИП`, `Пользовательские ФЛ`.
-
-```
-[Сист. заказчик]    [ЮЛ] Полное наименование — FLD-0000xx
-[Сист. заказчик]    [ФЛ] Расчётный счёт      — FLD-0000yy
-[Исполнитель]       [ЮЛ] Расчётный счёт      — FLD-0001xx
-[Пользовательские]  [ЮЛ] Расчётный счёт      — FLD-0010xx
-[Пользовательские]  [ФЛ] Расчётный счёт      — FLD-0020xx
+```jsonc
+{
+  "order_id":         "<uuid>",
+  "template_id":      "<uuid>",
+  "resolver_version": "v2-1.0.0",
+  "force_rebuild":    false,
+  "dry_run":          false,
+  "include_manual_overrides": false,
+  "counts": {
+    "written": 12, "skipped_locked": 3, "skipped_manual_override": 2,
+    "warnings": 1, "conflicts": 0, "missing": 0
+  },
+  "field_public_ids_changed": [ "FLD-000123", "FLD-000124" ]
+}
 ```
 
-DoD каталога: нет одинаковых визуальных labels с разными FLD-ID; видна группа и subject_type; банк ЮЛ/ФЛ — разные поля; поиск по «расчётный счёт» показывает все варианты с понятными подписями.
+**Запрещено** в meta: ФИО, УНП, паспортные данные, адреса, телефоны, email, IBAN/БИК, любые `value` из snapshot, любые JSON-поля requisites. Только идентификаторы и счётчики.
 
 ---
 
-## 12. Этапы спринта
+## E2.x.G — Catalog: только active/non-deprecated
 
-- **A. Discovery** — `docs/audits/requisites-fields-discovery.md` + анти-дубликат-чек (§1).
-- **B. Tenant foundation** — `tenants`, `tenant_memberships`, backfill личных tenant, `get_active_tenant_for` (§8.2–8.3).
-- **C. Новые таблицы реквизитов и RLS** — `legal_entities_requisites`, `individual_requisites`, индексы, триггеры, RLS с tenant-membership (§5–6).
-- **D. Новый `fields_registry**` — канонические FLD-ID для `system_customer` ЮЛ/ИП/ФЛ, `platform_executor` (зеркальные поверх `executors`), `user_requisites` ЮЛ/ИП/ФЛ. Состав по subject_type совпадает между доменами (§3, §4).
-- **E. Clean reset** — удалить старые **пользовательские/тестовые** реквизиты и связи; старые `entity`/`person`/`entity_person` записи реестра — удалить. Без архива (§9).
-- **F. UI** — единые `LegalEntityRequisitesForm`/`IndividualRequisitesForm`; убрать AI-нейминг; обновить каталог плейсхолдеров; default — свойство записи (§10).
-- **G. Resolver** — обновить `token-resolver`, `tokenRegistry`, document snapshot; жёсткие правила и коды ошибок (§7).
-- **H. Verify** — RLS-двумя-пользователями, RLS-двумя-tenant, генерация системного акта и пользовательского документа, отсутствие дубликатов в каталоге, AI-нейминга нигде нет.
+Resolver catalog (`_shared/document-resolver-v2/catalog.ts`) загружает `fields_registry` со строгими фильтрами:
+- `is_active = true` (если колонка существует);
+- `archived_at IS NULL`;
+- `options->>'deprecated_at' IS NULL` (Stage E маркер).
+
+Discovery: реальный набор колонок `fields_registry` фиксируется в **первом разделе** `requisites_v2_stage_e2_dryrun.md` (`SELECT column_name FROM information_schema.columns WHERE table_name='fields_registry'`). Если `is_active` отсутствует — фильтр по этой колонке снимается, фиксируется в proof. Иначе — применяется.
+
+Deprecated 71 поле из Stage E (`legal_details/entity/entity_person/person`) автоматически исключаются из catalog → не участвуют в резолве, не попадают в `source_trace` как кандидаты.
 
 ---
 
-## 13. DoD спринта
+## Что трогаем (add-only, никаких rewrite)
 
-- Discovery-отчёт зафиксировал финальный канон полей и анти-дубликат-чек.
-- `tenants`/`tenant_memberships` созданы (или подтверждено использование существующих).
-- `legal_entities_requisites`/`individual_requisites` созданы; `tenant_id NOT NULL` и реально заполнен.
-- RLS не пускает чужих пользователей и чужих tenant.
-- В коде/UI/labels/comments/docs только: `system_customer`, `user_requisites`, `platform_executor`. Слова «AI» в реквизитах нет.
-- Системные реквизиты — только в документах платформы; пользовательские — только в пользовательских; Исполнитель — только из `executors` через `platform_executor`.
-- Состав и смысл полей совпадают между `system_customer` и `user_requisites` по каждому subject_type.
-- Labels не содержат «Основное»; визуальных дубликатов нет; банк ЮЛ ≠ банк ФЛ.
-- Резолвер требует `tenant_id` и `source`, ошибки `REQUISITES_NOT_SELECTED`/`REQUISITES_SCOPE_MISMATCH` работают, fallback запрещён.
-- Один пользователь не видит реквизиты другого; в одном tenant возможны несколько ЮЛ/ИП/ФЛ; default — только выбор записи.
-- Старые тестовые реквизиты удалены; старые документы и текущая generation pipeline не сломаны.
+### Backend — новые edge-функции
+- `supabase/functions/document-field-resolver-v2/index.ts` (NEW) — preview-only.
+  - admin-only (JWT + RBAC через `user_roles_v2`).
+  - input: `{ order_id, template_id?, mode: 'preview' }`.
+  - читает `orders_v2`, `fields_registry` (active+non-deprecated, см. E2.x.G), `legal_entities_requisites` / `individual_requisites` / `system_customer*` / `executors`.
+  - резолвит ТОЛЬКО по `FLD-XXXXXX` / `field_id`.
+  - возвращает: `resolved`, `source_trace`, `warnings`, `conflicts`, `missing`, `locked` (см. E2.x.A).
+  - production resolver (`canonical-document-generate-strict`) **не трогаем**.
+
+- `supabase/functions/document-field-resolver-v2-snapshot/index.ts` (NEW)
+  - admin-only, idempotent.
+  - режимы: `apply` / `rebuild` × `dry_run` ∈ {true, false} (см. E2.x.E).
+  - флаг `include_manual_overrides=true` обязателен для перезаписи `manual_override=true` полей (см. E2.x.C).
+  - пишет в `orders_v2.meta.document_data.fields[FLD-...]`:
+    ```jsonc
+    {
+      "value": ...,
+      "scope": "system_customer|platform_executor|user_requisites|deal|document",
+      "subject_type": "legal|individual|null",
+      "entity_type": "customer|executor|user_requisites|...",
+      "source": "client_legal_details|legal_entities_requisites|order_meta|computed|manual",
+      "source_priority": <int>,
+      "scope_lock": true,
+      "locked_at": "...",
+      "resolver_version": "v2-1.0.0",
+      "manual_override": false
+    }
+    ```
+  - `manual_override=true` поля НЕ трогаются (см. E2.x.C).
+  - audit `audit_logs.action='document_field_resolver_v2.snapshot_applied'` с meta по whitelist (E2.x.F).
+
+- `supabase/functions/_shared/document-resolver-v2/` (NEW)
+  - `catalog.ts` — load active/non-deprecated `fields_registry` (E2.x.G); группировка `(scope, subject_type, label)` для классификации коллизий (E2.x.A).
+  - `sources.ts` — карта source → priority (см. ниже).
+  - `resolver.ts` — чистая функция `(catalog, sources, order, requisites, executors) → ResolverResult`.
+
+### DB — никаких schema changes
+- `orders_v2.meta.document_data.fields` ключ `FLD-XXXXXX`.
+- `fields_registry.options.scope` (Stage E).
+- Никаких новых таблиц/ALTER. Если потребуется extension `audit_logs` action enum — миграция отдельным шагом (после dry-run discovery).
+
+### UI — минимальный read-only
+- `src/components/admin/resolver-v2/ResolverV2DiagnosticsCard.tsx` (NEW).
+- `src/pages/admin/AdminProductsDocs.tsx` (MOD, минимально) — регистрация вкладки «Resolver v2 (диагностика)» (E2.x.B).
+- Контролы: order picker + template picker; кнопки **Preview (v2)** / **Snapshot apply (dry_run)** / **Snapshot apply (write)** / **Force rebuild (dry_run)** / **Force rebuild (write)** / **Force rebuild + manual_overrides (write, требует подтверждения)**.
+- Таблицы: `source_trace` (field_id, label, scope, subject_type, source, status, reason), `warnings`, `conflicts`, `locked`, `missing`.
+- `DealDocumentsPanel` НЕ переключаем на v2.
+- `PlaceholdersCatalogTab` НЕ перестраиваем (PATCH E.3).
+
+---
+
+## Source priority (без изменений)
+```
+100  manual_override (canonical-deal-fields-update)
+ 80  computed (passport_number_full, ru-words, ...)
+ 60  scope=user_requisites (legal_entities_requisites / individual_requisites)
+ 50  scope=system_customer (system_customer / system_customer_signer)
+ 50  scope=platform_executor (executors)
+ 30  order.meta (final_price, currency, order_number, dates)
+ 10  legacy fallback (client_legal_details — read-only, migration window)
+  0  not_resolved
+```
+При equal priority **внутри одного `(scope, subject_type)` с одинаковым label** → conflict (E2.x.A).
+
+---
+
+## STOP-guards (расширено)
+- E2.guard.1: `rg -n "label.*===|label.*indexOf|byLabel" supabase/functions/document-field-resolver-v2* supabase/functions/_shared/document-resolver-v2/` → **0**.
+- E2.guard.2: `rg -n "snapshot_lock" supabase/functions/document-field-resolver-v2* src/components/admin/resolver-v2/ .lovable/proofs/requisites_v2_stage_e2*` → **0**.
+- E2.guard.3: `git diff supabase/functions/canonical-document-generate-strict/` → **0 строк**.
+- E2.guard.4: legacy таблицы не тронуты (никаких DROP/DELETE/ALTER).
+- E2.guard.5: dry-run `apply` → real `apply` → repeat `apply`: финальный `would_write`/`written` = **0**, `skipped_locked` = locked count предыдущего шага.
+- E2.guard.6 (NEW, E2.x.D): `rg -n "scope_locked|scopeLock" supabase/functions/document-field-resolver-v2* src/components/admin/resolver-v2/ .lovable/proofs/requisites_v2_stage_e2*` → **0**.
+- E2.guard.7 (NEW, E2.x.F): grep по audit meta — отсутствуют PII-маркеры. SQL: `audit_logs WHERE action LIKE 'document_field_resolver_v2.%' AND (meta::text ~* 'паспорт|УНП|IBAN|БИК|@|\\+375|address')` → **0**.
+
+---
+
+## Dry-run (proof до execute)
+
+`.lovable/proofs/requisites_v2_stage_e2_dryrun.md`:
+1. Discovery: фактические колонки `fields_registry` (E2.x.G).
+2. Catalog stats: active/deprecated/excluded counts.
+3. Sample collisions:
+   - **warning** sample: «Сделка: валюта» — два FLD в разных scope, оба резолвятся.
+   - **conflict** sample: если найден реальный within-scope дубль (ожидание: 0 после Stage E), иначе фиксируется отсутствие.
+4. Прогон preview на 3 представительных order'ах (legal customer / individual customer / executor-only template).
+5. Прогон snapshot `dry_run=true` на тех же order'ах: counts, fields_changed, fields_skipped.
+6. SQL-инвариант: snapshot в DB не записан (`SELECT meta->'document_data' FROM orders_v2 WHERE id IN (...)` — без новых полей).
+
+---
+
+## Execute
+1. Деплой 2 edge-функций.
+2. На контрольном order: `dry_run=true apply` → `apply` (write) → повторный `apply` → 0 переписано (E2.guard.5).
+3. На том же order: `dry_run=true rebuild` → `rebuild` (write, без manual override flag) → manual-override поля НЕ тронуты (E2.x.C).
+4. Опционально: `rebuild + include_manual_overrides=true` (с подтверждением) — на тестовом order.
+
+---
+
+## Verify (DoD, обновлено)
+- [ ] `document-field-resolver-v2` и `document-field-resolver-v2-snapshot` задеплоены.
+- [ ] `canonical-document-generate-strict` без изменений (E2.guard.3).
+- [ ] Snapshot содержит `scope_lock=true`, `scope`, `subject_type`, `source`, `source_priority`, `resolver_version='v2-1.0.0'`.
+- [ ] Apply повторно → `written`=0, `skipped_locked` корректен.
+- [ ] Force rebuild без флага → `manual_override=true` поля НЕ тронуты (E2.x.C).
+- [ ] Force rebuild + `include_manual_overrides=true` → manual-поля перезаписаны.
+- [ ] **«Сделка: валюта» → diagnostics warning `label_collision_cross_scope`** (НЕ blocking conflict), оба FLD корректно резолвятся по `field_public_id` (E2.x.A).
+- [ ] Within-scope дубль (если найден) → status=`conflict`, value НЕ записан.
+- [ ] Резолв по label = 0 (E2.guard.1 grep) + sample no-label-resolution в proof (см. ниже).
+- [ ] `scope_lock` единственный термин (E2.guard.2 + E2.guard.6).
+- [ ] Audit без PII (E2.guard.7), whitelist соблюдён (E2.x.F).
+- [ ] Catalog исключает deprecated (71 Stage E поле) и archived.
+- [ ] Dry-run режим работает (`dry_run=true` → 0 записей в DB).
+- [ ] Legacy таблицы не тронуты, archived_at не сдвинут.
+- [ ] PATCH D.3 (`StructuredAddressBlock`) остаётся следующим UI-патчем.
+- [ ] `address_structured` сохраняется в snapshot как plain JSON value (read-only из формы D.1).
+- [ ] proof: `.lovable/proofs/requisites_v2_stage_e2_execute.md` со счётчиками, source_trace sample, **explicit no-label-resolution sample** (два FLD с одинаковым label в разных scope, шаблон содержит FLD-A → резолвится FLD-A; шаблон содержит FLD-B → резолвится FLD-B; label НЕ участвовал), audit, grep proof, PII grep proof.
+
+---
+
+## Что НЕ делаем (zero-touch list, без изменений)
+- ❌ Не переключаем `DealDocumentsPanel` / `canonical-document-generate-strict` на v2.
+- ❌ Не удаляем legacy `client_legal_details` / `entity` / `entity_person` / `person`.
+- ❌ Не пересчитываем существующие snapshot в `orders_v2.meta.document_data` массово (только через UI диагностики per-order).
+- ❌ Не вводим `StructuredAddressBlock` (PATCH D.3).
+- ❌ Не перестраиваем `PlaceholdersCatalogTab` (PATCH E.3).
+- ❌ Не трогаем JSONB-колонку `meta` у `fields_registry` — она называется `options` (Stage E).
+- ❌ Не пишем PII в audit_logs (E2.x.F).
+
+---
+
+## Файлы (итог)
+
+**Создаются:**
+- `supabase/functions/document-field-resolver-v2/index.ts`
+- `supabase/functions/document-field-resolver-v2-snapshot/index.ts`
+- `supabase/functions/_shared/document-resolver-v2/catalog.ts`
+- `supabase/functions/_shared/document-resolver-v2/sources.ts`
+- `supabase/functions/_shared/document-resolver-v2/resolver.ts`
+- `src/components/admin/resolver-v2/ResolverV2DiagnosticsCard.tsx`
+- `.lovable/proofs/requisites_v2_stage_e2_dryrun.md`
+- `.lovable/proofs/requisites_v2_stage_e2_execute.md`
+
+**Изменяются (минимально):**
+- `src/pages/admin/AdminProductsDocs.tsx` — регистрация вкладки «Resolver v2 (диагностика)» (E2.x.B).
+- `supabase/functions.registry.txt` — добавление двух новых функций в registry.
+
+**НЕ изменяются:**
+- `canonical-document-generate-strict/`
+- `canonical-deal-fields-update/` (канонический writer для manual override)
+- `DealDocumentsPanel.tsx`
+- legacy tables / production resolver / production UI.
+
+После approve плана — Dry run → Execute → Verify-отчёт.
