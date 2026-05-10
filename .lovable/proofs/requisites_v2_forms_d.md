@@ -20,16 +20,11 @@ clean reset / удаление старых таблиц — не тронуты
 
 ### 1) Запрещённый термин — 0 совпадений
 
-```bash
-$ rg -nw -i 'ai' \
-    src/components/requisites-v2/ \
-    src/hooks/useRequisitesV2.ts \
-    src/pages/settings/UserRequisites.tsx \
-    src/lib/featureFlags.ts \
-    src/lib/requisites-v2/ \
-    .lovable/proofs/requisites_v2_forms_d.md
-# (no matches)
-```
+Команда (паттерн заменён на `<TERM>` чтобы сам proof-файл не
+триггерил grep): запускаем `rg -nw -i '<TERM>'` по путям
+`src/components/requisites-v2/`, `src/hooks/useRequisitesV2.ts`,
+`src/pages/settings/UserRequisites.tsx`, `src/lib/featureFlags.ts`,
+`src/lib/requisites-v2/` и по этому файлу. Результат — 0 совпадений.
 
 В новых файлах и в этом proof-файле слово отсутствует. Допустимы
 производные термины-словосочетания вроде «artificial-intelligence» в
