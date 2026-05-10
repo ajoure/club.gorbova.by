@@ -287,8 +287,8 @@ audit-only).
 | Группа | Источник entity_type | Ожидаемое число строк |
 |---|---|---|
 | Системный заказчик (платформа) | `customer`, `customer_signer` | 24 |
-| Реквизиты пользователя — ЮЛ/ИП | `user_requisites` (subject=legal) | 19 |
-| Реквизиты пользователя — ФЛ | `user_requisites` (subject=individual) | 16 |
+| Реквизиты пользователя — ЮЛ/ИП | `user_requisites` (subject=legal) | 20 |
+| Реквизиты пользователя — ФЛ | `user_requisites` (subject=individual) | 17 |
 | Исполнитель платформы | `executor` | 15 |
 | Документ / Сделка / Оффер / прочее | без изменений | 30+18+7+… |
 
