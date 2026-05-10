@@ -1,10 +1,15 @@
 /**
- * IndividualRequisitesForm — unified form for V2 individual requisites.
+ * IndividualRequisitesForm — unified form for v2 individual requisites.
  *
  * scope: 'system_customer' | 'user_requisites'
  * subject_type is implicit: 'individual'.
  *
- * Stores all fields under `data` jsonb.
+ * Reads use `normalizeLegacyData('individual', …)` to map legacy `ind_*`
+ * keys (and split address sub-fields) into canonical keys. Writes use
+ * `sanitizeForWrite('individual', …)` to drop legacy/service keys and
+ * preserve any unknown forward-compat keys.
+ *
+ * No artificial-intelligence wording allowed in this module.
  */
 
 import { useForm } from "react-hook-form";
@@ -27,6 +32,7 @@ import type {
   IndividualRequisitesRow,
   RequisitesScope,
 } from "@/hooks/useRequisitesV2";
+import { normalizeLegacyData, sanitizeForWrite } from "@/lib/requisites-v2/fieldMap";
 
 const schema = z.object({
   full_name: z.string().min(5, "Введите ФИО полностью"),
@@ -34,8 +40,10 @@ const schema = z.object({
   personal_number: z.string().optional().or(z.literal("")),
   passport_series: z.string().optional().or(z.literal("")),
   passport_number: z.string().optional().or(z.literal("")),
+  passport_number_full: z.string().optional().or(z.literal("")),
   passport_issued_by: z.string().optional().or(z.literal("")),
   passport_issued_date: z.string().optional().or(z.literal("")),
+  passport_valid_until: z.string().optional().or(z.literal("")),
   address: z.string().optional().or(z.literal("")),
   bank_account: z.string().optional().or(z.literal("")),
   bank_name: z.string().optional().or(z.literal("")),
@@ -70,7 +78,12 @@ export function IndividualRequisitesForm({
   onSubmit,
   onCancel,
 }: IndividualRequisitesFormProps) {
-  const data = (initialData?.data ?? {}) as Record<string, string | undefined>;
+  const rawData = (initialData?.data ?? {}) as Record<string, unknown>;
+  const data = normalizeLegacyData("individual", rawData) as Record<
+    string,
+    string | undefined
+  >;
+
   const prefix = `[${SCOPE_LABEL[scope]}] [ФЛ]`;
 
   const form = useForm<FormValues>({
@@ -81,8 +94,10 @@ export function IndividualRequisitesForm({
       personal_number: data.personal_number ?? "",
       passport_series: data.passport_series ?? "",
       passport_number: data.passport_number ?? "",
+      passport_number_full: data.passport_number_full ?? "",
       passport_issued_by: data.passport_issued_by ?? "",
       passport_issued_date: data.passport_issued_date ?? "",
+      passport_valid_until: data.passport_valid_until ?? "",
       address: data.address ?? "",
       bank_account: data.bank_account ?? "",
       bank_name: data.bank_name ?? "",
@@ -95,10 +110,11 @@ export function IndividualRequisitesForm({
 
   const submit = async (v: FormValues) => {
     const { is_default, ...rest } = v;
-    const cleaned: Record<string, unknown> = {};
-    for (const [k, val] of Object.entries(rest)) {
-      if (val !== undefined && val !== "") cleaned[k] = val;
-    }
+    const cleaned = sanitizeForWrite(
+      "individual",
+      rest as Record<string, unknown>,
+      rawData,
+    );
     await onSubmit({ data: cleaned, is_default: !!is_default });
   };
 
@@ -146,6 +162,9 @@ export function IndividualRequisitesForm({
               </FormItem>
             )}
           />
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-3">
           <FormField
             control={form.control}
             name="passport_series"
@@ -174,9 +193,25 @@ export function IndividualRequisitesForm({
           />
           <FormField
             control={form.control}
-            name="passport_issued_by"
+            name="passport_number_full"
             render={({ field }) => (
               <FormItem>
+                <FormLabel>{prefix} Паспорт (полный)</FormLabel>
+                <FormControl>
+                  <Input {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-3">
+          <FormField
+            control={form.control}
+            name="passport_issued_by"
+            render={({ field }) => (
+              <FormItem className="md:col-span-1">
                 <FormLabel>{prefix} Кем выдан</FormLabel>
                 <FormControl>
                   <Input {...field} />
@@ -198,6 +233,19 @@ export function IndividualRequisitesForm({
               </FormItem>
             )}
           />
+          <FormField
+            control={form.control}
+            name="passport_valid_until"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{prefix} Действителен до</FormLabel>
+                <FormControl>
+                  <Input type="date" {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
         </div>
 
         <FormField
@@ -209,6 +257,10 @@ export function IndividualRequisitesForm({
               <FormControl>
                 <Input {...field} />
               </FormControl>
+              <FormDescription>
+                Структурированный адрес (address_structured) сохраняется без
+                изменений из исходной записи.
+              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -300,7 +352,8 @@ export function IndividualRequisitesForm({
                 </FormLabel>
                 <FormDescription>
                   Свойство записи. Уникальность default — в пределах
-                  tenant + scope.
+                  tenant + scope. Переключение default — через
+                  транзакционную RPC.
                 </FormDescription>
               </div>
             </FormItem>
