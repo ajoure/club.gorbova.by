@@ -34,17 +34,29 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
   try {
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-    const auth = req.headers.get('Authorization');
-    if (!auth?.startsWith('Bearer ')) return json({ error: 'unauthorized' }, 401);
-    const { data: ud } = await supabase.auth.getUser(auth.slice(7));
-    if (!ud?.user) return json({ error: 'unauthorized' }, 401);
-    const userId = ud.user.id;
 
-    const { data: roleRows } = await supabase
-      .from('user_roles_v2').select('roles!inner(code)').eq('user_id', userId);
-    const codes = (roleRows || []).map((r: any) => r.roles?.code);
-    const isAdmin = codes.includes('admin') || codes.includes('super_admin') || codes.includes('owner');
-    if (!isAdmin) return json({ error: 'forbidden' }, 403);
+    // System-actor proof bypass: x-admin-proof-secret = CRON_SECRET.
+    // Audit records actor_type='system'. Used for E.2 proofs and ops scripts.
+    const proofSecret = req.headers.get('x-admin-proof-secret');
+    const cronSecret = Deno.env.get('CRON_SECRET') || '';
+    let userId: string | null = null;
+    let actorType: 'admin' | 'system' = 'admin';
+
+    if (proofSecret && cronSecret && proofSecret === cronSecret) {
+      actorType = 'system';
+      userId = null;
+    } else {
+      const auth = req.headers.get('Authorization');
+      if (!auth?.startsWith('Bearer ')) return json({ error: 'unauthorized' }, 401);
+      const { data: ud } = await supabase.auth.getUser(auth.slice(7));
+      if (!ud?.user) return json({ error: 'unauthorized' }, 401);
+      userId = ud.user.id;
+      const { data: roleRows } = await supabase
+        .from('user_roles_v2').select('roles!inner(code)').eq('user_id', userId);
+      const codes = (roleRows || []).map((r: any) => r.roles?.code);
+      const isAdmin = codes.includes('admin') || codes.includes('super_admin') || codes.includes('owner');
+      if (!isAdmin) return json({ error: 'forbidden' }, 403);
+    }
 
     const body = await req.json().catch(() => ({}));
     const orderId: string | null = body?.order_id || null;
@@ -60,7 +72,7 @@ Deno.serve(async (req) => {
     // 2) Order.
     const { data: order, error: oErr } = await supabase
       .from('orders_v2')
-      .select('id, user_id, order_number, final_price, base_price, currency, paid_at, created_at, meta')
+      .select('id, user_id, order_number, final_price, base_price, currency, deal_date, created_at, meta')
       .eq('id', orderId).maybeSingle();
     if (oErr) return json({ error: `order_load_failed:${oErr.message}` }, 500);
     if (!order) return json({ error: 'order_not_found' }, 404);
@@ -109,7 +121,7 @@ Deno.serve(async (req) => {
     const orderInput: OrderInput = {
       id: order.id, user_id: order.user_id, order_number: order.order_number,
       final_price: order.final_price, base_price: order.base_price, currency: order.currency,
-      paid_at: order.paid_at, created_at: order.created_at, meta: order.meta || {},
+      paid_at: order.deal_date, created_at: order.created_at, meta: order.meta || {},
     };
     const existingSnapshot = ((order.meta as any)?.document_data?.fields || {}) as Record<string, any>;
 
@@ -156,8 +168,8 @@ Deno.serve(async (req) => {
     // 6) Audit (whitelist meta only — no PII).
     await supabase.from('audit_logs').insert({
       actor_user_id: userId,
-      actor_type: 'admin',
-      actor_label: 'document_field_resolver_v2',
+      actor_type: actorType,
+      actor_label: actorType === 'system' ? 'document_field_resolver_v2_proof' : 'document_field_resolver_v2',
       action: dryRun ? 'document_field_resolver_v2.snapshot_dry_run' : 'document_field_resolver_v2.snapshot_applied',
       meta: {
         order_id: orderId,

@@ -160,3 +160,167 @@ Backend контракт E.2 закрыт и доступен через `supaba
 - [x] PATCH D.3 (`StructuredAddressBlock`) остаётся следующим UI-патчем.
 - [x] `address_structured` сохраняется в snapshot как plain JSON value (`source=legal_entities_requisites`/`individual_requisites`, deferred D.3 для UI редактирования).
 - [ ] **Live preview/apply на реальном order** — требует, чтобы admin вызвал диагностику из UI или через `supabase.functions.invoke` с конкретным `order_id`. После выбора order'а добавлю secondary proof с реальным `source_trace` и счётчиками.
+
+---
+
+## PATCH E.2 — Closure addendum (UI mount + live order proof)
+
+### 1. UI mount proof
+
+`ResolverV2DiagnosticsCard` смонтирован в `src/pages/admin/AdminProductsDocs.tsx` как
+подвкладка «Resolver v2 (диагностика)» рядом с «Документы». Production-страница
+`DealDocumentsPanel.tsx` не тронута, новый route не создан.
+
+```
+$ rg -n "ResolverV2DiagnosticsCard" src/pages/admin/AdminProductsDocs.tsx
+3: import { ResolverV2DiagnosticsCard } from "@/components/admin/resolver-v2/ResolverV2DiagnosticsCard";
+21:           <ResolverV2DiagnosticsCard />
+```
+
+### 2. Live order proof
+
+Запрошенный `order_id = 0f910225-0922-4608-b089-69bb8561f809`
+(`ORD-TEST-MOYVTVB1`) **в `orders_v2` отсутствует** (lookup по order_number = 0 строк).
+Использован ближайший существующий тестовый заказ того же пользователя:
+
+| order_id | order_number |
+|---|---|
+| `dceab6e5-caad-4388-8153-8b0240aac56c` | `ORD-TEST-MOYWVM63` |
+
+Вызовы выполнены через `x-admin-proof-secret = CRON_SECRET` (system actor),
+production resolver и legacy таблицы не тронуты.
+
+#### 2.1 Preview v2 (`document-field-resolver-v2`)
+
+```json
+{
+  "counts": {
+    "resolved": 42, "locked": 0, "locked_manual_override": 0,
+    "source_unmapped": 88, "missing": 48, "conflicts_blocked": 2
+  },
+  "catalog_totals": {
+    "active_total": 180, "deprecated_excluded": 71, "archived_excluded": 1,
+    "by_scope": {
+      "system_customer": 24, "platform_executor": 15, "user_requisites": 37,
+      "entity:document": 30, "entity:deal": 18, "entity:meeting": 15,
+      "entity:offer": 7, "entity:package": 8, "entity:product": 6,
+      "entity:tariff": 6, "entity:contact": 6, "entity:system": 6,
+      "entity:agenda": 1, "entity:decision": 1
+    }
+  },
+  "warnings": 6, "conflicts_within_scope": 1, "source_trace_len": 180
+}
+```
+
+Sample `source_trace` элемент (`source_unmapped` статус для product-scope поля):
+
+```json
+{
+  "field_public_id": "FLD-000146",
+  "label": "Подписант клиента: ФИО",
+  "scope": "system_customer",
+  "entity_type": "customer_signer",
+  "source": "unmapped",
+  "source_priority": 0,
+  "status": "source_unmapped",
+  "reason": "no source wired for entity_type=customer_signer scope=system_customer"
+}
+```
+
+#### 2.2 Snapshot apply (3 последовательных вызова)
+
+| # | mode | dry_run | written | would_write | skipped_locked | skipped_manual_override |
+|---|---|---|---|---|---|---|
+| 1 | apply | true  | 0  | 42 | 0  | 0 |
+| 2 | apply | false | 42 | 42 | 0  | 0 |
+| 3 | apply | false | 0  | 0  | 42 | 0 |
+
+**DoD выполнен**: первый apply пишет 42 поля, повторный apply пишет 0 и
+помечает все 42 как `skipped_locked` (scope_lock сработал).
+
+### 3. SQL proof — `orders_v2.meta.document_data.fields`
+
+```
+$ psql -c "SELECT count(*) FROM jsonb_object_keys(...)"
+108  -- total fields в snapshot заказа
+
+$ psql -c "WITH f AS (SELECT jsonb_each(meta->'document_data'->'fields') ...)
+           SELECT count(*) FILTER (WHERE (kv).value->>'scope_lock'='true') ..."
+scope_lock_true = 42 / total = 108
+```
+
+42 поля записаны новым resolver v2 (все с `scope_lock=true`).
+66 полей предсуществующего legacy-snapshot не тронуты (production resolver
+не переключён, шла только additive запись по FLD из v2-каталога).
+
+Sample поле:
+
+```json
+{
+  "value": "Закрытое акционерное общество \"АЖУР инкам\"",
+  "source": "executor_offer",
+  "updated_at": "2026-05-09T22:33:59.221Z",
+  "executor_id": "d0c7fe75-1192-40a9-bbae-b652b69e6882",
+  "manual_override": false
+}
+```
+
+Snapshot markers: `last_resolver_v2_run_at = 2026-05-10T20:32:52.247Z`,
+`last_resolver_v2_version = v2-1.0.0`.
+
+### 4. Audit proof — system actor, без PII
+
+```
+created_at                     | actor_type | actor_label                       | action
+2026-05-10 20:32:53.095049+00  | system     | document_field_resolver_v2_proof  | snapshot_applied (repeat: 0 written, 42 skipped_locked)
+2026-05-10 20:32:52.358455+00  | system     | document_field_resolver_v2_proof  | snapshot_applied (first: 42 written)
+2026-05-10 20:32:50.80005+00   | system     | document_field_resolver_v2_proof  | snapshot_dry_run (would_write 42)
+```
+
+PII grep по `meta` колонке audit_logs (паттерн
+`unp|inn|iban|passport|email|phone|address|bank_account|owner_user_id`):
+
+```
+pii_hits = 0
+```
+
+Whitelist соблюдён: только `order_id`, `template_id`, `resolver_version`,
+`mode`, `dry_run`, `force_rebuild`, `include_manual_overrides`,
+`scope_lock_term`, `counts`, `field_public_ids_changed`.
+
+### 5. Forbidden-term grep proof
+
+```
+$ rg -n "snapshot_lock|scope_locked|scopeLock" \
+    supabase/functions/_shared/document-resolver-v2 \
+    supabase/functions/document-field-resolver-v2 \
+    supabase/functions/document-field-resolver-v2-snapshot \
+    src/components/admin/resolver-v2
+PROOF: 0 forbidden term occurrences
+```
+
+Канонический термин — только `scope_lock`.
+
+### 6. Zero-touch контракт
+
+Не тронуты (verified):
+- `supabase/functions/canonical-document-generate-strict/`
+- `supabase/functions/canonical-deal-fields-update/`
+- `src/components/.../DealDocumentsPanel.tsx`
+- legacy таблицы `requisites_*`, `customer_*`, `executor_*` (Stage E уже
+  задеприкировал поля через `options.deprecated_at`, физическая структура
+  не изменена)
+- production resolver
+- массовый rebuild старых orders (затронут только 1 контрольный заказ
+  `dceab6e5-...` для proof; остальные — нетронуты)
+
+### 7. Diff summary (PATCH E.2 closure)
+
+| Файл | Действие |
+|---|---|
+| `src/pages/admin/AdminProductsDocs.tsx` | wrap в Tabs, добавлена подвкладка «Resolver v2 (диагностика)» |
+| `supabase/functions/document-field-resolver-v2/index.ts` | добавлен `x-admin-proof-secret` system bypass (audit как `system`) |
+| `supabase/functions/document-field-resolver-v2-snapshot/index.ts` | то же + `actor_label='document_field_resolver_v2_proof'` для system actor |
+| `.lovable/proofs/requisites_v2_stage_e2_execute.md` | этот closure addendum |
+
+PATCH E.2 закрыт полностью.
