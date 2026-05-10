@@ -188,19 +188,23 @@ export function StructuredAddressBlock({
     updateDropdownPosition();
   }, [activeField, predictions, updateDropdownPosition]);
 
+  // Reposition dropdown on viewport changes (mobile keyboard open/close, scroll, resize)
+  // Do NOT close — closing on resize made the dropdown disappear when iOS keyboard opened.
   useEffect(() => {
     if (!isOpen) return;
-    const close = () => {
-      if (isSelectingRef.current) return;
-      clearPredictions();
-    };
-    window.addEventListener('scroll', close, true);
-    window.addEventListener('resize', close);
+    const reposition = () => updateDropdownPosition();
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    const vv = (window as any).visualViewport as VisualViewport | undefined;
+    vv?.addEventListener('resize', reposition);
+    vv?.addEventListener('scroll', reposition);
     return () => {
-      window.removeEventListener('scroll', close, true);
-      window.removeEventListener('resize', close);
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+      vv?.removeEventListener('resize', reposition);
+      vv?.removeEventListener('scroll', reposition);
     };
-  }, [isOpen, clearPredictions]);
+  }, [isOpen, updateDropdownPosition]);
 
   const handleFieldChange = useCallback(
     (field: keyof StructuredAddress, val: string) => {
