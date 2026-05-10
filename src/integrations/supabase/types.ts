@@ -14823,6 +14823,34 @@ export type Database = {
         Args: { _dry_run?: boolean; _profile_id: string }
         Returns: Json
       }
+      admin_tenants_overview: {
+        Args: never
+        Returns: {
+          created_at: string
+          individual_requisites_count: number
+          is_personal: boolean
+          legal_requisites_count: number
+          memberships_count: number
+          name: string
+          owner_email: string
+          owner_full_name: string
+          owner_user_id: string
+          system_customer_count: number
+          tenant_id: string
+          updated_at: string
+        }[]
+      }
+      admin_tenants_stats: {
+        Args: never
+        Returns: {
+          individual_system_customer: number
+          legal_system_customer: number
+          memberships_total: number
+          tenants_total: number
+          tenants_with_requisites: number
+          tenants_without_requisites: number
+        }[]
+      }
       admin_unlinked_cards_details: {
         Args: {
           _brand: string
