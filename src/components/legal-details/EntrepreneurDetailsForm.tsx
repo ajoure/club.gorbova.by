@@ -194,8 +194,12 @@ export function EntrepreneurDetailsForm({
 
   const handleSubmit = async (data: FormData) => {
     const addressFields = EntrepreneurAddressAdapter.toLegacyFields(address, addressSource);
+    const sanitized: Record<string, unknown> = { ...data };
+    for (const key of Object.keys(sanitized)) {
+      if (/_date$/.test(key) && sanitized[key] === "") sanitized[key] = null;
+    }
     await onSubmit({
-      ...data,
+      ...(sanitized as Partial<FormData>),
       ...addressFields,
       client_type: "entrepreneur",
     });
