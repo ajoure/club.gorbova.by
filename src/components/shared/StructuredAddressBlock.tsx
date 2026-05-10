@@ -294,12 +294,19 @@ export function StructuredAddressBlock({
         const details = await fetchPlaceDetails(prediction);
 
         if (details) {
-          const parsed = GooglePlacesAdapter.parseComponents(details.addressComponents as any[]);
+          const parsed = details.structuredAddress || GooglePlacesAdapter.parseComponents(details.addressComponents as any[]);
+          const currentStreetText = [
+            value.street,
+            value.house && (value.apartment ? `${value.house}-${value.apartment}` : value.house),
+          ].filter(Boolean).join(' ');
+          const typedParsed = parseStreetInput(currentStreetText || prediction.mainText || prediction.description.split(',')[0] || '');
           const merged: StructuredAddress = {
             ...emptyAddress(),
             building: value.building,
-            apartment: value.apartment,
             ...parsed,
+            street: typedParsed.street || parsed.street || value.street,
+            house: typedParsed.house || parsed.house || value.house,
+            apartment: typedParsed.apartment || parsed.apartment || value.apartment,
             google_place_id: details.placeId,
             lat: details.lat,
             lng: details.lng,
@@ -308,19 +315,17 @@ export function StructuredAddressBlock({
           // Apartment parser fallback: only if Google didn't provide apartment
           // and the description or street contains apartment-like patterns.
           // NOT used in GRP/UNP enrichment path (that sets address directly).
-          if (!merged.apartment && prediction.description) {
-            const streetForParse = merged.street
-              ? `${merged.street} ${merged.house || ''}`.trim()
-              : prediction.description;
+          if ((!merged.apartment || !merged.house) && prediction.description) {
+            const streetForParse = prediction.description.split(',')[0] || prediction.description;
             const parsed2 = parseStreetInput(streetForParse);
             if (parsed2.apartment) {
               merged.apartment = parsed2.apartment;
-              if (parsed2.house && !merged.house) {
-                merged.house = parsed2.house;
-              }
-              if (parsed2.street && !merged.street) {
-                merged.street = parsed2.street;
-              }
+            }
+            if (parsed2.house && !merged.house) {
+              merged.house = parsed2.house;
+            }
+            if (parsed2.street && !merged.street) {
+              merged.street = parsed2.street;
             }
           }
 
@@ -333,6 +338,14 @@ export function StructuredAddressBlock({
           // (route) selections. Reverse-geocode by lat/lng to fill the gap.
           if (!merged.postal_code && merged.lat != null && merged.lng != null) {
             const pc = await reverseGeocodePostalCode(merged.lat, merged.lng);
+            if (pc) merged.postal_code = pc;
+          }
+
+          if (!merged.postal_code) {
+            const pc = await geocodePostalCodeByAddress(
+              buildAutocompleteQuery(merged, 'house', merged.house || merged.street),
+              merged.country_code || countries?.[0]
+            );
             if (pc) merged.postal_code = pc;
           }
 
