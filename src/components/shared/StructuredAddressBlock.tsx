@@ -359,7 +359,7 @@ export function StructuredAddressBlock({
         isSelectingRef.current = false;
       }
     },
-    [fetchPlaceDetails, clearPredictions, onChange, value]
+    [fetchPlaceDetails, clearPredictions, onChange, value, countries]
   );
 
   const handleKeyDown = useCallback(
