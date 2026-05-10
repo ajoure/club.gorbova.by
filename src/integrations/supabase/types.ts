@@ -15906,6 +15906,14 @@ export type Database = {
         Args: { p_limit?: number; p_offset?: number; p_query: string }
         Returns: Json
       }
+      set_default_individual_requisites: {
+        Args: { p_id: string }
+        Returns: Json
+      }
+      set_default_legal_entity_requisites: {
+        Args: { p_id: string }
+        Returns: Json
+      }
       set_site_home_page: {
         Args: { p_domain: string; p_page_id: string }
         Returns: undefined
