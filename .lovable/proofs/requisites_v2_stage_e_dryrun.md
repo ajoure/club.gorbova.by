@@ -457,7 +457,7 @@ EXCEPTION`, ничего не сохраняется.
 ## 10. DoD dry-run E
 
 - [x] Подсчитаны фактические counts (см. §0).
-- [x] Карта FLD по трём scope'ам составлена (§1), новых FLD = 35,
+- [x] Карта FLD по трём scope'ам составлена (§1), новых FLD = 37,
       переиспользованных = 39, deprecated = 71.
 - [x] Resolver-map описан, cross-scope = блок (§3).
 - [x] Snapshot-map описан, scope_lock immutable (§4).
