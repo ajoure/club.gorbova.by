@@ -302,9 +302,11 @@ export function useRequisitesV2({ scope }: UseRequisitesV2Options) {
   // ========== DEFAULT MANAGEMENT ==========
 
   /**
-   * setDefault — atomically unset previous default in the same scope+subject_type
-   * and set the target row as default. Uniqueness is also enforced by partial
-   * unique indexes at DB level.
+   * setDefault — atomic default selection via SECURITY DEFINER RPC.
+   *
+   * Server function unsets previous default within the same
+   * (tenant, scope, subject_type) and sets the target row, all in one
+   * transaction, then writes a non-PII audit entry.
    */
   const setDefault = useMutation({
     mutationFn: async (input: {
@@ -312,29 +314,14 @@ export function useRequisitesV2({ scope }: UseRequisitesV2Options) {
       id: string;
       subject_type?: "legal_entity" | "entrepreneur";
     }) => {
-      const ctx = ensureCtx();
-
-      // 1) Unset previous default(s) in same scope (+subject_type for legal).
-      // We cast to `any` because the table name is dynamic and the typed
-      // builder cannot narrow both branches at once.
-      const fromAny = supabase.from(input.table as any) as any;
-      let unsetQ = fromAny
-        .update({ is_default: false, updated_by: ctx.userId })
-        .eq("tenant_id", ctx.tenantId)
-        .eq("scope", scope)
-        .eq("is_default", true)
-        .neq("id", input.id);
-      if (input.table === "legal_entities_requisites" && input.subject_type) {
-        unsetQ = unsetQ.eq("subject_type", input.subject_type);
-      }
-      const unsetRes = await unsetQ;
-      if (unsetRes.error) throw unsetRes.error;
-
-      // 2) Set target
-      const setRes = await (supabase.from(input.table as any) as any)
-        .update({ is_default: true, updated_by: ctx.userId })
-        .eq("id", input.id);
-      if (setRes.error) throw setRes.error;
+      ensureCtx();
+      const fn =
+        input.table === "legal_entities_requisites"
+          ? "set_default_legal_entity_requisites"
+          : "set_default_individual_requisites";
+      const { data, error } = await (supabase as any).rpc(fn, { p_id: input.id });
+      if (error) throw error;
+      return data;
     },
     onSuccess: () => {
       invalidate();
