@@ -10,6 +10,8 @@
  *   "Одинцова 19 кв 306"   → street=Одинцова, house=19, apartment=306
  *   "Одинцова 19 кв. 306"  → street=Одинцова, house=19, apartment=306
  *   "Одинцова 19, кв 306"  → street=Одинцова, house=19, apartment=306
+ *   "Одинцова 19 пом 306"  → street=Одинцова, house=19, apartment=306
+ *   "Одинцова 19 офис 306" → street=Одинцова, house=19, apartment=306
  *   "Одинцова 19"           → street=Одинцова, house=19
  *   "Одинцова"              → street=Одинцова (no change)
  *
@@ -35,7 +37,7 @@ export function parseStreetInput(input: string): ParsedStreetInput {
 
   // Pattern 1: "... 19 кв. 306" / "... 19, кв 306" / "... 19 кв 306"
   const kvMatch = trimmed.match(
-    /^(.+?)\s+(\d+[а-яА-Яa-zA-Z]?)\s*,?\s*кв\.?\s*(\d+)\s*$/
+    /^(.+?)\s+(\d+[а-яА-Яa-zA-Z]?)\s*,?\s*(?:кв\.?|квартира|пом\.?|помещение|оф\.?|офис)\s*([\wа-яА-Я-]+)\s*$/i
   );
   if (kvMatch) {
     return {
@@ -49,7 +51,7 @@ export function parseStreetInput(input: string): ParsedStreetInput {
   // Must ensure the dash is NOT part of the street name
   // Strategy: the number before dash must be preceded by whitespace (separating it from street name)
   const dashMatch = trimmed.match(
-    /^(.+?)\s+(\d+[а-яА-Яa-zA-Z]?)-(\d+)\s*$/
+    /^(.+?)\s+(\d+[а-яА-Яa-zA-Z]?)\s*[-–—]\s*([\wа-яА-Я]+)\s*$/
   );
   if (dashMatch) {
     return {
