@@ -1,6 +1,22 @@
 # Stage E — Dry-run report (add-only)
 
-**Статус:** DRY-RUN. Никаких миграций, INSERT/UPDATE/DELETE, изменений
+**Статус:** DRY-RUN (revision 2 — variant B applied). Никаких миграций, INSERT/UPDATE/DELETE, изменений
+
+> **Revision 2 (variant B).** Первая попытка execute была откачена STOP-guard'ом
+> (ожидал 35, нашёл 37 — арифметическая ошибка dry-run rev1).
+> Канон сверен с фактическим содержимым форм D.1 и таблицами:
+> Legal = **20** полей (16 базовых + 4 GRP read-only), Individual = **17**
+> полей (включая computed `passport_number_full` и shadow `address_structured`).
+> Итого новых `user_requisites` FLD = **37**. STOP-guards и текст ниже
+> соответствуют variant B.
+>
+> **JSONB-колонка.** Логическое поле «meta», упоминаемое ниже по тексту,
+> физически хранится в колонке `fields_registry.options jsonb`. Все SQL
+> ниже используют именно `options` (а «meta» — словесный синоним).
+>
+> **Терминология.** Используется `scope_lock` (snapshot_lock запрещён).
+>
+**(rev1 statement, sохраняется как историческая запись)** Никаких миграций, INSERT/UPDATE/DELETE, изменений
 resolver, fields_registry или старых таблиц **не выполнено**. Этот отчёт
 описывает план execute-этапа E и ожидаемые counts; execute запускается
 отдельным шагом только после явного approve.
@@ -95,7 +111,7 @@ Add-only действие: к существующим записям `fields_re
 
 | Поле формы D.1 | Канонический key | Тип |
 |---|---|---|
-| **Legal (ЮЛ/ИП), 19 полей** | | |
+| **Legal (ЮЛ/ИП), 20 полей (16 базовых + 4 GRP)** | | |
 | Полное наименование | `user_requisites.legal.name_full` | string |
 | Краткое наименование | `user_requisites.legal.name_short` | string |
 | Тип ЮЛ | `user_requisites.legal.entity_kind` | enum |
@@ -116,7 +132,7 @@ Add-only действие: к существующим записям `fields_re
 | GRP: дата регистрации | `user_requisites.legal.grp_registered_at` | date (RO) |
 | GRP: проверено | `user_requisites.legal.grp_verified_at` | datetime (RO) |
 | GRP: исходник | `user_requisites.legal.grp_source` | string (RO) |
-| **Individual (ФЛ), 16 полей** | | |
+| **Individual (ФЛ), 17 полей** | | |
 | Фамилия | `user_requisites.individual.last_name` | string |
 | Имя | `user_requisites.individual.first_name` | string |
 | Отчество | `user_requisites.individual.middle_name` | string |
@@ -135,9 +151,9 @@ Add-only действие: к существующим записям `fields_re
 | Email | `user_requisites.individual.email` | email |
 | Телефон | `user_requisites.individual.phone` | phone |
 
-Ожидаемые новые FLD: **19 + 16 = 35** записей в `fields_registry` с
-`entity_type='user_requisites'` и `meta.scope='user_requisites'`,
-`meta.subject_type ∈ {legal, individual}`.
+Ожидаемые новые FLD: **20 + 17 = 37** записей в `fields_registry` с
+`entity_type='user_requisites'` и `options.scope='user_requisites'`,
+`options.subject_type ∈ {legal, individual}`.
 
 ### 1.3. scope = `platform_executor` (исполнитель платформы)
 
@@ -145,18 +161,18 @@ Add-only действие: к существующим записям `fields_re
 
 Канонический `entity_type` — **существующий** `executor`
 (FLD-000103…FLD-000154, 15 записей). Add-only: добавляется
-`meta.scope='platform_executor'`. Resolver запрещает читать executor.*
+`options.scope='platform_executor'`. Resolver запрещает читать executor.*
 из `legal_entities_requisites` или `individual_requisites`.
 
 Ожидаемый count update: **15** записей получат
-`meta.scope='platform_executor'`. Новых FLD: **0**.
+`options.scope='platform_executor'`. Новых FLD: **0**.
 
 ### 1.4. Итоги по §1
 
-- Новых FLD создаётся: **35** (только `user_requisites.*`).
-- Существующих FLD получит `meta.scope`: **24 customer + 15 executor = 39**.
+- Новых FLD создаётся: **37** (только `user_requisites.*`).
+- Существующих FLD получит `options.scope`: **24 customer + 15 executor = 39**.
 - Старые `entity / entity_person / person / legal_details` (47+6+6+12 = 71)
-  **не трогаются** в этап E, помечаются `meta.deprecated_at` без архивации.
+  **не трогаются** в этап E, помечаются `options.deprecated_at` без архивации.
 
 ---
 
@@ -271,8 +287,8 @@ audit-only).
 | Группа | Источник entity_type | Ожидаемое число строк |
 |---|---|---|
 | Системный заказчик (платформа) | `customer`, `customer_signer` | 24 |
-| Реквизиты пользователя — ЮЛ/ИП | `user_requisites` (subject=legal) | 19 |
-| Реквизиты пользователя — ФЛ | `user_requisites` (subject=individual) | 16 |
+| Реквизиты пользователя — ЮЛ/ИП | `user_requisites` (subject=legal) | 20 |
+| Реквизиты пользователя — ФЛ | `user_requisites` (subject=individual) | 17 |
 | Исполнитель платформы | `executor` | 15 |
 | Документ / Сделка / Оффер / прочее | без изменений | 30+18+7+… |
 
@@ -329,14 +345,14 @@ user_requisites / customer / customer_signer». В строке `Settings`
 1. **Нет смешивания system_customer и user_requisites:**
    ```sql
    SELECT COUNT(*) FROM fields_registry
-   WHERE meta->>'scope' = 'system_customer'
+   WHERE options->>'scope' = 'system_customer'
      AND entity_type = 'user_requisites';
    -- expected: 0
    ```
 2. **platform_executor читается только из executors:**
    ```sql
    SELECT COUNT(*) FROM fields_registry
-   WHERE meta->>'scope' = 'platform_executor'
+   WHERE options->>'scope' = 'platform_executor'
      AND entity_type <> 'executor';
    -- expected: 0
    ```
@@ -363,7 +379,7 @@ user_requisites / customer / customer_signer». В строке `Settings`
 5. **Каталог без визуальных дублей:**
    ```sql
    SELECT label, COUNT(*) c FROM fields_registry
-   WHERE archived_at IS NULL AND (meta->>'deprecated_at') IS NULL
+   WHERE archived_at IS NULL AND (options->>'deprecated_at') IS NULL
    GROUP BY label HAVING COUNT(*) > 1;
    -- expected: 0 rows
    ```
@@ -396,22 +412,22 @@ user_requisites / customer / customer_signer». В строке `Settings`
 BEGIN;
 
 -- Step 1: scope=system_customer для customer + customer_signer (24 строки)
-UPDATE fields_registry SET meta = meta || jsonb_build_object('scope','system_customer')
+UPDATE fields_registry SET options = COALESCE(options,'{}'::jsonb) || jsonb_build_object('scope','system_customer')
 WHERE entity_type IN ('customer','customer_signer') AND archived_at IS NULL;
 -- guard: count = 24
 
 -- Step 2: scope=platform_executor для executor (15 строк)
-UPDATE fields_registry SET meta = meta || jsonb_build_object('scope','platform_executor')
+UPDATE fields_registry SET options = COALESCE(options,'{}'::jsonb) || jsonb_build_object('scope','platform_executor')
 WHERE entity_type = 'executor' AND archived_at IS NULL;
 -- guard: count = 15
 
--- Step 3: seed 35 новых FLD для user_requisites
-INSERT INTO fields_registry (entity_type, key, label, data_type, public_id, meta, ...)
-VALUES (... 35 rows ...);
--- guard: count = 35, все public_id уникальны
+-- Step 3: seed 37 новых FLD для user_requisites (Legal=20, Individual=17)
+INSERT INTO fields_registry (entity_type, key, label, data_type, options, ...)
+VALUES (... 37 rows ...);
+-- guard: count = 37, все public_id уникальны (генерируются триггером)
 
 -- Step 4: deprecate 71 legacy FLD
-UPDATE fields_registry SET meta = meta || jsonb_build_object(
+UPDATE fields_registry SET options = COALESCE(options,'{}'::jsonb) || jsonb_build_object(
   'deprecated_at', now()::text,
   'deprecated_reason', 'requisites_v2_stage_e',
   'replaced_by', '<map>'
@@ -419,15 +435,15 @@ UPDATE fields_registry SET meta = meta || jsonb_build_object(
 WHERE entity_type IN ('legal_details','entity','entity_person','person') AND archived_at IS NULL;
 -- guard: count = 71, archived_at = NULL во всех
 
--- Step 5: deploy edge function `document-field-resolver-v2` (add-only)
--- Step 6: расширить scope_lock в snapshot pipeline (только для новых генераций)
+-- Step 5: deploy edge function `document-field-resolver-v2` (add-only) — отдельный шаг E.2
+-- Step 6: расширить scope_lock в snapshot pipeline (только для новых генераций) — отдельный шаг E.2
 
 -- STOP-guards:
 DO $$ BEGIN
-  IF (SELECT COUNT(*) FROM fields_registry WHERE entity_type='user_requisites') <> 35 THEN RAISE EXCEPTION 'E.guard.1 user_requisites count mismatch'; END IF;
-  IF (SELECT COUNT(*) FROM fields_registry WHERE meta->>'scope'='system_customer') <> 24 THEN RAISE EXCEPTION 'E.guard.2 system_customer scope mismatch'; END IF;
-  IF (SELECT COUNT(*) FROM fields_registry WHERE meta->>'scope'='platform_executor') <> 15 THEN RAISE EXCEPTION 'E.guard.3 platform_executor scope mismatch'; END IF;
-  IF (SELECT COUNT(*) FROM fields_registry WHERE meta->>'deprecated_at' IS NOT NULL) <> 71 THEN RAISE EXCEPTION 'E.guard.4 deprecated count mismatch'; END IF;
+  IF (SELECT COUNT(*) FROM fields_registry WHERE options->>'scope'='system_customer') <> 24 THEN RAISE EXCEPTION 'E.guard.1 system_customer scope mismatch'; END IF;
+  IF (SELECT COUNT(*) FROM fields_registry WHERE options->>'scope'='platform_executor') <> 15 THEN RAISE EXCEPTION 'E.guard.2 platform_executor scope mismatch'; END IF;
+  IF (SELECT COUNT(*) FROM fields_registry WHERE entity_type='user_requisites') <> 37 THEN RAISE EXCEPTION 'E.guard.3 user_requisites count mismatch (expected 37)'; END IF;
+  IF (SELECT COUNT(*) FROM fields_registry WHERE options->>'deprecated_at' IS NOT NULL) <> 71 THEN RAISE EXCEPTION 'E.guard.4 deprecated count mismatch'; END IF;
 END $$;
 
 COMMIT;
@@ -441,7 +457,7 @@ EXCEPTION`, ничего не сохраняется.
 ## 10. DoD dry-run E
 
 - [x] Подсчитаны фактические counts (см. §0).
-- [x] Карта FLD по трём scope'ам составлена (§1), новых FLD = 35,
+- [x] Карта FLD по трём scope'ам составлена (§1), новых FLD = 37,
       переиспользованных = 39, deprecated = 71.
 - [x] Resolver-map описан, cross-scope = блок (§3).
 - [x] Snapshot-map описан, scope_lock immutable (§4).
