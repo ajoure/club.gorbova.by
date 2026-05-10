@@ -14,7 +14,7 @@
 
 import type { StructuredAddress } from './types';
 import { GooglePlacesAdapter } from './adapters/GooglePlacesAdapter';
-import { GOOGLE_PLACE_DETAIL_FIELDS, mapGooglePlaceDetails } from './googlePlaceDetails';
+import { GOOGLE_PLACE_DETAIL_FIELDS, mapGooglePlaceDetails, reverseGeocodePostalCode } from './googlePlaceDetails';
 import { formatFullAddress } from './utils';
 export interface EnrichmentResult {
   address: StructuredAddress;
@@ -190,6 +190,12 @@ export async function enrichAddressViaGoogle(
           lat: details.lat,
           lng: details.lng,
         };
+
+        // Postal-code fallback via reverse-geocode if Google didn't return one
+        if (!merged.postal_code && merged.lat != null && merged.lng != null) {
+          const pc = await reverseGeocodePostalCode(merged.lat, merged.lng);
+          if (pc) merged.postal_code = pc;
+        }
 
         return { address: merged, enriched: true };
       } catch (candidateErr) {
