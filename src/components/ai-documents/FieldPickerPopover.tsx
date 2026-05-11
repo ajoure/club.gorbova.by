@@ -46,6 +46,11 @@ interface Props {
   /** Если true — пропускает шаг «формат/падеж» и сразу отдаёт результат с null modifiers.
    *  Используется для messages-контекста (рассылки/email/telegram), где сериализуется legacy {{token_key}}. */
   simple?: boolean;
+  /** Если задан — токены вне этого набора показываются как disabled с подписью «Недоступно для сообщений».
+   *  null/undefined = все поддерживаются (DOCX-контекст). */
+  supportedTokenKeys?: Set<string> | null;
+  /** Подпись для disabled-токенов. По умолчанию: «Недоступно для сообщений». */
+  unsupportedLabel?: string;
 }
 
 export function FieldPickerPopover({
