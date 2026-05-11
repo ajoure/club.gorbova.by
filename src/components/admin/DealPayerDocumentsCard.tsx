@@ -24,7 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Loader2, UserCog, CreditCard, RefreshCw, FileType2, Wand2, AlertCircle } from "lucide-react";
+import { Loader2, UserCog, CreditCard, RefreshCw, Wand2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 import { useHasRoleV2 } from "@/hooks/useHasRoleV2";
