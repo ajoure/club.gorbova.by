@@ -56,10 +56,13 @@ Deno.serve(async (req) => {
     const userId = ud.user.id;
     const actorLabel = ud.user.email || ud.user.id;
 
-    const { data: roleRows } = await supabase
-      .from('user_roles_v2').select('roles!inner(code)').eq('user_id', userId);
-    const codes = (roleRows || []).map((r: any) => r.roles?.code);
-    const isAdmin = codes.includes('admin') || codes.includes('super_admin') || codes.includes('owner');
+    // Canonical RBAC via has_role_v2 (no manual user_roles_v2 walk).
+    const [adminRes, superRes, ownerRes] = await Promise.all([
+      supabase.rpc('has_role_v2', { _user_id: userId, _role_code: 'admin' }),
+      supabase.rpc('has_role_v2', { _user_id: userId, _role_code: 'super_admin' }),
+      supabase.rpc('has_role_v2', { _user_id: userId, _role_code: 'owner' }),
+    ]);
+    const isAdmin = adminRes.data === true || superRes.data === true || ownerRes.data === true;
     if (!isAdmin) return json({ error: 'forbidden' }, 403);
 
     const body = await req.json().catch(() => ({}));
@@ -158,8 +161,9 @@ Deno.serve(async (req) => {
       .eq('id', orderId);
     if (uErr) return json({ error: uErr.message }, 500);
 
-    // Server-side audit (JWT actor).
-    await supabase.from('audit_logs').insert(
+    // Server-side audit (JWT actor). If audit insert fails, surface 500 — the
+    // override is not considered successful without a traceability record.
+    const { error: auditErr } = await supabase.from('audit_logs').insert(
       auditEntries.map((a) => ({
         actor_user_id: userId,
         actor_type: 'user',
@@ -169,6 +173,7 @@ Deno.serve(async (req) => {
         meta: a.meta,
       })),
     );
+    if (auditErr) return json({ error: `audit_failed: ${auditErr.message}` }, 500);
 
     return json({
       ok: true,
