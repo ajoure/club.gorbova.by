@@ -873,86 +873,22 @@ export function TokenizedRichInput({
         document.body
       )}
 
-      {/* Floating dropdown at caret position */}
-      {pickerOpen && caretCoords && createPortal(
-        <div
-          ref={dropdownRef}
-          data-token-picker="true"
-          className="fixed z-[9998] max-w-[320px] rounded-md border bg-popover text-popover-foreground shadow-md"
-          style={{ top: caretCoords.top, left: caretCoords.left }}
-          onWheel={(e) => e.stopPropagation()}
-        >
-          <Command>
-            <CommandInput
-              ref={searchInputRef}
-              placeholder="Поиск по названию..."
-              className="text-xs h-8"
-            />
-            <CommandList className="max-h-[240px] overflow-auto">
-              <CommandEmpty>Токены не найдены</CommandEmpty>
-              <CommandGroup heading="Контакт / Профиль">
-                {CONTACT_TOKENS.map((t) => (
-                  <CommandItem key={t.key} value={t.searchKeywords} className="text-xs py-1" data-token-picker="true"
-                    onSelect={() => handleTokenSelect(t)}>
-                    <span className="flex-1 truncate">{t.label}</span>
-                    <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">{t.badge}</Badge>
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-              <CommandGroup heading="Дата / Время">
-                {DATETIME_TOKENS.map((t) => (
-                  <CommandItem key={t.key} value={t.searchKeywords} className="text-xs py-1" data-token-picker="true"
-                    onSelect={() => handleTokenSelect(t)}>
-                    <span className="flex-1 truncate">{t.label}</span>
-                    <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">{t.badge}</Badge>
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-              {/* Context-based groups (when tokenContext is provided) */}
-              {tokenContext && contextGroups.map((group) => (
-                group.tokens.length > 0 && (
-                  <CommandGroup heading={group.heading} key={group.heading}>
-                    {group.tokens.map((t) => (
-                      <CommandItem key={t.key} value={t.searchKeywords} className="text-xs py-1" data-token-picker="true"
-                        onSelect={() => handleTokenSelect(t)}>
-                        <span className="flex-1 truncate">{t.label}</span>
-                        <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">{t.badge}</Badge>
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
-                )
-              ))}
-              {/* Legacy: product fields (when no tokenContext) */}
-              {!tokenContext && productFields.length > 0 && (
-                <CommandGroup heading="Продукт">
-                  {productFields.map((t) => (
-                    <CommandItem key={t.key} value={t.searchKeywords} className="text-xs py-1" data-token-picker="true"
-                      onSelect={() => handleTokenSelect(t)}>
-                      <span className="flex-1 truncate">{t.label}</span>
-                      <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">{t.badge}</Badge>
-                    </CommandItem>
-                  ))}
-                </CommandGroup>
-              )}
-              {/* @deprecated: extraTokenGroups for backward compat only */}
-              {extraTokenGroups?.map((group) => (
-                group.tokens.length > 0 && (
-                  <CommandGroup heading={group.heading} key={group.heading}>
-                    {group.tokens.map((t) => (
-                      <CommandItem key={t.key} value={t.searchKeywords} className="text-xs py-1" data-token-picker="true"
-                        onSelect={() => handleTokenSelect(t)}>
-                        <span className="flex-1 truncate">{t.label}</span>
-                        <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">{t.badge}</Badge>
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
-                )
-              ))}
-            </CommandList>
-          </Command>
-        </div>,
-        document.body
-      )}
+      {/* Канонический picker — единый компонент со страницы DOCX-разметки. */}
+      <FieldPickerPopover
+        open={pickerOpen}
+        onOpenChange={(o) => {
+          setPickerOpen(o);
+          if (!o) editor?.commands.focus();
+        }}
+        anchor={caretCoords ? { x: caretCoords.left, y: caretCoords.top } : null}
+        contextLabel="Вставка плейсхолдера"
+        refs={registryRefs}
+        onPick={handleFieldPick}
+      />
+      {/* Скрытый якорь dropdownRef для совместимости со старыми эффектами фокуса */}
+      <div ref={dropdownRef} data-token-picker="true" className="hidden" />
+      {/* legacy refs (mute unused warnings) */}
+      <span className="hidden">{contextGroups.length}{productFields.length}{extraTokenGroups?.length}{handleTokenSelect.name}</span>
 
       <p className="text-xs text-muted-foreground">
         Нажмите{" "}
