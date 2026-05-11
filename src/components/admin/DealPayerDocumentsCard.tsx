@@ -325,7 +325,32 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
     }
   };
 
-  if (loading || !order) {
+  const generate = async () => {
+    if (!order || !effectiveTemplateId) return;
+    setGenerating(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("canonical-document-generate-strict", {
+        body: { mode: "generate", order_id: order.id, template_id: effectiveTemplateId },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+      toast.success("Документ создан");
+      const url = (data as any)?.download_url;
+      if (url) window.open(url, "_blank");
+      await load();
+    } catch (e: any) {
+      toast.error(`Создание документа: ${normalizeEdgeFunctionError(e, e?.context?.body ?? null)}`);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const downloadHistoryItem = async (h: HistoryDoc) => {
+    if (!h.file_path || !h.storage_bucket) { toast.error("Файл недоступен"); return; }
+    const { data, error } = await supabase.storage.from(h.storage_bucket).createSignedUrl(h.file_path, 3600);
+    if (error || !data?.signedUrl) { toast.error("Не удалось получить ссылку"); return; }
+    window.open(data.signedUrl, "_blank");
+  };
     return (
       <Card>
         <CardHeader className="pb-2">
