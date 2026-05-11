@@ -31,18 +31,13 @@ import Code from "@tiptap/extension-code";
 import Link from "@tiptap/extension-link";
 import TextAlign from "@tiptap/extension-text-align";
 import {
-  CONTACT_TOKENS,
-  DATETIME_TOKENS,
   loadProductFields,
   setProductFieldsCache,
   tokenStringToLabel,
   extractShortUuid,
   loadTokensForContext,
-  getTokenGroupsForContext,
-  type TokenDef,
   type TokenContext,
 } from "@/lib/tokens/tokenRegistry";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Bold as BoldIcon, Italic as ItalicIcon, Code as CodeIcon, Link as LinkIcon, AlignLeft, AlignCenter, AlignRight } from "lucide-react";
 import { cn } from "@/lib/utils";
