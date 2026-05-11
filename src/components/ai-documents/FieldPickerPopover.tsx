@@ -175,11 +175,16 @@ export function FieldPickerPopover({
                         <div>
                           {items.map((r) => {
                             const isSelected = currentFld === r.field_public_id;
+                            const isUnsupported = !!supportedTokenKeys && !supportedTokenKeys.has(r.token_key);
                             return (
                               <button
                                 key={r.field_public_id}
                                 type="button"
+                                disabled={isUnsupported}
+                                aria-disabled={isUnsupported}
+                                title={isUnsupported ? unsupportedLabel : undefined}
                                 onClick={() => {
+                                  if (isUnsupported) return;
                                   if (simple) {
                                     onPick({ fld: r.field_public_id, format: null, caseModifier: null, data_type: r.data_type ?? null });
                                   } else {
@@ -187,16 +192,25 @@ export function FieldPickerPopover({
                                   }
                                 }}
                                 className={cn(
-                                  "w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-accent/50 focus:bg-accent focus:outline-none",
-                                  isSelected && "bg-accent/40",
+                                  "w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 focus:outline-none",
+                                  isUnsupported
+                                    ? "opacity-50 cursor-not-allowed"
+                                    : "hover:bg-accent/50 focus:bg-accent",
+                                  isSelected && !isUnsupported && "bg-accent/40",
                                 )}
                               >
-                                <Check className={cn("h-3.5 w-3.5 shrink-0", isSelected ? "opacity-100 text-primary" : "opacity-0")} />
+                                <Check className={cn("h-3.5 w-3.5 shrink-0", isSelected && !isUnsupported ? "opacity-100 text-primary" : "opacity-0")} />
                                 <span className="font-mono text-[10px] text-muted-foreground shrink-0 w-[88px]">
                                   {r.field_public_id}
                                 </span>
                                 <span className="flex-1 truncate">{r.ui_label}</span>
-                                <span className="text-[10px] text-muted-foreground shrink-0">{r.data_type}</span>
+                                {isUnsupported ? (
+                                  <span className="text-[9px] uppercase tracking-wide text-muted-foreground bg-muted px-1.5 py-0.5 rounded shrink-0">
+                                    {unsupportedLabel}
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] text-muted-foreground shrink-0">{r.data_type}</span>
+                                )}
                               </button>
                             );
                           })}
