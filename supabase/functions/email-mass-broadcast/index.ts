@@ -55,13 +55,21 @@ function resolveContactTokens(
   const lastName = parts.slice(1).join(' ') || '';
 
   return text
+    // Legacy unprefixed
     .replace(/\{\{full_name\}\}/g, fullName)
     .replace(/\{\{first_name\}\}/g, firstName)
     .replace(/\{\{last_name\}\}/g, lastName)
     .replace(/\{\{name\}\}/g, fullName)
     .replace(/\{\{email\}\}/g, profile.email || '')
     .replace(/\{\{phone\}\}/g, profile.phone || '')
-    .replace(/\{\{telegram_username\}\}/g, profile.telegram_username || '');
+    .replace(/\{\{telegram_username\}\}/g, profile.telegram_username || '')
+    // Canonical prefixed (Sprint canonical picker)
+    .replace(/\{\{contact\.full_name\}\}/g, fullName)
+    .replace(/\{\{contact\.first_name\}\}/g, firstName)
+    .replace(/\{\{contact\.last_name\}\}/g, lastName)
+    .replace(/\{\{contact\.email\}\}/g, profile.email || '')
+    .replace(/\{\{contact\.phone\}\}/g, profile.phone || '')
+    .replace(/\{\{contact\.telegram_username\}\}/g, profile.telegram_username || '');
 }
 
 interface EmailAccount {
