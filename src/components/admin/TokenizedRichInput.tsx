@@ -333,8 +333,6 @@ export function TokenizedRichInput({
 }: TokenizedRichInputProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerOpenRef = useRef(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
   const isInternalUpdate = useRef(false);
   const [caretCoords, setCaretCoords] = useState<{ top: number; left: number } | null>(null);
   const editorRef = useRef<Editor | null>(null);
@@ -349,16 +347,18 @@ export function TokenizedRichInput({
 
   const closePicker = useCallback(() => setPickerOpen(false), []);
 
-  // Load token groups based on context (legacy caches: kept for tokenStringToLabel rendering of chips).
+  // Hydrate legacy label caches so existing chips render labels via tokenStringToLabel().
   const effectiveContext = tokenContext ?? "messages";
-  const { data: contextGroups = [] } = useQuery({
-    queryKey: ["token-context-groups", effectiveContext],
-    queryFn: async () => {
-      await loadTokensForContext(effectiveContext);
-      return getTokenGroupsForContext(effectiveContext);
-    },
-    staleTime: 60_000,
-  });
+  useEffect(() => { void loadTokensForContext(effectiveContext); }, [effectiveContext]);
+  useEffect(() => {
+    if (tokenContext) return;
+    let cancelled = false;
+    loadProductFields().then((fields) => { if (!cancelled) setProductFieldsCache(fields); });
+    return () => { cancelled = true; };
+  }, [tokenContext]);
+
+  // Suppress @deprecated extraTokenGroups (kept for API compat with existing call sites).
+  void extraTokenGroups;
 
   // Canonical registry refs — единый источник для FieldPickerPopover (тот же, что в DOCX-разметке).
   const { data: registryRefs = [] } = useQuery<RegistryFieldRef[]>({
@@ -366,21 +366,6 @@ export function TokenizedRichInput({
     queryFn: loadRegistryRefs,
     staleTime: 60_000,
   });
-
-  // For backward compat: also load product fields when no tokenContext (legacy path)
-  const { data: productFields = [] } = useQuery({
-    queryKey: ["token-registry-product-fields"],
-    queryFn: loadProductFields,
-    staleTime: 60_000,
-    enabled: !tokenContext,
-  });
-
-  // Update cache when product fields load (legacy path)
-  useEffect(() => {
-    if (!tokenContext) {
-      setProductFieldsCache(productFields);
-    }
-  }, [productFields, tokenContext]);
 
   // Build extensions list
   const extensions = useMemo(() => {
