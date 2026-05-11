@@ -55,6 +55,7 @@ interface Props {
 
 export function FieldPickerPopover({
   open, onOpenChange, anchor, contextLabel, currentFld, refs, onPick, simple = false,
+  supportedTokenKeys = null, unsupportedLabel = "Недоступно для сообщений",
 }: Props) {
   const [query, setQuery] = useState("");
   const [pickedField, setPickedField] = useState<RegistryFieldRef | null>(null);
