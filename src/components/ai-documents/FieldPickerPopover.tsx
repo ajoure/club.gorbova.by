@@ -43,10 +43,13 @@ interface Props {
   currentFld?: string | null;
   refs: RegistryFieldRef[];
   onPick: (result: FieldPickerResult) => void;
+  /** Если true — пропускает шаг «формат/падеж» и сразу отдаёт результат с null modifiers.
+   *  Используется для messages-контекста (рассылки/email/telegram), где сериализуется legacy {{token_key}}. */
+  simple?: boolean;
 }
 
 export function FieldPickerPopover({
-  open, onOpenChange, anchor, contextLabel, currentFld, refs, onPick,
+  open, onOpenChange, anchor, contextLabel, currentFld, refs, onPick, simple = false,
 }: Props) {
   const [query, setQuery] = useState("");
   const [pickedField, setPickedField] = useState<RegistryFieldRef | null>(null);
@@ -95,6 +98,12 @@ export function FieldPickerPopover({
         avoidCollisions
         collisionPadding={16}
         sticky="always"
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        onInteractOutside={(e) => {
+          // Не закрывать picker, если клик/фокус ушёл обратно в редактор-источник.
+          const t = e.target as HTMLElement | null;
+          if (t?.closest?.('.ProseMirror') || t?.closest?.('[contenteditable="true"]')) e.preventDefault();
+        }}
         onWheelCapture={(e) => e.stopPropagation()}
         className="docx-field-picker-popover p-0 bg-popover border shadow-lg z-[100] overflow-hidden"
       >
@@ -164,7 +173,13 @@ export function FieldPickerPopover({
                               <button
                                 key={r.field_public_id}
                                 type="button"
-                                onClick={() => setPickedField(r)}
+                                onClick={() => {
+                                  if (simple) {
+                                    onPick({ fld: r.field_public_id, format: null, caseModifier: null, data_type: r.data_type ?? null });
+                                  } else {
+                                    setPickedField(r);
+                                  }
+                                }}
                                 className={cn(
                                   "w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-accent/50 focus:bg-accent focus:outline-none",
                                   isSelected && "bg-accent/40",

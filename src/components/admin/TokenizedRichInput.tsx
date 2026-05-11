@@ -31,18 +31,13 @@ import Code from "@tiptap/extension-code";
 import Link from "@tiptap/extension-link";
 import TextAlign from "@tiptap/extension-text-align";
 import {
-  CONTACT_TOKENS,
-  DATETIME_TOKENS,
   loadProductFields,
   setProductFieldsCache,
   tokenStringToLabel,
   extractShortUuid,
   loadTokensForContext,
-  getTokenGroupsForContext,
-  type TokenDef,
   type TokenContext,
 } from "@/lib/tokens/tokenRegistry";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Bold as BoldIcon, Italic as ItalicIcon, Code as CodeIcon, Link as LinkIcon, AlignLeft, AlignCenter, AlignRight } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -338,8 +333,6 @@ export function TokenizedRichInput({
 }: TokenizedRichInputProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerOpenRef = useRef(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
   const isInternalUpdate = useRef(false);
   const [caretCoords, setCaretCoords] = useState<{ top: number; left: number } | null>(null);
   const editorRef = useRef<Editor | null>(null);
@@ -354,16 +347,18 @@ export function TokenizedRichInput({
 
   const closePicker = useCallback(() => setPickerOpen(false), []);
 
-  // Load token groups based on context (legacy caches: kept for tokenStringToLabel rendering of chips).
+  // Hydrate legacy label caches so existing chips render labels via tokenStringToLabel().
   const effectiveContext = tokenContext ?? "messages";
-  const { data: contextGroups = [] } = useQuery({
-    queryKey: ["token-context-groups", effectiveContext],
-    queryFn: async () => {
-      await loadTokensForContext(effectiveContext);
-      return getTokenGroupsForContext(effectiveContext);
-    },
-    staleTime: 60_000,
-  });
+  useEffect(() => { void loadTokensForContext(effectiveContext); }, [effectiveContext]);
+  useEffect(() => {
+    if (tokenContext) return;
+    let cancelled = false;
+    loadProductFields().then((fields) => { if (!cancelled) setProductFieldsCache(fields); });
+    return () => { cancelled = true; };
+  }, [tokenContext]);
+
+  // Suppress @deprecated extraTokenGroups (kept for API compat with existing call sites).
+  void extraTokenGroups;
 
   // Canonical registry refs — единый источник для FieldPickerPopover (тот же, что в DOCX-разметке).
   const { data: registryRefs = [] } = useQuery<RegistryFieldRef[]>({
@@ -371,21 +366,6 @@ export function TokenizedRichInput({
     queryFn: loadRegistryRefs,
     staleTime: 60_000,
   });
-
-  // For backward compat: also load product fields when no tokenContext (legacy path)
-  const { data: productFields = [] } = useQuery({
-    queryKey: ["token-registry-product-fields"],
-    queryFn: loadProductFields,
-    staleTime: 60_000,
-    enabled: !tokenContext,
-  });
-
-  // Update cache when product fields load (legacy path)
-  useEffect(() => {
-    if (!tokenContext) {
-      setProductFieldsCache(productFields);
-    }
-  }, [productFields, tokenContext]);
 
   // Build extensions list
   const extensions = useMemo(() => {
@@ -464,10 +444,9 @@ export function TokenizedRichInput({
       const pos = ed.state.selection.from;
       const coords = ed.view.coordsAtPos(pos);
       const { offsetX, offsetY, vw, vh } = getViewportOffsets();
-      // Dropdown dimensions (real or fallback)
-      const ddRect = dropdownRef.current?.getBoundingClientRect();
-      const ddH = ddRect?.height || 280;
-      const ddW = ddRect?.width || 320;
+      // Picker dimensions (fixed fallback — picker сам позиционируется через Radix Popover).
+      const ddH = 280;
+      const ddW = 320;
       // Position below caret, flip above if no space
       const topBelow = coords.bottom + 6 + offsetY;
       const topAbove = coords.top - ddH - 6 + offsetY;
@@ -540,7 +519,6 @@ export function TokenizedRichInput({
         setPickerOpen(true);
         requestAnimationFrame(() => {
           updateCaretCoords();
-          searchInputRef.current?.focus();
         });
       },
       () => {
@@ -583,23 +561,8 @@ export function TokenizedRichInput({
     }
   }, [value, editor, singleLine]);
 
-  // Handle token selection from picker (legacy TokenDef path — kept for safety)
-  const handleTokenSelect = useCallback(
-    (tokenDef: TokenDef) => {
-      if (!editor) return;
-      editor
-        .chain()
-        .focus()
-        .insertContent({
-          type: "token",
-          attrs: { tokenString: tokenDef.tokenString },
-        })
-        .insertContent(" ")
-        .run();
-      setPickerOpen(false);
-    },
-    [editor]
-  );
+  // legacy handleTokenSelect удалён — единый путь handleFieldPick.
+
 
   // Канонический путь: FieldPickerPopover → token_key → {{token_key}} (legacy SoT, совместим с резолверами).
   const handleFieldPick = useCallback(
@@ -623,45 +586,8 @@ export function TokenizedRichInput({
     [editor, registryRefs]
   );
 
-  // Close picker when focus leaves both editor and dropdown
-  useEffect(() => {
-    if (!editor) return;
-    const handler = () => {
-      setTimeout(() => {
-        const active = document.activeElement;
-        if (dropdownRef.current?.contains(active)) return;
-        // Check if focus went to search input inside dropdown (may mount after blur fires)
-        if ((active as HTMLElement)?.closest?.('[data-token-picker]')) return;
-        // Check cmdk elements (used by token picker Command)
-        if ((active as HTMLElement)?.closest?.('[cmdk-item]') || (active as HTMLElement)?.closest?.('[cmdk-list]') || (active as HTMLElement)?.closest?.('[cmdk-input]') || (active as HTMLElement)?.closest?.('[cmdk-root]')) return;
-        // Extra safety: re-check after another tick in case portal mount is delayed
-        setTimeout(() => {
-          const activeAfter = document.activeElement;
-          if (dropdownRef.current?.contains(activeAfter)) return;
-          if ((activeAfter as HTMLElement)?.closest?.('[data-token-picker]')) return;
-          if ((activeAfter as HTMLElement)?.closest?.('[cmdk-item]') || (activeAfter as HTMLElement)?.closest?.('[cmdk-list]') || (activeAfter as HTMLElement)?.closest?.('[cmdk-input]') || (activeAfter as HTMLElement)?.closest?.('[cmdk-root]')) return;
-          if (!editor.isFocused && pickerOpenRef.current) {
-            setPickerOpen(false);
-          }
-        }, 100);
-      }, 300);
-    };
-    editor.on("blur", handler);
-    return () => { editor.off("blur", handler); };
-  }, [editor]);
-
-  // Click-outside handler
-  useEffect(() => {
-    if (!pickerOpen) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as globalThis.Node;
-      if (dropdownRef.current?.contains(target as globalThis.Node)) return;
-      if (editor && editor.view.dom.contains(target as globalThis.Node)) return;
-      setPickerOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [pickerOpen, editor]);
+  // Закрытие picker по фокусу/клику вне обрабатывает Radix Popover внутри FieldPickerPopover.
+  // Дублировать здесь нельзя: autofocus инпута picker'а вызывает blur редактора и моментально закрывал picker.
 
   // Esc key closes dropdown and returns focus
   useEffect(() => {
@@ -884,11 +810,9 @@ export function TokenizedRichInput({
         contextLabel="Вставка плейсхолдера"
         refs={registryRefs}
         onPick={handleFieldPick}
+        simple
       />
-      {/* Скрытый якорь dropdownRef для совместимости со старыми эффектами фокуса */}
-      <div ref={dropdownRef} data-token-picker="true" className="hidden" />
-      {/* legacy refs (mute unused warnings) */}
-      <span className="hidden">{contextGroups.length}{productFields.length}{extraTokenGroups?.length}{handleTokenSelect.name}</span>
+
 
       <p className="text-xs text-muted-foreground">
         Нажмите{" "}
