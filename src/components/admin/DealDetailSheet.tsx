@@ -65,6 +65,7 @@ import { EditDealDialog } from "./EditDealDialog";
 import { LinkPaymentDialog } from "./payments/LinkPaymentDialog";
 import { GrantAccessFromDealDialog } from "./GrantAccessFromDealDialog";
 import { DealDocumentsCard } from "./DealDocumentsCard";
+import { DealPayerDocumentsCard } from "./DealPayerDocumentsCard";
 
 interface DealDetailSheetProps {
   deal: any | null;
@@ -1150,6 +1151,8 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
             </Card>
 
             {/* Documents (Sprint 10) */}
+            <DealPayerDocumentsCard orderId={deal.id} />
+
             <DealDocumentsCard
               orderId={deal.id}
               documentData={(deal.meta as any)?.document_data || null}
