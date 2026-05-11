@@ -519,7 +519,6 @@ export function TokenizedRichInput({
         setPickerOpen(true);
         requestAnimationFrame(() => {
           updateCaretCoords();
-          searchInputRef.current?.focus();
         });
       },
       () => {
