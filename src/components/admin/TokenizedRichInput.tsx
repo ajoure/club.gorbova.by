@@ -444,10 +444,9 @@ export function TokenizedRichInput({
       const pos = ed.state.selection.from;
       const coords = ed.view.coordsAtPos(pos);
       const { offsetX, offsetY, vw, vh } = getViewportOffsets();
-      // Dropdown dimensions (real or fallback)
-      const ddRect = dropdownRef.current?.getBoundingClientRect();
-      const ddH = ddRect?.height || 280;
-      const ddW = ddRect?.width || 320;
+      // Picker dimensions (fixed fallback — picker сам позиционируется через Radix Popover).
+      const ddH = 280;
+      const ddW = 320;
       // Position below caret, flip above if no space
       const topBelow = coords.bottom + 6 + offsetY;
       const topAbove = coords.top - ddH - 6 + offsetY;
