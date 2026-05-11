@@ -15330,6 +15330,18 @@ export type Database = {
         }[]
       }
       get_db_now: { Args: never; Returns: string }
+      get_deal_requisites_status: {
+        Args: { p_order_id: string }
+        Returns: {
+          executor_override: string
+          has_required_full_name: boolean
+          order_id: string
+          payer_type: string
+          payer_type_source: string
+          requisites_status: string
+          template_override: string
+        }[]
+      }
       get_deal_tab_counts: {
         Args: {
           p_date_from?: string
@@ -15396,6 +15408,15 @@ export type Database = {
           metadata: Json
           user_id: string
           visibility_scope: string
+        }[]
+      }
+      get_my_requisites_status: {
+        Args: never
+        Returns: {
+          has_required_full_name: boolean
+          order_id: string
+          payer_type: string
+          requisites_status: string
         }[]
       }
       get_next_document_number: {
