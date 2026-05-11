@@ -64,12 +64,19 @@ function derivePaymentChannel(p: PaymentRow | null): string | null {
 }
 
 function reqLabel(r: ReqRow): string {
-  const d = r.data || {};
-  return (
-    d.short_name || d.full_name || d.name || d.fio ||
-    `${d.last_name || ""} ${d.first_name || ""}`.trim() ||
-    r.id.slice(0, 8)
-  );
+  const d = (r.data || {}) as any;
+  // Физлицо
+  const ind =
+    d.ind_full_name ||
+    [d.ind_last_name, d.ind_first_name, d.ind_middle_name].filter(Boolean).join(" ").trim();
+  // Юрлицо / ИП
+  const leg =
+    d.leg_short_name || d.leg_name ||
+    d.ent_short_name || d.ent_name ||
+    d.grp_short_name || d.grp_full_name;
+  // Универсальные
+  const generic = d.short_name || d.full_name || d.name || d.fio;
+  return ind || leg || generic || `Карточка ${r.id.slice(0, 8)}`;
 }
 
 interface ResolvedScenario {
