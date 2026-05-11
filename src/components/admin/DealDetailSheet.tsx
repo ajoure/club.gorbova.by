@@ -1149,13 +1149,8 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
               </CardContent>
             </Card>
 
-            {/* Documents (Sprint 10) */}
+            {/* Documents — единая карточка */}
             <DealPayerDocumentsCard orderId={deal.id} />
-
-            <DealDocumentsCard
-              orderId={deal.id}
-              documentData={(deal.meta as any)?.document_data || null}
-            />
 
             {/* Audit */}
             <Card>
