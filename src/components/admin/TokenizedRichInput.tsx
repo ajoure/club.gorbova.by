@@ -811,10 +811,7 @@ export function TokenizedRichInput({
         refs={registryRefs}
         onPick={handleFieldPick}
       />
-      {/* Скрытый якорь dropdownRef для совместимости со старыми эффектами фокуса */}
-      <div ref={dropdownRef} data-token-picker="true" className="hidden" />
-      {/* legacy refs (mute unused warnings) */}
-      <span className="hidden">{contextGroups.length}{productFields.length}{extraTokenGroups?.length}{handleTokenSelect.name}</span>
+
 
       <p className="text-xs text-muted-foreground">
         Нажмите{" "}
