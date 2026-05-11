@@ -1,20 +1,12 @@
 /**
- * DealPayerDocumentsCard
- * ----------------------
- * Document-level admin overrides for an order:
- *  - payer_type (individual | legal_entity), with auto vs admin_override badge;
- *  - payer entity (individual_requisites / legal_entities_requisites);
- *  - document template override;
- *  - executor override.
+ * DealPayerDocumentsCard — единая карточка «Документы / плательщик».
  *
- * Read-only display of:
- *  - canonical successful payment (payment_channel + brand/last4) — derived
- *    client-side, NEVER mutated.
+ * SOT источников для авто-значений (шаблон / исполнитель / тип плательщика):
+ *   1) tariff_offers.meta.document_scenarios[]  — сценарий по способу оплаты + типу плательщика
+ *   2) tariff_offers.meta.document_defaults     — fallback (legacy)
  *
- * STOP-guards (mirrored from edge function):
- *  - never touches payments_v2;
- *  - admin override only — does NOT change real payment channel;
- *  - all writes go through `canonical-deal-document-overrides` (JWT actor + audit).
+ * Ручные изменения админа пишутся ТОЛЬКО в orders_v2.meta.documents.* через
+ * canonical-deal-document-overrides (JWT actor + audit). payments_v2 не трогается.
  */
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -24,7 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Loader2, UserCog, CreditCard, RefreshCw, Wand2, AlertCircle } from "lucide-react";
+import { Loader2, UserCog, CreditCard, RefreshCw, AlertCircle, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 import { useHasRoleV2 } from "@/hooks/useHasRoleV2";
@@ -36,19 +28,15 @@ type PayerType = "individual" | "legal_entity";
 interface OrderRow {
   id: string;
   user_id: string | null;
+  offer_id: string | null;
   payer_type: PayerType | string;
   meta: any;
 }
 interface PaymentRow {
-  id: string;
-  status: string;
-  card_brand: string | null;
-  card_last4: string | null;
-  card_holder: string | null;
-  paid_at: string | null;
-  created_at: string;
-  meta: any;
-  provider: string | null;
+  id: string; status: string;
+  card_brand: string | null; card_last4: string | null; card_holder: string | null;
+  paid_at: string | null; created_at: string;
+  meta: any; provider: string | null;
 }
 interface ReqRow { id: string; data: any; is_default: boolean | null; }
 interface TemplateRow { id: string; name: string; }
@@ -84,21 +72,62 @@ function reqLabel(r: ReqRow): string {
   );
 }
 
+interface ResolvedScenario {
+  source: "scenario" | "defaults" | "none";
+  payer_type: PayerType | null;
+  template_id: string | null;
+  executor_id: string | null;
+}
+
+function resolveScenario(offerMeta: any, channel: string | null): ResolvedScenario {
+  const scenarios: any[] = Array.isArray(offerMeta?.document_scenarios) ? offerMeta.document_scenarios : [];
+  if (channel && scenarios.length > 0) {
+    const match = scenarios.find((s) => {
+      const methods: string[] = Array.isArray(s?.payment_methods) ? s.payment_methods : [];
+      return methods.length === 0 || methods.includes(channel);
+    });
+    if (match) {
+      return {
+        source: "scenario",
+        payer_type: (match.payer_type as PayerType) || null,
+        template_id: match.template_id || null,
+        executor_id: match.executor_id || null,
+      };
+    }
+  }
+  const defs = offerMeta?.document_defaults;
+  if (defs && (defs.template_id || defs.executor_id)) {
+    return {
+      source: "defaults",
+      payer_type: (defs.payer_type as PayerType) || null,
+      template_id: defs.template_id || null,
+      executor_id: defs.executor_id || null,
+    };
+  }
+  return { source: "none", payer_type: null, template_id: null, executor_id: null };
+}
+
+function sourceLabel(s: ResolvedScenario["source"]): string {
+  if (s === "scenario") return "По сценарию кнопки";
+  if (s === "defaults") return "По умолчанию";
+  return "Источник не задан";
+}
+
 export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [order, setOrder] = useState<OrderRow | null>(null);
   const [payment, setPayment] = useState<PaymentRow | null>(null);
+  const [offerMeta, setOfferMeta] = useState<any>(null);
   const [individuals, setIndividuals] = useState<ReqRow[]>([]);
   const [legalEntities, setLegalEntities] = useState<ReqRow[]>([]);
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
   const [executors, setExecutors] = useState<ExecutorRow[]>([]);
 
-  // pending edits
   const [edPayerType, setEdPayerType] = useState<PayerType | null>(null);
-  const [edEntityKey, setEdEntityKey] = useState<string | null>(null); // "auto" | "{kind}:{id}"
-  const [edTemplate, setEdTemplate] = useState<string | null>(null); // "auto" | uuid
-  const [edExecutor, setEdExecutor] = useState<string | null>(null); // "auto" | uuid
+  const [edEntityKey, setEdEntityKey] = useState<string | null>(null);
+  const [edTemplate, setEdTemplate] = useState<string | null>(null);
+  const [edExecutor, setEdExecutor] = useState<string | null>(null);
 
   const { hasRole: isAdmin } = useHasRoleV2("admin");
   const { hasRole: isSuper } = useHasRoleV2("super_admin");
@@ -108,12 +137,13 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
     setLoading(true);
     const { data: o } = await supabase
       .from("orders_v2")
-      .select("id, user_id, payer_type, meta")
+      .select("id, user_id, offer_id, payer_type, meta")
       .eq("id", orderId)
       .maybeSingle();
     setOrder(o as OrderRow | null);
 
-    const [{ data: pays }, { data: tmpls }, { data: execs }] = await Promise.all([
+    const offerId = (o as any)?.offer_id || null;
+    const [{ data: pays }, { data: tmpls }, { data: execs }, offerRes] = await Promise.all([
       supabase.from("payments_v2")
         .select("id, status, card_brand, card_last4, card_holder, paid_at, created_at, meta, provider")
         .eq("order_id", orderId)
@@ -125,11 +155,15 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
         .eq("template_status", "active")
         .order("name"),
       supabase.from("executors").select("id, full_name, short_name").order("full_name"),
+      offerId
+        ? supabase.from("tariff_offers").select("meta").eq("id", offerId).maybeSingle()
+        : Promise.resolve({ data: null }),
     ]);
     const succ = (pays || []).find((p: any) => SUCCEEDED.has(p.status)) || null;
     setPayment(succ as PaymentRow | null);
     setTemplates((tmpls || []) as TemplateRow[]);
     setExecutors((execs || []) as ExecutorRow[]);
+    setOfferMeta((offerRes as any)?.data?.meta || null);
 
     const userId = (o as any)?.user_id;
     if (userId) {
@@ -158,17 +192,17 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
   const templateOverride: string | null = documents.template_override || null;
   const executorOverride: string | null = documents.executor_override || null;
 
-  // initialise edits from current state when order loads
+  const channel = useMemo(() => derivePaymentChannel(payment), [payment]);
+  const resolved = useMemo(() => resolveScenario(offerMeta, channel), [offerMeta, channel]);
+
   useEffect(() => {
     if (!order) return;
-    setEdPayerType((order.payer_type as PayerType) || "individual");
+    setEdPayerType((order.payer_type as PayerType) || resolved.payer_type || "individual");
     setEdEntityKey(payerEntityOverride ? `${payerEntityOverride.kind}:${payerEntityOverride.id}` : "auto");
     setEdTemplate(templateOverride || "auto");
     setEdExecutor(executorOverride || "auto");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [order?.id]);
-
-  const channel = useMemo(() => derivePaymentChannel(payment), [payment]);
 
   const dirty = useMemo(() => {
     if (!order) return false;
@@ -179,6 +213,32 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
     if ((edExecutor || "auto") !== (executorOverride || "auto")) return true;
     return false;
   }, [order, edPayerType, edEntityKey, edTemplate, edExecutor, payerEntityOverride, templateOverride, executorOverride]);
+
+  const hasManualOverrides = !!(payerEntityOverride || templateOverride || executorOverride || payerTypeSource === "admin_override");
+
+  const effectiveTemplateId = templateOverride || resolved.template_id;
+  const effectiveExecutorId = executorOverride || resolved.executor_id;
+  const effectivePayerType: PayerType = (order?.payer_type as PayerType) || resolved.payer_type || "individual";
+
+  // Статус
+  const statusItems = useMemo(() => {
+    const items: { kind: "ok" | "warn" | "err"; text: string }[] = [];
+    if (!effectiveTemplateId) {
+      items.push({ kind: "err", text: "Документ не может быть сформирован — не выбран шаблон" });
+    }
+    if (!effectiveExecutorId) {
+      items.push({ kind: "err", text: "Документ не может быть сформирован — не выбран исполнитель" });
+    }
+    // Реквизиты
+    const list = effectivePayerType === "legal_entity" ? legalEntities : individuals;
+    const hasRequisites = list.length > 0;
+    if (!hasRequisites) {
+      items.push({ kind: "err", text: "Не заполнены обязательные реквизиты" });
+    } else if (items.length === 0) {
+      items.push({ kind: "ok", text: "Реквизиты заполнены" });
+    }
+    return items;
+  }, [effectiveTemplateId, effectiveExecutorId, effectivePayerType, individuals, legalEntities]);
 
   const save = async () => {
     if (!order || !canEdit) return;
@@ -207,7 +267,7 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
       });
       if (error) throw error;
       if ((data as any)?.error) throw new Error((data as any).error);
-      toast.success(`Сохранено (${(data as any).audit_count} запис(ей) в audit)`);
+      toast.success("Изменения сохранены");
       await load();
     } catch (e: any) {
       toast.error(`Сохранение: ${normalizeEdgeFunctionError(e, e?.context?.body ?? null)}`);
@@ -216,16 +276,24 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
     }
   };
 
-  const clearPayerOverride = async () => {
+  const resetAll = async () => {
     if (!order || !canEdit) return;
     setSaving(true);
     try {
       const { data, error } = await supabase.functions.invoke("canonical-deal-document-overrides", {
-        body: { order_id: order.id, changes: {}, clear_payer_override: true },
+        body: {
+          order_id: order.id,
+          changes: {
+            payer_entity_override: null,
+            template_override: null,
+            executor_override: null,
+          },
+          clear_payer_override: true,
+        },
       });
       if (error) throw error;
       if ((data as any)?.error) throw new Error((data as any).error);
-      toast.success("Тип плательщика возвращён в auto");
+      toast.success("Ручные изменения сброшены");
       await load();
     } catch (e: any) {
       toast.error(`Сброс: ${normalizeEdgeFunctionError(e, e?.context?.body ?? null)}`);
@@ -249,9 +317,22 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
     );
   }
 
-  const channelLabel = channel ? PAYMENT_LABEL[channel] || channel : "—";
+  const channelLabel = channel ? PAYMENT_LABEL[channel] || "Иное" : "—";
   const cardSuffix =
     payment?.card_last4 ? `•••• ${payment.card_last4}${payment.card_brand ? ` ${payment.card_brand}` : ""}` : null;
+
+  const payerSourceBadge = payerTypeSource === "admin_override"
+    ? "Изменено вручную администратором"
+    : "Определено автоматически";
+  const templateSourceBadge = templateOverride
+    ? "Изменено вручную администратором"
+    : sourceLabel(resolved.source);
+  const executorSourceBadge = executorOverride
+    ? "Изменено вручную администратором"
+    : sourceLabel(resolved.source);
+  const entitySourceBadge = payerEntityOverride
+    ? "Изменено вручную администратором"
+    : "По умолчанию";
 
   return (
     <Card>
@@ -261,28 +342,27 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Payment (read-only) */}
+        {/* Способ оплаты — read-only */}
         <div className="flex items-center gap-2 flex-wrap text-sm">
           <CreditCard className="h-4 w-4 text-muted-foreground" />
           <span className="text-muted-foreground">Способ оплаты:</span>
           <Badge variant="outline">{channelLabel}</Badge>
           {cardSuffix && <span className="text-xs text-muted-foreground">{cardSuffix}</span>}
           {payment?.card_holder && <span className="text-xs text-muted-foreground">· {payment.card_holder}</span>}
-          {!payment && <span className="text-xs text-amber-600 flex items-center gap-1"><AlertCircle className="h-3 w-3" /> Успешного платежа нет</span>}
+          {!payment && (
+            <span className="text-xs text-amber-600 flex items-center gap-1">
+              <AlertCircle className="h-3 w-3" /> Успешного платежа нет
+            </span>
+          )}
         </div>
 
-        {/* Payer type */}
+        {/* Тип плательщика */}
         <div className="space-y-1.5">
           <div className="flex items-center gap-2 text-sm">
             <span className="font-medium">Тип плательщика</span>
             <Badge variant={payerTypeSource === "admin_override" ? "default" : "outline"} className="text-[10px]">
-              {payerTypeSource === "admin_override" ? "admin override" : "auto"}
+              {payerSourceBadge}
             </Badge>
-            {payerTypeSource === "admin_override" && canEdit && (
-              <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={clearPayerOverride} disabled={saving}>
-                <RefreshCw className="h-3 w-3 mr-1" /> Сбросить в auto
-              </Button>
-            )}
           </div>
           <Select
             value={edPayerType || "individual"}
@@ -297,9 +377,14 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
           </Select>
         </div>
 
-        {/* Payer entity */}
+        {/* Карточка реквизитов плательщика */}
         <div className="space-y-1.5">
-          <div className="text-sm font-medium">Карточка реквизитов плательщика</div>
+          <div className="flex items-center gap-2 text-sm">
+            <span className="font-medium">Карточка реквизитов плательщика</span>
+            <Badge variant={payerEntityOverride ? "default" : "outline"} className="text-[10px]">
+              {entitySourceBadge}
+            </Badge>
+          </div>
           <Select
             value={edEntityKey || "auto"}
             onValueChange={(v) => setEdEntityKey(v)}
@@ -307,13 +392,13 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
           >
             <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="auto">По умолчанию (default карточка пользователя)</SelectItem>
+              <SelectItem value="auto">По умолчанию (карточка пользователя)</SelectItem>
               {individuals.length > 0 && (
                 <>
                   <div className="px-2 pt-1 text-[10px] uppercase text-muted-foreground">Физлицо</div>
                   {individuals.map((r) => (
                     <SelectItem key={`ind-${r.id}`} value={`individual:${r.id}`}>
-                      {reqLabel(r)}{r.is_default ? " · default" : ""}
+                      {reqLabel(r)}{r.is_default ? " · по умолчанию" : ""}
                     </SelectItem>
                   ))}
                 </>
@@ -323,7 +408,7 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
                   <div className="px-2 pt-1 text-[10px] uppercase text-muted-foreground">Юрлицо</div>
                   {legalEntities.map((r) => (
                     <SelectItem key={`le-${r.id}`} value={`legal_entity:${r.id}`}>
-                      {reqLabel(r)}{r.is_default ? " · default" : ""}
+                      {reqLabel(r)}{r.is_default ? " · по умолчанию" : ""}
                     </SelectItem>
                   ))}
                 </>
@@ -332,20 +417,49 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
           </Select>
         </div>
 
-        {/* Template: auto-resolved from tariff_offers.meta.document_defaults.template_id.
-            Ручной выбор шаблона теперь живёт ТОЛЬКО в карточке «Документы (strict ID-first)» ниже,
-            а привязка «оплата → шаблон акта» настраивается в редакторе тарифа/оффера
-            (tariff_offers.meta.document_defaults.template_id). */}
-
-        {/* Executor override */}
+        {/* Шаблон документа */}
         <div className="space-y-1.5">
-          <div className="text-sm font-medium flex items-center gap-1.5">
-            <Wand2 className="h-3.5 w-3.5" /> Исполнитель (override)
+          <div className="flex items-center gap-2 text-sm">
+            <span className="font-medium">Шаблон документа</span>
+            <Badge variant={templateOverride ? "default" : "outline"} className="text-[10px]">
+              {templateSourceBadge}
+            </Badge>
+          </div>
+          <Select value={edTemplate || "auto"} onValueChange={setEdTemplate} disabled={!canEdit || saving}>
+            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">
+                {resolved.template_id
+                  ? `${sourceLabel(resolved.source)} · ${templates.find((t) => t.id === resolved.template_id)?.name || "шаблон"}`
+                  : "Автоматически (не задан в кнопке)"}
+              </SelectItem>
+              {templates.map((t) => (
+                <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Исполнитель */}
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2 text-sm">
+            <span className="font-medium">Исполнитель</span>
+            <Badge variant={executorOverride ? "default" : "outline"} className="text-[10px]">
+              {executorSourceBadge}
+            </Badge>
           </div>
           <Select value={edExecutor || "auto"} onValueChange={setEdExecutor} disabled={!canEdit || saving}>
             <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="auto">По сценарию / по умолчанию</SelectItem>
+              <SelectItem value="auto">
+                {resolved.executor_id
+                  ? `${sourceLabel(resolved.source)} · ${
+                      executors.find((e) => e.id === resolved.executor_id)?.short_name
+                      || executors.find((e) => e.id === resolved.executor_id)?.full_name
+                      || "исполнитель"
+                    }`
+                  : "Автоматически (не задан в кнопке)"}
+              </SelectItem>
               {executors.map((e) => (
                 <SelectItem key={e.id} value={e.id}>{e.short_name || e.full_name || e.id.slice(0, 8)}</SelectItem>
               ))}
@@ -353,14 +467,35 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
           </Select>
         </div>
 
-        <div className="flex items-center justify-between pt-2 border-t">
-          <div className="text-xs text-muted-foreground">
-            Изменения пишутся в `orders_v2.meta.documents` и audit_logs. payments_v2 не затрагивается.
+        {/* Статус */}
+        <div className="space-y-1 pt-2 border-t">
+          <div className="text-xs font-medium text-muted-foreground">Статус</div>
+          {statusItems.map((s, i) => (
+            <div key={i} className={`text-xs flex items-center gap-1.5 ${
+              s.kind === "ok" ? "text-emerald-600"
+              : s.kind === "warn" ? "text-amber-600"
+              : "text-rose-600"
+            }`}>
+              {s.kind === "ok" ? <CheckCircle2 className="h-3 w-3" /> : <AlertCircle className="h-3 w-3" />}
+              <span>{s.text}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex items-center justify-between pt-2 border-t gap-2 flex-wrap">
+          <div className="text-xs text-muted-foreground">Платежные данные не изменяются</div>
+          <div className="flex gap-2">
+            {hasManualOverrides && canEdit && (
+              <Button size="sm" variant="ghost" onClick={resetAll} disabled={saving}>
+                <RefreshCw className="h-3 w-3 mr-1" />
+                Сбросить ручные изменения
+              </Button>
+            )}
+            <Button size="sm" onClick={save} disabled={!canEdit || saving || !dirty}>
+              {saving ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : null}
+              Сохранить изменения
+            </Button>
           </div>
-          <Button size="sm" onClick={save} disabled={!canEdit || saving || !dirty}>
-            {saving ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : null}
-            Сохранить
-          </Button>
         </div>
       </CardContent>
     </Card>
