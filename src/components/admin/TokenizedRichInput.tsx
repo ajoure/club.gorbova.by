@@ -44,6 +44,29 @@ import { cn } from "@/lib/utils";
 import { FieldPickerPopover, type FieldPickerResult } from "@/components/ai-documents/FieldPickerPopover";
 import { loadRegistryRefs, type RegistryFieldRef } from "@/utils/templateAutoSuggest";
 
+/**
+ * Набор token_key, поддерживаемых резолверами рассылок (email-mass-broadcast,
+ * telegram-mass-broadcast, telegram-send-test) — синхронизирован с
+ * supabase/functions/_shared/systemTokens.ts (CONTACT_TOKEN_KEYS + SYSTEM_TOKEN_KEYS)
+ * и canonical contact.* aliases. Токены вне этого набора показываются в picker'е
+ * как disabled с подписью «Недоступно для сообщений».
+ */
+const MESSAGES_SUPPORTED_TOKEN_KEYS: Set<string> = new Set([
+  // contact (legacy unprefixed)
+  "full_name", "first_name", "last_name", "name",
+  "email", "phone", "telegram_username",
+  // contact (canonical)
+  "contact.full_name", "contact.first_name", "contact.last_name",
+  "contact.email", "contact.phone", "contact.telegram_username",
+  // system datetime (legacy unprefixed)
+  "today", "tomorrow", "yesterday", "now",
+  "month_name", "month", "year", "day", "weekday",
+  // system datetime (canonical)
+  "system.today", "system.tomorrow", "system.yesterday", "system.now",
+  "system.month_name", "system.month", "system.year", "system.day", "system.weekday",
+  "system.today_long", "system.today_ru",
+]);
+
 const TokenNode = Node.create({
   name: "token",
   group: "inline",
