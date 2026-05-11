@@ -351,6 +351,8 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
     if (error || !data?.signedUrl) { toast.error("Не удалось получить ссылку"); return; }
     window.open(data.signedUrl, "_blank");
   };
+
+  if (loading || !order) {
     return (
       <Card>
         <CardHeader className="pb-2">
