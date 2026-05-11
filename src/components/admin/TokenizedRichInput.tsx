@@ -810,6 +810,7 @@ export function TokenizedRichInput({
         contextLabel="Вставка плейсхолдера"
         refs={registryRefs}
         onPick={handleFieldPick}
+        simple
       />
 
 
