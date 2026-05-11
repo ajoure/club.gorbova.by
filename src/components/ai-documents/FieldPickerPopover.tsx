@@ -173,7 +173,13 @@ export function FieldPickerPopover({
                               <button
                                 key={r.field_public_id}
                                 type="button"
-                                onClick={() => setPickedField(r)}
+                                onClick={() => {
+                                  if (simple) {
+                                    onPick({ fld: r.field_public_id, format: null, caseModifier: null, data_type: r.data_type ?? null });
+                                  } else {
+                                    setPickedField(r);
+                                  }
+                                }}
                                 className={cn(
                                   "w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-accent/50 focus:bg-accent focus:outline-none",
                                   isSelected && "bg-accent/40",
