@@ -65,6 +65,7 @@ import { EditDealDialog } from "./EditDealDialog";
 import { LinkPaymentDialog } from "./payments/LinkPaymentDialog";
 import { GrantAccessFromDealDialog } from "./GrantAccessFromDealDialog";
 import { DealDocumentsCard } from "./DealDocumentsCard";
+import { DealPayerDocumentsCard } from "./DealPayerDocumentsCard";
 
 interface DealDetailSheetProps {
   deal: any | null;
