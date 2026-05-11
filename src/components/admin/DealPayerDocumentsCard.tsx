@@ -179,6 +179,15 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
     setExecutors((execs || []) as ExecutorRow[]);
     setOfferMeta((offerRes as any)?.data?.meta || null);
 
+    const { data: docs } = await supabase
+      .from("ai_generated_documents")
+      .select("id, title, file_path, storage_bucket, created_at, document_number")
+      .eq("context_type", "order")
+      .eq("context_id", orderId)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false });
+    setHistory((docs || []) as HistoryDoc[]);
+
     const userId = (o as any)?.user_id;
     if (userId) {
       const [{ data: ind }, { data: le }] = await Promise.all([
