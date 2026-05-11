@@ -799,7 +799,10 @@ export function TokenizedRichInput({
         document.body
       )}
 
-      {/* Канонический picker — единый компонент со страницы DOCX-разметки. */}
+      {/* Канонический picker — единый компонент со страницы DOCX-разметки.
+          Для messages-контекста ограничиваем набор поддерживаемых токенов резолверами рассылок:
+          contact.* (+ legacy unprefixed) и system.* (+ legacy datetime).
+          Остальные показываются disabled с подписью «Недоступно для сообщений». */}
       <FieldPickerPopover
         open={pickerOpen}
         onOpenChange={(o) => {
@@ -811,6 +814,8 @@ export function TokenizedRichInput({
         refs={registryRefs}
         onPick={handleFieldPick}
         simple
+        supportedTokenKeys={MESSAGES_SUPPORTED_TOKEN_KEYS}
+        unsupportedLabel="Недоступно для сообщений"
       />
 
 
