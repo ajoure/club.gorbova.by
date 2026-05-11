@@ -76,16 +76,43 @@ export function resolveSystemTokens(text: string, now: Date): string {
   const [yyyy, mm, dd] = todayKey.split('-');
   const monthIdx = parseInt(mm, 10) - 1;          // 0-based
 
+  // Russian months in genitive (for "11 мая 2026")
+  const RU_MONTHS_GEN = [
+    'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+    'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
+  ];
+  const todayDot = dateKeyToDot(todayKey);
+  const tomorrowDot = dateKeyToDot(tomorrowKey);
+  const yesterdayDot = dateKeyToDot(yesterdayKey);
+  const nowStr = `${todayDot} ${timeInTz(now, tz)}`;
+  const monthName = RU_MONTHS[monthIdx] || '';
+  const weekdayName = RU_WEEKDAYS[weekdayOfDateKey(todayKey)] || '';
+  const todayLong = `${dd} ${RU_MONTHS_GEN[monthIdx] || ''} ${yyyy} г.`;
+  const todayRu = `${dd} ${RU_MONTHS_GEN[monthIdx] || ''} ${yyyy} года`;
+
   return text
-    .replace(/\{\{today\}\}/g, dateKeyToDot(todayKey))
-    .replace(/\{\{tomorrow\}\}/g, dateKeyToDot(tomorrowKey))
-    .replace(/\{\{yesterday\}\}/g, dateKeyToDot(yesterdayKey))
-    .replace(/\{\{now\}\}/g, `${dateKeyToDot(todayKey)} ${timeInTz(now, tz)}`)
-    .replace(/\{\{month_name\}\}/g, RU_MONTHS[monthIdx] || '')
+    // legacy unprefixed
+    .replace(/\{\{today\}\}/g, todayDot)
+    .replace(/\{\{tomorrow\}\}/g, tomorrowDot)
+    .replace(/\{\{yesterday\}\}/g, yesterdayDot)
+    .replace(/\{\{now\}\}/g, nowStr)
+    .replace(/\{\{month_name\}\}/g, monthName)
     .replace(/\{\{month\}\}/g, mm)
     .replace(/\{\{year\}\}/g, yyyy)
     .replace(/\{\{day\}\}/g, dd)
-    .replace(/\{\{weekday\}\}/g, RU_WEEKDAYS[weekdayOfDateKey(todayKey)] || '');
+    .replace(/\{\{weekday\}\}/g, weekdayName)
+    // canonical system.*
+    .replace(/\{\{system\.today\}\}/g, todayDot)
+    .replace(/\{\{system\.tomorrow\}\}/g, tomorrowDot)
+    .replace(/\{\{system\.yesterday\}\}/g, yesterdayDot)
+    .replace(/\{\{system\.now\}\}/g, nowStr)
+    .replace(/\{\{system\.month_name\}\}/g, monthName)
+    .replace(/\{\{system\.month\}\}/g, mm)
+    .replace(/\{\{system\.year\}\}/g, yyyy)
+    .replace(/\{\{system\.day\}\}/g, dd)
+    .replace(/\{\{system\.weekday\}\}/g, weekdayName)
+    .replace(/\{\{system\.today_long\}\}/g, todayLong)
+    .replace(/\{\{system\.today_ru\}\}/g, todayRu);
 }
 
 /** Known system token keys (for audit logging) */
