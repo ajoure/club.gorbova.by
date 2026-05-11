@@ -43,10 +43,13 @@ interface Props {
   currentFld?: string | null;
   refs: RegistryFieldRef[];
   onPick: (result: FieldPickerResult) => void;
+  /** Если true — пропускает шаг «формат/падеж» и сразу отдаёт результат с null modifiers.
+   *  Используется для messages-контекста (рассылки/email/telegram), где сериализуется legacy {{token_key}}. */
+  simple?: boolean;
 }
 
 export function FieldPickerPopover({
-  open, onOpenChange, anchor, contextLabel, currentFld, refs, onPick,
+  open, onOpenChange, anchor, contextLabel, currentFld, refs, onPick, simple = false,
 }: Props) {
   const [query, setQuery] = useState("");
   const [pickedField, setPickedField] = useState<RegistryFieldRef | null>(null);
