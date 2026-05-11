@@ -98,6 +98,12 @@ export function FieldPickerPopover({
         avoidCollisions
         collisionPadding={16}
         sticky="always"
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        onInteractOutside={(e) => {
+          // Не закрывать picker, если клик/фокус ушёл обратно в редактор-источник.
+          const t = e.target as HTMLElement | null;
+          if (t?.closest?.('.ProseMirror') || t?.closest?.('[contenteditable="true"]')) e.preventDefault();
+        }}
         onWheelCapture={(e) => e.stopPropagation()}
         className="docx-field-picker-popover p-0 bg-popover border shadow-lg z-[100] overflow-hidden"
       >
