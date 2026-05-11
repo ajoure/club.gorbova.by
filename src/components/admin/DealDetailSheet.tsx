@@ -64,7 +64,6 @@ import { cn } from "@/lib/utils";
 import { EditDealDialog } from "./EditDealDialog";
 import { LinkPaymentDialog } from "./payments/LinkPaymentDialog";
 import { GrantAccessFromDealDialog } from "./GrantAccessFromDealDialog";
-import { DealDocumentsCard } from "./DealDocumentsCard";
 import { DealPayerDocumentsCard } from "./DealPayerDocumentsCard";
 
 interface DealDetailSheetProps {
