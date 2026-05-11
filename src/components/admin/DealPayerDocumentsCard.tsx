@@ -16,7 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Loader2, UserCog, CreditCard, RefreshCw, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Loader2, UserCog, CreditCard, RefreshCw, AlertCircle, CheckCircle2, FileDown, FilePlus2 } from "lucide-react";
 import { toast } from "sonner";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 import { useHasRoleV2 } from "@/hooks/useHasRoleV2";
@@ -41,6 +41,11 @@ interface PaymentRow {
 interface ReqRow { id: string; data: any; is_default: boolean | null; }
 interface TemplateRow { id: string; name: string; }
 interface ExecutorRow { id: string; full_name: string | null; short_name: string | null; }
+interface HistoryDoc {
+  id: string; title: string | null;
+  file_path: string | null; storage_bucket: string | null;
+  created_at: string; document_number: string | null;
+}
 
 const PAYMENT_LABEL: Record<string, string> = {
   card: "Карта",
@@ -64,12 +69,19 @@ function derivePaymentChannel(p: PaymentRow | null): string | null {
 }
 
 function reqLabel(r: ReqRow): string {
-  const d = r.data || {};
-  return (
-    d.short_name || d.full_name || d.name || d.fio ||
-    `${d.last_name || ""} ${d.first_name || ""}`.trim() ||
-    r.id.slice(0, 8)
-  );
+  const d = (r.data || {}) as any;
+  // Физлицо
+  const ind =
+    d.ind_full_name ||
+    [d.ind_last_name, d.ind_first_name, d.ind_middle_name].filter(Boolean).join(" ").trim();
+  // Юрлицо / ИП
+  const leg =
+    d.leg_short_name || d.leg_name ||
+    d.ent_short_name || d.ent_name ||
+    d.grp_short_name || d.grp_full_name;
+  // Универсальные
+  const generic = d.short_name || d.full_name || d.name || d.fio;
+  return ind || leg || generic || `Карточка ${r.id.slice(0, 8)}`;
 }
 
 interface ResolvedScenario {
@@ -123,6 +135,8 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
   const [legalEntities, setLegalEntities] = useState<ReqRow[]>([]);
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
   const [executors, setExecutors] = useState<ExecutorRow[]>([]);
+  const [history, setHistory] = useState<HistoryDoc[]>([]);
+  const [generating, setGenerating] = useState(false);
 
   const [edPayerType, setEdPayerType] = useState<PayerType | null>(null);
   const [edEntityKey, setEdEntityKey] = useState<string | null>(null);
@@ -154,7 +168,7 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
         .not("current_version_id", "is", null)
         .eq("template_status", "active")
         .order("name"),
-      supabase.from("executors").select("id, full_name, short_name").order("full_name"),
+      supabase.from("executors").select("id, full_name, short_name").eq("is_active", true).order("full_name"),
       offerId
         ? supabase.from("tariff_offers").select("meta").eq("id", offerId).maybeSingle()
         : Promise.resolve({ data: null }),
@@ -164,6 +178,15 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
     setTemplates((tmpls || []) as TemplateRow[]);
     setExecutors((execs || []) as ExecutorRow[]);
     setOfferMeta((offerRes as any)?.data?.meta || null);
+
+    const { data: docs } = await supabase
+      .from("ai_generated_documents")
+      .select("id, title, file_path, storage_bucket, created_at, document_number")
+      .eq("context_type", "order")
+      .eq("context_id", orderId)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false });
+    setHistory((docs || []) as HistoryDoc[]);
 
     const userId = (o as any)?.user_id;
     if (userId) {
@@ -300,6 +323,33 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
     } finally {
       setSaving(false);
     }
+  };
+
+  const generate = async () => {
+    if (!order || !effectiveTemplateId) return;
+    setGenerating(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("canonical-document-generate-strict", {
+        body: { mode: "generate", order_id: order.id, template_id: effectiveTemplateId },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+      toast.success("Документ создан");
+      const url = (data as any)?.download_url;
+      if (url) window.open(url, "_blank");
+      await load();
+    } catch (e: any) {
+      toast.error(`Создание документа: ${normalizeEdgeFunctionError(e, e?.context?.body ?? null)}`);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const downloadHistoryItem = async (h: HistoryDoc) => {
+    if (!h.file_path || !h.storage_bucket) { toast.error("Файл недоступен"); return; }
+    const { data, error } = await supabase.storage.from(h.storage_bucket).createSignedUrl(h.file_path, 3600);
+    if (error || !data?.signedUrl) { toast.error("Не удалось получить ссылку"); return; }
+    window.open(data.signedUrl, "_blank");
   };
 
   if (loading || !order) {
@@ -480,6 +530,44 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
               <span>{s.text}</span>
             </div>
           ))}
+        </div>
+
+        {/* Создание документа */}
+        <div className="pt-2 border-t space-y-2">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="text-xs text-muted-foreground">
+              {effectiveTemplateId && effectiveExecutorId
+                ? "Готово к созданию документа"
+                : "Заполните шаблон и исполнителя, чтобы создать документ"}
+            </div>
+            <Button
+              size="sm"
+              onClick={generate}
+              disabled={!canEdit || generating || saving || dirty || !effectiveTemplateId || !effectiveExecutorId}
+              title={dirty ? "Сначала сохраните изменения" : undefined}
+            >
+              {generating ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <FilePlus2 className="h-3 w-3 mr-1" />}
+              Создать документ
+            </Button>
+          </div>
+          {history.length > 0 && (
+            <div className="space-y-1">
+              <div className="text-xs font-medium text-muted-foreground">История ({history.length})</div>
+              {history.slice(0, 5).map((h) => (
+                <div key={h.id} className="flex items-center justify-between text-xs gap-2 bg-muted/40 rounded px-2 py-1">
+                  <div className="truncate">
+                    <span className="font-medium">{h.document_number || h.title || "Документ"}</span>
+                    <span className="text-muted-foreground ml-2">
+                      {new Date(h.created_at).toLocaleString("ru-RU")}
+                    </span>
+                  </div>
+                  <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => downloadHistoryItem(h)}>
+                    <FileDown className="h-3 w-3" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="flex items-center justify-between pt-2 border-t gap-2 flex-wrap">
