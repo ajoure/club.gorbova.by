@@ -24,7 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Loader2, UserCog, CreditCard, RefreshCw, FileType2, Wand2, AlertCircle } from "lucide-react";
+import { Loader2, UserCog, CreditCard, RefreshCw, Wand2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 import { useHasRoleV2 } from "@/hooks/useHasRoleV2";
@@ -332,21 +332,10 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
           </Select>
         </div>
 
-        {/* Template override */}
-        <div className="space-y-1.5">
-          <div className="text-sm font-medium flex items-center gap-1.5">
-            <FileType2 className="h-3.5 w-3.5" /> Шаблон документа (override)
-          </div>
-          <Select value={edTemplate || "auto"} onValueChange={setEdTemplate} disabled={!canEdit || saving}>
-            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="auto">По сценарию / по умолчанию</SelectItem>
-              {templates.map((t) => (
-                <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        {/* Template: auto-resolved from tariff_offers.meta.document_defaults.template_id.
+            Ручной выбор шаблона теперь живёт ТОЛЬКО в карточке «Документы (strict ID-first)» ниже,
+            а привязка «оплата → шаблон акта» настраивается в редакторе тарифа/оффера
+            (tariff_offers.meta.document_defaults.template_id). */}
 
         {/* Executor override */}
         <div className="space-y-1.5">
