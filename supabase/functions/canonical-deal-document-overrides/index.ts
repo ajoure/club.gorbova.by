@@ -161,8 +161,9 @@ Deno.serve(async (req) => {
       .eq('id', orderId);
     if (uErr) return json({ error: uErr.message }, 500);
 
-    // Server-side audit (JWT actor).
-    await supabase.from('audit_logs').insert(
+    // Server-side audit (JWT actor). If audit insert fails, surface 500 — the
+    // override is not considered successful without a traceability record.
+    const { error: auditErr } = await supabase.from('audit_logs').insert(
       auditEntries.map((a) => ({
         actor_user_id: userId,
         actor_type: 'user',
@@ -172,6 +173,7 @@ Deno.serve(async (req) => {
         meta: a.meta,
       })),
     );
+    if (auditErr) return json({ error: `audit_failed: ${auditErr.message}` }, 500);
 
     return json({
       ok: true,
