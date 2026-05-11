@@ -886,7 +886,7 @@ Deno.serve(async (req) => {
         primary_bot_id: primaryBotId,
         selected_bot_ids: selectedBotIds,
         message_preview: resolveSystemTokens(message, broadcastNow)
-          .replace(/[,\s]*\{\{(?:first_name|last_name|full_name|name|email|phone|telegram_username)\}\}[,\s]*/g, ' ')
+          .replace(/[,\s]*\{\{(?:contact\.)?(?:first_name|last_name|full_name|name|email|phone|telegram_username)\}\}[,\s]*/g, ' ')
           .replace(/\{\{cf\.product\.[^}]+\}\}/g, '')
           .replace(/\s{2,}/g, ' ')
           .trim()
