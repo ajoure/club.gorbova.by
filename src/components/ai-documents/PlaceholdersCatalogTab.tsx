@@ -342,7 +342,7 @@ export function PlaceholdersCatalogTab() {
                             </TableCell>
                             <TableCell className="py-2">
                               <Badge variant="outline" className="text-[10px] font-normal">
-                                {GROUP_LABELS[t.category] ?? t.category}
+                                {GROUP_LABELS[t.category?.toLowerCase()] ?? GROUP_LABELS[t.category] ?? t.category}
                               </Badge>
                             </TableCell>
                             <TableCell className="font-medium text-sm py-2">
