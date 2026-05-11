@@ -586,45 +586,8 @@ export function TokenizedRichInput({
     [editor, registryRefs]
   );
 
-  // Close picker when focus leaves both editor and dropdown
-  useEffect(() => {
-    if (!editor) return;
-    const handler = () => {
-      setTimeout(() => {
-        const active = document.activeElement;
-        if (dropdownRef.current?.contains(active)) return;
-        // Check if focus went to search input inside dropdown (may mount after blur fires)
-        if ((active as HTMLElement)?.closest?.('[data-token-picker]')) return;
-        // Check cmdk elements (used by token picker Command)
-        if ((active as HTMLElement)?.closest?.('[cmdk-item]') || (active as HTMLElement)?.closest?.('[cmdk-list]') || (active as HTMLElement)?.closest?.('[cmdk-input]') || (active as HTMLElement)?.closest?.('[cmdk-root]')) return;
-        // Extra safety: re-check after another tick in case portal mount is delayed
-        setTimeout(() => {
-          const activeAfter = document.activeElement;
-          if (dropdownRef.current?.contains(activeAfter)) return;
-          if ((activeAfter as HTMLElement)?.closest?.('[data-token-picker]')) return;
-          if ((activeAfter as HTMLElement)?.closest?.('[cmdk-item]') || (activeAfter as HTMLElement)?.closest?.('[cmdk-list]') || (activeAfter as HTMLElement)?.closest?.('[cmdk-input]') || (activeAfter as HTMLElement)?.closest?.('[cmdk-root]')) return;
-          if (!editor.isFocused && pickerOpenRef.current) {
-            setPickerOpen(false);
-          }
-        }, 100);
-      }, 300);
-    };
-    editor.on("blur", handler);
-    return () => { editor.off("blur", handler); };
-  }, [editor]);
-
-  // Click-outside handler
-  useEffect(() => {
-    if (!pickerOpen) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as globalThis.Node;
-      if (dropdownRef.current?.contains(target as globalThis.Node)) return;
-      if (editor && editor.view.dom.contains(target as globalThis.Node)) return;
-      setPickerOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [pickerOpen, editor]);
+  // Закрытие picker по фокусу/клику вне обрабатывает Radix Popover внутри FieldPickerPopover.
+  // Дублировать здесь нельзя: autofocus инпута picker'а вызывает blur редактора и моментально закрывал picker.
 
   // Esc key closes dropdown and returns focus
   useEffect(() => {
