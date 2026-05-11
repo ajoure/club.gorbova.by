@@ -73,6 +73,7 @@ const GROUP_LABELS: Record<string, string> = {
   tariff: "Тариф",
   offer: "Кнопка оплаты",
   document: "Документ",
+  payment: "Платежи",
   system: "Системные",
   legal_details: "Custom-поля",
 };
