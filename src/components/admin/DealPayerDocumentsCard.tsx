@@ -41,6 +41,11 @@ interface PaymentRow {
 interface ReqRow { id: string; data: any; is_default: boolean | null; }
 interface TemplateRow { id: string; name: string; }
 interface ExecutorRow { id: string; full_name: string | null; short_name: string | null; }
+interface HistoryDoc {
+  id: string; title: string | null;
+  file_path: string | null; storage_bucket: string | null;
+  created_at: string; document_number: string | null;
+}
 
 const PAYMENT_LABEL: Record<string, string> = {
   card: "Карта",
