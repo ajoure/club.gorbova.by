@@ -115,10 +115,13 @@ export function resolveSystemTokens(text: string, now: Date): string {
     .replace(/\{\{system\.today_ru\}\}/g, todayRu);
 }
 
-/** Known system token keys (for audit logging) */
+/** Known system token keys (for audit logging) — incl. canonical system.* aliases. */
 export const SYSTEM_TOKEN_KEYS = [
   'today', 'tomorrow', 'yesterday', 'now',
   'month_name', 'month', 'year', 'day', 'weekday',
+  'system.today', 'system.tomorrow', 'system.yesterday', 'system.now',
+  'system.month_name', 'system.month', 'system.year', 'system.day', 'system.weekday',
+  'system.today_long', 'system.today_ru',
 ] as const;
 
 /** Known contact token keys (for audit logging) */
