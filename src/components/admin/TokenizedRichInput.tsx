@@ -354,7 +354,7 @@ export function TokenizedRichInput({
 
   const closePicker = useCallback(() => setPickerOpen(false), []);
 
-  // Load token groups based on context (or just product fields for legacy)
+  // Load token groups based on context (legacy caches: kept for tokenStringToLabel rendering of chips).
   const effectiveContext = tokenContext ?? "messages";
   const { data: contextGroups = [] } = useQuery({
     queryKey: ["token-context-groups", effectiveContext],
@@ -362,6 +362,13 @@ export function TokenizedRichInput({
       await loadTokensForContext(effectiveContext);
       return getTokenGroupsForContext(effectiveContext);
     },
+    staleTime: 60_000,
+  });
+
+  // Canonical registry refs — единый источник для FieldPickerPopover (тот же, что в DOCX-разметке).
+  const { data: registryRefs = [] } = useQuery<RegistryFieldRef[]>({
+    queryKey: ["token-registry-refs"],
+    queryFn: loadRegistryRefs,
     staleTime: 60_000,
   });
 
