@@ -532,6 +532,44 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
           ))}
         </div>
 
+        {/* Создание документа */}
+        <div className="pt-2 border-t space-y-2">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="text-xs text-muted-foreground">
+              {effectiveTemplateId && effectiveExecutorId
+                ? "Готово к созданию документа"
+                : "Заполните шаблон и исполнителя, чтобы создать документ"}
+            </div>
+            <Button
+              size="sm"
+              onClick={generate}
+              disabled={!canEdit || generating || saving || dirty || !effectiveTemplateId || !effectiveExecutorId}
+              title={dirty ? "Сначала сохраните изменения" : undefined}
+            >
+              {generating ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <FilePlus2 className="h-3 w-3 mr-1" />}
+              Создать документ
+            </Button>
+          </div>
+          {history.length > 0 && (
+            <div className="space-y-1">
+              <div className="text-xs font-medium text-muted-foreground">История ({history.length})</div>
+              {history.slice(0, 5).map((h) => (
+                <div key={h.id} className="flex items-center justify-between text-xs gap-2 bg-muted/40 rounded px-2 py-1">
+                  <div className="truncate">
+                    <span className="font-medium">{h.document_number || h.title || "Документ"}</span>
+                    <span className="text-muted-foreground ml-2">
+                      {new Date(h.created_at).toLocaleString("ru-RU")}
+                    </span>
+                  </div>
+                  <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => downloadHistoryItem(h)}>
+                    <FileDown className="h-3 w-3" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         <div className="flex items-center justify-between pt-2 border-t gap-2 flex-wrap">
           <div className="text-xs text-muted-foreground">Платежные данные не изменяются</div>
           <div className="flex gap-2">
