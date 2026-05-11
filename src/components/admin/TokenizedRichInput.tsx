@@ -561,23 +561,8 @@ export function TokenizedRichInput({
     }
   }, [value, editor, singleLine]);
 
-  // Handle token selection from picker (legacy TokenDef path — kept for safety)
-  const handleTokenSelect = useCallback(
-    (tokenDef: TokenDef) => {
-      if (!editor) return;
-      editor
-        .chain()
-        .focus()
-        .insertContent({
-          type: "token",
-          attrs: { tokenString: tokenDef.tokenString },
-        })
-        .insertContent(" ")
-        .run();
-      setPickerOpen(false);
-    },
-    [editor]
-  );
+  // legacy handleTokenSelect удалён — единый путь handleFieldPick.
+
 
   // Канонический путь: FieldPickerPopover → token_key → {{token_key}} (legacy SoT, совместим с резолверами).
   const handleFieldPick = useCallback(
