@@ -42,11 +42,12 @@ import {
   type TokenDef,
   type TokenContext,
 } from "@/lib/tokens/tokenRegistry";
-import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Bold as BoldIcon, Italic as ItalicIcon, Code as CodeIcon, Link as LinkIcon, AlignLeft, AlignCenter, AlignRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { FieldPickerPopover, type FieldPickerResult } from "@/components/ai-documents/FieldPickerPopover";
+import { loadRegistryRefs, type RegistryFieldRef } from "@/utils/templateAutoSuggest";
 
 const TokenNode = Node.create({
   name: "token",
