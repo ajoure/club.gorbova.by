@@ -88,13 +88,21 @@ function resolveContactTokens(
   const lastName = profile.last_name || parts.slice(1).join(' ') || '';
 
   return text
+    // Legacy unprefixed
     .replace(/\{\{full_name\}\}/g, fullName)
     .replace(/\{\{first_name\}\}/g, firstName)
     .replace(/\{\{last_name\}\}/g, lastName)
     .replace(/\{\{name\}\}/g, fullName)
     .replace(/\{\{email\}\}/g, profile.email || '')
     .replace(/\{\{phone\}\}/g, profile.phone || '')
-    .replace(/\{\{telegram_username\}\}/g, profile.telegram_username || '');
+    .replace(/\{\{telegram_username\}\}/g, profile.telegram_username || '')
+    // Canonical prefixed (Sprint canonical picker)
+    .replace(/\{\{contact\.full_name\}\}/g, fullName)
+    .replace(/\{\{contact\.first_name\}\}/g, firstName)
+    .replace(/\{\{contact\.last_name\}\}/g, lastName)
+    .replace(/\{\{contact\.email\}\}/g, profile.email || '')
+    .replace(/\{\{contact\.phone\}\}/g, profile.phone || '')
+    .replace(/\{\{contact\.telegram_username\}\}/g, profile.telegram_username || '');
 }
 
 Deno.serve(async (req) => {
@@ -878,7 +886,7 @@ Deno.serve(async (req) => {
         primary_bot_id: primaryBotId,
         selected_bot_ids: selectedBotIds,
         message_preview: resolveSystemTokens(message, broadcastNow)
-          .replace(/[,\s]*\{\{(?:first_name|last_name|full_name|name|email|phone|telegram_username)\}\}[,\s]*/g, ' ')
+          .replace(/[,\s]*\{\{(?:contact\.)?(?:first_name|last_name|full_name|name|email|phone|telegram_username)\}\}[,\s]*/g, ' ')
           .replace(/\{\{cf\.product\.[^}]+\}\}/g, '')
           .replace(/\s{2,}/g, ' ')
           .trim()
