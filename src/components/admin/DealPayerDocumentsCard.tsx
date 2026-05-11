@@ -135,6 +135,8 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
   const [legalEntities, setLegalEntities] = useState<ReqRow[]>([]);
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
   const [executors, setExecutors] = useState<ExecutorRow[]>([]);
+  const [history, setHistory] = useState<HistoryDoc[]>([]);
+  const [generating, setGenerating] = useState(false);
 
   const [edPayerType, setEdPayerType] = useState<PayerType | null>(null);
   const [edEntityKey, setEdEntityKey] = useState<string | null>(null);
