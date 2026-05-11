@@ -161,7 +161,7 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
         .not("current_version_id", "is", null)
         .eq("template_status", "active")
         .order("name"),
-      supabase.from("executors").select("id, full_name, short_name").order("full_name"),
+      supabase.from("executors").select("id, full_name, short_name").eq("is_active", true).order("full_name"),
       offerId
         ? supabase.from("tariff_offers").select("meta").eq("id", offerId).maybeSingle()
         : Promise.resolve({ data: null }),
