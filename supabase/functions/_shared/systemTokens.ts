@@ -135,7 +135,8 @@ export const CONTACT_TOKEN_KEYS = [
  * Returns { contact: [...], system: [...] }
  */
 export function extractUsedTokens(text: string): { contact: string[]; system: string[] } {
-  const allMatches = text.match(/\{\{(\w+)\}\}/g) || [];
+  // Match both unprefixed {{key}} and namespaced {{ns.key}}
+  const allMatches = text.match(/\{\{([\w.]+)\}\}/g) || [];
   const raw = allMatches.map(m => m.replace(/\{\{|\}\}/g, ''));
   const unique = [...new Set(raw)];
 
