@@ -583,7 +583,7 @@ export function TokenizedRichInput({
     }
   }, [value, editor, singleLine]);
 
-  // Handle token selection from picker
+  // Handle token selection from picker (legacy TokenDef path — kept for safety)
   const handleTokenSelect = useCallback(
     (tokenDef: TokenDef) => {
       if (!editor) return;
@@ -599,6 +599,28 @@ export function TokenizedRichInput({
       setPickerOpen(false);
     },
     [editor]
+  );
+
+  // Канонический путь: FieldPickerPopover → token_key → {{token_key}} (legacy SoT, совместим с резолверами).
+  const handleFieldPick = useCallback(
+    (result: FieldPickerResult) => {
+      if (!editor) return;
+      const ref = registryRefs.find((r) => r.field_public_id === result.fld);
+      // Серилизуем в legacy {{token_key}} — резолверы (resolveContactTokens / resolveSystemTokens / product / document)
+      // продолжают понимать существующий формат. Format/case modifiers пока не применяются для messages-контекста
+      // (расширим в следующем спринте вместе с edge-функциями рассылок).
+      const tokenString = ref?.token_key
+        ? `{{${ref.token_key}}}`
+        : `{{field:${result.fld}${result.format ? `|format=${result.format}` : ""}${result.caseModifier ? `|case=${result.caseModifier}` : ""}}}`;
+      editor
+        .chain()
+        .focus()
+        .insertContent({ type: "token", attrs: { tokenString } })
+        .insertContent(" ")
+        .run();
+      setPickerOpen(false);
+    },
+    [editor, registryRefs]
   );
 
   // Close picker when focus leaves both editor and dropdown
