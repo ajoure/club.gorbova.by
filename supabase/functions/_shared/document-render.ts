@@ -835,15 +835,15 @@ export async function generateCanonicalDocument(
     return { success: false, payload, error: `render_failed:${e?.message || 'unknown'}` };
   }
 
-  const docNumber = payload.resolved_tokens['document.number'] || generateDocNumber('AKT');
-  const fileName = `${docNumber}.docx`;
+  const docNumber = canonicalDocNumber || payload.resolved_tokens['document.number'] || generateDocNumber('AKT');
+  // Sanitize for filename: replace '/' (canonical DDMM/N) with '-'
+  const safeDocNumber = docNumber.replace(/[\/\\]/g, '-');
+  const fileName = `${safeDocNumber}.docx`;
   const filePath = `canonical/${opts.profileId}/${fileName}`;
   const outBucket = opts.storageBucketOutput || 'documents';
 
   // ── DOCX post-render check (Sprint 9) ─────────────────────────────────────
-  // Проверяем размер, MIME, и сканируем оставшиеся {{...}} плейсхолдеры
-  // в собранном document.xml. Не блокирует генерацию — пишет warning.
-  const MIN_DOCX_SIZE = 1024; // bytes — пустой DOCX < ~1KB
+  const MIN_DOCX_SIZE = 1024;
   const docxCheck: {
     file_size: number;
     mime: string;
@@ -869,7 +869,6 @@ export async function generateCanonicalDocument(
       const f = zipCheck.file(p);
       if (!f) continue;
       const xml: string = f.asText();
-      // XML may split {{...}} across runs; strip tags first
       const text = xml.replace(/<[^>]+>/g, '');
       const re = /\{\{\s*([^{}]+?)\s*\}\}/g;
       let m: RegExpExecArray | null;
@@ -878,7 +877,6 @@ export async function generateCanonicalDocument(
     docxCheck.unresolved_tokens = Array.from(found).sort();
     docxCheck.unresolved_count = found.size;
   } catch (_e) {
-    // не валим генерацию — оставляем check.ok=false без подробностей
     docxCheck.ok = false;
   }
   docxCheck.ok = docxCheck.ok && docxCheck.min_size_ok && docxCheck.unresolved_count === 0;
@@ -892,40 +890,71 @@ export async function generateCanonicalDocument(
   });
   if (upErr) return { success: false, payload, error: `upload_failed:${upErr.message}` };
 
-  const { data: insertRow, error: insErr } = await supabase.from('ai_generated_documents').insert({
-    profile_id: opts.profileId,
-    template_id: payload.template.id,
-    template_name: payload.template.name,
-    template_version_id: payload.template.version_id,
-    title: `${payload.template.name} — ${docNumber}`,
-    status: 'success',
-    legal_details_id: input.legal_details_id || null,
-    signer_link_id: input.signer_link_id || null,
-    file_path: filePath,
-    file_name: fileName,
-    file_mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    storage_bucket: outBucket,
-    snapshot: payload.snapshot,
-    missing_tokens: payload.missing_tokens,
-    template_tokens_snapshot: { tokens: payload.template_tokens, manifest: payload.token_manifest },
-    token_manifest_snapshot: payload.resolved_tokens,
-    warnings_snapshot: [...payload.warnings, ...checkWarnings],
-    source_trace: {
+  // Sprint C — generate mode: UPDATE pending row; preview mode: INSERT a fresh non-canonical row.
+  let insertRowId: string | null = null;
+  if (mode === 'generate' && pendingDocId) {
+    const { error: updErr } = await supabase.from('ai_generated_documents').update({
+      title: `${payload.template.name} — ${docNumber}`,
+      status: 'success',
+      file_path: filePath,
+      file_name: fileName,
+      file_mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      storage_bucket: outBucket,
+      snapshot: payload.snapshot,
+      missing_tokens: payload.missing_tokens,
+      template_tokens_snapshot: { tokens: payload.template_tokens, manifest: payload.token_manifest },
+      token_manifest_snapshot: payload.resolved_tokens,
+      warnings_snapshot: [...payload.warnings, ...checkWarnings],
+      source_trace: {
+        resolver_version: CANONICAL_RESOLVER_VERSION,
+        idempotency_key: idempotencyKey,
+        context_type: input.context_type,
+        context_id: input.context_id,
+        tokens: payload.source_trace,
+      },
       resolver_version: CANONICAL_RESOLVER_VERSION,
-      idempotency_key: idempotencyKey,
-      context_type: input.context_type,
-      context_id: input.context_id,
-      tokens: payload.source_trace,
-    },
-    resolver_version: CANONICAL_RESOLVER_VERSION,
-    context_type: input.context_type || null,
-    context_id: input.context_id || null,
-    idempotency_key: idempotencyKey,
-    created_by: opts.userId,
-    meta: { canonical: true, docx_check: docxCheck },
-  }).select('id').single();
+      meta: { canonical: true, docx_check: docxCheck, numbering_pending: false },
+    }).eq('id', pendingDocId);
+    if (updErr) return { success: false, payload, error: `update_failed:${updErr.message}` };
+    insertRowId = pendingDocId;
+  } else {
+    const { data: insertRow, error: insErr } = await supabase.from('ai_generated_documents').insert({
+      profile_id: opts.profileId,
+      template_id: payload.template.id,
+      template_name: payload.template.name,
+      template_version_id: payload.template.version_id,
+      title: `${payload.template.name} — ${docNumber}`,
+      status: 'success',
+      legal_details_id: input.legal_details_id || null,
+      signer_link_id: input.signer_link_id || null,
+      file_path: filePath,
+      file_name: fileName,
+      file_mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      storage_bucket: outBucket,
+      snapshot: payload.snapshot,
+      missing_tokens: payload.missing_tokens,
+      template_tokens_snapshot: { tokens: payload.template_tokens, manifest: payload.token_manifest },
+      token_manifest_snapshot: payload.resolved_tokens,
+      warnings_snapshot: [...payload.warnings, ...checkWarnings],
+      source_trace: {
+        resolver_version: CANONICAL_RESOLVER_VERSION,
+        idempotency_key: null,
+        context_type: input.context_type,
+        context_id: input.context_id,
+        tokens: payload.source_trace,
+      },
+      resolver_version: CANONICAL_RESOLVER_VERSION,
+      context_type: input.context_type || null,
+      context_id: input.context_id || null,
+      idempotency_key: null,
+      created_by: opts.userId,
+      meta: { canonical: true, docx_check: docxCheck, preview: true },
+    }).select('id').single();
+    if (insErr) return { success: false, payload, error: `insert_failed:${insErr.message}` };
+    insertRowId = insertRow.id;
+  }
 
-  if (insErr) return { success: false, payload, error: `insert_failed:${insErr.message}` };
+  const insertRow = { id: insertRowId! };
 
   // Audit logs (Sprint 9)
   try {
