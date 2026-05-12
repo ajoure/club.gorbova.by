@@ -1,0 +1,1 @@
+UPDATE public.app_settings SET value='true'::jsonb WHERE key='documents_canonical_generation_enabled';

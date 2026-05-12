@@ -1,0 +1,1 @@
+UPDATE public.document_templates SET current_version_id='985c33f1-9f36-4f7d-9ab8-dbb1c338519b' WHERE id='422663f0-d975-41ad-85b4-b3b430afcf72';
