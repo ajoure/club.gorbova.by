@@ -341,6 +341,10 @@ export async function resolveCanonicalPayload(
     ? formatStructuredAddress(executor.legal_address_structured, executor.legal_address, 'executor')
     : { rendered: '', source: 'missing' };
   const customerAddress: FormatAddressResult = buildCustomerAddressResolved(customer);
+  if (executor && executorAddress.source === 'missing') warnings.push('executor_address_missing');
+  else if (executor && executorAddress.source === 'raw') warnings.push('executor_address_unstructured_fallback');
+  if (customer && customerAddress.source === 'missing') warnings.push('customer_address_missing');
+  else if (customer && customerAddress.source === 'raw') warnings.push('customer_address_unstructured_fallback');
 
   const resolverValues: Record<string, any> = {
     'system.today':       now.toISOString().slice(0, 10),
