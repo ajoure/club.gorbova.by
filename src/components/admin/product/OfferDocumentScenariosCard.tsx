@@ -147,9 +147,9 @@ export function OfferDocumentScenariosCard({ value, onChange }: Props) {
   const toggleChannel = (id: string, channel: PaymentChannel, checked: boolean) => {
     const row = rows.find((r) => r.id === id);
     if (!row) return;
-    const set = new Set(row.payment_channels);
+    const set = new Set<string>(row.payment_channels);
     if (checked) set.add(channel); else set.delete(channel);
-    update(id, { payment_channels: Array.from(set) });
+    update(id, { payment_channels: Array.from(set) as OfferDocumentScenario['payment_channels'] });
   };
   const addExtra = (payer: DocumentScenarioPayerType) => {
     onChange([...rows, makeBlank(payer)]);
@@ -307,7 +307,7 @@ export function OfferDocumentScenariosCard({ value, onChange }: Props) {
                 </div>
                 {row.payment_channels.length > 0 && (
                   <div className="text-[10px] text-muted-foreground">
-                    Каналы: {row.payment_channels.map((c) => CHANNEL_LABELS_RU[c]).join(', ')}
+                    Каналы: {row.payment_channels.map((c) => CHANNEL_LABELS_RU[c as PaymentChannel] || c).join(', ')}
                   </div>
                 )}
               </div>
