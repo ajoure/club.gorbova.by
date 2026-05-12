@@ -260,20 +260,57 @@ export async function resolveCanonicalPayload(
     livePayment = (pays || []).find((p: any) => p.status === 'succeeded') || null;
   }
 
-  // 6. Customer legal_details
+  // 6. Customer legal_details (Sprint B: payer_type-aware resolution).
+  // SOT: orders_v2.payer_type. legal_entity → client_type='legal_entity',
+  // individual → client_type='individual'. Within the cohort prefer is_default,
+  // then most recently updated. Fallback to ANY default row only when cohort
+  // is empty (warning emitted).
+  const payerType: 'legal_entity' | 'individual' =
+    (order as any)?.payer_type === 'legal_entity' ? 'legal_entity' : 'individual';
   let customer: any = null;
+  let customerResolutionSource: string = 'none';
   if (input.legal_details_id) {
     const { data } = await supabase.from('client_legal_details').select('*').eq('id', input.legal_details_id).maybeSingle();
     customer = data;
+    customerResolutionSource = 'explicit_legal_details_id';
   } else if (order?.user_id) {
     const { data: prof } = await supabase.from('profiles').select('id').eq('user_id', order.user_id).maybeSingle();
     if (prof?.id) {
-      const { data } = await supabase.from('client_legal_details').select('*').eq('profile_id', prof.id).eq('is_default', true).maybeSingle();
-      customer = data;
-      if (data) input.legal_details_id = data.id;
+      // 1. Try cohort matching payer_type, ordered by is_default DESC, updated_at DESC.
+      const { data: cohort } = await supabase
+        .from('client_legal_details')
+        .select('*')
+        .eq('profile_id', prof.id)
+        .eq('client_type', payerType)
+        .order('is_default', { ascending: false })
+        .order('updated_at', { ascending: false })
+        .limit(1);
+      if (cohort && cohort.length > 0) {
+        customer = cohort[0];
+        customerResolutionSource = `cohort_${payerType}`;
+        input.legal_details_id = customer.id;
+      } else {
+        // 2. Cohort empty → fallback to any default row, but warn.
+        const { data: fallback } = await supabase
+          .from('client_legal_details')
+          .select('*')
+          .eq('profile_id', prof.id)
+          .eq('is_default', true)
+          .maybeSingle();
+        customer = fallback || null;
+        if (customer) {
+          customerResolutionSource = `fallback_default_${customer.client_type || 'unknown'}`;
+          warnings.push(`customer_payer_type_mismatch:expected=${payerType},got=${customer.client_type || 'unknown'}`);
+          input.legal_details_id = customer.id;
+        }
+      }
     }
   }
-  if (!customer) warnings.push('customer_legal_details_not_found');
+  if (!customer) {
+    warnings.push(payerType === 'legal_entity'
+      ? 'customer_legal_entity_requisites_missing'
+      : 'customer_legal_details_not_found');
+  }
 
   // 7. Build resolver values
   const now = new Date();
