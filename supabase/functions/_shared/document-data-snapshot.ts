@@ -321,6 +321,16 @@ export async function snapshotOrderDocumentData(
               : (pick<string>('template_id') ? 'defaults' : 'none'),
           final_template_id: finalTemplateId,
         },
+        executor_resolution: {
+          source: executorOverride
+            ? 'override'
+            : (scenarioResolved.source === 'scenario' && scenarioResolved.executor_id)
+              ? 'scenario'
+              : ((offerDefaults?.executor_id ?? tariffDefaults?.executor_id ?? productDefaults?.executor_id)
+                  ? 'defaults'
+                  : 'none'),
+          final_executor_id: explicitExecutorIdLayered,
+        },
       },
     };
 
