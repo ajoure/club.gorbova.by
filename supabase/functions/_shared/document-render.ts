@@ -29,6 +29,7 @@ import {
   type TokenManifestEntry,
 } from './docx-helpers.ts';
 import { ALLOWED_DATE_FORMATS, applyDateFormat } from './dateFormatModifiers.ts';
+import { formatStructuredAddress, type FormatAddressResult } from './address-format.ts';
 
 export const CANONICAL_RESOLVER_VERSION = '1.0.0';
 export const CANONICAL_FEATURE_FLAG_KEY = 'documents_canonical_generation_enabled';
@@ -104,15 +105,34 @@ function buildCustomerName(ld: any): string {
   return ld.leg_name || '';
 }
 
-function buildCustomerAddress(ld: any): string {
-  if (!ld) return '';
-  if (ld.client_type === 'individual') {
-    return [ld.ind_address_index, ld.ind_address_region, ld.ind_address_district, ld.ind_address_city,
-      ld.ind_address_street, ld.ind_address_house, ld.ind_address_apartment && `кв. ${ld.ind_address_apartment}`]
-      .filter(Boolean).join(', ');
+// Sprint D — structured address resolution.
+// Returns { rendered, source } where source ∈ structured|raw|missing.
+function buildCustomerAddressResolved(ld: any): FormatAddressResult {
+  if (!ld) return { rendered: '', source: 'missing' };
+  if (ld.client_type === 'legal_entity') {
+    return formatStructuredAddress(ld.leg_address_structured, ld.leg_address, 'legal_entity');
   }
-  if (ld.client_type === 'entrepreneur') return ld.ent_address || '';
-  return ld.leg_address || '';
+  if (ld.client_type === 'entrepreneur') {
+    return formatStructuredAddress(ld.ent_address_structured, ld.ent_address, 'entrepreneur');
+  }
+  // individual: prefer structured JSONB, then build from ind_address_* columns,
+  // then raw fallback.
+  if (ld.ind_address_structured && typeof ld.ind_address_structured === 'object') {
+    const r = formatStructuredAddress(ld.ind_address_structured, null, 'individual');
+    if (r.rendered) return r;
+  }
+  const legacyParts = [
+    ld.ind_address_street && (/^(ул\.|улица|пр\.|пр-т|проспект|пер\.|переулок)/i.test(ld.ind_address_street)
+      ? ld.ind_address_street : `ул. ${ld.ind_address_street}`),
+    ld.ind_address_house && `д. ${ld.ind_address_house}`,
+    ld.ind_address_apartment && `кв. ${ld.ind_address_apartment}`,
+    ld.ind_address_city && (/^г\.?\s/i.test(ld.ind_address_city) ? ld.ind_address_city : `г. ${ld.ind_address_city}`),
+    ld.ind_address_index || null,
+    ld.ind_address_district || null,
+    ld.ind_address_region || null,
+  ].filter(Boolean);
+  if (legacyParts.length) return { rendered: legacyParts.join(', '), source: 'structured' };
+  return { rendered: '', source: 'missing' };
 }
 
 function generateDocNumber(prefix = 'AKT'): string {
@@ -315,6 +335,17 @@ export async function resolveCanonicalPayload(
   // 7. Build resolver values
   const now = new Date();
   const docNumber = generateDocNumber('AKT');
+
+  // Sprint D — structured address resolution.
+  const executorAddress: FormatAddressResult = executor
+    ? formatStructuredAddress(executor.legal_address_structured, executor.legal_address, 'executor')
+    : { rendered: '', source: 'missing' };
+  const customerAddress: FormatAddressResult = buildCustomerAddressResolved(customer);
+  if (executor && executorAddress.source === 'missing') warnings.push('executor_address_missing');
+  else if (executor && executorAddress.source === 'raw') warnings.push('executor_address_unstructured_fallback');
+  if (customer && customerAddress.source === 'missing') warnings.push('customer_address_missing');
+  else if (customer && customerAddress.source === 'raw') warnings.push('customer_address_unstructured_fallback');
+
   const resolverValues: Record<string, any> = {
     'system.today':       now.toISOString().slice(0, 10),
     'system.today_long':  dateToRussianFormat(now),
@@ -325,7 +356,8 @@ export async function resolveCanonicalPayload(
     'executor.name':            executor?.full_name || '',
     'executor.short_name':      executor?.short_name || executor?.full_name || '',
     'executor.unp':             executor?.unp || '',
-    'executor.address':         executor?.legal_address || '',
+    'executor.address':         executorAddress.rendered,
+    'executor.address.full':    executorAddress.rendered,
     'executor.bank':            executor?.bank_name || '',
     'executor.bank_code':       executor?.bank_code || '',
     'executor.account':         executor?.bank_account || '',
@@ -338,7 +370,9 @@ export async function resolveCanonicalPayload(
                                   ? fullNameToInitials(customer?.ind_full_name)
                                   : buildCustomerName(customer),
     'customer.unp':             customer?.ent_unp || customer?.leg_unp || '',
-    'customer.address':         buildCustomerAddress(customer),
+    'customer.address':         customerAddress.rendered,
+    'customer.address.full':    customerAddress.rendered,
+    
     'customer.phone':           customer?.phone || '',
     'customer.email':           customer?.email || order?.customer_email || '',
     'customer.bank':            customer?.bank_name || '',
@@ -506,6 +540,12 @@ export async function resolveCanonicalPayload(
   function sourceFor(row: any): string {
     if (row.source_type === 'custom_field') return `client_legal_details.${row.token_key.replace(/^legal_details\./, '')}`;
     const k: string = row.resolver_key || row.token_key;
+    if (k === 'executor.address' || k === 'executor.address.full') {
+      return `executors.${executorAddress.source}`;
+    }
+    if (k === 'customer.address' || k === 'customer.address.full') {
+      return `client_legal_details.${customerAddress.source}`;
+    }
     if (k.startsWith('executor.')) return 'executors';
     if (k.startsWith('customer.')) return 'client_legal_details / orders_v2';
     if (k.startsWith('deal.')) return 'orders_v2';
@@ -559,8 +599,18 @@ export async function resolveCanonicalPayload(
     generated_at: now.toISOString(),
     resolver_version: CANONICAL_RESOLVER_VERSION,
     template: { id: tpl.id, name: tpl.name, code: tpl.code, version_id: version?.id || null, version_number: version?.version_number || null },
-    executor: executor ? { id: executor.id, name: executor.full_name, unp: executor.unp } : null,
-    customer: customer ? { id: customer.id, client_type: customer.client_type, name: buildCustomerName(customer), unp: customer.ent_unp || customer.leg_unp } : null,
+    executor: executor ? {
+      id: executor.id, name: executor.full_name, unp: executor.unp,
+      address: { rendered: executorAddress.rendered, source: executorAddress.source,
+                 structured: executor.legal_address_structured || null, raw: executor.legal_address || null },
+    } : null,
+    customer: customer ? {
+      id: customer.id, client_type: customer.client_type, name: buildCustomerName(customer),
+      unp: customer.ent_unp || customer.leg_unp,
+      address: { rendered: customerAddress.rendered, source: customerAddress.source,
+                 structured: customer.leg_address_structured || customer.ent_address_structured || customer.ind_address_structured || null,
+                 raw: customer.leg_address || customer.ent_address || null },
+    } : null,
     customer_resolution: { payer_type: payerType, source: customerResolutionSource, client_type: customer?.client_type || null },
     order: order ? { id: order.id, order_number: order.order_number, payer_type: (order as any).payer_type || null, product_id: order.product_id, tariff_id: order.tariff_id, final_price: order.final_price, currency: order.currency, status: order.status } : null,
     document: { number: docNumber, date: now.toISOString() },
