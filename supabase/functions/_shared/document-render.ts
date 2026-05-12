@@ -536,6 +536,12 @@ export async function resolveCanonicalPayload(
   function sourceFor(row: any): string {
     if (row.source_type === 'custom_field') return `client_legal_details.${row.token_key.replace(/^legal_details\./, '')}`;
     const k: string = row.resolver_key || row.token_key;
+    if (k === 'executor.address' || k === 'executor.address.full') {
+      return `executors.${executorAddress.source}`;
+    }
+    if (k === 'customer.address' || k === 'customer.address.full') {
+      return `client_legal_details.${customerAddress.source}`;
+    }
     if (k.startsWith('executor.')) return 'executors';
     if (k.startsWith('customer.')) return 'client_legal_details / orders_v2';
     if (k.startsWith('deal.')) return 'orders_v2';
