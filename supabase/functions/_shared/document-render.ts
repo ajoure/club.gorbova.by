@@ -105,15 +105,34 @@ function buildCustomerName(ld: any): string {
   return ld.leg_name || '';
 }
 
-function buildCustomerAddress(ld: any): string {
-  if (!ld) return '';
-  if (ld.client_type === 'individual') {
-    return [ld.ind_address_index, ld.ind_address_region, ld.ind_address_district, ld.ind_address_city,
-      ld.ind_address_street, ld.ind_address_house, ld.ind_address_apartment && `кв. ${ld.ind_address_apartment}`]
-      .filter(Boolean).join(', ');
+// Sprint D — structured address resolution.
+// Returns { rendered, source } where source ∈ structured|raw|missing.
+function buildCustomerAddressResolved(ld: any): FormatAddressResult {
+  if (!ld) return { rendered: '', source: 'missing' };
+  if (ld.client_type === 'legal_entity') {
+    return formatStructuredAddress(ld.leg_address_structured, ld.leg_address, 'legal_entity');
   }
-  if (ld.client_type === 'entrepreneur') return ld.ent_address || '';
-  return ld.leg_address || '';
+  if (ld.client_type === 'entrepreneur') {
+    return formatStructuredAddress(ld.ent_address_structured, ld.ent_address, 'entrepreneur');
+  }
+  // individual: prefer structured JSONB, then build from ind_address_* columns,
+  // then raw fallback.
+  if (ld.ind_address_structured && typeof ld.ind_address_structured === 'object') {
+    const r = formatStructuredAddress(ld.ind_address_structured, null, 'individual');
+    if (r.rendered) return r;
+  }
+  const legacyParts = [
+    ld.ind_address_street && (/^(ул\.|улица|пр\.|пр-т|проспект|пер\.|переулок)/i.test(ld.ind_address_street)
+      ? ld.ind_address_street : `ул. ${ld.ind_address_street}`),
+    ld.ind_address_house && `д. ${ld.ind_address_house}`,
+    ld.ind_address_apartment && `кв. ${ld.ind_address_apartment}`,
+    ld.ind_address_city && (/^г\.?\s/i.test(ld.ind_address_city) ? ld.ind_address_city : `г. ${ld.ind_address_city}`),
+    ld.ind_address_index || null,
+    ld.ind_address_district || null,
+    ld.ind_address_region || null,
+  ].filter(Boolean);
+  if (legacyParts.length) return { rendered: legacyParts.join(', '), source: 'structured' };
+  return { rendered: '', source: 'missing' };
 }
 
 function generateDocNumber(prefix = 'AKT'): string {
