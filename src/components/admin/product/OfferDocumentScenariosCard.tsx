@@ -168,10 +168,17 @@ export function OfferDocumentScenariosCard({ value, onChange }: Props) {
           <div className="flex gap-2">
             <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-indigo-500" />
             <span>
-              При создании сделки система подберёт сценарий по
-              <strong> типу плательщика</strong> и <strong>способу оплаты</strong>.
-              Если ни один сценарий не подошёл — будут использованы значения из
-              блока «Данные для документов» выше.
+              Это единственное место, где задаются <strong>шаблон документа</strong> и
+              <strong> исполнитель</strong>. При создании сделки система подберёт сценарий
+              по <strong>типу плательщика</strong> и <strong>способу оплаты</strong>.
+            </span>
+          </div>
+          <div className="flex gap-2">
+            <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-500" />
+            <span>
+              Если ни один сценарий не включён и нет legacy-значений в «Данные для
+              документов», документ не будет создан — в карточке сделки появится
+              причина «Не выбран шаблон документа для сценария».
             </span>
           </div>
           <div className="flex gap-2">
@@ -308,6 +315,18 @@ export function OfferDocumentScenariosCard({ value, onChange }: Props) {
                 {row.payment_channels.length > 0 && (
                   <div className="text-[10px] text-muted-foreground">
                     Каналы: {row.payment_channels.map((c) => CHANNEL_LABELS_RU[c as PaymentChannel] || c).join(', ')}
+                  </div>
+                )}
+                {row.is_enabled && (!row.template_id || !row.executor_id) && (
+                  <div className="flex items-start gap-2 text-[11px] text-amber-600 dark:text-amber-400">
+                    <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                    <span>
+                      {!row.template_id && !row.executor_id
+                        ? 'Не выбран шаблон и исполнитель — документ по этому сценарию создан не будет.'
+                        : !row.template_id
+                          ? 'Не выбран шаблон — документ по этому сценарию создан не будет.'
+                          : 'Не выбран исполнитель — документ по этому сценарию создан не будет.'}
+                    </span>
                   </div>
                 )}
               </div>
