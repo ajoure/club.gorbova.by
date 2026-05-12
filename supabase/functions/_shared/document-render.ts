@@ -472,6 +472,10 @@ export async function resolveCanonicalPayload(
     if (k.startsWith('executor.')) return 'executors';
     if (k.startsWith('customer.')) return 'client_legal_details / orders_v2';
     if (k.startsWith('deal.')) return 'orders_v2';
+    if (k.startsWith('payment.')) {
+      // Sprint A — payment.* источник = payments_v2 (snapshot или live).
+      return paymentSource === 'snapshot' ? 'payments_v2_snapshot' : (paymentSource === 'live' ? 'payments_v2' : 'payments_v2_missing');
+    }
     if (k.startsWith('document.')) return 'system.generated';
     if (k.startsWith('system.')) return 'system';
     return 'resolver';
