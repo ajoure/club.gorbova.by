@@ -21,6 +21,8 @@
 import { numberToWordsRu, normalizeCurrency } from './docx-helpers.ts';
 import { resolveExecutorForOrder, buildExecutorFieldValues, mergeExecutorIntoFields } from './executor-fields.ts';
 import { buildStandardFieldValues, mergeStandardIntoFields } from './standard-fields.ts';
+import { derivePaymentChannel } from './document-resolver-v2/payment-channel.ts';
+import { resolveDocumentScenario, type PayerType } from './document-scenario-resolver.ts';
 
 export const SNAPSHOT_VERSION = '1.2';
 
