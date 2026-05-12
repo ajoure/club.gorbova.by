@@ -237,7 +237,7 @@ export async function resolveCanonicalPayload(
   if (input.context_type === 'order' && input.context_id) {
     const { data: o } = await supabase
       .from('orders_v2')
-      .select('id, order_number, user_id, profile_id, product_id, tariff_id, final_price, base_price, currency, status, created_at, customer_email, customer_phone, meta')
+      .select('id, order_number, user_id, profile_id, product_id, tariff_id, final_price, base_price, currency, status, created_at, customer_email, customer_phone, payer_type, meta')
       .eq('id', input.context_id).maybeSingle();
     order = o;
     if (order?.product_id) {
@@ -260,20 +260,57 @@ export async function resolveCanonicalPayload(
     livePayment = (pays || []).find((p: any) => p.status === 'succeeded') || null;
   }
 
-  // 6. Customer legal_details
+  // 6. Customer legal_details (Sprint B: payer_type-aware resolution).
+  // SOT: orders_v2.payer_type. legal_entity → client_type='legal_entity',
+  // individual → client_type='individual'. Within the cohort prefer is_default,
+  // then most recently updated. Fallback to ANY default row only when cohort
+  // is empty (warning emitted).
+  const payerType: 'legal_entity' | 'individual' =
+    (order as any)?.payer_type === 'legal_entity' ? 'legal_entity' : 'individual';
   let customer: any = null;
+  let customerResolutionSource: string = 'none';
   if (input.legal_details_id) {
     const { data } = await supabase.from('client_legal_details').select('*').eq('id', input.legal_details_id).maybeSingle();
     customer = data;
+    customerResolutionSource = 'explicit_legal_details_id';
   } else if (order?.user_id) {
     const { data: prof } = await supabase.from('profiles').select('id').eq('user_id', order.user_id).maybeSingle();
     if (prof?.id) {
-      const { data } = await supabase.from('client_legal_details').select('*').eq('profile_id', prof.id).eq('is_default', true).maybeSingle();
-      customer = data;
-      if (data) input.legal_details_id = data.id;
+      // 1. Try cohort matching payer_type, ordered by is_default DESC, updated_at DESC.
+      const { data: cohort } = await supabase
+        .from('client_legal_details')
+        .select('*')
+        .eq('profile_id', prof.id)
+        .eq('client_type', payerType)
+        .order('is_default', { ascending: false })
+        .order('updated_at', { ascending: false })
+        .limit(1);
+      if (cohort && cohort.length > 0) {
+        customer = cohort[0];
+        customerResolutionSource = `cohort_${payerType}`;
+        input.legal_details_id = customer.id;
+      } else {
+        // 2. Cohort empty → fallback to any default row, but warn.
+        const { data: fallback } = await supabase
+          .from('client_legal_details')
+          .select('*')
+          .eq('profile_id', prof.id)
+          .eq('is_default', true)
+          .maybeSingle();
+        customer = fallback || null;
+        if (customer) {
+          customerResolutionSource = `fallback_default_${customer.client_type || 'unknown'}`;
+          warnings.push(`customer_payer_type_mismatch:expected=${payerType},got=${customer.client_type || 'unknown'}`);
+          input.legal_details_id = customer.id;
+        }
+      }
     }
   }
-  if (!customer) warnings.push('customer_legal_details_not_found');
+  if (!customer) {
+    warnings.push(payerType === 'legal_entity'
+      ? 'customer_legal_entity_requisites_missing'
+      : 'customer_legal_details_not_found');
+  }
 
   // 7. Build resolver values
   const now = new Date();
@@ -524,7 +561,8 @@ export async function resolveCanonicalPayload(
     template: { id: tpl.id, name: tpl.name, code: tpl.code, version_id: version?.id || null, version_number: version?.version_number || null },
     executor: executor ? { id: executor.id, name: executor.full_name, unp: executor.unp } : null,
     customer: customer ? { id: customer.id, client_type: customer.client_type, name: buildCustomerName(customer), unp: customer.ent_unp || customer.leg_unp } : null,
-    order: order ? { id: order.id, order_number: order.order_number, product_id: order.product_id, tariff_id: order.tariff_id, final_price: order.final_price, currency: order.currency, status: order.status } : null,
+    customer_resolution: { payer_type: payerType, source: customerResolutionSource, client_type: customer?.client_type || null },
+    order: order ? { id: order.id, order_number: order.order_number, payer_type: (order as any).payer_type || null, product_id: order.product_id, tariff_id: order.tariff_id, final_price: order.final_price, currency: order.currency, status: order.status } : null,
     document: { number: docNumber, date: now.toISOString() },
     token_manifest: tokenManifest,
     aliases: Object.fromEntries(aliasMap),

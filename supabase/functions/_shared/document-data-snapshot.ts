@@ -145,21 +145,47 @@ export async function snapshotOrderDocumentData(
       productDefaults = data?.meta?.document_defaults || null;
     }
 
-    // Customer legal_details (default for the buyer's profile).
+    // Customer legal_details — Sprint B: payer_type-aware cohort.
+    // SOT: orders_v2.payer_type. Match client_type=payer_type, prefer is_default,
+    // then most recently updated. Fallback to any default row + warning.
     let customerRow: any = null;
+    let customerResolutionSource = 'none';
+    const orderPayerTypeForCustomer: PayerType = (order as any).payer_type === 'legal_entity'
+      ? 'legal_entity' : 'individual';
     if (order.profile_id) {
-      const { data, error } = await supabase
+      const { data: cohort, error: cohortErr } = await supabase
         .from('client_legal_details')
         .select('*')
         .eq('profile_id', order.profile_id)
-        .eq('is_default', true)
-        .maybeSingle();
-      if (error) {
+        .eq('client_type', orderPayerTypeForCustomer)
+        .order('is_default', { ascending: false })
+        .order('updated_at', { ascending: false })
+        .limit(1);
+      if (cohortErr) {
         await safeAudit(supabase, 'document_data.snapshot_error', {
-          order_id: orderId, table: 'client_legal_details', stage: 'load_customer', error: error.message,
+          order_id: orderId, table: 'client_legal_details', stage: 'load_customer_cohort', error: cohortErr.message,
         });
       }
-      customerRow = data || null;
+      if (cohort && cohort.length > 0) {
+        customerRow = cohort[0];
+        customerResolutionSource = `cohort_${orderPayerTypeForCustomer}`;
+      } else {
+        const { data: fallback, error } = await supabase
+          .from('client_legal_details')
+          .select('*')
+          .eq('profile_id', order.profile_id)
+          .eq('is_default', true)
+          .maybeSingle();
+        if (error) {
+          await safeAudit(supabase, 'document_data.snapshot_error', {
+            order_id: orderId, table: 'client_legal_details', stage: 'load_customer_fallback', error: error.message,
+          });
+        }
+        customerRow = fallback || null;
+        if (customerRow) {
+          customerResolutionSource = `fallback_default_${customerRow.client_type || 'unknown'}`;
+        }
+      }
     }
 
     // Layered pick (offer wins, then tariff, then product).
@@ -459,6 +485,12 @@ export async function snapshotOrderDocumentData(
       ...(documentData as any)._provenance,
       customer_legal_details_id: customerRow?.id || null,
       customer_legal_details_present: !!customerRow,
+      customer_resolution: {
+        payer_type: orderPayerTypeForCustomer,
+        source: customerResolutionSource,
+        client_type: customerRow?.client_type || null,
+        mismatch: !!customerRow && customerRow.client_type !== orderPayerTypeForCustomer,
+      },
       standard_fields_written: stdMerged.written,
       standard_fields_skipped_manual: stdMerged.skipped_manual,
     };
