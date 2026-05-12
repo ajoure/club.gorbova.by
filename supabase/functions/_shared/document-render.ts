@@ -711,6 +711,77 @@ export async function generateCanonicalDocument(
   const { data: file, error: dlErr } = await supabase.storage.from(dlBucket).download(dlPath);
   if (dlErr || !file) return { success: false, payload, error: 'template_file_download_failed' };
 
+  // ─── Sprint C — canonical numbering ───────────────────────────────────────
+  // mode='generate' (default): pre-INSERT pending row → allocate_document_number RPC
+  //   → use canonical number for render & filename → UPDATE row to success.
+  // mode='preview': временный номер PREVIEW-DDMM, sequence НЕ расходуется,
+  //   row не инсертится (caller sample/diagnostic).
+  const mode: 'generate' | 'preview' = opts.mode || 'generate';
+  const _now = new Date();
+  const _ddmm = `${String(_now.getDate()).padStart(2, '0')}${String(_now.getMonth() + 1).padStart(2, '0')}`;
+
+  let canonicalDocNumber: string | null = null;
+  let canonicalDocDate: string | null = null;
+  let pendingDocId: string | null = null;
+
+  if (mode === 'preview') {
+    canonicalDocNumber = `PREVIEW-${_ddmm}`;
+    canonicalDocDate = _now.toISOString().slice(0, 10);
+  } else {
+    // pre-INSERT pending row to get id for allocate_document_number RPC
+    const { data: pending, error: pendErr } = await supabase.from('ai_generated_documents').insert({
+      profile_id: opts.profileId,
+      template_id: payload.template.id,
+      template_name: payload.template.name,
+      template_version_id: payload.template.version_id,
+      title: `${payload.template.name} — pending`,
+      status: 'pending',
+      legal_details_id: input.legal_details_id || null,
+      signer_link_id: input.signer_link_id || null,
+      storage_bucket: opts.storageBucketOutput || 'documents',
+      idempotency_key: idempotencyKey,
+      context_type: input.context_type || null,
+      context_id: input.context_id || null,
+      created_by: opts.userId,
+      meta: { canonical: true, numbering_pending: true },
+    }).select('id').single();
+
+    if (pendErr) {
+      // Race-safe: на UNIQUE-конфликт по idempotency_key — попробовать reuse существующий success-row
+      if (idempotencyKey && /duplicate key|unique/i.test(pendErr.message || '')) {
+        const { data: existing2 } = await supabase
+          .from('ai_generated_documents')
+          .select('id, file_path, storage_bucket, status, document_number')
+          .eq('idempotency_key', idempotencyKey)
+          .is('deleted_at', null)
+          .maybeSingle();
+        if (existing2 && existing2.status === 'success' && existing2.file_path) {
+          const { data: signed } = await supabase.storage.from(existing2.storage_bucket).createSignedUrl(existing2.file_path, 86400);
+          return { success: true, payload, document_id: existing2.id, document_number: existing2.document_number || undefined, download_url: signed?.signedUrl, storage_path: existing2.file_path, reused: true } as any;
+        }
+      }
+      return { success: false, payload, error: `pending_insert_failed:${pendErr.message}` };
+    }
+    pendingDocId = pending.id;
+
+    const { data: alloc, error: allocErr } = await supabase.rpc('allocate_document_number', { p_document_id: pendingDocId });
+    if (allocErr || !alloc || !alloc[0]) {
+      return { success: false, payload, error: `allocate_number_failed:${allocErr?.message || 'no_data'}` };
+    }
+    canonicalDocNumber = alloc[0].document_number;
+    canonicalDocDate = alloc[0].document_date;
+  }
+
+  // Inject canonical number/date back into resolved tokens for render
+  if (canonicalDocNumber) {
+    payload.resolved_tokens['document.number'] = canonicalDocNumber;
+  }
+  if (canonicalDocDate) {
+    payload.resolved_tokens['document.date'] = applyDateFormat(canonicalDocDate, 'short').value || canonicalDocDate;
+    payload.resolved_tokens['document.date_short'] = payload.resolved_tokens['document.date'];
+  }
+
+
   let docBuffer: Uint8Array;
   try {
     const buf = new Uint8Array(await file.arrayBuffer());
