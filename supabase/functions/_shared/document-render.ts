@@ -829,6 +829,53 @@ export async function generateCanonicalDocument(
       renderData['document.date_short'] = applyDateFormat(renderData['document.date'], 'short').value
         || renderData['document.date'];
     }
+    // ── Case modifiers (|case=...) для текстовых токенов customer/payer/executor ─
+    // Сканируем шаблон-токены: для любого, в котором есть |case=..., вычисляем
+    // значение через applyCaseModifier и кладём в renderData по полному ключу.
+    // Format на текстовых токенах игнорируется с warning format_modifier_ignored_for_text.
+    {
+      const customerType = ((payload.snapshot as any)?.customer_resolution?.payer_type
+        ?? (payload.snapshot as any)?.customer?.client_type
+        ?? null) as 'individual' | 'legal_entity' | 'entrepreneur' | null;
+      const TEXT_BASES = new Set([
+        'customer.name', 'payer.name',
+        'executor.name', 'executor.short_name',
+        'executor.director', 'executor.director_short',
+      ]);
+      for (const tok of payload.template_tokens) {
+        if (!tok || tok.indexOf('|case=') === -1) continue;
+        if (tok in renderData && renderData[tok] !== '') continue;
+        const parts = tok.split('|');
+        const baseKey = parts[0];
+        let caseVal: string | null = null;
+        let formatVal: string | null = null;
+        for (const p of parts.slice(1)) {
+          const eq = p.indexOf('=');
+          if (eq < 0) continue;
+          const k = p.slice(0, eq);
+          const v = p.slice(eq + 1);
+          if (k === 'case') caseVal = v;
+          else if (k === 'format') formatVal = v;
+        }
+        if (!caseVal) continue;
+
+        const baseValue = renderData[baseKey] ?? payload.resolved_tokens[baseKey] ?? '';
+        const isTextBase = TEXT_BASES.has(baseKey);
+        if (isTextBase && formatVal != null) {
+          payload.warnings.push(`format_modifier_ignored_for_text:${baseKey}`);
+        }
+        if (!isCaseModifier(caseVal)) {
+          renderData[tok] = baseValue;
+          payload.warnings.push(`case_modifier_unknown:${caseVal}`);
+          continue;
+        }
+        const ctxKey = isTextBase ? baseKey : baseKey; // tokenKey для классификатора
+        const r = applyCaseModifier(baseValue, caseVal, { tokenKey: ctxKey, customerType });
+        renderData[tok] = r.value;
+        if (r.warning) payload.warnings.push(r.warning);
+      }
+    }
+
     for (const t of payload.unmapped_template_tokens) if (!(t in renderData)) renderData[t] = '';
     docx.render(renderData);
     docBuffer = docx.getZip().generate({ type: 'uint8array' });
