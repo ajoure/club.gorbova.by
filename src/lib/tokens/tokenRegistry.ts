@@ -76,12 +76,20 @@ export interface TokenDef {
 
 /** Standard contact tokens — strictly 1:1 with edge function resolveContactTokens */
 export const CONTACT_TOKENS: TokenDef[] = [
+  // Legacy unprefixed (back-compat для старых сообщений/шаблонов)
   { key: "full_name", label: "Полное имя", tokenString: "{{full_name}}", group: "contact", badge: "Текст", searchKeywords: "полное имя full_name фио" },
   { key: "first_name", label: "Имя", tokenString: "{{first_name}}", group: "contact", badge: "Текст", searchKeywords: "имя first_name" },
   { key: "last_name", label: "Фамилия", tokenString: "{{last_name}}", group: "contact", badge: "Текст", searchKeywords: "фамилия last_name" },
   { key: "email", label: "Email", tokenString: "{{email}}", group: "contact", badge: "Текст", searchKeywords: "email почта" },
   { key: "phone", label: "Телефон", tokenString: "{{phone}}", group: "contact", badge: "Текст", searchKeywords: "телефон phone" },
   { key: "telegram_username", label: "Telegram username", tokenString: "{{telegram_username}}", group: "contact", badge: "Текст", searchKeywords: "telegram username телеграм" },
+  // Canonical contact.* aliases — picker вставляет именно их; resolveContactTokens в edge functions их принимает
+  { key: "contact.full_name", label: "Контакт · Полное имя", tokenString: "{{contact.full_name}}", group: "contact", badge: "Текст", searchKeywords: "полное имя full_name фио contact" },
+  { key: "contact.first_name", label: "Контакт · Имя", tokenString: "{{contact.first_name}}", group: "contact", badge: "Текст", searchKeywords: "имя first_name contact" },
+  { key: "contact.last_name", label: "Контакт · Фамилия", tokenString: "{{contact.last_name}}", group: "contact", badge: "Текст", searchKeywords: "фамилия last_name contact" },
+  { key: "contact.email", label: "Контакт · Email", tokenString: "{{contact.email}}", group: "contact", badge: "Текст", searchKeywords: "email почта contact" },
+  { key: "contact.phone", label: "Контакт · Телефон", tokenString: "{{contact.phone}}", group: "contact", badge: "Текст", searchKeywords: "телефон phone contact" },
+  { key: "contact.telegram_username", label: "Контакт · Telegram username", tokenString: "{{contact.telegram_username}}", group: "contact", badge: "Текст", searchKeywords: "telegram username телеграм contact" },
 ];
 
 /** System date/time tokens — strictly 1:1 with resolveSystemTokens in _shared/systemTokens.ts */
