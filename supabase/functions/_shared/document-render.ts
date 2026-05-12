@@ -319,7 +319,79 @@ export async function resolveCanonicalPayload(
     'deal.currency':      order?.currency ? (normalizeCurrency(order.currency) === 'UNKNOWN' ? order.currency : normalizeCurrency(order.currency)) : '',
     'deal.paid_at':       order?.created_at ? new Date(order.created_at).toLocaleDateString('ru-RU') : '',
     'deal.access_days':   tariff?.access_days != null ? String(tariff.access_days) : '',
+
+    // Sprint A — payment.* defaults (empty strings; overlay below from snapshot or live).
+    'payment.method':                  '',
+    'payment.method_label':            '',
+    'payment.description':             '',
+    'payment.card.brand':              '',
+    'payment.card.brand_normalized':   '',
+    'payment.card.last4':              '',
+    'payment.card.holder':             '',
+    'payment.paid_at':                 '',
+    'payment.amount':                  '',
+    'payment.currency':                '',
+    'payment.provider_transaction_id': '',
+    'payment.external_reference':      '',
   };
+
+  // 7a. Sprint A — payment.* overlay (snapshot SOT → live fallback → empty + warning).
+  // Snapshot.payment block содержит method_label/description, выработанные на момент snapshot.
+  // Live fallback используется только если snapshot.payment отсутствует.
+  let paymentSource: 'snapshot' | 'live' | 'none' = 'none';
+  function applyPaymentBlock(p: any) {
+    if (!p) return;
+    const set = (k: string, v: any) => {
+      if (v != null && v !== '') resolverValues[k] = String(v);
+    };
+    set('payment.method', p.method);
+    set('payment.method_label', p.method_label);
+    set('payment.description', p.description);
+    set('payment.card.brand', p.card_brand);
+    set('payment.card.brand_normalized', p.card_brand_normalized);
+    set('payment.card.last4', p.card_last4);
+    set('payment.card.holder', p.card_holder);
+    if (p.paid_at) {
+      try { resolverValues['payment.paid_at'] = new Date(p.paid_at).toLocaleDateString('ru-RU'); }
+      catch { resolverValues['payment.paid_at'] = String(p.paid_at); }
+    }
+    if (p.amount != null && p.amount !== '') {
+      resolverValues['payment.amount'] = formatMoney(Number(p.amount), p.currency || order?.currency);
+    }
+    set('payment.currency', p.currency);
+    set('payment.provider_transaction_id', p.provider_transaction_id);
+    set('payment.external_reference', p.external_reference);
+  }
+  function buildLivePaymentBlock(row: any): any {
+    if (!row) return null;
+    const channelLabels: Record<string, string> = {
+      card: 'Банковская карта', apple_pay: 'Apple Pay', google_pay: 'Google Pay',
+      erip: 'ЕРИП', bank_transfer: 'Банковский перевод',
+    };
+    const provider = row.provider || null;
+    const method = provider === 'bepaid' ? 'card' : (provider || 'unknown');
+    const methodLabel = channelLabels[method] || method;
+    const brand = row.card_brand || null;
+    const brandNorm = brand ? String(brand).toLowerCase().replace(/[^a-z0-9]+/g, '_') : null;
+    const last4 = row.card_last4 || null;
+    const holder = row.card_holder || null;
+    const txnId = row.provider_payment_id || null;
+    const meta = row.meta || {};
+    const descParts = [methodLabel];
+    if (brand) descParts.push(brand);
+    if (last4) descParts.push(`**** ${last4}`);
+    if (holder) descParts.push(holder);
+    return {
+      payment_id: row.id, provider, method, method_label: methodLabel,
+      description: descParts.filter(Boolean).join(', '),
+      card_brand: brand, card_brand_normalized: brandNorm,
+      card_last4: last4, card_holder: holder,
+      paid_at: row.paid_at || row.created_at,
+      amount: row.amount, currency: row.currency,
+      provider_transaction_id: txnId,
+      external_reference: meta.external_reference || meta.external_ref || null,
+    };
+  }
 
   // 7b. Sprint 10 — overlay orders_v2.meta.document_data snapshot.
   // Priority chain: snapshot → input.overrides → live → computed fallback.
