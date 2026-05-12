@@ -230,14 +230,94 @@ export async function snapshotOrderDocumentData(
       ? 'legal_entity' : 'individual';
 
     // Определяем канал по последнему succeeded платежу (read-only).
+    // Sprint A: расширенный select для payment.* namespace в renderer.
     const { data: paysForChannel } = await supabase
       .from('payments_v2')
-      .select('id, status, card_last4, card_brand, provider, meta, paid_at, created_at')
+      .select('id, status, card_last4, card_brand, card_holder, provider, provider_payment_id, amount, currency, meta, paid_at, created_at')
       .eq('order_id', orderId)
       .order('paid_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false });
     const succPay = (paysForChannel || []).find((p: any) => p.status === 'succeeded') || null;
     const paymentChannel = derivePaymentChannel(succPay as any);
+
+    // Sprint A — payment.* snapshot block.
+    // SOT: последний succeeded payment по order_id. Не пишем ничего в payments_v2.
+    // Renderer overlay: snapshot.payment → live payments_v2 → empty + warning.
+    function buildPaymentBlock(p: any, channel: string | null): any {
+      if (!p) {
+        return {
+          payment_id: null,
+          provider: null,
+          payment_channel: channel || null,
+          method: null,
+          method_label: null,
+          description: null,
+          card_brand: null,
+          card_brand_normalized: null,
+          card_last4: null,
+          card_holder: null,
+          paid_at: null,
+          amount: null,
+          currency: null,
+          provider_transaction_id: null,
+          external_reference: null,
+          selection_reason: 'no_succeeded_payment',
+        };
+      }
+      const meta = p.meta || {};
+      const brand = p.card_brand || null;
+      const brandNorm = brand
+        ? String(brand).toLowerCase().replace(/[^a-z0-9]+/g, '_')
+        : null;
+      const channelLabels: Record<string, string> = {
+        card: 'Банковская карта',
+        apple_pay: 'Apple Pay',
+        google_pay: 'Google Pay',
+        erip: 'ЕРИП',
+        bank_transfer: 'Банковский перевод',
+      };
+      const methodCode = channel || (p.provider === 'bepaid' ? 'card' : (p.provider || 'unknown'));
+      const methodLabel = channelLabels[methodCode] || methodCode;
+      // Description: формируется из факта платежа (см. plan §6).
+      let description: string;
+      const last4 = p.card_last4 || null;
+      const holder = p.card_holder || null;
+      const txnId = p.provider_payment_id || null;
+      if (channel === 'card' || channel === 'apple_pay' || channel === 'google_pay') {
+        const parts = [methodLabel];
+        if (brand) parts.push(brand);
+        if (last4) parts.push(`**** ${last4}`);
+        if (holder) parts.push(holder);
+        description = parts.filter(Boolean).join(', ');
+      } else if (channel === 'erip') {
+        description = txnId ? `ЕРИП, операция ${txnId}` : 'ЕРИП';
+      } else if (channel === 'bank_transfer') {
+        description = txnId ? `Банковский перевод, № ${txnId}` : 'Банковский перевод';
+      } else {
+        const parts = [methodLabel];
+        if (txnId) parts.push(txnId);
+        description = parts.filter(Boolean).join(', ') || (meta.description || '');
+      }
+      return {
+        payment_id: p.id || null,
+        provider: p.provider || null,
+        payment_channel: channel || null,
+        method: methodCode,
+        method_label: methodLabel,
+        description,
+        card_brand: brand,
+        card_brand_normalized: brandNorm,
+        card_last4: last4,
+        card_holder: holder,
+        paid_at: p.paid_at || p.created_at || null,
+        amount: p.amount != null ? Number(p.amount) : null,
+        currency: p.currency || null,
+        provider_transaction_id: txnId,
+        external_reference: meta.external_reference || meta.external_ref || null,
+        selection_reason: 'last_succeeded_by_paid_at',
+      };
+    }
+    const paymentBlock = buildPaymentBlock(succPay, paymentChannel);
 
     const offerMetaForResolver = offerRow?.meta || {};
     const scenarioResolved = resolveDocumentScenario(
