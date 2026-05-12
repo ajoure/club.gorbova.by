@@ -1,266 +1,149 @@
-## Да, ощущение правильное: в плане появилась опасная подмена фокуса.
+## да, согласен, с учетом правок:
 
-Изначальный Sprint D был про **корректный рендер существующих адресных плейсхолдеров**:
+1. **Фразу про “если ни один сценарий не включён — документ будет создан с пустым шаблоном” заменить**
 
-```text
-customer.address
-executor.address
-```
-
-А теперь он добавил:
+Так писать нельзя. Документ не должен “создаваться с пустым шаблоном”. Правильно:
 
 ```text
-customer.address.full
-executor.address.full
+Если ни один сценарий не включён и нет legacy fallback в document_defaults, документ не будет создан. В карточке сделки/генерации должна быть понятная причина: «Не выбран шаблон документа для сценария».
 ```
 
-Это допустимо **только как add-on**, но не должно заменить основную задачу. Основной DoD должен оставаться вокруг `customer.address` и `executor.address`.
+2. **Не удалять загрузку** `templates/executors`**, если она ещё нужна для отображения legacy summary**
 
-Дай ему такую ревизию:
+Если в верхнем блоке после удаления селектов ничего не показывает название старого legacy-шаблона/исполнителя — ок, загрузку можно удалить.
+
+Но если хочешь показать read-only строку:
 
 ```text
-Да, план в целом согласован, но с обязательными правками. Не уходить от первоначального Sprint D.
-
-## Главное уточнение
-
-Sprint D — это НЕ sprint по новым плейсхолдерам.
-
-Sprint D — это патч рендера существующих адресов:
-
-- customer.address
-- executor.address
-
-Новые алиасы:
-
-- customer.address.full
-- executor.address.full
-
-можно добавить только как дополнительный alias-layer, но они не заменяют основную задачу.
-
-## Что обязательно сохранить из первоначального плана
-
-1. Основной результат должен быть в существующих токенах:
-
-customer.address
-executor.address
-
-Именно они должны начать рендериться из structured JSONB.
-
-2. Source priority остается:
-
-legal_entity:
-leg_address_structured → leg_address raw → empty + warning
-
-entrepreneur:
-ent_address_structured → ent_address raw → empty + warning
-
-individual:
-ind_address_structured → текущая сборка из ind_address_* → raw fallback
-
-executor:
-legal_address_structured → legal_address raw → empty + warning
-
-3. Правильный порядок адреса:
-
-улица → дом → корпус → помещение/квартира → населённый пункт → индекс → район/область только если нужно → страна
-
-Пример:
-
-ул. Панфилова, д. 2, пом. 49л, г. Минск, 220035, Республика Беларусь
-
-НЕ:
-
-220035, Республика Беларусь, г. Минск, ул. Панфилова, д. 2, пом. 49л
-
-4. Region/district:
-
-Не добавлять район/область для Минска и областных центров, если уже есть город + индекс + страна.
-
-Не должно быть:
-
-ул. Панфилова, д. 2, пом. 49л, г. Минск, 220035, Центральный район, Минский район, Минская обл., Республика Беларусь
-
-Должно быть:
-
-ул. Панфилова, д. 2, пом. 49л, г. Минск, 220035, Республика Беларусь
-
-5. Sub-token’ы вида:
-
-customer.address.street
-customer.address.house
-executor.address.city
-
-НЕ вводить в этом спринте, если их нет в document_token_registry.
-
-Сначала только discovery. Если токенов нет — отдельный patch позже.
-
-6. Алиасы full:
-
-customer.address.full
-executor.address.full
-
-можно добавить только если:
-- они есть или будут корректно зарегистрированы в document_token_registry;
-- они просто равны customer.address / executor.address;
-- они не требуют новой логики;
-- они не ломают unresolved_count.
-
-Если registry seed для них затягивает спринт — убрать из Sprint D и вынести отдельно.
-
-## Что НЕ делать в этом Sprint D
-
-Не трогать:
-
-- payment.*
-- document.number
-- payer_type cohort logic
-- document scenarios
-- aliases payer/service/order
-- payments_v2
-- orders_v2
-- client_legal_details schema
-- executors schema
-- morph/case modifiers
-- PDF/DOCX generator architecture
-
-## Исправить пункт про document-data-snapshot
-
-Фраза:
-
-Renderer-priority: live row → snapshot → raw fallback
-
-опасная.
-
-Нужно использовать существующую архитектуру без смены глобального порядка.
-
-Правильно:
-
-1. Если в текущем pipeline renderer получает live customer/executor row — использовать structured из live row.
-2. Если renderer работает из snapshot — использовать snapshot.address.
-3. Не менять глобальный snapshot-first/live-first порядок всего renderer-а в этом спринте.
-4. Address block в snapshot нужен для воспроизводимости, но не должен ломать текущий overlay.
-
-## Исправить DoD
-
-DoD должен быть таким:
-
-1. customer.address для legal_entity со structured:
-   ул. Панфилова, д. 2, пом. 49л, г. Минск, 220035, Республика Беларусь
-
-2. executor.address со structured:
-   ул. Панфилова, д. 2, пом. 49л, г. Минск, 220035, Республика Беларусь
-
-3. individual со structured:
-   ул. Сухая, д. 15, кв. 26, г. Брест, 224032, Республика Беларусь
-
-4. Сельский адрес:
-   ул. Центральная, д. 12, д. Клунь, 223016, Минский р-н, Минская обл., Республика Беларусь
-
-5. Старый order без structured:
-   customer.address / executor.address не пустеют, берутся из raw fallback.
-
-6. Для Минска нет административного хвоста:
-   Центральный район / Минский район / Минская обл.
-
-7. unresolved_count = 0.
-
-8. deno check clean.
-
-9. payments_v2 checksum identical.
-
-10. Если добавлены customer.address.full / executor.address.full:
-   - они есть в registry;
-   - они равны customer.address / executor.address;
-   - они не создают новые source rules;
-   - если их нет в registry — не добавлять в smoke.
-
-## Итоговая команда
-
-Реализуй Sprint D строго как патч structured rendering для customer.address и executor.address.
-
-Алиасы customer.address.full / executor.address.full — только add-only, если не мешают и проходят registry/discovery. Если мешают — вынести в отдельный patch.
+Legacy fallback: шаблон/исполнитель сохранены в старых настройках
 ```
 
-Коротко: **он не должен превращать Sprint D в новый namespace/alias sprint**. Основная задача — чтобы уже существующие `customer.address` и `executor.address` стали красивыми и правильными.
+тогда загрузка нужна. Решение: в этом патче **не показывать legacy summary**, чтобы не усложнять.
+
+3. **Оставить** `generate_act` **в верхнем блоке**
+
+Верхний блок «Данные для документов» должен остаться для:
+
+- `generate_act`;
+- сумма/валюта/услуга/сроки/описание;
+- прочие document_defaults поля.
+
+Убираем только:
+
+- `template_id`;
+- `executor_id`;
+- `showTechIds`;
+- технические ID.
+
+4. **Добавить защиту от пустых сценариев в UI**
+
+В `OfferDocumentScenariosCard` добавить визуальную подсказку/валидацию:
+
+```text
+Если сценарий включён, но не выбран шаблон или исполнитель — показать предупреждение в строке сценария:
+«Не выбран шаблон» / «Не выбран исполнитель».
+```
+
+Не блокировать сохранение пока, но явно показывать проблему.
+
+5. **DoD дополнить проверкой legacy fallback**
+
+Добавить proof:
+
+```text
+Оффер со старым meta.document_defaults.template_id/executor_id:
+- в UI верхний блок больше не показывает эти селекты;
+- resolver всё ещё использует эти значения как fallback;
+- документ генерируется.
+```
+
+6. **Sprint E.2 пока не формулировать как “обнулить legacy-поля”**
+
+Это опасно. Лучше:
+
+```text
+Sprint E.2 deferred:
+one-shot backfill document_defaults.template_id/executor_id → catch-all scenario.
+После proof на всех офферах можно решить, удалять ли UI/fallback. Legacy поля физически не очищать без отдельного dry-run и rollback.
+```
+
+## **Итоговая команда**
+
+```text
+Реализуй UI cleanup:
+
+1. В OfferDocumentDefaultsCard убрать только селекты:
+   - «Шаблон акта»
+   - «Исполнитель»
+   - «Показывать технические ID»
+
+2. Оставить остальные поля document_defaults.
+
+3. В OfferDocumentScenariosCard оставить единственное место выбора шаблона и исполнителя.
+
+4. Добавить предупреждение:
+   «Шаблон документа и исполнитель задаются в сценариях ниже».
+
+5. Резолверы не трогать:
+   document_defaults.template_id/executor_id остаются fallback для старых офферов.
+
+6. Typecheck proof.
+```
+
+Можно выполнять.
 
 &nbsp;
 
-Sprint D — Structured Addresses (исправленный порядок)
+План: Sprint E — единый источник template_id / executor_id в карточке оффера
+
+### Контекст
+
+В диалоге «Редактировать кнопку → Документы» сейчас два блока, которые задают одно и то же:
+
+1. `OfferDocumentDefaultsCard` (старый блок «Данные для документов») — содержит селекты `Шаблон акта`, `Исполнитель`, тумблер «Показывать технические ID». Пишет в `meta.document_defaults.{template_id, executor_id}`.
+2. `OfferDocumentScenariosCard` (новый блок «Сценарии документов по способу оплаты») — задаёт `template_id` / `executor_id` для каждой пары (payer_type, payment_channel). Пишет в `meta.document_scenarios[]`.
+
+Резолвер (`src/utils/resolveDocumentScenario.ts` и `supabase/functions/_shared/document-data-snapshot.ts`) уже устроен по приоритету **override → scenario → defaults**, поэтому defaults использовался как fallback, если ни один сценарий не подобрался. Из-за этого в UI остался противоречивый дубль: пользователь меняет «Шаблон акта» в одном месте, а реально применяется значение из сценария.
 
 ### Цель
 
-Резолвить `customer.address` и `executor.address` из structured-полей с правильным белорусским порядком: **улица → дом → корпус → помещение → населённый пункт → индекс → район/область (только сельские) → страна**.
+Сделать «Сценарии документов» единственным местом, где задаются `template_id` и `executor_id`. Блок «Данные для документов» оставляет только бизнес-поля акта (формировать или нет, наименование/описание услуги, единица, количество, цена, сумма, валюта, сроки).
 
-Дополнительно: ввести единый placeholder `customer.address.full` / `executor.address.full` (синоним `address`), чтобы шаблоны могли вставлять собранный адрес одной подстановкой.
+### Что меняем
 
-### Канонический порядок
+**UI (frontend, без логики бизнес-правил):**
 
-```
-ул. Панфилова, д. 2, корп. 1, пом. 49л, г. Минск, 220035, Республика Беларусь
-```
+1. `src/components/admin/product/OfferDocumentDefaultsCard.tsx`
+  - Удалить секцию «Шаблон и исполнитель» целиком: оба `<Select>` и тумблер «Показывать технические ID».
+  - Удалить связанный код: загрузку `templates`/`executors`, `executorPreselectRef`, `showTechIds` стейт.
+  - Подсказку «По умолчанию сумма акта берётся…» оставить, добавить второй абзац: *«Шаблон акта и исполнитель задаются в блоке «Сценарии документов по способу оплаты» ниже.»*.
+  - Поля `meta.document_defaults.template_id` и `meta.document_defaults.executor_id` больше не редактируются из UI, но из типа `OfferDocumentDefaults` НЕ удаляем (legacy данные читаются резолвером).
+2. `src/components/admin/product/OfferDocumentScenariosCard.tsx`
+  - Уже содержит селекты template/executor — без изменений.
+  - Добавить лёгкий info-баннер вверху карточки: «Это единственное место, где задаются шаблон документа и исполнитель. Если ни один сценарий не включён — документ будет создан с пустым шаблоном.»
+3. `src/pages/admin/AdminProductDetailV2.tsx` — без изменений: оба компонента остаются на вкладке «Документы».
 
-Не: `220035, Республика Беларусь, г. Минск, ...`
+**Резолвер (бизнес-правила) — НЕ трогаем в этом спринте:**
 
-### Префиксы apartment по subject_type
+- `resolveDocumentScenario.ts` и `document-data-snapshot.ts` продолжают читать `document_defaults.template_id/executor_id` как fallback, чтобы старые офферы (где template был сохранён только в defaults) не сломались.
+- В UI это поле просто становится read-only / невидимым. Миграция/чистка legacy полей — отдельная задача (Sprint E.2, см. ниже).
 
-- `legal_entity`, `executor` → `пом.`
-- `individual` → `кв.`
-- если в structured есть явный тип (office/room) → `оф.` / `пом.`
+### STOP-guards
 
-### Region/district
-
-Скрывать для Минска и облцентров (если есть city + индекс + страна). Показывать только для сельских адресов (settlement_type = `д.`, `аг.`, `п.`, `г.п.`).
-
-### Country
-
-Не добавлять, если в structured/raw его нет.
-
-### Source priority по subject_type
-
-- **legal_entity** → `leg_address_structured` → `leg_address` raw → empty + warning.
-- **entrepreneur** → `ent_address_structured` → `ent_address` raw.
-- **individual** → `ind_address_structured` → текущая сборка из `ind_address_*` → raw fallback.
-- **executor** → `executors.legal_address_structured` → `executors.legal_address` raw.
-
-### Реализация
-
-1. **Helper** в `supabase/functions/_shared/address-format.ts`:
-  ```ts
-   formatStructuredAddress(struct, fallback, { subject_type })
-  ```
-   Алгоритм: street_type+street → house → building → apartment(с префиксом по subject_type) → settlement_type+settlement|city|locality → postal_code → [district, region если сельский] → country. Дедуп префиксов (нет `ул. ул.`, `г. г.`, `д. д.`).
-2. `**document-render.ts**`:
-  - `buildCustomerAddress(ld)` — branch по `payer_type`, использовать helper.
-  - `executor.address` — использовать helper.
-  - Зарегистрировать токены `customer.address.full` и `executor.address.full` как алиасы `customer.address` / `executor.address` (для семантической ясности в шаблонах).
-3. `**document-data-snapshot.ts**`:
-  - В snapshot блоке customer/executor добавить `address: { rendered, structured, raw, source }`.
-  - Renderer-priority: live row → snapshot → raw fallback (не ломает существующую логику snapshot-first).
-4. **Sub-tokens (street/house/city/...)** — НЕ вводить в этом спринте. Сначала discovery `document_token_registry`. Если sub-token'ов нет — отдельный patch с registry seed.
-5. **Source trace** — точечно для существующих ключей:
-  - `customer.address` → `client_legal_details.<structured|raw|missing>`
-  - `executor.address` → `executors.<structured|raw|missing>`
-
-### STOP (не трогать)
-
-`payment.*`, `customer.*` (кроме address), `payer_type` cohort, `document.number`, `payments_v2`, схему `client_legal_details` / `executors`, `ind_address_*` колонки.
+- `payments_v2`, `document.number`, `payment.*`, payer cohort, address rendering — не трогаем.
+- `OfferDocumentDefaults` тип (`useTariffOffers`) не меняем.
+- Резолвер документа не меняем — fallback на defaults остаётся живым для legacy.
+- Новая миграция БД не нужна.
 
 ### DoD
 
-1. legal_entity со structured: `ул. Панфилова, д. 2, пом. 49л, г. Минск, 220035, Республика Беларусь`.
-2. individual со structured: `ул. Сухая, д. 15, кв. 26, г. Брест, 224032, Республика Беларусь`.
-3. Сельский: `ул. Центральная, д. 12, д. Клунь, 223016, Минский р-н, Минская обл., Республика Беларусь`.
-4. **Старый order без `*_address_structured**` — `customer.address` / `executor.address` рендерятся из raw, не пустеют (regression).
-5. Missing legal row — non-blocking warning, document не падает.
-6. Минск/облцентр — нет хвоста "Центральный район, Минский район, Минская обл.".
-7. `customer.address.full` / `executor.address.full` доступны как алиасы.
-8. `unresolved_count = 0` в smoke.
-9. `payments_v2` checksum identical.
-10. `deno check` clean.
+1. В диалоге «Редактировать кнопку → Документы» нет селектов «Шаблон акта» и «Исполнитель» в верхнем блоке.
+2. Тумблер «Показывать технические ID» убран.
+3. Все настройки template/executor задаются только в карточке «Сценарии документов по способу оплаты».
+4. Старые офферы, у которых template/executor лежат в `meta.document_defaults`, продолжают генерировать документы (резолвер читает их как fallback).
+5. Сборка/типы чистые.
 
-### Smoke
+### Что НЕ входит (отдельные спринты)
 
-- Order legal_entity со structured (Панфилова) → проверить порядок.
-- Order legal_entity без structured (raw fallback) → не пусто.
-- Order individual → префикс `кв.`.
-- Сравнить `customer.address` и `customer.address.full` — идентичны.
+- **Sprint C**: canonical numbering non-strict (убрать `AKT-260512-*`, использовать `allocate_document_number`, не расходовать номер в preview).
+- **Sprint E.2**: одноразовая backfill-миграция — перенести `meta.document_defaults.{template_id, executor_id}` офферов в неявный «catch-all» сценарий и обнулить legacy-поля; после этого можно убрать fallback из резолвера.
