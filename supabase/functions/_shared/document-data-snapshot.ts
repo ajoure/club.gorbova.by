@@ -272,7 +272,7 @@ export async function snapshotOrderDocumentData(
         order_id: order.id,
       },
       template_id: finalTemplateId,
-      executor_id: pick<string>('executor_id'),
+      executor_id: explicitExecutorIdLayered,
       service_name: pick<string>('service_name'),
       service_description: pick<string>('service_description'),
       unit: pick<string>('unit') || 'услуга',
@@ -320,6 +320,16 @@ export async function snapshotOrderDocumentData(
               ? 'scenario'
               : (pick<string>('template_id') ? 'defaults' : 'none'),
           final_template_id: finalTemplateId,
+        },
+        executor_resolution: {
+          source: executorOverride
+            ? 'override'
+            : (scenarioResolved.source === 'scenario' && scenarioResolved.executor_id)
+              ? 'scenario'
+              : ((offerDefaults?.executor_id ?? tariffDefaults?.executor_id ?? productDefaults?.executor_id)
+                  ? 'defaults'
+                  : 'none'),
+          final_executor_id: explicitExecutorIdLayered,
         },
       },
     };
