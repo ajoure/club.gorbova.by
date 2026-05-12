@@ -233,6 +233,7 @@ export async function resolveCanonicalPayload(
   let order: any = null;
   let product: any = null;
   let tariff: any = null;
+  let livePayment: any = null; // Sprint A — last succeeded payments_v2 row for payment.* fallback.
   if (input.context_type === 'order' && input.context_id) {
     const { data: o } = await supabase
       .from('orders_v2')
@@ -247,6 +248,16 @@ export async function resolveCanonicalPayload(
       const { data } = await supabase.from('product_tariffs').select('id, name, access_days').eq('id', order.tariff_id).maybeSingle();
       tariff = data;
     }
+    // Sprint A — read-only fetch последнего succeeded платежа для payment.* live fallback.
+    // Snapshot.payment имеет приоритет; live используется только если snapshot отсутствует.
+    const { data: pays } = await supabase
+      .from('payments_v2')
+      .select('id, status, card_last4, card_brand, card_holder, provider, provider_payment_id, amount, currency, meta, paid_at, created_at')
+      .eq('order_id', order?.id || input.context_id)
+      .order('paid_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .limit(20);
+    livePayment = (pays || []).find((p: any) => p.status === 'succeeded') || null;
   }
 
   // 6. Customer legal_details
