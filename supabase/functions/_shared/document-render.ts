@@ -859,7 +859,15 @@ export async function generateCanonicalDocument(
         }
         if (!caseVal) continue;
 
-        const baseValue = renderData[baseKey] ?? payload.resolved_tokens[baseKey] ?? '';
+        // Alias-aware lookup: snapshot.aliases использует ключи вида `{{payer.name}}`
+        // (с фигурными скобками), поэтому при отсутствии прямого ключа пробуем
+        // бракетированную форму, чтобы payer.name|case=... корректно склонялось.
+        const bracketedAlias = `{{${baseKey}}}`;
+        const baseValue = renderData[baseKey]
+          ?? renderData[bracketedAlias]
+          ?? payload.resolved_tokens[baseKey]
+          ?? (aliases[bracketedAlias] ? payload.resolved_tokens[aliases[bracketedAlias]] : undefined)
+          ?? '';
         const isTextBase = TEXT_BASES.has(baseKey);
         if (isTextBase && formatVal != null) {
           payload.warnings.push(`format_modifier_ignored_for_text:${baseKey}`);
