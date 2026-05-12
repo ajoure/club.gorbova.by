@@ -39,63 +39,9 @@ export function OfferDocumentDefaultsCard({ value, onChange, offerAmount, offerC
   const v = value ?? {};
   const set = (patch: Partial<OfferDocumentDefaults>) => onChange({ ...v, ...patch });
 
-  const [templates, setTemplates] = useState<TemplateOpt[]>([]);
-  const [executors, setExecutors] = useState<ExecutorOpt[]>([]);
-  const [showTechIds, setShowTechIds] = useState(false);
   const initRef = useRef(false);
   const lastOfferAmount = useRef<number | undefined>(offerAmount);
   const lastOfferCurrency = useRef<string | undefined>(offerCurrency);
-
-  // PATCH UI-BLOCKER-1: реально подтягиваем шаблоны и исполнителей из тех же таблиц,
-  // что и разделы /admin/ai → Документы → Шаблоны / Исполнители. Никакого хардкода.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const [tpl, exe] = await Promise.all([
-        supabase
-          .from("document_templates")
-          .select("id, name, code, is_active, current_version_id, document_template_versions:document_template_versions!document_templates_current_version_id_fkey(version)")
-          .eq("is_active", true)
-          .order("name", { ascending: true }),
-        supabase
-          .from("executors")
-          .select("id, short_name, full_name, is_default, is_active")
-          .eq("is_active", true)
-          .order("is_default", { ascending: false })
-          .order("short_name", { ascending: true }),
-      ]);
-      if (cancelled) return;
-      if (!tpl.error && tpl.data) {
-        setTemplates(
-          (tpl.data as any[]).map((t) => ({
-            id: t.id,
-            name: t.name,
-            code: t.code,
-            current_version: t.document_template_versions?.version ?? null,
-            has_active_version: !!t.current_version_id,
-          })),
-        );
-      } else if (tpl.error) {
-        // Fallback: канонические версии могут отсутствовать как relation — берём без версий.
-        const fallback = await supabase
-          .from("document_templates")
-          .select("id, name, code, is_active")
-          .eq("is_active", true)
-          .order("name", { ascending: true });
-        if (!cancelled && !fallback.error && fallback.data) {
-          setTemplates(
-            (fallback.data as any[]).map((t) => ({
-              id: t.id, name: t.name, code: t.code, current_version: null, has_active_version: true,
-            })),
-          );
-        }
-      }
-      if (!exe.error && exe.data) {
-        setExecutors(exe.data as ExecutorOpt[]);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
 
   // PATCH DOC-OFFER-1/2: первичный авто-fill при открытии вкладки.
   useEffect(() => {
