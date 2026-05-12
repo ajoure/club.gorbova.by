@@ -142,6 +142,22 @@ function formatDistrict(district: string): string {
   return `${district} р-н`;
 }
 
+/**
+ * Normalize country name to official form.
+ * - Беларусь / BY / Belarus → Республика Беларусь
+ * - Already "Республика Беларусь" → unchanged
+ * - Other → as-is
+ */
+export function normalizeCountry(country: string): string {
+  const c = country.trim();
+  if (!c) return '';
+  const lower = c.toLowerCase();
+  if (lower === 'республика беларусь') return 'Республика Беларусь';
+  if (lower === 'беларусь' || lower === 'belarus' || lower === 'by' || lower === 'blr') {
+    return 'Республика Беларусь';
+  }
+  return c;
+
 export interface FormatAddressResult {
   rendered: string;
   source: 'structured' | 'raw' | 'missing';
