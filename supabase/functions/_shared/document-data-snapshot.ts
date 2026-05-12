@@ -327,10 +327,8 @@ export async function snapshotOrderDocumentData(
 
     // Resolve executor and pre-populate executor.* FLD fields (entity_type='executor').
     // These FLDs are NEVER user-editable (see canonical-deal-fields-update guard).
-    const explicitExecutorId = (offerDefaults?.executor_id
-      ?? tariffDefaults?.executor_id
-      ?? productDefaults?.executor_id
-      ?? null) as string | null;
+    // Используем layered executor_id: override → scenario → defaults.
+    const explicitExecutorId = explicitExecutorIdLayered;
     const { executor, source: execSource, executor_id: resolvedExecutorId } =
       await resolveExecutorForOrder(supabase, explicitExecutorId);
     const fields: Record<string, any> = {};
