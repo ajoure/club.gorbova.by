@@ -272,7 +272,7 @@ export async function snapshotOrderDocumentData(
         order_id: order.id,
       },
       template_id: finalTemplateId,
-      executor_id: pick<string>('executor_id'),
+      executor_id: explicitExecutorIdLayered,
       service_name: pick<string>('service_name'),
       service_description: pick<string>('service_description'),
       unit: pick<string>('unit') || 'услуга',
