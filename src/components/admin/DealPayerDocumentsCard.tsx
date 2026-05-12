@@ -158,8 +158,14 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
   const templateOverride: string | null = documents.template_override || null;
   const executorOverride: string | null = documents.executor_override || null;
 
-  const channel = useMemo(() => derivePaymentChannel(payment), [payment]);
-  const resolved = useMemo(() => resolveScenario(offerMeta, channel), [offerMeta, channel]);
+  const channel = useMemo(() => derivePaymentChannel(payment as any), [payment]);
+  // Live matched scenario: payer_type для матча берём из orders_v2.payer_type
+  // (SOT-колонка). Если null — fallback 'individual'.
+  const resolverPayerType: PayerType = (order?.payer_type as PayerType) || "individual";
+  const resolved = useMemo(
+    () => resolveDocumentScenario(offerMeta as any, channel as PaymentChannel | null, resolverPayerType),
+    [offerMeta, channel, resolverPayerType],
+  );
 
   useEffect(() => {
     if (!order) return;
@@ -310,19 +316,21 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
     );
   }
 
-  const channelLabel = channel ? PAYMENT_LABEL[channel] || "Иное" : "—";
+  const channelLabel = channel ? CHANNEL_LABELS_RU[channel as PaymentChannel] || "Иное" : "—";
   const cardSuffix =
     payment?.card_last4 ? `•••• ${payment.card_last4}${payment.card_brand ? ` ${payment.card_brand}` : ""}` : null;
 
   const payerSourceBadge = payerTypeSource === "admin_override"
     ? "Изменено вручную администратором"
     : "Определено автоматически";
+  // Override бейдж показывается ТОЛЬКО при фактическом ручном изменении.
+  // Иначе — live matched scenario (или defaults / none).
   const templateSourceBadge = templateOverride
     ? "Изменено вручную администратором"
-    : sourceLabel(resolved.source);
+    : sourceLabelRu(resolved.source);
   const executorSourceBadge = executorOverride
     ? "Изменено вручную администратором"
-    : sourceLabel(resolved.source);
+    : sourceLabelRu(resolved.source);
   const entitySourceBadge = payerEntityOverride
     ? "Изменено вручную администратором"
     : "По умолчанию";
