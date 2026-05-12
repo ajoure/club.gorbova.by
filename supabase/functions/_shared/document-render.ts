@@ -271,8 +271,8 @@ export async function resolveCanonicalPayload(
     'system.today':       now.toISOString().slice(0, 10),
     'system.today_long':  dateToRussianFormat(now),
     'document.number':    docNumber,
-    'document.date':      dateToRussianFormat(now),
-    'document.date_short':now.toLocaleDateString('ru-RU'),
+    'document.date':      applyDateFormat(now, 'short').value,
+    'document.date_short':applyDateFormat(now, 'short').value,
 
     'executor.name':            executor?.full_name || '',
     'executor.short_name':      executor?.short_name || executor?.full_name || '',
