@@ -368,7 +368,7 @@ export async function resolveCanonicalPayload(
     'customer.unp':             customer?.ent_unp || customer?.leg_unp || '',
     'customer.address':         customerAddress.rendered,
     'customer.address.full':    customerAddress.rendered,
-    'customer.address':         buildCustomerAddress(customer),
+    
     'customer.phone':           customer?.phone || '',
     'customer.email':           customer?.email || order?.customer_email || '',
     'customer.bank':            customer?.bank_name || '',
