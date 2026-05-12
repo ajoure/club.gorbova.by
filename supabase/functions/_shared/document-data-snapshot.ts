@@ -485,6 +485,12 @@ export async function snapshotOrderDocumentData(
       ...(documentData as any)._provenance,
       customer_legal_details_id: customerRow?.id || null,
       customer_legal_details_present: !!customerRow,
+      customer_resolution: {
+        payer_type: orderPayerTypeForCustomer,
+        source: customerResolutionSource,
+        client_type: customerRow?.client_type || null,
+        mismatch: !!customerRow && customerRow.client_type !== orderPayerTypeForCustomer,
+      },
       standard_fields_written: stdMerged.written,
       standard_fields_skipped_manual: stdMerged.skipped_manual,
     };
