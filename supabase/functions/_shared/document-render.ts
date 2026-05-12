@@ -644,6 +644,16 @@ export interface CanonicalGenerateOptions {
   bypassIdempotency?: boolean;
   /** Explicit idempotency key override (mutually exclusive with bypassIdempotency). */
   idempotencyKeyOverride?: string | null;
+  /**
+   * Sprint C — canonical numbering mode.
+   * - 'generate' (default): pre-INSERT pending row → call allocate_document_number RPC
+   *   → render with canonical number → UPDATE row to success. Расходует sequence ровно на 1.
+   * - 'preview': НЕ insert в ai_generated_documents (caller сам решает, что делать),
+   *   sequence НЕ расходуется. generateCanonicalDocument при mode='preview' использует
+   *   временный номер вида PREVIEW-DDMM. Обычно preview идёт через resolveCanonicalPayload
+   *   напрямую — этот режим оставлен для smoke/проверки рендера без расхода номера.
+   */
+  mode?: 'generate' | 'preview';
 }
 
 export async function generateCanonicalDocument(
@@ -701,6 +711,77 @@ export async function generateCanonicalDocument(
   const { data: file, error: dlErr } = await supabase.storage.from(dlBucket).download(dlPath);
   if (dlErr || !file) return { success: false, payload, error: 'template_file_download_failed' };
 
+  // ─── Sprint C — canonical numbering ───────────────────────────────────────
+  // mode='generate' (default): pre-INSERT pending row → allocate_document_number RPC
+  //   → use canonical number for render & filename → UPDATE row to success.
+  // mode='preview': временный номер PREVIEW-DDMM, sequence НЕ расходуется,
+  //   row не инсертится (caller sample/diagnostic).
+  const mode: 'generate' | 'preview' = opts.mode || 'generate';
+  const _now = new Date();
+  const _ddmm = `${String(_now.getDate()).padStart(2, '0')}${String(_now.getMonth() + 1).padStart(2, '0')}`;
+
+  let canonicalDocNumber: string | null = null;
+  let canonicalDocDate: string | null = null;
+  let pendingDocId: string | null = null;
+
+  if (mode === 'preview') {
+    canonicalDocNumber = `PREVIEW-${_ddmm}`;
+    canonicalDocDate = _now.toISOString().slice(0, 10);
+  } else {
+    // pre-INSERT pending row to get id for allocate_document_number RPC
+    const { data: pending, error: pendErr } = await supabase.from('ai_generated_documents').insert({
+      profile_id: opts.profileId,
+      template_id: payload.template.id,
+      template_name: payload.template.name,
+      template_version_id: payload.template.version_id,
+      title: `${payload.template.name} — pending`,
+      status: 'pending',
+      legal_details_id: input.legal_details_id || null,
+      signer_link_id: input.signer_link_id || null,
+      storage_bucket: opts.storageBucketOutput || 'documents',
+      idempotency_key: idempotencyKey,
+      context_type: input.context_type || null,
+      context_id: input.context_id || null,
+      created_by: opts.userId,
+      meta: { canonical: true, numbering_pending: true },
+    }).select('id').single();
+
+    if (pendErr) {
+      // Race-safe: на UNIQUE-конфликт по idempotency_key — попробовать reuse существующий success-row
+      if (idempotencyKey && /duplicate key|unique/i.test(pendErr.message || '')) {
+        const { data: existing2 } = await supabase
+          .from('ai_generated_documents')
+          .select('id, file_path, storage_bucket, status, document_number')
+          .eq('idempotency_key', idempotencyKey)
+          .is('deleted_at', null)
+          .maybeSingle();
+        if (existing2 && existing2.status === 'success' && existing2.file_path) {
+          const { data: signed } = await supabase.storage.from(existing2.storage_bucket).createSignedUrl(existing2.file_path, 86400);
+          return { success: true, payload, document_id: existing2.id, document_number: existing2.document_number || undefined, download_url: signed?.signedUrl, storage_path: existing2.file_path, reused: true } as any;
+        }
+      }
+      return { success: false, payload, error: `pending_insert_failed:${pendErr.message}` };
+    }
+    pendingDocId = pending.id;
+
+    const { data: alloc, error: allocErr } = await supabase.rpc('allocate_document_number', { p_document_id: pendingDocId });
+    if (allocErr || !alloc || !alloc[0]) {
+      return { success: false, payload, error: `allocate_number_failed:${allocErr?.message || 'no_data'}` };
+    }
+    canonicalDocNumber = alloc[0].document_number;
+    canonicalDocDate = alloc[0].document_date;
+  }
+
+  // Inject canonical number/date back into resolved tokens for render
+  if (canonicalDocNumber) {
+    payload.resolved_tokens['document.number'] = canonicalDocNumber;
+  }
+  if (canonicalDocDate) {
+    payload.resolved_tokens['document.date'] = applyDateFormat(canonicalDocDate, 'short').value || canonicalDocDate;
+    payload.resolved_tokens['document.date_short'] = payload.resolved_tokens['document.date'];
+  }
+
+
   let docBuffer: Uint8Array;
   try {
     const buf = new Uint8Array(await file.arrayBuffer());
@@ -754,15 +835,15 @@ export async function generateCanonicalDocument(
     return { success: false, payload, error: `render_failed:${e?.message || 'unknown'}` };
   }
 
-  const docNumber = payload.resolved_tokens['document.number'] || generateDocNumber('AKT');
-  const fileName = `${docNumber}.docx`;
+  const docNumber = canonicalDocNumber || payload.resolved_tokens['document.number'] || generateDocNumber('AKT');
+  // Sanitize for filename: replace '/' (canonical DDMM/N) with '-'
+  const safeDocNumber = docNumber.replace(/[\/\\]/g, '-');
+  const fileName = `${safeDocNumber}.docx`;
   const filePath = `canonical/${opts.profileId}/${fileName}`;
   const outBucket = opts.storageBucketOutput || 'documents';
 
   // ── DOCX post-render check (Sprint 9) ─────────────────────────────────────
-  // Проверяем размер, MIME, и сканируем оставшиеся {{...}} плейсхолдеры
-  // в собранном document.xml. Не блокирует генерацию — пишет warning.
-  const MIN_DOCX_SIZE = 1024; // bytes — пустой DOCX < ~1KB
+  const MIN_DOCX_SIZE = 1024;
   const docxCheck: {
     file_size: number;
     mime: string;
@@ -788,7 +869,6 @@ export async function generateCanonicalDocument(
       const f = zipCheck.file(p);
       if (!f) continue;
       const xml: string = f.asText();
-      // XML may split {{...}} across runs; strip tags first
       const text = xml.replace(/<[^>]+>/g, '');
       const re = /\{\{\s*([^{}]+?)\s*\}\}/g;
       let m: RegExpExecArray | null;
@@ -797,7 +877,6 @@ export async function generateCanonicalDocument(
     docxCheck.unresolved_tokens = Array.from(found).sort();
     docxCheck.unresolved_count = found.size;
   } catch (_e) {
-    // не валим генерацию — оставляем check.ok=false без подробностей
     docxCheck.ok = false;
   }
   docxCheck.ok = docxCheck.ok && docxCheck.min_size_ok && docxCheck.unresolved_count === 0;
@@ -811,40 +890,71 @@ export async function generateCanonicalDocument(
   });
   if (upErr) return { success: false, payload, error: `upload_failed:${upErr.message}` };
 
-  const { data: insertRow, error: insErr } = await supabase.from('ai_generated_documents').insert({
-    profile_id: opts.profileId,
-    template_id: payload.template.id,
-    template_name: payload.template.name,
-    template_version_id: payload.template.version_id,
-    title: `${payload.template.name} — ${docNumber}`,
-    status: 'success',
-    legal_details_id: input.legal_details_id || null,
-    signer_link_id: input.signer_link_id || null,
-    file_path: filePath,
-    file_name: fileName,
-    file_mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    storage_bucket: outBucket,
-    snapshot: payload.snapshot,
-    missing_tokens: payload.missing_tokens,
-    template_tokens_snapshot: { tokens: payload.template_tokens, manifest: payload.token_manifest },
-    token_manifest_snapshot: payload.resolved_tokens,
-    warnings_snapshot: [...payload.warnings, ...checkWarnings],
-    source_trace: {
+  // Sprint C — generate mode: UPDATE pending row; preview mode: INSERT a fresh non-canonical row.
+  let insertRowId: string | null = null;
+  if (mode === 'generate' && pendingDocId) {
+    const { error: updErr } = await supabase.from('ai_generated_documents').update({
+      title: `${payload.template.name} — ${docNumber}`,
+      status: 'success',
+      file_path: filePath,
+      file_name: fileName,
+      file_mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      storage_bucket: outBucket,
+      snapshot: payload.snapshot,
+      missing_tokens: payload.missing_tokens,
+      template_tokens_snapshot: { tokens: payload.template_tokens, manifest: payload.token_manifest },
+      token_manifest_snapshot: payload.resolved_tokens,
+      warnings_snapshot: [...payload.warnings, ...checkWarnings],
+      source_trace: {
+        resolver_version: CANONICAL_RESOLVER_VERSION,
+        idempotency_key: idempotencyKey,
+        context_type: input.context_type,
+        context_id: input.context_id,
+        tokens: payload.source_trace,
+      },
       resolver_version: CANONICAL_RESOLVER_VERSION,
-      idempotency_key: idempotencyKey,
-      context_type: input.context_type,
-      context_id: input.context_id,
-      tokens: payload.source_trace,
-    },
-    resolver_version: CANONICAL_RESOLVER_VERSION,
-    context_type: input.context_type || null,
-    context_id: input.context_id || null,
-    idempotency_key: idempotencyKey,
-    created_by: opts.userId,
-    meta: { canonical: true, docx_check: docxCheck },
-  }).select('id').single();
+      meta: { canonical: true, docx_check: docxCheck, numbering_pending: false },
+    }).eq('id', pendingDocId);
+    if (updErr) return { success: false, payload, error: `update_failed:${updErr.message}` };
+    insertRowId = pendingDocId;
+  } else {
+    const { data: insertRow, error: insErr } = await supabase.from('ai_generated_documents').insert({
+      profile_id: opts.profileId,
+      template_id: payload.template.id,
+      template_name: payload.template.name,
+      template_version_id: payload.template.version_id,
+      title: `${payload.template.name} — ${docNumber}`,
+      status: 'success',
+      legal_details_id: input.legal_details_id || null,
+      signer_link_id: input.signer_link_id || null,
+      file_path: filePath,
+      file_name: fileName,
+      file_mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      storage_bucket: outBucket,
+      snapshot: payload.snapshot,
+      missing_tokens: payload.missing_tokens,
+      template_tokens_snapshot: { tokens: payload.template_tokens, manifest: payload.token_manifest },
+      token_manifest_snapshot: payload.resolved_tokens,
+      warnings_snapshot: [...payload.warnings, ...checkWarnings],
+      source_trace: {
+        resolver_version: CANONICAL_RESOLVER_VERSION,
+        idempotency_key: null,
+        context_type: input.context_type,
+        context_id: input.context_id,
+        tokens: payload.source_trace,
+      },
+      resolver_version: CANONICAL_RESOLVER_VERSION,
+      context_type: input.context_type || null,
+      context_id: input.context_id || null,
+      idempotency_key: null,
+      created_by: opts.userId,
+      meta: { canonical: true, docx_check: docxCheck, preview: true },
+    }).select('id').single();
+    if (insErr) return { success: false, payload, error: `insert_failed:${insErr.message}` };
+    insertRowId = insertRow.id;
+  }
 
-  if (insErr) return { success: false, payload, error: `insert_failed:${insErr.message}` };
+  const insertRow = { id: insertRowId! };
 
   // Audit logs (Sprint 9)
   try {
