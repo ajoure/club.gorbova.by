@@ -237,7 +237,7 @@ export async function resolveCanonicalPayload(
   if (input.context_type === 'order' && input.context_id) {
     const { data: o } = await supabase
       .from('orders_v2')
-      .select('id, order_number, user_id, profile_id, product_id, tariff_id, final_price, base_price, currency, status, created_at, customer_email, customer_phone, meta')
+      .select('id, order_number, user_id, profile_id, product_id, tariff_id, final_price, base_price, currency, status, created_at, customer_email, customer_phone, payer_type, meta')
       .eq('id', input.context_id).maybeSingle();
     order = o;
     if (order?.product_id) {
