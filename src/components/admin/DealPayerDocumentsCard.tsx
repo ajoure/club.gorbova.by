@@ -2,8 +2,13 @@
  * DealPayerDocumentsCard — единая карточка «Документы / плательщик».
  *
  * SOT источников для авто-значений (шаблон / исполнитель / тип плательщика):
- *   1) tariff_offers.meta.document_scenarios[]  — сценарий по способу оплаты + типу плательщика
- *   2) tariff_offers.meta.document_defaults     — fallback (legacy)
+ *   1) orders_v2.meta.documents.template_override / executor_override (ручное)
+ *   2) tariff_offers.meta.document_scenarios[]  — live matched scenario
+ *   3) tariff_offers.meta.document_defaults     — fallback
+ *   4) block/warning, если значения нет
+ *
+ * Если admin не менял вручную — карточка показывает live matched scenario.
+ * Override отображается только при фактическом ручном изменении.
  *
  * Ручные изменения админа пишутся ТОЛЬКО в orders_v2.meta.documents.* через
  * canonical-deal-document-overrides (JWT actor + audit). payments_v2 не трогается.
@@ -20,10 +25,12 @@ import { Loader2, UserCog, CreditCard, RefreshCw, AlertCircle, CheckCircle2, Fil
 import { toast } from "sonner";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 import { useHasRoleV2 } from "@/hooks/useHasRoleV2";
+import { derivePaymentChannel, CHANNEL_LABELS_RU, type PaymentChannel } from "@/utils/derivePaymentChannel";
+import { resolveDocumentScenario, sourceLabelRu, type PayerType as ResolverPayerType } from "@/utils/resolveDocumentScenario";
 
 const SUCCEEDED = new Set(["succeeded"]);
 
-type PayerType = "individual" | "legal_entity";
+type PayerType = ResolverPayerType;
 
 interface OrderRow {
   id: string;
@@ -47,83 +54,19 @@ interface HistoryDoc {
   created_at: string; document_number: string | null;
 }
 
-const PAYMENT_LABEL: Record<string, string> = {
-  card: "Карта",
-  apple_pay: "Apple Pay",
-  google_pay: "Google Pay",
-  erip: "ЕРИП",
-  bank_transfer: "Банковский перевод",
-  other: "Иное",
-};
-
-function derivePaymentChannel(p: PaymentRow | null): string | null {
-  if (!p) return null;
-  const m = (p.meta || {}) as any;
-  if (m?.is_erip === true || m?.payment_method === "erip") return "erip";
-  const pm = (m?.payment_method || "").toString().toLowerCase();
-  if (["apple_pay", "google_pay", "bank_transfer"].includes(pm)) return pm;
-  if (["credit_card", "card"].includes(pm)) return "card";
-  if (p.card_last4) return "card";
-  if (p.provider === "admin" || p.provider === "admin_test") return "other";
-  return "other";
-}
-
 function reqLabel(r: ReqRow): string {
   const d = (r.data || {}) as any;
-  // Физлицо
   const ind =
     d.ind_full_name ||
     [d.ind_last_name, d.ind_first_name, d.ind_middle_name].filter(Boolean).join(" ").trim();
-  // Юрлицо / ИП
   const leg =
     d.leg_short_name || d.leg_name ||
     d.ent_short_name || d.ent_name ||
     d.grp_short_name || d.grp_full_name;
-  // Универсальные
   const generic = d.short_name || d.full_name || d.name || d.fio;
   return ind || leg || generic || `Карточка ${r.id.slice(0, 8)}`;
 }
 
-interface ResolvedScenario {
-  source: "scenario" | "defaults" | "none";
-  payer_type: PayerType | null;
-  template_id: string | null;
-  executor_id: string | null;
-}
-
-function resolveScenario(offerMeta: any, channel: string | null): ResolvedScenario {
-  const scenarios: any[] = Array.isArray(offerMeta?.document_scenarios) ? offerMeta.document_scenarios : [];
-  if (channel && scenarios.length > 0) {
-    const match = scenarios.find((s) => {
-      const methods: string[] = Array.isArray(s?.payment_methods) ? s.payment_methods : [];
-      return methods.length === 0 || methods.includes(channel);
-    });
-    if (match) {
-      return {
-        source: "scenario",
-        payer_type: (match.payer_type as PayerType) || null,
-        template_id: match.template_id || null,
-        executor_id: match.executor_id || null,
-      };
-    }
-  }
-  const defs = offerMeta?.document_defaults;
-  if (defs && (defs.template_id || defs.executor_id)) {
-    return {
-      source: "defaults",
-      payer_type: (defs.payer_type as PayerType) || null,
-      template_id: defs.template_id || null,
-      executor_id: defs.executor_id || null,
-    };
-  }
-  return { source: "none", payer_type: null, template_id: null, executor_id: null };
-}
-
-function sourceLabel(s: ResolvedScenario["source"]): string {
-  if (s === "scenario") return "По сценарию кнопки";
-  if (s === "defaults") return "По умолчанию";
-  return "Источник не задан";
-}
 
 export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
   const [loading, setLoading] = useState(true);
@@ -215,8 +158,14 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
   const templateOverride: string | null = documents.template_override || null;
   const executorOverride: string | null = documents.executor_override || null;
 
-  const channel = useMemo(() => derivePaymentChannel(payment), [payment]);
-  const resolved = useMemo(() => resolveScenario(offerMeta, channel), [offerMeta, channel]);
+  const channel = useMemo(() => derivePaymentChannel(payment as any), [payment]);
+  // Live matched scenario: payer_type для матча берём из orders_v2.payer_type
+  // (SOT-колонка). Если null — fallback 'individual'.
+  const resolverPayerType: PayerType = (order?.payer_type as PayerType) || "individual";
+  const resolved = useMemo(
+    () => resolveDocumentScenario(offerMeta as any, channel as PaymentChannel | null, resolverPayerType),
+    [offerMeta, channel, resolverPayerType],
+  );
 
   useEffect(() => {
     if (!order) return;
@@ -367,19 +316,21 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
     );
   }
 
-  const channelLabel = channel ? PAYMENT_LABEL[channel] || "Иное" : "—";
+  const channelLabel = channel ? CHANNEL_LABELS_RU[channel as PaymentChannel] || "Иное" : "—";
   const cardSuffix =
     payment?.card_last4 ? `•••• ${payment.card_last4}${payment.card_brand ? ` ${payment.card_brand}` : ""}` : null;
 
   const payerSourceBadge = payerTypeSource === "admin_override"
     ? "Изменено вручную администратором"
     : "Определено автоматически";
+  // Override бейдж показывается ТОЛЬКО при фактическом ручном изменении.
+  // Иначе — live matched scenario (или defaults / none).
   const templateSourceBadge = templateOverride
     ? "Изменено вручную администратором"
-    : sourceLabel(resolved.source);
+    : sourceLabelRu(resolved.source);
   const executorSourceBadge = executorOverride
     ? "Изменено вручную администратором"
-    : sourceLabel(resolved.source);
+    : sourceLabelRu(resolved.source);
   const entitySourceBadge = payerEntityOverride
     ? "Изменено вручную администратором"
     : "По умолчанию";
@@ -480,7 +431,7 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
             <SelectContent>
               <SelectItem value="auto">
                 {resolved.template_id
-                  ? `${sourceLabel(resolved.source)} · ${templates.find((t) => t.id === resolved.template_id)?.name || "шаблон"}`
+                  ? `${sourceLabelRu(resolved.source)} · ${templates.find((t) => t.id === resolved.template_id)?.name || "шаблон"}`
                   : "Автоматически (не задан в кнопке)"}
               </SelectItem>
               {templates.map((t) => (
@@ -503,7 +454,7 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
             <SelectContent>
               <SelectItem value="auto">
                 {resolved.executor_id
-                  ? `${sourceLabel(resolved.source)} · ${
+                  ? `${sourceLabelRu(resolved.source)} · ${
                       executors.find((e) => e.id === resolved.executor_id)?.short_name
                       || executors.find((e) => e.id === resolved.executor_id)?.full_name
                       || "исполнитель"

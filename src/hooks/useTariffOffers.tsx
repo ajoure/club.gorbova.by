@@ -82,6 +82,24 @@ export interface OfferMetaConfig {
   crm_routing?: CrmRoutingConfig;
   // Sprint 10 — defaults for document generation (act). Stored in meta to keep schema unchanged.
   document_defaults?: OfferDocumentDefaults;
+  // Sprint 12 — массив сценариев документа (см. mem://architecture/documents/document-scenarios-sot).
+  // Канон: payment_channels. Legacy: payment_methods (read-only, не пишется UI).
+  document_scenarios?: OfferDocumentScenario[];
+}
+
+export type DocumentScenarioPayerType = 'individual' | 'legal_entity';
+export type DocumentScenarioChannel =
+  | 'card' | 'apple_pay' | 'google_pay' | 'erip' | 'bank_transfer';
+
+export interface OfferDocumentScenario {
+  id: string;
+  payer_type: DocumentScenarioPayerType;
+  /** Канонический список каналов; пустой массив = «любой канал». */
+  payment_channels: DocumentScenarioChannel[];
+  template_id: string | null;
+  executor_id: string | null;
+  requires_required_requisites?: boolean;
+  is_enabled: boolean;
 }
 
 export interface OfferDocumentDefaults {

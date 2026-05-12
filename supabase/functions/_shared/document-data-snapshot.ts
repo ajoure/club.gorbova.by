@@ -21,6 +21,8 @@
 import { numberToWordsRu, normalizeCurrency } from './docx-helpers.ts';
 import { resolveExecutorForOrder, buildExecutorFieldValues, mergeExecutorIntoFields } from './executor-fields.ts';
 import { buildStandardFieldValues, mergeStandardIntoFields } from './standard-fields.ts';
+import { derivePaymentChannel } from './document-resolver-v2/payment-channel.ts';
+import { resolveDocumentScenario, type PayerType } from './document-scenario-resolver.ts';
 
 export const SNAPSHOT_VERSION = '1.2';
 
@@ -211,6 +213,55 @@ export async function snapshotOrderDocumentData(
       periodTo = d.toISOString().slice(0, 10);
     }
 
+    // === Sprint 12: priority resolver ============================================
+    // template_id / executor_id выбираются в порядке:
+    //   1. orders_v2.meta.documents.template_override / executor_override (manual)
+    //   2. matched tariff_offers.meta.document_scenarios[]                 (live)
+    //   3. tariff_offers.meta.document_defaults                            (fallback)
+    //   4. block/warning, если значения нет
+    // На моменте создания snapshot шаг 1 обычно пуст (override может быть задан позже).
+    // ================================================================================
+    const documentsMeta: any = orderMetaAny?.documents || {};
+    const templateOverride: string | null = documentsMeta?.template_override || null;
+    const executorOverride: string | null = documentsMeta?.executor_override || null;
+
+    // payer_type: SOT-колонка orders_v2.payer_type, fallback 'individual'.
+    const orderPayerType: PayerType = (order as any).payer_type === 'legal_entity'
+      ? 'legal_entity' : 'individual';
+
+    // Определяем канал по последнему succeeded платежу (read-only).
+    const { data: paysForChannel } = await supabase
+      .from('payments_v2')
+      .select('id, status, card_last4, card_brand, provider, meta, paid_at, created_at')
+      .eq('order_id', orderId)
+      .order('paid_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false });
+    const succPay = (paysForChannel || []).find((p: any) => p.status === 'succeeded') || null;
+    const paymentChannel = derivePaymentChannel(succPay as any);
+
+    const offerMetaForResolver = offerRow?.meta || {};
+    const scenarioResolved = resolveDocumentScenario(
+      offerMetaForResolver,
+      paymentChannel,
+      orderPayerType,
+    );
+
+    // Layered template_id: override → scenario → defaults
+    const finalTemplateId: string | null =
+      templateOverride
+        || (scenarioResolved.source === 'scenario' ? scenarioResolved.template_id : null)
+        || pick<string>('template_id')
+        || null;
+
+    // Layered executor_id: override → scenario → defaults (через resolveExecutorForOrder)
+    const explicitExecutorIdLayered: string | null =
+      executorOverride
+        || (scenarioResolved.source === 'scenario' ? scenarioResolved.executor_id : null)
+        || (offerDefaults?.executor_id
+          ?? tariffDefaults?.executor_id
+          ?? productDefaults?.executor_id
+          ?? null);
+
     const documentData = {
       snapshot_version: SNAPSHOT_VERSION,
       snapshotted_at: new Date().toISOString(),
@@ -220,7 +271,7 @@ export async function snapshotOrderDocumentData(
         offer_id: resolvedOfferId,
         order_id: order.id,
       },
-      template_id: pick<string>('template_id'),
+      template_id: finalTemplateId,
       executor_id: pick<string>('executor_id'),
       service_name: pick<string>('service_name'),
       service_description: pick<string>('service_description'),
@@ -244,7 +295,6 @@ export async function snapshotOrderDocumentData(
       bank_credit_price: pick<number>('bank_credit_price') ?? amount,
       final_payment: pick<number>('final_payment') ?? 0,
       comment: pick<string>('comment') ?? null,
-      // Lineage of which layers contributed (for audit).
       _provenance: {
         offer_defaults_present: !!offerDefaults,
         tariff_defaults_present: !!tariffDefaults,
@@ -255,15 +305,30 @@ export async function snapshotOrderDocumentData(
         product_id: order.product_id || null,
         order_paid_at: paidAt,
         order_currency: liveCurrencyRaw,
+        // Sprint 12 — scenario resolution snapshot.
+        scenario: {
+          source: scenarioResolved.source,
+          scenario_id: scenarioResolved.scenario_id,
+          payer_type: orderPayerType,
+          payment_channel: paymentChannel,
+          requires_required_requisites: scenarioResolved.requires_required_requisites,
+        },
+        template_resolution: {
+          source: templateOverride
+            ? 'override'
+            : scenarioResolved.source === 'scenario'
+              ? 'scenario'
+              : (pick<string>('template_id') ? 'defaults' : 'none'),
+          final_template_id: finalTemplateId,
+        },
       },
     };
 
+
     // Resolve executor and pre-populate executor.* FLD fields (entity_type='executor').
     // These FLDs are NEVER user-editable (see canonical-deal-fields-update guard).
-    const explicitExecutorId = (offerDefaults?.executor_id
-      ?? tariffDefaults?.executor_id
-      ?? productDefaults?.executor_id
-      ?? null) as string | null;
+    // Используем layered executor_id: override → scenario → defaults.
+    const explicitExecutorId = explicitExecutorIdLayered;
     const { executor, source: execSource, executor_id: resolvedExecutorId } =
       await resolveExecutorForOrder(supabase, explicitExecutorId);
     const fields: Record<string, any> = {};
