@@ -574,6 +574,10 @@ Deno.serve(async (req) => {
           if (!applied) w.push('format_text_not_applied');
           if (dataType !== 'boolean') w.push('format_text_on_non_boolean_field');
         }
+        if (v.format === 'short' || v.format === 'dd.MM.yyyy' || v.format === 'long_ru' || v.format === 'words_ru') {
+          if (!applied) w.push('format_date_not_applied');
+          if (dataType !== 'date' && dataType !== 'datetime') w.push('format_date_on_non_date_field');
+        }
         if (v.case_modifier) {
           if (!caseApplied) w.push('case_modifier_not_applied');
           if (NUM_DT.has(dataType) && v.format !== 'words') {
