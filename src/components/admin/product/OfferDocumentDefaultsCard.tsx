@@ -27,15 +27,6 @@ const DEFAULT_CURRENCY = "BYN";
 
 const num = (s: string): number | null => (s === "" ? null : (Number(s) || 0));
 
-interface TemplateOpt {
-  id: string;
-  name: string;
-  code: string;
-  current_version: number | string | null;
-  has_active_version: boolean;
-}
-interface ExecutorOpt { id: string; short_name: string | null; full_name: string; is_default: boolean; }
-
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
     <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground/80 pt-2 border-t first:border-t-0 first:pt-0">
