@@ -157,6 +157,7 @@ export function normalizeCountry(country: string): string {
     return 'Республика Беларусь';
   }
   return c;
+}
 
 export interface FormatAddressResult {
   rendered: string;
