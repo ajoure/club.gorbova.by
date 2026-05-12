@@ -384,10 +384,12 @@ export function ExternalProductWorkshop({ blockId, lessonId, sourceLessonId = nu
       const rsRows = row.responsibility_ids.map((id) => rsIdx.get(id)).filter(Boolean) as CoeffRow[];
 
       const allCoeffRows = [...cxRows, ...(sv ? [sv] : []), ...rsRows];
-      const coeffProduct = allCoeffRows.reduce((acc, r) => acc * (r.coefficient || 1), 1);
+      // Аддитивная дельта от base: каждый коэф применяется к base независимо,
+      // результат коммутативен по порядку выбора (см. .lovable/plan.md).
+      const coeffDeltaSum = allCoeffRows.reduce((acc, r) => acc + ((r.coefficient || 1) - 1), 0);
       const addonsSum = allCoeffRows.reduce((acc, r) => acc + (r.price || 0), 0);
 
-      const price_by_coeff = base * coeffProduct;
+      const price_by_coeff = base * (1 + coeffDeltaSum);
       const price_by_addons = base + addonsSum;
 
       const ref = row.current_price || 0;
