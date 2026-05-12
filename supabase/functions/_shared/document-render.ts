@@ -335,6 +335,13 @@ export async function resolveCanonicalPayload(
   // 7. Build resolver values
   const now = new Date();
   const docNumber = generateDocNumber('AKT');
+
+  // Sprint D — structured address resolution.
+  const executorAddress: FormatAddressResult = executor
+    ? formatStructuredAddress(executor.legal_address_structured, executor.legal_address, 'executor')
+    : { rendered: '', source: 'missing' };
+  const customerAddress: FormatAddressResult = buildCustomerAddressResolved(customer);
+
   const resolverValues: Record<string, any> = {
     'system.today':       now.toISOString().slice(0, 10),
     'system.today_long':  dateToRussianFormat(now),
@@ -345,7 +352,8 @@ export async function resolveCanonicalPayload(
     'executor.name':            executor?.full_name || '',
     'executor.short_name':      executor?.short_name || executor?.full_name || '',
     'executor.unp':             executor?.unp || '',
-    'executor.address':         executor?.legal_address || '',
+    'executor.address':         executorAddress.rendered,
+    'executor.address.full':    executorAddress.rendered,
     'executor.bank':            executor?.bank_name || '',
     'executor.bank_code':       executor?.bank_code || '',
     'executor.account':         executor?.bank_account || '',
@@ -358,6 +366,8 @@ export async function resolveCanonicalPayload(
                                   ? fullNameToInitials(customer?.ind_full_name)
                                   : buildCustomerName(customer),
     'customer.unp':             customer?.ent_unp || customer?.leg_unp || '',
+    'customer.address':         customerAddress.rendered,
+    'customer.address.full':    customerAddress.rendered,
     'customer.address':         buildCustomerAddress(customer),
     'customer.phone':           customer?.phone || '',
     'customer.email':           customer?.email || order?.customer_email || '',
