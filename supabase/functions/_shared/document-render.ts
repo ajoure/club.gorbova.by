@@ -644,6 +644,16 @@ export interface CanonicalGenerateOptions {
   bypassIdempotency?: boolean;
   /** Explicit idempotency key override (mutually exclusive with bypassIdempotency). */
   idempotencyKeyOverride?: string | null;
+  /**
+   * Sprint C — canonical numbering mode.
+   * - 'generate' (default): pre-INSERT pending row → call allocate_document_number RPC
+   *   → render with canonical number → UPDATE row to success. Расходует sequence ровно на 1.
+   * - 'preview': НЕ insert в ai_generated_documents (caller сам решает, что делать),
+   *   sequence НЕ расходуется. generateCanonicalDocument при mode='preview' использует
+   *   временный номер вида PREVIEW-DDMM. Обычно preview идёт через resolveCanonicalPayload
+   *   напрямую — этот режим оставлен для smoke/проверки рендера без расхода номера.
+   */
+  mode?: 'generate' | 'preview';
 }
 
 export async function generateCanonicalDocument(
