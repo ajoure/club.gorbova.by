@@ -157,6 +157,30 @@ function parseNumberLoose(v: any): number | null {
   const n = Number(cleaned);
   return Number.isFinite(n) ? n : null;
 }
+function applyDateAliasFormat(rawValue: any, format: string): { value: string; applied: boolean } {
+  // Reuse the legacy date parser to honor existing tolerant input formats
+  const d = parseDateLoose(typeof rawValue === 'string' ? rawValue : String(rawValue ?? ''));
+  if (!d) return { value: fmtVal(rawValue), applied: false };
+  const day = d.getUTCDate();
+  const monthIdx = d.getUTCMonth();
+  const year = d.getUTCFullYear();
+  const pad2 = (n: number) => (n < 10 ? `0${n}` : String(n));
+  switch (format) {
+    case 'short':
+    case 'dd.MM.yyyy':
+      return { value: `${pad2(day)}.${pad2(monthIdx + 1)}.${year}`, applied: true };
+    case 'long_ru':
+      return { value: `${pad2(day)} ${RU_MONTHS_GEN[monthIdx]} ${year} г.`, applied: true };
+    case 'words_ru': {
+      // Same as legacy `format=words` for date — keeps semantics identical.
+      const w = ruDateWords(typeof rawValue === 'string' ? rawValue : String(rawValue ?? ''));
+      return w ? { value: w, applied: true } : { value: fmtVal(rawValue), applied: false };
+    }
+    default:
+      return { value: fmtVal(rawValue), applied: false };
+  }
+}
+
 function applyFormat(rawValue: any, dataType: string, currency: string | null, format: string | null): { value: string; applied: boolean } {
   const baseStr = fmtVal(rawValue);
   if (!format) return { value: baseStr, applied: false };
@@ -180,6 +204,13 @@ function applyFormat(rawValue: any, dataType: string, currency: string | null, f
       if (!w) return { value: baseStr, applied: false };
       return { value: w, applied: true };
     }
+  }
+  // Date-only format aliases — only applied when data_type is date/datetime.
+  if (format === 'short' || format === 'dd.MM.yyyy' || format === 'long_ru' || format === 'words_ru') {
+    if (dataType === 'date' || dataType === 'datetime') {
+      return applyDateAliasFormat(rawValue, format);
+    }
+    return { value: baseStr, applied: false };
   }
   return { value: baseStr, applied: false };
 }
