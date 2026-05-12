@@ -145,10 +145,15 @@ export function OfferDocumentDefaultsCard({ value, onChange, offerAmount, offerC
       <CardContent className="space-y-5">
         <div className="rounded-md bg-muted/40 border border-border/40 p-2.5 text-xs text-muted-foreground flex gap-2">
           <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-indigo-500" />
-          <span>
-            По умолчанию сумма акта берётся из суммы кнопки оплаты. Количество = 1.
-            Если изменить количество или цену за единицу, сумма акта пересчитается автоматически.
-          </span>
+          <div className="space-y-1">
+            <div>
+              По умолчанию сумма акта берётся из суммы кнопки оплаты. Количество = 1.
+              Если изменить количество или цену за единицу, сумма акта пересчитается автоматически.
+            </div>
+            <div>
+              Шаблон акта и исполнитель задаются в блоке «Сценарии документов по способу оплаты» ниже.
+            </div>
+          </div>
         </div>
         <div className="flex items-center justify-between">
           <div>
@@ -161,71 +166,6 @@ export function OfferDocumentDefaultsCard({ value, onChange, offerAmount, offerC
             checked={!!v.generate_act}
             onCheckedChange={(c) => set({ generate_act: c })}
           />
-        </div>
-
-        {/* Шаблон и исполнитель */}
-        <SectionTitle>Шаблон и исполнитель</SectionTitle>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="space-y-1.5">
-            <Label className="text-xs">Шаблон акта</Label>
-            <Select
-              value={v.template_id ?? ""}
-              onValueChange={(val) => set({ template_id: val || null })}
-            >
-              <SelectTrigger><SelectValue placeholder="Выберите шаблон" /></SelectTrigger>
-              <SelectContent>
-                {templates.length === 0 ? (
-                  <div className="p-2 text-sm text-muted-foreground">
-                    Нет активных шаблонов. Добавьте шаблон в Нейросеть → Документы → Шаблоны.
-                  </div>
-                ) : templates.map(t => (
-                  <SelectItem key={t.id} value={t.id} disabled={!t.has_active_version}>
-                    {t.name}
-                    {t.code ? ` · ${t.code}` : ""}
-                    {t.current_version != null ? ` · v${t.current_version}` : ""}
-                    {!t.has_active_version ? " · нет активной версии" : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {showTechIds && v.template_id && (
-              <p className="text-[10px] font-mono text-muted-foreground">{v.template_id}</p>
-            )}
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs">Исполнитель</Label>
-            <Select
-              value={v.executor_id ?? ""}
-              onValueChange={(val) => set({ executor_id: val || null })}
-            >
-              <SelectTrigger><SelectValue placeholder="Выберите исполнителя" /></SelectTrigger>
-              <SelectContent>
-                {executors.length === 0 ? (
-                  <div className="p-2 text-sm text-muted-foreground">
-                    Нет активных исполнителей. Добавьте в Нейросеть → Документы → Исполнители.
-                  </div>
-                ) : executors.map(ex => (
-                  <SelectItem key={ex.id} value={ex.id}>
-                    {ex.short_name || ex.full_name}{ex.is_default ? " · по умолчанию" : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {showTechIds && v.executor_id && (
-              <p className="text-[10px] font-mono text-muted-foreground">{v.executor_id}</p>
-            )}
-            {executors.length > 0 && !executors.some((e) => e.is_default) && (
-              <p className="text-[11px] text-amber-600 dark:text-amber-400">
-                Исполнитель по умолчанию не задан. Откройте Нейросеть → Документы → Исполнители и отметьте одного как «по умолчанию».
-              </p>
-            )}
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <Switch id="doc-tech-ids" checked={showTechIds} onCheckedChange={setShowTechIds} />
-          <Label htmlFor="doc-tech-ids" className="text-[11px] text-muted-foreground">
-            Показывать технические ID
-          </Label>
         </div>
 
         {/* Услуга */}
