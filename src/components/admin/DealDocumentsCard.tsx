@@ -1,9 +1,9 @@
 // ============================================================================
-// DealDocumentsCard — Sprint 11 C3.
+// DealDocumentsCard — Sprint 12.
 //
 // Тонкая обёртка над `DealDocumentsPanel` (strict ID-first pipeline).
-// Старая Sprint 10 реализация удалена: legacy generated_documents,
-// auto-generation flags и старые placeholders больше не используются.
+// Заголовок переименован в «Сформированные документы», чтобы не дублировать
+// карточку «Документы / плательщик» (DealPayerDocumentsCard).
 // ============================================================================
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,7 +22,7 @@ export function DealDocumentsCard({ orderId }: DealDocumentsCardProps) {
       <CardHeader className="pb-2">
         <CardTitle className="text-base flex items-center gap-2">
           <FileText className="h-4 w-4 text-orange-500" />
-          Документы (strict ID-first)
+          Сформированные документы
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-0">

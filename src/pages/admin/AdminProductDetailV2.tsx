@@ -47,6 +47,7 @@ import { type TariffMetaConfig } from "@/components/admin/product/TariffWelcomeM
 import { OfferWelcomeMessageEditor } from "@/components/admin/product/OfferWelcomeMessageEditor";
 import { OfferCrmRoutingSection, validateCrmRoutingForSave } from "@/components/admin/OfferCrmRoutingSection";
 import { OfferDocumentDefaultsCard } from "@/components/admin/product/OfferDocumentDefaultsCard";
+import { OfferDocumentScenariosCard } from "@/components/admin/product/OfferDocumentScenariosCard";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -2433,6 +2434,13 @@ export default function AdminProductDetailV2() {
                 onChange={(next) => setOfferForm({
                   ...offerForm,
                   meta: { ...offerForm.meta, document_defaults: next },
+                })}
+              />
+              <OfferDocumentScenariosCard
+                value={(offerForm.meta as any)?.document_scenarios}
+                onChange={(next) => setOfferForm({
+                  ...offerForm,
+                  meta: { ...offerForm.meta, document_scenarios: next } as any,
                 })}
               />
             </TabsContent>
