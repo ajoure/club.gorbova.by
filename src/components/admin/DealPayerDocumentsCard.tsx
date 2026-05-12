@@ -431,7 +431,7 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
             <SelectContent>
               <SelectItem value="auto">
                 {resolved.template_id
-                  ? `${sourceLabel(resolved.source)} · ${templates.find((t) => t.id === resolved.template_id)?.name || "шаблон"}`
+                  ? `${sourceLabelRu(resolved.source)} · ${templates.find((t) => t.id === resolved.template_id)?.name || "шаблон"}`
                   : "Автоматически (не задан в кнопке)"}
               </SelectItem>
               {templates.map((t) => (
@@ -454,7 +454,7 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
             <SelectContent>
               <SelectItem value="auto">
                 {resolved.executor_id
-                  ? `${sourceLabel(resolved.source)} · ${
+                  ? `${sourceLabelRu(resolved.source)} · ${
                       executors.find((e) => e.id === resolved.executor_id)?.short_name
                       || executors.find((e) => e.id === resolved.executor_id)?.full_name
                       || "исполнитель"
