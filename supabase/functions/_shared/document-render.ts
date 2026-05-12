@@ -517,12 +517,47 @@ export async function generateCanonicalDocument(
   try {
     const buf = new Uint8Array(await file.arrayBuffer());
     const zip = new PizZip(buf);
-    const docx = new Docxtemplater(zip, { delimiters: { start: '{{', end: '}}' }, paragraphLoop: true, linebreaks: true });
+    // Custom parser keeps the entire tag (including `|format=…`) as the variable
+    // key, so docxtemplater never tries to interpret `|` as a filter pipeline.
+    const docx = new Docxtemplater(zip, {
+      delimiters: { start: '{{', end: '}}' },
+      paragraphLoop: true,
+      linebreaks: true,
+      parser: (tag: string) => ({
+        get: (scope: any) => {
+          const key = (tag || '').trim();
+          if (scope && Object.prototype.hasOwnProperty.call(scope, key)) return scope[key];
+          return '';
+        },
+      }) as any,
+    });
     // Pass both registered tokens and unmapped (empty for safety)
     const renderData: Record<string, string> = { ...payload.resolved_tokens };
     const aliases: Record<string, string> = (payload as any).aliases || {};
     for (const [alias, canonical] of Object.entries(aliases)) {
       if (!(alias in renderData)) renderData[alias] = payload.resolved_tokens[canonical] ?? '';
+    }
+    // ── Date format modifiers (legacy + canonical syntax) ───────────────────
+    // For every known date-bearing token, populate {{<key>|format=<name>}}
+    // variants in renderData so that `{{document.date|format=short}}`,
+    // `{{document.date|format=long_ru}}`, etc. resolve correctly.
+    // Also re-bind the legacy alias `{{document.date_short}}` →
+    // equivalent of `{{document.date|format=short}}`.
+    const DATE_BEARING_KEYS = ['document.date', 'system.today', 'system.tomorrow', 'system.yesterday'];
+    for (const baseKey of DATE_BEARING_KEYS) {
+      const baseVal = renderData[baseKey];
+      if (baseVal == null || baseVal === '') continue;
+      for (const fmt of ALLOWED_DATE_FORMATS) {
+        const aliasKey = `${baseKey}|format=${fmt}`;
+        if (!(aliasKey in renderData)) {
+          renderData[aliasKey] = applyDateFormat(baseVal, fmt).value || baseVal;
+        }
+      }
+    }
+    // Legacy: {{document.date_short}} ≡ {{document.date|format=short}}
+    if (renderData['document.date'] && !renderData['document.date_short']) {
+      renderData['document.date_short'] = applyDateFormat(renderData['document.date'], 'short').value
+        || renderData['document.date'];
     }
     for (const t of payload.unmapped_template_tokens) if (!(t in renderData)) renderData[t] = '';
     docx.render(renderData);
