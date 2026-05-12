@@ -432,9 +432,10 @@ function BlockResponseDetail({ block, response, lessonBlocks }: {
               const cxRows = cxIds.map((id) => cxIdx.get(String(id))).filter(Boolean) as Array<Record<string, unknown>>;
               const rsRows = rsIds.map((id) => rsIdx.get(String(id))).filter(Boolean) as Array<Record<string, unknown>>;
               const all = [...cxRows, ...(svRow ? [svRow] : []), ...rsRows];
-              const coeffProduct = all.reduce((acc, r) => acc * ((r.coefficient as number) || 1), 1);
+              // Аддитивная дельта от base (см. .lovable/plan.md): должно совпадать с ExternalProductWorkshop.
+              const coeffDeltaSum = all.reduce((acc, r) => acc + (((r.coefficient as number) || 1) - 1), 0);
               const addonsSum = all.reduce((acc, r) => acc + ((r.price as number) || 0), 0);
-              const priceCoeff = base * coeffProduct;
+              const priceCoeff = base * (1 + coeffDeltaSum);
               const priceAddons = base + addonsSum;
               const cur = (p.current_price as number) || 0;
               const dCoeff = priceCoeff - cur;
