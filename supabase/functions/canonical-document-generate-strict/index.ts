@@ -157,6 +157,30 @@ function parseNumberLoose(v: any): number | null {
   const n = Number(cleaned);
   return Number.isFinite(n) ? n : null;
 }
+function applyDateAliasFormat(rawValue: any, format: string): { value: string; applied: boolean } {
+  // Reuse the legacy date parser to honor existing tolerant input formats
+  const d = parseDateLoose(typeof rawValue === 'string' ? rawValue : String(rawValue ?? ''));
+  if (!d) return { value: fmtVal(rawValue), applied: false };
+  const day = d.getUTCDate();
+  const monthIdx = d.getUTCMonth();
+  const year = d.getUTCFullYear();
+  const pad2 = (n: number) => (n < 10 ? `0${n}` : String(n));
+  switch (format) {
+    case 'short':
+    case 'dd.MM.yyyy':
+      return { value: `${pad2(day)}.${pad2(monthIdx + 1)}.${year}`, applied: true };
+    case 'long_ru':
+      return { value: `${pad2(day)} ${RU_MONTHS_GEN[monthIdx]} ${year} г.`, applied: true };
+    case 'words_ru': {
+      // Same as legacy `format=words` for date — keeps semantics identical.
+      const w = ruDateWords(typeof rawValue === 'string' ? rawValue : String(rawValue ?? ''));
+      return w ? { value: w, applied: true } : { value: fmtVal(rawValue), applied: false };
+    }
+    default:
+      return { value: fmtVal(rawValue), applied: false };
+  }
+}
+
 function applyFormat(rawValue: any, dataType: string, currency: string | null, format: string | null): { value: string; applied: boolean } {
   const baseStr = fmtVal(rawValue);
   if (!format) return { value: baseStr, applied: false };
@@ -181,14 +205,30 @@ function applyFormat(rawValue: any, dataType: string, currency: string | null, f
       return { value: w, applied: true };
     }
   }
+  // Date-only format aliases — only applied when data_type is date/datetime.
+  if (format === 'short' || format === 'dd.MM.yyyy' || format === 'long_ru' || format === 'words_ru') {
+    if (dataType === 'date' || dataType === 'datetime') {
+      return applyDateAliasFormat(rawValue, format);
+    }
+    return { value: baseStr, applied: false };
+  }
   return { value: baseStr, applied: false };
 }
 const FLD_RE = /^FLD-\d+$/;
 const ALLOWED_CASES = new Set([
   'nominative', 'genitive', 'dative', 'accusative', 'instrumental', 'prepositional',
 ]);
-const ALLOWED_FORMATS = new Set(['words', 'text']);
-const STRICT_FIELD_RE = /^field:(FLD-\d+)((?:\|[a-z_]+=[a-z_]+)*)$/;
+// Allowed `format=...` values:
+//   - 'words' / 'text' — legacy (number/money/boolean/date words/text variants)
+//   - date format aliases: 'short', 'dd.MM.yyyy', 'long_ru', 'words_ru'
+//     (applied only to data_type ∈ {date, datetime}; otherwise warning).
+const ALLOWED_FORMATS = new Set([
+  'words', 'text',
+  'short', 'dd.MM.yyyy', 'long_ru', 'words_ru',
+]);
+// Format/case modifier values may include letters, digits, underscore and dot
+// (the dot is required for `format=dd.MM.yyyy`).
+const STRICT_FIELD_RE = /^field:(FLD-\d+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 // Префикс «правильного контракта» — `field:FLD-…` (с любым хвостом). Если префикс совпал,
 // но STRICT_FIELD_RE — нет, классифицируем как `unknown_modifier`, а не как legacy.
 const FIELD_PREFIX_RE = /^field:FLD-\d+(\||$)/;
@@ -533,6 +573,10 @@ Deno.serve(async (req) => {
         if (v.format === 'text') {
           if (!applied) w.push('format_text_not_applied');
           if (dataType !== 'boolean') w.push('format_text_on_non_boolean_field');
+        }
+        if (v.format === 'short' || v.format === 'dd.MM.yyyy' || v.format === 'long_ru' || v.format === 'words_ru') {
+          if (!applied) w.push('format_date_not_applied');
+          if (dataType !== 'date' && dataType !== 'datetime') w.push('format_date_on_non_date_field');
         }
         if (v.case_modifier) {
           if (!caseApplied) w.push('case_modifier_not_applied');
