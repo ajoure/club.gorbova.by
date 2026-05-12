@@ -187,8 +187,17 @@ const FLD_RE = /^FLD-\d+$/;
 const ALLOWED_CASES = new Set([
   'nominative', 'genitive', 'dative', 'accusative', 'instrumental', 'prepositional',
 ]);
-const ALLOWED_FORMATS = new Set(['words', 'text']);
-const STRICT_FIELD_RE = /^field:(FLD-\d+)((?:\|[a-z_]+=[a-z_]+)*)$/;
+// Allowed `format=...` values:
+//   - 'words' / 'text' — legacy (number/money/boolean/date words/text variants)
+//   - date format aliases: 'short', 'dd.MM.yyyy', 'long_ru', 'words_ru'
+//     (applied only to data_type ∈ {date, datetime}; otherwise warning).
+const ALLOWED_FORMATS = new Set([
+  'words', 'text',
+  'short', 'dd.MM.yyyy', 'long_ru', 'words_ru',
+]);
+// Format/case modifier values may include letters, digits, underscore and dot
+// (the dot is required for `format=dd.MM.yyyy`).
+const STRICT_FIELD_RE = /^field:(FLD-\d+)((?:\|[a-z_]+=[A-Za-z0-9_.]+)*)$/;
 // Префикс «правильного контракта» — `field:FLD-…` (с любым хвостом). Если префикс совпал,
 // но STRICT_FIELD_RE — нет, классифицируем как `unknown_modifier`, а не как legacy.
 const FIELD_PREFIX_RE = /^field:FLD-\d+(\||$)/;
