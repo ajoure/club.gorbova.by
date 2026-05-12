@@ -168,7 +168,7 @@ export function formatStructuredAddress(
   const apartment = s(struct.apartment) || s(struct.office) || s(struct.premise);
   const apartmentExplicitType = s(struct.apartment_type) || (struct.office ? 'оф.' : (struct.premise ? 'пом.' : ''));
   const postal = s(struct.postal_code);
-  const country = s(struct.country);
+  const country = normalizeCountry(s(struct.country) || s(struct.country_name) || s(struct.country_code));
   const region = s(struct.region);
   const district = s(struct.district);
 
