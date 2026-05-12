@@ -317,6 +317,18 @@ export function OfferDocumentScenariosCard({ value, onChange }: Props) {
                     Каналы: {row.payment_channels.map((c) => CHANNEL_LABELS_RU[c as PaymentChannel] || c).join(', ')}
                   </div>
                 )}
+                {row.is_enabled && (!row.template_id || !row.executor_id) && (
+                  <div className="flex items-start gap-2 text-[11px] text-amber-600 dark:text-amber-400">
+                    <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                    <span>
+                      {!row.template_id && !row.executor_id
+                        ? 'Не выбран шаблон и исполнитель — документ по этому сценарию создан не будет.'
+                        : !row.template_id
+                          ? 'Не выбран шаблон — документ по этому сценарию создан не будет.'
+                          : 'Не выбран исполнитель — документ по этому сценарию создан не будет.'}
+                    </span>
+                  </div>
+                )}
               </div>
             );
           })}
