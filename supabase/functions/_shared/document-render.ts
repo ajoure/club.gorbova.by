@@ -29,6 +29,7 @@ import {
   type TokenManifestEntry,
 } from './docx-helpers.ts';
 import { ALLOWED_DATE_FORMATS, applyDateFormat } from './dateFormatModifiers.ts';
+import { formatStructuredAddress, type FormatAddressResult } from './address-format.ts';
 
 export const CANONICAL_RESOLVER_VERSION = '1.0.0';
 export const CANONICAL_FEATURE_FLAG_KEY = 'documents_canonical_generation_enabled';
