@@ -229,7 +229,7 @@ export function OfferDocumentScenariosCard({ value, onChange }: Props) {
                   <Label className="text-xs">Применять при способе оплаты</Label>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     {PAYMENT_CHANNEL_OPTIONS.map((opt) => {
-                      const checked = row.payment_channels.includes(opt.value);
+                      const checked = (row.payment_channels as string[]).includes(opt.value);
                       return (
                         <label
                           key={opt.value}
