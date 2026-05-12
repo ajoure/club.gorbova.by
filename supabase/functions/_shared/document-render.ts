@@ -432,6 +432,19 @@ export async function resolveCanonicalPayload(
       if (docData.final_payment != null) resolverValues['deal.final_payment'] = String(docData.final_payment);
       if (docData.comment) resolverValues['deal.comment'] = docData.comment;
     }
+
+    // Sprint A — payment.* overlay (snapshot SOT → live fallback → empty + warning).
+    if (docData?.payment) {
+      applyPaymentBlock(docData.payment);
+      paymentSource = 'snapshot';
+    } else if (livePayment) {
+      applyPaymentBlock(buildLivePaymentBlock(livePayment));
+      paymentSource = 'live';
+      warnings.push('payment_snapshot_missing_live_fallback_used');
+    } else {
+      paymentSource = 'none';
+      warnings.push('payment_data_missing');
+    }
   }
 
   // 8. legal_details.* (custom_field) — read from customer columns directly via key suffix
