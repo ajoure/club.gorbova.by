@@ -389,3 +389,190 @@ export function inflectRu(input: string, c: RuCase): InflectionResult {
   }
   return { value: result.join(''), applied: true, per_token: per };
 }
+
+// ===========================================================================
+// inflectCompanyName — добавлено в рамках спринта «морфология DOCX»
+// ---------------------------------------------------------------------------
+// Склоняет ТОЛЬКО префикс юрлица из словаря (организационно-правовая форма
+// + родовое слово). Аббревиатуры (ООО/ЗАО/ИП/...) и название в кавычках
+// не склоняются. Для «Индивидуальный предприниматель <ФИО>» хвост дополнительно
+// прогоняется через inflectRu.
+// ===========================================================================
+
+type CaseMap = Record<RuCase, string>;
+
+interface CompanyDictEntry {
+  prefix: string;        // lowercase ключ для матча
+  forms: CaseMap;        // 6 форм, всё в нижнем регистре
+}
+
+// Перечислены от длинных к коротким — first-match wins.
+const COMPANY_DICT: CompanyDictEntry[] = [
+  {
+    prefix: 'закрытое акционерное общество',
+    forms: {
+      nominative:    'закрытое акционерное общество',
+      genitive:      'закрытого акционерного общества',
+      dative:        'закрытому акционерному обществу',
+      accusative:    'закрытое акционерное общество',
+      instrumental:  'закрытым акционерным обществом',
+      prepositional: 'закрытом акционерном обществе',
+    },
+  },
+  {
+    prefix: 'открытое акционерное общество',
+    forms: {
+      nominative:    'открытое акционерное общество',
+      genitive:      'открытого акционерного общества',
+      dative:        'открытому акционерному обществу',
+      accusative:    'открытое акционерное общество',
+      instrumental:  'открытым акционерным обществом',
+      prepositional: 'открытом акционерном обществе',
+    },
+  },
+  {
+    prefix: 'общество с ограниченной ответственностью',
+    forms: {
+      nominative:    'общество с ограниченной ответственностью',
+      genitive:      'общества с ограниченной ответственностью',
+      dative:        'обществу с ограниченной ответственностью',
+      accusative:    'общество с ограниченной ответственностью',
+      instrumental:  'обществом с ограниченной ответственностью',
+      prepositional: 'обществе с ограниченной ответственностью',
+    },
+  },
+  {
+    prefix: 'общество с дополнительной ответственностью',
+    forms: {
+      nominative:    'общество с дополнительной ответственностью',
+      genitive:      'общества с дополнительной ответственностью',
+      dative:        'обществу с дополнительной ответственностью',
+      accusative:    'общество с дополнительной ответственностью',
+      instrumental:  'обществом с дополнительной ответственностью',
+      prepositional: 'обществе с дополнительной ответственностью',
+    },
+  },
+  {
+    prefix: 'акционерное общество',
+    forms: {
+      nominative:    'акционерное общество',
+      genitive:      'акционерного общества',
+      dative:        'акционерному обществу',
+      accusative:    'акционерное общество',
+      instrumental:  'акционерным обществом',
+      prepositional: 'акционерном обществе',
+    },
+  },
+  {
+    prefix: 'индивидуальный предприниматель',
+    forms: {
+      nominative:    'индивидуальный предприниматель',
+      genitive:      'индивидуального предпринимателя',
+      dative:        'индивидуальному предпринимателю',
+      accusative:    'индивидуального предпринимателя',
+      instrumental:  'индивидуальным предпринимателем',
+      prepositional: 'индивидуальном предпринимателе',
+    },
+  },
+  {
+    prefix: 'частное унитарное предприятие',
+    forms: {
+      nominative:    'частное унитарное предприятие',
+      genitive:      'частного унитарного предприятия',
+      dative:        'частному унитарному предприятию',
+      accusative:    'частное унитарное предприятие',
+      instrumental:  'частным унитарным предприятием',
+      prepositional: 'частном унитарном предприятии',
+    },
+  },
+  {
+    prefix: 'унитарное предприятие',
+    forms: {
+      nominative:    'унитарное предприятие',
+      genitive:      'унитарного предприятия',
+      dative:        'унитарному предприятию',
+      accusative:    'унитарное предприятие',
+      instrumental:  'унитарным предприятием',
+      prepositional: 'унитарном предприятии',
+    },
+  },
+  {
+    prefix: 'совместное предприятие',
+    forms: {
+      nominative:    'совместное предприятие',
+      genitive:      'совместного предприятия',
+      dative:        'совместному предприятию',
+      accusative:    'совместное предприятие',
+      instrumental:  'совместным предприятием',
+      prepositional: 'совместном предприятии',
+    },
+  },
+];
+
+const COMPANY_ABBREV_RE =
+  /^\s*(ООО|ЗАО|ОАО|ПАО|АО|ОДО|ИП|УП|РУП|ЧУП|ГУП|ФГУП|МУП|ТОО|НКО|СП|ЧП|КФХ|ИЧП|ФЛП|СПД|ОЮЛ|НПФ)(\s|$|\.|"|«|“)/;
+
+function matchCase(template: string, sample: string): string {
+  // Если первый символ sample заглавный — поднять регистр первого символа template.
+  if (!sample || !template) return template;
+  const first = sample.charAt(0);
+  if (first === first.toUpperCase() && first !== first.toLowerCase()) {
+    return template.charAt(0).toUpperCase() + template.slice(1);
+  }
+  return template;
+}
+
+export interface CompanyInflectionResult {
+  value: string;
+  applied: boolean;
+  reason?: string;
+  prefix_matched?: string | null;
+  tail_inflection?: InflectionResult | null;
+}
+
+export function inflectCompanyName(input: string, c: RuCase): CompanyInflectionResult {
+  if (!input || typeof input !== 'string') {
+    return { value: input, applied: false, reason: 'empty' };
+  }
+  if (c === 'nominative') {
+    return { value: input, applied: true, prefix_matched: null };
+  }
+
+  const trimmed = input.trim();
+  if (COMPANY_ABBREV_RE.test(trimmed)) {
+    return { value: input, applied: false, reason: 'abbreviation_not_inflected' };
+  }
+
+  const lower = trimmed.toLowerCase();
+  let entry: CompanyDictEntry | null = null;
+  for (const e of COMPANY_DICT) {
+    if (lower.startsWith(e.prefix)) { entry = e; break; }
+  }
+  if (!entry) {
+    return { value: input, applied: false, reason: 'no_known_legal_form' };
+  }
+
+  const prefixOriginal = trimmed.slice(0, entry.prefix.length);
+  const tail = trimmed.slice(entry.prefix.length);
+  const newPrefix = matchCase(entry.forms[c], prefixOriginal);
+
+  // Special: «Индивидуальный предприниматель <ФИО>» — склонить хвост через inflectRu.
+  let finalTail = tail;
+  let tailInflection: InflectionResult | null = null;
+  if (entry.prefix === 'индивидуальный предприниматель') {
+    const tailTrim = tail.replace(/^\s+/, '');
+    if (tailTrim.length > 0 && /^[А-ЯЁ]/.test(tailTrim)) {
+      tailInflection = inflectRu(tailTrim, c);
+      const leading = tail.slice(0, tail.length - tailTrim.length);
+      finalTail = leading + (tailInflection.applied ? tailInflection.value : tailTrim);
+    }
+  }
+
+  return {
+    value: newPrefix + finalTail,
+    applied: true,
+    prefix_matched: entry.prefix,
+    tail_inflection: tailInflection,
+  };
+}
+
