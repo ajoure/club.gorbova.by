@@ -375,6 +375,8 @@ export async function snapshotOrderDocumentData(
       bank_credit_price: pick<number>('bank_credit_price') ?? amount,
       final_payment: pick<number>('final_payment') ?? 0,
       comment: pick<string>('comment') ?? null,
+      // Sprint A — payment.* SOT block (read-only snapshot of succeeded payments_v2 row).
+      payment: paymentBlock,
       _provenance: {
         offer_defaults_present: !!offerDefaults,
         tariff_defaults_present: !!tariffDefaults,
