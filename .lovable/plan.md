@@ -1,151 +1,125 @@
-# Да, согласен, **с учетом правок**:
+## План: реквизиты, плейсхолдеры, шаблоны документов
 
-1. **B1 нельзя делать сейчас.**  
-Не выключать `Строительство`, не менять entitlement и не переносить доступы. Только зафиксировать как `empty_training_root` и вывести в отчёт. Контентное решение — отдельный PATCH.
-2. **B3 нельзя выполнять массово.**  
-Только dry-run по 23 строкам: кто должен быть `full_tariff_scope`, кто `module_scope_only`, кто standalone-only. Без автоматического удаления/изменения parent-entitlement.
-3. **B4 — только после discovery.**  
-Не включать все `access_rules` массово. Сначала показать: какие rules, для каких products, есть ли дубли, какой canonical rule. Потом отдельное approve.
-4. **C1 добавить обязательно.**  
-Resolver должен временно поддерживать оба формата `hpids`: `product_id` и `training_module_id`, с audit/warn `hpids_training_id_fallback_used`.
-5. **Главный DoD:**  
-Для каждого active entitlement на продукт с training root:
-  - продукт виден в «Моей библиотеке»;
-  - если контента нет — карточка видна как «Контент не опубликован», а не исчезает;
-  - доступы в карточке контакта и библиотека не расходятся.
+Работа разбита на 4 пункта по запросу пользователя.
 
-Можно запускать с этими правками.
+---
 
-&nbsp;
+### 1. Типы плательщика: добавить ИП как отдельную сущность
 
-Да, согласен, с учетом правки:
+**Проблема:** в карточке сделки и в селекторе «Тип плательщика» сейчас только два значения — `individual` (Физлицо) и `legal_entity` (Юрлицо). ИП (`entrepreneur`) подписывает как ФЛ, хотя у нас уже есть отдельная форма реквизитов ИП (`EntrepreneurDetailsForm`, поля `ent_*`) и demo-набор `DEMO_ENTREPRENEUR`. Резолвер сценариев документа (`resolveDocumentScenario.ts`) знает только `'individual' | 'legal_entity'`.
 
-- **Пустой модуль с доступом обязан отображаться.**  
-Если `entitlement active` и training/module существует, но `lessons_count=0` и `children_count=0`, карточку не скрывать.
-- В UI показывать состояние: **«Уроки скоро появятся» / «Контент не опубликован»**.
-- Это применить глобально ко всем тренингам/модулям, не только к «Строительству».
-- Resolver не должен использовать наличие уроков как условие видимости. Условие видимости = **есть активный доступ + существует training_module**.
-- В DoD добавить:
-  - Алена видит «ЦБ-1 | Строительство» даже без уроков;
-  - модуль открывается и показывает пустое состояние;
-  - sweep по всем active entitlements: нет кейсов, где доступ есть, module существует, но карточка скрыта из-за `0 lessons`.
+**Действия:**
+- Расширить `PayerType` → `'individual' | 'entrepreneur' | 'legal_entity'`.
+- Добавить `entrepreneur` в:
+  - селектор `DealPayerDocumentsCard.tsx` (новый `SelectItem` «ИП»),
+  - группировку карточек реквизитов в picker (отдельная секция «ИП»),
+  - `LegalDetailsPickerDialog.tsx` (label `entrepreneur: "ИП"`),
+  - `resolveDocumentScenario.ts` (matching по `entrepreneur`),
+  - `orders_v2.payer_type` миграция: добавить значение в check/enum (если есть).
+- Документ-сценарии (`tariff_offers.meta.document_scenarios[]`): ничего ломать не нужно — формат уже массив, добавим возможность `payer_type='entrepreneur'`. Если сценария для ИП нет — fallback на `individual` (через priority в резолвере).
+- В админке «Реквизиты сделки» при выборе типа «ИП» подгружаем карточку из `legal_details` со scope ИП (по `org_form='entrepreneur'` или флагу `is_entrepreneur`).
 
-Можно запускать в работу.
+---
 
-&nbsp;
+### 2. Нормализация полей реквизитов и плейсхолдеров (FLD-каталог)
 
-План: устранить расхождения «доступы ↔ показ тренингов»
+**Проблема:** в `fields_registry` бардак — есть дубли и неоднозначные названия:
+- `customer.director` / `customer.director_short` / `customer.director_full_name` / `customer.director_position` / `customer.basis` / `customer.acts_on_basis` — дублирующие пары.
+- Нет явного указания «ФЛ» / «ЮЛ» / «ИП» в label у части полей.
+- Краткое и полное наименование ИП/ЮЛ не имеют разведения вида «ИП Иванов И.И.» vs «Индивидуальный предприниматель Иванов Иван Иванович».
+- Отсутствует поле «организационно-правовая форма» (ООО, ЗАО, УП).
 
-## 1. Что найдено в дискавери (Елена Богинская, 78123ed5…)
+**Каноническая схема label** (для `executor` и `customer`):
+```
+{Сторона} {ФЛ|ЮЛ|ИП}: {суть поля}
+```
+Примеры:
+- `Заказчик ФЛ: ФИО полностью` (Иванов Иван Иванович)
+- `Заказчик ФЛ: ФИО кратко` (Иванов И.И.)
+- `Заказчик ФЛ: фамилия`, `…имя`, `…отчество`
+- `Заказчик ЮЛ: наименование полное` (ООО «Альфа Консалтинг»)
+- `Заказчик ЮЛ: наименование краткое` (ООО «Альфа»)
+- `Заказчик ЮЛ: организационно-правовая форма` (ООО)
+- `Заказчик ЮЛ: директор ФИО полностью`
+- `Заказчик ЮЛ: директор ФИО кратко`
+- `Заказчик ЮЛ: должность руководителя`
+- `Заказчик ИП: наименование полное` (Индивидуальный предприниматель Иванов Иван Иванович)
+- `Заказчик ИП: наименование краткое` (ИП Иванов И.И.)
+- `Заказчик ИП: ФИО полностью`, `…ФИО кратко`
+- Общие (для ЮЛ/ИП): `…УНП`, `…юридический адрес`, `…банк`, `…БИК`, `…счёт`, `…действует на основании`.
 
-### 1.1. Корневая причина «Строительство не активный»
+**Действия:**
+- Миграция: переименовать существующие `label` к канону, добавить недостающие поля (`org_form`, `name_full`, `name_short`, `director_full_name`, `director_short_name`, дубликаты пометить `archived_at` с маппингом на канонический ключ).
+- Аналогично для `entity_type='executor'`.
+- Добавить ИП-вариант полей (`customer.entrepreneur.*`, `executor.entrepreneur.*`).
+- В resolver снапшота (`document-field-resolver-v2-snapshot`) — маппинг новых полей из `legal_details`.
 
+---
 
-| Что                                     | Маркетплейсы (d7effaf4) | Строительство (f833c846) |
-| --------------------------------------- | ----------------------- | ------------------------ |
-| Entitlement                             | active, до 16.05.26     | active, до 16.05.26      |
-| products_v2                             | есть                    | есть                     |
-| Корневой training_module                | `4c97d21c`              | `b7bae7fd`               |
-| Дочерние training_modules               | **0**                   | **0**                    |
-| Уроки на корне                          | **5** (есть контент)    | **0** (пусто)            |
-| access_rules (product/training_content) | **все is_active=false** | **все is_active=false**  |
+### 3. Шаблоны: удаление и кеш
 
+**Проблема:** при удалении шаблона и загрузке нового с тем же названием — `Создать документ` всё равно генерирует по старому. Источник: вероятно
+- кеш `current_version_id` в `document_templates` не обновляется при удалении/перезаливе,
+- либо `template_path` (storage) не перезаписывается, и edge `ai-generate-document` берёт DOCX по старому пути,
+- либо в `orders_v2.meta.document_data` снапшотится старый `template_id`.
 
-**Строительство не «активный» в библиотеке потому, что у его корневого тренинга нет ни дочерних модулей, ни уроков — рендерить нечего.** Доступ выдан корректно, но контента в БД нет.
+**Действия:**
+- Аудит таблицы `document_templates`: нет колонки `deleted_at`. Удаление сейчас — только hard-delete или флаг `is_active=false`. Добавить `deleted_at TIMESTAMPTZ`.
+- В `ai-generate-document/index.ts` (и `canonical-document-generate*`) добавить guard:
+  - `template.deleted_at IS NULL`,
+  - `template.is_active = true`,
+  - чтение DOCX строго по `current_version_id` → `document_template_versions.storage_path`, не по «имени».
+- В UI `useDocumentTemplates` инвалидировать react-query кеш `['document-templates']` при upload/delete.
+- При создании документа в `DealPayerDocumentsCard`/`DealDocumentsPanel`:
+  - не сохранять `template_id` в `orders_v2.meta.document_data` намертво — резолвить актуальный шаблон в момент генерации,
+  - если в snapshot записан несуществующий/удалённый `template_id` — fallback на актуальный по `(document_type, payer_type, payment_channel)` + лог в `audit_logs`.
+- Версионирование: каждый upload → новая запись в `document_template_versions`, `current_version_id` обновляется атомарно. Старые версии помечаем `superseded_at`.
 
-### 1.2. Системные ошибки, делающие resolver хрупким
+---
 
-**A. Битая семантика `historical_module_product_ids**` в module-product entitlements:
+### 4. Превью-колонка в каталоге плейсхолдеров
 
-- `Маркетплейсы.meta.hpids = [4c97d21c]` — это **training_module_id**, а не product_id.
-- `Строительство.meta.hpids = [b7bae7fd]` — то же самое.
-- `resolveBonusScopeRules` (строка 332) делает `training_modules WHERE product_id IN (hpids)` → **возвращает пусто** → синтетический bonus rule с `allowed_module_ids=[]`.
-- Сейчас спасает только то, что в `useSidebarModules` корень с `parent_module_id=null` всегда виден (PATCH 2026-05-13). Но любой клиентский фильтр глубже ломается.
+**Проблема:** в `/admin/ai` (вкладка «Плейсхолдеры») трудно понять, что подставится в документ.
 
-**B. Все access_rules для standalone module-products отключены** (`is_active=false`) — backend не имеет SOT для проверки контента этих продуктов. Любая ветка, читающая access_rules (а не entitlements напрямую), вернёт «нет доступа».
+**Действия:**
+- В таблицу `Плейсхолдеры для Word` (`AdminProductsDocs.tsx` / соответствующий компонент) добавить колонку **«Пример»** между «Настройки» и «Плейсхолдер».
+- Источник примеров — расширить `templateEditorTestData.ts`: `EDITOR_TEST_DATA_BY_FIELD_ID` (Record<FLD-ID, string>). Покрыть все 120 полей реалистичными значениями (Иванов Иван Иванович, ООО «Альфа», 192345678 и т.д.).
+- На UI значение рендерим в `<code>` с tooltip «Пример отображения».
+- Бонус: при наведении на ячейку «Плейсхолдер» — popover с примером в составе мини-предложения («…действует на основании Устава…»).
 
-**C. Reverted CB-1 root entitlement** (7101ed3c, batch INV-PHANTOM-PARENT-V1-REVERT-2026-05-13):
+---
 
-- `meta.hpids = [d7effaf4]` (product_id Маркетплейсы — ОК для маппинга),
-- но `scope_resolution_mode='module_scope_only'` → resolver выдаёт `partial, allowed=[4c97d21c]`,
-- из-за этого вся внутренность ЦБ-1 (root c9f7e9b8 + 18+ детей) скрыта, кроме модулей, попадающих в этот allowlist. Ровно поэтому в библиотеке у Алены ЦБ-1 «торчит» как 0/4 (или вовсе не виден целиком).
+### Технические детали (для разработчика)
 
-**D. Несогласованность модели данных «standalone module»:**
+| Слой | Файлы |
+|---|---|
+| Типы | `src/utils/resolveDocumentScenario.ts`, `src/components/admin/DealPayerDocumentsCard.tsx`, `src/components/ai-documents/LegalDetailsPickerDialog.tsx` |
+| Реквизиты ИП | `src/components/legal-details/EntrepreneurDetailsForm.tsx` (уже есть), `src/constants/demoLegalDetails.ts` |
+| Каталог полей | миграция `fields_registry`: rename labels, add ИП-секция, archive дубликаты |
+| Шаблоны | миграция `document_templates ADD COLUMN deleted_at`, `supabase/functions/ai-generate-document/index.ts`, `canonical-document-generate*`, `src/hooks/useDocumentTemplates.tsx` |
+| UI плейсхолдеров | страница каталога (`AdminProductsDocs.tsx` или `/admin/ai` placeholders tab) + `templateEditorTestData.ts` (расширить до Record<field_id, string>) |
+| Резолвер снапшота | `supabase/functions/document-field-resolver-v2-snapshot` — маппинг новых полей |
 
-- Один и тот же контент существует и как дочерний модуль внутри `c9f7e9b8` (CB-1 root), и как отдельный product+training (Маркетплейсы/Строительство/…).
-- Покупка standalone-модуля даёт entitlement на отдельный product, но visual library показывает его рядом с CB-1, а не внутри. При этом сам standalone-training может быть пустым (Строительство).
+### Порядок выполнения (Diagnose → Plan → Dry run → Execute → Verify)
 
-## 2. План устранения
+1. **Dry run каталога полей** — выгрузить текущие 120 FLD, составить маппинг old→new (CSV в `.lovable/proofs/fields_registry_normalize_2026_05_13.md`), показать пользователю до миграции.
+2. Миграция `fields_registry` (rename + add + archive дубликатов).
+3. Расширение `PayerType` (типы + UI + резолвер).
+4. Шаблоны: `deleted_at` + guard в edge + инвалидация кеша + fallback в snapshot.
+5. Превью-колонка + расширение test-data.
+6. Verify: создать тест-сделку с ИП, прогнать генерацию документа на новом шаблоне, проверить что удалённый шаблон не используется.
 
-### Этап A — Диагностика по всем 23 reverted записям и всем module-products
+### DoD
 
-Read-only sweep:
+- В селекторе «Тип плательщика» три значения: ФЛ / ИП / ЮЛ.
+- Все плейсхолдеры в каталоге имеют формат `{Сторона} {ФЛ|ЮЛ|ИП}: {суть}`, без дублей.
+- Поле «организационно-правовая форма» добавлено для ЮЛ.
+- Удалённый/перезалитый шаблон больше не используется при «Создать документ».
+- В каталоге плейсхолдеров есть колонка «Пример» с реалистичным значением для каждого FLD.
+- Proof-файлы: маппинг полей, лог удаления шаблона, скриншот новой колонки.
 
-1. Для каждого `entitlement` с `meta.scope_resolution_mode='module_scope_only'`:
-  - Проверить, что `hpids[]` содержит **product_id** (а не training_module_id). Битые → bucket `hpids_are_training_ids`.
-  - Прогнать `resolveBonusScopeRules` симуляцию → bucket `synthetic_empty_allowlist`.
-2. Для всех products, у которых `entitlements.status=active` существует, но `access_rules.is_active=true` отсутствует → bucket `product_without_active_rules`.
-3. Для каждого root `training_module` с `is_active=true` посчитать `children + lessons`. Если = 0 → bucket `empty_training_root`.
-4. Сохранить proof в `.lovable/proofs/access_vs_training_audit_2026_05_13.md`.
+### Открытые вопросы (нужно подтверждение перед стартом)
 
-### Этап B — Починка данных (строго точечно, без массовых правок)
-
-B
-
-1. **Empty Строительство (b7bae7fd)** — это **контентная** проблема, не resolver. Решения на выбор (нужно подтверждение владельца контента):
-  - либо завести уроки/модули для standalone Строительство,
-  - либо привязать entitlement Строительство не к product `f833c846`, а к подмодулю внутри CB-1 (изменить SOT module-product → child training_module внутри c9f7e9b8).
-   До решения — пометить product как `is_active=false` и вернуть «доступ к модулю Строительство внутри ЦБ-1» через access_rule на c9f7e9b8.
-
-B
-
-2. **Битые `hpids` (training_id вместо product_id)** в entitlements Маркетплейсы/Строительство (и аналогичных): миграция `inv_hpids_normalize_2026_05_13`:
-  - Для каждой записи: если все `hpids[]` → существующие training_module_id с `parent_module_id=null` → перевести их в соответствующие `product_id` (берём `training_modules.product_id`).
-  - Audit `entitlement.hpids_normalized_v1` per row.
-  - DRY-RUN сначала.
-
-B
-
-3. **Reverted CB-1 root (Алена и аналоги)** — для всех 23 записей решить:
-  - Если у пользователя есть отдельные standalone-module entitlements (Маркетплейсы/Строительство/…), parent CB-1 entitlement **не должен** иметь `scope_resolution_mode='module_scope_only'` — он должен либо быть `full_tariff_scope` (если был полный CB-1), либо вообще не существовать (видимость идёт из standalone-ents).
-  - Аудит исходных заказов/основания → перевести в один из: `full_tariff_scope` / удалить / оставить `module_scope_only` с правильными hpids.
-  - Без подтверждения по каждому — не менять.
-
-B
-
-4. **Включить access_rules для активных module-products** (Маркетплейсы, Строительство, …): миграция `module_product_rules_activate_2026_05_13` — выставить `is_active=true` на канонических `product_access` + `training_content` правилах, либо удалить дубли, оставив один SOT-rule на product.
-
-### Этап C — Изменения резолвера (минимальные, чтобы не маскировать данные)
-
-C
-
-1. В `resolveBonusScopeRules`: добавить **fallback маппинг** — если `hpids[i]` не нашлось в `products_v2.id`, проверить как `training_modules.id` (с `parent_module_id=null`). Если совпало — использовать его напрямую как `allowed_module_ids[i]`. Логировать `hpids_training_id_fallback_used` (чтобы B2 двигал данные в норму).
-
-C
-
-2. В `useSidebarModules` библиотеки: для root-модуля с `has_access=true`, но `lessons=0 && children=0` — показывать карточку с состоянием **«Контент не опубликован»** вместо тихого скрытия. Сейчас Строительство в принципе РЕНДЕРИТСЯ (resolver его не режет — root защищён правилом 199-201), но у пользователя визуально пусто и неясно почему.
-
-C
-
-3. НЕ трогать: `subscriptions_v2`, `provider_subscriptions`, `access_end_at`, Telegram, write-paths grant-access.
-
-### Этап D — Верификация (DoD)
-
-- Audit-файл со всеми bucket'ами и поimённым списком пользователей.
-- Для Алены: после B2 (нормализация hpids) синтетический rule для Маркетплейсы/Строительство выдаёт корректный allowlist; ЦБ-1 root решается через B3.
-- Для Строительства: либо контент добавлен (и видно), либо product выключен и видимость идёт через access_rule на c9f7e9b8 — пользователь явно видит модуль внутри ЦБ-1.
-- Sweep `(user_id, product_id)` с active entitlement → root тренинг проходит resolver И имеет ≥1 урок/child = **0 broken cases**.
-- Memory: добавить `hpids-semantics-canon` (hpids = product_id only, training_id запрещён); обновить `cabinet-visibility-entitlement-dependency.md` пунктом «empty training root → явный UI-state, не молча скрывать».
-
-## 3. Что НЕ делаю в этом плане
-
-- Не выдаю и не отзываю никакие entitlements автоматически.
-- Не редактирую `subscriptions_v2`, биллинг, Telegram, access_end_at.
-- Не трогаю поведение grant-access-for-order.
-- Не запускаю массовые правки без подтверждения по каждому пользователю из 23-ки.
-
-## 4. Что мне нужно от тебя перед стартом
-
-1. По Строительству: **добавляем контент** или **переводим entitlement внутрь ЦБ-1**?
-2. По 23 reverted CB-1 ents: можно ли мне после Этапа A прислать тебе bucketed-список и идти по нему построчно (full / module_scope / удалить)?
-3. Подтверждаешь, что C1 (fallback маппинг hpids) допустим как временный костыль до завершения B2?
+1. **Старые шаблоны и сделки**: переименование labels поломает уже привязанные плейсхолдеры в DOCX? Канонический формат токена — `{{field:FLD-XXXXXX}}` (по ID, не по label) — переименование label безопасно. Подтверждаешь?
+2. **Архивация дубликатов** (`customer.director` vs `customer.director_full_name`): сливаем в один канонический ключ или оставляем оба и просто чистим labels? Предлагаю слить с redirect на канонический FLD-ID.
+3. **Удаление шаблона**: переходим на soft-delete (`deleted_at`) — старые сделки с этим `template_id` будут показывать «Шаблон удалён, выберите новый», или автоматически подставлять актуальный по сценарию? Предлагаю **автофолбэк** + бейдж «Шаблон обновлён».

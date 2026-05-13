@@ -14,7 +14,14 @@
 
 import type { PaymentChannel } from './derivePaymentChannel';
 
-export type PayerType = 'individual' | 'legal_entity';
+export type PayerType = 'individual' | 'entrepreneur' | 'legal_entity';
+
+/** RU-лейблы (SOT для UI). */
+export const PAYER_TYPE_LABELS_RU: Record<PayerType, string> = {
+  individual: 'Физлицо',
+  entrepreneur: 'ИП',
+  legal_entity: 'Юрлицо',
+};
 
 export interface DocumentScenario {
   id: string;
@@ -108,7 +115,19 @@ export function resolveDocumentScenario(
 
   // Приоритет — сценарий с непустым списком каналов (более специфичный).
   const specific = candidates.find((s) => s.payment_channels.length > 0);
-  const match = specific || candidates[0] || null;
+  let match = specific || candidates[0] || null;
+
+  // ИП-fallback: если для entrepreneur нет сценария — ищем сценарий ФЛ
+  // (ИП традиционно подписывает по физлицу, если иное не задано явно).
+  if (!match && payerType === 'entrepreneur') {
+    const indCandidates = scenarios.filter((s) => {
+      if (s.payer_type !== 'individual') return false;
+      if (s.payment_channels.length === 0) return true;
+      if (!channel) return false;
+      return s.payment_channels.includes(channel);
+    });
+    match = indCandidates.find((s) => s.payment_channels.length > 0) || indCandidates[0] || null;
+  }
 
   if (match && (match.template_id || match.executor_id)) {
     return {

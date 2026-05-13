@@ -305,15 +305,16 @@ export function PlaceholdersCatalogTab() {
                     <TableHead className="min-w-[180px]">Название</TableHead>
                     <TableHead className="w-[110px]">FLD-ID</TableHead>
                     <TableHead className="w-[90px]">Тип</TableHead>
-                    <TableHead className="w-[280px]">Настройки</TableHead>
-                    <TableHead className="min-w-[260px]">Плейсхолдер</TableHead>
+                    <TableHead className="w-[260px]">Настройки</TableHead>
+                    <TableHead className="min-w-[180px]">Пример</TableHead>
+                    <TableHead className="min-w-[240px]">Плейсхолдер</TableHead>
                     <TableHead className="w-[90px] text-right">Действия</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filtered.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-8">
+                      <TableCell colSpan={9} className="text-center text-sm text-muted-foreground py-8">
                         Ничего не найдено
                       </TableCell>
                     </TableRow>
@@ -368,6 +369,11 @@ export function PlaceholdersCatalogTab() {
                                 settings={settings}
                                 onChange={(patch) => updateRowSettings(t.id, patch)}
                               />
+                            </TableCell>
+                            <TableCell className="py-2 text-xs text-foreground/80">
+                              {t.example_value
+                                ? <span className="italic">{t.example_value}</span>
+                                : <span className="text-muted-foreground/60 italic">— нет примера —</span>}
                             </TableCell>
                             <TableCell className="py-2">
                               <code className="text-[11px] text-foreground/90 break-all font-mono">

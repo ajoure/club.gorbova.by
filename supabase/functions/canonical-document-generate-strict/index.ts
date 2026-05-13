@@ -321,21 +321,27 @@ Deno.serve(async (req) => {
     if (!orderId) return json({ error: 'order_id_required' }, 400);
     if (!templateId) return json({ error: 'template_id_required' }, 400);
 
-    // Load template + active version
+    // Load template + active version (guard: must be active and not archived)
     const { data: tpl } = await supabase
       .from('document_templates')
-      .select('id, name, current_version_id')
+      .select('id, name, current_version_id, is_active, template_status')
       .eq('id', templateId)
       .maybeSingle();
-    if (!tpl) return json({ error: 'template_not_found' }, 404);
-    if (!tpl.current_version_id) return json({ error: 'no_active_version' }, 400);
+    if (!tpl) return json({ error: 'template_not_found', template_id: templateId, hint: 'Шаблон не существует или был удалён. Очистите ручной выбор и пересохраните карточку «Документы / плательщик».' }, 404);
+    if (tpl.is_active === false || tpl.template_status === 'archived' || tpl.template_status === 'deleted') {
+      return json({ error: 'template_inactive', template_id: templateId, template_status: tpl.template_status, hint: 'Шаблон деактивирован. Выберите актуальный шаблон в карточке сделки.' }, 400);
+    }
+    if (!tpl.current_version_id) return json({ error: 'no_active_version', template_id: templateId, hint: 'У шаблона нет активной версии. Загрузите DOCX заново.' }, 400);
 
     const { data: ver } = await supabase
       .from('document_template_versions')
-      .select('id, version_number, storage_bucket, storage_path, validation_status, token_manifest')
+      .select('id, version_number, storage_bucket, storage_path, validation_status, token_manifest, is_current')
       .eq('id', tpl.current_version_id)
       .maybeSingle();
-    if (!ver) return json({ error: 'active_version_missing' }, 500);
+    if (!ver) return json({ error: 'active_version_missing', template_id: templateId, current_version_id: tpl.current_version_id }, 500);
+    if (ver.is_current === false) {
+      return json({ error: 'version_not_current', template_id: templateId, hint: 'У шаблона рассинхрон версий — current_version_id указывает на устаревшую версию. Активируйте новую версию.' }, 400);
+    }
     if (ver.validation_status !== 'valid') {
       return json({ error: 'active_version_invalid', validation_status: ver.validation_status }, 400);
     }

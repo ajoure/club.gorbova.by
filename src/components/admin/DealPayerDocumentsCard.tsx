@@ -188,29 +188,34 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
 
   const hasManualOverrides = !!(payerEntityOverride || templateOverride || executorOverride || payerTypeSource === "admin_override");
 
-  const effectiveTemplateId = templateOverride || resolved.template_id;
+  // Guard: если templateOverride указывает на удалённый/неактивный шаблон — не используем его.
+  const overrideTemplateExists = templateOverride ? templates.some((t) => t.id === templateOverride) : true;
+  const effectiveTemplateId = (overrideTemplateExists ? templateOverride : null) || resolved.template_id;
   const effectiveExecutorId = executorOverride || resolved.executor_id;
   const effectivePayerType: PayerType = (order?.payer_type as PayerType) || resolved.payer_type || "individual";
 
   // Статус
   const statusItems = useMemo(() => {
     const items: { kind: "ok" | "warn" | "err"; text: string }[] = [];
+    if (templateOverride && !overrideTemplateExists) {
+      items.push({ kind: "warn", text: "Выбранный ранее шаблон удалён или деактивирован — используется шаблон по сценарию. Сохраните выбор шаблона заново." });
+    }
     if (!effectiveTemplateId) {
       items.push({ kind: "err", text: "Документ не может быть сформирован — не выбран шаблон" });
     }
     if (!effectiveExecutorId) {
       items.push({ kind: "err", text: "Документ не может быть сформирован — не выбран исполнитель" });
     }
-    // Реквизиты
-    const list = effectivePayerType === "legal_entity" ? legalEntities : individuals;
+    // Реквизиты: ФЛ берёт individuals; ИП/ЮЛ — legalEntities (там лежат ent_* / leg_* в одной таблице)
+    const list = effectivePayerType === "individual" ? individuals : legalEntities;
     const hasRequisites = list.length > 0;
     if (!hasRequisites) {
       items.push({ kind: "err", text: "Не заполнены обязательные реквизиты" });
-    } else if (items.length === 0) {
+    } else if (items.filter(i => i.kind === "err").length === 0) {
       items.push({ kind: "ok", text: "Реквизиты заполнены" });
     }
     return items;
-  }, [effectiveTemplateId, effectiveExecutorId, effectivePayerType, individuals, legalEntities]);
+  }, [effectiveTemplateId, effectiveExecutorId, effectivePayerType, individuals, legalEntities, templateOverride, overrideTemplateExists]);
 
   const save = async () => {
     if (!order || !canEdit) return;
@@ -373,6 +378,7 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
             <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="individual">Физлицо</SelectItem>
+              <SelectItem value="entrepreneur">ИП</SelectItem>
               <SelectItem value="legal_entity">Юрлицо</SelectItem>
             </SelectContent>
           </Select>
@@ -404,16 +410,38 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
                   ))}
                 </>
               )}
-              {legalEntities.length > 0 && (
-                <>
-                  <div className="px-2 pt-1 text-[10px] uppercase text-muted-foreground">Юрлицо</div>
-                  {legalEntities.map((r) => (
-                    <SelectItem key={`le-${r.id}`} value={`legal_entity:${r.id}`}>
-                      {reqLabel(r)}{r.is_default ? " · по умолчанию" : ""}
-                    </SelectItem>
-                  ))}
-                </>
-              )}
+              {(() => {
+                const isEntrepreneur = (r: ReqRow) => {
+                  const d = (r.data || {}) as any;
+                  return !!(d.ent_name || d.ent_unp || d.ent_short_name || d.is_entrepreneur === true || d.subject_type === 'entrepreneur');
+                };
+                const ips = legalEntities.filter(isEntrepreneur);
+                const legs = legalEntities.filter((r) => !isEntrepreneur(r));
+                return (
+                  <>
+                    {ips.length > 0 && (
+                      <>
+                        <div className="px-2 pt-1 text-[10px] uppercase text-muted-foreground">ИП</div>
+                        {ips.map((r) => (
+                          <SelectItem key={`ip-${r.id}`} value={`entrepreneur:${r.id}`}>
+                            {reqLabel(r)}{r.is_default ? " · по умолчанию" : ""}
+                          </SelectItem>
+                        ))}
+                      </>
+                    )}
+                    {legs.length > 0 && (
+                      <>
+                        <div className="px-2 pt-1 text-[10px] uppercase text-muted-foreground">Юрлицо</div>
+                        {legs.map((r) => (
+                          <SelectItem key={`le-${r.id}`} value={`legal_entity:${r.id}`}>
+                            {reqLabel(r)}{r.is_default ? " · по умолчанию" : ""}
+                          </SelectItem>
+                        ))}
+                      </>
+                    )}
+                  </>
+                );
+              })()}
             </SelectContent>
           </Select>
         </div>
