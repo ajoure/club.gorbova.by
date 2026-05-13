@@ -39,17 +39,19 @@ Deno.serve(async (req) => {
     const result = await generateCanonicalDocument(supabase, input as any, {
       profileId,
       userId: body.user_id || '05cd3754-d589-4d90-97d1-89ba2bee610b',
-      idempotencyKey: `smoke:${input.template_id}:${input.context_id}:${Date.now()}`,
+      idempotencyKeyOverride: `smoke:${input.template_id}:${input.context_id}:${Date.now()}`,
       enforceFeatureFlag: false,
     } as any);
     const payload = (result as any).payload;
     return new Response(JSON.stringify({
       success: result.success,
       error: (result as any).error,
-      file_path: (result as any).file_path,
+      document_id: (result as any).document_id,
       document_number: (result as any).document_number,
+      storage_path: (result as any).storage_path,
+      docx_check: (result as any).docx_check,
+      reused: (result as any).reused,
       warnings: payload?.warnings,
-      resolved_tokens: payload?.resolved_tokens,
       template_tokens: payload?.template_tokens,
       aliases: payload?.aliases,
     }, null, 2), { headers: { ...cors, 'Content-Type': 'application/json' } });
