@@ -594,14 +594,15 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
 
   const deleteTemplate = async (id: string) => {
     try {
-      const verRows = versions.filter(v => v.template_id === id);
-      // Remove storage files
-      for (const v of verRows) {
-        await supabase.storage.from(v.storage_bucket).remove([v.storage_path]);
-      }
-      await supabase.from("document_template_versions").delete().eq("template_id", id);
-      await supabase.from("document_templates").delete().eq("id", id);
-      toast.success("Шаблон удалён");
+      // Soft-delete: keep storage files and version rows for audit / возможный
+      // восстанавливаемый rollback. Hard-delete production-шаблонов запрещён
+      // STOP-guard PLACEHOLDERS-NORMALIZATION-v3.
+      const { error } = await supabase
+        .from("document_templates")
+        .update({ deleted_at: new Date().toISOString() } as any)
+        .eq("id", id);
+      if (error) throw error;
+      toast.success("Шаблон удалён (soft-delete)");
       setDeleteId(null);
       if (activeTemplateId === id) {
         setActiveTemplateId(null);
