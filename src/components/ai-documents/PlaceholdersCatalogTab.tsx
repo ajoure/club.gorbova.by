@@ -305,8 +305,9 @@ export function PlaceholdersCatalogTab() {
                     <TableHead className="min-w-[180px]">Название</TableHead>
                     <TableHead className="w-[110px]">FLD-ID</TableHead>
                     <TableHead className="w-[90px]">Тип</TableHead>
-                    <TableHead className="w-[280px]">Настройки</TableHead>
-                    <TableHead className="min-w-[260px]">Плейсхолдер</TableHead>
+                    <TableHead className="w-[260px]">Настройки</TableHead>
+                    <TableHead className="min-w-[180px]">Пример</TableHead>
+                    <TableHead className="min-w-[240px]">Плейсхолдер</TableHead>
                     <TableHead className="w-[90px] text-right">Действия</TableHead>
                   </TableRow>
                 </TableHeader>
