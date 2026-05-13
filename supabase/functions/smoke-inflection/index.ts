@@ -2,7 +2,8 @@
 // DELETE after smoke is closed.
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { resolveCanonicalPayload, generateCanonicalDocument } from '../_shared/document-render.ts';
+import * as DR from '../_shared/document-render.ts';
+const { resolveCanonicalPayload, generateCanonicalDocument } = DR as any;
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
