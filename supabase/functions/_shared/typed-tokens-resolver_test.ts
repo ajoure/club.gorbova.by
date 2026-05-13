@@ -91,7 +91,7 @@ Deno.test("ФЛ-заказчик заполняет customer.ind.*, осталь
   assertEquals(map["customer.ind.full_name"], "Иванов Иван Иванович");
   assertEquals(map["customer.ind.passport_series"], "MP");
   assertEquals(map["customer.ind.passport_number"], "1234567");
-  assertEquals(map["customer.ind.passport_number_full"], "MP 1234567");
+  assertEquals(map["customer.ind.passport_number_full"], "MP1234567");
   assertEquals(map["customer.leg.name"], "");
   assertEquals(map["customer.ent.name"], "");
   assertEquals(map["customer.leg.director_full_name"], "");
