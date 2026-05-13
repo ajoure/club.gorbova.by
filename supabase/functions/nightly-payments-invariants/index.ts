@@ -428,6 +428,68 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
+    // INV-22-AUDIT: проверяем audit-trail предыдущего execute. Если за 24ч в subscriptions_v2 появились
+    // изменения cancel_reason='inv22_provider_dead_local_active', но в audit_logs нет соответствующих
+    // записей `inv22.repair_provider_dead_local_active` — это silent audit-fail, alert.
+    try {
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { data: closedSubs } = await supabase
+        .from("subscriptions_v2")
+        .select("id, canceled_at")
+        .eq("cancel_reason", "inv22_provider_dead_local_active")
+        .gte("canceled_at", since);
+      const closedIds = (closedSubs ?? []).map((s: any) => s.id);
+      let missingAuditCount = 0;
+      const missingAuditIds: string[] = [];
+      if (closedIds.length > 0) {
+        const { data: audits } = await supabase
+          .from("audit_logs")
+          .select("meta")
+          .eq("action", "inv22.repair_provider_dead_local_active")
+          .gte("created_at", since);
+        const auditedSubIds = new Set(
+          (audits ?? [])
+            .map((a: any) => a?.meta?.subscription_id)
+            .filter((x: any) => typeof x === "string"),
+        );
+        for (const id of closedIds) {
+          if (!auditedSubIds.has(id)) {
+            missingAuditCount += 1;
+            if (missingAuditIds.length < 5) missingAuditIds.push(id);
+          }
+        }
+      }
+      invariants.push({
+        name: "INV-22-AUDIT: audit-trail для inv22.* execute",
+        passed: missingAuditCount === 0,
+        count: missingAuditCount,
+        samples: missingAuditIds,
+        description: missingAuditCount === 0
+          ? `Все ${closedIds.length} INV-22 фиксов за 24ч имеют audit_logs запись. OK.`
+          : `${missingAuditCount}/${closedIds.length} INV-22 фиксов за 24ч БЕЗ audit. Silent audit-fail в system-health-inv22-resolve. CRITICAL.`,
+      });
+      if (missingAuditCount > 0) {
+        try {
+          await fetch(`${supabaseUrl}/functions/v1/telegram-notify-admins`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${supabaseServiceKey}`,
+            },
+            body: JSON.stringify({
+              message:
+                `🚨 INV-22-AUDIT CRITICAL: ${missingAuditCount}/${closedIds.length} подписок закрыты за 24ч с reason=inv22_provider_dead_local_active, но БЕЗ audit_logs.\n` +
+                `Образцы sub_id: ${missingAuditIds.join(", ")}\n` +
+                `Проверь system-health-inv22-resolve.audit_logs.insert и сделай backfill.`,
+              source: "nightly-payments-invariants",
+            }),
+          });
+        } catch (_) {}
+      }
+    } catch (e) {
+      console.error("[INV-22-AUDIT] check failed", e);
+    }
+
     // Regress guard: log unknown provider/reconcile_source combos (info, not failed)
     try {
       const { data: sourceBreakdown } = await supabase.rpc('execute_readonly_query', {

@@ -63,7 +63,10 @@ interface ResolveResultItem {
     | "closed_provider_dead"
     | "kept_provider_alive"
     | "pull_failed"
-    | "skipped_not_in_snapshot";
+    | "skipped_not_in_snapshot"
+    | "audit_failed";
+  audit_id?: string | null;
+  audit_error?: string | null;
   notes: string;
 }
 
@@ -295,27 +298,49 @@ Deno.serve(async (req) => {
         }
       }
 
-      // --- 5. Per-subscription audit ---
-      await supabase.from("audit_logs").insert({
-        action: outcome === "closed_provider_dead"
-          ? "inv22.repair_provider_dead_local_active"
-          : `inv22.resolve.${outcome}`,
-        actor_type: "user",
-        actor_id: user.id,
-        target_type: "subscription_v2",
-        target_id: subId,
-        metadata: {
-          provider_subscription_id: providerSubId,
-          before,
-          after,
-          pull_result: pullResult,
-          pull_error: pullError,
-          delegated_to: delegated,
-          outcome,
-          bucket: snapshotRow.bucket,
-          age_hours: snapshotRow.age_hours,
-        },
-      });
+      // --- 5. Per-subscription audit (HARD requirement; on failure mark outcome=audit_failed) ---
+      const auditAction = outcome === "closed_provider_dead"
+        ? "inv22.repair_provider_dead_local_active"
+        : `inv22.resolve.${outcome}`;
+      const auditMeta = {
+        subscription_id: subId,
+        provider_subscription_id: providerSubId,
+        before,
+        after,
+        pull_result: pullResult,
+        pull_error: pullError,
+        delegated_to: delegated,
+        outcome,
+        bucket: snapshotRow.bucket,
+        age_hours: snapshotRow.age_hours,
+      };
+      const { data: auditRow, error: auditErr } = await supabase
+        .from("audit_logs")
+        .insert({
+          action: auditAction,
+          actor_type: "user",
+          actor_user_id: user.id,
+          actor_label: user.email ?? null,
+          target_user_id: snapshotRow.user_id ?? null,
+          meta: auditMeta,
+        })
+        .select("id")
+        .maybeSingle();
+
+      let auditId: string | null = auditRow?.id ?? null;
+      let auditError: string | null = null;
+      if (auditErr) {
+        auditError = auditErr.message;
+        outcome = "audit_failed";
+        notes =
+          `${notes} | AUDIT INSERT FAILED: ${auditErr.message}. ` +
+          "Изменения в subscriptions_v2 уже применены, но audit-trail отсутствует — требуется ручной backfill.";
+        console.error("[inv22-resolve] audit insert failed", {
+          subscription_id: subId,
+          action: auditAction,
+          error: auditErr,
+        });
+      }
 
       results.push({
         subscription_id: subId,
@@ -325,9 +350,13 @@ Deno.serve(async (req) => {
         pull_result: pullResult,
         delegated_to: delegated,
         outcome,
+        audit_id: auditId,
+        audit_error: auditError,
         notes,
       });
     }
+
+    const auditFailures = results.filter((r) => r.outcome === "audit_failed").length;
 
     // --- Verify: re-run RPC and report new count ---
     const { data: verifyData } = await supabase.rpc("inv22_subscription_desync", { p_limit: 1 });
@@ -335,15 +364,19 @@ Deno.serve(async (req) => {
 
     return new Response(
       JSON.stringify({
-        ok: true,
+        ok: auditFailures === 0,
         invariant: "INV-22",
         processed: results.length,
+        audit_failures: auditFailures,
         results,
         remaining_inv22_count: remainingCount,
         verification_query:
           "SELECT count(*) FROM subscriptions_v2 s JOIN provider_subscriptions ps ON ps.subscription_v2_id=s.id WHERE s.status='active' AND s.auto_renew=true AND s.access_end_at>now() AND (ps.state IN ('expired','redirecting') OR (ps.state='active' AND ps.next_charge_at IS NULL AND ps.last_charge_at IS NULL));",
       }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      {
+        status: auditFailures === 0 ? 200 : 207, // 207 Multi-Status: data ok, audit broken
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
     );
   } catch (e) {
     console.error("[inv22-resolve] error:", e);
