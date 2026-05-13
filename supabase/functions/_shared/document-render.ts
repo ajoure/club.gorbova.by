@@ -803,7 +803,7 @@ export async function generateCanonicalDocument(
     });
     // Pass both registered tokens and unmapped (empty for safety)
     const renderData: Record<string, string> = { ...payload.resolved_tokens };
-    const aliases: Record<string, string> = (payload as any).aliases || {};
+    const aliases: Record<string, string> = ((payload as any).aliases ?? (payload.snapshot as any)?.aliases ?? {}) as Record<string, string>;
     for (const [alias, canonical] of Object.entries(aliases)) {
       const v = payload.resolved_tokens[canonical] ?? '';
       if (!(alias in renderData)) renderData[alias] = v;
