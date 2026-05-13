@@ -16,6 +16,11 @@ Deno.serve(async (req) => {
     // TEMPORARY: ungated; function is delete-after-smoke. No persistence beyond ai_generated_documents row that will be cleaned.
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
     const body = await req.json();
+    // DEBUG: probe template lookup
+    const probe = await supabase.from('document_templates').select('id, code, is_active, current_version_id, template_path').eq('id', body.template_id).maybeSingle();
+    if (body.debug === 'probe') {
+      return new Response(JSON.stringify({ probe, env_url: Deno.env.get('SUPABASE_URL') }, null, 2), { headers: { ...cors, 'Content-Type': 'application/json' } });
+    }
     const input = {
       template_id: body.template_id,
       template_version_id: body.template_version_id || null,
