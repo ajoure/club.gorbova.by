@@ -103,7 +103,7 @@ function fullNameToInitials(fullName?: string | null): string {
 function buildCustomerName(ld: any): string {
   if (!ld) return '';
   if (ld.client_type === 'individual') return ld.ind_full_name || '';
-  if (ld.client_type === 'entrepreneur') return ld.ent_name || '';
+  if (ld.client_type === 'entrepreneur') return formatEntrepreneurDisplayName(ld.ent_name || '');
   return ld.leg_name || '';
 }
 
