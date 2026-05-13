@@ -3442,6 +3442,7 @@ export type Database = {
           code: string
           created_at: string
           current_version_id: string | null
+          deleted_at: string | null
           description: string | null
           document_type: string
           editor_draft_content: Json | null
@@ -3462,6 +3463,7 @@ export type Database = {
           code: string
           created_at?: string
           current_version_id?: string | null
+          deleted_at?: string | null
           description?: string | null
           document_type?: string
           editor_draft_content?: Json | null
@@ -3482,6 +3484,7 @@ export type Database = {
           code?: string
           created_at?: string
           current_version_id?: string | null
+          deleted_at?: string | null
           description?: string | null
           document_type?: string
           editor_draft_content?: Json | null
