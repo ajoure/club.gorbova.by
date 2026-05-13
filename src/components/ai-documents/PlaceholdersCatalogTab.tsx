@@ -374,7 +374,16 @@ export function PlaceholdersCatalogTab() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filtered.map(t => {
+                    grouped.flatMap((section) => [
+                      <TableRow key={`section-${section.id}`} className="bg-muted/60 hover:bg-muted/60 sticky">
+                        <TableCell colSpan={9} className="py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          {section.label}
+                          <span className="ml-2 text-[10px] font-normal lowercase text-muted-foreground/70">
+                            ({section.rows.length})
+                          </span>
+                        </TableCell>
+                      </TableRow>,
+                      ...section.rows.map(t => {
                       const isOpen = expanded.has(t.id);
                       const settings = rowSettings.get(t.id) ?? { format: null, caseModifier: null };
                       const dirty = !isDefault(rowSettings.get(t.id));
