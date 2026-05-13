@@ -11,7 +11,7 @@
 
 import type { PaymentChannel } from './document-resolver-v2/payment-channel.ts';
 
-export type PayerType = 'individual' | 'legal_entity';
+export type PayerType = 'individual' | 'entrepreneur' | 'legal_entity';
 
 export interface DocumentScenario {
   id: string;
@@ -83,7 +83,18 @@ export function resolveDocumentScenario(
   });
 
   const specific = candidates.find((s) => s.payment_channels.length > 0);
-  const match = specific || candidates[0] || null;
+  let match = specific || candidates[0] || null;
+
+  // ИП-fallback на ФЛ-сценарии (ИП исторически подписывает как физлицо).
+  if (!match && payerType === 'entrepreneur') {
+    const ind = scenarios.filter((s) => {
+      if (s.payer_type !== 'individual') return false;
+      if (s.payment_channels.length === 0) return true;
+      if (!channel) return false;
+      return s.payment_channels.includes(channel);
+    });
+    match = ind.find((s) => s.payment_channels.length > 0) || ind[0] || null;
+  }
 
   if (match && (match.template_id || match.executor_id)) {
     return {
