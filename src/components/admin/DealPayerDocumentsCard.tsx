@@ -201,8 +201,8 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
     if (!effectiveExecutorId) {
       items.push({ kind: "err", text: "Документ не может быть сформирован — не выбран исполнитель" });
     }
-    // Реквизиты
-    const list = effectivePayerType === "legal_entity" ? legalEntities : individuals;
+    // Реквизиты: ФЛ берёт individuals; ИП/ЮЛ — legalEntities (там лежат ent_* / leg_* в одной таблице)
+    const list = effectivePayerType === "individual" ? individuals : legalEntities;
     const hasRequisites = list.length > 0;
     if (!hasRequisites) {
       items.push({ kind: "err", text: "Не заполнены обязательные реквизиты" });
