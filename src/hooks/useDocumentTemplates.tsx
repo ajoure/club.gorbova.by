@@ -130,18 +130,20 @@ export function useDocumentTemplates() {
     },
   });
 
+  // Soft-delete: UPDATE deleted_at = now() instead of physical DELETE.
   const deleteTemplate = useMutation({
     mutationFn: async (id: string) => {
       const { error } = await supabase
         .from("document_templates")
-        .delete()
+        .update({ deleted_at: new Date().toISOString() } as any)
         .eq("id", id);
 
       if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["document-templates"] });
-      toast.success("Шаблон удалён");
+      queryClient.invalidateQueries({ queryKey: ["product-document-templates"] });
+      toast.success("Шаблон удалён (soft-delete)");
     },
     onError: (error) => {
       console.error("Delete template error:", error);
