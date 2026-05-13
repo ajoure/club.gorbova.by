@@ -20,7 +20,7 @@ Deno.serve(async (req) => {
     // DEBUG: probe template lookup
     const probe = await supabase.from('document_templates').select('id, code, is_active, current_version_id, template_path').eq('id', body.template_id).maybeSingle();
     if (body.debug === 'probe') {
-      return new Response(JSON.stringify({ probe, env_url: Deno.env.get('SUPABASE_URL') }, null, 2), { headers: { ...cors, 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify({ probe, env_url: Deno.env.get('SUPABASE_URL'), exports: Object.keys(DR), src_len: (DR as any)?.__SRC_LEN ?? null }, null, 2), { headers: { ...cors, 'Content-Type': 'application/json' } });
     }
     const input = {
       template_id: body.template_id,
