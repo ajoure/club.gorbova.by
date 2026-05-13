@@ -197,6 +197,9 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
   // Статус
   const statusItems = useMemo(() => {
     const items: { kind: "ok" | "warn" | "err"; text: string }[] = [];
+    if (templateOverride && !overrideTemplateExists) {
+      items.push({ kind: "warn", text: "Выбранный ранее шаблон удалён или деактивирован — используется шаблон по сценарию. Сохраните выбор шаблона заново." });
+    }
     if (!effectiveTemplateId) {
       items.push({ kind: "err", text: "Документ не может быть сформирован — не выбран шаблон" });
     }
@@ -208,11 +211,11 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
     const hasRequisites = list.length > 0;
     if (!hasRequisites) {
       items.push({ kind: "err", text: "Не заполнены обязательные реквизиты" });
-    } else if (items.length === 0) {
+    } else if (items.filter(i => i.kind === "err").length === 0) {
       items.push({ kind: "ok", text: "Реквизиты заполнены" });
     }
     return items;
-  }, [effectiveTemplateId, effectiveExecutorId, effectivePayerType, individuals, legalEntities]);
+  }, [effectiveTemplateId, effectiveExecutorId, effectivePayerType, individuals, legalEntities, templateOverride, overrideTemplateExists]);
 
   const save = async () => {
     if (!order || !canEdit) return;
