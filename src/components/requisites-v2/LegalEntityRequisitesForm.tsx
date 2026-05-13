@@ -137,6 +137,10 @@ export function LegalEntityRequisitesForm({
       phone: data.phone ?? "",
       email: data.email ?? "",
       is_default: !!initialData?.is_default,
+      ent_director_position: data.ent_director_position ?? "",
+      ent_director_full_name: data.ent_director_full_name ?? "",
+      ent_director_short_name: data.ent_director_short_name ?? "",
+      ent_acts_on_basis_override: data.ent_acts_on_basis_override ?? "",
     },
   });
 
@@ -148,6 +152,14 @@ export function LegalEntityRequisitesForm({
   };
 
   const showDirectorBlock = subjectType === "legal_entity";
+  const showIpSignerBlock = subjectType === "entrepreneur";
+
+  // Live-вычисление дефолтов для подсказок placeholder в блоке ИП-руководителя.
+  const watchedName = form.watch("name") ?? "";
+  const watchedActsOnBasis = form.watch("acts_on_basis") ?? "";
+  const ipDefaultFullName = stripIpPrefix(watchedName);
+  const ipDefaultShortName = toInitials(ipDefaultFullName);
+  const ipDefaultActs = watchedActsOnBasis || "Свидетельства о государственной регистрации";
 
   return (
     <Form {...form}>
