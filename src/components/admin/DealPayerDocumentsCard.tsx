@@ -456,6 +456,12 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
               {templateSourceBadge}
             </Badge>
           </div>
+          {templateOverrideDeleted && (
+            <div className="rounded border border-amber-300 bg-amber-50 text-amber-800 px-2 py-1.5 text-xs flex items-start gap-1.5">
+              <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+              <span>Шаблон удалён, выберите другой. Создание документа заблокировано до сохранения нового выбора.</span>
+            </div>
+          )}
           <Select value={edTemplate || "auto"} onValueChange={setEdTemplate} disabled={!canEdit || saving}>
             <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
