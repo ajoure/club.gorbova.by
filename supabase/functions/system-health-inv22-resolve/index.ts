@@ -364,15 +364,19 @@ Deno.serve(async (req) => {
 
     return new Response(
       JSON.stringify({
-        ok: true,
+        ok: auditFailures === 0,
         invariant: "INV-22",
         processed: results.length,
+        audit_failures: auditFailures,
         results,
         remaining_inv22_count: remainingCount,
         verification_query:
           "SELECT count(*) FROM subscriptions_v2 s JOIN provider_subscriptions ps ON ps.subscription_v2_id=s.id WHERE s.status='active' AND s.auto_renew=true AND s.access_end_at>now() AND (ps.state IN ('expired','redirecting') OR (ps.state='active' AND ps.next_charge_at IS NULL AND ps.last_charge_at IS NULL));",
       }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      {
+        status: auditFailures === 0 ? 200 : 207, // 207 Multi-Status: data ok, audit broken
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
     );
   } catch (e) {
     console.error("[inv22-resolve] error:", e);
