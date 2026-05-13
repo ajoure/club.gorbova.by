@@ -63,11 +63,21 @@ interface RowSettings {
   caseModifier: FieldCase | null;
 }
 
+/**
+ * Маппинг category → пользовательский ярлык группы (короткий — для бейджа в строке).
+ */
 const GROUP_LABELS: Record<string, string> = {
   contact: "Контакт",
-  customer: "Заказчик",
+  customer: "Заказчик (динам.)",
+  "customer.individual": "Заказчик ФЛ",
+  "customer.legal": "Заказчик ЮЛ",
+  "customer.entrepreneur": "Заказчик ИП",
   "customer.signer": "Подписант",
-  executor: "Исполнитель",
+  executor: "Исполнитель (динам.)",
+  "executor.individual": "Исполнитель ФЛ",
+  "executor.legal": "Исполнитель ЮЛ",
+  "executor.entrepreneur": "Исполнитель ИП",
+  "executor.signer": "Подписант",
   deal: "Сделка",
   product: "Продукт",
   tariff: "Тариф",
@@ -77,6 +87,36 @@ const GROUP_LABELS: Record<string, string> = {
   system: "Системные",
   legal_details: "Custom-поля",
 };
+
+/**
+ * 9 секций каталога (PLACEHOLDERS-NORMALIZATION-v3, требование владельца).
+ * Порядок здесь = порядок отображения в UI.
+ */
+const SECTION_DEFINITIONS: Array<{ id: string; label: string; categories: string[] }> = [
+  { id: "customer_ind", label: "1. Заказчик ФЛ", categories: ["customer.individual"] },
+  { id: "customer_leg", label: "2. Заказчик ЮЛ", categories: ["customer.legal"] },
+  { id: "customer_ent", label: "3. Заказчик ИП", categories: ["customer.entrepreneur"] },
+  { id: "executor_ind", label: "4. Исполнитель ФЛ", categories: ["executor.individual"] },
+  { id: "executor_leg", label: "5. Исполнитель ЮЛ", categories: ["executor.legal"] },
+  { id: "executor_ent", label: "6. Исполнитель ИП", categories: ["executor.entrepreneur"] },
+  { id: "dynamic", label: "7. Динамические поля (по типу плательщика)", categories: ["customer", "executor"] },
+  { id: "signer", label: "8. Подписант", categories: ["customer.signer", "executor.signer"] },
+  {
+    id: "system",
+    label: "9. Системные / Документ / Сделка / Оплата",
+    categories: ["system", "document", "deal", "payment", "contact", "product", "tariff", "offer", "legal_details"],
+  },
+];
+
+const CATEGORY_TO_SECTION: Record<string, string> = (() => {
+  const m: Record<string, string> = {};
+  for (const s of SECTION_DEFINITIONS) for (const c of s.categories) m[c] = s.id;
+  return m;
+})();
+
+const SECTION_LABEL: Record<string, string> = Object.fromEntries(
+  SECTION_DEFINITIONS.map((s) => [s.id, s.label]),
+);
 
 const DATA_TYPE_LABEL: Record<string, string> = {
   text: "Текст", string: "Текст", number: "Число", currency: "Сумма",
