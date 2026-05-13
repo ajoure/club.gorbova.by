@@ -408,6 +408,13 @@ export async function resolveCanonicalPayload(
     'payment.external_reference':      '',
   };
 
+  // v3 — typed namespace tokens (148) + executor.signer.* (4)
+  // Заполняются ТОЛЬКО для сущностей matching subject_type, прочие = ''.
+  // ИП name — без кавычек (formatEntrepreneurDisplayName).
+  const typedValues = buildTypedNamespaceValues(customer, executor);
+  for (const [k, v] of Object.entries(typedValues)) resolverValues[k] = v;
+  applyEntrepreneurNameWithoutQuotes(resolverValues, customer, executor);
+
   // 7a. Sprint A — payment.* overlay (snapshot SOT → live fallback → empty + warning).
   // Snapshot.payment block содержит method_label/description, выработанные на момент snapshot.
   // Live fallback используется только если snapshot.payment отсутствует.
