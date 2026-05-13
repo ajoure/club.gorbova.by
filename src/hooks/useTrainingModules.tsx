@@ -42,6 +42,13 @@ export interface TrainingModule {
   has_access?: boolean;
   accessible_tariffs?: string[];
   accessible_products?: AccessibleProduct[];
+  /**
+   * True если у root-модуля (parent_module_id=null) с has_access=true
+   * нет ни активных детей, ни активных уроков, ни видимого scope.
+   * UI должен показать карточку как «Контент не опубликован», а НЕ скрывать.
+   * См. memory: cabinet-visibility-entitlement-dependency.
+   */
+  is_empty?: boolean;
 }
 
 export interface TrainingModuleFormData {
@@ -298,19 +305,23 @@ export function useTrainingModules() {
         return total;
       };
 
-      // Phase E: Hide root modules with empty effective scope (not "0 уроков")
-      const finalModules = normalizedModules.filter(m => {
-        if (isAdminUser) return true;
-        // Keep locked child items visible (for lock display)
-        if (!m.has_access && m.parent_module_id !== null) return true;
-        // Root module with access: hide if effective scope is empty
+      // PATCH 2026-05-13 (cabinet-visibility-entitlement-dependency):
+      // SOT — active access + training_module exists. Root НИКОГДА не скрываем
+      // только за «нет видимых уроков». Помечаем is_empty, UI рендерит карточку
+      // «Контент не опубликован» / «Уроки скоро появятся».
+      const finalModules = normalizedModules.map(m => {
+        if (isAdminUser) return m;
         if (m.parent_module_id === null && m.has_access) {
           const visibleRecursive = computeVisibleRecursiveLessonCount(m.id);
           if (visibleRecursive === 0) {
-            // Phase E STOP-guard: empty scope = "нет доступа", not "0 уроков"
-            return false;
+            return { ...m, is_empty: true };
           }
         }
+        return m;
+      }).filter(m => {
+        if (isAdminUser) return true;
+        // Locked child items keep visibility (lock display).
+        if (!m.has_access && m.parent_module_id !== null) return true;
         return true;
       });
 

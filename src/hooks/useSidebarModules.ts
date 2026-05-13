@@ -25,6 +25,12 @@ export interface SidebarModule {
   /** Tariff that grants access to this content_month. */
   required_tariff_id?: string | null;
   accessible_tariffs?: string[];
+  /**
+   * True если у root-модуля нет ни активных детей, ни активных уроков —
+   * контент ещё не опубликован. См. memory:
+   * cabinet-visibility-entitlement-dependency (empty training root → явный UI-state).
+   */
+  is_empty?: boolean;
 }
 
 interface ModulesBySection {
@@ -129,6 +135,37 @@ export function useSidebarModules() {
         }
       });
 
+      // PATCH 2026-05-13: empty-training-root detection.
+      // Для каждого root-модуля считаем активных детей + активные уроки.
+      // Если 0+0 — карточка должна рендериться как «Контент не опубликован»
+      // (никогда не скрывать молча). См. memory cabinet-visibility-entitlement-dependency.
+      const rootIds = (modulesData || [])
+        .filter(m => !m.parent_module_id)
+        .map(m => m.id);
+      const emptyRootIds = new Set<string>();
+      if (rootIds.length > 0) {
+        const childrenByRoot = new Map<string, number>();
+        (modulesData || []).forEach(m => {
+          if (m.parent_module_id) {
+            childrenByRoot.set(m.parent_module_id, (childrenByRoot.get(m.parent_module_id) || 0) + 1);
+          }
+        });
+        const { data: lessonsAgg } = await supabase
+          .from("training_lessons")
+          .select("module_id")
+          .in("module_id", rootIds)
+          .eq("is_active", true);
+        const lessonsByRoot = new Map<string, number>();
+        (lessonsAgg || []).forEach(l => {
+          lessonsByRoot.set(l.module_id, (lessonsByRoot.get(l.module_id) || 0) + 1);
+        });
+        rootIds.forEach(id => {
+          const c = childrenByRoot.get(id) || 0;
+          const l = lessonsByRoot.get(id) || 0;
+          if (c === 0 && l === 0) emptyRootIds.add(id);
+        });
+      }
+
       const modules = modulesData?.map(m => {
         const moduleAccess = accessByModule[m.id] || { tariffIds: [], tariffNames: [] };
         
@@ -154,6 +191,7 @@ export function useSidebarModules() {
           ...m,
           has_access: hasAccess,
           accessible_tariffs: moduleAccess.tariffNames,
+          is_empty: emptyRootIds.has(m.id),
         };
       }) || [];
 

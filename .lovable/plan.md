@@ -1,120 +1,151 @@
-Дополнение к плану:
+# Да, согласен, **с учетом правок**:
 
-Перед execute обязательно проверить, что `previous_status` внутри `meta.inv_phantom_parent_v1` реально читается именно по пути:
+1. **B1 нельзя делать сейчас.**  
+Не выключать `Строительство`, не менять entitlement и не переносить доступы. Только зафиксировать как `empty_training_root` и вывести в отчёт. Контентное решение — отдельный PATCH.
+2. **B3 нельзя выполнять массово.**  
+Только dry-run по 23 строкам: кто должен быть `full_tariff_scope`, кто `module_scope_only`, кто standalone-only. Без автоматического удаления/изменения parent-entitlement.
+3. **B4 — только после discovery.**  
+Не включать все `access_rules` массово. Сначала показать: какие rules, для каких products, есть ли дубли, какой canonical rule. Потом отдельное approve.
+4. **C1 добавить обязательно.**  
+Resolver должен временно поддерживать оба формата `hpids`: `product_id` и `training_module_id`, с audit/warn `hpids_training_id_fallback_used`.
+5. **Главный DoD:**  
+Для каждого active entitlement на продукт с training root:
+  - продукт виден в «Моей библиотеке»;
+  - если контента нет — карточка видна как «Контент не опубликован», а не исчезает;
+  - доступы в карточке контакта и библиотека не расходятся.
 
-meta->'inv_phantom_parent_v1'->>'previous_status'
-
-Если в части строк ключ отсутствует, не пропускать их молча — вывести в dry-run как `missing_previous_status` и не менять до ручного решения.
-
-Также после data-revert обязательно сделать React Query/cache invalidation или явно указать пользователю обновить страницу/перелогиниться, иначе UI может продолжить показывать старое состояние.
+Можно запускать с этими правками.
 
 &nbsp;
 
-План: восстановить ошибочно деактивированные entitlements (INV-PHANTOM-PARENT-V1) и починить resolver видимости тренингов.
+Да, согласен, с учетом правки:
 
-## 1. Проблема
+- **Пустой модуль с доступом обязан отображаться.**  
+Если `entitlement active` и training/module существует, но `lessons_count=0` и `children_count=0`, карточку не скрывать.
+- В UI показывать состояние: **«Уроки скоро появятся» / «Контент не опубликован»**.
+- Это применить глобально ко всем тренингам/модулям, не только к «Строительству».
+- Resolver не должен использовать наличие уроков как условие видимости. Условие видимости = **есть активный доступ + существует training_module**.
+- В DoD добавить:
+  - Алена видит «ЦБ-1 | Строительство» даже без уроков;
+  - модуль открывается и показывает пустое состояние;
+  - sweep по всем active entitlements: нет кейсов, где доступ есть, module существует, но карточка скрыта из-за `0 lessons`.
 
-- INV-PHANTOM-PARENT-V1 был трактован неверно: parent-entitlements, выданные через BUSINESS как бонусное восстановление доступа к ранее купленным продуктам/модулям, ошибочно классифицированы как «фантомные» и переведены в `status='superseded'` batch-ем `INV-PHANTOM-PARENT-V1-2026-05-13` (23 строки).
-- Эти строки должны оставаться `active` и управлять видимостью в «Моей библиотеке».
-- По Алене Богинской (`lena_times@mail.ru`) ошибочно отключена строка root-доступа `Ценный бухгалтер | 1 ступень 2.0`, что в текущей UI-логике может приводить к исчезновению root-карточки тренинга при сохранённом доступе к standalone-модулям «Маркетплейсы» и «Строительство».
+Можно запускать в работу.
 
-## 2. Source of Truth
+&nbsp;
 
-- SOT видимости в «Моей библиотеке» = карточка контакта → вкладка «Доступы».
-- Если active entitlement есть в «Доступах» (status='active', expires_at>now() или NULL) — соответствующий продукт/тренинг ОБЯЗАН отображаться пользователю.
-- Никакая комбинация `meta.scope_resolution_mode`, `historical_module_product_ids`, `inv_phantom_parent_v1` не должна скрывать сам parent product.
+План: устранить расхождения «доступы ↔ показ тренингов»
 
-## 3. Диагностика (факты)
+## 1. Что найдено в дискавери (Елена Богинская, 78123ed5…)
 
-- Профиль: `lena_times@mail.ru` → Алена Богинская, `user_id=78123ed5-3a00-4982-87cf-72de6c0cdb8c`.
-- Active entitlements сохранены: Gorbova Club, Бухгалтерия как бизнес, ЗАКРОЙ ГОД, Подоходный налог с физлиц, Деньги BY 1 тариф, ЦБ 2 ступень 3 поток, ЦБ 1 ступень 2.0 модуль Маркетплейсы (standalone), ЦБ 1 ступень 2.0 модуль Строительство (standalone).
-- Superseded ошибочно: entitlement `c56c29d6-631a-4d9d-9e3f-1e63d2686c20` на product `7101ed3c… (Ценный бухгалтер | 1 ступень 2.0)`, `previous_status=active`, `expires_at=2026-05-16 20:59:59+00`, `meta.inv_phantom_parent_v1.batch=INV-PHANTOM-PARENT-V1-2026-05-13`.
-- По batch-у всего 23 строки superseded, 23 уникальных пользователя.
-- Текущий `useSidebarModules` строит видимость root тренинга строго по active `entitlements.product_id` для root-продукта. Standalone-модульные entitlements с другим `product_id` НЕ показывают родительский тренинг ЦБ-1.
+### 1.1. Корневая причина «Строительство не активный»
 
-## 4. Изменяемые компоненты
 
-- Данные: только `public.entitlements` — обратное обновление статуса для строк с `meta.inv_phantom_parent_v1.batch='INV-PHANTOM-PARENT-V1-2026-05-13'`.
-- Resolver: `src/hooks/useSidebarModules.ts` и `src/hooks/useTrainingContentRules.ts` — не скрывать parent product при наличии active entitlement, корректно учитывать `historical_module_product_ids` как ограничитель/расширитель списка модулей, не как kill-switch для root.
-- CREATE-guard: `supabase/functions/_shared/product-access-grants.ts` (логика `inv_phantom_parent_v1:hpids_outside_target`) — пересмотреть: BUSINESS-выданный bonus parent с hpids вне subtree это легитимный сценарий, его нельзя блокировать как phantom.
-- Memory: `mem://architecture/access-control/phantom-parent-entitlement-guard` обновить (правило отменено/переписано), `mem://architecture/access-control/cabinet-visibility-entitlement-dependency` дополнить SOT-формулировкой про карточку «Доступы».
+| Что                                     | Маркетплейсы (d7effaf4) | Строительство (f833c846) |
+| --------------------------------------- | ----------------------- | ------------------------ |
+| Entitlement                             | active, до 16.05.26     | active, до 16.05.26      |
+| products_v2                             | есть                    | есть                     |
+| Корневой training_module                | `4c97d21c`              | `b7bae7fd`               |
+| Дочерние training_modules               | **0**                   | **0**                    |
+| Уроки на корне                          | **5** (есть контент)    | **0** (пусто)            |
+| access_rules (product/training_content) | **все is_active=false** | **все is_active=false**  |
 
-## 5. Что НЕ будет изменено
 
-- `subscriptions_v2` — не трогать.
-- `provider_subscriptions`, bePaid — не трогать.
-- `access_end_at` ни в подписках, ни в entitlements — не менять.
-- Telegram (`telegram_grant_access`, `telegram_manual_access`, queues) — не трогать.
-- Новые entitlements не создавать.
-- Существующие entitlements не удалять и не сокращать срок.
-- Только восстановить ошибочно отключённые + исправить resolver.
+**Строительство не «активный» в библиотеке потому, что у его корневого тренинга нет ни дочерних модулей, ни уроков — рендерить нечего.** Доступ выдан корректно, но контента в БД нет.
 
-## 6. Dry-run
+### 1.2. Системные ошибки, делающие resolver хрупким
 
-1. Read-only выборка по batch:
-  - `select * from entitlements where meta->'inv_phantom_parent_v1'->>'batch'='INV-PHANTOM-PARENT-V1-2026-05-13'` → 23 строки;
-  - для каждой строки: `previous_status`, `expires_at`, `user_id`, email, `product_id`, `product_name`, `historical_module_product_ids`, текущие active entitlements того же user_id;
-  - кандидаты на revert: `previous_status='active'` AND `expires_at > now()`;
-  - не-кандидаты (если есть): причина по каждой (expired до даты execute, previous_status не active, продукт удалён и т.п.).
-2. Read-only resolver-симуляция по каждому затронутому пользователю:
-  - до revert: какие тренинги видны;
-  - после revert: какие тренинги станут видны;
-  - проверка, что standalone-модули не теряют доступ.
-3. Сохранить артефакт `/mnt/documents/inv_phantom_parent_v1_revert_dryrun.md` со списком 23 строк и решением по каждой.
+**A. Битая семантика `historical_module_product_ids**` в module-product entitlements:
 
-STOP-guards:
+- `Маркетплейсы.meta.hpids = [4c97d21c]` — это **training_module_id**, а не product_id.
+- `Строительство.meta.hpids = [b7bae7fd]` — то же самое.
+- `resolveBonusScopeRules` (строка 332) делает `training_modules WHERE product_id IN (hpids)` → **возвращает пусто** → синтетический bonus rule с `allowed_module_ids=[]`.
+- Сейчас спасает только то, что в `useSidebarModules` корень с `parent_module_id=null` всегда виден (PATCH 2026-05-13). Но любой клиентский фильтр глубже ломается.
 
-- Если кандидатов > 23 — стоп, расследование расширения batch.
-- Если хоть одна строка имеет `expires_at <= now()` — не возвращать в active, фиксировать причиной в отчёте.
-- Если revert по строке вернёт user-у доступ к продукту, на который у него никогда не было ни orders_v2.paid, ни business-grant audit — стоп, отдельное обсуждение.
-- Если есть конфликт с другим active entitlement по тому же `(user_id, product_id)` — мерж по `GREATEST(expires_at)`, никогда не уменьшать.
+**B. Все access_rules для standalone module-products отключены** (`is_active=false`) — backend не имеет SOT для проверки контента этих продуктов. Любая ветка, читающая access_rules (а не entitlements напрямую), вернёт «нет доступа».
 
-## 7. Execute
+**C. Reverted CB-1 root entitlement** (7101ed3c, batch INV-PHANTOM-PARENT-V1-REVERT-2026-05-13):
 
-1. Migration update по `entitlements`:
-  - WHERE `meta->'inv_phantom_parent_v1'->>'batch'='INV-PHANTOM-PARENT-V1-2026-05-13'`
-   AND `status='superseded'`
-   AND `(meta->'inv_phantom_parent_v1'->>'previous_status')='active'`
-   AND `(expires_at IS NULL OR expires_at > now())`;
-  - SET `status='active'`,
-  `meta = meta || jsonb_build_object('reverted_inv_phantom_parent_v1', true, 'reverted_at', now(), 'revert_reason', 'business_bonus_parent_misclassified_as_phantom_2026_05_13')`;
-  - audit_logs по каждой строке: `action='entitlement.reverted.inv_phantom_parent_v1'`, `actor_type='system'`, `actor_label='inv_phantom_parent_v1_revert'`, `target_user_id`, `meta` со ссылкой на batch и `entitlement_id`.
-2. Resolver-fix (frontend, презентационный слой):
-  - В `useSidebarModules`: при `effectiveProductId != null` и наличии active entitlement на этот product_id — root всегда `has_access=true`, без зависимости от `synthetic_legacy`/`rule_unresolved` фильтров.
-  - В `resolveTrainingContentFilter`: для строк типа `module_scope_only` с непустым `historical_module_product_ids` — фильтр работает только как allowlist child-модулей; root-модуль НЕ исключается, если active entitlement существует на parent product.
-  - Standalone module-products продолжают отображаться как отдельные карточки, не глушат parent.
-3. CREATE-guard в `product-access-grants.ts`:
-  - Пересмотреть кейс `inv_phantom_parent_v1:hpids_outside_target` так, чтобы он не блокировал business-bonus parent. Минимально — снять блок INSERT, оставить аудит-метку, без отказа.
+- `meta.hpids = [d7effaf4]` (product_id Маркетплейсы — ОК для маппинга),
+- но `scope_resolution_mode='module_scope_only'` → resolver выдаёт `partial, allowed=[4c97d21c]`,
+- из-за этого вся внутренность ЦБ-1 (root c9f7e9b8 + 18+ детей) скрыта, кроме модулей, попадающих в этот allowlist. Ровно поэтому в библиотеке у Алены ЦБ-1 «торчит» как 0/4 (или вовсе не виден целиком).
 
-## 8. Verify / DoD
+**D. Несогласованность модели данных «standalone module»:**
 
-- 23 ошибочно superseded entitlements: либо восстановлены в `active` с пометкой `reverted_inv_phantom_parent_v1=true`, либо по каждому в отчёте указана конкретная причина, почему revert не выполнен.
-- По Алене Богинской:
-  - строка ЦБ-1 root `c56c29d6-…` снова `active`;
-  - в карточке контакта → «Доступы» строка ЦБ-1 видна как «Активен»;
-  - в «Моей библиотеке» виден тренинг `Ценный бухгалтер | 1 ступень 2.0` и его модули по правилам resolver;
-  - модули `Маркетплейсы` и `Строительство` остаются видимы;
-  - остальные active entitlements не изменились;
-  - audit_logs содержит revert-запись.
-- По «ЗАКРОЙ ГОД»:
-  - active entitlement в «Доступах» → тренинг виден в библиотеке (proof по конкретному пользователю с active entitlement).
-- По всем продуктам с `training_modules`:
-  - инвариант: для каждой пары `(user_id, product_id)` с active entitlement и существующим training root → root обязан проходить resolver visibility.
-  - read-only sweep после execute: `remaining_broken_cases (active_entitlement AND invisible_training_root) = 0`.
-- Memory обновлена: правило про phantom-parent отменено/переписано, SOT «карточка Доступы = SOT видимости библиотеки» закреплён.
-- Backlog `inv_phantom_parent_permanent_detector` переоформлен: детектор не должен помечать business-bonus parent как phantom.
+- Один и тот же контент существует и как дочерний модуль внутри `c9f7e9b8` (CB-1 root), и как отдельный product+training (Маркетплейсы/Строительство/…).
+- Покупка standalone-модуля даёт entitlement на отдельный product, но visual library показывает его рядом с CB-1, а не внутри. При этом сам standalone-training может быть пустым (Строительство).
 
-## 9. Риски и зависимости
+## 2. План устранения
 
-- Риск: для какой-то строки revert вернёт доступ к продукту, к которому у пользователя нет легитимного основания. Mitigation: STOP-guard по orders_v2/business audit.
-- Риск: resolver-fix может расширить видимость у пользователей, у которых остался legacy active entitlement без orders_v2 paid. Mitigation: resolver не выдаёт доступ, он только не скрывает то, что уже есть в `entitlements`. SOT остаётся `entitlements`.
-- Зависимости: фронтенд-кэш React Query (`["sidebar-modules", ...]`, `["active-training-content-rules", ...]`) — потребует invalidation после revert.
+### Этап A — Диагностика по всем 23 reverted записям и всем module-products
 
-## 10. Порядок исполнения (после approval)
+Read-only sweep:
 
-1. Сформировать dry-run артефакт по 23 строкам.
-2. Применить data-revert миграцию.
-3. Применить resolver-fix во фронтенде + снять блок CREATE-guard для business-bonus.
-4. Verify по Алене, по «ЗАКРОЙ ГОД», по sweep всех продуктов с training_modules.
-5. Обновить memory + backlog detector.
-6. Финальный отчёт «Отчет о выполнении».
+1. Для каждого `entitlement` с `meta.scope_resolution_mode='module_scope_only'`:
+  - Проверить, что `hpids[]` содержит **product_id** (а не training_module_id). Битые → bucket `hpids_are_training_ids`.
+  - Прогнать `resolveBonusScopeRules` симуляцию → bucket `synthetic_empty_allowlist`.
+2. Для всех products, у которых `entitlements.status=active` существует, но `access_rules.is_active=true` отсутствует → bucket `product_without_active_rules`.
+3. Для каждого root `training_module` с `is_active=true` посчитать `children + lessons`. Если = 0 → bucket `empty_training_root`.
+4. Сохранить proof в `.lovable/proofs/access_vs_training_audit_2026_05_13.md`.
+
+### Этап B — Починка данных (строго точечно, без массовых правок)
+
+B
+
+1. **Empty Строительство (b7bae7fd)** — это **контентная** проблема, не resolver. Решения на выбор (нужно подтверждение владельца контента):
+  - либо завести уроки/модули для standalone Строительство,
+  - либо привязать entitlement Строительство не к product `f833c846`, а к подмодулю внутри CB-1 (изменить SOT module-product → child training_module внутри c9f7e9b8).
+   До решения — пометить product как `is_active=false` и вернуть «доступ к модулю Строительство внутри ЦБ-1» через access_rule на c9f7e9b8.
+
+B
+
+2. **Битые `hpids` (training_id вместо product_id)** в entitlements Маркетплейсы/Строительство (и аналогичных): миграция `inv_hpids_normalize_2026_05_13`:
+  - Для каждой записи: если все `hpids[]` → существующие training_module_id с `parent_module_id=null` → перевести их в соответствующие `product_id` (берём `training_modules.product_id`).
+  - Audit `entitlement.hpids_normalized_v1` per row.
+  - DRY-RUN сначала.
+
+B
+
+3. **Reverted CB-1 root (Алена и аналоги)** — для всех 23 записей решить:
+  - Если у пользователя есть отдельные standalone-module entitlements (Маркетплейсы/Строительство/…), parent CB-1 entitlement **не должен** иметь `scope_resolution_mode='module_scope_only'` — он должен либо быть `full_tariff_scope` (если был полный CB-1), либо вообще не существовать (видимость идёт из standalone-ents).
+  - Аудит исходных заказов/основания → перевести в один из: `full_tariff_scope` / удалить / оставить `module_scope_only` с правильными hpids.
+  - Без подтверждения по каждому — не менять.
+
+B
+
+4. **Включить access_rules для активных module-products** (Маркетплейсы, Строительство, …): миграция `module_product_rules_activate_2026_05_13` — выставить `is_active=true` на канонических `product_access` + `training_content` правилах, либо удалить дубли, оставив один SOT-rule на product.
+
+### Этап C — Изменения резолвера (минимальные, чтобы не маскировать данные)
+
+C
+
+1. В `resolveBonusScopeRules`: добавить **fallback маппинг** — если `hpids[i]` не нашлось в `products_v2.id`, проверить как `training_modules.id` (с `parent_module_id=null`). Если совпало — использовать его напрямую как `allowed_module_ids[i]`. Логировать `hpids_training_id_fallback_used` (чтобы B2 двигал данные в норму).
+
+C
+
+2. В `useSidebarModules` библиотеки: для root-модуля с `has_access=true`, но `lessons=0 && children=0` — показывать карточку с состоянием **«Контент не опубликован»** вместо тихого скрытия. Сейчас Строительство в принципе РЕНДЕРИТСЯ (resolver его не режет — root защищён правилом 199-201), но у пользователя визуально пусто и неясно почему.
+
+C
+
+3. НЕ трогать: `subscriptions_v2`, `provider_subscriptions`, `access_end_at`, Telegram, write-paths grant-access.
+
+### Этап D — Верификация (DoD)
+
+- Audit-файл со всеми bucket'ами и поimённым списком пользователей.
+- Для Алены: после B2 (нормализация hpids) синтетический rule для Маркетплейсы/Строительство выдаёт корректный allowlist; ЦБ-1 root решается через B3.
+- Для Строительства: либо контент добавлен (и видно), либо product выключен и видимость идёт через access_rule на c9f7e9b8 — пользователь явно видит модуль внутри ЦБ-1.
+- Sweep `(user_id, product_id)` с active entitlement → root тренинг проходит resolver И имеет ≥1 урок/child = **0 broken cases**.
+- Memory: добавить `hpids-semantics-canon` (hpids = product_id only, training_id запрещён); обновить `cabinet-visibility-entitlement-dependency.md` пунктом «empty training root → явный UI-state, не молча скрывать».
+
+## 3. Что НЕ делаю в этом плане
+
+- Не выдаю и не отзываю никакие entitlements автоматически.
+- Не редактирую `subscriptions_v2`, биллинг, Telegram, access_end_at.
+- Не трогаю поведение grant-access-for-order.
+- Не запускаю массовые правки без подтверждения по каждому пользователю из 23-ки.
+
+## 4. Что мне нужно от тебя перед стартом
+
+1. По Строительству: **добавляем контент** или **переводим entitlement внутрь ЦБ-1**?
+2. По 23 reverted CB-1 ents: можно ли мне после Этапа A прислать тебе bucketed-список и идти по нему построчно (full / module_scope / удалить)?
+3. Подтверждаешь, что C1 (fallback маппинг hpids) допустим как временный костыль до завершения B2?
