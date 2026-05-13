@@ -405,16 +405,38 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
                   ))}
                 </>
               )}
-              {legalEntities.length > 0 && (
-                <>
-                  <div className="px-2 pt-1 text-[10px] uppercase text-muted-foreground">Юрлицо</div>
-                  {legalEntities.map((r) => (
-                    <SelectItem key={`le-${r.id}`} value={`legal_entity:${r.id}`}>
-                      {reqLabel(r)}{r.is_default ? " · по умолчанию" : ""}
-                    </SelectItem>
-                  ))}
-                </>
-              )}
+              {(() => {
+                const isEntrepreneur = (r: ReqRow) => {
+                  const d = (r.data || {}) as any;
+                  return !!(d.ent_name || d.ent_unp || d.ent_short_name || d.is_entrepreneur === true || d.subject_type === 'entrepreneur');
+                };
+                const ips = legalEntities.filter(isEntrepreneur);
+                const legs = legalEntities.filter((r) => !isEntrepreneur(r));
+                return (
+                  <>
+                    {ips.length > 0 && (
+                      <>
+                        <div className="px-2 pt-1 text-[10px] uppercase text-muted-foreground">ИП</div>
+                        {ips.map((r) => (
+                          <SelectItem key={`ip-${r.id}`} value={`entrepreneur:${r.id}`}>
+                            {reqLabel(r)}{r.is_default ? " · по умолчанию" : ""}
+                          </SelectItem>
+                        ))}
+                      </>
+                    )}
+                    {legs.length > 0 && (
+                      <>
+                        <div className="px-2 pt-1 text-[10px] uppercase text-muted-foreground">Юрлицо</div>
+                        {legs.map((r) => (
+                          <SelectItem key={`le-${r.id}`} value={`legal_entity:${r.id}`}>
+                            {reqLabel(r)}{r.is_default ? " · по умолчанию" : ""}
+                          </SelectItem>
+                        ))}
+                      </>
+                    )}
+                  </>
+                );
+              })()}
             </SelectContent>
           </Select>
         </div>
