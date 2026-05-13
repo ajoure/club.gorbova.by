@@ -42,6 +42,13 @@ export interface TrainingModule {
   has_access?: boolean;
   accessible_tariffs?: string[];
   accessible_products?: AccessibleProduct[];
+  /**
+   * True если у root-модуля (parent_module_id=null) с has_access=true
+   * нет ни активных детей, ни активных уроков, ни видимого scope.
+   * UI должен показать карточку как «Контент не опубликован», а НЕ скрывать.
+   * См. memory: cabinet-visibility-entitlement-dependency.
+   */
+  is_empty?: boolean;
 }
 
 export interface TrainingModuleFormData {
