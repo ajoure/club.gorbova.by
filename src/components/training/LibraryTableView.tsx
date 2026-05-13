@@ -518,6 +518,15 @@ export function LibraryTableView({ libraryModules, allModules }: LibraryTableVie
                 {flatRoot.accessLabel}
               </Badge>
             )}
+            {isFlat && flatRoot?.module.is_empty && (
+              <Badge
+                variant="outline"
+                className={cn("text-[10px] px-1.5 py-0 h-4 ml-1", getStatusBadgeClass("warning"))}
+                title="У этого тренинга пока нет опубликованных уроков. Доступ выдан корректно."
+              >
+                Контент не опубликован
+              </Badge>
+            )}
           </div>
         </TableCell>
         <TableCell className="py-2.5 hidden sm:table-cell">
