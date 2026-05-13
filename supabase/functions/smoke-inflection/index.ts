@@ -14,7 +14,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: cors });
   try {
     const guard = req.headers.get('x-smoke-key');
-    if (guard !== Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')) {
+    if (!guard || guard !== Deno.env.get('CRON_SECRET')) {
       return new Response(JSON.stringify({ error: 'forbidden' }), { status: 403, headers: cors });
     }
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
