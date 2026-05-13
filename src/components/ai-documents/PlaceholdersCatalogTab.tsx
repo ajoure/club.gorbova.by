@@ -323,7 +323,7 @@ export function PlaceholdersCatalogTab() {
               <SelectContent>
                 <SelectItem value="all">Все группы</SelectItem>
                 {groupOptions.map(g => (
-                  <SelectItem key={g} value={g}>{GROUP_LABELS[g?.toLowerCase()] ?? GROUP_LABELS[g] ?? g}</SelectItem>
+                  <SelectItem key={g.id} value={g.id}>{g.label}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
