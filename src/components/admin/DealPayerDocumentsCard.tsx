@@ -191,6 +191,7 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
 
   // Guard: если templateOverride указывает на удалённый/неактивный шаблон — не используем его.
   const overrideTemplateExists = templateOverride ? templates.some((t) => t.id === templateOverride) : true;
+  const templateOverrideDeleted = !!templateOverride && !overrideTemplateExists;
   const effectiveTemplateId = (overrideTemplateExists ? templateOverride : null) || resolved.template_id;
   const effectiveExecutorId = executorOverride || resolved.executor_id;
   const effectivePayerType: PayerType = (order?.payer_type as PayerType) || resolved.payer_type || "individual";
