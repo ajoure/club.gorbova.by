@@ -373,6 +373,7 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
             <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="individual">Физлицо</SelectItem>
+              <SelectItem value="entrepreneur">ИП</SelectItem>
               <SelectItem value="legal_entity">Юрлицо</SelectItem>
             </SelectContent>
           </Select>
