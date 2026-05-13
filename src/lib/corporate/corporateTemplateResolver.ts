@@ -50,11 +50,12 @@ export async function resolveManifestTemplates(
     .filter(m => m.category !== 'externally_provided')
     .map(m => m.template_code);
 
-  // Single batch query to document_templates
+  // Single batch query to document_templates (soft-deleted шаблоны исключаем)
   const { data: dbTemplates, error } = await supabase
     .from('document_templates')
     .select('id, code, is_active, template_path')
     .eq('template_scope', 'corporate')
+    .is('deleted_at', null)
     .in('code', codesToResolve);
 
   if (error) {

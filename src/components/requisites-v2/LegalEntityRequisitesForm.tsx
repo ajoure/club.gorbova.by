@@ -60,7 +60,26 @@ const schema = z.object({
   phone: z.string().optional().or(z.literal("")),
   email: z.string().email("Некорректный email").optional().or(z.literal("")),
   is_default: z.boolean().optional(),
+  // ИП Руководитель/Подписант override (только для subjectType=entrepreneur).
+  ent_director_position: z.string().optional().or(z.literal("")),
+  ent_director_full_name: z.string().optional().or(z.literal("")),
+  ent_director_short_name: z.string().optional().or(z.literal("")),
+  ent_acts_on_basis_override: z.string().optional().or(z.literal("")),
 });
+
+/** Helper: «Иванов Иван Иванович» → «И. И. Иванов» */
+function toInitials(full: string): string {
+  const parts = full.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "";
+  if (parts.length === 1) return parts[0];
+  const [last, ...rest] = parts;
+  return `${rest.map((p) => p.charAt(0).toUpperCase() + ".").join(" ")} ${last}`;
+}
+
+/** Helper: «ИП "Горбова Е.А."» → «Горбова Е.А.» (для дефолта ФИО руководителя ИП). */
+function stripIpPrefix(name: string): string {
+  return name.replace(/^ИП\s*/i, "").replace(/[«»"']/g, "").trim();
+}
 
 type FormValues = z.infer<typeof schema>;
 
@@ -118,6 +137,10 @@ export function LegalEntityRequisitesForm({
       phone: data.phone ?? "",
       email: data.email ?? "",
       is_default: !!initialData?.is_default,
+      ent_director_position: data.ent_director_position ?? "",
+      ent_director_full_name: data.ent_director_full_name ?? "",
+      ent_director_short_name: data.ent_director_short_name ?? "",
+      ent_acts_on_basis_override: data.ent_acts_on_basis_override ?? "",
     },
   });
 
@@ -129,6 +152,14 @@ export function LegalEntityRequisitesForm({
   };
 
   const showDirectorBlock = subjectType === "legal_entity";
+  const showIpSignerBlock = subjectType === "entrepreneur";
+
+  // Live-вычисление дефолтов для подсказок placeholder в блоке ИП-руководителя.
+  const watchedName = form.watch("name") ?? "";
+  const watchedActsOnBasis = form.watch("acts_on_basis") ?? "";
+  const ipDefaultFullName = stripIpPrefix(watchedName);
+  const ipDefaultShortName = toInitials(ipDefaultFullName);
+  const ipDefaultActs = watchedActsOnBasis || "Свидетельства о государственной регистрации";
 
   return (
     <Form {...form}>
@@ -273,6 +304,81 @@ export function LegalEntityRequisitesForm({
             </FormItem>
           )}
         />
+
+        {showIpSignerBlock && (
+          <div className="rounded-md border border-border/60 bg-muted/20 p-4 space-y-4">
+            <div>
+              <div className="text-sm font-medium">
+                {prefix} Руководитель / Подписант
+              </div>
+              <FormDescription className="mt-1">
+                Если оставить поля пустыми — в документах подставятся данные
+                самого ИП. Заполните, если документ подписывает представитель
+                по доверенности.
+              </FormDescription>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <FormField
+                control={form.control}
+                name="ent_director_position"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{prefix} Руководитель: Должность</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Индивидуальный предприниматель" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="ent_director_full_name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{prefix} Руководитель: ФИО</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder={ipDefaultFullName || "Иванов Иван Иванович"}
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="ent_director_short_name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{prefix} Руководитель: ФИО кратко</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder={ipDefaultShortName || "И. И. Иванов"}
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="ent_acts_on_basis_override"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{prefix} Руководитель: Действует на основании</FormLabel>
+                    <FormControl>
+                      <Input placeholder={ipDefaultActs} {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+          </div>
+        )}
 
         <div className="grid gap-4 md:grid-cols-2">
           <FormField

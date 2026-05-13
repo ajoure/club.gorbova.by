@@ -63,11 +63,21 @@ interface RowSettings {
   caseModifier: FieldCase | null;
 }
 
+/**
+ * Маппинг category → пользовательский ярлык группы (короткий — для бейджа в строке).
+ */
 const GROUP_LABELS: Record<string, string> = {
   contact: "Контакт",
-  customer: "Заказчик",
+  customer: "Заказчик (динам.)",
+  "customer.individual": "Заказчик ФЛ",
+  "customer.legal": "Заказчик ЮЛ",
+  "customer.entrepreneur": "Заказчик ИП",
   "customer.signer": "Подписант",
-  executor: "Исполнитель",
+  executor: "Исполнитель (динам.)",
+  "executor.individual": "Исполнитель ФЛ",
+  "executor.legal": "Исполнитель ЮЛ",
+  "executor.entrepreneur": "Исполнитель ИП",
+  "executor.signer": "Подписант",
   deal: "Сделка",
   product: "Продукт",
   tariff: "Тариф",
@@ -77,6 +87,36 @@ const GROUP_LABELS: Record<string, string> = {
   system: "Системные",
   legal_details: "Custom-поля",
 };
+
+/**
+ * 9 секций каталога (PLACEHOLDERS-NORMALIZATION-v3, требование владельца).
+ * Порядок здесь = порядок отображения в UI.
+ */
+const SECTION_DEFINITIONS: Array<{ id: string; label: string; categories: string[] }> = [
+  { id: "customer_ind", label: "1. Заказчик ФЛ", categories: ["customer.individual"] },
+  { id: "customer_leg", label: "2. Заказчик ЮЛ", categories: ["customer.legal"] },
+  { id: "customer_ent", label: "3. Заказчик ИП", categories: ["customer.entrepreneur"] },
+  { id: "executor_ind", label: "4. Исполнитель ФЛ", categories: ["executor.individual"] },
+  { id: "executor_leg", label: "5. Исполнитель ЮЛ", categories: ["executor.legal"] },
+  { id: "executor_ent", label: "6. Исполнитель ИП", categories: ["executor.entrepreneur"] },
+  { id: "dynamic", label: "7. Динамические поля (по типу плательщика)", categories: ["customer", "executor"] },
+  { id: "signer", label: "8. Подписант", categories: ["customer.signer", "executor.signer"] },
+  {
+    id: "system",
+    label: "9. Системные / Документ / Сделка / Оплата",
+    categories: ["system", "document", "deal", "payment", "contact", "product", "tariff", "offer", "legal_details"],
+  },
+];
+
+const CATEGORY_TO_SECTION: Record<string, string> = (() => {
+  const m: Record<string, string> = {};
+  for (const s of SECTION_DEFINITIONS) for (const c of s.categories) m[c] = s.id;
+  return m;
+})();
+
+const SECTION_LABEL: Record<string, string> = Object.fromEntries(
+  SECTION_DEFINITIONS.map((s) => [s.id, s.label]),
+);
 
 const DATA_TYPE_LABEL: Record<string, string> = {
   text: "Текст", string: "Текст", number: "Число", currency: "Сумма",
@@ -154,10 +194,8 @@ export function PlaceholdersCatalogTab() {
     return () => { mounted = false; };
   }, []);
 
-  const groupOptions = useMemo(() => {
-    const set = new Set(rows.map(r => r.category ?? "system"));
-    return Array.from(set);
-  }, [rows]);
+  // Группа = одна из 9 секций. «Все группы» = все секции по порядку.
+  const groupOptions = SECTION_DEFINITIONS.map((s) => ({ id: s.id, label: s.label }));
 
   const typeOptions = useMemo(() => {
     const set = new Set(rows.map(r => r.data_type).filter(Boolean) as string[]);
@@ -167,7 +205,8 @@ export function PlaceholdersCatalogTab() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter(r => {
-      if (groupFilter !== "all" && (r.category ?? "system") !== groupFilter) return false;
+      const sectionId = CATEGORY_TO_SECTION[r.category ?? "system"] ?? "system";
+      if (groupFilter !== "all" && sectionId !== groupFilter) return false;
       if (typeFilter !== "all" && r.data_type !== typeFilter) return false;
       if (onlyRequired && !r.is_required) return false;
       if (q && !(
@@ -175,11 +214,27 @@ export function PlaceholdersCatalogTab() {
         r.token_key.toLowerCase().includes(q) ||
         (r.ui_label ?? "").toLowerCase().includes(q) ||
         (r.description ?? "").toLowerCase().includes(q) ||
+        (r.field_label ?? "").toLowerCase().includes(q) ||
+        (r.example_value ?? "").toLowerCase().includes(q) ||
+        (SECTION_LABEL[sectionId] ?? "").toLowerCase().includes(q) ||
         (r.category ?? "").toLowerCase().includes(q)
       )) return false;
       return true;
     });
   }, [rows, search, groupFilter, typeFilter, onlyRequired]);
+
+  // Группировка отфильтрованных строк по 9 секциям с сохранением порядка.
+  const grouped = useMemo(() => {
+    const map = new Map<string, CatalogRow[]>();
+    for (const s of SECTION_DEFINITIONS) map.set(s.id, []);
+    for (const r of filtered) {
+      const sid = CATEGORY_TO_SECTION[r.category ?? "system"] ?? "system";
+      map.get(sid)!.push(r);
+    }
+    return SECTION_DEFINITIONS
+      .map((s) => ({ id: s.id, label: s.label, rows: map.get(s.id) ?? [] }))
+      .filter((s) => s.rows.length > 0);
+  }, [filtered]);
 
   const updateRowSettings = (id: string, patch: Partial<RowSettings>) => {
     setRowSettings(prev => {
@@ -268,7 +323,7 @@ export function PlaceholdersCatalogTab() {
               <SelectContent>
                 <SelectItem value="all">Все группы</SelectItem>
                 {groupOptions.map(g => (
-                  <SelectItem key={g} value={g}>{GROUP_LABELS[g?.toLowerCase()] ?? GROUP_LABELS[g] ?? g}</SelectItem>
+                  <SelectItem key={g.id} value={g.id}>{g.label}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -319,7 +374,16 @@ export function PlaceholdersCatalogTab() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filtered.map(t => {
+                    grouped.flatMap((section) => [
+                      <TableRow key={`section-${section.id}`} className="bg-muted/60 hover:bg-muted/60 sticky">
+                        <TableCell colSpan={9} className="py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          {section.label}
+                          <span className="ml-2 text-[10px] font-normal lowercase text-muted-foreground/70">
+                            ({section.rows.length})
+                          </span>
+                        </TableCell>
+                      </TableRow>,
+                      ...section.rows.map(t => {
                       const isOpen = expanded.has(t.id);
                       const settings = rowSettings.get(t.id) ?? { format: null, caseModifier: null };
                       const dirty = !isDefault(rowSettings.get(t.id));
@@ -433,7 +497,8 @@ export function PlaceholdersCatalogTab() {
                           )}
                         </Fragment>
                       );
-                    })
+                      }),
+                    ])
                   )}
                 </TableBody>
               </Table>

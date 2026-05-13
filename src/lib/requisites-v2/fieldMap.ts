@@ -48,6 +48,13 @@ export const ENTREPRENEUR_CANONICAL_KEYS = [
   "bank_code",
   "phone",
   "email",
+  // ИП Руководитель/Подписант override (PLACEHOLDERS-NORMALIZATION-v3).
+  // Хранятся в той же data jsonb, без миграции схемы. Если пусто —
+  // resolver подставит дефолты от данных самого ИП.
+  "ent_director_position",
+  "ent_director_full_name",
+  "ent_director_short_name",
+  "ent_acts_on_basis_override",
 ] as const;
 
 export const INDIVIDUAL_CANONICAL_KEYS = [

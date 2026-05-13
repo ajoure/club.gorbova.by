@@ -110,6 +110,7 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
         .select("id, name, current_version_id, template_status")
         .not("current_version_id", "is", null)
         .eq("template_status", "active")
+        .is("deleted_at", null)
         .order("name"),
       supabase.from("executors").select("id, full_name, short_name").eq("is_active", true).order("full_name"),
       offerId

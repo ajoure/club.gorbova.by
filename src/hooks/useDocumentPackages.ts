@@ -145,16 +145,21 @@ export function useDocumentPackageItems(packageId: string | null) {
 
       const { data: templates } = await supabase
         .from("document_templates")
-        .select("id, name, document_type")
+        .select("id, name, document_type, deleted_at")
         .in("id", templateIds);
 
       const tplMap = new Map((templates || []).map((t: any) => [t.id, t]));
 
-      return data.map((item: any) => ({
-        ...item,
-        template_name: tplMap.get(item.template_id)?.name || "—",
-        template_document_type: tplMap.get(item.template_id)?.document_type || "—",
-      })) as DocumentPackageItem[];
+      return data.map((item: any) => {
+        const t: any = tplMap.get(item.template_id);
+        const isDeleted = !!t?.deleted_at;
+        return {
+          ...item,
+          template_name: (t?.name ? `${t.name}${isDeleted ? " (удалён)" : ""}` : "—"),
+          template_document_type: t?.document_type || "—",
+          template_deleted: isDeleted,
+        };
+      }) as DocumentPackageItem[];
     },
     enabled: !!packageId,
   });
