@@ -514,23 +514,21 @@ export async function syncSecondaryProductAccessForUser(
         target_product_id: targetProdId,
       });
 
-      // INV-PHANTOM-PARENT-V1 guard: a module_scope_only enrichment whose
-      // historical_module_product_ids do NOT contain the target product is by
-      // construction unable to grant any visible content for that target — it would
-      // produce a phantom parent-entitlement (admin shows "Активен/Отдельные модули"
-      // but library hides the parent because Phase E STOP-guard sees zero visible
-      // children). Skip CREATE in this case; standalone module-product entitlements
-      // outside this code path remain untouched.
-      if (!ent
-        && enrichedMeta.scope_resolution_mode === 'module_scope_only'
+      // INV-PHANTOM-PARENT-V1 guard REMOVED 2026-05-13.
+      // Reason: business-bonus parent entitlements with hpids outside target subtree
+      // are a LEGITIMATE business scenario (восстановление доступа BUSINESS-ом).
+      // Resolver SOT: «Доступы» в карточке контакта = SOT видимости «Моей библиотеки».
+      // hpids ограничивают список child-модулей, но НЕ скрывают parent product.
+      // We keep an audit-only marker in meta for diagnostics, never block CREATE.
+      const _hpidsOutsideTarget =
+        enrichedMeta.scope_resolution_mode === 'module_scope_only'
         && Array.isArray(enrichedMeta.historical_module_product_ids)
         && enrichedMeta.historical_module_product_ids.length > 0
-        && !enrichedMeta.historical_module_product_ids.includes(targetProdId)) {
-        action.outcome = 'phantom_parent_skip';
-        action.reason = 'inv_phantom_parent_v1:hpids_outside_target';
-        out.push(action);
-        await writeSkipLedger(supabase, ctx, action, 'no_matching_target');
-        continue;
+        && !enrichedMeta.historical_module_product_ids.includes(targetProdId);
+      if (_hpidsOutsideTarget) {
+        (enrichedMeta as any).hpids_outside_target_subtree = true;
+        (enrichedMeta as any).hpids_outside_target_marker_reason =
+          'business_bonus_parent_legitimate_2026_05_13';
       }
 
       try {
