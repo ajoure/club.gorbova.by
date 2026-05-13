@@ -60,7 +60,26 @@ const schema = z.object({
   phone: z.string().optional().or(z.literal("")),
   email: z.string().email("Некорректный email").optional().or(z.literal("")),
   is_default: z.boolean().optional(),
+  // ИП Руководитель/Подписант override (только для subjectType=entrepreneur).
+  ent_director_position: z.string().optional().or(z.literal("")),
+  ent_director_full_name: z.string().optional().or(z.literal("")),
+  ent_director_short_name: z.string().optional().or(z.literal("")),
+  ent_acts_on_basis_override: z.string().optional().or(z.literal("")),
 });
+
+/** Helper: «Иванов Иван Иванович» → «И. И. Иванов» */
+function toInitials(full: string): string {
+  const parts = full.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "";
+  if (parts.length === 1) return parts[0];
+  const [last, ...rest] = parts;
+  return `${rest.map((p) => p.charAt(0).toUpperCase() + ".").join(" ")} ${last}`;
+}
+
+/** Helper: «ИП "Горбова Е.А."» → «Горбова Е.А.» (для дефолта ФИО руководителя ИП). */
+function stripIpPrefix(name: string): string {
+  return name.replace(/^ИП\s*/i, "").replace(/[«»"']/g, "").trim();
+}
 
 type FormValues = z.infer<typeof schema>;
 
