@@ -194,10 +194,8 @@ export function PlaceholdersCatalogTab() {
     return () => { mounted = false; };
   }, []);
 
-  const groupOptions = useMemo(() => {
-    const set = new Set(rows.map(r => r.category ?? "system"));
-    return Array.from(set);
-  }, [rows]);
+  // Группа = одна из 9 секций. «Все группы» = все секции по порядку.
+  const groupOptions = SECTION_DEFINITIONS.map((s) => ({ id: s.id, label: s.label }));
 
   const typeOptions = useMemo(() => {
     const set = new Set(rows.map(r => r.data_type).filter(Boolean) as string[]);
@@ -207,7 +205,8 @@ export function PlaceholdersCatalogTab() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter(r => {
-      if (groupFilter !== "all" && (r.category ?? "system") !== groupFilter) return false;
+      const sectionId = CATEGORY_TO_SECTION[r.category ?? "system"] ?? "system";
+      if (groupFilter !== "all" && sectionId !== groupFilter) return false;
       if (typeFilter !== "all" && r.data_type !== typeFilter) return false;
       if (onlyRequired && !r.is_required) return false;
       if (q && !(
@@ -215,11 +214,27 @@ export function PlaceholdersCatalogTab() {
         r.token_key.toLowerCase().includes(q) ||
         (r.ui_label ?? "").toLowerCase().includes(q) ||
         (r.description ?? "").toLowerCase().includes(q) ||
+        (r.field_label ?? "").toLowerCase().includes(q) ||
+        (r.example_value ?? "").toLowerCase().includes(q) ||
+        (SECTION_LABEL[sectionId] ?? "").toLowerCase().includes(q) ||
         (r.category ?? "").toLowerCase().includes(q)
       )) return false;
       return true;
     });
   }, [rows, search, groupFilter, typeFilter, onlyRequired]);
+
+  // Группировка отфильтрованных строк по 9 секциям с сохранением порядка.
+  const grouped = useMemo(() => {
+    const map = new Map<string, CatalogRow[]>();
+    for (const s of SECTION_DEFINITIONS) map.set(s.id, []);
+    for (const r of filtered) {
+      const sid = CATEGORY_TO_SECTION[r.category ?? "system"] ?? "system";
+      map.get(sid)!.push(r);
+    }
+    return SECTION_DEFINITIONS
+      .map((s) => ({ id: s.id, label: s.label, rows: map.get(s.id) ?? [] }))
+      .filter((s) => s.rows.length > 0);
+  }, [filtered]);
 
   const updateRowSettings = (id: string, patch: Partial<RowSettings>) => {
     setRowSettings(prev => {
