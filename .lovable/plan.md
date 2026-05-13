@@ -1,232 +1,115 @@
-да, согласен, с учетом правок:
+Да, по плану всё логично. Критических правок нет.
 
-## **1. Уточнить PDF**
+Я бы добавил только **одну обязательную правку перед approve**:
 
-Не утверждать заранее, что `canonical-document-generate` сам создаёт PDF. По прошлым smoke он создавал DOCX, а PDF делался через LibreOffice.
+**Не выбирать A/B/C на уровне вопроса пользователю.**  
+Сразу фиксировать решение:
 
-Заменить:
+**A + D:**
 
-```text
-PDF создан (`file_path` указывает на `.pdf`, `file_mime='application/pdf'`)
-```
+- деактивировать фантомные parent-entitlements;
+- не удалять физически;
+- статус: superseded;
+- meta-маркер: inv_phantom_parent_v1;
+- обязательно закрыть RetroApply, чтобы такие строки больше не создавались.
 
-на:
+И добавить в DoD:
 
-```text
-DOCX создан через canonical-document-generate.
-PDF создаётся из DOCX отдельной конвертацией LibreOffice для smoke-proof.
-В ai_generated_documents может остаться DOCX file_path — это не ошибка.
-```
+- для [lena_times@mail.ru](mailto:lena_times@mail.ru):
+  - строка родительского ЦБ-1 с module_scope_only исчезла из активных доступов;
+  - доступ к «Маркетплейсы» остался;
+  - «Моя библиотека» показывает модуль как раньше;
+- по всем 23 пользователям:
+  - фантомные parent-entitlements больше не active;
+  - отдельные module-entitlements остались active;
+  - entitlements физически не удалены;
+- RetroApply больше не создаёт parent-entitlement, если уже создаётся standalone module entitlement.
 
-## **2. Уточнить feature flag**
-
-Если `canonical-document-generate` не запускается при `documents_canonical_generation_enabled=false`, тогда допустимо временно включить flag, как в предыдущем E2E.
-
-Добавить:
-
-```text
-Если endpoint возвращает feature_disabled, временно включить documents_canonical_generation_enabled=true только на время smoke и обязательно вернуть прежнее значение в cleanup.
-```
-
-
-
-
-
-## **3.**
-
-`warnings_snapshot` **— “ровно эти” заменить на “минимум эти”**
-
-Могут быть системные warnings типа `document_data_live_fallback_used`, `payment_snapshot_missing_live_fallback_used`.
-
-Заменить:
-
-```text
-должны присутствовать ровно эти
-```
-
-на:
-
-```text
-должны присутствовать expected case-warnings; дополнительные системные non-blocking warnings допустимы, если они не относятся к неудачному склонению customer.name / payer.name / executor.name / executor.director и не являются docx_check:*.
-```
-
-
-
-
-
-## **4.**
-
-`executor.short_name` **warning зависит от значения**
-
-Если `executor.short_name = ЗАО "АЖУР инкам"`, warning ожидаем. Если short_name вдруг другое — не фиксировать жёстко.
-
-Уточнить:
-
-```text
-Если executor.short_name начинается с аббревиатуры ЗАО/ООО/ОАО/..., ожидается warning abbreviation_not_inflected и значение без изменения.
-```
-
-## **5. Итог**
-
-После этих правок план можно выполнять.
-
-Короткая команда для Lovable:
-
-```text
-План согласован с правками:
-
-1. Smoke запускать только через non-strict canonical-document-generate, не strict.
-2. PDF для proof можно создавать отдельной LibreOffice-конвертацией из DOCX; ai_generated_documents может хранить DOCX.
-3. Если endpoint блокируется feature flag — временно включить flag и вернуть исходное значение после smoke.
-4. Warnings проверять как expected case-warnings + отсутствие forbidden case-warnings; не требовать “ровно эти”, потому что могут быть системные non-blocking warnings.
-5. executor.short_name warning ожидать только если short_name является аббревиатурой.
-6. После smoke приложить DOCX, PDF, pdf-text, preview.json/report.md и отключить smoke-template.
-```
-
-После выполнения этого smoke морфологию можно закрывать полностью.
+Можно запускать так.
 
 &nbsp;
 
-План v2: финальный E2E smoke по морфологии падежей (legacy renderer)
+## План: Моя библиотека — пропавший тренинг ЦБ-1 (и аналогичные)
 
-## Цель
+### Diagnose (что нашёл)
 
-Закрыть DoD по морфологии (C5-B): доказать, что `_shared/document-render.ts` (через **non-strict** legacy `canonical-document-generate`) реально подставляет склонённые значения в DOCX и в финальный PDF на боевом order'е, без `{{...}}` в выходе и с ожидаемым составом warnings.
+**Кейс:** [lena_times@mail.ru](mailto:lena_times@mail.ru) (`78123ed5-…`). Админ-панель Доступы показывает «Ценный бухгалтер | 1 ступень 2.0 — Активен — через BUSINESS — Область доступа: Отдельные модули». В Моей библиотеке этого тренинга нет, при этом виден отдельный «ЦБ-1 | Модуль: Маркетплейсы».
 
-Strict pipeline (`canonical-document-generate-strict`, FLD-токены) — НЕ цель этого smoke и не используется.
+**Корень — данные RetroApply:**
+У пользователя 3 активных entitlement по семейству ЦБ-1:
 
-## Ключевые правки относительно v1
 
-1. Smoke идёт через `**canonical-document-generate**` (или фактический endpoint, который вызывает `_shared/document-render.ts`). Strict исключён, т.к. customer.*, payer.*, executor.* — это legacy token-key плейсхолдеры, не FLD.
-2. Smoke-шаблон создаётся `is_active=false`, `template_status='in_development'`. Если non-strict endpoint умеет принимать `template_id`/`template_version_id` напрямую — активация не нужна. Если требует `is_active=true` — включаем только на время прогона и в cleanup гарантированно выключаем.
-3. Feature flag `documents_canonical_generation_enabled` фиксируется до и после (proof-запросы), не меняем.
-4. `executor.short_name|case=...` и `executor.director_short|case=...` — ожидаемые warnings, не баг.
+| product_id | название                     | scope_mode          | historical_module_product_ids                          |
+| ---------- | ---------------------------- | ------------------- | ------------------------------------------------------ |
+| `7101ed3c` | ЦБ-1 (родительский продукт)  | `module_scope_only` | `[d7effaf4]`                                           |
+| `d7effaf4` | ЦБ-1 | Модуль: Маркетплейсы  | `module_scope_only` | `[4c97d21c]` *(это training_module_id, не product_id)* |
+| `f833c846` | ЦБ-1 | Модуль: Строительство | `module_scope_only` | `[b7bae7fd]`                                           |
 
-## Шаги
 
-### 0. Pre-flight proof (read-only)
+Тренинг-структура:
 
-```sql
--- Feature flag (до)
-SELECT key, value FROM app_settings
-WHERE key='documents_canonical_generation_enabled';
+- root `c9f7e9b8` (product `7101ed3c`, ЦБ-1) — содержит 25+ дочерних модулей курса
+- root `4c97d21c` (product `d7effaf4`, Маркетплейсы) — отдельный root, **не дочерний** для `c9f7e9b8`
+- аналогично «Строительство» и др. — отдельные root-модули с собственными product_id
 
--- Order и snapshot customer.name
-SELECT id, payer_type, profile_id,
-       meta->'document_data'->'customer' AS snapshot_customer
-FROM orders_v2
-WHERE id='15927402-5566-4810-97cf-f1d5997e80ed';
+**Что делает резолвер (`useTrainingContentRules` + `useTrainingModules`):**
 
--- Executor: ФИО директора и адрес с индексом
-SELECT id, name, short_name, director_full_name, director_short_name,
-       legal_address_structured->>'postal_code' AS postal
-FROM executors
-WHERE id='d0c7fe75-1192-40a9-bbae-b652b69e6882';
-```
+1. Для root `c9f7e9b8` подбирает synthetic-bonus rule по entitlement `7101ed3c` с `module_scope_only` → mapping `[d7effaf4]` → training_modules WHERE product_id IN ([d7effaf4]) → `allowed_module_ids=[4c97d21c]`.
+2. Filter `partial`, allowed=[4c97d21c]. Для root код возвращает «keep visible, дети фильтруются» (Learning/useTrainingModules.tsx:269-270).
+3. Для каждого реального ребёнка `c9f7e9b8` → `isModuleVisible` ложь (4c97d21c — не его ребёнок) → `has_access=false`, `lesson_count=0`.
+4. **Phase E STOP-guard** (useTrainingModules.tsx:302-313): root с `visibleRecursive===0` скрывается → ЦБ-1 пропадает из библиотеки.
 
-Acceptance pre-flight:
+Маркетплейсы при этом виден, потому что есть **отдельный** entitlement на product `d7effaf4`, чей synthetic rule даёт allowed=[4c97d21c] и target_ref=4c97d21c (он сам root).
 
-- `snapshot_customer.name` = `Федорчук Сергей Валерьевич` (или эквивалент с тремя кириллическими словами, поддающимися склонению). Если нет — берём другой order физлица с полным ФИО, иначе тест морфологии ФИО не валиден.
-- `executors.postal_code` = `220035`.
-- `director_full_name` непустой, кириллица.
+**Почему так получилось.** RetroApply (batch `RETROAPPLY-2026-04-29-…`) при покупке BUSINESS создаёт «теневой» entitlement родительского продукта ЦБ-1 со scope, указывающим на другой продукт-модуль. Этот entitlement функционально дублирует уже существующий entitlement на сам модуль, но создаёт админский «Активен — Отдельные модули» и одновременно «глушит» root в библиотеке (allowed_modules за пределами поддерева → ноль видимых детей → STOP-guard).
 
-### 1. Smoke-шаблон (DOCX)
+**Масштаб (активные entitlements с непустыми historical_module_product_ids и scope_resolution_mode∈{module_scope_only, union_scope}):**
 
-- Сгенерировать `inflection_smoke_v1.docx` (docx-js) с блоком плейсхолдеров (см. §Состав ниже).
-- Загрузить в bucket `documents-templates` под `smoke/inflection_smoke_v1.docx` (service_role INSERT).
-- Вставить `document_templates`:
-  - `code='smoke_inflection_v1'`, `name='Smoke: морфология падежей'`,
-  - `document_type='service_act'`, `template_scope='billing'`,
-  - `template_status='in_development'`, `**is_active=false**`,
-  - `template_path='smoke/inflection_smoke_v1.docx'`.
-- Зарегистрировать `document_template_versions` через тот же путь, что использует админка при upload.
-- Если non-strict endpoint требует `is_active=true` — включить только на время прогона; в cleanup обязательно вернуть `false`.
 
-Состав плейсхолдеров шаблона:
+| Родительский продукт      | Затронуто пользователей |
+| ------------------------- | ----------------------- |
+| ЦБ-1 (родитель)           | **23**                  |
+| ЦБ-1 | Маркетплейсы       | 15                      |
+| ЦБ-1 | Производство       | 14                      |
+| ЦБ-1 | Грузоперевозки     | 9                       |
+| ЦБ-1 | Строительство      | 8                       |
+| ЦБ-1 | Розничная торговля | 7                       |
+| ЦБ-1 | Общепит            | 5                       |
+| ЦБ-1 | ПВТ                | 1                       |
 
-```
-ФИО заказчика:
-{{customer.name}}
-{{customer.name|case=genitive}}
-{{payer.name|case=genitive}}
 
-Исполнитель:
-{{executor.name}}
-{{executor.name|case=genitive}}
-{{executor.short_name|case=genitive}}      ← ожидается warning abbreviation_not_inflected
+23 пользователя — точные кандидаты «исчез ЦБ-1 в библиотеке». Остальные строки — entitlement на сам модуль, там `historical_module_product_ids` ссылается на собственный training_module и резолвер отрабатывает корректно (Маркетплейсы виден).
 
-Директор:
-{{executor.director}}
-{{executor.director|case=genitive}}
-{{executor.director_short|case=genitive}}  ← ожидается warning unsupported_field
+### Развилка решения (нужно выбрать ДО Plan/Execute)
 
-Unsupported:
-{{payment.amount|case=genitive}}           ← ожидается warning unsupported_field
+Логически проблема — **семантика теневого parent-entitlement**. Возможные направления:
 
-Адрес исполнителя:
-{{executor.address}}                        ← должен содержать 220035
-```
+**A. Data-fix (рекомендую): убрать «теневые» parent-entitlements.**
+Удаляем/деактивируем активные entitlements родительского ЦБ-1 (`7101ed3c`) и других «модуль-родителей», у которых `scope_resolution_mode='module_scope_only'` и `historical_module_product_ids` ссылается на ДРУГИЕ продукты, не покрытые поддеревом этого тренинга. Доступ к самому модулю Маркетплейсы остаётся (отдельный entitlement product=`d7effaf4`). Админ-панель перестаёт врать «через BUSINESS — Отдельные модули» для родителя. Библиотека не меняет логики.
+Плюсы: чистый SOT, админу не показывается «теневой» доступ. Минусы: requires Retroapply patch чтобы это не воспроизводилось снова.
 
-### 2. Прогон non-strict canonical generator
+**B. Resolver-fix: при `module_scope_only` со ссылкой за пределы своего поддерева — не подавлять root, а возвращать `null` (full-deny на этот product), не вмешиваясь в Phase E.**
+Эффект: root остаётся скрытым (как сейчас), но админская панель и data остаются. Не решает первопричину «фантомного» Активен в админке.
 
-Endpoint: `POST /functions/v1/canonical-document-generate` (legacy non-strict; именно он использует `_shared/document-render.ts`).
+**C. UI-fix: показывать root в библиотеке как «есть только Х модулей: Маркетплейсы, …»** даже если allowed_module_ids за пределами поддерева — рендерить root + список покрытых модулей-продуктов с кросс-навигацией.
+Плюсы: полное соответствие админ-сообщению. Минусы: меняет визуальную модель библиотеки.
 
-- `mode='preview'` → анализ `variants[]`, `unresolved_count`, `warnings`.
-- `mode='generate'` с `idempotency_key='smoke_inflection_v1:{order_id}:{template_version_id}'` → сохраняем DOCX + PDF из `ai_generated_documents`.
+**D. Retroapply-fix (обязателен в любом случае рядом с A): не выдавать parent-product entitlement, если historical purchase — standalone-модуль, имеющий собственный product_id с уже выданным entitlement.** Это устраняет генерацию «теневых» строк впредь.
 
-Если фактическое имя функции отличается (грепом по `_shared/document-render.ts` импортёрам) — использовать его, но запрет на strict сохраняется.
+### Вопросы пользователю (нужны до перехода к финальному Plan)
 
-### 3. Верификация (DoD-чеклист)
+1. Какой подход: **A+D** (data-cleanup + блокировка повторного создания) или **C** (UI показывает «частичный родитель»)?
+2. Если **A+D**: помечать теневые entitlements `status='superseded'` с meta-маркером `inv_phantom_parent_v1`, или физически `archived`? (предпочтение — superseded, он не ломает аудит).
+3. Нужен ли отдельный отчёт по 23 пользователям (CSV в `/mnt/documents`) перед write-операцией.
 
-1. DOCX создан (`meta.docx_storage_path` присутствует).
-2. PDF создан (`file_path` указывает на `.pdf`, `file_mime='application/pdf'`).
-3. `unresolved_count = 0`.
-4. В тексте PDF нет подстрок `{{` или `}}` (через `pdftotext - | grep`).
-5. В PDF присутствуют:
-  - `Федорчука Сергея Валерьевича` для `customer.name|case=genitive` (и для `payer.name|case=genitive` через alias).
-  - `Закрытого акционерного общества "АЖУР инкам"` для `executor.name|case=genitive` (основной proof юрформы).
-  - Корректный genitive для `executor.director|case=genitive` (склонение ФИО директора).
-  - `220035` в `executor.address`.
-  - `ЗАО "АЖУР инкам"` (без изменения) для `executor.short_name|case=genitive` — это ожидаемое поведение, аббревиатура.
-  - Инициалы (без изменения) для `executor.director_short|case=genitive` — ожидаемое поведение.
-6. `warnings_snapshot` ОЖИДАЕМЫЕ (должны присутствовать ровно эти):
-  - `case_modifier_not_applied:payment.amount:unsupported_field`
-  - `case_modifier_not_applied:executor.director_short:unsupported_field`
-  - `case_modifier_not_applied:executor.short_name:abbreviation_not_inflected`
-   Допустимо (не fail): `format_modifier_ignored_for_text:<token>`.
-   ЗАПРЕЩЕНО (fail при наличии): любой warning для
-  - `customer.name|case=genitive`
-  - `payer.name|case=genitive`
-  - `executor.name|case=genitive`
-  - `executor.director|case=genitive`
-7. `deno check supabase/functions/_shared/{document-render,case-format,ru-inflection}.ts` — clean.
-8. Автохарнес `tsc --noEmit` — clean (запускается автоматически).
-9. **Feature flag (после)** — повторный SELECT идентичен SELECT'у из §0. Никаких записей в `app_settings`.
+### План работ (после выбора)
 
-Артефакты в `/mnt/documents/smoke/inflection/`:
+После одобрения подхода — **отдельным сообщением** дам уточнённый Plan: миграция/insert-фикс data-set, патч в `grant-access-for-order` / RetroApply, audit, dry-run + execute, верификация Lena + 22 ост., обновление memory `Training Content Resolver Rules`. Сейчас в plan-mode — без записей.
 
-- `preflight.json` (snapshot pre-flight SELECT'ов),
-- `preview.json` (variants + warnings),
-- `generated.docx`, `generated.pdf`,
-- `pdf-text.txt`,
-- `report.md` с DoD-чеклистом.
+### Технические детали (для справки)
 
-### 4. Cleanup
-
-- `document_templates.is_active=false` (если включали в §1) — обязательно.
-- Запись и `document_template_versions` оставляем (idempotency reuse, аудит).
-- Email/Telegram/Contact Center/auto-generation — не задействованы по построению (ручной POST, без триггеров).
-- Если `documents_canonical_generation_enabled` менялся — вернуть в исходное (по плану — не меняем).
-
-## Что НЕ делаем
-
-- Не используем `canonical-document-generate-strict`.
-- Не модифицируем `_shared/document-render.ts`, `case-format.ts`, `ru-inflection.ts` (если smoke выявит баг — отдельный план).
-- Не трогаем `payments_v2`, `orders_v2`, `allocate_document_number`, document scenarios storage.
-- Не включаем production auto-generation.
-- Не отправляем документ клиенту.
-- Не меняем production-шаблоны.
-
-## DoD
-
-Все 9 пунктов §3 — зелёные, отчёт `report.md` приложен, smoke-шаблон inactive, feature flag без изменений. После этого C5-B (морфология) закрывается полностью.
+- Точка скрытия root: `src/hooks/useTrainingModules.tsx:302-313` (Phase E STOP-guard).
+- Точка генерации синтетического правила: `src/hooks/useTrainingContentRules.ts:278-410` (`resolveBonusScopeRules`).
+- Точка резолюции: `useTrainingContentRules.ts:462-586` (Priority 3 = synthetic_bonus).
+- Источник entitlement: RetroApply batch (см. `meta.batch_id`, `source_rule_id`, `business_subscription_id`).
+- Проверка валидности фикса: для тех же 23 user_id после удаления теневого entitlement → admin Доступы перестаёт показывать «ЦБ-1 — Активен» строкой родителя; library не меняет состав видимого; `useAccessValidation` → доступ к Маркетплейсы сохраняется.
