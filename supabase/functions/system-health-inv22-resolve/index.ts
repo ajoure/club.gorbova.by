@@ -63,7 +63,10 @@ interface ResolveResultItem {
     | "closed_provider_dead"
     | "kept_provider_alive"
     | "pull_failed"
-    | "skipped_not_in_snapshot";
+    | "skipped_not_in_snapshot"
+    | "audit_failed";
+  audit_id?: string | null;
+  audit_error?: string | null;
   notes: string;
 }
 
