@@ -59,3 +59,6 @@ WHERE s.status='active' AND s.auto_renew=true AND s.access_end_at > now()
        OR (ps.state='active' AND ps.next_charge_at IS NULL AND ps.last_charge_at IS NULL));
 ```
 должен вернуть 0 (или меньше с обоснованием по каждой оставшейся: либо `skip_too_fresh`, либо `pull_failed`).
+
+## Known issue (2026-05-13)
+`system-health-inv22-resolve` audit-insert использует НЕВЕРНЫЕ колонки (`actor_id`/`target_id`/`metadata`/`target_type`). Реальная схема `audit_logs`: `actor_user_id`, `target_user_id`, `meta` (нет `target_type`). Insert тихо проваливается. Run от 2026-05-13 на 3 sub_id (727c05bf/555a69bb/b1676866) — audit вручную backfilled с `meta.backfill_reason='resolve_audit_silent_fail_2026-05-13'`. Открыт бэклог-патч: починить колонки + проверять `.error` от insert.
