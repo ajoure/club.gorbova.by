@@ -15,50 +15,37 @@ JOIN `provider_subscriptions` where:
 Канонический детектор: `public.inv22_subscription_desync(p_limit int)` — RPC возвращает `count`, `by_bucket`, `samples` (с `bucket` и `age_hours`).
 
 ## Buckets
-- `never_charged_expired` — provider expired, никогда не списывалось
-- `previously_charged_expired` — provider expired, были списания
-- `never_charged_redirecting` — застряло на 3DS, без списаний
-- `previously_charged_redirecting` — 3DS после успешных списаний (редкий случай)
-- `active_no_dates` — provider active, обе даты NULL (snapshot протух)
+- `never_charged_expired`, `previously_charged_expired`, `never_charged_redirecting`, `previously_charged_redirecting`, `active_no_dates`.
 
 ## Resolution Protocol
-1. **Read** через `system-health-inv22-plan` (super_admin JWT, read-only). Возвращает план action per row.
-2. **48-hour grace** для `*_redirecting`: возраст `< 48ч` → `skip_too_fresh`, не трогать (см. mem://infrastructure/access/revoke-race-condition-guard).
-3. **Pull-then-decide** (`active_no_dates` и любой execute): сначала вызвать `bepaid-get-subscription-details` по `provider_subscription_id`. Это обновит provider_subscriptions из bePaid.
-4. **Re-read** provider_subscriptions. Если bePaid вернул живую — НИЧЕГО локально не менять.
-5. **Close locally** (только если provider всё ещё мёртв):
-   - `subscriptions_v2.auto_renew = false`
-   - `subscriptions_v2.status = 'canceled'`
-   - `subscriptions_v2.canceled_at = now()`
-   - `subscriptions_v2.cancel_reason = 'inv22_provider_dead_local_active'`
-   - `provider_subscriptions.state` — НЕ переписывать (оставить provider truth)
-6. **Telegram-доступ и `access_end_at` НЕ трогать.** Это отдельное решение владельца.
-7. **Audit per row**: `inv22.repair_provider_dead_local_active` (или `inv22.resolve.<outcome>` для прочих исходов) с `before/after/pull_result/delegated_to/bucket/age_hours`.
+1. **Read** через `system-health-inv22-plan` (super_admin JWT, read-only).
+2. **48-hour grace** для `*_redirecting`: возраст `< 48ч` → `skip_too_fresh`.
+3. **Pull-then-decide**: вызвать `bepaid-get-subscription-details`, обновить provider_subscriptions.
+4. **Re-read**: если bePaid вернул живую — НИЧЕГО не менять.
+5. **Close locally** (provider всё ещё мёртв):
+   - `subscriptions_v2.auto_renew=false`, `status='canceled'`, `canceled_at=now()`, `cancel_reason='inv22_provider_dead_local_active'`.
+   - `provider_subscriptions.state` НЕ переписываем.
+6. **Telegram-доступ и `access_end_at` НЕ трогать.**
+7. **Audit per row** в `audit_logs` обязателен:
+   - action: `inv22.repair_provider_dead_local_active` (или `inv22.resolve.<outcome>`).
+   - колонки: `actor_user_id`, `target_user_id`, `actor_type='user'`, `actor_label`, `meta` (НЕ `actor_id`/`target_id`/`metadata`/`target_type` — таких колонок в `audit_logs` НЕТ).
+   - meta содержит: `subscription_id`, `provider_subscription_id`, `before`, `after`, `pull_result`, `pull_error`, `delegated_to`, `outcome`, `bucket`, `age_hours`.
+   - **HARD requirement**: `.error` от insert обязателен к проверке. Fail audit → outcome `audit_failed`, response HTTP 207, `audit_failures>0`.
 
 ## Запрещено
-- Прямые `UPDATE provider_subscriptions SET state=...` для лечения INV-22 (provider state — single source of truth).
-- Авто-ревок Telegram/entitlements в рамках INV-22 resolve.
+- Прямые `UPDATE provider_subscriptions SET state=...` для лечения INV-22.
+- Авто-ревок Telegram/entitlements/access_end_at.
 - Bulk-execute без `confirm:true` и без `subscription_ids`.
+- Silent audit insert без проверки error (ловится INV-22-AUDIT invariant).
 
 ## SOT files
-- RPC: `public.inv22_subscription_desync` (миграция от 2026-04-29)
-- Detector report: `supabase/functions/nightly-payments-invariants/index.ts` (с разбивкой по buckets в Telegram alert)
+- RPC: `public.inv22_subscription_desync`
 - Plan: `supabase/functions/system-health-inv22-plan/index.ts`
-- Resolve: `supabase/functions/system-health-inv22-resolve/index.ts`
-- UI: `src/components/admin/payments/Inv22ResolverPanel.tsx` (встроен в `AutoRenewalsTabContent`)
-- Classification: `src/lib/system-health/invariant-humanize.ts` → `INV-22 = critical_fix`
+- Resolve: `supabase/functions/system-health-inv22-resolve/index.ts` (audit columns fixed 2026-05-13)
+- Nightly + audit-trail invariant: `supabase/functions/nightly-payments-invariants/index.ts` (`INV-22` + `INV-22-AUDIT`)
+- UI: `src/components/admin/payments/Inv22ResolverPanel.tsx`
 
 ## Verification (DoD)
-После execute:
-```sql
-SELECT count(*)
-FROM subscriptions_v2 s
-JOIN provider_subscriptions ps ON ps.subscription_v2_id = s.id
-WHERE s.status='active' AND s.auto_renew=true AND s.access_end_at > now()
-  AND (ps.state IN ('expired','redirecting')
-       OR (ps.state='active' AND ps.next_charge_at IS NULL AND ps.last_charge_at IS NULL));
-```
-должен вернуть 0 (или меньше с обоснованием по каждой оставшейся: либо `skip_too_fresh`, либо `pull_failed`).
-
-## Known issue (2026-05-13)
-`system-health-inv22-resolve` audit-insert использует НЕВЕРНЫЕ колонки (`actor_id`/`target_id`/`metadata`/`target_type`). Реальная схема `audit_logs`: `actor_user_id`, `target_user_id`, `meta` (нет `target_type`). Insert тихо проваливается. Run от 2026-05-13 на 3 sub_id (727c05bf/555a69bb/b1676866) — audit вручную backfilled с `meta.backfill_reason='resolve_audit_silent_fail_2026-05-13'`. Открыт бэклог-патч: починить колонки + проверять `.error` от insert.
+- `inv22_subscription_desync.count = 0`.
+- За каждый closed_provider_dead row: запись в `audit_logs` с `action='inv22.repair_provider_dead_local_active'` и `meta.subscription_id=<sub_id>`.
+- `INV-22-AUDIT` invariant в nightly-check: `passed=true`, `count=0` missing.
