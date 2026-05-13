@@ -163,13 +163,19 @@ function fillEntCustomer(map: Record<string, string>, ld: any) {
   map["customer.ent.unp"] = isEnt ? (ld?.ent_unp || "") : "";
   map["customer.ent.acts_on_basis"] = isEnt ? (ld?.ent_acts_on_basis || "") : "";
 
-  // Руководитель ИП: дефолт = сам ИП.
-  // Override может быть подан через input.overrides позже.
-  const dirFullName = rawName ? rawName.replace(/^ИП\s*/i, "").replace(/[«»"']/g, "").trim() : "";
-  map["customer.ent.director_position"] = isEnt ? "Индивидуальный предприниматель" : "";
-  map["customer.ent.director_full_name"] = isEnt ? dirFullName : "";
-  map["customer.ent.director_short_name"] = isEnt ? fullNameToInitials(dirFullName) : "";
-  map["customer.ent.director_acts_on_basis"] = isEnt ? (ld?.ent_acts_on_basis || "Свидетельства о государственной регистрации") : "";
+  // Руководитель ИП: дефолт = сам ИП. Override приходит через
+  // legal_entities_requisites.data.ent_director_* / ent_acts_on_basis_override
+  // (UI «Руководитель / Подписант» в форме ИП).
+  const defaultDirFull = rawName ? rawName.replace(/^ИП\s*/i, "").replace(/[«»"']/g, "").trim() : "";
+  const defaultDirShort = fullNameToInitials(defaultDirFull);
+  const overrideDirPos = (ld?.ent_director_position || "").toString().trim();
+  const overrideDirFull = (ld?.ent_director_full_name || "").toString().trim();
+  const overrideDirShort = (ld?.ent_director_short_name || "").toString().trim();
+  const overrideActs = (ld?.ent_acts_on_basis_override || "").toString().trim();
+  map["customer.ent.director_position"] = isEnt ? (overrideDirPos || "Индивидуальный предприниматель") : "";
+  map["customer.ent.director_full_name"] = isEnt ? (overrideDirFull || defaultDirFull) : "";
+  map["customer.ent.director_short_name"] = isEnt ? (overrideDirShort || defaultDirShort) : "";
+  map["customer.ent.director_acts_on_basis"] = isEnt ? (overrideActs || ld?.ent_acts_on_basis || "Свидетельства о государственной регистрации") : "";
 
   map["customer.ent.address.full"] = addrFull;
   for (const p of ADDR_PARTS) {
