@@ -132,6 +132,7 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
         .select("id, name, current_version_id, template_status")
         .not("current_version_id", "is", null)
         .eq("template_status", "active")
+        .is("deleted_at", null)
         .order("name"),
       supabase.from("orders_v2").select("meta").eq("id", orderId).maybeSingle(),
       supabase
