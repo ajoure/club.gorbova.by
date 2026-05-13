@@ -20,6 +20,8 @@ export interface DocumentTemplate {
   editor_mvp_enabled?: boolean;
   /** Staging-only editor draft content (not used by runtime generation) */
   editor_draft_content?: Record<string, unknown> | null | unknown;
+  /** Soft-delete timestamp. NULL = active. */
+  deleted_at?: string | null;
 }
 
 export interface ProductDocumentTemplate {
