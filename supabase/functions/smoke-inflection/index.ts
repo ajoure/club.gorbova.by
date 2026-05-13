@@ -32,15 +32,17 @@ Deno.serve(async (req) => {
       signer_link_id: body.signer_link_id || null,
     };
     const profileId = body.profile_id || '00000000-0000-0000-0000-000000000000';
-    const payload = await resolveCanonicalPayload(supabase, input as any);
     if (body.mode === 'preview') {
+      const payload = await resolveCanonicalPayload(supabase, input as any);
       return new Response(JSON.stringify({ payload }, null, 2), { headers: { ...cors, 'Content-Type': 'application/json' } });
     }
-    const result = await generateCanonicalDocument(supabase, payload, {
+    const result = await generateCanonicalDocument(supabase, input as any, {
       profileId,
       userId: body.user_id || '05cd3754-d589-4d90-97d1-89ba2bee610b',
       idempotencyKey: `smoke:${input.template_id}:${input.context_id}:${Date.now()}`,
+      enforceFeatureFlag: false,
     } as any);
+    const payload = (result as any).payload;
     return new Response(JSON.stringify({
       success: result.success,
       error: (result as any).error,
