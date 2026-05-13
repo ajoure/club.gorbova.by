@@ -192,15 +192,18 @@ export function useSidebarModules() {
       const filter = resolveTrainingContentFilter(tcData.rules, rootId, effectiveProductId, tcData.userTariffIds, tcData.entitlementTariffsByProduct || {}, (tcData as any).productsWithManualEnt || []);
       if (!filter || filter.mode === "full") return true;
 
-      // For root modules: check if any children survived filtering
+      // SOT rule (2026-05-13): «Доступы» в карточке контакта = SOT видимости.
+      // Active entitlement на effective product_id (already encoded in has_access=true)
+      // → root тренинг ОБЯЗАН быть виден. Filter-allowlist ограничивает child-модули,
+      // но НЕ скрывает parent root, даже при rule_unresolved / пустом allowlist.
       if (!m.parent_module_id) {
-        const hasVisibleChildren = modules.some(
-          child => child.parent_module_id === m.id && child.has_access && isModAllowed(filter, child.id)
-        );
-        return hasVisibleChildren || isModAllowed(filter, m.id);
+        return true;
       }
 
-      // Child module: check allowlist
+      // Child module: применяем allowlist ТОЛЬКО если он непустой (явный partial scope).
+      // Пустой allowlist (rule_unresolved / synthetic_legacy без meta) → не резать child,
+      // SOT = active entitlement on parent product.
+      if (filter.allowedModuleIds.size === 0) return true;
       return isModAllowed(filter, m.id);
     });
   }, [modules, isAdminUser, tcData, tcLoading]);
