@@ -191,6 +191,7 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
 
   // Guard: если templateOverride указывает на удалённый/неактивный шаблон — не используем его.
   const overrideTemplateExists = templateOverride ? templates.some((t) => t.id === templateOverride) : true;
+  const templateOverrideDeleted = !!templateOverride && !overrideTemplateExists;
   const effectiveTemplateId = (overrideTemplateExists ? templateOverride : null) || resolved.template_id;
   const effectiveExecutorId = executorOverride || resolved.executor_id;
   const effectivePayerType: PayerType = (order?.payer_type as PayerType) || resolved.payer_type || "individual";
@@ -455,6 +456,12 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
               {templateSourceBadge}
             </Badge>
           </div>
+          {templateOverrideDeleted && (
+            <div className="rounded border border-amber-300 bg-amber-50 text-amber-800 px-2 py-1.5 text-xs flex items-start gap-1.5">
+              <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+              <span>Шаблон удалён, выберите другой. Создание документа заблокировано до сохранения нового выбора.</span>
+            </div>
+          )}
           <Select value={edTemplate || "auto"} onValueChange={setEdTemplate} disabled={!canEdit || saving}>
             <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -523,8 +530,12 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
             <Button
               size="sm"
               onClick={generate}
-              disabled={!canEdit || generating || saving || dirty || !effectiveTemplateId || !effectiveExecutorId}
-              title={dirty ? "Сначала сохраните изменения" : undefined}
+              disabled={!canEdit || generating || saving || dirty || !effectiveTemplateId || !effectiveExecutorId || templateOverrideDeleted}
+              title={
+                templateOverrideDeleted
+                  ? "Выберите новый шаблон — текущий удалён"
+                  : dirty ? "Сначала сохраните изменения" : undefined
+              }
             >
               {generating ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <FilePlus2 className="h-3 w-3 mr-1" />}
               Создать документ
