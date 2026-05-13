@@ -31,6 +31,7 @@ import {
 import { ALLOWED_DATE_FORMATS, applyDateFormat } from './dateFormatModifiers.ts';
 import { formatStructuredAddress, type FormatAddressResult } from './address-format.ts';
 import { applyCaseModifier, isCaseModifier } from './case-format.ts';
+import { buildTypedNamespaceValues, applyEntrepreneurNameWithoutQuotes, formatEntrepreneurDisplayName } from './typed-tokens-resolver.ts';
 
 export const CANONICAL_RESOLVER_VERSION = '1.0.0';
 export const CANONICAL_FEATURE_FLAG_KEY = 'documents_canonical_generation_enabled';
