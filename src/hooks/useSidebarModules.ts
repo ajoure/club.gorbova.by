@@ -25,6 +25,12 @@ export interface SidebarModule {
   /** Tariff that grants access to this content_month. */
   required_tariff_id?: string | null;
   accessible_tariffs?: string[];
+  /**
+   * True если у root-модуля нет ни активных детей, ни активных уроков —
+   * контент ещё не опубликован. См. memory:
+   * cabinet-visibility-entitlement-dependency (empty training root → явный UI-state).
+   */
+  is_empty?: boolean;
 }
 
 interface ModulesBySection {
