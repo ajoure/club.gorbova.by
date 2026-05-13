@@ -31,6 +31,7 @@ import {
 import { ALLOWED_DATE_FORMATS, applyDateFormat } from './dateFormatModifiers.ts';
 import { formatStructuredAddress, type FormatAddressResult } from './address-format.ts';
 import { applyCaseModifier, isCaseModifier } from './case-format.ts';
+import { buildTypedNamespaceValues, applyEntrepreneurNameWithoutQuotes, formatEntrepreneurDisplayName } from './typed-tokens-resolver.ts';
 
 export const CANONICAL_RESOLVER_VERSION = '1.0.0';
 export const CANONICAL_FEATURE_FLAG_KEY = 'documents_canonical_generation_enabled';
@@ -102,7 +103,7 @@ function fullNameToInitials(fullName?: string | null): string {
 function buildCustomerName(ld: any): string {
   if (!ld) return '';
   if (ld.client_type === 'individual') return ld.ind_full_name || '';
-  if (ld.client_type === 'entrepreneur') return ld.ent_name || '';
+  if (ld.client_type === 'entrepreneur') return formatEntrepreneurDisplayName(ld.ent_name || '');
   return ld.leg_name || '';
 }
 
@@ -406,6 +407,13 @@ export async function resolveCanonicalPayload(
     'payment.provider_transaction_id': '',
     'payment.external_reference':      '',
   };
+
+  // v3 — typed namespace tokens (148) + executor.signer.* (4)
+  // Заполняются ТОЛЬКО для сущностей matching subject_type, прочие = ''.
+  // ИП name — без кавычек (formatEntrepreneurDisplayName).
+  const typedValues = buildTypedNamespaceValues(customer, executor);
+  for (const [k, v] of Object.entries(typedValues)) resolverValues[k] = v;
+  applyEntrepreneurNameWithoutQuotes(resolverValues, customer, executor);
 
   // 7a. Sprint A — payment.* overlay (snapshot SOT → live fallback → empty + warning).
   // Snapshot.payment block содержит method_label/description, выработанные на момент snapshot.
