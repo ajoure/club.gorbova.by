@@ -14,7 +14,14 @@
 
 import type { PaymentChannel } from './derivePaymentChannel';
 
-export type PayerType = 'individual' | 'legal_entity';
+export type PayerType = 'individual' | 'entrepreneur' | 'legal_entity';
+
+/** RU-лейблы (SOT для UI). */
+export const PAYER_TYPE_LABELS_RU: Record<PayerType, string> = {
+  individual: 'Физлицо',
+  entrepreneur: 'ИП',
+  legal_entity: 'Юрлицо',
+};
 
 export interface DocumentScenario {
   id: string;
