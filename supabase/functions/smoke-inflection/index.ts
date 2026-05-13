@@ -48,10 +48,10 @@ Deno.serve(async (req) => {
       error: (result as any).error,
       file_path: (result as any).file_path,
       document_number: (result as any).document_number,
-      warnings: payload.warnings,
-      resolved_tokens: payload.resolved_tokens,
-      template_tokens: payload.template_tokens,
-      aliases: (payload as any).aliases,
+      warnings: payload?.warnings,
+      resolved_tokens: payload?.resolved_tokens,
+      template_tokens: payload?.template_tokens,
+      aliases: payload?.aliases,
     }, null, 2), { headers: { ...cors, 'Content-Type': 'application/json' } });
   } catch (e: any) {
     return new Response(JSON.stringify({ error: String(e?.message || e), stack: e?.stack }), { status: 500, headers: cors });
