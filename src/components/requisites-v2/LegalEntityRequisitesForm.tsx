@@ -305,6 +305,81 @@ export function LegalEntityRequisitesForm({
           )}
         />
 
+        {showIpSignerBlock && (
+          <div className="rounded-md border border-border/60 bg-muted/20 p-4 space-y-4">
+            <div>
+              <div className="text-sm font-medium">
+                {prefix} Руководитель / Подписант
+              </div>
+              <FormDescription className="mt-1">
+                Если оставить поля пустыми — в документах подставятся данные
+                самого ИП. Заполните, если документ подписывает представитель
+                по доверенности.
+              </FormDescription>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <FormField
+                control={form.control}
+                name="ent_director_position"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{prefix} Руководитель: Должность</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Индивидуальный предприниматель" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="ent_director_full_name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{prefix} Руководитель: ФИО</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder={ipDefaultFullName || "Иванов Иван Иванович"}
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="ent_director_short_name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{prefix} Руководитель: ФИО кратко</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder={ipDefaultShortName || "И. И. Иванов"}
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="ent_acts_on_basis_override"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{prefix} Руководитель: Действует на основании</FormLabel>
+                    <FormControl>
+                      <Input placeholder={ipDefaultActs} {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+          </div>
+        )}
+
         <div className="grid gap-4 md:grid-cols-2">
           <FormField
             control={form.control}
