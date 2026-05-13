@@ -120,6 +120,7 @@ export function OfferDocumentScenariosCard({ value, onChange }: Props) {
           .select('id, name, is_active, current_version_id, template_status')
           .eq('is_active', true)
           .eq('template_status', 'active')
+          .is('deleted_at', null)
           .not('current_version_id', 'is', null)
           .order('name', { ascending: true }),
         supabase
