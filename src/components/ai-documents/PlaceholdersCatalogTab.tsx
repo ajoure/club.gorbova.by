@@ -314,7 +314,7 @@ export function PlaceholdersCatalogTab() {
                 <TableBody>
                   {filtered.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-8">
+                      <TableCell colSpan={9} className="text-center text-sm text-muted-foreground py-8">
                         Ничего не найдено
                       </TableCell>
                     </TableRow>
@@ -369,6 +369,11 @@ export function PlaceholdersCatalogTab() {
                                 settings={settings}
                                 onChange={(patch) => updateRowSettings(t.id, patch)}
                               />
+                            </TableCell>
+                            <TableCell className="py-2 text-xs text-foreground/80">
+                              {t.example_value
+                                ? <span className="italic">{t.example_value}</span>
+                                : <span className="text-muted-foreground/60 italic">— нет примера —</span>}
                             </TableCell>
                             <TableCell className="py-2">
                               <code className="text-[11px] text-foreground/90 break-all font-mono">
