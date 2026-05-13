@@ -17,7 +17,7 @@ import {
 
 const customerInd = {
   client_type: "individual",
-  full_name: "Иванов Иван Иванович",
+  ind_full_name: "Иванов Иван Иванович",
   ind_personal_number: "1234567A001PB1",
   ind_passport_series: "MP",
   ind_passport_number: "1234567",
@@ -37,9 +37,9 @@ const customerLeg = {
   leg_short_name: "Ромашка",
   leg_unp: "192345678",
   leg_address: "г. Минск, пр. Победителей, д. 1",
-  director_full_name: "Петров Петр Петрович",
-  director_position: "Директор",
-  acts_on_basis: "Устава",
+  leg_director_name: "Петров Петр Петрович",
+  leg_director_position: "Директор",
+  leg_acts_on_basis: "Устава",
   bank_account: "BY00ALFA11111111111111111111",
   bank_name: "ОАО Альфа-Банк",
   bank_code: "ALFABY2X",
@@ -74,7 +74,7 @@ const customerEntWithOverride = {
 const executorLeg = {
   subject_type: "legal_entity",
   org_form: "ООО",
-  name: 'ООО "Горбова и Партнёры"',
+  full_name: 'ООО "Горбова и Партнёры"',
   short_name: "Горбова и Партнёры",
   unp: "192987654",
   legal_address: "г. Минск, ул. Сурганова, д. 28",
