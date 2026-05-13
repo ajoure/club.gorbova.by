@@ -328,11 +328,17 @@ async function resolveBonusScopeRules(
 
   // Batch query: map module product_ids → training_module_ids
   let moduleProductToTrainingIds = new Map<string, string[]>();
+  // Fallback: hpid может ошибочно содержать training_module_id (root) вместо product_id.
+  // См. memory: hpids-semantics-canon — hpids ДОЛЖНЫ быть product_id.
+  // Этот fallback — временный костыль до миграции данных (Этап B2).
+  const trainingRootDirectIds = new Set<string>();
   if (allModuleProductIds.size > 0) {
+    const idList = [...allModuleProductIds];
+
     const { data: mappedModules } = await supabaseClient
       .from("training_modules")
       .select("id, product_id")
-      .in("product_id", [...allModuleProductIds])
+      .in("product_id", idList)
       .eq("is_active", true);
 
     (mappedModules || []).forEach(m => {
@@ -341,6 +347,36 @@ async function resolveBonusScopeRules(
       existing.push(m.id);
       moduleProductToTrainingIds.set(m.product_id, existing);
     });
+
+    // Те id из hpids, которые не нашлись как product_id, проверяем как training_module_id (root).
+    const unresolved = idList.filter(id => !moduleProductToTrainingIds.has(id));
+    if (unresolved.length > 0) {
+      const { data: rootMatches } = await supabaseClient
+        .from("training_modules")
+        .select("id, product_id, parent_module_id, is_active")
+        .in("id", unresolved)
+        .is("parent_module_id", null)
+        .eq("is_active", true);
+
+      (rootMatches || []).forEach(m => {
+        // Используем сам training_module_id как allowed_module_id напрямую.
+        moduleProductToTrainingIds.set(m.id, [m.id]);
+        trainingRootDirectIds.add(m.id);
+      });
+
+      if (trainingRootDirectIds.size > 0 && typeof console !== "undefined") {
+        // Warn-лог для миграционного аудита (B2). Не шумим в production без debug-флага.
+        try {
+          if (typeof localStorage !== "undefined" &&
+              localStorage.getItem("debug.training_content") === "1") {
+            console.warn("[training_content] hpids_training_id_fallback_used", {
+              count: trainingRootDirectIds.size,
+              ids: [...trainingRootDirectIds],
+            });
+          }
+        } catch { /* SSR/no-window */ }
+      }
+    }
   }
 
   // Find root training modules for all relevant product_ids
