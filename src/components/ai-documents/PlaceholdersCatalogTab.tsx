@@ -497,7 +497,8 @@ export function PlaceholdersCatalogTab() {
                           )}
                         </Fragment>
                       );
-                    })
+                      }),
+                    ])
                   )}
                 </TableBody>
               </Table>
