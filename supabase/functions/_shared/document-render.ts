@@ -805,7 +805,13 @@ export async function generateCanonicalDocument(
     const renderData: Record<string, string> = { ...payload.resolved_tokens };
     const aliases: Record<string, string> = (payload as any).aliases || {};
     for (const [alias, canonical] of Object.entries(aliases)) {
-      if (!(alias in renderData)) renderData[alias] = payload.resolved_tokens[canonical] ?? '';
+      const v = payload.resolved_tokens[canonical] ?? '';
+      if (!(alias in renderData)) renderData[alias] = v;
+      // Also expose alias under unbracketed key (e.g. `payer.name`) so that
+      // `payer.name|case=...` modifier loop and any token matchers that look
+      // up by base key (without `{{...}}`) resolve to the canonical value.
+      const stripped = alias.replace(/^\{\{|\}\}$/g, '');
+      if (stripped && !(stripped in renderData)) renderData[stripped] = v;
     }
     // ── Date format modifiers (legacy + canonical syntax) ───────────────────
     // For every known date-bearing token, populate {{<key>|format=<name>}}
