@@ -360,7 +360,7 @@ export function ProductDocumentsOverview({ productId }: Props) {
     let cancelled = false;
     (async () => {
       const [tpl, exe] = await Promise.all([
-        supabase.from("document_templates").select("id, name, code, is_active").eq("is_active", true),
+        supabase.from("document_templates").select("id, name, code, is_active").eq("is_active", true).is("deleted_at", null),
         supabase.from("executors").select("id, short_name, full_name, is_default, is_active").eq("is_active", true),
       ]);
       if (cancelled) return;
