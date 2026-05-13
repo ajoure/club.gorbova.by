@@ -280,6 +280,7 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
       supabase
         .from("document_templates")
         .select("id, name, description, template_status, current_version_id, created_at")
+        .is("deleted_at", null)
         .order("created_at", { ascending: false }),
       supabase
         .from("document_template_versions")
