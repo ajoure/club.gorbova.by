@@ -530,8 +530,12 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
             <Button
               size="sm"
               onClick={generate}
-              disabled={!canEdit || generating || saving || dirty || !effectiveTemplateId || !effectiveExecutorId}
-              title={dirty ? "Сначала сохраните изменения" : undefined}
+              disabled={!canEdit || generating || saving || dirty || !effectiveTemplateId || !effectiveExecutorId || templateOverrideDeleted}
+              title={
+                templateOverrideDeleted
+                  ? "Выберите новый шаблон — текущий удалён"
+                  : dirty ? "Сначала сохраните изменения" : undefined
+              }
             >
               {generating ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <FilePlus2 className="h-3 w-3 mr-1" />}
               Создать документ
