@@ -194,12 +194,28 @@ export async function buildPriorPurchaseCache(
   const uniqueUsers = [...new Set(userIds.filter((u): u is string => !!u))];
   const uniqueProducts = [...new Set(productIds.filter((p): p is string => !!p))];
 
+  // Priority order (highest → lowest):
+  //   1. direct + base_tariff_purchase / historical_tariff_id present (full parent purchase)
+  //   2. direct + module_only_standalone (module-of-parent standalone purchase)
+  //   3. module_list_mapped (Channel 2 fallback)
+  // INV-PHANTOM-PARENT-V1: when a user has BOTH a base purchase and a module_only_standalone
+  // purchase recorded against the same parent product, the base purchase MUST win — otherwise
+  // the entitlement is enriched with module_scope_only/historical_module_product_ids that
+  // point outside the parent's training subtree, producing a phantom parent-entitlement that
+  // hides the parent course from "Моя библиотека".
+  const priorityRank = (info: PriorPurchaseInfo): number => {
+    if (info.match_type === 'direct') {
+      const isBase = info.historical_purchase_type === 'base_tariff_purchase'
+        || (!!info.historical_tariff_id && info.historical_purchase_type !== 'module_only_standalone');
+      return isBase ? 3 : 2;
+    }
+    return 1; // module_list_mapped
+  };
   const recordInfo = (userId: string, productId: string, info: PriorPurchaseInfo) => {
     if (!cache.has(userId)) cache.set(userId, new Map());
     const userMap = cache.get(userId)!;
     const existing = userMap.get(productId);
-    // Prefer 'direct' over 'module_list_mapped' evidence; otherwise keep first-seen.
-    if (!existing || (existing.match_type === 'module_list_mapped' && info.match_type === 'direct')) {
+    if (!existing || priorityRank(info) > priorityRank(existing)) {
       userMap.set(productId, info);
     }
   };
