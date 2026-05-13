@@ -1,85 +1,120 @@
-да, согласен, с учетом правок:
+Дополнение к плану:
 
-1. До Execute обязательно приложить dry-run таблицу по 3 sub_id: bucket, age_hours, pull_result, planned_action.
-2. Execute делать только по строкам, где после pull provider всё ещё expired/redirecting/dead.
-3. В audit обязательно писать:
-  - sub_id
-  - provider_subscription_id
-  - before
-  - after
-  - pull_result
-  - bucket
-  - age_hours
-4. Финальный verify:
-  - SOT count = 0
-  - отдельно подтвердить, что access_end_at, entitlements, Telegram-доступы не менялись.
-5. Если хотя бы одна подписка после pull окажется живой — её не закрывать, а вынести отдельной строкой pull_alive_skip.
+Перед execute обязательно проверить, что `previous_status` внутри `meta.inv_phantom_parent_v1` реально читается именно по пути:
+
+meta->'inv_phantom_parent_v1'->>'previous_status'
+
+Если в части строк ключ отсутствует, не пропускать их молча — вывести в dry-run как `missing_previous_status` и не менять до ручного решения.
+
+Также после data-revert обязательно сделать React Query/cache invalidation или явно указать пользователю обновить страницу/перелогиниться, иначе UI может продолжить показывать старое состояние.
 
 &nbsp;
 
-## План: INV-22 разбор 3 зомби-подписок
+План: восстановить ошибочно деактивированные entitlements (INV-PHANTOM-PARENT-V1) и починить resolver видимости тренингов.
 
-### Контекст
+## 1. Проблема
 
-Детектор подтверждён через `inv22_subscription_desync` SOT-запрос. Найдено ровно 3 строки, совпадают с алертом:
+- INV-PHANTOM-PARENT-V1 был трактован неверно: parent-entitlements, выданные через BUSINESS как бонусное восстановление доступа к ранее купленным продуктам/модулям, ошибочно классифицированы как «фантомные» и переведены в `status='superseded'` batch-ем `INV-PHANTOM-PARENT-V1-2026-05-13` (23 строки).
+- Эти строки должны оставаться `active` и управлять видимостью в «Моей библиотеке».
+- По Алене Богинской (`lena_times@mail.ru`) ошибочно отключена строка root-доступа `Ценный бухгалтер | 1 ступень 2.0`, что в текущей UI-логике может приводить к исчезновению root-карточки тренинга при сохранённом доступе к standalone-модулям «Маркетплейсы» и «Строительство».
 
+## 2. Source of Truth
 
-| sub_id (short) | provider_sub     | bucket                    | age_hours | access_end_at |
-| -------------- | ---------------- | ------------------------- | --------- | ------------- |
-| 727c05bf…      | sbs_d522c09a6105 | never_charged_expired     | 1675ч     | 2026-05-30    |
-| 555a69bb…      | sbs_9e596dfe6f8c | never_charged_expired     | 236ч      | 2026-05-27    |
-| b1676866…      | sbs_cf5b0c60c895 | never_charged_redirecting | 159ч      | 2026-06-05    |
+- SOT видимости в «Моей библиотеке» = карточка контакта → вкладка «Доступы».
+- Если active entitlement есть в «Доступах» (status='active', expires_at>now() или NULL) — соответствующий продукт/тренинг ОБЯЗАН отображаться пользователю.
+- Никакая комбинация `meta.scope_resolution_mode`, `historical_module_product_ids`, `inv_phantom_parent_v1` не должна скрывать сам parent product.
 
+## 3. Диагностика (факты)
 
-Все три подходят под канон `mem://commercial-logic/subscriptions/inv22-desync-resolution`:
+- Профиль: `lena_times@mail.ru` → Алена Богинская, `user_id=78123ed5-3a00-4982-87cf-72de6c0cdb8c`.
+- Active entitlements сохранены: Gorbova Club, Бухгалтерия как бизнес, ЗАКРОЙ ГОД, Подоходный налог с физлиц, Деньги BY 1 тариф, ЦБ 2 ступень 3 поток, ЦБ 1 ступень 2.0 модуль Маркетплейсы (standalone), ЦБ 1 ступень 2.0 модуль Строительство (standalone).
+- Superseded ошибочно: entitlement `c56c29d6-631a-4d9d-9e3f-1e63d2686c20` на product `7101ed3c… (Ценный бухгалтер | 1 ступень 2.0)`, `previous_status=active`, `expires_at=2026-05-16 20:59:59+00`, `meta.inv_phantom_parent_v1.batch=INV-PHANTOM-PARENT-V1-2026-05-13`.
+- По batch-у всего 23 строки superseded, 23 уникальных пользователя.
+- Текущий `useSidebarModules` строит видимость root тренинга строго по active `entitlements.product_id` для root-продукта. Standalone-модульные entitlements с другим `product_id` НЕ показывают родительский тренинг ЦБ-1.
 
-- два `expired` — без grace;
-- один `redirecting` с возрастом **159ч > 48ч** — grace пройден, eligible.
+## 4. Изменяемые компоненты
 
-### Действия (Diagnose → Plan → Dry run → Execute → Verify)
+- Данные: только `public.entitlements` — обратное обновление статуса для строк с `meta.inv_phantom_parent_v1.batch='INV-PHANTOM-PARENT-V1-2026-05-13'`.
+- Resolver: `src/hooks/useSidebarModules.ts` и `src/hooks/useTrainingContentRules.ts` — не скрывать parent product при наличии active entitlement, корректно учитывать `historical_module_product_ids` как ограничитель/расширитель списка модулей, не как kill-switch для root.
+- CREATE-guard: `supabase/functions/_shared/product-access-grants.ts` (логика `inv_phantom_parent_v1:hpids_outside_target`) — пересмотреть: BUSINESS-выданный bonus parent с hpids вне subtree это легитимный сценарий, его нельзя блокировать как phantom.
+- Memory: `mem://architecture/access-control/phantom-parent-entitlement-guard` обновить (правило отменено/переписано), `mem://architecture/access-control/cabinet-visibility-entitlement-dependency` дополнить SOT-формулировкой про карточку «Доступы».
 
-**1. Dry-run (read-only)**  
-Вызвать `system-health-inv22-plan` (super_admin JWT) на все 3 `sub_id`. Зафиксировать в отчёте:
+## 5. Что НЕ будет изменено
 
-- `action` per row (ожидается `pull_then_close` для всех трёх),
-- `bepaid-get-subscription-details` pull-результат каждой подписки,
-- если bePaid после pull вернёт живую подписку — НИЧЕГО не делаем по этой строке (re-read правило).
+- `subscriptions_v2` — не трогать.
+- `provider_subscriptions`, bePaid — не трогать.
+- `access_end_at` ни в подписках, ни в entitlements — не менять.
+- Telegram (`telegram_grant_access`, `telegram_manual_access`, queues) — не трогать.
+- Новые entitlements не создавать.
+- Существующие entitlements не удалять и не сокращать срок.
+- Только восстановить ошибочно отключённые + исправить resolver.
 
-**2. Execute (только по тем, кто после pull всё ещё мёртв)**  
-Вызвать `system-health-inv22-resolve` с `confirm: true` и явным списком `subscription_ids`. На каждую строку:
+## 6. Dry-run
 
-- `subscriptions_v2`: `auto_renew=false`, `status='canceled'`, `canceled_at=now()`, `cancel_reason='inv22_provider_dead_local_active'`.
-- `provider_subscriptions.state` — НЕ перезаписываем (provider = SoT).
-- `access_end_at` и Telegram-доступ — НЕ трогаем (отдельное решение владельца).
-- Audit: `inv22.repair_provider_dead_local_active` с `before/after/pull_result/bucket/age_hours`.
+1. Read-only выборка по batch:
+  - `select * from entitlements where meta->'inv_phantom_parent_v1'->>'batch'='INV-PHANTOM-PARENT-V1-2026-05-13'` → 23 строки;
+  - для каждой строки: `previous_status`, `expires_at`, `user_id`, email, `product_id`, `product_name`, `historical_module_product_ids`, текущие active entitlements того же user_id;
+  - кандидаты на revert: `previous_status='active'` AND `expires_at > now()`;
+  - не-кандидаты (если есть): причина по каждой (expired до даты execute, previous_status не active, продукт удалён и т.п.).
+2. Read-only resolver-симуляция по каждому затронутому пользователю:
+  - до revert: какие тренинги видны;
+  - после revert: какие тренинги станут видны;
+  - проверка, что standalone-модули не теряют доступ.
+3. Сохранить артефакт `/mnt/documents/inv_phantom_parent_v1_revert_dryrun.md` со списком 23 строк и решением по каждой.
 
-**3. Verify (DoD)**  
-Повторить SOT-запрос:
+STOP-guards:
 
-```sql
-SELECT count(*) FROM subscriptions_v2 s
-JOIN provider_subscriptions ps ON ps.subscription_v2_id = s.id
-WHERE s.status='active' AND s.auto_renew=true AND s.access_end_at > now()
-  AND (ps.state IN ('expired','redirecting')
-       OR (ps.state='active' AND ps.next_charge_at IS NULL AND ps.last_charge_at IS NULL));
-```
+- Если кандидатов > 23 — стоп, расследование расширения batch.
+- Если хоть одна строка имеет `expires_at <= now()` — не возвращать в active, фиксировать причиной в отчёте.
+- Если revert по строке вернёт user-у доступ к продукту, на который у него никогда не было ни orders_v2.paid, ни business-grant audit — стоп, отдельное обсуждение.
+- Если есть конфликт с другим active entitlement по тому же `(user_id, product_id)` — мерж по `GREATEST(expires_at)`, никогда не уменьшать.
 
-Должен вернуть `0` или меньше с обоснованием по каждой оставшейся (`pull_alive` / `skip_too_fresh`).
+## 7. Execute
 
-### Запрещено (per канон)
+1. Migration update по `entitlements`:
+  - WHERE `meta->'inv_phantom_parent_v1'->>'batch'='INV-PHANTOM-PARENT-V1-2026-05-13'`
+   AND `status='superseded'`
+   AND `(meta->'inv_phantom_parent_v1'->>'previous_status')='active'`
+   AND `(expires_at IS NULL OR expires_at > now())`;
+  - SET `status='active'`,
+  `meta = meta || jsonb_build_object('reverted_inv_phantom_parent_v1', true, 'reverted_at', now(), 'revert_reason', 'business_bonus_parent_misclassified_as_phantom_2026_05_13')`;
+  - audit_logs по каждой строке: `action='entitlement.reverted.inv_phantom_parent_v1'`, `actor_type='system'`, `actor_label='inv_phantom_parent_v1_revert'`, `target_user_id`, `meta` со ссылкой на batch и `entitlement_id`.
+2. Resolver-fix (frontend, презентационный слой):
+  - В `useSidebarModules`: при `effectiveProductId != null` и наличии active entitlement на этот product_id — root всегда `has_access=true`, без зависимости от `synthetic_legacy`/`rule_unresolved` фильтров.
+  - В `resolveTrainingContentFilter`: для строк типа `module_scope_only` с непустым `historical_module_product_ids` — фильтр работает только как allowlist child-модулей; root-модуль НЕ исключается, если active entitlement существует на parent product.
+  - Standalone module-products продолжают отображаться как отдельные карточки, не глушат parent.
+3. CREATE-guard в `product-access-grants.ts`:
+  - Пересмотреть кейс `inv_phantom_parent_v1:hpids_outside_target` так, чтобы он не блокировал business-bonus parent. Минимально — снять блок INSERT, оставить аудит-метку, без отказа.
 
-- Прямые `UPDATE provider_subscriptions SET state=...`.
-- Авто-revoke Telegram / entitlements / `access_end_at`.
-- Bulk-execute без `confirm:true` или без явного списка `subscription_ids`.
+## 8. Verify / DoD
 
-### Что не входит в план
+- 23 ошибочно superseded entitlements: либо восстановлены в `active` с пометкой `reverted_inv_phantom_parent_v1=true`, либо по каждому в отчёте указана конкретная причина, почему revert не выполнен.
+- По Алене Богинской:
+  - строка ЦБ-1 root `c56c29d6-…` снова `active`;
+  - в карточке контакта → «Доступы» строка ЦБ-1 видна как «Активен»;
+  - в «Моей библиотеке» виден тренинг `Ценный бухгалтер | 1 ступень 2.0` и его модули по правилам resolver;
+  - модули `Маркетплейсы` и `Строительство` остаются видимы;
+  - остальные active entitlements не изменились;
+  - audit_logs содержит revert-запись.
+- По «ЗАКРОЙ ГОД»:
+  - active entitlement в «Доступах» → тренинг виден в библиотеке (proof по конкретному пользователю с active entitlement).
+- По всем продуктам с `training_modules`:
+  - инвариант: для каждой пары `(user_id, product_id)` с active entitlement и существующим training root → root обязан проходить resolver visibility.
+  - read-only sweep после execute: `remaining_broken_cases (active_entitlement AND invisible_training_root) = 0`.
+- Memory обновлена: правило про phantom-parent отменено/переписано, SOT «карточка Доступы = SOT видимости библиотеки» закреплён.
+- Backlog `inv_phantom_parent_permanent_detector` переоформлен: детектор не должен помечать business-bonus parent как phantom.
 
-- Никаких code/schema-изменений: вся инфраструктура (`system-health-inv22-plan`, `system-health-inv22-resolve`, `Inv22ResolverPanel`) уже задеплоена и подтверждена в memory.
-- Это разовый operational run строго по существующему protocol.
+## 9. Риски и зависимости
 
-### Отчёт по итогам
+- Риск: для какой-то строки revert вернёт доступ к продукту, к которому у пользователя нет легитимного основания. Mitigation: STOP-guard по orders_v2/business audit.
+- Риск: resolver-fix может расширить видимость у пользователей, у которых остался legacy active entitlement без orders_v2 paid. Mitigation: resolver не выдаёт доступ, он только не скрывает то, что уже есть в `entitlements`. SOT остаётся `entitlements`.
+- Зависимости: фронтенд-кэш React Query (`["sidebar-modules", ...]`, `["active-training-content-rules", ...]`) — потребует invalidation после revert.
 
-- Список 3 sub_id с outcome (`repaired` / `pull_alive` / `skip`).
-- Запросы audit_logs по `inv22.repair_provider_dead_local_active`.
-- Финальный count = 0 (или объяснение остатка).
-- Подтверждение, что `access_end_at` и Telegram у этих 3 пользователей не изменились.
+## 10. Порядок исполнения (после approval)
+
+1. Сформировать dry-run артефакт по 23 строкам.
+2. Применить data-revert миграцию.
+3. Применить resolver-fix во фронтенде + снять блок CREATE-guard для business-bonus.
+4. Verify по Алене, по «ЗАКРОЙ ГОД», по sweep всех продуктов с training_modules.
+5. Обновить memory + backlog detector.
+6. Финальный отчёт «Отчет о выполнении».
