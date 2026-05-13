@@ -1,9 +1,8 @@
-// TEMPORARY smoke harness: runs morphology smoke without preview JWT.
-// DELETE after smoke is closed.
+// TEMPORARY smoke harness — DELETE after smoke is closed.
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import * as DR from '../_shared/document-render.ts';
-const { resolveCanonicalPayload, generateCanonicalDocument } = DR as any;
+const { generateCanonicalDocument } = DR as any;
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -14,44 +13,34 @@ const cors = {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: cors });
   try {
-    // TEMPORARY: ungated; function is delete-after-smoke. No persistence beyond ai_generated_documents row that will be cleaned.
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
     const body = await req.json();
-    // DEBUG: probe template lookup
-    const probe = await supabase.from('document_templates').select('id, code, is_active, current_version_id, template_path').eq('id', body.template_id).maybeSingle();
-    if (body.debug === 'probe') {
-      return new Response(JSON.stringify({ probe, env_url: Deno.env.get('SUPABASE_URL'), exports: Object.keys(DR), src_len: (DR as any)?.__SRC_LEN ?? null }, null, 2), { headers: { ...cors, 'Content-Type': 'application/json' } });
+    if (body.action === 'sign') {
+      const { data: signed } = await supabase.storage.from(body.bucket || 'documents').createSignedUrl(body.path, 3600);
+      return new Response(JSON.stringify({ signed_url: signed?.signedUrl }), { headers: { ...cors, 'Content-Type': 'application/json' } });
     }
     const input = {
       template_id: body.template_id,
       template_version_id: body.template_version_id || null,
       context_type: body.context_type || null,
       context_id: body.context_id || null,
-      executor_id: body.executor_id || null,
-      legal_details_id: body.legal_details_id || null,
-      signer_link_id: body.signer_link_id || null,
     };
-    const profileId = body.profile_id || '00000000-0000-0000-0000-000000000000';
-    if (body.mode === 'preview') {
-      const payload = await resolveCanonicalPayload(supabase, input as any);
-      return new Response(JSON.stringify({ payload }, null, 2), { headers: { ...cors, 'Content-Type': 'application/json' } });
-    }
     const result = await generateCanonicalDocument(supabase, input as any, {
-      profileId,
+      profileId: body.profile_id,
       userId: body.user_id || '05cd3754-d589-4d90-97d1-89ba2bee610b',
-      idempotencyKey: `smoke:${input.template_id}:${input.context_id}:${Date.now()}`,
+      idempotencyKeyOverride: `smoke:${input.template_id}:${input.context_id}:${Date.now()}`,
       enforceFeatureFlag: false,
     } as any);
     const payload = (result as any).payload;
     return new Response(JSON.stringify({
       success: result.success,
       error: (result as any).error,
-      file_path: (result as any).file_path,
+      document_id: (result as any).document_id,
       document_number: (result as any).document_number,
+      storage_path: (result as any).storage_path,
+      docx_check: (result as any).docx_check,
+      reused: (result as any).reused,
       warnings: payload?.warnings,
-      resolved_tokens: payload?.resolved_tokens,
-      template_tokens: payload?.template_tokens,
-      aliases: payload?.aliases,
     }, null, 2), { headers: { ...cors, 'Content-Type': 'application/json' } });
   } catch (e: any) {
     return new Response(JSON.stringify({ error: String(e?.message || e), stack: e?.stack }), { status: 500, headers: cors });
