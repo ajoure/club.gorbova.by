@@ -2587,16 +2587,63 @@ Deno.serve(async (req) => {
           }
 
           // 3) legacy fallback by user+product (no status filter — rebill may hit after expiry)
+          // PATCH DEAL-LINKAGE-ROOT-FIXES-2026-05: при наличии bepaid sbs у webhook'а
+          // запрещён "слепой" fallback по user+product. Кандидат обязан иметь
+          // тот же bepaid_subscription_id (provider_subscriptions или meta), иначе
+          // получим linkage-дефект как у Ларисы (старая sbs продлевает новую sub).
           if (!grantedSubscriptionV2Id && linkOrder.user_id && linkOrder.product_id) {
             const { data: subByUserProduct } = await supabase
               .from('subscriptions_v2')
-              .select('id')
+              .select('id, meta')
               .eq('user_id', linkOrder.user_id)
               .eq('product_id', linkOrder.product_id)
               .order('created_at', { ascending: false })
               .limit(1)
               .maybeSingle();
-            if (subByUserProduct) grantedSubscriptionV2Id = subByUserProduct.id;
+
+            if (subByUserProduct) {
+              if (subscriptionId) {
+                // Требуется явный sbs match (provider_subscriptions ИЛИ meta.bepaid_subscription_id).
+                const { data: provLink } = await supabase
+                  .from('provider_subscriptions')
+                  .select('subscription_v2_id')
+                  .eq('provider', 'bepaid')
+                  .eq('provider_subscription_id', String(subscriptionId))
+                  .eq('subscription_v2_id', subByUserProduct.id)
+                  .maybeSingle();
+
+                const metaSbs = ((subByUserProduct.meta as any) || {}).bepaid_subscription_id || null;
+                const metaMatch = metaSbs && String(metaSbs) === String(subscriptionId);
+
+                if (provLink || metaMatch) {
+                  grantedSubscriptionV2Id = subByUserProduct.id;
+                } else {
+                  console.warn('[WEBHOOK-LINK-ORDER] sbs_mismatch — skip user+product fallback', {
+                    webhook_sbs: subscriptionId,
+                    candidate_sub_id: subByUserProduct.id,
+                    candidate_meta_sbs: metaSbs,
+                  });
+                  await supabase.from('audit_logs').insert({
+                    actor_user_id: null,
+                    actor_type: 'system',
+                    actor_label: 'bepaid-webhook',
+                    action: 'webhook.skip_extend_bepaid_subscription_mismatch',
+                    meta: {
+                      webhook_subscription_id: String(subscriptionId),
+                      order_id: linkOrder.id,
+                      user_id: linkOrder.user_id,
+                      product_id: linkOrder.product_id,
+                      candidate_subscription_v2_id: subByUserProduct.id,
+                      candidate_meta_bepaid_sbs: metaSbs,
+                      reason: 'user+product fallback denied — bepaid_subscription_id mismatch',
+                    },
+                  });
+                }
+              } else {
+                // Нет sbs у webhook (one-time / non-recurrent path) — старое поведение.
+                grantedSubscriptionV2Id = subByUserProduct.id;
+              }
+            }
           }
 
           if (grantedSubscriptionV2Id) {
