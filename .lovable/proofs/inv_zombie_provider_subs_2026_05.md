@@ -92,9 +92,66 @@ provider_subs_active_total       = 179
 ## Snapshot ПОСЛЕ repair (заполняется по факту)
 
 ```
-zombie_total_after               = ?
-canceled_by_repair               = ?
-failed_to_cancel_provider        = ?
-manual_review                    = ?
-healthy_active_after             = 152 (must remain unchanged)
+zombie_total_after               = не считался массово на этом этапе
+canceled_by_repair               = 1 (только Вероника Матук)
+failed_to_cancel_provider        = 0 после PATCH cancel_reason
+manual_review                    = 0 по строке Вероники
+healthy_active_after             = не менялся массово
 ```
+
+## Execute 3.1 — только Вероника Матук (2026-05-14)
+
+### Diagnose / Dry-run
+
+- До execute: `provider_subscriptions.a8999dac-4f65-4693-9b2e-12482732409a` → `state='active'`, `subscription_v2_id=NULL`, `next_charge_at=2026-06-10`, `last_charge_at=NULL`.
+- Локальная подписка `subscriptions_v2.22576f44-0921-433d-95b3-ae58c9c57522` → `status='expired'`, `auto_renew=false`, `access_end_at=2026-05-11 12:19:54+00`.
+- Dry-run функции вернул по одной строке: `action='cancel_provider_then_local'`, `bepaid_provider_state='active'`, `bepaid_response_status=200`.
+
+### Execute
+
+- Первый execute показал safety-failure от bePaid: `422 Cancel reason can't be blank`; локальное состояние НЕ менялось.
+- Исправлена edge function `admin-repair-zombie-provider-subs`: передаёт `cancel_reason='cancelled_by_admin'` и использует общий strict loader bePaid-кредов с корректной сигнатурой.
+- Повторный execute только по `a8999dac-4f65-4693-9b2e-12482732409a` вернул:
+  - `ok=true`
+  - `processed=1`
+  - `action='cancel_provider_then_local'`
+  - `before_state='active'`
+  - `after_state='canceled'`
+  - `reason_class='local_expired_provider_active_2026_05'`
+
+### Verify
+
+- `provider_subscriptions.a8999dac-4f65-4693-9b2e-12482732409a`:
+  - `state='canceled'`
+  - `meta.cancel_reason='local_expired_provider_active_2026_05'`
+  - `meta.repair_batch='REPAIR-BEPAID-ACCESS-2026-05'`
+  - `meta.bepaid_cancel_status=200`
+- `subscriptions_v2.22576f44-0921-433d-95b3-ae58c9c57522` осталась без изменений по доступу:
+  - `status='expired'`
+  - `auto_renew=false`
+  - `access_end_at=2026-05-11 12:19:54+00`
+- Audit создан:
+  - `action='provider_subscription.canceled.zombie_repair_2026_05'`
+  - `actor_type='system'`
+  - `actor_user_id=NULL`
+  - `actor_label='inv_zombie_repair_2026_05'`
+  - `before_state='active'`, `after_state='canceled'`, `bepaid_cancel_status=200`
+- Остаток zombie-записей по Веронике: `0`.
+- Контроль неизменности связанных данных Вероники после execute:
+  - `payments_v2`: `row_count=15`, checksum `1227ac5f894119cef630f52bfe89b04b`
+  - `orders_v2`: `row_count=11`, checksum `bef04151c4e2629fef6852f15609da0e`
+  - `entitlements`: `row_count=4`, checksum `45053b2139eda2290205c494c510655b`
+  - `subscriptions_v2_access`: `row_count=3`, checksum `a0270a489a130a003c803ed18829d361`
+- UI proof — админ-карточка Вероники:
+  - активной показывается только «Бухгалтерия как бизнес — Ежемесячный доступ»;
+  - Gorbova Club не отображается как активная подписка;
+  - июньский `next_charge_at` по Gorbova Club не показывается.
+- UI proof — кабинет Вероники `/purchases`:
+  - в блоке «Активные подписки» видны только «Бухгалтерия как бизнес» и «ЗАКРОЙ ГОД»;
+  - Gorbova Club виден только в истории платежей;
+  - текста о продлении/списании Gorbova Club в июне нет.
+
+### Scope guard
+
+- Массовый repair по остальным кандидатам НЕ запускался.
+- `payments_v2`, `orders_v2`, `entitlements`, `subscriptions_v2.access_end_at` не изменялись repair-функцией.

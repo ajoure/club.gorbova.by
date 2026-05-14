@@ -85,13 +85,13 @@ Deno.serve(async (req) => {
     }
     const dryRun = body.dry_run === true;
 
-    const credsResult = await getBepaidCredsStrict();
+    const credsResult = await getBepaidCredsStrict(supabase);
     if (isBepaidCredsError(credsResult)) {
       return new Response(JSON.stringify({ error: 'bePaid credentials missing', detail: credsResult.error }), {
         status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-    const bepaidAuth = createBepaidAuthHeader(credsResult.shopId, credsResult.secretKey);
+    const bepaidAuth = createBepaidAuthHeader(credsResult);
 
     // Load full rows
     const { data: rows, error: loadErr } = await supabase
@@ -134,7 +134,7 @@ Deno.serve(async (req) => {
       let pullStatus = 0;
       let pullExcerpt = '';
       try {
-        const r = await fetch(`https://api.bepaid.by/v2/subscriptions/${encodeURIComponent(psId)}`, {
+        const r = await fetch(`https://api.bepaid.by/subscriptions/${encodeURIComponent(psId)}`, {
           headers: { Authorization: bepaidAuth, 'Content-Type': 'application/json' },
         });
         pullStatus = r.status;
@@ -186,9 +186,10 @@ Deno.serve(async (req) => {
           continue;
         }
         try {
-          const c = await fetch(`https://api.bepaid.by/v2/subscriptions/${encodeURIComponent(psId)}/cancel`, {
+          const c = await fetch(`https://api.bepaid.by/subscriptions/${encodeURIComponent(psId)}/cancel`, {
             method: 'POST',
             headers: { Authorization: bepaidAuth, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cancel_reason: 'cancelled_by_admin' }),
           });
           cancelStatus = c.status;
           cancelExcerpt = (await c.text()).slice(0, 400);
