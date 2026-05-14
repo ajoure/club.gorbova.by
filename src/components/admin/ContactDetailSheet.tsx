@@ -2089,8 +2089,26 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 </Card>
               )}
 
-              {/* PATCH-7: Provider-managed subscriptions (bePaid) for Admin */}
-              {contact.user_id && contactProviderSubscriptions && contactProviderSubscriptions.length > 0 && (
+              {/* PATCH-7 + REPAIR-BEPAID-ACCESS-2026-05 v3:
+                  Provider-managed subscriptions (bePaid) for Admin.
+                  Zombies (linked sv2 expired/canceled/superseded OR access_end_at < now OR sv2 missing)
+                  не рисуются как «живые подписки» — provider_subscriptions.next_charge_at для них
+                  технический desync-сигнал, а не пользовательский статус. */}
+              {(() => {
+                const allProviderSubs = contactProviderSubscriptions || [];
+                const nowMs = Date.now();
+                const isHealthyProviderSub = (sub: any) => {
+                  const sv2 = sub?.subscriptions_v2;
+                  if (!sv2) return false;
+                  if (sv2.status !== 'active') return false;
+                  if (sv2.access_end_at && new Date(sv2.access_end_at).getTime() < nowMs) return false;
+                  return true;
+                };
+                const healthyProviderSubs = allProviderSubs.filter(isHealthyProviderSub);
+                const zombieProviderSubs = allProviderSubs.filter((s: any) => !isHealthyProviderSub(s));
+                return (
+                  <>
+                    {contact.user_id && healthyProviderSubs.length > 0 && (
                 <Card className="border-blue-200 dark:border-blue-800">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-sm text-blue-600 dark:text-blue-400 flex items-center gap-2">
@@ -2100,7 +2118,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <TooltipProvider>
-                    {contactProviderSubscriptions.map((sub: any) => {
+                    {healthyProviderSubs.map((sub: any) => {
                       const productName = sub.subscriptions_v2?.products_v2?.name || 'Подписка';
                       const tariffName = sub.subscriptions_v2?.tariffs?.name;
                       const displayName = tariffName ? `${productName} — ${tariffName}` : productName;
