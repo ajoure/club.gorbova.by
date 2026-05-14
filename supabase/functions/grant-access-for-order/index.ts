@@ -802,59 +802,39 @@ Deno.serve(async (req) => {
                 })
               );
 
-            const orderMetaForFlow = ((order as any).meta || {}) as Record<string, unknown>;
-            const paymentFlowForAudit = String(
-              orderMetaForFlow.payment_flow
-              || (order as any).payment_flow
-              || ""
-            );
+            const paymentFlowForAudit = resolvePaymentFlow(order);
+
+            const auditPayload = buildSbsMismatchAuditPayload({
+              orderId,
+              productId,
+              tariffId,
+              paymentFlow: paymentFlowForAudit,
+              orderSbs,
+              primaryCandidateId: activeSub.id,
+              primaryCandidateSbs: activeSubSbs,
+              candidates: candidateSbsList,
+            });
 
             // 1) Audit с полным контекстом (все кандидаты).
             await supabase.from("audit_logs").insert({
-              action: "grant-access-for-order.skip_extend_bepaid_subscription_mismatch.no_new_sub",
-              actor_type: "system",
-              actor_user_id: null,
-              actor_label: "grant-access-for-order",
+              ...auditPayload,
               target_user_id: userId,
-              meta: {
-                order_id: orderId,
-                product_id: productId,
-                tariff_id: tariffId,
-                payment_flow: paymentFlowForAudit,
-                order_bepaid_subscription_id: orderSbs,
-                primary_candidate_subscription_v2_id: activeSub.id,
-                primary_candidate_bepaid_sbs: activeSubSbs,
-                candidate_sub_ids: candidateIds,
-                candidate_sbs_list: candidateSbsList,
-                matched_by_tariff: true,
-                matched_by_sbs: false,
-                decision: "no_new_sub_chain",
-                reason: "bePaid subscription_id mismatch — refusing to extend OR create-new via foreign rebill",
-              },
             });
 
             // 2) Merge orders_v2.meta (manual_review).
             try {
-              const existingMeta = (order as any).meta || {};
+              const mergedMeta = buildSbsMismatchOrderMetaMerge({
+                existingMeta: ((order as any).meta || {}) as Record<string, unknown>,
+                orderSbs,
+                primaryCandidateId: activeSub.id,
+                primaryCandidateSbs: activeSubSbs,
+                candidates: candidateSbsList,
+                paymentFlow: paymentFlowForAudit,
+                nowIso: new Date().toISOString(),
+              });
               await supabase
                 .from("orders_v2")
-                .update({
-                  meta: {
-                    ...existingMeta,
-                    manual_review: true,
-                    manual_review_reason: "bepaid_subscription_mismatch",
-                    manual_review_at: new Date().toISOString(),
-                    manual_review_context: {
-                      order_bepaid_sbs: orderSbs,
-                      candidate_subscription_v2_id: activeSub.id,
-                      candidate_bepaid_sbs: activeSubSbs,
-                      candidate_sub_ids: candidateIds,
-                      candidate_sbs_list: candidateSbsList,
-                      payment_flow: paymentFlowForAudit,
-                      decision: "no_new_sub_chain",
-                    },
-                  },
-                })
+                .update({ meta: mergedMeta })
                 .eq("id", orderId);
             } catch (mrErr) {
               console.error("[grant-access-for-order] §F manual_review meta-merge failed (non-fatal):", mrErr);
@@ -866,28 +846,14 @@ Deno.serve(async (req) => {
               `[grant-access-for-order] §F NO-NEW-SUB: order ${orderId} skipped, ` +
               `manual_review=true, candidates=${candidateIds.length}`
             );
+            const responseBody = buildSbsMismatchResponseBody({
+              orderSbs,
+              primaryCandidateId: activeSub.id,
+              primaryCandidateSbs: activeSubSbs,
+              candidates: candidateSbsList,
+            });
             return new Response(
-              JSON.stringify({
-                success: true,
-                skipped: true,
-                manual_review: true,
-                manualReview: true,
-                reason: "bepaid_subscription_mismatch",
-                granted_subscription_v2_id: null,
-                grantedSubscriptionV2Id: null,
-                granted_entitlement_id: null,
-                grantedEntitlementId: null,
-                subscription_id: null,
-                subscription_v2_id: null,
-                entitlement_id: null,
-                message: "SBS mismatch: рабочая sub под другой bePaid subscription. Требуется ручная проверка.",
-                manual_review_context: {
-                  order_bepaid_sbs: orderSbs,
-                  primary_candidate_subscription_v2_id: activeSub.id,
-                  primary_candidate_bepaid_sbs: activeSubSbs,
-                  candidate_sub_ids: candidateIds,
-                },
-              }),
+              JSON.stringify(responseBody),
               { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
           }
