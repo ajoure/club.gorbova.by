@@ -378,7 +378,7 @@ export function setDecisionFieldsCache(fields: TokenDef[]) {
  * Module-level cache of registry refs from document_token_registry.
  * Populated by setRegistryRefsCache() from TokenizedRichInput when its
  * useQuery for token-registry-refs resolves. Used as fallback in
- * tokenStringToLabel() so canonical system.*/customer.*/etc. tokens render
+ * tokenStringToLabel() so canonical system/customer/executor/etc. tokens render
  * correct UI labels in the broadcast/picker UI without showing UNMAPPED.
  */
 let _registryRefsCache: Array<{ token_key: string; ui_label: string }> = [];
