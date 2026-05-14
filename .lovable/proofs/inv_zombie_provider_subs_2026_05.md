@@ -155,3 +155,52 @@ healthy_active_after             = не менялся массово
 
 - Массовый repair по остальным кандидатам НЕ запускался.
 - `payments_v2`, `orders_v2`, `entitlements`, `subscriptions_v2.access_end_at` не изменялись repair-функцией.
+
+## Execute 3.3 — массовый repair (2026-05-14)
+
+### Scope
+
+- Источник: `inv_zombie_provider_subs_2026_05_candidates.tsv` (26 строк, без Вероники).
+- Батч: 26 row_id (≤ 50 лимита).
+- Pre-check: все 26 имели `state='active'`.
+
+### Result (edge function `admin-repair-zombie-provider-subs`)
+
+- HTTP 200, `ok=true`, `processed=26`, `batch='REPAIR-BEPAID-ACCESS-2026-05'`.
+- Per-row outcome:
+  - `cancel_provider_then_local` (bePaid вернул `active`, локально canceled с `local_expired_provider_active_2026_05`): **20**
+  - `cancel_local_only` (bePaid вернул dead/`inv_zombie_provider_dead_2026_05`): **6**
+  - `failed_to_cancel_provider`: **0**
+  - `manual_review` / `skipped`: **0**
+
+### Verify
+
+| метрика | значение |
+|---|---|
+| canceled (из 26) | 26 |
+| still active (из 26) | 0 |
+| cancel_reason=local_expired_provider_active_2026_05 | 20 |
+| cancel_reason=inv_zombie_provider_dead_2026_05 | 6 |
+| audit_logs (`provider_subscription.canceled.zombie_repair_2026_05`, batch REPAIR-BEPAID-ACCESS-2026-05) total | 27 (26 + Вероника) |
+| zombies остаток (state=active AND (sv2 NULL OR sv2 dead/expired)) | **0** |
+
+### Skip-list
+
+- Пусто. Все 26 кандидатов обработаны успешно.
+
+### Checksums по затронутым user_id (до vs после)
+
+| таблица | rows | checksum до | checksum после | match |
+|---|---|---|---|---|
+| payments_v2 | 465 | `ae96510d9848b6b0419c51fd889edc28` | `ae96510d9848b6b0419c51fd889edc28` | ✅ |
+| orders_v2 | 401 | `9392d5f2ee3e77dbdcdf3dd8f83e2a7d` | `9392d5f2ee3e77dbdcdf3dd8f83e2a7d` | ✅ |
+| entitlements | 111 | `3618eca585edb7c4627e46d25885ca13` | `3618eca585edb7c4627e46d25885ca13` | ✅ |
+| subscriptions_v2 (status, access_end_at) | 141 | `5994862c97b7e45169e992b6d1490be2` | `5994862c97b7e45169e992b6d1490be2` | ✅ |
+
+`payments_v2`, `orders_v2`, `entitlements`, `subscriptions_v2.access_end_at` — без изменений. Telegram grant/revoke не вызывался.
+
+### Closure
+
+- INV REPAIR-BEPAID-ACCESS-2026-05 закрыт.
+- Healthy active subscriptions (152) не тронуты.
+- Counter zombies = 0.
