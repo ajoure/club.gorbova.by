@@ -1,260 +1,293 @@
-План: Diagnose desync платежей/возвратов в карточке сделки + сверка с bePaid + починка linkage и UI
-
-## Diagnose (что я уже проверил в БД и сверил с bePaid)
-
-Сделка `SUB-26-MMOP3Z026XWH` = `orders_v2.id = 11adac7b-3f31-4267-b8e2-da54bba4b57c`, создана 13.03.2026, продукт Gorbova Club, владелец `lori-30@tut.by` (user `e748983f-…`).
-
-Что реально привязано к этому order_id в `payments_v2` (3 строки):
-
-```
-
-ID                                    paid_at              type             provider_payment_id (=bePaid uid)
-
-52229463-188a-4d03-8983-5b584c3433c5  2026-03-13 09:31:55  Платеж           aa391ec7-218e-46ed-bafc-d01a07d7a608   ← оригинал, OK
-
-7a64cd04-3d08-4c9f-a81b-d50b7383edf6  2026-05-13 03:00:14  Платеж           e2eedd12-f1dc-4af4-8d3a-feae6956b39c   ← чужой автоплатёж старой sbs
-
-49825c85-07e5-4493-b086-f3cfd79b2545  2026-05-14 11:00:35  Возврат средств  6e4a67ff-f71a-4edd-9d63-89c16b44b9bf   ← refund 13.05 платежа
-
-```
-
-Сверка с bePaid (скрин [merchant.bepaid.by](http://merchant.bepaid.by), фильтр по [lori-30@tut.by](mailto:lori-30@tut.by), Gorbova Club):
-
-```
-
-bePaid uid                            операция         BYN    дата
-
-6e4a67ff-…b9bf                         Возврат средств  250    14.05 14:00   ✓ совпадает (id 49825c85)
-
-e2eedd12-…b39c                         Платёж           250    13.05 06:00   ✓ совпадает (id 7a64cd04)
-
-e3965e9b-…f780                         Платёж           250    12.05 21:21   ✓ есть (id 421d6884, привязан к SUB-LINK-MP2YGAG4)
-
-80010eae-…3f71                         Платёж (failed)  250    12.05 12:45   ✓ есть (id 405f1e72, без order)
-
-49c8f8f9-…3639                         Платёж           250    14.04 06:00   ✓ есть (id 0e530a8c, REBILL-0e530a8c-3eb)
-
-…                                      …                …      …             все 27 строк bePaid находятся в payments_v2
-
-```
-
-Расхождений по самим платежам с bePaid нет. Все суммы и uid сходятся. Проблема — в **linkage** (какой платёж к какому order_id и какой подписке относится) и в **UI карточки сделки**, который не показывает возврат.
-
-### Корень «хуйни» — найдено 5 дефектов
-
-1. **Дублирующая bePaid-подписка не была заблокирована duplicate-guard'ом.**  
-
-   На один продукт Gorbova Club у пользователя одновременно жили две bePaid-подписки:  
-
-   - старая `sbs_d0a38a4774c31891` (sub_v2 `ceb80b6f-…`, создана 13.03.2026, отменена админом 14.05.2026 11:00),  
-
-   - новая `sbs_e58bb848165cb713` (sub_v2 `b749abfb-…`, создана 12.05.2026 через public link `SUB-LINK-MP2YGAG4`).  
-
-   Это нарушает Duplicate Subscription Prevention Guard.
-
-2. **Автосписание 13.05 по СТАРОЙ sbs пристёгнуто к initial-order, а не к новому REBILL-order.**  
-
-   В апреле тот же сценарий породил отдельный `orders_v2.order_number = 'REBILL-0e530a8c-3eb'`. На майском цикле webhook привязал платёж e2eedd12 к `11adac7b` (мартовский initial-order). Регрессия в `bepaid-webhook` для sbs `sbs_d0a38a4774c31891`.
-
-3. **Этим же чужим платежом продлили НОВУЮ подписку `b749abfb`.**  
-
-   В её `meta.extended_by_orders` лежит `[15927402-…, 11adac7b-…]`, последний extension 13.05 03:00 +30 дней. То есть `grant-access-for-order` принял платёж старой sbs и продлил новую sub. Совпали `user_id + product_id + tariff_id`, но `bepaid_subscription_id` платежа != bepaid_subscription_id подписки.
-
-4. **Refund-row в payments_v2 не связан с parent-платежом и не уменьшает `refunded_amount` родителя.**  
-
-   - `49825c85.meta.parent_payment_id = NULL`,  
-
-   - `49825c85.amount = +250` (а не `-250`),  
-
-   - `7a64cd04.refunded_amount = 0`.  
-
-   Из-за этого `DealDetailSheet` не находит refund для парного платежа и показывает обе строки как «Оплачен», без бейджа «Частичный возврат».
-
-5. *`deal_date` сделки сдвигается под последний привязанный платёж.**  
-
-   Карточка показывает «13 мая 2026, 05:00» при «Месяц сделки: Март 2026» — заголовок берётся из последнего payment_at, а месяц — из `deal_date`. Из-за дефекта №2 чужой майский платёж переименовал заголовок мартовской сделки.
-
-## Что должно быть (целевая модель)
-
-- Каждое успешное автосписание bePaid создаёт **отдельный orders_v2** `REBILL-…`) и привязывается только к нему.
-
-- `grant-access-for-order` продлевает **только ту** subscription_v2, чей `bepaid_subscription_id` == bepaid_subscription платежа. Совпадения `product_id + tariff_id` недостаточно (актуализируем правило Extend ↔ Tariff Match).
-
-- `bepaid-webhook.refund` пишет refund-row с:  
-
-  - `meta.parent_payment_id = <uuid родителя>`,  
-
-  - `amount = -X` (или строго положительный, но при этом обновлять `parent.refunded_amount += X` атомарно),  
-
-  - проставляет `parent.refunded_amount` и `orders_v2.refunded_amount`.
-
-- Карточка сделки показывает refund-строку под parent-платежом с бейджем «Возврат N BYN», статус сделки = `partial_refund` / `fully_refunded` по правилу `partial-refund-state`.
-
-- Заголовок и месяц сделки берутся из `orders_v2.deal_date` (не из последнего payment).
-
-## Этапы
-
-### Этап 1 — Reconcile-репорт по этой сделке (read-only)
-
-1. Сверить все 27 платежей Ларисы payments_v2 ↔ bePaid по `provider_payment_id`, выписать расхождения по: order_id, transaction_type, amount, parent_payment_id, refunded_amount.
-
-2. По каждой sub_v2 пользователя `ceb80b6f`, `b749abfb`) построить таблицу `extended_by_orders` ↔ owning bepaid_subscription_id платежа.
-
-3. Сохранить в `.lovable/proofs/inv_deal_linkage_lori_30_2026_05.md` (snapshot до правок).
-
-### Этап 2 — Точечный data-repair по этой сделке (по согласованию)
-
-1. **Перепривязать** payment `7a64cd04` (13.05 250 BYN) с `order_id = 11adac7b` на новый `orders_v2 REBILL-…` той же sbs `ceb80b6f` (создать REBILL-order по образцу апрельского `06b224ab`), `deal_date = 2026-05-13`.
-
-2. **Перепривязать** refund `49825c85` к новому REBILL-order; проставить `meta.parent_payment_id = 7a64cd04`, `parent.refunded_amount = 250`, `orders_v2.refunded_amount = 250`, `orders_v2.status = 'refunded'`.
-
-3. Откатить из `b749abfb.meta.extended_by_orders` запись `11adac7b` и пересчитать `access_end_at` НОВОЙ подписки от 12.05 + 30 дней (без чужого продления). Старая sub `ceb80b6f` (cancelled) трогать не нужно.
-
-4. Аудит-логи `payment.relinked.deal_repair_2026_05`, `refund.parent_link_repaired`, `subscription.access_end_at.recompute`.
-
-5. Verify: на карточке сделки `SUB-26-MMOP3Z026XWH` остаётся ровно одна оплата 13.03 250 BYN, заголовок «13 марта 2026», месяц «Март 2026», без 13.05 платежа и без refund-строки. Карточка REBILL-сделки за 13.05 показывает «Платёж 250 + Возврат 250 = Полный возврат».
-
-### Этап 3 — Корневые правки кода (не data-fix)
-
-1. `bepaid-webhook` (renewal handler): на каждый успешный autocharge старой sbs создаём `REBILL-` order через canonical write-path, привязываем платёж к нему, не к initial-order.
-
-2. `bepaid-webhook` (refund handler): резолвим parent по `provider_payment_id` из refund payload `payment.uid` или `parent_uid`), пишем `parent.refunded_amount`, `meta.parent_payment_id`, обновляем `orders_v2.refunded_amount/status`.
-
-3. `grant-access-for-order` (recurring path): продлеваем подписку **только** при матче `bepaid_subscription_id` платежа и подписки, плюс существующий tariff_id-match. Иначе → audit `skip_extend_bepaid_subscription_mismatch` + создаём новую sub-цепочку либо помечаем `manual_review`.
-
-4. Duplicate Subscription Prevention Guard: при создании public-link checkout проверяем активные sbs того же `(user_id, product_id)` через `bepaid-get-subscription-details` (не только локально), блокируем дубль.
-
-5. `DealDetailSheet`: заголовок и месяц брать только из `orders_v2.deal_date`, никогда из `max(payment_at)`.
-
-### Этап 4 — Sweep по остальным сделкам (после verify Этапа 2)
-
-SQL-выборка: payments_v2, у которых `transaction_type='Платеж'` И `paid_at - order.created_at > 25 дней`, И order имеет более 1 успешного «Платеж» — кандидаты на mis-linkage по сценарию №2. Отдельный план execute по итогам dry-run.
-
-## Технические детали (для разработчика, не для пользователя)
-
-- Затрагиваемые edge-функции: `bepaid-webhook`, `grant-access-for-order`, `admin-create-public-link`, `subscription-admin-actions` (refund-ветка уже починена в прошлой задаче, но нужно дополнить установкой `parent_payment_id` и `parent.refunded_amount += amount` в идемпотентной транзакции).
-
-- Затрагиваемый UI: `src/components/admin/DealDetailSheet.tsx` — секции заголовка сделки и блока «Оплаты».
-
-- Read-only БД-зависимости для verify: `orders_v2`, `payments_v2`, `subscriptions_v2`, `audit_logs`.
-
-- Не трогаем: `entitlements`, `access_rules`, telegram grants — здесь они вне сценария.
-
-## Definition of Done
-
-1. По Ларисе: карточки `SUB-26-MMOP3Z026XWH` и нового `REBILL-…` соответствуют bePaid 1:1 по суммам и датам, refund отображается и считается.
-
-2. Sweep отчёт показывает 0 новых mis-linked платежей после деплоя п.3.1–3.5.
-
-3. `.lovable/proofs/inv_deal_linkage_lori_30_2026_05.md` содержит before/after снапшоты и checksum по `payments_v2` и `orders_v2` затронутых строк.
-
-4. Регресс-тесты bepaid-webhook (refund + autocharge) добавлены в `supabase/functions/bepaid-webhook/*_test.ts`.
-
-Перед запуском Этапа 2 нужно ваше «ок» — это правки данных по живому пользователю.
+## да, согласен, с учетом правок:
+
+1. **План не завершён в сообщении.**  
+Последний пункт обрывается на `БД не м...`. Перед запуском нужно прислать полный финальный текст плана, чтобы не потерять часть regression-test scope.
+2. **В** `bepaid-webhook` **нельзя делать прямой** `INSERT orders_v2`**, если уже есть canonical materialization helper.**  
+Требование: сначала найти существующий write-path для `REBILL-order` и использовать его. Если его нет — вынести создание в отдельный helper/service внутри функции, но не размазывать business logic по webhook. Архитектурно бизнес-логика должна быть в service layer, а flow должен оставаться `Payment → Order → Deal → Entitlement → Notification → Integrations`.  
+3. **Idempotency key нужно унифицировать.**  
+Сейчас указано два поля: `meta.materialized_from_payment_id` и `meta.source_payment_uid`. Нужно зафиксировать главный ключ:
+  &nbsp;
+  &nbsp;
+  - `meta.source_payment_uid = bePaid transaction uid`;
+  - `meta.materialized_from_payment_id` использовать только если это UUID локального `payments_v2.id`, а не bePaid uid.  
+  Нельзя называть bePaid uid `payment_id`, иначе снова будет путаница provider ID vs local UUID.
+4. `materialized_from_payment_id` **в п.1 сейчас противоречив.**  
+В плане написано: `materialized_from_payment_id = <bepaid_uid>`. Это ошибка терминологии. Если поле называется `*_payment_id`, оно должно хранить локальный `payments_v2.id`. Для bePaid uid использовать:
+  - `source_payment_uid`;
+  - `provider_payment_id`;
+  - `bepaid_uid`.
+5. **Создание REBILL-order до записи payment может быть невозможно, если нужен local payment UUID.**  
+Нужно явно определить порядок:
+  - либо сначала создать/найти `payments_v2` по provider uid idempotently, затем создать order и привязать payment;
+  - либо создать order с `source_payment_uid`, затем записать payment.  
+  Главное — не допустить состояния, где order создан, а payment не записался без retry/idempotency.
+6. `do_not_grant_access:false` **опасно для fully refunded сценариев.**  
+Для autocharge сначала можно создавать `paid` order, но refund handler обязан после полного refund выставить состояние, при котором `grant-access-for-order` не продлит доступ. Добавить guard:
+  - если `order.status='refunded'` или `paid_amount <= refunded_amount` или `meta.refunded_in_full=true` → no grant/no extend.
+7. **Refund handler должен быть идемпотентным по refund uid.**  
+Перед `record_refund_atomic` нужно проверить:
+  - существует ли refund-row с `provider_payment_id=<refund_uid>`;
+  - если да — не увеличивать `parent.refunded_amount` повторно;
+  - audit/log `refund_duplicate_ignored`.
+8. `parent.refunded_amount += refund.amount` **должен быть capped.**  
+Добавить защиту:
+  - `new_refunded_amount <= parent.amount`;
+  - если больше — STOP/manual_review/audit, не делать over-refund в локальной модели.
+9. `record_refund_atomic` **должен обновлять order-level refund state.**  
+В плане указано обновление parent payment, но нужно явно добавить:
+  - пересчет order refunded total;
+  - `orders_v2.status='refunded'` при full refund;
+  - `partial_refund`/аналогичный статус только если такой статус реально поддерживается enum/UI;
+  - если нет поля `orders_v2.refunded_amount`, хранить агрегат в `meta` и UI считать через payments.
+10. `grant-access-for-order` **не должен выставлять** `orders_v2.meta.manual_review=true` **прямым overwrite.**  
+Только merge в `meta`, чтобы не затереть существующие ключи:
 
 &nbsp;
 
+- `meta.manual_review=true`;
+- `meta.manual_review_reason='bepaid_subscription_mismatch'`;
+- `meta.manual_review_at`;
+- `meta.manual_review_context`.
+
+11. **Mismatch audit должен включать найденных кандидатов.**  
+Добавить в audit:
+
+- `order_id`;
+- `payment_id`;
+- `payment_provider_uid`;
+- `payment_bepaid_subscription_id`;
+- `candidate_subscription_ids`;
+- `candidate_bepaid_subscription_ids`;
+- `product_id`;
+- `tariff_id`.
+
+12. **Duplicate guard должен проверять не только local active/trial/past_due.**  
+Добавить:
+
+- `provider_subscriptions.state IN ('active','past_due')`;
+- локальные `provider_subscriptions` без `subscription_v2_id`;
+- pending checkout/public link, если она уже может создать sbs;
+- zombie-provider case: provider active + local expired → сначала manual decision/cancel старую, потом разрешать новую.
+
+13. **Provider check через** `bepaid-get-subscription-details` **должен иметь fail-closed режим.**  
+Если bePaid API недоступен или ответ ambiguous:
+
+- не создавать новую подписку silently;
+- вернуть `manual_review`;
+- audit `subscription.duplicate_guard_provider_check_failed`.
+
+14. **Тарифный переход нужно формализовать.**  
+`tariff_change_detected:true` недостаточно. Нужно указать:
+
+- кто может передать `confirm_tariff_change=true`;
+- где это подтверждается в UI;
+- что происходит со старой sbs;
+- отменяется ли старая provider subscription;
+- не будет ли двойного списания.
+
+15. `DealDetailSheet` **не должен определять refund только через** `meta.parent_payment_id`**.**  
+Для backward compatibility добавить fallback:
+
+- `meta.parent_payment_uid`;
+- `parent_payment_id` если есть отдельная колонка;
+- matching by provider parent uid, если присутствует в meta.  
+Но основной новый стандарт — `meta.parent_payment_id`.
+
+16. **Header date helper нужно проверить на все места использования.**  
+Если `getEffectiveDealDate.ts` используется в списках, фильтрах, статистике или периодах, изменение не должно ломать month grouping. Нужно явно указать: правим только display header или весь helper с regression proof по списку сделок.
+17. **Deno-тесты не должны требовать реального bePaid.**  
+Добавить mock/stub для:
+
+- bePaid subscription details;
+- cancel/details calls;
+- webhook payloads;
+- Supabase client calls, если текущая тестовая инфраструктура это поддерживает.  
+Никаких реальных credentials в тестах.
+
+18. **Добавить тест по кейсу Ларисы как fixture.**  
+Минимальный fixture:
+
+- initial order март;
+- old sbs;
+- new sbs;
+- autocharge old sbs;
+- refund old sbs;
+- verify: old initial order не меняется, new subscription не продлевается чужим sbs.
+
+19. **Добавить anti-data-change proof.**  
+Так как этап заявлен “только код + тесты”, отчет должен содержать:
+
+- список измененных файлов;
+- подтверждение, что миграций нет или если есть RPC — отдельно объяснить;
+- подтверждение, что DML по production таблицам не выполнялся;
+- тестовые данные не писались в production.
+
+20. **Если добавляется RPC** `record_refund_atomic`**, это уже не “только код” в узком смысле.**  
+Если RPC уже существует — указать “используем существующий RPC, без миграций”.  
+Если RPC нужно создать/изменить — это SQL migration, и план должен явно включить:
+
+- migration file;
+- security definer/RLS rationale;
+- idempotency;
+- tests;
+- no production DML.
+
+21. **Audit system actor proof обязателен для новых веток.**  
+В отчете после тестов/локального proof показать, что audit payload формируется с:
+
+- `actor_type='system'`;
+- `actor_user_id=NULL`;
+- `actor_label`;
+- action name;
+- entity IDs.
+
+22. **Этап 4 sweep не запускать в рамках этого плана.**  
+После code-fixes можно сделать только read-only query/report. Любые repair по найденным кандидатам — отдельный план и отдельный approve.
+23. **Финальный DoD добавить явно:**
+
+- `bepaid-webhook` autocharge test passed;
+- refund test passed;
+- missing parent test passed;
+- `grant-access-for-order` mismatch test passed;
+- duplicate guard tests passed;
+- `DealDetailSheet` date/refund rendering proof;
+- diff-summary;
+- no production data changes;
+- файл proof обновлен.
+
+После внесения этих правок план можно запускать как **code-fix этап без data-repair**.
+
 &nbsp;
 
-План: Diagnose desync платежей/возвратов в карточке сделки + сверка с bePaid + починка linkage и UI
+План: Этап 3 — root code-fixes (DEAL-LINKAGE)
 
-## Diagnose (что я уже проверил в БД и сверил с bePaid)
+Repair Ларисы закрыт. Этап 3 устраняет первопричины расхождения, выявленные в Этапе 1. **Никаких UPDATE/INSERT в payments_v2 / orders_v2 / subscriptions_v2 / entitlements / access_rules / telegram_*** — только код + тесты.
 
-Сделка `SUB-26-MMOP3Z026XWH` = `orders_v2.id = 11adac7b-3f31-4267-b8e2-da54bba4b57c`, создана 13.03.2026, продукт Gorbova Club, владелец `lori-30@tut.by` (user `e748983f-…`).
+---
 
-Что реально привязано к этому order_id в `payments_v2` (3 строки):
+### 1. `bepaid-webhook` — autocharge → отдельный REBILL-order
 
-```
-ID                                    paid_at              type             provider_payment_id (=bePaid uid)
-52229463-188a-4d03-8983-5b584c3433c5  2026-03-13 09:31:55  Платеж           aa391ec7-218e-46ed-bafc-d01a07d7a608   ← оригинал, OK
-7a64cd04-3d08-4c9f-a81b-d50b7383edf6  2026-05-13 03:00:14  Платеж           e2eedd12-f1dc-4af4-8d3a-feae6956b39c   ← чужой автоплатёж старой sbs
-49825c85-07e5-4493-b086-f3cfd79b2545  2026-05-14 11:00:35  Возврат средств  6e4a67ff-f71a-4edd-9d63-89c16b44b9bf   ← refund 13.05 платежа
-```
+**Где:** `supabase/functions/bepaid-webhook/index.ts` (6819 строк, ветка обработки `transaction.notification` где `parent_uid != null` и матч по `bepaid_subscription_id`).
 
-Сверка с bePaid (скрин merchant.bepaid.by, фильтр по [lori-30@tut.by](mailto:lori-30@tut.by), Gorbova Club):
+**Дефект Ларисы:** платёж 13.05 (`e2eedd12…`) был приклеен к мартовскому initial-order `11adac7b…` вместо нового REBILL.
 
-```
-bePaid uid                            операция         BYN    дата
-6e4a67ff-…b9bf                         Возврат средств  250    14.05 14:00   ✓ совпадает (id 49825c85)
-e2eedd12-…b39c                         Платёж           250    13.05 06:00   ✓ совпадает (id 7a64cd04)
-e3965e9b-…f780                         Платёж           250    12.05 21:21   ✓ есть (id 421d6884, привязан к SUB-LINK-MP2YGAG4)
-80010eae-…3f71                         Платёж (failed)  250    12.05 12:45   ✓ есть (id 405f1e72, без order)
-49c8f8f9-…3639                         Платёж           250    14.04 06:00   ✓ есть (id 0e530a8c, REBILL-0e530a8c-3eb)
-…                                      …                …      …             все 27 строк bePaid находятся в payments_v2
-```
+**Изменения:**
 
-Расхождений по самим платежам с bePaid нет. Все суммы и uid сходятся. Проблема — в **linkage** (какой платёж к какому order_id и какой подписке относится) и в **UI карточки сделки**, который не показывает возврат.
+- Перед записью `payments_v2` для autocharge:
+  1. Идемпотентность: `SELECT id FROM orders_v2 WHERE meta->>'materialized_from_payment_id' = <bepaid_uid> OR meta->>'source_payment_uid' = <bepaid_uid>` — если есть, переиспользовать.
+  2. Иначе INSERT нового `orders_v2` со схемой как в апрельском REBILL Ларисы (см. `06b224ab…`): `order_number = REBILL-<first8>-<next3>`, `status='paid'`, `paid_amount=<amount>`, `deal_date=<paid_at>`, `bepaid_subscription_id=<sbs>`, `meta` с `materialization_run='bepaid_webhook_rebill'`, `materialized_from_payment_id`, `source_payment_uid`, `parent_order_id` (= initial order той же sbs), `payment_flow='bepaid_subscription_charge'`, `do_not_grant_access:false` (доступ выдаёт grant-access-for-order через extend).
+  3. Pipeline_id/stage_id наследовать из initial-order.
+- Платёж пишется с `order_id = <new_rebill_id>`. Initial-order не апдейтится.
+- Audit `bepaid.webhook.rebill_order_created` (system actor) с `before:null`, `after:{order_id, payment_id, sbs}`.
 
-### Корень «хуйни» — найдено 5 дефектов
+**Risk:** регрессия на legitimate первичные платежи. Mitigation: новая ветка работает только если `parent_uid != null` (т.е. это явный rebill-нотификейшн bePaid), и только когда нашли `subscriptions_v2.bepaid_subscription_id = <sbs>`.
 
-1. **Дублирующая bePaid-подписка не была заблокирована duplicate-guard'ом.**
-  На один продукт Gorbova Club у пользователя одновременно жили две bePaid-подписки:  
-  - старая `sbs_d0a38a4774c31891` (sub_v2 `ceb80b6f-…`, создана 13.03.2026, отменена админом 14.05.2026 11:00),  
-  - новая `sbs_e58bb848165cb713` (sub_v2 `b749abfb-…`, создана 12.05.2026 через public link `SUB-LINK-MP2YGAG4`).  
-   Это нарушает Duplicate Subscription Prevention Guard.
-2. **Автосписание 13.05 по СТАРОЙ sbs пристёгнуто к initial-order, а не к новому REBILL-order.**
-  В апреле тот же сценарий породил отдельный `orders_v2.order_number = 'REBILL-0e530a8c-3eb'`. На майском цикле webhook привязал платёж e2eedd12 к `11adac7b` (мартовский initial-order). Регрессия в `bepaid-webhook` для sbs `sbs_d0a38a4774c31891`.
-3. **Этим же чужим платежом продлили НОВУЮ подписку `b749abfb`.**
-  В её `meta.extended_by_orders` лежит `[15927402-…, 11adac7b-…]`, последний extension 13.05 03:00 +30 дней. То есть `grant-access-for-order` принял платёж старой sbs и продлил новую sub. Совпали `user_id + product_id + tariff_id`, но `bepaid_subscription_id` платежа != bepaid_subscription_id подписки.
-4. **Refund-row в payments_v2 не связан с parent-платежом и не уменьшает `refunded_amount` родителя.**
-  - `49825c85.meta.parent_payment_id = NULL`,  
-  - `49825c85.amount = +250` (а не `-250`),  
-  - `7a64cd04.refunded_amount = 0`.  
-   Из-за этого `DealDetailSheet` не находит refund для парного платежа и показывает обе строки как «Оплачен», без бейджа «Частичный возврат».
-5. `**deal_date` сделки сдвигается под последний привязанный платёж.**
-  Карточка показывает «13 мая 2026, 05:00» при «Месяц сделки: Март 2026» — заголовок берётся из последнего payment_at, а месяц — из `deal_date`. Из-за дефекта №2 чужой майский платёж переименовал заголовок мартовской сделки.
+---
 
-## Что должно быть (целевая модель)
+### 2. `bepaid-webhook` — refund: parent linkage + atomic update
 
-- Каждое успешное автосписание bePaid создаёт **отдельный orders_v2** (`REBILL-…`) и привязывается только к нему.
-- `grant-access-for-order` продлевает **только ту** subscription_v2, чей `bepaid_subscription_id` == bepaid_subscription платежа. Совпадения `product_id + tariff_id` недостаточно (актуализируем правило Extend ↔ Tariff Match).
-- `bepaid-webhook.refund` пишет refund-row с:  
-  - `meta.parent_payment_id = <uuid родителя>`,  
-  - `amount = -X` (или строго положительный, но при этом обновлять `parent.refunded_amount += X` атомарно),  
-  - проставляет `parent.refunded_amount` и `orders_v2.refunded_amount`.
-- Карточка сделки показывает refund-строку под parent-платежом с бейджем «Возврат N BYN», статус сделки = `partial_refund` / `fully_refunded` по правилу `partial-refund-state`.
-- Заголовок и месяц сделки берутся из `orders_v2.deal_date` (не из последнего payment).
+**Дефект Ларисы:** refund-row `49825c85…` — `meta.parent_payment_id=NULL`, `parent.refunded_amount=0`, `order_id` указывал на чужой initial-order.
 
-## Этапы
+**Изменения (та же функция, ветка refund-нотификейшна):**
 
-### Этап 1 — Reconcile-репорт по этой сделке (read-only)
+- Резолвить parent: `SELECT id, order_id, refunded_amount FROM payments_v2 WHERE provider_payment_id = <refund.parent_uid> LIMIT 1`. STOP-guard если 0 строк → audit `bepaid.webhook.refund_parent_not_found` + 200 fallback (по правилу Payment Error Handling).
+- Через RPC `record_refund_atomic` (см. memory `Partial Refund State`): refund-row записывается с `order_id = parent.order_id` (а не initial-order), `meta.parent_payment_id`, `meta.parent_payment_uid`, `transaction_type='Возврат средств'`, **знак amount не меняется** (хранится как положительный, как было у Ларисы и как требует системный стандарт).
+- `parent.refunded_amount += refund.amount`, `refunded_at = max(existing, refund.paid_at)`.
+- Audit `bepaid.webhook.refund_recorded` system actor.
 
-1. Сверить все 27 платежей Ларисы payments_v2 ↔ bePaid по `provider_payment_id`, выписать расхождения по: order_id, transaction_type, amount, parent_payment_id, refunded_amount.
-2. По каждой sub_v2 пользователя (`ceb80b6f`, `b749abfb`) построить таблицу `extended_by_orders` ↔ owning bepaid_subscription_id платежа.
-3. Сохранить в `.lovable/proofs/inv_deal_linkage_lori_30_2026_05.md` (snapshot до правок).
+---
 
-### Этап 2 — Точечный data-repair по этой сделке (по согласованию)
+### 3. `grant-access-for-order` — extend только при матче `bepaid_subscription_id`
 
-1. **Перепривязать** payment `7a64cd04` (13.05 250 BYN) с `order_id = 11adac7b` на новый `orders_v2 REBILL-…` той же sbs `ceb80b6f` (создать REBILL-order по образцу апрельского `06b224ab`), `deal_date = 2026-05-13`.
-2. **Перепривязать** refund `49825c85` к новому REBILL-order; проставить `meta.parent_payment_id = 7a64cd04`, `parent.refunded_amount = 250`, `orders_v2.refunded_amount = 250`, `orders_v2.status = 'refunded'`.
-3. Откатить из `b749abfb.meta.extended_by_orders` запись `11adac7b` и пересчитать `access_end_at` НОВОЙ подписки от 12.05 + 30 дней (без чужого продления). Старая sub `ceb80b6f` (cancelled) трогать не нужно.
-4. Аудит-логи `payment.relinked.deal_repair_2026_05`, `refund.parent_link_repaired`, `subscription.access_end_at.recompute`.
-5. Verify: на карточке сделки `SUB-26-MMOP3Z026XWH` остаётся ровно одна оплата 13.03 250 BYN, заголовок «13 марта 2026», месяц «Март 2026», без 13.05 платежа и без refund-строки. Карточка REBILL-сделки за 13.05 показывает «Платёж 250 + Возврат 250 = Полный возврат».
+**Где:** `supabase/functions/grant-access-for-order/index.ts` (1930 строк, секция «попытка extend существующей подписки»).
 
-### Этап 3 — Корневые правки кода (не data-fix)
+**Дефект Ларисы:** платёж старой sbs `sbs_d0a38a4774c31891` продлил **новую** sub `b749abfb` (sbs `sbs_e58bb848165cb713`), потому что extend искался только по `product_id + tariff_id`.
 
-1. `bepaid-webhook` (renewal handler): на каждый успешный autocharge старой sbs создаём `REBILL-` order через canonical write-path, привязываем платёж к нему, не к initial-order.
-2. `bepaid-webhook` (refund handler): резолвим parent по `provider_payment_id` из refund payload (`payment.uid` или `parent_uid`), пишем `parent.refunded_amount`, `meta.parent_payment_id`, обновляем `orders_v2.refunded_amount/status`.
-3. `grant-access-for-order` (recurring path): продлеваем подписку **только** при матче `bepaid_subscription_id` платежа и подписки, плюс существующий tariff_id-match. Иначе → audit `skip_extend_bepaid_subscription_mismatch` + создаём новую sub-цепочку либо помечаем `manual_review`.
-4. Duplicate Subscription Prevention Guard: при создании public-link checkout проверяем активные sbs того же `(user_id, product_id)` через `bepaid-get-subscription-details` (не только локально), блокируем дубль.
-5. `DealDetailSheet`: заголовок и месяц брать только из `orders_v2.deal_date`, никогда из `max(payment_at)`.
+**Изменения:**
 
-### Этап 4 — Sweep по остальным сделкам (после verify Этапа 2)
+- Резолв активной recurring-sub: фильтр `WHERE bepaid_subscription_id = <order.bepaid_subscription_id>` (если у order есть sbs).
+- Если у платежа есть sbs, но в `subscriptions_v2` нет совпадения по sbs:
+  - НЕ создавать новую цепочку автоматически;
+  - audit `grant.skip_extend_bepaid_subscription_mismatch` (system actor) с `{order_id, payment_id, payment_sbs, candidate_sub_id, candidate_sub_sbs}`;
+  - выставить `meta.manual_review=true` на orders_v2 для этого ордера;
+  - вернуть `success:true, extended:false, manual_review:true` (без исключений, без падения webhook).
+- Контракт `Extend ↔ Tariff Match` (memory) сохраняется: tariff_id-проверка остаётся, **bepaid sbs match добавляется как первичный фильтр для recurring**.
 
-SQL-выборка: payments_v2, у которых `transaction_type='Платеж'` И `paid_at - order.created_at > 25 дней`, И order имеет более 1 успешного «Платеж» — кандидаты на mis-linkage по сценарию №2. Отдельный план execute по итогам dry-run.
+---
 
-## Технические детали (для разработчика, не для пользователя)
+### 4. Duplicate Subscription Prevention Guard
 
-- Затрагиваемые edge-функции: `bepaid-webhook`, `grant-access-for-order`, `admin-create-public-link`, `subscription-admin-actions` (refund-ветка уже починена в прошлой задаче, но нужно дополнить установкой `parent_payment_id` и `parent.refunded_amount += amount` в идемпотентной транзакции).
-- Затрагиваемый UI: `src/components/admin/DealDetailSheet.tsx` — секции заголовка сделки и блока «Оплаты».
-- Read-only БД-зависимости для verify: `orders_v2`, `payments_v2`, `subscriptions_v2`, `audit_logs`.
-- Не трогаем: `entitlements`, `access_rules`, telegram grants — здесь они вне сценария.
+**Где:** `supabase/functions/_shared/duplicateSubGuard.ts` (если есть) или inline в `create-payment-checkout` / `admin-create-public-link`. Проверю структуру в impl-фазе.
 
-## Definition of Done
+**Дефект Ларисы:** 12.05 создалась новая bePaid sbs при живой старой sbs того же продукта.
 
-1. По Ларисе: карточки `SUB-26-MMOP3Z026XWH` и нового `REBILL-…` соответствуют bePaid 1:1 по суммам и датам, refund отображается и считается.
-2. Sweep отчёт показывает 0 новых mis-linked платежей после деплоя п.3.1–3.5.
-3. `.lovable/proofs/inv_deal_linkage_lori_30_2026_05.md` содержит before/after снапшоты и checksum по `payments_v2` и `orders_v2` затронутых строк.
-4. Регресс-тесты bepaid-webhook (refund + autocharge) добавлены в `supabase/functions/bepaid-webhook/*_test.ts`.
+**Изменения:**
 
-Перед запуском Этапа 2 нужно ваше «ок» — это правки данных по живому пользователю.
+- Расширить guard:
+  1. local check: `subscriptions_v2 WHERE user_id=? AND product_id=? AND status IN ('active','past_due','trial')`;
+  2. provider check: для каждой найденной local-sub с непустым `bepaid_subscription_id` зовём `bepaid-get-subscription-details` → если provider state ∈ {active, past_due} — это дубль;
+  3. учитываем `(product_id, tariff_id, provider)`;
+  4. при разном `tariff_id` того же product — НЕ блокировать; возвращать `tariff_change_detected:true` и требовать `confirm_tariff_change=true` от вызывающего (UI/admin) — без manual decision не блокировать legitimate UX, но и не пропускать silently.
+- audit `subscription.duplicate_guard_blocked` / `subscription.tariff_change_requires_confirmation`.
+
+---
+
+### 5. `DealDetailSheet` — header/month from `orders_v2.deal_date`
+
+**Где:** `src/components/admin/DealDetailSheet.tsx`, `src/utils/getEffectiveDealDate.ts`.
+
+**Дефект Ларисы:** заголовок «13 мая 05:00» при «Месяц: Март 2026» — потому что header брался из `max(payment.paid_at)`.
+
+**Изменения:**
+
+- Заголовок и месяц-чип читать строго из `order.deal_date` (fallback `created_at` при NULL); удалить fallback на `max(payment.paid_at)`.
+- Платежи рендерить с вложенными refund-строками: для каждого `payment` где `transaction_type !== 'Возврат средств'` — показать payment + nested refunds (filter по `meta.parent_payment_id === payment.id`); под платежом строка «Net = amount − Σrefunds».
+- Логика badge оставить через memory `Partial Refund State` (paidSum / refundedSum).
+- Скоуп — только presentation, бизнес-данные не трогаются.
+
+---
+
+### 6. Регресс-тесты (Deno)
+
+`supabase/functions/bepaid-webhook/webhook_rebill_test.ts`:
+
+- autocharge с `parent_uid` + sbs → создаётся новый `orders_v2` с `meta.materialized_from_payment_id`; initial-order не меняется; повторный webhook с тем же uid — идемпотентно (0 новых rows).
+- refund nofification → `parent.refunded_amount += amount`, refund-row пишется с `order_id=parent.order_id`, `meta.parent_payment_id` присутствует, знак amount положительный.
+- refund для несуществующего parent_uid → 200 + audit `refund_parent_not_found`, БД не меняется.
+
+`supabase/functions/grant-access-for-order/grant_sbs_match_test.ts`:
+
+- order.sbs = X, sub.sbs = Y, тот же product/tariff → no extend, audit `skip_extend_bepaid_subscription_mismatch`, `manual_review=true`.
+- order.sbs = X, sub.sbs = X → extend выполняется как раньше.
+
+UI-тест `DealDetailSheet.test.tsx` (vitest):
+
+- Order с `deal_date='2026-03-13'` и payment `paid_at='2026-05-13'` → заголовок «13 марта 2026», chip «Март 2026» (не май).
+- Order с payment + refund (matched через `meta.parent_payment_id`) → refund вложен под платежом, показан Net.
+
+---
+
+### Порядок execute Этапа 3
+
+1. Diagnose: прочитать `bepaid-webhook` (autocharge + refund ветки), `grant-access-for-order` (extend секция), `DealDetailSheet`, существующий `_shared/duplicateSubGuard*`.
+2. Применить изменения файл-за-файлом, сохраняя CORS / `Deno.serve` / `npm:@supabase/supabase-js@2`.
+3. Написать тесты, прогнать `supabase--test_edge_functions`.
+4. Деплой `bepaid-webhook`, `grant-access-for-order`, при необходимости `create-payment-checkout`/`admin-create-public-link`.
+5. Smoke (read-only): прогнать тестовый payload через `supabase--curl_edge_functions` на статической фикстуре, без записи в реальные таблицы (тесты используют моки supabase-client / транзакционный rollback).
+6. Memory-апдейты:
+  - `mem://architecture/subscriptions/bepaid-webhook-rebill-order-standard` — каждый autocharge = свой REBILL-order;
+  - `mem://commercial-logic/access/extend-tariff-match-required` — добавить пункт «sbs_id match обязателен для recurring extend»;
+  - `mem://ui/admin/deal-detail-sheet-header-canon` — header строго из `deal_date`.
+
+### Запреты (повторно)
+
+- никаких UPDATE/INSERT в payments_v2 / orders_v2 / subscriptions_v2 / entitlements / access_rules / telegram_* через `supabase--insert` или migrations с DML;
+- Лариса (`e748983f…`, заказы `11adac7b…`, `09058c05…`) не трогается;
+- никаких новых cron/триггеров без отдельного approve.
+
+### DoD Этапа 3
+
+- 4 edge-функции/UI обновлены, 6 тестов зелёные;
+- proof-файл `.lovable/proofs/inv_deal_linkage_root_fixes_2026_05.md` с diff-summary, выводом тестов, deploy-логом;
+- 3 memory-обновления;
+- git diff чист от данных-миграций.
