@@ -41,6 +41,8 @@ interface SubscriptionListItemProps {
 export function SubscriptionListItem({ subscription, onClick }: SubscriptionListItemProps) {
   const isCanceled = !!subscription.canceled_at;
   const isExpired = subscription.access_end_at && new Date(subscription.access_end_at) < new Date();
+  // REPAIR-BEPAID-ACCESS-2026-05 v3: подписки expired/superseded не должны выглядеть как «живые».
+  const isInactive = isExpired || subscription.status === 'expired' || subscription.status === 'superseded';
 
   const formatShortDate = (dateString: string) => {
     return format(new Date(dateString), "d MMM yyyy", { locale: ru });
