@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { getSubscriptionChargeCount } from "@/utils/subscriptionChargeCount";
+import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
 import { useModuleDisplayMeta } from "@/hooks/useModuleDisplayMeta";
 import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
@@ -802,7 +803,24 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     },
   });
 
-  // PATCH 7: Auto-sync bePaid subscriptions (max 3, dedup by provider_subscription_id)
+  // REPAIR-BEPAID-ACCESS-2026-05 v3: admin repair of zombie provider_subscriptions
+  const repairZombieMutation = useMutation({
+    mutationFn: async (providerSubRowIds: string[]) => {
+      const { data, error } = await supabase.functions.invoke('admin-repair-zombie-provider-subs', {
+        body: { provider_sub_row_ids: providerSubRowIds },
+      });
+      if (error) throw new Error(normalizeEdgeFunctionError(error));
+      return data;
+    },
+    onSuccess: (data: any) => {
+      const failed = (data?.results || []).filter((r: any) => r.action === 'failed_to_cancel_provider' || r.action === 'manual_review');
+      const ok = (data?.results || []).filter((r: any) => r.action === 'cancel_local_only' || r.action === 'cancel_provider_then_local');
+      queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions', contact?.user_id] });
+      if (failed.length === 0) toast.success(`Ремонт выполнен: ${ok.length}`);
+      else toast.warning(`Готово: ${ok.length}, требуют внимания: ${failed.length}`);
+    },
+    onError: (e: Error) => toast.error('Ремонт не выполнен: ' + e.message),
+  });
   const autoSyncCountRef = useRef(0);
   const autoSyncedIdsRef = useRef(new Set<string>());
 
@@ -2089,8 +2107,26 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 </Card>
               )}
 
-              {/* PATCH-7: Provider-managed subscriptions (bePaid) for Admin */}
-              {contact.user_id && contactProviderSubscriptions && contactProviderSubscriptions.length > 0 && (
+              {/* PATCH-7 + REPAIR-BEPAID-ACCESS-2026-05 v3:
+                  Provider-managed subscriptions (bePaid) for Admin.
+                  Zombies (linked sv2 expired/canceled/superseded OR access_end_at < now OR sv2 missing)
+                  не рисуются как «живые подписки» — provider_subscriptions.next_charge_at для них
+                  технический desync-сигнал, а не пользовательский статус. */}
+              {(() => {
+                const allProviderSubs = contactProviderSubscriptions || [];
+                const nowMs = Date.now();
+                const isHealthyProviderSub = (sub: any) => {
+                  const sv2 = sub?.subscriptions_v2;
+                  if (!sv2) return false;
+                  if (sv2.status !== 'active') return false;
+                  if (sv2.access_end_at && new Date(sv2.access_end_at).getTime() < nowMs) return false;
+                  return true;
+                };
+                const healthyProviderSubs = allProviderSubs.filter(isHealthyProviderSub);
+                const zombieProviderSubs = allProviderSubs.filter((s: any) => !isHealthyProviderSub(s));
+                return (
+                  <>
+                    {contact.user_id && healthyProviderSubs.length > 0 && (
                 <Card className="border-blue-200 dark:border-blue-800">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-sm text-blue-600 dark:text-blue-400 flex items-center gap-2">
@@ -2100,7 +2136,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <TooltipProvider>
-                    {contactProviderSubscriptions.map((sub: any) => {
+                    {healthyProviderSubs.map((sub: any) => {
                       const productName = sub.subscriptions_v2?.products_v2?.name || 'Подписка';
                       const tariffName = sub.subscriptions_v2?.tariffs?.name;
                       const displayName = tariffName ? `${productName} — ${tariffName}` : productName;
@@ -2264,6 +2300,57 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                   </CardContent>
                 </Card>
               )}
+              {contact.user_id && zombieProviderSubs.length > 0 && (
+                <Card className="border-amber-200/60 dark:border-amber-900/40 bg-amber-50/30 dark:bg-amber-950/10">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-xs text-amber-700 dark:text-amber-400 flex items-center gap-2">
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      Технические записи провайдера ({zombieProviderSubs.length}) — требуют ремонта
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-[11px] text-muted-foreground leading-snug">
+                      У контакта есть {zombieProviderSubs.length} запись(ей) в provider_subscriptions со статусом active,
+                      но привязанная локальная подписка истекла, отменена или отсутствует.
+                      Это не активная подписка пользователя — следующее списание показываться не должно.
+                      Запись будет закрыта в рамках REPAIR-BEPAID-ACCESS-2026-05.
+                    </p>
+                    <ul className="mt-2 space-y-1 text-[11px] font-mono text-muted-foreground">
+                      {zombieProviderSubs.map((s: any) => (
+                        <li key={s.id} className="flex items-center justify-between gap-2">
+                          <span className="truncate">
+                            {s.provider_subscription_id} — sv2: {s.subscriptions_v2?.status ?? 'NULL'}
+                            {s.subscriptions_v2?.access_end_at ? ` (до ${new Date(s.subscriptions_v2.access_end_at).toLocaleDateString('ru-RU')})` : ''}
+                          </span>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-6 px-2 text-[10px] rounded-full shrink-0"
+                            disabled={repairZombieMutation.isPending}
+                            onClick={() => repairZombieMutation.mutate([s.id])}
+                          >
+                            {repairZombieMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Ремонт'}
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                    {zombieProviderSubs.length > 1 && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="mt-3 h-7 px-3 text-xs rounded-full"
+                        disabled={repairZombieMutation.isPending}
+                        onClick={() => repairZombieMutation.mutate(zombieProviderSubs.map((s: any) => s.id))}
+                      >
+                        {repairZombieMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : `Ремонт всех (${zombieProviderSubs.length})`}
+                      </Button>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+                  </>
+                );
+              })()}
 
               {/* Club Member Status Card - show for all contacts with user_id */}
               {contact.user_id && (

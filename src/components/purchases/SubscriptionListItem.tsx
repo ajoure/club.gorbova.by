@@ -41,6 +41,8 @@ interface SubscriptionListItemProps {
 export function SubscriptionListItem({ subscription, onClick }: SubscriptionListItemProps) {
   const isCanceled = !!subscription.canceled_at;
   const isExpired = subscription.access_end_at && new Date(subscription.access_end_at) < new Date();
+  // REPAIR-BEPAID-ACCESS-2026-05 v3: подписки expired/superseded не должны выглядеть как «живые».
+  const isInactive = isExpired || subscription.status === 'expired' || subscription.status === 'superseded';
 
   const formatShortDate = (dateString: string) => {
     return format(new Date(dateString), "d MMM yyyy", { locale: ru });
@@ -108,7 +110,7 @@ export function SubscriptionListItem({ subscription, onClick }: SubscriptionList
           {subscription.access_end_at && (
             <span>Действует до: {formatShortDate(subscription.access_end_at)}</span>
           )}
-          {subscription.payment_methods?.brand && subscription.payment_methods?.last4 && (
+          {!isInactive && subscription.payment_methods?.brand && subscription.payment_methods?.last4 && (
             <span className="flex items-center gap-1">
               <CreditCard className="h-3.5 w-3.5" />
               **** {subscription.payment_methods.last4}
@@ -116,7 +118,7 @@ export function SubscriptionListItem({ subscription, onClick }: SubscriptionList
           )}
         </div>
 
-        {subscription.is_trial && subscription.trial_end_at && (
+        {!isInactive && subscription.is_trial && subscription.trial_end_at && (
           <div className="text-xs text-blue-600 dark:text-blue-400">
             Пробный период до: {formatShortDate(subscription.trial_end_at)}
             {subscription.next_charge_at && (
