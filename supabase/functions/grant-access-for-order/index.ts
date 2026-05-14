@@ -1,4 +1,11 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import {
+  buildSbsMismatchAuditPayload,
+  buildSbsMismatchOrderMetaMerge,
+  buildSbsMismatchResponseBody,
+  resolvePaymentFlow,
+  decideSbsMismatchAction,
+} from "./sbs_mismatch_guard.ts";
 import { isCalendarMonthProduct, calcCalendarMonthEnd } from '../_shared/resolve-access-window.ts';
 import { writeLedgerEntry, buildPostCheck } from '../_shared/fulfillment-executor.ts';
 import { checkPriorPurchase } from '../_shared/check-prior-purchase.ts';
