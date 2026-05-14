@@ -189,6 +189,7 @@ Deno.serve(async (req) => {
           const c = await fetch(`https://api.bepaid.by/subscriptions/${encodeURIComponent(psId)}/cancel`, {
             method: 'POST',
             headers: { Authorization: bepaidAuth, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cancel_reason: 'cancelled_by_admin' }),
           });
           cancelStatus = c.status;
           cancelExcerpt = (await c.text()).slice(0, 400);
