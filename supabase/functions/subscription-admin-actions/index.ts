@@ -322,6 +322,7 @@ Deno.serve(async (req) => {
       
       let bepaidRefundResult: any = null;
       let bepaidRefundError: string | null = null;
+      let bepaidAlreadyRefunded = false;
 
       // Process refund through bePaid if we have a payment UID
       if (successfulPayment?.provider_payment_id) {
