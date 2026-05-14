@@ -4141,62 +4141,121 @@ Deno.serve(async (req) => {
       };
 
       // =====================================================================
-      // REFUND HANDLING - process refund transactions idempotently
+      // REFUND HANDLING — PATCH DEAL-LINKAGE-ROOT-FIXES-2026-05
+      // Канонический write-path для refund-row + parent linkage + atomic update
+      // через SECURITY DEFINER RPC `record_refund_atomic`. RPC обеспечивает:
+      //   - идемпотентность по provider_payment_id (refund uid);
+      //   - вставку отдельной refund-row с meta.parent_payment_id / parent_payment_uid;
+      //   - атомарный апдейт parent.refunded_amount;
+      //   - пересчёт order.status (refunded при full refund) и order.meta агрегатов.
+      // Старый путь (мутация payments_v2.refunds JSON-массива) был заменён,
+      // так как не создавал refund-row → DealDetailSheet не показывал «Возврат»
+      // (дефект Ларисы).
       // =====================================================================
       if (isRefundTransaction && transactionUid) {
-        console.log(`Processing refund webhook for payment ${paymentV2.id}, refund UID: ${transactionUid}`);
-        
-        const existingRefunds = (paymentV2.refunds || []) as any[];
-        
-        // Check idempotency - skip if this refund already exists
-        const alreadyExists = existingRefunds.find(r => r.refund_id === transactionUid);
-        
-        if (alreadyExists) {
-          console.log(`Refund ${transactionUid} already recorded, updating status only`);
-          
-          // Update existing refund status if changed
-          const updatedRefunds = existingRefunds.map(r => {
-            if (r.refund_id === transactionUid) {
-              return {
-                ...r,
-                status: transactionStatus === 'successful' ? 'succeeded' : transactionStatus,
-                receipt_url: transaction?.receipt_url || r.receipt_url,
-              };
-            }
-            return r;
-          });
-          
-          const totalRefunded = updatedRefunds
-            .filter(r => r.status === 'succeeded')
-            .reduce((sum, r) => sum + r.amount, 0);
-          
-          await supabase
-            .from('payments_v2')
-            .update({
-              ...basePaymentUpdate,
-              refunds: updatedRefunds,
-              refunded_amount: totalRefunded,
-            })
-            .eq('id', paymentV2.id);
-          
+        console.log(`[bepaid-webhook] refund via record_refund_atomic: uid=${transactionUid}, parent=${paymentV2.id}`);
+
+        const refundAmount = (transaction?.amount || 0) / 100;
+        const refundReason = transaction?.message
+          || transaction?.refund_reason
+          || body.refund?.reason
+          || null;
+
+        // Pre-cap guard: defense-in-depth (RPC сам не cap'ит).
+        const parentAmt = Number(paymentV2.amount || 0);
+        const priorRefunded = Number(paymentV2.refunded_amount || 0);
+        if (parentAmt > 0 && priorRefunded + refundAmount - parentAmt > 0.01) {
           await supabase.from('audit_logs').insert({
             actor_user_id: null,
             actor_type: 'system',
             actor_label: 'bepaid-webhook',
-            action: 'bepaid_refund_ignored_duplicate',
-            meta: { 
-              payment_id: paymentV2.id, 
-              refund_id: transactionUid,
+            action: 'bepaid_refund_over_cap_blocked',
+            meta: {
+              payment_id: paymentV2.id,
               order_id: paymentV2.order_id,
+              refund_uid: transactionUid,
+              parent_amount: parentAmt,
+              prior_refunded: priorRefunded,
+              attempted_refund: refundAmount,
+              reason: 'refund would exceed parent.amount — manual_review',
             },
           });
-          
+          // Возвращаем 200 (по правилу Payment Error Handling), DML не выполняется.
           return new Response(
-            JSON.stringify({ ok: true, type: 'refund_duplicate', refund_id: transactionUid }),
+            JSON.stringify({ ok: true, type: 'refund_over_cap_blocked', refund_id: transactionUid, fallback: true }),
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
           );
         }
-        
+
+        // Сначала flush basePaymentUpdate (sync от bePaid) на parent.
+        try {
+          await supabase
+            .from('payments_v2')
+            .update(basePaymentUpdate)
+            .eq('id', paymentV2.id);
+        } catch (syncErr) {
+          console.error('[bepaid-webhook] basePaymentUpdate flush failed (non-fatal):', syncErr);
+        }
+
+        const { data: rpcResult, error: rpcErr } = await supabase.rpc('record_refund_atomic', {
+          p_order_id: paymentV2.order_id,
+          p_parent_payment_id: paymentV2.id,
+          p_refund_amount: refundAmount,
+          p_refund_uid: transactionUid,
+          p_refund_reason: refundReason,
+          p_actor_user_id: null,
+          p_target_user_id: paymentV2.user_id || null,
+          p_bepaid_response: body || {},
+        });
+
+        if (rpcErr) {
+          console.error('[bepaid-webhook] record_refund_atomic failed:', rpcErr);
+          await supabase.from('audit_logs').insert({
+            actor_user_id: null,
+            actor_type: 'system',
+            actor_label: 'bepaid-webhook',
+            action: 'bepaid_refund_rpc_failed',
+            meta: {
+              payment_id: paymentV2.id,
+              order_id: paymentV2.order_id,
+              refund_uid: transactionUid,
+              error: rpcErr.message || String(rpcErr),
+            },
+          });
+          // Fallback по правилу Payment Error Handling — 200 + fallback:true.
+          return new Response(
+            JSON.stringify({ ok: false, type: 'refund_rpc_failed', refund_id: transactionUid, fallback: true }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+
+        const result = (rpcResult as any) || {};
+        await supabase.from('audit_logs').insert({
+          actor_user_id: null,
+          actor_type: 'system',
+          actor_label: 'bepaid-webhook',
+          action: result.idempotent ? 'bepaid_refund_idempotent' : 'bepaid_refund_recorded',
+          meta: {
+            payment_id: paymentV2.id,
+            order_id: paymentV2.order_id,
+            refund_uid: transactionUid,
+            refund_amount: refundAmount,
+            rpc_result: result,
+          },
+        });
+
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            type: result.idempotent ? 'refund_idempotent' : 'refund_recorded',
+            refund_id: transactionUid,
+            amount: refundAmount,
+            rpc_result: result,
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
         // New refund - add to array
         const refundAmount = (transaction?.amount || 0) / 100;
         const newRefund = {
