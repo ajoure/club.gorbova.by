@@ -374,6 +374,24 @@ export function setDecisionFieldsCache(fields: TokenDef[]) {
  * Used to render chips from saved SoT strings.
  * Returns null if token is unknown (UNMAPPED).
  */
+/**
+ * Module-level cache of registry refs from document_token_registry.
+ * Populated by setRegistryRefsCache() from TokenizedRichInput when its
+ * useQuery for token-registry-refs resolves. Used as fallback in
+ * tokenStringToLabel() so canonical system.*/customer.*/etc. tokens render
+ * correct UI labels in the broadcast/picker UI without showing UNMAPPED.
+ */
+let _registryRefsCache: Array<{ token_key: string; ui_label: string }> = [];
+
+export function setRegistryRefsCache(refs: Array<{ token_key: string; ui_label: string }>): void {
+  _registryRefsCache = refs ?? [];
+}
+
+/**
+ * Runtime lookup: tokenString → label.
+ * Used to render chips from saved SoT strings.
+ * Returns null if token is unknown (UNMAPPED).
+ */
 export function tokenStringToLabel(tokenString: string): string | null {
   const allCaches: TokenDef[][] = [
     CONTACT_TOKENS,
@@ -394,6 +412,15 @@ export function tokenStringToLabel(tokenString: string): string | null {
   for (const cache of allCaches) {
     const found = cache.find((t) => t.tokenString === tokenString);
     if (found) return found.label;
+  }
+
+  // Fallback: registry refs from document_token_registry.
+  // Strip optional modifiers like {{key|format=…|case=…}} before matching.
+  const inner = tokenString.replace(/^\{\{/, "").replace(/\}\}$/, "").trim();
+  const tokenKey = inner.split("|")[0].trim();
+  if (tokenKey && _registryRefsCache.length > 0) {
+    const ref = _registryRefsCache.find((r) => r.token_key === tokenKey);
+    if (ref) return ref.ui_label;
   }
 
   return null; // UNMAPPED
