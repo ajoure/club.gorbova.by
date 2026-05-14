@@ -6363,6 +6363,30 @@ export type Database = {
         }
         Relationships: []
       }
+      lesson_progress_state_backup_byn_x3_revert_2026_05_13: {
+        Row: {
+          backed_up_at: string
+          id: string
+          lesson_id: string
+          state_json_before: Json
+          user_id: string
+        }
+        Insert: {
+          backed_up_at?: string
+          id: string
+          lesson_id: string
+          state_json_before: Json
+          user_id: string
+        }
+        Update: {
+          backed_up_at?: string
+          id?: string
+          lesson_id?: string
+          state_json_before?: Json
+          user_id?: string
+        }
+        Relationships: []
+      }
       live_access_links: {
         Row: {
           activated_at: string | null
