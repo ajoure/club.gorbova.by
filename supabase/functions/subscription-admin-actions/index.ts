@@ -393,11 +393,35 @@ Deno.serve(async (req) => {
       const hasBepaidPayment = !!successfulPayment?.provider_payment_id;
       const bepaidRefundSuccessful = bepaidRefundResult?.transaction?.status === 'successful';
       
+      // bePaid уже сообщил «refunded already» → идемпотентный skip, возвращаем 200, не падаем UI.
+      if (hasBepaidPayment && !bepaidRefundSuccessful && bepaidAlreadyRefunded) {
+        await supabase.from('audit_logs').insert({
+          actor_user_id: adminUserId,
+          target_user_id: order.user_id,
+          action: 'admin.subscription.refund_skipped_already_refunded',
+          meta: {
+            order_id,
+            order_number: order.order_number,
+            parent_payment_uid: successfulPayment?.provider_payment_id,
+            bepaid_response: bepaidRefundResult,
+          },
+        });
+        return new Response(JSON.stringify({
+          success: false,
+          idempotent: true,
+          error: 'Платёж уже возвращён в bePaid ранее. Локальный статус заказа не изменён — проверьте журнал возвратов.',
+          bepaid_error: 'bepaid_already_refunded',
+          bepaid_response: bepaidRefundResult,
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
       // If there was a bePaid payment and refund failed, return error - don't update order
       if (hasBepaidPayment && !bepaidRefundSuccessful) {
         console.error(`bePaid refund failed for order ${order_id}, NOT marking as refunded`);
-        
-        // Log the failed attempt
+
         await supabase.from('audit_logs').insert({
           actor_user_id: adminUserId,
           target_user_id: order.user_id,
@@ -412,13 +436,13 @@ Deno.serve(async (req) => {
           },
         });
 
-        return new Response(JSON.stringify({ 
-          success: false, 
+        return new Response(JSON.stringify({
+          success: false,
           error: bepaidRefundError || 'Ошибка возврата в bePaid. Статус заказа не изменён.',
           bepaid_error: bepaidRefundError,
           bepaid_response: bepaidRefundResult,
         }), {
-          status: 400,
+          status: 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
