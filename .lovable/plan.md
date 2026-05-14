@@ -291,3 +291,21 @@ Read-only SQL отчёт за окно [сейчас − 30 дней; сейча
 - §A code-patch (с kill-switch off);
 - §F SBS-mismatch no-new-sub patch;
 - §C / §B / §D / §E — каждый отдельным approve.
+---
+
+## 2026-05-14 — §A REBILL Materialization Spec выполнен
+
+Артефакт: `.lovable/proofs/inv_rebill_materialization_spec_2026_05.md`.
+
+Ключевые решения:
+- Принятая модель: REBILL.id = единый source для финансов и для grant. Отказ от `do_not_grant_access`/`source_payment_uid` (point #1 — обоснован отсутствием контракта в `grant-access-for-order`).
+- Pattern `order_number` оставлен текущим production-форматом `REBILL-<first8>-<next3>` (point #5).
+- Resolver parent_subscription идёт по `provider_subscriptions` + `subscriptions_v2.meta`, без user+product fallback (point #6).
+- Kill-switch расширен до `off|dry_run|on` (point #10).
+- 23505 на REBILL uid → skip, не 500 (point #11).
+- Атомарность INSERT REBILL+payment — будущим RPC `materialize_rebill_atomic` (миграция в §A code-patch, не сейчас).
+- Refund: payment и refund webhook трактуются раздельно (point #8); существующий `record_refund_atomic` подходит без изменений (point #9).
+
+Запреты §A: 0 DML, 0 миграций, 0 правок edge functions. Лариса не трогается.
+
+Жду approve §A spec → дальше §F (SBS-mismatch no-new-sub) отдельным approve как блокер для production-включения.
