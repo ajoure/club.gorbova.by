@@ -109,3 +109,26 @@ git diff --stat (только src/ + supabase/functions/, без миграци�
 ## 8. Жду approve части 3.2
 
 Часть 3.1 закрывает три первопричины linkage-дефекта (sbs-blind fallback, sbs-blind extend, refund без parent-row). Часть 3.2 завершает scope (REBILL-order materialization, UI nested refunds, расширенный guard, тесты). Не запускаю без отдельного dry-run.
+
+## 9. Уточнение по фразе «создаётся новая sub от baseStartDate» (по запросу 14.05.2026)
+
+Текущий код `grant-access-for-order` (строки 708–792) при mismatch ведёт себя так:
+
+| Кейс | Проверка | Поведение | Корректно? |
+|---|---|---|---|
+| `tariffMatch && sbsMatch` | оба совпали | extend существующей sub от `access_end_at` | ✅ |
+| `!tariffMatch` (разные тарифы / отсутствуют) | — | НЕ extend, создаётся новая sub-цепочка от `baseStartDate` | ✅ (это первичная покупка другого тарифа продукта, не recurring rebill) |
+| `tariffMatch && !sbsMatch` (recurring SBS-mismatch) | sbs не совпал при том же тарифе | сейчас: audit `skip_extend_bepaid_subscription_mismatch` + `manual_review=true` + создаётся новая sub-цепочка от `baseStartDate` | ❌ нарушает правило: при mismatch recurring должно быть `no extend AND no new subscription chain` |
+
+### Действие
+
+Перенесено в **3.2 §F (новый scope)** — патч `grant-access-for-order`:
+- При `!sbsMatch && tariffMatch` — после audit + manual_review **прерывать** sub/entitlement-creation для этого ордера;
+- Возврат `{ skipped: true, reason: 'bepaid_subscription_mismatch', manual_review: true }` без INSERT в `subscriptions_v2` и без INSERT/UPDATE в `entitlements`;
+- Telegram grant — НЕ вызывается;
+- Existing sub (чужая) — НЕ продлевается (как сейчас);
+- `do_not_grant_access` фактический по этому ордеру.
+
+Существующий путь `!tariffMatch → новая sub` остаётся без изменений (это легитимная покупка другого тарифа, не recurring drift).
+
+Этот патч войдёт отдельным §F в план 3.2 рядом с §A REBILL Materialization Spec.
