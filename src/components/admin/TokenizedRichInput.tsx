@@ -34,6 +34,7 @@ import {
   loadProductFields,
   setProductFieldsCache,
   tokenStringToLabel,
+  setRegistryRefsCache,
   extractShortUuid,
   loadTokensForContext,
   type TokenContext,
@@ -389,6 +390,14 @@ export function TokenizedRichInput({
     queryFn: loadRegistryRefs,
     staleTime: 60_000,
   });
+
+  // Sync registry refs into tokenStringToLabel fallback cache so canonical
+  // system.*/customer.*/etc. tokens render proper UI labels (no UNMAPPED).
+  useEffect(() => {
+    setRegistryRefsCache(
+      registryRefs.map((r) => ({ token_key: r.token_key, ui_label: r.ui_label }))
+    );
+  }, [registryRefs]);
 
   // Build extensions list
   const extensions = useMemo(() => {
