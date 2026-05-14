@@ -322,6 +322,7 @@ Deno.serve(async (req) => {
       
       let bepaidRefundResult: any = null;
       let bepaidRefundError: string | null = null;
+      let bepaidAlreadyRefunded = false;
 
       // Process refund through bePaid if we have a payment UID
       if (successfulPayment?.provider_payment_id) {
@@ -357,13 +358,26 @@ Deno.serve(async (req) => {
             bepaidRefundResult = await bepaidResponse.json();
             console.log('bePaid refund response:', JSON.stringify(bepaidRefundResult));
 
+            // Detect nested error envelope: { response: { message, errors: { base: [...] } } }
+            const nestedResp = (bepaidRefundResult as any)?.response;
+            const nestedMsg: string = nestedResp?.message || '';
+            const nestedBaseErrors: string[] = nestedResp?.errors?.base || [];
+            const combinedErrText = [nestedMsg, ...nestedBaseErrors].join(' ').toLowerCase();
+            const alreadyRefunded = combinedErrText.includes('refunded already')
+              || combinedErrText.includes('already refunded');
+
             if (bepaidRefundResult.transaction?.status === 'successful') {
               console.log(`bePaid refund successful: uid=${bepaidRefundResult.transaction.uid}`);
+            } else if (alreadyRefunded) {
+              // Idempotent: bePaid уже вернул этот платёж. Не считаем ошибкой.
+              bepaidAlreadyRefunded = true;
+              bepaidRefundError = 'bepaid_already_refunded';
+              console.warn('[refund] bePaid reports payment already refunded — treating as idempotent skip');
             } else if (bepaidRefundResult.transaction?.status === 'failed') {
               bepaidRefundError = bepaidRefundResult.transaction.message || 'Refund failed';
               console.error('bePaid refund failed:', bepaidRefundError);
-            } else if (bepaidRefundResult.errors) {
-              bepaidRefundError = bepaidRefundResult.message || JSON.stringify(bepaidRefundResult.errors);
+            } else if (bepaidRefundResult.errors || nestedResp?.errors) {
+              bepaidRefundError = bepaidRefundResult.message || nestedMsg || JSON.stringify(bepaidRefundResult.errors || nestedResp?.errors);
               console.error('bePaid refund error:', bepaidRefundError);
             }
           } catch (err) {
@@ -379,11 +393,35 @@ Deno.serve(async (req) => {
       const hasBepaidPayment = !!successfulPayment?.provider_payment_id;
       const bepaidRefundSuccessful = bepaidRefundResult?.transaction?.status === 'successful';
       
+      // bePaid уже сообщил «refunded already» → идемпотентный skip, возвращаем 200, не падаем UI.
+      if (hasBepaidPayment && !bepaidRefundSuccessful && bepaidAlreadyRefunded) {
+        await supabase.from('audit_logs').insert({
+          actor_user_id: adminUserId,
+          target_user_id: order.user_id,
+          action: 'admin.subscription.refund_skipped_already_refunded',
+          meta: {
+            order_id,
+            order_number: order.order_number,
+            parent_payment_uid: successfulPayment?.provider_payment_id,
+            bepaid_response: bepaidRefundResult,
+          },
+        });
+        return new Response(JSON.stringify({
+          success: false,
+          idempotent: true,
+          error: 'Платёж уже возвращён в bePaid ранее. Локальный статус заказа не изменён — проверьте журнал возвратов.',
+          bepaid_error: 'bepaid_already_refunded',
+          bepaid_response: bepaidRefundResult,
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
       // If there was a bePaid payment and refund failed, return error - don't update order
       if (hasBepaidPayment && !bepaidRefundSuccessful) {
         console.error(`bePaid refund failed for order ${order_id}, NOT marking as refunded`);
-        
-        // Log the failed attempt
+
         await supabase.from('audit_logs').insert({
           actor_user_id: adminUserId,
           target_user_id: order.user_id,
@@ -398,13 +436,13 @@ Deno.serve(async (req) => {
           },
         });
 
-        return new Response(JSON.stringify({ 
-          success: false, 
+        return new Response(JSON.stringify({
+          success: false,
           error: bepaidRefundError || 'Ошибка возврата в bePaid. Статус заказа не изменён.',
           bepaid_error: bepaidRefundError,
           bepaid_response: bepaidRefundResult,
         }), {
-          status: 400,
+          status: 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
