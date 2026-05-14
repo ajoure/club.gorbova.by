@@ -2282,6 +2282,35 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                   </CardContent>
                 </Card>
               )}
+              {contact.user_id && zombieProviderSubs.length > 0 && (
+                <Card className="border-amber-200/60 dark:border-amber-900/40 bg-amber-50/30 dark:bg-amber-950/10">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-xs text-amber-700 dark:text-amber-400 flex items-center gap-2">
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      Технические записи провайдера ({zombieProviderSubs.length}) — требуют ремонта
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-[11px] text-muted-foreground leading-snug">
+                      У контакта есть {zombieProviderSubs.length} запись(ей) в provider_subscriptions со статусом active,
+                      но привязанная локальная подписка истекла, отменена или отсутствует.
+                      Это не активная подписка пользователя — следующее списание показываться не должно.
+                      Запись будет закрыта в рамках REPAIR-BEPAID-ACCESS-2026-05.
+                    </p>
+                    <ul className="mt-2 space-y-0.5 text-[11px] font-mono text-muted-foreground">
+                      {zombieProviderSubs.map((s: any) => (
+                        <li key={s.id} className="truncate">
+                          {s.provider_subscription_id} — sv2: {s.subscriptions_v2?.status ?? 'NULL'}
+                          {s.subscriptions_v2?.access_end_at ? ` (до ${new Date(s.subscriptions_v2.access_end_at).toLocaleDateString('ru-RU')})` : ''}
+                        </li>
+                      ))}
+                    </ul>
+                  </CardContent>
+                </Card>
+              )}
+                  </>
+                );
+              })()}
 
               {/* Club Member Status Card - show for all contacts with user_id */}
               {contact.user_id && (
