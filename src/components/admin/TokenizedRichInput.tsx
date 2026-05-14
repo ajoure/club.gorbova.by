@@ -34,6 +34,7 @@ import {
   loadProductFields,
   setProductFieldsCache,
   tokenStringToLabel,
+  setRegistryRefsCache,
   extractShortUuid,
   loadTokensForContext,
   type TokenContext,
