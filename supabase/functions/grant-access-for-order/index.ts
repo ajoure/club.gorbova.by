@@ -675,34 +675,66 @@ Deno.serve(async (req) => {
         .maybeSingle();
 
       if (activeSub?.access_end_at && new Date(activeSub.access_end_at) > now) {
-        // ── TARIFF-MATCH GUARD ──────────────────────────────────────────
+        // ── TARIFF + bePaid SBS MATCH GUARD ─────────────────────────────
         // Extend существующей подписки разрешён ТОЛЬКО при совпадении tariff_id.
-        // Покупка другого тарифа того же продукта = новая подписка от даты оплаты,
-        // без суммирования остатка дней. Замена тарифа — только через explicit
-        // cancel → supersede администратором (safe-replacement-flow).
-        const canExtendExistingSub =
+        // Дополнительно (PATCH DEAL-LINKAGE-ROOT-FIXES-2026-05): для recurring
+        // rebill (когда у order есть bepaid_subscription_id) обязателен ещё и
+        // sbs match с активной подпиской — иначе платёж старой sbs может продлить
+        // новую sub того же продукта (дефект Ларисы 12-13 мая 2026).
+        const orderSbs = (order as any).bepaid_subscription_id || null;
+
+        // Резолв sbs активной подписки: provider_subscriptions ИЛИ meta.bepaid_subscription_id.
+        let activeSubSbs: string | null = null;
+        if (orderSbs) {
+          const { data: provLink } = await supabase
+            .from('provider_subscriptions')
+            .select('provider_subscription_id')
+            .eq('subscription_v2_id', activeSub.id)
+            .eq('provider', 'bepaid')
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          activeSubSbs = (provLink as any)?.provider_subscription_id || null;
+          if (!activeSubSbs) {
+            const { data: subMetaRow } = await supabase
+              .from('subscriptions_v2')
+              .select('meta')
+              .eq('id', activeSub.id)
+              .maybeSingle();
+            activeSubSbs = ((subMetaRow as any)?.meta || {}).bepaid_subscription_id || null;
+          }
+        }
+
+        const tariffMatch =
           activeSub.product_id === productId &&
           activeSub.tariff_id != null &&
           tariffId != null &&
           activeSub.tariff_id === tariffId;
 
+        const sbsMatch = !orderSbs ? true : (activeSubSbs && String(activeSubSbs) === String(orderSbs));
+        const canExtendExistingSub = tariffMatch && sbsMatch;
+
         if (canExtendExistingSub) {
           // Extend from end of current access
           accessStartAt = new Date(activeSub.access_end_at);
           existingProductSub = activeSub;
-          console.log(`[grant-access-for-order] Extending from existing access end: ${activeSub.access_end_at} (tariff match: ${tariffId})`);
+          console.log(`[grant-access-for-order] Extending from existing access end: ${activeSub.access_end_at} (tariff+sbs match)`);
         } else {
-          // Tariff mismatch (или одна из сторон без tariff_id) → НЕ extend.
-          // Создаём новую подписку от baseStartDate. Старая подписка остаётся как есть.
-          const skipReason =
-            activeSub.tariff_id == null || tariffId == null
-              ? "skip_extend_missing_tariff"
-              : "skip_extend_tariff_mismatch";
+          // Mismatch → НЕ extend.
+          let skipReason: string;
+          if (!tariffMatch) {
+            skipReason =
+              activeSub.tariff_id == null || tariffId == null
+                ? "skip_extend_missing_tariff"
+                : "skip_extend_tariff_mismatch";
+          } else {
+            skipReason = "skip_extend_bepaid_subscription_mismatch";
+          }
 
           console.log(
             `[grant-access-for-order] ${skipReason}: active sub ${activeSub.id} ` +
-            `(tariff=${activeSub.tariff_id}) != order tariff=${tariffId}. ` +
-            `Создаю новую подписку от ${baseStartDate.toISOString()} вместо extend.`
+            `(tariff=${activeSub.tariff_id}, sbs=${activeSubSbs}) vs order ` +
+            `(tariff=${tariffId}, sbs=${orderSbs}). Создаю новую подписку от ${baseStartDate.toISOString()}.`
           );
 
           await supabase.from("audit_logs").insert({
@@ -714,17 +746,48 @@ Deno.serve(async (req) => {
             meta: {
               order_id: orderId,
               product_id: productId,
+              tariff_id: tariffId,
+              order_bepaid_subscription_id: orderSbs,
               active_subscription_id: activeSub.id,
               active_subscription_access_end_at: activeSub.access_end_at,
               active_subscription_tariff_id: activeSub.tariff_id,
-              new_order_tariff_id: tariffId,
+              active_subscription_bepaid_sbs: activeSubSbs,
               new_access_start_at: baseStartDate.toISOString(),
+              tariff_match: tariffMatch,
+              sbs_match: sbsMatch,
               reason:
-                skipReason === "skip_extend_tariff_mismatch"
+                skipReason === "skip_extend_bepaid_subscription_mismatch"
+                  ? "bePaid subscription_id mismatch — refusing to extend foreign sub via rebill"
+                  : skipReason === "skip_extend_tariff_mismatch"
                   ? "Different tariff_id — new subscription instead of extending existing one"
                   : "Missing tariff_id on either side — defaulting to safe new subscription",
             },
           });
+
+          // При sbs-mismatch — проставить manual_review на ордер (merge meta).
+          if (skipReason === "skip_extend_bepaid_subscription_mismatch") {
+            try {
+              const existingMeta = (order as any).meta || {};
+              await supabase
+                .from('orders_v2')
+                .update({
+                  meta: {
+                    ...existingMeta,
+                    manual_review: true,
+                    manual_review_reason: 'bepaid_subscription_mismatch',
+                    manual_review_at: new Date().toISOString(),
+                    manual_review_context: {
+                      order_bepaid_sbs: orderSbs,
+                      candidate_subscription_v2_id: activeSub.id,
+                      candidate_bepaid_sbs: activeSubSbs,
+                    },
+                  },
+                })
+                .eq('id', orderId);
+            } catch (mrErr) {
+              console.error('[grant-access-for-order] manual_review meta-merge failed (non-fatal):', mrErr);
+            }
+          }
           // existingProductSub остаётся null, accessStartAt = baseStartDate
         }
       }
