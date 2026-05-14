@@ -2297,14 +2297,36 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                       Это не активная подписка пользователя — следующее списание показываться не должно.
                       Запись будет закрыта в рамках REPAIR-BEPAID-ACCESS-2026-05.
                     </p>
-                    <ul className="mt-2 space-y-0.5 text-[11px] font-mono text-muted-foreground">
+                    <ul className="mt-2 space-y-1 text-[11px] font-mono text-muted-foreground">
                       {zombieProviderSubs.map((s: any) => (
-                        <li key={s.id} className="truncate">
-                          {s.provider_subscription_id} — sv2: {s.subscriptions_v2?.status ?? 'NULL'}
-                          {s.subscriptions_v2?.access_end_at ? ` (до ${new Date(s.subscriptions_v2.access_end_at).toLocaleDateString('ru-RU')})` : ''}
+                        <li key={s.id} className="flex items-center justify-between gap-2">
+                          <span className="truncate">
+                            {s.provider_subscription_id} — sv2: {s.subscriptions_v2?.status ?? 'NULL'}
+                            {s.subscriptions_v2?.access_end_at ? ` (до ${new Date(s.subscriptions_v2.access_end_at).toLocaleDateString('ru-RU')})` : ''}
+                          </span>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-6 px-2 text-[10px] rounded-full shrink-0"
+                            disabled={repairZombieMutation.isPending}
+                            onClick={() => repairZombieMutation.mutate([s.id])}
+                          >
+                            {repairZombieMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Ремонт'}
+                          </Button>
                         </li>
                       ))}
                     </ul>
+                    {zombieProviderSubs.length > 1 && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="mt-3 h-7 px-3 text-xs rounded-full"
+                        disabled={repairZombieMutation.isPending}
+                        onClick={() => repairZombieMutation.mutate(zombieProviderSubs.map((s: any) => s.id))}
+                      >
+                        {repairZombieMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : `Ремонт всех (${zombieProviderSubs.length})`}
+                      </Button>
+                    )}
                   </CardContent>
                 </Card>
               )}
