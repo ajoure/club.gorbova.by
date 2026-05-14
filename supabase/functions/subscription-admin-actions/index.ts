@@ -357,13 +357,26 @@ Deno.serve(async (req) => {
             bepaidRefundResult = await bepaidResponse.json();
             console.log('bePaid refund response:', JSON.stringify(bepaidRefundResult));
 
+            // Detect nested error envelope: { response: { message, errors: { base: [...] } } }
+            const nestedResp = (bepaidRefundResult as any)?.response;
+            const nestedMsg: string = nestedResp?.message || '';
+            const nestedBaseErrors: string[] = nestedResp?.errors?.base || [];
+            const combinedErrText = [nestedMsg, ...nestedBaseErrors].join(' ').toLowerCase();
+            const alreadyRefunded = combinedErrText.includes('refunded already')
+              || combinedErrText.includes('already refunded');
+
             if (bepaidRefundResult.transaction?.status === 'successful') {
               console.log(`bePaid refund successful: uid=${bepaidRefundResult.transaction.uid}`);
+            } else if (alreadyRefunded) {
+              // Idempotent: bePaid уже вернул этот платёж. Не считаем ошибкой.
+              bepaidAlreadyRefunded = true;
+              bepaidRefundError = 'bepaid_already_refunded';
+              console.warn('[refund] bePaid reports payment already refunded — treating as idempotent skip');
             } else if (bepaidRefundResult.transaction?.status === 'failed') {
               bepaidRefundError = bepaidRefundResult.transaction.message || 'Refund failed';
               console.error('bePaid refund failed:', bepaidRefundError);
-            } else if (bepaidRefundResult.errors) {
-              bepaidRefundError = bepaidRefundResult.message || JSON.stringify(bepaidRefundResult.errors);
+            } else if (bepaidRefundResult.errors || nestedResp?.errors) {
+              bepaidRefundError = bepaidRefundResult.message || nestedMsg || JSON.stringify(bepaidRefundResult.errors || nestedResp?.errors);
               console.error('bePaid refund error:', bepaidRefundError);
             }
           } catch (err) {
