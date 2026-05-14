@@ -98,3 +98,76 @@ Deno tests в `supabase/functions/grant-access-for-order/` с моками `supa
 ## Production включение
 
 §F закрывает blocker для §A REBILL Materialization — теперь `BEPAID_REBILL_MATERIALIZATION=on` безопаснее по части recurring foreign-sbs (любой mismatch не материализует новую sub-цепочку). Само включение `on` остаётся за отдельным approve.
+
+---
+
+## Verify (2026-05-14): тесты §F
+
+### Запуск
+`supabase test_edge_functions {functions:["grant-access-for-order"]}`
+
+### Результат
+
+```
+ok | 9 passed | 0 failed (31ms)
+```
+
+### Покрытие (5 обязательных кейсов из требования)
+
+| # | Тест | Decision / Контракт | Статус |
+|---|------|--------------------|--------|
+| 1 | recurring `tariffMatch=true, sbsMatch=false, payment_flow='bepaid_subscription_charge'` | `skip_no_new_sub` + response `{skipped:true, manual_review:true, granted_*=null, entitlement_id=null}` | ok |
+| 2 | recurring `tariffMatch=true, sbsMatch=true` | `normal_extend` (без §F early-return) | ok |
+| 3 | Primary flow без candidate | `create_new_primary` (create-new путь не сломан) | ok |
+| 4 | **Larisa fixture:** `order.sbs=sbs_OLD`, candidate `SUB_NEW` под `sbs_NEW`, product/tariff совпадают | `skip_no_new_sub`; audit содержит обоих кандидатов (`order_bepaid_subscription_id=sbs_OLD`, `primary_candidate_bepaid_sbs=sbs_NEW`); response: `granted_subscription_v2_id=null`, `entitlement_id=null`, `skipped=true`, `manual_review=true` | ok |
+| 5 | `!tariffMatch` regression | `create_new_tariff_mismatch` (текущее поведение НЕ изменено §F) — **backlog-risk:** для recurring + foreign sbs + tariff-mismatch одновременно нужен отдельный guard | ok |
+
+Доп. контрактные тесты (4): payment_flow resolver, audit payload shape, orders_v2.meta merge non-overwrite, response snake+camel parity.
+
+### Минимальный рефакторинг для тестируемости
+
+Извлечены **pure builders** в `supabase/functions/grant-access-for-order/sbs_mismatch_guard.ts`:
+- `decideSbsMismatchAction(input)` — decision-table.
+- `buildSbsMismatchAuditPayload(input)` — audit row payload.
+- `buildSbsMismatchOrderMetaMerge(input)` — orders_v2.meta merge (не overwrite).
+- `buildSbsMismatchResponseBody(input)` — HTTP 200 response body.
+- `resolvePaymentFlow(order)` — fallback `meta.payment_flow → order.payment_flow → ""`.
+
+`index.ts` §F-блок (lines ~805–860) теперь вызывает эти builders. **Поведение 1:1** с предыдущей inline-реализацией; никаких новых side-effects, никаких изменений runtime-семантики.
+
+### Production guarantees (повторно подтверждено)
+
+- `subscriptions_v2`: **0** production INSERT/UPDATE.
+- `entitlements`: **0**.
+- `access_rules`: **0**.
+- `telegram_access_queue` / `telegram_access`: **0**.
+- `payments_v2`: **0**.
+- `orders_v2`: только runtime `meta` merge внутри §F-блока; никакого ручного data repair.
+- Migrations: **0**.
+- Production data DML: **0**.
+- Лариса повторно НЕ трогалась.
+
+### diff-summary
+
+```
+M supabase/functions/grant-access-for-order/index.ts
+  + import { ... } from "./sbs_mismatch_guard.ts"
+  ~ §F block (~805–860): inline builders → calls к pure helpers (1:1 поведение)
+A supabase/functions/grant-access-for-order/sbs_mismatch_guard.ts (new, pure)
+A supabase/functions/grant-access-for-order/sbs_mismatch_guard_test.ts (new, 9 tests)
+M .lovable/proofs/inv_grant_access_sbs_mismatch_no_new_sub_2026_05.md (this section)
+```
+
+### DoD §F (final)
+
+- [x] Patch применён (1 production файл + 1 helper-модуль).
+- [x] Early return ДО любых grant-веток.
+- [x] orders_v2.meta — merge, не overwrite.
+- [x] Audit: candidate_sub_ids + candidate_sbs_list для всех кандидатов.
+- [x] Response: snake_case + camelCase aliases, все grant-id = null.
+- [x] payment_flow с fallback chain.
+- [x] **Deno tests: 9/9 passed** (включая Larisa anti-regression fixture).
+- [x] Production DML = 0, migrations = 0.
+- [ ] Memory `mem://commercial-logic/subscriptions/sbs-mismatch-no-new-sub-guard` — следующий шаг (ОК после verify, согласно правилу).
+
+§F закрыт полностью. §A REBILL Materialization можно начинать (ждём отдельный approve).
