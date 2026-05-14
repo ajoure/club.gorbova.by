@@ -802,7 +802,24 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     },
   });
 
-  // PATCH 7: Auto-sync bePaid subscriptions (max 3, dedup by provider_subscription_id)
+  // REPAIR-BEPAID-ACCESS-2026-05 v3: admin repair of zombie provider_subscriptions
+  const repairZombieMutation = useMutation({
+    mutationFn: async (providerSubRowIds: string[]) => {
+      const { data, error } = await supabase.functions.invoke('admin-repair-zombie-provider-subs', {
+        body: { provider_sub_row_ids: providerSubRowIds },
+      });
+      if (error) throw new Error(normalizeEdgeFunctionError(error));
+      return data;
+    },
+    onSuccess: (data: any) => {
+      const failed = (data?.results || []).filter((r: any) => r.action === 'failed_to_cancel_provider' || r.action === 'manual_review');
+      const ok = (data?.results || []).filter((r: any) => r.action === 'cancel_local_only' || r.action === 'cancel_provider_then_local');
+      queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions', contact?.user_id] });
+      if (failed.length === 0) toast.success(`Ремонт выполнен: ${ok.length}`);
+      else toast.warning(`Готово: ${ok.length}, требуют внимания: ${failed.length}`);
+    },
+    onError: (e: Error) => toast.error('Ремонт не выполнен: ' + e.message),
+  });
   const autoSyncCountRef = useRef(0);
   const autoSyncedIdsRef = useRef(new Set<string>());
 
