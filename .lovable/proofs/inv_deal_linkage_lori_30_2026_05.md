@@ -59,3 +59,5 @@ Status: **Stage 1 — read-only reconcile complete**. Stage 2 (data repair) — 
 SELECT md5(string_agg(id::text || '|' || coalesce(order_id::text,'') || '|' || amount::text || '|' || coalesce(refunded_amount::text,'0') || '|' || transaction_type, ',' ORDER BY id))
 FROM payments_v2 WHERE user_id = 'e748983f-8409-49b6-b5f5-88a7c95920b0';
 ```
+
+**Snapshot checksum (before): `c0924fac0f71950d74279346454e18d7` (27 rows)**
