@@ -764,31 +764,135 @@ Deno.serve(async (req) => {
             },
           });
 
-          // При sbs-mismatch — проставить manual_review на ордер (merge meta).
+          // ── PATCH §F SBS-MISMATCH NO-NEW-SUB GUARD (2026-05) ───────────────
+          // При recurring rebill с чужой sbs ЗАПРЕЩЕНО создавать новую sub-цепочку.
+          // Только: audit + manual_review + ранний return. НИКАКИХ INSERT в
+          // subscriptions_v2 / entitlements / access_rules / telegram_access_queue.
+          // Tariff-mismatch ветка (без sbs) сохраняет прежнее поведение (создание
+          // новой подписки от baseStartDate) — §F её не меняет.
           if (skipReason === "skip_extend_bepaid_subscription_mismatch") {
+            // Собрать ВСЕХ кандидатов того же user+product для полноты audit.
+            const { data: allCandidates } = await supabase
+              .from("subscriptions_v2")
+              .select("id, tariff_id, status, access_end_at, meta")
+              .eq("user_id", userId)
+              .eq("product_id", productId)
+              .in("status", ["active", "trial", "past_due"]);
+            const candidateIds: string[] = (allCandidates || []).map((c: any) => c.id);
+            const candidateSbsList: Array<{ subscription_v2_id: string; bepaid_sbs: string | null; tariff_id: string | null; status: string }> =
+              await Promise.all(
+                (allCandidates || []).map(async (c: any) => {
+                  const { data: pl } = await supabase
+                    .from("provider_subscriptions")
+                    .select("provider_subscription_id")
+                    .eq("subscription_v2_id", c.id)
+                    .eq("provider", "bepaid")
+                    .order("updated_at", { ascending: false })
+                    .limit(1)
+                    .maybeSingle();
+                  const sbs = (pl as any)?.provider_subscription_id
+                    || ((c.meta || {}) as any).bepaid_subscription_id
+                    || null;
+                  return {
+                    subscription_v2_id: c.id,
+                    bepaid_sbs: sbs,
+                    tariff_id: c.tariff_id,
+                    status: c.status,
+                  };
+                })
+              );
+
+            const orderMetaForFlow = ((order as any).meta || {}) as Record<string, unknown>;
+            const paymentFlowForAudit = String(
+              orderMetaForFlow.payment_flow
+              || (order as any).payment_flow
+              || ""
+            );
+
+            // 1) Audit с полным контекстом (все кандидаты).
+            await supabase.from("audit_logs").insert({
+              action: "grant-access-for-order.skip_extend_bepaid_subscription_mismatch.no_new_sub",
+              actor_type: "system",
+              actor_user_id: null,
+              actor_label: "grant-access-for-order",
+              target_user_id: userId,
+              meta: {
+                order_id: orderId,
+                product_id: productId,
+                tariff_id: tariffId,
+                payment_flow: paymentFlowForAudit,
+                order_bepaid_subscription_id: orderSbs,
+                primary_candidate_subscription_v2_id: activeSub.id,
+                primary_candidate_bepaid_sbs: activeSubSbs,
+                candidate_sub_ids: candidateIds,
+                candidate_sbs_list: candidateSbsList,
+                matched_by_tariff: true,
+                matched_by_sbs: false,
+                decision: "no_new_sub_chain",
+                reason: "bePaid subscription_id mismatch — refusing to extend OR create-new via foreign rebill",
+              },
+            });
+
+            // 2) Merge orders_v2.meta (manual_review).
             try {
               const existingMeta = (order as any).meta || {};
               await supabase
-                .from('orders_v2')
+                .from("orders_v2")
                 .update({
                   meta: {
                     ...existingMeta,
                     manual_review: true,
-                    manual_review_reason: 'bepaid_subscription_mismatch',
+                    manual_review_reason: "bepaid_subscription_mismatch",
                     manual_review_at: new Date().toISOString(),
                     manual_review_context: {
                       order_bepaid_sbs: orderSbs,
                       candidate_subscription_v2_id: activeSub.id,
                       candidate_bepaid_sbs: activeSubSbs,
+                      candidate_sub_ids: candidateIds,
+                      candidate_sbs_list: candidateSbsList,
+                      payment_flow: paymentFlowForAudit,
+                      decision: "no_new_sub_chain",
                     },
                   },
                 })
-                .eq('id', orderId);
+                .eq("id", orderId);
             } catch (mrErr) {
-              console.error('[grant-access-for-order] manual_review meta-merge failed (non-fatal):', mrErr);
+              console.error("[grant-access-for-order] §F manual_review meta-merge failed (non-fatal):", mrErr);
             }
+
+            // 3) Ранний return ДО любых INSERT в subscriptions_v2/entitlements/
+            //    access_rules/telegram_access_queue. HTTP 200, без grant.
+            console.log(
+              `[grant-access-for-order] §F NO-NEW-SUB: order ${orderId} skipped, ` +
+              `manual_review=true, candidates=${candidateIds.length}`
+            );
+            return new Response(
+              JSON.stringify({
+                success: true,
+                skipped: true,
+                manual_review: true,
+                manualReview: true,
+                reason: "bepaid_subscription_mismatch",
+                granted_subscription_v2_id: null,
+                grantedSubscriptionV2Id: null,
+                granted_entitlement_id: null,
+                grantedEntitlementId: null,
+                subscription_id: null,
+                subscription_v2_id: null,
+                entitlement_id: null,
+                message: "SBS mismatch: рабочая sub под другой bePaid subscription. Требуется ручная проверка.",
+                manual_review_context: {
+                  order_bepaid_sbs: orderSbs,
+                  primary_candidate_subscription_v2_id: activeSub.id,
+                  primary_candidate_bepaid_sbs: activeSubSbs,
+                  candidate_sub_ids: candidateIds,
+                },
+              }),
+              { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
           }
           // existingProductSub остаётся null, accessStartAt = baseStartDate
+          // (только для tariff-mismatch / missing-tariff веток — не SBS-mismatch).
         }
       }
     }
