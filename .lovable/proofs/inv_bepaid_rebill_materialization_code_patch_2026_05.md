@@ -132,3 +132,55 @@ REBILL-7a64cd04-3d0, REBILL-420bec3d-21e, REBILL-5ad48899-0c5, ...
 - UI для REBILL-orders в админке сделок.
 - Изменение поведения `!tariffMatch + recurring + foreign sbs` (отдельный backlog-risk из §F).
 - Авто-ретрай grant для `materialized_partial` / `materialized_grant_failed` без нового webhook'а — markers есть, ручной/cron retry — backlog.
+
+---
+
+## §A.3 FIX-BEPAID-WEBHOOK-SYNTAX-BLOCKER (2026-05-15)
+
+### Причина блокера
+
+При раннем PATCH DEAL-LINKAGE-ROOT-FIXES-2026-05 рефакторинге refund-ветки (переход на `record_refund_atomic` RPC) был добавлен новый блок с явным `return` и закрывающей `}`, **но старый legacy refund-код не был удалён**. В результате в файле остались:
+
+- строки 4434: `}` — корректное закрытие нового RPC-блока (`if (isRefundTransaction && transactionUid) { ... return ... }`);
+- строки 4436–4504: orphan legacy refund-код (`// New refund - add to array`, references `existingRefunds`, `updatedRefunds`, `totalRefunded`, `lastRefundAt`) **без enclosing if/else**;
+- строка 4505: лишняя `}` — закрывала отсутствующий внешний блок.
+
+Эта лишняя `}` ломала brace-баланс на ~3500 строк ниже, и парсер падал на: `Expected ',', got 'catch' at index.ts:6704:5` (внешний try…catch обработчика становился синтаксически невалидным).
+
+### Точная область правки
+
+- **Файл:** `supabase/functions/bepaid-webhook/index.ts`
+- **Удалены строки 4435–4505** (один пустой межблок + 70 строк orphan refund-кода + лишняя `}`).
+- **Бизнес-логика не менялась** — удалённый код был unreachable (новый RPC-блок выше всегда возвращает `Response`).
+- **§A.2 dispatcher / `rebill_flow` / `grant-access-for-order` не тронуты.**
+- Нет изменений в `payments_v2`, `orders_v2`, `subscriptions_v2`, `entitlements`, `access_rules`, `telegram_*`.
+- Миграций: **0**.
+- Secret не менялся: `BEPAID_REBILL_MATERIALIZATION=dry_run` (значение установлено на §A.3 этапе ранее, осталось `dry_run`).
+
+### Verification
+
+- `deno check supabase/functions/bepaid-webhook/index.ts` — **0 ошибок парсинга** (`Check index.ts`).
+- `supabase--test_edge_functions ["bepaid-webhook","grant-access-for-order"]` — **46/46 passed**:
+  - 16 builders + 17 flow + 4 wiring (`bepaid-webhook`);
+  - 9 §F regression (`grant-access-for-order`), Larisa fixture зелёный.
+- `supabase--deploy_edge_functions ["bepaid-webhook"]` — **Successfully deployed**.
+
+### Production state после деплоя
+
+- `bepaid-webhook` задеплоен на новый bundle с активной §A.2 wiring.
+- `BEPAID_REBILL_MATERIALIZATION` = **`dry_run`** (подтверждено через `secrets--fetch_secrets`; значение не менялось этим патчем).
+- `mode=on` **НЕ включён**.
+- Production DML патчем = **0**.
+- Миграции = **0**.
+- Audit `bepaid.rebill.dry_run.*` за последние 30 минут: **0 событий** (recurring autocharge от bePaid не приходил с момента деплоя; первые dry_run события появятся при первом органическом rebill webhook'е).
+
+### DoD §A.3
+
+- [x] Найден и устранён лишний `}` (фактически — удалён orphan legacy refund-блок 4435–4505 целиком).
+- [x] Бизнес-логика не менялась.
+- [x] §A.2 (dispatcher/rebill_flow/grant) не менялся.
+- [x] Миграций нет.
+- [x] Secret value = `dry_run`, не `on`.
+- [x] `mode=on` в production НЕ включался.
+- [x] Tests 46/46, deploy успешен.
+- [ ] Сбор статистики dry_run (счётчики happy/conflict_uid/sbs_mismatch/idempotent/dispatcher_error) — отложен до накопления первых событий, отдельный отчёт по обсервабилити.
