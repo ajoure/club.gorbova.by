@@ -2673,7 +2673,13 @@ Deno.serve(async (req) => {
       }
 
       // 6. Grant access via grant-access-for-order
+      // §A.2 short-circuit: if REBILL flow handled (mode=on terminal), skip legacy grant
+      // to prevent double-grant. Downstream subscription resolution + date sync still run.
       let grantedSubscriptionV2Id: string | null = null;
+      if (rebillShortCircuit) {
+        console.log('[WEBHOOK-LINK-ORDER] legacy grant SKIPPED — REBILL handled (decision=' +
+                    (rebillResultDecision || 'unknown') + ')');
+      } else {
       try {
         const grantResp = await fetch(
           `${Deno.env.get('SUPABASE_URL')}/functions/v1/grant-access-for-order`,
@@ -2727,6 +2733,7 @@ Deno.serve(async (req) => {
           null;
       } catch (grantErr) {
         console.error('[WEBHOOK-LINK-ORDER] grant-access-for-order error (non-fatal):', grantErr);
+      }
       }
 
       // PATCH rebill-idempotency-fix-2026-05: robust fallback by order_id (no entitlement.status filter).
