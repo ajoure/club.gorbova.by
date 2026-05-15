@@ -1,294 +1,195 @@
-# да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-1. **Не создавать REBILL-order только для теста §F mismatch.**  
-В тесте 7 написано противоречиво: сначала «§F guard срабатывает внутри grant-access-for-order», потом «REBILL-order при этом всё равно НЕ создаётся, потому что mismatch ловится ДО invoke grant». Нужно зафиксировать одно правило:  
-**если recurring autocharge имеет SBS mismatch — REBILL-order не создаётся, payment не перепривязывается, grant не вызывается, только audit/manual_review.**
-2. **Локальный** `guardSbsTariffMatch()` **в** `rebillFlow` **не должен дублировать бизнес-логику §F вручную.**  
-Нужно переиспользовать общий helper/contract из §F или вынести shared pure-guard. Иначе через месяц снова появятся две разные логики.
-3. **Уточнить** `provider_payment_id` **в** `orders_v2`**.**  
-Перед кодом проверить, что поле реально существует. Если нет — использовать только `meta.materialized_from_payment_uid`. Нельзя писать в несуществующее поле.
-4. **Order number standard привести к production-паттерну.**  
-Сейчас указано `REBILL-<first12(provider_payment_id)>`, а ранее были `REBILL-7a64cd04-3d0`. Нужно использовать один текущий production-паттерн, чтобы не плодить два стандарта номеров.
-5. `off mode` **не должен писать audit всегда.**  
-В плане раньше фигурировал `bepaid.rebill.disabled`, сейчас в тесте ожидается отсутствие новых audit. Оставить так:  
-**mode=off полностью обходит новый path и не пишет новые audit**, иначе будет шум в логах.
-6. `dry_run` **не должен менять runtime-поведение webhook.**  
-В режиме `dry_run` старый путь должен продолжить работать как сейчас, а новый path должен только логировать planned payload. Уточнить, что dry_run не ломает фактическую обработку платежа.
-7. `mode=on` **не включать и не добавлять secret без отдельного approve.**  
-В DoD написано «env присутствует». Лучше: код читает env с default `off`; production secret не менять, если он не нужен. Любое изменение secrets — отдельное подтверждение.
-8. **Full-refund guard проверить по фактическому порядку webhook.**  
-Если refund приходит позже отдельным webhook, то autocharge уже мог вызвать grant. В этом patch достаточно:
+1. **Full-refund guard не должен проверять parent.**  
+В плане написано: `full-refund guard на parent`. Это неверно. Проверять нужно именно **REBILL-order / payment uid**, а не parent initial-order.  
+Правильно:
+  - если по текущему `provider_payment_id` уже есть refund/full-refund → no grant;
+  - parent-order refund state не использовать для решения по новому REBILL.
+2. **При** `idempotent_skip` **нельзя всегда “no grant”.**  
+Если REBILL уже создан, но предыдущая попытка упала до grant, то простой `idempotent_skip` оставит доступ непродлённым.  
+Нужно различать:
   &nbsp;
-  - не grant при known full-refund до grant;
-  - refund handler корректно ставит refunded state.  
-  Но отмена уже выданного доступа при последующем full refund — это отдельный scope, не смешивать.
-9. `grant-access-for-order` **по REBILL-order должен быть доказан тестом.**  
-Добавить отдельный тест/fixture: REBILL-order с `bepaid_subscription_id` совпадает с subscription_v2 → grant делает extend нужной subscription, не создает новую.
-10. **Atomicity описать в proof.**  
-Если `orders_v2` создан, а `payments_v2` insert/update упал, повторный webhook должен безопасно завершить процесс. В proof указать retry/idempotency поведение.
-11. **Никакого** `UPDATE payments_v2.order_id` **в production при** `off/dry_run`**.**  
-Это очевидно, но зафиксировать явно. Любая перепривязка существующего payment — только при `mode=on`.
-12. **Тесты должны быть offline/mocked.**  
-Никаких реальных bePaid credentials, реального webhook или production Supabase в тестах.
-13. **Отчет после выполнения должен отдельно подтвердить §F regression.**  
-Не только тест внутри `bepaid-webhook`, но и повторный прогон тестов `grant-access-for-order`, чтобы guard не сломался.
-14. **DoD добавить список changed files и no migration proof.**  
-В финальном отчете: diff-summary, список файлов, тесты, proof, migrations=0, production DML=0, kill-switch default off.
+  &nbsp;
+  - REBILL существует + grant уже успешен → skip;
+  - REBILL существует + payment привязан + grant не был выполнен/failed → retry grant или manual_review.  
+  Минимум: добавить audit/status marker в `meta` или проверку `access_grant_ledger`/результата grant, чтобы не терять доступ.
+3. `materialized_partial` **нельзя оставлять только на ручной backlog без статуса.**  
+Если order создан, а payment-repoint упал, нужна машинная метка:
+  - `meta.materialization_status='partial_payment_repoint_failed'`;
+  - audit;
+  - повторный webhook должен продолжить с этого места, а не просто idempotent-skip.
+4. **Grant invoke error тоже должен оставлять retryable/manual_review marker.**  
+Если grant упал:
+  - не fallback на legacy path — правильно;
+  - но обязательно `meta.grant_status='failed'`, `manual_review=true`, `grant_error`;
+  - повторный webhook должен понимать, можно ли retry grant.
+5. `mode=on` **conflict должен обновлять meta у правильной строки.**  
+В плане написано `merge meta.manual_review parent`. Если conflict связан с уже существующим payment/order, manual_review лучше ставить:
+  - на конфликтующий order, если он найден;
+  - на parent_order только как дополнительный context.  
+  Иначе ручная проверка будет искать проблему не там.
+6. `UPSERT payments_v2` **формулировку заменить на точную.**  
+Если payment уже есть — `UPDATE order_id`.  
+Если payment отсутствует — `INSERT`.  
+Не использовать общий термин `UPSERT`, если нет уникального constraint по `provider_payment_id`, иначе можно получить дубль.
+7. **Перед** `UPDATE payments_v2.order_id` **проверить transaction_type.**  
+Repoint должен применяться только к основному payment:
+  - `transaction_type='Платеж'`;
+  - не refund-row;
+  - `amount` совпадает;
+  - `provider_payment_id=uid`.  
+  Refund обрабатывается отдельной веткой через `record_refund_atomic`.
+8. `orders_v2.provider_payment_id` **снова проверить в коде.**  
+Если поле есть — ок. Если нет — использовать только `meta.materialized_from_payment_uid`. Не допускать silent field mismatch.
+9. **Short-circuit должен возвращать HTTP 200 только после audit.**  
+Для всех terminal outcomes:
+  - `idempotent_skip`;
+  - `conflict_uid`;
+  - `sbs_mismatch`;
+  - `grant_failed`;
+  - `materialized_partial`  
+  нужен audit до ответа, чтобы не терять причину.
+10. **Test coverage добавить по resume-сценариям.**  
+Добавить тесты:
 
 &nbsp;
 
-С этими правками план можно запускать. Главное: **код можно писать, production** `on` **не включать, data-repair не делать**.
+- REBILL exists, payment not repointed → повторный webhook делает repoint;
+- REBILL exists, grant missing → повторный webhook делает grant или manual_review;
+- REBILL exists, grant already done → skip.
+
+11. **Не полагаться на** `SELECT-then-INSERT` **без race-handling.**  
+Если уникального индекса нет — race возможен. В proof нужно явно подтвердить:
+
+- есть unique constraint/index по `orders_v2.provider_payment_id`;
+- или race считается manual_review risk и production `on` не включается до миграции.
+
+12. **DoD обновить по количеству тестов после добавления resume-сценариев.**  
+Не фиксировать заранее `≥45`, а писать: все существующие + новые tests passed, 0 failed.
+13. **В proof добавить отдельную таблицу terminal outcomes.**  
+Для каждого outcome указать:
+
+- создаётся ли REBILL;
+- repoint payment;
+- вызывается ли grant;
+- запускается ли legacy path;
+- какой audit;
+- какой retry/manual_review marker.
+
+После этих правок план можно запускать. Главное: `mode=on` подключить в коде, но **не включать env в production** и не делать никаких data-repair.
 
 &nbsp;
 
-План: §A REBILL Materialization code-patch
+План: §A.2 REBILL Materialization mode=on wiring
 
-## 0. Scope и границы
+### Цель
 
-- Только **код + Deno-тесты + proof**.
-- **0 production DML** (никаких ручных INSERT/UPDATE в `orders_v2`, `payments_v2`, `subscriptions_v2`, `entitlements`, `access_rules`, `telegram_*`).
-- **0 миграций**. Если по ходу выяснится, что нужен новый partial UNIQUE или индекс — выносим отдельным под-планом и согласуем перед кодом.
-- **Без data-repair Ларисы**, без sweep, без backfill.
-- Production включение `BEPAID_REBILL_MATERIALIZATION=on` — **не в этом этапе**. По умолчанию `off`.
+Подключить `mode=on` к production-пути `bepaid-webhook` так, чтобы recurring autocharge создавал REBILL-order, привязывал payment к нему и вызывал `grant-access-for-order` по REBILL-id. Старый recurring path должен short-circuit'иться, чтобы не было double-write/double-grant. Включение env в проде — отдельным approve, не в этом плане.
 
-## 1. Kill-switch
+### Scope
 
-Новый env-флаг в `bepaid-webhook`:
+- Только код + Deno tests + обновление proof.
+- Без production data DML.
+- Без миграций.
+- Без data-repair.
+- Без изменения secret `BEPAID_REBILL_MATERIALIZATION` в проде (default остаётся `off`).
+- §F guard не трогаем — он уже на месте и проходит регрессию.
 
-```
-BEPAID_REBILL_MATERIALIZATION = off | dry_run | on
-default = off
-```
+### Файлы
 
-Поведение:
 
-- `off` — текущее поведение webhook без изменений. Новый код-путь полностью обойдён. Это safe-by-default состояние production.
-- `dry_run` — выполняется весь новый decision-flow (resolve recurring → resolve REBILL-order target → idempotency check → conflict detection), но:
-  - НЕ создаётся новый `orders_v2` REBILL-row;
-  - НЕ перепривязывается `payments_v2.order_id`;
-  - НЕ вызывается `grant-access-for-order` по REBILL-order;
-  - пишется audit `bepaid.rebill.dry_run` со всем планируемым payload (что бы было создано / куда бы привязали / какой grant вызвали).
-- `on` — полный путь с реальными INSERT/UPDATE через каноничные write-paths. Включается только отдельным approve после verify dry_run на проде.
+| File                                                                      | Action                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `supabase/functions/bepaid-webhook/rebill_flow.ts`                        | EDIT — реализовать ветку `mode=on`: insertRebillOrder → upsertPaymentForRebill (repoint) → invokeGrantAccess(REBILL.id) → audit `materialized`. Использовать те же deps-стабы для тестируемости.                                                                                                                                                                                                                                                                                         |
+| `supabase/functions/bepaid-webhook/rebill_builders.ts`                    | EDIT (минимально) — при необходимости вынести helper для merge `orders_v2.meta` (manual_review).                                                                                                                                                                                                                                                                                                                                                                                         |
+| `supabase/functions/bepaid-webhook/index.ts`                              | EDIT — в recurring-charge ветке: после `runRebillFlow` с `mode=on`, при результате `materialized` → **short-circuit**: не выполнять старый `grant-access-for-order` invoke по `linkOrder.id` и не апдейтить даты на parent. При `idempotent_skip` / `skip_*` / ошибке — fallback на старый path не делаем (audit + return 200), чтобы не было double-grant. При `mode=off` поведение полностью прежнее. При `mode=dry_run` — старый path продолжает работать (dry_run только наблюдает). |
+| `supabase/functions/bepaid-webhook/rebill_flow_test.ts`                   | EDIT — добавить `mode=on` кейсы поверх faked deps.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `supabase/functions/bepaid-webhook/rebill_wiring_test.ts`                 | NEW — интеграционный тест диспетчера в `index.ts` (или unit-тест экспортированной wiring-функции), проверяет short-circuit и отсутствие двойного grant.                                                                                                                                                                                                                                                                                                                                  |
+| `.lovable/proofs/inv_bepaid_rebill_materialization_code_patch_2026_05.md` | EDIT — добавить раздел §A.2 wiring + final verify.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
-Флаг читается **один раз на старте handler** и логируется в каждый audit (`mode: off|dry_run|on`).
 
-## 2. Точный call graph в bepaid-webhook
-
-Узлы — функции/модули, стрелки — порядок вызова. Новые блоки помечены `[NEW]`.
+### Поведение по режимам (после патча)
 
 ```text
-bepaid-webhook (handler)
-  ├─ verify signature
-  ├─ parse payload → { transaction, subscription_id?, uid (provider_payment_id), status, amount, paid_at, ... }
-  ├─ resolveContext()                               // существующее
-  │     → { parent_order, subscription_v2, product_id, tariff_id, user_id, profile_id, sbs }
-  │
-  ├─ classifyPayment()                              // существующее + расширение
-  │     → kind ∈ { initial | recurring_autocharge | refund | unknown }
-  │     recurring_autocharge признаки:
-  │       - есть subscription_id (sbs) И
-  │       - найдена subscriptions_v2 с этим sbs И
-  │       - status ∈ {successful, paid} И
-  │       - НЕ initial-charge (есть предыдущие successful payments под этим sbs ИЛИ flag в payload)
-  │
-  ├─ if kind == recurring_autocharge AND mode != off:
-  │     [NEW] rebillFlow.run({ parent_order, subscription_v2, payment_payload, mode })
-  │              │
-  │              ├─ guardSbsTariffMatch()           // §F пере-используется как есть
-  │              │     → если mismatch: skip + audit (как сейчас) + return
-  │              │
-  │              ├─ idempotencyCheck()              // [NEW]
-  │              │     SELECT orders_v2 WHERE provider='bepaid'
-  │              │                       AND provider_payment_id = uid
-  │              │     → existing? return { idempotent:true, order_id } БЕЗ повторных INSERT/grant
-  │              │
-  │              ├─ conflictCheck()                 // [NEW]
-  │              │     SELECT payments_v2 WHERE provider_payment_id = uid
-  │              │     → если есть, но привязан к ДРУГОМУ order (не REBILL для этого uid)
-  │              │       → audit 'bepaid.rebill.conflict_uid' + meta.manual_review=true
-  │              │       → return { skipped:true, reason:'conflict_uid' }
-  │              │
-  │              ├─ buildRebillOrderPayload()       // [NEW] чистый builder, тестируемый
-  │              │     order_number = 'REBILL-' || substr(uid,1,12)
-  │              │     status='paid', final_price=amount, paid_amount=amount
-  │              │     provider='bepaid', provider_payment_id=uid
-  │              │     bepaid_subscription_id = sbs
-  │              │     pipeline_id/stage_id = parent.pipeline_id/stage_id
-  │              │     created_at=paid_at, deal_date=paid_at
-  │              │     meta = { source:'bepaid_rebill', payment_flow:'bepaid_subscription_charge',
-  │              │              parent_order_id, materialized_from_payment_uid: uid,
-  │              │              materialization_run:'bepaid_webhook_rebill_v1' }
-  │              │
-  │              ├─ if mode == 'dry_run':
-  │              │     audit 'bepaid.rebill.dry_run' { planned_order_payload, planned_payment_link, planned_grant_call }
-  │              │     return { dry_run:true }
-  │              │
-  │              └─ if mode == 'on':
-  │                    INSERT orders_v2 (REBILL row)            // канон. write-path: тот же helper, что сейчас
-  │                    INSERT/UPSERT payments_v2 с order_id = REBILL.id, provider_payment_id=uid
-  │                          (если payment уже существовал на parent_order — UPDATE order_id на REBILL.id;
-  │                           решение фиксируется в proof, не делаем DELETE)
-  │                    invoke grant-access-for-order { order_id: REBILL.id }
-  │                          → внутри сработает §F guard и canonical extend/grant logic
-  │                    audit 'bepaid.rebill.materialized' { rebill_order_id, uid, sbs, parent_order_id, grant_result }
-  │
-  ├─ else if kind == refund:
-  │     [NEW-rule] refund linking:
-  │         resolve target order = orders_v2 WHERE provider_payment_id = parent_uid
-  │         → если найден REBILL-order — refund пишется через RPC record_refund_atomic
-  │           против ИМЕННО этого REBILL-order (не parent initial)
-  │         → full-refund guard (см. §3.5): grant НЕ продлевается
-  │
-  └─ else: текущее поведение
+mode=off
+  → no-op в dispatcher
+  → старый recurring path работает как раньше (legacy grant на parent.id)
+
+mode=dry_run
+  → dispatcher пишет audit `bepaid.rebill.dry_run` (planned payload)
+  → старый recurring path работает как раньше
+  → 0 DML из rebill_flow
+
+mode=on
+  → dispatcher вызывает runRebillFlow:
+      sbs-mismatch pre-check (read-only) → если mismatch: audit skip, return, старый path НЕ зовём (§F всё равно его остановит, но избегаем повторного hit)
+      idempotency по provider_payment_id:
+        already exists → audit `idempotent_skip`, short-circuit (старый path НЕ зовём)
+      conflict: payment uid привязан к чужому order → audit `conflict_uid`, merge meta.manual_review=true в parent, short-circuit
+      happy path:
+        INSERT orders_v2 REBILL-row (status=paid, provider_payment_id, meta.source=bepaid_rebill, payment_flow=bepaid_subscription_charge, parent_link_order_id, sbs)
+        UPSERT payments_v2: SET order_id=REBILL.id WHERE provider_payment_id=uid (repoint)
+        full-refund guard на parent → если parent fully refunded: audit `skip_grant_full_refunded`, grant НЕ зовём, short-circuit
+        invoke grant-access-for-order { order_id: REBILL.id }
+        audit `bepaid.rebill.materialized` (rebill_order_id, grant_result)
+      ⇒ возвращаем сигнал "handled" → index.ts SHORT-CIRCUIT'ит legacy grant
 ```
 
-## 3. Где что определяется
+### Idempotency / atomicity
 
-### 3.1 Recurring autocharge detection
+- Идемпотентность по `orders_v2.provider_payment_id` (UNIQUE-предположение проверим в коде через SELECT-then-INSERT с onConflict-обработкой; если INSERT падает на уникальности — рассматриваем как idempotent).
+- Если INSERT REBILL прошёл, а payment-repoint упал → audit `materialized_partial`, short-circuit (повторный webhook найдёт REBILL и сделает только repoint+grant).
+- Если grant invoke упал → audit `materialized` с `grant_result.error`, short-circuit (повторный webhook отсечётся idempotency, далее ручной ретрай grant — backlog).
+- Никаких commit/rollback нескольких таблиц — пишем последовательно с явным audit на каждом шаге.
 
-- модуль: `supabase/functions/bepaid-webhook/classify_payment.ts` ([NEW] чистый билдер) либо in-place расширение существующего classifier;
-- сигналы: `subscription_id` в payload + найден `subscriptions_v2` row + НЕ первый платёж под этим sbs (есть предыдущий `payments_v2.provider_payment_id` под этим sbs ИЛИ `subscriptions_v2.status='active'` уже было до этого webhook).
+### Anti-side-effect инварианты
 
-### 3.2 Создание / переиспользование REBILL-order
+- `subscriptions_v2`: 0 прямых INSERT/UPDATE из rebill_flow. Все изменения — только через `grant-access-for-order` (где §F и каноничный write-path).
+- `entitlements`, `access_rules`, `telegram_*`: 0 прямых записей.
+- `payments_v2`: только UPDATE `order_id` по `provider_payment_id` (repoint), без модификации сумм/refunded_amount.
+- `orders_v2`: INSERT REBILL-row + при conflict — merge meta.manual_review parent. Никаких UPDATE дат на parent.
+- `audit_logs`: записи только в `mode != off`.
+- Production DML до approve env=on — **0** (env остаётся off).
+- Migrations — **0**.
 
-- модуль: `supabase/functions/bepaid-webhook/rebill_flow.ts` ([NEW]).
-- Переиспользуется через `idempotencyCheck` (см. call graph).
-- Создаётся через `buildRebillOrderPayload` + единый INSERT helper (не writeRaw).
+### Тесты (новые/обновлённые)
 
-### 3.3 Создание payment
+`rebill_flow_test.ts` — добавить:
 
-- Сначала идемпотентность по `provider_payment_id`.
-- Если payment уже есть, привязан к parent — UPDATE его `order_id` на REBILL.id (только в `mode=on`).
-- Если payment отсутствует — INSERT с `order_id=REBILL.id`.
-- Никаких side-effect insert'ов до прохождения idempotency + conflict checks.
+1. `mode=on` happy path → insert REBILL + repoint payment + invoke grant с REBILL.id + audit `materialized`.
+2. `mode=on` idempotent (REBILL уже есть) → no insert, no grant, audit `idempotent_skip`, signal=handled.
+3. `mode=on` conflict (uid у чужого order) → merge meta manual_review, no insert REBILL, no grant, audit `conflict_uid`, signal=handled.
+4. `mode=on` full-refund parent → insert REBILL + repoint, no grant, audit `skip_grant_full_refunded`.
+5. `mode=on` sbs-mismatch pre-check → no insert, no grant, audit `skip_sbs_mismatch_pre_check`, signal=handled.
+6. `mode=on` grant invoke error → audit `materialized` с error, signal=handled (no fallback).
+7. `mode=on` insert REBILL falls on UNIQUE → treated as idempotent.
 
-### 3.4 Вызов grant
+`rebill_wiring_test.ts` (NEW) — изолированный тест функции-обёртки short-circuit:
+8. `mode=off` → wiring возвращает `proceedLegacy=true`.
+9. `mode=dry_run` → `proceedLegacy=true` + audit dry_run.
+10. `mode=on` + handled (любой terminal outcome) → `proceedLegacy=false`, legacy grant НЕ дернут (мокаем legacy invoker).
 
-- ТОЛЬКО `invoke('grant-access-for-order', { order_id: REBILL.id })`.
-- Никогда — по `parent_order_id`.
-- Никаких прямых INSERT в `subscriptions_v2`/`entitlements`/`access_rules`/`telegram_*` из webhook.
-- §F guard внутри `grant-access-for-order` остаётся единственным охранником SBS-mismatch.
+### §F regression
 
-### 3.5 Full-refund guard
+- `grant-access-for-order/sbs_mismatch_guard_test.ts` 9/9 должен остаться зелёным (не трогаем модуль).
 
-- Перед `invoke grant`:
-  - читаем суммарно по REBILL-order: `paidSum` vs `refundedSum` (та же формула, что в `partial-refund-state` memory);
-  - если `refundedSum + 0.01 >= paidSum` (full refund на момент webhook) — grant НЕ вызывается;
-  - audit `bepaid.rebill.skip_grant_full_refunded`.
-- Это покрывает кейс «refund прилетел раньше / в той же пачке, что и autocharge-success retry».
+### DoD
 
-### 3.6 Audit
+- Код: `rebill_flow.ts` mode=on реализован; `index.ts` short-circuit подключён.
+- Тесты: новые кейсы 1–10 + старые 35 → итого ≥45 passed, 0 failed.
+- §F regression 9/9 зелёный.
+- Proof обновлён: diff-summary, новые audit-коды, mode-таблица, tests result.
+- Production DML = **0**.
+- Migrations = **0**.
+- `BEPAID_REBILL_MATERIALIZATION` env в проде остаётся `off`, `on` не включался.
+- dry_run на проде — НЕ включаем в этом плане (по вашему требованию).
 
-Все события — в `audit_logs`:
+### NOT в этом плане
 
-- `bepaid.rebill.dry_run`
-- `bepaid.rebill.materialized`
-- `bepaid.rebill.idempotent_skip`
-- `bepaid.rebill.conflict_uid`
-- `bepaid.rebill.skip_grant_full_refunded`
-- `bepaid.rebill.disabled` (mode=off, для observability — раз в N webhook'ов либо всегда, решаем в коде по объёму)
+- Включение `BEPAID_REBILL_MATERIALIZATION=on` или `dry_run` на проде.
+- Sweep / backfill исторических rebills.
+- UI для REBILL-orders в админке.
+- Ручной ретрай grant при `materialized_partial` — backlog.
+- Изменение поведения !tariffMatch + recurring + foreign sbs (отдельный backlog-risk из §F).
 
-Каждый audit обязательно содержит: `mode`, `uid`, `sbs`, `parent_order_id`, `rebill_order_id?`, `payment_flow`, `decision`.
-
-### 3.7 Duplicate uid (повторный webhook того же платежа)
-
-- `idempotencyCheck` по `orders_v2.provider_payment_id=uid` → найден REBILL → return `idempotent_skip` без INSERT, без grant, audit только `idempotent_skip`.
-- 0 дубликатов orders, 0 дубликатов payments, 0 повторных grant.
-
-### 3.8 Conflict uid (тот же uid, но привязан к ЧУЖОМУ order)
-
-- `conflictCheck` ловит ситуацию, когда `payments_v2.provider_payment_id=uid` есть, но соответствующий order — не REBILL для этого uid (например, исторический misбилд).
-- Действие: НЕ создаём REBILL, НЕ вызываем grant, audit `conflict_uid`, `orders_v2.meta.manual_review=true` через **merge** (как в §F).
-- Возврат HTTP 200, чтобы bePaid не ретраил бесконечно.
-
-### 3.9 Partial / full refund
-
-- partial — refund пишется атомарно через `record_refund_atomic` против REBILL-order, classifier UI показывает amber «Частичный возврат» по существующей формуле.
-- full — то же + flag учитывается следующими webhook'ами этого же sbs (если внезапно прилетит ещё один success на тот же uid — отсечётся idempotency; если новый uid — пройдёт как новый REBILL-order, что корректно).
-
-## 4. Новые/изменяемые файлы
-
-```text
-supabase/functions/bepaid-webhook/index.ts                  [edit] — встраивание rebillFlow за kill-switch
-supabase/functions/bepaid-webhook/rebill_flow.ts            [NEW]  — pure orchestrator (функция, принимает deps)
-supabase/functions/bepaid-webhook/rebill_builders.ts        [NEW]  — buildRebillOrderPayload, full-refund check
-supabase/functions/bepaid-webhook/rebill_flow_test.ts       [NEW]  — Deno tests (см. §5)
-supabase/functions/bepaid-webhook/rebill_builders_test.ts   [NEW]  — Deno unit tests чистых билдеров
-.lovable/proofs/inv_bepaid_rebill_materialization_code_patch_2026_05.md  [NEW]
-```
-
-Чистые билдеры в отдельных модулях — чтобы тестировать без сети, как сделано для §F.
-
-## 5. Тесты (Deno, оффлайн, fakes для supabase client)
-
-Обязательные кейсы:
-
-1. **autocharge creates REBILL-order** (mode=on, mocked client):
-  - kind=recurring_autocharge, нет существующего uid, sbs+tariff match;
-  - ожидание: 1 INSERT orders_v2 c order_number='REBILL-...', payment.order_id=REBILL.id, 1 invoke grant-access-for-order с REBILL.id;
-  - audit: `bepaid.rebill.materialized`.
-2. **payment linked to REBILL, not parent**:
-  - предсуществующий payment с этим uid привязан к parent_order;
-  - ожидание: UPDATE payments_v2.order_id → REBILL.id, parent_order не получает повторного grant.
-3. **duplicate webhook idempotent**:
-  - REBILL-order с этим uid уже существует;
-  - ожидание: 0 INSERT, 0 invoke grant, audit `idempotent_skip`, HTTP 200.
-4. **conflict uid → manual_review/audit**:
-  - payment с этим uid есть, но привязан к чужому order, REBILL для uid отсутствует;
-  - ожидание: 0 INSERT REBILL, 0 grant, audit `conflict_uid`, orders_v2.meta merge с `manual_review=true`.
-5. **refund later links to REBILL payment**:
-  - сначала materialized REBILL-order (fixture), затем приходит refund webhook с parent_uid;
-  - ожидание: refund-row пишется против REBILL-order, не parent initial; classifier даёт partial/full корректно.
-6. **full refunded order → no grant / no extend**:
-  - перед autocharge webhook'ом для нового uid фикстурим REBILL с full refund (или одновременный refund в той же серии);
-  - ожидание: full-refund guard не пускает grant, audit `skip_grant_full_refunded`.
-7. **§F guard still passes** (anti-regression):
-  - recurring autocharge, sbs mismatch с активной чужой подпиской;
-  - ожидание: §F guard срабатывает внутри grant-access-for-order, новая sub-цепочка не создаётся, audit §F пишется как раньше; REBILL-order при этом всё равно НЕ создаётся, потому что mismatch ловится ДО invoke grant (rebillFlow зовёт guardSbsTariffMatch локально перед idempotencyCheck — синхронно с поведением grant-access-for-order, чтобы не плодить REBILL-orders без доступа).
-8. **dry_run mode**:
-  - всё то же, что в кейсе 1, но mode=dry_run;
-  - ожидание: 0 INSERT/UPDATE orders_v2/payments_v2, 0 invoke grant, ровно 1 audit `bepaid.rebill.dry_run` с полным planned-payload.
-9. **off mode**:
-  - mode=off, recurring autocharge;
-  - ожидание: новый код-путь не выполняется, поведение webhook идентично текущему (1 контрольный assert на отсутствие новых audit'ов).
-
-Запуск: `supabase--test_edge_functions { functions: ["bepaid-webhook"] }`. Цель: 9/9 passed.
-
-## 6. Anti-side-effect инварианты (фиксируются в proof)
-
-- `subscriptions_v2`: 0 production INSERT/UPDATE из этого патча (всё идёт через invoke grant-access-for-order, который уже под §F).
-- `entitlements`: 0.
-- `access_rules`: 0.
-- `telegram_*`: 0.
-- `orders_v2`: INSERT REBILL-row только в `mode=on`; UPDATE meta — только merge при `conflict_uid`/`manual_review`.
-- `payments_v2`: INSERT/UPDATE order_id только в `mode=on` под uid идемпотентность.
-- `audit_logs`: записи по событиям §A.
-- Миграций — 0.
-
-## 7. DoD
-
-- Код залит: `bepaid-webhook` index + 2 новых модуля + 2 test-файла.
-- `BEPAID_REBILL_MATERIALIZATION` env присутствует, default `off` (фактическое значение в проде остаётся `off` — сам флаг при необходимости добавляется через secrets, без включения).
-- Deno tests 9/9 passed (отчёт в proof).
-- Proof-файл `inv_bepaid_rebill_materialization_code_patch_2026_05.md`:
-  - diff-summary;
-  - результаты тестов;
-  - подтверждение `production DML = 0`, `migrations = 0`, `kill-switch=off`, `BEPAID_REBILL_MATERIALIZATION=on не включался`;
-  - call graph (копия из §2);
-  - перечень audit-кодов и их условий.
-- §F regression-fixture зелёный (повторный прогон `grant-access-for-order` тестов).
-- Никакого включения production `on`. Включение — отдельным approve после observability на dry_run.
-
-## 8. Что НЕ входит в этап
-
-- Sweep / repair исторических rebills (старые платежи, привязанные к parent initial-orders).
-- Backfill REBILL-orders для уже произошедших autocharges.
-- Изменения в UI сделок/платежей.
-- Любые миграции БД.
-- Production включение `mode=on`.
-
-Эти пункты — отдельные под-планы после verify §A на dry_run.
-
----
-
-После approve этого плана — выполняю code + tests + proof, **не трогая production data и не включая `on**`.
+Жду approve, чтобы перейти к реализации.
