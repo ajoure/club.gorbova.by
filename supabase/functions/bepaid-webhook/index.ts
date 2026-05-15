@@ -2502,6 +2502,91 @@ Deno.serve(async (req) => {
         }
       }
 
+      // ===================================================================
+      // §A REBILL Materialization dispatcher (kill-switch).
+      // env BEPAID_REBILL_MATERIALIZATION = off | dry_run | on  (default off).
+      // - off    : no-op (текущее поведение, ничего не пишется).
+      // - dry_run: side-channel audit `bepaid.rebill.dry_run` без DML/grant;
+      //            существующий путь продолжает работать как сейчас.
+      // - on     : production wiring (short-circuit existing path) — отдельный
+      //            sub-plan после verify dry_run; здесь visibility-audit.
+      // Тестируемая логика — в rebill_flow.ts/rebill_builders.ts (Deno tests).
+      // ===================================================================
+      try {
+        const { resolveKillSwitchMode } = await import('./rebill_builders.ts');
+        const rebillMode = resolveKillSwitchMode(Deno.env.get('BEPAID_REBILL_MATERIALIZATION'));
+        if (rebillMode === 'dry_run') {
+          const { runRebillFlow } = await import('./rebill_flow.ts');
+          const incomingSbs = subscriptionId ? String(subscriptionId) : null;
+          const sbsCheck = await (async () => {
+            if (!incomingSbs || !linkOrder.user_id || !linkOrder.product_id || !linkOrder.tariff_id) {
+              return { mismatch: false } as const;
+            }
+            const { data: candidate } = await supabase
+              .from('subscriptions_v2').select('id, meta')
+              .eq('user_id', linkOrder.user_id)
+              .eq('product_id', linkOrder.product_id)
+              .eq('tariff_id', linkOrder.tariff_id)
+              .in('status', ['active', 'paid'])
+              .order('created_at', { ascending: false }).limit(1).maybeSingle();
+            if (!candidate) return { mismatch: false } as const;
+            const candSbs = ((candidate.meta as any) || {}).bepaid_subscription_id || null;
+            return candSbs && String(candSbs) !== incomingSbs
+              ? { mismatch: true, foreignSbs: String(candSbs), candidateSubId: candidate.id } as const
+              : { mismatch: false } as const;
+          })();
+          await runRebillFlow(
+            {
+              findRebillOrderByPaymentUid: async (uid) => {
+                const { data } = await supabase.from('orders_v2').select('id')
+                  .eq('provider', 'bepaid').eq('provider_payment_id', uid).maybeSingle();
+                return data ?? null;
+              },
+              findPaymentByUid: async (uid) => {
+                const { data } = await supabase.from('payments_v2').select('id, order_id')
+                  .eq('provider', 'bepaid').eq('provider_payment_id', uid).maybeSingle();
+                return data ?? null;
+              },
+              listPaymentsForOrder: async (orderId) => {
+                const { data } = await supabase.from('payments_v2')
+                  .select('id, amount, status, transaction_type, refunded_amount, meta, provider_payment_id')
+                  .eq('order_id', orderId);
+                return (data ?? []) as any[];
+              },
+              checkSbsMismatchBeforeRebill: async () => sbsCheck,
+              insertRebillOrder: async () => { throw new Error('dry_run must not insert'); },
+              upsertPaymentForRebill: async () => { throw new Error('dry_run must not upsert'); },
+              invokeGrantAccess: async () => { throw new Error('dry_run must not invoke grant'); },
+              mergeOrderMetaManualReview: async () => { /* dry_run: no DML */ },
+              writeAudit: async (input) => {
+                await supabase.from('audit_logs').insert({
+                  actor_type: 'system', actor_user_id: null, actor_label: 'bepaid-webhook',
+                  action: input.action, meta: input.meta, created_at: new Date().toISOString(),
+                });
+              },
+            },
+            {
+              mode: 'dry_run',
+              parentOrder: linkOrder as any,
+              payment: { uid: transactionUid, amount: paymentAmount, paid_at: transaction?.paid_at || new Date().toISOString(), currency: transaction?.currency || 'BYN' },
+              subscriptionId: incomingSbs,
+            },
+          );
+        } else if (rebillMode === 'on') {
+          await supabase.from('audit_logs').insert({
+            actor_type: 'system', actor_user_id: null, actor_label: 'bepaid-webhook',
+            action: 'bepaid.rebill.on_mode_not_yet_wired',
+            meta: {
+              note: 'BEPAID_REBILL_MATERIALIZATION=on detected, но production wiring (short-circuit existing path) — отдельный sub-plan после verify dry_run',
+              uid: transactionUid, parent_order_id: linkOrder.id, sbs: subscriptionId ?? null,
+            },
+            created_at: new Date().toISOString(),
+          });
+        }
+      } catch (rebillErr) {
+        console.error('[REBILL-DISPATCHER] non-fatal:', rebillErr);
+      }
+
       // 6. Grant access via grant-access-for-order
       let grantedSubscriptionV2Id: string | null = null;
       try {
