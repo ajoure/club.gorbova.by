@@ -25,7 +25,7 @@ export function buildRebillOrderNumber(providerPaymentUid: string): string {
   if (!providerPaymentUid || typeof providerPaymentUid !== "string") {
     throw new Error("buildRebillOrderNumber: providerPaymentUid required");
   }
-  return `REBILL-${providerPaymentUid.slice(0, 11)}`;
+  return `REBILL-${providerPaymentUid.slice(0, 12)}`;
 }
 
 export interface RebillOrderPayloadInput {
