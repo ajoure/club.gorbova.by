@@ -2503,19 +2503,23 @@ Deno.serve(async (req) => {
       }
 
       // ===================================================================
-      // §A REBILL Materialization dispatcher (kill-switch).
+      // §A.2 REBILL Materialization dispatcher (kill-switch + mode=on wired).
       // env BEPAID_REBILL_MATERIALIZATION = off | dry_run | on  (default off).
-      // - off    : no-op (текущее поведение, ничего не пишется).
-      // - dry_run: side-channel audit `bepaid.rebill.dry_run` без DML/grant;
-      //            существующий путь продолжает работать как сейчас.
-      // - on     : production wiring (short-circuit existing path) — отдельный
-      //            sub-plan после verify dry_run; здесь visibility-audit.
-      // Тестируемая логика — в rebill_flow.ts/rebill_builders.ts (Deno tests).
+      //   off    : no-op, legacy grant runs as before.
+      //   dry_run: side-channel audit `bepaid.rebill.dry_run` без DML/grant;
+      //            legacy grant продолжает работать.
+      //   on     : runs full REBILL flow. On terminal outcome (handled),
+      //            sets `rebillShortCircuit=true` → step 6 legacy grant SKIPPED
+      //            to prevent double-grant.
+      // Все critical errors внутри dispatcher — non-fatal, fall back to legacy.
+      // Tests: bepaid-webhook/rebill_flow_test.ts + rebill_wiring_test.ts.
       // ===================================================================
+      let rebillShortCircuit = false;
+      let rebillResultDecision: string | null = null;
       try {
         const { resolveKillSwitchMode } = await import('./rebill_builders.ts');
         const rebillMode = resolveKillSwitchMode(Deno.env.get('BEPAID_REBILL_MATERIALIZATION'));
-        if (rebillMode === 'dry_run') {
+        if (rebillMode !== 'off') {
           const { runRebillFlow } = await import('./rebill_flow.ts');
           const incomingSbs = subscriptionId ? String(subscriptionId) : null;
           const sbsCheck = await (async () => {
@@ -2535,60 +2539,147 @@ Deno.serve(async (req) => {
               ? { mismatch: true, foreignSbs: String(candSbs), candidateSubId: candidate.id } as const
               : { mismatch: false } as const;
           })();
-          await runRebillFlow(
-            {
-              findRebillOrderByPaymentUid: async (uid) => {
-                const { data } = await supabase.from('orders_v2').select('id')
-                  .eq('provider', 'bepaid').eq('provider_payment_id', uid).maybeSingle();
-                return data ?? null;
-              },
-              findPaymentByUid: async (uid) => {
-                const { data } = await supabase.from('payments_v2').select('id, order_id')
-                  .eq('provider', 'bepaid').eq('provider_payment_id', uid).maybeSingle();
-                return data ?? null;
-              },
-              listPaymentsForOrder: async (orderId) => {
-                const { data } = await supabase.from('payments_v2')
-                  .select('id, amount, status, transaction_type, refunded_amount, meta, provider_payment_id')
-                  .eq('order_id', orderId);
-                return (data ?? []) as any[];
-              },
-              checkSbsMismatchBeforeRebill: async () => sbsCheck,
-              insertRebillOrder: async () => { throw new Error('dry_run must not insert'); },
-              upsertPaymentForRebill: async () => { throw new Error('dry_run must not upsert'); },
-              invokeGrantAccess: async () => { throw new Error('dry_run must not invoke grant'); },
-              mergeOrderMetaManualReview: async () => { /* dry_run: no DML */ },
-              writeAudit: async (input) => {
-                await supabase.from('audit_logs').insert({
-                  actor_type: 'system', actor_user_id: null, actor_label: 'bepaid-webhook',
-                  action: input.action, meta: input.meta, created_at: new Date().toISOString(),
-                });
-              },
+
+          // Build deps. For dry_run, write-deps throw; orchestrator never calls them.
+          const isDryRun = rebillMode === 'dry_run';
+          const liveDeps = {
+            findRebillOrderByOrderNumber: async (orderNumber: string) => {
+              const { data } = await supabase.from('orders_v2')
+                .select('id, order_number, meta')
+                .eq('order_number', orderNumber).maybeSingle();
+              return data ? { id: data.id, order_number: data.order_number, meta: data.meta as any } : null;
             },
-            {
-              mode: 'dry_run',
-              parentOrder: linkOrder as any,
-              payment: { uid: transactionUid, amount: paymentAmount, paid_at: transaction?.paid_at || new Date().toISOString(), currency: transaction?.currency || 'BYN' },
-              subscriptionId: incomingSbs,
+            findMainPaymentByUid: async (uid: string) => {
+              // amendment 7: only main payment row (Платеж/payment).
+              const { data } = await supabase.from('payments_v2')
+                .select('id, order_id, transaction_type, amount, status')
+                .eq('provider', 'bepaid')
+                .eq('provider_payment_id', uid)
+                .in('transaction_type', ['Платеж', 'payment'])
+                .order('created_at', { ascending: false }).limit(1).maybeSingle();
+              return data ?? null;
             },
-          );
-        } else if (rebillMode === 'on') {
-          await supabase.from('audit_logs').insert({
-            actor_type: 'system', actor_user_id: null, actor_label: 'bepaid-webhook',
-            action: 'bepaid.rebill.on_mode_not_yet_wired',
-            meta: {
-              note: 'BEPAID_REBILL_MATERIALIZATION=on detected, но production wiring (short-circuit existing path) — отдельный sub-plan после verify dry_run',
-              uid: transactionUid, parent_order_id: linkOrder.id, sbs: subscriptionId ?? null,
+            sumRefundsForPaymentUid: async (uid: string) => {
+              // refund-rows linked via meta.parent_payment_uid OR matching uid w/ refund tx_type.
+              const { data } = await supabase.from('payments_v2')
+                .select('amount, transaction_type, meta')
+                .or(`provider_payment_id.eq.${uid},meta->>parent_payment_uid.eq.${uid}`);
+              if (!data) return 0;
+              let sum = 0;
+              for (const r of data as any[]) {
+                const t = String(r.transaction_type || '').toLowerCase();
+                const isRefund = t.includes('refund') || t.includes('возврат') ||
+                  String((r.meta || {}).type || '').toLowerCase() === 'refund' ||
+                  (Number(r.amount) || 0) < 0;
+                if (isRefund) sum += Math.abs(Number(r.amount) || 0);
+              }
+              return sum;
             },
-            created_at: new Date().toISOString(),
+            checkSbsMismatchBeforeRebill: async () => sbsCheck,
+            insertRebillOrder: isDryRun
+              ? async () => { throw new Error('dry_run must not insert'); }
+              : async (payload: any) => {
+                  const { data, error } = await supabase.from('orders_v2')
+                    .insert(payload).select('id').single();
+                  if (error) throw new Error(`${error.code || ''}: ${error.message}`);
+                  return { id: data!.id };
+                },
+            insertPaymentRow: isDryRun
+              ? async () => { throw new Error('dry_run must not insert payment'); }
+              : async (input: any) => {
+                  const { data, error } = await supabase.from('payments_v2').insert({
+                    order_id: input.rebill_order_id,
+                    user_id: input.userId, profile_id: input.profileId,
+                    provider: 'bepaid', provider_payment_id: input.payment_uid,
+                    transaction_type: 'Платеж',
+                    status: 'paid',
+                    amount: input.payment.amount,
+                    currency: input.payment.currency || 'BYN',
+                    paid_at: input.payment.paid_at,
+                    meta: { source: 'bepaid_rebill_materialization',
+                            bepaid_subscription_id: input.subscriptionId },
+                  }).select('id').single();
+                  if (error) throw new Error(`${error.code || ''}: ${error.message}`);
+                  return { payment_id: data!.id };
+                },
+            updatePaymentOrderId: isDryRun
+              ? async () => { throw new Error('dry_run must not update payment'); }
+              : async (input: any) => {
+                  const { error } = await supabase.from('payments_v2')
+                    .update({ order_id: input.rebill_order_id })
+                    .eq('id', input.payment_id);
+                  if (error) throw new Error(`${error.code || ''}: ${error.message}`);
+                },
+            invokeGrantAccess: isDryRun
+              ? async () => { throw new Error('dry_run must not invoke grant'); }
+              : async (rebillOrderId: string) => {
+                  const resp = await fetch(
+                    `${Deno.env.get('SUPABASE_URL')}/functions/v1/grant-access-for-order`,
+                    { method: 'POST',
+                      headers: { 'Content-Type': 'application/json',
+                                 'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` },
+                      body: JSON.stringify({ orderId: rebillOrderId }) });
+                  const json = await resp.json().catch(() => ({}));
+                  if (!resp.ok) throw new Error(`grant_http_${resp.status}: ${JSON.stringify(json)}`);
+                  return json;
+                },
+            mergeOrderMeta: isDryRun
+              ? async () => { /* dry_run: no DML */ }
+              : async (input: any) => {
+                  const { data: cur } = await supabase.from('orders_v2')
+                    .select('meta').eq('id', input.orderId).maybeSingle();
+                  const merged = { ...(cur?.meta || {}), ...input.patch };
+                  const { error } = await supabase.from('orders_v2')
+                    .update({ meta: merged }).eq('id', input.orderId);
+                  if (error) throw new Error(`${error.code || ''}: ${error.message}`);
+                },
+            writeAudit: async (input: any) => {
+              await supabase.from('audit_logs').insert({
+                actor_type: 'system', actor_user_id: null, actor_label: 'bepaid-webhook',
+                action: input.action, meta: input.meta, created_at: new Date().toISOString(),
+              });
+            },
+          };
+
+          const rebillResult = await runRebillFlow(liveDeps, {
+            mode: rebillMode,
+            parentOrder: linkOrder as any,
+            payment: { uid: transactionUid, amount: paymentAmount,
+                       paid_at: transaction?.paid_at || new Date().toISOString(),
+                       currency: transaction?.currency || 'BYN' },
+            subscriptionId: incomingSbs,
           });
+          rebillResultDecision = rebillResult.decision;
+          // mode=on: any non-off_noop terminal → short-circuit legacy grant (handled).
+          if (rebillMode === 'on' && !rebillResult.proceedLegacy) {
+            rebillShortCircuit = true;
+            console.log('[REBILL-DISPATCHER] mode=on handled, decision=' + rebillResult.decision +
+                        ' rebill_order_id=' + (rebillResult.rebill_order_id || 'n/a') +
+                        ' → short-circuit legacy grant');
+          }
         }
       } catch (rebillErr) {
+        // amendment 9: errors do not block legacy fallback path.
         console.error('[REBILL-DISPATCHER] non-fatal:', rebillErr);
+        try {
+          await supabase.from('audit_logs').insert({
+            actor_type: 'system', actor_user_id: null, actor_label: 'bepaid-webhook',
+            action: 'bepaid.rebill.dispatcher_error',
+            meta: { error: String((rebillErr as Error)?.message || rebillErr),
+                    uid: transactionUid, parent_order_id: linkOrder.id },
+            created_at: new Date().toISOString(),
+          });
+        } catch (_) {}
       }
 
       // 6. Grant access via grant-access-for-order
+      // §A.2 short-circuit: if REBILL flow handled (mode=on terminal), skip legacy grant
+      // to prevent double-grant. Downstream subscription resolution + date sync still run.
       let grantedSubscriptionV2Id: string | null = null;
+      if (rebillShortCircuit) {
+        console.log('[WEBHOOK-LINK-ORDER] legacy grant SKIPPED — REBILL handled (decision=' +
+                    (rebillResultDecision || 'unknown') + ')');
+      } else {
       try {
         const grantResp = await fetch(
           `${Deno.env.get('SUPABASE_URL')}/functions/v1/grant-access-for-order`,
@@ -2642,6 +2733,7 @@ Deno.serve(async (req) => {
           null;
       } catch (grantErr) {
         console.error('[WEBHOOK-LINK-ORDER] grant-access-for-order error (non-fatal):', grantErr);
+      }
       }
 
       // PATCH rebill-idempotency-fix-2026-05: robust fallback by order_id (no entitlement.status filter).
