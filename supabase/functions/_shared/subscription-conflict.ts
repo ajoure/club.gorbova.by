@@ -231,3 +231,119 @@ export async function validateReplacementSubscription(
   });
   return { status: 'ok' };
 }
+
+// =====================================================================
+// PATCH H3.x-a — classifySameProductState (B-2 root-fix)
+//
+// SOT: same SOT, что и checkSubscriptionConflict — `subscriptions_v2` +
+// `provider_subscriptions(provider='bepaid', state in ('active','pending'))`.
+// Не заменяет checkSubscriptionConflict (callers оставлены без изменений),
+// а добавляет тариф-чувствительную классификацию для writer-ов.
+//
+// Возможные decisions:
+//   - 'no_existing'         — нет provider-managed active/trial/past_due для этого product;
+//   - 'extend_same_tariff'  — есть active provider-managed sub с тем же tariff_id;
+//   - 'replace_other_tariff'— есть active provider-managed sub другого tariff_id (или tariff_id отсутствует);
+//   - 'error'               — fail-closed.
+//
+// Frontend-friendly outcome (B-2 правка плана #2):
+//   при extend_same_tariff writer ОБЯЗАН вернуть already_has_active_subscription
+//   и НЕ создавать ни нового orders_v2 subscription-pre-record, ни вызывать bePaid /subscriptions.
+// =====================================================================
+
+export type SameProductDecision =
+  | 'no_existing'
+  | 'extend_same_tariff'
+  | 'replace_other_tariff';
+
+export interface ExistingProviderSub {
+  subscription_v2_id: string;
+  status: string;
+  tariff_id: string | null;
+  access_end_at: string | null;
+  next_charge_at: string | null;
+  provider_subscription_id: string | null;
+  provider_state: string;
+}
+
+export type ClassifyResult =
+  | { status: 'ok'; decision: SameProductDecision; existing: ExistingProviderSub | null }
+  | { status: 'error'; error: string };
+
+export async function classifySameProductState(
+  supabase: SupabaseClient,
+  params: { user_id: string; product_id: string; tariff_id: string | null | undefined },
+): Promise<ClassifyResult> {
+  const { user_id, product_id, tariff_id } = params;
+
+  if (!user_id || !product_id) {
+    return { status: 'error', error: 'Missing required fields (user_id, product_id)' };
+  }
+
+  const { data: candidates, error: candErr } = await supabase
+    .from('subscriptions_v2')
+    .select('id, status, tariff_id, access_end_at, next_charge_at, created_at')
+    .eq('user_id', user_id)
+    .eq('product_id', product_id)
+    .in('status', CONFLICTING_STATUSES as unknown as string[])
+    .order('created_at', { ascending: false });
+
+  if (candErr) {
+    console.error('[classifySameProductState] candidates query failed (fail-closed)', candErr);
+    return { status: 'error', error: 'Ошибка проверки существующих подписок.' };
+  }
+
+  if (!candidates || candidates.length === 0) {
+    return { status: 'ok', decision: 'no_existing', existing: null };
+  }
+
+  // Найти первый кандидат, у которого есть provider linkage.
+  let sameTariff: ExistingProviderSub | null = null;
+  let anyProviderSub: ExistingProviderSub | null = null;
+
+  for (const cand of candidates as any[]) {
+    const { data: provRaw, error: provErr } = await supabase
+      .from('provider_subscriptions')
+      .select('provider_subscription_id, state, provider')
+      .eq('subscription_v2_id', cand.id as string)
+      .eq('provider', 'bepaid')
+      .in('state', ['active', 'pending'])
+      .limit(1)
+      .maybeSingle();
+
+    if (provErr) {
+      console.error('[classifySameProductState] provider_subscriptions query failed (fail-closed)', provErr);
+      return { status: 'error', error: 'Ошибка проверки провайдерской подписки.' };
+    }
+
+    const prov = provRaw as any;
+    if (!prov) continue;
+
+    const candTariffId = (cand.tariff_id as string | null) ?? null;
+    const summary: ExistingProviderSub = {
+      subscription_v2_id: cand.id as string,
+      status: cand.status as string,
+      tariff_id: candTariffId,
+      access_end_at: (cand.access_end_at as string | null) ?? null,
+      next_charge_at: (cand.next_charge_at as string | null) ?? null,
+      provider_subscription_id: (prov.provider_subscription_id as string | null) ?? null,
+      provider_state: prov.state as string,
+    };
+
+    if (!anyProviderSub) anyProviderSub = summary;
+    if (tariff_id && candTariffId && candTariffId === tariff_id) {
+      sameTariff = summary;
+      break;
+    }
+  }
+
+  if (sameTariff) {
+    return { status: 'ok', decision: 'extend_same_tariff', existing: sameTariff };
+  }
+  if (anyProviderSub) {
+    return { status: 'ok', decision: 'replace_other_tariff', existing: anyProviderSub };
+  }
+  // Только зомби-кандидаты без provider-связи — не блокируем.
+  return { status: 'ok', decision: 'no_existing', existing: null };
+}
+
