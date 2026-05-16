@@ -131,7 +131,21 @@ writer returns subscription_id = X
 
 &nbsp;
 
+# Статус H2.1b-ii — **closed** (2026-05-16)
+
+- Tests: grant-access-for-order 42/42, bepaid-webhook 44/44 — green.
+- Static check (3DS handover region 4536–4767): 0 direct access writes, 0 telegram-grant-access invoke. Только legitimate `SELECT meta` + provider-sync `UPDATE` (5 разрешённых полей).
+- Proof: `.lovable/proofs/patch_h2_1b_ii_webhook_3ds_replace_2026_05.md`.
+- Production DML = 0, migrations = 0, `BEPAID_REBILL_MATERIALIZATION = dry_run`, `mode=on` выключен.
+- Data-repair Рабчевской — НЕ выполнен (dry-run зафиксирован в proof, ожидает отдельного approve).
+- H2.1c / H2b / H3 / H4 — без изменений.
+
+Deploy НЕ выполнялся — отдельным шагом после approve.
+
+---
+
 # План: PATCH H2.1b-ii — replace 3DS finalize access writes with canonical writer (+ duplicate fix)
+
 
 ## Контекст
 

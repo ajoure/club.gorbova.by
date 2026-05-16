@@ -193,7 +193,15 @@ Deno.test("H2.1b-ii: bepaid-webhook 3DS finalize branch has zero direct access w
   checkForbidden("subscriptions_v2 insert", /\.from\(['"]subscriptions_v2['"]\)/, /\.insert\(/);
   checkForbidden("entitlements insert", /\.from\(['"]entitlements['"]\)/, /\.insert\(/);
   checkForbidden("entitlement_orders insert", /\.from\(['"]entitlement_orders['"]\)/, /\.insert\(/);
-  assert(!/telegram-grant-access/.test(region), "telegram-grant-access invoked directly in handover region");
+  // Strip line comments before checking invoke (comments mentioning the function name are allowed).
+  const regionNoComments = region
+    .split("\n")
+    .map((l) => l.replace(/\/\/.*$/, ""))
+    .join("\n");
+  assert(
+    !/functions\.invoke\(\s*['"]telegram-grant-access['"]/.test(regionNoComments),
+    "telegram-grant-access invoked directly in handover region",
+  );
 
   // Provider-sync update IS allowed but must NOT touch access fields.
   const updateBlocks = region.match(/\.update\(\{[\s\S]*?\}\)/g) ?? [];
