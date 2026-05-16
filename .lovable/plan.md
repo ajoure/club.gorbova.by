@@ -1,195 +1,362 @@
-## да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. **Full-refund guard не должен проверять parent.**  
-В плане написано: `full-refund guard на parent`. Это неверно. Проверять нужно именно **REBILL-order / payment uid**, а не parent initial-order.  
-Правильно:
-  - если по текущему `provider_payment_id` уже есть refund/full-refund → no grant;
-  - parent-order refund state не использовать для решения по новому REBILL.
-2. **При** `idempotent_skip` **нельзя всегда “no grant”.**  
-Если REBILL уже создан, но предыдущая попытка упала до grant, то простой `idempotent_skip` оставит доступ непродлённым.  
-Нужно различать:
-  &nbsp;
-  &nbsp;
-  - REBILL существует + grant уже успешен → skip;
-  - REBILL существует + payment привязан + grant не был выполнен/failed → retry grant или manual_review.  
-  Минимум: добавить audit/status marker в `meta` или проверку `access_grant_ledger`/результата grant, чтобы не терять доступ.
-3. `materialized_partial` **нельзя оставлять только на ручной backlog без статуса.**  
-Если order создан, а payment-repoint упал, нужна машинная метка:
-  - `meta.materialization_status='partial_payment_repoint_failed'`;
-  - audit;
-  - повторный webhook должен продолжить с этого места, а не просто idempotent-skip.
-4. **Grant invoke error тоже должен оставлять retryable/manual_review marker.**  
-Если grant упал:
-  - не fallback на legacy path — правильно;
-  - но обязательно `meta.grant_status='failed'`, `manual_review=true`, `grant_error`;
-  - повторный webhook должен понимать, можно ли retry grant.
-5. `mode=on` **conflict должен обновлять meta у правильной строки.**  
-В плане написано `merge meta.manual_review parent`. Если conflict связан с уже существующим payment/order, manual_review лучше ставить:
-  - на конфликтующий order, если он найден;
-  - на parent_order только как дополнительный context.  
-  Иначе ручная проверка будет искать проблему не там.
-6. `UPSERT payments_v2` **формулировку заменить на точную.**  
-Если payment уже есть — `UPDATE order_id`.  
-Если payment отсутствует — `INSERT`.  
-Не использовать общий термин `UPSERT`, если нет уникального constraint по `provider_payment_id`, иначе можно получить дубль.
-7. **Перед** `UPDATE payments_v2.order_id` **проверить transaction_type.**  
-Repoint должен применяться только к основному payment:
-  - `transaction_type='Платеж'`;
-  - не refund-row;
-  - `amount` совпадает;
-  - `provider_payment_id=uid`.  
-  Refund обрабатывается отдельной веткой через `record_refund_atomic`.
-8. `orders_v2.provider_payment_id` **снова проверить в коде.**  
-Если поле есть — ок. Если нет — использовать только `meta.materialized_from_payment_uid`. Не допускать silent field mismatch.
-9. **Short-circuit должен возвращать HTTP 200 только после audit.**  
-Для всех terminal outcomes:
-  - `idempotent_skip`;
-  - `conflict_uid`;
-  - `sbs_mismatch`;
-  - `grant_failed`;
-  - `materialized_partial`  
-  нужен audit до ответа, чтобы не терять причину.
-10. **Test coverage добавить по resume-сценариям.**  
-Добавить тесты:
-
-&nbsp;
-
-- REBILL exists, payment not repointed → повторный webhook делает repoint;
-- REBILL exists, grant missing → повторный webhook делает grant или manual_review;
-- REBILL exists, grant already done → skip.
-
-11. **Не полагаться на** `SELECT-then-INSERT` **без race-handling.**  
-Если уникального индекса нет — race возможен. В proof нужно явно подтвердить:
-
-- есть unique constraint/index по `orders_v2.provider_payment_id`;
-- или race считается manual_review risk и production `on` не включается до миграции.
-
-12. **DoD обновить по количеству тестов после добавления resume-сценариев.**  
-Не фиксировать заранее `≥45`, а писать: все существующие + новые tests passed, 0 failed.
-13. **В proof добавить отдельную таблицу terminal outcomes.**  
-Для каждого outcome указать:
-
-- создаётся ли REBILL;
-- repoint payment;
-- вызывается ли grant;
-- запускается ли legacy path;
-- какой audit;
-- какой retry/manual_review marker.
-
-После этих правок план можно запускать. Главное: `mode=on` подключить в коде, но **не включать env в production** и не делать никаких data-repair.
-
-&nbsp;
-
-План: §A.2 REBILL Materialization mode=on wiring
-
-### Цель
-
-Подключить `mode=on` к production-пути `bepaid-webhook` так, чтобы recurring autocharge создавал REBILL-order, привязывал payment к нему и вызывал `grant-access-for-order` по REBILL-id. Старый recurring path должен short-circuit'иться, чтобы не было double-write/double-grant. Включение env в проде — отдельным approve, не в этом плане.
-
-### Scope
-
-- Только код + Deno tests + обновление proof.
-- Без production data DML.
-- Без миграций.
-- Без data-repair.
-- Без изменения secret `BEPAID_REBILL_MATERIALIZATION` в проде (default остаётся `off`).
-- §F guard не трогаем — он уже на месте и проходит регрессию.
-
-### Файлы
-
-
-| File                                                                      | Action                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `supabase/functions/bepaid-webhook/rebill_flow.ts`                        | EDIT — реализовать ветку `mode=on`: insertRebillOrder → upsertPaymentForRebill (repoint) → invokeGrantAccess(REBILL.id) → audit `materialized`. Использовать те же deps-стабы для тестируемости.                                                                                                                                                                                                                                                                                         |
-| `supabase/functions/bepaid-webhook/rebill_builders.ts`                    | EDIT (минимально) — при необходимости вынести helper для merge `orders_v2.meta` (manual_review).                                                                                                                                                                                                                                                                                                                                                                                         |
-| `supabase/functions/bepaid-webhook/index.ts`                              | EDIT — в recurring-charge ветке: после `runRebillFlow` с `mode=on`, при результате `materialized` → **short-circuit**: не выполнять старый `grant-access-for-order` invoke по `linkOrder.id` и не апдейтить даты на parent. При `idempotent_skip` / `skip_*` / ошибке — fallback на старый path не делаем (audit + return 200), чтобы не было double-grant. При `mode=off` поведение полностью прежнее. При `mode=dry_run` — старый path продолжает работать (dry_run только наблюдает). |
-| `supabase/functions/bepaid-webhook/rebill_flow_test.ts`                   | EDIT — добавить `mode=on` кейсы поверх faked deps.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `supabase/functions/bepaid-webhook/rebill_wiring_test.ts`                 | NEW — интеграционный тест диспетчера в `index.ts` (или unit-тест экспортированной wiring-функции), проверяет short-circuit и отсутствие двойного grant.                                                                                                                                                                                                                                                                                                                                  |
-| `.lovable/proofs/inv_bepaid_rebill_materialization_code_patch_2026_05.md` | EDIT — добавить раздел §A.2 wiring + final verify.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-
-
-### Поведение по режимам (после патча)
+1. **Добавить обязательный PATCH F — полная end-to-end ревизия цепочки оплаты и доступа.**  
+Сейчас план чинит конкретные дефекты `orderId/order_id` и прямой Telegram writer, но не закрывает главный риск: система может иметь другие разрывы в цепочке `payment → order → grant → subscription/entitlement → Telegram → UI`.
+2. **PATCH F должен быть read-only и идти до массового repair.**  
+Никаких execute-действий по кандидатам, пока не будет полной карты цепочки.
+3. **В PATCH F проверить всю цепочку:**
 
 ```text
-mode=off
-  → no-op в dispatcher
-  → старый recurring path работает как раньше (legacy grant на parent.id)
-
-mode=dry_run
-  → dispatcher пишет audit `bepaid.rebill.dry_run` (planned payload)
-  → старый recurring path работает как раньше
-  → 0 DML из rebill_flow
-
-mode=on
-  → dispatcher вызывает runRebillFlow:
-      sbs-mismatch pre-check (read-only) → если mismatch: audit skip, return, старый path НЕ зовём (§F всё равно его остановит, но избегаем повторного hit)
-      idempotency по provider_payment_id:
-        already exists → audit `idempotent_skip`, short-circuit (старый path НЕ зовём)
-      conflict: payment uid привязан к чужому order → audit `conflict_uid`, merge meta.manual_review=true в parent, short-circuit
-      happy path:
-        INSERT orders_v2 REBILL-row (status=paid, provider_payment_id, meta.source=bepaid_rebill, payment_flow=bepaid_subscription_charge, parent_link_order_id, sbs)
-        UPSERT payments_v2: SET order_id=REBILL.id WHERE provider_payment_id=uid (repoint)
-        full-refund guard на parent → если parent fully refunded: audit `skip_grant_full_refunded`, grant НЕ зовём, short-circuit
-        invoke grant-access-for-order { order_id: REBILL.id }
-        audit `bepaid.rebill.materialized` (rebill_order_id, grant_result)
-      ⇒ возвращаем сигнал "handled" → index.ts SHORT-CIRCUIT'ит legacy grant
+payment received
+→ payment recorded
+→ order/deal created
+→ grant-access-for-order
+→ subscription / entitlement
+→ access window
+→ Telegram access
+→ admin UI / user cabinet display
 ```
 
-### Idempotency / atomicity
+4. **Добавить в план раздел PATCH F:**
 
-- Идемпотентность по `orders_v2.provider_payment_id` (UNIQUE-предположение проверим в коде через SELECT-then-INSERT с onConflict-обработкой; если INSERT падает на уникальности — рассматриваем как idempotent).
-- Если INSERT REBILL прошёл, а payment-repoint упал → audit `materialized_partial`, short-circuit (повторный webhook найдёт REBILL и сделает только repoint+grant).
-- Если grant invoke упал → audit `materialized` с `grant_result.error`, short-circuit (повторный webhook отсечётся idempotency, далее ручной ретрай grant — backlog).
-- Никаких commit/rollback нескольких таблиц — пишем последовательно с явным audit на каждом шаге.
+```text
+### PATCH F — полная ревизия end-to-end цепочки оплаты, доступа, Telegram и подписок
 
-### Anti-side-effect инварианты
+Цель: проверить всю цепочку от получения денег до отображения доступа в админке, кабинете пользователя и Telegram.
 
-- `subscriptions_v2`: 0 прямых INSERT/UPDATE из rebill_flow. Все изменения — только через `grant-access-for-order` (где §F и каноничный write-path).
-- `entitlements`, `access_rules`, `telegram_*`: 0 прямых записей.
-- `payments_v2`: только UPDATE `order_id` по `provider_payment_id` (repoint), без модификации сумм/refunded_amount.
-- `orders_v2`: INSERT REBILL-row + при conflict — merge meta.manual_review parent. Никаких UPDATE дат на parent.
-- `audit_logs`: записи только в `mode != off`.
-- Production DML до approve env=on — **0** (env остаётся off).
-- Migrations — **0**.
+Read-only проверить:
 
-### Тесты (новые/обновлённые)
+1. Payment ingestion:
+- bePaid webhook;
+- admin bePaid sync;
+- manual/admin payment flow;
+- payment_reconcile_queue;
+- public payment link;
+- bulk create from payments.
 
-`rebill_flow_test.ts` — добавить:
+Для каждого источника определить:
+- где создаётся payments_v2;
+- где определяется user_id/profile_id;
+- где определяется product_id/tariff_id;
+- где создаётся orders_v2;
+- где вызывается grant-access-for-order;
+- есть ли flow, где payment/order создаются без canonical grant.
 
-1. `mode=on` happy path → insert REBILL + repoint payment + invoke grant с REBILL.id + audit `materialized`.
-2. `mode=on` idempotent (REBILL уже есть) → no insert, no grant, audit `idempotent_skip`, signal=handled.
-3. `mode=on` conflict (uid у чужого order) → merge meta manual_review, no insert REBILL, no grant, audit `conflict_uid`, signal=handled.
-4. `mode=on` full-refund parent → insert REBILL + repoint, no grant, audit `skip_grant_full_refunded`.
-5. `mode=on` sbs-mismatch pre-check → no insert, no grant, audit `skip_sbs_mismatch_pre_check`, signal=handled.
-6. `mode=on` grant invoke error → audit `materialized` с error, signal=handled (no fallback).
-7. `mode=on` insert REBILL falls on UNIQUE → treated as idempotent.
+2. Order/deal creation:
+- все места создания orders_v2;
+- все meta.source:
+  - admin_from_payment;
+  - admin_bulk_from_payments;
+  - admin_grant;
+  - bepaid_webhook;
+  - rebill_materialization;
+  - другие;
+- какие flows создают order, но не подтверждают grant;
+- какие flows игнорируют ошибку grant.
 
-`rebill_wiring_test.ts` (NEW) — изолированный тест функции-обёртки short-circuit:
-8. `mode=off` → wiring возвращает `proceedLegacy=true`.
-9. `mode=dry_run` → `proceedLegacy=true` + audit dry_run.
-10. `mode=on` + handled (любой terminal outcome) → `proceedLegacy=false`, legacy grant НЕ дернут (мокаем legacy invoker).
+3. Platform access:
+Проверить canonical path:
 
-### §F regression
+orders_v2 / paid order
+→ grant-access-for-order(orderId)
+→ subscriptions_v2 / entitlements
+→ access_grant_ledger / audit_logs
 
-- `grant-access-for-order/sbs_mismatch_guard_test.ts` 9/9 должен остаться зелёным (не трогаем модуль).
+Проверить все вызовы grant-access-for-order:
+- из UI;
+- из edge functions;
+- из cron/sync;
+- body contract orderId/order_id;
+- где результат grant игнорируется.
 
-### DoD
+4. Telegram access:
+Проверить, что Telegram выдаётся только через:
 
-- Код: `rebill_flow.ts` mode=on реализован; `index.ts` short-circuit подключён.
-- Тесты: новые кейсы 1–10 + старые 35 → итого ≥45 passed, 0 failed.
-- §F regression 9/9 зелёный.
-- Proof обновлён: diff-summary, новые audit-коды, mode-таблица, tests result.
-- Production DML = **0**.
-- Migrations = **0**.
-- `BEPAID_REBILL_MATERIALIZATION` env в проде остаётся `off`, `on` не включался.
-- dry_run на проде — НЕ включаем в этом плане (по вашему требованию).
+grant-access-for-order
+→ access_rules/product fulfillment
+→ telegram-grant-access
 
-### NOT в этом плане
+Найти все прямые вызовы telegram-grant-access:
+- из UI;
+- из edge functions;
+- из admin flows;
+- из repair flows.
 
-- Включение `BEPAID_REBILL_MATERIALIZATION=on` или `dry_run` на проде.
-- Sweep / backfill исторических rebills.
-- UI для REBILL-orders в админке.
-- Ручной ретрай grant при `materialized_partial` — backlog.
-- Изменение поведения !tariffMatch + recurring + foreign sbs (отдельный backlog-risk из §F).
+Telegram access не считать source of truth. Source of truth:
+subscriptions_v2 / entitlements / manual access.
 
-Жду approve, чтобы перейти к реализации.
+5. Subscriptions:
+Проверить:
+- когда создаётся subscriptions_v2;
+- когда продлевается access_end_at;
+- как определяется bepaid_subscription_id;
+- как связаны orders_v2, payments_v2, subscriptions_v2, provider_subscriptions, entitlements;
+- есть ли provider active + local expired;
+- есть ли local active + provider canceled;
+- есть ли subscription без entitlement;
+- есть ли entitlement без subscription/access window.
+
+6. Access time synchronization:
+Проверить совпадение:
+- subscriptions_v2.access_start_at/access_end_at;
+- entitlements.valid_from/expires_at;
+- provider_subscriptions.next_charge_at;
+- orders_v2.deal_date;
+- payments_v2.paid_at;
+- admin UI access date;
+- user cabinet access date;
+- Telegram expiration/status, если хранится.
+
+7. Admin UI vs user cabinet:
+Проверить одинаковость отображения в:
+- карточке контакта → Доступы;
+- карточке сделки;
+- карточке платежа;
+- личном кабинете;
+- /products;
+- training-tree;
+- Telegram status blocks.
+
+Proof-файл:
+.lovable/proofs/payment_to_access_chain_revision_2026_05.md
+```
+
+5. **Добавить группы кандидатов для read-only отчета:**
+
+```text
+Group A — paid orders without platform access
+Group B — Telegram access without platform access
+Group C — platform access without Telegram access
+Group D — subscription / entitlement date mismatch
+Group E — provider/local subscription desync
+Group F — grant called but failed/ignored
+Group G — direct Telegram writer usage
+```
+
+6. **Добавить отдельную строку по Матук Веронике в PATCH F proof:**
+
+```text
+Матук Вероника:
+- payment;
+- order;
+- subscription;
+- entitlement;
+- Telegram status;
+- access dates;
+- current admin UI status;
+- current user cabinet status;
+- conclusion: restored / not restored / needs repair / code-only issue.
+```
+
+7. **PATCH E repair не выполнять в рамках первого захода.**  
+В текущем плане пункт 7 допускает repair после dry-run. Лучше разделить:
+  - текущий заход: code-patch A/B/C + read-only D/F;
+  - repair E: только отдельным approve после таблицы кандидатов.
+8. **Добавить запрет на прямой Telegram repair.**  
+Любой Telegram sync repair допустим только если уже есть primary active entitlement/subscription. Нельзя выдавать Telegram как замену платформенному доступу.
+9. **Добавить проверку admin UI vs user cabinet по одинаковому access resolver.**  
+Если админка и кабинет используют разные источники, это отдельный UI display resolver patch.
+10. **Добавить в конец плана:**
+
+```text
+Важно: этот PATCH не должен ограничиваться кейсом Матук Вероники. Кейс Матук — контрольный пример. Основная задача — проверить и зафиксировать всю цепочку от получения денег до отображения доступа в админке, личном кабинете и Telegram.
+```
+
+После этих дополнений план можно запускать. Для текущего захода: **code A/B/C + read-only D/F**, без массового repair.
+
+&nbsp;
+
+План:
+
+## 1. Проблема
+
+По Матук Веронике (контрольный пример) и похожим сценариям админский UI создаёт сделку из платежа, но canonical writer `grant-access-for-order` срабатывает не всегда: платформенный доступ не подтверждается, а Telegram-доступ при этом приходит отдельно. Нужно не точечный фикс, а полная ревизия end-to-end цепочки оплаты → сделка → доступ → Telegram → отображение.
+
+## 2. Диагностика (уже выполненная read-only)
+
+- Контакт: `profile_id=4e8834a5-0f6a-44d6-b05a-8d7ec3b4d6e9`, `user_id=341e6f46-79dd-4920-b500-da78e3574aab`, `email=nika.1900735@mail.ru`.
+- Проблемная сделка: `order_id=baeb6e7d-e661-4ee5-9a15-9d5991ce6b24`, `order_number=PAY-26-MP5R5Z6S`, `meta.source=admin_from_payment`, продукт Gorbova Club, тариф BUSINESS, 250 BYN.
+- В момент создания сделки audit `admin.create_deal_with_access_from_payment` записал `subscription_id=null` — UI не дождался подтверждения canonical grant.
+- Позже `grant-access-for-order` всё же отработал: `entitlements.id=a2bb0780-…`, `subscriptions_v2.id=1f7e391e-…`, `access_end_at=2026-06-11`.
+- Системный код-дефект: UI зовёт `grant-access-for-order` с body `{ order_id }`, edge function ждёт `orderId` → `orderId is required`, при этом UI продолжает Telegram side-effect.
+- Параллельный Telegram writer в UI нарушает canonical path и объясняет «Telegram есть, доступа нет».
+
+## 3. Предлагаемое решение
+
+### PATCH A — контракт `grant-access-for-order`
+
+1. UI: `{ order_id }` → `{ orderId }` во всех точках (`CreateDealFromPaymentDialog`, `BulkCreateDealsDialog`, `ContactDetailSheet` и пр.).
+2. Edge function: принимать оба ключа, нормализовать в `orderId`, писать audit `grant-access-for-order.legacy_body_alias` для legacy-вызовов.
+
+### PATCH B — убрать параллельный Telegram writer из UI
+
+В UI-flows создания сделки/ручного гранта удалить прямые `supabase.functions.invoke("telegram-grant-access", …)`. Telegram-доступ выдаёт только canonical path:
+
+```text
+order paid / admin grant / deal from payment
+  → grant-access-for-order
+  → telegram-grant-access (через access_rules)
+```
+
+### PATCH C — корректная обработка результата в UI
+
+- Не показывать «доступ выдан», если canonical grant не вернул успех.
+- Использовать `normalizeEdgeFunctionError`, не показывать raw error.
+- В audit `admin.create_deal_with_access_from_payment` сохранять `grant_success`, `grant_error_code`, `subscription_id`, `entitlement_id`.
+
+### PATCH D — dry-run кандидатов локального дефекта
+
+Read-only список paid-сделок, где writer-flow ожидал доступ, но его нет:
+
+- `meta.source ∈ ('admin_from_payment','admin_bulk_from_payments','admin_grant')`;
+- не ghost, есть `product_id` и `tariff_id`;
+- нет активного entitlement по `(user_id, product_id)` и/или нет/не extended `subscriptions_v2`.
+
+### PATCH E — repair только через canonical writer
+
+Для approved кандидатов: вызов `grant-access-for-order(orderId)` без прямых INSERT/UPDATE. Proof-файл с before/after.
+
+---
+
+## PATCH F — полная ревизия end-to-end цепочки оплаты и доступа (обязательный, read-only)
+
+### F.0 Цель
+
+Проверить, что вся цепочка работает как единая система без параллельных writer’ов:
+
+```text
+payment received
+  → payment recorded (payments_v2)
+  → order/deal created (orders_v2)
+  → grant-access-for-order(orderId)
+  → entitlement / subscriptions_v2 created or extended
+  → access window synchronized
+  → Telegram access via canonical path
+  → admin UI и user cabinet показывают одинаковый access state
+```
+
+Кейс Матук Вероники — только контрольный пример. Основная задача — зафиксировать всю цепочку от получения денег до отображения доступа.
+
+### F.1 Read-only inventory
+
+1. **Payment ingestion sources:** `bepaid-webhook`, admin bePaid sync, manual/admin flow, `payment_reconcile_queue`, public payment link, bulk create from payments. Для каждого: где пишется `payments_v2`, где определяются `user_id/profile_id/product_id/tariff_id`, где создаётся/находится `orders_v2`, где зовётся `grant-access-for-order`, есть ли flows без canonical grant.
+2. **Order creation flows:** все места insert в `orders_v2`, инвентарь `meta.source` (`admin_from_payment`, `admin_bulk_from_payments`, `admin_grant`, `bepaid_webhook`, `rebill_materialization`, прочие), какие создают order без grant, какие зовут grant без проверки результата, какие пишут «доступ выдан» до подтверждения.
+3. **Grant-access callers:** body contract (`orderId` vs legacy `order_id`); UI / edge functions / cron; где результат игнорируется; где UI продолжает side-effect при ошибке.
+4. **Telegram access:** прямые UI и edge вызовы `telegram-grant-access` вне canonical; flows, где Telegram выдан без primary entitlement/subscription. Telegram **не** SOT.
+5. **Subscriptions_v2 linkage:** когда создаётся/продлевается, как резолвится `bepaid_subscription_id`, как связаны `orders_v2 ↔ payments_v2 ↔ subscriptions_v2 ↔ provider_subscriptions ↔ entitlements`.
+6. **Access window sync:** `subscriptions_v2.access_start_at/access_end_at`, `entitlements.expires_at`, `provider_subscriptions.next_charge_at`, `orders_v2.deal_date`, `payments_v2.paid_at`, окна в admin UI и user cabinet, Telegram expiration.
+7. **Admin vs user cabinet UI:** один canonical resolver (или одинаковый результат) в карточке контакта (вкладка «Доступы»), карточке сделки, карточке платежа, личном кабинете, `/products`, training-tree, Telegram-блоках.
+
+### F.2 Candidate groups (read-only SQL)
+
+- **A** — paid orders без platform access (есть `user_id/product_id/tariff_id`, нет активных entitlement/subscription).
+- **B** — Telegram access без platform access.
+- **C** — platform access без Telegram при `requires_telegram=true` на продукте.
+- **D** — date mismatch `subscriptions_v2.access_end_at` ≠ `entitlements.expires_at` для одного `(user_id, product_id)`.
+- **E** — provider/local desync: `provider_subscriptions.state='active'` vs local expired/canceled/superseded и наоборот.
+- **F** — grant called but failed/ignored: audit показывает попытку, но `subscription_id/entitlement_id` отсутствуют или UI продолжил side-effect.
+- **G** — direct Telegram writer usage: места в коде и audit, где Telegram выдан вне canonical.
+
+### F.3 Proof-файл
+
+`.lovable/proofs/payment_to_access_chain_revision_2026_05.md` со всеми разделами F.1–F.2 и отдельной строкой по Матук Веронике: payment / order / subscription / entitlement / Telegram / access dates / current status / вывод (восстановлено, требует repair, требует code-fix).
+
+### F.4 STOP-guards для PATCH F
+
+- Никакого execute на этом этапе. Только read-only.
+- Никаких прямых INSERT/UPDATE в `entitlements`, `subscriptions_v2`, `telegram_*`.
+- `BEPAID_REBILL_MATERIALIZATION=on` не включать.
+- Не менять schema/RLS.
+- Если в любой группе A–G кандидатов больше 20 — только отчёт, без repair-плана execute.
+- Все repair — отдельными patch: dry-run → approve → execute.
+
+### F.5 Repair-планы после ревизии (отдельно, не в этом PATCH)
+
+- Canonical grant repair — только через `grant-access-for-order(orderId)`.
+- Telegram sync repair — только при активных primary entitlement/subscription.
+- Subscription/entitlement date alignment — через canonical writer или approved repair.
+- Provider/local subscription desync — по аналогии с zombie provider subscriptions.
+- UI display resolver patch — если admin/user UI показывают разное.
+
+### F.6 DoD PATCH F
+
+- Полный proof-файл создан.
+- Перечислены все payment/order/grant/telegram flows.
+- Перечислены все прямые Telegram writer’ы.
+- Матрица расхождений по access windows.
+- Candidate lists по группам A–G.
+- По Матук Веронике отдельная строка с финальным выводом.
+
+---
+
+## 4. Изменяемые компоненты
+
+Файлы (PATCH A–C):
+
+- `supabase/functions/grant-access-for-order/index.ts` (только compatibility + audit)
+- `src/components/admin/payments/CreateDealFromPaymentDialog.tsx`
+- `src/components/admin/payments/BulkCreateDealsDialog.tsx`
+- `src/components/admin/ContactDetailSheet.tsx`
+
+Proof:
+
+- `.lovable/proofs/matuk_access_deal_creation_revision_2026_05.md` (PATCH A–E)
+- `.lovable/proofs/payment_to_access_chain_revision_2026_05.md` (PATCH F)
+
+Read-only таблицы для F: `profiles`, `orders_v2`, `payments_v2`, `subscriptions_v2`, `entitlements`, `payment_reconcile_queue`, `audit_logs`, `telegram_club_members`, `telegram_messages`, `telegram_access_queue`, `provider_subscriptions`, `access_rules`, `access_grant_ledger`, `products_v2`, `tariffs`.
+
+## 5. Что не будет изменено
+
+- `BEPAID_REBILL_MATERIALIZATION=on` не включать.
+- `bepaid-webhook` не рефакторить (только если targeted tests покажут регрессию).
+- Никаких новых таблиц/RPC/edge functions.
+- Никаких прямых INSERT/UPDATE в `entitlements` / `subscriptions_v2` / `telegram_*`.
+- Не менять access_rules, продукты, тарифы, schema, RLS.
+
+## 6. Dry-run
+
+1. SQL-снимок Матук Вероники по всем уровням цепочки.
+2. SQL по PATCH D кандидатам.
+3. SQL по PATCH F группам A–G с rowcount.
+4. STOP-guard: > 20 в группе → только отчёт.
+
+## 7. Execute (после approve этого плана)
+
+1. PATCH A–C — код-патч + tests `grant-access-for-order` + deploy.
+2. PATCH F — read-only ревизия + proof-файл.
+3. PATCH D — dry-run кандидатов.
+4. PATCH E — canonical repair только после approve по rowcount.
+5. Repair-планы из F.5 — отдельными PATCH с dry-run → approve → execute.
+
+## 8. STOP-guards (общие)
+
+- Заказ без `user_id/product_id/tariff_id` → stop.
+- Foreign-user collision на entitlement → stop.
+- `grant-access-for-order` вернул `sbs_mismatch` / `manual_review` / `primary_entitlement_*_failed` → stop.
+- Edge function tests не проходят → stop.
+- Любая необходимость менять schema/RLS → отдельный план/миграция.
+
+## 9. DoD общий
+
+- UI везде использует `orderId` (или совместимый нормализованный контракт).
+- `grant-access-for-order` принимает legacy `order_id` с audit.
+- В flows создания сделки/ручного гранта нет прямого `telegram-grant-access`.
+- UI не пишет «доступ выдан» без подтверждения canonical grant.
+- По Матук Веронике в proof: payment / deal / entitlement / subscription / Telegram / access window — всё через canonical writer; Telegram не используется как доказательство платформенного доступа.
+- PATCH F DoD выполнен (см. F.6).
+- Данных вне canonical writer не меняли.
+- `BEPAID_REBILL_MATERIALIZATION=on` не включался.
+
+## 10. Риски и зависимости
+
+- Удаление прямого Telegram writer из UI безопасно: `grant-access-for-order` уже содержит canonical Telegram path через `access_rules`.
+- Исторические сделки с разными `meta.source` — массовый repair только после dry-run.
+- Текущий кейс Матук уже восстановлен в backend, но root cause в коде остаётся → повторится без PATCH A–C.
+
+## 11. Требуется дополнительная информация
+
+Не требуется для approve. Repair-объёмы (PATCH E и F.5) запросят отдельный approve по rowcount после dry-run.
+
+---
+
+**Важно:** этот план не ограничивается кейсом Матук Вероники. Кейс Матук — контрольный пример. Основная задача PATCH F — проверить и зафиксировать всю цепочку от получения денег до отображения доступа в админке, личном кабинете и Telegram.
