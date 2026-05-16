@@ -4532,421 +4532,132 @@ Deno.serve(async (req) => {
               // Continue to handle other operations (GetCourse, Telegram), but skip subscription creation
             }
 
-            // PATCH-A2: Expand existingSub search to include 'past_due' status
-            // This prevents creating duplicates when failed/pending payment is followed by success
-            let existingSub: { id: string; access_end_at: string; canceled_at: string | null; tariff_id: string; order_id: string | null; status: string } | null = null;
-            let allCandidates: { id: string; access_end_at: string; canceled_at: string | null; tariff_id: string; order_id: string | null; status: string }[] = [];
-            
-            if (!orderV2.is_trial && orderV2.status === 'paid') {
-              // Search for ALL non-canceled subscriptions (active, trial, past_due)
-              const { data: candidates } = await supabase
-                .from('subscriptions_v2')
-                .select('id, access_end_at, canceled_at, tariff_id, order_id, status')
-                .eq('user_id', orderV2.user_id)
-                .eq('product_id', orderV2.product_id)
-                .in('status', ['active', 'trial', 'past_due'])
-                .is('canceled_at', null)
-                .order('access_end_at', { ascending: false });
-              
-              allCandidates = candidates || [];
-              
-              // PATCH-A3: STOP-guard if multiple candidates — mark for review, don't auto-merge
-              if (allCandidates.length > 1) {
-                console.warn(`[SUBSCRIPTION] Multiple candidates found (${allCandidates.length}), marking for review`);
-                await supabase.from('audit_logs').insert({
-                  actor_type: 'system',
-                  actor_user_id: null,
-                  actor_label: 'bepaid-webhook',
-                  action: 'bepaid.webhook.subscription_multi_candidate_review',
-                  meta: {
-                    order_id: orderV2.id,
-                    user_id: orderV2.user_id,
-                    product_id: orderV2.product_id,
-                    candidate_count: allCandidates.length,
-                    candidate_ids: allCandidates.map(c => c.id),
-                    needs_review: true,
-                  },
-                });
-                // Take the most recent one with valid access_end_at in future
-                const futureCandidate = allCandidates.find(c => new Date(c.access_end_at) >= now);
-                existingSub = futureCandidate || allCandidates[0];
-              } else if (allCandidates.length === 1) {
-                existingSub = allCandidates[0];
-              }
-              
-              // PATCH-A2b: If found past_due subscription with NULL order_id — attach current order_id
-              if (existingSub && existingSub.status === 'past_due' && !existingSub.order_id) {
-                console.log(`[SUBSCRIPTION] Found past_due sub ${existingSub.id} without order_id, attaching order ${orderV2.id}`);
-                await supabase
-                  .from('subscriptions_v2')
-                  .update({
-                    order_id: orderV2.id,
-                    status: 'active',
-                    updated_at: now.toISOString(),
-                  })
-                  .eq('id', existingSub.id);
-                
-                await supabase.from('audit_logs').insert({
-                  actor_type: 'system',
-                  actor_user_id: null,
-                  actor_label: 'bepaid-webhook',
-                  action: 'bepaid.webhook.subscription_order_attached',
-                  meta: {
-                    subscription_id: existingSub.id,
-                    order_id: orderV2.id,
-                    previous_status: 'past_due',
-                    new_status: 'active',
-                  },
-                });
-                
-                // Update local reference
-                existingSub.order_id = orderV2.id;
-                existingSub.status = 'active';
-              }
-            }
+            // ----------------------------------------------------------------
+            // PATCH H2.1b-ii: 3DS finalize handover to canonical writer.
+            // All access writes (subscriptions_v2 access fields, entitlements,
+            // entitlement_orders, telegram-grant-access) are owned by
+            // grant-access-for-order(context='3ds_finalize'). This webhook only
+            // performs provider-sync on the subscription_id returned by writer
+            // (billing_type, next_charge_at, auto_renew, meta.bepaid_*, updated_at,
+            // optional payment_method_id/payment_token).
+            //
+            // skip/error/manual_review/ambiguous_order_id outcomes → audit
+            // 'bepaid.webhook.grant_skipped_no_fallback' + HTTP 200, NO fallback-write.
+            // ----------------------------------------------------------------
 
-            const isSameTariff = existingSub && existingSub.tariff_id === orderV2.tariff_id;
-            
-            // Calculate proration for tariff change
-            interface ProrationResult {
-              bonusDays: number;
-              unusedValue: number;
-              remainingDays: number;
-              oldTariffId: string;
-            }
-            let prorationResult: ProrationResult | null = null;
-            
-            if (existingSub && !isSameTariff && !orderV2.is_trial && existingSub.order_id) {
-              console.log(`Webhook: User is changing tariff from ${existingSub.tariff_id} to ${orderV2.tariff_id}, calculating proration...`);
-              
-              // Get paid amount from old order
-              const { data: oldOrder } = await supabase
-                .from('orders_v2')
-                .select('paid_amount, final_price')
-                .eq('id', existingSub.order_id)
-                .single();
-              
-              // Get access_days from old tariff
-              const { data: oldTariff } = await supabase
-                .from('tariffs')
-                .select('access_days')
-                .eq('id', existingSub.tariff_id)
-                .single();
-              
-              if (oldOrder && oldTariff?.access_days) {
-                const oldPaidAmount = oldOrder.paid_amount || oldOrder.final_price || 0;
-                const accessEnd = new Date(existingSub.access_end_at);
-                const remainingMs = accessEnd.getTime() - now.getTime();
-                const remainingDays = Math.max(0, remainingMs / (24 * 60 * 60 * 1000));
-                
-                if (remainingDays > 0 && oldPaidAmount > 0) {
-                  const oldDailyRate = oldPaidAmount / oldTariff.access_days;
-                  const unusedValue = oldDailyRate * remainingDays;
-                  const newDailyRate = paymentV2.amount / tariff.access_days;
-                  const bonusDays = newDailyRate > 0 ? Math.floor(unusedValue / newDailyRate) : 0;
-                  
-                  prorationResult = {
-                    bonusDays,
-                    unusedValue,
-                    remainingDays,
-                    oldTariffId: existingSub.tariff_id,
-                  };
-                  
-                  console.log(`Webhook proration: ${remainingDays.toFixed(1)} days remaining, bonus: ${bonusDays} days`);
-                }
-              }
-            }
-
-            const baseAccessDays = orderV2.is_trial
-              ? Math.max(1, Math.ceil((new Date(orderV2.trial_end_at).getTime() - new Date(orderV2.created_at).getTime()) / (24 * 60 * 60 * 1000)))
-              : (tariff.access_days || 30);
-            
-            const prorationBonusDays = prorationResult?.bonusDays || 0;
-            const accessDays = baseAccessDays + prorationBonusDays;
-
-            // For same tariff non-trial: extend from existing subscription end date
-            const extendFromDate = (existingSub && isSameTariff && !orderV2.is_trial) ? new Date(existingSub.access_end_at) : null;
-            const baseDate = extendFromDate || new Date();
-            const accessEndAt = orderV2.is_trial
-              ? new Date(orderV2.trial_end_at)
-              : new Date(baseDate.getTime() + accessDays * 24 * 60 * 60 * 1000);
-
-            // Set next_charge_at only if this is a recurring subscription or trial with auto-charge
-            let nextChargeAt: Date | null = null;
-            if (orderV2.is_trial && autoChargeAfterTrial) {
-              nextChargeAt = new Date(accessEndAt.getTime() - 24 * 60 * 60 * 1000);
-            } else if (!orderV2.is_trial && isRecurringSubscription) {
-              nextChargeAt = new Date(accessEndAt.getTime() - 3 * 24 * 60 * 60 * 1000);
-            }
-            // If not recurring subscription (one-time payment), next_charge_at stays null
-
-            console.log('Subscription upsert logic:', {
-              existingSubId: existingSub?.id,
-              existingEndAt: existingSub?.access_end_at,
-              isSameTariff,
-              extendFromDate: extendFromDate?.toISOString(),
-              baseAccessDays,
-              prorationBonusDays,
-              totalAccessDays: accessDays,
-              newAccessEndAt: accessEndAt.toISOString(),
-              nextChargeAt: nextChargeAt?.toISOString(),
-              isRecurringSubscription,
-            });
-
-            // === CRITICAL FIX: Create/link payment_method from checkout card data ===
-            // This ensures users can see and manage their cards
-            let paymentMethodId: string | null = (orderV2.meta as any)?.payment_method_id || null;
-            const cardData = transaction?.credit_card;
-            
-            // If card token is present and no payment_method_id yet, create or find payment_method
-            if (paymentV2.payment_token && cardData && !paymentMethodId && isRecurringSubscription) {
-              console.log('Creating payment_method from checkout card data...');
-              
-              // Check if payment_method with this token already exists
-              const { data: existingPM } = await supabase
-                .from('payment_methods')
-                .select('id')
-                .eq('user_id', orderV2.user_id)
-                .eq('provider_token', paymentV2.payment_token)
-                .maybeSingle();
-              
-              if (existingPM) {
-                paymentMethodId = existingPM.id;
-                console.log('Found existing payment_method:', paymentMethodId);
-              } else {
-                // Create new payment_method
-                const { data: newPM, error: pmError } = await supabase
-                  .from('payment_methods')
-                  .insert({
-                    user_id: orderV2.user_id,
-                    provider: 'bepaid',
-                    provider_token: paymentV2.payment_token,
-                    brand: cardData.brand || null,
-                    last4: cardData.last_4 || null,
-                    exp_month: cardData.exp_month ? parseInt(cardData.exp_month) : null,
-                    exp_year: cardData.exp_year ? parseInt(cardData.exp_year) : null,
-                    is_default: true,
-                    status: 'active',
-                    card_product: cardData.product || null,
-                    card_category: cardData.category || null,
-                  })
-                  .select('id')
-                  .single();
-                
-                if (pmError) {
-                  console.error('Failed to create payment_method:', pmError);
-                } else {
-                  paymentMethodId = newPM.id;
-                  console.log('Created new payment_method:', paymentMethodId);
-                  
-                  // Unset is_default for other payment methods of this user
-                  await supabase
-                    .from('payment_methods')
-                    .update({ is_default: false })
-                    .eq('user_id', orderV2.user_id)
-                    .neq('id', paymentMethodId);
-                }
-              }
-            }
-
-            // PATCH-A1 continued: Only create/update subscription if order is paid
-            if (orderV2.status === 'paid') {
-              if (existingSub && isSameTariff && !orderV2.is_trial) {
-                // Update existing active subscription - extend it (same tariff)
-                await supabase
-                  .from('subscriptions_v2')
-                  .update({
-                    status: 'active',
-                    is_trial: false,
-                    access_end_at: accessEndAt.toISOString(),
-                    next_charge_at: nextChargeAt?.toISOString() || null,
-                    payment_method_id: paymentMethodId,
-                    payment_token: paymentMethodId ? paymentV2.payment_token : null, // Only save token if payment_method exists
-                    updated_at: now.toISOString(),
-                  })
-                  .eq('id', existingSub.id);
-                
-                console.log('Updated existing subscription:', existingSub.id, 'payment_method_id:', paymentMethodId);
-              } else {
-                // Create new subscription (new tariff or upgrade/downgrade with proration)
-                const subscriptionMeta = prorationResult ? {
-                  proration: {
-                    from_tariff_id: prorationResult.oldTariffId,
-                    remaining_days: Math.round(prorationResult.remainingDays * 10) / 10,
-                    unused_value: Math.round(prorationResult.unusedValue),
-                    bonus_days: prorationResult.bonusDays,
-                  }
-                } : undefined;
-                
-                const { data: newSub } = await supabase
-                  .from('subscriptions_v2')
-                  .insert({
-                    user_id: orderV2.user_id,
-                    product_id: orderV2.product_id,
-                    tariff_id: orderV2.tariff_id,
-                    order_id: orderV2.id,
-                    status: orderV2.is_trial ? 'trial' : 'active',
-                    is_trial: !!orderV2.is_trial,
-                    access_start_at: now.toISOString(),
-                    access_end_at: accessEndAt.toISOString(),
-                    trial_end_at: orderV2.is_trial ? accessEndAt.toISOString() : null,
-                    next_charge_at: nextChargeAt?.toISOString() || null,
-                    payment_method_id: paymentMethodId,
-                    payment_token: paymentMethodId ? paymentV2.payment_token : null, // Only save token if payment_method exists
-                    meta: subscriptionMeta,
-                  })
-                  .select('id')
-                  .single();
-                
-                console.log('Created new subscription:', newSub?.id);
-                
-                // If tariff changed - cancel old subscription
-                if (existingSub && !isSameTariff) {
-                  console.log(`Canceling old subscription ${existingSub.id} due to tariff change`);
-                  await supabase
-                    .from('subscriptions_v2')
-                    .update({
-                      status: 'canceled',
-                      canceled_at: now.toISOString(),
-                      cancel_reason: `Changed to tariff. Proration: ${prorationBonusDays} bonus days applied.`,
-                    })
-                    .eq('id', existingSub.id);
-                }
-              }
-            } // End of orderV2.status === 'paid' guard for subscription
-
-            // === ALWAYS CREATE/UPDATE ENTITLEMENT (Variant 1: upsert by user_id, product_code) ===
-            const productCode = productV2.code || `product_${productV2.id}`;
-
-            // Guard: проверяем, что user_id — реальный auth user (есть профиль)
+            // Profile lookup is still needed downstream (GetCourse + admin notify).
             const { data: userProfileCheck } = await supabase
               .from('profiles')
               .select('id, user_id, email, telegram_user_id, telegram_link_status, phone, first_name, last_name')
               .eq('user_id', orderV2.user_id)
               .maybeSingle();
 
-            if (!userProfileCheck) {
-              // Ghost user_id — не создаём entitlement, помечаем для ручной обработки
-              console.warn('[ENTITLEMENT] Ghost user_id detected, skipping entitlement:', orderV2.user_id);
-              await supabase.from('audit_logs').insert({
-                actor_user_id: orderV2.user_id,
-                action: 'entitlement_skipped_ghost_user',
-                meta: { order_id: orderV2.id, order_number: orderV2.order_number },
-              });
-            } else {
-              // Idempotency guard: проверяем, есть ли уже запись в entitlement_orders для этого order_id
-              const { data: existingEO } = await supabase
-                .from('entitlement_orders')
-                .select('id, entitlement_id')
-                .eq('order_id', orderV2.id)
-                .maybeSingle();
+            let grantedSubscriptionId: string | null = null;
+            let grantNextChargeAt: string | null = null;
+            let grantOutcomeKind = 'not_called';
+            let grantOutcomeFull: any = null;
 
-              if (existingEO) {
-                console.log('[ENTITLEMENT_ORDERS] Already linked for order:', orderV2.id);
-              } else {
-                // Expires: строго subscriptions_v2.access_end_at
-                const entitlementExpiresAt = accessEndAt.toISOString();
-
-                // Upsert entitlement с GREATEST(expires_at)
-                const { data: existingEntitlement } = await supabase
-                  .from('entitlements')
-                  .select('id, expires_at')
-                  .eq('user_id', orderV2.user_id)
-                  .eq('product_code', productCode)
-                  .maybeSingle();
-
-                let entitlementId: string;
-
-                if (existingEntitlement) {
-                  // Update с GREATEST(expires_at)
-                  const currentExpires = existingEntitlement.expires_at ? new Date(existingEntitlement.expires_at) : new Date(0);
-                  const newExpires = new Date(entitlementExpiresAt);
-                  const finalExpires = currentExpires > newExpires ? currentExpires : newExpires;
-
-                  await supabase
-                    .from('entitlements')
-                    .update({
-                      expires_at: finalExpires.toISOString(),
-                      status: 'active',
-                      updated_at: new Date().toISOString(),
-                    })
-                    .eq('id', existingEntitlement.id);
-
-                  entitlementId = existingEntitlement.id;
-                  console.log('[ENTITLEMENT] Updated with GREATEST expires_at:', finalExpires.toISOString());
+            if (orderV2.status === 'paid' && orderV2.id) {
+              try {
+                const grantResp = await fetch(
+                  `${Deno.env.get('SUPABASE_URL')}/functions/v1/grant-access-for-order`,
+                  {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+                    },
+                    body: JSON.stringify({
+                      orderId: orderV2.id,
+                      context: '3ds_finalize',
+                      source: 'bepaid_webhook',
+                    }),
+                  },
+                );
+                const grantBody = await grantResp.json().catch(() => ({}));
+                grantOutcomeFull = grantBody?.outcome || null;
+                grantOutcomeKind = String(grantOutcomeFull?.kind || 'unknown');
+                const successKinds = [
+                  'ok',
+                  'extended',
+                  'bootstrap_created',
+                  'incomplete_subscription_completed',
+                  'skip_already_processed',
+                ];
+                if (successKinds.includes(grantOutcomeKind)) {
+                  grantedSubscriptionId = grantOutcomeFull?.subscription_id ?? null;
+                  grantNextChargeAt = grantOutcomeFull?.next_charge_at_suggested ?? null;
                 } else {
-                  // Insert new entitlement
-                  const { data: newEntitlement, error: entitlementError } = await supabase
-                    .from('entitlements')
-                    .insert({
-                      user_id: orderV2.user_id,
-                      profile_id: userProfileCheck.id,
-                      order_id: orderV2.id, // первый order_id
-                      product_code: productCode,
-                      product_id: productV2.id,
-                      status: 'active',
-                      expires_at: entitlementExpiresAt,
-                      meta: {
-                        order_number: orderV2.order_number,
-                        product_name: productV2.name,
-                        tariff_name: tariff.name,
-                        bepaid_uid: transactionUid,
-                        source: 'bepaid_webhook_v2',
-                      },
-                    })
-                    .select('id')
-                    .single();
-
-                  if (entitlementError) {
-                    console.error('[ENTITLEMENT] Insert failed:', entitlementError);
-                    await supabase.from('audit_logs').insert({
-                      actor_user_id: orderV2.user_id,
-                      action: 'entitlement_failed_v2',
-                      meta: { order_id: orderV2.id, error: entitlementError.message },
-                    });
-                    throw new Error(`Entitlement creation failed: ${entitlementError.message}`);
-                  }
-
-                  entitlementId = newEntitlement.id;
-                  console.log('[ENTITLEMENT] Created:', entitlementId);
-                }
-
-                // Создаём запись в entitlement_orders (связка order → entitlement)
-                const { error: eoError } = await supabase
-                  .from('entitlement_orders')
-                  .insert({
-                    order_id: orderV2.id,
-                    entitlement_id: entitlementId,
-                    user_id: orderV2.user_id,
-                    product_code: productCode,
+                  // skip_no_order / skip_inactive_offer / skip_concurrent_insert
+                  // / manual_review_* / error / ambiguous_order_id → NO fallback-write.
+                  await supabase.from('audit_logs').insert({
+                    actor_type: 'system',
+                    actor_user_id: null,
+                    actor_label: 'bepaid-webhook',
+                    action: 'bepaid.webhook.grant_skipped_no_fallback',
                     meta: {
+                      order_id: orderV2.id,
                       bepaid_uid: transactionUid,
-                      order_number: orderV2.order_number,
-                      tariff_name: tariff.name,
-                      access_end_at: entitlementExpiresAt,
+                      context: '3ds_finalize',
+                      outcome_kind: grantOutcomeKind,
+                      outcome: grantOutcomeFull,
                     },
                   });
-
-                if (eoError) {
-                  console.error('[ENTITLEMENT_ORDERS] Insert failed:', eoError);
-                } else {
-                  console.log('[ENTITLEMENT_ORDERS] Linked order', orderV2.id, '→ entitlement', entitlementId);
                 }
-
+              } catch (grantErr) {
+                grantOutcomeKind = 'invoke_error';
                 await supabase.from('audit_logs').insert({
-                  actor_user_id: orderV2.user_id,
-                  action: 'entitlement_created_v2',
-                  meta: { 
-                    order_id: orderV2.id, 
-                    entitlement_id: entitlementId,
-                    product_code: productCode, 
-                    expires_at: entitlementExpiresAt 
+                  actor_type: 'system',
+                  actor_user_id: null,
+                  actor_label: 'bepaid-webhook',
+                  action: 'bepaid.webhook.grant_skipped_no_fallback',
+                  meta: {
+                    order_id: orderV2.id,
+                    bepaid_uid: transactionUid,
+                    context: '3ds_finalize',
+                    outcome_kind: 'invoke_error',
+                    error: String((grantErr as Error)?.message || grantErr),
                   },
                 });
               }
             }
 
-            // Use the same profile data for Telegram check
+            // Provider-sync: only on subscription_id returned by writer,
+            // only technical/provider fields (no access_*/status writes).
+            if (grantedSubscriptionId) {
+              const providerSyncPatch: Record<string, any> = {
+                billing_type: isRecurringSubscription ? 'mit' : 'cit',
+                auto_renew: !!isRecurringSubscription,
+                updated_at: now.toISOString(),
+              };
+              if (grantNextChargeAt) providerSyncPatch.next_charge_at = grantNextChargeAt;
+              if (paymentMethodId) {
+                providerSyncPatch.payment_method_id = paymentMethodId;
+                providerSyncPatch.payment_token = paymentV2.payment_token;
+              }
+              const { data: curSub } = await supabase
+                .from('subscriptions_v2')
+                .select('meta')
+                .eq('id', grantedSubscriptionId)
+                .maybeSingle();
+              const baseMeta = (curSub?.meta as Record<string, any>) || {};
+              providerSyncPatch.meta = {
+                ...baseMeta,
+                bepaid_uid: transactionUid,
+                bepaid_synced_at: now.toISOString(),
+                bepaid_outcome: grantOutcomeKind,
+              };
+              await supabase
+                .from('subscriptions_v2')
+                .update(providerSyncPatch)
+                .eq('id', grantedSubscriptionId);
+            }
+
+            // PATCH H2.1b-ii: entitlements + entitlement_orders are owned by
+            // grant-access-for-order(context='3ds_finalize'). Block removed here —
+            // see provider-sync block above.
+
+            // Reuse profile data for downstream GetCourse sync & admin notify.
             const userProfile = userProfileCheck;
 
             // ===== GetCourse sync - ALWAYS attempt, INDEPENDENT of Telegram =====
@@ -5033,51 +4744,9 @@ Deno.serve(async (req) => {
               console.log(`[GC-SYNC] Skipped: ${skipReason}`);
             }
 
-            // ===== Telegram access - check if linked =====
-            const hasTelegramLinked = userProfile?.telegram_user_id && userProfile?.telegram_link_status === 'active';
-            
-            if (hasTelegramLinked && productV2.telegram_club_id) {
-              // Telegram linked - grant access immediately
-              console.log('[TELEGRAM] Linked, granting access');
-              
-              await supabase.functions.invoke('telegram-grant-access', {
-                body: {
-                  user_id: orderV2.user_id,
-                  club_id: productV2.telegram_club_id,
-                  source_id: orderV2.id,
-                  source: 'bepaid-webhook:legacy-single',
-                  duration_days: accessDays,
-                },
-              });
-            } else if (productV2.telegram_club_id) {
-              // Telegram NOT linked but product has club - mark pending
-              console.log('[TELEGRAM] NOT linked, marking access pending');
-              
-              await supabase
-                .from('orders_v2')
-                .update({
-                  meta: {
-                    ...((orderV2.meta as object) || {}),
-                    telegram_access_pending: true,
-                    pending_since: new Date().toISOString(),
-                  }
-                })
-                .eq('id', orderV2.id);
-              
-              // Queue notification for user to link Telegram
-              await supabase.from('pending_telegram_notifications').insert({
-                user_id: orderV2.user_id,
-                notification_type: 'telegram_link_required',
-                payload: {
-                  order_id: orderV2.id,
-                  product_name: productV2.name,
-                  tariff_name: tariff.name,
-                },
-                priority: 10,
-              });
-              
-              console.log('[TELEGRAM] Created pending notification for linking');
-            }
+            // PATCH H2.1b-ii: Telegram grant is owned by grant-access-for-order
+            // (canonical write-path → telegram-grant-access). Webhook no longer
+            // calls telegram-grant-access directly here.
 
             // Audit
             await supabase.from('audit_logs').insert({
