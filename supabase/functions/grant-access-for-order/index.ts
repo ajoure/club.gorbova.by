@@ -1378,7 +1378,34 @@ Deno.serve(async (req) => {
         .single();
 
       const existingMeta = (fullExistingSub?.meta || {}) as Record<string, any>;
-      const extendedByOrders = existingMeta.extended_by_orders || [];
+      // PATCH H2: dedup extended_by_orders (idempotent append).
+      // Раньше — `[...arr, orderId]` без проверки; webhook ретраи давали [X, X].
+      const rawExtendedByOrders: string[] = Array.isArray(existingMeta.extended_by_orders)
+        ? existingMeta.extended_by_orders
+        : [];
+      const extendedByOrders = Array.from(new Set(rawExtendedByOrders));
+      const extendDuplicate = extendedByOrders.includes(orderId);
+      const nextExtendedByOrders = extendDuplicate
+        ? extendedByOrders
+        : [...extendedByOrders, orderId];
+
+      if (extendDuplicate) {
+        // best-effort audit (race-safe atomic append вынесен в backlog PATCH H2b).
+        await supabase.from("audit_logs").insert({
+          action: "grant-access-for-order.extend.duplicate_ignored",
+          actor_type: "system",
+          actor_user_id: null,
+          actor_label: "grant-access-for-order",
+          target_user_id: userId,
+          meta: {
+            subscription_id: existingProductSub.id,
+            order_id: orderId,
+            product_id: productId,
+            existing_extended_by_orders: extendedByOrders,
+            patch: "patch-h2-extend-dedupe",
+          },
+        });
+      }
       
       // SOT-aligned snapshot resolver on EXTEND.
       // Read-only helper: never writes to orders_v2.offer_id.
