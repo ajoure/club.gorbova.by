@@ -17,6 +17,7 @@ import { ru } from "date-fns/locale";
 import { DateRange } from "react-day-picker";
 import { cn } from "@/lib/utils";
 import { formatContactName } from "@/lib/nameUtils";
+import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 
 interface Contact {
   id: string;
