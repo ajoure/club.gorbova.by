@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { dedupeExtendedByOrders } from './extended_by_orders_dedupe.ts';
 import {
   buildSbsMismatchAuditPayload,
   buildSbsMismatchOrderMetaMerge,
