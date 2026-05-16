@@ -1,158 +1,246 @@
-# да, согласен.
+# да, согласен, с учетом правок:
 
-Запускать только текущий шаг:
+1. **Strict A должен быть единственным кандидатом на execute.**  
+Cohort B/C — только контрольные/диагностические, не источник execute.
+2. **Для** `already_materialized` **лучше разделить** `skip_done` **и** `manual_review`**.**
 
 ```text
-Stage 0 + Stage 0.5 — frozen execute table
+skip_done:
+- найден ровно один корректный REBILL-order;
+- payment уже привязан правильно;
+- данные не конфликтуют.
+
+manual_review:
+- найдено несколько REBILL;
+- REBILL есть, но payment не там;
+- user/product/tariff/amount/month конфликтуют.
 ```
 
-Без DML.
+3. `parent.deal_date` **может быть NULL.**  
+Для `parent_deal_month` использовать:
 
-## **Команда Lovable**
+```sql
+COALESCE(parent.deal_date, parent.created_at)
+```
+
+4. `ROW_NUMBER()` **считать только по non-refund successful payments.**  
+Refund-rows не должны влиять на `rn>1`.
+5. **Refund guard должен проверять не только meta-ссылки, но и** `provider_payment_id`**/uid-следы.**  
+Добавить поиск refund по:
 
 ```text
-План H5.1 v2 подтверждаю.
+meta.parent_payment_uid = payment.provider_payment_id
+meta.parent_uid = payment.provider_payment_id
+meta.original_payment_uid = payment.provider_payment_id
+```
 
-Выполни только Stage 0 + Stage 0.5:
+Если структура отличается — указать фактические поля.
 
-1. Schema-check.
-2. REBILL number format verify.
-3. Mode check: BEPAID_REBILL_MATERIALIZATION=on.
-4. Baseline stable checksums.
-5. Frozen execute table по кандидатам:
-   - green;
-   - manual_review;
-   - skipped.
-6. Expected rowcounts:
-   - INSERT orders_v2 = green_candidates_count;
-   - UPDATE payments_v2 = green_candidates_count;
-   - INSERT audit_logs = green_candidates_count + 1.
-7. Rollback SQL preview.
-8. Proof + CSV:
-   - .lovable/proofs/h5_1_frozen_execute_table_2026_05.md
-   - .lovable/proofs/h5_1_frozen_execute_table_2026_05.csv
+6. **SBS recursive JSON scan должен быть read-only и детерминированным.**  
+Если технически сложно сделать полноценный recursive scan в SQL, допустимо ограничиться известными путями и пометить:
+
+```text
+sbs_source='NONE'
+manual_review:sbs_unresolved
+```
+
+Не использовать слабую эвристику.
+
+7. `payment.meta->>'source'` **и** `payment.meta->>'payment_flow'` **проверить фактически.**  
+Если в данных используются другие ключи, отразить в proof и расширить признаки только после доказательства.
+8. **CSV лучше разделить на 3 файла или явно добавить** `cohort_type`**.**  
+Чтобы не смешать A/B/C:
+
+```text
+cohort_type = strict | id_first | broad
+```
+
+И execute frozen list = только:
+
+```text
+cohort_type='strict' AND guard_status='green'
+```
+
+9. **Scoped baselines считать только по green Strict A users, но также сохранить count affected payments.**  
+В proof добавить:
+
+```text
+green_payment_count
+green_user_count
+green_parent_order_count
+green_sum_amount
+```
+
+10. **Добавить проверку, что** `mode=on` **не создаст новые REBILL в момент между freeze и будущим execute.**  
+В H5.1a только зафиксировать риск:
+
+```text
+Before H5.1b execute нужно re-check, что каждый green payment всё ещё не materialized runtime'ом.
+```
+
+11. **В Verdict добавить рекомендацию по batch strategy.**  
+Если N большой, лучше split:
+
+```text
+single batch — если N <= 100 и guards clean;
+split by month — если много майских;
+split by tariff — если есть разные pipeline/stage риски.
+```
+
+12. **Команда на выполнение:**
+
+```text
+План H5.1a подтверждаю.
+
+Выполни строго read-only:
+- пересобери deterministic cohorts A/B/C;
+- подтверди runtime REBILL format;
+- собери frozen Strict A table;
+- отдели green/manual_review/skip_done;
+- зафиксируй scoped baselines;
+- дай verdict, можно ли готовить H5.1b execute.
 
 Запрещено:
 - DML;
-- создание REBILL-orders;
-- UPDATE payments_v2;
-- любые changes в orders_v2;
-- entitlements;
-- subscriptions_v2;
-- Telegram;
-- provider_subscriptions;
-- provider API;
-- secrets/mode changes;
 - migrations;
-- persistent temp tables.
+- provider API;
+- edge function calls;
+- изменение secrets/mode;
+- любые правки orders/payments/refunds/accesses.
 
-После frozen table остановиться и ждать отдельного approve на execute.
+Proof:
+.lovable/proofs/h5_1a_rebuilt_frozen_candidate_cohort_2026_05.md
+
+CSV:
+.lovable/proofs/h5_1a_rebuilt_frozen_candidate_cohort_2026_05.csv
+
+Execute не запускать.
 ```
 
-После отчёта по frozen table можно будет принимать решение: запускать весь green batch или делить на подбатчи.
+После отчёта H5.1a уже можно будет решить, запускаем H5.1b одним батчем или дробим.
 
 &nbsp;
 
-План: H5.1 — Historical REBILL Deal Linkage Repair 2026 execute (v2, frozen-table-gated)
+План: H5.1a — Rebuild Frozen Candidate Cohort
 
-Execute-фаза для кандидатов из H5 dry-run. **DML не запускается до отдельного approve по frozen execute table.** Текущий шаг — построить frozen table; всё ниже — контракт того, что войдёт в execute после approve.
+Цель: заново детерминированно собрать frozen candidate list для Historical REBILL Deal Linkage Repair 2026, потому что прежний H5 proof не содержит ни SQL, ни id-list, и не воспроизводит ровно 72 кандидата на текущем snapshot. Без надёжного frozen списка execute H5.1b запускать нельзя.
 
-## 0. Изменения относительно v1
+## 0. Жёсткие правила (read-only)
 
-- Введён обязательный **Stage 0.5 — Frozen Execute Table** как gate перед approve.
-- `expected rowcounts = green_candidates_count` (не «72» захардкоженных).
-- `bepaid_subscription_id` для REBILL берётся из доказуемого источника на уровне payment, не слепо от parent.
-- Добавлен **Stage 0.A schema-check** для всех колонок, которые мы пишем/читаем.
-- Подтверждён формат `REBILL-<first12(provider_payment_id)>` сверкой с runtime materialization.
-- Жёсткий **refund-guard**: любой payment с refund-следом → `manual_review` / H5.2.
-- Введены **stable checksums** (без `order_id`/`updated_at` для payments_v2, без будущих H5 rows для orders_v2).
-- Расширен **rollback guard** (entitlements/subs/payments/Telegram refs = 0).
-- Запрет на persistent temp objects: только session-temp / CTE.
-- Final STOP по `BEPAID_REBILL_MATERIALIZATION = on` перед DML.
+- DML = 0, migrations = 0, edge-function calls = 0, provider API = 0.
+- Не трогаем: `orders_v2`, `payments_v2`, `refunds`, `entitlements`, `subscriptions_v2`, `access_rules`, `provider_subscriptions`, Telegram (`telegram_access_queue`, `telegram_grant_*`).
+- `BEPAID_REBILL_MATERIALIZATION` не меняем (остаётся `on`).
+- Никаких persistent temp objects; только session-temp / CTE.
+- 0 unrelated fixes.
 
-## 1. Scope
+## 1. Исправления контракта (фиксируются до выборки)
 
-- Кандидаты — строго из H5 dry-run snapshot (62 users, 71 parent orders, 4 tariffs, ≤72 payments, Σ ≤16 410.00 BYN).
-- 35 orphan refund-rows + 1 canonical refund → **H5.2** (не сюда).
-- Hold: G25 / Alesya Khomich, Рабчевская Юлия, INV-22 phantom past_due, legacy ребиллы до 2026.
+### 1.1 REBILL order_number — runtime format
 
-## 2. Stage 0 — Pre-flight (read-only)
-
-### 2.A Schema-check (hard STOP при отсутствии)
-
-Подтвердить через `information_schema.columns`:
+Фиксируется как:
 
 ```
-orders_v2.provider
-orders_v2.provider_payment_id
-orders_v2.bepaid_subscription_id
-orders_v2.pipeline_id
-orders_v2.pipeline_stage_id
-orders_v2.offer_id
-orders_v2.order_number
-orders_v2.deal_date
-orders_v2.paid_amount
-orders_v2.final_price
-orders_v2.currency
-orders_v2.product_id
-orders_v2.tariff_id
-orders_v2.user_id
-orders_v2.profile_id
-orders_v2.status
-orders_v2.meta
-payments_v2.id
-payments_v2.order_id
-payments_v2.profile_id
-payments_v2.user_id
-payments_v2.paid_at
-payments_v2.provider_payment_id
-payments_v2.amount
-payments_v2.refunded_amount
-payments_v2.transaction_type
-payments_v2.meta
-payments_v2.updated_at
+REBILL-<first12(payments_v2.id::text)>
 ```
 
-Любого поля нет / тип не совпадает → STOP, без DML.
+Подтверждено spot-check'ом в Stage 0 H5.1 (6/6 совпадений по `payments_v2.id`, 0/6 — по `provider_payment_id`).
 
-### 2.B REBILL number format verify
+### 1.2 SBS resolver (без `payments_v2.bepaid_subscription_id`)
 
-В Stage 0 проверить, что runtime canonical materialization (bepaid-webhook / rebill writer) формирует `order_number` как `REBILL-<first12(provider_payment_id)>`. Источник истины:
+Колонки нет — ступень убрана. Порядок:
 
-- последние `audit_logs.action='bepaid.rebill.materialized'`, поле `new_order_number`;
-- spot-check `orders_v2.order_number LIKE 'REBILL-%'` за последние 30d → confirm format.
+1. `payment.meta->>'bepaid_subscription_id'` → `sbs_source='payment_meta.sbs'`;
+2. `payment.meta->>'subscription_id'` → `sbs_source='payment_meta.subscription_id'`;
+3. `payment.meta->>'sbs'` → `sbs_source='payment_meta.sbs_short'`;
+4. `payment.meta#>>'{provider_response,transaction,subscription_id}'` → `sbs_source='provider_response.transaction'`;
+5. `payment.meta#>>'{provider_response,subscription_id}'` → `sbs_source='provider_response.root'`;
+6. `parent.bepaid_subscription_id` — **только если** оно not null И совпадает с любым sbs-значением, найденным внутри `payment.meta` целиком (recursive JSON scan) → `sbs_source='parent_match'`;
+7. иначе → `manual_review:sbs_unresolved` (`sbs_source='NONE'`).
 
-Если runtime использует `payments_v2.id` или иной ключ — H5.1 **обязан** использовать тот же формат. Зафиксировать решение в proof.
+### 1.3 Refund guard (hard)
 
-### 2.C Mode check (hard STOP)
+Любое из:
 
-`BEPAID_REBILL_MATERIALIZATION` должен быть `on` (сейчас on, подтверждено H4.1). Если != on — STOP.
+- `payment.refunded_amount IS NOT NULL AND payment.refunded_amount > 0`;
+- existence refund-row в `payments_v2` с `meta->>'parent_payment_id' = payment.id` ИЛИ `meta->>'parent_payment_uid' = payment.provider_payment_id`;
+- existence refund в `refunds` (если таблица есть) по `payment_id` / `payment_uid`
 
-### 2.D Baseline checksums (по 62 users из H5 snapshot)
+→ `manual_review:refund_present` → H5.2. Не попадает в green.
 
-Зафиксировать в proof:
+### 1.4 Already-materialized guard
 
-**Full baselines (для информации, из H5):**
+Помечать как `manual_review:already_materialized` (или `skip_done`), если найдено хотя бы одно совпадение:
 
-- `payments_v2` md5 = `8435bb6cb4cc737e90fe3cc50860af47`
-- `orders_v2` md5 = `e2e15331c9eab49e27f0269249a4d9d5`
-- `subscriptions_v2`: rows=456, Σepoch=787 775 646 072, null=11
-- `entitlements`: rows=405, Σepoch=721 480 200 523, null=0
+- `orders_v2.order_number = 'REBILL-' || substr(payment.id::text, 1, 12)`;
+- `orders_v2.meta->>'materialized_from_payment_id' = payment.id::text`;
+- `orders_v2.meta->>'materialized_from_payment_uid' = payment.provider_payment_id`;
+- `orders_v2.provider = 'bepaid' AND orders_v2.provider_payment_id = payment.provider_payment_id` (unique index).
 
-**Stable checksums (для post-state verify, обязательны):**
+Если совпадение в **двух и более** ключах указывает на разные orders — `manual_review:duplicate_rebill_collision`.
 
-- `payments_v2_stable_md5` = md5 по rows кандидатов, **исключая** колонки `order_id`, `updated_at`. После execute должен **совпасть** с pre-state (мы трогаем только order_id / updated_at).
-- `orders_v2_stable_md5` = md5 по `orders_v2` rows **существующих** на момент Stage 0 (без будущих H5 REBILL-orders). После execute должен **совпасть** с pre-state. Новые H5 REBILL rows считаются отдельно.
-- `subscriptions_v2_stable_md5` + rows/Σepoch/null — без изменений.
-- `entitlements_stable_md5` + rows/Σepoch/null — без изменений.
+## 2. Cohort definitions (3 варианта)
 
-## 3. Stage 0.5 — FROZEN EXECUTE TABLE (gate для approve)
+Все три варианта применяются на одном snapshot. База — `payments_v2` JOIN `orders_v2` по `payment.order_id = order.id`, с предварительной фильтрацией:
 
-**Это текущий deliverable.** Без одобрения этой таблицы никакой DML не запускается.
+- `payment.provider = 'bepaid'`;
+- `payment.paid_at` ∈ `[2026-01-01, 2027-01-01)`;
+- `payment.amount > 0`;
+- `payment.transaction_type` не refund И `payment.meta->>'type'` ≠ `'refund'`;
+- `parent.order_number NOT LIKE 'REBILL-%'`;
+- `parent.meta->>'source'` ∉ `{'h5_historical_repair','rebill_materialization','rebill_materialization_repair'}`.
 
-Артефакт: `.lovable/proofs/h5_1_frozen_execute_table_2026_05.md` + CSV `.lovable/proofs/h5_1_frozen_execute_table_2026_05.csv`.
+Все три варианта дополнительно прогоняются через **already-materialized guard** (§1.4) до подсчёта.
 
-Колонки таблицы (одна строка на candidate payment):
+### 2.A Strict cohort (преимущественный кандидат для frozen)
+
+- **Recurring evidence** — хотя бы один признак:
+  - `payment.meta->>'payment_flow' = 'bepaid_subscription_charge'`;
+  - `payment.meta->>'source' IN ('subscription_rebill','bepaid_rebill','bepaid_subscription_charge')`;
+  - `payment.meta->>'is_rebill' = 'true'`;
+  - `payment.meta->>'parent_uid' IS NOT NULL`;
+  - SBS resolver (§1.2) вернул не NONE.
+- **Split signal** — `payment.meta` / `parent` сигналы говорят о rebill'е, разнесённом по месяцам:
+  - `to_char(payment.paid_at AT TZ 'Europe/Minsk','YYYY-MM') <> to_char(parent.deal_date AT TZ 'Europe/Minsk','YYYY-MM')`
+  - ИЛИ `ROW_NUMBER() OVER (PARTITION BY parent.id ORDER BY payment.paid_at) > 1`.
+- Refund guard (§1.3) — clean.
+- Already-materialized guard (§1.4) — нет совпадений.
+
+### 2.B ID-first cohort (без эвристик)
+
+- Required: SBS resolver §1.2 вернул не NONE **И** `payment.meta` явно содержит `payment_flow='bepaid_subscription_charge'` ИЛИ `source` ∈ set из §2.A.
+- Без month-split / rn эвристик: split signal не требуется. Кандидатами становятся **все** recurring bepaid payments 2026, у которых есть формальные ID-маркеры и которые ещё не материализованы.
+
+### 2.C Broad audit cohort (с risk flags)
+
+- Любой `payment` с месяцем-разрывом ИЛИ `rn>1` per parent (как в Stage 0 reconstruction).
+- Каждому кандидату присваивается набор `risk_flags`: `no_recurring_evidence`, `sbs_unresolved`, `refund_present`, `pipeline_missing`, `already_materialized`, `duplicate_collision`, `tariff_id_null`.
+- Используется для контроля: проверить, не выпадают ли строки между strict и broad из-за слабой эвристики.
+
+## 3. Метрики и сравнение
+
+Для каждого варианта (A/B/C) выдать в proof:
+
+- `total_candidates`;
+- `distinct_users`, `distinct_parent_orders`, `distinct_tariffs`, `distinct_products`;
+- `sum_amount` (BYN);
+- `months_distribution` (`YYYY-MM` → count, sum);
+- `manual_review_reasons` breakdown (refund_present / sbs_unresolved / already_materialized / pipeline_missing / duplicate_collision / other);
+- `green_count`.
+
+Сравнение:
+
+- `A ∩ B`, `A \ B`, `B \ A`;
+- `A ∩ C`, `A \ C`, `C \ A`;
+- комментарий на каждую заметную дельту (особенно — почему candidate из C не попал в A).
+
+## 4. Frozen table (только Strict A green)
+
+Артефакты:
+
+- `.lovable/proofs/h5_1a_rebuilt_frozen_candidate_cohort_2026_05.md` (описание + summary + сравнения + spot-checks + verdict);
+- `.lovable/proofs/h5_1a_rebuilt_frozen_candidate_cohort_2026_05.csv` (per-candidate строки).
+
+Колонки CSV (одна строка на candidate payment Strict A):
 
 ```
 payment_id
@@ -160,207 +248,96 @@ provider_payment_id
 parent_order_id
 parent_order_number
 user_id
+profile_id
 product_id
 tariff_id
 amount
 currency
-paid_at
-deal_month                       (Europe/Minsk, YYYY-MM)
-sbs_source                       (payment_field | payment_meta | parent_match | NONE)
-bepaid_subscription_id_resolved  (NULL если sbs_source=NONE)
-pipeline_id (from parent)
-pipeline_stage_id (from parent)
-offer_id (from parent)
-expected_rebill_order_number     (REBILL-<first12(provider_payment_id)>)
-expected_rebill_order_id         (deterministic uuid5 OR 'gen_at_execute' marker)
-refund_check                     (clean | parent_refunded | refund_row_found)
-guard_status                     (green | manual_review:<reason>)
+paid_at (UTC ISO8601)
+deal_month (Europe/Minsk YYYY-MM)
+parent_deal_month
+sbs_source
+bepaid_subscription_id_resolved
+pipeline_id
+pipeline_stage_id
+offer_id
+expected_rebill_order_number   = REBILL-<first12(payment_id)>
+refund_check                   = clean | parent_refunded | refund_row_found
+already_materialized_check     = none | order_number_match | meta_payment_id_match | meta_payment_uid_match | provider_payment_id_match | multi_match
+guard_status                   = green | manual_review:<reason>
+recurring_evidence             = строка с активными признаками (payment_flow / source / is_rebill / parent_uid / sbs_resolved)
 ```
 
-### 3.A Summary в proof:
+Включаем в CSV **все** Strict A кандидаты (green + manual_review) для прозрачности; frozen для execute = только `guard_status='green'`.
 
-- `total_dryrun_candidates` (≤72)
-- `green_candidates_count` (X)
-- `manual_review_count` (Y)
-- `skipped_count` (Z)
-- `green_sum_amount`
-- `green_distinct_users`
-- `green_distinct_parents`
-- `expected_INSERT_orders_v2 = X`
-- `expected_UPDATE_payments_v2 = X`
-- `expected_INSERT_audit_logs = X + 1` (per-candidate + summary)
+Для cohorts B и C — отдельные CSV-секции (или приложения) с теми же колонками + `risk_flags`.
 
-**Никаких «72 заранее».** Если X < 72 — execute идёт по X, остаток едет в manual_review/H5.2.
+## 5. Scoped baselines (для будущего execute / verify)
 
-## 4. Per-candidate guards (для попадания в green)
+После заморозки green-листа, в том же proof фиксируем scoped checksums (read-only) **по users из green Strict A**:
 
-Все условия обязательны. Любое нарушение → `manual_review:<reason>`, кандидат не идёт в execute.
+- `payments_v2`:
+  - `count`, `md5 stable` (без `order_id`, `updated_at`);
+  - md5 полный (включая `order_id`, `updated_at`).
+- `orders_v2`:
+  - count, md5 (без будущих H5 rows — это автоматически, так как сейчас их нет).
+- `subscriptions_v2`: rows, Σ epoch(access_end_at), null.
+- `entitlements`: rows, Σ epoch(expires_at), null.
+- `telegram_access_queue`: count по этим users + max(updated_at).
+- `provider_subscriptions`: count по этим users + max(updated_at).
 
-1. `payments_v2.provider_payment_id IS NOT NULL`.
-2. `payments_v2.order_id = parent_order_id` snapshot.
-3. `payments_v2.amount > 0`, `transaction_type` не refund, `meta.type` не refund.
-4. **Refund-guard (hard):**
-  - `payments_v2.refunded_amount IS NULL OR refunded_amount = 0`;
-  - НЕТ refund-row, ссылающейся на этот payment через `meta.parent_payment_id = payment.id` ИЛИ `meta.parent_payment_uid = payment.provider_payment_id`.
-  - Любое нарушение → `manual_review:refund_present` → H5.2.
-5. Нет `orders_v2 WHERE provider='bepaid' AND provider_payment_id = payment.provider_payment_id` (no duplicate REBILL).
-6. После переноса у parent останется ≥1 non-refund payment (initial rn=1).
-7. `parent.user_id = payment.user_id`, `parent.profile_id = payment.profile_id` (если payment.profile_id IS NOT NULL).
-8. `parent.tariff_id`, `parent.product_id`, `parent.currency` существуют (наследуются REBILL-order).
-9. `parent.pipeline_id IS NOT NULL` И `parent.pipeline_stage_id IS NOT NULL` (Product → Pipeline Mapping Canon). Иначе → `manual_review:pipeline_missing`.
-10. `payment.paid_at` ∈ `[2026-01-01; 2027-01-01)`.
-11. **SBS resolution (без слепого parent fallback):**
-  - `payment.bepaid_subscription_id` (если поле существует и not null) →
-    - иначе `payment.meta->>'bepaid_subscription_id'` →
-    - иначе `parent.bepaid_subscription_id` **только если** оно not null И совпадает с любым доказательством на payment (например, `payment.meta` упоминает тот же sbs ИЛИ provider_response в payment.meta содержит sbs == parent.bepaid_subscription_id) →
-    - иначе → `manual_review:sbs_unresolved`.
-    - Поле `sbs_source` фиксирует выбранный путь.
+Эти baselines + green-листы будут source-of-truth для H5.1b execute (re-verify внутри transaction).
 
-## 5. Stage 2 — Atomic DML (после approve frozen table)
+## 6. Spot-checks (read-only)
 
-Все шаги — одна транзакция. Любая ошибка → ROLLBACK всего батча.
+В proof добавить spot-check по 6 кейсам, выбранным детерминированно:
 
-### 5.A Final guards внутри transaction
+- 1 candidate из 2026-03 (если есть);
+- 1 candidate из 2026-04;
+- 2 candidate из 2026-05;
+- 1 кейс `manual_review:refund_present`;
+- 1 кейс `manual_review:sbs_unresolved`.
 
-- Re-check `BEPAID_REBILL_MATERIALIZATION = on`.
-- Re-check schema-check (2.A).
-- Re-check stable checksums (`payments_v2_stable_md5`, `orders_v2_stable_md5`) против Stage 0 baseline.
-- Re-resolve candidates ровно по frozen table (id-list, без re-query из dry-run).
-- Если набор изменился (drift) — ROLLBACK, не выполняем.
+Для каждого — `payment_id`, `parent_order_id`, выбранный `sbs_source`, причина guard_status.
 
-### 5.B INSERT orders_v2 (×X = green_candidates_count)
+## 7. Verdict секция (обязательная)
+
+В конце proof:
 
 ```
-INSERT INTO orders_v2 (
-  id, order_number, user_id, profile_id, product_id, tariff_id, currency,
-  status, paid_amount, final_price,
-  provider, provider_payment_id, bepaid_subscription_id,
-  deal_date, created_at, updated_at,
-  pipeline_id, pipeline_stage_id, offer_id, meta
-) VALUES (
-  gen_random_uuid(),
-  'REBILL-' || substr(payment.provider_payment_id, 1, 12),
-  parent.user_id, parent.profile_id, parent.product_id, parent.tariff_id, parent.currency,
-  'paid',
-  payment.amount, payment.amount,
-  'bepaid', payment.provider_payment_id, <sbs_resolved_per_payment>,
-  payment.paid_at, payment.paid_at, now(),
-  parent.pipeline_id, parent.pipeline_stage_id, parent.offer_id,
-  jsonb_build_object(
-    'source','h5_historical_repair',
-    'run','h5_1_historical_rebill_deal_linkage_2026_05',
-    'materialized_from_payment_id', payment.id,
-    'materialized_from_payment_uid', payment.provider_payment_id,
-    'parent_order_id', parent.id,
-    'parent_order_number', parent.order_number,
-    'deal_month', to_char(payment.paid_at AT TIME ZONE 'Europe/Minsk','YYYY-MM'),
-    'payment_flow','bepaid_subscription_charge',
-    'sbs_source', <sbs_source>,
-    'do_not_grant_access', true
-  )
-);
+execute_ready_count          = N (green Strict A)
+manual_review_count          = M
+skipped_already_materialized = K
+strict_vs_idfirst_delta      = |A \ B|, |B \ A|
+strict_vs_broad_delta        = |C \ A| with reasons summary
+recommended_batch_strategy   = single batch | split by month | split by tariff
+can_run_h5_1b_execute        = YES (если N>0 и нет critical risks) | NO (с указанием причин)
 ```
 
-Уникальный indx `(provider='bepaid', provider_payment_id)` гарантирует, что повтор не пройдёт.
+Также рекомендация по дальнейшим планам:
 
-### 5.C UPDATE payments_v2.order_id (×X)
+- H5.1b — execute frozen green;
+- H5.2 — orphan refunds + refund_present candidates;
+- H5.3 (если нужно) — sbs_unresolved.
 
-```
-UPDATE payments_v2
-SET order_id = <new_rebill_id>, updated_at = now()
-WHERE id = <payment.id> AND order_id = <expected_parent_id>;
-```
+## 8. Что НЕ делаем в H5.1a
 
-`affected_rows ≠ 1` → ROLLBACK.
+- Никакого DML.
+- Не строим rollback SQL (это для H5.1b).
+- Не запускаем `grant-access-for-order`.
+- Не трогаем G25 / Alesya Khomich / Рабчевская Юлия / INV-22 phantom past_due / legacy ребиллы до 2026.
+- Не пытаемся «доказать ровно 72». H5 proof признаётся как summary, но не как авторитативный список; новый frozen строится с нуля.
 
-### 5.D audit_logs (×X + 1)
+## 9. Deliverable
 
-Per-candidate: `action='orders.h5_historical_rebill_repaired'`, `actor_type='system'`, `actor_label='h5_1_historical_rebill_deal_linkage_2026_05'`, meta = {payment_id, payment_uid, parent_order_id, new_rebill_order_id, amount, deal_month, sbs_source}.
+- `.lovable/proofs/h5_1a_rebuilt_frozen_candidate_cohort_2026_05.md` — полный отчёт со SQL всех трёх вариантов (inline-блоками), summary, сравнениями, spot-checks, scoped baselines, verdict.
+- `.lovable/proofs/h5_1a_rebuilt_frozen_candidate_cohort_2026_05.csv` — frozen list Strict A + опционально B/C приложениями.
 
-Summary: `action='orders.h5_historical_rebill_summary'`, meta = {run, total_inserted=X, total_repointed_payments=X, manual_review_count=Y, skipped=Z, sum_amount, distinct_users, distinct_parents, mode='on'}.
+## 10. Следующий шаг после H5.1a
 
-### 5.E Запрещено
+После approve этого плана и публикации proof:
 
-- INSERT/UPDATE/DELETE: `entitlements`, `subscriptions_v2`, `access_rules`, `provider_subscriptions`, `telegram_access_queue`, `telegram_grant_*`.
-- Любые edge-function вызовы (`grant-access-for-order`, `bepaid-*`, `telegram-*`).
-- Provider API.
-- Изменения `secrets` / `BEPAID_REBILL_MATERIALIZATION`.
-- Orphan refund-rows.
-- Payments/orders вне frozen table.
-- Persistent temp objects (только session-temp / CTE; никаких migration / постоянных таблиц).
+- если verdict = YES — отдельным заходом готовится **H5.1b** (execute план на основании зафиксированного green list, scoped baselines, runtime REBILL format, корректного SBS resolver);
+- если verdict = NO — фиксируются открытые риски и переход в H5.2/H5.3 либо в backlog.
 
-## 6. Stage 3 — Post-state verify
-
-1. **Rowcounts:**
-  - inserted orders_v2 = X;
-  - updated payments_v2 = X;
-  - audit_logs per-candidate = X, summary = 1.
-2. **Stable checksums:**
-  - `payments_v2_stable_md5` (без `order_id`, `updated_at`) = baseline → **PASS**.
-  - `orders_v2_stable_md5` (rows existing at Stage 0, исключая новые H5 REBILL) = baseline → **PASS**.
-  - `subscriptions_v2` checksum/rows/Σepoch/null = baseline → **PASS**.
-  - `entitlements` checksum/rows/Σepoch/null = baseline → **PASS**.
-3. **Новые H5 REBILL rows** считаются отдельно: count=X, Σ paid_amount = green_sum_amount, все имеют `meta.source='h5_historical_repair'`, `meta.run='h5_1_…'`.
-4. **Telegram / provider_subscriptions** по 62 users: count + max(updated_at) — без изменений.
-5. **Spot-check 3 кейсов** (по 1 на каждый месяц 03/04/05): открыть карточку сделки → `deal_date`, `order_number REBILL-*`, `paid_amount`, привязка payment корректные.
-
-## 7. Stage 4 — Rollback (extended guard)
-
-Rollback SQL генерируется и кладётся в `.lovable/proofs/h5_1_rollback_2026_05.sql` **до** Stage 2.
-
-**Pre-rollback guard (hard):**
-
-- Все H5 REBILL-orders (`meta.run='h5_1_…'`):
-  - 0 `entitlements` ссылок (`meta.order_id` / `source_order_id` / linkage column);
-  - 0 `subscriptions_v2` ссылок (`order_id`);
-  - 0 дополнительных `payments_v2` сверх X plan (т.е. payments_v2 c order_id=rebill_id ровно 1 на rebill);
-  - 0 Telegram / access ссылок (`telegram_access_queue.meta.order_id`, `access_rules.meta.order_id`).
-- Любое нарушение → STOP rollback, переход в manual investigation.
-
-**Rollback SQL:**
-
-```
-BEGIN;
--- 1) Вернуть payments
-UPDATE payments_v2 p
-SET order_id = orig.parent_order_id::uuid, updated_at = now()
-FROM (VALUES <X пар (payment_id, original_parent_id)>) AS orig(payment_id, parent_order_id)
-WHERE p.id = orig.payment_id::uuid;
--- 2) Удалить H5 REBILL-orders
-DELETE FROM orders_v2
- WHERE meta->>'source'='h5_historical_repair'
-   AND meta->>'run'='h5_1_historical_rebill_deal_linkage_2026_05';
--- 3) Audit
-INSERT INTO audit_logs(action,actor_type,actor_label,meta)
-VALUES('orders.h5_historical_rebill_rollback','system','h5_1_rollback',
-       jsonb_build_object('reverted_payments',X,'deleted_rebill_orders',X));
-COMMIT;
-```
-
-## 8. DoD
-
-- Frozen execute table опубликована и approved.
-- X recurring payment'ов перепривязаны к REBILL-сделкам своего месяца (X = green_candidates_count, не «72»).
-- `subscriptions_v2` / `entitlements` / Telegram / provider_subscriptions — без изменений.
-- Stable checksums payments_v2 / orders_v2 — совпали.
-- audit_logs полны (per-candidate + summary).
-- Rollback SQL приложен и rollback-guard проверен.
-- 3 spot-check карточки сделок показывают корректный месяц.
-- Proof: `.lovable/proofs/h5_1_historical_rebill_deal_linkage_execute_2026_05.md` + frozen table CSV.
-
-## 9. Out of scope
-
-- 35 orphan refund-rows + любые payments с refund-следом → H5.2.
-- G25 / Alesya Khomich; Рабчевская Юлия; INV-22 phantom past_due; legacy ребиллы до 2026.
-
-## 10. Команда на текущий шаг
-
-1. Построить `.lovable/proofs/h5_1_frozen_execute_table_2026_05.md` + CSV (Stage 0 + 0.5):
-  - schema-check OK/FAIL;
-  - REBILL format verify;
-  - mode=on verify;
-  - baseline stable checksums;
-  - frozen execute table (per-candidate с guard_status);
-  - summary (green/manual_review/skipped, expected rowcounts);
-  - rollback SQL preview.
-2. **DML не запускать.** Ожидать отдельного approve по frozen table.
+**Approve на execute (H5.1b) — только отдельным сообщением после публикации frozen cohort.**
