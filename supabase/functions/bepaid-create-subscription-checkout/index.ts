@@ -1,8 +1,8 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 import {
-  checkSubscriptionConflict,
   validateReplacementSubscription,
+  classifySameProductState,
 } from '../_shared/subscription-conflict.ts';
 
 const corsHeaders = {
