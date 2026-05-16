@@ -341,3 +341,76 @@ can_run_h5_1b_execute        = YES (если N>0 и нет critical risks) | NO 
 - если verdict = NO — фиксируются открытые риски и переход в H5.2/H5.3 либо в backlog.
 
 **Approve на execute (H5.1b) — только отдельным сообщением после публикации frozen cohort.**
+---
+
+# Отчет о выполнении: H5.1a-R2 — Expanded Frozen Cohort (parent subscription + Product Type SOT)
+
+**Snapshot:** 2026-05-16. Read-only. DML=0, migrations=0, edge calls=0, provider API=0, secrets/mode не трогали.
+
+## Контракт R2
+Recurring evidence без echo-проверки: `parent.bepaid_subscription_id` ИЛИ `parent.meta` (subscription/rebill/payment_flow markers) ИЛИ `subscriptions_v2.link` (order_id / initial_order_id / checkout_order_id / extended_by_orders) ИЛИ Product Type SOT (`tariff_offers.meta.recurring.is_recurring=true` ИЛИ `is_installment` ИЛИ `auto_charge_after_trial`).
+
+SBS resolver R2: payment.meta пути → `parent.bepaid_subscription_id` (без echo) → NONE.
+
+`expected_rebill_order_number = 'REBILL-' || first12(payments_v2.id::text)`.
+
+## Результаты
+
+| метрика | значение |
+|---|---|
+| Base bepaid 2026 | 934 / 206 users / 762 parents / Σ 201 981 BYN |
+| **R2 green** | **167 / 91 users / 117 parents / 4 products / 6 tariffs / Σ 37 192 BYN** |
+| manual_review:sbs_unresolved | 10 / Σ 1 134 BYN |
+| manual_review:pipeline_missing | 1 / Σ 345 BYN |
+| skip_no_split | 756 |
+| refund_present / already_materialized / tariff_id_null / not_recurring_product | 0 |
+
+R2 GREEN по месяцам: 2026-01: 12, 2026-02: 3, 2026-03: 25, 2026-04: 51, 2026-05: 76.
+
+## Сравнение когорт
+
+| set | n |
+|---|---|
+| Strict A green | 4 |
+| R2 green | 167 |
+| Broad C candidate | 178 |
+| R2 ∩ C | 167 |
+| Strict A \ R2 | 0 (Strict A полностью внутри R2) |
+| C \ R2 | 11 (10 sbs_unresolved + 1 pipeline_missing — без recurring-доказательств) |
+
+## Источники evidence (167 green, multi-source ok)
+- `parent.bepaid_subscription_id`: **0** (колонка глобально почти пуста — 2/3375 orders с 2025).
+- `parent.meta` subscription markers: 161
+- `subscriptions_v2.link`: 148
+- `tariff_offer.meta.recurring`: 162
+- `tariff_offer.auto_charge_after_trial`: 123
+- `sbs_source != NONE` (payment.meta path): 4
+
+## Scoped baselines (91 R2-green user)
+- payments_v2: 1 998 rows / md5_stable `b1636582eb56c8c02211bea25f5a0d0a`
+- orders_v2: 1 802 rows / md5_ids `ba70618941f94d8ec26ef68175562f6d`
+- subscriptions_v2: 620 rows / Σepoch 1 055 372 396 047
+- entitlements: 554 rows / Σepoch 986 868 153 034
+- global REBILL-%: 201 rows / md5 `f4b7f8055f48b17ab34ba383128622d6`
+
+**Mode check:** `system_settings` table отсутствует — режим в env (`BEPAID_REBILL_MATERIALIZATION=on` по слову пользователя). Перед H5.1b execute обязательна ручная сверка значения переменной.
+
+## Артефакты
+- `.lovable/proofs/h5_1a_r2_expanded_frozen_candidate_cohort_2026_05.md`
+- `.lovable/proofs/h5_1a_r2_expanded_frozen_candidate_cohort_2026_05.csv` (934 rows со статусом)
+- `.lovable/proofs/h5_1a_r2_expanded_frozen_candidate_cohort_2026_05_green.csv` (167 frozen GREEN)
+- `.lovable/proofs/h5_1a_r2_expanded_frozen_candidate_cohort_2026_05.sql`
+
+## Verdict
+```
+execute_ready_count          = 167
+manual_review_count          = 11
+skip_done_count              = 0
+sum_amount                   = 37 192 BYN
+months                       = 01:12 / 02:3 / 03:25 / 04:51 / 05:76
+recommended_batch_strategy   = split by month (5 batches; меньший blast radius при mode-race с runtime)
+                               ALT: split by tariff (2 крупных тарифа = 137/167, 4 хвоста)
+can_run_h5_1b_execute        = WAITING_APPROVE — execute не запускать
+```
+
+Execute не запускать. Перед H5.1b approve пользователь должен подтвердить: (а) принять R2 frozen list 167, либо (б) ужесточить контракт (требовать пересечение `subscriptions_v2.link AND tariff_offer.meta.recurring`).
