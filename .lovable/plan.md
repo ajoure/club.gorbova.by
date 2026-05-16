@@ -1,155 +1,163 @@
-да, согласен, с учетом правок:
 
-1. **Не утверждать заранее, что canonical writer “не покрывает сценарий”.**  
-В шаге 7 формулировать как гипотезу до проверки кода:
+# План: PATCH H2.1b-i — grant-access-for-order 3DS writer extension
 
-```text
-Проверить, покрывает ли grant-access-for-order следующие сценарии...
-Если не покрывает — зафиксировать gap.
+## Контекст
+
+H2.1b analysis закрыт: 3DS finalize ветка в `bepaid-webhook` делает 8 прямых access-writes, дублируя логику writer'а. Перед рефакторингом webhook (H2.1b-ii) сначала расширяем сам canonical writer, чтобы он умел всё то же самое.
+
+## Scope / Constraints
+
+- Менять ТОЛЬКО `supabase/functions/grant-access-for-order/index.ts` (+ shared helpers, + tests).
+- НЕ трогать `bepaid-webhook/index.ts` 3DS finalize ветку (это H2.1b-ii).
+- НЕ трогать LINK-ORDER, WEBHOOK-SUBSCRIPTION renewal, legacy one-time.
+- Production DML = 0, migrations = 0.
+- `BEPAID_REBILL_MATERIALIZATION` остаётся `dry_run`.
+- `mode=on` НЕ включать.
+- Никаких прямых Telegram/entitlements/subscriptions_v2 writes вне writer'а — но это обеспечивается тем, что webhook пока не меняем.
+
+## Что writer должен покрыть (out of analysis H2.1b)
+
+### 1. Multi-candidate guard
+- Селект `subscriptions_v2` по `(user_id, product_id)` где `status IN ('active','past_due','trialing')` ORDER BY `access_end_at DESC`.
+- Если найдено >1 кандидата → outcome `manual_review_multi_candidate`, audit `grant.multi_candidate_review`, ZERO writes.
+- Полностью изолировано от существующего single-candidate пути.
+
+### 2. past_due reattach
+- Если найден один кандидат со `status='past_due'` и его `tariff_id` совпадает с `order.tariff_id` → reattach:
+  - update `status='active'`, `order_id = newOrder.id`, `meta.reattached_from_order_id = oldOrderId`;
+  - extend через стандартный `extendFromDate` (см. п.5);
+  - audit `grant.subscription_order_attached`.
+
+### 3. Proration при смене tariff_id
+- Если кандидат active + `tariff_id != order.tariff_id` → proration:
+  - `remainingDays = max(0, ceil((sub.access_end_at - now) / day))`;
+  - `bonusDays = round(remainingDays * (oldTariff.amount / newTariff.amount))` (формула как в webhook 4790-block);
+  - `extendFromDate = now`, `accessDays = newTariff.access_days + bonusDays`;
+  - в `meta`: `proration: { old_tariff_id, new_tariff_id, remaining_days, bonus_days }`;
+  - audit `grant.proration_applied`.
+
+### 4. Trial bootstrap по trial_end_at
+- Если `order.is_trial = true` и `order.trial_end_at` присутствует:
+  - на CREATE → `access_end_at = trial_end_at`, `status = 'trialing'`, `meta.bootstrap = 'trial'`;
+  - `baseAccessDays` берётся как `ceil((trial_end_at - now) / day)` для последующего nextChargeAt;
+  - audit `grant.trial_bootstrap`.
+
+### 5. extendFromDate logic
+- Унифицированная функция `resolveExtendFromDate(sub, order, now)`:
+  - active + расширение того же tariff → `sub.access_end_at` (продление от конца);
+  - past_due reattach → `max(now, sub.access_end_at)`;
+  - tariff change → `now` (proration уже учла остаток);
+  - trial → `trial_end_at` (после окончания триала уже recurring цикл).
+- Возвращает `{ extendFromDate, reason }`, идёт в audit.
+
+### 6. nextChargeAt contract
+**Решение:** writer **возвращает** `nextChargeAt` в response, НЕ пишет в `subscriptions_v2.next_charge_at` сам (это provider-sync поле, остаётся за webhook).
+- Расчёт: `nextChargeAt = access_end_at - offset`, где offset = `1d` для trial, `3d` для recurring (как в webhook).
+- В audit пишем `grant.next_charge_at_computed` с offset/reason.
+- Webhook потом просто берёт это поле и кладёт в provider-sync update.
+
+### 7. Structured outcomes
+Расширить `GrantOutcome`:
+```ts
+type GrantOutcome =
+  | { kind: 'ok'; subscription_id, access_end_at, next_charge_at_suggested }
+  | { kind: 'bootstrap_created'; subscription_id, access_end_at, next_charge_at_suggested }
+  | { kind: 'extended'; subscription_id, access_end_at, extended_by_days, next_charge_at_suggested }
+  | { kind: 'manual_review_multi_candidate'; candidate_ids: string[] }
+  | { kind: 'skip_already_processed' | 'skip_tariff_mismatch' | 'skip_no_order' | 'skip_inactive_offer' }
+  | { kind: 'error'; reason: string };
 ```
+Все outcomes идут в response + audit.
 
-2. `writer extend-ориентирован` **не писать как факт до code review.**  
-Нужно подтвердить по коду. Иначе можно ошибочно заложить лишний refactor.
-3. `nextChargeAt writer возвращает в response` **— это уже изменение контракта.**  
-Для discovery можно описать как proposal, но не как обязательное решение. Формулировка:
+## Технический срез
 
-```text
-Возможный контракт: writer возвращает nextChargeAt или webhook рассчитывает provider-sync отдельно, но не меняет access fields.
+### Файлы
+- **edit**: `supabase/functions/grant-access-for-order/index.ts` — добавить:
+  - `findCandidateSubscriptions()` (multi-candidate select);
+  - `applyProration()`;
+  - `bootstrapTrial()`;
+  - `resolveExtendFromDate()`;
+  - `computeNextChargeAt()`;
+  - расширенный `GrantOutcome` union;
+  - context-aware ветка `context: '3ds_finalize'` (новый параметр в payload).
+- **edit**: `supabase/functions/grant-access-for-order/extended_by_orders_dedupe.ts` — без изменений, переиспользуется.
+- **create**: `supabase/functions/grant-access-for-order/three_ds_writer_test.ts` — Deno tests.
+- **create**: `.lovable/proofs/patch_h2_1b_i_writer_extension_2026_05.md`.
+
+### Payload контракт (новое)
+```ts
+{
+  order_id: string,
+  context?: 'link_order' | 'webhook_subscription' | '3ds_finalize',  // default 'link_order'
+  source: 'bepaid_webhook' | 'admin' | ...,
+  // existing fields
+}
 ```
+`context === '3ds_finalize'` включает новые ветки (multi-candidate, proration, trial bootstrap, past_due reattach).
+Для остальных контекстов поведение НЕ меняется (backward compat).
 
-4. **Осторожно с** `status` **в provider-sync.**  
-В шаге 6 правильно указано, что `status` нельзя менять, если это active/trial/past_due transition. Добавить:
+### Безопасность
+- Все новые select'ы — только чтение.
+- Все write'ы — только в `subscriptions_v2` и `entitlements` через уже существующие helpers (`dedupeExtendedByOrders`, primary writer).
+- Никаких новых Telegram-вызовов — canonical Telegram path остаётся как есть (`telegram-grant-access` вызывается из существующих веток).
+- forceExtend=true НЕ вводится.
 
-```text
-Любое изменение subscriptions_v2.status, влияющее на платформенный доступ, должно идти только через writer.
-```
+## Tests (Deno)
 
-5. **Добавить проверку связи с payment_method/card token.**  
-Если 3DS finalize создаёт или подтверждает payment_method, нужно явно отделить:
-  &nbsp;
-  - payment method/tokenization state;
-  - access grant state.  
-  Tokenization может оставаться в webhook, access — только writer.
-6. **Добавить output “минимальный execution strategy”.**  
-В proof после анализа нужно дать один из вариантов:
+`three_ds_writer_test.ts`:
+1. **create_new_subscription** — нет existing sub → `bootstrap_created`, 1 insert в subscriptions_v2.
+2. **extend_same_tariff** — active sub same tariff → `extended`, accessEnd = oldEnd + tariff.access_days.
+3. **tariff_change_with_proration** — active sub different tariff → `extended`, bonusDays > 0, audit `proration_applied`.
+4. **trial_bootstrap** — order.is_trial=true → `bootstrap_created`, access_end_at = trial_end_at, status='trialing'.
+5. **past_due_reattach** — past_due same tariff → `extended`, status flipped to 'active', meta.reattached_from_order_id set.
+6. **multi_candidate_manual_review** — 2 active subs → `manual_review_multi_candidate`, 0 writes.
+7. **no_direct_telegram_writes** — static check: новые ветки не вызывают telegram-grant-access напрямую дважды (только через существующий path).
+8. **response_has_next_charge_at** — все ok/extended/bootstrap_created outcomes содержат `next_charge_at_suggested`.
 
-&nbsp;
+## Proof
 
-```text
-A. grant-access-for-order уже покрывает 3DS finalize → заменить webhook writes на вызов writer.
-B. grant-access-for-order покрывает частично → сначала доработать writer, потом заменить webhook.
-C. grant-access-for-order не покрывает → нужен отдельный writer-extension patch.
-```
-
-7. `.lovable/plan.md` **обновлять только статусом, без изменения scope.**  
-Чтобы не потерять предыдущие задачи:
-
-```text
-H2.1b = analysis_complete
-H2.1c = pending
-H3/H4/G = unchanged
-```
-
-8. **Добавить no-loss mapping.**  
-В proof нужна таблица:
-
-```text
-old 3DS finalize behavior
-→ target canonical writer behavior
-→ provider-sync remains in webhook
-→ removed direct access write
-```
-
-9. **Добавить explicit blocker для mode=on.**
-
-```text
-Даже после H2.1b analysis mode=on остаётся запрещён, пока H2.1b execution и H2.1c не закрыты.
-```
-
-После этих правок можно запускать H2.1b как read-only/code-discovery. Код и данные не менять.
-
-&nbsp;
-
-План: PATCH H2.1b — 3DS finalize canonical writer analysis (read-only)
-
-## Scope и stop-list
-
-- Только read-only/code-discovery. 0 production DML. 0 migrations.
-- `BEPAID_REBILL_MATERIALIZATION` остаётся `dry_run`. `mode=on` не включается.
-- Никаких изменений canonical writer или webhook кода в рамках этого патча — только диагностика и письменный proof.
-- Legacy one-time/orphan recovery (H2.1c, ≈5820–6070) не трогаем — отдельный план позже.
-- Никакого repair Багинской/Насимовой/Матук и других пользователей.
-
-## Цель
-
-Зафиксировать в виде proof-документа полную карту 3DS finalize ветки `bepaid-webhook` (≈4500–4951), её прямые access-writes, и спецификацию изменений в `grant-access-for-order`, необходимых чтобы эта ветка могла полностью идти через canonical writer без потери поведения (proration, trial bootstrap, multi-candidate guard, tariff change).
-
-## Шаги (read-only)
-
-1. **Идентификация ветки.** Зафиксировать точные границы 3DS finalize блока в `supabase/functions/bepaid-webhook/index.ts`: триггер (status `successful`/3DS notification, payment_v2 уже создан), входные условия (`productV2 && tariff`), guard `orderV2.status === 'paid'`. Указать строки.
-2. **Order discovery.** Описать, где и как находится `orderV2`/`paymentV2` (lookup по `payment_v2.order_id`/`bepaid_uid`), какие поля читаются: `is_trial`, `trial_end_at`, `created_at`, `user_id`, `product_id`, `tariff_id`, `meta`, `status`, `customer_email`.
-3. **Payment method / card token.** Где сохраняется `bepaid_card_token` / payment_method (вне 3DS finalize, до этой ветки в `WEBHOOK-TRANSACTION`/`LINK-ORDER`). Подтвердить, что 3DS finalize сам по себе токен не создаёт, только потребляет.
-4. **Subscription bootstrap логика.** Подробно перечислить специфические шаги, которых сейчас НЕТ в canonical writer:
-  - `existingSub` поиск по `(user_id, product_id, status ∈ {active,trial,past_due}, canceled_at IS NULL)` с порядком по `access_end_at DESC` (строка 4541–4551).
-  - Multi-candidate STOP-guard + audit `subscription_multi_candidate_review` (4554–4575).
-  - past_due без `order_id` → attach текущий order + `status=active` + audit `subscription_order_attached` (4578–4607).
-  - Proration при смене тарифа: `oldPaidAmount / oldTariff.access_days × remainingDays / newDailyRate → bonusDays` (4612–4659).
-  - `baseAccessDays`: для trial — diff между `trial_end_at` и `created_at`, иначе `tariff.access_days || 30` (4661–4666).
-  - `extendFromDate` — продление от `existingSub.access_end_at` только при `isSameTariff && !is_trial` (4668).
-  - `nextChargeAt` расчёт: trial+autoCharge → end−1d, recurring non-trial → end−3d (4674–4682).
-  - Классификатор `isRecurringSubscription` (offer.meta.recurring.is_recurring || installment || trial+autoCharge) — соответствует Product Type SOT.
-5. **Прямые access-writes, которые нужно убрать.** Точный inventory (read-only, со строками):
-  - 4761 — `subscriptions_v2.access_end_at` (update extend ветка).
-  - 4790–4791 — `subscriptions_v2.access_start_at` / `access_end_at` (insert new sub ветка).
-  - 4852–4876 — `entitlements` select + update с GREATEST(`expires_at`).
-  - 4880–4892 — `entitlements` insert (`expires_at`, прочие поля).
-  - 4926 — `subscriptions_v2.access_end_at` (повторный update?).
-  - 4943 — entitlement expires_at в follow-up upsert.
-  - Все эти ветки сегодня дублируют функции `grant-access-for-order`.
-6. **Provider-sync поля, которые можно оставить за webhook.** То же что и в WEBHOOK-SUBSCRIPTION renewal:
-  - `subscriptions_v2`: `billing_type`, `next_charge_at`, `auto_renew`, `meta.bepaid_subscription_id`, `meta.bepaid_*`, `updated_at`.
-  - `orders_v2.meta`: gc_sync_*, telegram_access_pending, payment_method_token references.
-  - НИ ОДНО из: `access_start_at`, `access_end_at`, `status` (active/trial/past_due transitions), `entitlements.*`, `telegram_access.*`.
-7. **Почему canonical writer сегодня не покрывает сценарий.** Зафиксировать gaps в `supabase/functions/grant-access-for-order/index.ts`:
-  - Нет bootstrap-ветки «создать subscriptions_v2 с нуля по paid order, если её ещё не существует» (writer extend-ориентирован).
-  - Нет proration-калькулятора при смене tariff_id внутри одного product_id.
-  - Нет multi-candidate STOP-guard с audit `subscription_multi_candidate_review`.
-  - Нет past_due→active reattach со стороны нового order_id.
-  - Нет trial-bootstrap (расчёт access_days из `trial_end_at − created_at`, `nextChargeAt = end−1d`).
-  - Нет логики выбора `extendFromDate` vs `now` в зависимости от `isSameTariff`.
-8. **Спецификация изменений canonical writer (proposal-only, без кода).** Для каждого gap из шага 7 — короткое описание API/контракта:
-  - Новый источник вызова `source: 'bepaid_webhook'`, `context: '3ds_finalize'`.
-  - Outcomes: `ok` | `skip_*` | `error` | `bootstrap_created` | `manual_review_multi_candidate`.
-  - Контракт: writer САМ решает create-vs-extend по `(user_id, product_id, tariff_id)`; webhook не передаёт `accessEndAt`.
-  - Proration считается внутри writer по тем же формулам (port 1-в-1, чтобы дни не разошлись).
-  - Trial detection — по `orders_v2.is_trial` + `trial_end_at`.
-  - `nextChargeAt` writer возвращает в response, webhook записывает в provider-sync update.
-  - Audit события сохраняют те же имена (`subscription_multi_candidate_review`, `subscription_order_attached`) — переезжают внутрь writer.
-9. **План тестов (без выполнения).** Перечислить контрактные тесты, которые нужно будет добавить в H2.1b execution:
-  - 3DS finalize → writer вызван ровно 1 раз с правильным `source/context`.
-  - При `outcome=skip_*` — 0 прямых access writes, audit `bepaid.webhook.grant_skipped_no_fallback`.
-  - При смене tariff_id — proration считается writer'ом, бонусные дни сохранены.
-  - Multi-candidate → writer возвращает `manual_review_multi_candidate`, webhook не пишет.
-  - Trial bootstrap → writer создаёт subscriptions_v2 с access_end_at = trial_end_at.
-  - past_due reattach → writer переводит в active с новым order_id.
-  - Static check: 0 матчей по `from('subscriptions_v2').update.*access_(start|end)_at` и `from('entitlements').(insert|update|upsert).*expires_at` в 3DS finalize диапазоне.
-10. **Proof и DoD.**
-  - Файл: `.lovable/proofs/patch_h2_1b_3ds_finalize_analysis_2026_05.md`.
-    - Содержит: точные строки, inventory access-writes, gap-list, спецификация изменений writer, план тестов, явное подтверждение «0 DML, 0 migrations, mode=on не менялся, код webhook/writer не изменён».
-    - Update `.lovable/plan.md`: статус H2.1b = analysis_complete, готов к execution (отдельный план/патч).
-
-## Что НЕ делается в этом патче
-
-- Код canonical writer не изменяется.
-- Код webhook не изменяется.
-- Тесты не пишутся (только список).
-- Legacy path (H2.1c) не анализируется.
-- Никакие production данные не правятся.
-- `BEPAID_REBILL_MATERIALIZATION` не трогается.
+`.lovable/proofs/patch_h2_1b_i_writer_extension_2026_05.md` содержит:
+- changelog по index.ts (line-level);
+- payload контракт + примеры;
+- outcome matrix;
+- static check: 0 новых прямых writes из webhook (webhook не менялся);
+- test results (7+ tests pass);
+- next step: H2.1b-ii — рефакторинг webhook 3DS finalize ветки.
 
 ## DoD
 
-- proof-файл создан и содержит все 10 разделов выше.
-- `.lovable/plan.md` обновлён со статусом H2.1b.
-- Подтверждено: 0 правок в `supabase/functions/bepaid-webhook/index.ts`, 0 правок в `supabase/functions/grant-access-for-order/index.ts`, 0 migrations, 0 production DML.
-- Следующий шаг (после approve этого discovery) — отдельный план «PATCH H2.1b execution» с кодовыми изменениями canonical writer и заменой 3DS finalize ветки.
+- [ ] writer покрывает все 6 сценариев (multi-candidate, past_due, proration, trial, extendFromDate, nextChargeAt);
+- [ ] structured outcomes реализованы;
+- [ ] backward compat: контексты `link_order` и `webhook_subscription` ведут себя как раньше;
+- [ ] tests pass (≥7);
+- [ ] proof файл создан;
+- [ ] `.lovable/plan.md` обновлён со статусом H2.1b-i = closed;
+- [ ] webhook 3DS finalize ветка НЕ изменена;
+- [ ] production DML = 0, migrations = 0, `BEPAID_REBILL_MATERIALIZATION` = dry_run, mode=on выключен.
+
+## Что НЕ входит
+
+- Рефакторинг `bepaid-webhook` 3DS finalize ветки (H2.1b-ii, отдельный план).
+- Legacy one-time path (H2.1c).
+- H2b atomic append, H3 data-repair, H4 mode=on.
+- PATCH G (идёт параллельно read-only).
+
+---
+
+## Status update (2026-05-16)
+
+PATCH H2.1b-i — **closed**.
+
+Chain:
+- H2 LINK-ORDER — closed
+- H2.1 WEBHOOK-SUBSCRIPTION — closed
+- H2.1b 3DS finalize analysis — closed
+- **H2.1b-i 3DS writer extension — closed** ← this
+- H2.1b-ii 3DS finalize webhook refactor — pending (separate plan)
+- H2.1c legacy path — pending
+- H2b atomic append — backlog
+- H3 data-repair — pending
+- H4 mode=on — pending
+
+Proof: `.lovable/proofs/patch_h2_1b_i_writer_extension_2026_05.md`.
+Tests: 35/35 pass. Production DML=0, migrations=0, `BEPAID_REBILL_MATERIALIZATION`=dry_run.
