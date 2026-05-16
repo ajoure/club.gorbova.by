@@ -14,7 +14,8 @@
 | H2.1c-ii legacy bridge + delegate | **N/A** | снято с roadmap (0 paid за 90д, 0 live трафика) — реактивировать только если zone 2 снова получит paid webhook |
 | H2b atomic append RPC | **backlog** | — |
 | H3 data-repair (Рабчевская и др.) | **pending** | data-repair НЕ выполнять до отдельного approve |
-| H4 `BEPAID_REBILL_MATERIALIZATION=mode=on` | **pending** | блокирован до deploy H2.1c-i |
+| H3.x duplicate-subs repair (B-1/B-2/B-3) | **new — pending approve** | 3 новых active duplicates 2026-05-13/14/16 (вкл. race 2 мин). Подробности: `h4_rebill_materialization_on_preconditions_2026_05.md` §6 |
+| H4 `BEPAID_REBILL_MATERIALIZATION=mode=on` | **NO-GO (2026-05-16)** | preconditions proof готов; blocker'ы B-1/B-2/B-3. Proof: `h4_rebill_materialization_on_preconditions_2026_05.md` |
 | PATCH G discovery (read-only) | **unchanged** | можно параллельно |
 
 ## Safety state
@@ -38,4 +39,5 @@
 - `.lovable/proofs/patch_h2_1b_i_writer_extension_2026_05.md` — writer extension (3DS) closed
 - `.lovable/proofs/patch_h2_1b_ii_webhook_3ds_replace_2026_05.md` — webhook 3DS replace closed + deployed
 - `.lovable/proofs/patch_h2_1c_legacy_one_time_analysis_2026_05.md` — legacy one-time analysis + Go/No-Go A
-- `.lovable/proofs/patch_h2_1c_i_legacy_retirement_2026_05.md` — legacy retirement code+tests closed, deploy pending
+- `.lovable/proofs/patch_h2_1c_i_legacy_retirement_2026_05.md` — legacy retirement closed + deployed
+- `.lovable/proofs/h4_rebill_materialization_on_preconditions_2026_05.md` — H4 preconditions read-only, **NO-GO** (3 новых duplicate active subs, race condition)
