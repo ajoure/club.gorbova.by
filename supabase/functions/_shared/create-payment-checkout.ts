@@ -14,7 +14,9 @@ import { resolveOfferRoutingWithFallback, buildNegativeSnapshot, auditNegativeSn
 import {
   checkSubscriptionConflict,
   validateReplacementSubscription,
+  classifySameProductState,
   type SubscriptionConflict as SharedSubscriptionConflict,
+  type ExistingProviderSub,
 } from './subscription-conflict.ts';
 
 export interface CreateCheckoutParams {
