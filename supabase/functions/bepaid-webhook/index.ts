@@ -1,3 +1,12 @@
+// CANONICAL-WRITER-ONLY (PATCH H2):
+// В LINK-ORDER ветке этого webhook ЗАПРЕЩЕНО прямое обновление полей доступа:
+//   - subscriptions_v2.access_end_at / access_start_at / status
+//   - entitlements.expires_at / status (любые insert/update)
+//   - telegram_access.active_until / telegram-grant-access bypass
+// Единственный writer этих полей — grant-access-for-order → telegram-grant-access.
+// Допустимы только provider-sync поля subscriptions_v2: billing_type, auto_renew,
+// meta.bepaid_subscription_id, meta.bepaid_activated_at. Любая новая запись в
+// access-поля из webhook должна быть отвергнута на code-review.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { Resend } from 'npm:resend@2.0.0';
 import { endOfDayAppTz } from '../_shared/timezone.ts';
