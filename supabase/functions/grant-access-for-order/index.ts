@@ -1379,16 +1379,12 @@ Deno.serve(async (req) => {
         .single();
 
       const existingMeta = (fullExistingSub?.meta || {}) as Record<string, any>;
-      // PATCH H2: dedup extended_by_orders (idempotent append).
+      // PATCH H2: dedup extended_by_orders (idempotent append) через shared helper.
       // Раньше — `[...arr, orderId]` без проверки; webhook ретраи давали [X, X].
-      const rawExtendedByOrders: string[] = Array.isArray(existingMeta.extended_by_orders)
-        ? existingMeta.extended_by_orders
-        : [];
-      const extendedByOrders = Array.from(new Set(rawExtendedByOrders));
-      const extendDuplicate = extendedByOrders.includes(orderId);
-      const nextExtendedByOrders = extendDuplicate
-        ? extendedByOrders
-        : [...extendedByOrders, orderId];
+      const _dedupe = dedupeExtendedByOrders(existingMeta.extended_by_orders, orderId);
+      const extendedByOrders = _dedupe.normalized_existing;
+      const extendDuplicate = _dedupe.duplicate;
+      const nextExtendedByOrders = _dedupe.next;
 
       if (extendDuplicate) {
         // best-effort audit (race-safe atomic append вынесен в backlog PATCH H2b).
