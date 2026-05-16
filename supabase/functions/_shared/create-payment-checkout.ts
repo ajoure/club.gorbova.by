@@ -747,7 +747,57 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         resolved_via: subRouting.resolved_via ?? 'none',
         candidates_count: subRouting.candidates_count ?? 0,
       });
+    // PATCH H3.x-a (B-1 partial / best-effort re-check) ===
+    // Полный atomic-lock против race выносится в H3.x-a-migration (RPC pg_advisory_xact_lock).
+    // Здесь только повторный classify за 1 шаг до INSERT — закроет окно, когда parallel-call
+    // успел создать active sub после первичного classify (но до нашего INSERT).
+    if (classifyDecision === 'no_existing' && !replacement_of_subscription_v2_id) {
+      const recheck = await classifySameProductState(supabase, { user_id, product_id, tariff_id });
+      if (recheck.status === 'ok' && recheck.decision === 'extend_same_tariff' && recheck.existing) {
+        const ex = recheck.existing;
+        console.warn('[create-payment-checkout] H3.x-a race_insert_avoided — parallel sub appeared between classify and insert', {
+          existing_sub_id: ex.subscription_v2_id, user_id, product_id, tariff_id, order_id: order.id,
+        });
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'create-payment-checkout',
+          action: 'subscription.race_insert_avoided',
+          target_user_id: user_id,
+          meta: {
+            existing_subscription_v2_id: ex.subscription_v2_id,
+            existing_provider_subscription_id: ex.provider_subscription_id,
+            cancelled_order_id: order.id,
+            product_id, tariff_id,
+            payment_flow: paymentFlow,
+            stage: 'pre_insert_recheck',
+            note: 'best_effort_no_db_lock_pending_h3xa_migration',
+          },
+        });
+        await supabase.from('orders_v2').update({
+          status: 'failed',
+          meta: { ...subMetaWithRouting, race_insert_avoided: true, race_insert_avoided_at: new Date().toISOString() },
+        }).eq('id', order.id);
+        return {
+          success: false,
+          error: 'already_has_active_subscription',
+          conflict: {
+            subscription_v2_id: ex.subscription_v2_id,
+            status: ex.status,
+            next_charge_at: ex.next_charge_at,
+            access_end_at: ex.access_end_at,
+            bepaid_subscription_id: ex.provider_subscription_id,
+            provider_subscription_id: ex.provider_subscription_id,
+            product_id,
+            tariff_id,
+            display_next_charge_at: ex.next_charge_at,
+            display_access_end_at: ex.access_end_at,
+            timezone_used: 'Europe/Minsk',
+          } as SharedSubscriptionConflict,
+        };
+      }
     }
+
 
     const accessDays = tariff.access_days || 30;
     // PATCH INSTALLMENT-PUBLIC-LINK: распознаём installment-subscription по meta_extra.installment_count.
