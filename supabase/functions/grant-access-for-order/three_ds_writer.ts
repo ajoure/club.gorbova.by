@@ -100,7 +100,7 @@ export function resolveExtendFromDate(
     return { extendFromDate: now, reason: "new_from_now" };
   }
   const subEnd = sub.access_end_at ? new Date(sub.access_end_at) : null;
-  if (prevStatus === "past_due") {
+  if (sub.status === "past_due") {
     const base = subEnd && subEnd.getTime() > now.getTime() ? subEnd : now;
     return { extendFromDate: base, reason: "past_due_reattach_from_max" };
   }
