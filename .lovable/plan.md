@@ -1,253 +1,165 @@
-# да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. **Уточнить, что это только dry-run, без “canonical write-path” в execute.**  
-В плане несколько раз упоминается `grant-access-for-order` как canonical write-path, но planned action включает:
-  - cancel/supersede duplicate;
-  - merge orders;
-  - align entitlement;
-  - Telegram active_until.
-  Это уже не обычный `grant-access-for-order`, а отдельный repair flow. Поэтому в proof нужно явно разделить:
+1. **В Step 1 не останавливать весь план, если count ≠ 7.**  
+Лучше так:
 
 ```text
-grant-access-for-order — canonical writer для выдачи доступа;
-H3.x-b-execute — отдельный approved repair duplicate subscriptions, не grant-access-for-order.
+Если count ≠ 7:
+- всё равно выполнить read-only классификацию 4 уже найденных out-of-scope пар;
+- зафиксировать новый count как blocker для execute;
+- H3.x-b-execute не approve до нового H4 preconditions.
 ```
 
-2. **В dry-run не обещать Telegram** `active_until`**, если такой таблицы/поля нет или называется иначе.**  
-Сначала проверить фактическую Telegram-схему. Если `telegram_access` / `active_until` нет, использовать реальные таблицы/поля из проекта: `telegram_club_members`, `telegram_access`, `telegram_access_queue` или фактический эквивалент.
-3. **Cancel provider subscription в execute — только после bePaid pull.**  
-В planned action добавить:
-
-```text
-если duplicate имеет provider_subscriptions.state='active':
-  сначала read/pull provider status через canonical bePaid function;
-  если provider реально active — cancel provider;
-  если provider уже dead/canceled — только local supersede;
-  если provider API ambiguous/error — STOP/manual_review.
-```
-
-4. **Не перепривязывать orders через** `meta.subscription_v2_id`**, если есть другие поля связи.**  
-В dry-run нужно проверить все возможные linkage-поля:
-  - `orders_v2.subscription_v2_id`, если есть;
-  - `orders_v2.origin_subscription_id`, если есть;
-  - `orders_v2.meta.subscription_v2_id`;
-  - `payments_v2`/`provider_subscriptions` linkage;
-  - `extended_by_orders`.
-5. **Добавить проверку** `extended_by_orders`**.**  
-Для каждой пары показать:
-  - в какой subscription лежит `extended_by_orders`;
-  - есть ли дубли;
-  - какие orders будут перенесены/объединены;
-  - не потеряются ли lineage-цепочки.
-6. **Добавить проверку entitlements по source subscription.**  
-В dry-run недостаточно `(user_id, product_id)`. Нужно также показать:
-  - `entitlements.order_id`;
-  - `entitlements.source_order_id`, если есть;
-  - `entitlements.meta.source_subscription_v2_id`;
-  - `entitlements.meta.tariff_id`;
-  - есть ли несколько entitlement по одному product/tariff.
-7. **Priority chain canonical выбора дополнить provider safety.**  
-Если duplicate имеет более высокий `access_end_at`, но canonical имеет единственную active provider subscription, нельзя автоматически выбрать duplicate canonical без проверки provider-связи. Добавить:
-
-```text
-если max access_end_at принадлежит sub без provider, а другая sub имеет active provider — planned action должен сохранить provider linkage на canonical или пометить manual_review.
-```
-
-8. **STOP guard по двум active provider subscriptions оставить жёстким.**  
-Если обе sub имеют разные active bePaid SBS — не выбирать canonical, только manual_review.
-9. **Финальный SELECT “должно быть ровно 3” формулировать как контроль, но не STOP всего плана.**  
-Если найдено больше 3 duplicate-пар, текущие 3 можно всё равно описать read-only, но execute запрещён до нового scope. Лучше:
-
-```text
-если найдено >3 — dry-run по этим 3 завершить, но execute не approve; создать updated H4 preconditions.
-```
-
-10. **Добавить человекочитаемые имена в proof.**  
-Первая колонка:
-
-- имя/email пользователя;
-- продукт;
-- тариф;
-- потом UUID в технических колонках.
-
-11. **DoD добавить: no execute-ready без before/after rollback draft.**  
-Для каждой `ready_for_execute` пары dry-run должен включать будущий rollback sketch:
-
-- вернуть duplicate status;
-- вернуть order meta;
-- вернуть entitlement source;
-- вернуть provider state невозможно без provider API — отдельно указать.
-
-12. **Текущий шаг разрешён только как read-only dry-run.**  
-Команда:
-
-```text
-Выполняй H3.x-b только как read-only dry-run.
-Никакого execute, cancel provider, grant, telegram, DML, migrations.
-После proof — отдельный approve на H3.x-b-execute.
-```
-
-После этих правок план можно запускать.
+2. **Уточнить “4 пары” как конкретный список после пересчёта.**  
+В proof обязательно показать:
+  - какие 3 пары исключены как уже описанные;
+  - какие 4 пары вошли в текущий H3.x-b2;
+  - если появились новые пары сверх 7 — вынести их в отдельный список `new_out_of_scope_not_classified`.
+3. `telegram_access` **может не быть фактической таблицей.**  
+Использовать фактическую схему проекта:
+  &nbsp;
+  &nbsp;
+  - `telegram_access`, если есть;
+  - `telegram_club_members`;
+  - `telegram_access_queue`;
+  - или фактический equivalent.  
+  В proof указать, какие таблицы реально существуют.
+4. `access_rules subject_type='subscription'` **не предполагать заранее.**  
+Сначала schema verification. Если такого поля/значения нет — использовать JSON/text search и отметить `field_missing`.
+5. **Классификация** `post_H3xa_deploy` **должна использовать точное время deploy H3.x-a.**  
+В proof указать deploy timestamp, а не просто “после deploy”.
+6. **Добавить проверку, связаны ли пары с сегодняшним/последним bePaid autocharge.**  
+Для каждой из 4 пар показать:
+  - была ли создана в результате autocharge;
+  - public checkout;
+  - admin action;
+  - webhook;
+  - sync/polling.  
+  Это важно для решения, виноват ли H3.x-a или другой flow.
+7. **Root-fix verdict должен быть строгим:**
+  - `confirmed` — если все 4 legacy/pre-deploy;
+  - `incomplete` — если есть post-H3.x-a duplicate через защищённый flow;
+  - `not_applicable` — если duplicate создан manual/admin flow вне H3.x-a;
+  - `inconclusive` — если не хватает audit/order linkage.
+8. **Planned execute пока не формировать как действие.**  
+Для каждой пары писать только:
+  - `likely_safe_execute_candidate`;
+  - `manual_review`;
+  - `defer_until_lock`;
+  - `needs_more_discovery`.  
+  Без конкретных update-инструкций до execute-plan.
+9. **Добавить запрет на provider API.**  
+Не только cancel/create, но и live pull, если это не read-only через уже сохранённые данные. Если нужен live provider pull — отдельное approve.
+10. **Добавить итоговый блок “что это меняет для H4 mode=on”.**
 
 &nbsp;
 
-План: H3.x-b — duplicate subscriptions repair dry-run (read-only)
+```text
+H4 remains blocked / unblocked only if:
+- no post-H3.x-a duplicates from protected flows;
+- all 7 pairs classified;
+- safe execute plan prepared or manual_review accepted.
+```
 
-## Статус и режим
+После этих правок план можно запускать как read-only классификацию.
 
-**Только read-only dry-run.** Никакого execute, cancel provider, grant-access, telegram, DML, миграций, secrets, mode=on. После proof — отдельный approve на `H3.x-b-execute` как независимый repair flow (не `grant-access-for-order`).
+&nbsp;
+
+План: H3.x-b2 — classify 4 out-of-scope duplicate subscription pairs
 
 ## Цель
 
-Подготовить read-only снапшот по 3 duplicate-парам `subscriptions_v2` и описать planned repair action **без выполнения**:
+Read-only классификация 4 дополнительных duplicate-пар `subscriptions_v2`, выявленных в H3.x-b dry-run (всего 7 пар, 3 уже описаны). Понять происхождение каждой пары, проверить, не сломался ли root-fix H3.x-a, и подготовить решение: объединить все 7 пар в один execute-plan или разделить на `safe_execute` / `manual_review`.
 
-- `1b68252b…`
-- `3c6d812a…`
-- `7261e727…`
+## Жёсткие ограничения (запрещено)
 
-## Терминологическое разделение (важно)
+- DML любого вида (UPDATE/INSERT/DELETE) на проде.
+- Любые migrations.
+- Любой вызов `bepaid-cancel-subscriptions`, `bepaid-create-subscription*`, `grant-access-for-order`, `telegram-*`, `direct-charge`.
+- Изменение секрета `BEPAID_REBILL_MATERIALIZATION` (остаётся `dry_run`).
+- Включение `mode=on` где-либо.
+- Любые правки edge functions, RPC, триггеров, cron jobs.
+- Любые действия по 3 уже описанным парам (`1b68252b`, `3c6d812a`, `7261e727`) — они out of scope для этого плана.
 
-- `grant-access-for-order` — canonical writer **для выдачи доступа** при оплате. В H3.x-b-execute **не используется**.
-- `H3.x-b-execute` — отдельный approved repair flow для duplicate subscriptions. Имеет собственный набор операций (supersede, order rebind, entitlement merge, provider cancel), которые `grant-access-for-order` не делает.
-
-В proof это разделение зафиксировать явно.
+Разрешено только: `SELECT` запросы через `supabase--read_query` / `supabase--analytics_query` и запись proof-файла.
 
 ## Scope
 
-МОЖНО: только `SELECT` по 3 указанным парам и связанным сущностям.
+Ровно 4 пары: `total active duplicates − 3` из H3.x-b dry-run. Если глобальный `COUNT(*)` изменится (стало не 7, а больше) — STOP plan, отдельный H4 preconditions audit.
 
-НЕЛЬЗЯ: любой DML; миграции; вызов мутирующих edge functions (`bepaid-cancel-subscriptions`, `grant-access-for-order`, `telegram-grant-access`, `telegram-revoke`, `subscription-actions`, `bepaid-get-subscription-details` с побочными эффектами); webhook replay; изменение `BEPAID_REBILL_MATERIALIZATION` (остаётся `dry_run`); включение `mode=on`.
+## Шаги (read-only)
 
-## Шаги
+1. **Глобальный пересчёт duplicate-пар.**
+  `SELECT user_id, product_id, COUNT(*), array_agg(id ORDER BY created_at)` из `subscriptions_v2` где `status IN ('active','trial','past_due')` GROUP BY → HAVING COUNT > 1.
+  - Если итог ≠ 7 — STOP, фиксируем в proof, новый H4.
+  - Исключаем 3 пары из H3.x-b → получаем target list из 4.
+2. **Schema verification** (повторно, без доверия памяти):
+  - подтвердить колонки `subscriptions_v2`: `id, user_id, product_id, tariff_id, status, auto_renew, access_end_at, last_paid_at, next_charge_at, billing_type, created_at, updated_at, meta`;
+  - `provider_subscriptions`: `subscription_v2_id, external_subscription_id, state, provider, last_synced_at, meta`;
+  - `orders_v2` linkage: `subscriptions_v2.meta.initial_order_id`, `meta.checkout_order_id`, `meta.extended_by_orders[]`;
+  - `payments_v2.order_id`, `entitlements.user_id/product_id/expires_at/source_order_id/meta.source_subscription_v2_id`;
+  - `telegram_access` (active_until, club_id), `access_rules` (subject_type='subscription').
+3. **Снимок каждой из 4 пар** (по 2 sub в паре):
+  - profile: id / email / full_name;
+  - product (id, name), tariff (id, name, access_days);
+  - обе строки `subscriptions_v2` (все поля выше + полный `meta`);
+  - все `provider_subscriptions` по обеим sub_v2_id (state, external_subscription_id, last_synced_at);
+  - все `orders_v2`, ссылающиеся на любой из двух sub через `meta.initial_order_id` / `meta.checkout_order_id` / `meta.extended_by_orders[]` / `meta.subscription_v2_id`;
+  - связанные `payments_v2` (status, amount, paid_at, provider_payment_id);
+  - все `entitlements` пользователя по этому product_id (expires_at, source, meta.source_subscription_v2_id, meta.source_order_id, meta.tariff_id);
+  - `telegram_access` / `telegram_access_queue` строки (active_until, club_id, source) — только чтение;
+  - `access_rules` строки, ссылающиеся на любой из двух sub_v2_id;
+  - `audit_logs` за окно `min(created_at) − 1d … max(updated_at) + 1d` по обоим sub_v2_id и связанным order_id (actions: `subscription.*`, `bepaid.*`, `grant-access-for-order.*`, `bepaid-webhook.*`, `bepaid_rebill.*`).
+4. **Классификация источника появления** (per pair). Источник = один из:
+  - `legacy_pre_H2` — обе sub созданы до даты deploy H2 root-pre-create guard;
+  - `legacy_between_H2_and_H3xa` — созданы между H2 и H3.x-a deploy;
+  - `post_H3xa_deploy` — хотя бы одна sub создана **после** даты deploy H3.x-a (см. proof H3.x-a);
+  - `race_condition_B1` — обе sub созданы из одного `order_id` или в окне ≤5 минут от одного checkout-события;
+  - `admin_manual` — есть запись `bepaid-admin-create-subscription-link` / ручной insert в audit_logs;
+  - `unknown` — ни один из критериев не доказуем.
+5. **Анализ root-fix H3.x-a.**
+  - Если ≥1 пара = `post_H3xa_deploy` AND `race_condition_B1` → пометить root-fix как **incomplete**, эскалировать H3.x-a-migration (advisory lock / unique partial index) до execute.
+  - Если все 4 = legacy → root-fix H3.x-a подтверждён рабочим, остаётся только cleanup.
+  - Если admin_manual — фиксируем процесс-инцидент, root-fix не виноват.
+6. **Risk checks per pair** (без действий):
+  - оба `provider_subscriptions.state IN ('active','pending')` с **разными** `external_subscription_id` → `manual_review` (нельзя auto-merge);
+  - один `external_subscription_id` повторяется в обеих sub → провайдер видит одну подписку, локальный split — безопасно для cleanup;
+  - `GREATEST(access_end_at)` совпадает с canonical canonical-chain (provider safety > access_end_at > paid_orders_count > last_paid_at > updated_at) → если canonical имеет меньший `access_end_at`, чем дубль → STOP-guard `risk_access_reduction`;
+  - есть `installment_payments.status='pending'` по любой sub → `manual_review`;
+  - `access_rules` ссылается на duplicate sub_v2_id → `manual_review`.
+7. **Финальное решение per pair** (только в proof, без execute):
+  - `safe_execute_candidate` — нет ни одного STOP-guard, понятный canonical, rollback sketch применим;
+  - `manual_review` — хотя бы один STOP-guard или unknown источник;
+  - `defer_until_H3xa_migration` — пара post-H3.x-a race; cleanup только после advisory lock / unique index.
+8. **Сводка по всем 7 парам** (3 из H3.x-b + 4 новые):
+  - таблица: pair_id | source | provider_state | risk | verdict;
+  - распределение по execute-bucket: `safe_execute_candidate` / `manual_review` / `defer_until_H3xa_migration`;
+  - рекомендация: единый H3.x-b-execute (если все safe) ИЛИ split на 2 плана.
 
-### 1. Предварительная schema-проверка (фактическая, не предполагаемая)
+## Proof
 
-Перед сбором данных подтвердить реальные имена колонок/таблиц:
+`.lovable/proofs/h3x_duplicate_subscriptions_out_of_scope_classification_2026_05.md`
 
-- `orders_v2`: проверить наличие колонок `subscription_v2_id`, `origin_subscription_id`, `extended_by_order_id`/`extended_by_orders`; зафиксировать какие реально существуют.
-- `entitlements`: проверить наличие `order_id`, `source_order_id`, `meta.source_subscription_v2_id`, `meta.tariff_id`.
-- Telegram: подтвердить **фактические** таблицы и поля. Возможные варианты — `telegram_access`, `telegram_club_members`, `telegram_access_queue`. Зафиксировать какие действительно есть и какое поле описывает срок (`active_until` / `expires_at` / иное). В дальнейших шагах использовать только подтверждённые имена. Если ничего эквивалентного нет — пометить Telegram impact как `not_applicable` и не обещать пересчёт.
-- `provider_subscriptions`: подтвердить `subscription_v2_id`, `state`, `external_subscription_id`.
+Структура:
 
-Если какое-либо ожидаемое поле отсутствует — в proof явно записать как `field_missing`, без ассумпций.
-
-### 2. Идентификация 3 пар
-
-Подтянуть полные UUID для коротких маркеров (`1b68252b`, `3c6d812a`, `7261e727`) из H4 proof и/или `WHERE id::text LIKE '<short>%'`. Зафиксировать `pair_id` и для каждой пары:
-
-- ФИО / email пользователя (для человекочитаемой колонки);
-- Название продукта;
-- Название тарифа (если разные у двух sub — оба).
-
-### 3. Снапшот по каждой паре
-
-Для каждой sub в паре собрать:
-
-- `id`, `status`, `billing_type`, `auto_renew`, `access_start_at`, `access_end_at`, `next_charge_at`, `created_at`, `updated_at`;
-- `meta.model`, `meta.tariff_access_days`, `meta.recurring`, `meta.amount_byn`;
-- `provider_subscriptions[]`: `id`, `state`, `external_subscription_id`, `created_at`;
-- `orders_v2[]` через **все подтверждённые linkage-поля** (`subscription_v2_id`, `origin_subscription_id`, `meta.subscription_v2_id`, и при наличии — `extended_by_*`), статус `paid`, исключая `meta.source='rule_engine'`. Для каждого order: `id`, `final_price`, `paid_at`, `meta.payment_flow`, `meta.tariff_id`, набор linkage-полей которыми он привязан;
-- `payments_v2[]` по этим orders;
-- `extended_by_orders` (если колонка/механизм существует): какая sub является «головой» цепочки, есть ли дубли цепочек, какие orders в цепочке;
-- `entitlements[]` по `(user_id, product_id)`: `id`, `status`, `expires_at`, `order_id` (если есть), `source_order_id` (если есть), `meta.source_subscription_v2_id`, `meta.tariff_id`. Отметить случаи, когда на один `(product_id, tariff_id)` есть >1 entitlement;
-- Telegram impact (только по подтверждённым в шаге 1 полям): какие записи существуют по `user_id` + `club_id` продукта, текущий срок (имя поля как в схеме), state.
-
-### 4. Diff-таблица по паре
-
-Человекочитаемая первая колонка (пользователь / продукт / тариф), затем технические:
-`sub_A` vs `sub_B` по: `status`, `access_end_at`, `auto_renew`, `provider_state`, `provider_sbs_external_id`, `paid_orders_count`, `last_paid_at`, `tariff_id`, `entitlements_count`, Telegram-срок.
-
-### 5. Выбор canonical (priority chain c provider safety)
-
-Применять последовательно, первая выполнившаяся побеждает:
-
-1. Если только одна sub имеет `provider_subscriptions.state IN ('active','pending')` — она кандидат (provider safety приоритетнее access_end_at, чтобы не потерять live rebill).
-2. Иначе — sub с большим `access_end_at`.
-3. При равенстве — sub с большим количеством paid orders (не rule_engine).
-4. При равенстве — sub со свежим `last_paid_at`.
-5. При равенстве — sub со свежим `updated_at`.
-
-Спец-случай: если шаг 2 выбирает sub **без** provider, а другая sub имеет active provider — пара помечается `manual_review` (нельзя одновременно сохранить и max access_end_at, и provider linkage без явного решения).
-
-Для каждой пары зафиксировать: `canonical_sub_id`, `duplicate_sub_id`, какой шаг сработал, обоснование.
-
-### 6. Planned action (описание для H3.x-b-execute, не выполняется)
-
-Для каждой пары описать что **будет** сделано в отдельном approved execute:
-
-1. **Keep canonical** + пересчёт `access_end_at = GREATEST(canonical, duplicate)` без снижения.
-2. **Cancel/supersede duplicate** — только после провайдер-pull:
-  - если duplicate имеет `provider_subscriptions.state IN ('active','pending')`:
-    - сначала **read-only pull** через canonical bePaid read function (`bepaid-get-subscription-details` в read-режиме, без побочных эффектов);
-    - если провайдер реально active → плановый `bepaid-cancel-subscriptions`, затем local `status='superseded'`, `auto_renew=false`;
-    - если провайдер уже dead/canceled/expired → только local supersede;
-    - если провайдер API ambiguous/error → **STOP / `manual_review**`, без cancel и без supersede;
-  - если у duplicate нет active provider записи → сразу local supersede без provider-вызовов (режим `local_only_no_provider_subscription`).
-   Режим явно зафиксировать в audit на этапе execute.
-3. **Order rebind** — перепривязка orders, висящих на duplicate, через **все linkage-поля** которые подтверждены в шаге 1 (`subscription_v2_id`, `origin_subscription_id`, `meta.subscription_v2_id`, и `extended_by_*` если используется). Цель — сохранить полную lineage. Сами `orders_v2` не модифицируются деструктивно (только эти поля связи + audit `repair.h3xb.order_rebind`).
-4. **Entitlement merge** — `expires_at = GREATEST(current, canonical.access_end_at)`. Обновить указатели на canonical: `meta.source_subscription_v2_id`, и при наличии — `source_order_id`. Если на `(product_id, tariff_id)` обнаружено >1 entitlement — отдельная подзадача (не выполнять автомерж в execute без явного решения).
-5. **Telegram** — только если в шаге 1 подтверждены реальные таблицы/поля. Никакого revoke. Срок пересчитывается через GREATEST по подтверждённому полю. Если Telegram-схема `not_applicable` для этого продукта — Telegram-блок пропускается, об этом явно в proof.
-
-### 7. STOP-guards (помечают пару `manual_review`, не выполняют действий)
-
-Пара → `manual_review` если выполнено хотя бы одно:
-
-1. После выбора canonical итоговый `access_end_at` пользователя **ниже** текущего `MAX(sub_A, sub_B)`.
-2. **Обе** sub имеют `provider_subscriptions.state='active'` с **разными** `external_subscription_id` — жёстко: только manual_review, никакого автоматического выбора canonical.
-3. Найден paid order/payment, который нельзя однозначно привязать ни к canonical, ни к duplicate ни по одному из linkage-полей.
-4. `entitlement.expires_at` после planned merge получится ниже текущего.
-5. У пользователя по тому же продукту найдена >1 duplicate-пара (scope creep на уровне пользователя).
-6. Любая из sub имеет активный `installment_payments.status='pending'` (рассрочка — отдельный flow).
-7. `access_rules` ссылается на duplicate `subscription_v2_id` явным полем (риск потери доступа).
-8. Конфликт «max access_end_at у sub без provider vs другая sub с active provider» (см. шаг 5, спец-случай).
-9. bePaid read-pull (в проекции, не в выполнении) выглядит ambiguous/недоступен — execute по такой паре без него запрещён.
-
-### 8. Контроль общего scope (без жёсткого STOP всего плана)
-
-Финальный SELECT — общее число active+conflict duplicate-пар.
-
-- Если **=3** → dry-run и execute по 3 парам разрешены к approve.
-- Если **>3** → текущие 3 описываются read-only до конца, **но execute approve запрещён**. Создаётся обновлённый H4-style preconditions для нового scope; execute переносится за этот рефреш.
-
-### 9. Rollback sketch (обязательно для каждой `ready_for_execute` пары)
-
-В proof для каждой `ready_for_execute` пары привести before/after rollback draft:
-
-- restore `subscriptions_v2` (status, auto_renew, access_end_at, next_charge_at, meta) — по snapshot;
-- restore `orders_v2` linkage-полей (значения до rebind по каждому поднятому полю);
-- restore `entitlements.expires_at`, `meta.source_subscription_v2_id`, `source_order_id` — по snapshot;
-- restore Telegram-полей (только если применимо);
-- **отдельный пункт:** restore provider state через API **невозможен** — если provider уже отменён, откат на стороне bePaid требует ручной операции / новой подписки. Это явно зафиксировать.
-
-Без готового rollback sketch — пара не получает `ready_for_execute`, только `manual_review`.
-
-### 10. Proof
-
-Создать `.lovable/proofs/h3x_duplicate_subscriptions_repair_dryrun_2026_05.md`:
-
-- блок разделения терминов: `grant-access-for-order` vs `H3.x-b-execute` repair flow;
-- schema-проверка из шага 1 (что есть / чего нет);
-- по каждой паре: человекочитаемая шапка (имя, продукт, тариф) → snapshot → diff → canonical + обоснование → planned action → STOP-guard результат → rollback sketch;
-- финальный вердикт по каждой паре: `ready_for_execute` или `manual_review`;
-- контроль общего scope (=3 или >3) и его последствия;
-- блок «Что НЕ делалось»: DML=0, миграции=0, мутирующие edge calls=0, secrets не менялись, `BEPAID_REBILL_MATERIALIZATION=dry_run`, `mode=on` не включался, Telegram revoke/grant не вызывались, webhook replay=0;
-- следующий шаг: `H3.x-b-execute` — отдельный план + approve.
+1. Scope check (global duplicate count, 7 expected).
+2. Schema verification (per table, field_missing markers).
+3. Per pair (4 секции): snapshot → orders/payments → entitlements → telegram → audit timeline → source classification → risk checks → verdict + rollback applicability.
+4. Root-fix H3.x-a assessment (verdict: confirmed / incomplete / inconclusive).
+5. Aggregate table по 7 парам.
+6. Рекомендация: единый execute-plan или split.
+7. DoD: 0 DML, 0 migrations, 0 provider cancel, 0 grant, 0 telegram, secret `dry_run`, `mode=on` disabled, 3 in-scope пары не тронуты.
 
 ## DoD
 
-- proof создан, содержит schema-проверку, snapshot, planned action, STOP-guard результат и rollback sketch по всем 3 парам;
-- терминологическое разделение `grant-access-for-order` ≠ H3.x-b-execute зафиксировано явно;
-- Telegram блок построен только на подтверждённых таблицах/полях (или `not_applicable`);
-- production DML = 0; миграции = 0; secrets не менялись;
-- `BEPAID_REBILL_MATERIALIZATION=dry_run`; `mode=on` не включался;
-- мутирующие edge calls = 0; bePaid cancel/grant = 0; telegram revoke/grant = 0; webhook replay = 0;
-- контроль общего scope выполнен (=3 → approve возможен; >3 → approve запрещён);
-- по каждой паре финальный вердикт `ready_for_execute` или `manual_review`;
-- ни одна пара не получает `ready_for_execute` без приложенного rollback sketch;
-- следующий шаг — отдельный план `H3.x-b-execute` + approve.
+- Proof существует и содержит все 7 пар в сводке + 4 новые в деталях.
+- Каждой паре присвоен source и verdict.
+- Дано явное заключение по root-fix H3.x-a.
+- Production DML = 0, migrations = 0, edge function calls = 0 (кроме `read_query`).
+- 3 in-scope пары из H3.x-b не упомянуты в planned actions.
+- `BEPAID_REBILL_MATERIALIZATION = dry_run`, `mode=on` disabled.
+- Сформирована рекомендация по структуре H3.x-b-execute (единый или split).
 
-## Что дальше
+## После plan
 
-- `H3.x-b-execute` — отдельный план с явным approve: атомарная транзакция, rowcount guards, backup-таблицы (по образцу `recurring_repair_2026_05_execute_A`), pre-cancel provider read-pull, audit `repair.h3xb.*`. **Не** через `grant-access-for-order`.
-- Только после execute + наблюдения за audit (новых duplicate-пар = 0 ≥ 7 дней) — повторный H4 preconditions перед `mode=on`.
-- `mode=on` сейчас не включать.
+Только после approve этого классификационного отчёта — отдельный план H3.x-b-execute (или два плана). Никаких execute до этого.
