@@ -1,334 +1,227 @@
 да, согласен, с учетом правок:
 
-1. **План обрезан в конце.**  
-Последняя строка — просто DoD. Нужно дописать финальный DoD полностью.
-2. **C.2 data-repair Рабчевской убрать из текущего execution scope.**  
-В этом патче допустим только:
-  - code;
-  - tests;
-  - proof;
-  - dry-run план по Рабчевской.
-3. Реальный DML repair Рабчевской — отдельный PATCH после approve dry-run.
-4. **Race guard не называть полностью race-safe без DB constraint/RPC.**  
-Без транзакционного RPC/unique constraint по (order_id/user/product/tariff) это не абсолютная защита. Формулировка должна быть:
+1. **В анализ добавить главный decision-point: поддерживать legacy path или отключать.**  
+Если D1–D5 покажут, что legacy one-time path почти не используется, нужно рассмотреть не только writer-extension, но и вариант:
 
-B.2 — best-effort pre-insert re-check.
+legacy path → manual_review / no access write / admin recovery
 
-Полная race-safe атомарность — отдельный H2b RPC/constraint, если потребуется.
+То есть не строить большой bridge, если поток уже фактически мёртвый.
 
-4. **skip_already_processed опасен, если subscription есть, а entitlement нет.**  
-Если writer нашёл existing subscription по order_id или meta.bepaid_subscription_id, он не должен просто skip’ать весь grant. Нужно различать:
+2. **Legacy-order bridge — только как будущий отдельный write-path.**  
+В H2.1c analysis зафиксировать, что создание orders_v2-двойника — это будущий DML и требует отдельного dry-run/approve.  
+В текущем analysis никаких orders_v2 не создавать.
+3. **В H2.1c-i не смешивать bridge и grant, если это усложняет writer.**  
+В proof сравнить 2 варианта:
 
-- subscription есть + entitlement verified → skip_already_processed;
-
-- subscription есть, но entitlement отсутствует/expired → reuse subscription + ensure primary entitlement;
-
-- subscription есть, но данные конфликтуют → manual_review_existing_subscription_incomplete.
-
-5. **Provider-sync UPDATE делать только по subscription_id, который вернул writer.**  
-Не искать “по order_id” после writer’а, если есть риск нескольких строк. Правильно:
-
-grant.outcome.subscription_id → provider-sync target
-
-Если subscription_id не вернулся — provider-sync не делать, audit/manual_review.
-
-6. **Не оставлять direct access writes даже при fallback/error.**  
-Для всех outcome:
-
-skip / error / manual_review / ambiguous_order_id
-
-→ 0 access writes
-
-→ audit
-
-→ HTTP 200
-
-7. **Static check уточнить.**  
-Не просто entitlements\. по диапазону, потому что чтение может быть легитимным. Проверять именно write-паттерны:
-
-from('entitlements').insert
-
-from('entitlements').upsert
-
-from('entitlements').update
-
-subscriptions_v2 update payload with access_start_at/access_end_at/status
-
-telegram-grant-access invoke
-
-telegram_access insert/update/upsert
-
-8. **subscriptions_v2.status не менять из webhook.**  
-В 3DS ветке статус active/trial/past_due должен выставлять только writer. Webhook может писать только технический provider-sync, если это не влияет на платформенный доступ.
-9. **B.1 candidate search по meta.bepaid_subscription_id должен быть безопасным.**  
-Если найдено несколько кандидатов по одному sbs/order — manual_review_multi_candidate, не авто-выбор.
-10. **Добавить test на incomplete existing subscription.**  
-Новый тест:
-
-existing subscription by order_id exists, but entitlement missing
-
-→ writer reuses subscription / creates entitlement
-
-→ no second subscription insert
-
-11. **Добавить test на provider-sync target.**
-
-writer returns subscription_id = X
-
-→ webhook updates provider-sync only on X
-
-→ no update by broad order_id query
-
-12. **Перед deploy обязательно:**
-
-- deno check;
-- все H2.1b-i tests;
-- новые H2.1b-ii tests;
-- §F regression;
-- static check.
-
-13. **Финальный DoD добавить так:**
-
-## DoD
+Вариант A: webhook/bridge сначала создает/находит orders_v2, потом вызывает grant-access-for-order(orderId)
 
 &nbsp;
 
-- 3DS finalize ветка больше не содержит прямых access writes:
+Вариант B: grant-access-for-order сам принимает legacy_order_id и внутри делает bridge
 
-  - subscriptions_v2.access_start_at/access_end_at/status;
+Рекомендация: предпочтительнее **A**, потому что grant-access-for-order должен работать с canonical orders_v2, а не становиться универсальным legacy-migrator.
 
-  - entitlements insert/update/upsert;
+4. **Для tariff_code → tariff_id добавить collision-check.**  
+В D-запросы добавить:
 
-  - telegram access / telegram-grant-access.
+legacy tariff_code maps to 0 / 1 / many tariffs
 
-- Ветка вызывает grant-access-for-order с context='3ds_finalize'.
+Если many — manual_review, не авто-резолв.
 
-- Provider-sync пишет только технические поля и только по subscription_id, возвращённому writer'ом.
+5. **Для product_v1 → product_v2 добавить mapping confidence.**  
+Не только product_v2_id IS NULL, но и:
 
-- skip/error/manual_review/ambiguous_order_id → no fallback-write, audit, HTTP 200.
+mapped_by_explicit_id
 
-- Existing subscription by order_id/sbs не создаёт дубль; если entitlement отсутствует — writer не skip’ает grant молча.
+mapped_by_code
 
-- Tests green.
+mapped_by_name
 
-- Static check green.
+unmapped
 
-- Deploy successful.
+ambiguous
 
-- production DML = 0 ручных операций.
+Любой fuzzy/name match — только manual_review.
 
-- migrations = 0.
+6. **По legacy v1 subscriptions не планировать удаление в рамках H2.1c.**  
+Формулировку “депрекейтить или удалить” оставить только как long-term backlog. Сейчас задача — убрать access writes из webhook, не ломать старую совместимость.
+7. **G8 false-recurring — сделать обязательным blocker-output.**  
+В proof должна быть таблица:
 
-- BEPAID_REBILL_MATERIALIZATION остаётся dry_run.
+legacy order | tariff | offer recurring? | created subscription auto_renew | expected auto_renew | gap
 
-- mode=on не включался.
+Если есть false-recurring — это blocker для любого автоматического переноса.
 
-- Рабчевская data-repair не выполнялся.
+8. **Для Telegram multi-club проверить текущий canonical writer.**  
+Если writer сейчас поддерживает только один telegram_club_id, а legacy path раздаёт несколько access_rules club — это отдельный gap:
 
-- H2.1c legacy path не трогался.
+telegram_multi_target_writer_gap
 
-После этих правок план можно выполнять. Главное: **в этом патче не чинить Рабчевскую данными**, а только закрыть кодовую причину дублей и direct access writes в 3DS finalize.
+Не чинить в analysis, только зафиксировать.
+
+9. **DoD анализа дополнить go/no-go выводом.**
+
+В конце proof должен быть один из выводов:
+
+A. legacy path больше не используется → можно отключить/перевести в manual_review
+
+B. legacy path используется и полностью маппится на orders_v2/products_v2/tariffs → можно делать H2.1c-i
+
+C. legacy path используется, но есть unmapped/ambiguous продукты/тарифы → сначала mapping cleanup
+
+D. legacy path критичный и содержит false-recurring/telegram gaps → нужен отдельный design-план
+
+10. **.lovable/[plan.md](http://plan.md) обновлять только статусом.**
+
+H2.1c = analysis_complete
+
+H2.1c-i = pending
+
+H2.1c-ii = pending
+
+H3/H4/PATCH G = unchanged
+
+После этих правок план можно запускать как read-only/code-discovery. Код, данные, миграции и secrets не трогать.
 
 &nbsp;
 
-# Статус H2.1b-ii — **closed** (2026-05-16)
+План: PATCH H2.1c — legacy one-time path canonical writer analysis (read-only)
 
-- Tests: grant-access-for-order 42/42, bepaid-webhook 44/44 — green.
-- Static check (3DS handover region 4536–4767): 0 direct access writes, 0 telegram-grant-access invoke. Только legitimate `SELECT meta` + provider-sync `UPDATE` (5 разрешённых полей).
-- Proof: `.lovable/proofs/patch_h2_1b_ii_webhook_3ds_replace_2026_05.md`.
-- Production DML = 0, migrations = 0, `BEPAID_REBILL_MATERIALIZATION = dry_run`, `mode=on` выключен.
-- Data-repair Рабчевской — НЕ выполнен (dry-run зафиксирован в proof, ожидает отдельного approve).
-- H2.1c / H2b / H3 / H4 — без изменений.
+## Цель
 
-Deploy НЕ выполнялся — отдельным шагом после approve.
+Полностью разобрать legacy/one-time ветки `bepaid-webhook`, где ещё остаются прямые записи в `subscriptions_v2` / `entitlements` / `subscriptions(v1)` и прямые вызовы `telegram-grant-access`. Подготовить безопасный план замены на `grant-access-for-order` (canonical writer). Без изменений кода, без DML, без миграций, без переключения `BEPAID_REBILL_MATERIALIZATION`.
 
----
+## Запреты (зафиксировано)
 
-# План: PATCH H2.1b-ii — replace 3DS finalize access writes with canonical writer (+ duplicate fix)
+- production DML = 0;
+- миграций = 0;
+- secrets не меняем;
+- `BEPAID_REBILL_MATERIALIZATION` остаётся `dry_run`;
+- `mode=on` не включать;
+- Рабчевская и другие data-repair — не трогать;
+- writer-код не менять (только проектируем расширение).
 
+## Scope (что разбираем)
 
-## Контекст
+В `supabase/functions/bepaid-webhook/index.ts` две legacy-зоны:
 
-H2.1b-i закрыт: canonical writer умеет 3DS finalize через `context='3ds_finalize'`. Webhook 3DS finalize ветка всё ещё делает 8 прямых access-writes — это блокер перед `mode=on`.
+1. `**[WEBHOOK-LEGACY]` materialization-only** — строки ≈5015–5269 (PATCH P-LEGACY-BEPAID.1):
+  - триггер: `!orderId && !subscriptionId && status='successful' && transactionUid`;
+  - матчинг профиля по `card.stamp` / `card_last4+brand` / email;
+  - записывает только `payments_v2` + amoCRM, **НЕ пишет access**;
+  - подтвердить read-only при ревью.
+2. **Legacy flow (orders table)** — строки ≈5274–6285 — главный кандидат на замену. Содержит прямые access-writes (см. ниже).
 
-Кейс **Рабчевская Юлия** (`user_id=7261e727-f6d4-4ccf-9c71-ba7ec49bcf6e`, `order_id=d1080bf5-c395-4b91-b8e7-afb89a599929`, product Gorbova Club, tariff BUSINESS) даёт прямое подтверждение: webhook + writer создали **две** `subscriptions_v2` с одним и тем же `order_id` и одним и тем же `(user_id, product_id, tariff_id)`:
+## Что делает legacy flow (zone 2)
 
+### Когда срабатывает
 
-| sub_id                                 | created_at     | billing_type     | bepaid_sub_id          | access_end_at | granted_by                         |
-| -------------------------------------- | -------------- | ---------------- | ---------------------- | ------------- | ---------------------------------- |
-| `4469a81d-2967-45a5-a7cc-4af9461b6e5e` | 16.05 07:54:55 | provider_managed | `sbs_2f634e38e892da31` | 15.06 20:59   | webhook (pending_provider_managed) |
-| `f7fda1d7-b5a0-4ea2-aaa0-3d61a5e7301e` | 16.05 07:57:06 | mit              | —                      | 16.06 12:00   | grant-access-for-order             |
+- В payload есть `tracking_id` без префиксов `subv2:` / `link:` / `link:order:` → `orderId` ссылается на legacy `public.orders.id`;
+- ИЛИ есть только `subscriptionId` без tracking → fallback по `orders.meta->>bepaid_subscription_id`;
+- статус транзакции = `successful`.
 
+### Где создаёт/находит order
 
-Это **race-INSERT**: webhook успел создать `provider_managed` skeleton (без SBS-binding в кандидатной выборке writer'а), затем writer не нашёл match по `bepaid_subscription_id` и **создал второй insert**. Multi-candidate guard в writer'е сейчас читает только уже существующие active subs, но при INSERT-гонке оба пути не видят друг друга. Это второй симптом той же проблемы, что 8 direct-writes в 3DS finalize — нужна единая точка записи.
+- `orders.select * .eq(id, orderId)` (≈5290);
+- fallback: `orders.select * .eq(meta->>bepaid_subscription_id, subscriptionId)` (≈5301);
+- **orphan-create**: если order не найден ни в `orders`, ни в `orders_v2` — создаёт orphan-запись в `orders` (≈4188–4246, общий пред-блок).
 
-## Scope / Constraints
+### Где пишет subscriptions_v2 (прямые writes)
 
-- Менять ТОЛЬКО `supabase/functions/bepaid-webhook/index.ts` (3DS finalize ветка ≈4500–4951) + минимально `grant-access-for-order` (guard от race-INSERT).
-- НЕ трогать LINK-ORDER, WEBHOOK-SUBSCRIPTION renewal, legacy one-time (H2.1c).
-- Production DML = 0. Все исправления Рабчевской — отдельным data-repair шагом ниже, с явным dry-run первой стадии.
-- Migrations = 0.
-- `BEPAID_REBILL_MATERIALIZATION` = `dry_run`.
-- `mode=on` НЕ включать.
+- ≈5546 — `select id, access_end_at, status` по (user_id, product_id, status∈active/trial);
+- ≈5561 — `UPDATE` существующей подписки: `access_end_at`, `is_trial`, `status`, `trial_end_at`, `payment_token`, `order_id` (логика «продлить от current_end или now + access_days»);
+- ≈5576 — `INSERT` новой подписки: `access_start_at`, `access_end_at`, `status`, `auto_renew=true`, `trial_end_at`, `next_charge_at`, `payment_token`, `meta.bepaid_subscription_id/legacy_order_id`.
 
-## Часть A — Webhook 3DS finalize → canonical writer
+### Где пишет entitlements
 
-### A.1. Делегирование
+- ≈5696 — `upsert` в `entitlements` с `expires_at`, `onConflict: user_id,product_code` (старый `product_code`-ключ, противоречит `id-first` каноне).
 
-В 3DS finalize ветке заменить на единственный вызов:
+### Где трогает legacy v1 `subscriptions`
 
-```ts
-const grant = await invokeGrantAccessForOrder({
-  orderId,
-  context: '3ds_finalize',
-  source: 'bepaid_webhook'
-});
-```
+- ≈5721 — `UPDATE public.subscriptions SET tier, is_active, starts_at, expires_at WHERE user_id=...` (legacy v1 — кандидат на удаление, не на замену).
 
-Удалить локальные расчёты `access_start_at`, `access_end_at`, статусов подписки, бонус-дней, trial-bootstrap, past_due-reattach — всё это теперь делает writer.
+### Где вызывает Telegram
 
-### A.2. Запрещённые поля в webhook-write
+- ≈5614 — `functions.invoke('telegram-grant-access')` для products_v2 при `productV2.telegram_club_id`;
+- ≈5755 — `functions.invoke('telegram-grant-access')` в цикле по `access_rules.grant_target_type='club'` для products_v1;
+- оба нарушают канон «Telegram Auto-Grant Single Path» (auto-grant DM только через `grant-access-for-order → telegram-grant-access`).
 
-После делегирования из 3DS ветки **запрещены** UPDATE/UPSERT на:
+## Может ли `grant-access-for-order` заменить ветку сейчас
 
-- `subscriptions_v2.access_start_at`
-- `subscriptions_v2.access_end_at`
-- `subscriptions_v2.status`
-- `entitlements.*` (любые поля, любая ветка)
-- `telegram_access_queue.*` напрямую
-- любой `invoke('telegram-grant-access', …)` из 3DS ветки
+**Частично.** Прямой `fetch(grant-access-for-order, { order_id })` не сработает «как есть» по причинам ниже.
 
-Static check добавляется как тест (см. ниже).
-
-### A.3. Provider-sync (что остаётся в webhook)
-
-Только технические поля одной отдельной UPDATE-секцией:
-
-- `billing_type`
-- `next_charge_at` — берётся из `grant.outcome.next_charge_at_suggested`, если есть; иначе НЕ пишется
-- `auto_renew` (true при активации, false при cancel)
-- `meta.bepaid_*` (subscription_id, activated_at, source flags)
-- `updated_at`
-
-Цель UPDATE — найденная subscription (через `order_id = orderId` после writer'а). Если writer вернул `manual_review_multi_candidate` или `error`/`skip_*` — UPDATE провайдер-полей НЕ делается, fallback-write НЕ делается, audit ниже.
-
-### A.4. Обработка outcome
+## Gap-анализ
 
 
-| outcome.kind                     | webhook действие                                                                                                     |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `bootstrap_created` / `extended` | provider-sync UPDATE по `order_id = orderId`; audit `bepaid.webhook.grant_ok`                                        |
-| `manual_review_multi_candidate`  | 0 writes; audit `bepaid.webhook.grant_skipped_no_fallback` с `reason='multi_candidate'` и `candidate_ids`; HTTP 200  |
-| `skip_*`                         | 0 writes; audit `bepaid.webhook.grant_skipped_no_fallback` с reason; HTTP 200                                        |
-| `error`                          | 0 writes; audit `bepaid.webhook.grant_skipped_no_fallback` с reason; HTTP 200 (НЕ 500, иначе bePaid начнёт ретраить) |
+| #   | Gap                                                  | Описание                                                                                                                                                                                                                                 | Блокирующий?                  |
+| --- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| G1  | **Legacy `orders` vs `orders_v2**`                   | Writer читает `orders_v2` по UUID; legacy ветка работает с `public.orders` (часто без `orders_v2`-пары). Нужен либо bridge-create `orders_v2` перед вызовом writer'а, либо writer context `legacy_one_time` с приёмом `legacy_order_id`. | Да                            |
+| G2  | `**tariff_id` отсутствует**                          | Legacy `orders.meta` содержит `tariff_code` (string), а не `tariff_id` (UUID). Нарушает `ID-First Logic`. Нужен резолв `tariff_code + product_v2_id → tariff_id` перед writer'ом.                                                        | Да                            |
+| G3  | **products_v1 без `product_v2_id**`                  | Часть legacy orders ссылаются только на `products` (v1) без `product_v2_id`. Writer работает только с `products_v2`. Нужен аудит: остались ли активные продукты без v2-зеркала.                                                          | Да (требует discovery-запрос) |
+| G4  | `**entitlements.product_code` legacy upsert**        | Legacy ветка пишет entitlements по строковому `product_code`. Writer пишет `id-first` (`product_id`). Конфликт onConflict-ключей — рассинхрон.                                                                                           | Средний                       |
+| G5  | **legacy v1 `subscriptions` (tier/is_active)**       | Эту таблицу writer не трогает. Решение: после миграции — оставить, депрекейтить или удалить отдельным шагом (не часть H2.1c).                                                                                                            | Низкий (decoupled)            |
+| G6  | **Telegram по `access_rules` цикл**                  | Writer уже умеет `telegram-grant-access` через `invokeTelegram` (см. H2.1b-ii). Множественные клубы в одном продукте — нужно проверить, поддерживает ли writer цикл по всем `grant_target_type='club'` rules или только основной club.   | Средний                       |
+| G7  | **orphan-order стадия (≈4188–4246)**                 | Создаётся через legacy `orders.insert`, не через `orders_v2`. После H2.1c — переключить orphan-create на `orders_v2` для совместимости с writer'ом.                                                                                      | Средний                       |
+| G8  | `**subscription_charge_count` / recurring snapshot** | Legacy ветка ставит `auto_renew=true` всегда; writer определяет recurring по `tariff_offers.meta.recurring.is_recurring` (Product Type SOT). Возможно появление false-recurring подписок на one-time products.                           | Высокий (риск регрессии)      |
 
 
-### A.5. Ambiguous orderId
+## Нужен ли writer extension
 
-Если в webhook payload нет однозначного `order_id` (или mapping `transaction → order` дал ≥2 кандидата) — НЕ зовём writer, audit `bepaid.webhook.ambiguous_order_id`, HTTP 200, 0 writes.
+**Да, минимум 3 расширения** (для отдельного PATCH H2.1c-i, после approve анализа):
 
-## Часть B — Guard от race-INSERT в canonical writer
+1. `**context='legacy_one_time'**` с приёмом `{ legacy_order_id, tracking_id, transaction_uid, customer_anchors }`;
+2. **Legacy-order bridge**: внутри writer'а — `resolveLegacyOrder(legacy_order_id)` → создать/найти `orders_v2`-двойник по детерминированному mapping, чтобы канонический grant-flow работал на UUID;
+3. `**resolveTariffByCode(product_id, tariff_code)**` — id-first резолвер для legacy orders без `tariff_id`.
 
-**Минимальная** правка `three_ds_writer.ts` / основной ветки writer'а — закрыть кейс Рабчевской на будущее без переноса логики из webhook.
+Race-guard, ensurePrimaryEntitlement, Telegram-invoke уже реализованы в `three_ds_writer.ts` (H2.1b-ii) и переиспользуются.
 
-### B.1. Расширить `classifyCandidates`
+## Какие тесты потребуются (для H2.1c-i, не сейчас)
 
-Добавить к выборке кандидатов:
+- `legacy_one_time_writer_test.ts`:
+  1. legacy order с `product_v2_id + tariff_code` → bootstrap_created;
+  2. legacy order с существующей подпиской (same tariff) → extended;
+  3. legacy order с tariff mismatch → новая подписка от даты оплаты (по `Extend ↔ Tariff Match`);
+  4. legacy order без `tariff_code` → `manual_review_no_tariff`;
+  5. legacy order без `product_v2_id` (v1-only) → `manual_review_v1_only`;
+  6. recurring snapshot: one-time tariff → `auto_renew=false` (анти-регрессия G8);
+  7. Telegram multi-club (несколько `access_rules` `grant_target_type='club'`) → writer вызывает grant per club;
+  8. orphan-order путь: order создан через `orders_v2`, writer успешно отрабатывает;
+  9. static check: legacy zone в `bepaid-webhook` после рефакторинга = 0 direct access writes, 0 direct telegram invokes.
 
-- `subscriptions_v2.order_id = orderId` (поиск по тому же order даже если status уже active);
-- `subscriptions_v2.meta->>'bepaid_subscription_id' = $sbsFromOrder` (если order содержит `meta.bepaid_subscription_id`).
+## Discovery-задачи (read-only, для proof)
 
-Если найден кандидат по любому из этих ключей → **outcome `skip_already_processed**` (а не INSERT). Это закрывает race, когда webhook успел вставить provider_managed skeleton раньше.
+Все — через `supabase--read_query`, без записи:
 
-### B.2. Pre-INSERT advisory-lock-style guard
+- **D1**: количество legacy `orders` за последние 90 дней, попавших в зону 2 (paid, без orders_v2-пары) — оценка трафика;
+- **D2**: распределение `meta.product_v2_id IS NULL` vs `NOT NULL` в этих orders — приоритет G3;
+- **D3**: список distinct `product_code` без `products_v2`-зеркала среди продаваемых за 90д — список v1-only продуктов на депрекейт;
+- **D4**: за 30 дней — webhook вызовы `[WEBHOOK-LEGACY]` (zone 1, materialization-only) — частота и unmatched-доля;
+- **D5**: примеры (5–10) legacy orders → проверить наличие `auto_renew=true` подписок на one-time tariff (G8 evidence).
 
-Перед самим INSERT новой подписки повторно `SELECT … FOR UPDATE` по `(user_id, product_id, status IN active/past_due/trialing)`. Если за время вычислений появился новый active кандидат → НЕ INSERT, outcome `skip_concurrent_insert`, audit `grant.race_insert_avoided`.
+## DoD анализа H2.1c
 
-### B.3. Без forceExtend
+- proof-файл создан: `.lovable/proofs/patch_h2_1c_legacy_one_time_analysis_2026_05.md`;
+- внутри — выжимка из этого плана + результаты D1–D5;
+- список gap'ов с приоритетами;
+- proposed writer-extension contract (TypeScript-сигнатуры, без реализации);
+- риски G8 (false-recurring) с примерами из БД;
+- `.lovable/plan.md` обновлён: H2.1c = analysis_complete (по аналогии с H2.1b);
+- production DML = 0, миграций = 0, secrets без изменений;
+- `mode=on` не включался.
 
-`forceExtend=true` НЕ вводится. Никаких новых Telegram-вызовов из writer'а — Telegram path остаётся unchanged.
+## Что НЕ делаем в этом патче
 
-## Часть C — Data-repair Рабчевской (отдельным шагом, после merge A+B)
+- никаких изменений в `bepaid-webhook`;
+- никаких изменений в `grant-access-for-order` / `three_ds_writer`;
+- никаких миграций таблиц `orders` / `orders_v2` / `entitlements`;
+- никакого data-repair (Рабчевская и др.);
+- H2.1b-ii (3DS finalize) — закрыт, не трогаем;
+- H2b atomic RPC — backlog, не входит.
 
-### C.1. Dry-run отчёт
+## Следующие шаги (после approve анализа)
 
-Read-only скрипт (через `supabase--read_query`) фиксирует:
+1. **H2.1c-i** — writer extension (`context='legacy_one_time'` + legacy-order bridge + tariff resolver) + тесты, без касания webhook;
+2. **H2.1c-ii** — замена legacy зоны 2 в `bepaid-webhook` на delegate в writer + static check;
+3. **H2.1c-iii** (опционально) — депрекейшен legacy v1 `subscriptions` updates (G5) и orphan-create через `orders_v2` (G7).
 
-- два `subscriptions_v2` с одним `order_id=d1080bf5-…`;
-- предлагаемое решение: оставить `4469a81d` (provider_managed, привязан к `sbs_2f634e38e892da31`), погасить `f7fda1d7` как дубль с переносом метаданных:
-  - `f7fda1d7.status = 'canceled'`
-  - `f7fda1d7.cancel_reason = 'duplicate_race_h2_1b_ii'`
-  - `f7fda1d7.meta.merged_into = '4469a81d-…'`
-  - `4469a81d.access_end_at = max(оба, 16.06.26 12:00)` (НЕ уменьшать);
-  - `4469a81d.billing_type` оставить `provider_managed`;
-  - `4469a81d.meta.initial_order_id = 'd1080bf5-…'` (взять из погашенной);
-  - `4469a81d.next_charge_at = max(оба)` (НЕ уменьшать).
-- entitlements не трогаем — там единственная `934499af` уже корректна (`expires_at=16.06.26 12:00`).
-
-### C.2. Execute
-
-Выполнение C.1 только после явного approve пользователем отчёта dry-run. Это **не часть** DoD текущего патча — пойдёт отдельным мини-DML с миграцией-аудитом.
-
-## Tests
-
-`bepaid-webhook/three_ds_canonical_writer_test.ts` (новый):
-
-1. **happy_path_bootstrap** — 3DS finalize, нет existing sub → writer вызван 1 раз, ZERO direct access writes, provider-sync UPDATE на subscription, созданную writer'ом.
-2. **happy_path_extend** — existing active same tariff → writer extend, provider-sync UPDATE на ту же запись.
-3. **multi_candidate_no_fallback** — 2 active subs → writer вернул `manual_review_multi_candidate` → ZERO writes, audit `grant_skipped_no_fallback`.
-4. **skip_already_processed_no_fallback** — order уже привязан → ZERO writes, audit.
-5. **error_no_fallback** — writer вернул `error` → ZERO writes, audit, HTTP 200.
-6. **next_charge_at_provider_sync** — writer вернул `next_charge_at_suggested=X`, webhook записал ровно X в `next_charge_at`, НЕ трогая `access_*`/`status`.
-7. **ambiguous_order_id** — 0 writes, audit `ambiguous_order_id`.
-8. **static_check_no_access_writes** — `rg`-проверка по диапазону 3DS finalize ветки: 0 совпадений `access_start_at|access_end_at|entitlements\.|telegram-grant-access` (кроме чтения).
-9. **race_insert_avoided** (writer-тест) — есть `subscriptions_v2.order_id = orderId` уже → новый INSERT не происходит, outcome `skip_already_processed`.
-10. **race_insert_avoided_by_sbs** — кандидат найден по `meta.bepaid_subscription_id` → `skip_already_processed`.
-
-DoD: новые 10 тестов + все существующие H2.1b-i (35) + H2.1b webhook-тесты должны быть green.
-
-## Технические файлы
-
-- **edit**: `supabase/functions/bepaid-webhook/index.ts` — 3DS finalize ветка переписана как (a) вызов writer'а, (b) outcome handling, (c) узкий provider-sync UPDATE.
-- **edit (small)**: `supabase/functions/grant-access-for-order/three_ds_writer.ts` — расширить `classifyCandidates` (B.1) + pre-INSERT re-check (B.2).
-- **create**: `supabase/functions/bepaid-webhook/three_ds_canonical_writer_test.ts`.
-- **edit**: `supabase/functions/grant-access-for-order/three_ds_writer_test.ts` — добавить 2 race-теста.
-- **create**: `.lovable/proofs/patch_h2_1b_ii_webhook_3ds_replace_2026_05.md`.
-- **edit**: `.lovable/plan.md` — статусы цепочки.
-
-## Proof (DoD)
-
-`.lovable/proofs/patch_h2_1b_ii_webhook_3ds_replace_2026_05.md`:
-
-- diff webhook 3DS finalize: before (8 direct writes) → after (0 writes + 1 writer call + 1 узкий provider-sync UPDATE);
-- outcome × action матрица (см. A.4);
-- static check вывод `rg`;
-- список запрещённых полей и подтверждение их отсутствия;
-- результаты тестов (10 new + 35 existing writer + existing webhook = all green);
-- explicit: production DML = 0, migrations = 0, `BEPAID_REBILL_MATERIALIZATION = dry_run`, `mode=on` выключен;
-- отдельная секция "Дубликат Рабчевской":
-  - корневая причина (race INSERT между webhook и writer);
-  - подтверждение, что B.1+B.2 закрывают этот класс на будущее;
-  - dry-run план C.1 (без выполнения).
-
-## Что НЕ входит
-
-- Выполнение data-repair Рабчевской (C.2) — отдельный approve.
-- H2.1c legacy one-time path.
-- H2b atomic append через RPC.
-- H3 широкий repair дублей по всей базе.
-- H4 preconditions + `mode=on`.
-
-## DoD
-
-- 3DS finalize ветка не пишет в access-поля;
-- writer вызывается ровно 1 раз на 3DS finalize;
-- provider-sync — только 5 разрешённых полей;
-- skip/error/manual_review → no fallback-write, HTTP 200, audit;
-- `next_charge_at` из writer применяется без касания access;
-- race-INSERT guard в writer закрывает кейс Рабчевской;
-- 10 новых тестов + все existing — green;
-- static check `rg` чист;
-- proof файл создан;
-- `.lovable/plan.md` обновлён: H2.1b-ii = closed;
-- dry-run Рабчевской зафиксирован в proof, execute НЕ выполнен;
-- production DML = 0, migrations = 0, `BEPAID_REBILL_MATERIALIZATION = dry_run`, `mode=on` выключен.
+До закрытия всего H2.1c (i+ii) — `BEPAID_REBILL_MATERIALIZATION=on` запрещён.
