@@ -155,3 +155,44 @@ overall: ✓ Tests completed with exit code 0
 - **H3.x-a-migration** (если нужен полный B-1): migration + RPC `try_subscription_precreate_lock(uuid,uuid)` + использование лока в writer'ах.
 - **H3.x-b** — dry-run по 3 duplicate-парам, выбор canonical, merge/cancel-план без снижения `access_end_at`. Execute — только после отдельного approve.
 - После закрытия H3.x-b → повторный H4 preconditions → approve → mode=on.
+
+---
+
+## 9. Deploy verification (2026-05)
+
+**Approve:** получен на deploy code-patch H3.x-a (без production data repair).
+
+**Deployed functions (7/7 success):**
+- `bepaid-webhook` ✅
+- `bepaid-create-subscription-checkout` ✅
+- `admin-create-public-link` ✅
+- `admin-create-payment-link` ✅
+- `bepaid-create-token` ✅
+- `public-checkout` ✅
+- `subscription-renewal-reminders` ✅
+
+Scope найден через `rg -l "_shared/subscription-conflict|_shared/create-payment-checkout"` + `bepaid-webhook` (изменён напрямую).
+
+**Smoke/tests после deploy:** регрессия `bepaid-webhook` + `_shared/subscription-conflict_test.ts` зелёные (5/5 в фильтре `subscription`; полная регрессия проходила ранее: 8/8 conflict + 54/54 bepaid-webhook + 42/42 grant-access-for-order).
+
+**DoD после deploy:**
+- ✅ migrations = 0
+- ✅ production DML = 0
+- ✅ 3 duplicate-пары не тронуты
+- ✅ H3.x-b repair не запускался
+- ✅ `BEPAID_REBILL_MATERIALIZATION` остаётся `dry_run`
+- ✅ `mode=on` не включался
+- ✅ secrets не менялись
+
+**Post-deploy наблюдение (открыто):**
+- `audit_logs.action = 'bepaid.rebill.decision_audit'` — должно появляться на каждом rebill (admin_subscription branch).
+- `audit_logs.action = 'admin_subscription.audit_coverage_fixed'` — coverage 100% ожидается.
+- `audit_logs.action = 'subscription.extend_blocked_same_tariff'` (или эквивалент) — на попытках повторного checkout того же тарифа.
+- Метрика: 0 новых active duplicate subscriptions за окно наблюдения.
+
+**H3.x-a статус:** **deployed / closed.**
+
+**Next:**
+- H3.x-a-migration (advisory lock RPC для полного закрытия B-1 race) — отдельный план.
+- H3.x-b (dry-run repair 3 duplicate-пар) — отдельный план.
+- H4 preconditions перед `mode=on` — только после H3.x-b.
