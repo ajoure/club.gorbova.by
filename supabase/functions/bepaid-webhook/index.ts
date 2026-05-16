@@ -1565,19 +1565,20 @@ Deno.serve(async (req) => {
             grantStatus = grantResp.status;
             grantResult = await grantResp.json().catch(() => null);
 
-            if (grantResp.ok && grantResult && grantResult.success !== false) {
-              grantOutcome = 'ok';
+            if (!grantResp.ok || !grantResult) {
+              grantOutcome = 'error';
             } else if (
-              grantResp.ok &&
-              (grantResult?.skipped === true ||
-                grantResult?.status === 'skipped' ||
-                String(grantResult?.reason || '').startsWith('skip_') ||
-                String(grantResult?.reason || '') === 'sbs_mismatch' ||
-                String(grantResult?.reason || '') === 'manual_review')
+              grantResult.skipped === true ||
+              grantResult.status === 'skipped' ||
+              String(grantResult.reason || '').startsWith('skip_') ||
+              String(grantResult.reason || '') === 'sbs_mismatch' ||
+              String(grantResult.reason || '') === 'manual_review'
             ) {
               grantOutcome = 'skip';
-            } else {
+            } else if (grantResult.success === false) {
               grantOutcome = 'error';
+            } else {
+              grantOutcome = 'ok';
             }
             console.log('[WEBHOOK-SUBSCRIPTION] grant-access outcome:', grantOutcome, grantStatus, grantResult);
           } catch (grantErr) {
