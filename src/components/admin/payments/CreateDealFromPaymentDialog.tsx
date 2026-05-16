@@ -398,6 +398,8 @@ export function CreateDealFromPaymentDialog({
           access_end: accessEnd.toISOString(),
           is_ghost: isGhostContact,
           subscription_id: subscriptionId,
+          grant_success: grantSuccess,
+          grant_error_code: grantErrorCode,
         },
       });
 
