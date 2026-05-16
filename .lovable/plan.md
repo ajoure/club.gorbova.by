@@ -10,7 +10,7 @@
 | H2.1 WEBHOOK-SUBSCRIPTION | **closed** | — |
 | H2.1b 3DS finalize (writer + webhook) | **closed + deployed** | proof: `patch_h2_1b_ii_webhook_3ds_replace_2026_05.md` |
 | H2.1c legacy one-time path | **analysis_complete** | proof: `patch_h2_1c_legacy_one_time_analysis_2026_05.md` · Go/No-Go = **Recommendation A (retire)** |
-| H2.1c-i legacy retirement patch | **code+tests closed, deploy pending** | proof: `patch_h2_1c_i_legacy_retirement_2026_05.md` · bepaid-webhook 54/54 + grant-access 42/42 · DML=0 · migrations=0 |
+| H2.1c-i legacy retirement patch | **closed + deployed** | proof: `patch_h2_1c_i_legacy_retirement_2026_05.md` · bepaid-webhook 54/54 + grant-access 42/42 · DML=0 · migrations=0 · secret=`dry_run` |
 | H2.1c-ii legacy bridge + delegate | **N/A** | снято с roadmap (0 paid за 90д, 0 live трафика) — реактивировать только если zone 2 снова получит paid webhook |
 | H2b atomic append RPC | **backlog** | — |
 | H3 data-repair (Рабчевская и др.) | **pending** | data-repair НЕ выполнять до отдельного approve |
