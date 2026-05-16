@@ -100,3 +100,49 @@
 - **H3.x-d cleanup — Stage 1 dry-run готов, ждёт approve**
 - G25 (Алеся Хомич) — hold до 2026-05-18 06:00 UTC
 - H4 `mode=on` — still blocked
+
+---
+
+## Stage 2 — EXECUTED (2026-05-16 19:38:00 UTC)
+
+### Verify
+
+| # | ФИО | sbs | status | auto_renew | canceled_at | access_end_at | cancel_reason | batch | verdict |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | Anasstasia Stankevich | sbs_4cb14472e800f524 | canceled | false | 2026-05-16 19:38:00+00 | NULL | inv22_provider_dead_local_active_pastdue | h3x_d_abandoned_signup_2026_05 | provider_expired |
+| 2 | Ирина Гузаревич | sbs_686219e109cfccc1 | canceled | false | 2026-05-16 19:38:00+00 | NULL | ✅ | ✅ | ✅ |
+| 3 | Оксана Зеленкевич | sbs_c6e68d772064a5fe | canceled | false | 2026-05-16 19:38:00+00 | NULL | ✅ | ✅ | ✅ |
+| 4 | Ольга Черкашина | sbs_b167a6fc7b17b93a | canceled | false | 2026-05-16 19:38:00+00 | NULL | ✅ | ✅ | ✅ |
+| 5 | Татьяна Чёкчикова | sbs_8b65f96cbba62f0c | canceled | false | 2026-05-16 19:38:00+00 | NULL | ✅ | ✅ | ✅ |
+| 6 | Татьяна Ярошевич | sbs_23f8e27141ac2ebc | canceled | false | 2026-05-16 19:38:00+00 | NULL | ✅ | ✅ | ✅ |
+| 7 | Юлия Станкевич G34a | sbs_4f13f25943f4ccd6 | canceled | false | 2026-05-16 19:38:00+00 | NULL | ✅ | ✅ | ✅ |
+| 8 | Юлия Станкевич G34b | sbs_92b38efdebaeb110 | canceled | false | 2026-05-16 19:38:00+00 | NULL | ✅ | ✅ | ✅ |
+
+### DoD check
+
+- [x] subscriptions_v2 UPDATE rowcount = 8
+- [x] audit_logs INSERT rowcount = 8 (action=`inv22.local_terminate_after_provider_dead`, actor_type=`system`, actor_label=`h3x_d_abandoned_signup_2026_05`)
+- [x] все 8 → `status='canceled'`
+- [x] все 8 → `auto_renew=false`
+- [x] все 8 → `canceled_at` заполнен (2026-05-16 19:38:00.777185+00)
+- [x] `access_end_at` у всех остался `NULL` (доступ не отзывался)
+- [x] entitlements не трогались
+- [x] orders_v2 не трогались
+- [x] payments_v2 не трогались
+- [x] provider_subscriptions не трогались
+- [x] Telegram не трогался
+- [x] provider API не вызывался
+- [x] `grant-access-for-order` не вызывался
+- [x] G25 / Алеся Хомич (sbs_50a3bd75a025455b) НЕ тронута: `status=past_due, auto_renew=true` — hold до 2026-05-18 06:00 UTC
+- [x] `BEPAID_REBILL_MATERIALIZATION=dry_run` (не менялся)
+- [x] `mode=on` не включался
+- [x] migrations = 0
+
+## Status board
+
+- H3.x-b execute-A/B — closed
+- H3.x-c past_due classification — closed
+- H3.x-c-provider-pull — closed
+- **H3.x-d cleanup — closed (8/8 executed)**
+- G25 (Алеся Хомич) — hold до 2026-05-18 06:00 UTC → repeat provider pull
+- H4 `mode=on` — still blocked
