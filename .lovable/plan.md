@@ -1,362 +1,251 @@
 да, согласен, с учетом правок:
 
-1. **Добавить обязательный PATCH F — полная end-to-end ревизия цепочки оплаты и доступа.**  
-Сейчас план чинит конкретные дефекты `orderId/order_id` и прямой Telegram writer, но не закрывает главный риск: система может иметь другие разрывы в цепочке `payment → order → grant → subscription/entitlement → Telegram → UI`.
-2. **PATCH F должен быть read-only и идти до массового repair.**  
-Никаких execute-действий по кандидатам, пока не будет полной карты цепочки.
-3. **В PATCH F проверить всю цепочку:**
+1. **Сейчас разрешать только Этап 1 — dry-run read-only.**  
+Execute из Этапа 2 не запускать до отдельного approve по dry-run таблице.
+2. **В Этапе 5.3 убрать отдельную ручную запись** `inv_group_a_canonical_regrant.execute` **из обязательного execute.**  
+Если задача принципиально “только через canonical writer”, то достаточно audit самого `grant-access-for-order` + proof-файл.  
+Отдельный batch audit можно делать только если это уже предусмотрено безопасным system-audit механизмом и не является ручным DML.
+3. **Whitelist для Telegram source не фиксировать заранее.**  
+Сначала в dry-run/proof показать реальные canonical `source` значения Telegram path. Формулировку заменить на:  
+`подтвердить, что Telegram был создан через grant-access-for-order canonical path, а не прямым UI-вызовом`.
+4. **Добавить в dry-run проверку refund/cancel факта по payments.**  
+Для каждого order:
+  - `status='paid'`;
+  - сумма платежей > сумма возвратов;
+  - нет полного возврата;
+  - если full refund/cancel найден — `stop_status_changed` или `manual_review`.
+5. **Добавить проверку already active access по тому же order_id.**  
+Если уже есть entitlement/subscription, связанная именно с этим order_id — `skip_already_fulfilled`, не extend.
+6. **Добавить проверку active access по тому же product/tariff от другого order.**  
+В dry-run явно показать:
+  - это дубль;
+  - это легитимное продление;
+  - или нужен `manual_review`.
+7. **Для GIFT-orders добавить отдельный флаг.**  
+В dry-run показать:
+  - получатель подарка;
+  - кто выдал;
+  - не был ли подарок уже реализован;
+  - не создаст ли re-grant второй доступ.
+8. **DoD разделить на два блока.**
 
 ```text
-payment received
-→ payment recorded
-→ order/deal created
-→ grant-access-for-order
-→ subscription / entitlement
-→ access window
-→ Telegram access
-→ admin UI / user cabinet display
+DoD Dry-run:
+- proof-файл создан;
+- все 9 order проверены;
+- planned_action/stop_reason заполнены;
+- DML=0;
+- execute не запускался.
+
+DoD Execute:
+- только после отдельного approve;
+- grant-access-for-order вызван сериально;
+- before/after по каждому order;
+- manual_review отдельно;
+- прямых DML нет.
 ```
 
-4. **Добавить в план раздел PATCH F:**
+9. **Команда на текущий шаг:**
 
 ```text
-### PATCH F — полная ревизия end-to-end цепочки оплаты, доступа, Telegram и подписок
+Выполни только Этап 1 — dry-run read-only по 9 кандидатам Group A.
 
-Цель: проверить всю цепочку от получения денег до отображения доступа в админке, кабинете пользователя и Telegram.
+Запрещено:
+- вызывать grant-access-for-order;
+- писать audit;
+- делать DML;
+- менять entitlements/subscriptions_v2/telegram;
+- выполнять execute.
 
-Read-only проверить:
+После dry-run дай таблицу по 9 order_id:
+order_id, user_id, product_id, tariff_id, current entitlement/subscription, refund/cancel status, planned_action, stop_reason, expected access window, Telegram action.
 
-1. Payment ingestion:
-- bePaid webhook;
-- admin bePaid sync;
-- manual/admin payment flow;
-- payment_reconcile_queue;
-- public payment link;
-- bulk create from payments.
+Execute не запускать без отдельного approve.
 
-Для каждого источника определить:
-- где создаётся payments_v2;
-- где определяется user_id/profile_id;
-- где определяется product_id/tariff_id;
-- где создаётся orders_v2;
-- где вызывается grant-access-for-order;
-- есть ли flow, где payment/order создаются без canonical grant.
-
-2. Order/deal creation:
-- все места создания orders_v2;
-- все meta.source:
-  - admin_from_payment;
-  - admin_bulk_from_payments;
-  - admin_grant;
-  - bepaid_webhook;
-  - rebill_materialization;
-  - другие;
-- какие flows создают order, но не подтверждают grant;
-- какие flows игнорируют ошибку grant.
-
-3. Platform access:
-Проверить canonical path:
-
-orders_v2 / paid order
-→ grant-access-for-order(orderId)
-→ subscriptions_v2 / entitlements
-→ access_grant_ledger / audit_logs
-
-Проверить все вызовы grant-access-for-order:
-- из UI;
-- из edge functions;
-- из cron/sync;
-- body contract orderId/order_id;
-- где результат grant игнорируется.
-
-4. Telegram access:
-Проверить, что Telegram выдаётся только через:
-
-grant-access-for-order
-→ access_rules/product fulfillment
-→ telegram-grant-access
-
-Найти все прямые вызовы telegram-grant-access:
-- из UI;
-- из edge functions;
-- из admin flows;
-- из repair flows.
-
-Telegram access не считать source of truth. Source of truth:
-subscriptions_v2 / entitlements / manual access.
-
-5. Subscriptions:
-Проверить:
-- когда создаётся subscriptions_v2;
-- когда продлевается access_end_at;
-- как определяется bepaid_subscription_id;
-- как связаны orders_v2, payments_v2, subscriptions_v2, provider_subscriptions, entitlements;
-- есть ли provider active + local expired;
-- есть ли local active + provider canceled;
-- есть ли subscription без entitlement;
-- есть ли entitlement без subscription/access window.
-
-6. Access time synchronization:
-Проверить совпадение:
-- subscriptions_v2.access_start_at/access_end_at;
-- entitlements.valid_from/expires_at;
-- provider_subscriptions.next_charge_at;
-- orders_v2.deal_date;
-- payments_v2.paid_at;
-- admin UI access date;
-- user cabinet access date;
-- Telegram expiration/status, если хранится.
-
-7. Admin UI vs user cabinet:
-Проверить одинаковость отображения в:
-- карточке контакта → Доступы;
-- карточке сделки;
-- карточке платежа;
-- личном кабинете;
-- /products;
-- training-tree;
-- Telegram status blocks.
-
-Proof-файл:
-.lovable/proofs/payment_to_access_chain_revision_2026_05.md
+План: PATCH E — canonical re-grant Group A (9 кандидатов)
 ```
 
-5. **Добавить группы кандидатов для read-only отчета:**
+## 1. Цель
+
+Восстановить платформенный доступ по 9 paid-сделкам из Group A (proof `.lovable/proofs/payment_to_access_chain_revision_2026_05.md`), которые были созданы UI-flows до PATCH A и остались без активного entitlement/subscription. Repair выполняется **только** через canonical writer `grant-access-for-order(orderId)`. Никаких прямых DML в `entitlements`, `subscriptions_v2`, `telegram_*`.
+
+## 2. Scope (фиксированный)
+
+Ровно 9 order_id из Group A:
 
 ```text
-Group A — paid orders without platform access
-Group B — Telegram access without platform access
-Group C — platform access without Telegram access
-Group D — subscription / entitlement date mismatch
-Group E — provider/local subscription desync
-Group F — grant called but failed/ignored
-Group G — direct Telegram writer usage
+2da906f1-7957-4461-a7a1-8b977f30bf09  GIFT-26-MOCVYPNO  admin_grant         2026-04-24
+d0a995aa-887f-469b-8329-804fa9f40072  PAY-26-MNRI13HN   admin_from_payment  2026-04-09
+6914c44e-f174-4da4-a831-c47da13ab36e  GIFT-26-MNM0A0PG  admin_grant         2026-04-05
+df4f2c36-2184-48ae-bd40-cfb35b73c2e2  GIFT-26-MNM09LJN  admin_grant         2026-04-05
+3a748fd9-e8dc-407a-9b67-866664cfa105  GIFT-26-MNM099PF  admin_grant         2026-04-05
+d3c5070c-c182-44b4-aac0-21634595f233  GIFT-26-MNM08XKV  admin_grant         2026-04-05
+b170b768-aaeb-4749-8071-20258b908dd8  PAY-26-MN1G0JZJ   admin_from_payment  2026-03-21
+85a99b74-c545-4600-b7c8-382a37e9f118  PAY-26-MM4P1ZYR   admin_from_payment  2026-02-27
+bddd5a41-8338-4bbe-86a7-9a1db69ba5cd  PAY-26-MN1G057Z   admin_from_payment  2026-02-19
 ```
 
-6. **Добавить отдельную строку по Матук Веронике в PATCH F proof:**
+Скоуп жёстко зафиксирован: новые order_id не добавляются без отдельного approve. Если в pre-flight выяснится, что чей-то статус уже стал `cancelled/refunded` — кандидат исключается с пометкой `precheck_status_changed`.
+
+## 3. Этап 1 — Dry-run (read-only)
+
+### 3.1 Pre-flight SELECT
+
+Для каждого order_id собрать:
+
+- `orders_v2.{id, order_number, status, user_id, product_id, tariff_id, final_price, created_at, meta.source}`;
+- `entitlements` по `(user_id, product_id)`: id, expires_at, order_id, meta.tariff_id;
+- `subscriptions_v2` по `(user_id, product_id)`: id, tariff_id, status, access_start_at, access_end_at, auto_renew;
+- `products_v2.{name, telegram_club_id, requires_telegram}` и `access_rules` для (product_id, tariff_id);
+- `tariffs.{name, access_days}`;
+- `audit_logs` фильтр `action LIKE 'grant-access-for-order%' AND meta->>'order_id'=<id>` за всё время.
+
+### 3.2 Классификация (per-order)
+
+
+| planned_action                                                 | условие                                                                                                                                                               |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create_primary_entitlement_and_subscription`                  | нет entitlement и нет active subscription по (user_id, product_id)                                                                                                    |
+| `extend_active_subscription`                                   | есть active subscription с **тем же** `tariff_id`; `grant-access-for-order` выполнит idempotent extend                                                                |
+| `create_new_subscription_tariff_change`                        | есть active subscription, но `tariff_id` отличается (см. mem://commercial-logic/access/extend-tariff-match-required) — будет создана новая, существующая не трогается |
+| `skip_already_fulfilled`                                       | guard `grant-access-for-order` уже считает order fulfilled (entitlement по order_id есть, даты не stale) — фактически no-op                                           |
+| `stop_no_user_id` / `stop_no_product_id` / `stop_no_tariff_id` | данных не хватает (по proof все 9 имеют все три, но re-check обязателен)                                                                                              |
+| `stop_status_changed`                                          | order.status != 'paid'                                                                                                                                                |
+| `stop_foreign_user_collision`                                  | order_id уже привязан к entitlement другого user_id (hard-stop в writer)                                                                                              |
+
+
+### 3.3 Ожидаемый `access_end_at`
+
+- `extend_active_subscription`: `GREATEST(current_access_end_at, access_start_resolved + tariff.access_days)` — расчёт canonical writer, не предсказываем сами; в dry-run выводим текущий `access_end_at` и `+access_days` как «планируемая нижняя граница».
+- `create_primary_*` / `create_new_*`: `paid_at_or_created_at + tariff.access_days` (canonical writer пересчитает по своему `calcCalendarMonthEnd` для club).
+
+### 3.4 Telegram action
+
+- Для `product.telegram_club_id IS NOT NULL` и `access_rules` с Telegram fulfillment: planned `telegram-grant-access` через canonical (writer вызовет сам).
+- Для остальных: `none`.
+- Прямой Telegram-вызов исключён.
+
+### 3.5 Dry-run артефакт
+
+`.lovable/proofs/inv_group_a_canonical_regrant_dry_run_2026_05.md` с таблицей по каждому order:
 
 ```text
-Матук Вероника:
-- payment;
-- order;
-- subscription;
-- entitlement;
-- Telegram status;
-- access dates;
-- current admin UI status;
-- current user cabinet status;
-- conclusion: restored / not restored / needs repair / code-only issue.
+order_id | order_number | source | user_id | product_name | tariff_name |
+current_ent.expires_at | current_sub.status/end | planned_action |
+expected_access_end_at_lower_bound | telegram_action | stop_reason
 ```
 
-7. **PATCH E repair не выполнять в рамках первого захода.**  
-В текущем плане пункт 7 допускает repair после dry-run. Лучше разделить:
-  - текущий заход: code-patch A/B/C + read-only D/F;
-  - repair E: только отдельным approve после таблицы кандидатов.
-8. **Добавить запрет на прямой Telegram repair.**  
-Любой Telegram sync repair допустим только если уже есть primary active entitlement/subscription. Нельзя выдавать Telegram как замену платформенному доступу.
-9. **Добавить проверку admin UI vs user cabinet по одинаковому access resolver.**  
-Если админка и кабинет используют разные источники, это отдельный UI display resolver patch.
-10. **Добавить в конец плана:**
+И сводка: счётчики по planned_action, список stop, общий go/no-go.
+
+### 3.6 Что НЕ делаем в dry-run
+
+- Не вызываем `grant-access-for-order` даже в `dry_run` mode (этот writer не имеет dry-режима).
+- Не пишем в audit.
+- Не меняем БД.
+
+## 4. STOP-guards (между dry-run и execute)
+
+Execute блокируется (waiting for approve), если хотя бы одно:
+
+- любой кандидат с `stop_*` reason;
+- любой кандидат с `foreign_user_collision`;
+- любой кандидат, где `product_id` или `tariff_id` пустые;
+- любой кандидат, где `user_id` пуст (ghost);
+- кандидатов >9 (значит scope расползся);
+- кандидатов <1 (нечего чинить — фиксируем и закрываем).
+
+При срабатывании STOP — отчёт с причиной, без execute.
+
+## 5. Этап 2 — Execute (только после approve dry-run)
+
+### 5.1 Контракт вызова
+
+Для каждого order последовательно (НЕ параллельно):
+
+```ts
+supabase.functions.invoke('grant-access-for-order', {
+  body: { orderId, source: 'inv_group_a_canonical_regrant_2026_05' }
+})
+```
+
+- `orderId` — canonical.
+- Никаких `customAccessDays/customAccessStartAt/customAccessEndAt` — writer считает SOT-окно сам.
+- `extendFromCurrent: true` по умолчанию.
+- `grantTelegram: true` — Telegram идёт canonical path через `access_rules`.
+- Сериально (1 за раз), таймаут 30s, без ретраев на 4xx; на 5xx — 1 повтор через 5s.
+
+### 5.2 Per-order ветвление по ответу
+
+
+| ответ writer'а                                                             | действие                                              |
+| -------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `success: true` + `subscription_id`/`entitlement_id`                       | записать before/after в proof, статус `done`          |
+| `skip_already_fulfilled`                                                   | статус `idempotent_skip`, считается успехом           |
+| `error: 'order_id_collision_foreign_user'`                                 | статус `manual_review`, не чинить, в отдельный список |
+| `error: 'sbs_mismatch'` / `manual_review` / `primary_entitlement_*_failed` | статус `manual_review`, в отдельный список            |
+| HTTP 4xx (валидация)                                                       | статус `precheck_failed`, в отдельный список          |
+| HTTP 5xx / exception после 1 ретрая                                        | статус `dispatcher_error`, в отдельный список         |
+
+
+### 5.3 Audit
+
+Дополнительно к audit writer'а — отдельная запись в `audit_logs`:
 
 ```text
-Важно: этот PATCH не должен ограничиваться кейсом Матук Вероники. Кейс Матук — контрольный пример. Основная задача — проверить и зафиксировать всю цепочку от получения денег до отображения доступа в админке, личном кабинете и Telegram.
+action: 'inv_group_a_canonical_regrant.execute'
+actor_type: 'system'
+meta: { order_id, planned_action, result_status, before, after, writer_response }
 ```
 
-После этих дополнений план можно запускать. Для текущего захода: **code A/B/C + read-only D/F**, без массового repair.
+## 6. Этап 3 — Post-execute proof
 
-&nbsp;
+`.lovable/proofs/inv_group_a_canonical_regrant_execute_2026_05.md` с разделами:
 
-План:
+1. Before/after таблица по 9 order'ам:
+  - `entitlement.id`, `entitlement.expires_at` до и после;
+  - `subscription.id`, `subscription.status`, `access_end_at` до и после;
+  - Telegram: создан/продлён/none.
+2. Audit-выборка по `action LIKE 'grant-access-for-order%'` за окно execute (с фильтром по order_id).
+3. Список `manual_review` с конкретным error-кодом writer'а и причиной.
+4. Подтверждение, что прямых DML в `entitlements`, `subscriptions_v2`, `telegram_*` не было (по audit и по count delta вне canonical path).
+5. Подтверждение, что Telegram везде создан через canonical path (нет записей в `telegram_access_queue` со `source` вне whitelist `{reinvite, manual_bulk, repair, admin_backfill}`).
+6. DoD-чеклист (см. §10).
 
-## 1. Проблема
+## 7. Что НЕ меняем
 
-По Матук Веронике (контрольный пример) и похожим сценариям админский UI создаёт сделку из платежа, но canonical writer `grant-access-for-order` срабатывает не всегда: платформенный доступ не подтверждается, а Telegram-доступ при этом приходит отдельно. Нужно не точечный фикс, а полная ревизия end-to-end цепочки оплаты → сделка → доступ → Telegram → отображение.
+- `BEPAID_REBILL_MATERIALIZATION` — не трогаем.
+- `bepaid-webhook` — не трогаем.
+- Schema/RLS — не меняем.
+- Group D (51 кандидат) — отдельным планом «Subscription/Entitlement Date Alignment — read-only first», вне PATCH E.
+- Group B/C — отдельным планом после TG-schema sweep.
+- Никаких manual fix для `manual_review` ветки — только список и причина.
 
-## 2. Диагностика (уже выполненная read-only)
+## 8. Изменяемые файлы
 
-- Контакт: `profile_id=4e8834a5-0f6a-44d6-b05a-8d7ec3b4d6e9`, `user_id=341e6f46-79dd-4920-b500-da78e3574aab`, `email=nika.1900735@mail.ru`.
-- Проблемная сделка: `order_id=baeb6e7d-e661-4ee5-9a15-9d5991ce6b24`, `order_number=PAY-26-MP5R5Z6S`, `meta.source=admin_from_payment`, продукт Gorbova Club, тариф BUSINESS, 250 BYN.
-- В момент создания сделки audit `admin.create_deal_with_access_from_payment` записал `subscription_id=null` — UI не дождался подтверждения canonical grant.
-- Позже `grant-access-for-order` всё же отработал: `entitlements.id=a2bb0780-…`, `subscriptions_v2.id=1f7e391e-…`, `access_end_at=2026-06-11`.
-- Системный код-дефект: UI зовёт `grant-access-for-order` с body `{ order_id }`, edge function ждёт `orderId` → `orderId is required`, при этом UI продолжает Telegram side-effect.
-- Параллельный Telegram writer в UI нарушает canonical path и объясняет «Telegram есть, доступа нет».
+Только proof'ы:
 
-## 3. Предлагаемое решение
+- `.lovable/proofs/inv_group_a_canonical_regrant_dry_run_2026_05.md`
+- `.lovable/proofs/inv_group_a_canonical_regrant_execute_2026_05.md`
 
-### PATCH A — контракт `grant-access-for-order`
+Код не меняется. Тестов не добавляем — `grant-access-for-order` уже покрыт 9 unit-тестами (зелёные после PATCH A).
 
-1. UI: `{ order_id }` → `{ orderId }` во всех точках (`CreateDealFromPaymentDialog`, `BulkCreateDealsDialog`, `ContactDetailSheet` и пр.).
-2. Edge function: принимать оба ключа, нормализовать в `orderId`, писать audit `grant-access-for-order.legacy_body_alias` для legacy-вызовов.
+## 9. Риски
 
-### PATCH B — убрать параллельный Telegram writer из UI
+- `admin_grant` GIFT-orders могли быть подарками: возможно, у пользователя уже есть активная подписка по другому `tariff_id` → ветка `create_new_subscription_tariff_change`. Это легитимный исход, не ошибка.
+- Старые `PAY-*` orders (2026-02/03) — пользователь мог за 2-3 месяца получить доступ другим путём (новый order, ручной grant). Тогда writer вернёт `skip_already_fulfilled`. Это тоже легитимно.
+- `order_id_collision_foreign_user` маловероятен (proof фильтрует `user_id IS NOT NULL`), но guard оставлен.
 
-В UI-flows создания сделки/ручного гранта удалить прямые `supabase.functions.invoke("telegram-grant-access", …)`. Telegram-доступ выдаёт только canonical path:
+## 10. DoD
 
-```text
-order paid / admin grant / deal from payment
-  → grant-access-for-order
-  → telegram-grant-access (через access_rules)
-```
-
-### PATCH C — корректная обработка результата в UI
-
-- Не показывать «доступ выдан», если canonical grant не вернул успех.
-- Использовать `normalizeEdgeFunctionError`, не показывать raw error.
-- В audit `admin.create_deal_with_access_from_payment` сохранять `grant_success`, `grant_error_code`, `subscription_id`, `entitlement_id`.
-
-### PATCH D — dry-run кандидатов локального дефекта
-
-Read-only список paid-сделок, где writer-flow ожидал доступ, но его нет:
-
-- `meta.source ∈ ('admin_from_payment','admin_bulk_from_payments','admin_grant')`;
-- не ghost, есть `product_id` и `tariff_id`;
-- нет активного entitlement по `(user_id, product_id)` и/или нет/не extended `subscriptions_v2`.
-
-### PATCH E — repair только через canonical writer
-
-Для approved кандидатов: вызов `grant-access-for-order(orderId)` без прямых INSERT/UPDATE. Proof-файл с before/after.
-
----
-
-## PATCH F — полная ревизия end-to-end цепочки оплаты и доступа (обязательный, read-only)
-
-### F.0 Цель
-
-Проверить, что вся цепочка работает как единая система без параллельных writer’ов:
-
-```text
-payment received
-  → payment recorded (payments_v2)
-  → order/deal created (orders_v2)
-  → grant-access-for-order(orderId)
-  → entitlement / subscriptions_v2 created or extended
-  → access window synchronized
-  → Telegram access via canonical path
-  → admin UI и user cabinet показывают одинаковый access state
-```
-
-Кейс Матук Вероники — только контрольный пример. Основная задача — зафиксировать всю цепочку от получения денег до отображения доступа.
-
-### F.1 Read-only inventory
-
-1. **Payment ingestion sources:** `bepaid-webhook`, admin bePaid sync, manual/admin flow, `payment_reconcile_queue`, public payment link, bulk create from payments. Для каждого: где пишется `payments_v2`, где определяются `user_id/profile_id/product_id/tariff_id`, где создаётся/находится `orders_v2`, где зовётся `grant-access-for-order`, есть ли flows без canonical grant.
-2. **Order creation flows:** все места insert в `orders_v2`, инвентарь `meta.source` (`admin_from_payment`, `admin_bulk_from_payments`, `admin_grant`, `bepaid_webhook`, `rebill_materialization`, прочие), какие создают order без grant, какие зовут grant без проверки результата, какие пишут «доступ выдан» до подтверждения.
-3. **Grant-access callers:** body contract (`orderId` vs legacy `order_id`); UI / edge functions / cron; где результат игнорируется; где UI продолжает side-effect при ошибке.
-4. **Telegram access:** прямые UI и edge вызовы `telegram-grant-access` вне canonical; flows, где Telegram выдан без primary entitlement/subscription. Telegram **не** SOT.
-5. **Subscriptions_v2 linkage:** когда создаётся/продлевается, как резолвится `bepaid_subscription_id`, как связаны `orders_v2 ↔ payments_v2 ↔ subscriptions_v2 ↔ provider_subscriptions ↔ entitlements`.
-6. **Access window sync:** `subscriptions_v2.access_start_at/access_end_at`, `entitlements.expires_at`, `provider_subscriptions.next_charge_at`, `orders_v2.deal_date`, `payments_v2.paid_at`, окна в admin UI и user cabinet, Telegram expiration.
-7. **Admin vs user cabinet UI:** один canonical resolver (или одинаковый результат) в карточке контакта (вкладка «Доступы»), карточке сделки, карточке платежа, личном кабинете, `/products`, training-tree, Telegram-блоках.
-
-### F.2 Candidate groups (read-only SQL)
-
-- **A** — paid orders без platform access (есть `user_id/product_id/tariff_id`, нет активных entitlement/subscription).
-- **B** — Telegram access без platform access.
-- **C** — platform access без Telegram при `requires_telegram=true` на продукте.
-- **D** — date mismatch `subscriptions_v2.access_end_at` ≠ `entitlements.expires_at` для одного `(user_id, product_id)`.
-- **E** — provider/local desync: `provider_subscriptions.state='active'` vs local expired/canceled/superseded и наоборот.
-- **F** — grant called but failed/ignored: audit показывает попытку, но `subscription_id/entitlement_id` отсутствуют или UI продолжил side-effect.
-- **G** — direct Telegram writer usage: места в коде и audit, где Telegram выдан вне canonical.
-
-### F.3 Proof-файл
-
-`.lovable/proofs/payment_to_access_chain_revision_2026_05.md` со всеми разделами F.1–F.2 и отдельной строкой по Матук Веронике: payment / order / subscription / entitlement / Telegram / access dates / current status / вывод (восстановлено, требует repair, требует code-fix).
-
-### F.4 STOP-guards для PATCH F
-
-- Никакого execute на этом этапе. Только read-only.
-- Никаких прямых INSERT/UPDATE в `entitlements`, `subscriptions_v2`, `telegram_*`.
-- `BEPAID_REBILL_MATERIALIZATION=on` не включать.
-- Не менять schema/RLS.
-- Если в любой группе A–G кандидатов больше 20 — только отчёт, без repair-плана execute.
-- Все repair — отдельными patch: dry-run → approve → execute.
-
-### F.5 Repair-планы после ревизии (отдельно, не в этом PATCH)
-
-- Canonical grant repair — только через `grant-access-for-order(orderId)`.
-- Telegram sync repair — только при активных primary entitlement/subscription.
-- Subscription/entitlement date alignment — через canonical writer или approved repair.
-- Provider/local subscription desync — по аналогии с zombie provider subscriptions.
-- UI display resolver patch — если admin/user UI показывают разное.
-
-### F.6 DoD PATCH F
-
-- Полный proof-файл создан.
-- Перечислены все payment/order/grant/telegram flows.
-- Перечислены все прямые Telegram writer’ы.
-- Матрица расхождений по access windows.
-- Candidate lists по группам A–G.
-- По Матук Веронике отдельная строка с финальным выводом.
-
----
-
-## 4. Изменяемые компоненты
-
-Файлы (PATCH A–C):
-
-- `supabase/functions/grant-access-for-order/index.ts` (только compatibility + audit)
-- `src/components/admin/payments/CreateDealFromPaymentDialog.tsx`
-- `src/components/admin/payments/BulkCreateDealsDialog.tsx`
-- `src/components/admin/ContactDetailSheet.tsx`
-
-Proof:
-
-- `.lovable/proofs/matuk_access_deal_creation_revision_2026_05.md` (PATCH A–E)
-- `.lovable/proofs/payment_to_access_chain_revision_2026_05.md` (PATCH F)
-
-Read-only таблицы для F: `profiles`, `orders_v2`, `payments_v2`, `subscriptions_v2`, `entitlements`, `payment_reconcile_queue`, `audit_logs`, `telegram_club_members`, `telegram_messages`, `telegram_access_queue`, `provider_subscriptions`, `access_rules`, `access_grant_ledger`, `products_v2`, `tariffs`.
-
-## 5. Что не будет изменено
-
-- `BEPAID_REBILL_MATERIALIZATION=on` не включать.
-- `bepaid-webhook` не рефакторить (только если targeted tests покажут регрессию).
-- Никаких новых таблиц/RPC/edge functions.
-- Никаких прямых INSERT/UPDATE в `entitlements` / `subscriptions_v2` / `telegram_*`.
-- Не менять access_rules, продукты, тарифы, schema, RLS.
-
-## 6. Dry-run
-
-1. SQL-снимок Матук Вероники по всем уровням цепочки.
-2. SQL по PATCH D кандидатам.
-3. SQL по PATCH F группам A–G с rowcount.
-4. STOP-guard: > 20 в группе → только отчёт.
-
-## 7. Execute (после approve этого плана)
-
-1. PATCH A–C — код-патч + tests `grant-access-for-order` + deploy.
-2. PATCH F — read-only ревизия + proof-файл.
-3. PATCH D — dry-run кандидатов.
-4. PATCH E — canonical repair только после approve по rowcount.
-5. Repair-планы из F.5 — отдельными PATCH с dry-run → approve → execute.
-
-## 8. STOP-guards (общие)
-
-- Заказ без `user_id/product_id/tariff_id` → stop.
-- Foreign-user collision на entitlement → stop.
-- `grant-access-for-order` вернул `sbs_mismatch` / `manual_review` / `primary_entitlement_*_failed` → stop.
-- Edge function tests не проходят → stop.
-- Любая необходимость менять schema/RLS → отдельный план/миграция.
-
-## 9. DoD общий
-
-- UI везде использует `orderId` (или совместимый нормализованный контракт).
-- `grant-access-for-order` принимает legacy `order_id` с audit.
-- В flows создания сделки/ручного гранта нет прямого `telegram-grant-access`.
-- UI не пишет «доступ выдан» без подтверждения canonical grant.
-- По Матук Веронике в proof: payment / deal / entitlement / subscription / Telegram / access window — всё через canonical writer; Telegram не используется как доказательство платформенного доступа.
-- PATCH F DoD выполнен (см. F.6).
-- Данных вне canonical writer не меняли.
+- Dry-run артефакт с таблицей по 9 order'ам и сводкой создан.
+- Approve dry-run получен явно.
+- Execute прогнан сериально через `grant-access-for-order(orderId)`.
+- Post-execute proof содержит before/after по всем 9.
+- Прямых DML в entitlements/subscriptions_v2/telegram_* нет.
+- Telegram только canonical path.
+- `manual_review`/`dispatcher_error` вынесены в отдельный список с error-кодами.
 - `BEPAID_REBILL_MATERIALIZATION=on` не включался.
 
-## 10. Риски и зависимости
+## 11. Следующий план (отдельно, не часть PATCH E)
 
-- Удаление прямого Telegram writer из UI безопасно: `grant-access-for-order` уже содержит canonical Telegram path через `access_rules`.
-- Исторические сделки с разными `meta.source` — массовый repair только после dry-run.
-- Текущий кейс Матук уже восстановлен в backend, но root cause в коде остаётся → повторится без PATCH A–C.
-
-## 11. Требуется дополнительная информация
-
-Не требуется для approve. Repair-объёмы (PATCH E и F.5) запросят отдельный approve по rowcount после dry-run.
-
----
-
-**Важно:** этот план не ограничивается кейсом Матук Вероники. Кейс Матук — контрольный пример. Основная задача PATCH F — проверить и зафиксировать всю цепочку от получения денег до отображения доступа в админке, личном кабинете и Telegram.
+«План: Subscription/Entitlement Date Alignment — read-only first» — для Group D (51 кандидат): сначала read-only классификация причин расхождения дат (renewal mis-alignment / partial extend / legacy import), потом отдельный repair по подгруппам через canonical writer. Подготовлю отдельным сообщением после approve этого плана.
