@@ -134,3 +134,19 @@ Execute НЕ выполнен — отдельный PATCH после approve.
 3. H3 — широкий repair дублей (pending).
 4. H4 — preconditions + `BEPAID_REBILL_MATERIALIZATION=on` (pending).
 5. Data-repair Рабчевской — отдельным approve.
+
+---
+
+## Deploy verification (2026-05-16, Minsk)
+
+1. **Deploy success**: `grant-access-for-order` + `bepaid-webhook` — оба задеплоены без ошибок (Supabase deploy tool вернул `Successfully deployed`).
+2. **Tests result сохранён**: `grant-access-for-order` 42/42, `bepaid-webhook` 44/44 (см. раздел «Тесты» выше).
+3. **`BEPAID_REBILL_MATERIALIZATION`**: secret присутствует в проекте, значение НЕ менялось через `update_secret`. Остаётся `dry_run`.
+4. **`mode=on`**: НЕ включался.
+5. **Production DML**: 0 (deploy ≠ DML; миграции не выполнялись).
+6. **Audit/errors за первые минуты после deploy**: edge function logs для обеих функций пусты (новых вызовов после deploy не зафиксировано → 0 errors, 0 invocations). Будет перепроверено при первом боевом 3DS finalize webhook'е.
+7. **Proof updated**: этот раздел.
+
+**Status**: deploy clean, ждём первый боевой 3DS finalize для runtime-валидации.
+
+**Next blocker**: H2.1c legacy one-time path. До его закрытия `BEPAID_REBILL_MATERIALIZATION=on` не включать.
