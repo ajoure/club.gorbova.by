@@ -54,17 +54,20 @@ Stage 3 проверка `access_end_at` regression идёт против эти
 
 ## 2. Flip (Stage 1)
 
-_Pending — Stage 1 будет выполнен после явного подтверждения через secrets update form._
+- `flipped_at_utc` = `2026-05-16T21:03:50.442Z`
+- `flipped_at_minsk` = `2026-05-17 00:03:50 Europe/Minsk`
+- Действие: `BEPAID_REBILL_MATERIALIZATION`: `dry_run` → **`on`** через `secrets--update_secret` (secure form, user-confirmed).
+- Re-read #1 (сразу после update): secret присутствует в `fetch_secrets` listing (значения скрыты по design).
+- Re-read #2 (перед observation): будет выполнен непосредственно перед первой verify-проверкой Stage 3.
 
-- `flipped_at_utc` = `<TBD>`
-- `flipped_at_minsk` = `<TBD>`
-- Действие: `BEPAID_REBILL_MATERIALIZATION`: `dry_run` → `on`. Двойное re-read (сразу после update и перед началом observation).
-
----
+Любые другие secrets не трогались. Migrations=0, ручной DML=0.
 
 ## 3. Observation window (Stage 2)
 
-_Pending после Stage 1. Окно — до 24h ожидания первого live REBILL. Если за 24h трафика нет → статус `enabled_awaiting_first_rebill`, без rollback._
+- Окно: `[2026-05-16T21:03:50Z; 2026-05-17T21:03:50Z]` (24h).
+- Триггер verify: появление первого `audit_logs` с `action='bepaid.rebill.materialized'` ИЛИ `bepaid-webhook` события с `is_rebill=true` и `mode=on`.
+- Статус: **`enabled_awaiting_first_rebill`**.
+- Если за 24h трафика нет → план получает финальный статус `enabled_awaiting_first_rebill`, первый live verify выполняется отдельным follow-up proof при первом событии. Rollback НЕ выполняется (отсутствие трафика регрессом не является).
 
 ---
 
