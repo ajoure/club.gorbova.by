@@ -466,7 +466,17 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
   } else if (payment_type === 'subscription') {
     // === SUBSCRIPTION ===
 
-    // === PATCH PAYMENT-CONFLICT: shared exact-pair guard + replacement validation ===
+    // === PATCH H3.x-a (B-2 root-fix) ===
+    // Различаем legitimate extend (same tariff) vs replacement (other tariff)
+    // vs no_existing. Поведение:
+    //   extend_same_tariff  → НЕ создавать новой subscriptions_v2 / orders_v2 / bePaid sub;
+    //                         вернуть already_has_active_subscription;
+    //   replace_other_tariff:
+    //       + replacement_of_subscription_v2_id указан → validateReplacementSubscription (старое поведение);
+    //       + не указан                              → existing_subscription_conflict (старое поведение);
+    //   no_existing          → продолжаем создавать новый order+subscription.
+    let classifyDecision: 'no_existing' | 'extend_same_tariff' | 'replace_other_tariff' = 'no_existing';
+    let classifyExisting: ExistingProviderSub | null = null;
     if (replacement_of_subscription_v2_id) {
       const repl = await validateReplacementSubscription(supabase, {
         replacement_of_subscription_v2_id,
@@ -481,25 +491,85 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         replacement_of_subscription_v2_id, user_id, product_id, tariff_id,
       });
     } else {
-      const conflictCheck = await checkSubscriptionConflict(supabase, {
-        user_id, product_id, tariff_id,
-      });
-      if (conflictCheck.status === 'error') {
-        return { success: false, error: conflictCheck.error };
+      const cls = await classifySameProductState(supabase, { user_id, product_id, tariff_id });
+      if (cls.status === 'error') {
+        return { success: false, error: cls.error };
       }
-      if (conflictCheck.status === 'conflict') {
-        console.log('[create-payment-checkout] DUPLICATE GUARD (shared) — same-pair active subscription', {
-          existing_sub_id: conflictCheck.conflict.subscription_v2_id,
-          status: conflictCheck.conflict.status,
-          product_id, tariff_id, user_id,
+      classifyDecision = cls.decision;
+      classifyExisting = cls.existing;
+
+      if (cls.decision === 'extend_same_tariff' && cls.existing) {
+        const ex = cls.existing;
+        console.log('[create-payment-checkout] H3.x-a extend_same_tariff — reusing existing active sub', {
+          existing_sub_id: ex.subscription_v2_id,
+          tariff_id, product_id, user_id,
+        });
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'create-payment-checkout',
+          action: 'subscription.reused_existing_public_link',
+          target_user_id: user_id,
+          meta: {
+            decision: 'extend_same_tariff',
+            existing_subscription_v2_id: ex.subscription_v2_id,
+            existing_status: ex.status,
+            existing_tariff_id: ex.tariff_id,
+            existing_provider_subscription_id: ex.provider_subscription_id,
+            existing_provider_state: ex.provider_state,
+            requested_product_id: product_id,
+            requested_tariff_id: tariff_id,
+            payment_flow: paymentFlow,
+            stage: 'pre_insert_block',
+          },
+        });
+        return {
+          success: false,
+          error: 'already_has_active_subscription',
+          conflict: {
+            subscription_v2_id: ex.subscription_v2_id,
+            status: ex.status,
+            next_charge_at: ex.next_charge_at,
+            access_end_at: ex.access_end_at,
+            bepaid_subscription_id: ex.provider_subscription_id,
+            provider_subscription_id: ex.provider_subscription_id,
+            product_id,
+            tariff_id,
+            display_next_charge_at: ex.next_charge_at,
+            display_access_end_at: ex.access_end_at,
+            timezone_used: 'Europe/Minsk',
+          } as SharedSubscriptionConflict,
+        };
+      }
+
+      if (cls.decision === 'replace_other_tariff' && cls.existing) {
+        const ex = cls.existing;
+        console.log('[create-payment-checkout] H3.x-a replace_other_tariff WITHOUT replacement_id — conflict', {
+          existing_sub_id: ex.subscription_v2_id,
+          existing_tariff_id: ex.tariff_id,
+          requested_tariff_id: tariff_id,
         });
         return {
           success: false,
           error: 'existing_subscription_conflict',
-          conflict: conflictCheck.conflict as SharedSubscriptionConflict,
+          conflict: {
+            subscription_v2_id: ex.subscription_v2_id,
+            status: ex.status,
+            next_charge_at: ex.next_charge_at,
+            access_end_at: ex.access_end_at,
+            bepaid_subscription_id: ex.provider_subscription_id,
+            provider_subscription_id: ex.provider_subscription_id,
+            product_id,
+            tariff_id: ex.tariff_id ?? tariff_id,
+            display_next_charge_at: ex.next_charge_at,
+            display_access_end_at: ex.access_end_at,
+            timezone_used: 'Europe/Minsk',
+          } as SharedSubscriptionConflict,
         };
       }
+      // no_existing → fall through to F3 + insert.
     }
+
 
     // PATCH F3: Dedup subscription — strict key: user/product/tariff/amount/flow/currency/3d
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
