@@ -2676,9 +2676,15 @@ Deno.serve(async (req) => {
       // §A.2 short-circuit: if REBILL flow handled (mode=on terminal), skip legacy grant
       // to prevent double-grant. Downstream subscription resolution + date sync still run.
       let grantedSubscriptionV2Id: string | null = null;
+      // PATCH H2: track canonical writer outcome so INLINE block can refuse
+      // to fallback-write access dates if writer skipped / failed.
+      let grantOutcome: 'ok' | 'skip' | 'error' | 'short_circuit' = 'ok';
+      let grantDecisionLabel: string | null = null;
       if (rebillShortCircuit) {
         console.log('[WEBHOOK-LINK-ORDER] legacy grant SKIPPED — REBILL handled (decision=' +
                     (rebillResultDecision || 'unknown') + ')');
+        grantOutcome = 'short_circuit';
+        grantDecisionLabel = rebillResultDecision || 'rebill_short_circuit';
       } else {
       try {
         const grantResp = await fetch(
@@ -2698,6 +2704,8 @@ Deno.serve(async (req) => {
         // PATCH P2.1: If grant-access failed — log CRITICAL audit + webhook_event
         if (!grantResp.ok) {
           console.error('[WEBHOOK-LINK-ORDER] grant-access FAILED:', grantResp.status, grantResult);
+          grantOutcome = 'error';
+          grantDecisionLabel = `http_${grantResp.status}`;
           try {
             await supabase.from('audit_logs').insert({
               actor_type: 'system',
@@ -2722,6 +2730,23 @@ Deno.serve(async (req) => {
             processing_ms: Date.now() - startTime,
             error_message: `grant-access failed: ${grantResp.status}`,
           });
+        } else {
+          // PATCH H2: распознаём skip-исходы canonical writer (manual_review / sbs_mismatch /
+          // primary_entitlement_*_failed / skip_blocked_stale_access).
+          const skippedFlag = grantResult?.skipped === true
+            || grantResult?.status === 'skipped'
+            || grantResult?.manual_review === true;
+          const decision = grantResult?.decision || grantResult?.reason || grantResult?.action || null;
+          const isSkipDecision = typeof decision === 'string' && (
+            decision.startsWith('skip_') ||
+            decision === 'manual_review' ||
+            decision === 'sbs_mismatch' ||
+            decision.startsWith('primary_entitlement_')
+          );
+          if (skippedFlag || isSkipDecision) {
+            grantOutcome = 'skip';
+            grantDecisionLabel = decision || 'skipped';
+          }
         }
         
         // PATCH rebill-idempotency-fix-2026-05: read sub id from all possible response shapes,
@@ -2733,6 +2758,8 @@ Deno.serve(async (req) => {
           null;
       } catch (grantErr) {
         console.error('[WEBHOOK-LINK-ORDER] grant-access-for-order error (non-fatal):', grantErr);
+        grantOutcome = 'error';
+        grantDecisionLabel = 'exception';
       }
       }
 
