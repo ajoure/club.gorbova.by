@@ -219,8 +219,10 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { 
-      orderId, 
+    const _body = await req.json();
+    // PATCH A: accept legacy { order_id } alongside canonical { orderId }
+    const orderId: string | undefined = _body.orderId ?? _body.order_id;
+    const {
       customAccessDays,
       customAccessStartAt,  // NEW: optional custom start date
       customAccessEndAt,    // PATCH: exact target end date (priority over days)
@@ -229,13 +231,25 @@ Deno.serve(async (req) => {
       grantGetcourse = true,
       adminManualAccessEdit = false,
       manualSubscriptionId = null,
-    } = await req.json();
+    } = _body;
 
     if (!orderId) {
       return new Response(
         JSON.stringify({ error: "orderId is required" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
+    }
+
+    // PATCH A: audit legacy body alias usage for observability
+    if (_body.order_id && !_body.orderId) {
+      try {
+        await supabase.from("audit_logs").insert({
+          action: "grant-access-for-order.legacy_body_alias",
+          actor_type: "system",
+          actor_label: "grant-access-for-order",
+          meta: { order_id: orderId, source: _body.source ?? null },
+        });
+      } catch (_) { /* non-fatal */ }
     }
 
     // Load order with product/tariff info
