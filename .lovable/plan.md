@@ -298,8 +298,8 @@ Before:                          After:
 ## Текущий статус инициатив (2026-05)
 
 - **H2.1c-i** — `closed + deployed`. Legacy one-time payload → audit `bepaid.webhook.legacy_one_time_retired_manual_review`, HTTP 200, manual_review, без выдачи доступа.
-- **H3.x-a** — `code+tests ready, deploy pending`. Закрывает B-2 (extend_same_tariff) полностью; B-3 (admin_subscription audit coverage) полностью; B-1 (race) — best-effort re-check, полное закрытие — в H3.x-a-migration.
+- **H3.x-a** — `closed + deployed` (2026-05). Deployed: `bepaid-webhook`, `bepaid-create-subscription-checkout`, `admin-create-public-link`, `admin-create-payment-link`, `bepaid-create-token`, `public-checkout`, `subscription-renewal-reminders` (7/7 success). Закрывает B-2 (extend_same_tariff) полностью; B-3 (admin_subscription audit coverage) полностью; B-1 (race) — best-effort re-check, полное закрытие — в H3.x-a-migration.
 - **H3.x-a-migration / RPC** — `pending`. Требует одной миграции `try_subscription_precreate_lock(uuid,uuid)` для атомарного advisory lock против гонок. Не подаётся до отдельного approve.
 - **H3.x-b — duplicate subscriptions repair dry-run** — `pending dry-run plan`. 3 duplicate-пары (1b68252b / 3c6d812a / 7261e727) НЕ тронуты.
-- **H4 — BEPAID_REBILL_MATERIALIZATION=on preconditions** — `NO-GO`. Блокируется H3.x-a deploy + H3.x-b repair.
+- **H4 — BEPAID_REBILL_MATERIALIZATION=on preconditions** — `NO-GO`. Блокируется H3.x-b repair + повторный preconditions sweep.
 - **Secret `BEPAID_REBILL_MATERIALIZATION`** — остаётся `dry_run`. `mode=on` НЕ включался и запрещён до закрытия H3.x-a/b и повторного H4.
