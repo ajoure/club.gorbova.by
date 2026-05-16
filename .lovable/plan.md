@@ -1,3 +1,10 @@
+## Статус: H3.x-b-execute-B / Stage 1 — closed (2026-05-16)
+
+Stage 1 (read-only dry-run) выполнен. Proof: `.lovable/proofs/h3x_duplicate_subscriptions_execute_b_dryrun_2026_05.md`.
+Stage 2 НЕ запущен — ожидает отдельный approve. Backup-таблицы исключены, поле `meta.source_subscription_v2_id` зафиксировано.
+
+---
+
 да, согласен, с учетом правок:
 
 1. **В Stage 2 убрать backup-таблицу или вынести в отдельную migration-approval.**  
