@@ -747,7 +747,10 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         resolved_via: subRouting.resolved_via ?? 'none',
         candidates_count: subRouting.candidates_count ?? 0,
       });
+    }
+
     // PATCH H3.x-a (B-1 partial / best-effort re-check) ===
+
     // Полный atomic-lock против race выносится в H3.x-a-migration (RPC pg_advisory_xact_lock).
     // Здесь только повторный classify за 1 шаг до INSERT — закроет окно, когда parallel-call
     // успел создать active sub после первичного classify (но до нашего INSERT).
