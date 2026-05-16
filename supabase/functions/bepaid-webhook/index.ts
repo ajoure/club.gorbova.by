@@ -2655,6 +2655,46 @@ Deno.serve(async (req) => {
             subscriptionId: incomingSbs,
           });
           rebillResultDecision = rebillResult.decision;
+
+          // PATCH H3.x-a (B-3): unconditional audit coverage for every rebill decision.
+          // Contract: каждое решение (would_materialize / materialized / skipped /
+          // conflict / manual_review / dry_run_only / off_noop / error) → audit-row
+          // с provider_payment_id, sbs, order_id, subscription_v2_id, decision, mode.
+          // Дополнительно для admin_subscription branch — отдельный action
+          // `admin_subscription.audit_coverage_fixed` (закрывает 50%→100% coverage gap из H4 §B-3).
+          try {
+            const linkMetaType = (linkOrder as any)?.meta?.type ?? null;
+            const isAdminSubscription = typeof linkMetaType === 'string'
+              && (linkMetaType === 'admin_payment_link_subscription'
+                  || linkMetaType === 'admin_subscription');
+            const decisionAuditMeta = {
+              decision: rebillResult.decision,
+              mode: rebillMode,
+              provider_payment_id: transactionUid,
+              sbs: incomingSbs,
+              parent_order_id: linkOrder.id,
+              rebill_order_id: rebillResult.rebill_order_id ?? null,
+              subscription_v2_id: (rebillResult as any)?.subscription_v2_id ?? null,
+              link_meta_type: linkMetaType,
+            };
+            await supabase.from('audit_logs').insert({
+              actor_type: 'system', actor_user_id: null, actor_label: 'bepaid-webhook',
+              action: 'bepaid.rebill.decision_audit',
+              meta: decisionAuditMeta,
+              created_at: new Date().toISOString(),
+            });
+            if (isAdminSubscription) {
+              await supabase.from('audit_logs').insert({
+                actor_type: 'system', actor_user_id: null, actor_label: 'bepaid-webhook',
+                action: 'admin_subscription.audit_coverage_fixed',
+                meta: decisionAuditMeta,
+                created_at: new Date().toISOString(),
+              });
+            }
+          } catch (auditErr) {
+            console.error('[REBILL-DISPATCHER] H3.x-a decision audit insert failed (non-fatal):', auditErr);
+          }
+
           // mode=on: any non-off_noop terminal → short-circuit legacy grant (handled).
           if (rebillMode === 'on' && !rebillResult.proceedLegacy) {
             rebillShortCircuit = true;
