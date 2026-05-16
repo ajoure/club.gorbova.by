@@ -1,200 +1,210 @@
-## Статус: H3.x-b-execute-B / Stage 1 — closed (2026-05-16)
+## да, согласен, с учетом правок:
 
-Stage 1 (read-only dry-run) выполнен. Proof: `.lovable/proofs/h3x_duplicate_subscriptions_execute_b_dryrun_2026_05.md`.
-Stage 2 НЕ запущен — ожидает отдельный approve. Backup-таблицы исключены, поле `meta.source_subscription_v2_id` зафиксировано.
-
----
-
-да, согласен, с учетом правок:
-
-1. **В Stage 2 убрать backup-таблицу или вынести в отдельную migration-approval.**  
-Сейчас Stage 1 можно approve, но в будущем Stage 2 снова содержит:
+1. **В Stage 3 исправить статус** `trialing`**.**  
+Ранее в системе использовались статусы `active`, `trial`, `past_due`. Нужно не писать `trialing`, если такого enum нет. Формулировка:
 
 ```text
-subscriptions_v2_repair_backup_h3x_b_b_2026_05
+WHERE status IN ('active','trial')
 ```
 
-Это migration/schema change. Для consistency с execute-A лучше:
+и отдельно:
 
 ```text
-backup — через before-snapshot в proof + audit before/after JSON
-без создания backup-таблиц
+WHERE status IN ('active','trial','past_due')
 ```
 
-2. **В Stage 2 использовать фактическое поле** `meta.source_subscription_v2_id`**.**  
-В плане снова указано:
+Если enum реально содержит `trialing`, это нужно подтвердить schema verification.
+
+2. **G25 искать не по** `id='<sbs_50a3bd75…>'`**.**  
+`sbs_50a3bd75…` — это provider subscription id, не `subscriptions_v2.id`. Правильно:
 
 ```text
-meta.source_subscription_id
+provider_subscriptions.provider_subscription_id = 'sbs_50a3bd75a025455b'
 ```
 
-Заменить на фактическое поле:
+и через него получить связанную `subscriptions_v2`.
+
+3. **Stage 1 не ограничивать только** `meta->>'is_rebill'='true'`**.**  
+Нужно проверить фактические поля audit. Если `is_rebill` не пишется, можно пропустить реальные autocharge. Добавить fallback-поиск по:
 
 ```text
-meta.source_subscription_v2_id
+provider_payment_id / bepaid_transaction_uid / parent_uid / subscription_id / sbs / payment_flow='bepaid_subscription_charge'
 ```
 
-3. **Сейчас approve только на Stage 1 dry-run.**  
-Execute Stage 2 не запускать.
-
-Команда:
+4. **Stage 2.D не смешивать direct writes в других canonical/repaired functions с blocker.**  
+Если direct write найден не в `bepaid-webhook`, а в approved repair/admin/manual function, его классифицировать отдельно. Blocker для `mode=on` — именно тот direct access write, который может сработать на bePaid payment/rebill path.
+5. **Stage 3 active duplicate pairs считать по** `(user_id, product_id, tariff_id)`**, а не только** `(user_id, product_id)`**.**  
+Иначе разные тарифы одного продукта попадут как ложный duplicate. Для отдельного backlog можно дать `tariff_mismatch_pairs`.
+6. `extended_by_orders duplicates` **проверять не через** `cleanup_batch`**.**  
+Нужно прямое условие:
 
 ```text
-Выполни только Stage 1 — read-only dry-run по H3.x-b-execute-B.
-
-Запрещено:
-- UPDATE/INSERT/DELETE;
-- provider API;
-- Telegram calls;
-- grant-access-for-order;
-- migrations;
-- backup-таблицы;
-- изменение secrets;
-- mode=on.
-
-В proof дай:
-- полную таблицу P5/P7;
-- STOP-guards;
-- before-snapshot;
-- expected Stage 2 plan без backup-таблиц;
-- rollback SQL из before-snapshot;
-- verdict по каждой паре.
-
-Stage 2 execute не запускать без отдельного approve.
+jsonb_array_length(extended_by_orders) != count(distinct elements)
 ```
 
-После этих правок план можно запускать как **read-only dry-run**.
+или эквивалентный разбор JSON массива. `cleanup_batch` не является признаком дубля.
+
+7. **Рабчевская / Алёна / Багинская — не через chat_search как основной источник.**  
+Основной источник — proof-файлы и БД. `chat_search` только как вспомогательный контекст. В proof указать фактические строки/статусы из БД.
+8. **Stage 5 “незакрытые data repairs execute pending” сделать blocker только если влияет на active/rebill path.**  
+Исторический repair без риска для новых webhook не должен автоматически блокировать `mode=on`.
+9. **Добавить explicit runtime check после последнего deploy.**  
+Для Stage 1/2 важно считать период после последнего deploy `bepaid-webhook`, а не только 14 дней. В proof сделать две колонки:
+
+```text
+last_14_days
+since_last_deploy
+```
+
+10. **Добавить итоговую таблицу решений:**
+
+```text
+Item | Status | Blocks mode=on? | Required action | Owner patch
+```
+
+Это поможет не утонуть в proof.
+
+После этих правок план можно запускать как read-only H4 preconditions refresh. Никаких DML, provider API и изменения `BEPAID_REBILL_MATERIALIZATION`.
 
 &nbsp;
 
-План: H3.x-b-execute-B — provider-managed duplicate subscriptions cleanup (Stage 1: read-only dry-run)
+План: H4 preconditions refresh — read-only inventory
 
-Scope: только 2 пары Cluster B. Никаких других. Никаких других пользователей / продуктов / тарифов.
+**Цель:** собрать единый proof-документ с финальным списком blockers/warnings/ready перед включением `BEPAID_REBILL_MATERIALIZATION=on`. Без DML, без migrations, без provider API, без изменения секрета, без `mode=on`.
 
-```
-P5: 56f8a606 (canonical) ↔ 98bc1c69 (duplicate) — user bb724225, product 11c9f1b8 (Gorbova Club), tariff 7c748940 (BUSINESS)
-P7: eba308ca (canonical) ↔ c30f04c3 (duplicate) — user 6b0e0451, product 11c9f1b8 (Gorbova Club), tariff 7c748940 (BUSINESS)
-```
+**Proof:** `.lovable/proofs/h4_rebill_materialization_on_preconditions_refresh_2026_05.md`
 
-## Что уже подтверждено из read-only-probe
+**Frozen cutoff:** `snapshot_at = now()` фиксируется в Stage 0 и используется во всех запросах.
 
-1. provider_subscriptions (SOT для provider-связи) показывает:
-  - canonical 56f8a606 → sbs_f874f468f78734df, state=active, next_charge=2026-06-05
-  - duplicate 98bc1c69 → sbs_673a1877356f9556, state=canceled (admin_cancel 2026-04-08)
-  - canonical eba308ca → sbs_b5c5ea6a57413c72, state=active, next_charge=2026-05-08 (stale, требует refresh, НО refresh — вне scope этого плана)
-  - duplicate c30f04c3 → sbs_0c978ba5afbef001, state=canceled (admin_cancel 2026-04-10)
-2. У обоих duplicates нет active/pending provider_subscriptions → provider cancel НЕ требуется (canonical safety preserved).
-3. У обоих canonicals есть active provider_subscriptions с собственным provider_subscription_id → trogать их запрещено.
-4. subscriptions_v2.meta.bepaid_subscription_id у duplicates указывает на canonical provider_id (ISSUE-WEBHOOK-META-OVERWRITE follow-up) — это meta-загрязнение, не реальная связь. Чистка meta-полей duplicate допустима только локально.
+---
 
-## Stage 1 (этот approve) — что делает dry-run
+### Stage 0 — Frozen cutoff + контекст
 
-Только read-only. Никакого DML. Никаких edge-вызовов. Никаких provider API.
+- `snapshot_at = now()` (Minsk).
+- Зафиксировать в proof: текущее значение `BEPAID_REBILL_MATERIALIZATION` (через `secrets--fetch_secrets`, без update).
+- Зафиксировать последние deploy timestamps `grant-access-for-order` и `bepaid-webhook` (из edge function logs, первая запись после deploy).
 
-Для каждой из 2 пар собирает и сохраняет в proof таблицу с колонками:
+---
 
-```
-pair, user_id, product_id, tariff_id,
-canonical_id, duplicate_id,
-canonical.status, duplicate.status,
-canonical.auto_renew, duplicate.auto_renew,
-canonical.access_end_at (before), duplicate.access_end_at (before),
-canonical.next_charge_at, duplicate.next_charge_at,
-canonical.meta.bepaid_subscription_id, duplicate.meta.bepaid_subscription_id,
-canonical.provider_subs (id+state), duplicate.provider_subs (id+state),
-canonical.meta.extended_by_orders, duplicate.meta.extended_by_orders,
-entitlement_id, entitlement.expires_at (before),
-new_canonical.access_end_at = GREATEST(canonical, duplicate),
-new_entitlement.expires_at  = GREATEST(current, new_canonical.access_end_at),
-greatest_changes_canonical (bool),
-greatest_changes_entitlement (bool),
-risk_flags[],
-verdict ∈ {ready_for_execute, manual_review}
-```
+### Stage 1 — REBILL materialization (dry_run телеметрия)
 
-И отдельные read-only проверки:
+Источники: `audit_logs`, `bepaid-webhook` edge logs.
 
-1. orders_v2: показать все orders по обоим subs (через meta.subscription_v2_id или extended_by_orders), без правок.
-2. payments_v2: показать payments по этим orders, без правок.
-3. installment_payments: убедиться, что нет pending по обоим.
-4. access_rules: убедиться, что нет правил, ссылающихся на duplicate_id.
-5. provider_subscriptions: показать обе стороны, подтвердить duplicate.state IN ('canceled','expired') и canonical.state='active'.
-6. telegram_access_queue / telegram_channel_members: read-only показать актуальные записи (только для логирования, не трогаем).
-7. audit_logs: последние 20 записей по обоим subs (контекст).
-8. global re-probe: COUNT(*) активных duplicate-пар = 2 (только P5/P7).
+Запросы (read-only SQL через `supabase--read_query`):
 
-## STOP-guards (если хоть один — verdict=manual_review, execute не предлагается)
+1. `audit_logs WHERE action LIKE 'bepaid.rebill.%' AND created_at >= snapshot_at - interval '14 days'` — разбивка по `action` (`dry_run`, `planned`, `dispatcher_error`, `conflict_uid`, `sbs_mismatch`, `skipped_*`).
+2. `audit_logs WHERE action LIKE 'bepaid.webhook.%' AND meta->>'transaction_type' IN ('authorization','payment') AND meta->>'is_rebill'='true'` — все боевые autocharge после deploy.
+3. JOIN (1)↔(2) по `order_id` / `meta.bepaid_transaction_uid` — для каждого реального autocharge должна быть ровно одна `bepaid.rebill.dry_run` запись с `planned_*` полями (order_id, tariff_id, access_days, next_charge_at_suggested).
+4. Аномалии: autocharge без dry_run, dry_run без autocharge, несколько dry_run на один UID, `dispatcher_error`/`conflict_uid`/`sbs_mismatch` ≠ 0.
 
-- duplicate.provider_subscriptions есть в state ∈ ('active','pending')
-- canonical.provider_subscriptions отсутствует или state ≠ 'active'
-- new_canonical.access_end_at < canonical.access_end_at (before)
-- new_entitlement.expires_at  < entitlement.expires_at (before)
-- найдены installment_payments.status='pending' на duplicate
-- найдены access_rules, ссылающиеся на duplicate_id
-- найдены orders_v2 в статусе pending/processing на duplicate
-- global active duplicate count ≠ 2
-- duplicate.user_id ≠ canonical.user_id, или product_id/tariff_id различаются
-- canonical.id или duplicate.id не из whitelisted 4 UUID
+В proof — таблица: `autocharges_total`, `dry_run_emitted`, `missing_dry_run`, `dispatcher_errors`, `conflict_uid`, `sbs_mismatch`, примеры строк (sub_id, order_id, action, meta-выжимка).
 
-## Что Stage 1 НЕ делает
+---
 
-- Никаких UPDATE / INSERT / DELETE в production.
-- Никаких provider API вызовов (никакого bepaid-cancel-subscriptions, никакого bepaid-get-subscription-details, никаких pull/sync).
-- Никаких Telegram вызовов (никакого telegram-grant-access, telegram-revoke-access, очередей).
-- Никаких grant/revoke (grant-access-for-order не дергаем).
-- Никаких изменений orders_v2 / payments_v2 / provider_subscriptions / entitlements / access_rules.
-- Никаких migrations.
-- BEPAID_REBILL_MATERIALIZATION не трогаем (остаётся dry_run).
-- mode=on НЕ включаем.
-- Не чиним stale provider_subscriptions.next_charge_at у canonical eba308ca (это отдельный backlog item, см. ниже).
-- Не чиним meta.bepaid_subscription_id pollution у duplicates (войдёт в Stage 2 как часть superseded-меты, но только локально, без provider влияния).
+### Stage 2 — Direct access writes (canonical write-path enforcement)
 
-## Stage 2 (отдельный approve, после принятия Stage 1)
+Цель: подтвердить, что все 4 ветки идут через `grant-access-for-order`, и найти остаточные direct writes.
 
-Структурно идентичен H3.x-b-execute-A:
+A. **LINK-ORDER** — статический поиск в `bepaid-webhook/index.ts` в ветке `link_order`: `subscriptions_v2 insert/update` (с `access_*`/`status`), `entitlements insert/update`, `telegram-grant-access invoke`. Ожидание: 0.
 
-1. Backup в `subscriptions_v2_repair_backup_h3x_b_b_2026_05` (RLS deny authenticated, service_role only) — 4 строки.
-2. Per-pair транзакция (2 транзакции суммарно):
-  - duplicate: status='superseded', auto_renew=false, meta.superseded_by=canonical_id, meta.superseded_reason='h3x_b_provider_managed_duplicate_no_active_provider', meta.repair_batch='H3X-B-EXECUTE-B-2026-05', meta.original_bepaid_subscription_id (сохраняем для аудита, не удаляем).
-  - canonical: access_end_at=GREATEST(canonical, duplicate), meta.extended_by_orders = dedup union, meta.merged_from = append duplicate_id, meta.repair_batch='H3X-B-EXECUTE-B-2026-05'. provider-поля canonical НЕ трогаем.
-3. entitlements: только если new_entitlement.expires_at > current — UPDATE expires_at и meta.source_subscription_id=canonical_id. Если уже больше — пропускаем (ожидание: оба уже >= canonical, апдейтов 0).
-4. audit_logs: 4 записи (по 2 на пару) с actor_type='system', repair_batch.
-5. Rowcount guards: каждая UPDATE должна вернуть ровно 1 строку, иначе ROLLBACK.
-6. Post-verify: те же 10 точек что в Cluster A + сверка provider_subscriptions canonical state осталась 'active' и duplicate state осталась 'canceled' (никто не двигал).
+B. **WEBHOOK-SUBSCRIPTION** (recurring autocharge ветка) — то же самое: подтвердить, что ветка делегирует в writer и/или провайдер-sync UPDATE содержит ТОЛЬКО разрешённые 5 полей (`billing_type`, `auto_renew`, `next_charge_at`, `payment_method_id/token`, `meta.bepaid_*`). Поля доступа (`access_start_at`/`access_end_at`/`status`/`canceled_at`/`is_trial`) — 0.
 
-Stage 2 НЕ включает:
+C. **3DS finalize** — подтвердить (H2.1b-ii closed). Проверить `bepaid-webhook` 3DS handover region: 0 запрещённых паттернов (уже подтверждено в proof, перепроверить статически).
 
-- provider cancel (duplicate уже canceled на стороне bePaid).
-- Telegram операции.
-- orders_v2 / payments_v2 / provider_subscriptions / access_rules изменения.
-- migrations.
-- mode=on enable.
+D. **H2.1c legacy one-time path** — `rg`-сканирование по всему `supabase/functions/**`:
 
-## DoD Stage 1
+- `\.from\(['"]subscriptions_v2['"]\).*\.(insert|update|upsert)` с access-полями;
+- `\.from\(['"]entitlements['"]\).*\.(insert|update|upsert)` с `expires_at`;
+- `\.from\(['"]access_rules['"]\).*\.(insert|update|upsert)` вне `product-access-grants`;
+- прямые invoke `telegram-grant-access` вне `grant-access-for-order` и canonical paths.
 
-- Proof файл: `.lovable/proofs/h3x_duplicate_subscriptions_execute_b_dryrun_2026_05.md` с полной таблицей, before-snapshots, верификацией каждого STOP-guard, явным verdict на каждую пару.
-- Production DML = 0.
-- Migrations = 0.
-- Provider API calls = 0.
-- Telegram calls = 0.
-- grant-access-for-order calls = 0.
-- BEPAID_REBILL_MATERIALIZATION = dry_run (не менялся).
-- mode=on disabled.
-- Global active duplicate pairs пересчитан = 2.
-- Cluster A пары (P1–P4, P6) не упомянуты в DML и не затронуты.
+   Каждое попадание классифицировать: canonical / legitimate (admin manual / repair / migration) / **legacy one-time direct write** (потенциальный H2.1c blocker). Дать file:line + цитата + classification.
 
-## Backlog (не часть этого плана, фиксируется отдельно)
+В proof — матрица 4 веток × {static check / runtime audit за 14d / verdict}.
 
-- ISSUE-WEBHOOK-META-OVERWRITE: webhook применяет meta-апдейт по слишком широкому match (user+product), из-за чего meta.bepaid_subscription_id и access_end_at у одной подписки могут перетекать на параллельную. Эта же проблема создала Cluster B duplicates. Фикс — match строго по provider_subscriptions.subscription_v2_id + provider_subscription_id.
-- ISSUE-PS-STALE-NEXT-CHARGE: provider_subscriptions для canonical eba308ca имеет next_charge_at=2026-05-08 (просрочено), хотя subscriptions_v2 показывает 2026-06-07. Нужен таргетированный pull через bepaid-get-subscription-details (отдельный read-only approve).
-- ISSUE-AG-DOUBLECLICK: остаётся из A.
+---
 
-## Текущий статус
+### Stage 3 — Duplicate subscriptions
 
-```
-H3.x-b-execute-A     — closed
-H3.x-b-execute-B/S1  — этот план (read-only dry-run)
-H3.x-b-execute-B/S2  — отдельный approve после S1
-Active duplicate pairs — 2
-H4 mode=on            — still blocked
-```
+Read-only через `supabase--read_query`:
+
+1. Active duplicate pairs (новый детерминированный фильтр, тот же что в H3.x-c):
+  ```
+   SELECT user_id, product_id, COUNT(*) 
+   FROM subscriptions_v2 
+   WHERE status IN ('active','trialing') AND auto_renew=true
+   GROUP BY 1,2 HAVING COUNT(*) > 1
+  ```
+2. То же с `status IN ('active','trialing','past_due')`.
+3. G25 статус: `WHERE id='<sbs_50a3bd75…>'` — current status / auto_renew / access_end_at / canceled_at.
+4. Новые пары после H3.x-a deploy: те же запросы с фильтром `created_at >= h3xa_deploy_at`.
+5. `extended_by_orders` дубликаты (если есть отдельный признак): `meta->>'cleanup_batch'` ≠ 'h3x_d_…' и duplicate-флаги.
+
+В proof — все ID, ФИО контактов через JOIN `profiles`, классификация (Cluster A/B/D/G25/новый/Рабчевская/Алёна-Багинская/extended_by_orders).
+
+---
+
+### Stage 4 — Data repairs status board
+
+Таблица: задача / статус / proof-ссылка / остаток.
+
+- H3.x-b A — closed (proof)
+- H3.x-b B — closed (proof)
+- H3.x-c classification + provider-pull — closed
+- H3.x-d cleanup — closed (8/8)
+- **G25** — hold до 2026-05-18 06:00 UTC, нужен repeat provider pull
+- **Рабчевская** — dry-run в H2.1b-ii proof, execute не выполнен
+- **Алёна / Багинская** — найти упоминания (chat_search + grep по proofs), статус
+- **extended_by_orders duplicates** — если Stage 3 нашёл, list + классификация
+
+---
+
+### Stage 5 — Preconditions verdict
+
+Финальный блок в proof:
+
+**Blockers (mode=on запрещено пока не закрыто):**
+
+- любая аномалия Stage 1 (autocharge без dry_run, dispatcher_error > 0, conflict_uid > 0, sbs_mismatch > 0);
+- любой legacy one-time direct write из Stage 2.D, классифицированный как blocker;
+- active duplicate pairs > 0 в Stage 3.1;
+- незакрытые data repairs со статусом «execute pending» (Рабчевская, etc.) — если они на active subscriptions.
+
+**Warnings (включать можно, но с риском):**
+
+- past_due duplicate без access (Stage 3.2 минус Stage 3.1);
+- G25 на hold;
+- единичные `skipped_*` в Stage 1, объяснимые SOT-логикой.
+
+**Ready:**
+
+- список branches/repairs, который точно зелёный.
+
+**Что сделать до `mode=on`:**
+
+- упорядоченный action list с DoD на каждый blocker.
+
+---
+
+### Запрещено
+
+- DML / migrations / provider API / Telegram invocations / `grant-access-for-order` calls;
+- изменение `BEPAID_REBILL_MATERIALIZATION`;
+- `mode=on`;
+- любые edits в production коде (только чтение + новый proof-файл).
+
+### Разрешено
+
+- `supabase--read_query` (SELECT-only);
+- `supabase--edge_function_logs` / `supabase--analytics_query` (read);
+- `secrets--fetch_secrets` (read значения флага);
+- `rg` / `code--view` по репозиторию;
+- `chat_search` для поиска контекста по Рабчевская / Алёна / Багинская;
+- запись ОДНОГО нового proof-файла.
+
+### DoD
+
+1. Proof-файл создан с 5 stages + frozen `snapshot_at` + цитаты source-кода + SQL-результаты.
+2. Stage 5 содержит явный verdict: `mode=on` = `BLOCKED` или `READY` с numbered list причин.
+3. Никаких изменений в DB / secrets / production коде. Migrations=0, DML=0, provider API=0.
+4. Список ФИО контактов по всем затронутым подпискам из Stage 3.
