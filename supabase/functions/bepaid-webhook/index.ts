@@ -1501,19 +1501,29 @@ Deno.serve(async (req) => {
           console.log('[WEBHOOK-SUBSCRIPTION] Order updated to paid');
         }
         
-        // 2. Update subscription_v2 status to active
-        // PATCH 3: Truth dates from bePaid instead of hardcoded +accessDays
+        // ===================================================================
+        // PATCH H2.1 — CANONICAL-WRITER-ONLY for WEBHOOK-SUBSCRIPTION renewal
+        // grant-access-for-order owns:
+        //   - subscriptions_v2.access_start_at / access_end_at / status
+        //   - entitlements (insert/update/expires_at/status)
+        //   - telegram_access (via telegram-grant-access)
+        // Webhook does ONLY provider-sync: billing_type, next_charge_at,
+        // auto_renew, meta.bepaid_*, provider_subscriptions, payments_v2.
+        // On skip/error: audit + NO fallback access writes.
+        // ===================================================================
+
+        // Provider-derived diagnostics (used for next_charge_at provider-sync
+        // and admin notifications; NOT used to write access dates).
         const accessDays = subV2.tariffs?.access_days || subV2.access_days || 30;
         const bepaidActiveTo = body.active_to || body.subscription?.active_to;
         const bepaidRenewAt = body.renew_at || body.subscription?.renew_at;
-        
-        let accessEndAt: Date;
+
+        let providerAccessEndDiag: Date;
         if (bepaidActiveTo) {
-          accessEndAt = new Date(endOfDayAppTz(bepaidActiveTo));
+          providerAccessEndDiag = new Date(endOfDayAppTz(bepaidActiveTo));
         } else {
-          // Fallback: +accessDays (with mandatory audit)
-          accessEndAt = new Date(now.getTime() + accessDays * 24 * 60 * 60 * 1000);
-          console.warn('[WEBHOOK-SUBSCRIPTION] FALLBACK: no active_to from bePaid, using +accessDays');
+          providerAccessEndDiag = new Date(now.getTime() + accessDays * 24 * 60 * 60 * 1000);
+          console.warn('[WEBHOOK-SUBSCRIPTION] FALLBACK diag: no active_to from bePaid');
           await supabase.from('audit_logs').insert({
             action: 'bepaid.webhook.fallback_access_days_used',
             actor_type: 'system',
@@ -1522,23 +1532,91 @@ Deno.serve(async (req) => {
             meta: { subscription_id: subscriptionId, access_days: accessDays, reason: 'no_active_to_field' },
           });
         }
-        const renewAt = bepaidRenewAt ? new Date(bepaidRenewAt) : accessEndAt;
-        
-        // PATCH PAYMENTS-REVISION: для finite bePaid installment auto_renew должен оставаться false.
-        // Источник истины — subV2.meta.installment_count >= 2 или meta.model='bepaid_finite_subscription'.
+        const renewAt = bepaidRenewAt ? new Date(bepaidRenewAt) : providerAccessEndDiag;
+
+        // Finite installment marker (provider-sync only)
         const subV2Meta = (subV2.meta || {}) as Record<string, any>;
         const subInstallmentCount = Number(subV2Meta.installment_count ?? 0);
         const subIsInstallmentFinite =
           subV2Meta.model === 'bepaid_finite_subscription' ||
           (Number.isFinite(subInstallmentCount) && subInstallmentCount >= 2);
 
+        // === STEP A: Canonical writer FIRST (single access write-path) ===
+        let grantOutcome: 'ok' | 'skip' | 'error' = 'error';
+        let grantStatus = 0;
+        let grantResult: any = null;
+        if (orderV2Id) {
+          try {
+            const grantResp = await fetch(
+              `${Deno.env.get('SUPABASE_URL')}/functions/v1/grant-access-for-order`,
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+                },
+                body: JSON.stringify({
+                  orderId: orderV2Id,
+                  source: 'bepaid_webhook',
+                  context: 'subscription_renewal',
+                }),
+              }
+            );
+            grantStatus = grantResp.status;
+            grantResult = await grantResp.json().catch(() => null);
+
+            if (grantResp.ok && grantResult && grantResult.success !== false) {
+              grantOutcome = 'ok';
+            } else if (
+              grantResp.ok &&
+              (grantResult?.skipped === true ||
+                grantResult?.status === 'skipped' ||
+                String(grantResult?.reason || '').startsWith('skip_') ||
+                String(grantResult?.reason || '') === 'sbs_mismatch' ||
+                String(grantResult?.reason || '') === 'manual_review')
+            ) {
+              grantOutcome = 'skip';
+            } else {
+              grantOutcome = 'error';
+            }
+            console.log('[WEBHOOK-SUBSCRIPTION] grant-access outcome:', grantOutcome, grantStatus, grantResult);
+          } catch (grantErr) {
+            console.error('[WEBHOOK-SUBSCRIPTION] grant-access error:', grantErr);
+            grantOutcome = 'error';
+          }
+        } else {
+          console.warn('[WEBHOOK-SUBSCRIPTION] No orderV2Id — cannot invoke canonical writer');
+          grantOutcome = 'error';
+        }
+
+        // STEP B: skip/error → audit + NO fallback access write. Provider-sync continues.
+        if (grantOutcome !== 'ok') {
+          await supabase.from('audit_logs').insert({
+            actor_type: 'system',
+            actor_label: 'bepaid-webhook',
+            action: 'bepaid.webhook.grant_skipped_no_fallback',
+            target_user_id: subV2.user_id,
+            meta: {
+              branch: 'webhook_subscription_renewal',
+              order_id: orderV2Id,
+              subscription_v2_id: subscriptionV2Id,
+              provider_subscription_id: subscriptionId,
+              http_status: grantStatus,
+              grant_outcome: grantOutcome,
+              grant_result: grantResult,
+              severity: grantOutcome === 'error' ? 'CRITICAL' : 'INFO',
+            },
+          });
+        }
+
+        // === STEP C: PROVIDER-SYNC (non-access fields only) ===
+        // Fields here are provider facts (billing model, next charge moment, card
+        // metadata). They do NOT grant or extend access — that is owned by
+        // grant-access-for-order in STEP A.
         await supabase
           .from('subscriptions_v2')
           .update({
-            status: 'active',
             billing_type: 'provider_managed',
-            access_start_at: now.toISOString(),
-            access_end_at: accessEndAt.toISOString(),
             next_charge_at: subIsInstallmentFinite ? null : renewAt.toISOString(),
             auto_renew: !subIsInstallmentFinite,
             meta: {
@@ -1553,11 +1631,12 @@ Deno.serve(async (req) => {
                   }
                 : {}),
             },
+            updated_at: now.toISOString(),
           })
           .eq('id', subscriptionV2Id);
-        console.log('[WEBHOOK-SUBSCRIPTION] Subscription updated to active, provider_managed, finite=', subIsInstallmentFinite);
-        
-        // 3. Update provider_subscriptions state
+        console.log('[WEBHOOK-SUBSCRIPTION] provider-sync (non-access) applied, finite=', subIsInstallmentFinite);
+
+        // STEP D: provider_subscriptions state (provider fact mirror)
         await supabase
           .from('provider_subscriptions')
           .update({
@@ -1568,15 +1647,15 @@ Deno.serve(async (req) => {
           })
           .eq('provider_subscription_id', subscriptionId);
         console.log('[WEBHOOK-SUBSCRIPTION] provider_subscriptions updated to active');
-        
-        // 4. Create payments_v2 record
+
+        // STEP E: payments_v2 (payment fact, not access)
         const paymentAmount = transaction?.amount ? transaction.amount / 100 : (body.plan?.amount ? body.plan.amount / 100 : 0);
         const { data: profile } = await supabase
           .from('profiles')
           .select('id')
           .eq('user_id', subV2.user_id)
           .maybeSingle();
-        
+
         const subPayResult = await upsertPaymentV2(supabase, {
             order_id: orderV2Id,
             user_id: subV2.user_id,
@@ -1597,96 +1676,12 @@ Deno.serve(async (req) => {
             },
           }, '[WEBHOOK-SUBSCRIPTION]');
         console.log('[WEBHOOK-SUBSCRIPTION] payments_v2', subPayResult.action, subPayResult.id);
-        
-        // 5. Create entitlements
-        if (subV2.products_v2?.code) {
-          const productCode = subV2.products_v2.code;
-          const productIdForEnt = subV2.products_v2.id;
-          const { data: existingEntitlement } = await supabase
-            .from('entitlements')
-            .select('id, expires_at')
-            .eq('user_id', subV2.user_id)
-            .eq('product_code', productCode)
-            .maybeSingle();
-          
-          if (existingEntitlement) {
-            // Extend existing
-            const currentExpires = existingEntitlement.expires_at ? new Date(existingEntitlement.expires_at) : new Date(0);
-            const newExpires = accessEndAt > currentExpires ? accessEndAt : currentExpires;
-            
-            await supabase
-              .from('entitlements')
-              .update({
-                expires_at: newExpires.toISOString(),
-                status: 'active',
-                updated_at: now.toISOString(),
-              })
-              .eq('id', existingEntitlement.id);
-            console.log('[WEBHOOK-SUBSCRIPTION] Entitlement extended');
-          } else {
-            // Create new
-            await supabase
-              .from('entitlements')
-              .insert({
-                user_id: subV2.user_id,
-                profile_id: profile?.id || null,
-                order_id: orderV2Id,
-                product_code: productCode,
-                product_id: productIdForEnt,
-                status: 'active',
-                expires_at: accessEndAt.toISOString(),
-                meta: {
-                  source: 'bepaid_subscription_webhook',
-                  bepaid_subscription_id: subscriptionId,
-                },
-              });
-            console.log('[WEBHOOK-SUBSCRIPTION] Entitlement created');
-          }
-        }
-        
-        // 5b. Invoke grant-access-for-order for secondary grants (access_rules)
-        // The inline entitlement upsert above handles the primary product only.
-        // grant-access-for-order processes access_rules (bonuses, prior_purchase, etc.)
-        // and is idempotent — it checks already_fulfilled before acting.
-        if (orderV2Id) {
-          try {
-            const grantResp = await fetch(
-              `${Deno.env.get('SUPABASE_URL')}/functions/v1/grant-access-for-order`,
-              {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
-                },
-                body: JSON.stringify({
-                  orderId: orderV2Id,
-                  context: 'subscription_renewal',
-                }),
-              }
-            );
-            const grantResult = await grantResp.json();
-            console.log('[WEBHOOK-SUBSCRIPTION] grant-access-for-order result:', grantResp.status, grantResult);
-            
-            if (!grantResp.ok) {
-              console.error('[WEBHOOK-SUBSCRIPTION] grant-access-for-order FAILED:', grantResp.status, grantResult);
-              await supabase.from('audit_logs').insert({
-                actor_type: 'system',
-                actor_label: 'bepaid-webhook',
-                action: 'bepaid.webhook.subscription_renewal_grant_failed',
-                target_user_id: subV2.user_id,
-                meta: {
-                  order_id: orderV2Id,
-                  subscription_id: subscriptionId,
-                  http_status: grantResp.status,
-                  error: grantResult?.error || grantResult?.message || grantResult,
-                  severity: 'CRITICAL',
-                },
-              });
-            }
-          } catch (grantErr) {
-            console.error('[WEBHOOK-SUBSCRIPTION] grant-access-for-order error (non-fatal):', grantErr);
-          }
-        }
+
+        // NOTE (PATCH H2.1): entitlements insert/update and prior secondary
+        // grant-access invoke removed. The single STEP A invocation above
+        // covers both primary (subscription/entitlement) and secondary
+        // (access_rules / bonuses / telegram) grants. Webhook never writes
+        // entitlements directly anymore.
         
         // 6. Send notifications
         try {
