@@ -1484,7 +1484,7 @@ Deno.serve(async (req) => {
         updated_at: now.toISOString(),
         meta: {
           ...existingMeta,
-          extended_by_orders: [...extendedByOrders, orderId],
+          extended_by_orders: nextExtendedByOrders,
           last_extension_at: now.toISOString(),
           last_extension_days: durationDays,
           // PATCH 14: Preserve recurring_amount from order
