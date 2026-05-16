@@ -13,18 +13,18 @@ function classifyGrantOutcome(args: {
   body: any;
 }): GrantOutcome {
   const { ok, body } = args;
-  if (ok && body && body.success !== false) return 'ok';
+  if (!ok || !body) return 'error';
   if (
-    ok &&
-    (body?.skipped === true ||
-      body?.status === 'skipped' ||
-      String(body?.reason || '').startsWith('skip_') ||
-      String(body?.reason || '') === 'sbs_mismatch' ||
-      String(body?.reason || '') === 'manual_review')
+    body.skipped === true ||
+    body.status === 'skipped' ||
+    String(body.reason || '').startsWith('skip_') ||
+    String(body.reason || '') === 'sbs_mismatch' ||
+    String(body.reason || '') === 'manual_review'
   ) {
     return 'skip';
   }
-  return 'error';
+  if (body.success === false) return 'error';
+  return 'ok';
 }
 
 // What webhook is allowed to write to subscriptions_v2 in provider-sync STEP C.
