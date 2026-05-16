@@ -241,6 +241,27 @@ Deno.serve(async (req) => {
       );
     }
 
+    // PATCH H2.1b-i: 3DS finalize context delegates to extended writer.
+    // Backward-compat: only activated when caller passes `context: '3ds_finalize'`.
+    if (_body.context === '3ds_finalize') {
+      const { handleThreeDsFinalize } = await import('./three_ds_writer.ts');
+      const audit = async (action: string, meta: Record<string, unknown>) => {
+        try {
+          await supabase.from('audit_logs').insert({
+            action,
+            actor_type: 'system',
+            actor_label: 'grant-access-for-order:3ds_finalize',
+            meta: { ...meta, source: _body.source ?? null },
+          });
+        } catch (_) { /* non-fatal */ }
+      };
+      const outcome = await handleThreeDsFinalize(orderId, { supabase, audit });
+      return new Response(
+        JSON.stringify({ context: '3ds_finalize', outcome }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
+
     // PATCH A: audit legacy body alias usage for observability
     if (_body.order_id && !_body.orderId) {
       try {
