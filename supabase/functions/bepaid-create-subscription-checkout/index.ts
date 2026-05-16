@@ -312,30 +312,90 @@ Deno.serve(async (req) => {
         replacement_of_subscription_v2_id, user_id: userId, product_id: productId, tariff_id: tariff.id,
       });
     } else {
-      const conflictCheck = await checkSubscriptionConflict(supabase, {
+      // PATCH H3.x-a (B-2 root-fix): tariff-sensitive classification.
+      const cls = await classifySameProductState(supabase, {
         user_id: userId, product_id: productId, tariff_id: tariff.id,
       });
-      if (conflictCheck.status === 'error') {
-        return new Response(JSON.stringify({ success: false, error: conflictCheck.error }), {
+      if (cls.status === 'error') {
+        return new Response(JSON.stringify({ success: false, error: cls.error }), {
           status: 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
-      if (conflictCheck.status === 'conflict') {
-        console.log('[bepaid-sub-checkout] DUPLICATE GUARD (shared) — same-pair active subscription', {
-          existing_sub_id: conflictCheck.conflict.subscription_v2_id,
-          status: conflictCheck.conflict.status,
-          user_id: userId, product_id: productId, tariff_id: tariff.id,
+
+      if (cls.decision === 'extend_same_tariff' && cls.existing) {
+        const ex = cls.existing;
+        console.log('[bepaid-sub-checkout] H3.x-a extend_same_tariff — already has active subscription', {
+          existing_sub_id: ex.subscription_v2_id, user_id: userId, product_id: productId, tariff_id: tariff.id,
+        });
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'bepaid-create-subscription-checkout',
+          action: 'subscription.reused_existing_public_link',
+          target_user_id: userId,
+          meta: {
+            decision: 'extend_same_tariff',
+            existing_subscription_v2_id: ex.subscription_v2_id,
+            existing_status: ex.status,
+            existing_provider_subscription_id: ex.provider_subscription_id,
+            existing_provider_state: ex.provider_state,
+            requested_product_id: productId,
+            requested_tariff_id: tariff.id,
+            stage: 'pre_insert_block',
+          },
         });
         return new Response(JSON.stringify({
           success: false,
-          error: 'existing_subscription_conflict',
-          conflict: conflictCheck.conflict,
+          error: 'already_has_active_subscription',
+          conflict: {
+            subscription_v2_id: ex.subscription_v2_id,
+            status: ex.status,
+            next_charge_at: ex.next_charge_at,
+            access_end_at: ex.access_end_at,
+            bepaid_subscription_id: ex.provider_subscription_id,
+            provider_subscription_id: ex.provider_subscription_id,
+            product_id: productId,
+            tariff_id: tariff.id,
+            display_next_charge_at: ex.next_charge_at,
+            display_access_end_at: ex.access_end_at,
+            timezone_used: 'Europe/Minsk',
+          },
         }), {
           status: 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
+
+      if (cls.decision === 'replace_other_tariff' && cls.existing) {
+        const ex = cls.existing;
+        console.log('[bepaid-sub-checkout] H3.x-a replace_other_tariff WITHOUT replacement_id — conflict', {
+          existing_sub_id: ex.subscription_v2_id,
+          existing_tariff_id: ex.tariff_id,
+          requested_tariff_id: tariff.id,
+        });
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'existing_subscription_conflict',
+          conflict: {
+            subscription_v2_id: ex.subscription_v2_id,
+            status: ex.status,
+            next_charge_at: ex.next_charge_at,
+            access_end_at: ex.access_end_at,
+            bepaid_subscription_id: ex.provider_subscription_id,
+            provider_subscription_id: ex.provider_subscription_id,
+            product_id: productId,
+            tariff_id: ex.tariff_id ?? tariff.id,
+            display_next_charge_at: ex.next_charge_at,
+            display_access_end_at: ex.access_end_at,
+            timezone_used: 'Europe/Minsk',
+          },
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      // no_existing → продолжаем создавать новый order + subscription.
     }
 
     const subCheckoutAccessDays = tariff.access_days || 30;
