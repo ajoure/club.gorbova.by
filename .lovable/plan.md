@@ -1,343 +1,227 @@
 # да, согласен, с учетом правок:
 
-## **1. По PATCH G план в целом правильный**
-
-Можно запускать **только read-only discovery** по secondary / bonus access fulfillment.
-
-Но план нужно дополнить и закрыть обрезанный раздел `8. Backlog-предложения`, потому что сейчас он начинается и не содержит конкретных outputs.
-
-Добавить:
+1. **В Step 2 не удалять blindly** `next_charge_at`**,** `status`**,** `auto_renew`**.**  
+Нужно разделить:
+  - access-grant поля — запрещены для прямой записи из webhook;
+  - provider-sync поля — допустимы только после явной классификации.
+  Исправить формулировку:
 
 ```text
-8. Backlog-предложения
+Webhook не должен напрямую менять:
+- subscriptions_v2.access_start_at;
+- subscriptions_v2.access_end_at;
+- entitlements.expires_at;
+- entitlements.status;
+- telegram access.
 
-По итогам discovery подготовить отдельные планы, если будут найдены gap-и:
-
-A. Secondary Bonus Access Canonical Writer Fix
-- если grant-access-for-order не читает bonus_products / included_products / historical_module_product_ids;
-- добавить writer-ветку только через canonical path;
-- без ручных INSERT в entitlements.
-
-B. Access Rules / Tariff Offers Data Fix
-- если expected bundle не описан в БД;
-- сначала dry-run diff правил;
-- потом отдельный approve на изменение access_rules / tariff_offers.
-
-C. Historical Module Access Repair
-- если у пользователей есть основной BUSINESS/Club доступ, но нет положенных исторических модулей;
-- repair только через canonical writer или отдельный approved repair function.
-
-D. Telegram Fulfillment Repair
-- только если primary platform access активен;
-- Telegram не является source of truth.
-
-E. UI Access Resolver Patch
-- если backend access есть, но admin/user UI показывают разные данные.
+subscriptions_v2.next_charge_at/status/auto_renew можно трогать только если это технический provider-sync и не используется как выдача/продление доступа. Каждый такой блок должен быть описан в inventory.
 ```
 
----
-
-## **2. По сегодняшнему платежу — это отдельный срочный blocker**
-
-Факт со скринов:
+2. **Убрать** `forceExtend=true`**.**  
+Это новый скрытый обход guard-логики. Правильнее:
 
 ```text
-Сегодняшний платеж снова привязался к мартовской сделке.
-Доступы при этом выдались корректно.
+Если recurring payment имеет доказанный tariff_id match + bepaid_subscription_id match, stale-guard не должен блокировать extend.
+Если match не доказан — manual_review.
 ```
 
-Это означает:
+3. **Не обещать** `FOR UPDATE` **без RPC.**  
+Через обычный Supabase client это может быть недоступно. Заменить:
 
 ```text
-§A REBILL Materialization dry_run / wiring НЕ сработал на реальном сценарии автосписания.
+Если row-level lock / atomic append невозможен без RPC, в H2 делаем best-effort dedupe, а полноценный race-safe append выносим в отдельный PATCH H2b с RPC/migration.
 ```
 
-Иначе сегодняшний платеж должен был хотя бы создать `bepaid.rebill.dry_run` audit-событие, а при будущем `on` — отдельную REBILL-сделку.
-
-Сейчас видно, что старая проблема повторилась:
+4. **Static check сделать по access-полям, а не по любому** `subscriptions_v2.update`**.**  
+Иначе можно случайно запретить легитимный provider-sync. В proof нужно показать:
 
 ```text
-новый платеж
-→ попал в старую мартовскую сделку
-→ доступ продлился
-→ но финансовая история сделки снова испорчена
+нет прямых write payload, содержащих:
+- access_end_at;
+- access_start_at;
+- expires_at;
+- entitlement status;
+- telegram grant.
 ```
 
-Это значит: **mode=on включать нельзя**.
+А все оставшиеся `subscriptions_v2.update` должны быть перечислены и классифицированы как non-access provider-sync.
 
----
-
-## **3. Добавить срочный PATCH H перед любыми новыми включениями**
-
-Вставь в план отдельный блок:
+5. **Тесты уточнить по race.**  
+Тест №6 “параллельные callback’и → ровно 1 append” допустим только если реально реализован atomic/CAS механизм. Если нет — заменить на:
 
 ```text
-## PATCH H — срочный blocker: сегодняшний bePaid payment снова привязался к мартовской сделке
-
-### Проблема
-
-После включения `BEPAID_REBILL_MATERIALIZATION=dry_run` реальный новый платеж bePaid снова привязался к старой мартовской сделке, а не к отдельной REBILL-сделке.
-
-Доступы выдались корректно, но financial/order linkage снова неправильный.
-
-Это означает, что §A REBILL dry_run dispatcher не сработал на реальном payment-flow или не классифицировал событие как rebill/autocharge.
-
-### Цель
-
-Read-only диагностировать сегодняшний платеж и понять:
-
-1. Почему `bepaid.rebill.dry_run` не появился.
-2. Почему payment был привязан к старому мартовскому order.
-3. Какой именно code path обработал платеж.
-4. Почему `grant-access-for-order` сработал, а REBILL materialization dispatcher — нет.
-5. Как исправить classifier / dispatcher hook до любого `mode=on`.
-
-### Read-only диагностика
-
-По сегодняшнему платежу собрать:
-
-- `payments_v2.id`
-- `provider_payment_id`
-- `paid_at`
-- `created_at`
-- `is_recurring`
-- `order_id`
-- `order_number`
-- `order.created_at`
-- `order.deal_date`
-- `order.meta`
-- `order.bepaid_subscription_id`
-- `provider_subscriptions`
-- `subscriptions_v2`
-- `audit_logs` за окно платежа
-- все action, связанные с:
-  - bePaid webhook;
-  - admin sync;
-  - grant-access-for-order;
-  - subscription extend;
-  - entitlement extend;
-  - telegram grant;
-  - rebill dry_run.
-
-### Ключевой вопрос
-
-Определить точный source сегодняшнего платежа:
-
-- пришёл через `bepaid-webhook`;
-- пришёл через `admin-bepaid-sync`;
-- пришёл через polling/sync;
-- был создан UI/ручным действием;
-- был повторно подтянут из bePaid выписки.
-
-Если платеж пришёл не через `bepaid-webhook`, то §A materialization в webhook не может его поймать. Тогда нужно делать REBILL materialization также в том ingestion-path, который реально создаёт такие платежи.
-
-### Проверить dry_run env
-
-Подтвердить:
-
-- `BEPAID_REBILL_MATERIALIZATION=dry_run` доступен именно в runtime той функции, которая должна была обработать этот платеж;
-- если payment обработал не `bepaid-webhook`, указать, какой env/flag нужен для фактического ingestion path.
-
-### STOP
-
-- `BEPAID_REBILL_MATERIALIZATION=on` не включать.
-- Не делать data-repair сегодняшнего платежа до отдельного dry-run.
-- Не создавать REBILL вручную.
-- Не перепривязывать payment вручную.
-- Только read-only diagnosis.
-
-### Proof
-
-Создать:
-
-`.lovable/proofs/rebill_dryrun_missed_real_payment_2026_05.md`
-
-В proof указать:
-
-1. платеж;
-2. старая сделка, к которой он привязался;
-3. почему это recurring/rebill;
-4. какой кодовый путь его обработал;
-5. почему `bepaid.rebill.dry_run` не появился;
-6. что нужно исправить;
-7. нужен ли новый PATCH для webhook или для admin sync/polling path.
+best-effort duplicate callback with same order_id → duplicate ignored
+race-safe guarantee → deferred to PATCH H2b if RPC required
 ```
 
----
+6. `grant-access-for-order(orderId, { source, context })` **заменить на фактический invoke body.**
 
-## **4. PATCH G можно делать параллельно, но не мешать с PATCH H**
+```ts
+supabase.functions.invoke('grant-access-for-order', {
+  body: { orderId, source: 'bepaid_webhook', context }
+})
+```
 
-Правильный порядок:
+И только если `context` реально поддерживается. Если нет — context писать в audit.
+
+7. **Добавить code rollback section.**
 
 ```text
-1. PATCH H — срочно понять, почему реальный платеж снова попал в мартовскую сделку.
-2. PATCH G — read-only discovery бонусных/вторичных доступов.
-3. Потом отдельный план исправления по результатам H.
-4. Потом отдельный план исправления по результатам G.
+Rollback:
+- если после деплоя webhook ломается, откатить H2 commit;
+- env оставить dry_run;
+- mode=on не включать;
+- data-repair не выполнять.
 ```
 
----
+8. **H2 можно запускать только как code+tests patch.**  
+Без data repair Алёны, без перепривязки платежей, без исправления уже созданных дублей в production.
 
-## **5. Команда Lovable сейчас**
+После этих правок план можно выполнять. H2 — blocker перед любым `BEPAID_REBILL_MATERIALIZATION=on`.
 
-```text
-План PATCH G принят с правками, но перед любым production-включением REBILL mode=on нужно срочно выполнить PATCH H.
-
-Сначала выполни PATCH H read-only diagnosis по сегодняшнему платежу, который снова привязался к мартовской сделке.
-
-Цель: определить, почему BEPAID_REBILL_MATERIALIZATION=dry_run не сработал на реальном платеже и какой ingestion-path фактически обработал платеж.
-
-Никакого repair, никакого mode=on, никаких DML. Только read-only proof.
-```
-
-Главное: сегодняшний платеж — это доказательство, что REBILL-защита пока не закрыта. Доступы выдались правильно, но сделка снова сломалась по финансовой привязке.
-
-&nbsp;
-
-План: PATCH G — Full discovery secondary / bonus access fulfillment (read-only)
+План: PATCH H2 — remove direct webhook access writes and enforce canonical grant path
 
 ## Цель
 
-Зафиксировать, **где** объявлен ожидаемый secondary/bonus access bundle для каждого продукта/тарифа и **что фактически делает** canonical writer `grant-access-for-order`. Найти gap-ы между «должно» и «факт» — без починки.
+Убрать из `bepaid-webhook` прямое обновление `subscriptions_v2.access_end_at` / `next_charge_at` и оставить **единственный** канонический путь продления доступа:
 
-## Жёсткие границы (read-only)
+```text
+bepaid-webhook
+  └─> grant-access-for-order
+        └─> subscriptions_v2 / entitlements / telegram-grant-access
+```
 
-- 0 INSERT/UPDATE/DELETE в: `entitlements`, `subscriptions_v2`, `access_rules`, `product_fulfillment`, `tariff_offers`, `telegram_access_queue`, `telegram_*`, `products_v2`, `tariffs`.
-- 0 миграций, 0 правок RLS, 0 правок edge functions.
-- `BEPAID_REBILL_MATERIALIZATION` НЕ включается.
-- `grant-access-for-order` НЕ вызывается ни на одном order. Анализ строго по коду + текущему state БД + истории audit_logs.
-- Никаких manual_review fix-ов, никаких ретро-grant-ов.
+Если canonical writer вернул `skip` / `error` / `manual_review` / `sbs_mismatch` — webhook **не имеет права** сам двигать даты. Случай уходит в `manual_review` + audit, а не в скрытый bypass.
 
-## Скоуп продуктов (контрольные)
+## Strict Stop-list
 
-1. **Gorbova Club** (`code='club'`)
-2. **БУХГАЛТЕРИЯ КАК БИЗНЕС / BUSINESS** (`code='buh_business'`)
-3. **Ценный бухгалтер 1 ступень 2.0** (CB-1, root `c9f7e9b8-e613-459a-91e3-38bbcfe424d8`)
-4. **Standalone-модули ЦБ-1** (Маркетплейсы / Строительство / Производство / ПВТ / Розница / ИП / Грузоперевозки / Общепит) — отдельные `product_id`, отдельный training-root, бонус → full_access на CB-1.
-5. **Платная консультация** (`code='consultation'`, тариф из кейса `d0a995aa`).
-6. **Модуль Предзапись ЦБ-1 ступень 2.0** (`product_id=11309c6a-…`, тариф `4248dadf-…`, кейс Дарьи Насимовой).
-7. **Платный подарок CHAT** (кейсы `3a748fd9`, `bddd5a41`).
+- production DML = 0
+- migrations = 0
+- `BEPAID_REBILL_MATERIALIZATION` остаётся `dry_run` (не переключать на `on` до закрытия H2)
+- ничего не чиним по уже задетым подпискам (Алёна Богинская и др.) — отдельный PATCH H3 на data-repair
+- PATCH G (bonus/secondary discovery) — read-only, может идти параллельно, но не блокирует и не блокируется H2
 
-Все остальные активные продукты — попадают в общий sweep (см. секцию 4), но без построчного разбора.
+## Scope (только код + тесты)
 
-## Источники истины (SOT-цепочка для secondary)
+### Step 1 — Inventory direct-write блоков в `bepaid-webhook/index.ts`
 
-Проверяем в строгом порядке:
+Найти и задокументировать все места, где webhook сам пишет в `subscriptions_v2` / `entitlements` помимо `grant-access-for-order`:
 
-1. `**tariff_offers.meta**` — `bonus_products[]`, `included_products[]`, `historical_module_product_ids[]`, `recurring`, `installment`, `subscription_offer`, `document_scenarios`.
-2. `**access_rules**` — все правила со `scope IN ('product','tariff','section','telegram','training_content','live')` по каждому product_id/tariff_id из скоупа.
-3. `**product_fulfillment**` (если таблица есть) — fulfillment-bundle.
-4. `**products_v2.meta**` + `entitlement_mode` + `telegram_club_id`.
-5. `**tariffs.meta**` + `access_days`.
-6. **Hardcoded ветки в `supabase/functions/grant-access-for-order/index.ts**` — все `if (product.code === …)`, `if (tariff.id === …)`, `bonus*`, `historical*`, `module_scope_only`, `full_access`, partial-grant блоки, `product_access` секция, `telegram-grant-access` вызов.
-7. `**access-resolver.ts` (`src/utils/access-resolver.ts`)** — как читается результат фулфилмента.
-8. **Memory-канон**: `cabinet-visibility-entitlement-dependency`, `training-content-resolver-rules`, `phantom-parent-entitlement-guard`, `unified-access-rules-standard`, `entitlement-mode-standard-v2`, `canonical-telegram-grant-write-path`, `recurring-snapshot-resolver-sot`.
+- `bepaid.webhook.link_order_dates_updated` (главный нарушитель, обнаружен в PATCH H)
+- любые другие `supabase.from('subscriptions_v2').update(...)` / `.from('entitlements').update(...)`
+- любые `.upsert` на тех же таблицах
+- любые места, где webhook напрямую дёргает `telegram-grant-access` минуя `grant-access-for-order`
 
-## Шаги (Diagnose → Discovery)
+Зафиксировать список в proof.
 
-### Шаг 1. Каталог продуктов и тарифов в скоупе
+### Step 2 — Запрет direct UPDATE access dates
 
-SELECT-ы по `products_v2` + `tariffs` + `tariff_offers` для 7 контрольных продуктов. Зафиксировать: id, name, code, entitlement_mode, telegram_club_id, активные тарифы и их `access_days`/`meta`.
+В каждом найденном direct-write блоке:
 
-### Шаг 2. SOT-матрица «ожидаемый bundle»
+1. Удалить запись/upsert `access_end_at`, `next_charge_at`, `status`, `auto_renew` в `subscriptions_v2` из webhook.
+2. Удалить запись `expires_at` в `entitlements` из webhook.
+3. На месте write-блока — вызов `grant-access-for-order(orderId, { source: 'bepaid_webhook', context })`.
+4. Если writer вернул `skip_*` / `error` / `manual_review` / `primary_entitlement_*_failed` / `sbs_mismatch`:
+  - webhook **не** падает в fallback с прямым UPDATE;
+  - пишет `audit_logs` `bepaid.webhook.grant_skipped_no_fallback` c { decision, reason, orderId, paymentId, subscriptionId };
+  - возвращает HTTP 200 с `processed: true, materialized: false, manual_review: <reason>` (webhook не должен ретраить бесконечно).
 
-Для каждой пары (product, tariff) собрать ожидаемое:
+### Step 3 — Idempotency `meta.extended_by_orders`
 
-- primary entitlement (product_id, access_days);
-- secondary entitlements (bonus_products / included_products / historical_module_product_ids);
-- training_content scope (`full_access` / `module_scope_only` / `union_scope`);
-- section_access (если есть);
-- Telegram (club_id, режим chat/channel/both);
-- live access.
+Проблема H: `[68e2c243, 68e2c243]` — дубль того же `order_id`.
 
-Источник для каждой строки — явно подписан (`tariff_offers.meta.bonus_products`, `access_rules#row_id`, `hardcoded:grant-access-for-order:L###`, `products_v2.meta.X`).
+Канонизировать append-операцию в `grant-access-for-order` (это единственное место, где она теперь будет жить):
 
-### Шаг 3. Что фактически делает writer
+1. Чтение текущего `meta.extended_by_orders` (default `[]`).
+2. `if (arr.includes(orderId)) { audit('extend.duplicate_ignored'); return existing; }`
+3. Иначе append + UPDATE.
+4. Использовать row-level lock (`FOR UPDATE`) или CAS через `updated_at` чтобы не было race между параллельными webhook callback'ами.
+5. Audit:
+  - `extend.applied` — нормальный путь;
+  - `extend.duplicate_ignored` — повторный заход того же `order_id`;
+  - оба содержат `subscription_id`, `order_id`, `previous_access_end_at`, `new_access_end_at`.
 
-Прочитать `supabase/functions/grant-access-for-order/index.ts` целиком и собрать карту:
+### Step 4 — Ревизия `patch-12.2-skip-stale-guard`
 
-- primary entitlement: ветка создания, источник `expires_at` (`extendFromCurrent`, `accessWindow.resolution`), запись `meta.tariff_id`.
-- `product_access` блок: какие rules он раскрывает, при каких условиях `skipped: "no_rules"` / `legacy_skip`.
-- `telegram` блок: когда зовёт `telegram-grant-access`, когда `null`, как защищается от legacy DM.
-- bonus/historical: есть ли вообще ветка чтения `tariff_offers.meta.bonus_products` / `included_products` / `historical_module_product_ids`. Если нет — это **gap_class=writer_missing_branch**.
-- partial-grant: какие пути приводят к `partial_grant_needs_patch_g`, `primary_entitlement_*_failed`, `sbs_mismatch`, `manual_review`.
+В PATCH H выяснили: guard блокировал расширение, потому что existing `access_end_at` < `expected_min_end`. Это означает, что **canonical writer отказывался продлевать** даже когда webhook знал правильный target.
 
-### Шаг 4. Sweep по всем оплаченным заказам (агрегат)
+Задачи:
 
-Read-only агрегатный SELECT по `orders_v2 status='paid'` за последние 24 мес: на сколько orders фактически создан bundle, который ожидается из Шага 2.
+1. Прочитать текущую логику guard.
+2. Сформулировать корректное условие: guard должен срабатывать только если:
+  - оплата НЕ соответствует tariff/sbs текущей подписки **и**
+  - existing access уже истёк и нет основания extend.
+3. Если match по `tariff_id` + `sbs` подтверждён, recurring rebill — `forceExtend=true` пропускает guard.
+4. Если решение — НЕ extend, writer возвращает явный `skip_blocked_stale_access` с причиной; webhook (см. Step 2) уходит в manual_review без прямого UPDATE.
 
-Метрики на каждый (product_id, tariff_id):
+Возможные результаты:
 
-- `orders_paid_total`
-- `orders_with_primary_entitlement`
-- `orders_with_expected_secondary_count` (по каждому ожидаемому secondary product_id отдельно)
-- `orders_with_expected_telegram`
-- `orders_with_audit_skip_legacy_skip` / `audit_skip_no_rules` / `partial_grant_needs_patch_g`
-- `gap_count` = orders где ожидался secondary/Telegram, но фактической записи в `entitlements`/`telegram_messages` нет.
+- guard работает корректно → оставить как есть, доработать только сообщение/audit;
+- guard ошибочно блокирует tariffMatch recurring rebill → исправить условие;
+- в любом случае: НИКАКОГО fallback в webhook.
 
-Никаких join-ов, которые могут что-то записать. Только агрегированные SELECT.
+### Step 5 — Tests (Deno, под `supabase/functions/*/index_test.ts`)
 
-### Шаг 5. Контрольные строки (per-order trace)
+Добавить и прогнать через `supabase--test_edge_functions`:
 
-Для следующих order_id собрать полный trace (orders_v2 → entitlements → subscriptions_v2 → telegram_messages → audit_logs `grant-access-for-order`):
+`bepaid-webhook`:
 
-- Матук Вероника (контрольный из PATCH F).
-- Дарья Насимова (`2da906f1-…`) — proof из Stage 2.
-- 2 чистых BUSINESS / Gorbova Club ордера с полностью корректным bundle (выбрать из top активных).
-- 1 заказ CB-1 standalone-модуль, у пользователя которого ожидается full_access на CB-1 root.
+1. Recurring success, `grant=ok` → 1 вызов grant, 0 прямых UPDATE на subscriptions_v2/entitlements.
+2. Recurring success, `grant=skip_already_fulfilled` → 0 прямых UPDATE, ответ `processed: true, materialized: false`.
+3. Recurring success, `grant=skip_blocked_stale_access` → 0 прямых UPDATE, audit `grant_skipped_no_fallback`, response `manual_review`.
+4. Recurring success, `grant=sbs_mismatch` → manual_review, 0 прямых UPDATE.
+5. Двойной webhook callback с тем же `order_id` → `extended_by_orders` остаётся длиной 1, audit `extend.duplicate_ignored`.
+6. Параллельные callback'и (race) → ровно 1 append.
 
-Для каждого: ожидаемый bundle (Шаг 2) vs фактический state vs audit_logs writer-а.
+`grant-access-for-order`:
+7. Idempotency `extended_by_orders` — повторный вызов с тем же orderId не удлиняет массив.
+8. tariffMatch + sbsMatch + recurring → не блокируется stale-guard (если Step 4 потребовал правки).
+9. `skip_blocked_stale_access` — ответ structured, без частичного UPDATE entitlements/sub.
 
-## Итоговая matrix (формат)
+### Step 6 — Static guard
 
+Добавить grep-guard в репозитории (комментарий + ESLint-disable-rule или простой `rg` chec в CI later):
 
-| product | tariff | expected primary | expected secondary/bonus | expected Telegram | actual writer behavior | gap | candidates |
-| ------- | ------ | ---------------- | ------------------------ | ----------------- | ---------------------- | --- | ---------- |
+- В `supabase/functions/bepaid-webhook/index.ts` запрещены строки:
+  - `from('subscriptions_v2').update`
+  - `from('subscriptions_v2').upsert`
+  - `from('entitlements').update`
+  - `from('entitlements').upsert`
+  - `from('telegram_access').update/upsert`
+- Если найдено — комментарий с обоснованием обязателен, иначе review-блок.
 
+(В этом PATCH добавить только комментарий-маркер `// CANONICAL-WRITER-ONLY: no direct subscriptions_v2/entitlements writes here` сверху файла; полноценный CI-guard — отдельный backlog item.)
 
-Плюс per-order таблица для контрольных строк:
+## Proof (после выполнения)
 
-| order | покупатель | expected bundle | actual entitlements | actual subscription | actual Telegram | audit | gap_class |
+Файл: `.lovable/proofs/patch_h2_canonical_writer_enforced_2026_05.md`
 
-`gap_class ∈ { none, writer_missing_branch, rules_missing_in_db, legacy_skip_mode, mode_mismatch, telegram_not_called, secondary_not_materialized, partial_grant_needs_patch_g, manual_review_required, sbs_mismatch }`.
+Содержание:
 
-## Технические детали
-
-- Все запросы — через `supabase--read_query`. Лимиты на batch ≤ 1000 (см. canon).
-- Чтение кода — `code--view` по `supabase/functions/grant-access-for-order/index.ts`, `src/utils/access-resolver.ts`, `src/hooks/useSidebarModules.ts` (если нужно), `src/utils/resolveTrainingContentFilter*`.
-- UUID-only в техническом приложении proof; в шапках таблиц — имена продуктов/покупателей (как договорились).
-- Legacy product code/slug упоминаем только как `legacy_existing_debt` (memory: `no-product-code-in-new-artifacts`).
-
-## Proof
-
-`.lovable/proofs/secondary_bonus_access_fulfillment_discovery_2026_05.md`
-
-Структура:
-
-1. Скоуп и SOT-цепочка
-2. Каталог продуктов/тарифов
-3. Expected-bundle matrix (per product/tariff)
-4. Writer behavior map (по коду grant-access-for-order)
-5. Sweep-агрегаты по всем оплаченным orders
-6. Per-order trace контрольных строк
-7. Список gap-ов с классификацией и candidate count
-8. Backlog-предложения (без выполнения): какие правила нужно создать в `access_rules`, какие ветки писателя дописать, какие продукты перевести с `legacy_skip` на канонический `entitlement_mode`.
+1. **Inventory** найденных direct-write блоков (до правки).
+2. **Diff-summary** — какие блоки удалены / заменены на `grant-access-for-order` call.
+3. **Stale-guard verdict** — корректен / исправлен (с описанием правки).
+4. **Idempotency** — описание dedupe-логики + audit-actions.
+5. **Test report** — 9 тестов, все passed, имена + результат.
+6. **Static check** — `rg "from\('subscriptions_v2'\)\.update" supabase/functions/bepaid-webhook/` → 0 совпадений.
+7. **Counters**: production DML = 0, migrations = 0, `BEPAID_REBILL_MATERIALIZATION` = `dry_run` (не менялось).
+8. **Untouched**: одноразовые платежи checkout-flow, installment public-link writer, autoweb, telegram queue manual sources.
 
 ## DoD
 
-- 0 DML, 0 миграций, 0 правок кода/функций.
-- Полная expected-bundle matrix по 7 контрольным продуктам.
-- Карта поведения `grant-access-for-order` со ссылками на строки файла.
-- Sweep-агрегат по всем активным продуктам с `gap_count`.
-- Per-order trace для ≥5 контрольных покупателей (включая Матук, Насимову).
-- Список gap-ов с классификацией и количеством кандидатов на каждый класс.
-- Backlog отдельным разделом — без принятия решений о починке.
-- BEPAID_REBILL_MATERIALIZATION не трогался.
+- В `bepaid-webhook` нет ни одного прямого UPDATE/UPSERT на `subscriptions_v2`, `entitlements`, `telegram_access` (grep-проверка приложена).
+- Все extend / renew пути идут через `grant-access-for-order`.
+- При `skip / error / manual_review / sbs_mismatch` webhook НЕ продлевает даты, пишет audit, отвечает 200 с `manual_review`.
+- `extended_by_orders` dedupe покрыт тестом, дубль игнорируется + audit.
+- Stale-guard либо подтверждён корректным, либо исправлен с тестом.
+- 9 тестов passed.
+- Production DML = 0, migrations = 0, `BEPAID_REBILL_MATERIALIZATION` = `dry_run`.
+- Proof `.lovable/proofs/patch_h2_canonical_writer_enforced_2026_05.md` создан.
 
-## Что НЕ входит (отдельными планами)
+## После закрытия H2 — что остаётся отдельными задачами
 
-- Group D (51 расхождение дат) — отдельный read-only план.
-- INV-22 Юлия Рабчевская.
-- Manual review дублей (Катерина Горбова, [latysh_dashka@mail.ru](mailto:latysh_dashka@mail.ru)).
-- Решение по `d0a995aa` (истёкший без выдачи).
-- Любая фактическая починка bonus/secondary access (будет PATCH G Stage 2 после согласования).
+- **PATCH H3** — data-repair уже задетых записей (Алёна Богинская, дубль `extended_by_orders`), только после H2.
+- **PATCH H4** — preconditions check + переключение `BEPAID_REBILL_MATERIALIZATION=on`, отдельным dry-run → execute циклом.
+- **PATCH G** — read-only discovery bonus/secondary access (можно параллельно с H2).
+- **Group D** (51 date mismatches) — read-only план уже на очереди.
+- **INV-22 Юлия Рабчевская**, manual_review duplicates, `d0a995aa` — без изменений.
