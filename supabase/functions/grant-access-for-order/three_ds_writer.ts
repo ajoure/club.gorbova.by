@@ -334,6 +334,7 @@ export async function handleThreeDsFinalize(
 
   // 5b) Single candidate → extend / reattach / proration
   const sub = classification.candidates[0];
+  const prevStatus = sub.status; // capture before any mutation
   const sameTariff =
     !!sub.tariff_id && !!order.tariff_id && sub.tariff_id === order.tariff_id;
 
