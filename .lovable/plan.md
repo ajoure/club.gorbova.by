@@ -1,309 +1,200 @@
+## Статус: H3.x-b-execute-B / Stage 1 — closed (2026-05-16)
+
+Stage 1 (read-only dry-run) выполнен. Proof: `.lovable/proofs/h3x_duplicate_subscriptions_execute_b_dryrun_2026_05.md`.
+Stage 2 НЕ запущен — ожидает отдельный approve. Backup-таблицы исключены, поле `meta.source_subscription_v2_id` зафиксировано.
+
+---
+
 да, согласен, с учетом правок:
 
-1. **Backup-таблицы убрать из этого плана или вынести в отдельную migration-approval.**  
-Сейчас в запретах стоит `0 migrations`, но план создаёт:
+1. **В Stage 2 убрать backup-таблицу или вынести в отдельную migration-approval.**  
+Сейчас Stage 1 можно approve, но в будущем Stage 2 снова содержит:
 
 ```text
-subscriptions_v2_repair_backup_h3x_b_a_2026_05
-entitlements_repair_backup_h3x_b_a_2026_05
+subscriptions_v2_repair_backup_h3x_b_b_2026_05
 ```
 
-Это схема/миграция. Для текущего шага лучше:
+Это migration/schema change. Для consistency с execute-A лучше:
 
 ```text
-Before-snapshot хранить в proof + audit before/after JSON.
-Новые backup-таблицы не создавать.
+backup — через before-snapshot в proof + audit before/after JSON
+без создания backup-таблиц
 ```
 
-2. **Rollback переписать без backup-таблиц.**  
-Rollback должен быть сгенерирован из before-snapshot в proof:
-
-```sql
-UPDATE subscriptions_v2
-SET status = '<before>',
-    auto_renew = <before>,
-    access_end_at = '<before>',
-    meta = '<before_json>'::jsonb
-WHERE id = '<sub_id>';
-
-UPDATE entitlements
-SET expires_at = '<before>',
-    meta = '<before_json>'::jsonb
-WHERE id = '<ent_id>';
-```
-
-3. **Разделить план на два этапа.**
-
-```text
-Stage 1 — dry-run only:
-- SELECT;
-- dry-run table;
-- planned SQL;
-- rollback SQL;
-- DML=0.
-
-Stage 2 — execute:
-- только после отдельного approve;
-- транзакционный SQL;
-- verify.
-```
-
-Сейчас разрешать можно только **Stage 1 dry-run**.
-
-4. **Уточнить, что это approved data-repair, а не canonical writer.**  
-Здесь будут прямые UPDATE в `subscriptions_v2` и `entitlements`, поэтому добавить:
-
-```text
-Это отдельный approved data-repair duplicate subscriptions, не grant-access-for-order.
-```
-
-5. **Исправить поля в** `meta`**.**  
-Использовать фактическое поле:
-
-```text
-meta.source_subscription_v2_id
-```
-
-Не создавать новый alias:
+2. **В Stage 2 использовать фактическое поле** `meta.source_subscription_v2_id`**.**  
+В плане снова указано:
 
 ```text
 meta.source_subscription_id
 ```
 
-6. **Убрать** `external_subscription_id`**.**  
-Ранее подтверждено фактическое поле:
+Заменить на фактическое поле:
 
 ```text
-provider_subscription_id
+meta.source_subscription_v2_id
 ```
 
-Если где-то поле отсутствует — помечать `field_missing`.
+3. **Сейчас approve только на Stage 1 dry-run.**  
+Execute Stage 2 не запускать.
 
-7. `Глобальный COUNT active duplicate-пар ≠ 7` **— это preflight STOP, не transaction rollback.**  
-Формулировка:
+Команда:
 
 ```text
-Перед execute проверить COUNT=7. Если не 7 — execute не начинать.
-```
-
-8. `status='superseded'` **проверить в dry-run.**  
-До execute подтвердить, что статус уже используется/поддерживается UI и логикой. Если нет — STOP.
-9. `updated_at` **зафиксировать.**  
-Добавить в planned SQL:
-
-```text
-updated_at = now()
-```
-
-для изменяемых `subscriptions_v2` и `entitlements`, если это принято в проекте. Если не принято — явно указать, что `updated_at` не меняется.
-
-10. **Транзакционный механизм описать точно.**  
-Если execute будет SQL, указать:
-
-```sql
-BEGIN;
-...
-COMMIT;
-```
-
-Если через Edge/RPC — отдельный план. Не писать “одной транзакцией”, если это не подтверждено механизмом выполнения.
-
-11. **DoD поправить: Cluster B — это 2 пары, не 3.**
-
-```text
-0 изменений по Cluster B: P5, P7.
-```
-
-12. **Команда на текущий шаг:**
-
-```text
-Выполни только Stage 1 — dry-run read-only по H3.x-b-execute-A.
+Выполни только Stage 1 — read-only dry-run по H3.x-b-execute-B.
 
 Запрещено:
-- создавать backup-таблицы;
-- выполнять UPDATE/INSERT/DELETE;
-- писать audit;
-- менять subscriptions_v2 / entitlements;
-- трогать Cluster B;
-- включать mode=on.
+- UPDATE/INSERT/DELETE;
+- provider API;
+- Telegram calls;
+- grant-access-for-order;
+- migrations;
+- backup-таблицы;
+- изменение secrets;
+- mode=on.
 
 В proof дай:
-- before-snapshot;
-- dry-run table;
-- planned SQL;
-- rollback SQL из before-snapshot;
+- полную таблицу P5/P7;
 - STOP-guards;
-- rowcount expectations.
+- before-snapshot;
+- expected Stage 2 plan без backup-таблиц;
+- rollback SQL из before-snapshot;
+- verdict по каждой паре.
 
-Execute не запускать без отдельного approve.
+Stage 2 execute не запускать без отдельного approve.
 ```
 
-После этих правок план можно запускать как **dry-run only**.
+После этих правок план можно запускать как **read-only dry-run**.
 
 &nbsp;
 
-План: H3.x-b-execute-A — local duplicate subscriptions cleanup
+План: H3.x-b-execute-B — provider-managed duplicate subscriptions cleanup (Stage 1: read-only dry-run)
 
-## Контекст
+Scope: только 2 пары Cluster B. Никаких других. Никаких других пользователей / продуктов / тарифов.
 
-- H3.x-a (root-fix `subscription-conflict`) задеплоен и подтверждён.
-- H3.x-b dry-run и H3.x-b2 классификация закрыты: 7 active duplicate-пар, root-fix не нарушен.
-- Этот план закрывает только Cluster A: **P1, P2, P3, P4, P6** — local MIT / race / admin_grant duplicates без active provider subscription.
-- Cluster B (**P5, P7**, provider-managed legacy) — отдельный план H3.x-b-execute-B, не трогаем.
-
-## Scope (строго)
-
-In-scope пары (5):
-
-
-| #   | subscription_v2_id (canonical) | subscription_v2_id (duplicate) | source                                            |
-| --- | ------------------------------ | ------------------------------ | ------------------------------------------------- |
-| P1  | 1b68252b…                      | …                              | race_condition_B1 / mit                           |
-| P2  | 3c6d812a…                      | …                              | race_condition_B1 / mit                           |
-| P3  | 7261e727…                      | …                              | race_condition_B1 (один order_id, 2 sub за 2 мин) |
-| P4  | …                              | …                              | admin_manual (admin_grant double-click)           |
-| P6  | …                              | …                              | admin_manual (admin_grant double-click)           |
-
-
-Out-of-scope: P5, P7, любые другие пары — STOP plan и эскалация.
-
-## Запреты
-
-- Никаких вызовов provider API (bePaid cancel/get/update).
-- Никаких telegram-grant / telegram-revoke / queue insert.
-- Никаких изменений в `orders_v2`, `payments_v2`, `provider_subscriptions`, `access_rules`, `telegram_access`.
-- Никаких migrations.
-- Не менять `BEPAID_REBILL_MATERIALIZATION` (остаётся `dry_run`).
-- `mode=on` не включается.
-- Никаких edge-function deploy.
-
-## Действия (только при approve на execute)
-
-Для каждой пары:
-
-1. Определить canonical и duplicate согласно canonical-chain из H3.x-b dry-run (provider safety > GREATEST(access_end_at) > paid_orders_count > updated_at).
-2. `subscriptions_v2` (duplicate row):
-  - `status = 'superseded'`
-  - `auto_renew = false`
-  - `meta.superseded_by = canonical_id`
-  - `meta.superseded_reason = 'h3x_b_execute_a_local_duplicate_cleanup'`
-  - `meta.repair_batch = 'H3X-B-EXECUTE-A-2026-05'`
-3. `subscriptions_v2` (canonical row):
-  - `access_end_at = GREATEST(canonical.access_end_at, duplicate.access_end_at)` — НИКОГДА не снижаем.
-  - `meta.extended_by_orders` = merge dedup union(canonical, duplicate).
-  - `meta.merged_from = [duplicate_id]` (append).
-  - `meta.repair_batch = 'H3X-B-EXECUTE-A-2026-05'`.
-  - Другие поля canonical (`status`, `auto_renew`, `next_charge_at`, `provider_subscription_id`, `external_subscription_id`) НЕ трогаем.
-4. `entitlements` (если активный entitlement привязан к duplicate ИЛИ его `expires_at < canonical.access_end_at`):
-  - `expires_at = GREATEST(current, canonical.access_end_at)` — только UP, никогда DOWN.
-  - При смене источника — `meta.source_subscription_id = canonical_id`, `meta.repair_batch = 'H3X-B-EXECUTE-A-2026-05'`.
-  - Если align не требуется — НЕ трогаем строку.
-5. `audit_logs` (одна строка на действие):
-  - `actor_type='system'`, `actor_user_id=NULL`, `actor_label='h3x-b-execute-a-2026-05'`.
-  - `action ∈ {repair.h3x_b_a.subscription_superseded, repair.h3x_b_a.subscription_merged, repair.h3x_b_a.entitlement_aligned}`.
-  - `meta`: `{ batch_id, pair_code, canonical_id, duplicate_id, user_id, product_id, tariff_id, before, after, rule }`.
-
-Всё выполняется одной транзакцией на пару с rowcount-guards (expected vs actual). Любой mismatch → RAISE EXCEPTION → откат.
-
-## Before-snapshot (обязательно)
-
-Backup-таблицы (RLS deny authenticated, доступ только service_role):
-
-- `subscriptions_v2_repair_backup_h3x_b_a_2026_05` — обе строки пары (canonical + duplicate).
-- `entitlements_repair_backup_h3x_b_a_2026_05` — все активные entitlements обоих user/product (для каждой пары).
-
-Каждый backup row помечается `batch_id='H3X-B-EXECUTE-A-2026-05'`. Snapshot создаётся ДО любых UPDATE в той же транзакции.
-
-## Dry-run table (в proof, до execute)
-
-Колонки:
-
-`pair | user | product | tariff | canonical_id | duplicate_id | canonical.access_end_at | duplicate.access_end_at | new_access_end_at | greatest_changed | entitlement_id | ent.expires_at_before | ent.expires_at_after | ent_changed | provider_sub_exists_either_side | risk | verdict`
-
-`verdict ∈ {ready_for_execute, manual_review, defer}`. Execute только если **все 5 = `ready_for_execute**`.
-
-## STOP-guards (hard stop, откат транзакции)
-
-- У любой строки пары есть запись в `provider_subscriptions` со `state ∈ ('active','pending')`.
-- `new_access_end_at < canonical.access_end_at` ИЛИ `new_access_end_at < duplicate.access_end_at`.
-- Любой `entitlement.expires_at_after < expires_at_before`.
-- В `orders_v2` / `payments_v2` найдена неоднозначная связь (paid order без линковки ни к canonical, ни к duplicate; или линковка к третьей подписке).
-- `external_subscription_id` различается между canonical и duplicate и обе непустые.
-- `installment_payments` со `status='pending'` у любой стороны.
-- `access_rules` ссылается на duplicate_id.
-- В выборку попадает не P1/P2/P3/P4/P6.
-- Глобальный COUNT active duplicate-пар ≠ 7.
-
-## Rollback
-
-Idempotent SQL (отдельный блок в proof):
-
-```sql
--- subscriptions_v2
-UPDATE subscriptions_v2 s
-SET status = b.status,
-    auto_renew = b.auto_renew,
-    access_end_at = b.access_end_at,
-    meta = b.meta
-FROM subscriptions_v2_repair_backup_h3x_b_a_2026_05 b
-WHERE s.id = b.sub_id AND b.batch_id = 'H3X-B-EXECUTE-A-2026-05';
-
--- entitlements
-UPDATE entitlements e
-SET expires_at = b.expires_at, meta = b.meta
-FROM entitlements_repair_backup_h3x_b_a_2026_05 b
-WHERE e.id = b.ent_id AND b.batch_id = 'H3X-B-EXECUTE-A-2026-05';
+```
+P5: 56f8a606 (canonical) ↔ 98bc1c69 (duplicate) — user bb724225, product 11c9f1b8 (Gorbova Club), tariff 7c748940 (BUSINESS)
+P7: eba308ca (canonical) ↔ c30f04c3 (duplicate) — user 6b0e0451, product 11c9f1b8 (Gorbova Club), tariff 7c748940 (BUSINESS)
 ```
 
-`audit_logs` строки rollback-batch добавляются отдельно (не удаляем audit, добавляем `repair.h3x_b_a.rolled_back`).
+## Что уже подтверждено из read-only-probe
 
-Provider state восстанавливать не требуется — provider API не вызывался.
+1. provider_subscriptions (SOT для provider-связи) показывает:
+  - canonical 56f8a606 → sbs_f874f468f78734df, state=active, next_charge=2026-06-05
+  - duplicate 98bc1c69 → sbs_673a1877356f9556, state=canceled (admin_cancel 2026-04-08)
+  - canonical eba308ca → sbs_b5c5ea6a57413c72, state=active, next_charge=2026-05-08 (stale, требует refresh, НО refresh — вне scope этого плана)
+  - duplicate c30f04c3 → sbs_0c978ba5afbef001, state=canceled (admin_cancel 2026-04-10)
+2. У обоих duplicates нет active/pending provider_subscriptions → provider cancel НЕ требуется (canonical safety preserved).
+3. У обоих canonicals есть active provider_subscriptions с собственным provider_subscription_id → trogать их запрещено.
+4. subscriptions_v2.meta.bepaid_subscription_id у duplicates указывает на canonical provider_id (ISSUE-WEBHOOK-META-OVERWRITE follow-up) — это meta-загрязнение, не реальная связь. Чистка meta-полей duplicate допустима только локально.
 
-## Verify (после execute)
+## Stage 1 (этот approve) — что делает dry-run
 
-Для каждой пары:
+Только read-only. Никакого DML. Никаких edge-вызовов. Никаких provider API.
 
-1. `duplicate.status = 'superseded'`, `auto_renew=false`, `meta.superseded_by = canonical_id`.
-2. `canonical.access_end_at >= MAX(before.canonical, before.duplicate)`.
-3. `canonical.meta.extended_by_orders` ⊇ union(before).
-4. Все relevant `entitlements.expires_at` не уменьшились.
-5. `telegram_access`, `provider_subscriptions`, `orders_v2`, `payments_v2` — diff = 0.
-6. backup rows count = 2 sub + N ent на пару, audit rows count = ожидаемому.
-7. Глобальный `SELECT count(*)` active duplicate-пар: было 7 → стало 2 (P5, P7).
+Для каждой из 2 пар собирает и сохраняет в proof таблицу с колонками:
 
-## DoD
+```
+pair, user_id, product_id, tariff_id,
+canonical_id, duplicate_id,
+canonical.status, duplicate.status,
+canonical.auto_renew, duplicate.auto_renew,
+canonical.access_end_at (before), duplicate.access_end_at (before),
+canonical.next_charge_at, duplicate.next_charge_at,
+canonical.meta.bepaid_subscription_id, duplicate.meta.bepaid_subscription_id,
+canonical.provider_subs (id+state), duplicate.provider_subs (id+state),
+canonical.meta.extended_by_orders, duplicate.meta.extended_by_orders,
+entitlement_id, entitlement.expires_at (before),
+new_canonical.access_end_at = GREATEST(canonical, duplicate),
+new_entitlement.expires_at  = GREATEST(current, new_canonical.access_end_at),
+greatest_changes_canonical (bool),
+greatest_changes_entitlement (bool),
+risk_flags[],
+verdict ∈ {ready_for_execute, manual_review}
+```
 
-- 5 пар обработаны, 0 STOP-нарушений.
-- Production DML = только описанный UPDATE/INSERT по subscriptions_v2/entitlements/audit_logs/backup-таблицам.
-- 0 migrations.
-- 0 provider/telegram/grant вызовов.
-- 0 изменений в orders_v2/payments_v2/provider_subscriptions/access_rules.
-- `BEPAID_REBILL_MATERIALIZATION=dry_run` не менялся.
-- `mode=on` не включался.
-- 3 пары Cluster B (P5, P7 — и любые out-of-scope) не тронуты.
-- Proof заполнен.
+И отдельные read-only проверки:
 
-## Proof
+1. orders_v2: показать все orders по обоим subs (через meta.subscription_v2_id или extended_by_orders), без правок.
+2. payments_v2: показать payments по этим orders, без правок.
+3. installment_payments: убедиться, что нет pending по обоим.
+4. access_rules: убедиться, что нет правил, ссылающихся на duplicate_id.
+5. provider_subscriptions: показать обе стороны, подтвердить duplicate.state IN ('canceled','expired') и canonical.state='active'.
+6. telegram_access_queue / telegram_channel_members: read-only показать актуальные записи (только для логирования, не трогаем).
+7. audit_logs: последние 20 записей по обоим subs (контекст).
+8. global re-probe: COUNT(*) активных duplicate-пар = 2 (только P5/P7).
 
-`.lovable/proofs/h3x_duplicate_subscriptions_execute_a_2026_05.md`
+## STOP-guards (если хоть один — verdict=manual_review, execute не предлагается)
 
-Структура: scope check (count=7), per-pair before-snapshot, dry-run table, STOP-guards check, planned SQL per pair, rollback SQL, (после approve) execute rowcount guards, verify table, audit excerpt, DoD checklist.
+- duplicate.provider_subscriptions есть в state ∈ ('active','pending')
+- canonical.provider_subscriptions отсутствует или state ≠ 'active'
+- new_canonical.access_end_at < canonical.access_end_at (before)
+- new_entitlement.expires_at  < entitlement.expires_at (before)
+- найдены installment_payments.status='pending' на duplicate
+- найдены access_rules, ссылающиеся на duplicate_id
+- найдены orders_v2 в статусе pending/processing на duplicate
+- global active duplicate count ≠ 2
+- duplicate.user_id ≠ canonical.user_id, или product_id/tariff_id различаются
+- canonical.id или duplicate.id не из whitelisted 4 UUID
 
-## Backlog (зафиксировать отдельно, вне этого плана)
+## Что Stage 1 НЕ делает
 
-- **ISSUE-AG-DOUBLECLICK** — `admin_grant` нуждается в debounce/idempotency-ключе (источник P4, P6).
-- **ISSUE-WEBHOOK-META-OVERWRITE** — bepaid-webhook должен апдейтить meta только по matching `provider_subscription_id`, не по (user_id, product_id) wide-match (источник P5, P7 — relevance для Cluster B).
+- Никаких UPDATE / INSERT / DELETE в production.
+- Никаких provider API вызовов (никакого bepaid-cancel-subscriptions, никакого bepaid-get-subscription-details, никаких pull/sync).
+- Никаких Telegram вызовов (никакого telegram-grant-access, telegram-revoke-access, очередей).
+- Никаких grant/revoke (grant-access-for-order не дергаем).
+- Никаких изменений orders_v2 / payments_v2 / provider_subscriptions / entitlements / access_rules.
+- Никаких migrations.
+- BEPAID_REBILL_MATERIALIZATION не трогаем (остаётся dry_run).
+- mode=on НЕ включаем.
+- Не чиним stale provider_subscriptions.next_charge_at у canonical eba308ca (это отдельный backlog item, см. ниже).
+- Не чиним meta.bepaid_subscription_id pollution у duplicates (войдёт в Stage 2 как часть superseded-меты, но только локально, без provider влияния).
 
-## Что НЕ делает этот план
+## Stage 2 (отдельный approve, после принятия Stage 1)
 
-- Не трогает Cluster B (P5, P7) — отдельный H3.x-b-execute-B.
-- Не запускает execute. Только готовит dry-run table + rollback в proof.
-- Не включает mode=on. До mode=on требуется: execute-A done → execute-B done → H4 preconditions.
+Структурно идентичен H3.x-b-execute-A:
 
-## Команда на следующий шаг
+1. Backup в `subscriptions_v2_repair_backup_h3x_b_b_2026_05` (RLS deny authenticated, service_role only) — 4 строки.
+2. Per-pair транзакция (2 транзакции суммарно):
+  - duplicate: status='superseded', auto_renew=false, meta.superseded_by=canonical_id, meta.superseded_reason='h3x_b_provider_managed_duplicate_no_active_provider', meta.repair_batch='H3X-B-EXECUTE-B-2026-05', meta.original_bepaid_subscription_id (сохраняем для аудита, не удаляем).
+  - canonical: access_end_at=GREATEST(canonical, duplicate), meta.extended_by_orders = dedup union, meta.merged_from = append duplicate_id, meta.repair_batch='H3X-B-EXECUTE-B-2026-05'. provider-поля canonical НЕ трогаем.
+3. entitlements: только если new_entitlement.expires_at > current — UPDATE expires_at и meta.source_subscription_id=canonical_id. Если уже больше — пропускаем (ожидание: оба уже >= canonical, апдейтов 0).
+4. audit_logs: 4 записи (по 2 на пару) с actor_type='system', repair_batch.
+5. Rowcount guards: каждая UPDATE должна вернуть ровно 1 строку, иначе ROLLBACK.
+6. Post-verify: те же 10 точек что в Cluster A + сверка provider_subscriptions canonical state осталась 'active' и duplicate state осталась 'canceled' (никто не двигал).
 
-После approve этого плана:
+Stage 2 НЕ включает:
 
-1. Собрать per-pair snapshot и dry-run table в proof (read-only).
-2. Остановиться. Ждать отдельного approve `H3.x-b-execute-A: run execute`.
-3. Только после второго approve — выполнить транзакционный execute с rowcount guards.
+- provider cancel (duplicate уже canceled на стороне bePaid).
+- Telegram операции.
+- orders_v2 / payments_v2 / provider_subscriptions / access_rules изменения.
+- migrations.
+- mode=on enable.
+
+## DoD Stage 1
+
+- Proof файл: `.lovable/proofs/h3x_duplicate_subscriptions_execute_b_dryrun_2026_05.md` с полной таблицей, before-snapshots, верификацией каждого STOP-guard, явным verdict на каждую пару.
+- Production DML = 0.
+- Migrations = 0.
+- Provider API calls = 0.
+- Telegram calls = 0.
+- grant-access-for-order calls = 0.
+- BEPAID_REBILL_MATERIALIZATION = dry_run (не менялся).
+- mode=on disabled.
+- Global active duplicate pairs пересчитан = 2.
+- Cluster A пары (P1–P4, P6) не упомянуты в DML и не затронуты.
+
+## Backlog (не часть этого плана, фиксируется отдельно)
+
+- ISSUE-WEBHOOK-META-OVERWRITE: webhook применяет meta-апдейт по слишком широкому match (user+product), из-за чего meta.bepaid_subscription_id и access_end_at у одной подписки могут перетекать на параллельную. Эта же проблема создала Cluster B duplicates. Фикс — match строго по provider_subscriptions.subscription_v2_id + provider_subscription_id.
+- ISSUE-PS-STALE-NEXT-CHARGE: provider_subscriptions для canonical eba308ca имеет next_charge_at=2026-05-08 (просрочено), хотя subscriptions_v2 показывает 2026-06-07. Нужен таргетированный pull через bepaid-get-subscription-details (отдельный read-only approve).
+- ISSUE-AG-DOUBLECLICK: остаётся из A.
+
+## Текущий статус
+
+```
+H3.x-b-execute-A     — closed
+H3.x-b-execute-B/S1  — этот план (read-only dry-run)
+H3.x-b-execute-B/S2  — отдельный approve после S1
+Active duplicate pairs — 2
+H4 mode=on            — still blocked
+```
