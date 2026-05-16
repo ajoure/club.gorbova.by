@@ -1,210 +1,213 @@
-## да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
-1. **В Stage 3 исправить статус** `trialing`**.**  
-Ранее в системе использовались статусы `active`, `trial`, `past_due`. Нужно не писать `trialing`, если такого enum нет. Формулировка:
-
-```text
-WHERE status IN ('active','trial')
-```
-
-и отдельно:
+1. **Уточнить про DML.**  
+В плане написано `DML любого вида запрещено`, но при `mode=on` реальный live REBILL сам создаст:
 
 ```text
-WHERE status IN ('active','trial','past_due')
+orders_v2
+payments_v2 order_id repoint / insert
+subscriptions_v2 extend через grant-access-for-order
+entitlements extend
+audit_logs
 ```
 
-Если enum реально содержит `trialing`, это нужно подтвердить schema verification.
-
-2. **G25 искать не по** `id='<sbs_50a3bd75…>'`**.**  
-`sbs_50a3bd75…` — это provider subscription id, не `subscriptions_v2.id`. Правильно:
+Это ожидаемый runtime DML, а не ручной repair. Поэтому формулировку заменить:
 
 ```text
-provider_subscriptions.provider_subscription_id = 'sbs_50a3bd75a025455b'
+Запрещён ручной DML / repair DML. Runtime DML от bePaid webhook при первом live REBILL разрешён и является предметом проверки.
 ```
 
-и через него получить связанную `subscriptions_v2`.
-
-3. **Stage 1 не ограничивать только** `meta->>'is_rebill'='true'`**.**  
-Нужно проверить фактические поля audit. Если `is_rebill` не пишется, можно пропустить реальные autocharge. Добавить fallback-поиск по:
+2. **Stage 2 “пассивное ожидание до 24h” не должно быть обещанием фоновой работы без механизма.**  
+Нужно указать, как именно мониторим:
+  - либо Lovable запускает проверку вручную через N часов;
+  - либо есть cron/monitoring query;
+  - либо после flip сразу фиксируем “on enabled, awaiting first traffic”, а verify делаем отдельным отчётом после появления события.
+3. **Если за 24h нет трафика — это не незакрытый план, а статус** `enabled_awaiting_traffic`**.**  
+Иначе задача зависнет. Лучше:
 
 ```text
-provider_payment_id / bepaid_transaction_uid / parent_uid / subscription_id / sbs / payment_flow='bepaid_subscription_charge'
+Если за 24h нет live REBILL:
+- proof фиксирует no_traffic;
+- mode=on остаётся включённым;
+- H4.1 получает статус enabled_awaiting_first_rebill;
+- first live verify выполняется отдельным follow-up proof при первом событии.
 ```
 
-4. **Stage 2.D не смешивать direct writes в других canonical/repaired functions с blocker.**  
-Если direct write найден не в `bepaid-webhook`, а в approved repair/admin/manual function, его классифицировать отдельно. Blocker для `mode=on` — именно тот direct access write, который может сработать на bePaid payment/rebill path.
-5. **Stage 3 active duplicate pairs считать по** `(user_id, product_id, tariff_id)`**, а не только** `(user_id, product_id)`**.**  
-Иначе разные тарифы одного продукта попадут как ложный duplicate. Для отдельного backlog можно дать `tariff_mismatch_pairs`.
-6. `extended_by_orders duplicates` **проверять не через** `cleanup_batch`**.**  
-Нужно прямое условие:
+4. **Gate 0 active duplicate count должен быть именно по** `(user_id, product_id, tariff_id)`**.**  
+Не по `(user_id, product_id)`, чтобы не ловить разные тарифы как дубль.
+5. **Stage 1 dry_run audit action проверить по фактическим именам.**  
+В системе встречались `bepaid.rebill.dry_run`, `bepaid.rebill.decision_audit`. Не завязываться только на одно имя. В proof показать все `bepaid.rebill.%`.
+6. **Telegram DM check сделать только если продукт требует Telegram.**  
+Если REBILL по продукту без Telegram, пункт 8 должен быть `not_applicable`, а не fail.
+7. **Rollback не должен делать data repair.**  
+Это уже есть, но добавить: если первый live REBILL частично успел создать неправильные записи, rollback только переводит flag обратно в `dry_run`; исправление данных — отдельный incident repair.
+8. **Добавить проверку parent order.**  
+В Stage 3 явно проверить:
 
 ```text
-jsonb_array_length(extended_by_orders) != count(distinct elements)
+parent order payments count не увеличился по provider_payment_id после flipped_at
+parent order deal_date не изменился
 ```
 
-или эквивалентный разбор JSON массива. `cleanup_batch` не является признаком дубля.
-
-7. **Рабчевская / Алёна / Багинская — не через chat_search как основной источник.**  
-Основной источник — proof-файлы и БД. `chat_search` только как вспомогательный контекст. В proof указать фактические строки/статусы из БД.
-8. **Stage 5 “незакрытые data repairs execute pending” сделать blocker только если влияет на active/rebill path.**  
-Исторический repair без риска для новых webhook не должен автоматически блокировать `mode=on`.
-9. **Добавить explicit runtime check после последнего deploy.**  
-Для Stage 1/2 важно считать период после последнего deploy `bepaid-webhook`, а не только 14 дней. В proof сделать две колонки:
+9. **Добавить проверку REBILL-order статуса.**
 
 ```text
-last_14_days
-since_last_deploy
+REBILL-order.status корректен:
+- paid для успешного autocharge;
+- refunded/full_refund — если webhook содержит refund logic.
 ```
 
-10. **Добавить итоговую таблицу решений:**
+10. **Секрет после включения перечитать дважды.**  
+Один раз сразу после update, второй раз перед началом observation/verify. Это снизит риск UI/cache ошибки.
+11. **До approve финально указать: это реальное production-включение.**  
+Важно понимать: после Stage 1 новые автосписания уже начнут создавать реальные REBILL-сделки. Это не тестовый режим.
+
+С этими правками план можно запускать.
+
+Короткая команда:
 
 ```text
-Item | Status | Blocks mode=on? | Required action | Owner patch
+План H4.1 подтверждаю с правками.
+
+Разрешаю controlled enable BEPAID_REBILL_MATERIALIZATION=on.
+
+Важно:
+- это production-включение;
+- ручной DML запрещён, но runtime DML от первого live REBILL ожидаем и проверяется;
+- если за 24h нет трафика, статус enabled_awaiting_first_rebill, без rollback;
+- rollback только secret → dry_run, без data repair;
+- first live REBILL verify обязателен при первом событии.
+
+План: H4.1 — controlled enable BEPAID_REBILL_MATERIALIZATION=on
 ```
 
-Это поможет не утонуть в proof.
+## Цель
 
-После этих правок план можно запускать как read-only H4 preconditions refresh. Никаких DML, provider API и изменения `BEPAID_REBILL_MATERIALIZATION`.
+Перевести `BEPAID_REBILL_MATERIALIZATION` из `dry_run` в `on` контролируемым способом, с фиксацией pre-state, проверкой первого реального autocharge и однозначными rollback-условиями. Никакого «широкого» включения без verify первого live REBILL.
 
-&nbsp;
+## Жёсткие границы (запрещено)
 
-План: H4 preconditions refresh — read-only inventory
+- DML любого вида.
+- Migrations.
+- Schema / RLS changes.
+- Изменение других secrets, кроме `BEPAID_REBILL_MATERIALIZATION`.
+- Data repair (Рабчевская, G25, 45 phantom past_due, любые другие).
+- Provider API write (cancel/charge/refund/subscription mutate).
+- Telegram manual actions (DM, reinvite, queue insert).
+- Любые unrelated fixes / рефакторинги.
 
-**Цель:** собрать единый proof-документ с финальным списком blockers/warnings/ready перед включением `BEPAID_REBILL_MATERIALIZATION=on`. Без DML, без migrations, без provider API, без изменения секрета, без `mode=on`.
+Разрешено: `secrets--fetch_secrets`, `secrets--update_secret` (только `BEPAID_REBILL_MATERIALIZATION`), `supabase--read_query`, `supabase--edge_function_logs`, `supabase--analytics_query`, чтение кода, запись 1 proof-файла.
 
-**Proof:** `.lovable/proofs/h4_rebill_materialization_on_preconditions_refresh_2026_05.md`
+## Стадии
 
-**Frozen cutoff:** `snapshot_at = now()` фиксируется в Stage 0 и используется во всех запросах.
+### Stage 0 — Pre-flight snapshot (read-only)
 
----
+Зафиксировать `snapshot_at = now()` (Europe/Minsk) и собрать:
 
-### Stage 0 — Frozen cutoff + контекст
+1. Текущее значение `BEPAID_REBILL_MATERIALIZATION` через `fetch_secrets` (ожидание: `dry_run`). Если ≠ `dry_run` — **STOP**, эскалация.
+2. `secrets--fetch_secrets` — полный список имён (без значений), чтобы убедиться, что ничего смежного не трогаем.
+3. Pre-snapshot метрики (SQL, read-only):
+  - `active_duplicate_pairs_count` — пары `subscriptions_v2` с `status='active' AND auto_renew=true` по `(user_id, product_id, tariff_id)`.
+  - `past_due_phantom_count` — `status='past_due' AND access_end_at IS NULL`.
+  - `last_rebill_dry_run` — последние 10 `audit_logs.event='bepaid.rebill.dry_run'` с `payment_id`, `subscription_id`, `planned_rebill_order_payload`.
+  - Для каждого из этих 10 — текущее состояние `subscriptions_v2` (`status`, `access_end_at`, `auto_renew`), последние `orders_v2` (родитель + дети), последние `payments_v2`.
+  - `audit_logs` за 24h: счётчики `bepaid.rebill.dispatcher_error`, `bepaid.rebill.conflict_uid`, `bepaid.rebill.sbs_mismatch` (ожидание: 0).
+4. Запись в proof в раздел **Pre-state**.
 
-- `snapshot_at = now()` (Minsk).
-- Зафиксировать в proof: текущее значение `BEPAID_REBILL_MATERIALIZATION` (через `secrets--fetch_secrets`, без update).
-- Зафиксировать последние deploy timestamps `grant-access-for-order` и `bepaid-webhook` (из edge function logs, первая запись после deploy).
+**Gate 0:** если pre-state не соответствует ожиданиям (≠ `dry_run`, появились dispatcher_error / conflict_uid / sbs_mismatch, появились active duplicates с `auto_renew=true`) — **STOP**, mode=on не включаем.
 
----
+### Stage 1 — Flip switch
 
-### Stage 1 — REBILL materialization (dry_run телеметрия)
+Единственное действие:
 
-Источники: `audit_logs`, `bepaid-webhook` edge logs.
+- `secrets--update_secret(['BEPAID_REBILL_MATERIALIZATION'])` → значение `on`.
 
-Запросы (read-only SQL через `supabase--read_query`):
+Сразу после:
 
-1. `audit_logs WHERE action LIKE 'bepaid.rebill.%' AND created_at >= snapshot_at - interval '14 days'` — разбивка по `action` (`dry_run`, `planned`, `dispatcher_error`, `conflict_uid`, `sbs_mismatch`, `skipped_*`).
-2. `audit_logs WHERE action LIKE 'bepaid.webhook.%' AND meta->>'transaction_type' IN ('authorization','payment') AND meta->>'is_rebill'='true'` — все боевые autocharge после deploy.
-3. JOIN (1)↔(2) по `order_id` / `meta.bepaid_transaction_uid` — для каждого реального autocharge должна быть ровно одна `bepaid.rebill.dry_run` запись с `planned_*` полями (order_id, tariff_id, access_days, next_charge_at_suggested).
-4. Аномалии: autocharge без dry_run, dry_run без autocharge, несколько dry_run на один UID, `dispatcher_error`/`conflict_uid`/`sbs_mismatch` ≠ 0.
+- Перечитать через `fetch_secrets` и зафиксировать в proof `flipped_at` (UTC + Minsk).
+- Никаких других изменений в этом шаге.
 
-В proof — таблица: `autocharges_total`, `dry_run_emitted`, `missing_dry_run`, `dispatcher_errors`, `conflict_uid`, `sbs_mismatch`, примеры строк (sub_id, order_id, action, meta-выжимка).
+### Stage 2 — Wait & observe (canary)
 
----
+Пассивное ожидание первого реального bePaid autocharge (`bepaid-webhook` с `is_rebill=true`, реальный платёж, не dry_run).
 
-### Stage 2 — Direct access writes (canonical write-path enforcement)
+Окно ожидания: до 24h. Если за 24h не появилось ни одного live REBILL — фиксируем «no traffic», план не закрывается, проверка переносится. На этом этапе НЕ откатывать — отсутствие трафика не является регрессом.
 
-Цель: подтвердить, что все 4 ветки идут через `grant-access-for-order`, и найти остаточные direct writes.
+### Stage 3 — Verify первого live REBILL (read-only)
 
-A. **LINK-ORDER** — статический поиск в `bepaid-webhook/index.ts` в ветке `link_order`: `subscriptions_v2 insert/update` (с `access_*`/`status`), `entitlements insert/update`, `telegram-grant-access invoke`. Ожидание: 0.
+Для первого live REBILL (по `payments_v2.provider_payment_id` + `audit_logs.bepaid.rebill.materialized`) проверить:
 
-B. **WEBHOOK-SUBSCRIPTION** (recurring autocharge ветка) — то же самое: подтвердить, что ветка делегирует в writer и/или провайдер-sync UPDATE содержит ТОЛЬКО разрешённые 5 полей (`billing_type`, `auto_renew`, `next_charge_at`, `payment_method_id/token`, `meta.bepaid_*`). Поля доступа (`access_start_at`/`access_end_at`/`status`/`canceled_at`/`is_trial`) — 0.
+1. Создан **отдельный** REBILL-order в `orders_v2` (новый id, `meta.source` указывает на rebill materialization).
+2. `payments_v2.order_id` ссылается на **новый** REBILL-order, **не** на parent / старую мартовскую сделку.
+3. Parent order не получил новый `payments_v2` за этот provider_payment_id.
+4. `audit_logs` содержит запись `bepaid.rebill.materialized` с правильными `payment_id`, `order_id`, `subscription_id`.
+5. `grant-access-for-order` вызван **по REBILL-order** (audit `grant.outcome` для нового order_id).
+6. `subscriptions_v2.access_end_at` продлён корректно (`+access_days` от paid_at, без regression относительно pre-state).
+7. `entitlements.expires_at` обновлён через GREATEST (никогда не уменьшился).
+8. Telegram DM не дублируется: ровно один `telegram_messages` mirror per grant, нет двух «Доступ открыт!» подряд за окно ±5 минут.
+9. `active_duplicate_pairs_count` post-state == pre-state (не вырос).
+10. `dispatcher_error / conflict_uid / sbs_mismatch` за окно [flipped_at; now] == 0.
 
-C. **3DS finalize** — подтвердить (H2.1b-ii closed). Проверить `bepaid-webhook` 3DS handover region: 0 запрещённых паттернов (уже подтверждено в proof, перепроверить статически).
+Записать каждый пункт с фактическими значениями в **Post-state** раздел proof.
 
-D. **H2.1c legacy one-time path** — `rg`-сканирование по всему `supabase/functions/**`:
+### Stage 4 — Verdict
 
-- `\.from\(['"]subscriptions_v2['"]\).*\.(insert|update|upsert)` с access-полями;
-- `\.from\(['"]entitlements['"]\).*\.(insert|update|upsert)` с `expires_at`;
-- `\.from\(['"]access_rules['"]\).*\.(insert|update|upsert)` вне `product-access-grants`;
-- прямые invoke `telegram-grant-access` вне `grant-access-for-order` и canonical paths.
+- **PASS** — все 10 пунктов Stage 3 зелёные → mode=on остаётся включённым, план H4.1 закрыт, дальше — расширенное наблюдение 5–7 дней отдельной задачей.
+- **FAIL** — любой пункт Stage 3 красный → немедленный rollback (Stage 5).
 
-   Каждое попадание классифицировать: canonical / legitimate (admin manual / repair / migration) / **legacy one-time direct write** (потенциальный H2.1c blocker). Дать file:line + цитата + classification.
+### Stage 5 — Rollback (триггеры и действие)
 
-В proof — матрица 4 веток × {static check / runtime audit за 14d / verdict}.
+**Триггеры rollback (любой из):**
 
----
+- `audit_logs.bepaid.rebill.dispatcher_error` ≥ 1 после flipped_at.
+- `audit_logs.bepaid.rebill.conflict_uid` ≥ 1 после flipped_at.
+- `audit_logs.bepaid.rebill.sbs_mismatch` ≥ 1 после flipped_at.
+- `payments_v2` за live REBILL привязан к parent order (не к новому REBILL-order).
+- Появился новый active duplicate с `auto_renew=true` (post > pre).
+- `access_end_at` regression (post < pre) у затронутой subscription.
+- `grant-access-for-order` для REBILL-order завершился ошибкой / outcome ≠ success.
+- Дубликат Telegram DM «Доступ открыт!» в пределах ±5 минут на один user_id + product_id.
 
-### Stage 3 — Duplicate subscriptions
+**Действие rollback (единственное):**
 
-Read-only через `supabase--read_query`:
+- `secrets--update_secret(['BEPAID_REBILL_MATERIALIZATION'])` → `dry_run`.
+- Зафиксировать `rolled_back_at`, причину (какой триггер), идентификаторы затронутых рядов в proof.
+- Никакого DML / repair в рамках этого плана — последствия оформляются отдельной задачей.
 
-1. Active duplicate pairs (новый детерминированный фильтр, тот же что в H3.x-c):
-  ```
-   SELECT user_id, product_id, COUNT(*) 
-   FROM subscriptions_v2 
-   WHERE status IN ('active','trialing') AND auto_renew=true
-   GROUP BY 1,2 HAVING COUNT(*) > 1
-  ```
-2. То же с `status IN ('active','trialing','past_due')`.
-3. G25 статус: `WHERE id='<sbs_50a3bd75…>'` — current status / auto_renew / access_end_at / canceled_at.
-4. Новые пары после H3.x-a deploy: те же запросы с фильтром `created_at >= h3xa_deploy_at`.
-5. `extended_by_orders` дубликаты (если есть отдельный признак): `meta->>'cleanup_batch'` ≠ 'h3x_d_…' и duplicate-флаги.
+## Proof
 
-В proof — все ID, ФИО контактов через JOIN `profiles`, классификация (Cluster A/B/D/G25/новый/Рабчевская/Алёна-Багинская/extended_by_orders).
+Единственный артефакт: `.lovable/proofs/h4_1_rebill_materialization_on_rollout_2026_05.md`.
 
----
+Структура:
 
-### Stage 4 — Data repairs status board
+```
+1. Pre-state (Stage 0)
+2. Flip (Stage 1) — flipped_at
+3. Observation window (Stage 2)
+4. First live REBILL verify (Stage 3) — 10 пунктов с фактами
+5. Verdict (Stage 4) — PASS / FAIL
+6. Rollback (Stage 5) — только если был
+```
 
-Таблица: задача / статус / proof-ссылка / остаток.
+## DoD
 
-- H3.x-b A — closed (proof)
-- H3.x-b B — closed (proof)
-- H3.x-c classification + provider-pull — closed
-- H3.x-d cleanup — closed (8/8)
-- **G25** — hold до 2026-05-18 06:00 UTC, нужен repeat provider pull
-- **Рабчевская** — dry-run в H2.1b-ii proof, execute не выполнен
-- **Алёна / Багинская** — найти упоминания (chat_search + grep по proofs), статус
-- **extended_by_orders duplicates** — если Stage 3 нашёл, list + классификация
+- Pre-state зафиксирован, gate 0 пройден.
+- `BEPAID_REBILL_MATERIALIZATION` переключён ровно один раз (`dry_run` → `on`).
+- Verify первого live REBILL выполнен по всем 10 пунктам, либо явно отмечено «no traffic in 24h».
+- Verdict зафиксирован.
+- Либо mode=on остаётся (PASS), либо rollback выполнен (FAIL) — без промежуточных состояний.
+- Migrations = 0, DML = 0, provider API write = 0, Telegram manual = 0.
+- Proof-файл создан.
 
----
+## Контакты, которых может коснуться
 
-### Stage 5 — Preconditions verdict
+На стадии flip — никого (флаг переключает только поведение последующих autocharge).
 
-Финальный блок в proof:
+На стадии verify коснётся **первого** реального плательщика, у которого bePaid инициирует rebill после `flipped_at`. ФИО неизвестно заранее — фиксируется в proof по факту (по `profiles.full_name` через `payments_v2 → orders_v2 → user_id`). До flip-а конкретные ФИО назвать нельзя.
 
-**Blockers (mode=on запрещено пока не закрыто):**
+Заведомо **НЕ** трогаются:
 
-- любая аномалия Stage 1 (autocharge без dry_run, dispatcher_error > 0, conflict_uid > 0, sbs_mismatch > 0);
-- любой legacy one-time direct write из Stage 2.D, классифицированный как blocker;
-- active duplicate pairs > 0 в Stage 3.1;
-- незакрытые data repairs со статусом «execute pending» (Рабчевская, etc.) — если они на active subscriptions.
-
-**Warnings (включать можно, но с риском):**
-
-- past_due duplicate без access (Stage 3.2 минус Stage 3.1);
-- G25 на hold;
-- единичные `skipped_*` в Stage 1, объяснимые SOT-логикой.
-
-**Ready:**
-
-- список branches/repairs, который точно зелёный.
-
-**Что сделать до `mode=on`:**
-
-- упорядоченный action list с DoD на каждый blocker.
-
----
-
-### Запрещено
-
-- DML / migrations / provider API / Telegram invocations / `grant-access-for-order` calls;
-- изменение `BEPAID_REBILL_MATERIALIZATION`;
-- `mode=on`;
-- любые edits в production коде (только чтение + новый proof-файл).
-
-### Разрешено
-
-- `supabase--read_query` (SELECT-only);
-- `supabase--edge_function_logs` / `supabase--analytics_query` (read);
-- `secrets--fetch_secrets` (read значения флага);
-- `rg` / `code--view` по репозиторию;
-- `chat_search` для поиска контекста по Рабчевская / Алёна / Багинская;
-- запись ОДНОГО нового proof-файла.
-
-### DoD
-
-1. Proof-файл создан с 5 stages + frozen `snapshot_at` + цитаты source-кода + SQL-результаты.
-2. Stage 5 содержит явный verdict: `mode=on` = `BLOCKED` или `READY` с numbered list причин.
-3. Никаких изменений в DB / secrets / production коде. Migrations=0, DML=0, provider API=0.
-4. Список ФИО контактов по всем затронутым подпискам из Stage 3.
+- Алеся Хомич (G25, hold).
+- Рабчевская Юлия (отдельный repair).
+- 45 phantom past_due (wave 2, отдельно).
+- Алёна Богинская (без дубля сейчас).
