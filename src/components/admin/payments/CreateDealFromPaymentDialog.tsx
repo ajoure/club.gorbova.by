@@ -17,6 +17,7 @@ import { ru } from "date-fns/locale";
 import { DateRange } from "react-day-picker";
 import { cn } from "@/lib/utils";
 import { formatContactName } from "@/lib/nameUtils";
+import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 
 interface Contact {
   id: string;
@@ -318,45 +319,44 @@ export function CreateDealFromPaymentDialog({
       }
 
       // 4. Grant access via canonical fulfillment (grant-access-for-order)
+      // PATCH A/B/C: canonical orderId; Telegram выдаётся canonical path (через access_rules),
+      // никаких прямых telegram-grant-access в UI.
       let subscriptionId: string | null = null;
+      let grantSuccess = false;
+      let grantErrorCode: string | null = null;
       if (grantAccess && !isGhostContact && selectedContact.user_id) {
         try {
           const { data: grantResult, error: grantError } = await supabase.functions.invoke(
             "grant-access-for-order",
             {
               body: {
-                order_id: newOrder.id,
+                orderId: newOrder.id,
                 source: "admin_from_payment",
               },
             }
           );
 
-          if (grantError) {
-            console.error("grant-access-for-order error:", grantError);
-            toast.warning("Сделка создана, но автоматическая выдача доступа не сработала. Используйте кнопку 'Выдать доступ' на сделке.");
+          if (grantError || grantResult?.error) {
+            grantErrorCode = (grantResult?.error as string) || (grantError as any)?.message || "unknown";
+            console.error("grant-access-for-order error:", grantError, grantResult);
+            toast.warning(
+              normalizeEdgeFunctionError(
+                grantError ?? grantResult,
+                "Сделка создана, но автоматическая выдача доступа не сработала. Используйте кнопку 'Выдать доступ' на сделке."
+              )
+            );
           } else {
             subscriptionId = grantResult?.subscription_id || null;
+            grantSuccess = true;
           }
         } catch (grantErr) {
+          grantErrorCode = (grantErr as any)?.message || "exception";
           console.error("grant-access-for-order call failed:", grantErr);
           toast.warning("Сделка создана, но выдача доступа требует ручного действия.");
         }
 
-        // Telegram access (separate side-effect)
-        if (product?.telegram_club_id) {
-          await supabase.functions.invoke("telegram-grant-access", {
-            body: {
-              user_id: selectedContact.user_id,
-              club_id: product.telegram_club_id,
-              duration_days: days,
-              source: "admin_from_payment",
-              source_id: newOrder.id,
-              is_manual: true,
-              tariff_name: tariff?.name,
-              product_name: product?.name,
-            },
-          });
-        }
+        // Telegram access идёт canonical path через grant-access-for-order → access_rules
+        // → telegram-grant-access. Прямой вызов из UI запрещён (mem://architecture/telegram/canonical-grant-write-path).
 
         // GetCourse sync
         const gcOfferId = tariff?.getcourse_offer_id || tariff?.getcourse_offer_code;
@@ -398,6 +398,8 @@ export function CreateDealFromPaymentDialog({
           access_end: accessEnd.toISOString(),
           is_ghost: isGhostContact,
           subscription_id: subscriptionId,
+          grant_success: grantSuccess,
+          grant_error_code: grantErrorCode,
         },
       });
 

@@ -388,7 +388,7 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
         // Прямой entitlements.upsert запрещён (mem://architecture/fulfillment/canonical-write-path-standard).
         const { error: grantError } = await supabase.functions.invoke(
           'grant-access-for-order',
-          { body: { order_id: deal.id, source: 'admin_edit' } }
+          { body: { orderId: deal.id, source: 'admin_edit' } }
         );
 
         if (grantError) {

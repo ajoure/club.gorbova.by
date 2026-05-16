@@ -400,32 +400,19 @@ export function BulkCreateDealsDialog({
               .eq('id', payment.id);
           }
 
-          // Grant access via canonical fulfillment
+          // Grant access via canonical fulfillment (PATCH A/B/C)
+          // Telegram идёт canonical через access_rules; прямой telegram-grant-access из UI запрещён.
           if (shouldGrantAccess && profile.user_id) {
             try {
-              const { error: grantError } = await supabase.functions.invoke(
+              const { data: grantResult, error: grantError } = await supabase.functions.invoke(
                 'grant-access-for-order',
-                { body: { order_id: newOrder.id, source: 'admin_bulk_from_payments' } }
+                { body: { orderId: newOrder.id, source: 'admin_bulk_from_payments' } }
               );
-              if (grantError) console.error('grant-access-for-order error', newOrder.id, grantError);
+              if (grantError || grantResult?.error) {
+                console.error('grant-access-for-order error', newOrder.id, grantError, grantResult);
+              }
             } catch (grantErr) {
               console.error('grant-access-for-order call failed:', grantErr);
-            }
-
-            const days = differenceInDays(accessEnd, accessStart) + 1;
-            if (selectedProduct?.telegram_club_id) {
-              await supabase.functions.invoke('telegram-grant-access', {
-                body: {
-                  user_id: profile.user_id,
-                  club_id: selectedProduct.telegram_club_id,
-                  duration_days: days,
-                  source: 'admin_bulk_from_payments',
-                  source_id: newOrder.id,
-                  is_manual: true,
-                  tariff_name: selectedTariff?.name,
-                  product_name: selectedProduct?.name,
-                },
-              });
             }
 
             const gcOfferId = selectedTariff?.getcourse_offer_id || selectedTariff?.getcourse_offer_code;
