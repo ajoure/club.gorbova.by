@@ -1213,20 +1213,21 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
 
       if (!createDealOnly && !isGhostContact) {
         // 3. CANONICAL FULFILLMENT: Call grant-access-for-order instead of direct INSERT
-        // This ensures entitlements, access_rules resolution, and all side-effects are created
+        // This ensures entitlements, access_rules resolution, and all side-effects are created.
+        // PATCH A/B/C: canonical orderId; Telegram идёт canonical через access_rules.
         try {
           const { data: grantResult, error: grantError } = await supabase.functions.invoke(
             "grant-access-for-order",
             {
               body: {
-                order_id: orderV2.id,
+                orderId: orderV2.id,
                 source: "admin_grant",
               },
             }
           );
 
-          if (grantError) {
-            console.error("grant-access-for-order error:", grantError);
+          if (grantError || grantResult?.error) {
+            console.error("grant-access-for-order error:", grantError, grantResult);
             // Don't throw - order is already created, log the issue
             toast.warning("Сделка создана, но автоматическая выдача доступа не сработала. Используйте кнопку 'Выдать доступ' на сделке.");
           } else {
@@ -1237,29 +1238,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           toast.warning("Сделка создана, но выдача доступа требует ручного действия.");
         }
 
-        // 4. Grant Telegram access if product has club (separate from canonical fulfillment)
-        // NOTE: telegram-grant-access function already creates telegram_access_grants record
-        // Do NOT insert manually to avoid duplicates!
-        if (product?.telegram_club_id) {
-          try {
-            const { error: tgError } = await supabase.functions.invoke("telegram-grant-access", {
-              body: {
-                user_id: contact.user_id,
-                club_id: product.telegram_club_id,
-                duration_days: grantDays,
-                source: "admin_grant",
-                source_id: orderV2.id,
-                is_manual: true,
-                tariff_name: tariff?.name,
-                product_name: product?.name,
-              },
-            });
-            
-            syncResults.telegram = { success: !tgError, error: tgError?.message };
-          } catch (err) {
-            syncResults.telegram = { success: false, error: (err as Error).message };
-          }
-        }
+        // Telegram access выдаёт canonical path (grant-access-for-order → access_rules
+        // → telegram-grant-access). Прямой UI-вызов запрещён
+        // (mem://architecture/telegram/canonical-grant-write-path).
 
         // 5. Sync to GetCourse using the created order
         const gcOfferId = tariff?.getcourse_offer_id || tariff?.getcourse_offer_code;
