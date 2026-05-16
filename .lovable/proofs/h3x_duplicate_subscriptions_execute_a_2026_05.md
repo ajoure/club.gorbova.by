@@ -367,3 +367,59 @@ Entitlements не модифицировались → rollback по `entitlemen
 3. Выполнить 5 транзакций (по одной на пару) в порядке P4, P6, P3, P1, P2 (от низкорискового admin_manual к provider-canonical merge).
 4. Прогнать Verify §7.
 5. Зафиксировать результат в этом же proof в новой секции `## 13. Execute result`.
+
+---
+
+## 7. Stage 2 — Execute (выполнено 2026-05-16)
+
+batch_id: `H3X-B-EXECUTE-A-2026-05`. Approve: см. чат пользователя.
+
+### 7.1 Preflight (повтор)
+
+| guard | expected | actual |
+|---|---|---|
+| Global active duplicate-пар | 7 | **7** OK |
+
+Snapshot 10 строк совпал с §2.
+
+### 7.2 Выполненные операции (5 пар × 3 шага = 15 операций; идемпотентные WHERE `status='active'`)
+
+| pair | supersede duplicate | canonical merge | audits |
+|---|---|---|---|
+| P1 | `ac57a221…` → superseded | `1a2352ab…` access 06-15 → **06-17 12:00**, eb=`[0d192cc8]`, mf=`[ac57a221]` | 2 |
+| P2 | `bc5e6759…` → superseded | `240f45e7…` access 06-15 → **06-19 12:00**, eb=`[baf5801c]`, mf=`[bc5e6759]` | 2 |
+| P3 | `f7fda1d7…` → superseded | `4469a81d…` access 06-15 → **06-16 12:00**, eb=`[d1080bf5]`, mf=`[f7fda1d7]` | 2 |
+| P4 | `02a0d0a8…` → superseded | `409ba350…` access **без изменений** (05-15), mf=`[02a0d0a8]` | 2 |
+| P6 | `63fb86c0…` → superseded | `4c6d24db…` access **без изменений** (05-23), mf=`[63fb86c0]` | 2 |
+
+RETURNING подтверждает rowcount=1 для каждого UPDATE.
+
+### 7.3 Verify
+
+1. ✅ Все 5 duplicate → `status='superseded'`, `auto_renew=false`, `meta.superseded_by` = canonical, `meta.repair_batch` = batch.
+2. ✅ Canonical `access_end_at` не ниже before max (GREATEST применён, нигде не уменьшилось).
+3. ✅ `extended_by_orders` объединено по dedup (3 пары); `merged_from` содержит duplicate_id (5 пар).
+4. ✅ `entitlements` (5 строк) — `expires_at` без изменений: 2026-06-17, 2026-06-19, 2026-06-16, 2026-05-27, 2026-05-28.
+5. ✅ audit_logs по batch=10 строк: `subscription_superseded`×5 + `subscription_merged`×3 + `subscription_meta_merged`×2.
+6. ✅ Active duplicate-пар: 7 → **2** (Cluster B P5/P7 не тронуты).
+7. ✅ Cluster B P5/P7 active: `56f8a606…`, `eba308ca…` (P5 pair) и `98bc1c69…`, `c30f04c3…` (P7 pair) — не модифицированы.
+8. ✅ Production DML строго в рамках planned: `subscriptions_v2` (10 UPDATE) + `audit_logs` (10 INSERT).
+9. ✅ Migrations: 0.
+10. ✅ `BEPAID_REBILL_MATERIALIZATION`: не менялся. `mode=on`: off.
+
+### 7.4 Не выполнялось (запреты соблюдены)
+
+- ❌ provider API (bepaid-cancel/bepaid-charge/etc.)
+- ❌ telegram-grant / telegram-revoke / telegram_access_queue
+- ❌ grant-access-for-order / любые edge-функции
+- ❌ orders_v2 / payments_v2 / installment_payments
+- ❌ provider_subscriptions / access_rules
+- ❌ entitlements (0 UPDATE — все уже выровнены)
+- ❌ backup tables (per-row rollback из §2 snapshot)
+- ❌ migrations
+- ❌ Cluster B P5/P7
+
+### 7.5 Next
+
+- Отдельный план **H3.x-b-execute-B** для P5/P7 (provider_managed legacy, GREATEST merge + meta cleanup).
+- Backlog: `ISSUE-AG-DOUBLECLICK` (P4/P6 root-cause), `ISSUE-WEBHOOK-META-OVERWRITE` (P5/P7).
