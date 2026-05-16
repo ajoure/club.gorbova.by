@@ -1,286 +1,343 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
-1. **Stage 2 execute по одному кандидату можно запускать только после добавления проверки bonus/secondary fulfillment.**  
-Потому что сейчас план проверяет только основной продукт, но не проверяет вторичные/бонусные доступы, которые должны выдаваться вместе с тарифом.
-2. **Добавить в этот execute read-only проверку fulfillment-состава продукта/тарифа.**  
-Перед вызовом `grant-access-for-order` по Дарье Насимовой нужно проверить:
+## **1. По PATCH G план в целом правильный**
+
+Можно запускать **только read-only discovery** по secondary / bonus access fulfillment.
+
+Но план нужно дополнить и закрыть обрезанный раздел `8. Backlog-предложения`, потому что сейчас он начинается и не содержит конкретных outputs.
+
+Добавить:
 
 ```text
-product_id
-tariff_id
-access_rules
-product_fulfillment
-bonus products/modules
-included products
-historical module access
-secondary entitlements
-telegram/channel rules
+8. Backlog-предложения
+
+По итогам discovery подготовить отдельные планы, если будут найдены gap-и:
+
+A. Secondary Bonus Access Canonical Writer Fix
+- если grant-access-for-order не читает bonus_products / included_products / historical_module_product_ids;
+- добавить writer-ветку только через canonical path;
+- без ручных INSERT в entitlements.
+
+B. Access Rules / Tariff Offers Data Fix
+- если expected bundle не описан в БД;
+- сначала dry-run diff правил;
+- потом отдельный approve на изменение access_rules / tariff_offers.
+
+C. Historical Module Access Repair
+- если у пользователей есть основной BUSINESS/Club доступ, но нет положенных исторических модулей;
+- repair только через canonical writer или отдельный approved repair function.
+
+D. Telegram Fulfillment Repair
+- только если primary platform access активен;
+- Telegram не является source of truth.
+
+E. UI Access Resolver Patch
+- если backend access есть, но admin/user UI показывают разные данные.
 ```
 
-3. **Добавить PATCH G — Discovery bonus / secondary access fulfillment.**
+---
 
-Готовый блок для вставки в план:
+## **2. По сегодняшнему платежу — это отдельный срочный blocker**
+
+Факт со скринов:
 
 ```text
-## PATCH G — Discovery secondary / bonus product fulfillment
+Сегодняшний платеж снова привязался к мартовской сделке.
+Доступы при этом выдались корректно.
+```
+
+Это означает:
+
+```text
+§A REBILL Materialization dry_run / wiring НЕ сработал на реальном сценарии автосписания.
+```
+
+Иначе сегодняшний платеж должен был хотя бы создать `bepaid.rebill.dry_run` audit-событие, а при будущем `on` — отдельную REBILL-сделку.
+
+Сейчас видно, что старая проблема повторилась:
+
+```text
+новый платеж
+→ попал в старую мартовскую сделку
+→ доступ продлился
+→ но финансовая история сделки снова испорчена
+```
+
+Это значит: **mode=on включать нельзя**.
+
+---
+
+## **3. Добавить срочный PATCH H перед любыми новыми включениями**
+
+Вставь в план отдельный блок:
+
+```text
+## PATCH H — срочный blocker: сегодняшний bePaid payment снова привязался к мартовской сделке
 
 ### Проблема
 
-Сейчас проверяется только основной доступ по оплаченной сделке. Но по ряду тарифов один платеж должен выдавать не только основной продукт, но и связанные второстепенные/бонусные доступы.
+После включения `BEPAID_REBILL_MATERIALIZATION=dry_run` реальный новый платеж bePaid снова привязался к старой мартовской сделке, а не к отдельной REBILL-сделке.
 
-Пример:
-- покупка тарифа BUSINESS / Gorbova Club может должна выдавать:
-  - основной доступ к клубу;
-  - связанные Telegram-доступы;
-  - бонусные продукты;
-  - исторические сделки/модули;
-  - доступы к «Ценный бухгалтер 1 ступень» и его модулям, если это предусмотрено тарифом/правилами.
+Доступы выдались корректно, но financial/order linkage снова неправильный.
 
-Нужно проверить, не теряются ли эти вторичные доступы при canonical grant.
+Это означает, что §A REBILL dry_run dispatcher не сработал на реальном payment-flow или не классифицировал событие как rebill/autocharge.
 
 ### Цель
 
-Провести read-only discovery того, какие secondary / bonus / included access должны выдаваться по каждому продукту/тарифу, и проверить, реально ли `grant-access-for-order` их создает.
+Read-only диагностировать сегодняшний платеж и понять:
 
-### Что проверить read-only
+1. Почему `bepaid.rebill.dry_run` не появился.
+2. Почему payment был привязан к старому мартовскому order.
+3. Какой именно code path обработал платеж.
+4. Почему `grant-access-for-order` сработал, а REBILL materialization dispatcher — нет.
+5. Как исправить classifier / dispatcher hook до любого `mode=on`.
 
-1. Где в системе описаны связанные доступы:
-   - `access_rules`;
-   - `product_fulfillment`;
-   - product/tariff metadata;
-   - bonus product mappings;
-   - historical module mappings;
-   - legacy mappings;
-   - hardcoded logic в `grant-access-for-order`.
+### Read-only диагностика
 
-2. Для каждого релевантного продукта/тарифа определить expected access bundle:
-   - primary product;
-   - subscriptions_v2;
-   - entitlements;
-   - secondary/bonus products;
-   - module access;
-   - Telegram club/channel access;
-   - historical access.
+По сегодняшнему платежу собрать:
 
-3. Проверить на примерах:
-   - Gorbova Club / BUSINESS;
-   - Ценный бухгалтер 1 ступень 2.0;
-   - модули ЦБ-1;
-   - текущий order Дарьи Насимовой `2da906f1...`;
-   - кейс Матук Вероники;
-   - 2–3 пользователя с корректно выданным доступом как эталон.
+- `payments_v2.id`
+- `provider_payment_id`
+- `paid_at`
+- `created_at`
+- `is_recurring`
+- `order_id`
+- `order_number`
+- `order.created_at`
+- `order.deal_date`
+- `order.meta`
+- `order.bepaid_subscription_id`
+- `provider_subscriptions`
+- `subscriptions_v2`
+- `audit_logs` за окно платежа
+- все action, связанные с:
+  - bePaid webhook;
+  - admin sync;
+  - grant-access-for-order;
+  - subscription extend;
+  - entitlement extend;
+  - telegram grant;
+  - rebill dry_run.
 
-4. Проверить, что `grant-access-for-order(orderId)`:
-   - создает primary entitlement/subscription;
-   - создает все обязательные secondary entitlements;
-   - корректно ставит даты secondary-доступов;
-   - не выдает лишние продукты;
-   - не пропускает Telegram fulfillment;
-   - пишет audit по каждому важному действию.
+### Ключевой вопрос
 
-5. Сформировать matrix:
+Определить точный source сегодняшнего платежа:
 
-product | tariff | expected primary access | expected secondary access | expected Telegram | actual writer behavior | gap
+- пришёл через `bepaid-webhook`;
+- пришёл через `admin-bepaid-sync`;
+- пришёл через polling/sync;
+- был создан UI/ручным действием;
+- был повторно подтянут из bePaid выписки.
 
-### Candidate groups
+Если платеж пришёл не через `bepaid-webhook`, то §A materialization в webhook не может его поймать. Тогда нужно делать REBILL materialization также в том ingestion-path, который реально создаёт такие платежи.
 
-Собрать read-only группы:
+### Проверить dry_run env
 
-- Group H — paid orders where primary access exists but secondary/bonus access missing.
-- Group I — users with club access but missing included historical/module access.
-- Group J — users with secondary access but missing primary access.
-- Group K — access_rules/product_fulfillment mismatch.
-- Group L — hardcoded bonus logic found outside canonical writer.
+Подтвердить:
 
-### Proof file
+- `BEPAID_REBILL_MATERIALIZATION=dry_run` доступен именно в runtime той функции, которая должна была обработать этот платеж;
+- если payment обработал не `bepaid-webhook`, указать, какой env/flag нужен для фактического ingestion path.
 
-Добавить или создать:
+### STOP
 
-`.lovable/proofs/secondary_bonus_access_fulfillment_discovery_2026_05.md`
+- `BEPAID_REBILL_MATERIALIZATION=on` не включать.
+- Не делать data-repair сегодняшнего платежа до отдельного dry-run.
+- Не создавать REBILL вручную.
+- Не перепривязывать payment вручную.
+- Только read-only diagnosis.
 
-Разделы:
-1. Где описаны bonus/secondary rules.
-2. Expected bundle by product/tariff.
-3. Actual `grant-access-for-order` behavior.
-4. Gap matrix.
-5. Candidate groups H–L.
-6. Отдельная строка по Дарье Насимовой.
-7. Отдельная строка по Матук Веронике.
-8. Вывод: code-fix нужен / repair нужен / всё корректно.
+### Proof
 
-### STOP-guards
+Создать:
 
-- На этом этапе discovery не выполнять repair.
-- Не добавлять secondary entitlements вручную.
-- Не менять `access_rules` без отдельного плана.
-- Не менять `product_fulfillment` без отдельного плана.
-- Не трогать Telegram напрямую.
-- Если secondary access missing найден — подготовить отдельный PATCH:
-  `Secondary Bonus Access Canonical Writer Fix`.
+`.lovable/proofs/rebill_dryrun_missed_real_payment_2026_05.md`
 
-### DoD PATCH G
+В proof указать:
 
-PATCH G считается выполненным, когда:
-- найден источник истины по bonus/secondary access;
-- по каждому релевантному тарифу есть expected access bundle;
-- доказано, создает ли `grant-access-for-order` эти доступы;
-- есть список расхождений;
-- есть отдельный план исправления, если secondary access не создается.
+1. платеж;
+2. старая сделка, к которой он привязался;
+3. почему это recurring/rebill;
+4. какой кодовый путь его обработал;
+5. почему `bepaid.rebill.dry_run` не появился;
+6. что нужно исправить;
+7. нужен ли новый PATCH для webhook или для admin sync/polling path.
 ```
 
-4. **Для текущего execute по Дарье Насимовой добавить минимальную проверку до/после.**
+---
 
-В `Snapshot контракт` добавить:
+## **4. PATCH G можно делать параллельно, но не мешать с PATCH H**
+
+Правильный порядок:
 
 ```text
-Secondary / bonus access check:
-- expected secondary products/modules по product_id + tariff_id;
-- current secondary entitlements before;
-- secondary entitlements after;
-- если expected secondary access есть, но после grant не создан — статус `partial_grant_needs_patch_g`, без ручной починки.
+1. PATCH H — срочно понять, почему реальный платеж снова попал в мартовскую сделку.
+2. PATCH G — read-only discovery бонусных/вторичных доступов.
+3. Потом отдельный план исправления по результатам H.
+4. Потом отдельный план исправления по результатам G.
 ```
 
-5. **В DoD Execute добавить:**
+---
+
+## **5. Команда Lovable сейчас**
 
 ```text
-- Проверено, должен ли тариф выдавать secondary/bonus access.
-- Если должен — proof показывает, создан ли secondary/bonus access через canonical writer.
-- Если не создан — это не чинится вручную в PATCH E, а уходит в PATCH G / Secondary Bonus Access Canonical Writer Fix.
+План PATCH G принят с правками, но перед любым production-включением REBILL mode=on нужно срочно выполнить PATCH H.
+
+Сначала выполни PATCH H read-only diagnosis по сегодняшнему платежу, который снова привязался к мартовской сделке.
+
+Цель: определить, почему BEPAID_REBILL_MATERIALIZATION=dry_run не сработал на реальном платеже и какой ingestion-path фактически обработал платеж.
+
+Никакого repair, никакого mode=on, никаких DML. Только read-only proof.
 ```
 
-6. **В текущем Stage 2 не расширять execute на бонусные доступы вручную.**  
-Сейчас разрешён только один вызов:
-
-```text
-grant-access-for-order(orderId='2da906f1-7957-4461-a7a1-8b977f30bf09')
-```
-
-Если writer не создаст вторичные доступы — это важный найденный дефект, но чинить его нужно отдельным code-patch, а не ручными INSERT.
-
-7. **Постоянное правило про человекочитаемые имена можно принять.**  
-В proof’ах первая колонка — имя/email, UUID только в технических колонках. Memory можно создать после успешного отчета, если хочешь закрепить это для всех следующих отчетов.
-
-Итог: execute по одному order можно делать, но обязательно добавить read-only проверку expected/actual secondary access. Если вторичные доступы не выдаются — не чинить вручную, а оформить отдельный PATCH G.
+Главное: сегодняшний платеж — это доказательство, что REBILL-защита пока не закрыта. Доступы выдались правильно, но сделка снова сломалась по финансовой привязке.
 
 &nbsp;
 
-План: PATCH E Stage 2 — Execute GO-batch A (1 кандидат)
+План: PATCH G — Full discovery secondary / bonus access fulfillment (read-only)
 
-## 1. Скоуп
+## Цель
 
-**Ровно 1 order_id:**
+Зафиксировать, **где** объявлен ожидаемый secondary/bonus access bundle для каждого продукта/тарифа и **что фактически делает** canonical writer `grant-access-for-order`. Найти gap-ы между «должно» и «факт» — без починки.
+
+## Жёсткие границы (read-only)
+
+- 0 INSERT/UPDATE/DELETE в: `entitlements`, `subscriptions_v2`, `access_rules`, `product_fulfillment`, `tariff_offers`, `telegram_access_queue`, `telegram_*`, `products_v2`, `tariffs`.
+- 0 миграций, 0 правок RLS, 0 правок edge functions.
+- `BEPAID_REBILL_MATERIALIZATION` НЕ включается.
+- `grant-access-for-order` НЕ вызывается ни на одном order. Анализ строго по коду + текущему state БД + истории audit_logs.
+- Никаких manual_review fix-ов, никаких ретро-grant-ов.
+
+## Скоуп продуктов (контрольные)
+
+1. **Gorbova Club** (`code='club'`)
+2. **БУХГАЛТЕРИЯ КАК БИЗНЕС / BUSINESS** (`code='buh_business'`)
+3. **Ценный бухгалтер 1 ступень 2.0** (CB-1, root `c9f7e9b8-e613-459a-91e3-38bbcfe424d8`)
+4. **Standalone-модули ЦБ-1** (Маркетплейсы / Строительство / Производство / ПВТ / Розница / ИП / Грузоперевозки / Общепит) — отдельные `product_id`, отдельный training-root, бонус → full_access на CB-1.
+5. **Платная консультация** (`code='consultation'`, тариф из кейса `d0a995aa`).
+6. **Модуль Предзапись ЦБ-1 ступень 2.0** (`product_id=11309c6a-…`, тариф `4248dadf-…`, кейс Дарьи Насимовой).
+7. **Платный подарок CHAT** (кейсы `3a748fd9`, `bddd5a41`).
+
+Все остальные активные продукты — попадают в общий sweep (см. секцию 4), но без построчного разбора.
+
+## Источники истины (SOT-цепочка для secondary)
+
+Проверяем в строгом порядке:
+
+1. `**tariff_offers.meta**` — `bonus_products[]`, `included_products[]`, `historical_module_product_ids[]`, `recurring`, `installment`, `subscription_offer`, `document_scenarios`.
+2. `**access_rules**` — все правила со `scope IN ('product','tariff','section','telegram','training_content','live')` по каждому product_id/tariff_id из скоупа.
+3. `**product_fulfillment**` (если таблица есть) — fulfillment-bundle.
+4. `**products_v2.meta**` + `entitlement_mode` + `telegram_club_id`.
+5. `**tariffs.meta**` + `access_days`.
+6. **Hardcoded ветки в `supabase/functions/grant-access-for-order/index.ts**` — все `if (product.code === …)`, `if (tariff.id === …)`, `bonus*`, `historical*`, `module_scope_only`, `full_access`, partial-grant блоки, `product_access` секция, `telegram-grant-access` вызов.
+7. `**access-resolver.ts` (`src/utils/access-resolver.ts`)** — как читается результат фулфилмента.
+8. **Memory-канон**: `cabinet-visibility-entitlement-dependency`, `training-content-resolver-rules`, `phantom-parent-entitlement-guard`, `unified-access-rules-standard`, `entitlement-mode-standard-v2`, `canonical-telegram-grant-write-path`, `recurring-snapshot-resolver-sot`.
+
+## Шаги (Diagnose → Discovery)
+
+### Шаг 1. Каталог продуктов и тарифов в скоупе
+
+SELECT-ы по `products_v2` + `tariffs` + `tariff_offers` для 7 контрольных продуктов. Зафиксировать: id, name, code, entitlement_mode, telegram_club_id, активные тарифы и их `access_days`/`meta`.
+
+### Шаг 2. SOT-матрица «ожидаемый bundle»
+
+Для каждой пары (product, tariff) собрать ожидаемое:
+
+- primary entitlement (product_id, access_days);
+- secondary entitlements (bonus_products / included_products / historical_module_product_ids);
+- training_content scope (`full_access` / `module_scope_only` / `union_scope`);
+- section_access (если есть);
+- Telegram (club_id, режим chat/channel/both);
+- live access.
+
+Источник для каждой строки — явно подписан (`tariff_offers.meta.bonus_products`, `access_rules#row_id`, `hardcoded:grant-access-for-order:L###`, `products_v2.meta.X`).
+
+### Шаг 3. Что фактически делает writer
+
+Прочитать `supabase/functions/grant-access-for-order/index.ts` целиком и собрать карту:
+
+- primary entitlement: ветка создания, источник `expires_at` (`extendFromCurrent`, `accessWindow.resolution`), запись `meta.tariff_id`.
+- `product_access` блок: какие rules он раскрывает, при каких условиях `skipped: "no_rules"` / `legacy_skip`.
+- `telegram` блок: когда зовёт `telegram-grant-access`, когда `null`, как защищается от legacy DM.
+- bonus/historical: есть ли вообще ветка чтения `tariff_offers.meta.bonus_products` / `included_products` / `historical_module_product_ids`. Если нет — это **gap_class=writer_missing_branch**.
+- partial-grant: какие пути приводят к `partial_grant_needs_patch_g`, `primary_entitlement_*_failed`, `sbs_mismatch`, `manual_review`.
+
+### Шаг 4. Sweep по всем оплаченным заказам (агрегат)
+
+Read-only агрегатный SELECT по `orders_v2 status='paid'` за последние 24 мес: на сколько orders фактически создан bundle, который ожидается из Шага 2.
+
+Метрики на каждый (product_id, tariff_id):
+
+- `orders_paid_total`
+- `orders_with_primary_entitlement`
+- `orders_with_expected_secondary_count` (по каждому ожидаемому secondary product_id отдельно)
+- `orders_with_expected_telegram`
+- `orders_with_audit_skip_legacy_skip` / `audit_skip_no_rules` / `partial_grant_needs_patch_g`
+- `gap_count` = orders где ожидался secondary/Telegram, но фактической записи в `entitlements`/`telegram_messages` нет.
+
+Никаких join-ов, которые могут что-то записать. Только агрегированные SELECT.
+
+### Шаг 5. Контрольные строки (per-order trace)
+
+Для следующих order_id собрать полный trace (orders_v2 → entitlements → subscriptions_v2 → telegram_messages → audit_logs `grant-access-for-order`):
+
+- Матук Вероника (контрольный из PATCH F).
+- Дарья Насимова (`2da906f1-…`) — proof из Stage 2.
+- 2 чистых BUSINESS / Gorbova Club ордера с полностью корректным bundle (выбрать из top активных).
+- 1 заказ CB-1 standalone-модуль, у пользователя которого ожидается full_access на CB-1 root.
+
+Для каждого: ожидаемый bundle (Шаг 2) vs фактический state vs audit_logs writer-а.
+
+## Итоговая matrix (формат)
 
 
-| order_id                             | order_number     | покупатель                                              | продукт                                             | тариф               | paid_at    | окно до    |
-| ------------------------------------ | ---------------- | ------------------------------------------------------- | --------------------------------------------------- | ------------------- | ---------- | ---------- |
-| 2da906f1-7957-4461-a7a1-8b977f30bf09 | GIFT-26-MOCVYPNO | **Дарья Насимова** (`7743826@mail.ru`, TG: `Da_ry_nas`) | Ценный бухгалтер 1 ступень 2.0 / Модуль: Предзапись | Стандартный (30 дн) | 2026-04-24 | 2026-05-24 |
+| product | tariff | expected primary | expected secondary/bonus | expected Telegram | actual writer behavior | gap | candidates |
+| ------- | ------ | ---------------- | ------------------------ | ----------------- | ---------------------- | --- | ---------- |
 
 
-Остальные 8 — НЕ трогаем. GO-batch B (5 no-op), manual_review (3a748fd9 Катерина Горбова + bddd5a41 [latysh_dashka@mail.ru](mailto:latysh_dashka@mail.ru)), d0a995aa, 85a99b74 (Юлия Рабчевская / INV-22) — вне этого execute.
+Плюс per-order таблица для контрольных строк:
 
-## 2. Действие
+| order | покупатель | expected bundle | actual entitlements | actual subscription | actual Telegram | audit | gap_class |
 
-Один сериальный вызов canonical writer:
+`gap_class ∈ { none, writer_missing_branch, rules_missing_in_db, legacy_skip_mode, mode_mismatch, telegram_not_called, secondary_not_materialized, partial_grant_needs_patch_g, manual_review_required, sbs_mismatch }`.
 
-```ts
-supabase.functions.invoke('grant-access-for-order', {
-  body: {
-    orderId: '2da906f1-7957-4461-a7a1-8b977f30bf09',
-    source: 'inv_group_a_canonical_regrant_2026_05'
-  }
-})
-```
+## Технические детали
 
-Параметры:
+- Все запросы — через `supabase--read_query`. Лимиты на batch ≤ 1000 (см. canon).
+- Чтение кода — `code--view` по `supabase/functions/grant-access-for-order/index.ts`, `src/utils/access-resolver.ts`, `src/hooks/useSidebarModules.ts` (если нужно), `src/utils/resolveTrainingContentFilter*`.
+- UUID-only в техническом приложении proof; в шапках таблиц — имена продуктов/покупателей (как договорились).
+- Legacy product code/slug упоминаем только как `legacy_existing_debt` (memory: `no-product-code-in-new-artifacts`).
 
-- никаких `customAccessDays/customAccessStartAt/customAccessEndAt` — writer считает окно сам;
-- `extendFromCurrent: true` по умолчанию;
-- `grantTelegram: true` (по умолчанию; у продукта `telegram_club_id IS NULL` → writer сам решит `none`);
-- таймаут 30s, без ретраев на 4xx, 1 ретрай через 5s на 5xx.
+## Proof
 
-## 3. Что разрешено / запрещено
-
-Разрешено:
-
-- ровно один вызов `grant-access-for-order`;
-- read-only SELECT'ы для before/after снимков.
-
-Запрещено:
-
-- прямые `INSERT/UPDATE/DELETE` в `entitlements`, `subscriptions_v2`, `telegram_access_queue`, `telegram_*`;
-- ручная запись в `audit_logs` (audit пишет сам writer);
-- любые вызовы по остальным 8 order_id;
-- любые попытки «починить» manual_review/error результат вручную;
-- изменения `BEPAID_REBILL_MATERIALIZATION`, schema, RLS, миграций.
-
-## 4. Snapshot контракт
-
-**Before** (до вызова):
-
-- `orders_v2` по этому order_id (status, user_id, product_id, tariff_id, paid_at);
-- `entitlements` по (user_id=84b60f85, product_id=11309c6a): id, status, expires_at, order_id, meta.tariff_id (ожидается пусто);
-- `subscriptions_v2` по тому же ключу: ожидается пусто;
-- audit `grant%` по order_id (ожидается пусто).
-
-**After** (сразу после ответа writer'а):
-
-- те же выборки повторно;
-- audit `grant-access-for-order%` за окно execute с фильтром по order_id;
-- ответ writer'а (success/skip/error, ids).
-
-## 5. Per-response ветвление
-
-
-| ответ writer'а                                                                                        | действие                                                            |
-| ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `success: true` + `entitlement_id` + `subscription_id`                                                | зафиксировать в proof, статус `done`                                |
-| `skip_already_fulfilled`                                                                              | зафиксировать (неожиданно — но легитимно), статус `idempotent_skip` |
-| `order_id_collision_foreign_user` / `sbs_mismatch` / `manual_review` / `primary_entitlement_*_failed` | НЕ чинить, зафиксировать в `manual_review` раздел                   |
-| HTTP 4xx                                                                                              | статус `precheck_failed`, зафиксировать                             |
-| HTTP 5xx после 1 ретрая                                                                               | статус `dispatcher_error`, зафиксировать                            |
-
-
-## 6. Ожидаемый результат (по dry-run)
-
-- `planned_action = create_primary_entitlement_and_subscription`;
-- `entitlements`: 1 новая запись, `expires_at ≈ 2026-05-24`, `order_id = 2da906f1...`, `meta.tariff_id = 4248dadf...`;
-- `subscriptions_v2`: 1 новая, `access_start_at ≈ 2026-04-24`, `access_end_at ≈ 2026-05-24`, `tariff_id = 4248dadf...`, `status = active`;
-- Telegram action: `none` (`telegram_club_id IS NULL`);
-- audit: 1+ запись `grant-access-for-order.*` с `meta.order_id = 2da906f1...`.
-
-## 7. Proof файл
-
-`.lovable/proofs/inv_group_a_canonical_regrant_execute_2026_05.md`
+`.lovable/proofs/secondary_bonus_access_fulfillment_discovery_2026_05.md`
 
 Структура:
 
-1. Шапка с именем покупателя (Дарья Насимова), email, TG, продуктом и тарифом — **без голых UUID в основном тексте**, UUID только в техническом приложении.
-2. Before/After таблица (ent, sub, audit).
-3. Ответ writer'а (success/error код).
-4. Telegram action итог.
-5. Подтверждение: 0 DML вне canonical писателя, 0 вызовов по остальным 8 order'ам, `BEPAID_REBILL_MATERIALIZATION` не трогался.
-6. Статус в админке/кабинете — если доступно через read-only view (`unified_access_truth_v` или эквивалент), сделать одну выборку и приложить.
-7. DoD-чеклист.
+1. Скоуп и SOT-цепочка
+2. Каталог продуктов/тарифов
+3. Expected-bundle matrix (per product/tariff)
+4. Writer behavior map (по коду grant-access-for-order)
+5. Sweep-агрегаты по всем оплаченным orders
+6. Per-order trace контрольных строк
+7. Список gap-ов с классификацией и candidate count
+8. Backlog-предложения (без выполнения): какие правила нужно создать в `access_rules`, какие ветки писателя дописать, какие продукты перевести с `legacy_skip` на канонический `entitlement_mode`.
 
-## 8. Соглашение по именам в отчётах (постоянное)
+## DoD
 
-В шапках и сводных таблицах proof-файлов и отчётов **первой колонкой указываем человекочитаемое имя** покупателя (Имя Фамилия / email если имя пусто). UUID допускаются только в техническом приложении или в технических колонках, помеченных как ID. Применяется со следующего отчёта и далее.
+- 0 DML, 0 миграций, 0 правок кода/функций.
+- Полная expected-bundle matrix по 7 контрольным продуктам.
+- Карта поведения `grant-access-for-order` со ссылками на строки файла.
+- Sweep-агрегат по всем активным продуктам с `gap_count`.
+- Per-order trace для ≥5 контрольных покупателей (включая Матук, Насимову).
+- Список gap-ов с классификацией и количеством кандидатов на каждый класс.
+- Backlog отдельным разделом — без принятия решений о починке.
+- BEPAID_REBILL_MATERIALIZATION не трогался.
 
-Намеренно скоупно: это правило применяю к новым proof'ам PATCH E и последующим планам/отчётам по этому потоку. Если нужно — после approve вынесу в memory как Core-правило отдельным шагом.
+## Что НЕ входит (отдельными планами)
 
-## 9. DoD Execute
-
-- Вызван ровно 1 canonical writer по `2da906f1...`.
-- Прямых DML в entitlements/subscriptions_v2/telegram_* нет.
-- Остальные 8 order_id не трогались.
-- Proof собран с before/after и именем покупателя в шапке.
-- manual_review/error (если будут) — зафиксированы без ручной починки.
-- `BEPAID_REBILL_MATERIALIZATION=on` не включался.
-
-## 10. Что НЕ делаем в этом execute
-
-- GO-batch B (5 no-op canonization): skip до отдельного approve.
-- manual_review (3a748fd9 Катерина Горбова дубль-подарок, bddd5a41 [latysh_dashka@mail.ru](mailto:latysh_dashka@mail.ru) дубль CHAT): только ручной разбор, отдельный план.
-- `d0a995aa` (Платная консультация, окно истекло без выдачи): ждём продуктового решения.
-- `85a99b74` (Юлия Рабчевская, BUSINESS, 2 past_due subs auto_renew=true): отдельный план INV-22.
-- Group D (51) — отдельным планом «Subscription/Entitlement Date Alignment — read-only first».
+- Group D (51 расхождение дат) — отдельный read-only план.
+- INV-22 Юлия Рабчевская.
+- Manual review дублей (Катерина Горбова, [latysh_dashka@mail.ru](mailto:latysh_dashka@mail.ru)).
+- Решение по `d0a995aa` (истёкший без выдачи).
+- Любая фактическая починка bonus/secondary access (будет PATCH G Stage 2 после согласования).
