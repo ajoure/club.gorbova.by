@@ -39,6 +39,15 @@
 
 Оба кандидата — recurring по одному и тому же тарифу `7c748940` продукта `11c9f1b8`. `decision='would_materialize'`, `full_refunded_uid=false`, planned grant call = `grant-access-for-order(order_id=<new_rebill_order_id>)`, planned payment repoint = существующий payment перенаправляется на новый REBILL-order (no new payment row).
 
+**Pre-state соответствующих subscriptions_v2 (для regression check на Stage 3):**
+
+| subscription_id | user_id | status | auto_renew | access_end_at (UTC) |
+|---|---|---|---|---|
+| 3266e62a-128e-4637-a485-ed0bad23928d | ddcb6288-caed-44b6-819a-925956676a27 | active | true | 2026-06-15 20:59:59 |
+| 493f5559-0a1d-4a7d-b43f-d6375078e1cd | 78123ed5-3a00-4982-87cf-72de6c0cdb8c | active | true | 2026-06-16 12:00:00 |
+
+Stage 3 проверка `access_end_at` regression идёт против этих baseline-значений.
+
 **Gate 0:** PASS — pre-state соответствует ожиданиям. Можно flip.
 
 ---
