@@ -100,7 +100,7 @@ export function resolveExtendFromDate(
     return { extendFromDate: now, reason: "new_from_now" };
   }
   const subEnd = sub.access_end_at ? new Date(sub.access_end_at) : null;
-  if (sub.status === "past_due") {
+  if (prevStatus === "past_due") {
     const base = subEnd && subEnd.getTime() > now.getTime() ? subEnd : now;
     return { extendFromDate: base, reason: "past_due_reattach_from_max" };
   }
@@ -374,7 +374,7 @@ export async function handleThreeDsFinalize(
       ...(sub.meta ?? {}),
       extend_from_reason: reason,
       ...(prorationMeta ? { proration: prorationMeta } : {}),
-      ...(sub.status === "past_due"
+      ...(prevStatus === "past_due"
         ? { reattached_from_order_id: orderId, reattached_at: now.toISOString() }
         : {}),
       updated_by: "grant-access-for-order:3ds_finalize",
@@ -387,7 +387,7 @@ export async function handleThreeDsFinalize(
     .eq("id", sub.id);
   if (updErr) return { kind: "error", reason: `update_subscription: ${updErr.message}` };
 
-  if (sub.status === "past_due") {
+  if (prevStatus === "past_due") {
     await audit("grant.subscription_order_attached", {
       order_id: orderId,
       subscription_id: sub.id,
