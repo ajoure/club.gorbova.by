@@ -46,7 +46,7 @@ function makeMock(opts: {
               order(_c: string, _o: any) { return chain; },
               then(resolve: any) {
                 if (opts.subsError) return resolve({ data: null, error: { message: "boom" } });
-                const all = opts.subs ?? [];
+                const all = (opts.subs ?? []).map((r) => ({ ...r, user_id: USER, product_id: PRODUCT }));
                 const filtered = all.filter((r) =>
                   filters.every((f) => {
                     if (f.op === "in") return (f.val as any[]).includes((r as any)[f.col]);
