@@ -12,7 +12,6 @@ import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from
 import { buildPurchaseSnapshot } from './build-purchase-snapshot.ts';
 import { resolveOfferRoutingWithFallback, buildNegativeSnapshot, auditNegativeSnapshot } from './crm-routing.ts';
 import {
-  checkSubscriptionConflict,
   validateReplacementSubscription,
   classifySameProductState,
   type SubscriptionConflict as SharedSubscriptionConflict,
