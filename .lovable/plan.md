@@ -141,3 +141,23 @@ type GrantOutcome =
 - Legacy one-time path (H2.1c).
 - H2b atomic append, H3 data-repair, H4 mode=on.
 - PATCH G (идёт параллельно read-only).
+
+---
+
+## Status update (2026-05-16)
+
+PATCH H2.1b-i — **closed**.
+
+Chain:
+- H2 LINK-ORDER — closed
+- H2.1 WEBHOOK-SUBSCRIPTION — closed
+- H2.1b 3DS finalize analysis — closed
+- **H2.1b-i 3DS writer extension — closed** ← this
+- H2.1b-ii 3DS finalize webhook refactor — pending (separate plan)
+- H2.1c legacy path — pending
+- H2b atomic append — backlog
+- H3 data-repair — pending
+- H4 mode=on — pending
+
+Proof: `.lovable/proofs/patch_h2_1b_i_writer_extension_2026_05.md`.
+Tests: 35/35 pass. Production DML=0, migrations=0, `BEPAID_REBILL_MATERIALIZATION`=dry_run.
