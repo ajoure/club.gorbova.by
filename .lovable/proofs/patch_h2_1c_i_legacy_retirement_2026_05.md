@@ -129,8 +129,27 @@ git revert <commit-hash>
 
 ## Status
 
-- **H2.1c-i code+tests** — ready for deploy
-- **H2.1c-i fully closed** — only after deploy verification (audit-логи zone 2 в первые часы после deploy: ожидается 0 invocations за неделю по analysis)
+- **H2.1c-i code+tests** — closed
+- **H2.1c-i deploy** — **done** (см. Deploy verification ниже)
+- **H2.1c-i fully closed** — да; дальнейший мониторинг через `audit_logs` фильтром `bepaid.webhook.legacy_one_time_retired_manual_review` (ожидается 0 invocations по analysis)
+
+---
+
+## Deploy verification (2026-05-16, Minsk)
+
+1. **Deploy success** — `supabase--deploy_edge_functions(['bepaid-webhook'])` → `Successfully deployed edge functions: bepaid-webhook`.
+2. **grant-access-for-order** — НЕ передеплоен (без изменений с H2.1b-ii).
+3. **Tests result** — сохранён в этом proof (bepaid-webhook 54/54, grant-access-for-order 42/42).
+4. **deno check** — был чистый перед deploy.
+5. **Secret `BEPAID_REBILL_MATERIALIZATION`** — остаётся `dry_run`, не менялся.
+6. **`mode=on`** — не включался.
+7. **Secrets** — не менялись.
+8. **Migrations** — 0.
+9. **Production DML** — 0.
+10. **Data-repair** (Рабчевская / др.) — не выполнялся.
+11. **Edge logs первые минуты после deploy** — `supabase--edge_function_logs('bepaid-webhook')` → `No logs found` (тишина = норма, паника/5xx отсутствуют; реальный live traffic появится при следующем bePaid webhook). Мониторинг audit_logs по `bepaid.webhook.legacy_one_time_retired_manual_review` остаётся открытым.
+
+**H2.1c-i — fully closed.** Следующий этап: H4 preconditions для `BEPAID_REBILL_MATERIALIZATION=on` (план + approve отдельно). `mode=on` остаётся запрещён.
 
 После H2.1c-i:
 - → **H4 preconditions** для `BEPAID_REBILL_MATERIALIZATION=on` (отдельный план + approve)
