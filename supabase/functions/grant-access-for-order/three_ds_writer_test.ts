@@ -1,5 +1,7 @@
-// Tests for PATCH H2.1b-i — 3DS writer extension.
+// Tests for PATCH H2.1b-i — 3DS writer extension (stabilized for H2.1b-ii outcome union).
 // Pure-helper tests + handler tests with in-memory supabase mock.
+// H2.1b-ii additions in mock: `.in()` filter, profiles/products_v2/entitlements tables,
+// injected invokeTelegramGrant.
 import { assertEquals, assert } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   applyProration,
@@ -126,24 +128,35 @@ Deno.test("classifyCandidates: canceled subs ignored", () => {
 
 type Row = Record<string, any>;
 
-function makeMockSb(state: {
-  orders: Row[];
-  subscriptions: Row[];
-  tariffs: Row[];
-}) {
+interface MockState {
+  orders?: Row[];
+  subscriptions?: Row[];
+  tariffs?: Row[];
+  profiles?: Row[];
+  products_v2?: Row[];
+  entitlements?: Row[];
+}
+
+function makeMockSb(state: MockState) {
+  const tables: Record<string, Row[]> = {
+    orders_v2: state.orders ?? [],
+    subscriptions_v2: state.subscriptions ?? [],
+    tariffs: state.tariffs ?? [],
+    profiles: state.profiles ?? [],
+    products_v2: state.products_v2 ?? [],
+    entitlements: state.entitlements ?? [],
+  };
   const inserts: { table: string; payload: Row }[] = [];
   const updates: { table: string; id: string; payload: Row }[] = [];
 
   function table(name: string) {
-    let rows: Row[] =
-      name === "orders_v2" ? state.orders :
-      name === "subscriptions_v2" ? state.subscriptions :
-      name === "tariffs" ? state.tariffs : [];
-
+    const rows: Row[] = tables[name] ?? [];
     const filters: Array<(r: Row) => boolean> = [];
+
     const builder: any = {
       select: (_cols: string) => builder,
       eq: (k: string, v: any) => { filters.push((r) => r[k] === v); return builder; },
+      in: (k: string, vs: any[]) => { filters.push((r) => vs.includes(r[k])); return builder; },
       order: (_k: string, _opts?: any) => builder,
       maybeSingle: async () => {
         const f = rows.filter((r) => filters.every((fn) => fn(r)));
@@ -153,7 +166,6 @@ function makeMockSb(state: {
         const f = rows.filter((r) => filters.every((fn) => fn(r)));
         return { data: f[0] ?? null, error: null };
       },
-      // resolve to data array directly (await-able as promise)
       then: (resolve: any) => {
         const f = rows.filter((r) => filters.every((fn) => fn(r)));
         resolve({ data: f, error: null });
@@ -198,6 +210,7 @@ function makeMockSb(state: {
     sb: { from: table } as any,
     inserts,
     updates,
+    tables,
   };
 }
 
@@ -211,14 +224,27 @@ function makeAudit() {
   };
 }
 
+// Standard seeds reused across handler tests: profile + product so that
+// ensurePrimaryEntitlement & invokeTelegram have valid lookups.
+function baseSeeds(): Pick<MockState, "profiles" | "products_v2"> {
+  return {
+    profiles: [{ id: "prof-1", user_id: "u" }],
+    products_v2: [{ id: "p", code: "test_code", name: "Test", telegram_club_id: null }],
+  };
+}
+
+// telegram dep: always skipped (no club) — but we still inject to avoid network.
+const tgSkip = async () => ({ status: "skipped" as const, reason: "test" });
+
 Deno.test("handler: create_new_subscription → bootstrap_created, 1 insert", async () => {
   const { sb, inserts } = makeMockSb({
+    ...baseSeeds(),
     orders: [{ id: "o1", user_id: "u", product_id: "p", tariff_id: "t1", status: "paid" }],
     subscriptions: [],
     tariffs: [{ id: "t1", access_days: 30, amount: 100 }],
   });
   const { audit } = makeAudit();
-  const r = await handleThreeDsFinalize("o1", { supabase: sb, now: NOW, audit });
+  const r = await handleThreeDsFinalize("o1", { supabase: sb, now: NOW, audit, invokeTelegramGrant: tgSkip });
   assertEquals(r.kind, "bootstrap_created");
   if (r.kind === "bootstrap_created") {
     assertEquals(r.bootstrap, "recurring");
@@ -230,12 +256,13 @@ Deno.test("handler: create_new_subscription → bootstrap_created, 1 insert", as
 Deno.test("handler: extend_same_tariff → extended, end + 30d", async () => {
   const oldEnd = new Date(NOW.getTime() + 5 * DAY).toISOString();
   const { sb } = makeMockSb({
+    ...baseSeeds(),
     orders: [{ id: "o1", user_id: "u", product_id: "p", tariff_id: "t1", status: "paid" }],
     subscriptions: [{ id: "s1", user_id: "u", product_id: "p", tariff_id: "t1", status: "active", access_end_at: oldEnd, meta: {} }],
     tariffs: [{ id: "t1", access_days: 30, amount: 100 }],
   });
   const { audit } = makeAudit();
-  const r = await handleThreeDsFinalize("o1", { supabase: sb, now: NOW, audit });
+  const r = await handleThreeDsFinalize("o1", { supabase: sb, now: NOW, audit, invokeTelegramGrant: tgSkip });
   assertEquals(r.kind, "extended");
   if (r.kind === "extended") {
     assertEquals(r.extend_from_reason, "same_tariff_from_end");
@@ -247,6 +274,7 @@ Deno.test("handler: extend_same_tariff → extended, end + 30d", async () => {
 Deno.test("handler: tariff_change_with_proration → bonus_days > 0", async () => {
   const oldEnd = new Date(NOW.getTime() + 10 * DAY).toISOString();
   const { sb } = makeMockSb({
+    ...baseSeeds(),
     orders: [{ id: "o1", user_id: "u", product_id: "p", tariff_id: "t2", status: "paid" }],
     subscriptions: [{ id: "s1", user_id: "u", product_id: "p", tariff_id: "t1", status: "active", access_end_at: oldEnd, meta: {} }],
     tariffs: [
@@ -255,7 +283,7 @@ Deno.test("handler: tariff_change_with_proration → bonus_days > 0", async () =
     ],
   });
   const { audit, events } = makeAudit();
-  const r = await handleThreeDsFinalize("o1", { supabase: sb, now: NOW, audit });
+  const r = await handleThreeDsFinalize("o1", { supabase: sb, now: NOW, audit, invokeTelegramGrant: tgSkip });
   assertEquals(r.kind, "extended");
   if (r.kind === "extended") {
     assertEquals(r.extend_from_reason, "tariff_change_from_now");
@@ -269,12 +297,13 @@ Deno.test("handler: tariff_change_with_proration → bonus_days > 0", async () =
 Deno.test("handler: trial_bootstrap → status trialing, end = trial_end_at", async () => {
   const trialEnd = new Date(NOW.getTime() + 7 * DAY).toISOString();
   const { sb, inserts } = makeMockSb({
+    ...baseSeeds(),
     orders: [{ id: "o1", user_id: "u", product_id: "p", tariff_id: "t1", status: "paid", is_trial: true, trial_end_at: trialEnd }],
     subscriptions: [],
     tariffs: [{ id: "t1", access_days: 30, amount: 100 }],
   });
   const { audit, events } = makeAudit();
-  const r = await handleThreeDsFinalize("o1", { supabase: sb, now: NOW, audit });
+  const r = await handleThreeDsFinalize("o1", { supabase: sb, now: NOW, audit, invokeTelegramGrant: tgSkip });
   assertEquals(r.kind, "bootstrap_created");
   if (r.kind === "bootstrap_created") {
     assertEquals(r.bootstrap, "trial");
@@ -289,12 +318,13 @@ Deno.test("handler: trial_bootstrap → status trialing, end = trial_end_at", as
 Deno.test("handler: past_due_reattach → status=active, reattach meta set", async () => {
   const oldEnd = new Date(NOW.getTime() - 2 * DAY).toISOString();
   const { sb, updates } = makeMockSb({
+    ...baseSeeds(),
     orders: [{ id: "o1", user_id: "u", product_id: "p", tariff_id: "t1", status: "paid" }],
     subscriptions: [{ id: "s1", user_id: "u", product_id: "p", tariff_id: "t1", status: "past_due", access_end_at: oldEnd, meta: {} }],
     tariffs: [{ id: "t1", access_days: 30, amount: 100 }],
   });
   const { audit, events } = makeAudit();
-  const r = await handleThreeDsFinalize("o1", { supabase: sb, now: NOW, audit });
+  const r = await handleThreeDsFinalize("o1", { supabase: sb, now: NOW, audit, invokeTelegramGrant: tgSkip });
   assertEquals(r.kind, "extended");
   if (r.kind === "extended") {
     assertEquals(r.extend_from_reason, "past_due_reattach_from_max");
@@ -308,6 +338,7 @@ Deno.test("handler: past_due_reattach → status=active, reattach meta set", asy
 
 Deno.test("handler: multi_candidate → manual_review, 0 writes", async () => {
   const { sb, inserts, updates } = makeMockSb({
+    ...baseSeeds(),
     orders: [{ id: "o1", user_id: "u", product_id: "p", tariff_id: "t1", status: "paid" }],
     subscriptions: [
       { id: "s1", user_id: "u", product_id: "p", tariff_id: "t1", status: "active", access_end_at: NOW.toISOString(), meta: {} },
@@ -316,7 +347,7 @@ Deno.test("handler: multi_candidate → manual_review, 0 writes", async () => {
     tariffs: [{ id: "t1", access_days: 30 }, { id: "t2", access_days: 30 }],
   });
   const { audit, events } = makeAudit();
-  const r = await handleThreeDsFinalize("o1", { supabase: sb, now: NOW, audit });
+  const r = await handleThreeDsFinalize("o1", { supabase: sb, now: NOW, audit, invokeTelegramGrant: tgSkip });
   assertEquals(r.kind, "manual_review_multi_candidate");
   if (r.kind === "manual_review_multi_candidate") {
     assertEquals(r.candidate_ids.sort(), ["s1", "s2"]);
@@ -326,14 +357,17 @@ Deno.test("handler: multi_candidate → manual_review, 0 writes", async () => {
   assert(events.some((e) => e.action === "grant.multi_candidate_review"));
 });
 
-Deno.test("handler: skip_already_processed when order already attached", async () => {
+Deno.test("handler: skip_already_processed when order already attached AND entitlement valid", async () => {
+  const validEnd = new Date(NOW.getTime() + 10 * DAY).toISOString();
   const { sb, inserts, updates } = makeMockSb({
+    ...baseSeeds(),
     orders: [{ id: "o1", user_id: "u", product_id: "p", tariff_id: "t1", status: "paid" }],
-    subscriptions: [{ id: "s1", user_id: "u", product_id: "p", tariff_id: "t1", status: "active", order_id: "o1", access_end_at: NOW.toISOString(), meta: {} }],
+    subscriptions: [{ id: "s1", user_id: "u", product_id: "p", tariff_id: "t1", status: "active", order_id: "o1", access_end_at: validEnd, meta: {} }],
     tariffs: [{ id: "t1", access_days: 30 }],
+    entitlements: [{ id: "e1", user_id: "u", product_id: "p", status: "active", expires_at: validEnd, meta: {} }],
   });
   const { audit } = makeAudit();
-  const r = await handleThreeDsFinalize("o1", { supabase: sb, now: NOW, audit });
+  const r = await handleThreeDsFinalize("o1", { supabase: sb, now: NOW, audit, invokeTelegramGrant: tgSkip });
   assertEquals(r.kind, "skip_already_processed");
   assertEquals(inserts.length, 0);
   assertEquals(updates.length, 0);
@@ -341,12 +375,13 @@ Deno.test("handler: skip_already_processed when order already attached", async (
 
 Deno.test("handler: response always contains next_charge_at_suggested for ok/extended/bootstrap", async () => {
   const { sb } = makeMockSb({
+    ...baseSeeds(),
     orders: [{ id: "o1", user_id: "u", product_id: "p", tariff_id: "t1", status: "paid" }],
     subscriptions: [],
     tariffs: [{ id: "t1", access_days: 30, amount: 100 }],
   });
   const { audit } = makeAudit();
-  const r = await handleThreeDsFinalize("o1", { supabase: sb, now: NOW, audit });
+  const r = await handleThreeDsFinalize("o1", { supabase: sb, now: NOW, audit, invokeTelegramGrant: tgSkip });
   if (r.kind === "bootstrap_created" || r.kind === "ok" || r.kind === "extended") {
     assert(r.next_charge_at_suggested);
   } else {
