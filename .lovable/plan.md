@@ -242,3 +242,58 @@ Stage 3 execute — только после отдельного approve по dr
 1. Approve **этого плана** → переход к Stage 0–2 (read-only, dry-run, frozen table).
 2. Approve **dry-run артефакта** (`.lovable/proofs/h5_1b_jan_historical_rebill_execute_2026_05.md` с final frozen execute table + expected rowcounts) → переход к Stage 3 execute.
 3. После Stage 4 post-verify — отчёт пользователю; approve следующего месяца (H5.1b-Feb) отдельным сообщением.
+---
+
+# Отчет о выполнении: H5.1b-Jan Stage 0–2 (read-only)
+
+DML=0, migrations=0, edge calls=0, provider API=0. Stage 3 НЕ запускался.
+
+## Ключевые находки
+
+1. **Mode mismatch:** audit_logs proof `bepaid.rebill.{dry_run,decision_audit}` → `meta->>'mode' = 'dry_run'`, не `on`. Runtime создал 1 REBILL за 14 дней (race-risk ≈ 0), но контрактное условие плана нарушено.
+2. **Preflight: 8 pass / 4 fail.** 4 строки (ritka.4289, 6214525, irkaguzarevich, lana0407) исключены по `fail:parent_has_no_other_payment` — у parent ровно 1 non-refund payment (наш). Перенос → orphan parent. Идут в H5.2 manual review.
+3. **Runtime канон REBILL:** `status='paid'`, `meta.source='rebill_materialization'`, `deal_date=created_at=paid_at` (49/49), `bepaid_subscription_id=NULL` (50/50). H5 INSERT адаптирован: `created_at=paid_at` (поправка плана #3), `bepaid_subscription_id=NULL`, `meta.source='h5_historical_repair'` (отделяет от runtime для rollback).
+4. **Schema-check audit_logs:** колонок `actor`, `actor_subtype`, `entity_type`, `entity_id` нет. Маппинг: `actor_type='system'`, `actor_label='h5_1b_jan'`, entity_* в `meta`.
+5. **Schema-check provider_subscriptions:** `current_period_end` не существует. Checksum по `state || next_charge_at || updated_at`.
+6. **UNIQUE(provider, provider_payment_id)** на orders_v2 — collision-guard: 0/12 коллизий. ✓
+
+## Final frozen execute table (8 rows)
+| email | payment_id | amount | expected_rebill |
+|---|---|---|---|
+| 1@ajoure.by | 1fbe2822-… | 1.00 | REBILL-1fbe2822-d02 |
+| aliaunesco@gmail.com | 95fbdacd-… | 1.00 | REBILL-95fbdacd-3de |
+| alinka197@yandex.ru | d26d295b-… | 150.00 | REBILL-d26d295b-44b |
+| s12217801@gmail.com | 20489cc0-… | 1.00 | REBILL-20489cc0-297 |
+| vikushkamoon@mail.ru | fd7c514e-… | 1.00 | REBILL-fd7c514e-416 |
+| elena.platonova-fedyakova@yandex.ru | f49d3fb0-… | 1.00 | REBILL-f49d3fb0-719 |
+| polyaq@tut.by | 4b48bbb4-… | 1.00 | REBILL-4b48bbb4-a5c |
+| olesiko105@mail.ru | d984dc99-… | 45.00 | REBILL-d984dc99-8db |
+
+Σ execute = 200.00 BYN. Все 8 parent имеют status='refunded' (типичный H5: bePaid списал rebill после возврата изначального платежа).
+
+## Baselines (scoped, 12 users)
+- subscriptions_v2: 49 / md5 `78ee14d19039cbc37e3ad03f3375a436` / Σepoch 83 316 493 184
+- entitlements: 44 / md5 `33c62a5e28faa3e8bec276457b244f80` / Σepoch 78 378 471 143
+- provider_subscriptions: 25 / md5 `13e03c8887e9bdb350e52a2c7b89f908`
+- telegram_access_queue: 43 / md5 `25460796609f9d401105ceb3aa8a9682`
+- payments_v2 (12 frozen): md5 `65d13e057d851e09792be1f1dac55768`
+- orders_v2 REBILL-% global: 201 / md5 `f4b7f8055f48b17ab34ba383128622d6`
+
+## Expected rowcounts (если будет approve)
+```
+expected_inserts_orders_v2     = 8
+expected_updates_payments_v2   = 8
+expected_audit_rows            = 9 (8 per-payment + 1 summary)
+skipped                        = 4 (H5.2)
+```
+
+## Артефакты
+- `.lovable/proofs/h5_1b_jan_historical_rebill_execute_2026_05.md`
+- `.lovable/proofs/h5_1b_jan_historical_rebill_execute_2026_05.sql`
+- `.lovable/proofs/h5_1b_jan_frozen_jan.csv` (12 frozen rows)
+
+## Требует решения перед Stage 3
+1. Mode = `dry_run` vs план = `on`: принять (A) или ждать переключения (B)?
+2. Подтвердить, что 4 fail rows идут в H5.2 без действия в Jan batch.
+
+После двух approves — отдельный approve на Stage 3 execute.
