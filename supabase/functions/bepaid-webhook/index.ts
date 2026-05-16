@@ -1,3 +1,12 @@
+// CANONICAL-WRITER-ONLY (PATCH H2):
+// В LINK-ORDER ветке этого webhook ЗАПРЕЩЕНО прямое обновление полей доступа:
+//   - subscriptions_v2.access_end_at / access_start_at / status
+//   - entitlements.expires_at / status (любые insert/update)
+//   - telegram_access.active_until / telegram-grant-access bypass
+// Единственный writer этих полей — grant-access-for-order → telegram-grant-access.
+// Допустимы только provider-sync поля subscriptions_v2: billing_type, auto_renew,
+// meta.bepaid_subscription_id, meta.bepaid_activated_at. Любая новая запись в
+// access-поля из webhook должна быть отвергнута на code-review.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { Resend } from 'npm:resend@2.0.0';
 import { endOfDayAppTz } from '../_shared/timezone.ts';
@@ -2676,9 +2685,15 @@ Deno.serve(async (req) => {
       // §A.2 short-circuit: if REBILL flow handled (mode=on terminal), skip legacy grant
       // to prevent double-grant. Downstream subscription resolution + date sync still run.
       let grantedSubscriptionV2Id: string | null = null;
+      // PATCH H2: track canonical writer outcome so INLINE block can refuse
+      // to fallback-write access dates if writer skipped / failed.
+      let grantOutcome: 'ok' | 'skip' | 'error' | 'short_circuit' = 'ok';
+      let grantDecisionLabel: string | null = null;
       if (rebillShortCircuit) {
         console.log('[WEBHOOK-LINK-ORDER] legacy grant SKIPPED — REBILL handled (decision=' +
                     (rebillResultDecision || 'unknown') + ')');
+        grantOutcome = 'short_circuit';
+        grantDecisionLabel = rebillResultDecision || 'rebill_short_circuit';
       } else {
       try {
         const grantResp = await fetch(
@@ -2698,6 +2713,8 @@ Deno.serve(async (req) => {
         // PATCH P2.1: If grant-access failed — log CRITICAL audit + webhook_event
         if (!grantResp.ok) {
           console.error('[WEBHOOK-LINK-ORDER] grant-access FAILED:', grantResp.status, grantResult);
+          grantOutcome = 'error';
+          grantDecisionLabel = `http_${grantResp.status}`;
           try {
             await supabase.from('audit_logs').insert({
               actor_type: 'system',
@@ -2722,6 +2739,23 @@ Deno.serve(async (req) => {
             processing_ms: Date.now() - startTime,
             error_message: `grant-access failed: ${grantResp.status}`,
           });
+        } else {
+          // PATCH H2: распознаём skip-исходы canonical writer (manual_review / sbs_mismatch /
+          // primary_entitlement_*_failed / skip_blocked_stale_access).
+          const skippedFlag = grantResult?.skipped === true
+            || grantResult?.status === 'skipped'
+            || grantResult?.manual_review === true;
+          const decision = grantResult?.decision || grantResult?.reason || grantResult?.action || null;
+          const isSkipDecision = typeof decision === 'string' && (
+            decision.startsWith('skip_') ||
+            decision === 'manual_review' ||
+            decision === 'sbs_mismatch' ||
+            decision.startsWith('primary_entitlement_')
+          );
+          if (skippedFlag || isSkipDecision) {
+            grantOutcome = 'skip';
+            grantDecisionLabel = decision || 'skipped';
+          }
         }
         
         // PATCH rebill-idempotency-fix-2026-05: read sub id from all possible response shapes,
@@ -2733,6 +2767,8 @@ Deno.serve(async (req) => {
           null;
       } catch (grantErr) {
         console.error('[WEBHOOK-LINK-ORDER] grant-access-for-order error (non-fatal):', grantErr);
+        grantOutcome = 'error';
+        grantDecisionLabel = 'exception';
       }
       }
 
@@ -3144,118 +3180,72 @@ Deno.serve(async (req) => {
               renewAt = accessEndAt;
             }
 
-            // 1. Update subscriptions_v2
-            // STAGE L3 GUARD: для рассрочки (linkOrder.meta.installment_count >= 2) НЕ перезаписываем
-            // billing_type на 'provider_managed' и НЕ ставим auto_renew=true — рассрочка идёт через
-            // installment_payments + installment-charge-cron, а billing_type='internal_installment'.
+            // ============================================================
+            // PATCH H2: CANONICAL-WRITER-ONLY. Webhook больше НЕ пишет
+            // access_end_at / next_charge_at / status / entitlements /
+            // telegram_access напрямую. Эти поля владеет grant-access-for-order.
+            // Здесь только provider-sync технических биллинг-полей и audit.
+            // ============================================================
+
+            // 1. subscriptions_v2 provider-sync — ТОЛЬКО billing_type / auto_renew /
+            // meta.bepaid_subscription_id. Никаких access dates / status.
             const existingSubMeta = (linkSubV2.meta as Record<string, any>) || {};
-            const subUpdatePayload: Record<string, any> = {
-              status: 'active',
-              access_end_at: accessEndAt.toISOString(),
-              next_charge_at: renewAt.toISOString(),
-              meta: {
-                ...existingSubMeta,
-                bepaid_subscription_id: String(subscriptionId),
-                bepaid_activated_at: now.toISOString(),
-              },
-            };
-            if (!isInstallmentOrder) {
-              subUpdatePayload.billing_type = 'provider_managed';
-              subUpdatePayload.auto_renew = true;
-            }
-            await supabase
-              .from('subscriptions_v2')
-              .update(subUpdatePayload)
-              .eq('id', grantedSubscriptionV2Id);
-            console.log('[WEBHOOK-LINK-ORDER] INLINE: subscriptions_v2 access_end_at updated to', accessEndAt.toISOString(), 'isInstallment=', isInstallmentOrder, 'endAtAction=', endAtAction);
-
-            // 2. Update entitlements (GREATEST logic)
-            const productCode = (linkSubV2.products_v2 as any)?.code;
-            const productIdForEnt = (linkSubV2.products_v2 as any)?.id || linkSubV2.product_id;
-            if (productCode) {
-              const { data: existingEntitlement } = await supabase
-                .from('entitlements')
-                .select('id, expires_at')
-                .eq('user_id', linkSubV2.user_id)
-                .eq('product_code', productCode)
-                .maybeSingle();
-
-              if (existingEntitlement) {
-                const currentExpires = existingEntitlement.expires_at ? new Date(existingEntitlement.expires_at) : new Date(0);
-                const newExpires = accessEndAt > currentExpires ? accessEndAt : currentExpires;
+            if (!isInstallmentOrder && grantOutcome !== 'skip' && grantOutcome !== 'error') {
+              try {
                 await supabase
-                  .from('entitlements')
+                  .from('subscriptions_v2')
                   .update({
-                    expires_at: newExpires.toISOString(),
-                    status: 'active',
-                    updated_at: now.toISOString(),
-                  })
-                  .eq('id', existingEntitlement.id);
-                console.log('[WEBHOOK-LINK-ORDER] INLINE: entitlement extended to', newExpires.toISOString());
-              } else {
-                await supabase
-                  .from('entitlements')
-                  .insert({
-                    user_id: linkSubV2.user_id,
-                    profile_id: profile?.id || null,
-                    order_id: linkOrder.id,
-                    product_code: productCode,
-                    product_id: productIdForEnt,
-                    status: 'active',
-                    expires_at: accessEndAt.toISOString(),
+                    billing_type: 'provider_managed',
+                    auto_renew: true,
                     meta: {
-                      source: 'bepaid_link_order_webhook_inline',
+                      ...existingSubMeta,
                       bepaid_subscription_id: String(subscriptionId),
+                      bepaid_activated_at: now.toISOString(),
                     },
-                  });
-                console.log('[WEBHOOK-LINK-ORDER] INLINE: entitlement created');
+                  })
+                  .eq('id', grantedSubscriptionV2Id);
+                console.log('[WEBHOOK-LINK-ORDER] H2 provider-sync: billing_type/auto_renew/meta updated');
+              } catch (provSyncErr) {
+                console.error('[WEBHOOK-LINK-ORDER] H2 provider-sync (non-fatal):', provSyncErr);
               }
+            } else if (grantOutcome === 'skip' || grantOutcome === 'error') {
+              // canonical writer не подтвердил grant → не двигаем даже provider-sync,
+              // случай уходит в manual_review.
+              await supabase.from('audit_logs').insert({
+                actor_type: 'system',
+                actor_user_id: null,
+                actor_label: 'bepaid-webhook',
+                action: 'bepaid.webhook.grant_skipped_no_fallback',
+                target_user_id: linkSubV2.user_id,
+                meta: {
+                  patch: 'patch-h2-canonical-writer-only',
+                  decision: grantDecisionLabel,
+                  outcome: grantOutcome,
+                  order_id: linkOrder.id,
+                  subscription_v2_id: grantedSubscriptionV2Id,
+                  provider_subscription_id: subscriptionId ? String(subscriptionId) : null,
+                  computed_access_end_at_skipped: accessEndAt.toISOString(),
+                  computed_renew_at_skipped: renewAt.toISOString(),
+                  end_at_action_planned: endAtAction,
+                  bepaid_active_to: bepaidActiveTo || null,
+                  bepaid_renew_at: bepaidRenewAt || null,
+                  note: 'Direct webhook access writes removed (PATCH H2). Manual review.',
+                },
+              });
+              console.warn(
+                '[WEBHOOK-LINK-ORDER] H2: grant outcome=' + grantOutcome +
+                ' decision=' + grantDecisionLabel + ' → NO direct access writes, manual review queued.'
+              );
             }
 
-            // 3. Update telegram_access.active_until — SCOPED to clubs linked to this product via access_rules
-            try {
-              // Find club_ids associated with this product through active access_rules
-              const productIdForClub = linkSubV2.product_id;
-              const { data: clubRules } = await supabase
-                .from('access_rules')
-                .select('target_ref')
-                .eq('grant_target_type', 'club')
-                .eq('product_id', productIdForClub)
-                .eq('is_active', true);
+            // 2. entitlements — REMOVED (PATCH H2). Канонический writer владеет.
+            // 3. telegram_access — REMOVED (PATCH H2). Канонический writer → telegram-grant-access.
 
-              const relevantClubIds = (clubRules || []).map(r => r.target_ref).filter(Boolean);
-
-              if (relevantClubIds.length > 0) {
-                const { data: tgAccessRows } = await supabase
-                  .from('telegram_access')
-                  .select('id, active_until, club_id')
-                  .eq('user_id', linkSubV2.user_id)
-                  .in('club_id', relevantClubIds);
-
-                if (tgAccessRows && tgAccessRows.length > 0) {
-                  for (const tgRow of tgAccessRows) {
-                    const currentTgUntil = tgRow.active_until ? new Date(tgRow.active_until) : new Date(0);
-                    const newTgUntil = accessEndAt > currentTgUntil ? accessEndAt : currentTgUntil;
-                    await supabase
-                      .from('telegram_access')
-                      .update({ active_until: newTgUntil.toISOString(), updated_at: now.toISOString() })
-                      .eq('id', tgRow.id);
-                  }
-                  console.log('[WEBHOOK-LINK-ORDER] INLINE: telegram_access.active_until extended for', tgAccessRows.length, 'rows, clubs:', relevantClubIds);
-                } else {
-                  console.log('[WEBHOOK-LINK-ORDER] INLINE: no telegram_access rows for user in product clubs:', relevantClubIds);
-                }
-              } else {
-                console.log('[WEBHOOK-LINK-ORDER] INLINE: no club access_rules for product', productIdForClub, '- telegram_access update skipped');
-              }
-            } catch (tgErr) {
-              console.error('[WEBHOOK-LINK-ORDER] telegram_access update error (non-fatal):', tgErr);
-            }
-
-            // 4. GetCourse sync (parity with subv2 handler)
+            // 4. GetCourse sync (parity with subv2 handler) — external integration,
+            // не является access-grant, остаётся в webhook.
             const getcourseOfferId = (linkSubV2.tariffs as any)?.getcourse_offer_id;
             const tariffCode = (linkSubV2.tariffs as any)?.code || (linkSubV2.tariffs as any)?.name || 'subscription';
-            if (getcourseOfferId) {
+            if (getcourseOfferId && grantOutcome === 'ok') {
               try {
                 const { data: profileForGC } = await supabase
                   .from('profiles')
@@ -3283,7 +3273,6 @@ Deno.serve(async (req) => {
                     tariffCode
                   );
 
-                  // Update order meta with GC sync result
                   const orderMeta = (linkOrder.meta && typeof linkOrder.meta === 'object') ? linkOrder.meta : {};
                   await supabase.from('orders_v2').update({
                     meta: {
@@ -3320,23 +3309,28 @@ Deno.serve(async (req) => {
               }
             }
 
-            // 5. Audit log for inline dates update
+            // 5. Audit — заменён на canonical_writer_only marker.
             await supabase.from('audit_logs').insert({
               actor_type: 'system',
               actor_user_id: null,
               actor_label: 'bepaid-webhook',
-              action: 'bepaid.webhook.link_order_dates_updated',
+              action: 'bepaid.webhook.canonical_writer_only',
               target_user_id: linkSubV2.user_id,
               meta: {
+                patch: 'patch-h2-canonical-writer-only',
                 subscription_v2_id: grantedSubscriptionV2Id,
                 order_id: linkOrder.id,
                 provider_subscription_id: String(subscriptionId),
-                access_end_at: accessEndAt.toISOString(),
-                next_charge_at: renewAt.toISOString(),
+                grant_outcome: grantOutcome,
+                grant_decision: grantDecisionLabel,
+                computed_access_end_at: accessEndAt.toISOString(),
+                computed_renew_at: renewAt.toISOString(),
+                end_at_action: endAtAction,
                 bepaid_active_to: bepaidActiveTo || null,
                 bepaid_renew_at: bepaidRenewAt || null,
                 used_fallback: !bepaidActiveTo,
                 gc_offer_id: getcourseOfferId || null,
+                note: 'Access dates / entitlements / telegram_access NOT written from webhook (canonical-only).',
               },
             });
           }

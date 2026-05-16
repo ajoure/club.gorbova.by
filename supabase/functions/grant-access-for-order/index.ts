@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { dedupeExtendedByOrders } from './extended_by_orders_dedupe.ts';
 import {
   buildSbsMismatchAuditPayload,
   buildSbsMismatchOrderMetaMerge,
@@ -1378,7 +1379,30 @@ Deno.serve(async (req) => {
         .single();
 
       const existingMeta = (fullExistingSub?.meta || {}) as Record<string, any>;
-      const extendedByOrders = existingMeta.extended_by_orders || [];
+      // PATCH H2: dedup extended_by_orders (idempotent append) через shared helper.
+      // Раньше — `[...arr, orderId]` без проверки; webhook ретраи давали [X, X].
+      const _dedupe = dedupeExtendedByOrders(existingMeta.extended_by_orders, orderId);
+      const extendedByOrders = _dedupe.normalized_existing;
+      const extendDuplicate = _dedupe.duplicate;
+      const nextExtendedByOrders = _dedupe.next;
+
+      if (extendDuplicate) {
+        // best-effort audit (race-safe atomic append вынесен в backlog PATCH H2b).
+        await supabase.from("audit_logs").insert({
+          action: "grant-access-for-order.extend.duplicate_ignored",
+          actor_type: "system",
+          actor_user_id: null,
+          actor_label: "grant-access-for-order",
+          target_user_id: userId,
+          meta: {
+            subscription_id: existingProductSub.id,
+            order_id: orderId,
+            product_id: productId,
+            existing_extended_by_orders: extendedByOrders,
+            patch: "patch-h2-extend-dedupe",
+          },
+        });
+      }
       
       // SOT-aligned snapshot resolver on EXTEND.
       // Read-only helper: never writes to orders_v2.offer_id.
@@ -1457,7 +1481,7 @@ Deno.serve(async (req) => {
         updated_at: now.toISOString(),
         meta: {
           ...existingMeta,
-          extended_by_orders: [...extendedByOrders, orderId],
+          extended_by_orders: nextExtendedByOrders,
           last_extension_at: now.toISOString(),
           last_extension_days: durationDays,
           // PATCH 14: Preserve recurring_amount from order
