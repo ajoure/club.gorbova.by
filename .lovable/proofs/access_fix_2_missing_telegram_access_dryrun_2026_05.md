@@ -17,19 +17,19 @@
 | `50ac58f2…` | (другой) | — | — | — | нет правила |
 | `73c29914…` | ЗАКРОЙ ГОД | — | — | — | нет правила |
 
-## 2. Пересмотр 9 кейсов
+## 2. Пересмотр 9 кейсов (с ФИО и продуктами)
 
-| # | email | product | sub.tariff_id | tg_expected (SOT) | вывод |
-|---|---|---|---|:---:|---|
-| 1 | 1@ajoure.by | Gorbova Club | `31f75673…` | ✅ | true-positive |
-| 2 | 1@ajoure.by | Платная консультация | `1020fce2…` (≠ `c1b4bb88`) | ❌ | **false-positive аудита** |
-| 3 | 2.lady.di.only@gmail.com | Gorbova Club | `7c748940…` | ✅ | true-positive |
-| 4 | a5153253@yandex.by | Gorbova Club | `7c748940…` | ✅ | true-positive |
-| 5 | finassist.by@gmail.com | Gorbova Club | `7c748940…` | ✅ | true-positive |
-| 6 | gelaev46@gmail.com | Платная консультация | `28eb8dd9…` (≠ `c1b4bb88`) | ❌ | **false-positive аудита** |
-| 7 | ossiptschik@mail.ru | Gorbova Club | `7c748940…` | ✅ | true-positive |
-| 8 | pbourdon@tut.by | Gorbova Club | `b276d8a5…` | ✅ | true-positive |
-| 9 | piletski.a@yandex.by | Платная консультация | `f2e999a9…` (≠ `c1b4bb88`) | ❌ | **false-positive аудита** |
+| # | ФИО | email | продукт | sub.tariff_id | access_end_at | tg_expected (SOT) | вывод |
+|---|---|---|---|---|---|:---:|---|
+| 1 | Тест Тестовый (`@ajoure_ceo`) | 1@ajoure.by | **Gorbova Club** | `31f75673…` | 2026-05-26 | ✅ | true-positive |
+| 2 | Тест Тестовый (`@ajoure_ceo`) | 1@ajoure.by | Платная консультация | `1020fce2…` (≠ `c1b4bb88`) | 2026-05-18 | ❌ | **false-positive аудита** (тариф не совпадает с bonus-rule) |
+| 3 | Диана Новородская (`@divanka_by`) | 2.lady.di.only@gmail.com | **Gorbova Club** | `7c748940…` | 2026-05-25 | ✅ | true-positive |
+| 4 | Татьяна Чаплыгина (`@Tasha_buh`) | a5153253@yandex.by | **Gorbova Club** | `7c748940…` | 2026-06-12 | ✅ | true-positive |
+| 5 | Екатерина Иванченко (`@k_ivanchenko`) | finassist.by@gmail.com | **Gorbova Club** | `7c748940…` | 2026-06-02 | ✅ | true-positive |
+| 6 | Руслан Цурко (`@navinall`) | gelaev46@gmail.com | Платная консультация | `28eb8dd9…` (≠ `c1b4bb88`) | 2026-05-28 | ❌ | **false-positive аудита** |
+| 7 | Катя Осипчик (`@kateosipchik`) | ossiptschik@mail.ru | **Gorbova Club** | `7c748940…` | 2026-06-06 | ✅ | true-positive |
+| 8 | Юлия Бурдон (`@bourdon_yuliya`) | pbourdon@tut.by | **Gorbova Club** | `b276d8a5…` | 2026-05-31 | ✅ | true-positive |
+| 9 | Андрей Иванович Пилецкий (TG не привязан) | piletski.a@yandex.by | Платная консультация | `f2e999a9…` (≠ `c1b4bb88`) | 2026-05-29 | ❌ | **false-positive аудита** |
 
 **Итог пересмотра:** реальных `missing_telegram_access` = **6**, false-positive = **3** (аудит не учитывал `access_rules.tariff_id` фильтр для bonus-правила).
 
@@ -37,18 +37,20 @@
 
 Источник фактов: `telegram_club_members` (club_id = `fa547c41…`) + `profiles.telegram_link_status`.
 
-| # | email | profile.telegram_link | tg_member_row | in_chat | in_channel | invite_status | last_verified | классификация | recommended action |
-|---|---|---|:---:|:---:|:---:|---|---|---|---|
-| 1 | 1@ajoure.by | active (`@ajoure_ceo`) | ✅ | false | false | **sent** | 2026-05-17 13:00Z | `invite_sent_awaiting_user_join` | wait / no action |
-| 3 | 2.lady.di.only@gmail.com | active (`@divanka_by`) | ✅ | false | false | **sent** | 2026-05-17 14:00Z | `invite_sent_awaiting_user_join` | wait / no action |
-| 4 | a5153253@yandex.by | active (`@Tasha_buh`) | ✅ | false | false | **sent** | 2026-05-17 13:00Z | `invite_sent_awaiting_user_join` | wait / no action |
-| 5 | finassist.by@gmail.com | active (`@k_ivanchenko`) | ❌ нет строки | — | — | — | — | `no_member_row_link_present` | reinvite via canonical writer |
-| 7 | ossiptschik@mail.ru | active (`@kateosipchik`) | ❌ нет строки | — | — | — | — | `no_member_row_link_present` | reinvite via canonical writer |
-| 8 | pbourdon@tut.by | active (`@bourdon_yuliya`) | ❌ нет строки | — | — | — | — | `no_member_row_link_present` | reinvite via canonical writer |
+| # | ФИО | email | продукт | tg_member_row | in_chat | in_channel | invite_status | классификация | действие |
+|---|---|---|---|:---:|:---:|:---:|---|---|---|
+| 1 | Тест Тестовый (`@ajoure_ceo`) | 1@ajoure.by | Gorbova Club | ✅ | false | false | **sent** | `invite_sent_awaiting_user_join` | **не трогать** (ждать join) |
+| 3 | Диана Новородская (`@divanka_by`) | 2.lady.di.only@gmail.com | Gorbova Club | ✅ | false | false | **sent** | `invite_sent_awaiting_user_join` | **не трогать** (ждать join) |
+| 4 | Татьяна Чаплыгина (`@Tasha_buh`) | a5153253@yandex.by | Gorbova Club | ✅ | false | false | **sent** | `invite_sent_awaiting_user_join` | **не трогать** (ждать join) |
+| 5 | **Екатерина Иванченко** (`@k_ivanchenko`) | finassist.by@gmail.com | Gorbova Club | ❌ нет строки | — | — | — | `no_member_row_link_present` | **REINVITE** через canonical writer |
+| 7 | **Катя Осипчик** (`@kateosipchik`) | ossiptschik@mail.ru | Gorbova Club | ❌ нет строки | — | — | — | `no_member_row_link_present` | **REINVITE** через canonical writer |
+| 8 | **Юлия Бурдон** (`@bourdon_yuliya`) | pbourdon@tut.by | Gorbova Club | ❌ нет строки | — | — | — | `no_member_row_link_present` | **REINVITE** через canonical writer |
+
+У всех трёх «REINVITE»-строк `profile.telegram_link_status='active'` и `telegram_user_id` присутствует — бот привязан, но membership-строки в `telegram_club_members` нет (пропущенная выдача). Это безопасно для reinvite.
 
 ### Дополнительно
 
-- **piletski.a@yandex.by** (false-positive по TG): `profile.telegram_link_status = not_linked`, `telegram_user_id` отсутствует. TG не требуется по rule, но клиенту нет смысла предлагать reinvite — он сам не привязал бота. Не действие ACCESS-FIX-2.
+- **Андрей Иванович Пилецкий** / piletski.a@yandex.by (false-positive по TG): `profile.telegram_link_status = not_linked`, `telegram_user_id` отсутствует. TG не требуется по rule, плюс reinvite невозможен — клиент сам не привязал бота. Не действие ACCESS-FIX-2.
 
 ## 4. План execute (после approve)
 
@@ -76,11 +78,11 @@ VALUES (
 );
 ```
 
-| # | profile_id (sub.user_id) | telegram_user_id | sub_id |
-|---|---|---|---|
-| 5 | `a832c11e-1715-4646-bfcb-859fff931a0e` | 143174278 | `28965857-e8ca-41ed-9c5f-87711e884716` |
-| 7 | `1bd93a04-4393-41a7-8bb9-166d587686cc` | 8721456902 | `c3657287-18c4-4d94-844e-4496665eddea` |
-| 8 | `acd9116c-528f-44c9-9af2-cfe2ba804386` | 556054465 | `6d123c1b-86ed-4a6c-a447-f9f2a4dd2aff` |
+| # | ФИО | продукт | profile_id (sub.user_id) | telegram_user_id | sub_id |
+|---|---|---|---|---|---|
+| 5 | Екатерина Иванченко | Gorbova Club | `a832c11e-1715-4646-bfcb-859fff931a0e` | 143174278 | `28965857-e8ca-41ed-9c5f-87711e884716` |
+| 7 | Катя Осипчик | Gorbova Club | `1bd93a04-4393-41a7-8bb9-166d587686cc` | 8721456902 | `c3657287-18c4-4d94-844e-4496665eddea` |
+| 8 | Юлия Бурдон | Gorbova Club | `acd9116c-528f-44c9-9af2-cfe2ba804386` | 556054465 | `6d123c1b-86ed-4a6c-a447-f9f2a4dd2aff` |
 
 Обработка пойдёт через `telegram-process-access-queue → telegram-grant-access`. Stop-условие: при любом `last_error ≠ null` после 1 прогона — вынести в `manual_review`, не повторять.
 
