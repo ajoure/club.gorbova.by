@@ -71,6 +71,7 @@ export function buildRebillOrderPayload(input: RebillOrderPayloadInput) {
     tariff_id: input.parentOrder.tariff_id,
     currency: input.payment.currency || input.parentOrder.currency || "BYN",
     status: "paid" as const,
+    base_price: input.payment.amount,
     final_price: input.payment.amount,
     paid_amount: input.payment.amount,
     provider: "bepaid" as const,
