@@ -69,6 +69,7 @@ Deno.test("buildRebillOrderPayload: canonical fields", () => {
   assertEquals(payload.provider, "bepaid");
   assertEquals(payload.provider_payment_id, "7a64cd04-3d04-4a8e-9b1f-12ab34cd56ef");
   assertEquals(payload.bepaid_subscription_id, "sbs-123");
+  assertEquals(payload.base_price, 39);
   assertEquals(payload.final_price, 39);
   assertEquals(payload.paid_amount, 39);
   assertEquals(payload.user_id, "user-uuid");
