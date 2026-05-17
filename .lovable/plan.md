@@ -1,299 +1,214 @@
-# да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. **Stage 0 mode check должен быть фактическим, не ручным.**  
-Заменить:
+1. **Stage 1 Variant A не доказывает mode=off за 10 минут.**  
+Отсутствие webhook-трафика за 10 минут ≠ доказательство. Но у нас уже есть сильный факт:
 
-```text
-ручная сверка пользователем
-```
+после flipped_at был succeeded recurring payment 489f08eb
 
-на:
+REBILL-order не создан
 
-```text
-fetch secret / runtime proof из audit, значение должно быть on
-```
+bepaid.rebill.* audit не появился
 
-2. **TEMP-таблица только session/transaction.**  
-Добавить явно:
+payment склеился со старым order
 
-```text
-TEMP h5_1b_jan_frozen не persistent, не migration, не schema object.
-```
+Этого достаточно, чтобы считать runtime effectively not-on и идти к re-flip.
 
-3. `created_at` **для REBILL лучше как runtime.**  
-Перед execute в Stage 0 проверить, что runtime REBILL пишет в `created_at`.  
-Если runtime использует `payment.paid_at`, то H5 тоже должен использовать `payment.paid_at`, а не `now()`.
-4. **Audit schema-check обязателен.**  
-Перед Stage 3 проверить, существуют ли поля:
+2. **Stage 3 должен учитывать runtime DML.**  
+В плане написано DML=0, но если после reflip придёт live REBILL, webhook должен сам создать:
 
-```text
-actor
-actor_subtype
-entity_type
-entity_id
-```
+orders_v2 REBILL
 
-Если нет — использовать фактическую схему:
+payments_v2.order_id update
 
-```text
-actor_type
-actor_user_id
-actor_label
-action
-meta
-```
+subscriptions_v2 / entitlements через grant-access-for-order
 
-5. `provider_subscriptions` **checksum не использовать с** `current_period_end` **без schema-check.**  
-Поле уже раньше было спорным. В Stage 2 сначала schema-check, потом checksum по фактическим полям.
-6. `telegram_access_queue` **checksum scoped, не global.**  
-Только по 12 users/связанным order/payment meta, иначе параллельные события могут дать ложный fail.
-7. **Rollback должен проверять отсутствие дополнительных ссылок перед DELETE.**  
-Добавить pre-delete guard:
-  - у каждого H5 REBILL ровно 1 planned payment;
-  - нет entitlements;
-  - нет subscriptions_v2 references;
-  - нет telegram/access references;
-  - нет refund rows.
-8. **Stage 3 execute пока не approve.**  
-Текущий approve — только на Stage 0–2.
+audit_logs
 
-Команда:
+Формулировка:
 
-```text
-План H5.1b-Jan подтверждаю только на Stage 0–2.
+Ручной DML запрещён. Runtime DML от live REBILL разрешён и является предметом проверки.
 
-Выполни:
-- mode check;
-- frozen Jan recheck;
-- schema-check orders/payments/audit/provider_subscriptions;
-- runtime REBILL created_at/status format check;
-- preflight guards;
-- scoped baselines;
-- final frozen execute table;
-- expected rowcounts;
-- rollback preview.
+3. **После reflip не ждать bepaid.rebill.dry_run как норму.**  
+Если mode=on, ожидаемое событие:
 
-DML не запускать.
-Stage 3 execute — только после отдельного approve по dry-run artifact.
+bepaid.rebill.materialized
 
-План: H5.1b-Jan — Historical REBILL Deal Linkage Repair 2026 / January batch
-```
+meta.mode='on'
 
-## Цель
+dry_run после reflip — это warning, а не подтверждение нормальной работы.
 
-Материализовать REBILL-orders для **12 green-кандидатов R2 за месяц 2026-01** и переподвязать их payments_v2.order_id на новые REBILL-orders. Остальные месяцы (02–05) — не трогаем; они пойдут отдельными H5.1b-Feb/Mar/Apr/May.
+4. **Stage 2 reflip можно делать после Stage 0 без отдельного долгого Stage 1.**  
+Логика:
 
-## Frozen source
+Stage 0 подтвердил: после прошлого flip был реальный payment, но REBILL не создался.
 
-- `.lovable/proofs/h5_1a_r2_expanded_frozen_candidate_cohort_2026_05_green.csv`
-- Фильтр execute: `payment_month = '2026-01'` → ожидаемо **12 строк**, Σ 1 581.00 BYN, 1 currency=BYN.
-- Снимок frozen-список фиксируется перед stage 1 как TEMP-таблица `h5_1b_jan_frozen` (payment_id, provider_payment_id, parent_order_id, product_id, tariff_id, pipeline_id, pipeline_stage_id, offer_id, amount, paid_at, expected_rebill_order_number).
+=> mode фактически не on.
 
-## Scope
+=> reflip нужен.
 
-- DML только по 12 payment_id из frozen Jan list.
-- Месяцы 02/03/04/05 — НЕ трогать (отдельные batches).
-- Любая строка, прошедшая через preflight как не-green → исключается из execute, помечается `skip:<reason>`.
+5. **После reflip перечитать/зафиксировать не только список secret names, но и runtime evidence.**  
+Так как значение secret скрыто, подтверждение только через поведение:
 
-## Запрещено
+следующий recurring payment → REBILL materialized
 
-- refunds, entitlements, subscriptions_v2, telegram_*, provider_subscriptions, access_rules
-- provider API, grant-access-for-order, telegram-grant-access
-- изменение secrets / `BEPAID_REBILL_MATERIALIZATION` mode
-- любые payments вне frozen Jan list
-- любые orders_v2 NOT REBILL (parent не трогаем)
-- любые UPDATE на orders_v2 (только INSERT новых REBILL)
-- любые DELETE кроме rollback по `meta.run='h5_1b_jan_2026'`
+6. **H5.1b-Jan Stage 3 execute не запускать до reflip.**  
+Сначала восстановить корректный runtime mode. Потом можно отдельно approve январский батч.
+7. **Добавить rollback trigger: новый склеенный payment после reflip.**  
+Если после reflipped_at появляется recurring succeeded payment, который снова приклеился к old parent order и нет bepaid.rebill.materialized, это fail.
 
-## Этапы
+Команда для Lovable:
 
-### Stage 0 — Mode & frozen re-check (read-only)
+План H4.1-recheck подтверждаю с правками.
 
-1. Подтвердить `BEPAID_REBILL_MATERIALIZATION=on` (env, ручная сверка пользователем перед approve execute).
-2. Перечитать CSV → 12 payment_id, зафиксировать в TEMP `h5_1b_jan_frozen`.
-3. Проверить, что все 12 payment_id присутствуют в `payments_v2`.
-4. STOP, если mode != on или строк ≠ 12.
+&nbsp;
 
-### Stage 1 — Preflight guard re-run (read-only, per payment)
+Выполни Stage 0 read-only:
 
-Для каждой из 12 строк проверить:
+- зафиксируй snapshot;
 
-- `payments_v2.order_id = frozen.parent_order_id` (платёж не переехал).
-- `parent.order_number NOT LIKE 'REBILL-%'` (parent всё ещё initial).
-- Уже-materialized guard (4 ключа):
-  - `orders_v2.order_number = 'REBILL-' || first12(payment_id)` — НЕ существует
-  - `orders_v2.meta->>'materialized_from_payment_id' = payment_id::text` — НЕ существует
-  - `orders_v2.meta->>'materialized_from_payment_uid' = provider_payment_id` — НЕ существует
-  - `(provider='bepaid', provider_payment_id=...) AND order_number LIKE 'REBILL-%'` — НЕ существует
-- Refund guard clean (`refunded_amount=0`, нет refund-row по payment uid).
-- В parent остаётся хотя бы один non-refund payment, который НЕ материализуется этим batch (защита от «осиротевшего» parent).
-- `pipeline_id`, `pipeline_stage_id`, `tariff_id`, `product_id` — NOT NULL.
-- `amount > 0`, `currency='BYN'`.
+- подтверди платеж 489f08eb после flipped_at;
 
-Любая нарушенная проверка → строка исключается, записывается в `skip_table` с причиной.
+- подтверди, что он склеился со старым order;
 
-### Stage 2 — Baselines + dry-run final rowcount table (read-only)
+- подтверди отсутствие bepaid.rebill.* audit после flipped_at;
 
-1. Зафиксировать checksums:
-  - `subscriptions_v2` scoped по 12 users: rows, Σepoch(access_end_at), md5(id||access_end_at||status||updated_at)
-  - `entitlements` scoped по 12 users: rows, Σepoch(expires_at), md5(id||expires_at||updated_at)
-  - `orders_v2` global REBILL-%: rows, md5(ids)
-  - `payments_v2` scoped: md5(id||order_id||amount||provider_payment_id)
-  - `provider_subscriptions` scoped по 12 users: rows, md5(ids||status||current_period_end)
-  - `telegram_access_queue` rows, md5(ids)
-2. Вывести **final frozen execute table** (по passed-preflight строкам):
-  ```
-   payment_id | provider_payment_id | parent_order_id | expected_rebill_order_number | guard_status
-  ```
-3. Зафиксировать `green_candidates_count = N_passed_preflight` (ожидаемо 12).
-4. Зафиксировать `expected_inserts_orders_v2 = N`, `expected_updates_payments_v2 = N`, `expected_audit_rows = N + 1` (per payment + summary).
-5. STOP до отдельного approve пользователя. Артефакт публикуется в `.lovable/proofs/h5_1b_jan_historical_rebill_execute_2026_05.md`.
+- подтверди, что это означает runtime effectively not-on.
 
-### Stage 3 — Execute (только после approve на dry-run table)
+&nbsp;
 
-Внутри **одной транзакции** (`BEGIN; ... COMMIT;`), per-row:
+После Stage 0 запроси approve на reflip secret.
 
-1. **INSERT `orders_v2**` (REBILL):
-  - `id` = gen_random_uuid()
-  - `order_number` = `'REBILL-' || first12(payment.id::text)`
-  - `user_id`, `profile_id`, `product_id`, `tariff_id`, `offer_id`, `pipeline_id`, `pipeline_stage_id`, `currency` — из frozen
-  - `deal_date` = `payment.paid_at`
-  - `created_at` = `now()`, `updated_at` = `now()`
-  - `paid_amount` = `payment.amount`
-  - `final_price` = `payment.amount`
-  - `provider` = `'bepaid'`
-  - `provider_payment_id` = `payment.provider_payment_id`
-  - `bepaid_subscription_id` = NULL (R2 — parent.bepaid_subscription_id пустой; меняем только если frozen.sbs_resolved IS NOT NULL)
-  - `status` = `'paid'` (или текущий канонический статус; см. §technical)
-  - `meta` = `jsonb_build_object('source','h5_historical_repair','run','h5_1b_jan_2026','materialized_from_payment_id', payment.id::text, 'materialized_from_payment_uid', payment.provider_payment_id, 'parent_order_id', parent_order_id::text, 'do_not_grant_access', true, 'recurring_evidence_source', frozen.recurring_evidence_source, 'sbs_source', frozen.sbs_source)`
-  - **In-tx re-guard**: `INSERT ... WHERE NOT EXISTS (SELECT 1 FROM orders_v2 WHERE order_number = 'REBILL-' || first12(payment.id::text))` — если конфликт → транзакция ROLLBACK и STOP.
-2. **UPDATE `payments_v2**`:
-  - `SET order_id = <новый REBILL-order.id>`
-  - `WHERE id = payment.id AND order_id = frozen.parent_order_id` (защита от гонки с runtime).
-  - Если `ROW_COUNT() ≠ 1` → ROLLBACK + STOP.
-3. **INSERT `audit_logs**` per payment:
-  - `actor = 'system'`, `actor_subtype = 'h5_1b_jan'`
-  - `action = 'h5_historical_rebill_materialized'`
-  - `entity_type = 'orders_v2'`, `entity_id = new_rebill_order.id`
-  - `meta` = `{payment_id, parent_order_id, provider_payment_id, expected_rebill_order_number, amount, paid_at, recurring_evidence_source}`
-4. **INSERT `audit_logs` summary** (one row):
-  - `action = 'h5_1b_jan_batch_completed'`
-  - `meta` = `{run:'h5_1b_jan_2026', total_inserts, total_payment_updates, total_audit_rows, ts_start, ts_end, source_csv}`
-5. `COMMIT;`
+&nbsp;
 
-### Stage 4 — Post-verify (read-only)
+Если approve получен:
 
-1. Сравнить checksums из Stage 2:
-  - `subscriptions_v2` scoped — **должно совпадать** (DML не трогал).
-  - `entitlements` scoped — **должно совпадать**.
-  - `provider_subscriptions` — **должно совпадать**.
-  - `telegram_access_queue` — **должно совпадать**.
-  - `orders_v2` REBILL-%: rows = old + N, новые ids — только наши с `meta.run='h5_1b_jan_2026'`.
-  - `payments_v2`: точно N строк с обновлённым `order_id`, остальные — без изменений.
-2. Проверить, что для каждого нового REBILL-order:
-  - есть ровно один payment с `order_id = REBILL.id`
-  - этот payment.id принадлежит frozen Jan list
-  - parent_order (из frozen) всё ещё имеет ≥1 non-refund payment
-3. STOP, если что-то расходится → перейти к Rollback.
+- выполнить update_secret BEPAID_REBILL_MATERIALIZATION = on;
 
-### Stage 5 — Rollback (только при сбое post-verify или явной команде)
+- других secrets не трогать;
 
-В одной транзакции:
+- ручной DML не выполнять;
 
-1. `UPDATE payments_v2 SET order_id = <frozen.parent_order_id> WHERE id IN (<frozen Jan ids>) AND order_id IN (SELECT id FROM orders_v2 WHERE meta->>'run'='h5_1b_jan_2026');`
-2. `DELETE FROM orders_v2 WHERE meta->>'run'='h5_1b_jan_2026';`
-3. `INSERT INTO audit_logs (action='h5_1b_jan_rollback', meta={reverted_count, reason});`
-4. `COMMIT;`
-5. Re-verify checksums = baselines.
+- зафиксировать reflipped_at.
 
-## Артефакт
+&nbsp;
 
-`.lovable/proofs/h5_1b_jan_historical_rebill_execute_2026_05.md` содержит:
+После reflip:
 
-- Stage 0 mode + frozen recheck
-- Stage 1 preflight результаты (passed / skipped с причинами)
-- Stage 2 baselines + final frozen execute table + expected rowcounts
-- Stage 3 фактические rowcounts после execute
-- Stage 4 post-verify diff
-- (Stage 5 при необходимости)
+- ждать первый live recurring autocharge;
 
-## Что не входит в этот план
+- нормальное подтверждение mode=on = audit `bepaid.rebill.materialized` с meta.mode='on' и новый REBILL-order;
 
-- Месяцы 02/03/04/05 — отдельные планы H5.1b-Feb/Mar/Apr/May.
-- 11 manual_review строк (10 sbs_unresolved + 1 pipeline_missing) — отдельный H5.2.
-- Refund orphans (35 строк из H5 dry-run) — отдельный H5.3.
+- если за 24h нет трафика — статус enabled_awaiting_first_rebill, без rollback;
 
-## Technical detail (для разработчика)
+- если новый recurring payment снова склеился со старым order — rollback secret обратно в dry_run и incident proof.
 
-**Поля `orders_v2.status**` — точный enum/значение «paid» сверить в Stage 0 (`SELECT DISTINCT status FROM orders_v2 WHERE order_number LIKE 'REBILL-%' LIMIT 5`), использовать то же значение, что runtime пишет для materialized REBILL.
+&nbsp;
 
-`**bepaid_subscription_id` на REBILL-order**: писать `frozen.sbs_resolved` если NOT NULL, иначе NULL. В январском batch почти все строки будут с NULL (`parent.bepaid_subscription_id` глобально пустой), evidence уходит в `meta.sbs_source` и `meta.recurring_evidence_source`.
+H5.1b-Jan execute не запускать до отдельного approve после mode recheck.
 
-`**crm_routing**`: использовать `pipeline_id`/`pipeline_stage_id` из frozen (т.е. из parent order). НЕ резолвить заново через crm_routing — этого делает grant-access-for-order, но он запрещён к вызову. Берём готовые значения.
+Так план можно запускать.
 
-`**do_not_grant_access=true**` — флаг для будущих nightly reconcile / `grant-access-for-order` retro: REBILL-orders из этого batch НЕ должны триггерить новые grants (отдельная безопасность).
+&nbsp;
 
-**Mode-race**: даже при `BEPAID_REBILL_MATERIALIZATION=on` re-guard внутри транзакции (`WHERE NOT EXISTS`) защищает от runtime, успевшего материализовать платёж между Stage 2 dry-run и Stage 3 execute.
+# План: H4.1-recheck — Mode mismatch diagnose & re-flip 2026-05
 
-**Транзакция**: одна на весь batch (12 строк) — атомарно для Jan. Если падает 1 строка — ROLLBACK всего batch. Re-run после фикса.
+## Контекст
+
+H5.1b-Jan Stage 0–2 принят. Frozen Jan green = 8 строк (4 fail → H5.2). Stage 3 execute заблокирован до подтверждения runtime mode=on.
+
+## Что уже видно (read-only, DML=0)
+
+1. **Secret присутствует:** `BEPAID_REBILL_MATERIALIZATION` в `fetch_secrets` listing (значение скрыто).
+2. **Audit после flipped_at (`2026-05-16T21:03:50Z`):** `bepaid.rebill.%` событий = **0**. Последние dry_run-аудиты — 2026-05-16 16:31:05 UTC, ДО flip.
+3. **Runtime gluing подтверждён:** с момента flip прошёл 1 succeeded payment (`489f08eb-2541-4bd3-9ad2-18e9aa99e45a`, 2026-05-17 06:15:39 UTC) → склеен с `SUB-26-MMVMU7XAIA3D` (order создан 2026-03-18). REBILL-order не создан, audit `bepaid.rebill.*` не записан.
+4. **Код-путь:** `bepaid-webhook/index.ts:2526` читает `Deno.env.get('BEPAID_REBILL_MATERIALIZATION')` → `resolveKillSwitchMode()`. Дефолт и любое неизвестное значение → `"off"` (safe-by-default). Если `rebillMode === 'off'` — dispatcher вообще не входит в `runRebillFlow` и audit `bepaid.rebill.*` НЕ пишется.
+5. **Вывод по сигналам:** runtime эффективно работает в режиме `off` (а не `dry_run`, как мы предположили в H5.1b-Jan по старым audit-записям). Старые dry_run-записи относились к окну ДО flip.
+
+## Гипотезы причины
+
+- **H-A:** secret физически содержит значение != `on` (`dry_run`/`off`/пусто) — flip H4.1 не сохранился, был перезаписан, или был сделан с опечаткой.
+- **H-B:** secret = `on`, но edge-runtime инстансы используют старое значение из кэша (cold-start vs warm). Маловероятно через ~14 часов после flip — инстансы должны были переподняться.
+- **H-C:** проблема в чтении: `Deno.env.get` возвращает что-то с лишними whitespace/BOM, и `.trim().toLowerCase()` не справляется (теоретически).
+
+## Стадии
+
+### Stage 0 — Read-only снимок (DML=0)
+
+- Зафиксировать `snapshot_at_utc`.
+- Полный список `bepaid.rebill.%` за 14 дней с разбивкой по `meta.mode`.
+- Список всех succeeded payments с `paid_at > flipped_at` и флагом `glued_to_old_order` (order.created_at < paid_at - 7d).
+- Все non-rebill audit'ы `bepaid.%` для платежа `489f08eb` (chain `subscription.processed → sync_dates → entitlement_extended → access_chain_applied → payment.upsert_from_last_transaction`).
+
+### Stage 1 — Probe текущего значения secret (DML=0)
+
+Нельзя прочитать значение secret напрямую. Probe выполняется одноразовой diagnostic-функцией / curl edge function (read-only path):
+
+- Вариант A (предпочтительный, без нового кода): дождаться/спровоцировать любой bepaid webhook на тестовой подписке и проверить, появится ли `bepaid.rebill.dry_run` или `bepaid.rebill.materialized` audit. Если за окно 10 минут ничего — runtime mode эффективно = `off`.
+- Вариант B (если допустим временный probe): задеплоить временную edge-функцию `__probe-rebill-mode` (verify_jwt=true, super_admin only), которая возвращает `{ raw_env_length, mode_resolved }` — без значения. После probe — удалить.
+
+В этом плане выбираем **Вариант A** (без новых функций).
+
+### Stage 2 — Re-flip secret на `on` (single secret update)
+
+Если Stage 1 подтверждает mode != `on`:
+
+- Вызвать `secrets--update_secret(['BEPAID_REBILL_MATERIALIZATION'])`.
+- Пользователь вводит ровно строку `on` (lowercase, без пробелов, без кавычек).
+- Зафиксировать `reflipped_at_utc`.
+- Подождать 60–120 секунд, чтобы edge-runtime инстансы подтянули новое значение.
+
+### Stage 3 — Verify runtime mode = on (DML=0)
+
+Гейт перед любым H5.1b execute. Все условия должны выполниться, иначе Stage 3 H5.1b НЕ approve:
+
+1. Появление первого `audit_logs` с `action='bepaid.rebill.materialized'` ИЛИ `'bepaid.rebill.dry_run'` с `meta.mode='on'` после `reflipped_at_utc`.
+2. Подтверждение, что для следующего succeeded payment (после reflip):
+  - создаётся новый `orders_v2` с `order_number LIKE 'REBILL-%'`;
+  - `payments_v2.order_id` указывает на новый REBILL-order, а не на старую сделку;
+  - `bepaid.rebill.materialized` audit содержит `meta.mode='on'`.
+3. Smoke regression: `subscriptions_v2.access_end_at` для затронутого пользователя не уменьшился (сравнение с baseline pre-reflip).
+
+Если за окно 24h после reflip нет ни одного rebill-trigger трафика — статус `enabled_awaiting_first_rebill`, и Stage 3 H5.1b ждёт первого live verify (как в H4.1).
+
+### Stage 4 — Rollback (только при регрессии)
+
+Триггеры:
+
+- `bepaid.rebill.dispatcher_error` > 0 за 1h после reflip.
+- `bepaid.rebill.conflict_uid` > 0.
+- `subscriptions_v2.access_end_at` regression на любом затронутом user.
+- Любой 5xx от bepaid-webhook вырос относительно baseline.
+
+Действие: `secrets--update_secret(['BEPAID_REBILL_MATERIALIZATION'])` → значение `dry_run`. Сохранить proof инцидента.
+
+## Что НЕ делаем в этом плане
+
+- НЕ запускаем H5.1b-Jan Stage 3 execute.
+- НЕ трогаем 4 manual_review (H5.2) и refund orphans (H5.3).
+- НЕ меняем код edge function. Только secret value.
+- НЕ создаём probe-функцию (Вариант B). Если Вариант A не даст сигнала за 24h — отдельный мини-план на probe.
+
+## Proof artefact
+
+`.lovable/proofs/h4_1_mode_recheck_and_reflip_2026_05.md`
+
+Секции:
+
+1. Stage 0 снимок (rebill audit за 14d, glued payments since flip, chain для 489f08eb).
+2. Stage 1 решение (Вариант A — пассивное наблюдение).
+3. Stage 2 reflip timestamp + список secret (имена).
+4. Stage 3 verify (audit события, первый REBILL-order, regression checks).
+5. Verdict: `runtime_mode=on` confirmed → H5.1b-Jan Stage 3 unblocked / `awaiting_first_rebill` / rollback.
+
+## DoD
+
+- Runtime mode фактически = `on` (подтверждено audit `bepaid.rebill.%` с `meta.mode='on'` ИЛИ статусом `enabled_awaiting_first_rebill`).
+- Никаких новых склеек после `reflipped_at_utc` на succeeded payments с recurring-признаками.
+- Готов отдельный approve gate на H5.1b-Jan Stage 3 (8 INSERT + 8 UPDATE + 9 audit).
+- Proof файл закоммичен.
 
 ## Approve gates
 
-1. Approve **этого плана** → переход к Stage 0–2 (read-only, dry-run, frozen table).
-2. Approve **dry-run артефакта** (`.lovable/proofs/h5_1b_jan_historical_rebill_execute_2026_05.md` с final frozen execute table + expected rowcounts) → переход к Stage 3 execute.
-3. После Stage 4 post-verify — отчёт пользователю; approve следующего месяца (H5.1b-Feb) отдельным сообщением.
----
-
-# Отчет о выполнении: H5.1b-Jan Stage 0–2 (read-only)
-
-DML=0, migrations=0, edge calls=0, provider API=0. Stage 3 НЕ запускался.
-
-## Ключевые находки
-
-1. **Mode mismatch:** audit_logs proof `bepaid.rebill.{dry_run,decision_audit}` → `meta->>'mode' = 'dry_run'`, не `on`. Runtime создал 1 REBILL за 14 дней (race-risk ≈ 0), но контрактное условие плана нарушено.
-2. **Preflight: 8 pass / 4 fail.** 4 строки (ritka.4289, 6214525, irkaguzarevich, lana0407) исключены по `fail:parent_has_no_other_payment` — у parent ровно 1 non-refund payment (наш). Перенос → orphan parent. Идут в H5.2 manual review.
-3. **Runtime канон REBILL:** `status='paid'`, `meta.source='rebill_materialization'`, `deal_date=created_at=paid_at` (49/49), `bepaid_subscription_id=NULL` (50/50). H5 INSERT адаптирован: `created_at=paid_at` (поправка плана #3), `bepaid_subscription_id=NULL`, `meta.source='h5_historical_repair'` (отделяет от runtime для rollback).
-4. **Schema-check audit_logs:** колонок `actor`, `actor_subtype`, `entity_type`, `entity_id` нет. Маппинг: `actor_type='system'`, `actor_label='h5_1b_jan'`, entity_* в `meta`.
-5. **Schema-check provider_subscriptions:** `current_period_end` не существует. Checksum по `state || next_charge_at || updated_at`.
-6. **UNIQUE(provider, provider_payment_id)** на orders_v2 — collision-guard: 0/12 коллизий. ✓
-
-## Final frozen execute table (8 rows)
-| email | payment_id | amount | expected_rebill |
-|---|---|---|---|
-| 1@ajoure.by | 1fbe2822-… | 1.00 | REBILL-1fbe2822-d02 |
-| aliaunesco@gmail.com | 95fbdacd-… | 1.00 | REBILL-95fbdacd-3de |
-| alinka197@yandex.ru | d26d295b-… | 150.00 | REBILL-d26d295b-44b |
-| s12217801@gmail.com | 20489cc0-… | 1.00 | REBILL-20489cc0-297 |
-| vikushkamoon@mail.ru | fd7c514e-… | 1.00 | REBILL-fd7c514e-416 |
-| elena.platonova-fedyakova@yandex.ru | f49d3fb0-… | 1.00 | REBILL-f49d3fb0-719 |
-| polyaq@tut.by | 4b48bbb4-… | 1.00 | REBILL-4b48bbb4-a5c |
-| olesiko105@mail.ru | d984dc99-… | 45.00 | REBILL-d984dc99-8db |
-
-Σ execute = 200.00 BYN. Все 8 parent имеют status='refunded' (типичный H5: bePaid списал rebill после возврата изначального платежа).
-
-## Baselines (scoped, 12 users)
-- subscriptions_v2: 49 / md5 `78ee14d19039cbc37e3ad03f3375a436` / Σepoch 83 316 493 184
-- entitlements: 44 / md5 `33c62a5e28faa3e8bec276457b244f80` / Σepoch 78 378 471 143
-- provider_subscriptions: 25 / md5 `13e03c8887e9bdb350e52a2c7b89f908`
-- telegram_access_queue: 43 / md5 `25460796609f9d401105ceb3aa8a9682`
-- payments_v2 (12 frozen): md5 `65d13e057d851e09792be1f1dac55768`
-- orders_v2 REBILL-% global: 201 / md5 `f4b7f8055f48b17ab34ba383128622d6`
-
-## Expected rowcounts (если будет approve)
-```
-expected_inserts_orders_v2     = 8
-expected_updates_payments_v2   = 8
-expected_audit_rows            = 9 (8 per-payment + 1 summary)
-skipped                        = 4 (H5.2)
-```
-
-## Артефакты
-- `.lovable/proofs/h5_1b_jan_historical_rebill_execute_2026_05.md`
-- `.lovable/proofs/h5_1b_jan_historical_rebill_execute_2026_05.sql`
-- `.lovable/proofs/h5_1b_jan_frozen_jan.csv` (12 frozen rows)
-
-## Требует решения перед Stage 3
-1. Mode = `dry_run` vs план = `on`: принять (A) или ждать переключения (B)?
-2. Подтвердить, что 4 fail rows идут в H5.2 без действия в Jan batch.
-
-После двух approves — отдельный approve на Stage 3 execute.
+1. **Approve этого плана** → Stage 0 (read-only снимок).
+2. **Approve Stage 1 verdict** (mode != on подтверждён) → Stage 2 (secrets--update_secret).
+3. **Approve Stage 3 verify** → отдельный approve на H5.1b-Jan Stage 3 execute.
