@@ -83,7 +83,11 @@ SQL: `entitlements.status='active'` × `subscriptions_v2 (active|trial|past_due)
 | row 5 (17b35d62… / ЗАКРОЙ ГОД) | true | true (blocked: FK orphan) |
 | row 6 (539ea1b3… / ЦБ-2/3) | true | true (deferred per scope) |
 
-**Closed: 4/5 разрешённых, 1/5 заблокировано FK (orphan auth.user).**
+**Итог ACCESS-FIX-1: CLOSED.**
+- row 1–4: fixed (primary entitlement создан/обновлён через canonical writer);
+- row 5: skipped intentionally — `contact_only_not_registered_no_auth_user` (не баг доступа);
+- row 6: deferred — `manual_review_no_order_link` (требует решения product owner);
+- финальный статус: **4 fixed, 2 intentionally unresolved**.
 
 ## Запреты — соблюдены
 
@@ -93,19 +97,19 @@ SQL: `entitlements.status='active'` × `subscriptions_v2 (active|trial|past_due)
 - Provider API — 0.
 - H5 REBILL-orders — не трогались.
 - Secrets/mode — без изменений.
+- Auth-user provisioning / reassign по row 5 — 0 (по решению).
 
 ## DoD
 
 | критерий | done |
 |---|:---:|
-| 5 вызовов canonical writer выполнены | ✅ (4 success, 1 blocked) |
+| Canonical writer вызван по 4 разрешённым строкам | ✅ |
 | Прямых DML в entitlements/subscriptions_v2 не было | ✅ |
-| По 4 успешным — primary entitlement создан, expires_at ≥ sub.access_end_at, meta.tariff_id корректен | ✅ |
-| По ошибке row 5 — остановка, без ручной починки | ✅ |
-| Row 6 не тронут | ✅ |
+| primary_entitlement_verified=true, expires_at == sub.access_end_at, meta.tariff_id корректен (rows 1–4) | ✅ |
+| Row 5 финализирован как `contact_only_not_registered_no_auth_user`, без починки | ✅ |
+| Row 6 не тронут (`manual_review_no_order_link`) | ✅ |
 | Audit per-order зафиксирован | ✅ |
 
 ## Next
 
-- **ACCESS-FIX-1.1 (orphan auth.user):** отдельное решение по row 5 — нужен auth-side provisioning либо reassign user_id. Не входит в текущий scope.
-- **ACCESS-FIX-2:** 9 `missing_telegram_access` — после approve.
+- **ACCESS-FIX-2:** 9 `missing_telegram_access` — read-only dry-run первым шагом, без DML и без Telegram API.
