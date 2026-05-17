@@ -78,11 +78,11 @@ VALUES (
 );
 ```
 
-| # | profile_id (sub.user_id) | telegram_user_id | sub_id |
-|---|---|---|---|
-| 5 | `a832c11e-1715-4646-bfcb-859fff931a0e` | 143174278 | `28965857-e8ca-41ed-9c5f-87711e884716` |
-| 7 | `1bd93a04-4393-41a7-8bb9-166d587686cc` | 8721456902 | `c3657287-18c4-4d94-844e-4496665eddea` |
-| 8 | `acd9116c-528f-44c9-9af2-cfe2ba804386` | 556054465 | `6d123c1b-86ed-4a6c-a447-f9f2a4dd2aff` |
+| # | ФИО | продукт | profile_id (sub.user_id) | telegram_user_id | sub_id |
+|---|---|---|---|---|---|
+| 5 | Екатерина Иванченко | Gorbova Club | `a832c11e-1715-4646-bfcb-859fff931a0e` | 143174278 | `28965857-e8ca-41ed-9c5f-87711e884716` |
+| 7 | Катя Осипчик | Gorbova Club | `1bd93a04-4393-41a7-8bb9-166d587686cc` | 8721456902 | `c3657287-18c4-4d94-844e-4496665eddea` |
+| 8 | Юлия Бурдон | Gorbova Club | `acd9116c-528f-44c9-9af2-cfe2ba804386` | 556054465 | `6d123c1b-86ed-4a6c-a447-f9f2a4dd2aff` |
 
 Обработка пойдёт через `telegram-process-access-queue → telegram-grant-access`. Stop-условие: при любом `last_error ≠ null` после 1 прогона — вынести в `manual_review`, не повторять.
 
