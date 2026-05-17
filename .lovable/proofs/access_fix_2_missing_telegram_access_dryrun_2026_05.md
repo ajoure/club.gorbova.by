@@ -17,19 +17,19 @@
 | `50ac58f2…` | (другой) | — | — | — | нет правила |
 | `73c29914…` | ЗАКРОЙ ГОД | — | — | — | нет правила |
 
-## 2. Пересмотр 9 кейсов
+## 2. Пересмотр 9 кейсов (с ФИО и продуктами)
 
-| # | email | product | sub.tariff_id | tg_expected (SOT) | вывод |
-|---|---|---|---|:---:|---|
-| 1 | 1@ajoure.by | Gorbova Club | `31f75673…` | ✅ | true-positive |
-| 2 | 1@ajoure.by | Платная консультация | `1020fce2…` (≠ `c1b4bb88`) | ❌ | **false-positive аудита** |
-| 3 | 2.lady.di.only@gmail.com | Gorbova Club | `7c748940…` | ✅ | true-positive |
-| 4 | a5153253@yandex.by | Gorbova Club | `7c748940…` | ✅ | true-positive |
-| 5 | finassist.by@gmail.com | Gorbova Club | `7c748940…` | ✅ | true-positive |
-| 6 | gelaev46@gmail.com | Платная консультация | `28eb8dd9…` (≠ `c1b4bb88`) | ❌ | **false-positive аудита** |
-| 7 | ossiptschik@mail.ru | Gorbova Club | `7c748940…` | ✅ | true-positive |
-| 8 | pbourdon@tut.by | Gorbova Club | `b276d8a5…` | ✅ | true-positive |
-| 9 | piletski.a@yandex.by | Платная консультация | `f2e999a9…` (≠ `c1b4bb88`) | ❌ | **false-positive аудита** |
+| # | ФИО | email | продукт | sub.tariff_id | access_end_at | tg_expected (SOT) | вывод |
+|---|---|---|---|---|---|:---:|---|
+| 1 | Тест Тестовый (`@ajoure_ceo`) | 1@ajoure.by | **Gorbova Club** | `31f75673…` | 2026-05-26 | ✅ | true-positive |
+| 2 | Тест Тестовый (`@ajoure_ceo`) | 1@ajoure.by | Платная консультация | `1020fce2…` (≠ `c1b4bb88`) | 2026-05-18 | ❌ | **false-positive аудита** (тариф не совпадает с bonus-rule) |
+| 3 | Диана Новородская (`@divanka_by`) | 2.lady.di.only@gmail.com | **Gorbova Club** | `7c748940…` | 2026-05-25 | ✅ | true-positive |
+| 4 | Татьяна Чаплыгина (`@Tasha_buh`) | a5153253@yandex.by | **Gorbova Club** | `7c748940…` | 2026-06-12 | ✅ | true-positive |
+| 5 | Екатерина Иванченко (`@k_ivanchenko`) | finassist.by@gmail.com | **Gorbova Club** | `7c748940…` | 2026-06-02 | ✅ | true-positive |
+| 6 | Руслан Цурко (`@navinall`) | gelaev46@gmail.com | Платная консультация | `28eb8dd9…` (≠ `c1b4bb88`) | 2026-05-28 | ❌ | **false-positive аудита** |
+| 7 | Катя Осипчик (`@kateosipchik`) | ossiptschik@mail.ru | **Gorbova Club** | `7c748940…` | 2026-06-06 | ✅ | true-positive |
+| 8 | Юлия Бурдон (`@bourdon_yuliya`) | pbourdon@tut.by | **Gorbova Club** | `b276d8a5…` | 2026-05-31 | ✅ | true-positive |
+| 9 | Андрей Иванович Пилецкий (TG не привязан) | piletski.a@yandex.by | Платная консультация | `f2e999a9…` (≠ `c1b4bb88`) | 2026-05-29 | ❌ | **false-positive аудита** |
 
 **Итог пересмотра:** реальных `missing_telegram_access` = **6**, false-positive = **3** (аудит не учитывал `access_rules.tariff_id` фильтр для bonus-правила).
 
