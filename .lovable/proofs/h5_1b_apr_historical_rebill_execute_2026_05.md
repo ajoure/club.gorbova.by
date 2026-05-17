@@ -126,3 +126,56 @@ Excluded:
 - Refund-операции не выполнялись.
 
 **Ожидаю финальное подтверждение обновлённой таблицы → затем approve на execute (только Казачек, 250 BYN).**
+
+---
+
+## 9. Stage 3 — EXECUTE RESULT (2026-05-17, post-DML)
+
+**Status:** ✅ SUCCESS. Все rowcount/checksum совпали с expected (§6).
+
+### DML executed (single transaction)
+
+1. `INSERT orders_v2` → 1 row, `id=6042768c-c6ad-4a2d-a818-7e5c6e3e1d07`, `order_number=REBILL-ffb88444-c5d`.
+2. `UPDATE payments_v2` → 1 row, `ffb88444…` перепривязан с `6611441c…` → `6042768c…`.
+3. `INSERT audit_logs` → 2 rows: `bepaid.rebill.materialized` (per-payment) + `bepaid.rebill.batch.summary` (batch).
+
+### Post-execute verification
+
+| check | expected | actual | ok |
+|---|---|---|---|
+| new REBILL-order created | `REBILL-ffb88444-c5d`, paid, 250 BYN, 2026-04-10 | id `6042768c…`, paid, 250.00, 2026-04-10 03:00:49+00 | ✅ |
+| payment relink | `ffb88444…`.order_id → `6042768c…` | confirmed | ✅ |
+| parent intact | `SUB-LINK-MMIZ52FC` status=paid, не тронут | id `6611441c…`, paid, paid_amount=250.00 | ✅ |
+| parent_initial_payment_preserved | ≥1 succeeded non-refund остался на parent | **2** (March `6d24707a` + May `b458870d`) | ✅ |
+| `orders_v2` REBILL-% 2026 | 201 → **202** (+1) | 202 | ✅ |
+| audit rows (batch H5.1b-Apr-2026) | 2 | **2** | ✅ |
+| subscriptions_v2 | без изменений | не трогали | ✅ |
+| entitlements | без изменений | не трогали | ✅ |
+| provider_subscriptions | без изменений | не трогали | ✅ |
+| Telegram (queue/membership) | без изменений | не трогали | ✅ |
+| refunds / parent.meta.bepaid_refund | без изменений | не трогали | ✅ |
+| `grant-access-for-order` | НЕ вызван | НЕ вызван | ✅ |
+| secrets / mode | без изменений | не трогали | ✅ |
+
+### New REBILL-order — full record snapshot
+
+- `id`: `6042768c-c6ad-4a2d-a818-7e5c6e3e1d07`
+- `order_number`: `REBILL-ffb88444-c5d`
+- `user_id`: `6b0e0451-c01b-4cd9-8fc4-dd7e83fd5c65` (Наталья Казачек)
+- `product_id`: `11c9f1b8-0355-4753-bd74-40b42aa53616`
+- `tariff_id`: `7c748940-dcad-4c7c-a92e-76a2344622d3`
+- `base_price/final_price/paid_amount`: 250.00 BYN
+- `status`: `paid`
+- `provider/provider_payment_id`: `bepaid` / `c8ade1b3-1cd5-4119-ad5a-fe232756f2da`
+- `bepaid_subscription_id`: `sbs_b5c5ea6a57413c72`
+- `deal_date`: 2026-04-10 03:00:49+00
+- `pipeline_id`: `a0000001-0000-0000-0000-000000000001`
+- `pipeline_stage_id`: `b0000001-0001-0000-0000-000000000004`
+- `meta.type`: `bepaid_rebill_materialization`
+- `meta.batch`: `H5.1b-Apr-2026`
+- `meta.parent_order_id`: `6611441c-0bcf-45e7-85e6-46d11d6d5db3`
+- `meta.warning`: `parent_has_refund_on_other_payment`
+
+### Verdict
+
+**H5.1b-Apr-2026 closed. No rollback required.** Готовы переходить к следующему месяцу (March 2026, 2 платежа — по согласованию).
