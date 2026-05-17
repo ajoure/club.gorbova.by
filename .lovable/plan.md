@@ -1,233 +1,203 @@
 да, согласен, с учетом правок:
 
-1. **В Stage 1 не проверять “parent.updated_at не менялся” как hard FAIL.**  
-`updated_at` мог измениться технически не из-за H5. Главное — проверить, что не менялись критичные поля parent:
+1. `profile_id` **не должен быть hard STOP.**  
+У тебя уже есть 2 кейса `no profile`. Если `user_id` существует и подписка валидна, отсутствие `profile_id` не должно автоматически блокировать восстановление доступа.
+
+Заменить STOP:
 
 ```text
-status
-paid_amount
-final_price
-meta
-deal_date
-pipeline_id
-pipeline_stage_id
+нет user_id / profile_id
 ```
 
-`updated_at` можно фиксировать как warning, не blocker.
-
-2. **Для Telegram проверить обе таблицы/источника, которые реально используются.**  
-Не только `telegram_club_members`, но и фактические таблицы проекта, если используются:
+на:
 
 ```text
-telegram_access
-telegram_club_members
-telegram_channel_members
-telegram_access_queue
-telegram_logs / telegram_messages только для подтверждения событий
+нет user_id или user_id не существует в auth/profiles-связке → STOP
+profile_id отсутствует → warning no_profile, но не blocker, если canonical writer принимает user_id/orderId
 ```
 
-3. **Paid orders с access-window > cutoff не определять эвристикой.**  
-Если у order нет прямого access window, брать только через:
+2. **Source order не обязательно** `sub_order_id`**.**  
+Если `subscriptions_v2.sub_order_id` нет или поле называется иначе, искать order через:
 
 ```text
-subscription_v2
-entitlement
-access_rules
-tariff access_days + paid_at/deal_date как справочный расчёт
+initial_order_id
+checkout_order_id
+origin_order_id
+meta.initial_order_id
+meta.checkout_order_id
+meta.extended_by_orders
+order_id
 ```
 
-И помечать как `expected_access_window`, а не факт доступа.
+Иначе часть строк уйдёт в manual_review ошибочно.
 
-4. **Secondary/bonus access не считать ошибкой, если нет SOT-правила.**  
-Для `bonus/secondary` сначала доказать источник:
+3. **Refund guard проверять по конкретному source_order/payment, не по клиенту вообще.**  
+Refund по другому заказу не должен блокировать восстановление доступа.
+4. **Для** `grant_access_for_order_needed` **добавить проверку** `do_not_grant_access`**.**  
+Если source_order имеет:
 
 ```text
-tariff_offers.meta.bonus_products / included_products
-access_rules
-product_fulfillment
-products_v2.meta
+meta.do_not_grant_access=true
 ```
 
-Если правила нет — `no_rules_configured`, не `missing_secondary_access`.
+то не вызывать writer, строка → `manual_review_do_not_grant_access`.
 
-5. **Добавить отдельный блок “H5 не должен был выдавать доступ”.**  
-В proof явно подтвердить:
+5. **Если source_order — H5 REBILL-order, не использовать его для выдачи доступа.**  
+H5 REBILL-orders специально имеют `do_not_grant_access=true`. Для доступа искать original/source paid order.
+6. `entitlement_restore_needed` **лучше не делать через ручную реактивацию.**  
+В dry-run можно пометить, но execute должен быть только:
 
 ```text
-REBILL-orders H5 имеют meta.do_not_grant_access=true
-по H5 REBILL-orders не вызывался grant-access-for-order
-не появились новые entitlements/subscriptions/Telegram из-за H5
+сначала grant-access-for-order
+если writer не применим — manual_review
 ```
 
-6. **Для access audit добавить приоритет источников истины.**
+Никаких прямых восстановлений entitlements в ACCESS-FIX-1.
+
+7. **Добавить проверку access_rules.**  
+Для каждой строки указать:
 
 ```text
-1. entitlements — техническая видимость
-2. subscriptions_v2 — подписка/окно доступа
-3. access_rules / tariff_offers — что должно быть выдано
-4. Telegram membership — внешний факт, не замена platform access
+primary entitlement expected by access_rules / product entitlement_mode / tariff_offer
 ```
 
-7. **В CSV добавить поля для быстрого принятия решений:**
+Чтобы не создавать доступ там, где продукт не должен выдавать platform access.
+
+8. **Команда на запуск:**
 
 ```text
-customer
-email
-product
-tariff
-gap_class
-severity
-recommended_action
-source_order
-subscription_id
-entitlement_id
-telegram_expected
-telegram_actual
-secondary_expected
-secondary_actual
-```
-
-8. **Severity добавить отдельно от gap_class.**
-
-```text
-critical — платный активный пользователь без primary access
-high — Telegram/secondary отсутствует при наличии правила
-medium — расхождение дат
-low — no_rules_configured / informational
-```
-
-9. **Команда на запуск:**
-
-```text
-План H5-final verification + access consistency audit подтверждаю.
+План ACCESS-FIX-1 dry-run подтверждаю с правками.
 
 Выполни строго read-only:
-
-- Stage 1: verify H5-final-bulk-remaining against DB;
-- Stage 2: собрать remaining manual_review / skipped;
-- Stage 3–5: access consistency audit после 17.05.2026;
-- Stage 6: final status board.
-
-Учти правки:
-- parent.updated_at не hard blocker, проверять критичные поля parent;
-- Telegram проверять по фактическим таблицам проекта;
-- paid order access window считать только через subscription/entitlement/access rules;
-- secondary/bonus считать missing только при наличии доказанного SOT-правила;
-- добавить severity и recommended_action;
-- отдельно подтвердить, что H5 REBILL не выдавал доступ и имеет do_not_grant_access=true.
+- прочитать 6 critical missing_primary_entitlement;
+- собрать row-карту;
+- найти корректный source_order через все возможные поля subscription/meta;
+- проверить do_not_grant_access;
+- проверить refund только по конкретному source_order/payment;
+- проверить access_rules / entitlement_mode;
+- классифицировать planned_action;
+- создать proof + CSV.
 
 Запрещено:
 - DML;
 - grant-access-for-order;
-- Telegram grant/revoke;
+- Telegram;
 - provider API;
-- изменения subscriptions_v2 / entitlements / access_rules / secrets / mode;
-- auto-fix.
+- любые изменения subscriptions_v2 / entitlements / orders_v2 / payments_v2 / secrets.
 
-Artifacts:
-.lovable/proofs/h5_final_verification_status_board_2026_05.md
-.lovable/proofs/h5_access_consistency_audit_after_2026_05_17.md
-.lovable/proofs/h5_access_consistency_audit_after_2026_05_17.csv
+Proof:
+.lovable/proofs/access_fix_1_missing_primary_entitlement_dryrun_2026_05.md
+CSV:
+.lovable/proofs/access_fix_1_missing_primary_entitlement_dryrun_2026_05.csv
+
+После dry-run остановиться и ждать approve execute.
+
+План: ACCESS-FIX-1 — critical missing primary entitlement repair (dry-run)
 ```
-
-После этого отчёта уже можно будет отдельно решать, что чинить: доступы, Telegram, secondary/bonus или оставшиеся refund/manual-review платежи.
-
-&nbsp;
-
-План: H5-final verification + access consistency audit
-
-Режим: **read-only**. Никаких DML, grant-access, Telegram/provider API, изменений secrets/mode. Любые исправления — только отдельным approve после отчёта.
 
 ## Цель
 
-1. Подтвердить, что отчёт `H5-final-bulk-remaining` (70 REBILL / 70 repointed payments) соответствует фактическому состоянию БД.
-2. Зафиксировать всё, что осталось вне clean execute (manual_review / skipped / orphan).
-3. Сделать аудит активных доступов с окончанием после `2026-05-17 00:00:00+00` и сверить их с правилами продукта/тарифа.
+Подготовить read-only dry-run отчёт по 6 critical-кейсам `gap_class=missing_primary_entitlement` из аудита `.lovable/proofs/h5_access_consistency_audit_after_2026_05_17.csv`. Никаких DML, никаких вызовов `grant-access-for-order`, никаких Telegram/provider действий. Execute — отдельным approve следующим патчем.
 
-## Stage 1 — Verify H5 report against DB
+## Scope (точный)
 
-SQL по `orders_v2` / `payments_v2` / `audit_logs`. Проверяем:
+Source: `.lovable/proofs/h5_access_consistency_audit_after_2026_05_17.csv`
+Filter: `severity=critical AND gap_class=missing_primary_entitlement`
+Ожидание: 6 строк.
 
-- `orders_v2`: count(meta.run='h5_final_bulk_remaining_2026_05') = 70; все REBILL-%; у каждого `meta.source='h5_historical_repair'`, `meta.do_not_grant_access=true`, `parent_order_id` валиден; ровно 1 payment на REBILL.
-- `payments_v2`: count(meta.rebill_materialization.run=...) = 70; каждый указывает на REBILL; ни один больше не висит на parent.
-- Parent orders: каждый сохранил ≥1 succeeded non-refund payment; parent.meta/updated_at не менялись после snapshot.
-- Контрольные ассерты: `b458870d → REBILL-b458870d-cfa`, `5fc22e49 → REBILL-5fc22e49-9e1`, `8c78c039` остался на `SUB-LINK-MLNYCZPF`, `ffb88444 → REBILL-ffb88444-c5d`, `b9d946d4 / 0f854c28 / 6bfead3b` не тронуты.
-- Sanity vs baseline: `subscriptions_v2` (449), `entitlements` (931), `provider_subscriptions` (565), Σepoch(access_end_at)/Σepoch(expires_at) совпадают; `refunds`, `telegram_club_members`, `access_rules` без изменений (по updated_at > snapshot).
+Контрольный список (из status board / audit md):
 
-## Stage 2 — Remaining broken/skipped cases
+1. ЗАКРОЙ ГОД — `alexasermyazhko@gmail.com`, sub `405faf46…`, access_end_at 2026-05-31
+2. Gorbova Club — `elena.platonova-fedyakova@yandex.ru`, sub `f2901cfc…`, 2026-05-21
+3. Gorbova Club — `natapono2018@mail.ru`, sub `08363441…`, 2026-05-30
+4. Gorbova Club — `trofimova.ulia@tut.by`, sub `de75db3a…`, 2026-05-19
+5. ЗАКРОЙ ГОД — user `17b35d62…` (no profile), sub `0c999415…`, 2026-05-31
+6. Ценный бухгалтер 2 ступень / 3 поток — user `539ea1b3…` (no profile), sub `be19fa2e…`, 2026-08-30
 
-Single таблица всех, кто остался вне clean execute. Колонки: customer, email, payment_id, amount, paid_at, current_order, reason, recommended_next_action.
+Если CSV даст не ровно 6 строк или иной состав — STOP, отчёт о расхождении, дальше не идти.
 
-Категории:
+## Stage 1 — read-only dry-run
 
-- `manual_review:refund_or_tariff_upgrade_flow` (b9d946d4 — Хрущёва)
-- `manual_review:refund_related` (0f854c28)
-- `manual_review:parent_would_be_orphaned` (6bfead3b, ab0ffa83 и т.п.)
-- `manual_review:sbs_unresolved`
-- `intentionally_kept_initial` (8c78c039 — collective guard)
-- `skip_done` (ffb88444)
-- `orphan refund rows`
+Для каждой из 6 строк собрать row-карту (read-only SQL по subscriptions_v2, orders_v2, payments_v2, profiles, tariff_offers, entitlements, access_rules, product_fulfillment):
 
-Источник: `h5_refresh_v2_frozen_candidates_2026_05.csv` minus 70 executed + актуальный re-scan по `payments_v2` за окно H5.
+- customer (имя), email
+- `user_id`, `profile_id` (если есть)
+- `product_id`, product_name
+- `tariff_id`, tariff name
+- `subscription_id`, sub status, `access_start_at`, `access_end_at`, `auto_renew`, `sub_order_id`
+- `source_order` = `subscriptions_v2.sub_order_id`: id, public_id, status, paid_amount, final_price, refunded?
+- `latest_payment`: id, status, amount, captured_at, refund flag
+- текущий entitlement по `(user_id, product_id)` — есть/нет/superseded/expired
+- ожидаемое окно primary entitlement (на основе sub.access_start_at/access_end_at и tariff access_days)
+- `planned_action` (см. ниже)
+- `stop_guard` (см. ниже) — null если можно чинить canonical writer'ом
 
-## Stage 3 — Access consistency audit
+### Классификация `planned_action`
 
-`cutoff = '2026-05-17 00:00:00+00'`.
+- `grant_access_for_order_needed` — есть `sub_order_id` с `status='paid'`, без refund, продукт/тариф консистентны, entitlement по (user_id, product_id) реально отсутствует → execute-стадия позже вызовет `grant-access-for-order({orderId: sub_order_id, source: 'access_fix_1_missing_primary_entitlement_2026_05'})`.
+- `entitlement_restore_needed` — есть прошлый entitlement в `superseded/expired/canceled` строго того же `(user_id, product_id, tariff_id)`, который перекрывает ожидаемое окно, и canonical writer не сможет его реактивировать (например, нет «свежего» paid-заказа). Помечается, но в execute-стадии всё равно сначала пробуется canonical writer.
+- `manual_review_no_order` — `sub.sub_order_id IS NULL` или соответствующий `orders_v2` не найден / не `paid`.
+- `manual_review_no_user` — `subscriptions_v2.user_id IS NULL` или user не существует в profiles.
+- `manual_review_tariff_mismatch` — `sub.product_id ≠ order.product_id` или `sub.tariff_id ≠ order.tariff_id`, либо ни один tariff_offer не подтверждает продуктовую связь.
+- `skip_already_fixed` — entitlement на `(user_id, product_id)` уже active с `expires_at > now()` (если успели починить между snapshot'ом и dry-run'ом).
 
-Собрать union users с любым из:
+### STOP-guards (per-row)
 
-- `subscriptions_v2.access_end_at > cutoff`
-- `entitlements.expires_at > cutoff` (или `expires_at IS NULL` со status='active')
-- `telegram_club_members.access_status='ok'` или active membership
-- paid `orders_v2` (включая REBILL), у которого access-окно > cutoff
+Любой триггерит `manual_review_*` и блокирует canonical writer:
 
-Для каждого (user × product) собрать строку: customer, email, product, tariff, source_order, latest_payment, subscription_v2 (id/status/access_start_at/access_end_at/tariff_id/auto_renew), entitlement (id/status/expires_at/product_id/meta.tariff_id/source_order_id), Telegram (expected/actual/active_until/access_status), access_rules expectation (product/Telegram/training/bonus).
+- нет `user_id` / `profile_id`;
+- нет `product_id` / `tariff_id` на subscription;
+- `source_order.status ≠ 'paid'`;
+- есть refund по source_order или его последнему payment;
+- product_id / tariff_id у subscription не совпадает с order;
+- `sub.access_end_at <= now()`;
+- найден active entitlement того же `product_id` у другого `user_id`, перекрывающий ожидаемое окно (потенциальная коллизия).
 
-## Stage 4 — Product rules validation
+### Глобальные STOP-guards (отчёт целиком)
 
-Сверка по `access_rules` / `tariff_offers` / `products_v2`:
+- CSV не существует / parse error → STOP;
+- строк severity=critical/missing_primary_entitlement ≠ 6 → STOP с diff;
+- любой из контрольных sub_id отсутствует в БД → STOP.
 
-- **Primary entitlement**: продукт/тариф требует доступ → entitlement существует, `expires_at ≥ subscription.access_end_at` (или объяснение), `product_id` и `meta.tariff_id` совпадают с заказом.
-- **Subscription**: recurring → есть `subscriptions_v2`; status соответствует фактическому доступу; access_end_at > cutoff если доступ активен.
-- **Telegram**: если `access_rules` требует — есть активная связь; если не требует — отсутствие не ошибка; если TG есть без entitlement/subscription → anomaly.
-- **Bonus/secondary**: правила есть → проверить вторичные entitlements; правил нет → `no_rules` (не ошибка); правила есть и доступа нет → `missing_secondary_access`.
+## Stage 2 — proposal (только текст, без execute)
 
-## Stage 5 — Gap classification
+В конце dry-run отчёта:
 
-Проставить `gap_class` ∈ { ok, missing_primary_entitlement, missing_subscription, subscription_without_entitlement, entitlement_without_subscription, telegram_without_platform_access, missing_telegram_access, expired_entitlement_but_active_subscription, access_end_mismatch, tariff_mismatch, missing_secondary_access, manual_review_required, no_rules_configured }.
+- таблица `planned_action × count`;
+- список строк, которые в execute-фазе пойдут через `grant-access-for-order` (с конкретными `orderId`);
+- список строк, которые уйдут в `manual_review_*` с причиной;
+- предложение execute-патча: одна цепочка вызовов `grant-access-for-order`, последовательно, с capture результата (`entitlement.action`, `accessEndAt`, `primary_entitlement_verified`).
 
-## Stage 6 — Final status board
+Никакой DML, никакого invoke в этом патче.
 
-Сводная таблица:
+## Запреты (жёсткие)
 
-
-| Блок                             | Статус    | Count | Комментарий   |
-| -------------------------------- | --------- | ----- | ------------- |
-| H5 clean REBILL repaired         | PASS/FAIL | …     | факт vs отчёт |
-| Remaining manual_review payments | …         | …     | по категориям |
-| Active subscriptions after 17.05 | …         | …     | …             |
-| Active entitlements after 17.05  | …         | …     | …             |
-| Missing primary access           | …         | …     | …             |
-| Missing Telegram access          | …         | …     | …             |
-| Missing secondary/bonus access   | …         | …     | …             |
-| Access-rule gaps                 | …         | …     | by gap_class  |
-
+- Никаких INSERT/UPDATE/DELETE по `entitlements`, `subscriptions_v2`, `orders_v2`, `payments_v2`, `access_rules`, `telegram_*`, `provider_subscriptions`.
+- Никаких вызовов `grant-access-for-order`, `telegram-grant-access`, `telegram-process-access-queue`, `bepaid-*`.
+- Никаких H5 REBILL-операций.
+- Никаких изменений secrets / mode / cron.
+- Никаких массовых ручных правок entitlements — только canonical writer на execute-стадии.
+- Telegram-кейсы (9 шт.) НЕ трогать в этом патче — это ACCESS-FIX-2.
+- 40 sub_without_ent по «Учет у ИП» НЕ трогать.
 
 ## Артефакты
 
-- `.lovable/proofs/h5_final_verification_status_board_2026_05.md` — финальный статус-борд + Stage 1–2.
-- `.lovable/proofs/h5_access_consistency_audit_after_2026_05_17.md` — Stage 3–5: methodology, ассерты, аномалии.
-- `.lovable/proofs/h5_access_consistency_audit_after_2026_05_17.csv` — построчная таблица (user × product) с gap_class.
-
-## Запрещено
-
-DML/INSERT/UPDATE/DELETE; grant-access-for-order; Telegram grant/revoke; provider API; изменения subscriptions_v2 / entitlements / access_rules / secrets / mode; auto-fix.
+- `.lovable/proofs/access_fix_1_missing_primary_entitlement_dryrun_2026_05.md` — методология, 6 row-карт, planned_action, stop_guards, proposal execute.
+- `.lovable/proofs/access_fix_1_missing_primary_entitlement_dryrun_2026_05.csv` — per-row машинно-читаемый дамп (user_id, product_id, tariff_id, sub_id, sub_order_id, planned_action, stop_guard, sub_access_end_at, ожидаемый expires_at).
 
 ## DoD
 
-1. H5-final-bulk-remaining подтверждён или зафиксировано расхождение.
-2. Полный список оставшихся manual_review / skipped собран.
-3. Аудит активных доступов после 17.05.2026 собран по всем пользователям.
-4. Для каждого (user × product): есть/нет доступа, срок, соответствие правилам, Telegram, secondary/bonus.
-5. Все проблемы классифицированы `gap_class`.
-6. БД не менялась — подтверждено сравнением счётчиков/sum'ов с pre-execute baseline.
+- CSV прочитан, ровно 6 строк severity=critical/missing_primary_entitlement.
+- По каждой строке заполнена row-карта со всеми полями выше.
+- `planned_action` проставлен из фиксированного словаря.
+- Все STOP-guards проверены, расхождения зафиксированы.
+- Proof md + CSV созданы.
+- БД не менялась (0 DML, 0 invoke writer-функций).
+- Явно перечислено, какие строки в execute-фазе пойдут через canonical writer и какие — в manual_review.
+- Остановка после dry-run; ждать approve на execute.
+
+## Дальше (вне этого патча)
+
+- ACCESS-FIX-1 execute — после approve, отдельным сообщением.
+- ACCESS-FIX-2 — Telegram (9 шт.), только после закрытия ACCESS-FIX-1.
+- «Учет у ИП» grace cohort — отдельный dry-run с product owner'ом.
