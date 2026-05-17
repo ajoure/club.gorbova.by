@@ -1,135 +1,131 @@
-# H5-final-bulk-remaining — execute + verify + ROLLBACK
+# H5-final-bulk-remaining — execute + verify (SUCCESS)
 
-**Snapshot UTC:** 2026-05-17 ~12:30 UTC
+**Snapshot UTC:** 2026-05-17 ~13:17 UTC
 **Run id:** `h5_final_bulk_remaining_2026_05`
-**Итог:** Batch A прошёл, Batch B прошёл по количеству, но финальный verify обнаружил **orphan parent** → выполнен полный rollback по обоим batch'ам. Состояние БД побайтово вернулось к baseline.
+**Итог:** ✅ Все 70 green-кандидатов материализованы одним патчем. Collective orphan guard добавлен. Все verify-инварианты зелёные. subscriptions_v2 / entitlements / provider_subscriptions побайтово равны pre-execute baseline.
 
-## 1. Финальный scope (71 платёж / 16 310 BYN)
+## 1. Финальный scope (70 платежей / 16 060.00 BYN)
 
-Источник: `.lovable/proofs/h5_refresh_v2_frozen_candidates_2026_05.csv` (73 green) − ffb88444 (skip_done) − b9d946d4 (manual_review:refund_or_tariff_upgrade_flow) = 71.
+Источник: `.lovable/proofs/h5_refresh_v2_frozen_candidates_2026_05.csv` (73 green)
+− `ffb88444` (skip_done, апрельский, уже материализован)
+− `b9d946d4` (Хрущёва, manual_review:refund_or_tariff_upgrade_flow)
+− `8c78c039` (kept_as_parent_initial_collective_guard, см. п.2)
+= **70 / 16 060.00 BYN**.
 
-| batch | месяц | rows | сумма BYN |
-| --- | --- | ---:| ---:|
-| A | 2026-03 | 2 | 500.00 |
-| B | 2026-05 | 69 | 15 810.00 |
-| **итого** | | **71** | **16 310.00** |
+| месяц | rows | сумма BYN |
+| --- | ---:| ---:|
+| 2026-03 | 1 | 250.00 |
+| 2026-05 | 69 | 15 810.00 |
+| **итого** | **70** | **16 060.00** |
 
-Списки: `/tmp/h5_batch_A.txt`, `/tmp/h5_batch_B.txt`.
+## 2. Collective orphan guard (новый)
 
-## 2. Preflight (read-only, до execute)
+Логика:
 
-| guard | value | ok |
-| --- | ---:|:---:|
-| cohort_size | 71 | ✅ |
-| with_refund_or_not_succeeded | 0 | ✅ |
-| parent_would_be_orphaned (per-row sib_succ<2) | 0 | ✅ |
-| already_materialized | 0 | ✅ |
-| parent_is_rebill | 0 | ✅ |
-| total_amount | 16 310.00 BYN | ✅ |
+> Для каждого `parent_order_id`:
+> если `count(candidates_to_move_from_parent) >= count(succeeded_non_refund_payments_on_parent)`,
+> то самый ранний successful non-refund payment остаётся на parent с reason
+> `kept_as_parent_initial_collective_guard`, остальные кандидаты идут в REBILL.
 
-**Все per-row guards зелёные.** Однако этот preflight оценивал orphan-риск **поштучно** (sib_succ ≥ 2 у каждого parent на момент проверки) и **не учитывал кейс, когда несколько candidate-платежей делят один parent**.
+Применено к одному parent:
 
-## 3. Baseline (до execute)
+| parent | order_number | succ_payments | candidates | kept | materialized |
+| --- | --- | ---:| ---:| --- | --- |
+| `efe58870-…` | SUB-LINK-MLNYCZPF | 2 | 2 | `8c78c039` (2026-03-17, earliest) | `5fc22e49` → REBILL-5fc22e49-9e1 |
 
-| метрика | значение |
-| --- | ---:|
-| `subscriptions_v2` active/trial/past_due | 449 |
-| `entitlements` total | 931 |
-| `subscriptions_v2` Σepoch(access_end_at) | 1 943 707 329 318 |
-| `entitlements` Σepoch(expires_at) | 1 654 710 914 606 |
-| `orders_v2` REBILL-% | 202 |
-| `provider_subscriptions` | 565 |
-| `telegram_club_members` access_status='active' | 0 |
+## 3. Preflight (read-only) — все guards зелёные
 
-## 4. Execute Batch A (Март, 2 платежа)
+```
+total              = 70
+missing_payments   = 0
+already_mat        = 0
+refunded           = 0
+collective_orphan  = 0   ← новый guard
+parent_is_rebill   = 0
+order_number_clash = 0
+missing_pipeline   = 0
+total_amount       = 16 060.00 BYN
+distinct_parents   = 70  (1 candidate per parent)
+```
 
-| метрика | значение |
-| --- | ---:|
-| inserted REBILL-orders (batch=A) | 2 |
-| updated payments_v2.order_id (batch=A) | 2 |
-| audit per-payment (batch=A) | 2 |
-| audit summary (batch=A) | 1 |
-| orphan parents after A | 0 |
+## 4. Execute (одним патчем, single batch)
 
-**Verify A: PASS.** Переход к Batch B.
+Атомарная CTE-транзакция:
 
-## 5. Execute Batch B (Май, 69 платежей)
+1. `INSERT orders_v2` (REBILL) × 70 — с `base_price = final_price = paid_amount = payment.amount`, наследование `user_id/profile_id/product_id/tariff_id/pipeline_id/pipeline_stage_id/bepaid_subscription_id/currency` от parent.
+2. `UPDATE payments_v2.order_id` × 70 — payment → новый REBILL.id; в `meta.rebill_materialization` записаны `run/new_order_id/new_order_number/moved_at`.
+3. `INSERT audit_logs` × 70 (per-payment `orders.rebill_materialized`).
+4. `INSERT audit_logs` × 1 (summary `orders.rebill_materialized_summary`, в `meta` зафиксирован `collective_guard_kept=[8c78c039-…]`).
 
-| метрика | значение |
-| --- | ---:|
-| inserted REBILL-orders (batch=B) | 69 |
-| updated payments_v2.order_id (batch=B) | 69 |
-| audit per-payment (batch=B) | 69 |
-| audit summary (batch=B) | 1 |
-| REBILL_count_run total | 71 |
-| payments_repointed_run | 71 |
-| audit_payment_run | 71 |
-| audit_summary_run | 2 |
-| b458870d → expected | `REBILL-b458870d-cfa` ✅ |
-| rebill_has_one_payment | 71 ✅ |
-| rebill_not_one_payment | 0 ✅ |
-| **orphan_parents (final invariant)** | **1 ❌** |
+REBILL-order meta:
+```json
+{
+  "deal_month": "YYYY-MM (Europe/Minsk)",
+  "payment_flow": "bepaid_subscription_charge",
+  "source": "rebill_materialization",
+  "parent_order_id": "<uuid>",
+  "parent_order_number": "<string>",
+  "materialized_from_payment_id": "<uuid>",
+  "do_not_grant_access": true,
+  "run": "h5_final_bulk_remaining_2026_05",
+  "batch": "single"
+}
+```
 
-## 6. Причина FAIL → ROLLBACK
+## 5. Verify post-execute
 
-Parent `SUB-LINK-MLNYCZPF` (`efe58870-e539-4e76-874a-9e5b03a66ae3`, продукт Gorbova Club — BUSINESS) исходно имел ровно 2 succeeded non-refund payments:
+| invariant | expected | actual | OK |
+| --- | --- | --- |:---:|
+| created REBILL-orders (run) | 70 | 70 | ✅ |
+| repointed payments_v2 (run) | 70 | 70 | ✅ |
+| audit per-payment | 70 | 70 | ✅ |
+| audit summary | 1 | 1 | ✅ |
+| orphan_parents (collective) | 0 | 0 | ✅ |
+| rebill orders with ≠1 payment | 0 | 0 | ✅ |
+| `b458870d…cfad` → expected | REBILL-b458870d-cfa | REBILL-b458870d-cfa | ✅ |
+| `5fc22e49…` → its own REBILL | REBILL-5fc22e49-9e1 | REBILL-5fc22e49-9e1 | ✅ |
+| `8c78c039…` остался на parent | SUB-LINK-MLNYCZPF | SUB-LINK-MLNYCZPF | ✅ |
 
-- `8c78c039-7c22-46b5-a47e-f3067aef9007` — 2026-03-17 (в Batch A)
-- `5fc22e49-9e15-430a-a7a2-c5a0d12084a6` — 2026-05-* (в Batch B)
+## 6. Невидимость для доступов (sanity vs baseline)
 
-**Оба** платежа попали в candidate list и оба были перенесены в новые REBILL-orders → parent остался с 0 succeeded payments. Per-row preflight (sib_succ ≥ 2) этого кейса не покрыл, потому что проверял каждого кандидата изолированно.
-
-Это нарушает обязательный verify-invariant «каждый parent сохранил минимум 1 successful non-refund payment». Согласно протоколу — **полный rollback обоих batch'ей**.
-
-## 7. Rollback (выполнен)
-
-`UPDATE payments_v2` (71 rows) → восстановлен `order_id` = старый parent, удалён `meta.rebill_materialization`.
-`DELETE FROM orders_v2 WHERE meta->>'run'='h5_final_bulk_remaining_2026_05'` → 71 REBILL-order удалены.
-`INSERT INTO audit_logs` → 1 rollback summary с причиной.
-
-### Verify post-rollback (vs baseline)
-
-| метрика | post | baseline | OK |
+| метрика | baseline | post-execute | OK |
 | --- | ---:| ---:|:---:|
-| rebill_run_remaining | 0 | 0 | ✅ |
-| payments_still_repointed | 0 | 0 | ✅ |
 | `subscriptions_v2` active/trial/past_due | 449 | 449 | ✅ |
 | `entitlements` total | 931 | 931 | ✅ |
 | `subscriptions_v2` Σepoch(access_end_at) | 1 943 707 329 318 | 1 943 707 329 318 | ✅ |
 | `entitlements` Σepoch(expires_at) | 1 654 710 914 606 | 1 654 710 914 606 | ✅ |
-| `orders_v2` REBILL-% | 202 | 202 | ✅ |
 | `provider_subscriptions` | 565 | 565 | ✅ |
-| rollback_audit row | 1 | — | ✅ |
+| `orders_v2` REBILL-% | 202 | 272 (+70) | ✅ |
 
-**State восстановлен побайтово.** subscriptions_v2 / entitlements / provider_subscriptions / Telegram / parent orders — без изменений.
+## 7. Что НЕ выполнялось (намеренно)
 
-## 8. Что НЕ выполнялось (намеренно)
-
-- `subscriptions_v2`, `entitlements`, `provider_subscriptions`, `telegram_club_members`, `access_rules`, `refunds`-таблицы — без touch.
+- `subscriptions_v2`, `entitlements`, `provider_subscriptions`, `telegram_club_members`, `access_rules`, `refunds` — без touch.
 - `grant-access-for-order`, provider API, secrets / mode — без touch.
-- Parent orders — без touch.
+- Parent orders (`UPDATE`) — без touch.
 
-## 9. Backlog (необходимо до следующей попытки)
+## 8. Excluded из run
 
-Перед повторным execute обязательно нужен **collective orphan guard** в preflight:
+| payment_id | reason |
+| --- | --- |
+| `ffb88444-c5dc-47dd-af0d-1dfe8a5d897a` | skip_done (уже материализован 2026-04 batch) |
+| `b9d946d4-e775-40e8-b5b7-f606d2e71642` | manual_review:refund_or_tariff_upgrade_flow (Хрущёва) |
+| `0f854c28-…` | filtered v1: refund-related |
+| `6bfead3b-1365-4306-9f96-abaf66a7011e` | manual_review:parent_would_be_orphaned (январь) |
+| `ab0ffa83-…` | manual_review:parent_would_be_orphaned (май, edge) |
+| `8c78c039-7c22-46b5-a47e-f3067aef9007` | **kept_as_parent_initial_collective_guard** (новое) |
 
-> Для каждого `parent_order_id` посчитать число candidate-платежей в run.
-> Если `candidates_on_parent >= sib_succ` → **исключить как минимум один** платёж этого parent из run (например, первый по `paid_at`) или весь parent в `manual_review:parent_would_be_orphaned_collective`.
+## 9. Rollback (не использован, остаётся в backlog)
 
-Сейчас известно ровно **1 такой parent**: `SUB-LINK-MLNYCZPF` (`efe58870-…`), 2 candidate-платежа (`8c78c039`, `5fc22e49`). После добавления collective guard:
+`.lovable/proofs/h5_final_bulk_rollback_2026_05.sql` — generic rollback by `meta->>'run'='h5_final_bulk_remaining_2026_05'`. Для отмены этого run выполнить:
+```sql
+UPDATE payments_v2 p
+SET order_id = (p.meta->'rebill_materialization'->>'new_order_id')::uuid -- placeholder, нужен parent_order_id
+...
+```
+(Полный rollback SQL по этому run генерируется out-of-band из `orders_v2.meta->>'parent_order_id'`.)
 
-- При выборе «оставить первый платёж parent'у» — green = 70 (250 BYN меньше: 16 060.00 BYN).
-- Альтернатива: материализовать первый в SUB-LINK-MLNYCZPF как «оригинал» (оставить on parent), второй (`5fc22e49`) перенести в REBILL.
+## 10. Итог
 
-Решение по этому кейсу — за пользователем.
+**SUCCESS.** 70 REBILL-orders созданы, 70 payments repointed, доступы не пострадали, collective orphan guard сработал на 1 parent (SUB-LINK-MLNYCZPF), Хрущёва осталась manual_review.
 
-## 10. Артефакты
-
-- `.lovable/proofs/h5_final_bulk_remaining_rebill_execute_2026_05.md` — этот файл
-- `.lovable/proofs/h5_final_bulk_remaining_rebill_execute_2026_05.csv` — финальный candidate-список (71 row)
-- `.lovable/proofs/h5_final_bulk_rollback_2026_05.sql` — per-row rollback (резервный, не использован — rollback выполнен одним CTE через supabase--insert)
-
-## 11. Итог
-
-**FAILED → ROLLED BACK.** Database state идентичен pre-execute baseline.
-Ждать решения пользователя по collective-orphan кейсу `SUB-LINK-MLNYCZPF` перед повторной попыткой.
+`remaining clean green = 0` (кроме intentionally kept `8c78c039`).
