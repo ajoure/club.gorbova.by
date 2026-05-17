@@ -1619,10 +1619,16 @@ Deno.serve(async (req) => {
           (Number.isFinite(subInstallmentCount) && subInstallmentCount >= 2);
 
         // === STEP A: Canonical writer FIRST (single access write-path) ===
+        // PATCH-RB1: skip legacy grant if REBILL flow already invoked canonical writer
+        // against the REBILL-order (rebillHandled=true). Provider-sync (STEPS C/D/E) still
+        // runs below to mirror provider state into subscriptions_v2/provider_subscriptions/payments_v2.
         let grantOutcome: 'ok' | 'skip' | 'error' = 'error';
         let grantStatus = 0;
         let grantResult: any = null;
-        if (orderV2Id) {
+        if (rebillHandled) {
+          grantOutcome = 'ok';
+          console.log('[WEBHOOK-SUBSCRIPTION] STEP A skipped: REBILL flow already invoked canonical writer.');
+        } else if (orderV2Id) {
           try {
             const grantResp = await fetch(
               `${Deno.env.get('SUPABASE_URL')}/functions/v1/grant-access-for-order`,
