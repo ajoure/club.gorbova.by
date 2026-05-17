@@ -15,6 +15,10 @@ import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 import { applyCrmStageOnTerminal } from '../_shared/crm-routing.ts';
 import { consumePaymentLinkForOrder } from '../_shared/consume-payment-link.ts';
 import { generateInstallmentSchedule } from '../_shared/installment-schedule.ts';
+// PATCH-RB1: REBILL materialization engine (gated by BEPAID_REBILL_MATERIALIZATION).
+import { runRebillFlow } from './rebill_flow.ts';
+import { resolveKillSwitchMode } from './rebill_builders.ts';
+import { buildRebillDepsAdapter } from './rebill_deps_adapter.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
