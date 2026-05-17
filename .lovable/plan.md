@@ -1,203 +1,314 @@
-да, согласен, с учетом правок:
+Да, согласен, с учетом правок:
 
-1. `profile_id` **не должен быть hard STOP.**  
-У тебя уже есть 2 кейса `no profile`. Если `user_id` существует и подписка валидна, отсутствие `profile_id` не должно автоматически блокировать восстановление доступа.
-
-Заменить STOP:
-
-```text
-нет user_id / profile_id
-```
-
-на:
+1. **Сначала code-patch + tests, но без historical execute.**  
+Исправление будущего потока — приоритет. Historical repair двух кейсов только после того, как доказано, что webhook реально вызывает `runRebillFlow`.
+2. **Не вызывать** `grant-access-for-order` **для H5/repair REBILL, если REBILL-order имеет** `do_not_grant_access=true`**.**  
+Для будущих live REBILL — да, canonical writer должен продлевать доступ.  
+Для historical repair — осторожно: если доступ уже был продлён старой legacy-веткой, повторный grant может дать дубль/ошибку. Поэтому в dry-run обязательно проверить:
 
 ```text
-нет user_id или user_id не существует в auth/profiles-связке → STOP
-profile_id отсутствует → warning no_profile, но не blocker, если canonical writer принимает user_id/orderId
+был ли уже продлён access_end_at / entitlement по этому платежу
+нужен ли grant вообще
+если доступ уже покрыт — REBILL repair только финансовый, без grant
 ```
 
-2. **Source order не обязательно** `sub_order_id`**.**  
-Если `subscriptions_v2.sub_order_id` нет или поле называется иначе, искать order через:
+3. **Layer 1 и Layer 2 разделить в proof.**  
+Не смешивать:
+  - `PATCH-RB1` — подключение REBILL flow в `bepaid-webhook/index.ts`;
+  - `PATCH-RB2` — repair двух исторических платежей.
+4. **Для кейса A сначала восстановить не order, а цепочку ownership.**  
+По Юлии Смолик dry-run должен доказать:
 
 ```text
-initial_order_id
-checkout_order_id
-origin_order_id
-meta.initial_order_id
-meta.checkout_order_id
-meta.extended_by_orders
-order_id
+provider uid → provider_subscriptions → subscription_v2 → user/profile/product/tariff → expected parent/source order
 ```
 
-Иначе часть строк уйдёт в manual_review ошибочно.
+Если parent order отсутствует, REBILL-order можно создать только если хватает данных из subscription/profile/product/tariff/payment. Иначе `manual_review_orphan_parent_missing`.
 
-3. **Refund guard проверять по конкретному source_order/payment, не по клиенту вообще.**  
-Refund по другому заказу не должен блокировать восстановление доступа.
-4. **Для** `grant_access_for_order_needed` **добавить проверку** `do_not_grant_access`**.**  
-Если source_order имеет:
+5. **Для кейса B проверить, был ли доступ уже продлён legacy-путём.**  
+У Ольги был `skip_blocked_stale_access`, но нужно проверить фактические `subscriptions_v2.access_end_at` и `entitlements.expires_at`. Если они уже корректны — не дергать grant повторно.
+6. **Добавить runtime-env propagation check.**  
+В плане есть подозрение, что `BEPAID_REBILL_MATERIALIZATION=on` не доходил до runtime. Нужно явно проверить:
 
 ```text
-meta.do_not_grant_access=true
+index.ts реально читает secret/env
+mode логируется в audit
+при on вызывается runRebillFlow
+при dry_run пишет dry_run
+при off идёт legacy/skip
 ```
 
-то не вызывать writer, строка → `manual_review_do_not_grant_access`.
+7. **Добавить regression test на конкретный баг.**
 
-5. **Если source_order — H5 REBILL-order, не использовать его для выдачи доступа.**  
-H5 REBILL-orders специально имеют `do_not_grant_access=true`. Для доступа искать original/source paid order.
-6. `entitlement_restore_needed` **лучше не делать через ручную реактивацию.**  
-В dry-run можно пометить, но execute должен быть только:
+Обязательные тесты:
 
 ```text
-сначала grant-access-for-order
-если writer не применим — manual_review
+provider-managed subscription charge with existing parent order → creates REBILL-order, not parent update
+provider-managed subscription charge with missing tracking order but provider_subscriptions link → recovers via subscription chain
+if runRebillFlow succeeds → legacy link_order branch is not executed
+if runRebillFlow fails/manual_review → no legacy access date update
+BEPAID_REBILL_MATERIALIZATION=on → materialized
+BEPAID_REBILL_MATERIALIZATION=dry_run → audit only, no DML
 ```
 
-Никаких прямых восстановлений entitlements в ACCESS-FIX-1.
+8. **Не менять** `subscriptions_v2` **/** `entitlements` **вручную ни в каком слое.**  
+Это правильно оставить как hard stop.
 
-7. **Добавить проверку access_rules.**  
-Для каждой строки указать:
+## **Текст для Lovable**
 
 ```text
-primary entitlement expected by access_rules / product entitlement_mode / tariff_offer
+План принимаю с правками.
+
+Разделить задачу на два слоя:
+
+PATCH-RB1 — подключение REBILL engine в bepaid-webhook/index.ts для будущих provider-managed repeat charges.
+PATCH-RB2 — точечный historical repair двух платежей только после dry-run и отдельного approve.
+
+Правки к плану:
+
+1. Сначала выполнить PATCH-RB1:
+- подключить существующий runRebillFlow в реальный bepaid-webhook/index.ts;
+- проверить, что BEPAID_REBILL_MATERIALIZATION=on реально приводит к materialized path;
+- если runRebillFlow успешно обработал repeat charge, legacy link_order / parent-order branch больше не выполняется;
+- если runRebillFlow вернул manual_review/error — не делать fallback на parent-order access writes.
+
+2. Добавить runtime mode proof:
+- mode=on читается в runtime;
+- audit показывает выбранный режим;
+- при on пишется bepaid.rebill.materialized;
+- при dry_run пишется bepaid.rebill.dry_run;
+- проверить, что secret/env реально доступен внутри deployed function.
+
+3. Regression tests обязательны:
+- repeat charge с существующим parent order → создаёт отдельный REBILL-order;
+- repeat charge с отсутствующим tracking order, но найденной provider_subscriptions цепочкой → восстанавливается через subscription_v2;
+- successful runRebillFlow блокирует legacy branch;
+- failed/manual_review runRebillFlow не делает legacy UPDATE access;
+- mode on/dry_run/off покрыты тестами.
+
+4. Historical repair двух кейсов не выполнять в этом патче.
+Сначала только dry-run proof:
+- uid 113f7667… / Юлия Смолик;
+- uid 21613f63… / Ольга Черкашина.
+
+5. Для historical repair grant-access-for-order не вызывать автоматически.
+Сначала проверить:
+- был ли уже продлён subscriptions_v2.access_end_at;
+- был ли уже обновлён entitlement.expires_at;
+- если доступ уже покрыт legacy-путём — repair только финансовый: create REBILL + repoint payment, без grant;
+- если доступ не покрыт — только тогда proposal вызвать grant-access-for-order по новому REBILL/source order, но execute отдельно.
+
+6. По кейсу A / Юлия Смолик:
+dry-run должен доказать цепочку:
+provider uid → provider_subscriptions → subscription_v2 → user/profile/product/tariff → expected order data.
+Если parent/source order не найден и данных недостаточно — manual_review_orphan_parent_missing.
+
+7. По кейсу B / Ольга Черкашина:
+dry-run должен показать:
+- текущий parent order;
+- создаваемый REBILL-order;
+- текущий access_end_at/expires_at;
+- был ли skip_blocked_stale_access;
+- требуется ли grant или только financial repair.
+
+8. Запреты остаются:
+- не менять subscriptions_v2 вручную;
+- не менять entitlements вручную;
+- не менять access_rules;
+- не вызывать Telegram/provider API;
+- не делать массовый repair;
+- не менять secrets/mode без отдельного approve.
+
+Artifacts:
+- .lovable/proofs/rebill_materialization_patch_rb1_code_tests_2026_05.md
+- .lovable/proofs/rebill_materialization_two_cases_dryrun_2026_05.md
+
+Следующий шаг:
+PATCH-RB1 code patch + tests + deploy proof.
+Historical execute по двум uid — только после отдельного dry-run и отдельного approve.
 ```
 
-Чтобы не создавать доступ там, где продукт не должен выдавать platform access.
+Коротко: план правильный по сути, но **grant для исторических кейсов нельзя автоматически запускать**. Сначала нужно понять, доступ уже продлён или нет. Future-flow чинить сейчас, historical repair — отдельно и аккуратно.
 
-8. **Команда на запуск:**
+&nbsp;
 
-```text
-План ACCESS-FIX-1 dry-run подтверждаю с правками.
+План:
 
-Выполни строго read-only:
-- прочитать 6 critical missing_primary_entitlement;
-- собрать row-карту;
-- найти корректный source_order через все возможные поля subscription/meta;
-- проверить do_not_grant_access;
-- проверить refund только по конкретному source_order/payment;
-- проверить access_rules / entitlement_mode;
-- классифицировать planned_action;
-- создать proof + CSV.
+## 1. Проблема
 
-Запрещено:
-- DML;
-- grant-access-for-order;
-- Telegram;
-- provider API;
-- любые изменения subscriptions_v2 / entitlements / orders_v2 / payments_v2 / secrets.
+Есть повторение старого дефекта: успешные списания по подписке не материализуются в отдельные сделки/заказы.
 
-Proof:
-.lovable/proofs/access_fix_1_missing_primary_entitlement_dryrun_2026_05.md
-CSV:
-.lovable/proofs/access_fix_1_missing_primary_entitlement_dryrun_2026_05.csv
+Затронуты два кейса:
 
-После dry-run остановиться и ждать approve execute.
 
-План: ACCESS-FIX-1 — critical missing primary entitlement repair (dry-run)
-```
+| Кейс | Платёж                        | Клиент                                                          | Продукт                 | Факт                                                                                                                      |
+| ---- | ----------------------------- | --------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| A    | 100 BYN, 17.05.26 12:15 Minsk | Юлия Смолик / [sm_ulik@mail.ru](mailto:sm_ulik@mail.ru)         | Gorbova Club — CHAT     | webhook получил платёж, но не нашёл `orders_v2` по `tracking_id=link:order:e4cab43a...`; контакт/сделка в UI не связались |
+| B    | 250 BYN, 17.05.26 17:00 Minsk | Ольга Черкашина / [holgacher@mail.ru](mailto:holgacher@mail.ru) | Gorbova Club — BUSINESS | платёж записан в `payments_v2`, но привязан к первичной сделке `SUB-26-MO2YQLGECQ2J`, отдельная REBILL-сделка не создана  |
 
-## Цель
 
-Подготовить read-only dry-run отчёт по 6 critical-кейсам `gap_class=missing_primary_entitlement` из аудита `.lovable/proofs/h5_access_consistency_audit_after_2026_05_17.csv`. Никаких DML, никаких вызовов `grant-access-for-order`, никаких Telegram/provider действий. Execute — отдельным approve следующим патчем.
+## 2. Диагностика
 
-## Scope (точный)
+Факты read-only проверки:
 
-Source: `.lovable/proofs/h5_access_consistency_audit_after_2026_05_17.csv`
-Filter: `severity=critical AND gap_class=missing_primary_entitlement`
-Ожидание: 6 строк.
+### Кейс A — 100 BYN / 12:15
 
-Контрольный список (из status board / audit md):
+- `payment_reconcile_queue.id = 4708a0f9-37e6-4aab-b585-f4ba21d3c82c`
+- `bepaid_uid = 113f7667-369c-4cb2-8c88-c2b92bb854da`
+- `tracking_id = link:order:e4cab43a-c90b-4e26-8523-c2215bcb8267`
+- `status = pending`, `processed_order_id = NULL`
+- `orders_v2` по `e4cab43a...` сейчас не найден.
+- В `audit_logs` есть `bepaid.webhook.link_order_not_found` по этому `order_id`.
+- Provider subscription найден: `sbs_c8aa1cf60778cdf6` → `subscription_v2_id = eaeb666b-11d3-4204-bef8-bb72fca78743` → профиль Юлия Смолик, Gorbova Club CHAT.
 
-1. ЗАКРОЙ ГОД — `alexasermyazhko@gmail.com`, sub `405faf46…`, access_end_at 2026-05-31
-2. Gorbova Club — `elena.platonova-fedyakova@yandex.ru`, sub `f2901cfc…`, 2026-05-21
-3. Gorbova Club — `natapono2018@mail.ru`, sub `08363441…`, 2026-05-30
-4. Gorbova Club — `trofimova.ulia@tut.by`, sub `de75db3a…`, 2026-05-19
-5. ЗАКРОЙ ГОД — user `17b35d62…` (no profile), sub `0c999415…`, 2026-05-31
-6. Ценный бухгалтер 2 ступень / 3 поток — user `539ea1b3…` (no profile), sub `be19fa2e…`, 2026-08-30
+### Кейс B — Ольга Черкашина / 250 BYN
 
-Если CSV даст не ровно 6 строк или иной состав — STOP, отчёт о расхождении, дальше не идти.
+- `payments_v2.id = 4a9288d3-d2b1-4bc0-984a-8900d1664da3`
+- `provider_payment_id = 21613f63-dc85-406f-a8dd-34a936bc0784`
+- Платёж привязан к первичному `orders_v2.id = 57fcc9d8-a665-48a6-9fba-312c535be5a8` / `SUB-26-MO2YQLGECQ2J`.
+- Отдельного `REBILL-*` заказа по этому списанию нет.
+- `grant-access-for-order` запускался по первичному старому order и получил `skip_blocked_stale_access`; это подтверждает, что повторное списание пошло не через отдельный REBILL-order.
 
-## Stage 1 — read-only dry-run
+### Кодовая причина
 
-Для каждой из 6 строк собрать row-карту (read-only SQL по subscriptions_v2, orders_v2, payments_v2, profiles, tariff_offers, entitlements, access_rules, product_fulfillment):
+В проекте уже есть готовый REBILL engine:
 
-- customer (имя), email
-- `user_id`, `profile_id` (если есть)
-- `product_id`, product_name
-- `tariff_id`, tariff name
-- `subscription_id`, sub status, `access_start_at`, `access_end_at`, `auto_renew`, `sub_order_id`
-- `source_order` = `subscriptions_v2.sub_order_id`: id, public_id, status, paid_amount, final_price, refunded?
-- `latest_payment`: id, status, amount, captured_at, refund flag
-- текущий entitlement по `(user_id, product_id)` — есть/нет/superseded/expired
-- ожидаемое окно primary entitlement (на основе sub.access_start_at/access_end_at и tariff access_days)
-- `planned_action` (см. ниже)
-- `stop_guard` (см. ниже) — null если можно чинить canonical writer'ом
+- `supabase/functions/bepaid-webhook/rebill_flow.ts`
+- `supabase/functions/bepaid-webhook/rebill_builders.ts`
+- тесты `rebill_*_test.ts`
 
-### Классификация `planned_action`
+Но `bepaid-webhook/index.ts` фактически не вызывает `runRebillFlow`: поиск по `runRebillFlow / resolveKillSwitchMode / BEPAID_REBILL_MATERIALIZATION` в `index.ts` не нашёл подключения. Поэтому webhook продолжает legacy-поведение: использует первичный `order_id` из `tracking_id`, а не создаёт отдельную REBILL-сделку.
 
-- `grant_access_for_order_needed` — есть `sub_order_id` с `status='paid'`, без refund, продукт/тариф консистентны, entitlement по (user_id, product_id) реально отсутствует → execute-стадия позже вызовет `grant-access-for-order({orderId: sub_order_id, source: 'access_fix_1_missing_primary_entitlement_2026_05'})`.
-- `entitlement_restore_needed` — есть прошлый entitlement в `superseded/expired/canceled` строго того же `(user_id, product_id, tariff_id)`, который перекрывает ожидаемое окно, и canonical writer не сможет его реактивировать (например, нет «свежего» paid-заказа). Помечается, но в execute-стадии всё равно сначала пробуется canonical writer.
-- `manual_review_no_order` — `sub.sub_order_id IS NULL` или соответствующий `orders_v2` не найден / не `paid`.
-- `manual_review_no_user` — `subscriptions_v2.user_id IS NULL` или user не существует в profiles.
-- `manual_review_tariff_mismatch` — `sub.product_id ≠ order.product_id` или `sub.tariff_id ≠ order.tariff_id`, либо ни один tariff_offer не подтверждает продуктовую связь.
-- `skip_already_fixed` — entitlement на `(user_id, product_id)` уже active с `expires_at > now()` (если успели починить между snapshot'ом и dry-run'ом).
+## 3. Предлагаемое решение
 
-### STOP-guards (per-row)
+Сделать PATCH в два слоя.
 
-Любой триггерит `manual_review_*` и блокирует canonical writer:
+### Layer 1 — исправить поток для будущих повторных списаний
 
-- нет `user_id` / `profile_id`;
-- нет `product_id` / `tariff_id` на subscription;
-- `source_order.status ≠ 'paid'`;
-- есть refund по source_order или его последнему payment;
-- product_id / tariff_id у subscription не совпадает с order;
-- `sub.access_end_at <= now()`;
-- найден active entitlement того же `product_id` у другого `user_id`, перекрывающий ожидаемое окно (потенциальная коллизия).
+Подключить существующий `runRebillFlow` в `bepaid-webhook/index.ts` для успешных provider-managed subscription charges:
 
-### Глобальные STOP-guards (отчёт целиком)
+- если событие является повторным списанием подписки;
+- если есть `transactionUid` / `last_transaction.uid`;
+- если есть parent order или его можно восстановить через `provider_subscriptions.subscription_v2_id → subscriptions_v2.order_id`;
+- создать отдельный `orders_v2` с `order_number = REBILL-<uid>`;
+- связать `payments_v2.order_id` с новым REBILL-order;
+- вызвать `grant-access-for-order` только по новому REBILL-order;
+- legacy-ветку не запускать, если REBILL обработан.
 
-- CSV не существует / parse error → STOP;
-- строк severity=critical/missing_primary_entitlement ≠ 6 → STOP с diff;
-- любой из контрольных sub_id отсутствует в БД → STOP.
+### Layer 2 — точечный repair двух исторических кейсов
 
-## Stage 2 — proposal (только текст, без execute)
+Только после отдельного dry-run и approve:
 
-В конце dry-run отчёта:
+- для `21613f63-dc85-406f-a8dd-34a936bc0784` создать/дозавершить REBILL-order для Ольги Черкашиной;
+- для `113f7667-369c-4cb2-8c88-c2b92bb854da` создать/дозавершить REBILL-order для Юлии Смолик;
+- не делать ручных правок `subscriptions_v2.access_*` и `entitlements`;
+- все доступы — только через `grant-access-for-order`.
 
-- таблица `planned_action × count`;
-- список строк, которые в execute-фазе пойдут через `grant-access-for-order` (с конкретными `orderId`);
-- список строк, которые уйдут в `manual_review_*` с причиной;
-- предложение execute-патча: одна цепочка вызовов `grant-access-for-order`, последовательно, с capture результата (`entitlement.action`, `accessEndAt`, `primary_entitlement_verified`).
+## 4. Изменяемые компоненты
 
-Никакой DML, никакого invoke в этом патче.
+Планируемые файлы:
 
-## Запреты (жёсткие)
+- `supabase/functions/bepaid-webhook/index.ts` — подключение REBILL flow в реальный dispatcher webhook.
+- `supabase/functions/bepaid-webhook/rebill_flow.ts` — только если потребуется адаптер/guard для orphan recovery; без изменения SOT.
+- `supabase/functions/bepaid-webhook/rebill_builders.ts` — только если dry-run покажет, что REBILL payload не переносит нужный CRM snapshot для отдельной сделки.
+- `supabase/functions/bepaid-webhook/rebill_*_test.ts` — добавить regression cases.
+- `.lovable/proofs/rebill_materialization_dryrun_2026_05.md`
+- `.lovable/proofs/rebill_materialization_execute_2026_05.md`
 
-- Никаких INSERT/UPDATE/DELETE по `entitlements`, `subscriptions_v2`, `orders_v2`, `payments_v2`, `access_rules`, `telegram_*`, `provider_subscriptions`.
-- Никаких вызовов `grant-access-for-order`, `telegram-grant-access`, `telegram-process-access-queue`, `bepaid-*`.
-- Никаких H5 REBILL-операций.
-- Никаких изменений secrets / mode / cron.
-- Никаких массовых ручных правок entitlements — только canonical writer на execute-стадии.
-- Telegram-кейсы (9 шт.) НЕ трогать в этом патче — это ACCESS-FIX-2.
-- 40 sub_without_ent по «Учет у ИП» НЕ трогать.
+Таблицы, которые будут читаться:
 
-## Артефакты
+- `payment_reconcile_queue`
+- `payments_v2`
+- `orders_v2`
+- `subscriptions_v2`
+- `provider_subscriptions`
+- `profiles`
+- `products_v2`
+- `tariffs`
+- `audit_logs`
 
-- `.lovable/proofs/access_fix_1_missing_primary_entitlement_dryrun_2026_05.md` — методология, 6 row-карт, planned_action, stop_guards, proposal execute.
-- `.lovable/proofs/access_fix_1_missing_primary_entitlement_dryrun_2026_05.csv` — per-row машинно-читаемый дамп (user_id, product_id, tariff_id, sub_id, sub_order_id, planned_action, stop_guard, sub_access_end_at, ожидаемый expires_at).
+Таблицы, которые могут быть изменены только после approve execute:
 
-## DoD
+- `orders_v2` — создание отдельных REBILL-order.
+- `payments_v2` — привязка платежа к REBILL-order.
+- `payment_reconcile_queue` — отметка `processed_order_id` для восстановленного orphan.
+- `audit_logs` — системный trace.
 
-- CSV прочитан, ровно 6 строк severity=critical/missing_primary_entitlement.
-- По каждой строке заполнена row-карта со всеми полями выше.
-- `planned_action` проставлен из фиксированного словаря.
-- Все STOP-guards проверены, расхождения зафиксированы.
-- Proof md + CSV созданы.
-- БД не менялась (0 DML, 0 invoke writer-функций).
-- Явно перечислено, какие строки в execute-фазе пойдут через canonical writer и какие — в manual_review.
-- Остановка после dry-run; ждать approve на execute.
+## 5. Что не будет изменено
 
-## Дальше (вне этого патча)
+- Не менять `subscriptions_v2` вручную.
+- Не менять `entitlements` вручную.
+- Не менять `access_rules`.
+- Не создавать контакты вручную, если профиль уже существует.
+- Не создавать второй writer для доступа.
+- Не вызывать Telegram/API/провайдера напрямую.
+- Не делать массовый repair по всем подпискам — только два подтверждённых кейса после dry-run.
 
-- ACCESS-FIX-1 execute — после approve, отдельным сообщением.
-- ACCESS-FIX-2 — Telegram (9 шт.), только после закрытия ACCESS-FIX-1.
-- «Учет у ИП» grace cohort — отдельный dry-run с product owner'ом.
+## 6. Dry-run
+
+Перед execute подготовить proof с таблицей:
+
+
+| uid           | клиент          | продукт                 | parent_order                                  | planned_rebill_order_number | planned action                          | stop-guard                             |
+| ------------- | --------------- | ----------------------- | --------------------------------------------- | --------------------------- | --------------------------------------- | -------------------------------------- |
+| `113f7667...` | Юлия Смолик     | Gorbova Club — CHAT     | восстановить через `subscription_v2.order_id` | `REBILL-113f7667-369`       | create REBILL + link payment + grant    | stop если нет parent/sub/profile       |
+| `21613f63...` | Ольга Черкашина | Gorbova Club — BUSINESS | `57fcc9d8...`                                 | `REBILL-21613f63-dc8`       | create REBILL + repoint payment + grant | stop если payment уже у другого REBILL |
+
+
+Dry-run должен подтвердить:
+
+- сколько REBILL-order уже существует по этим uid;
+- куда сейчас смотрит каждый `payments_v2.order_id`;
+- есть ли `profile_id`, `product_id`, `tariff_id`, `offer_id`;
+- какой `crm_routing_snapshot` будет у новой сделки;
+- какой `grant-access-for-order` будет вызван;
+- ожидаемый rowcount: максимум 2 REBILL-order.
+
+## 7. Execute
+
+Execute только после отдельного подтверждения.
+
+Последовательность:
+
+1. Применить code PATCH, который подключает существующий REBILL flow в webhook.
+2. Прогнать regression tests для `bepaid-webhook`.
+3. Сделать dry-run historical repair по двум uid.
+4. После approve выполнить repair через canonical REBILL path.
+5. Для каждого кейса после создания REBILL-order вызвать `grant-access-for-order`.
+6. Если writer вернул `error/manual_review/sbs_mismatch/skip_*` — остановиться, не чинить вручную.
+
+## 8. STOP-guards
+
+Остановиться без execute, если:
+
+- найдено больше 2 затронутых historical uid;
+- REBILL-order уже есть, но указывает на другого клиента/продукт/тариф;
+- `payments_v2.provider_payment_id` связан с чужим order не из этого repair;
+- не найден `profile_id` или parent subscription/order;
+- `grant-access-for-order` возвращает skip/error/manual_review;
+- потребуется UPDATE `subscriptions_v2.access_*` или ручной INSERT/UPDATE `entitlements`;
+- dry-run не может доказать product/tariff через UUID.
+
+## 9. DoD
+
+Задача считается выполненной, когда:
+
+- будущие repeat charges идут через отдельный REBILL-order, а не через первичную сделку;
+- по Ольге Черкашиной появляется отдельная REBILL-сделка для платежа 250 BYN от 17.05.26;
+- по платежу 100 BYN от 12:15 появляется связанная REBILL-сделка с восстановленным клиентом/продуктом;
+- `payments_v2.order_id` для обоих uid указывает на соответствующие REBILL-order;
+- `orders_v2` не склеивает новые списания с первичной сделкой;
+- `subscriptions_v2` и `entitlements` не изменялись вручную;
+- `grant-access-for-order` был единственным write-path для доступа;
+- proof-файл содержит SQL-подтверждения rowcount и audit trail.
+
+## 10. Риски и зависимости
+
+- Кейс A использует legacy/orphan `tracking_id` на удалённый/отсутствующий order; восстановление возможно только через provider/subscription chain.
+- Для Ольги текущая первичная сделка уже была обновлена webhook’ом 17.05; repair должен быть add-only и не ломать историю.
+- Если текущий `rebill_builders.ts` переносит terminal stage первичной сделки, может потребоваться отдельный CRM snapshot guard, чтобы новая REBILL-сделка корректно отображалась как самостоятельная оплаченная сделка.
+- Нужна отдельная проверка, почему `BEPAID_REBILL_MATERIALIZATION` engine был написан, но не подключён в `index.ts`.
+
+## 11. Требуется дополнительная информация
+
+Не требуется для следующего шага. Следующий безопасный шаг — подготовить PATCH + dry-run proof без изменения данных.

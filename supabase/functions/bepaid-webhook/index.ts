@@ -15,6 +15,10 @@ import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 import { applyCrmStageOnTerminal } from '../_shared/crm-routing.ts';
 import { consumePaymentLinkForOrder } from '../_shared/consume-payment-link.ts';
 import { generateInstallmentSchedule } from '../_shared/installment-schedule.ts';
+// PATCH-RB1: REBILL materialization engine (gated by BEPAID_REBILL_MATERIALIZATION).
+import { runRebillFlow } from './rebill_flow.ts';
+import { resolveKillSwitchMode } from './rebill_builders.ts';
+import { buildRebillDepsAdapter } from './rebill_deps_adapter.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -1482,8 +1486,81 @@ Deno.serve(async (req) => {
           .eq('id', orderV2Id)
           .maybeSingle();
         
-        // 1. Update order status to paid
-        if (orderV2 && orderV2.status !== 'paid') {
+        // ===================================================================
+        // PATCH-RB1: REBILL MATERIALIZATION (gated by BEPAID_REBILL_MATERIALIZATION)
+        // Cycle >= 2 (repeat charge) → create separate REBILL-order via existing engine.
+        // Cycle == 1 (initial activation) → fall through to legacy parent-order update.
+        // Modes: off → no-op, dry_run → audit only, on → materialize + repoint payment +
+        // canonical grant; legacy branch is short-circuited when proceedLegacy=false.
+        // ===================================================================
+        const paidCycles = Number(
+          (body as any)?.paid_billing_cycles ??
+          (subscription as any)?.paid_billing_cycles ??
+          0
+        );
+        const rebillMode = resolveKillSwitchMode(Deno.env.get('BEPAID_REBILL_MATERIALIZATION'));
+        let rebillHandled = false;
+        if (rebillMode !== 'off' && paidCycles >= 2 && transactionUid && orderV2) {
+          try {
+            const deps = buildRebillDepsAdapter(supabase);
+            const rebillResult = await runRebillFlow(deps, {
+              mode: rebillMode,
+              parentOrder: {
+                id: String(orderV2.id),
+                user_id: orderV2.user_id ?? null,
+                profile_id: orderV2.profile_id ?? null,
+                product_id: orderV2.product_id ?? null,
+                tariff_id: orderV2.tariff_id ?? null,
+                currency: orderV2.currency ?? 'BYN',
+                pipeline_id: orderV2.pipeline_id ?? null,
+                pipeline_stage_id: orderV2.pipeline_stage_id ?? null,
+                bepaid_subscription_id: subscriptionId ? String(subscriptionId) : null,
+                customer_email: orderV2.customer_email ?? null,
+                customer_phone: orderV2.customer_phone ?? null,
+                payer_type: orderV2.payer_type ?? null,
+                meta: (orderV2.meta || {}) as Record<string, unknown>,
+              },
+              payment: {
+                uid: String(transactionUid),
+                amount: transaction?.amount
+                  ? transaction.amount / 100
+                  : (body.plan?.amount ? body.plan.amount / 100 : Number(orderV2.final_price) || 0),
+                paid_at: transaction?.paid_at || new Date().toISOString(),
+                currency: transaction?.currency || body.plan?.currency || 'BYN',
+              },
+              subscriptionId: subscriptionId ? String(subscriptionId) : null,
+            });
+            console.log('[WEBHOOK-SUBSCRIPTION] REBILL flow decision=', rebillResult.decision, 'proceedLegacy=', rebillResult.proceedLegacy, 'mode=', rebillMode);
+            if (!rebillResult.proceedLegacy) {
+              rebillHandled = true;
+              // REBILL handled access. Skip legacy parent-order paid-update + STEP A grant.
+              // STEPS C/D/E (provider-sync of subscriptions_v2, provider_subscriptions, payments_v2 enrichment)
+              // remain valuable for cohort dashboards — they are non-destructive provider mirrors.
+              // We fall through into the existing PATCH H2.1 block but the legacy `grant-access-for-order`
+              // STEP A is short-circuited explicitly below via `rebillHandled` guard.
+            }
+          } catch (rebillErr) {
+            // Engine itself threw (adapter-level transport). Audit and fall back to legacy.
+            console.error('[WEBHOOK-SUBSCRIPTION] REBILL flow threw, falling back to legacy:', rebillErr);
+            try {
+              await supabase.from('audit_logs').insert({
+                actor_type: 'system',
+                actor_label: 'bepaid-webhook-rebill',
+                action: 'bepaid.rebill.adapter_threw_fallback_legacy',
+                meta: {
+                  order_id: orderV2Id, subscription_v2_id: subscriptionV2Id,
+                  provider_subscription_id: subscriptionId, transaction_uid: transactionUid,
+                  paid_billing_cycles: paidCycles, mode: rebillMode,
+                  error: String((rebillErr as Error)?.message || rebillErr),
+                },
+              });
+            } catch (_) { /* best-effort */ }
+          }
+        }
+
+        // 1. Update order status to paid — only when REBILL did NOT handle this charge
+        // (initial activation, REBILL off, or REBILL fell back to legacy).
+        if (!rebillHandled && orderV2 && orderV2.status !== 'paid') {
           await supabase
             .from('orders_v2')
             .update({
@@ -1500,7 +1577,7 @@ Deno.serve(async (req) => {
             .eq('id', orderV2Id);
           console.log('[WEBHOOK-SUBSCRIPTION] Order updated to paid');
         }
-        
+
         // ===================================================================
         // PATCH H2.1 — CANONICAL-WRITER-ONLY for WEBHOOK-SUBSCRIPTION renewal
         // grant-access-for-order owns:
@@ -1542,10 +1619,16 @@ Deno.serve(async (req) => {
           (Number.isFinite(subInstallmentCount) && subInstallmentCount >= 2);
 
         // === STEP A: Canonical writer FIRST (single access write-path) ===
+        // PATCH-RB1: skip legacy grant if REBILL flow already invoked canonical writer
+        // against the REBILL-order (rebillHandled=true). Provider-sync (STEPS C/D/E) still
+        // runs below to mirror provider state into subscriptions_v2/provider_subscriptions/payments_v2.
         let grantOutcome: 'ok' | 'skip' | 'error' = 'error';
         let grantStatus = 0;
         let grantResult: any = null;
-        if (orderV2Id) {
+        if (rebillHandled) {
+          grantOutcome = 'ok';
+          console.log('[WEBHOOK-SUBSCRIPTION] STEP A skipped: REBILL flow already invoked canonical writer.');
+        } else if (orderV2Id) {
           try {
             const grantResp = await fetch(
               `${Deno.env.get('SUPABASE_URL')}/functions/v1/grant-access-for-order`,
