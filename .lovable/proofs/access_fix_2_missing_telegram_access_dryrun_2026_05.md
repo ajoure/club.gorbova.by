@@ -37,18 +37,20 @@
 
 Источник фактов: `telegram_club_members` (club_id = `fa547c41…`) + `profiles.telegram_link_status`.
 
-| # | email | profile.telegram_link | tg_member_row | in_chat | in_channel | invite_status | last_verified | классификация | recommended action |
-|---|---|---|:---:|:---:|:---:|---|---|---|---|
-| 1 | 1@ajoure.by | active (`@ajoure_ceo`) | ✅ | false | false | **sent** | 2026-05-17 13:00Z | `invite_sent_awaiting_user_join` | wait / no action |
-| 3 | 2.lady.di.only@gmail.com | active (`@divanka_by`) | ✅ | false | false | **sent** | 2026-05-17 14:00Z | `invite_sent_awaiting_user_join` | wait / no action |
-| 4 | a5153253@yandex.by | active (`@Tasha_buh`) | ✅ | false | false | **sent** | 2026-05-17 13:00Z | `invite_sent_awaiting_user_join` | wait / no action |
-| 5 | finassist.by@gmail.com | active (`@k_ivanchenko`) | ❌ нет строки | — | — | — | — | `no_member_row_link_present` | reinvite via canonical writer |
-| 7 | ossiptschik@mail.ru | active (`@kateosipchik`) | ❌ нет строки | — | — | — | — | `no_member_row_link_present` | reinvite via canonical writer |
-| 8 | pbourdon@tut.by | active (`@bourdon_yuliya`) | ❌ нет строки | — | — | — | — | `no_member_row_link_present` | reinvite via canonical writer |
+| # | ФИО | email | продукт | tg_member_row | in_chat | in_channel | invite_status | классификация | действие |
+|---|---|---|---|:---:|:---:|:---:|---|---|---|
+| 1 | Тест Тестовый (`@ajoure_ceo`) | 1@ajoure.by | Gorbova Club | ✅ | false | false | **sent** | `invite_sent_awaiting_user_join` | **не трогать** (ждать join) |
+| 3 | Диана Новородская (`@divanka_by`) | 2.lady.di.only@gmail.com | Gorbova Club | ✅ | false | false | **sent** | `invite_sent_awaiting_user_join` | **не трогать** (ждать join) |
+| 4 | Татьяна Чаплыгина (`@Tasha_buh`) | a5153253@yandex.by | Gorbova Club | ✅ | false | false | **sent** | `invite_sent_awaiting_user_join` | **не трогать** (ждать join) |
+| 5 | **Екатерина Иванченко** (`@k_ivanchenko`) | finassist.by@gmail.com | Gorbova Club | ❌ нет строки | — | — | — | `no_member_row_link_present` | **REINVITE** через canonical writer |
+| 7 | **Катя Осипчик** (`@kateosipchik`) | ossiptschik@mail.ru | Gorbova Club | ❌ нет строки | — | — | — | `no_member_row_link_present` | **REINVITE** через canonical writer |
+| 8 | **Юлия Бурдон** (`@bourdon_yuliya`) | pbourdon@tut.by | Gorbova Club | ❌ нет строки | — | — | — | `no_member_row_link_present` | **REINVITE** через canonical writer |
+
+У всех трёх «REINVITE»-строк `profile.telegram_link_status='active'` и `telegram_user_id` присутствует — бот привязан, но membership-строки в `telegram_club_members` нет (пропущенная выдача). Это безопасно для reinvite.
 
 ### Дополнительно
 
-- **piletski.a@yandex.by** (false-positive по TG): `profile.telegram_link_status = not_linked`, `telegram_user_id` отсутствует. TG не требуется по rule, но клиенту нет смысла предлагать reinvite — он сам не привязал бота. Не действие ACCESS-FIX-2.
+- **Андрей Иванович Пилецкий** / piletski.a@yandex.by (false-positive по TG): `profile.telegram_link_status = not_linked`, `telegram_user_id` отсутствует. TG не требуется по rule, плюс reinvite невозможен — клиент сам не привязал бота. Не действие ACCESS-FIX-2.
 
 ## 4. План execute (после approve)
 
