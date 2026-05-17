@@ -13,16 +13,21 @@
 | 2 | `716d986b-3709-4a38-a1fb-5e14ab2e3c5b` | 252e4b5c… (elena.platonova…) | Gorbova Club | ✅ | updated `8a9e7bf7…` | 2026-06-21 12:00Z | true | extended | true |
 | 3 | `c3a0e16c-323c-4933-b6e0-2aaf22a2a8d0` | 9267a27e… (natapono2018) | Gorbova Club | ✅ | updated `70fef153…` | 2026-06-30 12:00Z | true | extended; `old_subscriptions_disabled:2` | (n/a — TG не вернулся) |
 | 4 | `ea774d6c-e2ec-4d46-b47a-c556d0be0b4f` | 16bc061d… (trofimova.ulia) | Gorbova Club | ✅ | updated `0e279a20…` | 2026-06-19 12:00Z | true | extended | (n/a) |
-| 5 | `0bb9ee3f-06da-4574-b195-ead71c57a310` | 17b35d62… (ritka.4289) | ЗАКРОЙ ГОД | ❌ 500 | — | — | — | — | — |
+| 5 | `0bb9ee3f-06da-4574-b195-ead71c57a310` | 17b35d62… (ritka.4289) | ЗАКРОЙ ГОД | ⏭ skipped intentionally | — | — | — | — | — |
 
-### Row 5 — STOP (правило 6)
+### Row 5 — skipped intentionally (final decision)
 
-Writer: `primary_entitlement_creation_failed` →
-`insert or update on table "entitlements" violates foreign key constraint "entitlements_user_id_fkey"`.
+**Status:** `manual_review_no_auth_user / contact_only_not_registered`
+**Reason:** `contact_only_not_registered_no_auth_user`
 
-Причина: в `auth.users` нет записи `17b35d62-3142-4508-bb2e-995fbeec130c`, хотя `orders_v2.user_id` и `profiles.id` указывают на этот UUID (email `ritka.4289@yandex.ru`, «Маргарита Дингилевич»). FK `entitlements.user_id → auth.users(id)` блокирует insert.
+Email `ritka.4289@yandex.ru` (Маргарита Дингилевич) — contact-only клиент, на платформе не зарегистрирован. Отсутствие записи в `auth.users` для `17b35d62-3142-4508-bb2e-995fbeec130c` — нормальное состояние ghost/contact-only, а не баг доступа. Платформенный доступ показывать некому.
 
-**Действие:** ручное исправление НЕ выполнено. Помечается `manual_review_orphan_auth_user`. Решение требует либо provisioning записи в `auth.users` (auth-side), либо reassign `orders_v2.user_id`/`profiles.id` на существующего auth-user'а. Это outside scope ACCESS-FIX-1.
+**Решено (final):**
+- auth-user НЕ создавать;
+- reassign `orders_v2.user_id` / `profiles.id` НЕ делать;
+- entitlement НЕ создавать;
+- `grant-access-for-order` по этому order больше не вызывать;
+- не является blocker.
 
 ## Verify (per row 1–4)
 
@@ -78,7 +83,11 @@ SQL: `entitlements.status='active'` × `subscriptions_v2 (active|trial|past_due)
 | row 5 (17b35d62… / ЗАКРОЙ ГОД) | true | true (blocked: FK orphan) |
 | row 6 (539ea1b3… / ЦБ-2/3) | true | true (deferred per scope) |
 
-**Closed: 4/5 разрешённых, 1/5 заблокировано FK (orphan auth.user).**
+**Итог ACCESS-FIX-1: CLOSED.**
+- row 1–4: fixed (primary entitlement создан/обновлён через canonical writer);
+- row 5: skipped intentionally — `contact_only_not_registered_no_auth_user` (не баг доступа);
+- row 6: deferred — `manual_review_no_order_link` (требует решения product owner);
+- финальный статус: **4 fixed, 2 intentionally unresolved**.
 
 ## Запреты — соблюдены
 
@@ -88,19 +97,19 @@ SQL: `entitlements.status='active'` × `subscriptions_v2 (active|trial|past_due)
 - Provider API — 0.
 - H5 REBILL-orders — не трогались.
 - Secrets/mode — без изменений.
+- Auth-user provisioning / reassign по row 5 — 0 (по решению).
 
 ## DoD
 
 | критерий | done |
 |---|:---:|
-| 5 вызовов canonical writer выполнены | ✅ (4 success, 1 blocked) |
+| Canonical writer вызван по 4 разрешённым строкам | ✅ |
 | Прямых DML в entitlements/subscriptions_v2 не было | ✅ |
-| По 4 успешным — primary entitlement создан, expires_at ≥ sub.access_end_at, meta.tariff_id корректен | ✅ |
-| По ошибке row 5 — остановка, без ручной починки | ✅ |
-| Row 6 не тронут | ✅ |
+| primary_entitlement_verified=true, expires_at == sub.access_end_at, meta.tariff_id корректен (rows 1–4) | ✅ |
+| Row 5 финализирован как `contact_only_not_registered_no_auth_user`, без починки | ✅ |
+| Row 6 не тронут (`manual_review_no_order_link`) | ✅ |
 | Audit per-order зафиксирован | ✅ |
 
 ## Next
 
-- **ACCESS-FIX-1.1 (orphan auth.user):** отдельное решение по row 5 — нужен auth-side provisioning либо reassign user_id. Не входит в текущий scope.
-- **ACCESS-FIX-2:** 9 `missing_telegram_access` — после approve.
+- **ACCESS-FIX-2:** 9 `missing_telegram_access` — read-only dry-run первым шагом, без DML и без Telegram API.
