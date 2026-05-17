@@ -64,12 +64,14 @@ Variant A (10-минутное ожидание) не нужен — у нас �
 
 ---
 
-## Stage 2 — Re-flip (pending approval)
+## Stage 2 — Re-flip (DONE)
 
-_Pending. Будет заполнено после approve и выполнения `secrets--update_secret`._
-
-- `reflipped_at_utc`: _tbd_
-- secret list (имена): _tbd_
+- `reflipped_at_utc`: `2026-05-17T08:27:30Z`
+- `reflipped_at_minsk`: `2026-05-17 11:27:30 Europe/Minsk`
+- Действие: `secrets--update_secret(['BEPAID_REBILL_MATERIALIZATION'])` → value `on` (lowercase, no spaces, no quotes), user-confirmed через secure form.
+- Прочих secrets не трогали. Ручной DML = 0. Migrations = 0.
+- Re-read after update: secret присутствует в `fetch_secrets` listing (значения скрыты by design); финальная верификация — через первый live `bepaid.rebill.materialized` audit с `meta.mode='on'`.
+- Audit re-check за 24h на момент Stage 2 close: `bepaid.rebill.%` событий после reflip = 0 (recurring трафика пока не было — нормально, ожидаем первое автосписание).
 
 ## Stage 3 — Verify runtime mode = on (pending)
 
