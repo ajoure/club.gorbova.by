@@ -448,6 +448,13 @@ export async function runRebillFlow(
         last_attempt_at: new Date().toISOString(),
       },
     });
+    // PATCH-RB1.2: explicit payment_rebind_failed event (distinct from generic materialized_partial).
+    await deps.writeAudit({
+      action: "bepaid.rebill.payment_rebind_failed",
+      meta: { ...baseMeta, rebill_order_id: rebillOrderId,
+        error: repoint.error || "unknown", phase: "fresh_repoint",
+        severity: "CRITICAL" },
+    });
     await deps.writeAudit({
       action: "bepaid.rebill.materialized_partial",
       meta: { ...baseMeta, decision: "materialized_partial",
