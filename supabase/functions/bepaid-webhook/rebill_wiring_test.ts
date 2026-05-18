@@ -70,7 +70,7 @@ Deno.test("Wiring: mode=on + materialized → proceedLegacy=false (short-circuit
   let legacyCalled = false;
   const legacyInvoker = () => { legacyCalled = true; };
 
-  const r = await runRebillFlow(noopDeps, baseInput("on"));
+  const r = await runRebillFlow(makeNoopDeps(), baseInput("on"));
   let rebillShortCircuit = false;
   if (!r.proceedLegacy) rebillShortCircuit = true;
   if (!rebillShortCircuit) legacyInvoker();
