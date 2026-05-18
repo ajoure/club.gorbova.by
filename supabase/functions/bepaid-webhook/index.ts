@@ -2721,10 +2721,14 @@ Deno.serve(async (req) => {
             updatePaymentOrderId: isDryRun
               ? async () => { throw new Error('dry_run must not update payment'); }
               : async (input: any) => {
-                  const { error } = await supabase.from('payments_v2')
+                  // PATCH-RB1.2: verify affected_rows == 1.
+                  const { data, error } = await supabase.from('payments_v2')
                     .update({ order_id: input.rebill_order_id })
-                    .eq('id', input.payment_id);
+                    .eq('id', input.payment_id)
+                    .select('id');
                   if (error) throw new Error(`${error.code || ''}: ${error.message}`);
+                  const affected = Array.isArray(data) ? data.length : 0;
+                  if (affected !== 1) throw new Error(`payment_rebind_failed:affected_rows=${affected}`);
                 },
             invokeGrantAccess: isDryRun
               ? async () => { throw new Error('dry_run must not invoke grant'); }
