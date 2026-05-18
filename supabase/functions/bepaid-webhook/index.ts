@@ -1534,11 +1534,10 @@ Deno.serve(async (req) => {
             console.log('[WEBHOOK-SUBSCRIPTION] REBILL flow decision=', rebillResult.decision, 'proceedLegacy=', rebillResult.proceedLegacy, 'mode=', rebillMode);
             if (!rebillResult.proceedLegacy) {
               rebillHandled = true;
+              rebillOrderIdFromFlow = rebillResult.rebill_order_id ?? null;
               // REBILL handled access. Skip legacy parent-order paid-update + STEP A grant.
-              // STEPS C/D/E (provider-sync of subscriptions_v2, provider_subscriptions, payments_v2 enrichment)
-              // remain valuable for cohort dashboards — they are non-destructive provider mirrors.
-              // We fall through into the existing PATCH H2.1 block but the legacy `grant-access-for-order`
-              // STEP A is short-circuited explicitly below via `rebillHandled` guard.
+              // STEP E payments_v2 upsert MUST route to the REBILL order, NOT parent
+              // (PATCH-RB1.2: prevent legacy STEP E from overwriting payment back to parent).
             }
           } catch (rebillErr) {
             // Engine itself threw (adapter-level transport). Audit and fall back to legacy.
