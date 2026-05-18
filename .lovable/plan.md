@@ -1,198 +1,240 @@
 Да, согласен, с учетом правок:
 
+1. **Убрать из плана формулировку “дефолт клуба — 30 дней”.**  
+Источник срока доступа — только SOT:
+
 ```text
-План PATCH-TG-DISCOVERY-FULL + non-Telegram follow-up подтверждаю.
-
-Выполняй строго read-only по двум трекам.
-
-Ключевые уточнения:
-
-1. Telegram revoke на 133 НЕ выполнять.
-Старый список revoke считается подозрительным и не используется как execute-SOT.
-
-2. В Telegram discovery главным SOT считать не queue/audit/invite, а актуальную связку:
-- active entitlement / active subscription;
-- access_rules продукта к конкретному club_id;
-- фактическое membership: in_chat / in_channel;
-- актуальный telegram_user_id.
-
-3. По двум основным Telegram-клубам обязательно дать отдельные сводки:
-- Gorbova Club: expected members / actual in_chat / actual in_channel / revoke_needed / reinvite_needed.
-- Бухгалтерия как бизнес: expected members / actual in_chat. Channel не учитывать как ошибку, если по конфигурации доступ только в чат.
-
-4. Если revoke_needed снова получится большим:
-- НЕ предлагать execute;
-- дать причину, почему список большой;
-- показать топ-причины: expired product, canceled subscription, missing entitlement, stale membership, wrong club mapping.
-
-5. F3 Наталья Морозевич — обязательный контрольный кейс.
-Нужно явно указать:
-- по какому club_id есть проблема;
-- должна ли она быть в чате/канале;
-- где она фактически находится;
-- нужен revoke / no-action / manual_review.
-
-6. По non-Telegram:
-F1/F2 не закрывать как false-positive без UI/resolver проверки.
-Если SQL показывает доступ, но UI проверить нельзя — статус только `sql_ok_ui_not_verified`.
-
-7. Для F1/F2 обязательно определить источник проблемы:
-- data gap;
-- access_rules gap;
-- product_fulfillment gap;
-- ui_resolver gap;
-- mixed;
-- no_action/by_design.
-
-8. G1/G10/G14, где нужен реальный UI/resolver output, не считать подтверждёнными багами только по SQL.
-Если impersonation/resolver не доступен — `not_testable_sql_only`.
-
-9. Execute не запускать.
-Никаких INSERT в telegram_access_queue, никаких grant-access-for-order, никаких DML.
-
-Artifacts:
-- `.lovable/proofs/telegram_full_access_discovery_2026_05.md`
-- `/mnt/documents/telegram_full_access_expected_vs_actual_2026_05.csv`
-- `/mnt/documents/telegram_full_access_summary_2026_05.csv`
-- `/mnt/documents/telegram_revoke_candidates_verified_2026_05.csv`
-- `.lovable/proofs/audit_ideology_business_non_telegram_followup_2026_05.md`
-- обновлённый `/mnt/documents/audit_business_ideology_fix_dryrun_rows.csv`, если потребуется.
-
-После завершения:
-- отдельно дать вывод по Telegram: сколько ok / revoke / reinvite / refresh / manual_review;
-- отдельно дать вывод по F1/F2 и non-Telegram: что data-gap, что UI/resolver-gap, что by design;
-- остановиться и ждать approve на следующий patch.
-
-План: PATCH-TG-DISCOVERY-FULL + non-Telegram follow-up (read-only)
+1. tariff.access_days
+2. order.purchase_snapshot.access_days / tariff_snapshot.access_days
+3. subscription.access_start_at / access_end_at
+4. access_rules / product_fulfillment, если там явно задан срок
 ```
 
-## STOP
+Если `access_days` не найден — не подставлять 30 дней автоматически, а ставить:
 
-PATCH-TG-REVOKE-1 Stage 2 execute — НЕ approve. Список 133 revoke считаем подозрительным: вероятно собран по устаревшим membership/audit/queue строкам, без сверки с актуальным SOT и без учёта chat vs channel конфигурации клуба.
+```text
+manual_review_access_days_unresolved
+```
 
-Telegram-блок замораживается до полного завершения PATCH-TG-DISCOVERY-FULL. Параллельно идёт non-Telegram follow-up.
+Иначе снова будет ложная классификация.
+
+2. **Белозор — обязательный blocker-case.**  
+Если по Екатерине Белозор (`zapponka1@gmail.com`) последняя оплаченная сделка Gorbova Club BUSINESS покрывает дату аудита, то:
+
+```text
+telegram revoke запрещён
+verdict = missing_platform_access_but_paid_order_exists
+или access_active_by_paid_order_window
+```
+
+3. **Проверять не только orders_v2, но и фактический payment.**  
+Paid order сам по себе недостаточен. Для каждого order нужен связанный успешный `payments_v2`:
+
+```text
+payment.status IN ('paid','succeeded','successful')
+amount > 0
+refund отсутствует именно по этому payment
+```
+
+4. **Refund проверять строго по конкретному payment/order.**  
+Refund по другому платежу того же клиента не должен блокировать доступ и не должен отправлять в revoke.
+5. **Extend-логику считать только в пределах одного продукта/тарифа.**  
+Последовательные оплаты суммируются только если совпадают:
+
+```text
+user/profile
+product_id
+tariff_id
+club_id mapping
+```
+
+Если тариф менялся / upgrade / downgrade — `manual_review_refund_or_conflict`.
+
+6. **Для Gorbova Club учитывать оба источника доступа.**
+
+```text
+product 11c9f1b8 — Gorbova Club
+product 9d0d6de8 + tariff c1b4bb88 — Платная консультация bonus-rule
+```
+
+Но по `Платная консультация` доступ к club считать только при точном совпадении `tariff_id=c1b4bb88`.
+
+7. **Для “Бухгалтерия как бизнес” не проверять channel.**  
+Там SOT — только chat/group. Channel не должен попадать в ошибки.
+8. **Добавить отдельную итоговую категорию для data repair.**  
+Все строки:
+
+```text
+missing_platform_access_but_paid_order_exists
+```
+
+должны автоматически попасть в следующий backlog:
+
+```text
+PATCH-DATA-REPAIR-MISSING-ENT
+```
+
+Не в revoke.
+
+9. **Execute после 2A запрещён.**  
+Даже если останется 1–2 `revoke_confirmed`, этот патч только read-only. Revoke — отдельный approve.
+10. **Proof должен содержать source trace по каждому из 13 кандидатов.**  
+Для каждой строки указать:
+
+```text
+почему был в revoke list
+какой active access найден / не найден
+какой paid order найден / не найден
+какой payment подтверждает оплату
+какой срок доступа рассчитан
+какой итоговый verdict
+```
+
+Итоговая команда:
+
+```text
+PATCH-TG-REVOKE-2A подтверждаю с правками.
+
+Выполни строго read-only.
+
+Главное:
+не банить пользователя из Telegram только потому, что нет entitlement/subscription, пока не проверена последняя оплаченная сделка и её расчётное окно доступа.
+
+Особенно проверить Екатерину Белозор / zapponka1@gmail.com как blocker-case.
+
+Если paid order + successful payment дают действующий доступ на snapshot_at:
+- revoke запрещён;
+- строка уходит в missing_platform_access_but_paid_order_exists или access_active_by_paid_order_window;
+- дальше это PATCH-DATA-REPAIR-MISSING-ENT, а не Telegram revoke.
+
+Не использовать “30 дней по умолчанию”, если срок не доказан из tariff/order/subscription/access_rules. Если срок не найден — manual_review_access_days_unresolved.
+
+Artifacts:
+.lovable/proofs/patch_tg_revoke_2a_payment_access_revalidation_2026_05.md
+/mnt/documents/patch_tg_revoke_2a_revalidated_candidates_2026_05.csv
+
+После dry-run остановиться. Execute не запускать.
+
+План: дополнение к текущему Telegram-аудиту
+```
+
+## STOP-условие
+
+PATCH-TG-REVOKE-2 execute **НЕ approve**. Контрольный кейс Екатерина Белозор (`zapponka1@gmail.com`) показывает, что текущая логика revoke неполная:
+
+- `expected_access=no`, `active_entitlement_id=NULL`, `active_subscription_id=NULL`
+- `actual_in_chat=true`, `actual_in_channel=true`
+- но в админке — оплаченные Gorbova Club BUSINESS сделки, в т.ч. 22.04.2026 на 250 BYN
+
+При сроке доступа 30 дней от оплаты на дату аудита (18.05.2026) она должна была иметь действующий доступ до ~22.05.2026. Это не Telegram-проблема, а возможный missing entitlement/subscription bug.
+
+Поэтому перед любым revoke добавляется обязательный preflight-патч.
 
 ---
 
-## Трек 1 — PATCH-TG-DISCOVERY-FULL (read-only, execute запрещён)
+## PATCH-TG-REVOKE-2A — Revoke candidates payment/access revalidation
 
-### Stage 1 — Telegram clubs inventory
+**Тип:** read-only, dry-run only.
+**Scope:** ровно 13 строк из `/mnt/documents/telegram_revoke_candidates_verified_2026_05.csv` (12 Gorbova Club + 1 Бухгалтерия как бизнес).
+**Execute запрещён.**
 
-- Из `telegram_clubs` + связанных `access_rules` (`grant_target_type='club'`, `is_active=true`) собрать: `club_id`, `product_id`, `product_name`, `chat_id`, `channel_id`, `title`, `is_active`, `access_mode`, список access_rules, требуется ли chat/channel/both.
-- Отдельно зафиксировать Gorbova Club и «Бухгалтерия как бизнес» с их chat_id/channel_id и продуктовой привязкой.
+### Шаги
 
-### Stage 2 — Actual Telegram membership
+**1. Сбор paid orders по каждому кандидату**
 
-По каждому клубу из `telegram_club_members` (+ join `profiles`/`auth.users` по telegram_user_id/profile_id):
+Для каждой из 13 строк (user_id / profile_id / email) найти в `orders_v2`:
 
-- user/profile, email, telegram_user_id, username, in_chat, in_channel, access_status, last_verified_at, source, updated_at.
-- Агрегаты на клуб: total rows, in_chat=true, in_channel=true, access_status='ok', stale (last_verified_at старше N дней), без telegram_user_id.
+- `status='paid'`
+- успешный `payments_v2` (succeeded / paid)
+- `product_id` принадлежит множеству продуктов, которые открывают club_id кандидата (по `access_rules` с `grant_target_type='club'`, `is_active=true`):
+  - Gorbova Club (`fa547c41`): `11c9f1b8` (любой тариф) + `9d0d6de8` только tariff `c1b4bb88`
+  - Бухгалтерия как бизнес (`4f8f9d8f`): `85046734` (любой тариф)
+- собрать: `order_id`, `deal_date`, `paid_at`, `tariff_id`, `tariff_name`, `final_price`, `refund_status` / `partial_refund`, `meta.payment_flow`
 
-### Stage 3 — Expected access SOT
+**2. Расчёт expected access window**
 
-Для каждого (user, club) определить ожидаемый доступ строго по приоритету:
+Приоритет источников access_days:
 
-1. active entitlement по product_id клуба (`status='active'`, `expires_at IS NULL OR > now()`);
-2. active/trial/past_due subscription с `access_end_at > now()` по product_id/tariff_id клуба;
-3. paid order_v2 с действующим окном доступа;
-4. access_rules как маппинг продукта → club (но НЕ как источник права);
-5. явный admin/manual grant только если активен.
+1. `tariffs.access_days` по `tariff_id` заказа
+2. `purchase_snapshot.access_days` из order
+3. дефолт клуба (Gorbova Club — 30 дней, если ничего нет)
 
-Не учитывать как активный доступ: expired/canceled/superseded без entitlement; старые invite_sent; старые queue rows; `telegram_club_members.access_status` без platform access; исторические audit_logs.
+`expected_access_until = paid_at + access_days` (с учётом extend-логики: при повторной покупке того же `tariff_id` подписка продлевается — суммируем окна последовательных оплат того же тарифа).
 
-### Stage 4 — Expected vs actual matrix
+Сверить с:
 
-Таблица user × club с колонками: customer, email, telegram username, club_name, expected_access, expected_chat, expected_channel, actual_in_chat, actual_in_channel, actual_access_status, active_entitlement_id, active_subscription_id, entitlement_expires_at, subscription_access_end_at, access_rule_id, decision, reason.
+- `subscriptions_v2.access_end_at` (если есть)
+- `entitlements.expires_at` (если есть)
 
-Decision только из: `ok_keep_access`, `revoke_needed`, `reinvite_needed`, `refresh_status_needed`, `no_action_no_access_and_not_member`, `manual_review_conflicting_data`, `telegram_not_linked_by_user`.
+Если расчётный `expected_access_until > snapshot_at (2026-05-18T13:00Z)` — доступ должен быть активен.
 
-### Stage 5 — Sanity checks
+**3. Реклассификация (новый verdict)**
 
-- Gorbova Club: actual ≈ 155, expected ≈ 155. Если `revoke_needed` > 10–15% от actual → STOP, sweep подозрителен, разобрать причину.
-- Бухгалтерия как бизнес: actual ≈ 30, только chat/group, channel НЕ учитывать как ошибку.
-- Любой revoke-список > 20: явное объяснение (продукт, тариф, дата окончания, почему всё ещё in_chat/in_channel) до любого вывода.
 
-### Stage 6 — F3 контрольный кейс
+| verdict                                         | условие                                                                                                                                                                   |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `revoke_confirmed`                              | нет active entitlement, нет active subscription, **нет** paid order с window, покрывающим snapshot                                                                        |
+| `missing_platform_access_but_paid_order_exists` | есть paid order, который ДОЛЖЕН давать активный доступ на snapshot, но entitlement/subscription отсутствуют → **НЕ банить**, в DATA repair через `grant-access-for-order` |
+| `access_active_by_paid_order_window`            | оплата покрывает window на дату snapshot → **НЕ банить**                                                                                                                  |
+| `manual_review_refund_or_conflict`              | refund, partial_refund, upgrade, конфликт тарифов, несколько противоречивых заказов                                                                                       |
 
-Отдельный разбор `tkoffise@gmail.com` / @marazevichnatallia по обоим клубам: active platform access yes/no, entitlement/subscription status, actual in_chat/in_channel, верный club_id для revoke и обоснование.
 
-### Stage 7 — Final Telegram verdict
+**4. Контрольный кейс — Екатерина Белозор / `zapponka1@gmail.com**`
 
-Полные списки по каждому decision: `ok_keep_access`, `revoke_needed`, `reinvite_needed`, `refresh_status_needed`, `manual_review`. Execute не запускается.
+Обязательно вывести отдельным блоком:
+
+- список всех paid orders по Gorbova Club продуктам
+- последнюю оплату (ожидаем 22.04.2026, 250 BYN)
+- `tariff_id`, `access_days`, расчёт `expected_access_until`
+- наличие/отсутствие entitlement/subscription
+- объяснение причины попадания в revoke
+- новый verdict из 4 категорий
+
+**5. Итоговые таблицы (в proof и CSV)**
+
+- `revoke_confirmed` (N)
+- `do_not_revoke_access_repair_needed` (N)
+- `do_not_revoke_active_by_paid_order` (N)
+- `manual_review` (N)
+
+Сумма = 13.
 
 ### Artifacts
 
-- `.lovable/proofs/telegram_full_access_discovery_2026_05.md`
-- `/mnt/documents/telegram_full_access_expected_vs_actual_2026_05.csv`
-- `/mnt/documents/telegram_full_access_summary_2026_05.csv`
-- `/mnt/documents/telegram_revoke_candidates_verified_2026_05.csv`
+- `.lovable/proofs/patch_tg_revoke_2a_payment_access_revalidation_2026_05.md`
+- `/mnt/documents/patch_tg_revoke_2a_revalidated_candidates_2026_05.csv` (13 строк со всеми полями: orders, paid_at, access_days, expected_until, ent/sub, verdict)
 
-### Запрещено
+### Запреты (hard stop)
 
-DML; INSERT в `telegram_access_queue`; прямой Telegram API; revoke/grant; изменения `telegram_club_members`, `subscriptions_v2`, `entitlements`, `access_rules`; вызовы `grant-access-for-order`; provider API; изменения secrets/mode.
+- 0 INSERT в `telegram_access_queue`
+- 0 вызовов Telegram API
+- 0 вызовов `grant-access-for-order`
+- 0 DML
+- 0 изменений `subscriptions_v2` / `entitlements` / `access_rules` / `telegram_club_members`
+- 0 изменений secrets
 
-### DoD трека 1
+### DoD
 
-1. Полная инвентаризация всех Telegram clubs.
-2. Подтверждены Gorbova Club и Бухгалтерия как бизнес отдельно.
-3. По каждому клубу actual members count.
-4. По каждому клубу expected members count.
-5. Revoke list объяснён, не строится на старых invite/audit/status.
-6. F3 разобрана отдельно.
-7. Если revoke_needed большой — дана причина и STOP, execute не предлагается.
-8. Execute не запускался.
 
----
+| критерий                                                     | &nbsp; |
+| ------------------------------------------------------------ | ------ |
+| Для всех 13 кандидатов собраны paid orders                   | ☐      |
+| Для каждого рассчитан expected access window                 | ☐      |
+| Каждый получил новый verdict из 4 категорий                  | ☐      |
+| Белозор разобрана отдельным блоком с расчётом                | ☐      |
+| Сумма категорий = 13                                         | ☐      |
+| Получены 4 итоговых числа: revoke / repair / active / manual | ☐      |
+| Execute не запускался                                        | ☐      |
 
-## Трек 2 — Non-Telegram follow-up (read-only, параллельно)
-
-### F1 — Katerina Kaplia (`katrinkap777@rambler.ru`)
-
-- Проверить BUSINESS training/history access: expected (по orders_v2 + tariff bonuses + business_training_history rules) vs actual (entitlements + access_rules + resolver output).
-- Сравнить SQL-уровень и UI/resolver уровень (через `useSidebarModules` + `resolveTrainingContentFilter` + `access-resolver.ts`).
-- Выдать `gap_class` ∈ {`missing_primary_entitlement`, `missing_business_training_history_access`, `access_end_mismatch`, `tariff_id_mismatch`, `sql_access_exists_but_ui_missing`, `module_entitlements_instead_of_full_access`} и `planned_action`.
-
-### F2 — Елена Гудвилович (`alena.gudvilovich@bk.ru`)
-
-- Проверить: была ли full-tariff покупка или только набор модулей.
-- Если full paid order есть, а entitlements выглядят как набор модулей → `confirmed_bug` (`module_entitlements_instead_of_full_access`).
-- Если только модули — `by_design`, но всё равно проверить UI visibility модулей через resolver.
-- Выдать `gap_class` + `planned_action`.
-
-### Block A/C/D без Telegram
-
-Для всей когорты BUSINESS / ИДЕОЛОГИЯ / Бизнес-леди (из существующего sweep) перечитать и классифицировать строго по non-Telegram gap_class:
-
-- `missing_primary_entitlement`;
-- `missing_bonus` / `missing_business_training_history_access`;
-- `access_end_mismatch`;
-- `tariff_id_mismatch`;
-- `module_entitlements_instead_of_full_access`;
-- `sql_access_exists_but_ui_missing` (помечать как UI-not-verified, без auto-fix).
-
-Для каждой строки — `planned_action` ∈ {`data_repair_canonical_grant`, `ui_resolver_patch_needed`, `access_rules_patch_needed`, `manual_review`, `no_action`}.
-
-### Artifact трека 2
-
-- `.lovable/proofs/audit_ideology_business_non_telegram_followup_2026_05.md`
-- (если нужно) дополнить `/mnt/documents/audit_business_ideology_fix_dryrun_rows.csv` колонкой `source_problem` (`data` / `ui_resolver` / `mixed`).
-
-### Запрещено в треке 2
-
-DML; вызов `grant-access-for-order`; правки `entitlements`/`access_rules`/`subscriptions_v2`; UI/resolver patch без отдельного approve; любое касание Telegram.
-
-### DoD трека 2
-
-1. F1 и F2 имеют отдельный разбор SQL vs UI с явным `gap_class` и `planned_action`.
-2. Вся cohort переразмечена по non-Telegram gap_class.
-3. Указаны 3 категории: чисто data-gap, чисто UI/resolver-gap, mixed.
-4. Execute не запускался.
 
 ---
 
-## Порядок и зависимости
+## Порядок дальнейших действий
 
-- Треки 1 и 2 идут параллельно, оба read-only.
-- Никакой execute (Telegram revoke/reinvite, grant repairs, UI patches, access_rules patches) до отдельного approve по каждому треку.
-- После завершения трека 1 — отдельным сообщением запрос на approve PATCH-TG-DISCOVERY-FULL findings.
-- После завершения трека 2 — отдельным сообщением запрос на approve PATCH-UI-RESOLVER-F1-F2 и PATCH-DATA-REPAIR-NON-TG.
+1. **PATCH-TG-REVOKE-2A** (этот патч) — выполнить read-only ревалидацию.
+2. По результатам — пересобрать окончательный revoke list (ожидаем << 13).
+3. Параллельно открыть **PATCH-DATA-REPAIR-MISSING-ENT** для `missing_platform_access_but_paid_order_exists` кандидатов (отдельный approve, через canonical `grant-access-for-order`).
+4. Только после 2А — отдельный approve на PATCH-TG-REVOKE-2 уже по очищенному списку.
+5. PATCH-TG-REINVITE-1 (5 строк) и PATCH-UI-RESOLVER-F1-F2 — остаются в очереди, не блокируются 2А.
+
+Execute ничего из вышеперечисленного — только после явного approve по каждому патчу отдельно.
