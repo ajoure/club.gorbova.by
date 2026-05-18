@@ -1,247 +1,158 @@
-да, согласен, с учетом правок:
+# План подтверждаю, с обязательными правками:
 
-1. **Не подтверждаю трактовку, что “ИДЕОЛОГИЯ” = “Бизнес”.**  
-Ранее в данных уже фигурировал отдельный тариф:
+1. F1/F2/F3 считать обязательными regression fixtures.
 
-Gorbova Club — BUSINESS / tariff_id = 7c748940…
+Если любой из этих кейсов не попал в итоговые CSV/таблицы — dry-run считается failed.
 
-Поэтому в discovery нужно проверять **3 группы**, если все они существуют:
+2. Для F1/F2 обязательно дать не только SQL-статус, но и точный источник проблемы:
 
-1. Gorbova Club — ИДЕОЛОГИЯ / b018e9be…
+- data gap;
 
-2. CB20 — Бизнес-леди / 9bc81736…
+- access_rules gap;
 
-3. Gorbova Club — BUSINESS / 7c748940… / если активен
+- product_fulfillment gap;
 
-2. Добавить **Stage 0 — Tariff resolver**:
+- resolver/UI gap;
 
-Перед основным аудитом сделать SELECT по tariffs/products/tariff_offers:
+- mixed.
 
-- name ILIKE '%ИДЕОЛОГ%'
+Если UI/impersonation проверить невозможно — статус `ui_not_verified`, но SQL expected/actual всё равно должен быть заполнен.
 
-- name ILIKE '%БИЗНЕС%'
+3. Для F3 Telegram проверить именно фактическое членство:
 
-- name ILIKE '%BUSINESS%'
+- `in_chat`;
 
-- name ILIKE '%Бизнес-леди%'
+- `in_channel`;
 
-&nbsp;
+- `access_status`;
 
-В proof явно указать:
+- `last_verified_at`;
 
-tariff_id | tariff_name | product_id | product_name | active | included_in_audit | reason
+- queue invite/revoke history.
 
-3. Если 7c748940… существует и активен, **включить его в audit scope**.  
-Иначе есть риск снова проверить не тот “Бизнес”.
-4. paid orders без активного subscription/entitlement не считать автоматически активным доступом. Использовать их только как источник покупки и проверки, должен ли был быть создан доступ.
-5. Для Telegram проверять не только telegram_club_members, но и фактическую связку:
+Если доступ истёк, но `in_chat=true` или `in_channel=true`, это confirmed bug, а не stale/warning.
 
-telegram_club_members
+4. В итоговом proof обязателен раздел `Recommended execution order`:
 
-telegram_channel_members
+- first: Telegram revoke queue;
 
-telegram_access
+- second: Telegram reinvite queue;
 
-telegram_access_queue
+- third: grant-access-for-order repairs;
 
-6. Убрать из плана строку <presentation-artifact> — тут не нужен presentation artifact. Достаточно MD + CSV.
-7. Добавить контрольный блок:
+- fourth: config/access_rules/product_fulfillment patches;
 
-Если по любому включённому тарифу access_rules отсутствуют или пустые:
+- fifth: UI/resolver patches.
 
-- не считать это PASS;
-
-- пометить как access_rules_missing / no_rules_configured;
-
-- severity = medium/high в зависимости от наличия продаж по тарифу.
-
-Команда для Lovable:
-
-План подтверждаю с правками.
+Execute не запускать.
 
 &nbsp;
 
-Перед аудитом обязательно выполнить Stage 0 — Tariff resolver.
+PATCH-AUDIT-BUSINESS-IDEOLOGY-FIX-2026-05 (v2, ужесточённый)
 
-&nbsp;
+F1/F2/F3 со скриншотов — **обязательные контрольные баг-кейсы**, не гипотезы. По ним уже видны признаки 3 разных категорий багов: BUSINESS visibility gap, full→modules degradation, Telegram revoke desync. Dry-run обязан выдать по каждому конкретный `gap_class` + `planned_action`.
 
-Не считать ИДЕОЛОГИЮ автоматически тарифом “Бизнес”.
+## 0. Артефакты предыдущего аудита (DoD-fix)
 
-Проверить, существует ли отдельный Gorbova Club — BUSINESS tariff_id=7c748940… или иной активный тариф с названием Business/Бизнес.
+1. `.lovable/proofs/audit_ideology_business_access_2026_05.md`
+2. `/mnt/documents/audit_ideology_business_users.csv`
+3. `/mnt/documents/audit_ideology_business_missing_bonus.csv`
+4. `/mnt/documents/audit_ideology_business_bonus_full.csv`
 
-&nbsp;
+## 1. Главная бизнес-логика (SOT для всех проверок)
 
-В audit scope включить:
+1. Купил **Gorbova Club / BUSINESS** → должен видеть **весь BUSINESS-набор**: сам клуб + исторические сделки/материалы/тренинги + связанные training modules / historical access по правилам тарифа.
+2. Купил **«Бизнес-леди» / полный тариф ЦБ** → должен видеть **полный** набор тарифа, не случайные модули.
+3. Telegram-доступ истёк → пользователь **не должен** оставаться в чате/канале. «Приглашение отправлено» само по себе ничего не доказывает.
 
-1. ИДЕОЛОГИЯ / b018e9be…
+Telegram-SOT = (active platform access? ∧ TG положен правилом?) × (фактически in_chat/in_channel?) → решение revoke / reinvite / refresh / no-action.
 
-2. Бизнес-леди / 9bc81736…
+## 2. F1–F3 как обязательные баг-кейсы
 
-3. Gorbova Club BUSINESS / 7c748940… — если найден и активен.
+### F1. Katerina Kaplia (`katrinkap777@rambler.ru`) — BUSINESS visibility
 
-&nbsp;
+По 3 продуктам (Gorbova Club/BUSINESS, ЦБ 1ст 2.0/Бизнес-леди, ЗАКРОЙ ГОД/Стандартный):
 
-Дальше выполнить read-only audit по плану:
+- paid order + active sub + primary entitlement — есть/нет;
+- для BUSINESS дополнительно строится **expected_business_set** (historical deals + training modules из `access_rules` / `tariff_offers` / product_fulfillment) и сверяется с тем, что видит SQL-resolver и UI-resolver (`useSidebarModules` / `access-resolver`);
+- если primary есть, а BUSINESS-набор отсутствует — `gap_class = missing_business_training_history_access`, severity high/critical;
+- `planned_action` ∈ {`data_repair_canonical_grant`, `access_rules_config_gap`, `product_fulfillment_gap`, `ui_resolver_bug`}.
+- Запрещено писать «возможно нормально», пока полный BUSINESS-набор не подтверждён.
 
-- access_rules inventory;
+### F2. Елена Гудвилович (`alena.gudvilovich@bk.ru`) — full→modules degradation
 
-- cohort;
+- Полный perimeter paid orders (product, tariff, status, payment, access window).
+- Если есть paid order на full tariff (Бизнес-леди/BUSINESS) → обязан быть primary entitlement на full product + все training/history modules тарифа. Если только module entitlements → `gap_class = module_entitlements_instead_of_full_business_access`, severity high/critical.
+- Если реально куплены только модули → `by_design`, **но** обязательно проверить, что эти модули видны в кабинете через `useSidebarModules`.
+- Phantom-parent / `module_scope_only`: SQL vs UI расхождение → `gap_class = ui_resolver_module_visibility_bug`.
 
-- per-user checks C1–C10;
+### F3. Наталья Морозевич (`tkoffise@gmail.com`, `@marazevichnatallia`) — Telegram revoke/desync
 
-- gap_class + severity;
+По **Gorbova Club** собрать факты: active sub?, active entitlement?, `access_end_at`/`expires_at`, требует ли rule TG, `telegram_club_members` (`in_chat`, `in_channel`, `access_status`, `last_verified_at`), `telegram_access_queue` (pending/processed/revoke).
 
-- final status board;
+Решающая матрица:
 
-- CSV.
+- platform access истёк + (`in_chat=true` ∨ `in_channel=true` ∨ `access_status='ok'`) → `gap_class = telegram_membership_not_revoked_after_access_expired`, severity high/critical, `planned_action = telegram_revoke_needed_via_canonical_queue`.
+- active platform access + TG показывает «истёк» → `gap_class = telegram_status_desync_active_platform_access`, `planned_action = telegram_reinvite_or_status_refresh`.
+- «Приглашение отправлено» — НЕ нормальное состояние без проверки: когда отправлено, использовано ли, в чате ли сейчас, не истёк ли invite, не нужен ли уже revoke.
 
-&nbsp;
+По «Бухгалтерия как бизнес»: если sub истекла и юзера нет в клубе → ok; если в клубе без активного доступа → revoke bug.
 
-Запрещено:
+## 3. Block A/B/C/D (точечные)
 
-DML, grant-access-for-order, Telegram actions, provider API, changes to access_rules/entitlements/subscriptions_v2/secrets/mode.
+- **A. missing_primary_entitlement (critical):** A1 `alenamalachkevich`/BUSINESS — `grant-access-for-order` (pre-conditions: paid order, tariff match, access_end_at valid). A2 — Елена Гудвилович по результатам F2.
+- **B. missing_telegram_access — reinvite (critical):** `2.lady.di.only`, `finassist.by`, `ossiptschik`. Anti-spam pre-check: исключить уже отработавшие в ACCESS-FIX-2, no double-reinvite за 24ч. **Перед B запускать revoke-волну (см. Block E.Telegram)**, чтобы не пере-инвайтить тех, кому положен revoke.
+- **C. missing_bonus (high):** 3 кейса из аудита + любые из F1/F2 после `per_product`-фильтра. Только canonical `grant-access-for-order` по родительскому order.
+- **D. medium (classify-only):** 4× `access_end_mismatch`, 1× `tariff_id_mismatch`, новое `telegram_status_stale_needs_refresh` (`last_verified_at > 7d` при active sub).
 
-&nbsp;
+## 4. Block E (новый) — BUSINESS training/history access audit
 
-Artifacts:
+Цель: найти всех, кто купил Gorbova Club/BUSINESS / Бизнес-леди / ИДЕОЛОГИЯ или иные тарифы, открывающие BUSINESS-набор, но не видят положенные исторические сделки/тренинги/модули.
 
-.lovable/proofs/audit_ideology_business_access_2026_[05.md](http://05.md)
+**Шаги:**
 
-/mnt/documents/audit_ideology_business_users.csv
+1. Когорта: все active/paid users по перечисленным тарифам (источник — `orders_v2 paid` ∧ `meta.source ≠ rule_engine`, `subscriptions_v2 active`).
+2. `expected_access_matrix` на user×product: primary product, historical deals, training modules, bonus/secondary products, TG club/channel (если правилом положен). Источники: `access_rules`, `tariff_offers.meta`, `product_fulfillment`, `training_modules`.
+3. `actual_access_matrix`: `entitlements`, `subscriptions_v2`, resolved `access_rules`, output `useSidebarModules`/`access-resolver` (impersonation read-only), фактическая видимость в кабинете.
+4. `gap_class`: `missing_business_training_history_access`, `missing_full_tariff_primary_access`, `module_entitlements_instead_of_full_access`, `sql_access_exists_but_ui_missing`, `access_rules_missing_for_business_bundle`, `product_fulfillment_missing`, `no_rules_configured`.
+5. **F1 и F2 — обязательные spot-check** этого блока (должны попасть в выгрузку и быть классифицированы явно).
 
-/mnt/documents/audit_ideology_business_missing_bonus.csv
+### Block E.Telegram — revoke/reinvite/refresh sweep (исправление G4/G5/G11/G12)
 
-Ключевое: **проверять не два, а три возможных тарифа**, если отдельный BUSINESS действительно есть в базе.
+Per-user классификация (по всей базе):
 
-&nbsp;
+- active access + TG положен + бот привязан + нет membership → `missing_telegram_access`.
+- platform access истёк/отсутствует + (`in_chat=true` ∨ `in_channel=true`) → `telegram_membership_not_revoked_after_access_expired`.
+- `access_status='ok'` + `last_verified_at` старый → `telegram_status_stale_needs_refresh`.
+- `invite_sent` давно + user не вступил → `invite_stale_awaiting_user_or_expired`.
+- `invite_sent` + user уже in_chat/in_channel **без** active access → `telegram_invite_marker_misleading_revoke_needed`.
 
-План: PATCH-AUDIT-BUSINESS-IDEOLOGY-DISCOVERY-2026-05 (READ-ONLY)
+Приоритет действий: **revoke → reinvite → refresh**.
 
-## Цель
+## 5. Запреты (dry-run и будущий execute)
 
-Полное discovery по всей базе: проверить, что каждый клиент с активной покупкой тарифа **ИДЕОЛОГИЯ** (Gorbova Club, `b018e9be-…`) и/или **Бизнес-леди** (CB20, `9bc81736-…`) фактически получил весь обещанный SOT-набор доступов и реально видит его в личном кабинете. Никаких изменений в БД, edge-функциях, секретах, Telegram, провайдере. Только SELECT + сводный отчёт.
+Ручной DML в `entitlements`/`subscriptions_v2`/`access_rules`/`telegram_club_members`; прямой Telegram Bot API; provider API; изменения `access_rules`; secrets/mode changes. Все правки — только canonical write-path (`grant-access-for-order`, `telegram_access_queue` с разрешённым `meta.source`).
 
-## SOT-набор (что должно быть у держателя тарифа)
+## 6. Execute-классификация (вместо общего «reinvite»)
 
-Источник правды — `public.access_rules` (`is_active=true`) по tariff_id.
+После dry-run каждый кейс получает один из тегов:
+`telegram_revoke_needed_via_canonical_queue`, `telegram_reinvite_needed`, `telegram_status_refresh_needed`, `no_action_expired_and_not_in_chat`, `invite_pending_no_action`, `data_repair_canonical_grant`, `access_rules_config_gap`, `product_fulfillment_gap`, `ui_resolver_patch_needed`, `manual_review`.
 
-### ИДЕОЛОГИЯ (`b018e9be-53ce-4840-8034-e09f8e319080`, product = Gorbova Club `11c9f1b8…`)
+## 7. Артефакты
 
-1. **Primary club access** — entitlement на `11c9f1b8…` (Gorbova Club), активная `subscriptions_v2`.
-2. **Telegram (chat+channel клуба)** — `access_rules.grant_target_type='club'` для Gorbova Club; факт = `telegram_club_members` (`in_chat=true AND in_channel=true`, `access_status='ok'`).
-3. **База знаний клуба** — `training_content` rule `384a670b…` (`access_mode=partial`, 19 разрешённых `module_ids`, `match_purchase_month=true`).
-4. **Бонус: 9 продуктов CB20+модули** — `product_access` rule `f59d7b39…` (CB20 root + 8 модулей), условие `prior_purchase per_product`.
-5. **Бонус: «Подоходный налог с физлиц»** (`4fc18564…`) — `product_access` rule `8bac4a16…`, условие `prior_purchase`.
-6. `**section_access` «Нейросеть»** — rule `6fedf21d…`.
-7. (доп. правила в `access_rules` — добираем полным списком в шаге 1.2).
+- `.lovable/proofs/audit_ideology_business_fix_dryrun_2026_05.md` — block A/B/C/D + F1/F2/F3 per-row.
+- `.lovable/proofs/business_training_history_access_sweep_dryrun_2026_05.md` — Block E (BUSINESS visibility) + Block E.Telegram (revoke/reinvite/refresh).
+- `/mnt/documents/audit_business_ideology_fix_dryrun_rows.csv` — точечный per-row.
+- `/mnt/documents/business_training_history_expected_vs_actual_2026_05.csv` — per-user×per-product expected vs actual matrix + gap_class.
+- `/mnt/documents/telegram_revoke_reinvite_refresh_sweep_2026_05.csv` — per-user TG decision.
 
-### Бизнес-леди (`9bc81736…`, product = CB20 `7101ed3c…`)
+## 8. DoD dry-run (жёсткий)
 
-1. **Primary CB20 access** — entitlement на `7101ed3c…`.
-2. **База знаний CB20** — `training_content` rule `fc9e584e…` (`access_mode=partial`, 28 `module_ids`).
-3. (доп. правила — добираем полным списком).
-
-> Принцип «default-deny»: отсутствие явного правила ≠ «должен быть доступ». Telegram-grant ожидается ТОЛЬКО там, где есть `access_rules` с `grant_target_type='club'` для product_id.
-
-## Когорта
-
-```
-orders_v2 paid с tariff_id ∈ {ИДЕОЛОГИЯ, Бизнес-леди}
-  UNION
-subscriptions_v2 (active|trial|past_due|canceled с access_end_at > now())
-  с tariff_id ∈ {…}
-  UNION
-entitlements (active) c meta.tariff_id ∈ {…}
-```
-
-Резолв `user_id` через `orders_v2.user_id` / `subscriptions_v2.user_id` / `entitlements.user_id`, fallback profiles.
-
-## Этапы (только SELECT)
-
-### 1. Inventory
-
-- 1.1 Полный список `access_rules` для обоих tariff_id (rule_id, target, conditions, duration_days).
-- 1.2 Список `training_modules` под каждый `training_content` rule (для дальнейшей проверки видимости).
-- 1.3 Список `target_product_ids` бонусных `product_access` rules.
-
-### 2. Когорта
-
-- 2.1 SELECT по `orders_v2` (paid, не `meta.source='rule_engine'`) + `subscriptions_v2` + `entitlements`. Собрать distinct `(user_id, tariff_id)`.
-- 2.2 Резолв email/имя через `profiles`.
-
-### 3. Per-user проверки (для каждой пары `user × tariff`)
-
-
-| Чек                                                                | SOT                                                                                                                                   | Метод  |
-| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| C1. Primary entitlement                                            | `entitlements` active на product_id тарифа                                                                                            | SELECT |
-| C2. Subscription окно (если recurring)                             | `subscriptions_v2.access_end_at > now()`                                                                                              | SELECT |
-| C3. `ent.expires_at` ↔ `sub.access_end_at` δ ≤ 24h                 | оба                                                                                                                                   | SELECT |
-| C4. `ent.meta.tariff_id` == `sub.tariff_id`                        | оба                                                                                                                                   | SELECT |
-| C5. Telegram (только если есть club rule)                          | `telegram_club_members` (`in_chat`, `in_channel`, `access_status`)                                                                    | SELECT |
-| C6. Bonus product entitlements (CB20+модули / Подоходный)          | по каждому `target_product_id` rule с `prior_purchase` — entitlement создан?                                                          | SELECT |
-| C7. `training_content` allowlist соблюдён (база знаний)            | `useSidebarModules`/`resolveTrainingContentFilter` логика воспроизведена SQL'ом: active ent → allowed_module_ids → UI должен показать | SELECT |
-| C8. `section_access` «Нейросеть» (только ИДЕОЛОГИЯ)                | `access_rules` + `section_access` factual                                                                                             | SELECT |
-| C9. UI-видимость в библиотеке                                      | для каждого `target_product_id` из C6 — есть active entitlement (см. `cabinet-visibility-entitlement-dependency`)                     | SELECT |
-| C10. Историческая CB1 (legacy «Ценный бухгалтер 1 ступень» до 2.0) | сверка с orders_v2 prior_purchase (`required_product_id`) — выполнено ли условие, и если да — выдан ли bonus                          | SELECT |
-
-
-### 4. Gap-классификация (severity)
-
-
-| gap_class                                                                                                           | severity      |
-| ------------------------------------------------------------------------------------------------------------------- | ------------- |
-| `missing_primary_entitlement`                                                                                       | critical      |
-| `missing_telegram_when_expected` (club rule есть, `in_chat=false OR in_channel=false`)                              | critical      |
-| `missing_bonus_product_entitlement` (`prior_purchase` выполнен, но bonus ent отсутствует)                           | high          |
-| `partial_module_access_unexpected` (есть entitlement на CB20, но `training_content` allowlist у́же ожидаемого rule) | high          |
-| `entitlement_present_but_invisible_in_ui` (resolver возвращает empty для root при active ent)                       | high          |
-| `prior_purchase_unmet` (bonus rule не сработал, потому что нет required_product_id у user)                          | informational |
-| `access_end_mismatch`                                                                                               | medium        |
-| `tariff_id_mismatch` (`ent.meta.tariff_id` ≠ `sub.tariff_id`)                                                       | medium        |
-| `telegram_link_missing` (`profiles.telegram_user_id IS NULL`) — нельзя выдать чисто invite                          | informational |
-| `ok`                                                                                                                | low           |
-
-
-### 5. Артефакты (read-only)
-
-1. `.lovable/proofs/audit_ideology_business_access_2026_05.md` — методология, SOT-чек-листы, сводка, ТОП проблемных кейсов.
-2. CSV: `/mnt/documents/audit_ideology_business_users.csv` — по строке на пару `(user, tariff)` со всеми C1–C10, gap_class, severity, recommended_action.
-3. CSV: `/mnt/documents/audit_ideology_business_missing_bonus.csv` — детализация по C6/C9 (какой product_id не выдан).
-4. `<presentation-artifact>` ссылки в финальном отчёте.
-
-### 6. Recommended actions (НЕ выполняем в этом patch'е)
-
-Для каждого gap указываем точечный canonical fix без запуска:
-
-- `missing_primary_entitlement` → перепрогон `grant-access-for-order` по `sub_order_id`.
-- `missing_telegram_when_expected` → manual reinvite через `telegram_access_queue` (`meta.source='reinvite'`) **только** при наличии `telegram_user_id`; иначе flow привязки бота.
-- `missing_bonus_product_entitlement` → `grant-access-for-order` re-run (он сам резолвит prior_purchase rules).
-- `partial_module_access_unexpected` → проверить, не висит ли stale partial entitlement из старого тарифа; ручной DML запрещён.
-- `entitlement_present_but_invisible_in_ui` → invalidate React Query кеша или resolver-баг (отдельный patch).
-- `access_end_mismatch` → выровнять через canonical writer (отдельный patch).
-
-## DoD
-
-- Все 5 артефактов сформированы.
-- В отчёте указано: размер когорты, распределение по gap_class+severity, ТОП-20 critical/high кейсов с email/product/rule_id, для каждого — recommended canonical action.
-- 0 DML, 0 вызовов `grant-access-for-order`, 0 Telegram-операций, 0 изменений `access_rules`/`entitlements`/`subscriptions_v2`/secrets/mode.
-- БД не менялась (linter и snapshot до/после совпадают).
-
-## Запрещено в этом патче
-
-- Любой INSERT/UPDATE/DELETE.
-- Вызов canonical writer'а или edge functions с побочными эффектами.
-- Изменение `access_rules`, `entitlements`, `subscriptions_v2`, `telegram_club_members`, `telegram_access_queue`.
-- Provider API, secrets/mode changes.
-- Касание других тарифов/продуктов вне ИДЕОЛОГИЯ и Бизнес-леди.
-
-## Уточнение перед execute
-
-Подтверди трактовку «тариф Бизнес»:
-(а) ИДЕОЛОГИЯ (Club, b018e9be…) — это и есть «Бизнес»-бандл, который ты имеешь в виду;
-(б) Бизнес-леди (CB20, 9bc81736…) — второй тариф;
-(в) проверять оба;
-(г) есть третий тариф «Бизнес», который я упустил — назови id.
-
-После approve выполню только шаги 1–5 (read-only), без recommended actions.
+1. F1/F2/F3 классифицированы как `confirmed_bug` / `false_positive` / `ui_not_verified` / `manual_review` (не «возможно нормально»).
+2. Для F1/F2 явно: видит ли BUSINESS training/history access; если нет — причина (нет entitlement / нет access_rule / resolver не возвращает / UI не показывает).
+3. Для F3 явно: должен ли быть TG-доступ, есть ли active platform access, реально ли in_chat/in_channel, требуется revoke / reinvite / refresh / no-action.
+4. Global sweep отдельно подсчитывает: missing BUSINESS training/history access; TG not revoked after expired; stale invite / stale verification; module entitlements instead of full access.
+5. Конкретные списки на выходе: кого через `grant-access-for-order`, кого через TG revoke queue, кого через TG reinvite queue, где нужен resolver/UI patch, где нужен `access_rules`/product_fulfillment config patch.
+6. Все 4 артефакта прошлого аудита перечислены с путями.
+7. 0 DML, 0 Telegram API, 0 provider API.
+8. Execute НЕ запускается; отдельным approve, по блокам (revoke → reinvite → grant), один за раз с verify между блоками.
