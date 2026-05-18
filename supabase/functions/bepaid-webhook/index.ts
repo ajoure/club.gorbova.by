@@ -1740,8 +1740,13 @@ Deno.serve(async (req) => {
           .eq('user_id', subV2.user_id)
           .maybeSingle();
 
+        // PATCH-RB1.2: when REBILL handled, payment must stay attached to REBILL-order,
+        // not parent. Route upsert order_id to rebillOrderIdFromFlow.
+        const stepEOrderId = (rebillHandled && rebillOrderIdFromFlow)
+          ? rebillOrderIdFromFlow
+          : orderV2Id;
         const subPayResult = await upsertPaymentV2(supabase, {
-            order_id: orderV2Id,
+            order_id: stepEOrderId,
             user_id: subV2.user_id,
             profile_id: profile?.id || null,
             amount: paymentAmount,
@@ -1757,9 +1762,32 @@ Deno.serve(async (req) => {
               bepaid_subscription_id: subscriptionId,
               provider_managed: true,
               bepaid_description: extractBepaidDescription(body),
+              ...(rebillHandled && rebillOrderIdFromFlow ? { rebill_order_id: rebillOrderIdFromFlow, step_e_routed_to_rebill: true } : {}),
             },
           }, '[WEBHOOK-SUBSCRIPTION]');
-        console.log('[WEBHOOK-SUBSCRIPTION] payments_v2', subPayResult.action, subPayResult.id);
+        console.log('[WEBHOOK-SUBSCRIPTION] payments_v2', subPayResult.action, subPayResult.id, 'order_id=', stepEOrderId);
+
+        // PATCH-RB1.2: post-check that payment is on REBILL order if rebill handled.
+        if (rebillHandled && rebillOrderIdFromFlow && transactionUid) {
+          const postCheck = await findPaymentByProviderUid(supabase, 'bepaid', String(transactionUid));
+          if (postCheck && postCheck.order_id !== rebillOrderIdFromFlow) {
+            await supabase.from('audit_logs').insert({
+              actor_type: 'system', actor_label: 'bepaid-webhook-rebill',
+              action: 'bepaid.rebill.payment_rebind_post_check_failed',
+              meta: {
+                branch: 'webhook_subscription_renewal',
+                rebill_order_id: rebillOrderIdFromFlow,
+                parent_order_id: orderV2Id,
+                payment_id: postCheck.id,
+                actual_order_id: postCheck.order_id,
+                provider_payment_id: transactionUid,
+                step_e_action: subPayResult.action,
+                severity: 'CRITICAL',
+              },
+            });
+            console.error('[WEBHOOK-SUBSCRIPTION] CRITICAL: payment.order_id != rebill_order_id post-STEP-E', postCheck);
+          }
+        }
 
         // NOTE (PATCH H2.1): entitlements insert/update and prior secondary
         // grant-access invoke removed. The single STEP A invocation above
