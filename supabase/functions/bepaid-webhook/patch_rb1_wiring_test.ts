@@ -20,19 +20,26 @@ const UID = "21613f63-dc85-406f-a8dd-34a936bc0784";
 const REBILL_NUM = buildRebillOrderNumber(UID);
 
 function noopDeps(overrides: Partial<RebillFlowDeps> = {}): RebillFlowDeps {
-  return {
+  // PATCH-RB1.2: stateful payment row so post-grant verify finds order_id=REBILL.
+  let pay: { id: string; order_id: string | null; transaction_type: string } | null = null;
+  const base: RebillFlowDeps = {
     findRebillOrderByOrderNumber: async () => null,
-    findMainPaymentByUid: async () => null,
+    findMainPaymentByUid: async () => pay as any,
     sumRefundsForPaymentUid: async () => 0,
     checkSbsMismatchBeforeRebill: async () => ({ mismatch: false }),
     insertRebillOrder: async (p: any) => ({ id: `rebill-fresh-${p.order_number}` }),
-    insertPaymentRow: async () => ({ payment_id: "pay-fresh" }),
-    updatePaymentOrderId: async () => {},
+    insertPaymentRow: async ({ rebill_order_id }) => {
+      pay = { id: "pay-fresh", order_id: rebill_order_id, transaction_type: "Платеж" };
+      return { payment_id: "pay-fresh" };
+    },
+    updatePaymentOrderId: async ({ rebill_order_id }) => {
+      if (pay) pay = { ...pay, order_id: rebill_order_id };
+    },
     invokeGrantAccess: async () => ({ success: true }),
     mergeOrderMeta: async () => {},
     writeAudit: async () => {},
-    ...overrides,
   };
+  return { ...base, ...overrides };
 }
 
 const parentOrder = {

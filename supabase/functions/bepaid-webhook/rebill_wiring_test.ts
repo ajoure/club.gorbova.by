@@ -13,18 +13,29 @@
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { runRebillFlow, type RebillFlowDeps } from "./rebill_flow.ts";
 
-const noopDeps: RebillFlowDeps = {
-  findRebillOrderByOrderNumber: () => Promise.resolve(null),
-  findMainPaymentByUid: () => Promise.resolve(null),
-  sumRefundsForPaymentUid: () => Promise.resolve(0),
-  checkSbsMismatchBeforeRebill: () => Promise.resolve({ mismatch: false }),
-  insertRebillOrder: (p: any) => Promise.resolve({ id: `rb-${p.order_number}` }),
-  insertPaymentRow: () => Promise.resolve({ payment_id: "pay-1" }),
-  updatePaymentOrderId: () => Promise.resolve(),
-  invokeGrantAccess: () => Promise.resolve({ success: true }),
-  mergeOrderMeta: () => Promise.resolve(),
-  writeAudit: () => Promise.resolve(),
-};
+// PATCH-RB1.2: stateful payment row so post-grant verify finds order_id=REBILL.
+function makeNoopDeps(): RebillFlowDeps {
+  let pay: { id: string; order_id: string | null; transaction_type: string } | null = null;
+  return {
+    findRebillOrderByOrderNumber: () => Promise.resolve(null),
+    findMainPaymentByUid: () => Promise.resolve(pay as any),
+    sumRefundsForPaymentUid: () => Promise.resolve(0),
+    checkSbsMismatchBeforeRebill: () => Promise.resolve({ mismatch: false }),
+    insertRebillOrder: (p: any) => Promise.resolve({ id: `rb-${p.order_number}` }),
+    insertPaymentRow: ({ rebill_order_id }) => {
+      pay = { id: "pay-1", order_id: rebill_order_id, transaction_type: "Платеж" };
+      return Promise.resolve({ payment_id: "pay-1" });
+    },
+    updatePaymentOrderId: ({ rebill_order_id }) => {
+      if (pay) pay = { ...pay, order_id: rebill_order_id };
+      return Promise.resolve();
+    },
+    invokeGrantAccess: () => Promise.resolve({ success: true }),
+    mergeOrderMeta: () => Promise.resolve(),
+    writeAudit: () => Promise.resolve(),
+  };
+}
+const noopDeps = makeNoopDeps();
 
 const baseInput = (mode: "off" | "dry_run" | "on") => ({
   mode,
@@ -59,7 +70,7 @@ Deno.test("Wiring: mode=on + materialized → proceedLegacy=false (short-circuit
   let legacyCalled = false;
   const legacyInvoker = () => { legacyCalled = true; };
 
-  const r = await runRebillFlow(noopDeps, baseInput("on"));
+  const r = await runRebillFlow(makeNoopDeps(), baseInput("on"));
   let rebillShortCircuit = false;
   if (!r.proceedLegacy) rebillShortCircuit = true;
   if (!rebillShortCircuit) legacyInvoker();

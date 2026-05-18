@@ -1500,6 +1500,7 @@ Deno.serve(async (req) => {
         );
         const rebillMode = resolveKillSwitchMode(Deno.env.get('BEPAID_REBILL_MATERIALIZATION'));
         let rebillHandled = false;
+        let rebillOrderIdFromFlow: string | null = null;
         if (rebillMode !== 'off' && paidCycles >= 2 && transactionUid && orderV2) {
           try {
             const deps = buildRebillDepsAdapter(supabase);
@@ -1533,11 +1534,10 @@ Deno.serve(async (req) => {
             console.log('[WEBHOOK-SUBSCRIPTION] REBILL flow decision=', rebillResult.decision, 'proceedLegacy=', rebillResult.proceedLegacy, 'mode=', rebillMode);
             if (!rebillResult.proceedLegacy) {
               rebillHandled = true;
+              rebillOrderIdFromFlow = rebillResult.rebill_order_id ?? null;
               // REBILL handled access. Skip legacy parent-order paid-update + STEP A grant.
-              // STEPS C/D/E (provider-sync of subscriptions_v2, provider_subscriptions, payments_v2 enrichment)
-              // remain valuable for cohort dashboards — they are non-destructive provider mirrors.
-              // We fall through into the existing PATCH H2.1 block but the legacy `grant-access-for-order`
-              // STEP A is short-circuited explicitly below via `rebillHandled` guard.
+              // STEP E payments_v2 upsert MUST route to the REBILL order, NOT parent
+              // (PATCH-RB1.2: prevent legacy STEP E from overwriting payment back to parent).
             }
           } catch (rebillErr) {
             // Engine itself threw (adapter-level transport). Audit and fall back to legacy.
@@ -1740,8 +1740,13 @@ Deno.serve(async (req) => {
           .eq('user_id', subV2.user_id)
           .maybeSingle();
 
+        // PATCH-RB1.2: when REBILL handled, payment must stay attached to REBILL-order,
+        // not parent. Route upsert order_id to rebillOrderIdFromFlow.
+        const stepEOrderId = (rebillHandled && rebillOrderIdFromFlow)
+          ? rebillOrderIdFromFlow
+          : orderV2Id;
         const subPayResult = await upsertPaymentV2(supabase, {
-            order_id: orderV2Id,
+            order_id: stepEOrderId,
             user_id: subV2.user_id,
             profile_id: profile?.id || null,
             amount: paymentAmount,
@@ -1757,9 +1762,32 @@ Deno.serve(async (req) => {
               bepaid_subscription_id: subscriptionId,
               provider_managed: true,
               bepaid_description: extractBepaidDescription(body),
+              ...(rebillHandled && rebillOrderIdFromFlow ? { rebill_order_id: rebillOrderIdFromFlow, step_e_routed_to_rebill: true } : {}),
             },
           }, '[WEBHOOK-SUBSCRIPTION]');
-        console.log('[WEBHOOK-SUBSCRIPTION] payments_v2', subPayResult.action, subPayResult.id);
+        console.log('[WEBHOOK-SUBSCRIPTION] payments_v2', subPayResult.action, subPayResult.id, 'order_id=', stepEOrderId);
+
+        // PATCH-RB1.2: post-check that payment is on REBILL order if rebill handled.
+        if (rebillHandled && rebillOrderIdFromFlow && transactionUid) {
+          const postCheck = await findPaymentByProviderUid(supabase, 'bepaid', String(transactionUid));
+          if (postCheck && postCheck.order_id !== rebillOrderIdFromFlow) {
+            await supabase.from('audit_logs').insert({
+              actor_type: 'system', actor_label: 'bepaid-webhook-rebill',
+              action: 'bepaid.rebill.payment_rebind_post_check_failed',
+              meta: {
+                branch: 'webhook_subscription_renewal',
+                rebill_order_id: rebillOrderIdFromFlow,
+                parent_order_id: orderV2Id,
+                payment_id: postCheck.id,
+                actual_order_id: postCheck.order_id,
+                provider_payment_id: transactionUid,
+                step_e_action: subPayResult.action,
+                severity: 'CRITICAL',
+              },
+            });
+            console.error('[WEBHOOK-SUBSCRIPTION] CRITICAL: payment.order_id != rebill_order_id post-STEP-E', postCheck);
+          }
+        }
 
         // NOTE (PATCH H2.1): entitlements insert/update and prior secondary
         // grant-access invoke removed. The single STEP A invocation above
@@ -2693,10 +2721,14 @@ Deno.serve(async (req) => {
             updatePaymentOrderId: isDryRun
               ? async () => { throw new Error('dry_run must not update payment'); }
               : async (input: any) => {
-                  const { error } = await supabase.from('payments_v2')
+                  // PATCH-RB1.2: verify affected_rows == 1.
+                  const { data, error } = await supabase.from('payments_v2')
                     .update({ order_id: input.rebill_order_id })
-                    .eq('id', input.payment_id);
+                    .eq('id', input.payment_id)
+                    .select('id');
                   if (error) throw new Error(`${error.code || ''}: ${error.message}`);
+                  const affected = Array.isArray(data) ? data.length : 0;
+                  if (affected !== 1) throw new Error(`payment_rebind_failed:affected_rows=${affected}`);
                 },
             invokeGrantAccess: isDryRun
               ? async () => { throw new Error('dry_run must not invoke grant'); }

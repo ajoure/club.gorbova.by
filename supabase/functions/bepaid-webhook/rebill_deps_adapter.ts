@@ -155,11 +155,18 @@ export function buildRebillDepsAdapter(supabase: SupabaseClient): RebillFlowDeps
     },
 
     updatePaymentOrderId: async ({ payment_id, rebill_order_id }) => {
-      const { error } = await supabase
+      // PATCH-RB1.2: verify affected_rows == 1, otherwise upstream must audit
+      // payment_rebind_failed and downgrade the decision.
+      const { data, error } = await supabase
         .from('payments_v2')
         .update({ order_id: rebill_order_id })
-        .eq('id', payment_id);
+        .eq('id', payment_id)
+        .select('id');
       if (error) throw new Error(`payments_v2.update: ${error.message}`);
+      const affected = Array.isArray(data) ? data.length : 0;
+      if (affected !== 1) {
+        throw new Error(`payment_rebind_failed:affected_rows=${affected}`);
+      }
     },
 
     invokeGrantAccess: async (rebillOrderId) => {
