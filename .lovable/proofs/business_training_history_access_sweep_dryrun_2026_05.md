@@ -1,6 +1,6 @@
 # BUSINESS training/history access sweep — DRY-RUN proof
 
-**Snapshot:** `2026-05-18T12:12:24+00:00`  
+**Snapshot:** `2026-05-18T12:14:00+00:00`  
 **Режим:** READ-ONLY. 0 DML.
 
 ## 1. Scope
@@ -69,8 +69,8 @@ Action CSV: `/mnt/documents/audit_business_ideology_fix_dryrun_rows.csv`
 
 | gap_class | count |
 |---|---:|
-| `telegram_membership_not_revoked_after_access_expired` | 187 |
-| `sql_access_exists_but_ui_missing` | 63 |
+| `telegram_membership_not_revoked_after_access_expired` | 185 |
+| `sql_access_exists_but_ui_missing` | 65 |
 | `access_end_mismatch` | 20 |
 | `tariff_id_mismatch` | 8 |
 | `missing_business_training_history_access` | 8 |

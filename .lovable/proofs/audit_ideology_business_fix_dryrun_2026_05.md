@@ -1,6 +1,6 @@
 # PATCH-AUDIT-BUSINESS-IDEOLOGY-FIX-2026-05 — DRY-RUN proof
 
-**Snapshot:** `2026-05-18T12:12:24+00:00`  
+**Snapshot:** `2026-05-18T12:14:00+00:00`  
 **Режим:** READ-ONLY dry-run. Execute не запускался.
 
 ## 1. Что выполнено
@@ -29,8 +29,8 @@
 
 | gap_class | count |
 |---|---:|
-| `telegram_membership_not_revoked_after_access_expired` | 187 |
-| `sql_access_exists_but_ui_missing` | 63 |
+| `telegram_membership_not_revoked_after_access_expired` | 185 |
+| `sql_access_exists_but_ui_missing` | 65 |
 | `access_end_mismatch` | 20 |
 | `tariff_id_mismatch` | 8 |
 | `missing_business_training_history_access` | 8 |
@@ -46,20 +46,20 @@
 
 | email | case_status | gap_class | severity | planned_action | notes |
 |---|---|---|---|---|---|
-| `katrinkap777@rambler.ru` | `confirmed_sql` | `access_end_mismatch` | `medium` | `data_repair_canonical_grant` | mandatory fixture from screenshots |
+| `katrinkap777@rambler.ru` | `confirmed_sql` | `access_end_mismatch` | `medium` | `data_repair_canonical_grant` | mandatory fixture from screenshots; SQL data gap part |
+| `katrinkap777@rambler.ru` | `ui_not_verified` | `sql_access_exists_but_ui_missing` | `high` | `ui_resolver_patch_needed` | mandatory fixture: screenshot indicates missing visibility; source_problem=mixed |
 
 ### F2
 
 | email | case_status | gap_class | severity | planned_action | notes |
 |---|---|---|---|---|---|
-| `alena.gudvilovich@bk.ru` | `confirmed_sql` | `access_end_mismatch` | `medium` | `data_repair_canonical_grant` | mandatory fixture from screenshots |
+| `alena.gudvilovich@bk.ru` | `confirmed_sql` | `access_end_mismatch` | `medium` | `data_repair_canonical_grant` | mandatory fixture from screenshots; SQL data gap part |
+| `alena.gudvilovich@bk.ru` | `ui_not_verified` | `sql_access_exists_but_ui_missing` | `high` | `ui_resolver_patch_needed` | mandatory fixture: screenshot indicates missing visibility; source_problem=mixed |
 
 ### F3
 
 | email | case_status | gap_class | severity | planned_action | notes |
 |---|---|---|---|---|---|
-| `tkoffise@gmail.com` | `confirmed_bug` | `telegram_membership_not_revoked_after_access_expired` | `critical` | `telegram_revoke_needed_via_canonical_queue` | platform_access_absent_or_expired_but_member_is_in_chat_or_ok |
-| `tkoffise@gmail.com` | `confirmed_bug` | `telegram_membership_not_revoked_after_access_expired` | `critical` | `telegram_revoke_needed_via_canonical_queue` | platform_access_absent_or_expired_but_member_is_in_chat_or_ok |
 | `tkoffise@gmail.com` | `confirmed_bug` | `telegram_membership_not_revoked_after_access_expired` | `critical` | `telegram_revoke_needed_via_canonical_queue` | platform_access_absent_or_expired_but_member_is_in_chat_or_ok |
 | `tkoffise@gmail.com` | `confirmed_bug` | `telegram_membership_not_revoked_after_access_expired` | `critical` | `telegram_revoke_needed_via_canonical_queue` | platform_access_absent_or_expired_but_member_is_in_chat_or_ok |
 
