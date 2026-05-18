@@ -1,244 +1,247 @@
 да, согласен, с учетом правок:
 
-1. **Case A — это не “частичный успех”, а контрактное нарушение.**  
-Если REBILL-order создан, но payments_v2.order_id остался на parent, это должно быть:
+1. **Не подтверждаю трактовку, что “ИДЕОЛОГИЯ” = “Бизнес”.**  
+Ранее в данных уже фигурировал отдельный тариф:
 
-bepaid.rebill.materialized_partial
+Gorbova Club — BUSINESS / tariff_id = 7c748940…
 
-или
+Поэтому в discovery нужно проверять **3 группы**, если все они существуют:
 
-bepaid.rebill.payment_rebind_failed
+1. Gorbova Club — ИДЕОЛОГИЯ / b018e9be…
 
-А не обычный bepaid.rebill.materialized.
+2. CB20 — Бизнес-леди / 9bc81736…
 
-2. **Нельзя ждать ещё один такой же случай.**  
-mode=on можно оставить, но PATCH-RB1.2 нужно делать сразу. Это не новый research, а обязательный фикс payment-rebind.
-3. **bepaid.rebill.materialized должен писаться только после полного успеха:**
+3. Gorbova Club — BUSINESS / 7c748940… / если активен
 
-REBILL-order создан
+2. Добавить **Stage 0 — Tariff resolver**:
 
-payment.order_id = [REBILL-order.id](http://REBILL-order.id)
+Перед основным аудитом сделать SELECT по tariffs/products/tariff_offers:
 
-grant-access-for-order прошёл / либо корректно skipped по правилам
+- name ILIKE '%ИДЕОЛОГ%'
 
-Если payment rebind не выполнен — materialized писать нельзя.
+- name ILIKE '%БИЗНЕС%'
 
-**Что отправить Lovable**
+- name ILIKE '%BUSINESS%'
 
-План принимаю с правками.
+- name ILIKE '%Бизнес-леди%'
 
 &nbsp;
 
-Case A считать не частичным успехом, а нарушением основного контракта:
+В proof явно указать:
+
+tariff_id | tariff_name | product_id | product_name | active | included_in_audit | reason
+
+3. Если 7c748940… существует и активен, **включить его в audit scope**.  
+Иначе есть риск снова проверить не тот “Бизнес”.
+4. paid orders без активного subscription/entitlement не считать автоматически активным доступом. Использовать их только как источник покупки и проверки, должен ли был быть создан доступ.
+5. Для Telegram проверять не только telegram_club_members, но и фактическую связку:
+
+telegram_club_members
+
+telegram_channel_members
+
+telegram_access
+
+telegram_access_queue
+
+6. Убрать из плана строку <presentation-artifact> — тут не нужен presentation artifact. Достаточно MD + CSV.
+7. Добавить контрольный блок:
+
+Если по любому включённому тарифу access_rules отсутствуют или пустые:
+
+- не считать это PASS;
+
+- пометить как access_rules_missing / no_rules_configured;
+
+- severity = medium/high в зависимости от наличия продаж по тарифу.
+
+Команда для Lovable:
+
+План подтверждаю с правками.
 
 &nbsp;
 
-successful repeat payment должен быть:
-
-payment → REBILL-order
+Перед аудитом обязательно выполнить Stage 0 — Tariff resolver.
 
 &nbsp;
 
-Если REBILL-order создан, но payment остался на parent, это не PASS.
+Не считать ИДЕОЛОГИЮ автоматически тарифом “Бизнес”.
+
+Проверить, существует ли отдельный Gorbova Club — BUSINESS tariff_id=7c748940… или иной активный тариф с названием Business/Бизнес.
 
 &nbsp;
 
-Требую немедленно запустить PATCH-RB1.2.
+В audit scope включить:
+
+1. ИДЕОЛОГИЯ / b018e9be…
+
+2. Бизнес-леди / 9bc81736…
+
+3. Gorbova Club BUSINESS / 7c748940… — если найден и активен.
 
 &nbsp;
 
-PATCH-RB1.2 — fix payment rebind in runRebillFlow
+Дальше выполнить read-only audit по плану:
+
+- access_rules inventory;
+
+- cohort;
+
+- per-user checks C1–C10;
+
+- gap_class + severity;
+
+- final status board;
+
+- CSV.
 
 &nbsp;
 
-Цель:
+Запрещено:
 
-исправить ветку, где runRebillFlow создаёт REBILL-order и даже пишет materialized audit, но не перепривязывает payments_v2.order_id на REBILL-order.
-
-&nbsp;
-
-Обязательные изменения:
+DML, grant-access-for-order, Telegram actions, provider API, changes to access_rules/entitlements/subscriptions_v2/secrets/mode.
 
 &nbsp;
 
-1. `bepaid.rebill.materialized` писать только после проверки:
+Artifacts:
 
-   - REBILL-order существует;
+.lovable/proofs/audit_ideology_business_access_2026_[05.md](http://05.md)
 
-   - payment row существует;
+/mnt/documents/audit_ideology_business_users.csv
 
-   - payments_v2.order_id = [REBILL-order.id](http://REBILL-order.id).
+/mnt/documents/audit_ideology_business_missing_bonus.csv
 
-&nbsp;
-
-2. Если payment row уже существует на parent:
-
-   - выполнить UPDATE payments_v2.order_id → [REBILL-order.id](http://REBILL-order.id);
-
-   - проверить affected_rows = 1;
-
-   - если affected_rows != 1 → audit `bepaid.rebill.payment_rebind_failed`, не писать materialized.
+Ключевое: **проверять не два, а три возможных тарифа**, если отдельный BUSINESS действительно есть в базе.
 
 &nbsp;
 
-3. Если payment row ещё не существует в момент materialization:
+План: PATCH-AUDIT-BUSINESS-IDEOLOGY-DISCOVERY-2026-05 (READ-ONLY)
 
-   - не терять это молча;
+## Цель
 
-   - либо передать REBILL-order id в последующую вставку payment;
+Полное discovery по всей базе: проверить, что каждый клиент с активной покупкой тарифа **ИДЕОЛОГИЯ** (Gorbova Club, `b018e9be-…`) и/или **Бизнес-леди** (CB20, `9bc81736-…`) фактически получил весь обещанный SOT-набор доступов и реально видит его в личном кабинете. Никаких изменений в БД, edge-функциях, секретах, Telegram, провайдере. Только SELECT + сводный отчёт.
 
-   - либо выполнить deferred rebind после создания payment;
+## SOT-набор (что должно быть у держателя тарифа)
 
-   - обязательно audit `bepaid.rebill.payment_rebind_pending`;
+Источник правды — `public.access_rules` (`is_active=true`) по tariff_id.
 
-   - затем финальный audit `bepaid.rebill.materialized` только после успешного rebind.
+### ИДЕОЛОГИЯ (`b018e9be-53ce-4840-8034-e09f8e319080`, product = Gorbova Club `11c9f1b8…`)
 
-&nbsp;
+1. **Primary club access** — entitlement на `11c9f1b8…` (Gorbova Club), активная `subscriptions_v2`.
+2. **Telegram (chat+channel клуба)** — `access_rules.grant_target_type='club'` для Gorbova Club; факт = `telegram_club_members` (`in_chat=true AND in_channel=true`, `access_status='ok'`).
+3. **База знаний клуба** — `training_content` rule `384a670b…` (`access_mode=partial`, 19 разрешённых `module_ids`, `match_purchase_month=true`).
+4. **Бонус: 9 продуктов CB20+модули** — `product_access` rule `f59d7b39…` (CB20 root + 8 модулей), условие `prior_purchase per_product`.
+5. **Бонус: «Подоходный налог с физлиц»** (`4fc18564…`) — `product_access` rule `8bac4a16…`, условие `prior_purchase`.
+6. `**section_access` «Нейросеть»** — rule `6fedf21d…`.
+7. (доп. правила в `access_rules` — добираем полным списком в шаге 1.2).
 
-4. Legacy parent branch не должен финализировать payment на parent после успешного REBILL-order.
+### Бизнес-леди (`9bc81736…`, product = CB20 `7101ed3c…`)
 
-   Если runRebillFlow handled=true, дальнейшая legacy-привязка к parent запрещена.
+1. **Primary CB20 access** — entitlement на `7101ed3c…`.
+2. **База знаний CB20** — `training_content` rule `fc9e584e…` (`access_mode=partial`, 28 `module_ids`).
+3. (доп. правила — добираем полным списком).
 
-&nbsp;
+> Принцип «default-deny»: отсутствие явного правила ≠ «должен быть доступ». Telegram-grant ожидается ТОЛЬКО там, где есть `access_rules` с `grant_target_type='club'` для product_id.
 
-5. Добавить regression tests:
+## Когорта
 
-   - payment существует ДО REBILL flow → rebind successful;
+```
+orders_v2 paid с tariff_id ∈ {ИДЕОЛОГИЯ, Бизнес-леди}
+  UNION
+subscriptions_v2 (active|trial|past_due|canceled с access_end_at > now())
+  с tariff_id ∈ {…}
+  UNION
+entitlements (active) c meta.tariff_id ∈ {…}
+```
 
-   - payment создаётся ПОСЛЕ REBILL row, но до финального audit → rebind successful;
+Резолв `user_id` через `orders_v2.user_id` / `subscriptions_v2.user_id` / `entitlements.user_id`, fallback profiles.
 
-   - payment отсутствует → `payment_rebind_pending/failed`, НЕ `materialized`;
+## Этапы (только SELECT)
 
-   - affected_rows=0 → `payment_rebind_failed`, НЕ `materialized`;
+### 1. Inventory
 
-   - successful materialization всегда означает `payments_v2.order_id = rebill_order.id`.
+- 1.1 Полный список `access_rules` для обоих tariff_id (rule_id, target, conditions, duration_days).
+- 1.2 Список `training_modules` под каждый `training_content` rule (для дальнейшей проверки видимости).
+- 1.3 Список `target_product_ids` бонусных `product_access` rules.
 
-&nbsp;
+### 2. Когорта
 
-6. Деплой `bepaid-webhook` после зелёных тестов.
+- 2.1 SELECT по `orders_v2` (paid, не `meta.source='rule_engine'`) + `subscriptions_v2` + `entitlements`. Собрать distinct `(user_id, tariff_id)`.
+- 2.2 Резолв email/имя через `profiles`.
 
-&nbsp;
+### 3. Per-user проверки (для каждой пары `user × tariff`)
 
-PATCH-RB3 — repair Case A
 
-&nbsp;
+| Чек                                                                | SOT                                                                                                                                   | Метод  |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| C1. Primary entitlement                                            | `entitlements` active на product_id тарифа                                                                                            | SELECT |
+| C2. Subscription окно (если recurring)                             | `subscriptions_v2.access_end_at > now()`                                                                                              | SELECT |
+| C3. `ent.expires_at` ↔ `sub.access_end_at` δ ≤ 24h                 | оба                                                                                                                                   | SELECT |
+| C4. `ent.meta.tariff_id` == `sub.tariff_id`                        | оба                                                                                                                                   | SELECT |
+| C5. Telegram (только если есть club rule)                          | `telegram_club_members` (`in_chat`, `in_channel`, `access_status`)                                                                    | SELECT |
+| C6. Bonus product entitlements (CB20+модули / Подоходный)          | по каждому `target_product_id` rule с `prior_purchase` — entitlement создан?                                                          | SELECT |
+| C7. `training_content` allowlist соблюдён (база знаний)            | `useSidebarModules`/`resolveTrainingContentFilter` логика воспроизведена SQL'ом: active ent → allowed_module_ids → UI должен показать | SELECT |
+| C8. `section_access` «Нейросеть» (только ИДЕОЛОГИЯ)                | `access_rules` + `section_access` factual                                                                                             | SELECT |
+| C9. UI-видимость в библиотеке                                      | для каждого `target_product_id` из C6 — есть active entitlement (см. `cabinet-visibility-entitlement-dependency`)                     | SELECT |
+| C10. Историческая CB1 (legacy «Ценный бухгалтер 1 ступень» до 2.0) | сверка с orders_v2 prior_purchase (`required_product_id`) — выполнено ли условие, и если да — выдан ли bonus                          | SELECT |
 
-После RB1.2 или параллельно отдельным execute:
 
-&nbsp;
+### 4. Gap-классификация (severity)
 
-- payment `f2892a00-5731-4adb-97d8-ff8d3472f953`
 
-- provider uid `111dfc17-80c2-477c-8ecd-9b768744e8b7`
+| gap_class                                                                                                           | severity      |
+| ------------------------------------------------------------------------------------------------------------------- | ------------- |
+| `missing_primary_entitlement`                                                                                       | critical      |
+| `missing_telegram_when_expected` (club rule есть, `in_chat=false OR in_channel=false`)                              | critical      |
+| `missing_bonus_product_entitlement` (`prior_purchase` выполнен, но bonus ent отсутствует)                           | high          |
+| `partial_module_access_unexpected` (есть entitlement на CB20, но `training_content` allowlist у́же ожидаемого rule) | high          |
+| `entitlement_present_but_invisible_in_ui` (resolver возвращает empty для root при active ent)                       | high          |
+| `prior_purchase_unmet` (bonus rule не сработал, потому что нет required_product_id у user)                          | informational |
+| `access_end_mismatch`                                                                                               | medium        |
+| `tariff_id_mismatch` (`ent.meta.tariff_id` ≠ `sub.tariff_id`)                                                       | medium        |
+| `telegram_link_missing` (`profiles.telegram_user_id IS NULL`) — нельзя выдать чисто invite                          | informational |
+| `ok`                                                                                                                | low           |
 
-- parent `91b98bf3-282a-4ef0-854d-f71a86577139`
 
-- REBILL-order `06f22ceb-9792-464e-adfb-d15519352d21`
+### 5. Артефакты (read-only)
 
-&nbsp;
+1. `.lovable/proofs/audit_ideology_business_access_2026_05.md` — методология, SOT-чек-листы, сводка, ТОП проблемных кейсов.
+2. CSV: `/mnt/documents/audit_ideology_business_users.csv` — по строке на пару `(user, tariff)` со всеми C1–C10, gap_class, severity, recommended_action.
+3. CSV: `/mnt/documents/audit_ideology_business_missing_bonus.csv` — детализация по C6/C9 (какой product_id не выдан).
+4. `<presentation-artifact>` ссылки в финальном отчёте.
 
-Разрешён только financial repair:
+### 6. Recommended actions (НЕ выполняем в этом patch'е)
 
-- UPDATE payments_v2.order_id с parent → REBILL-order;
+Для каждого gap указываем точечный canonical fix без запуска:
 
-- grant-access-for-order НЕ вызывать;
-
-- subscriptions_v2 / entitlements НЕ трогать;
-
-- Telegram НЕ трогать;
-
-- provider API НЕ вызывать.
-
-&nbsp;
-
-Причина:
-
-доступ уже продлён canonical writer'ом до 2026-06-17 12:00Z.
-
-&nbsp;
-
-Proof:
-
-- `.lovable/proofs/patch_rb1_2_payment_rebind_fix_2026_05.md`
-
-- `.lovable/proofs/patch_rb3_case_a_payment_rebind_repair_2026_05.md`
-
-&nbsp;
-
-Mode:
-
-- `BEPAID_REBILL_MATERIALIZATION=on` оставить включённым, но PATCH-RB1.2 выполнить срочно.
-
-- Если после RB1.2 ещё раз появится REBILL-order без payment rebind — rollback mode в dry_run/off и стоп.
-
-Коротко: base_price исправлен, но теперь найден второй баг — **REBILL создаётся, а payment не переезжает**. Это надо чинить в коде сразу, а Case A перепривязать финансово без повторного grant.
-
-&nbsp;
-
-План: PATCH-RB1.1 runtime-watch — read-only verify по двум live REBILL после фикса base_price
-
-Только наблюдение, ноль DML, ноль изменений edge-функций/секретов.
-
-## Что найдено
-
-После deploy фикса `base_price` (PATCH-RB1.1) в окне `[2026-05-17T13:45Z; сейчас]` найдено **два** реальных REBILL-события через новый flow с `mode=on`:
-
-
-| #   | дата (UTC)          | sbs                  | provider_payment_uid                 | parent_order                         | REBILL-order                                               | payment_id                           |
-| --- | ------------------- | -------------------- | ------------------------------------ | ------------------------------------ | ---------------------------------------------------------- | ------------------------------------ |
-| A   | 2026-05-17 18:01:10 | sbs_e1f92ff0e3fa4bff | 111dfc17-80c2-477c-8ecd-9b768744e8b7 | 91b98bf3-282a-4ef0-854d-f71a86577139 | 06f22ceb-9792-464e-adfb-d15519352d21 (REBILL-111dfc17-80c) | f2892a00-5731-4adb-97d8-ff8d3472f953 |
-| B   | 2026-05-18 07:15:22 | sbs_9d30ab4a6e029b61 | e83818b8-10f6-46fc-9cec-cbb9043555ab | 0ecbeebd-493f-4672-a900-403da0365caf | 36d690fb-8b3b-4d11-8b17-79bcac7c0d5c (REBILL-e83818b8-10f) | fa537e59-27cd-4858-b950-412a29ca3e44 |
-
-
-## Чек-лист (7 пунктов)
-
-
-| #   | Проверка                                                                                                                               | Case A                                                                                     | Case B                                                                                         |
-| --- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| 1   | `bepaid.rebill.materialized` появился (без `_partial`)                                                                                 | ✅                                                                                          | ✅                                                                                              |
-| 2   | REBILL-order создан, `status=paid`, `base_price=final_price=paid_amount=250.00`                                                        | ✅                                                                                          | ✅                                                                                              |
-| 3   | `payments_v2.order_id` указывает на REBILL-order                                                                                       | ❌ payment остался на parent `91b98bf3…`                                                    | ✅ `fa537e59→36d690fb`                                                                          |
-| 4   | Parent-order не получил payment                                                                                                        | ❌ parent держит payment `f2892a00…`                                                        | ✅                                                                                              |
-| 5   | `grant-access-for-order` отработал успешно                                                                                             | ✅ extended до `2026-06-17 12:00Z`, `primary_entitlement_verified=true`, ledger writes есть | ✅ webhook → `bepaid.webhook.canonical_writer_only` + `link_order_processed` после materialized |
-| 6   | Нет `dispatcher_error` / `sbs_mismatch` / `skip_blocked_stale_access` / `materialized_partial` / `conflict_uid` / `skip_grant_blocked` | ✅ 0 событий                                                                                | ✅ 0 событий                                                                                    |
-| 7   | `BEPAID_REBILL_MATERIALIZATION=on` остался                                                                                             | ✅ secret присутствует, оба materialized с `meta.mode='on'`                                 | ✅                                                                                              |
-
-
-## Главное наблюдение (новый sub-bug, не базовый base_price)
-
-Case A — частичный успех:
-
-- REBILL-order создан корректно (base_price есть → фикс работает).
-- Grant отработал — доступ продлён каноническим writer'ом.
-- НО `payments_v2.111dfc17….order_id` НЕ перепривязан на REBILL → **payment всё ещё склеен с parent**.
-- В audit нет `bepaid.rebill.skipped_payment_rebind`, нет `dispatcher_error` — rebind тихо не выполнился, события об этом нет.
-
-Case B — полный успех, все 7 пунктов зелёные.
-
-Разница тайминга: в A payment-row создалась через ~360 ms после REBILL-row и за 12 s до `materialized`. В B payment-row создалась за 260 ms ДО REBILL-row. Это намёк на race условие или ветку, где `runRebillFlow` не вызывает payment-repoint, если payment ещё не существует в момент materialization (но вообще не должно — webhook должен сам инициировать).
-
-## Вердикт runtime-watch
-
-- Фикс `base_price` (PATCH-RB1.1) работает: больше нет `materialized_partial`, нет ошибок dispatcher/sbs/conflict.
-- Контракт «отдельная REBILL-сделка на каждый repeat payment» выполняется в `orders_v2` для обоих кейсов.
-- Контракт «payment.order_id → REBILL» выполняется для Case B, нарушен для Case A.
-- Bullet rollback (вернуть secret в `dry_run`) НЕ запускаю — это не регресс по сравнению с pre-PATCH-RB1.1 (там было хуже: REBILL вообще не создавался). Финансово Case A в том же состоянии, что и три исторических кейса в PATCH-RB2.
-- Secret оставлен `on`.
-
-## Что предлагаю дальше (отдельными патчами, не сейчас)
-
-1. **PATCH-RB1.2 (code, обязательный):** диагностика и фикс ветки `runRebillFlow`, где `payments_v2.order_id` не получает rebind. Добавить явный audit `bepaid.rebill.skipped_payment_rebind` или `payment_rebind_failed` с причиной, чтобы такие случаи не пропадали тихо. Покрыть тестом (payment вставляется ПОСЛЕ REBILL-row, но ДО materialization — это сценарий Case A).
-2. **PATCH-RB3 (financial repair, отдельно от RB1.2):** перепривязать `payments_v2.f2892a00….order_id` с `91b98bf3…` → `06f22ceb…`. Grant НЕ вызывать — доступ уже продлён каноническим writer'ом до `2026-06-17 12:00Z`. Те же гарантии и форма, что и в PATCH-RB2 case 2 (Ольга Черкашина), proof-only DML.
-3. Продолжать runtime-watch на следующие live repeat payments. Триггер немедленного rollback `on→dry_run` сохраняется при: `materialized_partial` / `dispatcher_error` / `sbs_mismatch` / `conflict_uid` / повторении приклейки payment к parent на ≥1 дополнительном кейсе.
-
-## DoD данного watch-цикла
-
-- Зафиксированы оба live кейса с фактическими ID и таймштампами.
-- 7-пунктовый чек-лист пройден явно по каждому.
-- Найден и описан новый sub-bug (rebind), без попытки фикса в этом цикле.
-- Secret подтверждён `on`, никаких изменений в БД/коде/секретах не сделано.
-- Будет создан proof-файл `.lovable/proofs/patch_rb1_1_runtime_watch_2026_05.md` с фактическими SQL-выдержками и решением «оставить on, завести RB1.2 + RB3».
-
-## Запрещено в этом цикле
-
-DML, edit edge functions, secrets/mode changes, provider API, Telegram, `grant-access-for-order` ручной вызов, ручные правки subscriptions_v2/entitlements/access_rules/payments_v2.
+- `missing_primary_entitlement` → перепрогон `grant-access-for-order` по `sub_order_id`.
+- `missing_telegram_when_expected` → manual reinvite через `telegram_access_queue` (`meta.source='reinvite'`) **только** при наличии `telegram_user_id`; иначе flow привязки бота.
+- `missing_bonus_product_entitlement` → `grant-access-for-order` re-run (он сам резолвит prior_purchase rules).
+- `partial_module_access_unexpected` → проверить, не висит ли stale partial entitlement из старого тарифа; ручной DML запрещён.
+- `entitlement_present_but_invisible_in_ui` → invalidate React Query кеша или resolver-баг (отдельный patch).
+- `access_end_mismatch` → выровнять через canonical writer (отдельный patch).
+
+## DoD
+
+- Все 5 артефактов сформированы.
+- В отчёте указано: размер когорты, распределение по gap_class+severity, ТОП-20 critical/high кейсов с email/product/rule_id, для каждого — recommended canonical action.
+- 0 DML, 0 вызовов `grant-access-for-order`, 0 Telegram-операций, 0 изменений `access_rules`/`entitlements`/`subscriptions_v2`/secrets/mode.
+- БД не менялась (linter и snapshot до/после совпадают).
+
+## Запрещено в этом патче
+
+- Любой INSERT/UPDATE/DELETE.
+- Вызов canonical writer'а или edge functions с побочными эффектами.
+- Изменение `access_rules`, `entitlements`, `subscriptions_v2`, `telegram_club_members`, `telegram_access_queue`.
+- Provider API, secrets/mode changes.
+- Касание других тарифов/продуктов вне ИДЕОЛОГИЯ и Бизнес-леди.
+
+## Уточнение перед execute
+
+Подтверди трактовку «тариф Бизнес»:
+(а) ИДЕОЛОГИЯ (Club, b018e9be…) — это и есть «Бизнес»-бандл, который ты имеешь в виду;
+(б) Бизнес-леди (CB20, 9bc81736…) — второй тариф;
+(в) проверять оба;
+(г) есть третий тариф «Бизнес», который я упустил — назови id.
+
+После approve выполню только шаги 1–5 (read-only), без recommended actions.
