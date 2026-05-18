@@ -481,6 +481,33 @@ export async function runRebillFlow(
   // 3f) Invoke grant.
   const grant = await safeInvokeGrant(deps, rebillOrderId);
   if (grant.ok) {
+    // PATCH-RB1.2: post-rebind verification BEFORE writing materialized.
+    // payments_v2.order_id must equal rebill_order_id; otherwise downgrade.
+    const verify = await deps.findMainPaymentByUid(input.payment.uid);
+    if (!verify || verify.order_id !== rebillOrderId) {
+      await deps.mergeOrderMeta({
+        orderId: rebillOrderId,
+        patch: { materialization_status: "partial_payment_rebind_post_check_failed",
+          manual_review: true,
+          last_post_check_payment_id: verify?.id ?? null,
+          last_post_check_order_id: verify?.order_id ?? null,
+          last_attempt_at: new Date().toISOString() },
+      });
+      await deps.writeAudit({
+        action: "bepaid.rebill.payment_rebind_post_check_failed",
+        meta: { ...baseMeta, decision: "materialized_partial",
+          rebill_order_id: rebillOrderId,
+          payment_id: verify?.id ?? null,
+          actual_order_id: verify?.order_id ?? null,
+          phase: "post_grant_verify",
+          severity: "CRITICAL" },
+      });
+      return {
+        decision: "materialized_partial", mode, proceedLegacy: false,
+        rebill_order_id: rebillOrderId, grant_result: grant.result,
+        reason: "payment_rebind_post_check_failed",
+      };
+    }
     await deps.mergeOrderMeta({
       orderId: rebillOrderId,
       patch: { materialization_status: "success", grant_status: "success",
