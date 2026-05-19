@@ -550,19 +550,22 @@ export function PlaceholdersCatalogTab() {
                       const isOpen = expanded.has(t.id);
                       const settings = rowSettings.get(t.id) ?? { format: null, caseModifier: null };
                       const dirty = !isDefault(rowSettings.get(t.id));
-                      const isRuntime = !t.field_public_id;
-                      const placeholder = isRuntime
-                        ? `{{${t.token_key}}}`
-                        : buildFieldPlaceholder(
-                            t.field_public_id!,
-                            settings.format,
-                            settings.caseModifier,
-                          );
+                      const isPostponed = isPostponedNoSot(t.category, t.token_key);
+                      const isRuntime = !t.field_public_id && !isPostponed;
+                      const placeholder = isPostponed
+                        ? ""
+                        : (isRuntime
+                          ? `{{${t.token_key}}}`
+                          : buildFieldPlaceholder(
+                              t.field_public_id!,
+                              settings.format,
+                              settings.caseModifier,
+                            ));
                       const kind = classifyDataType(t.field_data_type ?? t.data_type);
 
                       return (
                         <Fragment key={t.id}>
-                          <TableRow className="hover:bg-muted/40 align-top">
+                          <TableRow className={cn("hover:bg-muted/40 align-top", isPostponed && "opacity-70")}>
                             <TableCell className="p-1">
                               <Button
                                 size="icon" variant="ghost" className="h-6 w-6"
@@ -583,7 +586,19 @@ export function PlaceholdersCatalogTab() {
                               )}
                             </TableCell>
                             <TableCell className="py-2">
-                              {isRuntime ? (
+                              {isPostponed ? (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge variant="outline" className="text-[10px] cursor-help border-dashed text-muted-foreground">
+                                      нет источника
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent className="max-w-xs">
+                                    Поле не имеет источника данных в модели исполнителя, поэтому пока не является рабочим FLD-плейсхолдером.
+                                    <code className="block mt-1">{t.token_key}</code>
+                                  </TooltipContent>
+                                </Tooltip>
+                              ) : isRuntime ? (
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <Badge variant="outline" className="font-mono text-[10px] cursor-help">
@@ -608,7 +623,9 @@ export function PlaceholdersCatalogTab() {
                               })()}
                             </TableCell>
                             <TableCell className="py-2">
-                              {isRuntime ? (
+                              {isPostponed ? (
+                                <span className="text-[10px] text-muted-foreground italic">недоступно — нет SOT</span>
+                              ) : isRuntime ? (
                                 <span className="text-[10px] text-muted-foreground italic">runtime — без модификаторов</span>
                               ) : (
                                 <RowSettingsCell
@@ -624,13 +641,17 @@ export function PlaceholdersCatalogTab() {
                                 : <span className="text-muted-foreground/60 italic">— нет примера —</span>}
                             </TableCell>
                             <TableCell className="py-2">
-                              <code className="text-[11px] text-foreground/90 break-all font-mono">
-                                {placeholder}
-                              </code>
+                              {isPostponed ? (
+                                <span className="text-[11px] text-muted-foreground/60 italic">— не используйте в шаблонах —</span>
+                              ) : (
+                                <code className="text-[11px] text-foreground/90 break-all font-mono">
+                                  {placeholder}
+                                </code>
+                              )}
                             </TableCell>
                             <TableCell className="text-right py-2">
                               <div className="flex justify-end gap-0.5">
-                                {dirty && (
+                                {!isPostponed && dirty && (
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <Button
@@ -643,17 +664,19 @@ export function PlaceholdersCatalogTab() {
                                     <TooltipContent>Сбросить настройки</TooltipContent>
                                   </Tooltip>
                                 )}
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Button
-                                      size="icon" variant="ghost" className="h-7 w-7"
-                                      onClick={() => copyPlaceholder(placeholder)}
-                                    >
-                                      <Copy className="h-3.5 w-3.5" />
-                                    </Button>
-                                  </TooltipTrigger>
-                                  <TooltipContent>Копировать плейсхолдер</TooltipContent>
-                                </Tooltip>
+                                {!isPostponed && (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        size="icon" variant="ghost" className="h-7 w-7"
+                                        onClick={() => copyPlaceholder(placeholder)}
+                                      >
+                                        <Copy className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Копировать плейсхолдер</TooltipContent>
+                                  </Tooltip>
+                                )}
                               </div>
                             </TableCell>
                           </TableRow>
