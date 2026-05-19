@@ -292,11 +292,13 @@ export function PlaceholdersCatalogTab() {
       const all = (data ?? []) as any[];
       const mapped: CatalogRow[] = [];
       let runtime = 0;
+      let postponed = 0;
       for (const r of all) {
         const publicId = r.field?.public_id ?? null;
-        // Execute v4: runtime-токены (без field_id, но с resolver_key) тоже
-        // отображаются — они работают через _shared/document-render.ts по token_key.
-        if (!publicId) runtime += 1;
+        if (!publicId) {
+          if (isPostponedNoSot(r.category, r.token_key)) postponed += 1;
+          else runtime += 1; // настоящие runtime/technical (executor.signer.*, *.address.full и т.п.)
+        }
         mapped.push({
           ...r,
           field_public_id: publicId,
@@ -306,6 +308,7 @@ export function PlaceholdersCatalogTab() {
       }
       setRows(mapped);
       setRuntimeCount(runtime);
+      setPostponedCount(postponed);
       setLoading(false);
     })();
     return () => { mounted = false; };
