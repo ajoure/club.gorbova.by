@@ -319,10 +319,18 @@ export function PlaceholdersCatalogTab() {
     return Array.from(set);
   }, [rows]);
 
+  // Postponed B-97 имеет приоритет над category — постponed-токены всегда
+  // попадают в нижнюю секцию «Нет источника данных», даже если их category
+  // совпадает с обычной (executor.individual / executor.entrepreneur / executor.legal).
+  const sectionIdForRow = (r: CatalogRow): string => {
+    if (isPostponedNoSot(r.category, r.token_key)) return POSTPONED_NO_SOT_SECTION_ID;
+    return CATEGORY_TO_SECTION[r.category ?? "system"] ?? "system";
+  };
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter(r => {
-      const sectionId = CATEGORY_TO_SECTION[r.category ?? "system"] ?? "system";
+      const sectionId = sectionIdForRow(r);
       if (groupFilter !== "all" && sectionId !== groupFilter) return false;
       if (typeFilter !== "all" && r.data_type !== typeFilter) return false;
       if (onlyRequired && !r.is_required) return false;
@@ -340,12 +348,12 @@ export function PlaceholdersCatalogTab() {
     });
   }, [rows, search, groupFilter, typeFilter, onlyRequired]);
 
-  // Группировка отфильтрованных строк по 9 секциям с сохранением порядка.
+  // Группировка отфильтрованных строк по секциям с сохранением порядка.
   const grouped = useMemo(() => {
     const map = new Map<string, CatalogRow[]>();
     for (const s of SECTION_DEFINITIONS) map.set(s.id, []);
     for (const r of filtered) {
-      const sid = CATEGORY_TO_SECTION[r.category ?? "system"] ?? "system";
+      const sid = sectionIdForRow(r);
       map.get(sid)!.push(r);
     }
     return SECTION_DEFINITIONS
