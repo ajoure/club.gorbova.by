@@ -9,7 +9,7 @@ import { FileText, Download, ExternalLink, CheckCircle, Clock, AlertCircle } fro
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { useOrderDocuments, DOCUMENT_TYPE_LABELS, GeneratedDocument } from "@/hooks/useGeneratedDocuments";
-import { supabase } from "@/integrations/supabase/client";
+import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
 import { toast } from "sonner";
 
 interface OrderDocumentsProps {
@@ -35,19 +35,8 @@ export function OrderDocuments({ orderId, orderNumber, trigger, open: controlled
       toast.error("Файл недоступен");
       return;
     }
-
-    try {
-      const { data: signedUrl, error } = await supabase.storage
-        .from("documents")
-        .createSignedUrl(doc.file_path, 3600);
-
-      if (error) throw error;
-      
-      window.open(signedUrl.signedUrl, "_blank");
-    } catch (error) {
-      console.error("Download error:", error);
-      toast.error("Ошибка скачивания");
-    }
+    const r = await downloadDocumentBlob(doc.id, "pdf");
+    if (r.ok === false) toast.error(r.message);
   };
 
   const getStatusIcon = (status: string) => {
