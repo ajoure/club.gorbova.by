@@ -260,6 +260,9 @@ Deno.serve(async (req) => {
         is_recurring: false,
         meta: {
           test_payment_direct: true,
+          test_payment: true,
+          payment_method: 'credit_card',
+          payment_channel: 'card',
         },
       })
       .select('id')
