@@ -214,6 +214,9 @@ function fillIndExecutor(map: Record<string, string>, ex: any) {
 }
 
 function fillLegExecutor(map: Record<string, string>, ex: any) {
+  // B-97 scope: executor.leg.* — 23 токена, БЕЗ org_form.
+  // `executor.leg.org_form` отложен (нет SOT в `executors`) — пустой branch удалён,
+  // чтобы не маскировать postponed-статус «зарезолвленным пустым значением».
   const isLeg = !ex?.subject_type || ex?.subject_type === "legal_entity";
   const struct = isLeg ? (ex?.legal_address_structured || null) : null;
   const addrFull = isLeg
@@ -221,7 +224,6 @@ function fillLegExecutor(map: Record<string, string>, ex: any) {
     : "";
   const dirFull = isLeg ? (ex?.director_full_name || "") : "";
 
-  map["executor.leg.org_form"] = isLeg ? (ex?.org_form || "") : "";
   map["executor.leg.name"] = isLeg ? (ex?.full_name || "") : "";
   map["executor.leg.short_name"] = isLeg ? (ex?.short_name || ex?.full_name || "") : "";
   map["executor.leg.unp"] = isLeg ? (ex?.unp || "") : "";
