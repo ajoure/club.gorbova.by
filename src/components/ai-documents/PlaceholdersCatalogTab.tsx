@@ -379,9 +379,9 @@ export function PlaceholdersCatalogTab() {
         <div className="flex gap-3 rounded-lg border border-blue-200 bg-blue-50/60 dark:bg-blue-950/30 dark:border-blue-900 p-3">
           <Info className="h-4 w-4 text-blue-600 mt-0.5 flex-shrink-0" />
           <div className="text-xs text-blue-900 dark:text-blue-100 leading-relaxed">
-            Редактируйте шаблон в Microsoft Word. Найдите нужное поле, при необходимости
-            настройте формат и падеж прямо в строке, скопируйте плейсхолдер и вставьте
-            его в DOCX. После загрузки система проверит корректность всех плейсхолдеров.
+            Каждая секция соответствует отдельному источнику данных. Универсальные поля
+            автоматически выбирают реквизиты по типу плательщика сделки (ФЛ/ЮЛ/ИП), поэтому
+            один шаблон может работать для разных типов клиентов.
           </div>
         </div>
 
