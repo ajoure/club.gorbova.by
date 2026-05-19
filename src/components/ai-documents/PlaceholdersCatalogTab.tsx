@@ -92,33 +92,55 @@ const GROUP_LABELS: Record<string, string> = {
 };
 
 /**
- * Секции каталога (Execute v4 — PLACEHOLDERS-NORMALIZATION-v4).
- * Типизированные группы Заказчик/Исполнитель ФЛ/ЮЛ/ИП больше не пустые:
- * UI-фильтр FLD-only снят, runtime-токены рендерятся как {{token_key}}.
- * Порядок здесь = порядок отображения в UI.
+ * B-97 postponed-токены: 51 шт. без SOT в модели исполнителя.
+ * Они НЕ должны выглядеть как рабочие FLD-плейсхолдеры:
+ *   - копирование запрещено;
+ *   - выносятся в отдельную секцию «Нет источника данных»;
+ *   - получают пояснение, почему сейчас не работают.
+ */
+const POSTPONED_NO_SOT_SECTION_ID = "postponed_no_sot";
+function isPostponedNoSot(category: string | null | undefined, tokenKey: string): boolean {
+  if (tokenKey === "executor.leg.org_form") return true;
+  if (category === "executor.individual") return true;
+  if (category === "executor.entrepreneur") return true;
+  return false;
+}
+
+/**
+ * Секции каталога (B-97 — после backfill FLD-ID для 97 typed-токенов).
+ * Постponed-токены (executor.ind/ent.* + executor.leg.org_form) вынесены
+ * в отдельную нижнюю секцию «Нет источника данных» и не предлагаются как
+ * рабочие плейсхолдеры. Порядок здесь = порядок отображения в UI.
  */
 const SECTION_DEFINITIONS: Array<{ id: string; label: string; categories: string[] }> = [
   { id: "customer_ind", label: "1. Заказчик ФЛ", categories: ["customer.individual"] },
   { id: "customer_leg", label: "2. Заказчик ЮЛ", categories: ["customer.legal"] },
   { id: "customer_ent", label: "3. Заказчик ИП", categories: ["customer.entrepreneur"] },
-  { id: "executor_ind", label: "4. Исполнитель ФЛ", categories: ["executor.individual"] },
-  { id: "executor_leg", label: "5. Исполнитель ЮЛ", categories: ["executor.legal"] },
-  { id: "executor_ent", label: "6. Исполнитель ИП", categories: ["executor.entrepreneur"] },
-  { id: "dynamic", label: "7. Универсальные поля (по типу плательщика)", categories: ["customer", "executor"] },
-  { id: "document", label: "8. Документ", categories: ["document"] },
-  { id: "deal", label: "9. Сделка", categories: ["deal"] },
-  { id: "payment", label: "10. Оплата", categories: ["payment"] },
-  { id: "system", label: "11. Системные поля", categories: ["system"] },
+  { id: "executor_leg", label: "4. Исполнитель ЮЛ", categories: ["executor.legal"] },
+  { id: "dynamic", label: "5. Универсальные поля (по типу плательщика)", categories: ["customer", "executor"] },
+  { id: "document", label: "6. Документ", categories: ["document"] },
+  { id: "deal", label: "7. Сделка", categories: ["deal"] },
+  { id: "payment", label: "8. Оплата", categories: ["payment"] },
+  { id: "system", label: "9. Системные поля", categories: ["system"] },
   {
     id: "technical",
-    label: "12. Технические / override",
+    label: "10. Технические / override",
     categories: ["customer.signer", "executor.signer", "contact", "product", "tariff", "offer", "legal_details"],
+  },
+  {
+    id: POSTPONED_NO_SOT_SECTION_ID,
+    label: "11. Нет источника данных (postponed)",
+    // categories здесь не используются — постponed-набор определяется isPostponedNoSot().
+    categories: ["__postponed__"],
   },
 ];
 
 const CATEGORY_TO_SECTION: Record<string, string> = (() => {
   const m: Record<string, string> = {};
-  for (const s of SECTION_DEFINITIONS) for (const c of s.categories) m[c] = s.id;
+  for (const s of SECTION_DEFINITIONS) {
+    if (s.id === POSTPONED_NO_SOT_SECTION_ID) continue;
+    for (const c of s.categories) m[c] = s.id;
+  }
   return m;
 })();
 
