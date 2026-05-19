@@ -377,11 +377,20 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
   };
 
   const downloadFile = async (bucket: string, path: string) => {
-    const { data, error } = await supabase.storage
-      .from(bucket)
-      .createSignedUrl(path, 3600);
-    if (error || !data?.signedUrl) { toast.error("Не удалось получить ссылку"); return; }
-    window.open(data.signedUrl, "_blank");
+    // Скачиваем как blob через SDK, чтобы обойти ad-blocker'ы, которые
+    // режут прямые ссылки на *.supabase.co (ERR_BLOCKED_BY_CLIENT).
+    const { data, error } = await supabase.storage.from(bucket).download(path);
+    if (error || !data) { toast.error("Не удалось получить файл"); return; }
+    const blobUrl = URL.createObjectURL(data);
+    const fileName = path.split("/").pop() || "document";
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = fileName;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
   };
 
   const rebuildExecutor = async () => {
