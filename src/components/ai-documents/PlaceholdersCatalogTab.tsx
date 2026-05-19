@@ -476,14 +476,52 @@ export function PlaceholdersCatalogTab() {
                     </TableRow>
                   ) : (
                     grouped.flatMap((section) => [
-                      <TableRow key={`section-${section.id}`} className="bg-muted/60 hover:bg-muted/60 sticky">
-                        <TableCell colSpan={9} className="py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                          {section.label}
-                          <span className="ml-2 text-[10px] font-normal lowercase text-muted-foreground/70">
-                            ({section.rows.length})
-                          </span>
-                        </TableCell>
-                      </TableRow>,
+                      (() => {
+                        const copy = SECTION_COPY[section.id];
+                        return (
+                          <TableRow key={`section-${section.id}`} className="bg-muted/60 hover:bg-muted/60 sticky">
+                            <TableCell colSpan={9} className="py-2">
+                              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                <span>{section.label}</span>
+                                <span className="text-[10px] font-normal lowercase text-muted-foreground/70">
+                                  ({section.rows.length})
+                                </span>
+                                {copy?.helpBullets && copy.helpBullets.length > 0 && (
+                                  <Popover>
+                                    <PopoverTrigger asChild>
+                                      <Button
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-5 w-5 text-muted-foreground hover:text-foreground"
+                                        aria-label="Подробнее о секции"
+                                      >
+                                        <HelpCircle className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </PopoverTrigger>
+                                    <PopoverContent side="bottom" align="start" className="max-w-md text-xs leading-relaxed">
+                                      {copy.helpTitle && (
+                                        <div className="font-semibold text-sm text-foreground mb-1.5 normal-case">
+                                          {copy.helpTitle}
+                                        </div>
+                                      )}
+                                      <ul className="space-y-1.5 list-disc pl-4 text-foreground/90 normal-case font-normal tracking-normal">
+                                        {copy.helpBullets.map((b, i) => (
+                                          <li key={i}>{b}</li>
+                                        ))}
+                                      </ul>
+                                    </PopoverContent>
+                                  </Popover>
+                                )}
+                              </div>
+                              {copy?.hint && (
+                                <div className="mt-1 text-[11px] font-normal normal-case tracking-normal text-muted-foreground/80">
+                                  {copy.hint}
+                                </div>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })(),
                       ...section.rows.map(t => {
                       const isOpen = expanded.has(t.id);
                       const settings = rowSettings.get(t.id) ?? { format: null, caseModifier: null };
