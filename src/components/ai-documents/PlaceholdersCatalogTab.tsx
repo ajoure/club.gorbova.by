@@ -145,7 +145,7 @@ function isDefault(s: RowSettings | undefined): boolean {
 
 export function PlaceholdersCatalogTab() {
   const [rows, setRows] = useState<CatalogRow[]>([]);
-  const [skippedNoField, setSkippedNoField] = useState(0);
+  const [runtimeCount, setRuntimeCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [showTechnical, setShowTechnical] = useState(false);
@@ -178,13 +178,12 @@ export function PlaceholdersCatalogTab() {
       }
       const all = (data ?? []) as any[];
       const mapped: CatalogRow[] = [];
-      let skipped = 0;
+      let runtime = 0;
       for (const r of all) {
         const publicId = r.field?.public_id ?? null;
-        if (!r.field_id || !publicId) {
-          skipped += 1;
-          continue;
-        }
+        // Execute v4: runtime-токены (без field_id, но с resolver_key) тоже
+        // отображаются — они работают через _shared/document-render.ts по token_key.
+        if (!publicId) runtime += 1;
         mapped.push({
           ...r,
           field_public_id: publicId,
@@ -193,7 +192,7 @@ export function PlaceholdersCatalogTab() {
         });
       }
       setRows(mapped);
-      setSkippedNoField(skipped);
+      setRuntimeCount(runtime);
       setLoading(false);
     })();
     return () => { mounted = false; };
