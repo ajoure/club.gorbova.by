@@ -366,8 +366,11 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
       if (error) throw error;
       if ((data as any)?.error) throw new Error((data as any).error);
       toast.success("PDF создан");
-      const url = (data as any).download_url;
-      if (url) window.open(url, "_blank");
+      const filePath = (data as any).file_path as string | undefined;
+      const bucket = ((data as any).bucket as string | undefined) || "documents";
+      if (filePath) {
+        await downloadFile(bucket, filePath);
+      }
       await fetchAll();
     } catch (e: any) {
       toast.error(`Создание PDF: ${normalizeEdgeFunctionError(e, e?.context?.body ?? null)}`);
