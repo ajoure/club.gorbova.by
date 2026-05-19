@@ -119,17 +119,19 @@ export function useAiDocuments() {
     },
   });
 
-  // Download signed URL
-  const getDownloadUrl = async (filePath: string, bucket = "documents"): Promise<string | null> => {
-    const { data, error } = await supabase.storage
-      .from(bucket)
-      .createSignedUrl(filePath, 3600);
-    if (error) {
-      console.error("Signed URL error:", error);
-      toast.error("Не удалось получить ссылку для скачивания");
-      return null;
+  // Canonical ID-first download. Never returns a *.supabase.co URL.
+  // Скачивает файл blob-ом через edge function `document-download`.
+  const downloadAiDocument = async (
+    documentId: string,
+    kind: "pdf" | "docx" = "pdf",
+  ): Promise<boolean> => {
+    const { downloadDocumentBlob } = await import("@/utils/downloadDocumentBlob");
+    const r = await downloadDocumentBlob(documentId, kind);
+    if (r.ok === false) {
+      toast.error(r.message);
+      return false;
     }
-    return data.signedUrl;
+    return true;
   };
 
   // Hard delete document + file
@@ -163,6 +165,6 @@ export function useAiDocuments() {
     isGenerating: generateMutation.isPending,
     deleteDocument: deleteMutation.mutateAsync,
     isDeleting: deleteMutation.isPending,
-    getDownloadUrl,
+    downloadAiDocument,
   };
 }

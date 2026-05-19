@@ -27,6 +27,7 @@ import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 import { useHasRoleV2 } from "@/hooks/useHasRoleV2";
 import { derivePaymentChannel, CHANNEL_LABELS_RU, type PaymentChannel } from "@/utils/derivePaymentChannel";
 import { resolveDocumentScenario, sourceLabelRu, type PayerType as ResolverPayerType } from "@/utils/resolveDocumentScenario";
+import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
 
 const SUCCEEDED = new Set(["succeeded"]);
 
@@ -294,9 +295,12 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
       });
       if (error) throw error;
       if ((data as any)?.error) throw new Error((data as any).error);
+      const documentId = (data as any)?.document_id as string | undefined;
+      if (!documentId) throw new Error("document_id_missing");
       toast.success("Документ создан");
-      const url = (data as any)?.download_url;
-      if (url) window.open(url, "_blank");
+      // ID-first: качаем blob через canonical edge function, не открываем download_url.
+      const r = await downloadDocumentBlob(documentId, "pdf");
+      if (r.ok === false) toast.error(r.message);
       await load();
     } catch (e: any) {
       toast.error(`Создание документа: ${normalizeEdgeFunctionError(e, e?.context?.body ?? null)}`);
@@ -306,10 +310,9 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
   };
 
   const downloadHistoryItem = async (h: HistoryDoc) => {
-    if (!h.file_path || !h.storage_bucket) { toast.error("Файл недоступен"); return; }
-    const { data, error } = await supabase.storage.from(h.storage_bucket).createSignedUrl(h.file_path, 3600);
-    if (error || !data?.signedUrl) { toast.error("Не удалось получить ссылку"); return; }
-    window.open(data.signedUrl, "_blank");
+    // ID-first download — не используем storage_bucket / file_path.
+    const r = await downloadDocumentBlob(h.id, "pdf");
+    if (r.ok === false) toast.error(r.message);
   };
 
   if (loading || !order) {
