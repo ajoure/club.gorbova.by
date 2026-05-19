@@ -29,7 +29,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Loader2, Copy, Search, ChevronDown, ChevronRight, AlertTriangle, Info, RotateCcw } from "lucide-react";
+import { Loader2, Copy, Search, ChevronDown, ChevronRight, Info, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
