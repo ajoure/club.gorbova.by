@@ -28,14 +28,23 @@ export function derivePaymentChannel(row: PaymentRowLike | null | undefined): Pa
   if (!row) return null;
   const meta = row.meta || {};
   const pm = (meta.payment_method ?? '').toString().toLowerCase();
-  const isErip = meta.is_erip === true || meta.is_erip === 'true' || pm === 'erip';
+  const explicitChannel = (meta.payment_channel ?? '').toString().toLowerCase();
+  const isErip = meta.is_erip === true || meta.is_erip === 'true' || pm === 'erip' || explicitChannel === 'erip';
   if (isErip) return 'erip';
-  if (pm === 'apple_pay') return 'apple_pay';
-  if (pm === 'google_pay') return 'google_pay';
-  if (pm === 'bank_transfer') return 'bank_transfer';
-  if (pm === 'credit_card' || pm === 'card') return 'card';
+  if (pm === 'apple_pay' || explicitChannel === 'apple_pay') return 'apple_pay';
+  if (pm === 'google_pay' || explicitChannel === 'google_pay') return 'google_pay';
+  if (pm === 'bank_transfer' || explicitChannel === 'bank_transfer') return 'bank_transfer';
+  if (pm === 'credit_card' || pm === 'card' || explicitChannel === 'card') return 'card';
   if (row.card_last4 && row.card_last4.length > 0) return 'card';
-  if (row.provider === 'admin' || row.provider === 'admin_test') return 'other';
+  // Тестовая оплата через сайт (admin_test/admin_test_direct + test_payment marker
+  // и без явного method) симулирует card-checkout. Keep in sync with
+  // supabase/functions/_shared/document-resolver-v2/payment-channel.ts.
+  const isAdminTest = row.provider === 'admin_test' || row.provider === 'admin_test_direct';
+  const hasTestMarker = (meta as any).test_payment === true || (meta as any).test_payment === 'true'
+    || (meta as any).test_payment_direct === true || (meta as any).is_test === true
+    || (meta as any).source === 'test_payment';
+  if (isAdminTest && hasTestMarker) return 'card';
+  if (row.provider === 'admin' || row.provider === 'admin_test' || row.provider === 'admin_test_direct') return 'other';
   return 'other';
 }
 

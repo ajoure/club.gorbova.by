@@ -340,6 +340,9 @@ Deno.serve(async (req) => {
           meta: {
             test_payment: true,
             test_payment_by: user.email,
+            // SOT для derivePaymentChannel: тестовая оплата через сайт = card.
+            payment_method: 'credit_card',
+            payment_channel: 'card',
           },
         })
         .select('id')
