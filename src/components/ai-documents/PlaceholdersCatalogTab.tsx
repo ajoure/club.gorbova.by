@@ -29,7 +29,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Loader2, Copy, Search, ChevronDown, ChevronRight, AlertTriangle, Info, RotateCcw } from "lucide-react";
+import { Loader2, Copy, Search, ChevronDown, ChevronRight, Info, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
@@ -68,28 +68,30 @@ interface RowSettings {
  */
 const GROUP_LABELS: Record<string, string> = {
   contact: "Контакт",
-  customer: "Заказчик (динам.)",
+  customer: "Заказчик (универс.)",
   "customer.individual": "Заказчик ФЛ",
   "customer.legal": "Заказчик ЮЛ",
   "customer.entrepreneur": "Заказчик ИП",
-  "customer.signer": "Подписант",
-  executor: "Исполнитель (динам.)",
+  "customer.signer": "Подписант (override)",
+  executor: "Исполнитель (универс.)",
   "executor.individual": "Исполнитель ФЛ",
   "executor.legal": "Исполнитель ЮЛ",
   "executor.entrepreneur": "Исполнитель ИП",
-  "executor.signer": "Подписант",
+  "executor.signer": "Подписант (override)",
   deal: "Сделка",
   product: "Продукт",
   tariff: "Тариф",
   offer: "Кнопка оплаты",
   document: "Документ",
-  payment: "Платежи",
+  payment: "Оплата",
   system: "Системные",
   legal_details: "Custom-поля",
 };
 
 /**
- * 9 секций каталога (PLACEHOLDERS-NORMALIZATION-v3, требование владельца).
+ * Секции каталога (Execute v4 — PLACEHOLDERS-NORMALIZATION-v4).
+ * Типизированные группы Заказчик/Исполнитель ФЛ/ЮЛ/ИП больше не пустые:
+ * UI-фильтр FLD-only снят, runtime-токены рендерятся как {{token_key}}.
  * Порядок здесь = порядок отображения в UI.
  */
 const SECTION_DEFINITIONS: Array<{ id: string; label: string; categories: string[] }> = [
@@ -99,12 +101,15 @@ const SECTION_DEFINITIONS: Array<{ id: string; label: string; categories: string
   { id: "executor_ind", label: "4. Исполнитель ФЛ", categories: ["executor.individual"] },
   { id: "executor_leg", label: "5. Исполнитель ЮЛ", categories: ["executor.legal"] },
   { id: "executor_ent", label: "6. Исполнитель ИП", categories: ["executor.entrepreneur"] },
-  { id: "dynamic", label: "7. Динамические поля (по типу плательщика)", categories: ["customer", "executor"] },
-  { id: "signer", label: "8. Подписант", categories: ["customer.signer", "executor.signer"] },
+  { id: "dynamic", label: "7. Универсальные поля (по типу плательщика)", categories: ["customer", "executor"] },
+  { id: "document", label: "8. Документ", categories: ["document"] },
+  { id: "deal", label: "9. Сделка", categories: ["deal"] },
+  { id: "payment", label: "10. Оплата", categories: ["payment"] },
+  { id: "system", label: "11. Системные поля", categories: ["system"] },
   {
-    id: "system",
-    label: "9. Системные / Документ / Сделка / Оплата",
-    categories: ["system", "document", "deal", "payment", "contact", "product", "tariff", "offer", "legal_details"],
+    id: "technical",
+    label: "12. Технические / override",
+    categories: ["customer.signer", "executor.signer", "contact", "product", "tariff", "offer", "legal_details"],
   },
 ];
 
@@ -140,7 +145,7 @@ function isDefault(s: RowSettings | undefined): boolean {
 
 export function PlaceholdersCatalogTab() {
   const [rows, setRows] = useState<CatalogRow[]>([]);
-  const [skippedNoField, setSkippedNoField] = useState(0);
+  const [runtimeCount, setRuntimeCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [showTechnical, setShowTechnical] = useState(false);
@@ -173,13 +178,12 @@ export function PlaceholdersCatalogTab() {
       }
       const all = (data ?? []) as any[];
       const mapped: CatalogRow[] = [];
-      let skipped = 0;
+      let runtime = 0;
       for (const r of all) {
         const publicId = r.field?.public_id ?? null;
-        if (!r.field_id || !publicId) {
-          skipped += 1;
-          continue;
-        }
+        // Execute v4: runtime-токены (без field_id, но с resolver_key) тоже
+        // отображаются — они работают через _shared/document-render.ts по token_key.
+        if (!publicId) runtime += 1;
         mapped.push({
           ...r,
           field_public_id: publicId,
@@ -188,7 +192,7 @@ export function PlaceholdersCatalogTab() {
         });
       }
       setRows(mapped);
-      setSkippedNoField(skipped);
+      setRuntimeCount(runtime);
       setLoading(false);
     })();
     return () => { mounted = false; };
@@ -292,9 +296,9 @@ export function PlaceholdersCatalogTab() {
               <code className="text-foreground">{`{{field:FLD-XXXXXX}}`}</code>.
               Всего: <span className="font-medium text-foreground">{rows.length}</span>,
               показано: <span className="font-medium text-foreground">{filtered.length}</span>.
-              {skippedNoField > 0 && (
-                <span className="ml-2 inline-flex items-center gap-1 text-amber-600">
-                  <AlertTriangle className="h-3.5 w-3.5" /> скрыто без field_id: {skippedNoField}
+              {runtimeCount > 0 && (
+                <span className="ml-2 inline-flex items-center gap-1 text-muted-foreground">
+                  <Info className="h-3.5 w-3.5" /> runtime-токенов (без FLD-ID): {runtimeCount}
                 </span>
               )}
             </p>
@@ -387,11 +391,14 @@ export function PlaceholdersCatalogTab() {
                       const isOpen = expanded.has(t.id);
                       const settings = rowSettings.get(t.id) ?? { format: null, caseModifier: null };
                       const dirty = !isDefault(rowSettings.get(t.id));
-                      const placeholder = buildFieldPlaceholder(
-                        t.field_public_id!,
-                        settings.format,
-                        settings.caseModifier,
-                      );
+                      const isRuntime = !t.field_public_id;
+                      const placeholder = isRuntime
+                        ? `{{${t.token_key}}}`
+                        : buildFieldPlaceholder(
+                            t.field_public_id!,
+                            settings.format,
+                            settings.caseModifier,
+                          );
                       const kind = classifyDataType(t.field_data_type ?? t.data_type);
 
                       return (
@@ -417,9 +424,23 @@ export function PlaceholdersCatalogTab() {
                               )}
                             </TableCell>
                             <TableCell className="py-2">
-                              <Badge variant="secondary" className="font-mono text-[10px]">
-                                {t.field_public_id}
-                              </Badge>
+                              {isRuntime ? (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge variant="outline" className="font-mono text-[10px] cursor-help">
+                                      runtime
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent className="max-w-xs">
+                                    Runtime-токен: значение подставляется резолвером по token_key
+                                    <code className="block mt-1">{t.token_key}</code>
+                                  </TooltipContent>
+                                </Tooltip>
+                              ) : (
+                                <Badge variant="secondary" className="font-mono text-[10px]">
+                                  {t.field_public_id}
+                                </Badge>
+                              )}
                             </TableCell>
                             <TableCell className="text-xs text-muted-foreground py-2">
                               {(() => {
@@ -428,11 +449,15 @@ export function PlaceholdersCatalogTab() {
                               })()}
                             </TableCell>
                             <TableCell className="py-2">
-                              <RowSettingsCell
-                                kind={kind}
-                                settings={settings}
-                                onChange={(patch) => updateRowSettings(t.id, patch)}
-                              />
+                              {isRuntime ? (
+                                <span className="text-[10px] text-muted-foreground italic">runtime — без модификаторов</span>
+                              ) : (
+                                <RowSettingsCell
+                                  kind={kind}
+                                  settings={settings}
+                                  onChange={(patch) => updateRowSettings(t.id, patch)}
+                                />
+                              )}
                             </TableCell>
                             <TableCell className="py-2 text-xs text-foreground/80">
                               {t.example_value
