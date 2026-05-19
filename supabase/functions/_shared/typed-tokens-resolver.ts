@@ -189,29 +189,10 @@ function fillEntCustomer(map: Record<string, string>, ld: any) {
   map["customer.ent.email"] = isEnt ? (ld?.email || "") : "";
 }
 
-function fillIndExecutor(map: Record<string, string>, ex: any) {
-  // executor у нас всегда юр.лицо в текущей модели, но сохраняем зеркало,
-  // чтобы шаблоны не падали. Если в будущем executor станет ФЛ — заполнится.
-  const isInd = ex?.subject_type === "individual";
-  const fullName = isInd ? (ex?.full_name || "") : "";
-  map["executor.ind.full_name"] = fullName;
-  map["executor.ind.full_name_short"] = isInd ? fullNameToInitials(fullName) : "";
-  map["executor.ind.birth_date"] = "";
-  map["executor.ind.personal_number"] = "";
-  map["executor.ind.passport_series"] = "";
-  map["executor.ind.passport_number"] = "";
-  map["executor.ind.passport_number_full"] = "";
-  map["executor.ind.passport_issued_by"] = "";
-  map["executor.ind.passport_issued_date"] = "";
-  map["executor.ind.passport_valid_until"] = "";
-  map["executor.ind.address.full"] = "";
-  for (const p of ADDR_PARTS) map[`executor.ind.address.${p}`] = "";
-  map["executor.ind.bank_account"] = isInd ? (ex?.bank_account || "") : "";
-  map["executor.ind.bank_name"] = isInd ? (ex?.bank_name || "") : "";
-  map["executor.ind.bank_code"] = isInd ? (ex?.bank_code || "") : "";
-  map["executor.ind.phone"] = isInd ? (ex?.phone || "") : "";
-  map["executor.ind.email"] = isInd ? (ex?.email || "") : "";
-}
+// fillIndExecutor — УДАЛЁН в B-97 (postponed: нет SOT в `executors` для ФЛ).
+// Будет восстановлен в отдельном спринте «Executor requisites schema expansion».
+
+
 
 function fillLegExecutor(map: Record<string, string>, ex: any) {
   // B-97 scope: executor.leg.* — 23 токена, БЕЗ org_form.
