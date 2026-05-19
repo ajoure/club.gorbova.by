@@ -189,31 +189,15 @@ function fillEntCustomer(map: Record<string, string>, ld: any) {
   map["customer.ent.email"] = isEnt ? (ld?.email || "") : "";
 }
 
-function fillIndExecutor(map: Record<string, string>, ex: any) {
-  // executor у нас всегда юр.лицо в текущей модели, но сохраняем зеркало,
-  // чтобы шаблоны не падали. Если в будущем executor станет ФЛ — заполнится.
-  const isInd = ex?.subject_type === "individual";
-  const fullName = isInd ? (ex?.full_name || "") : "";
-  map["executor.ind.full_name"] = fullName;
-  map["executor.ind.full_name_short"] = isInd ? fullNameToInitials(fullName) : "";
-  map["executor.ind.birth_date"] = "";
-  map["executor.ind.personal_number"] = "";
-  map["executor.ind.passport_series"] = "";
-  map["executor.ind.passport_number"] = "";
-  map["executor.ind.passport_number_full"] = "";
-  map["executor.ind.passport_issued_by"] = "";
-  map["executor.ind.passport_issued_date"] = "";
-  map["executor.ind.passport_valid_until"] = "";
-  map["executor.ind.address.full"] = "";
-  for (const p of ADDR_PARTS) map[`executor.ind.address.${p}`] = "";
-  map["executor.ind.bank_account"] = isInd ? (ex?.bank_account || "") : "";
-  map["executor.ind.bank_name"] = isInd ? (ex?.bank_name || "") : "";
-  map["executor.ind.bank_code"] = isInd ? (ex?.bank_code || "") : "";
-  map["executor.ind.phone"] = isInd ? (ex?.phone || "") : "";
-  map["executor.ind.email"] = isInd ? (ex?.email || "") : "";
-}
+// fillIndExecutor — УДАЛЁН в B-97 (postponed: нет SOT в `executors` для ФЛ).
+// Будет восстановлен в отдельном спринте «Executor requisites schema expansion».
+
+
 
 function fillLegExecutor(map: Record<string, string>, ex: any) {
+  // B-97 scope: executor.leg.* — 23 токена, БЕЗ org_form.
+  // `executor.leg.org_form` отложен (нет SOT в `executors`) — пустой branch удалён,
+  // чтобы не маскировать postponed-статус «зарезолвленным пустым значением».
   const isLeg = !ex?.subject_type || ex?.subject_type === "legal_entity";
   const struct = isLeg ? (ex?.legal_address_structured || null) : null;
   const addrFull = isLeg
@@ -221,7 +205,6 @@ function fillLegExecutor(map: Record<string, string>, ex: any) {
     : "";
   const dirFull = isLeg ? (ex?.director_full_name || "") : "";
 
-  map["executor.leg.org_form"] = isLeg ? (ex?.org_form || "") : "";
   map["executor.leg.name"] = isLeg ? (ex?.full_name || "") : "";
   map["executor.leg.short_name"] = isLeg ? (ex?.short_name || ex?.full_name || "") : "";
   map["executor.leg.unp"] = isLeg ? (ex?.unp || "") : "";
@@ -242,36 +225,10 @@ function fillLegExecutor(map: Record<string, string>, ex: any) {
   map["executor.leg.email"] = isLeg ? (ex?.email || "") : "";
 }
 
-function fillEntExecutor(map: Record<string, string>, ex: any) {
-  const isEnt = ex?.subject_type === "entrepreneur";
-  const struct = isEnt ? (ex?.legal_address_structured || null) : null;
-  const addrFull = isEnt
-    ? formatStructuredAddress(struct, ex?.legal_address || null, "entrepreneur").rendered
-    : "";
-  const rawName = isEnt ? (ex?.full_name || "") : "";
-  const displayName = isEnt ? formatEntrepreneurDisplayName(rawName) : "";
-  const dirFullName = rawName ? rawName.replace(/^ИП\s*/i, "").replace(/[«»"']/g, "").trim() : "";
+// fillEntExecutor — УДАЛЁН в B-97 (postponed: нет SOT в `executors` для ИП).
+// Будет восстановлен в отдельном спринте «Executor requisites schema expansion».
 
-  map["executor.ent.name"] = displayName;
-  map["executor.ent.short_name"] = isEnt && rawName ? `ИП ${fullNameToInitials(dirFullName)}` : "";
-  map["executor.ent.unp"] = isEnt ? (ex?.unp || "") : "";
-  map["executor.ent.acts_on_basis"] = isEnt ? (ex?.acts_on_basis || "") : "";
-  map["executor.ent.director_position"] = isEnt ? "Индивидуальный предприниматель" : "";
-  map["executor.ent.director_full_name"] = isEnt ? dirFullName : "";
-  map["executor.ent.director_short_name"] = isEnt ? fullNameToInitials(dirFullName) : "";
-  map["executor.ent.director_acts_on_basis"] = isEnt ? (ex?.acts_on_basis || "Свидетельства о государственной регистрации") : "";
 
-  map["executor.ent.address.full"] = addrFull;
-  for (const p of ADDR_PARTS) {
-    map[`executor.ent.address.${p}`] = isEnt ? readAddressPart(struct, p) : "";
-  }
-
-  map["executor.ent.bank_account"] = isEnt ? (ex?.bank_account || "") : "";
-  map["executor.ent.bank_name"] = isEnt ? (ex?.bank_name || "") : "";
-  map["executor.ent.bank_code"] = isEnt ? (ex?.bank_code || "") : "";
-  map["executor.ent.phone"] = isEnt ? (ex?.phone || "") : "";
-  map["executor.ent.email"] = isEnt ? (ex?.email || "") : "";
-}
 
 function fillExecutorSigner(map: Record<string, string>, ex: any) {
   // executor.signer.* — на текущий момент derive из director_*; точечный override —
@@ -284,17 +241,22 @@ function fillExecutorSigner(map: Record<string, string>, ex: any) {
 }
 
 /**
- * Заполняет 148 typed + 4 executor.signer токена.
- * Возвращает плоский объект для слияния в resolverValues.
+ * Заполняет typed-токены B-97 scope (97 покрытых SOT):
+ * - customer.ind.* (26), customer.leg.* (24), customer.ent.* (24)
+ * - executor.leg.* без org_form (23)
+ * + 4 executor.signer.* (technical override).
+ *
+ * НЕ заполняет (postponed, нет SOT в `executors`):
+ * - executor.ind.* (26), executor.ent.* (24), executor.leg.org_form (1)
+ * Пустые branch'и для них удалены намеренно — postponed-токены должны
+ * проявляться как «нет источника данных», а не как «зарезолвлено пустым».
  */
 export function buildTypedNamespaceValues(customer: any, executor: any): Record<string, string> {
   const map: Record<string, string> = {};
   fillIndCustomer(map, customer);
   fillLegCustomer(map, customer);
   fillEntCustomer(map, customer);
-  fillIndExecutor(map, executor);
   fillLegExecutor(map, executor);
-  fillEntExecutor(map, executor);
   fillExecutorSigner(map, executor);
   return map;
 }

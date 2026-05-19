@@ -92,33 +92,55 @@ const GROUP_LABELS: Record<string, string> = {
 };
 
 /**
- * Секции каталога (Execute v4 — PLACEHOLDERS-NORMALIZATION-v4).
- * Типизированные группы Заказчик/Исполнитель ФЛ/ЮЛ/ИП больше не пустые:
- * UI-фильтр FLD-only снят, runtime-токены рендерятся как {{token_key}}.
- * Порядок здесь = порядок отображения в UI.
+ * B-97 postponed-токены: 51 шт. без SOT в модели исполнителя.
+ * Они НЕ должны выглядеть как рабочие FLD-плейсхолдеры:
+ *   - копирование запрещено;
+ *   - выносятся в отдельную секцию «Нет источника данных»;
+ *   - получают пояснение, почему сейчас не работают.
+ */
+const POSTPONED_NO_SOT_SECTION_ID = "postponed_no_sot";
+function isPostponedNoSot(category: string | null | undefined, tokenKey: string): boolean {
+  if (tokenKey === "executor.leg.org_form") return true;
+  if (category === "executor.individual") return true;
+  if (category === "executor.entrepreneur") return true;
+  return false;
+}
+
+/**
+ * Секции каталога (B-97 — после backfill FLD-ID для 97 typed-токенов).
+ * Постponed-токены (executor.ind/ent.* + executor.leg.org_form) вынесены
+ * в отдельную нижнюю секцию «Нет источника данных» и не предлагаются как
+ * рабочие плейсхолдеры. Порядок здесь = порядок отображения в UI.
  */
 const SECTION_DEFINITIONS: Array<{ id: string; label: string; categories: string[] }> = [
   { id: "customer_ind", label: "1. Заказчик ФЛ", categories: ["customer.individual"] },
   { id: "customer_leg", label: "2. Заказчик ЮЛ", categories: ["customer.legal"] },
   { id: "customer_ent", label: "3. Заказчик ИП", categories: ["customer.entrepreneur"] },
-  { id: "executor_ind", label: "4. Исполнитель ФЛ", categories: ["executor.individual"] },
-  { id: "executor_leg", label: "5. Исполнитель ЮЛ", categories: ["executor.legal"] },
-  { id: "executor_ent", label: "6. Исполнитель ИП", categories: ["executor.entrepreneur"] },
-  { id: "dynamic", label: "7. Универсальные поля (по типу плательщика)", categories: ["customer", "executor"] },
-  { id: "document", label: "8. Документ", categories: ["document"] },
-  { id: "deal", label: "9. Сделка", categories: ["deal"] },
-  { id: "payment", label: "10. Оплата", categories: ["payment"] },
-  { id: "system", label: "11. Системные поля", categories: ["system"] },
+  { id: "executor_leg", label: "4. Исполнитель ЮЛ", categories: ["executor.legal"] },
+  { id: "dynamic", label: "5. Универсальные поля (по типу плательщика)", categories: ["customer", "executor"] },
+  { id: "document", label: "6. Документ", categories: ["document"] },
+  { id: "deal", label: "7. Сделка", categories: ["deal"] },
+  { id: "payment", label: "8. Оплата", categories: ["payment"] },
+  { id: "system", label: "9. Системные поля", categories: ["system"] },
   {
     id: "technical",
-    label: "12. Технические / override",
+    label: "10. Технические / override",
     categories: ["customer.signer", "executor.signer", "contact", "product", "tariff", "offer", "legal_details"],
+  },
+  {
+    id: POSTPONED_NO_SOT_SECTION_ID,
+    label: "11. Нет источника данных (postponed)",
+    // categories здесь не используются — постponed-набор определяется isPostponedNoSot().
+    categories: ["__postponed__"],
   },
 ];
 
 const CATEGORY_TO_SECTION: Record<string, string> = (() => {
   const m: Record<string, string> = {};
-  for (const s of SECTION_DEFINITIONS) for (const c of s.categories) m[c] = s.id;
+  for (const s of SECTION_DEFINITIONS) {
+    if (s.id === POSTPONED_NO_SOT_SECTION_ID) continue;
+    for (const c of s.categories) m[c] = s.id;
+  }
   return m;
 })();
 
@@ -163,28 +185,12 @@ const SECTION_COPY: Record<
       "Для универсальных шаблонов берите поля из секции 7.",
     ],
   },
-  executor_ind: {
-    hint: "Реквизиты вашей стороны как ФЛ. Только для шаблонов, где исполнитель строго физлицо.",
-    helpTitle: "Исполнитель — физическое лицо",
-    helpBullets: [
-      "Источник данных: Админка → Реквизиты исполнителя, профиль ФЛ.",
-      "Не используйте в универсальных шаблонах — для них есть секция 7.",
-    ],
-  },
   executor_leg: {
     hint: "Реквизиты вашей организации (ЮЛ). Только для шаблонов, где исполнитель строго юрлицо.",
     helpTitle: "Исполнитель — юридическое лицо",
     helpBullets: [
       "Источник данных: Админка → Реквизиты исполнителя, профиль ЮЛ.",
-      "Не используйте в универсальных шаблонах — для них есть секция 7.",
-    ],
-  },
-  executor_ent: {
-    hint: "Реквизиты вашей стороны как ИП. Только для шаблонов, где исполнитель строго ИП.",
-    helpTitle: "Исполнитель — индивидуальный предприниматель",
-    helpBullets: [
-      "Источник данных: Админка → Реквизиты исполнителя, профиль ИП.",
-      "Не используйте в универсальных шаблонах — для них есть секция 7.",
+      "Не используйте в универсальных шаблонах — для них есть секция «Универсальные поля».",
     ],
   },
   dynamic: {
@@ -193,7 +199,7 @@ const SECTION_COPY: Record<
     helpBullets: [
       "Один и тот же токен в DOCX автоматически подставляет данные нужного типа субъекта — ФЛ, ЮЛ или ИП — в зависимости от участников сделки. Не нужно делать три отдельных шаблона.",
       "Где заполняются данные: для заказчика — Кабинет клиента → Настройки → Реквизиты (активная вкладка ФЛ / ЮЛ / ИП); для исполнителя — Админка → Реквизиты.",
-      "Когда использовать: универсальные поля — для шаблонов, работающих с любым типом плательщика (рекомендуемый путь). Типизированные поля из секций 1–6 — только если шаблон строго под один тип субъекта.",
+      "Когда использовать: универсальные поля — для шаблонов, работающих с любым типом плательщика (рекомендуемый путь). Типизированные поля из секций «Заказчик …» / «Исполнитель …» — только если шаблон строго под один тип субъекта.",
       "Тип плательщика определяется по данным сделки и выбранному сценарию документа.",
     ],
   },
@@ -214,8 +220,18 @@ const SECTION_COPY: Record<
     helpTitle: "Технические поля и override",
     helpBullets: [
       "Эти поля не имеют стандартного места для заполнения в интерфейсе и проставляются вручную в карточке сделки или приходят из legacy-источников.",
-      "Никогда не используйте их в типовых шаблонах вместо секций 1–7 — это приведёт к пустым значениям в документе.",
+      "Никогда не используйте их в типовых шаблонах вместо типизированных или универсальных секций — это приведёт к пустым значениям в документе.",
       "Если для какого-то поля нужен регулярный UI-источник — заведите задачу, а не используйте override постоянно.",
+    ],
+  },
+  [POSTPONED_NO_SOT_SECTION_ID]: {
+    hint: "Поля без источника данных в модели исполнителя — пока не являются рабочими FLD-плейсхолдерами и не должны использоваться в шаблонах.",
+    helpTitle: "Нет источника данных (postponed)",
+    helpBullets: [
+      "Сюда попали типизированные токены исполнителя ФЛ / ИП и `executor.leg.org_form` — для них в модели данных `executors` пока нет соответствующих колонок.",
+      "Эти поля не получили FLD-ID в рамках B-97 намеренно — каждый FLD в реестре обязан резолвиться. Создание «мёртвых» FLD запрещено.",
+      "Будут активированы в отдельном спринте «Расширение модели исполнителя» (ALTER `executors` + UI заполнения).",
+      "Сейчас не используйте их в DOCX-шаблонах: подстановка вернёт пустую строку.",
     ],
   },
 };
@@ -243,6 +259,7 @@ function isDefault(s: RowSettings | undefined): boolean {
 export function PlaceholdersCatalogTab() {
   const [rows, setRows] = useState<CatalogRow[]>([]);
   const [runtimeCount, setRuntimeCount] = useState(0);
+  const [postponedCount, setPostponedCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [showTechnical, setShowTechnical] = useState(false);
@@ -276,11 +293,13 @@ export function PlaceholdersCatalogTab() {
       const all = (data ?? []) as any[];
       const mapped: CatalogRow[] = [];
       let runtime = 0;
+      let postponed = 0;
       for (const r of all) {
         const publicId = r.field?.public_id ?? null;
-        // Execute v4: runtime-токены (без field_id, но с resolver_key) тоже
-        // отображаются — они работают через _shared/document-render.ts по token_key.
-        if (!publicId) runtime += 1;
+        if (!publicId) {
+          if (isPostponedNoSot(r.category, r.token_key)) postponed += 1;
+          else runtime += 1; // настоящие runtime/technical (executor.signer.*, *.address.full и т.п.)
+        }
         mapped.push({
           ...r,
           field_public_id: publicId,
@@ -290,6 +309,7 @@ export function PlaceholdersCatalogTab() {
       }
       setRows(mapped);
       setRuntimeCount(runtime);
+      setPostponedCount(postponed);
       setLoading(false);
     })();
     return () => { mounted = false; };
@@ -303,10 +323,18 @@ export function PlaceholdersCatalogTab() {
     return Array.from(set);
   }, [rows]);
 
+  // Postponed B-97 имеет приоритет над category — постponed-токены всегда
+  // попадают в нижнюю секцию «Нет источника данных», даже если их category
+  // совпадает с обычной (executor.individual / executor.entrepreneur / executor.legal).
+  const sectionIdForRow = (r: CatalogRow): string => {
+    if (isPostponedNoSot(r.category, r.token_key)) return POSTPONED_NO_SOT_SECTION_ID;
+    return CATEGORY_TO_SECTION[r.category ?? "system"] ?? "system";
+  };
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter(r => {
-      const sectionId = CATEGORY_TO_SECTION[r.category ?? "system"] ?? "system";
+      const sectionId = sectionIdForRow(r);
       if (groupFilter !== "all" && sectionId !== groupFilter) return false;
       if (typeFilter !== "all" && r.data_type !== typeFilter) return false;
       if (onlyRequired && !r.is_required) return false;
@@ -324,12 +352,12 @@ export function PlaceholdersCatalogTab() {
     });
   }, [rows, search, groupFilter, typeFilter, onlyRequired]);
 
-  // Группировка отфильтрованных строк по 9 секциям с сохранением порядка.
+  // Группировка отфильтрованных строк по секциям с сохранением порядка.
   const grouped = useMemo(() => {
     const map = new Map<string, CatalogRow[]>();
     for (const s of SECTION_DEFINITIONS) map.set(s.id, []);
     for (const r of filtered) {
-      const sid = CATEGORY_TO_SECTION[r.category ?? "system"] ?? "system";
+      const sid = sectionIdForRow(r);
       map.get(sid)!.push(r);
     }
     return SECTION_DEFINITIONS
@@ -395,7 +423,12 @@ export function PlaceholdersCatalogTab() {
               показано: <span className="font-medium text-foreground">{filtered.length}</span>.
               {runtimeCount > 0 && (
                 <span className="ml-2 inline-flex items-center gap-1 text-muted-foreground">
-                  <Info className="h-3.5 w-3.5" /> runtime-токенов (без FLD-ID): {runtimeCount}
+                  <Info className="h-3.5 w-3.5" /> runtime/technical (без FLD-ID): {runtimeCount}
+                </span>
+              )}
+              {postponedCount > 0 && (
+                <span className="ml-2 inline-flex items-center gap-1 text-muted-foreground">
+                  <Info className="h-3.5 w-3.5" /> postponed (нет источника): {postponedCount}
                 </span>
               )}
             </p>
@@ -526,19 +559,22 @@ export function PlaceholdersCatalogTab() {
                       const isOpen = expanded.has(t.id);
                       const settings = rowSettings.get(t.id) ?? { format: null, caseModifier: null };
                       const dirty = !isDefault(rowSettings.get(t.id));
-                      const isRuntime = !t.field_public_id;
-                      const placeholder = isRuntime
-                        ? `{{${t.token_key}}}`
-                        : buildFieldPlaceholder(
-                            t.field_public_id!,
-                            settings.format,
-                            settings.caseModifier,
-                          );
+                      const isPostponed = isPostponedNoSot(t.category, t.token_key);
+                      const isRuntime = !t.field_public_id && !isPostponed;
+                      const placeholder = isPostponed
+                        ? ""
+                        : (isRuntime
+                          ? `{{${t.token_key}}}`
+                          : buildFieldPlaceholder(
+                              t.field_public_id!,
+                              settings.format,
+                              settings.caseModifier,
+                            ));
                       const kind = classifyDataType(t.field_data_type ?? t.data_type);
 
                       return (
                         <Fragment key={t.id}>
-                          <TableRow className="hover:bg-muted/40 align-top">
+                          <TableRow className={cn("hover:bg-muted/40 align-top", isPostponed && "opacity-70")}>
                             <TableCell className="p-1">
                               <Button
                                 size="icon" variant="ghost" className="h-6 w-6"
@@ -559,7 +595,19 @@ export function PlaceholdersCatalogTab() {
                               )}
                             </TableCell>
                             <TableCell className="py-2">
-                              {isRuntime ? (
+                              {isPostponed ? (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge variant="outline" className="text-[10px] cursor-help border-dashed text-muted-foreground">
+                                      нет источника
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent className="max-w-xs">
+                                    Поле не имеет источника данных в модели исполнителя, поэтому пока не является рабочим FLD-плейсхолдером.
+                                    <code className="block mt-1">{t.token_key}</code>
+                                  </TooltipContent>
+                                </Tooltip>
+                              ) : isRuntime ? (
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <Badge variant="outline" className="font-mono text-[10px] cursor-help">
@@ -584,7 +632,9 @@ export function PlaceholdersCatalogTab() {
                               })()}
                             </TableCell>
                             <TableCell className="py-2">
-                              {isRuntime ? (
+                              {isPostponed ? (
+                                <span className="text-[10px] text-muted-foreground italic">недоступно — нет SOT</span>
+                              ) : isRuntime ? (
                                 <span className="text-[10px] text-muted-foreground italic">runtime — без модификаторов</span>
                               ) : (
                                 <RowSettingsCell
@@ -600,13 +650,17 @@ export function PlaceholdersCatalogTab() {
                                 : <span className="text-muted-foreground/60 italic">— нет примера —</span>}
                             </TableCell>
                             <TableCell className="py-2">
-                              <code className="text-[11px] text-foreground/90 break-all font-mono">
-                                {placeholder}
-                              </code>
+                              {isPostponed ? (
+                                <span className="text-[11px] text-muted-foreground/60 italic">— не используйте в шаблонах —</span>
+                              ) : (
+                                <code className="text-[11px] text-foreground/90 break-all font-mono">
+                                  {placeholder}
+                                </code>
+                              )}
                             </TableCell>
                             <TableCell className="text-right py-2">
                               <div className="flex justify-end gap-0.5">
-                                {dirty && (
+                                {!isPostponed && dirty && (
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <Button
@@ -619,17 +673,19 @@ export function PlaceholdersCatalogTab() {
                                     <TooltipContent>Сбросить настройки</TooltipContent>
                                   </Tooltip>
                                 )}
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Button
-                                      size="icon" variant="ghost" className="h-7 w-7"
-                                      onClick={() => copyPlaceholder(placeholder)}
-                                    >
-                                      <Copy className="h-3.5 w-3.5" />
-                                    </Button>
-                                  </TooltipTrigger>
-                                  <TooltipContent>Копировать плейсхолдер</TooltipContent>
-                                </Tooltip>
+                                {!isPostponed && (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        size="icon" variant="ghost" className="h-7 w-7"
+                                        onClick={() => copyPlaceholder(placeholder)}
+                                      >
+                                        <Copy className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Копировать плейсхолдер</TooltipContent>
+                                  </Tooltip>
+                                )}
                               </div>
                             </TableCell>
                           </TableRow>
