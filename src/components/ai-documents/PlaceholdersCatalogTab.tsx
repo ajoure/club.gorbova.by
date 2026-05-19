@@ -259,6 +259,7 @@ function isDefault(s: RowSettings | undefined): boolean {
 export function PlaceholdersCatalogTab() {
   const [rows, setRows] = useState<CatalogRow[]>([]);
   const [runtimeCount, setRuntimeCount] = useState(0);
+  const [postponedCount, setPostponedCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [showTechnical, setShowTechnical] = useState(false);
