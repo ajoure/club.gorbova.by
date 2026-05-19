@@ -23,6 +23,7 @@ import { resolveExecutorForOrder, buildExecutorFieldValues, mergeExecutorIntoFie
 import { buildStandardFieldValues, mergeStandardIntoFields } from './standard-fields.ts';
 import { derivePaymentChannel } from './document-resolver-v2/payment-channel.ts';
 import { resolveDocumentScenario, type PayerType } from './document-scenario-resolver.ts';
+import { buildTypedB97FieldValues, mergeTypedB97IntoFields } from './typed-fld-mapping.ts';
 
 export const SNAPSHOT_VERSION = '1.2';
 
