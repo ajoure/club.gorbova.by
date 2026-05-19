@@ -68,28 +68,30 @@ interface RowSettings {
  */
 const GROUP_LABELS: Record<string, string> = {
   contact: "Контакт",
-  customer: "Заказчик (динам.)",
+  customer: "Заказчик (универс.)",
   "customer.individual": "Заказчик ФЛ",
   "customer.legal": "Заказчик ЮЛ",
   "customer.entrepreneur": "Заказчик ИП",
-  "customer.signer": "Подписант",
-  executor: "Исполнитель (динам.)",
+  "customer.signer": "Подписант (override)",
+  executor: "Исполнитель (универс.)",
   "executor.individual": "Исполнитель ФЛ",
   "executor.legal": "Исполнитель ЮЛ",
   "executor.entrepreneur": "Исполнитель ИП",
-  "executor.signer": "Подписант",
+  "executor.signer": "Подписант (override)",
   deal: "Сделка",
   product: "Продукт",
   tariff: "Тариф",
   offer: "Кнопка оплаты",
   document: "Документ",
-  payment: "Платежи",
+  payment: "Оплата",
   system: "Системные",
   legal_details: "Custom-поля",
 };
 
 /**
- * 9 секций каталога (PLACEHOLDERS-NORMALIZATION-v3, требование владельца).
+ * Секции каталога (Execute v4 — PLACEHOLDERS-NORMALIZATION-v4).
+ * Типизированные группы Заказчик/Исполнитель ФЛ/ЮЛ/ИП больше не пустые:
+ * UI-фильтр FLD-only снят, runtime-токены рендерятся как {{token_key}}.
  * Порядок здесь = порядок отображения в UI.
  */
 const SECTION_DEFINITIONS: Array<{ id: string; label: string; categories: string[] }> = [
@@ -99,12 +101,15 @@ const SECTION_DEFINITIONS: Array<{ id: string; label: string; categories: string
   { id: "executor_ind", label: "4. Исполнитель ФЛ", categories: ["executor.individual"] },
   { id: "executor_leg", label: "5. Исполнитель ЮЛ", categories: ["executor.legal"] },
   { id: "executor_ent", label: "6. Исполнитель ИП", categories: ["executor.entrepreneur"] },
-  { id: "dynamic", label: "7. Динамические поля (по типу плательщика)", categories: ["customer", "executor"] },
-  { id: "signer", label: "8. Подписант", categories: ["customer.signer", "executor.signer"] },
+  { id: "dynamic", label: "7. Универсальные поля (по типу плательщика)", categories: ["customer", "executor"] },
+  { id: "document", label: "8. Документ", categories: ["document"] },
+  { id: "deal", label: "9. Сделка", categories: ["deal"] },
+  { id: "payment", label: "10. Оплата", categories: ["payment"] },
+  { id: "system", label: "11. Системные поля", categories: ["system"] },
   {
-    id: "system",
-    label: "9. Системные / Документ / Сделка / Оплата",
-    categories: ["system", "document", "deal", "payment", "contact", "product", "tariff", "offer", "legal_details"],
+    id: "technical",
+    label: "12. Технические / override",
+    categories: ["customer.signer", "executor.signer", "contact", "product", "tariff", "offer", "legal_details"],
   },
 ];
 
