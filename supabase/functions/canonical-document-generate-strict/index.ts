@@ -26,6 +26,7 @@ import Docxtemplater from 'npm:docxtemplater@3.47.1';
 import PizZip from 'npm:pizzip@3.1.6';
 import { inflectRu, type RuCase } from '../_shared/ru-inflection.ts';
 import { loadGotenbergConfig, convertDocxToPdf, GotenbergError } from '../_shared/gotenberg.ts';
+import { B97_FLD_TO_TOKEN_KEY, buildTypedB97FieldValues } from '../_shared/typed-fld-mapping.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -349,12 +350,69 @@ Deno.serve(async (req) => {
     // Load order + snapshot
     const { data: order } = await supabase
       .from('orders_v2')
-      .select('id, order_number, profile_id, meta, final_price, currency')
+      .select('id, order_number, profile_id, user_id, payer_type, meta, final_price, currency')
       .eq('id', orderId)
       .maybeSingle();
     if (!order) return json({ error: 'order_not_found' }, 404);
 
     const docFields = (((order.meta as any)?.document_data?.fields) || {}) as Record<string, any>;
+
+    // B-97 live overlay: snapshot may pre-date the typed-FLD writer. Strict
+    // generator должен подставлять typed customer/executor значения для FLD из
+    // B97 mapping, если snapshot их не содержит (или пуст). Идемпотентно:
+    // никогда не перезаписывает manual_override и не трогает legacy FLDs вне
+    // B-97 scope. Поднимает audit-warning `b97_live_fallback_used`.
+    const docDataMeta: any = (order.meta as any)?.document_data || {};
+    const customerLdId = docDataMeta?._provenance?.customer_legal_details_id || null;
+    const executorIdSnap = docDataMeta?.executor_id || null;
+    let b97LiveCustomer: any = null;
+    let b97LiveExecutor: any = null;
+    if (customerLdId) {
+      const { data: ld } = await supabase
+        .from('client_legal_details')
+        .select('*')
+        .eq('id', customerLdId)
+        .maybeSingle();
+      b97LiveCustomer = ld || null;
+    }
+    if (!b97LiveCustomer && order.profile_id) {
+      const payerType = (order as any).payer_type;
+      const wantedClientType = payerType === 'legal_entity' ? 'legal_entity'
+        : payerType === 'entrepreneur' ? 'entrepreneur'
+        : 'individual';
+      const { data: lds } = await supabase
+        .from('client_legal_details')
+        .select('*')
+        .eq('profile_id', order.profile_id)
+        .eq('client_type', wantedClientType)
+        .order('is_default', { ascending: false })
+        .order('updated_at', { ascending: false })
+        .limit(1);
+      b97LiveCustomer = (lds && lds[0]) || null;
+    }
+    if (executorIdSnap) {
+      const { data: ex } = await supabase.from('executors').select('*').eq('id', executorIdSnap).maybeSingle();
+      b97LiveExecutor = ex || null;
+    }
+    const b97Values = buildTypedB97FieldValues(b97LiveCustomer, b97LiveExecutor);
+    let b97FallbackApplied = 0;
+    let b97FallbackNonEmpty = 0;
+    const nowIsoB97 = new Date().toISOString();
+    for (const [fid] of Object.entries(B97_FLD_TO_TOKEN_KEY)) {
+      const existing = docFields[fid];
+      if (existing && existing.manual_override === true) continue;
+      const existingValue = existing?.value;
+      if (existingValue && String(existingValue).length > 0) continue;
+      const liveVal = b97Values[fid] ?? '';
+      docFields[fid] = {
+        value: liveVal,
+        source: 'b97_live_fallback',
+        manual_override: false,
+        updated_at: nowIsoB97,
+      };
+      b97FallbackApplied += 1;
+      if (liveVal.length > 0) b97FallbackNonEmpty += 1;
+    }
 
     // C5-G: канонические FLD для номера и даты документа
     const FLD_DOC_NUMBER = 'FLD-000069';  // document.number
@@ -751,7 +809,13 @@ Deno.serve(async (req) => {
       missing_tokens: missing,
       token_manifest_snapshot: manifest,
       template_tokens_snapshot: allIds.map((f) => `field:${f}`),
-      warnings_snapshot: [],
+      warnings_snapshot: (() => {
+        const w: string[] = [];
+        if (b97FallbackApplied > 0) w.push(`b97_live_fallback_used:${b97FallbackApplied}:non_empty=${b97FallbackNonEmpty}`);
+        if (b97FallbackApplied > 0 && !b97LiveCustomer) w.push('b97_customer_requisites_missing_for_payer_type');
+        if (b97FallbackApplied > 0 && !b97LiveExecutor) w.push('b97_executor_missing');
+        return w;
+      })(),
       source_trace: sourceTrace,
       resolver_version: RESOLVER_VERSION,
       context_type: 'order',

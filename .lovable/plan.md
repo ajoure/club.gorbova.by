@@ -1,433 +1,440 @@
 да, согласен, с учетом правок:
 
-1. **Не использовать** `document_token_aliases` **как self-alias без необходимости.**  
-Если `document_token_registry.token_key = fields_registry.key` и `field_id` проставлен, self-alias:
-  &nbsp;
-  ```text
-  customer.ind.full_name → customer.ind.full_name
-  ```
-  технически избыточен.  
-  Допустимо добавить только если текущий resolver реально читает `document_token_aliases` для legacy `{{token_key}}`.  
-  В dry-run нужно отдельно доказать: **зачем нужны 148 self-alias и где они используются**. Если не используются — не создавать.
-2. **Главное — не alias, а resolver coverage.**  
-Execute запрещён, пока dry-run не покажет для каждого token_key:
-  &nbsp;
-  ```text
-  token_key → SOT table/column/jsonPath → тестовое значение → expected output
-  ```
-  Иначе можно создать 148 FLD, которые снова будут пустыми.
-3. **Формулировку про** `canonical-template-validate` **уточнить.**  
-Старые `{{customer.ind.*}}` должны быть запрещены **для новых шаблонов**, но не должны ломать уже существующие legacy-шаблоны, если они где-то реально используются.  
-В DoD добавить:
-4. **Не использовать** `canonical-document-generate-strict` **для smoke, если эти поля резолвятся только в** `_shared/document-render.ts`**.**  
-В плане указано smoke через strict. Нужно сначала подтвердить, что strict resolver после backfill действительно умеет:
-  &nbsp;
-  ```text
-  field_id → token_key → typed resolver
-  ```
-  Если typed resolver реализуется только в non-strict `_shared/document-render.ts`, smoke через strict будет ложным или провалится.  
-  Правильно:
-  - либо расширить оба resolver-пути;
-  - либо в DoD явно указать, какой pipeline является production для этих шаблонов.
-5. **SOT должен быть зафиксирован до названий** `customer.ind.*`**.**  
-Сейчас есть риск, что token_key уже создан как `customer.ind.*`, а category как `customer.individual`. Это нормально, но mapping должен быть железный:
-  &nbsp;
-  ```text
-  customer.ind.* → individual
-  customer.leg.* → legal_entity
-  customer.ent.* → entrepreneur
-  ```
-  Без автогенерации по строкам.
-6. `fields_registry.data_type` **брать из реальной семантики, а не** `COALESCE(data_type,'string')` **вслепую.**  
-Для дат, чисел, money, email, phone, address-json:
-  &nbsp;
-  ```text
-  birth_date → date
-  passport_issue_date → date
-  passport_valid_until → date
-  amount/account? → string, не number
-  unp → string
-  ```
-  В dry-run таблице добавить колонку `proposed_data_type`.
-7. **Адресные части должны иметь отдельный resolver, не только** `address.full`**.**  
-В DoD добавить проверку:
-  &nbsp;
-  ```text
-  customer.leg.address.street
-  customer.leg.address.house
-  customer.leg.address.apartment
-  customer.leg.address.postal_code
-  executor.leg.address.full
-  ```
-  Иначе FLD появятся, но часть адресов может остаться пустой.
-8. **ИП без кавычек добавить в smoke именно для typed FLD.**  
-Проверить:
-  &nbsp;
-  ```text
-  customer.ent.name → ИП Федорчук Сергей Валерьевич
-  executor.ent.name → ИП Федорчук Сергей Валерьевич
-  ```
-  Запрещённый результат:
-9. **Runtime-бейдж после backfill не должен исчезнуть “везде”.**  
-Он должен исчезнуть только у 148 typed customer/executor.  
-Для оставшихся runtime/technical — оставить. В verify указать точный остаток:
-10. **Rollback должен учитывать FK/constraints.**  
-Порядок rollback правильный, но добавить pre-check:
+1. **Добавить в Discovery обязательную проверку фактического шаблона**, который ты сейчас использовал вручную:
+  - какие именно `FLD-...` есть в DOCX;
+  - какие из них относятся к B-97;
+  - какие из них `postponed-51`;
+  - какие вообще не существуют / не связаны с `document_token_registry`.
+2. **Не ограничиваться только последним** `ai_generated_documents`, а найти именно документ, созданный из твоего тестового шаблона:
+  - по `template_id`;
+  - по `order_id`;
+  - по `document_number`;
+  - по времени генерации.
+3. **Добавить отдельный proof по кнопке тарифа “Чат”**:
+  - `tariff_offers.id`;
+  - `tariff_offers.meta.document_scenarios`;
+  - `template_id`;
+  - `executor_id`;
+  - `payer_type`;
+  - payment channel;
+  - итог: почему scenario должен был сматчиться.
+4. **Обязательно проверить не только** `DealPayerDocumentsCard`**, но и путь создания order**:
+  - `bepaid-create-token`;
+  - `test-payment-complete`;
+  - webhook / payment completion;
+  - где именно должен записываться `offer_id`;
+  - почему в новой сделке снова не сработал ранее заявленный fix.
+5. **В Execute запретить ручное заполнение order/meta для proof**.  
+Нельзя вручную проставлять `template_id`, `executor_id`, `offer_id`, `meta.documents`, чтобы “доказать” успех. Proof должен быть только через новую тестовую оплату.
+6. **В Verify добавить сравнение UI vs backend**:
+  - UI показывает resolved template/executor;
+  - backend snapshot показывает те же `template_id/executor_id`;
+  - `ai_generated_documents.source_trace` показывает тот же источник;
+  - если UI и backend расходятся — задача не закрыта.
+7. **По B-97 FLD добавить жёсткий fail-condition**:  
+если хотя бы один FLD из реального шаблона есть в `fields_registry`, но в `token_manifest_snapshot` пустой без warning — это баг `silent empty`, задача не закрыта.
+8. **Финальный DoD усилить**:  
+задача закрыта только после новой тестовой оплаты, где:
+  - сделка сама подтянула шаблон и исполнителя;
+  - кнопка «Создать документ» активна без ручного выбора;
+  - PDF создан;
+  - реквизиты заполнены;
+  - в PDF нет пустых конструкций;
+  - `token_manifest_snapshot` содержит непустые значения по всем FLD из шаблона.
+
+С этими правками план можно запускать.
+
+&nbsp;
+
+План:
+
+# B-97 full-flow hotfix: документ из оплаты → сделка → PDF
+
+## 1. Проблема
+
+В одном пользовательском сценарии проявляются две связанные ошибки:
+
+1. На новой сделке `#ORD-TEST-MPCP6D01` из тестовой оплаты тарифом «Чат» блок «Документы / плательщик» снова не подтягивает настройки кнопки:
+  - `Шаблон документа: Автоматически (не задан в кнопке)`;
+  - `Исполнитель: Автоматически (не задан в кнопке)`;
+  - красные ошибки `не выбран шаблон` / `не выбран исполнитель`;
+  - кнопка «Создать документ» disabled.
+2. В уже сгенерированном счёт-акте FLD-first поля реквизитов B-97 валидируются, но в PDF приходят пустыми:
+  - `в лице , действующего на основании`;
+  - `физическое лицо ,`;
+  - `ИСПОЛНИТЕЛЬ: , УНП . Адрес: .`;
+  - `расчетный счет в , код .`.
+
+Это нельзя считать двумя независимыми слоями без proof: для пользователя это один flow — создать оплату → открыть сделку → создать документ → получить заполненный PDF.
+
+## 2. Диагностика
+
+### 2.1. Discovery по автоподтягиванию настроек кнопки
+
+Найти заказ со скрина:
 
 ```sql
-SELECT COUNT(*)
-FROM document_token_registry
-WHERE field_id IN (SELECT id FROM fields_registry WHERE options->>'batch_id'=...)
+SELECT id, order_number, status, offer_id, tariff_id, product_id,
+       payer_type, profile_id, user_id, customer_email, meta, created_at
+FROM orders_v2
+WHERE order_number = 'ORD-TEST-MPCP6D01';
 ```
 
-И только потом обнулять.
+Если номер отличается — взять последние тестовые сделки:
 
-11. **Audit dry-run не должен писать в БД, если discovery заявлен read-only.**  
-Если dry-run пишет `audit_logs`, это уже write.  
-Либо:
-
-- dry-run полностью read-only и только файл proof;
-- либо явно разрешить audit write как исключение.  
-Я бы оставил audit только на execute/verify, а dry-run — proof-файл без записи в БД.
-
-12. **Перед execute добавить STOP по count mismatch.**  
-Если найдено не 148, а 147/149/152 — execute не запускать. Только новый dry-run и новое подтверждение.
-
-Итоговая команда для него:
-
-```text
-План принимаю после внесения правок выше. Главное: сначала dry-run с фактическим SOT, data_type, stable mapping, resolver coverage и smoke strategy. Execute не запускать, пока dry-run не докажет, что 148 новых FLD будут реально резолвиться, а не просто появятся в каталоге.
-
-План: канонизация runtime customer/executor плейсхолдеров в FLD-ID-first (усиленная версия)
+```sql
+SELECT id, order_number, status, offer_id, tariff_id, product_id,
+       payer_type, profile_id, user_id, customer_email, meta, created_at
+FROM orders_v2
+ORDER BY created_at DESC
+LIMIT 10;
 ```
 
-## 0. Ключевая правка по сравнению с черновиком
+Проверить, где реально лежит `offer_id`:
 
-Направление верное (backfill FLD-ID + расширение резолвера), но без следующих усилений патч создаст **второй слой мёртвых FLD-полей**. Поэтому:
-
-1. Alias canonical — **typed token_key**, а не universal `customer.*/executor.*`.
-2. Все 148 mapping-строк фиксируются в proof **до** execute; миграция читает их из stable mapping, а не из `row_number()`.
-3. Перед execute обязательно перечитать `max(public_id)` и `entity_type`-constraint.
-4. Резолвер пишется только после фиксации фактического SOT для customer/executor реквизитов.
-5. Rollback и audit с `batch_id` обязательны.
-
----
-
-## 1. Прямые ответы на 7 вопросов
-
-**1.1. Работают ли 152 typed-токена в новой DOCX pipeline?**  
-**Нет.** В `_shared/document-render.ts` нет ни одной ветки для `customer.ind.*`, `customer.leg.*`, `customer.ent.*`, `executor.ind.*/leg.*/ent.*`. Резолвер знает только полиморфные `customer.*` / `executor.*` (35 FLD-000103..FLD-000218). Все typed-токены сейчас возвращают пустую строку, а `canonical-template-validate` отбракует их по regex `^\{\{field:FLD-[0-9]+\}\}$`. То есть они **dead-on-arrival**.
-
-**1.2. Зачем v4 показал их «рабочими»?**  
-v4 снимал только UI-фильтр в `PlaceholdersCatalogTab` — не знал о resolver coverage. Это и есть «временный fix видимости», который надо доканонизировать.
-
-**1.3. Какие токены без `field_id` сейчас?**  
-152 строки в `document_token_registry` (archived_at IS NULL, field_id IS NULL):  
-`customer.individual`=26, `customer.legal`=24, `customer.entrepreneur`=24, `executor.individual`=26, `executor.legal`=24, `executor.entrepreneur`=24, `customer`=1, `executor`=1, `executor.signer`=4. Все имеют `source_type='system'`, `resolver_key = token_key`.
-
-В патч войдут **только 148** (typed × 6 групп). Universal `customer`/`executor` (1+1) и `executor.signer` (4) — out of scope.
-
-**1.4. Что мешает создать `fields_registry` записи?**  
-Технически — ничего, но перед execute обязательно:  
-(а) перечитать `SELECT max(public_id) FROM fields_registry WHERE public_id LIKE 'FLD-%'` (на момент discovery — FLD-000272, но к execute может вырасти);  
-(б) перечитать ограничения: `SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='fields_registry'::regclass;` — если `entity_type` имеет CHECK/enum, новые значения `customer_individual`/`customer_legal`/… **вводить нельзя** без отдельной миграции constraint. Fallback-стратегия: использовать существующие `entity_type ∈ {customer, executor}` + хранить дискриминатор в `options.subject_type ∈ {individual, legal_entity, entrepreneur}` и `options.typed_namespace`. Выбор делается **в dry-run** по фактическому результату проверки constraint, фиксируется в proof, и только тогда execute.
-
-**1.5. Конфликты с существующими FLD?**  
-Проверено: `fields_registry.key` не содержит `customer.ind.*` / `customer.leg.*` / `customer.ent.*` / `executor.<ns>.*`. Существующие 35 customer/executor FLD используют ключи `customer.name`, `customer.address` и т.п. — это **другая семантика** (полиморфия по типу плательщика), не пересекается с typed. UNIQUE на `fields_registry.key` страхует от случайных дублей в самой миграции.
-
-**1.6. Какой резолвер обрабатывает `{{field:FLD-XXXXXX}}` после backfill?**  
-`_shared/document-render.ts` собирает `resolved` по `registryByKey[token_key]`. Цепочка: `{{field:FLD-...}} → fields_registry.public_id → document_token_registry.field_id → token_key → resolverValues[token_key]`. `resolverValues` для typed ключей сейчас не заполняется — поэтому backfill **без** расширения резолвера запрещён.
-
-**1.7. Нужно ли расширять резолвер?**  
-**Да, обязательно и одним патчем** с backfill — иначе создаём «полноценные FLD-ID», которые подставляются пустыми строками.
-
----
-
-## 2. Семантика alias — критическая правка
-
-В `document_token_aliases.alias_token` хранится **чистый token_key без фигурных скобок**:
-
-```
-alias_token = "customer.ind.full_name"
-alias_token = "executor.leg.name"
+```sql
+SELECT id,
+       order_number,
+       offer_id AS column_offer_id,
+       meta->>'offer_id' AS meta_offer_id,
+       meta->>'tariff_offer_id' AS meta_tariff_offer_id,
+       meta->'checkout'->>'offer_id' AS checkout_offer_id,
+       meta->'payment'->>'offer_id' AS payment_offer_id,
+       meta
+FROM orders_v2
+WHERE order_number = 'ORD-TEST-MPCP6D01';
 ```
 
-НЕ `{{customer.ind.full_name}}`.
+По найденному `offer_id` проверить кнопку/оффер:
 
-**Canonical для typed-токенов = их собственный typed token_key** (self-alias):
-
-```
-alias_token         | canonical_token_key
-customer.ind.full_name | customer.ind.full_name
-executor.leg.name      | executor.leg.name
-```
-
-**Запрещено** автоматически вести alias на universal `customer.*/executor.*` FLD, потому что:
-
-- `customer.ind.full_name ≠ customer.name`;
-- `customer.leg.name ≠ customer.name`;
-- `customer.ent.name ≠ customer.name`;
-- universal `customer.name` — динамически выбирает по `client_type`, а typed-токен жёстко берёт свой источник (например, `customer.leg.name` всегда читает `leg_name`, даже если плательщик помечен как ИП).
-
-Self-alias нужен только как явная запись «этот token_key известен registry, не делай unmapped warning», а реальный резолв идёт через расширенный резолвер.
-
----
-
-## 3. Источник данных для typed-токенов (обязательная фиксация ДО кода)
-
-В прошлых спринтах появлялись разные SOT: `client_legal_details`, `legal_entities_requisites`, `individual_requisites`, `executors`. Прежде чем писать резолвер, в dry-run артефакт зафиксировать:
-
-### 3.1. Customer SOT discovery
-
-Для каждого typed namespace выполнить:
-
-- список колонок реально используемых таблиц (`client_legal_details`, `legal_entities_requisites`, `individual_requisites`, `entrepreneurs_requisites` — если существуют);
-- какая таблица является **primary SOT** для каждого `subject_type`;
-- какая — legacy fallback;
-- где сейчас пишет UI реквизитов (см. `src/pages/settings/UserRequisites.tsx`, `OrganizationDetailsForm`, `IndividualDetailsForm`).
-
-### 3.2. Executor SOT discovery
-
-- какие колонки/JSONB есть в `executors`;
-- как определяется `subject_type` исполнителя (колонка/derived);
-- что делать, если у executor нет typed-структуры, а заполнены только универсальные поля — fallback на универсальные FLD-* через explicit branch, **не** через alias.
-
-### 3.3. Сверка namespace
-
-В discovery — `category = customer.individual / customer.legal / customer.entrepreneur` (полные слова).  
-В черновике плана употреблялся короткий вариант `customer.ind / customer.leg / customer.ent` — это **наследие token_key**, а не category. Зафиксировать в dry-run proof фактическое соответствие:
-
-```
-category             ↔ token_key prefix
-customer.individual  ↔ customer.ind.*
-customer.legal       ↔ customer.leg.*
-customer.entrepreneur ↔ customer.ent.*
-executor.individual  ↔ executor.ind.*
-executor.legal       ↔ executor.leg.*
-executor.entrepreneur ↔ executor.ent.*
+```sql
+SELECT id, tariff_id, product_id, title,
+       meta->'document_defaults' AS document_defaults,
+       meta->'document_scenarios' AS document_scenarios,
+       meta
+FROM tariff_offers
+WHERE id = '<offer_id>';
 ```
 
-И только после фиксации — mapping `token_key suffix → колонка SOT`.
+Ответить proof-ом:
 
----
+- есть ли `document_scenarios`;
+- есть ли `template_id`;
+- есть ли `executor_id`;
+- включён ли сценарий;
+- матчится ли он по `payer_type`;
+- матчится ли он по payment channel;
+- почему UI показывает «Источник не задан».
 
-## 4. Dry-run (ОБЯЗАТЕЛЬНО до execute)
+Проверить frontend resolver:
 
-Edge function `document-tokens-fld-backfill?mode=dry_run` (новая, `verify_jwt=true` + super_admin guard, без service_role bypass).
-
-### 4.1. Что выдаёт
-
-Артефакт `.lovable/proofs/placeholders_fld_backfill_dryrun_2026_05_13.md`:
-
-1. **batch_id** (стабильный): `PLACEHOLDERS-FLD-BACKFILL-2026-05-13`.
-2. **Снимок `max(public_id)**` на момент dry-run.
-3. **Результат проверки constraint** на `fields_registry.entity_type` (CHECK/enum/нет) + выбранная стратегия (расширить enum vs использовать existing `customer/executor` + `options.subject_type`).
-4. **Стабильная mapping-таблица** (148 строк, фиксируется как канон):
-
-```
-document_token_registry.id | token_key | category | proposed_fields_registry.key | proposed_public_id | proposed_entity_type | options.subject_type | options.typed_namespace | resolver_path_planned
+```bash
+rg -n "offer_id|tariff_offer_id|document_scenarios|document_defaults|resolveDocumentScenario|Источник не задан|Автоматически" src/components/admin/DealPayerDocumentsCard.tsx src -S
 ```
 
-Порядок mapping фиксируется не `row_number() OVER (ORDER BY category, token_key)` без сохранения, а **именно из этого proof**: execute читает таблицу с `document_token_registry.id` и присваивает заранее перечисленные public_id.
+Проверить backend/snapshot resolver:
 
-5. **Discovered SOT** (раздел 3) — фактические таблицы/колонки.
-6. **Resolver coverage plan** — кусок псевдокода с branches.
-7. **Counts**:
-  ```
-   found_typed_runtime_without_field_id: 148
-   will_create_fields_registry_rows: 148
-   will_update_document_token_registry_field_id: 148
-   will_create_aliases: 148 (self-alias на собственный token_key)
-   conflicts: 0
-   skipped_out_of_scope: customer=1, executor=1, executor.signer=4
-   public_id_range: FLD-XXXXXX .. FLD-YYYYYY (по факту max+1)
-  ```
-8. **Rollback SQL** (раздел 6).
+```bash
+rg -n "offer_id|tariff_offer_id|document_scenarios|document_defaults|resolveDocumentScenario" supabase/functions -S
+```
 
-### 4.2. STOP
+Обязательный вывод: backend должен использовать тот же fallback `offer_id`, что и UI. Нельзя допустить состояние, где UI показывает шаблон/исполнителя, а генерация backend идёт без scenario/defaults.
 
-Execute не запускается, пока dry-run не покажет:
+### 2.2. Discovery по пустым B-97 FLD
 
-- точный список 148 mapping-строк с конкретными public_id;
-- 0 конфликтов;
-- актуальный диапазон FLD;
-- понятный resolver coverage по фактическому SOT;
-- готовый rollback.
+Найти конкретный сгенерированный документ:
 
----
+```sql
+SELECT id, template_id, template_version_id, context_type, context_id,
+       document_number, file_path,
+       token_manifest_snapshot, missing_tokens, warnings_snapshot,
+       source_trace, meta, created_at
+FROM ai_generated_documents
+ORDER BY created_at DESC
+LIMIT 5;
+```
 
-## 5. Execute (после подтверждения; читает фиксированный mapping)
+Проверить проблемные FLD из реального шаблона:
 
-### 5.1. Миграция БД
+- `FLD-000366`, `FLD-000363`, `FLD-000362`, `FLD-000347`, `FLD-000369`, `FLD-000354`, `FLD-000359`, `FLD-000361`, `FLD-000360`, `FLD-000367`, `FLD-000365`;
+- `FLD-000313`, `FLD-000321`, `FLD-000322`, `FLD-000261`, `FLD-000262`.
 
-Одна транзакция. Mapping приходит как `(document_token_registry_id, fields_registry_key, public_id, entity_type, options_jsonb)` массивом из dry-run proof (фронт-обвязка миграции либо seeded VALUES, либо temp staging table).
+Проверить snapshot keys:
 
-```text
-BEGIN;
+```sql
+SELECT jsonb_object_keys(token_manifest_snapshot)
+FROM ai_generated_documents
+WHERE id = '<document_id>'
+ORDER BY 1;
+```
 
--- 1) INSERT 148 rows в fields_registry с заранее назначенными public_id
-INSERT INTO fields_registry(entity_type, key, label, data_type, public_id, description, options)
-VALUES
-  (<from mapping row 1>),
-  ...
-  (<from mapping row 148>);
+Проверить `missing_tokens`, `warnings_snapshot`, `source_trace` и связку FLD → token_key:
 
--- 2) Проставить field_id строго по document_token_registry.id ↔ fields_registry.key
-UPDATE document_token_registry dtr
-SET field_id = fr.id, updated_at = now()
+```sql
+SELECT fr.public_id, fr.key AS fields_registry_key, fr.label,
+       fr.entity_type, fr.data_type, fr.options,
+       dtr.token_key, dtr.field_id, dtr.resolver_key,
+       dtr.source_type, dtr.ui_label, dtr.example_value, dtr.archived_at
 FROM fields_registry fr
-WHERE dtr.id IN (<148 ids from mapping>)
-  AND dtr.token_key = fr.key
-  AND dtr.field_id IS NULL;
-
--- 3) Self-alias (token_key без скобок)
-INSERT INTO document_token_aliases(alias_token, canonical_token_key, notes, metadata)
-SELECT dtr.token_key, dtr.token_key,
-  'Sprint 11.1 typed FLD backfill self-alias',
-  jsonb_build_object('batch_id','PLACEHOLDERS-FLD-BACKFILL-2026-05-13',
-                     'source','sprint11_1_fld_backfill_2026_05_13')
-FROM document_token_registry dtr
-WHERE dtr.id IN (<148 ids>);
-
--- Sanity-check
-SELECT
-  (SELECT COUNT(*) FROM fields_registry WHERE options->>'batch_id'='PLACEHOLDERS-FLD-BACKFILL-2026-05-13') AS fr_inserted,
-  (SELECT COUNT(*) FROM document_token_registry WHERE id IN (<148>) AND field_id IS NOT NULL) AS dtr_linked,
-  (SELECT COUNT(*) FROM document_token_aliases WHERE metadata->>'batch_id'='PLACEHOLDERS-FLD-BACKFILL-2026-05-13') AS aliases_inserted;
--- expected: 148 / 148 / 148; иначе ROLLBACK
+LEFT JOIN document_token_registry dtr ON dtr.field_id = fr.id
+WHERE fr.public_id IN ('FLD-000366','FLD-000363','FLD-000362','FLD-000347',
+                       'FLD-000313','FLD-000321','FLD-000322','FLD-000354',
+                       'FLD-000369','FLD-000359','FLD-000361','FLD-000360',
+                       'FLD-000367','FLD-000365')
+ORDER BY fr.public_id;
 ```
 
-Все 148 строк в `fields_registry` получают `options.batch_id = 'PLACEHOLDERS-FLD-BACKFILL-2026-05-13'`. Это якорь для rollback.
+Проверить pipeline генерации:
 
-### 5.2. Расширение резолвера
-
-В `_shared/document-render.ts` добавить блок «8.5 typed customer/executor resolution» **по фактическому SOT из dry-run §3** (не «из `client_legal_details`» вслепую). Минимум:
-
-- branch для `customer.<ns>.*` — читает из primary SOT (например, `client_legal_details` columns `ind_*/leg_*/ent_*` ИЛИ соответствующих requisites-таблиц — фиксируется в proof);
-- branch для `executor.<ns>.*` — читает из `executors` (колонки/JSONB по проф. discovery);
-- `<ns>.address.*` — через существующий `formatStructuredAddress`;
-- fallback: если у executor нет typed-структуры — explicit branch на универсальные значения (с пометкой `source_trace.source = 'executor.universal_fallback'`), **не** через alias.
-
-`sourceFor()` расширить ветками `customer.<ns>.*` / `executor.<ns>.*` с указанием фактического источника.
-
-### 5.3. UI каталог
-
-После миграции 148 строк автоматически получат `field_id`/`public_id` → существующий рендер `PlaceholdersCatalogTab` покажет `FLD-XXXXXX` вместо бейджа `runtime`, и копирование начнёт вставлять `{{field:FLD-XXXXXX}}`.
-
-Доп. правка: серым вторым текстом показать `legacy alias: customer.ind.full_name` для прозрачности (это не плейсхолдер для копирования).
-
-### 5.4. canonical-template-validate
-
-Не меняется. 148 новых `{{field:FLD-XXXXXX}}` начинают проходить regex. Старые `{{customer.ind.*}}` остаются недопустимыми в новых шаблонах — это правильно; legacy DOCX покрывает alias-слой на этапе рендера, а не валидации.
-
-### 5.5. Smoke DOCX (строгий FLD-first)
-
-Шаблон `_smoke_sprint11_1_typed_fld.docx` содержит **только** `{{field:FLD-XXXXXX}}`. Запрещены: `{{customer.ind.*}}`, `{{customer.leg.*}}`, `{{customer.ent.*}}`, `{{executor.<ns>.*}}` (любой не-FLD формат) — smoke специально валидирует, что новые типизированные поля **не нужны** в legacy-формате.
-
-Покрытие: 18 плейсхолдеров (по 3 из каждой из 6 групп) × 3 fixtures (`subject_type ∈ {individual, legal_entity, entrepreneur}`) → 3 рендера через `canonical-document-generate-strict`. DoD: `unresolved_count = 0`, в выходе нет `{{...}}`, source_trace показывает фактический SOT для каждого FLD-ID.
-
----
-
-## 6. Rollback план (включается в dry-run артефакт)
-
-```text
-BEGIN;
--- 1) Снять field_id с document_token_registry
-UPDATE document_token_registry
-SET field_id = NULL, updated_at = now()
-WHERE field_id IN (
-  SELECT id FROM fields_registry WHERE options->>'batch_id'='PLACEHOLDERS-FLD-BACKFILL-2026-05-13'
-);
-
--- 2) Удалить aliases
-DELETE FROM document_token_aliases
-WHERE metadata->>'batch_id' = 'PLACEHOLDERS-FLD-BACKFILL-2026-05-13';
-
--- 3) Удалить fields_registry rows
-DELETE FROM fields_registry
-WHERE options->>'batch_id' = 'PLACEHOLDERS-FLD-BACKFILL-2026-05-13';
-
--- audit rows НЕ удаляем (история должна остаться), но они обязаны содержать batch_id
-COMMIT;
+```bash
+rg -n "FLD-000366|field:FLD|token_manifest_snapshot|buildTypedNamespaceValues|customer.ind|customer.leg|customer.ent|executor.leg" supabase/functions src -S
 ```
 
-После rollback состояние ровно как до execute (resolver patch откатывается отдельно через revert коммита).
+Проверить SOT-данные:
 
----
+```sql
+SELECT id, order_number, status, payer_type, profile_id, user_id,
+       customer_email, customer_phone, meta
+FROM orders_v2
+WHERE id = '<order_id>';
 
-## 7. Audit
+SELECT *
+FROM client_legal_details
+WHERE profile_id = '<profile_id>'
+ORDER BY client_type, is_default DESC, updated_at DESC;
 
-### Dry-run
+SELECT meta->'document_data'->>'executor_id',
+       meta->'document_data'->'_provenance'->'executor_resolution'
+FROM orders_v2
+WHERE id = '<order_id>';
 
-```
-action     = document_tokens.field_id_backfill_dryrun
-actor_type = system
-actor_label = migration
-meta.batch_id = PLACEHOLDERS-FLD-BACKFILL-2026-05-13
-meta.found_count = 148
-meta.max_public_id_before = <snapshot>
-meta.entity_type_constraint = <result>
-meta.sot_discovered = { customer: ..., executor: ... }
-```
-
-### Execute
-
-```
-action     = document_tokens.field_id_backfill_execute
-actor_type = system
-actor_label = migration
-meta.batch_id = PLACEHOLDERS-FLD-BACKFILL-2026-05-13
-meta.fr_inserted = 148
-meta.dtr_linked = 148
-meta.aliases_inserted = 148
-meta.public_id_range = FLD-XXXXXX..FLD-YYYYYY
+SELECT *
+FROM executors
+WHERE id = '<executor_id>';
 ```
 
-### Verify
+## 3. Возможные root causes
 
+### 3.1. Автоподтягивание кнопки
+
+Проверить и доказать фактическую причину:
+
+- A. Новый test/admin payment пишет `offer_id` не в `order.offer_id` и не в `meta.offer_id`, а в `meta.tariff_offer_id`, `meta.checkout.offer_id`, `meta.payment.offer_id` или другое поле.
+- B. `offer_id` есть, но `tariff_offers.meta.document_scenarios` / `document_defaults` пустые — проблема сохранения настроек кнопки.
+- C. `document_scenarios` есть, но resolver не матчится по `payer_type`, payment channel, enabled/template/executor.
+- D. UI читает scenario, backend snapshot/generation не читает.
+- E. Старые override-поля с `null` перетирают auto scenario; null override не должен блокировать scenario.
+
+### 3.2. Пустые B-97 FLD
+
+Проверить и доказать фактическую причину:
+
+- A. B-97 resolver patch не подключён к фактическому pipeline генерации.
+- B. Typed values строятся как `resolverValues[token_key]`, но `{{field:FLD-...}}` не маппится через `field_id → token_key`.
+- C. Фактические `token_key` в БД отличаются от ключей, которые пишет resolver.
+- D. Нет `executor_id` в order/scenario/defaults/snapshot.
+- E. `payer_type` не совпадает с `client_legal_details.client_type` или resolver смотрит не тот `profile_id`.
+- F. Генератор берёт старый snapshot без live overlay для новых typed FLD.
+
+## 4. Предлагаемое решение
+
+### 4.1. Единый resolver offer_id для UI + backend
+
+Ввести/использовать единое правило:
+
+```ts
+getOrderOfferId(order) =
+  order.offer_id
+  ?? order.meta?.offer_id
+  ?? order.meta?.tariff_offer_id
+  ?? order.meta?.checkout?.offer_id
+  ?? order.meta?.payment?.offer_id
+  ?? null
 ```
-action     = document_tokens.field_id_backfill_verify
-actor_type = system
-meta.batch_id = PLACEHOLDERS-FLD-BACKFILL-2026-05-13
-meta.smoke_fixtures = [individual, legal_entity, entrepreneur]
-meta.unresolved_total = 0
-meta.runtime_remaining_in_catalog = 6  // universal customer/executor + signer
+
+Применить его в:
+
+- `DealPayerDocumentsCard`;
+- backend snapshot/scenario resolver;
+- generation pipeline, который реально создаёт `ai_generated_documents`.
+
+Scenario resolution должен возвращать provenance:
+
+- `template_resolution.source = override | scenario | defaults | missing`;
+- `executor_resolution.source = override | scenario | defaults | missing`;
+- `source_trace.offer_id`;
+- `source_trace.scenario_id` или объяснение `scenario_not_matched:<reason>`.
+
+Null override не блокирует auto scenario; override применяется только если явно задан admin override.
+
+### 4.2. B-97 FLD resolver fix
+
+Минимально исправить тот pipeline, который реально генерирует документ:
+
+- обеспечить lookup `{{field:FLD-XXXXXX}} → fields_registry.public_id → document_token_registry.token_key → resolverValues[token_key]`;
+- убедиться, что typed values попадают в `token_manifest_snapshot` под FLD-ключом и token_key;
+- добавить warnings вместо silent empty:
+  - `typed_token_source_missing:<token_key>`;
+  - `typed_token_empty_value:<token_key>`;
+  - `typed_token_resolver_missing:<token_key>`;
+  - `executor_id_missing_for_typed_token`;
+  - `customer_requisites_missing_for_payer_type:<payer_type>`;
+- `source_trace` должен показывать реальные источники:
+  - `client_legal_details.ind_*`;
+  - `client_legal_details.leg_*`;
+  - `client_legal_details.ent_*`;
+  - `executors.*`.
+
+## 5. Изменяемые компоненты
+
+Потенциально, после discovery:
+
+- `src/components/admin/DealPayerDocumentsCard.tsx` — UI scenario/defaults resolution и status text.
+- `supabase/functions/_shared/document-data-snapshot.ts` — backend snapshot для template/executor/payer data.
+- `supabase/functions/_shared/document-scenario-resolver.ts` — scenario/defaults matching.
+- `supabase/functions/_shared/typed-tokens-resolver.ts` — typed B-97 values, warnings/source_trace.
+- `supabase/functions/_shared/document-render.ts` или strict generator path — только если discovery докажет, что именно он используется.
+- `supabase/functions/canonical-document-generate*/index.ts` — только фактический entrypoint генерации.
+- Proof artifacts:
+  - `.lovable/proofs/fl_typed_tokens_empty_in_generated_doc_discovery_2026_05_19.md`;
+  - `.lovable/proofs/document_generation_full_flow_fix_2026_05_19.md`.
+
+## 6. Что не будет изменено
+
+- `payments_v2`.
+- `orders_v2 schema`.
+- `allocate_document_number`.
+- Хранилище document scenarios как модель данных, если discovery не докажет баг сохранения.
+- Contact Center.
+- Production-шаблоны.
+- Hard-delete токенов.
+- Postponed 51: `executor.ind.*`, `executor.ent.*`, `executor.leg.org_form`.
+- Создание новых FLD.
+- Морфология, если root cause не в ней.
+
+## 7. Dry-run
+
+Перед fix выполнить read-only proof:
+
+1. SQL proof по `ORD-TEST-MPCP6D01`: order, все возможные `offer_id` paths, `meta.documents`.
+2. SQL proof по `tariff_offers`: document scenarios/defaults.
+3. Code proof через `rg`: UI + backend paths для `offer_id`, scenario/defaults, B-97 typed tokens.
+4. SQL proof по последнему `ai_generated_documents`: snapshot/missing/warnings/source_trace.
+5. SQL proof по FLD → token_key для проблемных FLD.
+6. SOT proof по `client_legal_details` и `executors`.
+
+STOP после dry-run, если:
+
+- order не найден;
+- `offer_id` не найден ни в одном path;
+- `tariff_offers` не содержит нужных settings;
+- B-97 FLD не связаны с `document_token_registry`;
+- SOT-данные реально отсутствуют и нечего резолвить;
+- pipeline генерации не определён.
+
+## 8. Execute
+
+После доказанного root cause:
+
+1. Исправить `offer_id` resolution в UI и backend единым helper/rule.
+2. Исправить scenario/defaults matching, если причина в payer/payment channel/null override.
+3. Исправить B-97 FLD mapping/resolver в фактическом pipeline генерации.
+4. Добавить warnings/source_trace для typed FLD.
+5. Не расширять scope за B-97.
+
+## 9. Verify
+
+### 9.1. До генерации на новой тестовой оплате
+
+Создать новую тестовую оплату для `7500084@gmail.com`, тариф «Чат». В карточке сделки проверить:
+
+- шаблон подтянулся автоматически из кнопки;
+- исполнитель подтянулся автоматически из кнопки;
+- тип плательщика определён;
+- карточка реквизитов выбрана;
+- нет красных ошибок `не выбран шаблон` / `не выбран исполнитель`;
+- кнопка «Создать документ» активна.
+
+### 9.2. После генерации
+
+В PDF проверить:
+
+- нет `{{...}}`;
+- нет пустых реквизитов:
+  - `в лице ,`;
+  - `действующего на основании ,`;
+  - `физическое лицо ,`;
+  - `УНП .`;
+  - `Адрес: .`;
+  - `расчетный счет в , код .`;
+  - `Телефон . Электронная почта: .`;
+- заполнены executor/customer requisites, услуга/цена/сумма/валюта/сроки.
+
+DB proof:
+
+```sql
+SELECT order_number, offer_id,
+       meta->>'offer_id',
+       meta->>'tariff_offer_id',
+       meta->'checkout'->>'offer_id',
+       meta->'payment'->>'offer_id',
+       meta->'documents'
+FROM orders_v2
+WHERE order_number = '<new_test_order>';
+
+SELECT token_manifest_snapshot, warnings_snapshot, source_trace
+FROM ai_generated_documents
+WHERE context_id = '<new_order_id>'
+ORDER BY created_at DESC
+LIMIT 1;
 ```
 
----
+Также выполнить `tsc` и `deno check` через стандартный verify-процесс.
 
-## 8. STOP-guards (не трогать)
+## 10. STOP-guards
 
-`payments_v2`, `orders_v2` schema, `allocate_document_number`, document scenarios storage, Contact Center, морфология, production-шаблоны, существующие 106 FLD-токенов с `field_id IS NOT NULL`, universal `customer`/`executor` (out of scope), `executor.signer` (out of scope, override-семантика).
+- Не чинить blind fix без SQL/code proof.
+- Не создавать новые FLD.
+- Не менять schema `orders_v2`.
+- Не писать manual DB updates в `orders_v2` для имитации успеха.
+- Не считать UI proof достаточным без backend proof.
+- Не считать backend proof достаточным без реального PDF proof.
+- Не включать postponed 51.
+- Не менять document numbering.
+- Не менять payment fulfillment.
 
----
+## 11. DoD
 
-## 9. Финальный DoD
+Задача закрыта только если на новой тестовой оплате `7500084@gmail.com` тариф «Чат»:
 
-- 148 typed customer/executor токенов имеют `field_id`.
-- Каждый получил `FLD-XXXXXX` из актуального диапазона `max(public_id)+1` (не хардкод).
-- Все 148 строк промечены `options.batch_id = 'PLACEHOLDERS-FLD-BACKFILL-2026-05-13'`.
-- `document_token_aliases` содержит 148 self-alias записей (token_key без скобок; canonical = тот же token_key).
-- Ни одного alias-ряда, ведущего typed-токен на universal `customer.*/executor.*` FLD.
-- Резолвер обрабатывает typed namespaces из фактического SOT, зафиксированного в dry-run proof.
-- В каталоге для этих 148 токенов исчез бейдж `runtime`.
-- Каталог показывает `FLD-XXXXXX`, копирование вставляет `{{field:FLD-XXXXXX}}`.
-- Бейдж `runtime` остаётся только для действительно runtime/technical токенов (universal customer/executor + signer + system).
-- Smoke DOCX содержит только `{{field:FLD-XXXXXX}}` (regex-проверка), 3 fixtures, `unresolved_count = 0`, `{{...}}` в выходе отсутствует.
-- `canonical-template-validate` принимает новые плейсхолдеры; legacy `{{customer.ind.*}}` корректно работают в старых DOCX через alias-слой.
-- tsc + deno check clean.
-- Audit dryrun/execute/verify с `batch_id`.
-- Rollback SQL приложен к dry-run артефакту и проверен на staging-копии.
-- Memory: дополнить `mem://architecture/documents/field-id-first-canon` записью о Sprint 11.1 + ссылкой на proof.
+1. Сделка автоматически подтягивает шаблон и исполнителя из кнопки.
+2. UI больше не показывает `Источник не задан` для реально настроенного scenario/defaults.
+3. Backend generation использует тот же resolved scenario, что UI.
+4. `token_manifest_snapshot` содержит непустые значения по проблемным B-97 FLD.
+5. `source_trace` показывает реальные источники для FLD и scenario/defaults.
+6. PDF не содержит `{{...}}` и пустых реквизитных конструкций.
+7. В отчёте указано, почему прошлый fix по `offer_id` был неполным.
+8. В отчёте указано, где именно лежал `offer_id` в новой сделке.
+9. В отчёте указано, почему B-97 FLD были пустыми.
+10. STOP-guards подтверждены.
 
----
+## 12. Финальный отчёт
 
-## 10. Порядок исполнения
+Создать:
 
-1. **Dry-run edge function** → артефакт `.lovable/proofs/placeholders_fld_backfill_dryrun_2026_05_13.md` с: фактическим SOT, constraint-результатом, актуальным max(public_id), стабильным mapping на 148 строк, rollback SQL. **STOP.**
-2. Жду подтверждения «execute».
-3. Migration (5.1) — `INSERT ... VALUES` по фиксированному mapping, не по `row_number()`. types.ts регенерится автоматически.
-4. Resolver patch (5.2) + alias INSERT — в том же коммите, что и миграция (атомарно).
-5. UI правка `PlaceholdersCatalogTab` — показ `legacy alias:` второй строкой.
-6. Smoke DOCX (5.5) — 3 fixtures, артефакт `.lovable/proofs/placeholders_fld_backfill_smoke_2026_05_13.md`.
-7. Verify audit + memory update + closing report `.lovable/proofs/placeholders_fld_backfill_execute_2026_05_13.md`.
+`.lovable/proofs/document_generation_full_flow_fix_2026_05_19.md`
+
+В отчёте обязательно:
+
+1. Почему прошлый fix по `offer_id` оказался неполным.
+2. Где именно лежал `offer_id` в новой сделке.
+3. Почему UI снова показывал «Источник не задан».
+4. Почему B-97 FLD были пустыми.
+5. Какие файлы исправлены.
+6. Proof новой сделки до генерации.
+7. Proof PDF после генерации.
+8. `token_manifest_snapshot` / `source_trace` по проблемным FLD.
+9. Warnings proof.
+10. Подтверждение STOP-guards.
+
+Пока новая тестовая сделка не подтягивает шаблон/исполнителя автоматически и PDF не заполнен реквизитами — B-97 full-flow НЕ закрыт.

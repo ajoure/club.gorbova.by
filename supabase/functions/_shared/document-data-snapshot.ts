@@ -23,6 +23,7 @@ import { resolveExecutorForOrder, buildExecutorFieldValues, mergeExecutorIntoFie
 import { buildStandardFieldValues, mergeStandardIntoFields } from './standard-fields.ts';
 import { derivePaymentChannel } from './document-resolver-v2/payment-channel.ts';
 import { resolveDocumentScenario, type PayerType } from './document-scenario-resolver.ts';
+import { buildTypedB97FieldValues, mergeTypedB97IntoFields } from './typed-fld-mapping.ts';
 
 export const SNAPSHOT_VERSION = '1.2';
 
@@ -480,6 +481,17 @@ export async function snapshotOrderDocumentData(
         explicit_executor_id: explicitExecutorId,
       });
     }
+
+    // B-97 typed FLDs (FLD-000273..FLD-000369): customer.{ind,leg,ent}.*
+    // и executor.leg.* — материализуем по FLD-id, чтобы strict-generator,
+    // который читает только docFields[fid], нашёл значения и не пометил
+    // их как missing. SOT — buildTypedNamespaceValues(customer, executor).
+    // Postponed-токены (executor.ind/ent + executor.leg.org_form) НЕ входят
+    // в этот scope: их FLD ещё не созданы в реестре.
+    const typedB97Values = buildTypedB97FieldValues(customerRow, executor);
+    const typedB97Merged = mergeTypedB97IntoFields(fields, typedB97Values, nowIso);
+    Object.assign(fields, typedB97Merged.fields);
+
     (documentData as any).fields = fields;
     (documentData as any)._provenance = {
       ...(documentData as any)._provenance,
@@ -493,6 +505,9 @@ export async function snapshotOrderDocumentData(
       },
       standard_fields_written: stdMerged.written,
       standard_fields_skipped_manual: stdMerged.skipped_manual,
+      typed_b97_fields_written: typedB97Merged.written,
+      typed_b97_fields_non_empty: typedB97Merged.non_empty,
+      typed_b97_fields_skipped_manual: typedB97Merged.skipped_manual,
     };
 
 
