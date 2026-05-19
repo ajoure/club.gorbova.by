@@ -286,17 +286,22 @@ function fillExecutorSigner(map: Record<string, string>, ex: any) {
 }
 
 /**
- * Заполняет 148 typed + 4 executor.signer токена.
- * Возвращает плоский объект для слияния в resolverValues.
+ * Заполняет typed-токены B-97 scope (97 покрытых SOT):
+ * - customer.ind.* (26), customer.leg.* (24), customer.ent.* (24)
+ * - executor.leg.* без org_form (23)
+ * + 4 executor.signer.* (technical override).
+ *
+ * НЕ заполняет (postponed, нет SOT в `executors`):
+ * - executor.ind.* (26), executor.ent.* (24), executor.leg.org_form (1)
+ * Пустые branch'и для них удалены намеренно — postponed-токены должны
+ * проявляться как «нет источника данных», а не как «зарезолвлено пустым».
  */
 export function buildTypedNamespaceValues(customer: any, executor: any): Record<string, string> {
   const map: Record<string, string> = {};
   fillIndCustomer(map, customer);
   fillLegCustomer(map, customer);
   fillEntCustomer(map, customer);
-  fillIndExecutor(map, executor);
   fillLegExecutor(map, executor);
-  fillEntExecutor(map, executor);
   fillExecutorSigner(map, executor);
   return map;
 }
