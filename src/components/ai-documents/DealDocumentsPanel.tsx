@@ -701,7 +701,7 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => d.file_path && downloadFile(d.storage_bucket, d.file_path)}
+                            onClick={() => downloadHistory(d.id, "pdf")}
                             disabled={!d.file_path}
                             title="Скачать PDF"
                           >
@@ -711,7 +711,7 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
                             <Button
                               size="sm"
                               variant="ghost"
-                              onClick={() => downloadFile(d.storage_bucket, d.meta!.docx_storage_path)}
+                              onClick={() => downloadHistory(d.id, "docx")}
                               title="Скачать DOCX (только для админов)"
                             >
                               <FileType2 className="h-3 w-3 mr-1" /> DOCX
