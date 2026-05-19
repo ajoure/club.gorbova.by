@@ -22,6 +22,7 @@ import {
 } from "@/hooks/useGeneratedDocuments";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
 
 export function DocumentLogTab() {
   const [filters, setFilters] = useState<DocumentFilters>({});
@@ -40,29 +41,25 @@ export function DocumentLogTab() {
       toast.error("Файл недоступен");
       return;
     }
-
+    // Kind based on file_mime / file_name; default pdf.
+    const fileName = (doc as any).file_name as string | undefined;
+    const fileMime = (doc as any).file_mime as string | undefined;
+    const kind: "pdf" | "docx" =
+      (fileMime?.includes("word") || fileName?.toLowerCase().endsWith(".docx"))
+        ? "docx" : "pdf";
+    const r = await downloadDocumentBlob(doc.id, kind);
+    if (r.ok === false) { toast.error(r.message); return; }
+    // Best-effort: update legacy download counter for generated_documents only.
     try {
-      const { data: signedUrl, error } = await supabase.storage
-        .from("documents")
-        .createSignedUrl(doc.file_path, 3600);
-
-      if (error) throw error;
-      
-      // Update download count
       await supabase
         .from("generated_documents")
-        .update({ 
+        .update({
           download_count: (doc.download_count || 0) + 1,
           last_downloaded_at: new Date().toISOString(),
         })
         .eq("id", doc.id);
-
-      window.open(signedUrl.signedUrl, "_blank");
-      refetch();
-    } catch (error) {
-      console.error("Download error:", error);
-      toast.error("Ошибка скачивания");
-    }
+    } catch { /* non-blocking */ }
+    refetch();
   };
 
   const handleResend = async (doc: GeneratedDocument) => {

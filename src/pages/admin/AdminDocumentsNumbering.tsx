@@ -95,15 +95,15 @@ export default function AdminDocumentsNumbering() {
   };
 
   const openDoc = async (r: Row) => {
-    if (!r.file_path || !r.storage_bucket) return;
-    const { data, error } = await supabase.storage
-      .from(r.storage_bucket)
-      .createSignedUrl(r.file_path, 3600);
-    if (error || !data?.signedUrl) {
-      toast.error("Не удалось получить ссылку на файл");
-      return;
-    }
-    window.open(data.signedUrl, "_blank");
+    if (!r.file_path) return;
+    // ID-first download через canonical edge function — без bucket/signed URL.
+    const fileMime = (r as any).file_mime as string | undefined;
+    const kind: "pdf" | "docx" =
+      (fileMime?.includes("word") || r.file_path?.toLowerCase().endsWith(".docx"))
+        ? "docx" : "pdf";
+    const { downloadDocumentBlob } = await import("@/utils/downloadDocumentBlob");
+    const res = await downloadDocumentBlob(r.id, kind);
+    if (res.ok === false) toast.error(res.message);
   };
 
   return (
