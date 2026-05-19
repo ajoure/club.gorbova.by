@@ -370,7 +370,7 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
       const documentId = (data as any).document_id as string | undefined;
       if (documentId) {
         const r = await downloadDocumentBlob(documentId, "pdf");
-        if (!r.ok) toast.error(r.message);
+        if (r.ok === false) toast.error(r.message);
       }
       await fetchAll();
     } catch (e: any) {
@@ -382,7 +382,7 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
 
   const downloadHistory = async (docId: string, kind: "pdf" | "docx") => {
     const r = await downloadDocumentBlob(docId, kind);
-    if (!r.ok) toast.error(r.message);
+    if (r.ok === false) toast.error(r.message);
   };
 
   const rebuildExecutor = async () => {
