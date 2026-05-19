@@ -423,7 +423,12 @@ export function PlaceholdersCatalogTab() {
               показано: <span className="font-medium text-foreground">{filtered.length}</span>.
               {runtimeCount > 0 && (
                 <span className="ml-2 inline-flex items-center gap-1 text-muted-foreground">
-                  <Info className="h-3.5 w-3.5" /> runtime-токенов (без FLD-ID): {runtimeCount}
+                  <Info className="h-3.5 w-3.5" /> runtime/technical (без FLD-ID): {runtimeCount}
+                </span>
+              )}
+              {postponedCount > 0 && (
+                <span className="ml-2 inline-flex items-center gap-1 text-muted-foreground">
+                  <Info className="h-3.5 w-3.5" /> postponed (нет источника): {postponedCount}
                 </span>
               )}
             </p>
