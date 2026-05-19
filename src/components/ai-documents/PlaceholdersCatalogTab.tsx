@@ -29,7 +29,10 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Loader2, Copy, Search, ChevronDown, ChevronRight, Info, RotateCcw } from "lucide-react";
+import {
+  Popover, PopoverContent, PopoverTrigger,
+} from "@/components/ui/popover";
+import { Loader2, Copy, Search, ChevronDown, ChevronRight, Info, RotateCcw, HelpCircle } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
@@ -122,6 +125,100 @@ const CATEGORY_TO_SECTION: Record<string, string> = (() => {
 const SECTION_LABEL: Record<string, string> = Object.fromEntries(
   SECTION_DEFINITIONS.map((s) => [s.id, s.label]),
 );
+
+/**
+ * UX-копирайт секций каталога: подзаголовок (hint) и развёрнутая
+ * подсказка (helpTitle + helpBullets) для иконки «?». Разделён со
+ * структурой SECTION_DEFINITIONS, чтобы тексты можно было править,
+ * не трогая логику группировки.
+ */
+const SECTION_COPY: Record<
+  string,
+  { hint: string; helpTitle?: string; helpBullets?: string[] }
+> = {
+  customer_ind: {
+    hint: "Реквизиты клиента-физлица. Строго типизированная группа — подставляется только если плательщик ФЛ.",
+    helpTitle: "Заказчик — физическое лицо",
+    helpBullets: [
+      "Источник данных: Кабинет клиента → Настройки → Реквизиты, вкладка «Физлицо».",
+      "Используйте эти поля только в шаблонах, рассчитанных строго на ФЛ.",
+      "Для универсальных шаблонов, работающих с любым типом плательщика, берите поля из секции 7.",
+    ],
+  },
+  customer_leg: {
+    hint: "Реквизиты клиента-юрлица. Строго типизированная группа — подставляется только если плательщик ЮЛ.",
+    helpTitle: "Заказчик — юридическое лицо",
+    helpBullets: [
+      "Источник данных: Кабинет клиента → Настройки → Реквизиты, вкладка «Юрлицо».",
+      "Используйте эти поля только в шаблонах, рассчитанных строго на ЮЛ.",
+      "Для универсальных шаблонов берите поля из секции 7.",
+    ],
+  },
+  customer_ent: {
+    hint: "Реквизиты клиента-ИП. Строго типизированная группа — подставляется только если плательщик ИП.",
+    helpTitle: "Заказчик — индивидуальный предприниматель",
+    helpBullets: [
+      "Источник данных: Кабинет клиента → Настройки → Реквизиты, вкладка «ИП».",
+      "Используйте эти поля только в шаблонах, рассчитанных строго на ИП.",
+      "Для универсальных шаблонов берите поля из секции 7.",
+    ],
+  },
+  executor_ind: {
+    hint: "Реквизиты вашей стороны как ФЛ. Только для шаблонов, где исполнитель строго физлицо.",
+    helpTitle: "Исполнитель — физическое лицо",
+    helpBullets: [
+      "Источник данных: Админка → Реквизиты исполнителя, профиль ФЛ.",
+      "Не используйте в универсальных шаблонах — для них есть секция 7.",
+    ],
+  },
+  executor_leg: {
+    hint: "Реквизиты вашей организации (ЮЛ). Только для шаблонов, где исполнитель строго юрлицо.",
+    helpTitle: "Исполнитель — юридическое лицо",
+    helpBullets: [
+      "Источник данных: Админка → Реквизиты исполнителя, профиль ЮЛ.",
+      "Не используйте в универсальных шаблонах — для них есть секция 7.",
+    ],
+  },
+  executor_ent: {
+    hint: "Реквизиты вашей стороны как ИП. Только для шаблонов, где исполнитель строго ИП.",
+    helpTitle: "Исполнитель — индивидуальный предприниматель",
+    helpBullets: [
+      "Источник данных: Админка → Реквизиты исполнителя, профиль ИП.",
+      "Не используйте в универсальных шаблонах — для них есть секция 7.",
+    ],
+  },
+  dynamic: {
+    hint: "Полиморфные поля: один токен в шаблоне сам подставляет данные ФЛ / ЮЛ / ИП по типу плательщика сделки.",
+    helpTitle: "Универсальные поля (по типу плательщика)",
+    helpBullets: [
+      "Один и тот же токен в DOCX автоматически подставляет данные нужного типа субъекта — ФЛ, ЮЛ или ИП — в зависимости от участников сделки. Не нужно делать три отдельных шаблона.",
+      "Где заполняются данные: для заказчика — Кабинет клиента → Настройки → Реквизиты (активная вкладка ФЛ / ЮЛ / ИП); для исполнителя — Админка → Реквизиты.",
+      "Когда использовать: универсальные поля — для шаблонов, работающих с любым типом плательщика (рекомендуемый путь). Типизированные поля из секций 1–6 — только если шаблон строго под один тип субъекта.",
+      "Тип плательщика определяется по данным сделки и выбранному сценарию документа.",
+    ],
+  },
+  document: {
+    hint: "Атрибуты самого документа: номер, дата, тип, ссылка.",
+  },
+  deal: {
+    hint: "Данные сделки: продукт, тариф, суммы, статус, даты.",
+  },
+  payment: {
+    hint: "Платёж по сделке: канал, сумма, статус, дата зачисления.",
+  },
+  system: {
+    hint: "Технические значения времени и контекста (текущая дата, идентификаторы и т. п.).",
+  },
+  technical: {
+    hint: "Ручные override и legacy-поля без UI-источника. Используйте только если точно понимаете последствия.",
+    helpTitle: "Технические поля и override",
+    helpBullets: [
+      "Эти поля не имеют стандартного места для заполнения в интерфейсе и проставляются вручную в карточке сделки или приходят из legacy-источников.",
+      "Никогда не используйте их в типовых шаблонах вместо секций 1–7 — это приведёт к пустым значениям в документе.",
+      "Если для какого-то поля нужен регулярный UI-источник — заведите задачу, а не используйте override постоянно.",
+    ],
+  },
+};
 
 const DATA_TYPE_LABEL: Record<string, string> = {
   text: "Текст", string: "Текст", number: "Число", currency: "Сумма",
@@ -282,9 +379,9 @@ export function PlaceholdersCatalogTab() {
         <div className="flex gap-3 rounded-lg border border-blue-200 bg-blue-50/60 dark:bg-blue-950/30 dark:border-blue-900 p-3">
           <Info className="h-4 w-4 text-blue-600 mt-0.5 flex-shrink-0" />
           <div className="text-xs text-blue-900 dark:text-blue-100 leading-relaxed">
-            Редактируйте шаблон в Microsoft Word. Найдите нужное поле, при необходимости
-            настройте формат и падеж прямо в строке, скопируйте плейсхолдер и вставьте
-            его в DOCX. После загрузки система проверит корректность всех плейсхолдеров.
+            Каждая секция соответствует отдельному источнику данных. Универсальные поля
+            автоматически выбирают реквизиты по типу плательщика сделки (ФЛ/ЮЛ/ИП), поэтому
+            один шаблон может работать для разных типов клиентов.
           </div>
         </div>
 
@@ -379,14 +476,52 @@ export function PlaceholdersCatalogTab() {
                     </TableRow>
                   ) : (
                     grouped.flatMap((section) => [
-                      <TableRow key={`section-${section.id}`} className="bg-muted/60 hover:bg-muted/60 sticky">
-                        <TableCell colSpan={9} className="py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                          {section.label}
-                          <span className="ml-2 text-[10px] font-normal lowercase text-muted-foreground/70">
-                            ({section.rows.length})
-                          </span>
-                        </TableCell>
-                      </TableRow>,
+                      (() => {
+                        const copy = SECTION_COPY[section.id];
+                        return (
+                          <TableRow key={`section-${section.id}`} className="bg-muted/60 hover:bg-muted/60 sticky">
+                            <TableCell colSpan={9} className="py-2">
+                              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                <span>{section.label}</span>
+                                <span className="text-[10px] font-normal lowercase text-muted-foreground/70">
+                                  ({section.rows.length})
+                                </span>
+                                {copy?.helpBullets && copy.helpBullets.length > 0 && (
+                                  <Popover>
+                                    <PopoverTrigger asChild>
+                                      <Button
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-5 w-5 text-muted-foreground hover:text-foreground"
+                                        aria-label="Подробнее о секции"
+                                      >
+                                        <HelpCircle className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </PopoverTrigger>
+                                    <PopoverContent side="bottom" align="start" className="max-w-md text-xs leading-relaxed">
+                                      {copy.helpTitle && (
+                                        <div className="font-semibold text-sm text-foreground mb-1.5 normal-case">
+                                          {copy.helpTitle}
+                                        </div>
+                                      )}
+                                      <ul className="space-y-1.5 list-disc pl-4 text-foreground/90 normal-case font-normal tracking-normal">
+                                        {copy.helpBullets.map((b, i) => (
+                                          <li key={i}>{b}</li>
+                                        ))}
+                                      </ul>
+                                    </PopoverContent>
+                                  </Popover>
+                                )}
+                              </div>
+                              {copy?.hint && (
+                                <div className="mt-1 text-[11px] font-normal normal-case tracking-normal text-muted-foreground/80">
+                                  {copy.hint}
+                                </div>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })(),
                       ...section.rows.map(t => {
                       const isOpen = expanded.has(t.id);
                       const settings = rowSettings.get(t.id) ?? { format: null, caseModifier: null };
