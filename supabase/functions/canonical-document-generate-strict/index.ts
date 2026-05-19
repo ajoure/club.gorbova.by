@@ -809,7 +809,13 @@ Deno.serve(async (req) => {
       missing_tokens: missing,
       token_manifest_snapshot: manifest,
       template_tokens_snapshot: allIds.map((f) => `field:${f}`),
-      warnings_snapshot: [],
+      warnings_snapshot: (() => {
+        const w: string[] = [];
+        if (b97FallbackApplied > 0) w.push(`b97_live_fallback_used:${b97FallbackApplied}:non_empty=${b97FallbackNonEmpty}`);
+        if (b97FallbackApplied > 0 && !b97LiveCustomer) w.push('b97_customer_requisites_missing_for_payer_type');
+        if (b97FallbackApplied > 0 && !b97LiveExecutor) w.push('b97_executor_missing');
+        return w;
+      })(),
       source_trace: sourceTrace,
       resolver_version: RESOLVER_VERSION,
       context_type: 'order',
