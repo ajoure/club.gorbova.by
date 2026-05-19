@@ -296,9 +296,9 @@ export function PlaceholdersCatalogTab() {
               <code className="text-foreground">{`{{field:FLD-XXXXXX}}`}</code>.
               Всего: <span className="font-medium text-foreground">{rows.length}</span>,
               показано: <span className="font-medium text-foreground">{filtered.length}</span>.
-              {skippedNoField > 0 && (
-                <span className="ml-2 inline-flex items-center gap-1 text-amber-600">
-                  <AlertTriangle className="h-3.5 w-3.5" /> скрыто без field_id: {skippedNoField}
+              {runtimeCount > 0 && (
+                <span className="ml-2 inline-flex items-center gap-1 text-muted-foreground">
+                  <Info className="h-3.5 w-3.5" /> runtime-токенов (без FLD-ID): {runtimeCount}
                 </span>
               )}
             </p>
