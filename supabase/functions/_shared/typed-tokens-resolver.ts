@@ -225,36 +225,10 @@ function fillLegExecutor(map: Record<string, string>, ex: any) {
   map["executor.leg.email"] = isLeg ? (ex?.email || "") : "";
 }
 
-function fillEntExecutor(map: Record<string, string>, ex: any) {
-  const isEnt = ex?.subject_type === "entrepreneur";
-  const struct = isEnt ? (ex?.legal_address_structured || null) : null;
-  const addrFull = isEnt
-    ? formatStructuredAddress(struct, ex?.legal_address || null, "entrepreneur").rendered
-    : "";
-  const rawName = isEnt ? (ex?.full_name || "") : "";
-  const displayName = isEnt ? formatEntrepreneurDisplayName(rawName) : "";
-  const dirFullName = rawName ? rawName.replace(/^ИП\s*/i, "").replace(/[«»"']/g, "").trim() : "";
+// fillEntExecutor — УДАЛЁН в B-97 (postponed: нет SOT в `executors` для ИП).
+// Будет восстановлен в отдельном спринте «Executor requisites schema expansion».
 
-  map["executor.ent.name"] = displayName;
-  map["executor.ent.short_name"] = isEnt && rawName ? `ИП ${fullNameToInitials(dirFullName)}` : "";
-  map["executor.ent.unp"] = isEnt ? (ex?.unp || "") : "";
-  map["executor.ent.acts_on_basis"] = isEnt ? (ex?.acts_on_basis || "") : "";
-  map["executor.ent.director_position"] = isEnt ? "Индивидуальный предприниматель" : "";
-  map["executor.ent.director_full_name"] = isEnt ? dirFullName : "";
-  map["executor.ent.director_short_name"] = isEnt ? fullNameToInitials(dirFullName) : "";
-  map["executor.ent.director_acts_on_basis"] = isEnt ? (ex?.acts_on_basis || "Свидетельства о государственной регистрации") : "";
 
-  map["executor.ent.address.full"] = addrFull;
-  for (const p of ADDR_PARTS) {
-    map[`executor.ent.address.${p}`] = isEnt ? readAddressPart(struct, p) : "";
-  }
-
-  map["executor.ent.bank_account"] = isEnt ? (ex?.bank_account || "") : "";
-  map["executor.ent.bank_name"] = isEnt ? (ex?.bank_name || "") : "";
-  map["executor.ent.bank_code"] = isEnt ? (ex?.bank_code || "") : "";
-  map["executor.ent.phone"] = isEnt ? (ex?.phone || "") : "";
-  map["executor.ent.email"] = isEnt ? (ex?.email || "") : "";
-}
 
 function fillExecutorSigner(map: Record<string, string>, ex: any) {
   // executor.signer.* — на текущий момент derive из director_*; точечный override —
