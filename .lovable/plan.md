@@ -1,164 +1,205 @@
 да, согласен, с учетом правок:
 
-1. **Не считать channel-fix достаточным для B-97.**  
-Исправление `admin_test → card` закрывает только автоподтягивание сценария кнопки. Пустые FLD-реквизиты B-97 нужно проверять отдельным proof в том же full-flow, но не смешивать root cause:
-  - root cause №1: `payment_channel=other` → scenario не матчится;
-  - root cause №2: если после scenario-match реквизиты всё ещё пустые → проблема B-97 resolver / FLD lookup / SOT.
-2. **Уточнить правило для** `admin_test` **строго ограниченно.**  
-Не писать просто `provider='admin_test' → card`. Нужно так:
+1. **Не называть frontend route “proxy” в смысле безопасности.**  
+Безопасный источник файла — только edge function `document-download`. Frontend route `/document-download/:documentId` должен быть только UI-обёрткой, которая вызывает edge function и получает blob. Никакой `file_path`, `bucket`, `signedUrl` на frontend не передавать.
+2. **Ввести helper для canonical URL, без хардкода** `gorbova.by` **в разных местах.**
   &nbsp;
+  Добавить единый helper, например:
   ```ts
-  if (
-    (provider === 'admin_test' || provider === 'admin_test_direct') &&
-    (meta.test_payment === true || meta.is_test === true || meta.source === 'test_payment') &&
-    !explicitPaymentMethod
-  ) {
-    return 'card';
-  }
+  getPublicAppBaseUrl()
+  getDocumentDownloadUrl(documentId, kind?)
   ```
-  Если в `meta.payment_method` явно указан `erip`, `bank_transfer`, `apple_pay`, `google_pay` — он должен иметь приоритет.
-3. **Добавить единый shared-helper для payment channel.**  
-Чтобы снова не было расхождения UI/backend:
-  - frontend mirror: `src/utils/derivePaymentChannel.ts`;
-  - backend mirror: `_shared/.../payment-channel.ts`;
-  - в обоих файлах комментарий: `Keep in sync with ...`.
-4. **В** `test-payment-complete` **/** `test-payment-direct` **писать не только** `payment_method`**, но и явный marker.**
+  Источник:
+  - env `PUBLIC_SITE_URL` / `VITE_PUBLIC_SITE_URL`;
+  - fallback в preview — текущий origin;
+  - production — `https://gorbova.by`.
+  Иначе потом снова появятся разные домены в разных местах.
+3. `document-download` **должен поддерживать оба режима: browser route и direct API.**
+  Минимум:
+  - `GET /functions/v1/document-download?id=<id>&kind=pdf|docx`
+  - `POST` с `{ document_id, kind }`
+  Но в обоих случаях источник истины — только DB row.
+4. **Проверку доступа описать точнее.**
+  Для `ai_generated_documents`:
+  - обычный пользователь: `document.profile_id` должен принадлежать его `auth.uid()` через `profiles.user_id`;
+  - admin/super_admin: доступ через существующие role/permission helpers;
+  - если `context_type='order'`, можно дополнительно сверить `orders_v2.profile_id`.
+  Если ownership нельзя доказать — `403`, а не fallback.
+5. **Не возвращать storage path в публичный response.**
+  В `canonical-document-generate-strict` можно оставить `file_path` только для internal/admin/debug, но лучше:
+  - в обычном response вернуть `document_id`, `download_url`, `file_name`, `file_mime`;
+  - `file_path/storage_bucket` не отдавать клиентскому UI, если не включён debug/admin mode.
+6. **Добавить запрет на** `*.supabase.co` **не только в UI-коде, но и в response-proof.**
   &nbsp;
-  ```json
-  {
-    "payment_method": "credit_card",
-    "test_payment": true,
-    "payment_channel": "card"
-  }
+  В Verify:
+  ```bash
+  rg -n "createSignedUrl|storage/v1/object/sign|supabase.co|download_url" src supabase/functions
   ```
-  Это нужно, чтобы будущая диагностика не угадывала тип платежа по `provider`.
-5. **Repair старой сделки** `ORD-TEST-MPCXYLNP` **— только после новой успешной сделки.**  
-Сначала доказать fix на новой оплате. Потом, если нужно, отдельным блоком:
-  - dry-run по одному `order_id`;
-  - пересборка только `orders_v2.meta.document_data`;
-  - без UPDATE `payments_v2`;
-  - без ручной подстановки `template_id/executor_id`.
-6. **В Verify добавить SQL-proof по новой оплате.**
+  И отдельно проверить JSON-response генерации:
+7. **Legacy-функции не переписывать вслепую.**
   &nbsp;
-  Обязательно показать:
-  ```sql
-  SELECT order_number,
-         offer_id,
-         meta->>'offer_id' AS meta_offer_id,
-         meta->'document_data'->'_provenance'->'scenario' AS scenario,
-         meta->'document_data'->'_provenance'->'template_resolution' AS template_resolution,
-         meta->'document_data'->'_provenance'->'executor_resolution' AS executor_resolution
-  FROM orders_v2
-  WHERE order_number = '<new_order>';
-  ```
-  Ожидание:
-  - `scenario.source = scenario`;
-  - `payment_channel = card`;
-  - `template_resolution.source = scenario`;
-  - `executor_resolution.source = scenario`.
-7. **В UI-proof добавить отрицательное подтверждение.**  
-В новой сделке не должно быть:
-  - `Источник не задан`;
-  - `Автоматически (не задан в кнопке)`;
-  - `не выбран шаблон`;
-  - `не выбран исполнитель`.
-8. **В PDF-proof добавить проверку именно FLD из твоего шаблона.**  
-Не общая фраза «B-97 не пустые», а таблица:
-9. **Если после channel-fix PDF всё ещё пустой — не закрывать задачу.**  
-Тогда сразу фиксировать второй root cause: `B-97 resolver/FLD lookup`, без отчёта «всё хорошо».
-10. **Финальный отчёт должен прямо признать прошлую ошибку.**  
-В отчёте добавить раздел:
+  Для `document-auto-generate`, `generate-from-template`, `ai-generate-document` сначала discovery:
+  - это клиентские ссылки или внутренние storage paths;
+  - используются ли они сейчас;
+  - кому отправляются.
+  Если это legacy и не участвует в текущем flow — зафиксировать backlog, но не ломать.
+8. **Добавить** `Content-Disposition` **по** `kind`**.**
+  &nbsp;
+  Для PDF:
+  - можно `inline; filename="..."`, чтобы браузер открывал PDF;
+  Для DOCX:
+  - лучше `attachment; filename="..."`.
+  Filename брать из DB и очищать от опасных символов.
+9. **Route** `/document-download/:documentId` **должен уметь показать ошибку без технических деталей.**
+  &nbsp;
+  Например:
+  - `Документ не найден`;
+  - `Нет доступа к документу`;
+  - `Файл ещё не готов`;
+  - `Не удалось скачать документ`.
+  Не показывать `bucket`, `file_path`, `Supabase`, stack trace.
+10. **Добавить audit log на скачивание.**
+
+В edge function:
+
+- `document.downloaded`
+- `document_id`
+- `profile_id`
+- `actor_user_id`
+- `actor_type`
+- `kind`
+- `source=canonical_document_download`
+
+Это важно, потому что документ юридически значимый.
+
+11. **DoD дополнить проверкой опубликованного домена.**
+
+Не только preview:
+
+- `/document-download/<id>` на preview работает;
+- `/document-download/<id>` на `https://gorbova.by` работает;
+- адресная строка не меняется на `supabase.co`;
+- network может обращаться к edge function, но пользователь не видит storage signed URL.
+
+12. **Public-token ссылки вынести строго в backlog.**
+
+В текущем патче только auth-only.  
+Если нужен доступ без логина — отдельный спринт:
 
 ```text
-Почему прошлый отчёт был неполным:
-- UI fix по offer_id был проверен не на том полном сценарии / не покрыл admin_test payment_channel.
-- PDF proof показал, что scenario-match и FLD-resolution — разные уровни.
-- Теперь проверен полный путь: payment → order → scenario → snapshot → document → PDF.
+document_public_links:
+token_hash, document_id, expires_at, max_downloads, revoked_at, audit_logs
 ```
 
 С этими правками план можно запускать.
 
 &nbsp;
 
+мы уже скрывали ранее адрес супабейс. Проверь также, чтобы не сделать дубли функции. 
+
 План:
 
 1. **Проблема**
-  - В новой тестовой сделке `ORD-TEST-MPCXYLNP` карточка «Документы / плательщик» не подставляет шаблон из кнопки автоматически.
-  - По данным заказа оффер найден: `offer_id = 6f306cbc-24e8-4589-b6f3-2dca9e4d0c8e` лежит в `orders_v2.meta.offer_id`.
-  - В кнопке есть сценарий для `payer_type=individual` и каналов `[card, erip, apple_pay, google_pay]` с шаблоном `21594005-ebdf-4d0f-8091-d00049f31e8c` и исполнителем `d0c7fe75-1192-40a9-bbae-b652b69e6882`.
-  - Но тестовая оплата создаёт запись `payments_v2` как `provider='admin_test'` без `meta.payment_method`; текущий `derivePaymentChannel` классифицирует это как `other`.
-  - Из-за `payment_channel=other` сценарий кнопки не матчится, snapshot пишет `source=defaults`, `template_id=null`, а UI показывает «Автоматически (не задан в кнопке)».
+  - Сейчас часть document-flow всё ещё создаёт или открывает прямые signed URL вида `*.supabase.co/storage/v1/object/sign/...`.
+  - В preview это блокируется браузером/расширениями (`ERR_BLOCKED_BY_CLIENT`).
+  - На опубликованном сайте файл открывается, но пользователь/клиент видит технический домен backend-провайдера, что недопустимо.
+  - Требование: ссылки на документы не должны вести на `*.supabase.co` и не должны показывать слово/домен Supabase. Внешняя ссылка должна быть на наш домен: `https://gorbova.by/...`.
 2. **Диагностика**
-  - `orders_v2.offer_id` у тестовых заказов `NULL`, но `orders_v2.meta.offer_id` заполнен — frontend уже читает fallback, backend snapshot тоже читает fallback.
-  - Root cause не в `offer_id`, а в канале оплаты тестовой симуляции.
-  - Реальная кнопка настроена корректно: сценарий ФЛ существует и указывает на активный шаблон `Шаблон. Счёт-акт на услуги ФЛ - Исполнитель`.
-  - `document_data.snapshot_created` для `ORD-TEST-MPCXYLNP` зафиксировал `payment_channel: other`, `scenario.source: defaults`, `template_resolution.source: none`.
+  - `src/components/ai-documents/DealDocumentsPanel.tsx` уже частично переведён на blob-download через SDK, но:
+    - edge function `canonical-document-generate-strict` всё равно возвращает `download_url` как прямой signed URL;
+    - существующие/другие UI-места продолжают создавать signed URL и открывать их через `window.open`.
+  - Найдены прямые signed URL в:
+    - `supabase/functions/canonical-document-generate-strict/index.ts` — `createSignedUrl(...)` и `download_url` в ответе;
+    - `src/hooks/useGeneratedDocuments.tsx` — `createSignedUrl(...)` + `window.open(url)`;
+    - `src/components/purchases/OrderDocuments.tsx` — `createSignedUrl(...)` + `window.open(...)`;
+    - `src/components/purchases/OrderListItem.tsx` — `createSignedUrl(...)` + `window.open(...)`;
+    - legacy-функции `document-auto-generate`, `generate-from-template`, `ai-generate-document` также сохраняют/возвращают signed URL для старого document-flow.
+  - Существующего публичного proxy/download route для `ai_generated_documents` по домену сайта не найдено.
+  - `ai_generated_documents` уже содержит достаточно данных для ID-first выдачи: `id`, `profile_id`, `context_id`, `file_path`, `storage_bucket`, `file_name`, `file_mime`, `deleted_at`, `status`.
 3. **Предлагаемое решение**
-  - Исправить классификацию тестовой оплаты как карточной, чтобы симуляция совпадала с реальным card-checkout flow:
-    - backend `derivePaymentChannel`: `provider='admin_test'` / `admin_test_direct` с `meta.test_payment=true` считать `card`, если нет явного `erip/bank_transfer/...`.
-    - frontend `derivePaymentChannel`: тот же mirror-алгоритм, чтобы UI сразу показывал «Карта» и матч сценария кнопки.
-  - Исправить запись новых тестовых платежей:
-    - `test-payment-complete` должен писать в `payments_v2.meta.payment_method='credit_card'` для тестовой оплаты через сайт.
-    - `test-payment-direct` — аналогично, если используется этим путём.
-  - Для уже созданной проблемной сделки выполнить безопасный repair только `orders_v2.meta.document_data` после dry-run:
-    - не трогать `payments_v2`;
-    - не трогать `orders_v2` schema;
-    - пересобрать только document snapshot / либо минимально обновить document_data template/scenario, если snapshot repair подтвердит ровно 1 целевой заказ.
+  - Ввести единый canonical download endpoint через backend function, например:
+    - `GET/POST /functions/v1/document-download?id=<document_id>&kind=pdf|docx`
+  - Клиентские публичные/админские URL строить только как:
+    - `https://gorbova.by/document-download/<document_id>` или `https://gorbova.by/document-download/<document_id>?kind=docx`
+  - На frontend добавить страницу-прокси `DocumentDownloadPage` по маршруту `/document-download/:documentId`, которая:
+    - вызывает backend function `document-download`;
+    - получает файл как blob;
+    - запускает скачивание/открытие через `blob:` URL;
+    - не показывает и не открывает `*.supabase.co`.
+  - Для админского UI оставить удобное скачивание из карточки сделки, но источник файла должен идти через тот же backend endpoint, а не напрямую через `supabase.storage.createSignedUrl`.
+  - В `canonical-document-generate-strict` убрать возврат прямого `download_url` на backend-провайдера; вернуть только:
+    - `document_id`,
+    - `file_path` для внутреннего аудита/совместимости,
+    - `download_url: https://gorbova.by/document-download/<document_id>`.
+  - Для email/клиентских ссылок в legacy document-flow заменить прямые signed URL на URL нашего домена там, где это относится к документам.
 4. **Изменяемые компоненты**
-  - `src/utils/derivePaymentChannel.ts` — UI mirror.
-  - `supabase/functions/_shared/document-resolver-v2/payment-channel.ts` — backend mirror для snapshot.
-  - `supabase/functions/test-payment-complete/index.ts` — метаданные тестового платежа.
-  - `supabase/functions/test-payment-direct/index.ts` — метаданные direct-тестового платежа.
-  - Деплой edge functions после правки:
-    - `test-payment-complete`
-    - `test-payment-direct`
-    - `canonical-document-payment-hook` (подхватывает shared backend resolver)
+  - Edge functions:
+    - создать `supabase/functions/document-download/index.ts`;
+    - изменить `supabase/functions/canonical-document-generate-strict/index.ts`;
+    - точечно проверить/обновить legacy document functions, где клиентам отправляются document download links:
+      - `supabase/functions/document-auto-generate/index.ts`,
+      - `supabase/functions/generate-from-template/index.ts`,
+      - `supabase/functions/ai-generate-document/index.ts`.
+  - Frontend:
+    - добавить route `/document-download/:documentId` в `src/App.tsx`;
+    - добавить страницу `src/pages/DocumentDownloadPage.tsx`;
+    - обновить скачивание документов в:
+      - `src/components/ai-documents/DealDocumentsPanel.tsx`,
+      - `src/hooks/useGeneratedDocuments.tsx`,
+      - `src/components/purchases/OrderDocuments.tsx`,
+      - `src/components/purchases/OrderListItem.tsx`.
+  - Shared helper:
+    - при необходимости добавить небольшой helper для canonical document URL, чтобы не дублировать домен.
+  - База данных:
+    - новых таблиц не требуется;
+    - migrations не планируются, если endpoint будет читать существующие `ai_generated_documents` / `generated_documents` и проверять доступ через текущую auth-сессию.
 5. **Что не будет изменено**
-  - `payments_v2` схема и существующие платежные записи — без UPDATE.
-  - `orders_v2` схема — без изменений.
-  - `allocate_document_number` — не трогать.
-  - document scenarios в кнопке — не менять, они уже корректные.
-  - Contact Center / CRM routing — не менять.
-  - B-97 морфология и FLD registry — не менять.
-  - Шаблоны документов — не менять.
+  - Не меняю генерацию PDF/DOCX и Gotenberg.
+  - Не меняю document numbering.
+  - Не меняю FLD/token mapping.
+  - Не меняю auto-fill шаблона/исполнителя из кнопки.
+  - Не делаю документы публичными без авторизации, если нет отдельного утверждённого требования на публичный token-link.
+  - Не раскрываю клиенту storage path/backend signed URL.
 6. **Dry-run**
-  - SQL-проверка перед repair:
-    - подтвердить, что целевой заказ один: `ORD-TEST-MPCXYLNP`;
-    - подтвердить `meta.offer_id = 6f306cbc-...`;
-    - подтвердить наличие active scenario для `individual + card`;
-    - подтвердить active template `21594005-...`;
-    - подтвердить executor `d0c7fe75-...` active.
-  - Edge dry-run:
-    - вызвать `canonical-document-payment-hook` / preview-путь только после правки и убедиться, что новый snapshot для новой сделки получает `scenario.source='scenario'`, `payment_channel='card'`, `template_id=21594005-...`.
+  - До правок проверить текущие места `createSignedUrl`, `download_url`, `file_url`, `window.open` по document-flow.
+  - Подтвердить, что `ai_generated_documents` и legacy `generated_documents` имеют `file_path` и связаны с `profile_id`/`context_id`.
+  - Проверить, что новый endpoint может работать ID-first: вход только `document_id` + `kind`, без передачи `file_path` от клиента.
 7. **Execute**
-  - Внести четыре точечные правки в код.
-  - Задеплоить только затронутые edge functions.
-  - Создать новую тестовую оплату на `7500084@gmail.com` по тарифу «Чат» через тот же UI/API путь.
-  - Проверить новую сделку до генерации:
-    - «Способ оплаты: Карта»;
-    - «Шаблон документа: По сценарию кнопки · Шаблон. Счёт-акт на услуги ФЛ - Исполнитель»;
-    - «Исполнитель: По сценарию кнопки · ЗАО "АЖУР ИНКАМ"»;
-    - кнопка «Создать документ» активна.
-  - Сгенерировать документ и проверить preview/generate response:
-    - нет `template_not_found`;
-    - нет пустого шаблона;
-    - B-97 FLD реквизитов не пустые.
+  - Создать backend function `document-download`:
+    - принимает `document_id` и `kind`;
+    - ищет документ по ID в `ai_generated_documents`, fallback — `generated_documents`;
+    - проверяет, что документ не удалён/не error;
+    - для обычного пользователя разрешает только свой `profile_id`;
+    - для admin/super_admin разрешает доступ к документам сделок;
+    - выбирает `file_path` только из DB, не из client body;
+    - скачивает файл из private bucket через service role внутри function;
+    - возвращает бинарный файл с `Content-Type`, `Content-Disposition` и без редиректа на storage URL.
+  - Добавить frontend route `/document-download/:documentId`:
+    - вызывает `document-download`;
+    - создаёт `blob:` URL;
+    - открывает/скачивает файл;
+    - показывает понятный статус/ошибку без технических backend-доменов.
+  - Обновить UI-кнопки скачивания на вызов canonical route/helper.
+  - Обновить `canonical-document-generate-strict`, чтобы `download_url` был на `https://gorbova.by/document-download/<document_id>`, а не signed storage URL.
+  - Точечно убрать прямые signed URL из клиентских document download paths.
 8. **STOP-guards**
-  - Остановиться, если dry-run показывает больше одного целевого заказа для repair.
-  - Остановиться, если сценарий кнопки отсутствует или template inactive/deleted.
-  - Остановиться, если новый платеж получает не `admin_test`, а реальный `bepaid` — не менять логику реальных платежей.
-  - Остановиться, если изменение требует UPDATE/DELETE в `payments_v2`.
-  - Остановиться, если нужно менять document scenarios или шаблон — это отдельная задача.
+  - Остановиться, если найдено, что документ может скачиваться без auth/token и это используется клиентскими email-ссылками как публичный сценарий — тогда нужен отдельный signed business-token, а не auth-only endpoint.
+  - Остановиться, если row/document ownership нельзя проверить через `profile_id` или role-check без риска раскрыть чужой документ.
+  - Остановиться, если legacy `generated_documents.file_url` используется как внешний SOT и его массовое изменение потребует отдельной миграции/repair.
+  - Не принимать `bucket`/`file_path` от клиента как источник истины.
+  - Не возвращать `Location` redirect на `*.supabase.co`.
 9. **DoD**
-  - Новая тестовая сделка по `7500084@gmail.com` автоматически получает шаблон и исполнителя из кнопки.
-  - UI больше не показывает «Автоматически (не задан в кнопке)» при настроенном сценарии.
-  - `orders_v2.meta.document_data._provenance.scenario.source = 'scenario'` для новой сделки.
-  - `payment_channel = 'card'` для тестовой оплаты через сайт.
-  - PDF генерируется без `template_not_found` и без пустых реквизитов B-97.
-  - В отчёте будут указаны: root cause, изменённые файлы, proof новой сделки, proof PDF, token/source trace, STOP-guards.
+  - В новом strict-flow ответ `canonical-document-generate-strict` больше не содержит `*.supabase.co` в `download_url`.
+  - Кнопки PDF/DOCX в карточке сделки не открывают storage signed URL.
+  - Клиентские документы в покупках не открывают `*.supabase.co`.
+  - Route `/document-download/:documentId` работает на published domain и preview без `ERR_BLOCKED_BY_CLIENT`.
+  - Поиск по коду для document-flow не показывает прямых `createSignedUrl + window.open` в затронутых местах.
+  - Backend function возвращает файл напрямую, с корректным MIME и filename.
+  - Нет раскрытия `Supabase`/backend storage domain в адресной строке и в клиентской ссылке.
 10. **Риски и зависимости**
-  - Уже созданные старые сделки могут иметь старый snapshot с `payment_channel=other`; для них нужен отдельный безопасный repair по конкретному `order_id`.
-  - UI на published-домене увидит frontend-правку только после публикации.
-  - Edge functions нужно redeploy после изменения shared resolver.
+  - Если клиентам нужны ссылки без входа в аккаунт, потребуется отдельная tokenized public-download модель с истечением срока и audit; это отдельный безопасный PATCH.
+  - Старые уже отправленные email-ссылки с `*.supabase.co` невозможно «переименовать» без повторной отправки/repair.
+  - Внутренний SDK всё равно технически ходит к backend endpoint, но пользователь и клиент не должны видеть storage signed URL или переходить на него.
 11. **Требуется дополнительная информация**
-  - Не требуется. Данных достаточно: root cause подтверждён live SQL и audit proof.
+  - Не требуется для auth-only админского/кабинетного скачивания.
+  - Если нужны публичные ссылки клиентам без логина — нужно отдельное подтверждение срока жизни ссылки и правил доступа.

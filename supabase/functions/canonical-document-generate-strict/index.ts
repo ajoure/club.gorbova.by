@@ -851,7 +851,10 @@ Deno.serve(async (req) => {
       documentId = insRow.id;
     }
 
-    const sig = await supabase.storage.from('documents').createSignedUrl(pdfPath, 3600);
+    // Canonical download URL on our own domain. NEVER expose *.supabase.co
+    // storage signed URLs to the client / customer.
+    const appBase = (Deno.env.get('PUBLIC_SITE_URL') || 'https://gorbova.by').replace(/\/+$/, '');
+    const canonicalDownloadUrl = `${appBase}/document-download/${documentId}`;
 
     await supabase.from('audit_logs').insert({
       actor_user_id: userId,
@@ -877,10 +880,8 @@ Deno.serve(async (req) => {
       success: true,
       mode: 'generate',
       document_id: documentId,
-      storage_path: pdfPath,
       file_mime: 'application/pdf',
-      docx_storage_path: docxPath,
-      download_url: sig.data?.signedUrl || null,
+      download_url: canonicalDownloadUrl,
       template: { id: tpl.id, version_id: ver.id, version_number: ver.version_number },
       resolver_version: RESOLVER_VERSION,
       document_number: allocatedNumber,

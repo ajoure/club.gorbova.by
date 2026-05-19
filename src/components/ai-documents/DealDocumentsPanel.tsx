@@ -34,6 +34,7 @@ import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 import { useHasRoleV2 } from "@/hooks/useHasRoleV2";
+import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
 
 // Executor FLD-IDs (entity_type='executor'). Hardcoded fast path; UI also
 // filters by entity_type from fields_registry as the registry-driven SOT.
@@ -366,10 +367,10 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
       if (error) throw error;
       if ((data as any)?.error) throw new Error((data as any).error);
       toast.success("PDF создан");
-      const filePath = (data as any).file_path as string | undefined;
-      const bucket = ((data as any).bucket as string | undefined) || "documents";
-      if (filePath) {
-        await downloadFile(bucket, filePath);
+      const documentId = (data as any).document_id as string | undefined;
+      if (documentId) {
+        const r = await downloadDocumentBlob(documentId, "pdf");
+        if (r.ok === false) toast.error(r.message);
       }
       await fetchAll();
     } catch (e: any) {
@@ -379,21 +380,9 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
     }
   };
 
-  const downloadFile = async (bucket: string, path: string) => {
-    // Скачиваем как blob через SDK, чтобы обойти ad-blocker'ы, которые
-    // режут прямые ссылки на *.supabase.co (ERR_BLOCKED_BY_CLIENT).
-    const { data, error } = await supabase.storage.from(bucket).download(path);
-    if (error || !data) { toast.error("Не удалось получить файл"); return; }
-    const blobUrl = URL.createObjectURL(data);
-    const fileName = path.split("/").pop() || "document";
-    const a = document.createElement("a");
-    a.href = blobUrl;
-    a.download = fileName;
-    a.rel = "noopener";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+  const downloadHistory = async (docId: string, kind: "pdf" | "docx") => {
+    const r = await downloadDocumentBlob(docId, kind);
+    if (r.ok === false) toast.error(r.message);
   };
 
   const rebuildExecutor = async () => {
@@ -712,7 +701,7 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => d.file_path && downloadFile(d.storage_bucket, d.file_path)}
+                            onClick={() => downloadHistory(d.id, "pdf")}
                             disabled={!d.file_path}
                             title="Скачать PDF"
                           >
@@ -722,7 +711,7 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
                             <Button
                               size="sm"
                               variant="ghost"
-                              onClick={() => downloadFile(d.storage_bucket, d.meta!.docx_storage_path)}
+                              onClick={() => downloadHistory(d.id, "docx")}
                               title="Скачать DOCX (только для админов)"
                             >
                               <FileType2 className="h-3 w-3 mr-1" /> DOCX

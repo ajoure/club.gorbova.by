@@ -244,23 +244,20 @@ export function useRegenerateDocument() {
 
 export function useDownloadDocument() {
   const queryClient = useQueryClient();
-  
+
   return useMutation({
-    mutationFn: async ({ documentId, filePath }: { documentId: string; filePath: string }) => {
-      // Get signed URL
-      const { data: signedUrl, error: signError } = await supabase.storage
-        .from("documents")
-        .createSignedUrl(filePath, 3600);
-
-      if (signError) throw signError;
-
-      // Update download count (increment manually)
+    mutationFn: async ({ documentId }: { documentId: string; filePath?: string }) => {
+      // Canonical client: ходим через наш edge function, не показываем
+      // *.supabase.co в URL.
+      const { downloadDocumentBlob } = await import("@/utils/downloadDocumentBlob");
+      const r = await downloadDocumentBlob(documentId, "pdf");
+      if (r.ok === false) throw new Error(r.message);
+      // Update download counter (best-effort, не критично).
       const { data: doc } = await supabase
         .from("generated_documents")
         .select("download_count")
         .eq("id", documentId)
         .single();
-
       await supabase
         .from("generated_documents")
         .update({
@@ -268,16 +265,14 @@ export function useDownloadDocument() {
           last_downloaded_at: new Date().toISOString(),
         })
         .eq("id", documentId);
-
-      return signedUrl.signedUrl;
+      return true;
     },
-    onSuccess: (url) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["generated-documents"] });
-      window.open(url, "_blank");
     },
-    onError: (error) => {
+    onError: (error: any) => {
       console.error("Download error:", error);
-      toast.error("Ошибка скачивания документа");
+      toast.error(error?.message || "Ошибка скачивания документа");
     },
   });
 }
