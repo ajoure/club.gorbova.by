@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuLabel } from "@/components/ui/dropdown-menu";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
 import { InvoiceActPreviewDialog } from "./InvoiceActPreviewDialog";
 
 interface Order {
@@ -170,20 +171,9 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
     }
   };
 
-  const downloadGeneratedDoc = async (filePath: string, docNumber: string) => {
-    try {
-      const { data, error } = await supabase.storage
-        .from("documents")
-        .createSignedUrl(filePath, 3600);
-      
-      if (error) throw error;
-      
-      // Open in new tab
-      window.open(data.signedUrl, "_blank");
-    } catch (error) {
-      console.error("Download error:", error);
-      toast.error("Ошибка скачивания документа");
-    }
+  const downloadGeneratedDoc = async (docId: string) => {
+    const r = await downloadDocumentBlob(docId, "pdf");
+    if (r.ok === false) toast.error(r.message);
   };
 
   const getStatusBadge = () => {
@@ -335,7 +325,7 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
                       {generatedDocs.map((doc) => (
                         <DropdownMenuItem
                           key={doc.id}
-                          onClick={() => downloadGeneratedDoc(doc.file_path, doc.document_number)}
+                          onClick={() => downloadGeneratedDoc(doc.id)}
                         >
                           <FileDown className="h-4 w-4 mr-2" />
                           {doc.document_number}
