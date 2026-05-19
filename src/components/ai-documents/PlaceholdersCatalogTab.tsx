@@ -391,11 +391,14 @@ export function PlaceholdersCatalogTab() {
                       const isOpen = expanded.has(t.id);
                       const settings = rowSettings.get(t.id) ?? { format: null, caseModifier: null };
                       const dirty = !isDefault(rowSettings.get(t.id));
-                      const placeholder = buildFieldPlaceholder(
-                        t.field_public_id!,
-                        settings.format,
-                        settings.caseModifier,
-                      );
+                      const isRuntime = !t.field_public_id;
+                      const placeholder = isRuntime
+                        ? `{{${t.token_key}}}`
+                        : buildFieldPlaceholder(
+                            t.field_public_id!,
+                            settings.format,
+                            settings.caseModifier,
+                          );
                       const kind = classifyDataType(t.field_data_type ?? t.data_type);
 
                       return (
@@ -421,9 +424,23 @@ export function PlaceholdersCatalogTab() {
                               )}
                             </TableCell>
                             <TableCell className="py-2">
-                              <Badge variant="secondary" className="font-mono text-[10px]">
-                                {t.field_public_id}
-                              </Badge>
+                              {isRuntime ? (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge variant="outline" className="font-mono text-[10px] cursor-help">
+                                      runtime
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent className="max-w-xs">
+                                    Runtime-токен: значение подставляется резолвером по token_key
+                                    <code className="block mt-1">{t.token_key}</code>
+                                  </TooltipContent>
+                                </Tooltip>
+                              ) : (
+                                <Badge variant="secondary" className="font-mono text-[10px]">
+                                  {t.field_public_id}
+                                </Badge>
+                              )}
                             </TableCell>
                             <TableCell className="text-xs text-muted-foreground py-2">
                               {(() => {
@@ -432,11 +449,15 @@ export function PlaceholdersCatalogTab() {
                               })()}
                             </TableCell>
                             <TableCell className="py-2">
-                              <RowSettingsCell
-                                kind={kind}
-                                settings={settings}
-                                onChange={(patch) => updateRowSettings(t.id, patch)}
-                              />
+                              {isRuntime ? (
+                                <span className="text-[10px] text-muted-foreground italic">runtime — без модификаторов</span>
+                              ) : (
+                                <RowSettingsCell
+                                  kind={kind}
+                                  settings={settings}
+                                  onChange={(patch) => updateRowSettings(t.id, patch)}
+                                />
+                              )}
                             </TableCell>
                             <TableCell className="py-2 text-xs text-foreground/80">
                               {t.example_value
