@@ -99,7 +99,11 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
       .maybeSingle();
     setOrder(o as OrderRow | null);
 
-    const offerId = (o as any)?.offer_id || null;
+    // Fallback: orders, созданные через public-link / admin-test, могут иметь
+    // offer_id ТОЛЬКО в meta.offer_id (column NULL). Без этого fallback live
+    // scenario из tariff_offers.meta никогда не подгружается → UI показывает
+    // «Источник не задан / Автоматически» даже когда кнопка настроена правильно.
+    const offerId = (o as any)?.offer_id || (o as any)?.meta?.offer_id || null;
     const [{ data: pays }, { data: tmpls }, { data: execs }, offerRes] = await Promise.all([
       supabase.from("payments_v2")
         .select("id, status, card_brand, card_last4, card_holder, paid_at, created_at, meta, provider")
