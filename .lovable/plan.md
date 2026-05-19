@@ -1,205 +1,166 @@
 да, согласен, с учетом правок:
 
-1. **Не называть frontend route “proxy” в смысле безопасности.**  
-Безопасный источник файла — только edge function `document-download`. Frontend route `/document-download/:documentId` должен быть только UI-обёрткой, которая вызывает edge function и получает blob. Никакой `file_path`, `bucket`, `signedUrl` на frontend не передавать.
-2. **Ввести helper для canonical URL, без хардкода** `gorbova.by` **в разных местах.**
+1. **Не путать два уровня URL**
+  - Адресная строка пользователя: только `gorbova.by`.
+  - Network-запрос к Edge Function может идти на Supabase Functions host, если это внутренний XHR/fetch и он не показывается пользователю.
+  - Запрещено именно: `window.open(signedUrl)`, `<a href=signedUrl>`, `download_url` со `supabase.co`, редирект на storage.
+2. `DocumentDownloadPage` **оставить обязательным, но не полагаться на него после генерации**
+  - После `Создать документ` — сразу `downloadDocumentBlob(document_id, "pdf")`.
+  - `/document-download/:documentId` — fallback для ручного открытия ссылки, истории, email/auth-only кабинета.
+  - Если published bundle старый и route даёт 404 — это решается публикацией, но админский flow уже не должен зависеть от route.
+3. **В** `canonical-document-generate-strict` **не возвращать storage signed URL вообще**  
+Даже если UI его больше не использует, response не должен содержать `supabase.co`.
   &nbsp;
-  Добавить единый helper, например:
-  ```ts
-  getPublicAppBaseUrl()
-  getDocumentDownloadUrl(documentId, kind?)
-  ```
-  Источник:
-  - env `PUBLIC_SITE_URL` / `VITE_PUBLIC_SITE_URL`;
-  - fallback в preview — текущий origin;
-  - production — `https://gorbova.by`.
-  Иначе потом снова появятся разные домены в разных местах.
-3. `document-download` **должен поддерживать оба режима: browser route и direct API.**
-  Минимум:
-  - `GET /functions/v1/document-download?id=<id>&kind=pdf|docx`
-  - `POST` с `{ document_id, kind }`
-  Но в обоих случаях источник истины — только DB row.
-4. **Проверку доступа описать точнее.**
-  Для `ai_generated_documents`:
-  - обычный пользователь: `document.profile_id` должен принадлежать его `auth.uid()` через `profiles.user_id`;
-  - admin/super_admin: доступ через существующие role/permission helpers;
-  - если `context_type='order'`, можно дополнительно сверить `orders_v2.profile_id`.
-  Если ownership нельзя доказать — `403`, а не fallback.
-5. **Не возвращать storage path в публичный response.**
-  В `canonical-document-generate-strict` можно оставить `file_path` только для internal/admin/debug, но лучше:
-  - в обычном response вернуть `document_id`, `download_url`, `file_name`, `file_mime`;
-  - `file_path/storage_bucket` не отдавать клиентскому UI, если не включён debug/admin mode.
-6. **Добавить запрет на** `*.supabase.co` **не только в UI-коде, но и в response-proof.**
+  Возвращать:
+
+```ts
+{
+  document_id,
+  download_url: getDocumentDownloadUrl(document_id, "pdf"),
+  docx_download_url: getDocumentDownloadUrl(document_id, "docx")
+}
+```
+
+4. `useAiDocuments.getDownloadUrl()` **не заменять на “URL”, а переименовать по смыслу**  
+Если функция теперь скачивает blob, не оставлять название `getDownloadUrl`, чтобы следующий разработчик снова не начал открывать URL.
   &nbsp;
-  В Verify:
-  ```bash
-  rg -n "createSignedUrl|storage/v1/object/sign|supabase.co|download_url" src supabase/functions
-  ```
-  И отдельно проверить JSON-response генерации:
-7. **Legacy-функции не переписывать вслепую.**
+  Лучше:
+  - `downloadAiDocument(documentId, kind)`
+  - `openAiDocumentBlob(documentId, kind)`
+5. **В** `DocumentLogTab` **и** `AdminDocumentsNumbering` **не выбирать kind вслепую**  
+Если в row есть `file_mime` / `file_name`:
+  - PDF → `"pdf"`;
+  - DOCX → `"docx"`;
+  - иначе fallback по расширению `file_path`.
+6. **В** `document-download` **проверить, что kind реально соответствует файлу**  
+Не позволять запросить `kind=pdf`, если у документа есть только DOCX, если только в БД нет отдельного PDF-path.
   &nbsp;
-  Для `document-auto-generate`, `generate-from-template`, `ai-generate-document` сначала discovery:
-  - это клиентские ссылки или внутренние storage paths;
-  - используются ли они сейчас;
-  - кому отправляются.
-  Если это legacy и не участвует в текущем flow — зафиксировать backlog, но не ломать.
-8. **Добавить** `Content-Disposition` **по** `kind`**.**
-  &nbsp;
-  Для PDF:
-  - можно `inline; filename="..."`, чтобы браузер открывал PDF;
-  Для DOCX:
-  - лучше `attachment; filename="..."`.
-  Filename брать из DB и очищать от опасных символов.
-9. **Route** `/document-download/:documentId` **должен уметь показать ошибку без технических деталей.**
-  &nbsp;
-  Например:
-  - `Документ не найден`;
-  - `Нет доступа к документу`;
-  - `Файл ещё не готов`;
-  - `Не удалось скачать документ`.
-  Не показывать `bucket`, `file_path`, `Supabase`, stack trace.
-10. **Добавить audit log на скачивание.**
-
-В edge function:
-
-- `document.downloaded`
-- `document_id`
-- `profile_id`
-- `actor_user_id`
-- `actor_type`
-- `kind`
-- `source=canonical_document_download`
-
-Это важно, потому что документ юридически значимый.
-
-11. **DoD дополнить проверкой опубликованного домена.**
-
-Не только preview:
-
-- `/document-download/<id>` на preview работает;
-- `/document-download/<id>` на `https://gorbova.by` работает;
-- адресная строка не меняется на `supabase.co`;
-- network может обращаться к edge function, но пользователь не видит storage signed URL.
-
-12. **Public-token ссылки вынести строго в backlog.**
-
-В текущем патче только auth-only.  
-Если нужен доступ без логина — отдельный спринт:
+  Если PDF ещё не готов:
 
 ```text
-document_public_links:
-token_hash, document_id, expires_at, max_downloads, revoked_at, audit_logs
+409: document_pdf_not_ready
 ```
+
+6. UI показывает: «PDF ещё не готов. Попробуйте скачать DOCX или повторите позже.»
+7. **Добавить защиту от старого** `download_url`  
+В местах, где response генерации всё ещё содержит `download_url`, не использовать его напрямую. Использовать только `document_id`.
+  &nbsp;
+  Пример:
+
+```ts
+if (!result.document_id) throw new Error("document_id_missing");
+await downloadDocumentBlob(result.document_id, "pdf");
+```
+
+8. **Dry-run должен показать не просто** `rg`**, а таблицу мест**
+  &nbsp;
+  В proof:
+
+
+| **файл**               | **старое поведение**      | **новое поведение**      | **статус** |
+| ---------------------- | ------------------------- | ------------------------ | ---------- |
+| DealPayerDocumentsCard | window.open(download_url) | downloadDocumentBlob(id) | fixed      |
+| DocumentLogTab         | createSignedUrl           | downloadDocumentBlob(id) | fixed      |
+| …                      | …                         | …                        | …          |
+
+
+9. **DoD добавить проверку “нет supabase.co в user-facing strings”**
+  &nbsp;
+  Проверить:
+  - `download_url` response;
+  - rendered links/buttons;
+  - toast/error text;
+  - `href` в DOM;
+  - `window.open(...)`.
+10. **Если Edge Function** `document-download` **не задеплоена — не чинить UI “вслепую”**  
+Перед UI-заменами сделать test call:
+
+- существующий `document_id`;
+- admin session;
+- получить `200` + blob;
+- проверить `Content-Type`.
+
+11. **Финальный proof должен быть на published domain**  
+Не только preview. Минимум:
+
+- создать/открыть документ на `gorbova.by`;
+- скачать из карточки сделки;
+- открыть из истории;
+- убедиться, что нет 404 и нет перехода на `supabase.co`.
 
 С этими правками план можно запускать.
 
 &nbsp;
 
-мы уже скрывали ранее адрес супабейс. Проверь также, чтобы не сделать дубли функции. 
-
 План:
 
 1. **Проблема**
-  - Сейчас часть document-flow всё ещё создаёт или открывает прямые signed URL вида `*.supabase.co/storage/v1/object/sign/...`.
-  - В preview это блокируется браузером/расширениями (`ERR_BLOCKED_BY_CLIENT`).
-  - На опубликованном сайте файл открывается, но пользователь/клиент видит технический домен backend-провайдера, что недопустимо.
-  - Требование: ссылки на документы не должны вести на `*.supabase.co` и не должны показывать слово/домен Supabase. Внешняя ссылка должна быть на наш домен: `https://gorbova.by/...`.
+  - После создания документа открывается `https://gorbova.by/document-download/<uuid>`, но пользователь видит 404 «Страница не найдена».
+  - Дополнительно в коде ещё остались старые точки, которые открывают signed URL напрямую через storage, что нарушает требование «не показывать backend/storage-домен».
 2. **Диагностика**
-  - `src/components/ai-documents/DealDocumentsPanel.tsx` уже частично переведён на blob-download через SDK, но:
-    - edge function `canonical-document-generate-strict` всё равно возвращает `download_url` как прямой signed URL;
-    - существующие/другие UI-места продолжают создавать signed URL и открывать их через `window.open`.
-  - Найдены прямые signed URL в:
-    - `supabase/functions/canonical-document-generate-strict/index.ts` — `createSignedUrl(...)` и `download_url` в ответе;
-    - `src/hooks/useGeneratedDocuments.tsx` — `createSignedUrl(...)` + `window.open(url)`;
-    - `src/components/purchases/OrderDocuments.tsx` — `createSignedUrl(...)` + `window.open(...)`;
-    - `src/components/purchases/OrderListItem.tsx` — `createSignedUrl(...)` + `window.open(...)`;
-    - legacy-функции `document-auto-generate`, `generate-from-template`, `ai-generate-document` также сохраняют/возвращают signed URL для старого document-flow.
-  - Существующего публичного proxy/download route для `ai_generated_documents` по домену сайта не найдено.
-  - `ai_generated_documents` уже содержит достаточно данных для ID-first выдачи: `id`, `profile_id`, `context_id`, `file_path`, `storage_bucket`, `file_name`, `file_mime`, `deleted_at`, `status`.
+  - В `src/App.tsx` маршрут `/document-download/:documentId` уже объявлен.
+  - На опубликованном домене SPA fallback должен работать автоматически; документация Lovable подтверждает, что отдельные `_redirects`/rewrites не нужны.
+  - Поэтому текущий 404 с большой вероятностью означает одно из двух:
+  1. опубликованная версия ещё не содержит нового маршрута;
+  2. ссылка открывается через компонент/ветку, где всё ещё используется старый `window.open(download_url)` или signed URL.
+    йдены оставшиеся проблемные места:
+    `src/components/admin/DealPayerDocumentsCard.tsx`: после генерации открывает `download_url`, история создаёт `createSignedUrl` и `window.open`.
+    `src/components/admin/DocumentLogTab.tsx`: создаёт signed URL из bucket/path.
+    `src/pages/admin/AdminDocumentsNumbering.tsx`: создаёт signed URL из bucket/path.
+    `src/hooks/useAiDocuments.ts`: helper `getDownloadUrl()` возвращает signed URL.
+    ocumentDownloadPage`и`downloadDocumentBlob`сейчас внутри страницы вызывают backend function напрямую через`*.functions.supabase.co`; это не видно в адресной строке, но технически request всё ещё идёт на backend host.
 3. **Предлагаемое решение**
-  - Ввести единый canonical download endpoint через backend function, например:
-    - `GET/POST /functions/v1/document-download?id=<document_id>&kind=pdf|docx`
-  - Клиентские публичные/админские URL строить только как:
-    - `https://gorbova.by/document-download/<document_id>` или `https://gorbova.by/document-download/<document_id>?kind=docx`
-  - На frontend добавить страницу-прокси `DocumentDownloadPage` по маршруту `/document-download/:documentId`, которая:
-    - вызывает backend function `document-download`;
-    - получает файл как blob;
-    - запускает скачивание/открытие через `blob:` URL;
-    - не показывает и не открывает `*.supabase.co`.
-  - Для админского UI оставить удобное скачивание из карточки сделки, но источник файла должен идти через тот же backend endpoint, а не напрямую через `supabase.storage.createSignedUrl`.
-  - В `canonical-document-generate-strict` убрать возврат прямого `download_url` на backend-провайдера; вернуть только:
-    - `document_id`,
-    - `file_path` для внутреннего аудита/совместимости,
-    - `download_url: https://gorbova.by/document-download/<document_id>`.
-  - Для email/клиентских ссылок в legacy document-flow заменить прямые signed URL на URL нашего домена там, где это относится к документам.
+  - Сделать пользовательский путь `/document-download/:documentId` безопасным fallback-маршрутом: если React-страница загружена, она скачивает файл blob-ом и не показывает storage/backend URL.
+  - Перевести оставшиеся UI-точки документов на `downloadDocumentBlob(documentId, kind)` вместо `window.open(download_url)` и `createSignedUrl`.
+  - Для `DealPayerDocumentsCard` после генерации не открывать новую вкладку с `/document-download/...`, а сразу скачивать blob по `document_id`, как уже сделано в `DealDocumentsPanel`. Это убирает 404 даже если опубликованный SPA bundle/кэш ещё не обновился.
+  - Обновить историю документов в той же карточке: скачивать по `h.id`, не по `file_path/storage_bucket`.
+  - Убрать/заменить helper `getDownloadUrl()` в `useAiDocuments`, чтобы новые UI не могли получить storage signed URL.
 4. **Изменяемые компоненты**
+  - UI:
+    - `src/components/admin/DealPayerDocumentsCard.tsx`
+    - `src/components/admin/DocumentLogTab.tsx`
+    - `src/pages/admin/AdminDocumentsNumbering.tsx`
+    - `src/hooks/useAiDocuments.ts`
+  - Возможная минимальная правка:
+    - `src/pages/DocumentDownloadPage.tsx` — оставить как fallback-страницу, но не полагаться на неё в админской кнопке создания.
+  - Таблицы/RPC/cron/jobs:
+    - не меняются.
   - Edge functions:
-    - создать `supabase/functions/document-download/index.ts`;
-    - изменить `supabase/functions/canonical-document-generate-strict/index.ts`;
-    - точечно проверить/обновить legacy document functions, где клиентам отправляются document download links:
-      - `supabase/functions/document-auto-generate/index.ts`,
-      - `supabase/functions/generate-from-template/index.ts`,
-      - `supabase/functions/ai-generate-document/index.ts`.
-  - Frontend:
-    - добавить route `/document-download/:documentId` в `src/App.tsx`;
-    - добавить страницу `src/pages/DocumentDownloadPage.tsx`;
-    - обновить скачивание документов в:
-      - `src/components/ai-documents/DealDocumentsPanel.tsx`,
-      - `src/hooks/useGeneratedDocuments.tsx`,
-      - `src/components/purchases/OrderDocuments.tsx`,
-      - `src/components/purchases/OrderListItem.tsx`.
-  - Shared helper:
-    - при необходимости добавить небольшой helper для canonical document URL, чтобы не дублировать домен.
-  - База данных:
-    - новых таблиц не требуется;
-    - migrations не планируются, если endpoint будет читать существующие `ai_generated_documents` / `generated_documents` и проверять доступ через текущую auth-сессию.
+    - не меняются, если после проверки не обнаружится, что `document-download` не задеплоен.
 5. **Что не будет изменено**
-  - Не меняю генерацию PDF/DOCX и Gotenberg.
-  - Не меняю document numbering.
-  - Не меняю FLD/token mapping.
-  - Не меняю auto-fill шаблона/исполнителя из кнопки.
-  - Не делаю документы публичными без авторизации, если нет отдельного утверждённого требования на публичный token-link.
-  - Не раскрываю клиенту storage path/backend signed URL.
+  - Генерация PDF/DOCX.
+  - Нумерация документов.
+  - Заполнение шаблонов/плательщика/исполнителя.
+  - Публичные клиентские ссылки без логина — это отдельный токенизированный сценарий, не смешиваю с текущим auth-only скачиванием.
+  - Старые email-ссылки, уже отправленные ранее, не переписываются этим патчем.
 6. **Dry-run**
-  - До правок проверить текущие места `createSignedUrl`, `download_url`, `file_url`, `window.open` по document-flow.
-  - Подтвердить, что `ai_generated_documents` и legacy `generated_documents` имеют `file_path` и связаны с `profile_id`/`context_id`.
-  - Проверить, что новый endpoint может работать ID-first: вход только `document_id` + `kind`, без передачи `file_path` от клиента.
+  - До правок проверить, что все оставшиеся `createSignedUrl` в документном UI действительно относятся к скачиванию сгенерированных документов.
+  - После правок выполнить поиск по:
+    - `createSignedUrl(`
+    - `window.open(data.signedUrl`
+    - `window.open(url, "_blank")` рядом с document generation
+    - `download_url` в document UI
+  - STOP, если найденная точка относится не к документам, а к другому модулю/вложениям/медиа.
 7. **Execute**
-  - Создать backend function `document-download`:
-    - принимает `document_id` и `kind`;
-    - ищет документ по ID в `ai_generated_documents`, fallback — `generated_documents`;
-    - проверяет, что документ не удалён/не error;
-    - для обычного пользователя разрешает только свой `profile_id`;
-    - для admin/super_admin разрешает доступ к документам сделок;
-    - выбирает `file_path` только из DB, не из client body;
-    - скачивает файл из private bucket через service role внутри function;
-    - возвращает бинарный файл с `Content-Type`, `Content-Disposition` и без редиректа на storage URL.
-  - Добавить frontend route `/document-download/:documentId`:
-    - вызывает `document-download`;
-    - создаёт `blob:` URL;
-    - открывает/скачивает файл;
-    - показывает понятный статус/ошибку без технических backend-доменов.
-  - Обновить UI-кнопки скачивания на вызов canonical route/helper.
-  - Обновить `canonical-document-generate-strict`, чтобы `download_url` был на `https://gorbova.by/document-download/<document_id>`, а не signed storage URL.
-  - Точечно убрать прямые signed URL из клиентских document download paths.
+  - Добавить импорт `downloadDocumentBlob` в оставшиеся документные UI.
+  - В `DealPayerDocumentsCard.generate()` заменить `window.open(download_url)` на скачивание по `document_id`.
+  - В `DealPayerDocumentsCard.downloadHistoryItem()` заменить signed URL на скачивание по `h.id`.
+  - В `DocumentLogTab.handleDownload()` заменить signed URL на `downloadDocumentBlob(doc.id, "pdf")`; счётчик скачиваний оставить только если он относится к legacy `generated_documents` и не конфликтует с backend audit.
+  - В `AdminDocumentsNumbering.openDoc()` заменить signed URL на `downloadDocumentBlob(r.id, "pdf")`.
+  - В `useAiDocuments.getDownloadUrl()` либо удалить экспорт/использование, либо заменить на безопасный canonical flow без возврата backend/storage URL.
 8. **STOP-guards**
-  - Остановиться, если найдено, что документ может скачиваться без auth/token и это используется клиентскими email-ссылками как публичный сценарий — тогда нужен отдельный signed business-token, а не auth-only endpoint.
-  - Остановиться, если row/document ownership нельзя проверить через `profile_id` или role-check без риска раскрыть чужой документ.
-  - Остановиться, если legacy `generated_documents.file_url` используется как внешний SOT и его массовое изменение потребует отдельной миграции/repair.
-  - Не принимать `bucket`/`file_path` от клиента как источник истины.
-  - Не возвращать `Location` redirect на `*.supabase.co`.
+  - Не трогать `src/integrations/supabase/client.ts` и generated types.
+  - Не добавлять новые таблицы/RPC/functions без доказанной необходимости.
+  - Не возвращать bucket/path/signed URL в UI.
+  - Не менять auth/RLS/права доступа в этом патче.
+  - Не делать массовые UPDATE/DELETE.
 9. **DoD**
-  - В новом strict-flow ответ `canonical-document-generate-strict` больше не содержит `*.supabase.co` в `download_url`.
-  - Кнопки PDF/DOCX в карточке сделки не открывают storage signed URL.
-  - Клиентские документы в покупках не открывают `*.supabase.co`.
-  - Route `/document-download/:documentId` работает на published domain и preview без `ERR_BLOCKED_BY_CLIENT`.
-  - Поиск по коду для document-flow не показывает прямых `createSignedUrl + window.open` в затронутых местах.
-  - Backend function возвращает файл напрямую, с корректным MIME и filename.
-  - Нет раскрытия `Supabase`/backend storage domain в адресной строке и в клиентской ссылке.
+  - Кнопка «Создать документ» в карточке сделки после генерации скачивает PDF без перехода на 404.
+  - История документов скачивает файл через blob, не открывая storage/backend URL.
+  - В документном UI не осталось прямых `createSignedUrl + window.open` для generated documents.
+  - Адресная строка пользователя остаётся на `gorbova.by`/текущей админской странице либо на `/document-download/<uuid>`, без `*.supabase.co`.
+  - Ошибки показываются нейтральным текстом, без bucket/file_path/backend host.
 10. **Риски и зависимости**
-  - Если клиентам нужны ссылки без входа в аккаунт, потребуется отдельная tokenized public-download модель с истечением срока и audit; это отдельный безопасный PATCH.
-  - Старые уже отправленные email-ссылки с `*.supabase.co` невозможно «переименовать» без повторной отправки/repair.
-  - Внутренний SDK всё равно технически ходит к backend endpoint, но пользователь и клиент не должны видеть storage signed URL или переходить на него.
-11. **Требуется дополнительная информация**
-  - Не требуется для auth-only админского/кабинетного скачивания.
-  - Если нужны публичные ссылки клиентам без логина — нужно отдельное подтверждение срока жизни ссылки и правил доступа.
+  - Если опубликованный сайт не содержит свежий bundle, прямой вход на `/document-download/<uuid>` будет 404 до публикации новой версии; обход через blob в кнопке создания решает текущий рабочий сценарий.
+  - Для ссылок клиентам без авторизации понадобится отдельный безопасный token-flow; текущий `document-download` требует JWT.
+  - Старые уже отправленные storage signed URL останутся старыми до отдельного repair/discovery.
