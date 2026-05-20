@@ -7,6 +7,7 @@ import {
   resolvePaymentFlow,
   decideSbsMismatchAction,
 } from "./sbs_mismatch_guard.ts";
+import { resolveProviderLinkedSubscription } from "./provider_linked_subscription_resolver.ts";
 import { isCalendarMonthProduct, calcCalendarMonthEnd } from '../_shared/resolve-access-window.ts';
 import { writeLedgerEntry, buildPostCheck } from '../_shared/fulfillment-executor.ts';
 import { checkPriorPurchase } from '../_shared/check-prior-purchase.ts';
@@ -704,8 +705,116 @@ Deno.serve(async (req) => {
     // Check for existing active subscription for this product to extend from
     let accessStartAt = baseStartDate;
     let existingProductSub = null;
-    
+
+    // ── PATCH SB1 (2026-05): PROVIDER-LINKED PRE-CREATED SUBSCRIPTION RESOLVER ──
+    // Pre-created subv2 (status=past_due/pending) referenced by an active/pending
+    // provider_subscriptions row for THIS order MUST be extended — not bypassed.
+    // Otherwise grant-access creates a parallel active subv2 while the bePaid sbs
+    // keeps charging the past_due row (split-brain, Belko 2026-05-20).
     if (extendFromCurrent) {
+      const providerLinked = await resolveProviderLinkedSubscription(supabase, {
+        orderId,
+        userId,
+        productId,
+        tariffId: tariffId ?? null,
+      });
+
+      if (providerLinked.outcome === 'manual_review_provider_linkage_conflict') {
+        // STOP. No new subv2. Audit + early return (HTTP 200, skipped).
+        await supabase.from('audit_logs').insert({
+          action: 'grant-access-for-order.manual_review_provider_linkage_conflict',
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'grant-access-for-order',
+          target_user_id: userId,
+          meta: {
+            order_id: orderId,
+            product_id: productId,
+            tariff_id: tariffId,
+            reason: providerLinked.reason,
+            details: providerLinked.details,
+            patch: 'patch-sb1-provider-linkage-resolver',
+          },
+        });
+
+        try {
+          const prevMeta = ((order as any).meta || {}) as Record<string, unknown>;
+          await supabase
+            .from('orders_v2')
+            .update({
+              meta: {
+                ...prevMeta,
+                manual_review: true,
+                manual_review_reason: 'provider_linkage_conflict',
+                manual_review_details: providerLinked.details,
+                manual_review_set_by: 'grant-access-for-order',
+                manual_review_set_at: new Date().toISOString(),
+                manual_review_patch: 'patch-sb1-provider-linkage-resolver',
+              },
+            })
+            .eq('id', orderId);
+        } catch (mrErr) {
+          console.error('[grant-access-for-order] SB1 manual_review meta-merge failed (non-fatal):', mrErr);
+        }
+
+        console.log(
+          `[grant-access-for-order] SB1 NO-NEW-SUB: order ${orderId} skipped, ` +
+          `reason=${providerLinked.reason}`,
+        );
+        return new Response(
+          JSON.stringify({
+            skipped: true,
+            reason: 'provider_linkage_conflict',
+            manual_review: true,
+            details: providerLinked.details,
+            patch: 'patch-sb1-provider-linkage-resolver',
+          }),
+          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        );
+      }
+
+      if (providerLinked.outcome === 'extend') {
+        // Use the pre-created subv2 as the extend target. accessStartAt stays
+        // at baseStartDate (order.paid_at) because past_due has no access_end_at.
+        existingProductSub = {
+          id: providerLinked.subscription.id,
+          access_end_at: providerLinked.subscription.access_end_at,
+          status: providerLinked.subscription.status,
+          tariff_id: providerLinked.subscription.tariff_id,
+          product_id: providerLinked.subscription.product_id,
+          auto_renew: providerLinked.subscription.auto_renew,
+        } as any;
+
+        await supabase.from('audit_logs').insert({
+          action: 'grant-access-for-order.provider_linked_extend',
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'grant-access-for-order',
+          target_user_id: userId,
+          meta: {
+            order_id: orderId,
+            product_id: productId,
+            tariff_id: tariffId,
+            subscription_v2_id: providerLinked.subscription.id,
+            provider_subscription_row_id: providerLinked.provider_subscription.id,
+            provider_subscription_id: providerLinked.provider_subscription.provider_subscription_id,
+            tracking_id: providerLinked.provider_subscription.tracking_id,
+            match_reason: providerLinked.reason,
+            previous_status: providerLinked.subscription.status,
+            patch: 'patch-sb1-provider-linkage-resolver',
+          },
+        });
+
+        console.log(
+          `[grant-access-for-order] SB1 provider-linked extend: subv2=${providerLinked.subscription.id} ` +
+          `(prev status=${providerLinked.subscription.status}) via ${providerLinked.reason}`,
+        );
+      }
+      // outcome === 'no_provider_linked' → fall through to legacy active-sub lookup below.
+    }
+
+    if (extendFromCurrent && !existingProductSub) {
+
       // PATCH: Added auto_renew to select for fallback guard in extend branch
       const { data: activeSub } = await supabase
         .from("subscriptions_v2")

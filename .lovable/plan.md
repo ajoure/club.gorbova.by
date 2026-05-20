@@ -1,523 +1,269 @@
-&nbsp;
-
-Да, согласен, **но только с существенной заменой бизнес-правила**.
-
-В текущем плане всё ещё неправильно написано, что блокировать может active/trial + access_end_at + paid order. Это нужно убрать.
-
-**Главная правка**
-
-Блокировать создание новой оплаты должен **только активный bePaid auto-renew / provider subscription по этому же продукту**.
-
-Не блокируют:
-
-active entitlement
-
-действующее окно access_end_at / expires_at
-
-старый paid order
-
-past_due
-
-pending
-
-redirecting
-
-expired
-
-canceled
-
-pending order
-
-paid_amount=0
-
-неоплаченная checkout-сессия
-
-Пользователь может иметь ещё 2 дня доступа и всё равно купить новый тариф сегодня. Это нормально.
-
-**Ответ Lovable**
-
 Да, согласен, с учетом правок:
 
-&nbsp;
-
-1. Полностью заменить раздел 2 “Бизнес-правило”.
-
-&nbsp;
-
-Правильный SoT:
-
-&nbsp;
-
-Checkout conflict / replacement flow нужен только для защиты от двух активных bePaid-автосписаний по одному продукту.
-
-&nbsp;
-
-Блокирующее условие только одно:
-
-&nbsp;
-
-- найден provider_subscriptions.state = 'active';
-
-- provider subscription относится к тому же user/profile;
-
-- product_id совпадает;
-
-- это bePaid recurring / auto-renew subscription.
-
-&nbsp;
-
-Всё.
-
-&nbsp;
-
-Не использовать как blocker:
-
-&nbsp;
-
-- subscriptions_v2.status='active' сам по себе;
-
-- subscriptions_v2.status='trial' сам по себе;
-
-- active entitlement;
-
-- access_end_at > now();
-
-- expires_at > now();
-
-- paid order;
-
-- paid_at + access_days;
-
-- orders_v2.status='paid';
-
-- past_due;
-
-- pending;
-
-- redirecting;
-
-- expired;
-
-- canceled;
-
-- pending order;
-
-- paid_amount=0;
-
-- неоплаченная checkout-сессия.
-
-&nbsp;
-
-2. Логика по тарифу:
-
-&nbsp;
-
-Если active bePaid subscription найдена по тому же продукту:
-
-&nbsp;
-
-- same tariff → показать сценарий “оставить текущую подписку / заменить подписку”;
-
-- other tariff same product → показать сценарий “отменить действующее автосписание и создать новое”.
-
-&nbsp;
-
-Это не ошибка “нельзя оплатить”. Это replacement flow.
-
-&nbsp;
-
-3. Для Ирины Белько:
-
-&nbsp;
-
-Факты:
-
-- subscriptions_v2.status=past_due;
-
-- provider state redirecting/expired;
-
-- paid order нет;
-
-- successful payment нет;
-
-- active bePaid provider subscription нет.
-
-&nbsp;
-
-Вывод:
-
-- checkout должен быть allowed;
-
-- already_has_active_subscription возвращать нельзя;
-
-- conflict modal показывать нельзя.
-
-&nbsp;
-
-4. Изменить `_shared/subscription-conflict.ts`:
-
-&nbsp;
-
-- убрать `past_due` из conflict statuses;
-
-- убрать access window / entitlement / paid order из blocking predicate;
-
-- provider blocking states = только `active`;
-
-- pending / redirecting / expired / canceled = ignore для checkout conflict;
-
-- subscription_v2 active/trial без active provider subscription = не blocker.
-
-&nbsp;
-
-5. `create-payment-checkout.ts`
-
-&nbsp;
-
-Если нет active provider subscription по этому продукту:
-
-- decision = no_existing;
-
-- создаётся новая оплата / checkout.
-
-&nbsp;
-
-Не использовать старую pending/redirecting попытку как причину блокировки.
-
-&nbsp;
-
-6. F3-dedup / pending checkout
-
-&nbsp;
-
-Pending checkout можно переиспользовать только если это свежий валидный checkout с TTL.
-
-&nbsp;
-
-Если TTL/валидность не доказаны:
-
-- старую pending/redirecting попытку игнорировать;
-
-- создавать новый checkout.
-
-&nbsp;
-
-7. `public-checkout/index.ts`
-
-&nbsp;
-
-Не добавлять отдельные guards.
-
-После исправления shared guard мусорные попытки не должны возвращать conflict.
-
-&nbsp;
-
-8. `PublicPayPage.tsx` и `PaymentDialog.tsx`
-
-&nbsp;
-
-Conflict modal показывать только при active bePaid provider subscription.
-
-&nbsp;
-
-Текст должен быть не “у вас есть доступ”, а:
-
-&nbsp;
-
-“У вас уже есть активное автосписание по этому продукту. Вы можете оставить текущую подписку или отменить её и создать новую.”
-
-&nbsp;
-
-Raw `already_has_active_subscription` пользователю не показывать.
-
-&nbsp;
-
-9. `ContactDetailSheet.tsx`
-
-&nbsp;
-
-Не добавлять блок “проблемные подписки”.
-
-Не показывать past_due/pending/redirecting/expired unpaid attempts как подписки.
-
-&nbsp;
-
-Показывать только:
-
-- активные оплаченные подписки;
-
-- активные доступы;
-
-- paid сделки.
-
-&nbsp;
-
-10. Dry-run заменить:
-
-&nbsp;
-
-Проверить не paid order / access window, а active provider conflicts:
-
-&nbsp;
-
-- сколько пользователей сейчас блокируются из-за provider_subscriptions.state='active';
-
-- сколько past_due/redirecting/pending сейчас ошибочно блокируются;
-
-- сколько таких мусорных кейсов после патча станет checkout_allowed;
-
-- отдельно Ирина Белько: current_behavior=blocked, new_behavior=checkout_allowed.
-
-&nbsp;
-
-11. Regression tests:
-
-&nbsp;
-
-Добавить:
-
-&nbsp;
-
-- past_due + redirecting + pending order + paid_amount=0 → checkout allowed;
-
-- past_due + expired provider → checkout allowed;
-
-- pending provider subscription → checkout allowed;
-
-- redirecting provider subscription → checkout allowed;
-
-- active entitlement + no active provider subscription → checkout allowed;
-
-- access_end_at > now + no active provider subscription → checkout allowed;
-
-- paid order + active access window + no active provider subscription → checkout allowed;
-
-- provider_subscriptions.state='active' same product same tariff → replacement/conflict flow;
-
-- provider_subscriptions.state='active' same product other tariff → replacement/conflict flow;
-
-- Ирина Белько-like case → checkout allowed.
-
-&nbsp;
-
-12. Убрать из плана пункт “дополнительно требовать paid order”.
-
-&nbsp;
-
-Paid order не нужен для conflict. Он относится к доступу, а не к защите от двойного bePaid-автосписания.
-
-&nbsp;
-
-13. DoD:
-
-&nbsp;
-
-- Ирина Белько может создать новую оплату по публичной ссылке;
-
-- past_due/redirecting/pending/expired попытки не блокируют checkout;
-
-- активный доступ без active bePaid provider subscription не блокирует checkout;
-
-- старый paid order не блокирует checkout;
-
-- active bePaid provider subscription по тому же продукту по-прежнему запускает replacement flow;
-
-- ContactDetailSheet не показывает неоплаченный мусор как подписки;
-
-- raw already_has_active_subscription не виден пользователю;
-
-- нет data repair, нет удаления мусора из БД.
-
-**Коротко**
-
-Правильная формула:
-
-Доступ ≠ bePaid-подписка.
-
-Блокировать новую оплату может только:
-
-активное bePaid-автосписание по тому же продукту
-
-Всё остальное — доступы, старые оплаты, окна доступа, past_due, redirecting, pending — **не должно мешать человеку снова оплатить**.
-
-План:
-
-## 1. Проблема
-
-Ирина Белько не может оплатить публичную ссылку на `Gorbova Club — BUSINESS`. Backend возвращает `already_has_active_subscription`, потому что считает её prior `past_due + redirecting` попытку конфликтом. Реальной оплаченной активной подписки у неё нет. Технический мусор (неоплаченные/незавершённые/expired попытки) не должен блокировать новую оплату и не должен показываться в карточке контакта.
-
-## 2. Бизнес-правило (SoT этого патча)
-
-Conflict (блокировка новой оплаты + conflict-modal) разрешён ТОЛЬКО при реально действующей оплаченной подписке/доступе:
-
-Blocking условие — все три должны быть истинны:
-
-- `subscriptions_v2.status IN ('active','trial')`
-- доступ ещё действует: `access_end_at IS NULL OR access_end_at > now()`
-- провайдерская связь жива: `provider_subscriptions.state = 'active'` ИЛИ есть paid order по этой подписке (`orders_v2.status='paid'` и `paid_amount > 0`)
-
-НЕ блокирует:
-
-- `status = past_due` без успешной оплаты
-- `provider_subscriptions.state IN ('redirecting','pending')` без paid order
-- `provider_subscriptions.state IN ('expired','canceled')`
-- `orders_v2.status='pending'`, `paid_amount = 0`
-- любые незавершённые checkout-сессии
-
-Мусор остаётся в БД как история, но игнорируется бизнес-логикой и не показывается в UI карточки.
-
-## 3. Диагностика (факты)
-
-Ирина Белько:
-
-- profile_id `689ed788-0ec5-4241-9fb4-1f5ba79abb4e`
-- user_id `0012a7a4-1420-486c-b95e-e6ba5907ef93`
-
-По `Gorbova Club — BUSINESS`:
-
-- 2 строки `subscriptions_v2.status=past_due`
-- provider rows: `redirecting` (sbs_cf0d4dfc4e6a5c2d) и `expired` (sbs_7a3f947b2a3927b5)
-- связанные `orders_v2.status=pending`, `paid_amount=0`
-- успешной оплаты нет
-
-`audit_logs` подтверждают повторяющийся блок `subscription.reused_existing_public_link` decision `extend_same_tariff` для этой `past_due/pending` пары. Backend (`_shared/create-payment-checkout.ts` → `classifySameProductState`) считает `past_due + provider state in (active,pending)` блокирующим конфликтом. Это и есть корень проблемы.
-
-UI `public-checkout` пробрасывает только `existing_subscription_conflict`, но не `already_has_active_subscription`. После исправления корня это уже не нужно — мусор просто не должен возвращать конфликт.
-
-## 4. Что меняется в коде
-
-### 4.1 `supabase/functions/_shared/subscription-conflict.ts`
-
-Изменить `classifySameProductState` и `checkSubscriptionConflict`:
-
-- `CONFLICTING_STATUSES` → `['active','trial']`. Убрать `past_due`.
-- Provider-managed проверка: учитывать ТОЛЬКО `provider_subscriptions.state='active'`. Состояния `pending`, `redirecting`, `expired`, `canceled` не считаются провайдерской связью для целей конфликта.
-- Дополнительно требовать наличие хотя бы одного `orders_v2.status='paid'` AND `paid_amount > 0` для пары `user_id + product_id` (или для конкретной `subscription_v2_id` через `meta`/`subscription_v2_id` linkage, по тому что доступно в схеме). Если paid order не найден — это unpaid attempt, не блокирующий.
-- Добавить non-blocking метки в логирование: `ignored_unpaid_provider_attempt`, `ignored_expired_provider_attempt`, `ignored_pending_checkout_without_payment`.
-
-`validateReplacementSubscription` не меняется.
-
-### 4.2 `supabase/functions/_shared/create-payment-checkout.ts`
-
-- Логика остаётся: при `decision='no_existing'` создаётся новый order/subscription. Так как guard станет уже, теперь Ирина-подобные кейсы пойдут именно сюда.
-- F3-dedup (по `orders_v2` pending + 3д) сохраняется. Это другая защита, не блокирующая новую оплату — она может вернуть тот же pending checkout, что приемлемо.
-
-### 4.3 `supabase/functions/public-checkout/index.ts`
-
-- Не делать дополнительных guard. После сужения shared-guard конфликт уже не будет возвращаться для unpaid attempts.
-- Существующий проброс `existing_subscription_conflict` остаётся для случая реальной active+paid подписки.
-
-### 4.4 `supabase/functions/bepaid-create-subscription-checkout/index.ts`
-
-- Зависит от того же shared-guard. Никаких локальных изменений логики.
-
-### 4.5 `src/pages/PublicPayPage.tsx` и `src/components/payment/PaymentDialog.tsx`
-
-- Conflict-modal оставить как есть, он будет показываться только для реальных active+paid.
-- НЕ добавлять обработку `already_has_active_subscription`. Этот код больше не должен прилетать для мусорных кейсов. Если он всё же прилетит (реально active+paid same tariff) — оставить текущее поведение `normalizeEdgeFunctionError`/общий error path; конфликт-модал для этого окраса не нужен по новой бизнес-логике (active+paid same tariff = просто валидная активная подписка, новая оплата не нужна, пользователю достаточно нейтрального сообщения «уже есть активная подписка»). Поправить `normalizeEdgeFunctionError` чтобы для `already_has_active_subscription` отдавал понятное русское сообщение.
-
-### 4.6 `src/components/admin/ContactDetailSheet.tsx`
-
-- НЕ добавлять блок «Проблемные подписки».
-- Подтвердить, что текущие фильтры уже скрывают мусор:
-  - `activeSubscriptions` через `isCurrentValidAccess` пропускает только `active|trial` с валидным `access_end_at` и активным правилом. Мусор `past_due` сюда не попадает — корректно.
-  - Блок «Подписки» (provider-managed) использует `healthyProviderSubs` (sv2.status==='active' && access_end_at>now). Мусор не показывается — корректно.
-- Дополнительно: убрать показ `pending`-бейджа из `getSubscriptionStatusBadge`-веток, которые могут отрисоваться в финишных списках. Проверить, что `finishedSubscriptions` не показывает unpaid pending checkout-сессии как «подписки». Если показывает — отфильтровать из `finishedSubscriptions` записи, у которых `status='past_due'` И нет ни одного paid order, ИЛИ `status='pending'` без paid order.
-
-Никаких новых блоков, таблиц, RPC, cron.
-
-## 5. Что не будет изменено
-
-- Нет новых таблиц, RPC, edge functions, cron.
-- Нет data repair (никаких UPDATE/DELETE мусорных past_due/redirecting/pending записей).
-- `subscriptions_v2`, `orders_v2`, `provider_subscriptions` schema не меняется.
-- Replacement flow `cancelOldSubscriptionForReplacement` не меняется.
-- Webhook `bepaid-webhook` не меняется.
-
-## 6. Dry-run
-
-Перед Execute:
-
-1. Глобально:
-
-```sql
--- сколько past_due без paid
-select count(*) from subscriptions_v2 s
-where s.status='past_due'
-  and not exists (
-    select 1 from orders_v2 o
-    where o.user_id=s.user_id and o.product_id=s.product_id
-      and o.status='paid' and o.paid_amount>0
-  );
-
--- сколько pending/redirecting provider attempts без paid
-select ps.state, count(*) from provider_subscriptions ps
-left join subscriptions_v2 s on s.id=ps.subscription_v2_id
-where ps.state in ('pending','redirecting')
-  and not exists (
-    select 1 from orders_v2 o
-    where o.user_id=ps.user_id and o.product_id=s.product_id
-      and o.status='paid' and o.paid_amount>0
-  )
-group by ps.state;
-
--- сколько пользователей реально заблокированы текущим guard
-select count(distinct s.user_id) from subscriptions_v2 s
-join provider_subscriptions ps on ps.subscription_v2_id=s.id
-where s.status in ('active','trial','past_due')
-  and ps.state in ('active','pending');
+1. **Repair Белько не выполнять “в рамках того же патча” без отдельного execute-gate.**  
+Разделить на 2 этапа:
+
+```text
+PATCH-SB1 — code fix + tests + deploy
+PATCH-SB2 — Белько repair dry-run → отдельный approve → execute
 ```
 
-2. По Ирине: подтвердить, что после нового guard `classifySameProductState` вернёт `no_existing` для пары (user `0012a7a4…`, product `11c9f1b8…`, tariff `7c748940…`).
-3. Таблица dry-run для отчёта (user/email, product/tariff, sub_id, sub status, provider state, order status, paid_amount, paid exists, current behavior, new behavior). Минимально включить Ирину Белько и 5 случайных других «мусорных» кейсов.
+Причина: code fix и production data repair нельзя смешивать без отдельного snapshot/rollback.
 
-STOP, если dry-run покажет:
+2. **В 4.1 не просто “tracking_id LIKE”, а строгий parse tracking_id.**  
+Нельзя искать по широкому LIKE. Нужно извлечь:
 
-- глобально >50% всех ранее блокирующих кейсов имели paid order (значит сужение guard вредит реальным защитам — пересмотреть критерий paid).
-- enum/имена состояний `provider_subscriptions.state` отличаются от ожидаемых.
-- В схеме нет надёжной linkage paid order ↔ subscription_v2 (тогда уточнить запрос: использовать `subscription_v2_id` в `orders_v2.meta` или `bepaid_subscription_id`).
+```text
+tracking_id = subv2:{subscription_v2_id}:order:{order_id}
+```
 
-## 7. Execute
+И проверить строго:
 
-1. Обновить `_shared/subscription-conflict.ts`: сузить `CONFLICTING_STATUSES`, ужесточить provider check, добавить paid-order проверку, добавить non-blocking логирование.
-2. Обновить `_shared/subscription-conflict_test.ts`: добавить регрессии (см. §8).
-3. Обновить `normalizeEdgeFunctionError.ts`: добавить fallback для `already_has_active_subscription` → «У вас уже есть активная подписка на этот продукт.»
-4. Прогнать существующие deno-тесты shared-guard.
-5. Запросить у пользователя публикацию.
+```text
+parsed_subv2_id = subscriptions_v2.id
+parsed_order_id = current order.id
+provider_subscriptions.subscription_v2_id = parsed_subv2_id
+```
 
-Никаких изменений UI карточки контакта не требуется кроме (опционально) фильтра `finishedSubscriptions` от unpaid pending — только если dry-run по UI покажет, что такие строки сейчас рисуются.
+Если parse не удался — STOP / manual_review.
 
-## 8. Regression tests (deno test)
+3. **Перед созданием новой subv2 добавить hard guard.**  
+Если найден provider_subscriptions по order/tracking, но target-sub не может быть использован, **нельзя создавать новую subv2**. Нужно:
 
-В `supabase/functions/_shared/subscription-conflict_test.ts` добавить:
+```text
+manual_review_provider_linkage_conflict
+```
 
-1. `past_due + provider redirecting + pending order + paid_amount=0 + no paid` → `no_existing`.
-2. `past_due + provider expired + no paid` → `no_existing`.
-3. `provider pending without paid` → `no_existing`.
-4. `active + provider active + paid order` → `extend_same_tariff` (или `replace_other_tariff` при другом tariff).
-5. `active + paid + no provider row` → behavior существующего «zombie ignore» сохраняется.
+Иначе снова появится split-brain.
 
-## 9. STOP-guards
+4. **При выборе pre-created past_due нужно проверять product/tariff/user.**  
+Extend можно делать только если:
 
-- Если paid-order linkage в схеме неоднозначна — STOP, уточнить критерий paid (по `subscription_v2_id` в meta, по `bepaid_subscription_id`, или через `provider_subscriptions.meta.order_id`).
-- Если dry-run покажет, что после сужения теряется защита active+paid same tariff кейсов — STOP, скорректировать предикат.
-- Если в БД enum-значения отличаются — STOP.
+```text
+sub.user_id = order.user_id
+sub.product_id = order.product_id
+sub.tariff_id = order.tariff_id
+provider_subscriptions.state IN ('active','pending')
+```
 
-## 10. DoD
+Если не совпадает — STOP, не extend.
 
-- Ирина Белько открывает публичную ссылку и создаёт новую оплату без `already_has_active_subscription`.
-- Неоплаченные `past_due/redirecting/pending/expired` попытки не блокируют checkout.
-- Карточка контакта не показывает мусор как подписки (подтверждено фильтрами).
-- Реальная active+paid подписка по-прежнему защищена (тесты §8.4, §8.5).
-- Raw `already_has_active_subscription` не показывается пользователю; если backend всё же его вернёт — `normalizeEdgeFunctionError` выдаст русское сообщение.
-- Нет новых таблиц/RPC/cron, нет data repair.
-- Proof-файл: `.lovable/proofs/public_checkout_unpaid_subscription_attempts_do_not_block_2026_05.md`
+5. **Repair Белько: лучше переносить provider linkage на active 81ba18e6, но past_due 46194979 не просто “superseded”.**  
+Нужно сохранить audit и meta-связь:
 
-## 11. Риски
+```text
+46194979.status='superseded'
+46194979.auto_renew=false
+46194979.meta.superseded_by='81ba18e6...'
+46194979.meta.superseded_reason='split_brain_provider_linkage_repair_2026_05'
+```
 
-- Расширение «paid order» предиката неточным join'ом может пропустить реальные оплаченные подписки. Минимизируется тестами §8.4–§8.5 + dry-run.
-- Если admin/`bepaid-create-subscription-checkout` использует тот же guard, поведение для админских создаваний тоже станет мягче — это согласуется с бизнес-правилом, явный риск отсутствует.
+А в `81ba18e6.meta` добавить:
 
-## 12. Требуется доп. информация
+```text
+provider_subscription_id / bepaid_subscription_id
+repaired_from_subv2_id='46194979...'
+repair_batch='split_brain_belko_2026_05'
+```
 
-Не требуется. Все факты собраны, схема известна, мусор у Ирины подтверждён.
+6. **Repair Белько должен иметь before-snapshot и rollback SQL.**
+
+До UPDATE сохранить snapshot:
+
+```text
+subscriptions_v2: 46194979, 81ba18e6
+provider_subscriptions: 4e201ec8
+orders_v2: 59c6eb7d
+entitlements по user/product
+```
+
+Rollback должен уметь вернуть:
+
+```text
+provider_subscriptions.subscription_v2_id обратно на 46194979
+status/meta/auto_renew обеих subscriptions_v2
+```
+
+7. **Не полагаться на “уйдёт из админ-вью через isUnpaidTrashRow”.**  
+Это UI-следствие, не DoD. DoD должен быть по данным:
+
+```text
+ровно 1 active auto_renew subscription по user/product/tariff
+ровно 1 active provider_subscriptions.state='active'
+provider_subscriptions.subscription_v2_id = active displayed subscription
+```
+
+8. **Глобальный sweep должен быть до repair или сразу после code patch, но read-only.**  
+Иначе можно починить Белько и не увидеть, что таких кейсов больше.
+
+Добавить в sweep:
+
+```text
+active_sub_without_provider + past_due/provider_active same user/product/tariff
+active_sub_without_provider + provider_subscriptions tracking same order
+multiple auto_renew=true same user/product/tariff
+past_due with provider active and access_end_at null
+```
+
+9. **Добавить post-deploy runtime proof.**  
+После PATCH-SB1 нужен не только unit-test, но и проверка, что следующий `grant-access-for-order` не создаёт новую subv2 при наличии pre-created provider-linked row.
+
+Если live-трафика нет — сделать controlled test на staging/fixture, но production DML не имитировать без approve.
+
+10. **Memory update не должен быть DoD production-патча.**  
+Можно зафиксировать как backlog/doc update, но не блокировать технический fix.
+
+## **Текст для Lovable**
+
+```text
+План принимаю с правками.
+
+Разделить на два патча:
+
+PATCH-SB1 — code fix:
+- расширить resolver в grant-access-for-order;
+- сначала искать provider-linked pre-created subscription через строгий parse tracking_id `subv2:{id}:order:{id}`;
+- только потом искать active subscription по user/product/tariff;
+- если provider_subscriptions найден, но target-sub конфликтует — STOP/manual_review, новую subv2 не создавать;
+- добавить tests:
+  1. same-order pre-created past_due + active provider_subscriptions → extend existing, no new subv2;
+  2. foreign sbs/provider mismatch → existing guard blocks new sub;
+  3. provider-linked sub product/tariff mismatch → manual_review, no new sub;
+  4. no provider-linked sub + active sub exists → old active path works;
+  5. no provider-linked and no active → create new only тогда.
+
+PATCH-SB2 — Belko repair:
+- сначала dry-run с before snapshot;
+- показать exact row changes;
+- rollback SQL;
+- execute только после отдельного approve.
+
+Правки к repair Белько:
+- provider_subscriptions `4e201ec8` переносить на active `81ba18e6`;
+- `46194979` пометить `superseded`, `auto_renew=false`, `meta.superseded_by='81ba18e6...'`;
+- `81ba18e6.meta` дополнить `bepaid_subscription_id='sbs_96311287f13c6391'`, `repaired_from_subv2_id='46194979...'`, `repair_batch`;
+- entitlements/access_end_at вручную не менять;
+- provider API не вызывать;
+- Telegram не трогать.
+
+Обязательный DoD по данным:
+- у Белько ровно 1 active auto_renew subscription по Gorbova Club BUSINESS;
+- provider_subscriptions.active указывает на эту active subscription;
+- old past_due provider-linked sub больше не active/auto_renew;
+- next_charge_at сохранён;
+- access_end_at active sub = 2026-06-20 или не ниже текущего;
+- audit `subscription.split_brain_repaired` есть;
+- rollback SQL приложен.
+
+Global sweep:
+- выполнить read-only по всем аналогичным split-brain кейсам за последние 60 дней;
+- execute sweep не делать без отдельного approve.
+
+Запреты:
+- не трогать past_due zombie `794661f3`, `1d9700de`;
+- не трогать GetCourse sync;
+- не делать ручной UPDATE entitlements;
+- не менять subscriptions_v2.access_* вручную;
+- не менять provider state через API;
+- не менять Telegram.
+```
+
+Коротко: **идея правильная**, но нужно жёстко разделить: сначала fix в коде, потом отдельный repair Белько с rollback, и обязательно не создавать новую subv2, если уже есть provider-linked pre-create.
+
+&nbsp;
+
+План: расследование linkage-бага после оплаты Белько (2026-05-20)
+
+## 1. Что обнаружено
+
+После того как Ирина Белько (`user_id=0012a7a4-…`) самостоятельно оплатила publici-link для продукта `Gorbova Club` / тариф `BUSINESS` (`tariff_id=7c748940-…`):
+
+
+| Сущность                              | ID           | Состояние                                                                                                     | Кому привязана                 |
+| ------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| Order (paid)                          | `59c6eb7d-…` | paid, 250 BYN, `payment_flow=renewal_subscription`                                                            | —                              |
+| Pre-create subv2                      | `46194979-…` | `past_due`, `access_end_at=NULL`, `auto_renew=true`                                                           | реальный bePaid sbs            |
+| Новая subv2                           | `81ba18e6-…` | `active`, `access_end_at=2026-06-20`, `auto_renew=true`                                                       | **нет** provider_subscriptions |
+| provider_subscriptions                | `4e201ec8-…` | `state=active`, `sbs_96311287f13c6391`, `next_charge=2026-06-19`, `tracking_id=subv2:46194979:order:59c6eb7d` | subv2 `46194979` (past_due)    |
+| Audit `bepaid.subscription.processed` | —            | `event=activated`                                                                                             | subv2 `46194979`               |
+
+
+Дополнительно у Белько две «зомби» past_due subv2 от предыдущих незавершённых попыток (`794661f3`, `1d9700de`) с `redirecting`/`expired` provider_subscriptions — это уже технический мусор, не блокирующий (после прошлого патча), но он формально остаётся в БД.
+
+## 2. Главный баг — linkage split
+
+```text
+bePaid sbs_96311287 (active, recurring) ──► provider_subscriptions ──► subv2 46194979 (past_due)
+                                                                                       │
+                                                                              [нет access_end_at]
+                                                                                       
+ЛК / Admin / Cabinet ◄────── subv2 81ba18e6 (active, до 2026-06-20)  ◄── grant-access-for-order
+                                            (нет провайдер-связи)
+```
+
+Последствия:
+
+- Следующий bePaid charge `sbs_96311287` обновит `46194979` (`bepaid.subscription.processed` уже пишет в неё), а отображаемая `81ba18e6` никогда не получит продление.
+- Через ~1 цикл `81ba18e6.access_end_at` истечёт → доступ слетит, хотя клиент исправно платит.
+- INV-22 detector сейчас может ошибочно пометить `81ba18e6` как зомби, потому что у неё `auto_renew=true` без provider linkage.
+- Раздел «Подписки» в админке показывает 4 строки subv2 на один продукт вместо одной.
+
+## 3. Почему так получилось
+
+`grant-access-for-order` ищет subv2 для extend по правилу `(user_id, product_id, tariff_id, status='active')`. Pre-created `46194979` имела `status=past_due` (нормальное состояние сразу после bePaid /subscriptions до прихода webhook), поэтому extend-ветка её не нашла и создала новую subv2 `81ba18e6`. При этом:
+
+- `bepaid-webhook → bepaid.subscription.processed` использует свой собственный поиск по `tracking_id=subv2:{id}:order:{id}` и активирует `46194979` (поднимает state в `active`), но `grant-access-for-order` к этому моменту уже создал параллельную subv2.
+- SBS-mismatch guard (`mem://commercial-logic/subscriptions/sbs-mismatch-no-new-sub-guard`) не сработал, потому что условие foreign-sbs не выполнилось: sbs принадлежит этому же ордеру/юзеру через pre-create.
+
+То есть это инвертированная форма того же «split-brain», который guard уже закрывает для tariffMatch + foreign sbs. Здесь — own sbs + локальный past_due pre-create.
+
+## 4. Что планирую сделать
+
+### 4.1 Расширить extend-резолвер в `grant-access-for-order`
+
+Изменить выбор target subv2 для extend (только для recurring offers, only `payment_flow ∈ renewal_subscription | bepaid_subscription_charge`):
+
+1. Сначала искать subv2 с **тем же tracking-парой** (`provider_subscriptions.order_id = order.id` ИЛИ `tracking_id LIKE 'subv2:%:order:{order.id}'`). Это покрывает все pre-created строки, независимо от их `status` (`past_due`/`pending`/`active`).
+2. Затем — текущая ветка (`status='active'` по `(user_id, product_id, tariff_id)`).
+3. Только если оба пустые — создавать новую subv2.
+
+При выборе pre-created past_due: extend = установить `status='active'`, `access_start_at=order.paid_at`, `access_end_at = access_start_at + tariff.access_days`, `next_charge_at = align(bePaid.next_charge)`, `auto_renew=true`.
+
+Никаких новых таблиц, без миграции. Изменение только в edge-функции + unit-тест на оба сценария (own-sbs pre-create vs foreign sbs).
+
+### 4.2 Repair-скрипт для Белько (одноразово)
+
+В рамках того же патча — серверный скрипт без миграции схемы:
+
+1. Перенести linkage: `subv2 46194979` → пометить `superseded`, `auto_renew=false`, `cancel_reason='split_brain_repair_2026_05'`.
+2. UPDATE `provider_subscriptions.subscription_v2_id = '81ba18e6-…'` для row `4e201ec8-…` (sbs_96311287).
+3. Скопировать в `81ba18e6.meta.bepaid_subscription_id = 'sbs_96311287f13c6391'` для прозрачности.
+4. Audit `subscription.split_brain_repaired` (actor=system, JWT super_admin) с полным before/after.
+5. Проверить, что:
+  - `81ba18e6` остаётся active до 2026-06-20.
+  - `46194979` уходит из админ-вью (через `isUnpaidTrashRow` или новый `isSupersededTechnical`).
+  - bePaid webhook следующего charge корректно продлит `81ba18e6` (потому что provider_subscriptions теперь смотрит на неё).
+
+### 4.3 Глобальный sweep
+
+DRY-RUN: найти все аналогичные пары `(active subv2 без provider linkage) + (past_due subv2 того же user_id/product_id/tariff_id с активной provider_subscriptions)` за последние 60 дней. Сохранить в `.lovable/proofs/split_brain_sweep_2026_05.md`. EXECUTE — только после explicit approve.
+
+### 4.4 Побочные находки (не входят в патч, в backlog)
+
+- `gc_sync_failed` (GetCourse offer `6.744628e+06`) на тот же order — отдельная интеграционная ошибка. Заведу `.lovable/backlog/gc_sync_failed_renewal_subscription.md`.
+- 2 «зомби» past_due subv2 у Белько (`794661f3`, `1d9700de`) с `redirecting/expired` provider_subscriptions — кандидаты на INV-22 resolution (memory `inv22-desync-resolution`).
+
+## 5. DoD
+
+- Extend-резолвер в `grant-access-for-order` сначала ищет по tracking-паре, потом по active.
+- Unit-тесты: pre-created past_due same-order → extend, не create-new; foreign sbs → existing SBS-mismatch guard срабатывает.
+- Белько: provider_subscriptions перенесён на `81ba18e6`, `46194979` помечена superseded, ЛК показывает одну активную подписку.
+- Sweep dry-run в proof-файле, execute только после approve.
+- Audit `subscription.split_brain_repaired` присутствует.
+- Memory обновлена: новая запись `subscription-grant-extend-tracking-priority` в индексе.
+
+## 6. Что НЕ делаю в этом плане
+
+- Не трогаю past_due «зомби» строки (`794661f3`, `1d9700de`) — отдельная задача через INV-22.
+- Не трогаю GetCourse sync — отдельный backlog.
+- Не меняю UI карточки контакта — после repair мусор уйдёт через уже существующий `isUnpaidTrashRow`.
