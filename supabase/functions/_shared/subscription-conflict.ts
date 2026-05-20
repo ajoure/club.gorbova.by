@@ -126,7 +126,7 @@ export async function checkSubscriptionConflict(
       .select('provider_subscription_id, state, provider')
       .eq('subscription_v2_id', cand.id as string)
       .eq('provider', 'bepaid')
-      .in('state', ['active', 'pending'])
+      .in('state', BLOCKING_PROVIDER_STATES as unknown as string[])
       .limit(1)
       .maybeSingle();
 
@@ -318,7 +318,7 @@ export async function classifySameProductState(
       .select('provider_subscription_id, state, provider')
       .eq('subscription_v2_id', cand.id as string)
       .eq('provider', 'bepaid')
-      .in('state', ['active', 'pending'])
+      .in('state', BLOCKING_PROVIDER_STATES as unknown as string[])
       .limit(1)
       .maybeSingle();
 
