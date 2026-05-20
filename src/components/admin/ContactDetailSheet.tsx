@@ -1422,8 +1422,25 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     isCurrentValidAccess(s as any, productsWithRules)
   ) || [];
 
+  // PATCH PAYMENT-CONFLICT v4: hide unpaid trash from finished section.
+  // Trash = past_due / pending / redirecting / expired without any successful
+  // billing cycle (access window never granted). Such records остаются в БД
+  // как технические попытки, но не должны отображаться как «подписки» в карточке.
+  const hadSuccessfulCycle = (s: any): boolean => {
+    if (!s?.access_start_at || !s?.access_end_at) return false;
+    const start = new Date(s.access_start_at).getTime();
+    const end = new Date(s.access_end_at).getTime();
+    // window >= ~12h => считаем, что был фактический оплаченный access cycle
+    return end - start > 12 * 60 * 60 * 1000;
+  };
+  const isUnpaidTrashRow = (s: any): boolean => {
+    const trashStatuses = new Set(['past_due', 'pending', 'redirecting', 'expired']);
+    if (!trashStatuses.has(s?.status)) return false;
+    return !hadSuccessfulCycle(s);
+  };
+
   const finishedSubscriptions = subscriptions?.filter(s => 
-    isHistoricalAccess(s as any, productsWithRules)
+    isHistoricalAccess(s as any, productsWithRules) && !isUnpaidTrashRow(s)
   ) || [];
 
   // Dedup entitlements against ONLY currently valid subscriptions (not canceled/archived/superseded)
