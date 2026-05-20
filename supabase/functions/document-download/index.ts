@@ -29,9 +29,36 @@ function errorResponse(code: string, status: number) {
   });
 }
 
-function safeFilename(name: string, fallback: string): string {
+function sanitizeFilename(name: string, fallback: string): string {
   const cleaned = (name || "").replace(/[\r\n"\\\/]/g, "_").trim();
   return cleaned || fallback;
+}
+
+function rfc5987(utf8Name: string): string {
+  return encodeURIComponent(utf8Name)
+    .replace(/['()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+}
+
+function asciiFallback(utf8Name: string, fallback: string): string {
+  const stripped = utf8Name.replace(/[^\x20-\x7E]/g, "_").trim();
+  if (!stripped || /^[._\s]+$/.test(stripped)) return fallback;
+  return stripped;
+}
+
+function ensureExtension(name: string, kind: "pdf" | "docx"): string {
+  const ext = `.${kind}`;
+  return name.toLowerCase().endsWith(ext) ? name : `${name}${ext}`;
+}
+
+function buildContentDisposition(
+  disposition: "inline" | "attachment",
+  rawName: string,
+  kind: "pdf" | "docx",
+): string {
+  const fallback = `document.${kind}`;
+  const utf8Name = ensureExtension(sanitizeFilename(rawName, fallback), kind);
+  const asciiName = ensureExtension(asciiFallback(utf8Name, fallback), kind);
+  return `${disposition}; filename="${asciiName}"; filename*=UTF-8''${rfc5987(utf8Name)}`;
 }
 
 Deno.serve(async (req) => {
