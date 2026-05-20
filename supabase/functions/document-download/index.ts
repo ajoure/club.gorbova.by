@@ -29,9 +29,36 @@ function errorResponse(code: string, status: number) {
   });
 }
 
-function safeFilename(name: string, fallback: string): string {
+function sanitizeFilename(name: string, fallback: string): string {
   const cleaned = (name || "").replace(/[\r\n"\\\/]/g, "_").trim();
   return cleaned || fallback;
+}
+
+function rfc5987(utf8Name: string): string {
+  return encodeURIComponent(utf8Name)
+    .replace(/['()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+}
+
+function asciiFallback(utf8Name: string, fallback: string): string {
+  const stripped = utf8Name.replace(/[^\x20-\x7E]/g, "_").trim();
+  if (!stripped || /^[._\s]+$/.test(stripped)) return fallback;
+  return stripped;
+}
+
+function ensureExtension(name: string, kind: "pdf" | "docx"): string {
+  const ext = `.${kind}`;
+  return name.toLowerCase().endsWith(ext) ? name : `${name}${ext}`;
+}
+
+function buildContentDisposition(
+  disposition: "inline" | "attachment",
+  rawName: string,
+  kind: "pdf" | "docx",
+): string {
+  const fallback = `document.${kind}`;
+  const utf8Name = ensureExtension(sanitizeFilename(rawName, fallback), kind);
+  const asciiName = ensureExtension(asciiFallback(utf8Name, fallback), kind);
+  return `${disposition}; filename="${asciiName}"; filename*=UTF-8''${rfc5987(utf8Name)}`;
 }
 
 Deno.serve(async (req) => {
@@ -206,15 +233,15 @@ Deno.serve(async (req) => {
       console.warn("[document-download] audit insert failed", e);
     }
 
-    const safe = safeFilename(fileName || "document", kind === "docx" ? "document.docx" : "document.pdf");
-    const disposition = kind === "docx" ? "attachment" : "inline";
+    const disposition: "inline" | "attachment" = kind === "docx" ? "attachment" : "inline";
+    const contentDisposition = buildContentDisposition(disposition, fileName || "", kind as "pdf" | "docx");
 
     return new Response(arrayBuf, {
       status: 200,
       headers: {
         ...corsHeaders,
         "Content-Type": fileMime || "application/octet-stream",
-        "Content-Disposition": `${disposition}; filename="${safe}"; filename*=UTF-8''${encodeURIComponent(safe)}`,
+        "Content-Disposition": contentDisposition,
         "Cache-Control": "private, no-store",
       },
     });
