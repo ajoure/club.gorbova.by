@@ -115,3 +115,118 @@ running 10 tests from ./supabase/functions/_shared/subscription-conflict_test.ts
 - [x] Нормализация `already_has_active_subscription` на русском.
 - [x] Edge functions задеплоены.
 - [x] 10/10 conflict tests зелёные.
+
+## 6. Runtime verify — Ирина Белько успешно оплатила (2026-05-20)
+
+После деплоя патча Ирина прошла публичную ссылку и оплатила Gorbova Club / BUSINESS.
+
+### 6.1. Новый paid order
+
+```sql
+SELECT id, status, paid_amount, tariff_id, product_id, created_at
+FROM orders_v2
+WHERE user_id='0012a7a4-1420-486c-b95e-e6ba5907ef93'
+  AND product_id='11c9f1b8-0355-4753-bd74-40b42aa53616'
+ORDER BY created_at DESC LIMIT 1;
+-- id=59c6eb7d-efe2-46bb-a7a3-78c78140a07b
+-- status=paid, paid_amount=250.00 BYN
+-- tariff_id=7c748940... (BUSINESS), created_at=2026-05-20 06:06:47Z
+```
+
+### 6.2. payments_v2
+
+```sql
+SELECT id, status, amount, provider FROM payments_v2
+WHERE order_id='59c6eb7d-efe2-46bb-a7a3-78c78140a07b';
+-- id=a9d3b5a6-3217-49c6-ab79-f6e754751ea9
+-- status=succeeded, amount=250.00, provider=bepaid
+-- created_at=2026-05-20 06:11:05Z
+```
+
+Платёж НЕ привязан к старым pending/past_due попыткам (ca089896 / 58be5a09 /
+e03c94f9 остались `pending` + `paid_amount=0`).
+
+### 6.3. Доступ — entitlement и subscription
+
+```sql
+SELECT id, status, expires_at, meta->>'tariff_id' AS tariff_id,
+       meta->>'granted_by' AS granted_by, meta->>'source' AS source
+FROM entitlements
+WHERE user_id='0012a7a4-1420-486c-b95e-e6ba5907ef93'
+  AND product_id='11c9f1b8-0355-4753-bd74-40b42aa53616';
+-- id=9f609d99-e8c4-44d3-84d8-3dc6ed40d591, status=active
+-- expires_at=2026-06-20 12:00:00Z
+-- tariff_id=7c748940... (BUSINESS)
+-- granted_by=primary_order_fulfillment, source=bepaid_webhook_v2
+
+SELECT id, status, auto_renew, access_start_at, access_end_at
+FROM subscriptions_v2
+WHERE user_id='0012a7a4-1420-486c-b95e-e6ba5907ef93'
+  AND product_id='11c9f1b8-0355-4753-bd74-40b42aa53616'
+  AND status='active';
+-- id=81ba18e6-e3b4-4c20-8406-c056bc42c58d, auto_renew=true
+-- access_start_at=2026-05-20 06:06:47Z, access_end_at=2026-06-20 12:00:00Z
+```
+
+Новая active подписка + entitlement.expires_at = 2026-06-20 (recurring monthly,
+BUSINESS, 250 BYN/мес).
+
+### 6.4. provider_subscriptions — живой sbs
+
+```sql
+SELECT id, state, provider_subscription_id, subscription_v2_id, created_at
+FROM provider_subscriptions
+WHERE subscription_v2_id IN (
+  '81ba18e6-...','46194979-...','794661f3-...','1d9700de-...'
+) ORDER BY created_at DESC;
+-- sbs_96311287f13c6391 state=active (2026-05-20, bound to pre-created sub 46194979)
+-- sbs_cf0d4dfc4e6a5c2d state=redirecting (2026-05-19, dead)
+-- sbs_7a3f947b2a3927b5 state=expired (2026-05-15, dead)
+```
+
+Активный bePaid sbs существует и держит recurring. Note: sbs привязан к
+pre-created sub_v2 46194979 (past_due), а active sub_v2 81ba18e6 без provider
+row — это известный SBS-mismatch паттерн (см. `mem://commercial-logic/subscriptions/sbs-mismatch-no-new-sub-guard`),
+не относится к текущему патчу и доступ не ломает.
+
+### 6.5. audit_logs — нет блокировок
+
+```sql
+SELECT count(*) FROM audit_logs
+WHERE action ILIKE '%already_has_active_subscription%'
+  AND created_at > '2026-05-20';
+-- 0
+```
+
+Ни одной записи `already_has_active_subscription` после деплоя патча — для
+Ирины и в целом по системе. Старые past_due/redirecting/expired строки больше
+не использовались как blocker.
+
+Цепочка по этому ордеру (audit_logs):
+1. `system.payment_link.created` (06:06:48)
+2. `public_checkout.created` (06:06:48) ← без блокировки
+3. `entitlement.tariff_id_persisted` (06:10:56) ← grant прошёл
+4. `document_data.snapshot_created` (06:11:06)
+5. `bepaid.subscription.processed` (06:11:07)
+
+`grant-access-for-order` прошёл без skip/error для primary entitlement.
+
+### 6.6. ContactDetailSheet — UI verify
+
+- `activeSubscriptions` → отображает 81ba18e6 (active, BUSINESS, до 20.06).
+- `finishedSubscriptions` → 1d9700de / 794661f3 / 46194979 отфильтрованы
+  через `isUnpaidTrashRow` (past_due без успешного billing cycle).
+- Истёкшая c405fc59 (expired с реальным access window 19.01–19.02)
+  показывается как нормальная завершённая.
+- Пользователь не видит raw `already_has_active_subscription` — за счёт
+  `normalizeEdgeFunctionError`.
+
+---
+
+## STATUS: CLOSED
+
+PATCH `public_checkout_unpaid_subscription_attempts_do_not_block_2026_05` — **CLOSED**.
+
+Runtime proof получен: Ирина Белько успешно оплатила Gorbova Club / BUSINESS
+через публичную ссылку, доступ выдан до 2026-06-20, ни одна старая
+past_due/redirecting/expired запись не сыграла роль blocker'а.
