@@ -233,15 +233,15 @@ Deno.serve(async (req) => {
       console.warn("[document-download] audit insert failed", e);
     }
 
-    const safe = safeFilename(fileName || "document", kind === "docx" ? "document.docx" : "document.pdf");
-    const disposition = kind === "docx" ? "attachment" : "inline";
+    const disposition: "inline" | "attachment" = kind === "docx" ? "attachment" : "inline";
+    const contentDisposition = buildContentDisposition(disposition, fileName || "", kind as "pdf" | "docx");
 
     return new Response(arrayBuf, {
       status: 200,
       headers: {
         ...corsHeaders,
         "Content-Type": fileMime || "application/octet-stream",
-        "Content-Disposition": `${disposition}; filename="${safe}"; filename*=UTF-8''${encodeURIComponent(safe)}`,
+        "Content-Disposition": contentDisposition,
         "Cache-Control": "private, no-store",
       },
     });
