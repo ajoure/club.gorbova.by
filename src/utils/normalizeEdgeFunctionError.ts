@@ -136,9 +136,10 @@ function mapKnown(raw: string): string | null {
 
   if (
     s.includes("already has active provider subscription") ||
-    s.includes("duplicate_subscription")
+    s.includes("duplicate_subscription") ||
+    s.includes("already_has_active_subscription")
   ) {
-    return "У вас уже есть активная подписка bePaid. Проверьте её статус ниже или отмените, чтобы создать новую.";
+    return "У вас уже есть активная подписка на этот продукт. Проверьте её статус в личном кабинете или отмените, чтобы создать новую.";
   }
   if (s.includes("missing_explicit_choice")) {
     return "Действие требует подтверждения. Обновите страницу и попробуйте снова.";

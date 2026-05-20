@@ -29,8 +29,19 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
-/** Статусы, которые блокируют новую покупку same-product (при наличии provider-связи). */
-export const CONFLICTING_STATUSES = ['active', 'trial', 'past_due'] as const;
+/**
+ * Статусы subscriptions_v2, которые могут означать «живая платёжная связь».
+ * SOT блокировки = только active bePaid provider subscription (см. ниже).
+ * past_due НЕ блокирует: это незавершённая/мусорная попытка оплаты.
+ * trial оставлен ради защиты trial-подписок с реальным provider-managed автосписанием.
+ */
+export const CONFLICTING_STATUSES = ['active', 'trial'] as const;
+
+/**
+ * Provider states, которые считаются живой bePaid-связью для целей конфликта.
+ * ТОЛЬКО 'active'. pending/redirecting/expired/canceled — мусор, не блокируют.
+ */
+const BLOCKING_PROVIDER_STATES = ['active'] as const;
 
 /** Финальные статусы, разрешённые для заменяемой подписки (из живого enum). */
 export const TERMINAL_STATUSES = ['canceled', 'superseded', 'expired', 'expired_reentry'] as const;
@@ -115,7 +126,7 @@ export async function checkSubscriptionConflict(
       .select('provider_subscription_id, state, provider')
       .eq('subscription_v2_id', cand.id as string)
       .eq('provider', 'bepaid')
-      .in('state', ['active', 'pending'])
+      .in('state', BLOCKING_PROVIDER_STATES as unknown as string[])
       .limit(1)
       .maybeSingle();
 
@@ -307,7 +318,7 @@ export async function classifySameProductState(
       .select('provider_subscription_id, state, provider')
       .eq('subscription_v2_id', cand.id as string)
       .eq('provider', 'bepaid')
-      .in('state', ['active', 'pending'])
+      .in('state', BLOCKING_PROVIDER_STATES as unknown as string[])
       .limit(1)
       .maybeSingle();
 

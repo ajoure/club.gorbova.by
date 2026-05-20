@@ -117,7 +117,7 @@ Deno.test("classifySameProductState — extend_same_tariff when active+provider 
 Deno.test("classifySameProductState — replace_other_tariff when active+provider sub on different tariff", async () => {
   const supabase = makeMock({
     subs: [{ id: "v2-other", status: "active", tariff_id: TARIFF_B }],
-    providerSubByV2: { "v2-other": { provider_subscription_id: "sbs_222", state: "pending" } },
+    providerSubByV2: { "v2-other": { provider_subscription_id: "sbs_222", state: "active" } },
   });
   const r = await classifySameProductState(supabase, { user_id: USER, product_id: PRODUCT, tariff_id: TARIFF_A });
   assertEquals(r.status, "ok");
@@ -125,6 +125,34 @@ Deno.test("classifySameProductState — replace_other_tariff when active+provide
     assertEquals(r.decision, "replace_other_tariff");
     assertEquals(r.existing?.tariff_id, TARIFF_B);
   }
+});
+
+// =====================================================================
+// PATCH PAYMENT-CONFLICT v4 — unpaid trash MUST NOT block checkout
+// =====================================================================
+
+Deno.test("v4: past_due alone → no_existing (status removed from CONFLICTING_STATUSES)", async () => {
+  // Ирина-like: past_due без provider linkage / с redirecting.
+  // past_due больше не входит в CONFLICTING_STATUSES → даже не дойдёт до provider check.
+  const supabase = makeMock({
+    subs: [{ id: "v2-pastdue", status: "past_due", tariff_id: TARIFF_A }],
+    providerSubByV2: { "v2-pastdue": { provider_subscription_id: "sbs_pd", state: "redirecting" } },
+  });
+  const r = await classifySameProductState(supabase, { user_id: USER, product_id: PRODUCT, tariff_id: TARIFF_A });
+  assertEquals(r.status, "ok");
+  if (r.status === "ok") assertEquals(r.decision, "no_existing");
+});
+
+Deno.test("v4: active sub but provider state=pending → no_existing (pending not blocking)", async () => {
+  // Mock не фильтрует по .in('state',...) — эмулируем фильтрацию через null.
+  // Реальный supabase отдаст null т.к. pending исключён из BLOCKING_PROVIDER_STATES.
+  const supabase = makeMock({
+    subs: [{ id: "v2-act", status: "active", tariff_id: TARIFF_A }],
+    providerSubByV2: { "v2-act": null },
+  });
+  const r = await classifySameProductState(supabase, { user_id: USER, product_id: PRODUCT, tariff_id: TARIFF_A });
+  assertEquals(r.status, "ok");
+  if (r.status === "ok") assertEquals(r.decision, "no_existing");
 });
 
 Deno.test("classifySameProductState — fail-closed on subs query error", async () => {
