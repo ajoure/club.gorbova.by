@@ -558,9 +558,13 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
             <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="auto">
-                {resolved.template_id
-                  ? `${sourceLabelRu(resolved.source)} · ${templates.find((t) => t.id === resolved.template_id)?.name || "шаблон"}`
-                  : "Автоматически (не задан в кнопке)"}
+                {effectiveTemplateId
+                  ? `${usingSnapshotTemplate ? snapshotBadgeText : sourceLabelRu(resolved.source)} · ${templates.find((t) => t.id === effectiveTemplateId)?.name || "шаблон"}`
+                  : !resolvedOfferId
+                    ? "Автоматически (оффер сделки не определён)"
+                    : !offerMetaLoaded
+                      ? "Автоматически (настройки кнопки не загружены)"
+                      : "Автоматически (не задан в кнопке)"}
               </SelectItem>
               {templates.map((t) => (
                 <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
