@@ -968,18 +968,31 @@ Deno.serve(async (req) => {
     if (upDocx.error) return json({ error: `upload_docx_failed:${upDocx.error.message}` }, 500);
 
     // ── PATCH-B: file_name_template render (FLD-first canon) ──────────────
-    const { renderFileName, buildDefaultFileName } = await import('../_shared/document-filename.ts');
-    const { data: tplExtra } = await supabase
-      .from('document_templates')
-      .select('file_name_template')
-      .eq('id', tpl.id)
-      .maybeSingle();
-    const fileNameTemplate: string | null = (tplExtra?.file_name_template as string) || null;
+    // fileNameTemplate / filenameFlds уже загружены до numbering-блока (см. выше).
+    // Строим FLD-keyed map для renderFileName: ключ = "FLD-XXXXXX".
+    const filenameTokenMap: Record<string, string> = {};
+    for (const fld of filenameFlds) {
+      // 1) если в DOCX есть точный токен `field:FLD-XXX` без модификаторов — берём готовое
+      const directKey = `field:${fld}`;
+      if (Object.prototype.hasOwnProperty.call(resolved, directKey)) {
+        filenameTokenMap[fld] = resolved[directKey] ?? '';
+        continue;
+      }
+      // 2) FLD используется только в имени файла — резолвим из docFields через applyFormat
+      const reg: any = regMap.get(fld);
+      const dt = ((reg?.data_type as string) || '').toLowerCase();
+      const entry = baseEntryByFld[fld];
+      // Для date/datetime принудительно DD.MM.YYYY (как в DOCX-резолвере по умолчанию).
+      const fmtKey = (dt === 'date' || dt === 'datetime') ? 'dd.MM.yyyy' : null;
+      const fmt = applyFormat(entry?.value, dt, orderCurrency, fmtKey);
+      filenameTokenMap[fld] = fmt.value ?? baseValueByFld[fld] ?? '';
+    }
+
     let fileNameWarnings: string[] = [];
     let fileNameTemplateSource: 'template' | 'system_default' = 'system_default';
     let renderedFileName: string;
     if (fileNameTemplate && fileNameTemplate.trim()) {
-      const r = renderFileName(fileNameTemplate, { resolvedTokens: resolved });
+      const r = renderFileName(fileNameTemplate, { resolvedTokens: filenameTokenMap });
       fileNameWarnings = r.warnings;
       if (r.name) {
         renderedFileName = r.name;
@@ -999,6 +1012,7 @@ Deno.serve(async (req) => {
         documentDate: allocatedDate,
       });
     }
+
     // ai_generated_documents.file_name хранится БЕЗ расширения для PDF
     // (download / send добавляют .pdf или .docx из mime).
     const renderedFileNameWithExt = `${renderedFileName}.pdf`;
