@@ -342,7 +342,7 @@ Deno.serve(async (req) => {
     if (!templateId) {
       const { data: ordForResolve } = await supabase
         .from('orders_v2')
-        .select('payer_type, offer_id')
+        .select('payer_type, offer_id, tariff_id')
         .eq('id', orderId)
         .maybeSingle();
       let offerMeta: any = null;
@@ -353,6 +353,17 @@ Deno.serve(async (req) => {
           .eq('id', ordForResolve.offer_id)
           .maybeSingle();
         offerMeta = off?.meta || null;
+      }
+      // Fallback: order has no offer_id (legacy/manual). Pick active offer of the tariff.
+      if (!offerMeta && ordForResolve?.tariff_id) {
+        const { data: offs } = await supabase
+          .from('tariff_offers')
+          .select('meta, is_active, created_at')
+          .eq('tariff_id', ordForResolve.tariff_id)
+          .order('is_active', { ascending: false })
+          .order('created_at', { ascending: false });
+        const pick = (offs || []).find((o: any) => o.is_active) || (offs || [])[0];
+        offerMeta = pick?.meta || null;
       }
       // Determine payment channel from latest succeeded payment.
       const { data: pay } = await supabase
