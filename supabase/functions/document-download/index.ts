@@ -151,14 +151,15 @@ Deno.serve(async (req) => {
 
       if (kind === "docx") {
         const docxPath = (aiDoc.meta as any)?.docx_storage_path;
-        if (!docxPath) return errorResponse("docx_not_available", 404);
+        const primaryIsDocx = aiDoc.file_mime?.includes("wordprocessingml") || aiDoc.file_name?.toLowerCase().endsWith(".docx");
+        if (!docxPath && !primaryIsDocx) return errorResponse("docx_not_available", 404);
         bucket = aiDoc.storage_bucket || "documents";
-        filePath = docxPath;
+        filePath = docxPath || aiDoc.file_path;
         fileMime = (aiDoc.meta as any)?.docx_mime ||
-          "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-        fileName = (aiDoc.meta as any)?.docx_file_name || `${aiDoc.file_name || "document"}.docx`;
-        // DOCX доступно только админу.
-        if (!isPrivileged) return errorResponse("forbidden", 403);
+          aiDoc.file_mime || "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        fileName = (aiDoc.meta as any)?.docx_file_name || aiDoc.file_name || "document.docx";
+        // Secondary DOCX при PDF-primary доступен только админу; исторический DOCX-primary доступен владельцу.
+        if (!primaryIsDocx && !isPrivileged) return errorResponse("forbidden", 403);
       } else {
         bucket = aiDoc.storage_bucket || "documents";
         filePath = aiDoc.file_path;
