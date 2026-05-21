@@ -627,10 +627,35 @@ Deno.serve(async (req) => {
     );
 
 
+    // ── PATCH-B FIX: подгрузить file_name_template ДО numbering, чтобы FLD,
+    // использованные только в шаблоне имени файла, тоже триггерили аллокацию
+    // номера/даты и попадали в общий резолв.
+    const { extractFilenamePlaceholders, FLD_PLACEHOLDER_RE: FN_FLD_RE, renderFileName, buildDefaultFileName } =
+      await import('../_shared/document-filename.ts');
+    const { data: tplExtra } = await supabase
+      .from('document_templates')
+      .select('file_name_template')
+      .eq('id', tpl.id)
+      .maybeSingle();
+    const fileNameTemplate: string | null = (tplExtra?.file_name_template as string) || null;
+    const filenameFlds: string[] = [];
+    if (fileNameTemplate) {
+      for (const raw of extractFilenamePlaceholders(fileNameTemplate)) {
+        const m = raw.match(FN_FLD_RE);
+        if (m) {
+          const fld = m[1];
+          if (!filenameFlds.includes(fld)) filenameFlds.push(fld);
+          foundIds.add(fld);
+        }
+        // невалидные плейсхолдеры остаются warning внутри renderFileName ниже
+      }
+    }
+
     // ── C5-G: Document numbering v2 ─────────────────────────────────────────
     // Резервируем номер ОДИН раз на документ (mode=generate), до резолва.
     // Все вхождения {{field:FLD-000069}} получат одно значение из docFields.
     const needsNumbering = foundIds.has(FLD_DOC_NUMBER) || foundIds.has(FLD_DOC_DATE);
+
     const idempotencyKey: string = (typeof body?.idempotency_key === 'string' && body.idempotency_key.trim())
       ? String(body.idempotency_key).trim()
       : `strict:${tpl.id}:${ver.id}:${order.id}`;
