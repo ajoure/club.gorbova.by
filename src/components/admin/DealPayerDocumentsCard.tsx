@@ -91,6 +91,13 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
   const { hasRole: isSuper } = useHasRoleV2("super_admin");
   const canEdit = isAdmin || isSuper;
 
+  // Расширенный fallback offer_id + snapshot-from-provenance — закрываем UI
+  // ситуацию «Источник не задан» для админ-тест/public-link заказов и для случаев,
+  // когда tariff_offers.meta не загрузился, но backend resolver уже зафиксировал
+  // финальный template/executor в orders_v2.meta.document_data._provenance.
+  const [offerMetaLoaded, setOfferMetaLoaded] = useState(false);
+  const [resolvedOfferId, setResolvedOfferId] = useState<string | null>(null);
+
   const load = async () => {
     setLoading(true);
     const { data: o } = await supabase
@@ -100,11 +107,26 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
       .maybeSingle();
     setOrder(o as OrderRow | null);
 
-    // Fallback: orders, созданные через public-link / admin-test, могут иметь
-    // offer_id ТОЛЬКО в meta.offer_id (column NULL). Без этого fallback live
-    // scenario из tariff_offers.meta никогда не подгружается → UI показывает
-    // «Источник не задан / Автоматически» даже когда кнопка настроена правильно.
-    const offerId = (o as any)?.offer_id || (o as any)?.meta?.offer_id || null;
+    // Robust meta parse (на случай если в части ответов meta придёт строкой).
+    const rawMeta = (o as any)?.meta;
+    const meta = typeof rawMeta === "string"
+      ? (() => { try { return JSON.parse(rawMeta); } catch { return {}; } })()
+      : (rawMeta || {});
+
+    // Полная fallback цепочка для offer_id (закрывает admin-test / public-link,
+    // где column NULL): column → top-level meta → CRM snapshot → checkout/payment
+    // → document_data provenance.
+    const offerId: string | null =
+      (o as any)?.offer_id
+      || meta?.offer_id
+      || meta?.tariff_offer_id
+      || meta?.crm_routing_snapshot?.offer_id
+      || meta?.checkout?.offer_id
+      || meta?.payment?.offer_id
+      || meta?.document_data?._provenance?.offer_id
+      || null;
+    setResolvedOfferId(offerId);
+
     const [{ data: pays }, { data: tmpls }, { data: execs }, offerRes] = await Promise.all([
       supabase.from("payments_v2")
         .select("id, status, card_brand, card_last4, card_holder, paid_at, created_at, meta, provider")
@@ -126,7 +148,21 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
     setPayment(succ as PaymentRow | null);
     setTemplates((tmpls || []) as TemplateRow[]);
     setExecutors((execs || []) as ExecutorRow[]);
-    setOfferMeta((offerRes as any)?.data?.meta || null);
+    const fetchedOfferMeta = (offerRes as any)?.data?.meta || null;
+    setOfferMeta(fetchedOfferMeta);
+    setOfferMetaLoaded(!!fetchedOfferMeta);
+
+    // Debug-proof — без visible UI.
+    // eslint-disable-next-line no-console
+    console.debug("[DealPayerDocumentsCard] offer resolution", {
+      orderId: (o as any)?.id,
+      columnOfferId: (o as any)?.offer_id,
+      metaOfferId: meta?.offer_id,
+      crmOfferId: meta?.crm_routing_snapshot?.offer_id,
+      provenanceOfferId: meta?.document_data?._provenance?.offer_id,
+      finalOfferId: offerId,
+      offerMetaLoaded: !!fetchedOfferMeta,
+    });
 
     const { data: docs } = await supabase
       .from("ai_generated_documents")
@@ -194,25 +230,64 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
 
   const hasManualOverrides = !!(payerEntityOverride || templateOverride || executorOverride || payerTypeSource === "admin_override");
 
+  // Backend snapshot fallback: если live-resolver не получил template/executor
+  // (offerMeta не загрузился), но backend уже зафиксировал финальное решение в
+  // orders_v2.meta.document_data._provenance — используем его как источник.
+  const provenance = ((order?.meta as any)?.document_data?._provenance) || null;
+  const snapshotTemplateId: string | null = provenance?.template_resolution?.final_template_id || null;
+  const snapshotExecutorId: string | null = provenance?.executor_resolution?.final_executor_id || null;
+  const snapshotSource: string | null = provenance?.scenario?.source || provenance?.template_resolution?.source || null;
+  const usingSnapshotTemplate = !resolved.template_id && !!snapshotTemplateId;
+  const usingSnapshotExecutor = !resolved.executor_id && !!snapshotExecutorId;
+
   // Guard: если templateOverride указывает на удалённый/неактивный шаблон — не используем его.
   const overrideTemplateExists = templateOverride ? templates.some((t) => t.id === templateOverride) : true;
   const templateOverrideDeleted = !!templateOverride && !overrideTemplateExists;
-  const effectiveTemplateId = (overrideTemplateExists ? templateOverride : null) || resolved.template_id;
-  const effectiveExecutorId = executorOverride || resolved.executor_id;
+  const effectiveTemplateId =
+    (overrideTemplateExists ? templateOverride : null)
+    || resolved.template_id
+    || snapshotTemplateId;
+  const effectiveExecutorId =
+    executorOverride
+    || resolved.executor_id
+    || snapshotExecutorId;
   const effectivePayerType: PayerType = (order?.payer_type as PayerType) || resolved.payer_type || "individual";
 
-  // Статус
+  // Статус — гранулярные причины (offer/scenario/template/executor).
   const statusItems = useMemo(() => {
     const items: { kind: "ok" | "warn" | "err"; text: string }[] = [];
     if (templateOverride && !overrideTemplateExists) {
       items.push({ kind: "warn", text: "Выбранный ранее шаблон удалён или деактивирован — используется шаблон по сценарию. Сохраните выбор шаблона заново." });
     }
-    if (!effectiveTemplateId) {
-      items.push({ kind: "err", text: "Документ не может быть сформирован — не выбран шаблон" });
+
+    // Диагностика отсутствия шаблона/исполнителя — отделяем «нет оффера», «meta не загрузилась»,
+    // «scenario без шаблона», «scenario без исполнителя».
+    if (!effectiveTemplateId || !effectiveExecutorId) {
+      if (!resolvedOfferId) {
+        items.push({
+          kind: "err",
+          text: "Не удалось определить оффер сделки (offer_id отсутствует). Свяжите сделку с офером кнопки или выберите шаблон/исполнителя вручную.",
+        });
+      } else if (!offerMetaLoaded) {
+        items.push({
+          kind: "err",
+          text: "Не удалось загрузить настройки кнопки (tariff_offers). Проверьте, что оффер активен, или выберите шаблон/исполнителя вручную.",
+        });
+      } else if (resolved.source === "none") {
+        items.push({
+          kind: "err",
+          text: "Для выбранного типа плательщика и способа оплаты нет подходящего сценария в кнопке.",
+        });
+      } else {
+        if (!effectiveTemplateId) {
+          items.push({ kind: "err", text: "В сценарии кнопки не задан шаблон документа." });
+        }
+        if (!effectiveExecutorId) {
+          items.push({ kind: "err", text: "В сценарии кнопки не задан исполнитель." });
+        }
+      }
     }
-    if (!effectiveExecutorId) {
-      items.push({ kind: "err", text: "Документ не может быть сформирован — не выбран исполнитель" });
-    }
+
     // Реквизиты: ФЛ берёт individuals; ИП/ЮЛ — legalEntities (там лежат ent_* / leg_* в одной таблице)
     const list = effectivePayerType === "individual" ? individuals : legalEntities;
     const hasRequisites = list.length > 0;
@@ -222,7 +297,7 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
       items.push({ kind: "ok", text: "Реквизиты заполнены" });
     }
     return items;
-  }, [effectiveTemplateId, effectiveExecutorId, effectivePayerType, individuals, legalEntities, templateOverride, overrideTemplateExists]);
+  }, [effectiveTemplateId, effectiveExecutorId, effectivePayerType, individuals, legalEntities, templateOverride, overrideTemplateExists, resolvedOfferId, offerMetaLoaded, resolved.source]);
 
   const save = async () => {
     if (!order || !canEdit) return;
@@ -338,13 +413,23 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
     ? "Изменено вручную администратором"
     : "Определено автоматически";
   // Override бейдж показывается ТОЛЬКО при фактическом ручном изменении.
-  // Иначе — live matched scenario (или defaults / none).
+  // Иначе — live matched scenario; если live пуст, но есть backend snapshot —
+  // показываем «По снапшоту сделки» (а не вводящее в заблуждение «Источник не задан»).
+  const snapshotBadgeText = snapshotSource === "scenario"
+    ? "По снапшоту (сценарий)"
+    : snapshotSource === "defaults"
+      ? "По снапшоту (по умолчанию)"
+      : "По снапшоту сделки";
   const templateSourceBadge = templateOverride
     ? "Изменено вручную администратором"
-    : sourceLabelRu(resolved.source);
+    : usingSnapshotTemplate
+      ? snapshotBadgeText
+      : sourceLabelRu(resolved.source);
   const executorSourceBadge = executorOverride
     ? "Изменено вручную администратором"
-    : sourceLabelRu(resolved.source);
+    : usingSnapshotExecutor
+      ? snapshotBadgeText
+      : sourceLabelRu(resolved.source);
   const entitySourceBadge = payerEntityOverride
     ? "Изменено вручную администратором"
     : "По умолчанию";
@@ -473,9 +558,13 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
             <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="auto">
-                {resolved.template_id
-                  ? `${sourceLabelRu(resolved.source)} · ${templates.find((t) => t.id === resolved.template_id)?.name || "шаблон"}`
-                  : "Автоматически (не задан в кнопке)"}
+                {effectiveTemplateId
+                  ? `${usingSnapshotTemplate ? snapshotBadgeText : sourceLabelRu(resolved.source)} · ${templates.find((t) => t.id === effectiveTemplateId)?.name || "шаблон"}`
+                  : !resolvedOfferId
+                    ? "Автоматически (оффер сделки не определён)"
+                    : !offerMetaLoaded
+                      ? "Автоматически (настройки кнопки не загружены)"
+                      : "Автоматически (не задан в кнопке)"}
               </SelectItem>
               {templates.map((t) => (
                 <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
@@ -496,13 +585,17 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
             <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="auto">
-                {resolved.executor_id
-                  ? `${sourceLabelRu(resolved.source)} · ${
-                      executors.find((e) => e.id === resolved.executor_id)?.short_name
-                      || executors.find((e) => e.id === resolved.executor_id)?.full_name
+                {effectiveExecutorId
+                  ? `${usingSnapshotExecutor ? snapshotBadgeText : sourceLabelRu(resolved.source)} · ${
+                      executors.find((e) => e.id === effectiveExecutorId)?.short_name
+                      || executors.find((e) => e.id === effectiveExecutorId)?.full_name
                       || "исполнитель"
                     }`
-                  : "Автоматически (не задан в кнопке)"}
+                  : !resolvedOfferId
+                    ? "Автоматически (оффер сделки не определён)"
+                    : !offerMetaLoaded
+                      ? "Автоматически (настройки кнопки не загружены)"
+                      : "Автоматически (не задан в кнопке)"}
               </SelectItem>
               {executors.map((e) => (
                 <SelectItem key={e.id} value={e.id}>{e.short_name || e.full_name || e.id.slice(0, 8)}</SelectItem>
