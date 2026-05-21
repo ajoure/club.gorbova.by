@@ -318,14 +318,21 @@ export async function snapshotOrderDocumentData(
         erip: 'ЕРИП',
         bank_transfer: 'Банковский перевод',
       };
-      const methodCode = channel || (p.provider === 'bepaid' ? 'card' : (p.provider || 'unknown'));
-      const methodLabel = channelLabels[methodCode] || methodCode;
+      const isAdminTest = p.provider === 'admin_test' || p.provider === 'admin_test_direct';
+      const methodCode = isAdminTest
+        ? 'test'
+        : (channel || (p.provider === 'bepaid' ? 'card' : (p.provider || 'unknown')));
+      const methodLabel = isAdminTest
+        ? 'Тестовый платёж'
+        : (channelLabels[methodCode] || methodCode);
       // Description: формируется из факта платежа (см. plan §6).
       let description: string;
       const last4 = p.card_last4 || null;
       const holder = p.card_holder || null;
       const txnId = p.provider_payment_id || null;
-      if (channel === 'card' || channel === 'apple_pay' || channel === 'google_pay') {
+      if (isAdminTest) {
+        description = 'Тестовый платёж';
+      } else if (channel === 'card' || channel === 'apple_pay' || channel === 'google_pay') {
         const parts = [methodLabel];
         if (brand) parts.push(brand);
         if (last4) parts.push(`**** ${last4}`);
