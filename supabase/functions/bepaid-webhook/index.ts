@@ -1913,27 +1913,35 @@ Deno.serve(async (req) => {
            });
            
            console.log('[WEBHOOK-SUBSCRIPTION] GetCourse sync result:', gcResult.success ? 'OK' : gcResult.error);
-         } else {
-           console.log('[WEBHOOK-SUBSCRIPTION] GetCourse sync skipped: no email');
-           await supabase.from('orders_v2').update({
-             meta: { ...(orderV2.meta || {}), gc_sync_status: 'skipped', gc_sync_error: 'No email found' }
-           }).eq('id', orderV2Id);
-         }
-       } else {
-         const skipReason = !getcourseOfferId ? 'no_gc_offer' : 'no_order';
-         console.log('[WEBHOOK-SUBSCRIPTION] GetCourse sync skipped:', skipReason);
-         if (orderV2) {
-           await supabase.from('orders_v2').update({
-             meta: { 
-               ...(orderV2.meta || {}), 
-               gc_sync_status: 'skipped', 
-               gc_sync_error: skipReason === 'no_gc_offer' 
-                 ? `No GetCourse offer ID for tariff: ${subV2.tariffs?.name || 'unknown'}` 
-                 : 'Order not found',
-             }
-           }).eq('id', orderV2Id);
-         }
-       }
+          } else {
+            console.log('[WEBHOOK-SUBSCRIPTION] GetCourse sync skipped: no email');
+            // PATCH-DOC-STALE-META-2026-05: см. выше, перечитываем актуальный meta.
+            const { data: freshOrderNoEmail } = await supabase
+              .from('orders_v2').select('meta').eq('id', orderV2Id).maybeSingle();
+            const freshMetaNoEmail = (freshOrderNoEmail?.meta || orderV2.meta || {}) as Record<string, unknown>;
+            await supabase.from('orders_v2').update({
+              meta: { ...freshMetaNoEmail, gc_sync_status: 'skipped', gc_sync_error: 'No email found' }
+            }).eq('id', orderV2Id);
+          }
+        } else {
+          const skipReason = !getcourseOfferId ? 'no_gc_offer' : 'no_order';
+          console.log('[WEBHOOK-SUBSCRIPTION] GetCourse sync skipped:', skipReason);
+          if (orderV2) {
+            // PATCH-DOC-STALE-META-2026-05: см. выше.
+            const { data: freshOrderSkip } = await supabase
+              .from('orders_v2').select('meta').eq('id', orderV2Id).maybeSingle();
+            const freshMetaSkip = (freshOrderSkip?.meta || orderV2.meta || {}) as Record<string, unknown>;
+            await supabase.from('orders_v2').update({
+              meta: {
+                ...freshMetaSkip,
+                gc_sync_status: 'skipped',
+                gc_sync_error: skipReason === 'no_gc_offer'
+                  ? `No GetCourse offer ID for tariff: ${subV2.tariffs?.name || 'unknown'}`
+                  : 'Order not found',
+              }
+            }).eq('id', orderV2Id);
+          }
+        }
        
         // 7. Audit log (SYSTEM ACTOR PROOF)
         // PATCH INSTALLMENT-PUBLIC-LINK: distinguish finite installment subscription via model marker.
