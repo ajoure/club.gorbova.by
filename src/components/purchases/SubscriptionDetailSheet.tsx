@@ -344,6 +344,9 @@ export function SubscriptionDetailSheet({
 
         {/* Sticky footer with actions */}
         <div className="border-t border-border/50 bg-background/95 backdrop-blur px-5 sm:px-6 py-4 space-y-2">
+          {/* Канонические документы (если есть оплаченный order) */}
+          <SubscriptionDocumentActions orderId={lastPaidOrderId} />
+
           {receiptUrl && (
             <Button
               variant="default"
@@ -354,14 +357,20 @@ export function SubscriptionDetailSheet({
               Чек bePaid
             </Button>
           )}
-          <Button
-            variant={receiptUrl ? "outline" : "default"}
-            className="w-full gap-2"
-            onClick={() => onDownloadReceipt(subscription)}
-          >
-            <Download className="h-4 w-4" />
-            Скачать квитанцию
-          </Button>
+
+          {/* Legacy виртуальная квитанция — показываем ТОЛЬКО когда нет реального
+              эквайрингового чека (для будущих безналичных/рассрочечных сценариев). */}
+          {!receiptUrl && (
+            <Button
+              variant="outline"
+              className="w-full gap-2"
+              onClick={() => onDownloadReceipt(subscription)}
+            >
+              <Download className="h-4 w-4" />
+              Скачать квитанцию
+            </Button>
+          )}
+
 
           {showRenew && (
             <Button
