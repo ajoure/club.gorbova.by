@@ -350,12 +350,30 @@ Deno.serve(async (req) => {
     }
 
     // Load order + snapshot
-    const { data: order } = await supabase
+    let { data: order } = await supabase
       .from('orders_v2')
-      .select('id, order_number, profile_id, user_id, payer_type, meta, final_price, currency')
+      .select('id, order_number, profile_id, user_id, payer_type, meta, final_price, currency, status')
       .eq('id', orderId)
       .maybeSingle();
     if (!order) return json({ error: 'order_not_found' }, 404);
+
+    // ── PATCH-DOC-PLACEHOLDERS-2026-05 F5 ──────────────────────────────────
+    // Backend-guaranteed rebuild of document_data snapshot before resolving
+    // FLDs. Frontend may also call rebuild as optimization, but the SOT is
+    // here: any change to payer_type, payment, customer card, template/executor
+    // override, scenario must reflect in the generated document.
+    // mergeStandardIntoFields/mergeTypedB97IntoFields preserve manual_override.
+    if (order.status === 'paid') {
+      const rebuild = await snapshotOrderDocumentData(supabase, orderId, { mode: 'rebuild' });
+      if (rebuild.status === 'rebuilt' || rebuild.status === 'created') {
+        const { data: reloaded } = await supabase
+          .from('orders_v2')
+          .select('id, order_number, profile_id, user_id, payer_type, meta, final_price, currency, status')
+          .eq('id', orderId)
+          .maybeSingle();
+        if (reloaded) order = reloaded;
+      }
+    }
 
     const docFields = (((order.meta as any)?.document_data?.fields) || {}) as Record<string, any>;
 
