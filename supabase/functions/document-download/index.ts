@@ -162,6 +162,8 @@ Deno.serve(async (req) => {
         filePath = docxPath || aiDoc.file_path;
         fileMime = (aiDoc.meta as any)?.docx_mime ||
           aiDoc.file_mime || "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        // PATCH-B: имя берём из ai_generated_documents.file_name (без расширения),
+        // .docx добавит buildContentDisposition. Никогда не из storage path.
         fileName = (aiDoc.meta as any)?.docx_file_name || aiDoc.file_name || "document.docx";
         // Secondary DOCX при PDF-primary доступен только админу; исторический DOCX-primary доступен владельцу.
         if (!primaryIsDocx && !isPrivileged) return errorResponse("forbidden", 403);
