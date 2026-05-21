@@ -51,9 +51,20 @@ function safeAudit(supabase: any, action: string, meta: any) {
 }
 
 export interface SnapshotResult {
-  status: 'created' | 'skipped_exists' | 'skipped_no_order' | 'skipped_not_paid' | 'failed';
+  status: 'created' | 'rebuilt' | 'skipped_exists' | 'skipped_no_order' | 'skipped_not_paid' | 'failed';
   reason?: string;
   document_data?: Record<string, unknown>;
+}
+
+export interface SnapshotOptions {
+  /**
+   * 'create' (default) — idempotent: skip if document_data already exists.
+   * 'rebuild' — force overwrite document_data (preserves manual_override
+   * field entries via mergeStandardIntoFields / mergeTypedB97IntoFields).
+   * Used by canonical-document-generate-strict (always) and by
+   * canonical-deal-document-overrides on payer_type/template/executor change.
+   */
+  mode?: 'create' | 'rebuild';
 }
 
 /**
@@ -63,11 +74,13 @@ export interface SnapshotResult {
 export async function snapshotOrderDocumentData(
   supabase: any,
   orderId: string,
+  opts: SnapshotOptions = {},
 ): Promise<SnapshotResult> {
+  const mode = opts.mode === 'rebuild' ? 'rebuild' : 'create';
   try {
     const { data: order, error: orderErr } = await supabase
       .from('orders_v2')
-      .select('id, order_number, status, profile_id, user_id, product_id, tariff_id, offer_id, final_price, base_price, currency, customer_email, customer_phone, deal_date, updated_at, created_at, meta')
+      .select('id, order_number, status, profile_id, user_id, product_id, tariff_id, offer_id, payer_type, final_price, base_price, currency, customer_email, customer_phone, deal_date, updated_at, created_at, meta')
       .eq('id', orderId)
       .maybeSingle();
     if (orderErr) {
@@ -79,7 +92,8 @@ export async function snapshotOrderDocumentData(
     if (!order) return { status: 'skipped_no_order' };
 
     const existing = (order.meta as any)?.document_data;
-    if (existing && typeof existing === 'object') {
+    const payerTypeBefore = (existing as any)?._provenance?.customer_resolution?.payer_type ?? null;
+    if (existing && typeof existing === 'object' && mode !== 'rebuild') {
       await safeAudit(supabase, 'document_data.snapshot_skipped_exists', {
         order_id: orderId,
         snapshot_version: existing.snapshot_version || null,
