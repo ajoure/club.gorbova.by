@@ -942,6 +942,43 @@ Deno.serve(async (req) => {
     });
     if (upDocx.error) return json({ error: `upload_docx_failed:${upDocx.error.message}` }, 500);
 
+    // ── PATCH-B: file_name_template render (FLD-first canon) ──────────────
+    const { renderFileName, buildDefaultFileName } = await import('../_shared/document-filename.ts');
+    const { data: tplExtra } = await supabase
+      .from('document_templates')
+      .select('file_name_template')
+      .eq('id', tpl.id)
+      .maybeSingle();
+    const fileNameTemplate: string | null = (tplExtra?.file_name_template as string) || null;
+    let fileNameWarnings: string[] = [];
+    let fileNameTemplateSource: 'template' | 'system_default' = 'system_default';
+    let renderedFileName: string;
+    if (fileNameTemplate && fileNameTemplate.trim()) {
+      const r = renderFileName(fileNameTemplate, { resolvedTokens: resolved });
+      fileNameWarnings = r.warnings;
+      if (r.name) {
+        renderedFileName = r.name;
+        fileNameTemplateSource = 'template';
+      } else {
+        renderedFileName = buildDefaultFileName({
+          templateName: tpl.name,
+          documentNumber: allocatedNumber,
+          documentDate: allocatedDate,
+        });
+        fileNameWarnings.push('file_name_fallback_to_default');
+      }
+    } else {
+      renderedFileName = buildDefaultFileName({
+        templateName: tpl.name,
+        documentNumber: allocatedNumber,
+        documentDate: allocatedDate,
+      });
+    }
+    // ai_generated_documents.file_name хранится БЕЗ расширения для PDF
+    // (download / send добавляют .pdf или .docx из mime).
+    const renderedFileNameWithExt = `${renderedFileName}.pdf`;
+    const renderedDocxName = `${renderedFileName}.docx`;
+
     const docCommon = {
       profile_id: order.profile_id,
       template_id: tpl.id,
@@ -953,7 +990,7 @@ Deno.serve(async (req) => {
       status: 'generated',
       // PRIMARY = PDF (клиент видит только его)
       file_path: pdfPath,
-      file_name: `${tpl.name}.pdf`,
+      file_name: renderedFileNameWithExt,
       file_mime: 'application/pdf',
       storage_bucket: 'documents',
       snapshot: { fields: docFields },
@@ -965,6 +1002,7 @@ Deno.serve(async (req) => {
         if (b97FallbackApplied > 0) w.push(`b97_live_fallback_used:${b97FallbackApplied}:non_empty=${b97FallbackNonEmpty}`);
         if (b97FallbackApplied > 0 && !b97LiveCustomer) w.push('b97_customer_requisites_missing_for_payer_type');
         if (b97FallbackApplied > 0 && !b97LiveExecutor) w.push('b97_executor_missing');
+        if (fileNameWarnings.length > 0) w.push(...fileNameWarnings);
         return w;
       })(),
       source_trace: sourceTrace,
@@ -977,7 +1015,7 @@ Deno.serve(async (req) => {
         strict: true,
         // SECONDARY = DOCX (admin-only download через UI guard)
         docx_storage_path: docxPath,
-        docx_file_name: `${tpl.name}.docx`,
+        docx_file_name: renderedDocxName,
         docx_mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         ...gotenbergMeta,
       },
