@@ -169,7 +169,7 @@ export function buildStandardFieldValues(ctx: StandardContext): Record<string, s
     'FLD-000189': documentData?.quantity != null ? String(documentData.quantity) : '1',         // document.service_quantity
     'FLD-000190': documentData?.unit_price != null ? String(documentData.unit_price) : (amount != null ? String(amount) : ''), // document.service_price
     'FLD-000191': amount != null ? String(amount) : '',                                         // document.service_amount
-    'FLD-000192': documentData?.amount_words || (amount != null ? numberToWordsRu(Number(amount), currency) : ''), // document.amount_words
+    'FLD-000192': documentData?.amount_words || (amount != null ? formatAmountWithWordsByRublesAndKopecks(Number(amount), currency) : ''), // document.amount_words
     'FLD-000193': documentData?.currency_major || '',                                           // document.currency_major
     'FLD-000194': documentData?.currency_minor || '',                                           // document.currency_minor
     'FLD-000195': documentData?.payment_due_days != null ? String(documentData.payment_due_days) : '', // document.payment_due_days
@@ -185,6 +185,20 @@ export function buildStandardFieldValues(ctx: StandardContext): Record<string, s
     'FLD-000205': documentData?.final_payment != null ? String(documentData.final_payment) : '',         // document.final_payment_amount
     'FLD-000206': currency,                                                                              // document.deal_currency
     'FLD-000208': dateRu(paidAt),                                                                        // document.payment_date
+
+    // ── payment.* (FLD-000256..267) — read from documentData.payment snapshot ─
+    'FLD-000256': pay?.method || '',                                                            // payment.method
+    'FLD-000257': pay?.method_label || '',                                                      // payment.method_label
+    'FLD-000258': pay?.description || '',                                                       // payment.description
+    'FLD-000259': pay?.card_brand || '',                                                        // payment.card.brand
+    'FLD-000260': pay?.card_brand_normalized || '',                                             // payment.card.brand_normalized
+    'FLD-000261': pay?.card_last4 || '',                                                        // payment.card.last4
+    'FLD-000262': pay?.card_holder || '',                                                       // payment.card.holder
+    'FLD-000263': pay?.paid_at ? dotDate(pay.paid_at) : '',                                     // payment.paid_at
+    'FLD-000264': pay?.amount != null ? formatMoney(Number(pay.amount), pay?.currency || currency) : '', // payment.amount → "100,00 BYN"
+    'FLD-000265': (pay?.currency || '').toString().toUpperCase(),                               // payment.currency
+    'FLD-000266': pay?.provider_transaction_id || '',                                           // payment.provider_transaction_id
+    'FLD-000267': pay?.external_reference || '',                                                // payment.external_reference
   };
 
   return v;
