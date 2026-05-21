@@ -70,8 +70,11 @@ interface SubscriptionDetailSheetProps {
   onResume: (sub: Subscription) => void;
   onDownloadReceipt: (sub: Subscription) => void;
   receiptUrl?: string | null;
+  /** Последний оплаченный order_id этой подписки — для канонических документов. */
+  lastPaidOrderId?: string | null;
   isProcessing: boolean;
 }
+
 
 export function SubscriptionDetailSheet({
   subscription,
