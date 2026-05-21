@@ -34,6 +34,7 @@ import { extractDocxPlaceholders } from "@/utils/extractDocxPlaceholders";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { TemplateMarkupDialog } from "./TemplateMarkupDialog";
+import { FileNameTemplateEditor } from "./FileNameTemplateEditor";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 
 // C5-I: понятные сообщения для ошибок activation backend
@@ -882,6 +883,14 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
                   убраны с основного экрана. При невалидной версии ошибки
                   уже видны в ValidationSummary; полный документ открывается
                   через «Проверка и исправление плейсхолдеров». */}
+
+              {/* PATCH-B: шаблон имени файла при скачивании (FLD-first canon). */}
+              {activeTemplate && (
+                <FileNameTemplateEditor
+                  templateId={activeTemplate.id}
+                  templateName={activeTemplate.name}
+                />
+              )}
             </div>
           )}
         </div>

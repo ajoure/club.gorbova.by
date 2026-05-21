@@ -146,9 +146,10 @@ export default function Purchases() {
         .select(`
           id, order_number, final_price, currency, status, is_trial, trial_end_at,
           customer_email, created_at, meta, purchase_snapshot,
+          offer_id, tariff_id, payer_type,
           products_v2(name, code),
           tariffs(name, code),
-          payments_v2(id, status, provider_payment_id, card_brand, card_last4, receipt_url, provider_response)
+          payments_v2(id, status, provider, provider_payment_id, card_brand, card_last4, receipt_url, provider_response)
         `)
         .eq("user_id", user.id)
         .order("created_at", { ascending: false });
@@ -173,7 +174,8 @@ export default function Purchases() {
           payment_methods(brand, last4),
           orders_v2!subscriptions_v2_order_id_fkey(
             id, order_number, final_price, currency, created_at,
-            payments_v2(id, status, provider_payment_id, card_brand, card_last4, receipt_url, provider_response)
+            offer_id, tariff_id, payer_type, status, meta,
+            payments_v2(id, status, provider, provider_payment_id, card_brand, card_last4, receipt_url, provider_response)
           )
         `)
         .eq("user_id", user.id)

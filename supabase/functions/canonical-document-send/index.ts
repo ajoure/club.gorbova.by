@@ -236,9 +236,11 @@ Deno.serve(async (req) => {
       return json(500, { error: "file_download_failed", detail: dlErr?.message });
     }
     const pdfBytes = new Uint8Array(await blob.arrayBuffer());
-    const filename =
-      doc.file_name ||
-      `${(doc.document_number || "document").replace(/[^A-Za-z0-9._-]/g, "_")}.pdf`;
+    // PATCH-B: filename берём из ai_generated_documents.file_name; всегда .pdf
+    // (email + Telegram отправляют только PDF). Кириллица допустима — MIME header
+    // RFC 2047 в send-email; Telegram sendDocument multipart принимает UTF-8.
+    const baseName = (doc.file_name || `${doc.document_number || "document"}.pdf`).replace(/\.docx$/i, "");
+    const filename = baseName.toLowerCase().endsWith(".pdf") ? baseName : `${baseName}.pdf`;
 
     // ---- Send Email ---------------------------------------------------------
     const results: {
