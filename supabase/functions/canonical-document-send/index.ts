@@ -182,7 +182,8 @@ Deno.serve(async (req) => {
 
     if (docErr) return json(500, { error: "db_error", detail: docErr.message });
     if (!doc || doc.deleted_at) return json(404, { error: "document_not_found" });
-    if (doc.status !== "generated" || !doc.file_path) {
+    const isReadyStatus = doc.status === "generated" || doc.status === "success";
+    if (!isReadyStatus || !doc.file_path) {
       return json(409, { error: "document_not_ready" });
     }
 
