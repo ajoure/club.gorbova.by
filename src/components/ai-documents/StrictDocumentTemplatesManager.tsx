@@ -904,6 +904,15 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
                 onChange={e => setUploadName(e.target.value)}
                 placeholder="Акт услуг — основной"
               />
+              {matchedExistingTemplate ? (
+                <div className="text-[11px] text-emerald-600 mt-1">
+                  Имя совпадает с существующим шаблоном — будет добавлена версия v{nextVersionNumberFor(matchedExistingTemplate.id)}. Настройки кнопок оплаты не изменятся.
+                </div>
+              ) : uploadName.trim() ? (
+                <div className="text-[11px] text-muted-foreground mt-1">
+                  Будет создан новый шаблон (v1).
+                </div>
+              ) : null}
             </div>
             <div>
               <Label>Файл .docx</Label>
