@@ -393,23 +393,96 @@ Deno.serve(async (req) => {
       const hasBepaidPayment = !!successfulPayment?.provider_payment_id;
       const bepaidRefundSuccessful = bepaidRefundResult?.transaction?.status === 'successful';
       
-      // bePaid уже сообщил «refunded already» → идемпотентный skip, возвращаем 200, не падаем UI.
+      // PATCH-REFUND-SOT-RPC-RECOVERY-2026-05:
+      // bePaid вернул «refunded already» → пытаемся идемпотентно записать refund-row
+      // через record_refund_atomic, но ТОЛЬКО при наличии доказанного refund_uid.
+      // Источники uid (по приоритету):
+      //   1) bepaidRefundResult.transaction.uid (если bePaid внезапно отдал)
+      //   2) original failed-audit `admin.subscription.refund_db_recording_failed`
+      //      для того же order_id (наша исходная попытка отправки в bePaid).
+      // Если uid не найден → пишем audit `manual_review_refund_uid_missing`,
+      // никаких записей в payments_v2, ничего не выдумываем.
       if (hasBepaidPayment && !bepaidRefundSuccessful && bepaidAlreadyRefunded) {
+        let recoveredRefundUid: string | null = bepaidRefundResult?.transaction?.uid || null;
+        let recoveredAuditId: string | null = null;
+        if (!recoveredRefundUid) {
+          const { data: priorFailed } = await supabase
+            .from('audit_logs')
+            .select('id, meta')
+            .eq('action', 'admin.subscription.refund_db_recording_failed')
+            .contains('meta', { order_id })
+            .order('created_at', { ascending: false })
+            .limit(1);
+          const meta0 = (priorFailed?.[0]?.meta as any) || null;
+          if (meta0?.bepaid_refund_uid) {
+            recoveredRefundUid = String(meta0.bepaid_refund_uid);
+            recoveredAuditId = String(priorFailed![0].id);
+          }
+        }
+
+        let rpcRecoveryResult: any = null;
+        let rpcRecoveryError: string | null = null;
+        let recoveryAction: 'rpc_called' | 'manual_review_refund_uid_missing' = 'manual_review_refund_uid_missing';
+
+        if (recoveredRefundUid && successfulPayment) {
+          recoveryAction = 'rpc_called';
+          const { data: rpcOut, error: rpcErr } = await supabase.rpc('record_refund_atomic', {
+            p_order_id: order_id,
+            p_parent_payment_id: successfulPayment.id,
+            p_refund_amount: actualRefundAmount,
+            p_refund_uid: recoveredRefundUid,
+            p_refund_reason: refund_reason,
+            p_actor_user_id: adminUserId,
+            p_target_user_id: order.user_id,
+            p_bepaid_response: {
+              status: 'already_refunded',
+              uid: recoveredRefundUid,
+              message: 'Recovery via bepaidAlreadyRefunded branch — PATCH-REFUND-SOT-RPC-RECOVERY-2026-05',
+              recovered_from_audit_log_id: recoveredAuditId,
+              upstream_bepaid_response: bepaidRefundResult,
+            },
+          });
+          if (rpcErr) rpcRecoveryError = String(rpcErr.message || rpcErr);
+          else rpcRecoveryResult = rpcOut;
+        }
+
         await supabase.from('audit_logs').insert({
           actor_user_id: adminUserId,
           target_user_id: order.user_id,
-          action: 'admin.subscription.refund_skipped_already_refunded',
+          actor_type: 'user',
+          actor_label: 'subscription-admin-actions[refund][already_refunded]',
+          action: recoveryAction === 'rpc_called'
+            ? (rpcRecoveryError
+                ? 'admin.subscription.refund_already_refunded_recovery_failed'
+                : 'admin.subscription.refund_already_refunded_recovered')
+            : 'admin.subscription.refund_already_refunded_manual_review',
           meta: {
             order_id,
             order_number: order.order_number,
             parent_payment_uid: successfulPayment?.provider_payment_id,
+            recovered_refund_uid: recoveredRefundUid,
+            recovered_from_audit_log_id: recoveredAuditId,
+            rpc_result: rpcRecoveryResult,
+            rpc_error: rpcRecoveryError,
             bepaid_response: bepaidRefundResult,
+            patch: 'PATCH-REFUND-SOT-RPC-RECOVERY-2026-05',
+            manual_review_reason: recoveryAction === 'manual_review_refund_uid_missing'
+              ? 'refund_uid_not_found_in_bepaid_response_nor_prior_failed_audit'
+              : null,
           },
         });
+
         return new Response(JSON.stringify({
-          success: false,
+          success: !!rpcRecoveryResult && !rpcRecoveryError,
           idempotent: true,
-          error: 'Платёж уже возвращён в bePaid ранее. Локальный статус заказа не изменён — проверьте журнал возвратов.',
+          recovery_action: recoveryAction,
+          rpc_result: rpcRecoveryResult,
+          rpc_error: rpcRecoveryError,
+          error: rpcRecoveryError
+            ? `Платёж уже возвращён в bePaid, но локальная запись refund не создана: ${rpcRecoveryError}`
+            : (recoveryAction === 'manual_review_refund_uid_missing'
+                ? 'Платёж уже возвращён в bePaid, refund_uid не найден — требуется ручная проверка (admin-repair-refund-recording).'
+                : 'Платёж уже возвращён в bePaid — локальная запись refund восстановлена.'),
           bepaid_error: 'bepaid_already_refunded',
           bepaid_response: bepaidRefundResult,
         }), {
