@@ -1,187 +1,192 @@
-да, согласен, с учетом правок:
+## Да, согласен, с учетом правок:
 
-1. **Сначала подтвердить** `FLD-000069` **и** `FLD-000263` **по registry.**  
-Перед фиксом добавить read-only proof:
-
-```sql
-SELECT fr.public_id, fr.key, fr.label, fr.data_type,
-       dtr.token_key, dtr.ui_label
-FROM fields_registry fr
-LEFT JOIN document_token_registry dtr ON dtr.field_id = fr.id
-WHERE fr.public_id IN ('FLD-000069','FLD-000263','FLD-000314','FLD-000368');
-```
-
-Нужно доказать:
-
-- `FLD-000069` — номер документа;
-- `FLD-000263` — дата платежа или другая дата, которую реально хотят в имени;
-- `FLD-000314` / `FLD-000368` — те поля, которые ожидаются в имени.
-
-2. **Не добавлять** `fileNameTemplate` **вторым SELECT, если он уже загружается ниже.**  
-Лучше перенести существующую загрузку `document_templates.file_name_template` выше, чтобы не было двух разных запросов и риска рассинхронизации.
-3. `filenameFlds` **должен включать только валидные FLD.**  
-Если в шаблоне имени есть невалидный плейсхолдер, например `{{payer_short_name}}`, он не должен попадать в `foundIds`.  
-Он должен остаться warning в `renderFileName`.
-4. **Расширение** `foundIds` **должно происходить до numbering-check.**  
-Это главный пункт. Если `FLD-000069` есть только в имени файла, numbering всё равно должен сработать.
-5. **Нельзя брать** `resolved[field:${fld}]` **только если значение непустое.**  
-Сейчас в плане:
+1. **PATCH-1 по CORS — правильно.**  
+Нужно добавить:
 
 ```ts
-if (direct !== undefined && direct !== '') { ... }
+"Access-Control-Expose-Headers": "Content-Disposition",
 ```
 
-Нужно аккуратнее. Пустая строка тоже может быть валидным resolved-значением, например поле реально пустое. Лучше:
+Но проверить, что этот header уходит **и в основной ответ**, и в `OPTIONS`/CORS preflight, если там отдельная ветка.
+
+2. **В** `downloadDocumentBlob.ts` **после фикса проверить именно чтение header через JS.**  
+Не только `curl -I`, а proof в браузере:
 
 ```ts
-if (Object.prototype.hasOwnProperty.call(resolved, `field:${fld}`)) {
-  filenameTokenMap[fld] = resolved[`field:${fld}`] ?? '';
-  continue;
-}
+res.headers.get("Content-Disposition")
 ```
 
-Иначе будет непредсказуемый fallback.
+должен вернуть реальное значение, не `null`.
 
-6. **Для номера документа использовать итоговое значение после allocator override.**  
-Если `FLD-000069` связан с `document.number`, нужно убедиться, что в `filenameTokenMap` попадает уже настоящий номер, например `2105/2`, а не пустое/preview/старое значение.
-7. **Дата в имени файла должна рендериться через тот же формат, что и field-resolver.**  
-Не добавлять отдельный новый формат даты. Если `applyFormat` без модификатора даёт текущий системный формат — использовать его. Если отдаёт ISO, тогда локальный fallback допустим, но только для имени файла и с proof.
-8. `renderFileName` **получает** `FLD-keyed map`**, но в proof нужно явно показать оба слоя.**
-
-В отчёте добавить таблицу:
+3. **PATCH-2 по истории — правильно.**  
+В `DealPayerDocumentsCard.tsx` добавить `file_name` в select и UI.  
+Но отображать лучше так:
 
 ```text
-FLD-000314 → field:FLD-000314 → value
-FLD-000368 → field:FLD-000368 → value
-FLD-000069 → field:FLD-000069 → value
-FLD-000263 → field:FLD-000263 → value
+номер документа + file_name без расширения + дата
 ```
 
-9. **Не удалять тестовый документ, если он нужен как proof.**  
-Лучше:
-  &nbsp;
-  - создать новый тестовый документ с новым idempotency_key;
-  - либо удалить только явно тестовый документ, если он помечен smoke/test meta.  
-  Не удалять пользовательский документ без отдельного подтверждения.
-10. **DoD дополнить проверкой скачивания.**  
-Недостаточно проверить `ai_generated_documents.file_name`. Нужно ещё проверить:
-
-&nbsp;
-
-- `document-download` отдаёт это имя в `Content-Disposition`;
-- PDF скачивается с новым именем;
-- нет `file_name_warnings`.
-
-11. **Добавить anti-regression для шаблона без** `file_name_template`**.**  
-Проверить один шаблон с `file_name_template IS NULL`: системный дефолт имени файла работает как раньше.
-12. **Файл действительно один.**  
-Подтвердить, что меняется только:
+Если `file_name` уже содержит номер, не страшно, но визуально может быть дубль:
 
 ```text
-supabase/functions/canonical-document-generate-strict/index.ts
+2205/2  Счет-акт ... № 2205-2 ...
 ```
 
-`document-filename.ts`, frontend, миграции, `document-download`, `canonical-document-send` — не трогать.
+Это допустимо для proof, но потом можно улучшить отдельным UX-патчем.
 
-Готовый блок для Lovable:
+4. **Не считать исправленным вопрос мусорных дефисов от кавычек.**  
+Сейчас имя:
 
 ```text
-План согласован, но выполни с правками:
-
-1. Перед фиксом read-only proof по FLD-000069/263/314/368 через fields_registry + document_token_registry. Подтвердить, что FLD-000069 — номер документа.
-
-2. Не делать второй независимый SELECT file_name_template. Перенести существующую загрузку document_templates.file_name_template выше, до needsNumbering/foundIds.
-
-3. filenameFlds добавлять в foundIds только для валидных {{field:FLD-XXXXXX}}. Невалидные плейсхолдеры остаются warning в renderFileName.
-
-4. Расширить foundIds до блока needsNumbering, чтобы номер документа аллоцировался даже если FLD-000069 есть только в file_name_template.
-
-5. При построении filenameTokenMap проверять наличие ключа в resolved через hasOwnProperty, а не через direct !== ''. Пустая строка может быть валидным resolved value.
-
-6. Для FLD-000069 использовать итоговое значение после allocator override, чтобы в имени файла был реальный номер документа.
-
-7. Дату форматировать тем же способом, что field-resolver. Не вводить новый формат даты.
-
-8. В proof показать таблицу FLD → field:FLD → resolved value → filenameTokenMap value.
-
-9. Не удалять пользовательский документ. Для verify создать новый тестовый generate или удалить только явно smoke/test документ.
-
-10. Verify должен проверить не только ai_generated_documents.file_name, но и скачивание через document-download / Content-Disposition.
-
-11. Добавить anti-regression: шаблон с file_name_template IS NULL продолжает работать через системный дефолт.
-
-12. Изменяемый файл только supabase/functions/canonical-document-generate-strict/index.ts. Без миграций, frontend, document-download, canonical-document-send.
+ЗАО -АЖУР инкам-
 ```
 
-После этих уточнений патч можно выполнять.
+Это отдельный баг sanitization в `document-filename.ts` / генерации имени.  
+В этом патче можно не трогать, если цель только:
 
-&nbsp;
+- перестать скачивать `document.pdf`;
+- показать `file_name` в истории.
 
-План: исправить генерацию имени файла из плейсхолдеров шаблона
+Но в отчёте нужно явно написать:
 
-## Проблема (verified в БД)
+```text
+Проблема document.pdf исправлена через CORS expose-header.
+Визуальная нормализация кавычек в имени файла остаётся отдельным PATCH.
+```
 
-Шаблон `Счет-акт: {{field:FLD-000314}} - {{field:FLD-000368}} № {{field:FLD-000069}} от {{field:FLD-000263}}` сохраняется корректно, но в `ai_generated_documents`:
+5. **Не менять** `canonical-document-generate-strict` **в этом патче.**  
+Согласен: если `file_name` уже записан в БД, то текущий патч должен быть только:
+  - `document-download/index.ts`;
+  - `DealPayerDocumentsCard.tsx`.
+6. **DoD дополнить проверкой нового документа.**  
+Нужно проверить два варианта:
+  - скачивание уже существующего документа из истории;
+  - скачивание сразу после новой генерации.
+7. **Proof-файл добавить.**
 
-- `file_name = "Счет-акт - № от.pdf"` (все плейсхолдеры пустые)
-- `meta.file_name_warnings = ["file_name_placeholder_unresolved:FLD-000314", "...368", "...069", "...263"]`
-- `meta.file_name_template_source = "template"` — шаблон применился, но lookup провалился на всех FLD.
+```text
+.lovable/proofs/patch_document_download_filename_history_2026_05.md
+```
 
-## Root cause
+В нём:
 
-В `canonical-document-generate-strict/index.ts` карта `resolved` для DOCX-рендера keyed по `raw_inside` (строки вида `field:FLD-000069`, `field:FLD-000114:case=gen`).  
-А `renderFileName` ожидает map keyed по чистому `FLD-XXXXXX` (см. `_shared/document-filename.ts` строки 114–115: `resolved[fld]` где `fld = "FLD-000069"`).  
-→ Любой lookup → undefined → warning + пустая строка.
+- curl/header proof;
+- browser proof `Content-Disposition` читается;
+- скрин/описание истории с `file_name`;
+- подтверждение, что backend generation не трогали.
 
-Дополнительно: FLD, использованные **только** в `file_name_template` (и отсутствующие в DOCX), не попадают в `foundIds`, и для `FLD-000069`/`FLD-000070`:
+Итоговый блок для Lovable:
 
-- `needsNumbering` не сработает → номер/дата не аллоцируются;
-- даже если есть в `order.meta.document_data.fields` — для номера это критично, потому что номер выдаётся аллокатором.
+```text
+План согласован.
 
-## Фикс (один файл, чистый PATCH)
+Выполнить двумя точечными PATCH:
 
-### supabase/functions/canonical-document-generate-strict/index.ts
+PATCH-1:
+- В document-download/index.ts добавить Access-Control-Expose-Headers: Content-Disposition.
+- Проверить, что header есть и в обычном ответе, и не теряется из-за CORS/preflight.
+- Verify не только curl, но и browser JS: res.headers.get("Content-Disposition") !== null.
 
-1. **Сразу после загрузки шаблона** прочитать `document_templates.file_name_template` (перенести существующий select выше — до блока `needsNumbering`). Это даёт `fileNameTemplate` и `filenameFlds = extractFilenamePlaceholders(...)` → Set FLD-ID.
-2. **Расширить `foundIds**`: для каждого валидного `FLD-XXXXXX` из `filenameFlds` сделать `foundIds.add(fld)`. Это автоматически:
-  - триггерит `needsNumbering`, если в имени файла участвует `FLD-000069` или `FLD-000070`;
-  - заставит резолвер посчитать `baseValueByFld[fld]` для FLD из имени.
-3. **Построить FLD-keyed map для renderFileName** после общего резолва (`resolved`/`baseValueByFld` уже посчитаны):
-  ```ts
-   const filenameTokenMap: Record<string, string> = {};
-   for (const fld of filenameFlds) {
-     // 1) если в DOCX есть точный токен `field:FLD-XXX` без модификаторов — берём готовое из resolved
-     const direct = resolved[`field:${fld}`];
-     if (direct !== undefined && direct !== '') { filenameTokenMap[fld] = direct; continue; }
-     // 2) иначе — базовое значение из docFields через fmtVal + applyFormat по data_type
-     const reg: any = regMap.get(fld);
-     const dt = ((reg?.data_type as string) || '').toLowerCase();
-     const entry = baseEntryByFld[fld];
-     const fmt = applyFormat(entry?.value, dt, orderCurrency, null); // без модификаторов
-     filenameTokenMap[fld] = fmt.value ?? baseValueByFld[fld] ?? '';
-   }
+PATCH-2:
+- В DealPayerDocumentsCard.tsx добавить file_name в HistoryDoc и select.
+- В истории показывать document_number + file_name без .pdf/.docx + date.
+- Для старых записей fallback: title или "Документ".
+
+Не трогать:
+- canonical-document-generate-strict;
+- FileNameTemplateEditor;
+- document-filename.ts;
+- registry/migrations;
+- /purchases.
+
+Отдельно в отчёте указать:
+- проблема document.pdf исправляется этим патчем;
+- проблема визуального имени "ЗАО -АЖУР инкам-" остаётся отдельным PATCH по sanitization кавычек.
+
+DoD:
+- document-download отдаёт Access-Control-Expose-Headers: Content-Disposition;
+- downloadDocumentBlob видит Content-Disposition и сохраняет файл не как document.pdf;
+- история в админ-карточке показывает file_name;
+- новая генерация и скачивание из истории оба используют корректное имя из БД.
+
+Отчёт о диагностике
+```
+
+Проверил БД и код. Найдено **два независимых бага**:
+
+### Баг 1 (главный — почему скачивается «document (17).pdf»)
+
+`supabase/functions/document-download/index.ts` корректно ставит `Content-Disposition: ...; filename="..."; filename*=UTF-8''...`, но **CORS-заголовки не отдают `Access-Control-Expose-Headers: Content-Disposition**`. Без этого браузер из CORS-ответа не отдаёт заголовок JS, поэтому в `downloadDocumentBlob.ts`:
+
+```
+const cd = res.headers.get("Content-Disposition") || "";  // → пусто
+```
+
+падает в fallback `"document.pdf"`. Chrome добавляет суффикс `(17)` из-за дубликатов в Загрузках. Имя в БД при этом правильное — проверено:
+
+```
+2205/2  Счет-акт - ЗАО -АЖУР инкам- № 2205-2 от 21.05.2026.pdf  (src=template)
+2105/5  Счет-акт- Прайс С. В. - ЗАО -АЖУР инкам- № 2105-5 от 21.05.2026.pdf
+```
+
+### Баг 2 (история документов в админ-карточке)
+
+`src/components/admin/DealPayerDocumentsCard.tsx`:
+
+- стр. 169: `select(... document_number)` — `file_name` не запрашивается;
+- стр. 650: рендер `{h.document_number || h.title || "Документ"}` — показывает только номер.
+
+Поэтому в списке «История (2)» видно только `2105/5  21.05.2026, 12:17:34`, а не итоговое имя файла.
+
+---
+
+## План правок (только UI + CORS, генерация не трогается)
+
+### PATCH-1 — CORS expose-header в `document-download`
+
+Файл: `supabase/functions/document-download/index.ts`
+
+1. В `corsHeaders` добавить:
   ```
-   Важно: для date-полей (FLD-000263, FLD-000070) `applyFormat` без модификатора должен вернуть отформатированную DD.MM.YYYY (это поведение уже стандартно в текущем `fmtVal`/`applyFormat` для DOCX). Если в текущей реализации без формата возвращается ISO — добавить локальный `formatDateForFileName(value)` для FLD типа `date`, чтобы в имени не было `2026-05-21` с дефисами (последующая санитизация уже превратит `:` в `-`, но ISO-даты допустимы; точную форму подтвердим тестом).
-4. **Передать новый map в renderFileName**:
-  ```ts
-   const r = renderFileName(fileNameTemplate, { resolvedTokens: filenameTokenMap });
+   "Access-Control-Expose-Headers": "Content-Disposition",
   ```
-5. **Verify**:
-  - удалить тестовый документ → перегенерировать → `file_name = "Счет-акт: <ФИО> - <ЮрЛицо> № 2105-X от 21.05.2026.pdf"`;
-  - `meta.file_name_warnings = []`;
-  - `meta.file_name_template_source = "template"`.
+2. Re-deploy `document-download`.
 
-## Что НЕ меняется
+DoD:
 
-- `_shared/document-filename.ts` — контракт (FLD-keyed map) остаётся, фиксим вызывающую сторону.
-- Frontend (`FileNameTemplateEditor`) — без изменений.
-- Migration не требуется.
-- `document-download` / `canonical-document-send` — без изменений (читают `file_name` из БД).
-- Поведение для шаблонов с `file_name_template IS NULL` (5 из 6 production-шаблонов) не меняется — системный дефолт.
+- `curl -i` к функции возвращает заголовок `Access-Control-Expose-Headers: Content-Disposition`.
+- В Preview скачивание из «Истории» сохраняет файл с настоящим именем (`Счет-акт - ... № 2205-2 от 21.05.2026.pdf`), а не `document.pdf`.
 
-## DoD
+### PATCH-2 — Показать имя файла в истории админ-карточки
 
-- Контрольная регенерация документа с шаблоном FLD-314/368/069/263 даёт корректное имя файла без warnings.
-- FLD, присутствующие только в `file_name_template` (не в DOCX), резолвятся; номер документа аллоцируется, даже если DOCX его не использует.
-- Существующие документы НЕ переименовываются (snapshot в БД иммутабельный).
-- proof-блок добавлен в `.lovable/proofs/patch_b_file_name_template.md` (раздел «FIX: FLD-keyed resolver»).
+Файл: `src/components/admin/DealPayerDocumentsCard.tsx`
+
+1. Тип `HistoryDoc` (стр. 53–55) — добавить `file_name: string | null`.
+2. Запрос (стр. 169): добавить `file_name` в `select`.
+3. Рендер (стр. 650): показать рядом с номером **отрендеренное имя файла без расширения**, например:
+  ```
+   <span className="font-medium">{h.document_number || "—"}</span>
+   <span className="text-foreground/80 ml-2 truncate">
+     {(h.file_name || "").replace(/\.(pdf|docx)$/i, "") || h.title || "Документ"}
+   </span>
+   <span className="text-muted-foreground ml-2">{date}</span>
+  ```
+   Уже существующая history-вёрстка (`truncate`) сохраняется.
+
+DoD:
+
+- В истории видны строки вида: `2205/2  Счет-акт - ЗАО -АЖУР инкам- № 2205-2 от 21.05.2026  21.05.2026, 22:12:18`.
+- Для старых записей без `file_name` (как `2105/4` — `Шаблон. Счёт-акт на услуги ФЛ - Исполнитель.pdf`) показывается то, что есть в БД — без падений.
+
+### Что НЕ меняем
+
+- `canonical-document-generate-strict` — `file_name` уже пишется корректно (подтверждено по 2205/2).
+- `FileNameTemplateEditor`, registry, миграции, скачивание в `/purchases`.
+- Аналогичный список «История документов сделки» в `DealDocumentsPanel.tsx` — там уже есть отдельный рендер `document_number`; если нужно — поправим тем же приёмом во второй итерации, но в текущем скрине у пользователя именно админ-карточка `/admin/payments`.
+
+### Verify
+
+1. Deploy edge function → `curl -I` проверка expose-header.
+2. В Preview (`/admin/payments` → открыть сделку 2205/2) — нажать иконку скачивания в «История»: файл сохраняется как `Счет-акт - ЗАО -АЖУР инкам- № 2205-2 от 21.05.2026.pdf`.
+3. Сгенерировать новый документ — он скачивается с правильным именем сразу.
+4. В списке «История» видно полное отрендеренное имя.

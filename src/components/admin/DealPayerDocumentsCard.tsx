@@ -52,7 +52,7 @@ interface ExecutorRow { id: string; full_name: string | null; short_name: string
 interface HistoryDoc {
   id: string; title: string | null;
   file_path: string | null; storage_bucket: string | null;
-  created_at: string; document_number: string | null;
+  created_at: string; document_number: string | null; file_name: string | null;
 }
 
 function reqLabel(r: ReqRow): string {
@@ -166,7 +166,7 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
 
     const { data: docs } = await supabase
       .from("ai_generated_documents")
-      .select("id, title, file_path, storage_bucket, created_at, document_number")
+      .select("id, title, file_path, storage_bucket, created_at, document_number, file_name")
       .eq("context_type", "order")
       .eq("context_id", orderId)
       .is("deleted_at", null)
@@ -646,9 +646,12 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
               <div className="text-xs font-medium text-muted-foreground">История ({history.length})</div>
               {history.slice(0, 5).map((h) => (
                 <div key={h.id} className="flex items-center justify-between text-xs gap-2 bg-muted/40 rounded px-2 py-1">
-                  <div className="truncate">
-                    <span className="font-medium">{h.document_number || h.title || "Документ"}</span>
-                    <span className="text-muted-foreground ml-2">
+                  <div className="truncate min-w-0 flex-1">
+                    <span className="font-medium">{h.document_number || "—"}</span>
+                    <span className="text-foreground/80 ml-2">
+                      {(h.file_name || "").replace(/\.(pdf|docx)$/i, "") || h.title || "Документ"}
+                    </span>
+                    <span className="text-muted-foreground ml-2 whitespace-nowrap">
                       {new Date(h.created_at).toLocaleString("ru-RU")}
                     </span>
                   </div>
