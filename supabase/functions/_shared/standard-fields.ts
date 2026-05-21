@@ -8,7 +8,9 @@
 // ============================================================================
 
 // deno-lint-ignore-file no-explicit-any
-import { numberToWordsRu } from './docx-helpers.ts';
+import { formatMoney } from './docx-helpers.ts';
+import { dotDate, dotDateTime, ruLongDate, ruWordsDate } from './ru-date.ts';
+import { formatAmountWithWordsByRublesAndKopecks } from './amount-with-words.ts';
 
 function fullNameToInitials(fullName?: string | null): string {
   if (!fullName) return '';
@@ -18,11 +20,9 @@ function fullNameToInitials(fullName?: string | null): string {
   return `${parts[0]} ${parts[1][0]}.${parts[2][0]}.`;
 }
 
+// Legacy callers may pass a date — render dd.MM.yyyy in Europe/Minsk.
 function dateRu(d?: string | Date | null): string {
-  if (!d) return '';
-  const dt = typeof d === 'string' ? new Date(d) : d;
-  if (isNaN(dt.getTime())) return '';
-  return dt.toLocaleDateString('ru-RU');
+  return dotDate(d);
 }
 
 function isoDate(d?: string | Date | null): string {
@@ -82,12 +82,14 @@ export function buildStandardFieldValues(ctx: StandardContext): Record<string, s
   const currency = (documentData?.currency || order?.currency || 'BYN') as string;
   const amount = documentData?.amount ?? order?.final_price ?? null;
 
+  const pay = (documentData?.payment || null) as any | null;
+
   const v: Record<string, string> = {
     // ── system.* ───────────────────────────────────────────────
-    'FLD-000133': isoDate(now),                                 // system.today
-    'FLD-000134': dateRu(now),                                  // system.today_long
-    'FLD-000209': dateRu(now),                                  // system.today_ru
-    'FLD-000210': now.toISOString(),                            // system.now
+    'FLD-000133': dotDate(now),                                 // system.today        → 20.05.2026
+    'FLD-000134': ruLongDate(now),                              // system.today_long   → 20 мая 2026 г.
+    'FLD-000209': ruWordsDate(now),                             // system.today_ru     → 20 мая 2026 года
+    'FLD-000210': dotDateTime(now),                             // system.now          → 20.05.2026 14:30
     'FLD-000211': String(now.getFullYear()),                    // system.year
     'FLD-000212': String(now.getMonth() + 1).padStart(2, '0'),  // system.month
 
@@ -121,7 +123,7 @@ export function buildStandardFieldValues(ctx: StandardContext): Record<string, s
     'FLD-000123': product?.name || '',                                                          // deal.product_name
     'FLD-000124': tariff?.name || '',                                                           // deal.tariff_name
     'FLD-000125': amount != null ? String(amount) : '',                                         // deal.amount
-    'FLD-000126': amount != null ? numberToWordsRu(Number(amount), currency) : '',              // deal.amount_words
+    'FLD-000126': amount != null ? formatAmountWithWordsByRublesAndKopecks(Number(amount), currency) : '', // deal.amount_words
     'FLD-000127': currency,                                                                     // deal.currency
     'FLD-000128': dateRu(paidAt),                                                               // deal.paid_at
     'FLD-000129': tariff?.access_days != null ? String(tariff.access_days) : '',                // deal.access_days
@@ -167,7 +169,7 @@ export function buildStandardFieldValues(ctx: StandardContext): Record<string, s
     'FLD-000189': documentData?.quantity != null ? String(documentData.quantity) : '1',         // document.service_quantity
     'FLD-000190': documentData?.unit_price != null ? String(documentData.unit_price) : (amount != null ? String(amount) : ''), // document.service_price
     'FLD-000191': amount != null ? String(amount) : '',                                         // document.service_amount
-    'FLD-000192': documentData?.amount_words || (amount != null ? numberToWordsRu(Number(amount), currency) : ''), // document.amount_words
+    'FLD-000192': documentData?.amount_words || (amount != null ? formatAmountWithWordsByRublesAndKopecks(Number(amount), currency) : ''), // document.amount_words
     'FLD-000193': documentData?.currency_major || '',                                           // document.currency_major
     'FLD-000194': documentData?.currency_minor || '',                                           // document.currency_minor
     'FLD-000195': documentData?.payment_due_days != null ? String(documentData.payment_due_days) : '', // document.payment_due_days
@@ -183,6 +185,20 @@ export function buildStandardFieldValues(ctx: StandardContext): Record<string, s
     'FLD-000205': documentData?.final_payment != null ? String(documentData.final_payment) : '',         // document.final_payment_amount
     'FLD-000206': currency,                                                                              // document.deal_currency
     'FLD-000208': dateRu(paidAt),                                                                        // document.payment_date
+
+    // ── payment.* (FLD-000256..267) — read from documentData.payment snapshot ─
+    'FLD-000256': pay?.method || '',                                                            // payment.method
+    'FLD-000257': pay?.method_label || '',                                                      // payment.method_label
+    'FLD-000258': pay?.description || '',                                                       // payment.description
+    'FLD-000259': pay?.card_brand || '',                                                        // payment.card.brand
+    'FLD-000260': pay?.card_brand_normalized || '',                                             // payment.card.brand_normalized
+    'FLD-000261': pay?.card_last4 || '',                                                        // payment.card.last4
+    'FLD-000262': pay?.card_holder || '',                                                       // payment.card.holder
+    'FLD-000263': pay?.paid_at ? dotDate(pay.paid_at) : '',                                     // payment.paid_at
+    'FLD-000264': pay?.amount != null ? formatMoney(Number(pay.amount), pay?.currency || currency) : '', // payment.amount → "100,00 BYN"
+    'FLD-000265': (pay?.currency || '').toString().toUpperCase(),                               // payment.currency
+    'FLD-000266': pay?.provider_transaction_id || '',                                           // payment.provider_transaction_id
+    'FLD-000267': pay?.external_reference || '',                                                // payment.external_reference
   };
 
   return v;

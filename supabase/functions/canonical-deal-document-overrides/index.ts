@@ -27,6 +27,7 @@
 
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { snapshotOrderDocumentData } from '../_shared/document-data-snapshot.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -175,11 +176,37 @@ Deno.serve(async (req) => {
     );
     if (auditErr) return json({ error: `audit_failed: ${auditErr.message}` }, 500);
 
+    // ── PATCH-DOC-PLACEHOLDERS-2026-05 F6 ──────────────────────────────────
+    // Любая смена payer_type / template_override / executor_override /
+    // payer_entity_override обязывает пересобрать document_data snapshot,
+    // чтобы customer.* / executor.* / template_id отразились в FLD до
+    // следующей генерации документа. manual_override сохраняется.
+    let snapshotRebuildResult: string | null = null;
+    try {
+      const r = await snapshotOrderDocumentData(supabase, orderId, { mode: 'rebuild' });
+      snapshotRebuildResult = r.status;
+      await supabase.from('audit_logs').insert({
+        actor_user_id: userId,
+        actor_type: 'user',
+        actor_label: actorLabel,
+        action: 'document_data.snapshot_rebuilt_on_payer_change',
+        meta: {
+          order_id: orderId,
+          trigger: auditEntries.map((a) => a.action),
+          result: r.status,
+          reason: r.reason ?? null,
+        },
+      });
+    } catch (e: any) {
+      snapshotRebuildResult = `error:${e?.message || String(e)}`;
+    }
+
     return json({
       ok: true,
       payer_type: newPayerType,
       documents: newDocuments,
       audit_count: auditEntries.length,
+      snapshot_rebuild: snapshotRebuildResult,
     });
   } catch (e: any) {
     return json({ error: e?.message || String(e) }, 500);

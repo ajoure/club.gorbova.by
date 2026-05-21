@@ -18,14 +18,15 @@
 // ============================================================================
 
 // deno-lint-ignore-file no-explicit-any
-import { numberToWordsRu, normalizeCurrency } from './docx-helpers.ts';
+import { normalizeCurrency } from './docx-helpers.ts';
+import { formatAmountWithWordsByRublesAndKopecks } from './amount-with-words.ts';
 import { resolveExecutorForOrder, buildExecutorFieldValues, mergeExecutorIntoFields } from './executor-fields.ts';
 import { buildStandardFieldValues, mergeStandardIntoFields } from './standard-fields.ts';
 import { derivePaymentChannel } from './document-resolver-v2/payment-channel.ts';
 import { resolveDocumentScenario, type PayerType } from './document-scenario-resolver.ts';
 import { buildTypedB97FieldValues, mergeTypedB97IntoFields } from './typed-fld-mapping.ts';
 
-export const SNAPSHOT_VERSION = '1.2';
+export const SNAPSHOT_VERSION = '1.3';
 
 const CURRENCY_WORDS: Record<string, { major: string; minor: string }> = {
   BYN: { major: 'рублей', minor: 'копеек' },
@@ -50,9 +51,20 @@ function safeAudit(supabase: any, action: string, meta: any) {
 }
 
 export interface SnapshotResult {
-  status: 'created' | 'skipped_exists' | 'skipped_no_order' | 'skipped_not_paid' | 'failed';
+  status: 'created' | 'rebuilt' | 'skipped_exists' | 'skipped_no_order' | 'skipped_not_paid' | 'failed';
   reason?: string;
   document_data?: Record<string, unknown>;
+}
+
+export interface SnapshotOptions {
+  /**
+   * 'create' (default) — idempotent: skip if document_data already exists.
+   * 'rebuild' — force overwrite document_data (preserves manual_override
+   * field entries via mergeStandardIntoFields / mergeTypedB97IntoFields).
+   * Used by canonical-document-generate-strict (always) and by
+   * canonical-deal-document-overrides on payer_type/template/executor change.
+   */
+  mode?: 'create' | 'rebuild';
 }
 
 /**
@@ -62,11 +74,13 @@ export interface SnapshotResult {
 export async function snapshotOrderDocumentData(
   supabase: any,
   orderId: string,
+  opts: SnapshotOptions = {},
 ): Promise<SnapshotResult> {
+  const mode = opts.mode === 'rebuild' ? 'rebuild' : 'create';
   try {
     const { data: order, error: orderErr } = await supabase
       .from('orders_v2')
-      .select('id, order_number, status, profile_id, user_id, product_id, tariff_id, offer_id, final_price, base_price, currency, customer_email, customer_phone, deal_date, updated_at, created_at, meta')
+      .select('id, order_number, status, profile_id, user_id, product_id, tariff_id, offer_id, payer_type, final_price, base_price, currency, customer_email, customer_phone, deal_date, updated_at, created_at, meta')
       .eq('id', orderId)
       .maybeSingle();
     if (orderErr) {
@@ -78,7 +92,8 @@ export async function snapshotOrderDocumentData(
     if (!order) return { status: 'skipped_no_order' };
 
     const existing = (order.meta as any)?.document_data;
-    if (existing && typeof existing === 'object') {
+    const payerTypeBefore = (existing as any)?._provenance?.customer_resolution?.payer_type ?? null;
+    if (existing && typeof existing === 'object' && mode !== 'rebuild') {
       await safeAudit(supabase, 'document_data.snapshot_skipped_exists', {
         order_id: orderId,
         snapshot_version: existing.snapshot_version || null,
@@ -303,14 +318,21 @@ export async function snapshotOrderDocumentData(
         erip: 'ЕРИП',
         bank_transfer: 'Банковский перевод',
       };
-      const methodCode = channel || (p.provider === 'bepaid' ? 'card' : (p.provider || 'unknown'));
-      const methodLabel = channelLabels[methodCode] || methodCode;
+      const isAdminTest = p.provider === 'admin_test' || p.provider === 'admin_test_direct';
+      const methodCode = isAdminTest
+        ? 'test'
+        : (channel || (p.provider === 'bepaid' ? 'card' : (p.provider || 'unknown')));
+      const methodLabel = isAdminTest
+        ? 'Тестовый платёж'
+        : (channelLabels[methodCode] || methodCode);
       // Description: формируется из факта платежа (см. plan §6).
       let description: string;
       const last4 = p.card_last4 || null;
       const holder = p.card_holder || null;
       const txnId = p.provider_payment_id || null;
-      if (channel === 'card' || channel === 'apple_pay' || channel === 'google_pay') {
+      if (isAdminTest) {
+        description = 'Тестовый платёж';
+      } else if (channel === 'card' || channel === 'apple_pay' || channel === 'google_pay') {
         const parts = [methodLabel];
         if (brand) parts.push(brand);
         if (last4) parts.push(`**** ${last4}`);
@@ -386,7 +408,7 @@ export async function snapshotOrderDocumentData(
       quantity,
       unit_price: unitPrice,
       amount,
-      amount_words: amount != null ? numberToWordsRu(amount, normCurrency) : '',
+      amount_words: amount != null ? formatAmountWithWordsByRublesAndKopecks(amount, normCurrency) : '',
       currency: normCurrency,
       currency_major: cm.major,
       currency_minor: cm.minor,
@@ -521,8 +543,9 @@ export async function snapshotOrderDocumentData(
       return { status: 'failed', reason: upErr.message };
     }
 
-    await safeAudit(supabase, 'document_data.snapshot_created', {
+    await safeAudit(supabase, mode === 'rebuild' ? 'document_data.snapshot_rebuilt' : 'document_data.snapshot_created', {
       order_id: orderId,
+      mode,
       snapshot_version: SNAPSHOT_VERSION,
       template_id: documentData.template_id,
       executor_id: (documentData as any).executor_id || null,
@@ -530,10 +553,12 @@ export async function snapshotOrderDocumentData(
       executor_trace: executorTrace,
       amount: documentData.amount,
       currency: documentData.currency,
+      payer_type_before: payerTypeBefore,
+      payer_type_after: orderPayerTypeForCustomer,
       provenance: documentData._provenance,
     });
 
-    return { status: 'created', document_data: documentData };
+    return { status: mode === 'rebuild' ? 'rebuilt' : 'created', document_data: documentData };
   } catch (e: any) {
     await safeAudit(supabase, 'document_data.snapshot_failed', {
       order_id: orderId, error: e?.message || String(e),
