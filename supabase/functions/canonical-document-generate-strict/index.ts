@@ -195,7 +195,7 @@ function applyFormat(rawValue: any, dataType: string, currency: string | null, f
     if (dataType === 'money') {
       const n = parseNumberLoose(rawValue);
       if (n === null) return { value: baseStr, applied: false };
-      return { value: ruMoneyWords(n, currency || 'BYN'), applied: true };
+      return { value: formatAmountWithWordsByRublesAndKopecks(n, currency || 'BYN'), applied: true };
     }
     if (dataType === 'number') {
       const n = parseNumberLoose(rawValue);
