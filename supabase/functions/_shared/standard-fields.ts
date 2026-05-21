@@ -8,7 +8,9 @@
 // ============================================================================
 
 // deno-lint-ignore-file no-explicit-any
-import { numberToWordsRu } from './docx-helpers.ts';
+import { formatMoney } from './docx-helpers.ts';
+import { dotDate, dotDateTime, ruLongDate, ruWordsDate } from './ru-date.ts';
+import { formatAmountWithWordsByRublesAndKopecks } from './amount-with-words.ts';
 
 function fullNameToInitials(fullName?: string | null): string {
   if (!fullName) return '';
@@ -18,11 +20,9 @@ function fullNameToInitials(fullName?: string | null): string {
   return `${parts[0]} ${parts[1][0]}.${parts[2][0]}.`;
 }
 
+// Legacy callers may pass a date — render dd.MM.yyyy in Europe/Minsk.
 function dateRu(d?: string | Date | null): string {
-  if (!d) return '';
-  const dt = typeof d === 'string' ? new Date(d) : d;
-  if (isNaN(dt.getTime())) return '';
-  return dt.toLocaleDateString('ru-RU');
+  return dotDate(d);
 }
 
 function isoDate(d?: string | Date | null): string {
