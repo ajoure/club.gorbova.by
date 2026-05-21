@@ -7,6 +7,12 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+interface EmailAttachment {
+  filename: string;
+  content_base64: string;
+  mime?: string;
+}
+
 interface EmailRequest {
   to: string;
   subject: string;
@@ -14,6 +20,7 @@ interface EmailRequest {
   text?: string;
   account_id?: string; // Optional: specify which email account to use
   product_id?: string; // Optional: use email account mapped to this product
+  attachments?: EmailAttachment[]; // Optional PDF/file attachments
   // Context for logging
   context?: {
     user_id?: string;
@@ -23,6 +30,7 @@ interface EmailRequest {
     meta?: Record<string, unknown>;
   };
 }
+
 
 interface EmailAccount {
   id: string;
@@ -208,8 +216,10 @@ async function sendEmailViaSMTP(params: {
   html: string;
   text?: string;
   account: EmailAccount;
+  attachments?: EmailAttachment[];
 }): Promise<{ queueId?: string; smtpHost: string; smtpPort: number }> {
   const { account } = params;
+
   
   let smtpHost = account.smtp_host;
   let smtpPort = account.smtp_port || 465;
@@ -320,35 +330,73 @@ async function sendEmailViaSMTP(params: {
     await sendCommand(`RCPT TO:<${params.to}>`, [250, 251]);
     await sendCommand("DATA", [354]);
 
-    const boundary = `boundary_${crypto.randomUUID()}`;
+    const altBoundary = `alt_${crypto.randomUUID()}`;
+    const mixedBoundary = `mixed_${crypto.randomUUID()}`;
     const subjectEncoded = `=?UTF-8?B?${b64Utf8(params.subject)}?=`;
 
     const textPart = wrapBase64(b64Utf8(params.text || ""));
     const htmlPart = wrapBase64(b64Utf8(params.html));
+    const hasAttachments = !!params.attachments && params.attachments.length > 0;
+    const outerBoundary = hasAttachments ? mixedBoundary : altBoundary;
+    const outerContentType = hasAttachments
+      ? `multipart/mixed; boundary="${mixedBoundary}"`
+      : `multipart/alternative; boundary="${altBoundary}"`;
 
-    const dataLines = [
+    const lines: string[] = [
       `From: "${fromName}" <${fromEmail}>`,
       `To: ${params.to}`,
       `Subject: ${subjectEncoded}`,
       `MIME-Version: 1.0`,
-      `Content-Type: multipart/alternative; boundary="${boundary}"`,
+      `Content-Type: ${outerContentType}`,
       "",
-      `--${boundary}`,
+    ];
+
+    if (hasAttachments) {
+      lines.push(
+        `--${mixedBoundary}`,
+        `Content-Type: multipart/alternative; boundary="${altBoundary}"`,
+        "",
+      );
+    }
+
+    lines.push(
+      `--${altBoundary}`,
       `Content-Type: text/plain; charset=UTF-8`,
       `Content-Transfer-Encoding: base64`,
       "",
       textPart,
       "",
-      `--${boundary}`,
+      `--${altBoundary}`,
       `Content-Type: text/html; charset=UTF-8`,
       `Content-Transfer-Encoding: base64`,
       "",
       htmlPart,
       "",
-      `--${boundary}--`,
+      `--${altBoundary}--`,
       "",
-      ".",
-    ].join("\r\n");
+    );
+
+    if (hasAttachments) {
+      for (const att of params.attachments!) {
+        const safeName = att.filename.replace(/"/g, "");
+        const mime = att.mime || "application/octet-stream";
+        const wrapped = wrapBase64(att.content_base64);
+        lines.push(
+          `--${mixedBoundary}`,
+          `Content-Type: ${mime}; name="${safeName}"`,
+          `Content-Transfer-Encoding: base64`,
+          `Content-Disposition: attachment; filename="${safeName}"`,
+          "",
+          wrapped,
+          "",
+        );
+      }
+      lines.push(`--${mixedBoundary}--`, "");
+    }
+
+    lines.push(".");
+
+    const dataLines = lines.join("\r\n");
 
     await conn.write(encoder.encode(dataLines + "\r\n"));
     const dataResp = await readResponse();
@@ -357,6 +405,7 @@ async function sendEmailViaSMTP(params: {
     if (dataCode !== 250) {
       throw new Error(`SMTP DATA not accepted (${dataCode}): ${dataResp.trim()}`);
     }
+
 
     // Best-effort queue id extraction (Yandex returns: "Ok: queued on ... <queueId>")
     const queueMatch = dataResp.match(/queued[^\s]*\s+.*\s([A-Za-z0-9_-]+)\s*$/m);
@@ -391,7 +440,7 @@ const handler = async (req: Request): Promise<Response> => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { to, subject, html, text, account_id, product_id, context }: EmailRequest = await req.json();
+    const { to, subject, html, text, account_id, product_id, attachments, context }: EmailRequest = await req.json();
 
     // PATCH-6: Log the received context for debugging - single source of truth
     const ctx = context ?? null;
@@ -403,7 +452,7 @@ const handler = async (req: Request): Promise<Response> => {
       event_type: ctx?.event_type ?? 'NULL',
     }));
 
-    console.log(`Email request: to=${to}, subject=${subject}, account_id=${account_id || "default"}, product_id=${product_id || "none"}, context=${ctx ? 'yes' : 'no'}`);
+    console.log(`Email request: to=${to}, subject=${subject}, account_id=${account_id || "default"}, product_id=${product_id || "none"}, context=${ctx ? 'yes' : 'no'}, attachments=${attachments?.length || 0}`);
 
     // Get email account from database (with product mapping support)
     const account = await getEmailAccount(supabase, account_id, product_id);
@@ -414,7 +463,8 @@ const handler = async (req: Request): Promise<Response> => {
 
     console.log(`Using email account: ${account.email} (${account.from_name || "no name"})`);
 
-    const sendResult = await sendEmailViaSMTP({ to, subject, html, text, account });
+    const sendResult = await sendEmailViaSMTP({ to, subject, html, text, account, attachments });
+
 
     // PATCH-6: Log to email_logs using ctx - ENSURE subscription_id and event_type are NOT NULL
     try {
