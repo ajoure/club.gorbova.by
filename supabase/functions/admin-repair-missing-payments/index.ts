@@ -88,7 +88,7 @@ Deno.serve(async (req) => {
     // ========== Step 1: Find paid orders without payments_v2 ==========
     const { data: missingOrders, error: moErr } = await supabase
       .from("orders_v2")
-      .select("id, order_number, user_id, profile_id, final_price, status, meta, created_at, product_id, currency")
+      .select("id, order_number, user_id, profile_id, final_price, status, meta, created_at, product_id, currency, provider, provider_payment_id")
       .eq("status", "paid")
       .gte("created_at", sinceDate)
       .not("user_id", "is", null)
