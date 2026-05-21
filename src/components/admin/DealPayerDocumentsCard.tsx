@@ -230,25 +230,64 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
 
   const hasManualOverrides = !!(payerEntityOverride || templateOverride || executorOverride || payerTypeSource === "admin_override");
 
+  // Backend snapshot fallback: если live-resolver не получил template/executor
+  // (offerMeta не загрузился), но backend уже зафиксировал финальное решение в
+  // orders_v2.meta.document_data._provenance — используем его как источник.
+  const provenance = ((order?.meta as any)?.document_data?._provenance) || null;
+  const snapshotTemplateId: string | null = provenance?.template_resolution?.final_template_id || null;
+  const snapshotExecutorId: string | null = provenance?.executor_resolution?.final_executor_id || null;
+  const snapshotSource: string | null = provenance?.scenario?.source || provenance?.template_resolution?.source || null;
+  const usingSnapshotTemplate = !resolved.template_id && !!snapshotTemplateId;
+  const usingSnapshotExecutor = !resolved.executor_id && !!snapshotExecutorId;
+
   // Guard: если templateOverride указывает на удалённый/неактивный шаблон — не используем его.
   const overrideTemplateExists = templateOverride ? templates.some((t) => t.id === templateOverride) : true;
   const templateOverrideDeleted = !!templateOverride && !overrideTemplateExists;
-  const effectiveTemplateId = (overrideTemplateExists ? templateOverride : null) || resolved.template_id;
-  const effectiveExecutorId = executorOverride || resolved.executor_id;
+  const effectiveTemplateId =
+    (overrideTemplateExists ? templateOverride : null)
+    || resolved.template_id
+    || snapshotTemplateId;
+  const effectiveExecutorId =
+    executorOverride
+    || resolved.executor_id
+    || snapshotExecutorId;
   const effectivePayerType: PayerType = (order?.payer_type as PayerType) || resolved.payer_type || "individual";
 
-  // Статус
+  // Статус — гранулярные причины (offer/scenario/template/executor).
   const statusItems = useMemo(() => {
     const items: { kind: "ok" | "warn" | "err"; text: string }[] = [];
     if (templateOverride && !overrideTemplateExists) {
       items.push({ kind: "warn", text: "Выбранный ранее шаблон удалён или деактивирован — используется шаблон по сценарию. Сохраните выбор шаблона заново." });
     }
-    if (!effectiveTemplateId) {
-      items.push({ kind: "err", text: "Документ не может быть сформирован — не выбран шаблон" });
+
+    // Диагностика отсутствия шаблона/исполнителя — отделяем «нет оффера», «meta не загрузилась»,
+    // «scenario без шаблона», «scenario без исполнителя».
+    if (!effectiveTemplateId || !effectiveExecutorId) {
+      if (!resolvedOfferId) {
+        items.push({
+          kind: "err",
+          text: "Не удалось определить оффер сделки (offer_id отсутствует). Свяжите сделку с офером кнопки или выберите шаблон/исполнителя вручную.",
+        });
+      } else if (!offerMetaLoaded) {
+        items.push({
+          kind: "err",
+          text: "Не удалось загрузить настройки кнопки (tariff_offers). Проверьте, что оффер активен, или выберите шаблон/исполнителя вручную.",
+        });
+      } else if (resolved.source === "none") {
+        items.push({
+          kind: "err",
+          text: "Для выбранного типа плательщика и способа оплаты нет подходящего сценария в кнопке.",
+        });
+      } else {
+        if (!effectiveTemplateId) {
+          items.push({ kind: "err", text: "В сценарии кнопки не задан шаблон документа." });
+        }
+        if (!effectiveExecutorId) {
+          items.push({ kind: "err", text: "В сценарии кнопки не задан исполнитель." });
+        }
+      }
     }
-    if (!effectiveExecutorId) {
-      items.push({ kind: "err", text: "Документ не может быть сформирован — не выбран исполнитель" });
-    }
+
     // Реквизиты: ФЛ берёт individuals; ИП/ЮЛ — legalEntities (там лежат ent_* / leg_* в одной таблице)
     const list = effectivePayerType === "individual" ? individuals : legalEntities;
     const hasRequisites = list.length > 0;
@@ -258,7 +297,7 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
       items.push({ kind: "ok", text: "Реквизиты заполнены" });
     }
     return items;
-  }, [effectiveTemplateId, effectiveExecutorId, effectivePayerType, individuals, legalEntities, templateOverride, overrideTemplateExists]);
+  }, [effectiveTemplateId, effectiveExecutorId, effectivePayerType, individuals, legalEntities, templateOverride, overrideTemplateExists, resolvedOfferId, offerMetaLoaded, resolved.source]);
 
   const save = async () => {
     if (!order || !canEdit) return;
