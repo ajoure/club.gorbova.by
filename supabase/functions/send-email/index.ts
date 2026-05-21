@@ -440,7 +440,7 @@ const handler = async (req: Request): Promise<Response> => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { to, subject, html, text, account_id, product_id, context }: EmailRequest = await req.json();
+    const { to, subject, html, text, account_id, product_id, attachments, context }: EmailRequest = await req.json();
 
     // PATCH-6: Log the received context for debugging - single source of truth
     const ctx = context ?? null;
@@ -452,7 +452,7 @@ const handler = async (req: Request): Promise<Response> => {
       event_type: ctx?.event_type ?? 'NULL',
     }));
 
-    console.log(`Email request: to=${to}, subject=${subject}, account_id=${account_id || "default"}, product_id=${product_id || "none"}, context=${ctx ? 'yes' : 'no'}`);
+    console.log(`Email request: to=${to}, subject=${subject}, account_id=${account_id || "default"}, product_id=${product_id || "none"}, context=${ctx ? 'yes' : 'no'}, attachments=${attachments?.length || 0}`);
 
     // Get email account from database (with product mapping support)
     const account = await getEmailAccount(supabase, account_id, product_id);
@@ -463,7 +463,8 @@ const handler = async (req: Request): Promise<Response> => {
 
     console.log(`Using email account: ${account.email} (${account.from_name || "no name"})`);
 
-    const sendResult = await sendEmailViaSMTP({ to, subject, html, text, account });
+    const sendResult = await sendEmailViaSMTP({ to, subject, html, text, account, attachments });
+
 
     // PATCH-6: Log to email_logs using ctx - ENSURE subscription_id and event_type are NOT NULL
     try {
