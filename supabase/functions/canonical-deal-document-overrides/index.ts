@@ -27,6 +27,7 @@
 
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { snapshotOrderDocumentData } from '../_shared/document-data-snapshot.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
