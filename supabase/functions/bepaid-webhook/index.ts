@@ -1877,17 +1877,23 @@ Deno.serve(async (req) => {
              tariffCode
            );
            
-           // Update order meta with GC sync result
-           await supabase.from('orders_v2').update({
-             meta: {
-               ...(orderV2.meta || {}),
-               gc_sync_status: gcResult.success ? 'success' : 'failed',
-               gc_sync_error: gcResult.error || null,
-               gc_order_id: gcResult.gcOrderId || null,
-               gc_deal_number: gcResult.gcDealNumber || null,
-               gc_synced_at: new Date().toISOString(),
-             }
-           }).eq('id', orderV2Id);
+            // Update order meta with GC sync result.
+            // PATCH-DOC-STALE-META-2026-05: перечитываем актуальный meta из БД,
+            // чтобы не затереть document_data / crm_routing_snapshot / documents,
+            // которые могли быть записаны параллельно (snapshot, overrides, grant).
+            const { data: freshOrderForGc } = await supabase
+              .from('orders_v2').select('meta').eq('id', orderV2Id).maybeSingle();
+            const freshMetaForGc = (freshOrderForGc?.meta || orderV2.meta || {}) as Record<string, unknown>;
+            await supabase.from('orders_v2').update({
+              meta: {
+                ...freshMetaForGc,
+                gc_sync_status: gcResult.success ? 'success' : 'failed',
+                gc_sync_error: gcResult.error || null,
+                gc_order_id: gcResult.gcOrderId || null,
+                gc_deal_number: gcResult.gcDealNumber || null,
+                gc_synced_at: new Date().toISOString(),
+              }
+            }).eq('id', orderV2Id);
            
            // Audit log for GC sync
            await supabase.from('audit_logs').insert({
