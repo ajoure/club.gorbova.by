@@ -34,6 +34,7 @@ import { extractDocxPlaceholders } from "@/utils/extractDocxPlaceholders";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { TemplateMarkupDialog } from "./TemplateMarkupDialog";
+import { FileNameTemplateEditor } from "./FileNameTemplateEditor";
 import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 
 // C5-I: понятные сообщения для ошибок activation backend
