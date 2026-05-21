@@ -123,7 +123,7 @@ export function buildStandardFieldValues(ctx: StandardContext): Record<string, s
     'FLD-000123': product?.name || '',                                                          // deal.product_name
     'FLD-000124': tariff?.name || '',                                                           // deal.tariff_name
     'FLD-000125': amount != null ? String(amount) : '',                                         // deal.amount
-    'FLD-000126': amount != null ? numberToWordsRu(Number(amount), currency) : '',              // deal.amount_words
+    'FLD-000126': amount != null ? formatAmountWithWordsByRublesAndKopecks(Number(amount), currency) : '', // deal.amount_words
     'FLD-000127': currency,                                                                     // deal.currency
     'FLD-000128': dateRu(paidAt),                                                               // deal.paid_at
     'FLD-000129': tariff?.access_days != null ? String(tariff.access_days) : '',                // deal.access_days
