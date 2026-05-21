@@ -7,8 +7,8 @@
  * context_id=order_id`. Legacy таблица `generated_documents` НЕ используется
  * для пользовательского UI «Мои покупки».
  *
- * Возвращает только живые документы (status='generated', deleted_at IS NULL,
- * file_path NOT NULL) — чтобы не показывать половинчатые/неуспешные.
+ * Возвращает только живые документы (status='generated' или legacy 'success',
+ * deleted_at IS NULL, file_path NOT NULL) — чтобы не показывать половинчатые/неуспешные.
  */
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -42,7 +42,7 @@ export function useOrderCanonicalDocuments(orderId?: string | null) {
         .eq("context_type", "order")
         .eq("context_id", orderId)
         .is("deleted_at", null)
-        .eq("status", "generated")
+        .in("status", ["generated", "success"])
         .not("file_path", "is", null)
         .order("created_at", { ascending: false });
       if (error) throw error;
