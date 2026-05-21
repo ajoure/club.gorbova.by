@@ -188,46 +188,30 @@ export function useUserDocuments(userId?: string) {
 
 export function useResendDocument() {
   const queryClient = useQueryClient();
-  
+
   return useMutation({
-    mutationFn: async ({ documentId, sendEmail, sendTelegram }: { documentId: string; sendEmail?: boolean; sendTelegram?: boolean }) => {
-      const { data, error } = await supabase.functions.invoke("document-auto-generate", {
+    mutationFn: async ({ documentId }: { documentId: string; sendEmail?: boolean; sendTelegram?: boolean }) => {
+      // Канонический путь: перегенерируем документ через
+      // canonical-document-generate-strict (rebuild snapshot + новый файл).
+      // service_name и пр. подтянутся из offer.meta.document_defaults — то же
+      // самое поведение, что и при ручной кнопке «Перегенерировать».
+      const { data: doc, error: docErr } = await supabase
+        .from("generated_documents")
+        .select("id, order_id, template_id")
+        .eq("id", documentId)
+        .maybeSingle();
+      if (docErr) throw docErr;
+      if (!doc) throw new Error("Документ не найден");
+      if (!doc.order_id || !doc.template_id) {
+        throw new Error("У документа нет order_id или template_id — перегенерация невозможна");
+      }
+      const { data, error } = await supabase.functions.invoke("canonical-document-generate-strict", {
         body: {
-          action: "resend",
-          document_id: documentId,
-          send_email: sendEmail,
-          send_telegram: sendTelegram,
+          order_id: doc.order_id,
+          template_id: doc.template_id,
+          mode: "generate",
         },
       });
-
-      if (error) throw error;
-      return data;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["generated-documents"] });
-      toast.success("Документ отправлен повторно");
-    },
-    onError: (error) => {
-      console.error("Resend error:", error);
-      toast.error("Ошибка отправки документа");
-    },
-  });
-}
-
-export function useRegenerateDocument() {
-  const queryClient = useQueryClient();
-  
-  return useMutation({
-    mutationFn: async ({ orderId, templateId }: { orderId: string; templateId?: string }) => {
-      const { data, error } = await supabase.functions.invoke("document-auto-generate", {
-        body: {
-          action: "regenerate",
-          order_id: orderId,
-          template_id: templateId,
-          trigger: "manual",
-        },
-      });
-
       if (error) throw error;
       return data;
     },
@@ -235,9 +219,50 @@ export function useRegenerateDocument() {
       queryClient.invalidateQueries({ queryKey: ["generated-documents"] });
       toast.success("Документ перегенерирован");
     },
-    onError: (error) => {
+    onError: (error: any) => {
+      console.error("Resend error:", error);
+      toast.error(error?.message || "Ошибка перегенерации документа");
+    },
+  });
+}
+
+export function useRegenerateDocument() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ orderId, templateId }: { orderId: string; templateId?: string }) => {
+      if (!templateId) {
+        // Берём template_id из последнего документа этого заказа.
+        const { data: last } = await supabase
+          .from("generated_documents")
+          .select("template_id")
+          .eq("order_id", orderId)
+          .not("template_id", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        templateId = (last?.template_id as string) || undefined;
+      }
+      if (!templateId) {
+        throw new Error("Не указан шаблон для перегенерации (template_id)");
+      }
+      const { data, error } = await supabase.functions.invoke("canonical-document-generate-strict", {
+        body: {
+          order_id: orderId,
+          template_id: templateId,
+          mode: "generate",
+        },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["generated-documents"] });
+      toast.success("Документ перегенерирован");
+    },
+    onError: (error: any) => {
       console.error("Regenerate error:", error);
-      toast.error("Ошибка генерации документа");
+      toast.error(error?.message || "Ошибка генерации документа");
     },
   });
 }
