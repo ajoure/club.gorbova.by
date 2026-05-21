@@ -233,8 +233,10 @@ Deno.serve(async (req) => {
       console.warn("[document-download] audit insert failed", e);
     }
 
-    const disposition: "inline" | "attachment" = kind === "docx" ? "attachment" : "inline";
-    const contentDisposition = buildContentDisposition(disposition, fileName || "", kind as "pdf" | "docx");
+    const effectiveKind: "pdf" | "docx" =
+      fileMime?.includes("wordprocessingml") || fileName?.toLowerCase().endsWith(".docx") ? "docx" : kind;
+    const disposition: "inline" | "attachment" = effectiveKind === "docx" ? "attachment" : "inline";
+    const contentDisposition = buildContentDisposition(disposition, fileName || "", effectiveKind);
 
     return new Response(arrayBuf, {
       status: 200,
