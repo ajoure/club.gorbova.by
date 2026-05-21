@@ -627,10 +627,35 @@ Deno.serve(async (req) => {
     );
 
 
+    // ── PATCH-B FIX: подгрузить file_name_template ДО numbering, чтобы FLD,
+    // использованные только в шаблоне имени файла, тоже триггерили аллокацию
+    // номера/даты и попадали в общий резолв.
+    const { extractFilenamePlaceholders, FLD_PLACEHOLDER_RE: FN_FLD_RE, renderFileName, buildDefaultFileName } =
+      await import('../_shared/document-filename.ts');
+    const { data: tplExtra } = await supabase
+      .from('document_templates')
+      .select('file_name_template')
+      .eq('id', tpl.id)
+      .maybeSingle();
+    const fileNameTemplate: string | null = (tplExtra?.file_name_template as string) || null;
+    const filenameFlds: string[] = [];
+    if (fileNameTemplate) {
+      for (const raw of extractFilenamePlaceholders(fileNameTemplate)) {
+        const m = raw.match(FN_FLD_RE);
+        if (m) {
+          const fld = m[1];
+          if (!filenameFlds.includes(fld)) filenameFlds.push(fld);
+          foundIds.add(fld);
+        }
+        // невалидные плейсхолдеры остаются warning внутри renderFileName ниже
+      }
+    }
+
     // ── C5-G: Document numbering v2 ─────────────────────────────────────────
     // Резервируем номер ОДИН раз на документ (mode=generate), до резолва.
     // Все вхождения {{field:FLD-000069}} получат одно значение из docFields.
     const needsNumbering = foundIds.has(FLD_DOC_NUMBER) || foundIds.has(FLD_DOC_DATE);
+
     const idempotencyKey: string = (typeof body?.idempotency_key === 'string' && body.idempotency_key.trim())
       ? String(body.idempotency_key).trim()
       : `strict:${tpl.id}:${ver.id}:${order.id}`;
@@ -943,18 +968,31 @@ Deno.serve(async (req) => {
     if (upDocx.error) return json({ error: `upload_docx_failed:${upDocx.error.message}` }, 500);
 
     // ── PATCH-B: file_name_template render (FLD-first canon) ──────────────
-    const { renderFileName, buildDefaultFileName } = await import('../_shared/document-filename.ts');
-    const { data: tplExtra } = await supabase
-      .from('document_templates')
-      .select('file_name_template')
-      .eq('id', tpl.id)
-      .maybeSingle();
-    const fileNameTemplate: string | null = (tplExtra?.file_name_template as string) || null;
+    // fileNameTemplate / filenameFlds уже загружены до numbering-блока (см. выше).
+    // Строим FLD-keyed map для renderFileName: ключ = "FLD-XXXXXX".
+    const filenameTokenMap: Record<string, string> = {};
+    for (const fld of filenameFlds) {
+      // 1) если в DOCX есть точный токен `field:FLD-XXX` без модификаторов — берём готовое
+      const directKey = `field:${fld}`;
+      if (Object.prototype.hasOwnProperty.call(resolved, directKey)) {
+        filenameTokenMap[fld] = resolved[directKey] ?? '';
+        continue;
+      }
+      // 2) FLD используется только в имени файла — резолвим из docFields через applyFormat
+      const reg: any = regMap.get(fld);
+      const dt = ((reg?.data_type as string) || '').toLowerCase();
+      const entry = baseEntryByFld[fld];
+      // Для date/datetime принудительно DD.MM.YYYY (как в DOCX-резолвере по умолчанию).
+      const fmtKey = (dt === 'date' || dt === 'datetime') ? 'dd.MM.yyyy' : null;
+      const fmt = applyFormat(entry?.value, dt, orderCurrency, fmtKey);
+      filenameTokenMap[fld] = fmt.value ?? baseValueByFld[fld] ?? '';
+    }
+
     let fileNameWarnings: string[] = [];
     let fileNameTemplateSource: 'template' | 'system_default' = 'system_default';
     let renderedFileName: string;
     if (fileNameTemplate && fileNameTemplate.trim()) {
-      const r = renderFileName(fileNameTemplate, { resolvedTokens: resolved });
+      const r = renderFileName(fileNameTemplate, { resolvedTokens: filenameTokenMap });
       fileNameWarnings = r.warnings;
       if (r.name) {
         renderedFileName = r.name;
@@ -974,6 +1012,7 @@ Deno.serve(async (req) => {
         documentDate: allocatedDate,
       });
     }
+
     // ai_generated_documents.file_name хранится БЕЗ расширения для PDF
     // (download / send добавляют .pdf или .docx из mime).
     const renderedFileNameWithExt = `${renderedFileName}.pdf`;
