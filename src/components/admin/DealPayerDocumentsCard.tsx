@@ -91,6 +91,13 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
   const { hasRole: isSuper } = useHasRoleV2("super_admin");
   const canEdit = isAdmin || isSuper;
 
+  // Расширенный fallback offer_id + snapshot-from-provenance — закрываем UI
+  // ситуацию «Источник не задан» для админ-тест/public-link заказов и для случаев,
+  // когда tariff_offers.meta не загрузился, но backend resolver уже зафиксировал
+  // финальный template/executor в orders_v2.meta.document_data._provenance.
+  const [offerMetaLoaded, setOfferMetaLoaded] = useState(false);
+  const [resolvedOfferId, setResolvedOfferId] = useState<string | null>(null);
+
   const load = async () => {
     setLoading(true);
     const { data: o } = await supabase
@@ -100,11 +107,26 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
       .maybeSingle();
     setOrder(o as OrderRow | null);
 
-    // Fallback: orders, созданные через public-link / admin-test, могут иметь
-    // offer_id ТОЛЬКО в meta.offer_id (column NULL). Без этого fallback live
-    // scenario из tariff_offers.meta никогда не подгружается → UI показывает
-    // «Источник не задан / Автоматически» даже когда кнопка настроена правильно.
-    const offerId = (o as any)?.offer_id || (o as any)?.meta?.offer_id || null;
+    // Robust meta parse (на случай если в части ответов meta придёт строкой).
+    const rawMeta = (o as any)?.meta;
+    const meta = typeof rawMeta === "string"
+      ? (() => { try { return JSON.parse(rawMeta); } catch { return {}; } })()
+      : (rawMeta || {});
+
+    // Полная fallback цепочка для offer_id (закрывает admin-test / public-link,
+    // где column NULL): column → top-level meta → CRM snapshot → checkout/payment
+    // → document_data provenance.
+    const offerId: string | null =
+      (o as any)?.offer_id
+      || meta?.offer_id
+      || meta?.tariff_offer_id
+      || meta?.crm_routing_snapshot?.offer_id
+      || meta?.checkout?.offer_id
+      || meta?.payment?.offer_id
+      || meta?.document_data?._provenance?.offer_id
+      || null;
+    setResolvedOfferId(offerId);
+
     const [{ data: pays }, { data: tmpls }, { data: execs }, offerRes] = await Promise.all([
       supabase.from("payments_v2")
         .select("id, status, card_brand, card_last4, card_holder, paid_at, created_at, meta, provider")
@@ -126,7 +148,21 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
     setPayment(succ as PaymentRow | null);
     setTemplates((tmpls || []) as TemplateRow[]);
     setExecutors((execs || []) as ExecutorRow[]);
-    setOfferMeta((offerRes as any)?.data?.meta || null);
+    const fetchedOfferMeta = (offerRes as any)?.data?.meta || null;
+    setOfferMeta(fetchedOfferMeta);
+    setOfferMetaLoaded(!!fetchedOfferMeta);
+
+    // Debug-proof — без visible UI.
+    // eslint-disable-next-line no-console
+    console.debug("[DealPayerDocumentsCard] offer resolution", {
+      orderId: (o as any)?.id,
+      columnOfferId: (o as any)?.offer_id,
+      metaOfferId: meta?.offer_id,
+      crmOfferId: meta?.crm_routing_snapshot?.offer_id,
+      provenanceOfferId: meta?.document_data?._provenance?.offer_id,
+      finalOfferId: offerId,
+      offerMetaLoaded: !!fetchedOfferMeta,
+    });
 
     const { data: docs } = await supabase
       .from("ai_generated_documents")
