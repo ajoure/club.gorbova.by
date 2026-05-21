@@ -543,8 +543,9 @@ export async function snapshotOrderDocumentData(
       return { status: 'failed', reason: upErr.message };
     }
 
-    await safeAudit(supabase, 'document_data.snapshot_created', {
+    await safeAudit(supabase, mode === 'rebuild' ? 'document_data.snapshot_rebuilt' : 'document_data.snapshot_created', {
       order_id: orderId,
+      mode,
       snapshot_version: SNAPSHOT_VERSION,
       template_id: documentData.template_id,
       executor_id: (documentData as any).executor_id || null,
@@ -552,10 +553,12 @@ export async function snapshotOrderDocumentData(
       executor_trace: executorTrace,
       amount: documentData.amount,
       currency: documentData.currency,
+      payer_type_before: payerTypeBefore,
+      payer_type_after: orderPayerTypeForCustomer,
       provenance: documentData._provenance,
     });
 
-    return { status: 'created', document_data: documentData };
+    return { status: mode === 'rebuild' ? 'rebuilt' : 'created', document_data: documentData };
   } catch (e: any) {
     await safeAudit(supabase, 'document_data.snapshot_failed', {
       order_id: orderId, error: e?.message || String(e),
