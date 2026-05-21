@@ -28,6 +28,8 @@ import { inflectRu, type RuCase } from '../_shared/ru-inflection.ts';
 import { loadGotenbergConfig, convertDocxToPdf, GotenbergError } from '../_shared/gotenberg.ts';
 import { B97_FLD_TO_TOKEN_KEY, buildTypedB97FieldValues } from '../_shared/typed-fld-mapping.ts';
 import { snapshotOrderDocumentData } from '../_shared/document-data-snapshot.ts';
+import { resolveDocumentScenario, type PayerType } from '../_shared/document-scenario-resolver.ts';
+import { derivePaymentChannel } from '../_shared/document-resolver-v2/payment-channel.ts';
 import { formatAmountWithWordsByRublesAndKopecks } from '../_shared/amount-with-words.ts';
 
 const corsHeaders = {
