@@ -496,6 +496,14 @@ export async function snapshotOrderDocumentData(
                   : 'none'),
           final_executor_id: explicitExecutorIdLayered,
         },
+        // Откуда взято «Наименование услуги» (FLD-000186). Помогает быстро
+        // понять, какие тарифы упали на product.name-фоллбэк и требуют
+        // заполнения document_defaults.service_name в кнопке.
+        service_name_source:
+          (offerDefaults?.service_name ? 'offer'
+            : tariffDefaults?.service_name ? 'tariff'
+            : productDefaults?.service_name ? 'product'
+            : (productRow?.name ? 'fallback_product_name' : 'empty')),
       },
     };
 
