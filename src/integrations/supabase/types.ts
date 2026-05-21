@@ -3447,6 +3447,7 @@ export type Database = {
           document_type: string
           editor_draft_content: Json | null
           editor_mvp_enabled: boolean
+          file_name_template: string | null
           id: string
           idempotency_scope: string | null
           is_active: boolean | null
@@ -3468,6 +3469,7 @@ export type Database = {
           document_type?: string
           editor_draft_content?: Json | null
           editor_mvp_enabled?: boolean
+          file_name_template?: string | null
           id?: string
           idempotency_scope?: string | null
           is_active?: boolean | null
@@ -3489,6 +3491,7 @@ export type Database = {
           document_type?: string
           editor_draft_content?: Json | null
           editor_mvp_enabled?: boolean
+          file_name_template?: string | null
           id?: string
           idempotency_scope?: string | null
           is_active?: boolean | null
