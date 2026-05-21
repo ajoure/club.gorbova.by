@@ -330,35 +330,73 @@ async function sendEmailViaSMTP(params: {
     await sendCommand(`RCPT TO:<${params.to}>`, [250, 251]);
     await sendCommand("DATA", [354]);
 
-    const boundary = `boundary_${crypto.randomUUID()}`;
+    const altBoundary = `alt_${crypto.randomUUID()}`;
+    const mixedBoundary = `mixed_${crypto.randomUUID()}`;
     const subjectEncoded = `=?UTF-8?B?${b64Utf8(params.subject)}?=`;
 
     const textPart = wrapBase64(b64Utf8(params.text || ""));
     const htmlPart = wrapBase64(b64Utf8(params.html));
+    const hasAttachments = !!params.attachments && params.attachments.length > 0;
+    const outerBoundary = hasAttachments ? mixedBoundary : altBoundary;
+    const outerContentType = hasAttachments
+      ? `multipart/mixed; boundary="${mixedBoundary}"`
+      : `multipart/alternative; boundary="${altBoundary}"`;
 
-    const dataLines = [
+    const lines: string[] = [
       `From: "${fromName}" <${fromEmail}>`,
       `To: ${params.to}`,
       `Subject: ${subjectEncoded}`,
       `MIME-Version: 1.0`,
-      `Content-Type: multipart/alternative; boundary="${boundary}"`,
+      `Content-Type: ${outerContentType}`,
       "",
-      `--${boundary}`,
+    ];
+
+    if (hasAttachments) {
+      lines.push(
+        `--${mixedBoundary}`,
+        `Content-Type: multipart/alternative; boundary="${altBoundary}"`,
+        "",
+      );
+    }
+
+    lines.push(
+      `--${altBoundary}`,
       `Content-Type: text/plain; charset=UTF-8`,
       `Content-Transfer-Encoding: base64`,
       "",
       textPart,
       "",
-      `--${boundary}`,
+      `--${altBoundary}`,
       `Content-Type: text/html; charset=UTF-8`,
       `Content-Transfer-Encoding: base64`,
       "",
       htmlPart,
       "",
-      `--${boundary}--`,
+      `--${altBoundary}--`,
       "",
-      ".",
-    ].join("\r\n");
+    );
+
+    if (hasAttachments) {
+      for (const att of params.attachments!) {
+        const safeName = att.filename.replace(/"/g, "");
+        const mime = att.mime || "application/octet-stream";
+        const wrapped = wrapBase64(att.content_base64);
+        lines.push(
+          `--${mixedBoundary}`,
+          `Content-Type: ${mime}; name="${safeName}"`,
+          `Content-Transfer-Encoding: base64`,
+          `Content-Disposition: attachment; filename="${safeName}"`,
+          "",
+          wrapped,
+          "",
+        );
+      }
+      lines.push(`--${mixedBoundary}--`, "");
+    }
+
+    lines.push(".");
+
+    const dataLines = lines.join("\r\n");
 
     await conn.write(encoder.encode(dataLines + "\r\n"));
     const dataResp = await readResponse();
@@ -367,6 +405,7 @@ async function sendEmailViaSMTP(params: {
     if (dataCode !== 250) {
       throw new Error(`SMTP DATA not accepted (${dataCode}): ${dataResp.trim()}`);
     }
+
 
     // Best-effort queue id extraction (Yandex returns: "Ok: queued on ... <queueId>")
     const queueMatch = dataResp.match(/queued[^\s]*\s+.*\s([A-Za-z0-9_-]+)\s*$/m);
