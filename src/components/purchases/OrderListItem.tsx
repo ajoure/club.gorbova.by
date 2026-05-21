@@ -261,100 +261,101 @@ export function OrderListItem({ order }: OrderListItemProps) {
       </div>
 
       <div className="flex items-center gap-1 shrink-0">
-        {/* Чек bePaid — только реальный, только для succeeded/failed (bePaid даёт URL и для ошибок) */}
-        {receiptUrl && (isPaid || isFailed) && (
+        {/* Чек bePaid — только реальный платёж с валидным receipt_url */}
+        {receiptUrl && (
           <Button
             variant="ghost"
             size="sm"
             onClick={() => window.open(receiptUrl, "_blank", "noopener")}
-            title={isPaid ? "Чек bePaid" : "Чек ошибки bePaid"}
+            title="Чек bePaid"
           >
             <ExternalLink className="h-4 w-4" />
             <span className="hidden sm:inline ml-1">Чек</span>
           </Button>
         )}
 
-        {/* Канонические документы — только при наличии реального успешного платежа */}
-        {hasRealPayment && (
-          <>
-            {primaryDoc ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" disabled={isSending}>
-                    {isSending ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <FileText className="h-4 w-4" />
-                    )}
-                    <span className="hidden sm:inline ml-1">Документы</span>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-64">
-                  <DropdownMenuLabel className="text-xs text-muted-foreground">
-                    {primaryDoc.title || "Документ"}
-                    {primaryDoc.document_number ? ` № ${primaryDoc.document_number}` : ""}
-                  </DropdownMenuLabel>
-                  <DropdownMenuItem onClick={() => downloadDoc(primaryDoc)}>
-                    <Download className="h-4 w-4 mr-2" />
-                    Скачать {primaryDoc.file_mime?.includes("wordprocessingml") ? "DOCX" : "PDF"}
-                  </DropdownMenuItem>
-                  {!primaryDoc.file_mime?.includes("wordprocessingml") && (
-                    <>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        onClick={() => sendDoc(primaryDoc.id, { email: true })}
-                      >
-                        <Mail className="h-4 w-4 mr-2" />
-                        Отправить на почту
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => sendDoc(primaryDoc.id, { telegram: true })}
-                      >
-                        <Send className="h-4 w-4 mr-2" />
-                        Отправить в Telegram (PDF)
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => sendDoc(primaryDoc.id, { email: true, telegram: true })}
-                      >
-                        <Send className="h-4 w-4 mr-2" />
-                        Отправить везде
-                      </DropdownMenuItem>
-                    </>
-                  )}
-
-                  {docs.length > 1 && (
-                    <>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuLabel className="text-xs text-muted-foreground">
-                        Все документы по заказу
-                      </DropdownMenuLabel>
-                      {docs.slice(1).map((d) => (
-                        <DropdownMenuItem key={d.id} onClick={() => downloadDoc(d)}>
-                          <Download className="h-4 w-4 mr-2" />
-                          {d.document_number || d.title || d.id.slice(0, 8)}
-                        </DropdownMenuItem>
-                      ))}
-                    </>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={generateDoc}
-                disabled={isGenerating}
-                title="Сформировать документ (присвоит номер)"
-              >
-                {isGenerating ? (
+        {/* Существующий канонический документ — доступен ВСЕГДА, даже если правила сейчас не выполняются */}
+        {primaryDoc && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" disabled={isSending}>
+                {isSending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  <Sparkles className="h-4 w-4" />
+                  <FileText className="h-4 w-4" />
                 )}
-                <span className="hidden sm:inline ml-1">Сформировать</span>
+                <span className="hidden sm:inline ml-1">Документы</span>
               </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-64">
+              <DropdownMenuLabel className="text-xs text-muted-foreground">
+                {primaryDoc.title || "Документ"}
+                {primaryDoc.document_number ? ` № ${primaryDoc.document_number}` : ""}
+              </DropdownMenuLabel>
+              <DropdownMenuItem onClick={() => downloadDoc(primaryDoc)}>
+                <Download className="h-4 w-4 mr-2" />
+                Скачать {primaryDoc.file_mime?.includes("wordprocessingml") ? "DOCX" : "PDF"}
+              </DropdownMenuItem>
+              {!primaryDoc.file_mime?.includes("wordprocessingml") && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => sendDoc(primaryDoc.id, { email: true })}>
+                    <Mail className="h-4 w-4 mr-2" />
+                    Отправить на почту
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => sendDoc(primaryDoc.id, { telegram: true })}>
+                    <Send className="h-4 w-4 mr-2" />
+                    Отправить в Telegram (PDF)
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => sendDoc(primaryDoc.id, { email: true, telegram: true })}
+                  >
+                    <Send className="h-4 w-4 mr-2" />
+                    Отправить везде
+                  </DropdownMenuItem>
+                </>
+              )}
+              {docs.length > 1 && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="text-xs text-muted-foreground">
+                    Все документы по заказу
+                  </DropdownMenuLabel>
+                  {docs.slice(1).map((d) => (
+                    <DropdownMenuItem key={d.id} onClick={() => downloadDoc(d)}>
+                      <Download className="h-4 w-4 mr-2" />
+                      {d.document_number || d.title || d.id.slice(0, 8)}
+                    </DropdownMenuItem>
+                  ))}
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+
+        {/* «Сформировать» — только реальный платёж + offer.document enabled + документа ещё нет */}
+        {canGenerateNew && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={generateDoc}
+            disabled={isGenerating}
+            title="Сформировать документ (присвоит номер)"
+          >
+            {isGenerating ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Sparkles className="h-4 w-4" />
             )}
-          </>
+            <span className="hidden sm:inline ml-1">Сформировать</span>
+          </Button>
+        )}
+
+        {/* «Документ не настроен» — generate_act=true, но template_id пуст */}
+        {showNotConfigured && (
+          <span className="text-xs text-muted-foreground italic px-2">
+            Документ не настроен
+          </span>
         )}
       </div>
     </div>
