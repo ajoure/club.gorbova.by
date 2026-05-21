@@ -82,12 +82,14 @@ export function buildStandardFieldValues(ctx: StandardContext): Record<string, s
   const currency = (documentData?.currency || order?.currency || 'BYN') as string;
   const amount = documentData?.amount ?? order?.final_price ?? null;
 
+  const pay = (documentData?.payment || null) as any | null;
+
   const v: Record<string, string> = {
     // ── system.* ───────────────────────────────────────────────
-    'FLD-000133': isoDate(now),                                 // system.today
-    'FLD-000134': dateRu(now),                                  // system.today_long
-    'FLD-000209': dateRu(now),                                  // system.today_ru
-    'FLD-000210': now.toISOString(),                            // system.now
+    'FLD-000133': dotDate(now),                                 // system.today        → 20.05.2026
+    'FLD-000134': ruLongDate(now),                              // system.today_long   → 20 мая 2026 г.
+    'FLD-000209': ruWordsDate(now),                             // system.today_ru     → 20 мая 2026 года
+    'FLD-000210': dotDateTime(now),                             // system.now          → 20.05.2026 14:30
     'FLD-000211': String(now.getFullYear()),                    // system.year
     'FLD-000212': String(now.getMonth() + 1).padStart(2, '0'),  // system.month
 
