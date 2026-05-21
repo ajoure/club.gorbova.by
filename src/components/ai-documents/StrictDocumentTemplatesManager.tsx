@@ -883,6 +883,14 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
                   убраны с основного экрана. При невалидной версии ошибки
                   уже видны в ValidationSummary; полный документ открывается
                   через «Проверка и исправление плейсхолдеров». */}
+
+              {/* PATCH-B: шаблон имени файла при скачивании (FLD-first canon). */}
+              {activeTemplate && (
+                <FileNameTemplateEditor
+                  templateId={activeTemplate.id}
+                  templateName={activeTemplate.name}
+                />
+              )}
             </div>
           )}
         </div>
