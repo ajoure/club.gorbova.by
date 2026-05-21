@@ -45,9 +45,14 @@ function asciiFallback(utf8Name: string, fallback: string): string {
   return stripped;
 }
 
+function stripExtension(name: string): string {
+  return name.replace(/\.(pdf|docx)$/i, '');
+}
+
 function ensureExtension(name: string, kind: "pdf" | "docx"): string {
   const ext = `.${kind}`;
-  return name.toLowerCase().endsWith(ext) ? name : `${name}${ext}`;
+  const base = stripExtension(name);
+  return `${base}${ext}`;
 }
 
 function buildContentDisposition(
