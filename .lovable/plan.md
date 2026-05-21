@@ -1,350 +1,247 @@
-&nbsp;
+Да, согласен, с учетом правок:
 
-да, согласен, с учетом правок:
+1. **Сначала dry-run до code edit.**  
+Перед изменением функции нужно зафиксировать, что именно эти 2 REBILL-заказа классифицируются как collision через orders_v2.provider_payment_id.
+2. **SELECT должен добавить не только provider_payment_id, но и provider.**  
+Чтобы не использовать колонку UID для чужого провайдера.
+3. **Fallback по колонке разрешить только если provider='bepaid'.**  
+Иначе можно ошибочно схлопнуть чужие UID.
+4. **Добавить regression-test/fixture на эти 2 кейса.**  
+Нужно доказать, что:
+  - meta пустой по UID;
+  - column provider_payment_id заполнен;
+  - payments_v2 уже содержит такой UID;
+  - заказ получает superseded_by_repair=true.
+5. **Execute через UI System Health — только после deploy и dry-run результата.**  
+В proof отдельно зафиксировать:
+  - patch deployed;
+  - execute запущен пользователем из UI;
+  - rowcount superseded;
+  - INV-20 после execute.
 
-Дополни план обязательным правилом исполнения:
+**Текст для Lovable**
 
-&nbsp;
-
-## Исполнение одним проходом, без растягивания патча
-
-&nbsp;
-
-Этот PATCH нужно выполнять одним цельным проходом:
-
-&nbsp;
-
-1. Сначала сделать полный read-only review/dry-run:
-
-   - проверить текущие значения FLD;
-
-   - проверить snapshot до rebuild;
-
-   - проверить payment/system/amount_words/customer fields;
-
-   - проверить, какие функции реально используются;
-
-   - зафиксировать root cause и expected diff.
+План принимаю с правками.
 
 &nbsp;
 
-2. После этого сразу выполнить реализацию F7 → F1 → F2 → F3 → F4 → F5 → F6.
+PATCH-INV20-REBILL-SUPERSEDED-2026-05 подтверждаю.
 
 &nbsp;
 
-3. Не дробить на отдельные мини-патчи и не возвращаться с сообщениями вида:
+Scope остаётся минимальный:
 
-   - «сделал discovery, жду подтверждения»;
+- только `supabase/functions/admin-repair-missing-payments/index.ts`;
 
-   - «сделал F1, продолжать?»;
+- без изменений bepaid-webhook;
 
-   - «нужен отдельный спринт на payment/system/amount_words».
+- без изменений grant-access-for-order;
 
-&nbsp;
+- без изменений payments_v2 schema;
 
-4. Остановиться можно только при реальном STOP-блокере:
+- без миграций;
 
-   - требуется миграция схемы, которой нет в плане;
+- без RLS;
 
-   - нет данных/SOT для обязательного FLD;
+- без cron;
 
-   - обнаружен риск затронуть payments_v2 / orders_v2 schema / RLS / provider API;
-
-   - dry-run показывает, что фикс выходит за scope этого PATCH.
+- без UI System Health.
 
 &nbsp;
 
-5. Если блокера нет — выполнить весь PATCH до конца и дать один финальный отчёт:
-
-   - что было в dry-run;
-
-   - что изменено;
-
-   - какие файлы затронуты;
-
-   - DB proof до/после;
-
-   - preview proof;
-
-   - PDF proof;
-
-   - anti-regression по 2 заказам;
-
-   - source_trace/warnings;
-
-   - итоговая DoD-таблица.
+Обязательные правки:
 
 &nbsp;
 
-6. Не делать ручную имитацию успеха:
+1. Перед code edit выполнить read-only dry-run:
 
-   - не подставлять значения вручную в order/meta;
+- проверить 2 REBILL-order:
 
-   - не чинить только тестовый заказ;
+  - REBILL-2071054f-906;
 
-   - не скрывать пустые FLD;
+  - REBILL-97fb20f7-f7c;
 
-   - не закрывать задачу без PDF proof.
+- доказать, что `meta` не содержит UID;
 
-&nbsp;
+- доказать, что `orders_v2.provider_payment_id` содержит UID;
 
-7. Финальный результат должен закрыть весь scope этого PATCH:
+- доказать, что `payments_v2.provider_payment_id` уже существует и привязан к каноническому SUB-order;
 
-   - system date FLD;
-
-   - payment.* FLD;
-
-   - rebuild snapshot;
-
-   - admin_test label/method;
-
-   - сумма прописью в формате `100 (сто) рублей, 56 копеек`;
-
-   - backend rebuild перед strict generation;
-
-   - rebuild при смене payer_type/overrides;
-
-   - proof_all_placeholders с resolved value OR explicit empty reason.
+- expected classification после patch = `uid_collision_via_column.provider_payment_id`.
 
 &nbsp;
 
-Итог: один полный review + одна реализация + один verify-отчёт. Не растягивать PATCH на цепочку отдельных сообщений.
+2. В SELECT добавить:
 
-После этого можно запускать.
+- `provider_payment_id`;
+
+- `provider`.
 
 &nbsp;
 
-План: PATCH-DOC-PLACEHOLDERS-SYSTEM-PAYMENT-2026-05 (revised)
+3. Добавить helper `extractOrderUid(order)`:
 
-## Root causes (4)
+- сначала использовать текущий `extractUidFromMeta(order.meta)`;
 
-- **RC1** — system-date FLD (FLD-000133/134/209/210) форматировались как ISO/`dd.MM.yyyy` вместо человекочитаемых вариантов из UI-label.
-- **RC2** — `payment.*` FLD (FLD-000256..267) не материализуются в `meta.document_data.fields[]`, хотя `documentData.payment` блок собран.
-- **RC3** — `snapshotOrderDocumentData` возвращает `skipped_exists`, поэтому смена `payer_type` / реквизитов / `template_override` / `executor_override` не пересобирает FLD; в PDF попадают stale значения.
-- **RC4** — admin_test смешивает «канал для scenario matching» (`card`) и «лейбл способа оплаты в документе» (`Тестовый платёж`). Нужно строго разделить.
+- если пусто, использовать `order.provider_payment_id`;
 
-## F1. Системные FLD (`_shared/standard-fields.ts`)
+- fallback по колонке разрешён только если `order.provider='bepaid'`;
 
-Вынести RU-date helpers в `_shared/ru-date.ts` (de-dup с `canonical-document-generate-strict`):
+- вернуть source:
 
-- `dotDate(d)` → `dd.MM.yyyy`
-- `ruLongDate(d)` → `dd месяц yyyy г.`
-- `ruWordsDate(d)` → `d месяц yyyy года`
-- `dotDateTime(d)` → `dd.MM.yyyy HH:mm` (TZ = `Europe/Minsk` через `_shared/timezone.ts`)
+  - `meta.*`
 
-Финальный mapping (одно значение на FLD, никаких dual ISO+readable):
+  - или `column.provider_payment_id`.
 
+&nbsp;
 
-| FLD                            | value                                                                                                                        |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| FLD-000133 `system.today`      | `dotDate(now)`                                                                                                               |
-| FLD-000134 `system.today_long` | `ruLongDate(now)`                                                                                                            |
-| FLD-000209 `system.today_ru`   | `ruWordsDate(now)`                                                                                                           |
-| FLD-000210 `system.now`        | `dotDateTime(now)` (`20.05.2026 22:30`). ISO-вариант откладываем в backlog (отдельный `system.now_iso`, **не в этом патче**) |
-| FLD-000211 `system.year`       | без изменений                                                                                                                |
+4. Заменить вызовы `extractUidFromMeta(order.meta as any)` на `extractOrderUid(order)` только в:
 
+- Step 2c;
 
-## F2. `payment.*` FLD материализация
+- Step 5 collision detection.
 
-В `standard-fields.ts` добавить блок, читающий `documentData.payment`:
+&nbsp;
 
+5. Не менять `extractUidFromMeta` напрямую.
 
-| FLD                                          | source key                      | formatter                                                                                                                                                                                |
-| -------------------------------------------- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| FLD-000256 `payment.method`                  | `payment.method`                | as-is                                                                                                                                                                                    |
-| FLD-000257 `payment.method_label`            | `payment.method_label`          | as-is                                                                                                                                                                                    |
-| FLD-000258 `payment.description`             | `payment.description`           | as-is                                                                                                                                                                                    |
-| FLD-000259 `payment.card.brand`              | `payment.card_brand`            | as-is                                                                                                                                                                                    |
-| FLD-000260 `payment.card.brand_normalized`   | `payment.card_brand_normalized` | as-is                                                                                                                                                                                    |
-| FLD-000261 `payment.card.last4`              | `payment.card_last4`            | as-is                                                                                                                                                                                    |
-| FLD-000262 `payment.card.holder`             | `payment.card_holder`           | as-is                                                                                                                                                                                    |
-| FLD-000263 `payment.paid_at`                 | `payment.paid_at`               | `dotDate`                                                                                                                                                                                |
-| FLD-000264 `payment.amount`                  | `payment.amount`                | `**formatMoney(amount, currency)**` → `100,00 BYN` (это пользовательский плейсхолдер «Сумма платежа», см. label в `fields_registry`; raw-вариант отложен в backlog `payment.amount_raw`) |
-| FLD-000265 `payment.currency`                | `payment.currency`              | upper                                                                                                                                                                                    |
-| FLD-000266 `payment.provider_transaction_id` | as-is                           | &nbsp;                                                                                                                                                                                   |
-| FLD-000267 `payment.external_reference`      | as-is                           | &nbsp;                                                                                                                                                                                   |
+&nbsp;
 
+6. Добавить regression test/fixture:
 
-**Live fallback**: если `documentData.payment` пуст/null — `standard-fields.ts` сам запрашивает последний succeeded `payments_v2` (как уже делает snapshot для buildPaymentBlock). При полном отсутствии платежа:
+- order source=bepaid_rebill;
 
-- все 12 FLD = `""`
-- audit warning `payment_data_missing` (общий) + per-field `payment_field_empty:<FLD>` в `source_trace[fid].warnings`.
+- meta без transaction_uid / bepaid_payment_uid / provider_payment_id;
 
-## F3. `documentData.payment.method` / `method_label` для admin_test
+- column `provider_payment_id` заполнена;
 
-В `_shared/document-data-snapshot.ts → buildPaymentBlock`:
+- matching `payments_v2.provider_payment_id` существует;
 
-- если `p.provider ∈ {admin_test, admin_test_direct}` → `method='test'`, `method_label='Тестовый платёж'`, `description='Тестовый платёж'`.
-- остальные ветки без изменений (card/erip/bank_transfer/apple_pay/google_pay).
+- результат = superseded collision, not orphan.
 
-`derivePaymentChannel` **не трогаем** — для admin_test продолжает возвращать `card` (нужно для `document_scenarios` matching).
-Frontend `src/utils/derivePaymentChannel.ts` тоже без изменений.
+&nbsp;
 
-## F4. Snapshot rebuild
+7. Deploy function.
 
-`_shared/document-data-snapshot.ts`:
+&nbsp;
 
-- `snapshotOrderDocumentData(supabase, orderId, opts?: { mode?: 'create' | 'rebuild' })`, default `'create'`.
-- В `'rebuild'`:
-  - НЕ возвращать `skipped_exists`;
-  - перезаписать `documentData` полностью;
-  - `mergeStandardIntoFields` / `mergeTypedB97IntoFields`: если existing.value пуст ИЛИ `manual_override !== true` → перезаписать новым значением (включая пустое → новое непустое). Сохранять только `manual_override=true`. Это исправляет stale пустые FLD от старого snapshot.
-  - audit `document_data.snapshot_rebuilt` с `{ changed_fld_count, manual_override_skipped, payer_type_before/after }`.
+8. Execute:
 
-## F5. Гарантия rebuild на backend (НЕ на frontend)
+- через UI System Health;
 
-`canonical-document-generate-strict/index.ts`:
+- mode=execute;
 
-- В начале handler (после загрузки `order` и до резолва FLD): `await snapshotOrderDocumentData(supabase, orderId, { mode: 'rebuild' })`. Безусловно (контекст всегда order).
-- После rebuild перечитать `order.meta.document_data.fields` свежим SELECT.
-- Frontend `useDownloadDocument` может вызывать rebuild как оптимизацию, но это не SOT.
+- since_days=30;
 
-`**canonical-document-payment-hook` не трогаем** — там остаётся idempotent `mode: 'create'` (skipped_exists на оплате — корректное поведение).
+- после deploy;
 
-## F6. UI trigger при смене payer_type
+- с admin/super_admin JWT.
 
-`canonical-deal-fields-update` (или ближайший edge function, обновляющий `orders_v2.payer_type` / `meta.documents.template_override` / `executor_override` / `payer_entity_override`):
+&nbsp;
 
-- после UPDATE `orders_v2` → `snapshotOrderDocumentData(supabase, orderId, { mode: 'rebuild' })`.
-- audit `document_data.snapshot_rebuilt_on_payer_change` с before/after.
-- Frontend: после успешного ответа от edge function — invalidate React Query для `document_data` / `useOrderDocuments` (без дополнительного rebuild-вызова).
+9. Verify:
 
-## F7. «Сумма прописью» (FLD-000192 `document.amount_words` + FLD-000126 `deal.amount_words`)
+SQL:
 
-**Текущий формат** (`numberToWordsRu` в `_shared/docx-helpers.ts`): `Сто белорусских рублей 00 копеек` — **неверно**.
+SELECT order_number,
 
-**Требуемый формат**: `100 (сто) рублей, 56 копеек`.
+       meta->>'superseded_by_repair' AS sup,
 
-Правило:
+       meta->>'superseded_by_order' AS by_order,
 
-1. числовая сумма целыми рублями;
-2. в скобках сумма прописью строчными буквами;
-3. согласованное слово `рубль/рубля/рублей` (для BYN — без «белорусских»);
-4. копейки двумя цифрами `00..99`;
-5. согласованное слово `копейка/копейки/копеек`.
+       meta->>'superseded_reason' AS reason
 
-Создать новый helper `_shared/amount-with-words.ts` → `formatAmountWithWordsByRublesAndKopecks(amount, currency='BYN')`. Использует существующие `ruIntToWords` / `ruPlural` из `canonical-document-generate-strict` (вынести в `_shared/ru-numerals.ts`).
+FROM orders_v2
 
-Тест-кейсы:
+WHERE order_number IN ('REBILL-2071054f-906','REBILL-97fb20f7-f7c');
 
+&nbsp;
 
-| input        | output                                        |
-| ------------ | --------------------------------------------- |
-| `1,01 BYN`   | `1 (один) рубль, 01 копейка`                  |
-| `2,04 BYN`   | `2 (два) рубля, 04 копейки`                   |
-| `5,00 BYN`   | `5 (пять) рублей, 00 копеек`                  |
-| `21,15 BYN`  | `21 (двадцать один) рубль, 15 копеек`         |
-| `100,56 BYN` | `100 (сто) рублей, 56 копеек`                 |
-| `124,22 BYN` | `124 (сто двадцать четыре) рубля, 22 копейки` |
+Ожидание:
 
+- `sup=true` по обеим строкам;
 
-Применить helper в `standard-fields.ts` для:
+- `by_order` указывает на канонический SUB-order;
 
-- FLD-000126 `deal.amount_words`
-- FLD-000192 `document.amount_words`
+- `reason LIKE 'uid_collision_via_column.provider_payment_id%'`.
 
-И обновить эквивалент в `canonical-document-generate-strict` для `format=words` поверх `data_type=money` (чтобы in-line `{{field:FLD-000125|format=words}}` тоже выдавал новый формат).
+&nbsp;
 
-**НЕ трогаем**: `FLD-000125 deal.amount`, `FLD-000264 payment.amount`, `FLD-000160 order.amount` — числовые/форматированные поля остаются как есть.
+Дополнительно:
 
-Backlog: «прежний» `numberToWordsRu` оставляем как deprecated с warning-логом, чтобы выявить других потребителей.
+- INV-20 paid-orders без payments_v2 минус superseded = 0 за 30 дней;
 
-## Verify (DoD)
+- новых строк в payments_v2 = 0;
 
-### 1. Reconcile DB (psql)
+- orphan bucket уменьшился минимум на 2;
 
-```sql
--- до rebuild
-select payer_type, meta->'document_data'->'_provenance'->'customer_resolution',
-       meta->'document_data'->'fields'->'FLD-000209' as today_ru_before,
-       meta->'document_data'->'fields'->'FLD-000264' as pay_amt_before,
-       meta->'document_data'->'fields'->'FLD-000192' as amt_words_before,
-       meta->'document_data'->'fields'->'FLD-000313' as cust_ind_before
-from orders_v2 where order_number='ORD-TEST-MPEHCJVZ';
+- proof создан:
 
--- сменить payer_type через UI, затем rebuild — re-query те же поля.
-```
+  `.lovable/proofs/patch_inv20_rebill_superseded_2026_05.md`.
 
-DoD: для test-order **после rebuild**:
+&nbsp;
 
-- FLD-000133 `system.today` = `20.05.2026`
-- FLD-000134 `system.today_long` = `20 мая 2026 г.`
-- FLD-000209 `system.today_ru` = `20 мая 2026 года`
-- FLD-000210 `system.now` = `20.05.2026 HH:mm`
-- FLD-000264 `payment.amount` = `100,00 BYN`
-- FLD-000257 `payment.method_label` = `Тестовый платёж`
-- FLD-000256 `payment.method` = `test`
-- FLD-000192 `document.amount_words` = `100 (сто) рублей, 00 копеек`
-- FLD-000313 `customer.ind.full_name` = `Федорчук Сергей Валерьевич` (после переключения на individual)
-- FLD-000321 `customer.ind.personal_number` = из карточки
-- FLD-000322 `customer.ind.phone` = из карточки
-- `_provenance.customer_resolution.client_type` = `individual`
-- `_provenance.customer_legal_details_id` ≠ id юр-карточки
+STOP-guards:
 
-### 2. Preview через `curl_edge_functions /canonical-document-generate-strict` (mode=preview) по test-order
+- если `provider != 'bepaid'`, column fallback не применять;
 
-- `resolved_tokens['field:FLD-000209']` = `20 мая 2026 года`
-- `resolved_tokens['field:FLD-000264']` = `100,00 BYN`
-- `resolved_tokens['field:FLD-000257']` = `Тестовый платёж`
-- `resolved_tokens['field:FLD-000313']` = `Федорчук Сергей Валерьевич`
-- `resolved_tokens['field:FLD-000192']` = `100 (сто) рублей, 00 копеек`
-- `source_trace[FLD-000264].warnings` = `[]` (платёж есть)
-- `source_trace[FLD-000256..267]` все имеют `source: 'snapshot_payment'`
+- если UID из колонки конфликтует с meta UID — manual_review, не supersede;
 
-### 3. PDF проверка (`/mnt/documents/proof_all_placeholders.pdf`)
+- если matching payment принадлежит другому пользователю/провайдеру без доказуемого SUB-order — не supersede;
 
-Загрузить DOCX с ВСЕМИ FLD из реестра (`{{field:FLD-XXXXXX}}`), запустить generate, скачать PDF, `pdftotext` → grep:
+- если больше 2 неожиданных новых collision в since_days=30 — показать diff в proof, не скрывать.
 
-- `20 мая 2026 года` ✓
-- `20.05.2026` ✓
-- `Федорчук Сергей Валерьевич` ✓
-- `100,00 BYN` ✓
-- `100 (сто) рублей, 00 копеек` ✓
-- `Тестовый платёж` ✓
+Коротко: план правильный, но нужен **provider guard** и **dry-run доказательство до code edit**, чтобы колонка provider_payment_id не начала случайно схлопывать не-bePaid заказы.
 
-### 4. Anti-regression — 2 заказа
+&nbsp;
 
-- Test order `ORD-TEST-MPEHCJVZ` (новый сценарий, admin_test).
-- Реальный исторический order с заполненным старым snapshot и реальной оплатой bePaid (выберу из БД paid + bePaid + meta.document_data NOT NULL, **не трогая user-facing статус**).
-- В обоих после rebuild: payment FLD заполнены, system FLD в новом формате, customer FLD соответствуют actual `payer_type`.
+## План: PATCH-INV20-REBILL-SUPERSEDED-2026-05
 
-### 5. Postponed-51 в proof-шаблоне
+### Diagnose
 
-Postponed token-keys (`executor.ind.*`, `executor.ent.*`, `executor.leg.org_form`) — отмечены в `source_trace[].warnings` как `postponed_no_sot`, **не считаются багом** этого патча.
+INV-20 алерт указывает 2 paid заказа за 30д без `payments_v2`:
 
-### 6. Proof all placeholders DoD
+- `REBILL-2071054f-906` (provider_payment_id=`2071054f-906d…`)
+- `REBILL-97fb20f7-f7c` (provider_payment_id=`97fb20f7-f7cc…`)
 
-Для каждого из ~260 FLD в proof-шаблоне:
-`resolved value` OR `explicit empty reason in source_trace/warnings` (`payment_field_empty:<FLD>`, `postponed_no_sot`, `no_data_in_source`, `customer_type_mismatch` и т.д.).
+Оба — артефакты `source=bepaid_rebill`. Фактический платёж по этим же `provider_payment_id` уже записан в `payments_v2` и привязан к каноническим `SUB-*` заказам:
 
-### 7. Sub-DoD: «Сумма прописью» отдельным пунктом
+- `2071054f-906d…` → `SUB-26-MLQD06YA6MGY` (payment id `e1238eac…`, status=succeeded).
+- `97fb20f7-f7cc…` → `SUB-26-MO5IUQ6K1UHL` (payment id `c5c7dcd0…`, status=succeeded).
 
-Все 6 тест-кейсов из F7 проходят (snapshot + preview + PDF).
+Это классический UID-collision (Strategy 5 в `admin-repair-missing-payments`). Однако функция не помечает их как `superseded`, потому что `extractUidFromMeta` читает UID только из `meta.{transaction_uid|bepaid_payment_uid|provider_payment_id}`. В REBILL-заказах эти ключи в `meta` отсутствуют — UID лежит ТОЛЬКО в колонке `orders_v2.provider_payment_id`. В результате эти заказы каждый прогон уходят в `orphaned` вместо `superseded`.
 
-## Scope-guard
+Дополнительный контекст алерта: orphan=23, synthetic=0, suppressed=0. Скорее всего, бóльшая часть оставшегося orphan-bucket — однотипные REBILL-* за более старый период; этот же фикс их подцепит.
 
-НЕ трогаем:
+### Изменения (минимальный scope)
 
-- `derivePaymentChannel` (backend + frontend) — admin_test остаётся `card` для scenario matching.
-- `canonical-document-payment-hook` — `mode: 'create'`, idempotent.
-- `grant-access-for-order`, bePaid webhook, RLS, миграции схемы.
-- `document-download` (закрыт PATCH-DOC-DOWNLOAD-HEADER-ASCII).
-- `FLD-000125/160/264-raw` денежные форматы (только `amount_words` FLD-000126/192 меняются).
-- Telegram / provider API / access-rules.
+**Файл:** `supabase/functions/admin-repair-missing-payments/index.ts`
 
-## Артефакт
+1. Добавить helper `extractOrderUid(order)`:
+  - сначала пробует `extractUidFromMeta(order.meta)` (как сейчас);
+  - если не нашлось — читает `order.provider_payment_id` и возвращает `{ uid, source: "column.provider_payment_id" }`.
+2. Расширить SELECT на шаге 1 — добавить `provider_payment_id` в список колонок.
+3. Заменить вызовы `extractUidFromMeta(order.meta as any)` на `extractOrderUid(order)` в:
+  - Step 2c (materialization UID из самого order'а);
+  - Step 5 (collision detection).
+4. Никаких изменений в логике записи/удаления, в `superseded_reason`-маркировке, в bepaid-webhook, grant-access, payments_v2-схеме или write-path. Это только пост-фактум классификация сиротских записей.
 
-`.lovable/proofs/patch_doc_placeholders_system_payment_2026_05.md` — RC1..RC4, dry-run snapshot diff (before/after), preview-output по test-order + одному real order, PDF-grep proof, DoD-таблица с 7 пунктами, source_trace выдержки.
+После деплоя — запустить функцию из UI System Health в режиме `execute, since_days=30` (требует JWT admin/super_admin; запускает пользователь — у меня нет admin-сессии в превью).
 
-## Файлы
+### Verify (DoD)
 
-- `supabase/functions/_shared/ru-date.ts` *(new)*
-- `supabase/functions/_shared/ru-numerals.ts` *(new — вынесено из strict generator)*
-- `supabase/functions/_shared/amount-with-words.ts` *(new)*
-- `supabase/functions/_shared/standard-fields.ts` *(F1, F2, F7)*
-- `supabase/functions/_shared/document-data-snapshot.ts` *(F3, F4)*
-- `supabase/functions/canonical-document-generate-strict/index.ts` *(F5 — rebuild call, refactor использования ru-numerals/ru-date, F7 в applyFormat)*
-- `supabase/functions/canonical-deal-fields-update/index.ts` *(F6 — rebuild на смену payer_type/overrides)*
-- `.lovable/proofs/patch_doc_placeholders_system_payment_2026_05.md` *(proof)*
+- SQL: `SELECT order_number, meta->>'superseded_by_repair' AS sup, meta->>'superseded_by_order' AS by_order, meta->>'superseded_reason' AS reason FROM orders_v2 WHERE order_number IN ('REBILL-2071054f-906','REBILL-97fb20f7-f7c');` → обе строки `sup=true`, `by_order` указывает на `c11a518d…` и `ea774d6c…` соответственно, `reason LIKE 'uid_collision_via_column.provider_payment_id'`.
+- Повторный INV-20 sweep за 30д: paid-orders без `payments_v2` минус superseded → 0 алертов.
+- Никаких новых строк в `payments_v2` (репарация только меняет `orders_v2.meta`).
+- `orphan` bucket уменьшается минимум на 2 (точнее — после execute посмотрим итог в audit/ответе функции).
 
-Дальше: подтвердите — выполню по порядку F7 → F1 → F2 → F3 → F4 → F5 → F6, потом Verify (DB → preview → PDF → anti-regression).
+### Scope-guard
+
+- Не трогаем: `bepaid-webhook`, `grant-access-for-order`, `payments_v2` schema, write-path заказов, UI System Health, RPC, миграции, cron, RLS.
+- Не создаём новые таблицы/функции/секреты.
+- Не меняем `extractUidFromMeta` (только добавляем обёртку поверх).
+
+### Файлы
+
+- edit: `supabase/functions/admin-repair-missing-payments/index.ts`
+- create: `.lovable/proofs/patch_inv20_rebill_superseded_2026_05.md` (после Verify)

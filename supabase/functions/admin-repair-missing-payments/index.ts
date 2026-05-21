@@ -28,6 +28,20 @@ function extractUidFromMeta(meta: any): { uid: string; source: string } | null {
   return null;
 }
 
+/**
+ * Extract UID from order — first from meta, then fallback to column orders_v2.provider_payment_id.
+ * Column fallback restricted to provider='bepaid' (PATCH-INV20-REBILL-SUPERSEDED-2026-05).
+ */
+function extractOrderUid(order: any): { uid: string; source: string } | null {
+  const fromMeta = extractUidFromMeta(order?.meta);
+  if (fromMeta) return fromMeta;
+  const col = order?.provider_payment_id;
+  if (typeof col === "string" && col.length > 5 && order?.provider === "bepaid") {
+    return { uid: col, source: "column.provider_payment_id" };
+  }
+  return null;
+}
+
 /** Chunk array into batches */
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
@@ -74,7 +88,7 @@ Deno.serve(async (req) => {
     // ========== Step 1: Find paid orders without payments_v2 ==========
     const { data: missingOrders, error: moErr } = await supabase
       .from("orders_v2")
-      .select("id, order_number, user_id, profile_id, final_price, status, meta, created_at, product_id, currency")
+      .select("id, order_number, user_id, profile_id, final_price, status, meta, created_at, product_id, currency, provider, provider_payment_id")
       .eq("status", "paid")
       .gte("created_at", sinceDate)
       .not("user_id", "is", null)
@@ -160,12 +174,14 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ========== Step 2c: Extract UID from order meta itself ==========
+    // ========== Step 2c: Extract UID from order meta or column (column fallback restricted to bepaid) ==========
+    // Note: collision check is deferred to Step 5 to ensure superseded classification has priority
+    // over "normal repair" when a payment with the same UID already exists on a different order.
     for (const order of ordersToRepair) {
       if (uidByOrderId.has(order.id)) continue;
-      const metaUid = extractUidFromMeta(order.meta as any);
-      if (metaUid) {
-        uidByOrderId.set(order.id, { uid: metaUid.uid, created_at: order.created_at, source: metaUid.source });
+      const uid = extractOrderUid(order);
+      if (uid) {
+        uidByOrderId.set(order.id, { uid: uid.uid, created_at: order.created_at, source: uid.source });
       }
     }
 
@@ -324,18 +340,24 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ========== Step 5: Strategy 5 — UID collision (meta UID points to another order's payment) ==========
-    const collisionOrders = ordersToRepair.filter((o: any) => {
-      if (uidByOrderId.has(o.id)) return false;
-      return extractUidFromMeta(o.meta as any) !== null;
+    // ========== Step 5: Strategy 5 — UID collision ==========
+    // For any order whose extractable UID (from meta or column.provider_payment_id) is already
+    // bound to a payments_v2 row on a DIFFERENT order, mark this order as superseded.
+    // Runs AFTER Step 2c so that orders with column-fallback UIDs are also checked.
+    const collisionCandidates = ordersToRepair.filter((o: any) => {
+      const info = uidByOrderId.get(o.id);
+      if (!info) return false;
+      // Skip already-classified terminal states
+      if (info.uid === "__superseded__" || info.uid === "__no_real_payment__") return false;
+      return true;
     });
 
-    for (const order of collisionOrders) {
-      const metaUid = extractUidFromMeta(order.meta as any)!;
+    for (const order of collisionCandidates) {
+      const info = uidByOrderId.get(order.id)!;
       const { data: existP } = await supabase
         .from("payments_v2")
         .select("id, order_id")
-        .eq("provider_payment_id", metaUid.uid)
+        .eq("provider_payment_id", info.uid)
         .limit(1);
 
       if (existP && existP.length > 0 && existP[0].order_id !== order.id) {
@@ -343,7 +365,7 @@ Deno.serve(async (req) => {
           order_id: order.id,
           order_number: order.order_number,
           superseded_by_order: existP[0].order_id,
-          reason: `uid_collision_via_${metaUid.source}`,
+          reason: `uid_collision_via_${info.source}`,
         });
         uidByOrderId.set(order.id, { uid: "__superseded__", created_at: order.created_at, source: "collision" });
       }
