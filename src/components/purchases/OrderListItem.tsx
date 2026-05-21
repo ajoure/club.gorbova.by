@@ -71,8 +71,11 @@ export function OrderListItem({ order }: OrderListItemProps) {
     format(new Date(dateString), "d MMM yyyy, HH:mm", { locale: ru });
 
   /** Скачать существующий документ (PDF) — без расхода нового номера. */
-  const downloadDoc = async (docId: string) => {
-    const r = await downloadDocumentBlob(docId, "pdf");
+  const downloadDoc = async (doc: CanonicalDocument) => {
+    const kind = doc.file_mime?.includes("wordprocessingml") || doc.file_name?.toLowerCase().endsWith(".docx")
+      ? "docx"
+      : "pdf";
+    const r = await downloadDocumentBlob(doc.id, kind);
     if (r.ok === false) toast.error(r.message);
   };
 
@@ -264,9 +267,9 @@ export function OrderListItem({ order }: OrderListItemProps) {
                     {primaryDoc.title || "Документ"}
                     {primaryDoc.document_number ? ` № ${primaryDoc.document_number}` : ""}
                   </DropdownMenuLabel>
-                  <DropdownMenuItem onClick={() => downloadDoc(primaryDoc.id)}>
+                  <DropdownMenuItem onClick={() => downloadDoc(primaryDoc)}>
                     <Download className="h-4 w-4 mr-2" />
-                    Скачать PDF
+                    Скачать {primaryDoc.file_mime?.includes("wordprocessingml") ? "DOCX" : "PDF"}
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
@@ -295,7 +298,7 @@ export function OrderListItem({ order }: OrderListItemProps) {
                         Все документы по заказу
                       </DropdownMenuLabel>
                       {docs.slice(1).map((d) => (
-                        <DropdownMenuItem key={d.id} onClick={() => downloadDoc(d.id)}>
+                        <DropdownMenuItem key={d.id} onClick={() => downloadDoc(d)}>
                           <Download className="h-4 w-4 mr-2" />
                           {d.document_number || d.title || d.id.slice(0, 8)}
                         </DropdownMenuItem>
