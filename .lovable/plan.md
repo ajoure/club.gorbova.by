@@ -1,191 +1,187 @@
 да, согласен, с учетом правок:
 
-1. **Сначала проверить API** `FieldPickerPopover` **по фактической сигнатуре.**  
-Не писать props наугад. Перед правкой сделать `rg` по всем использованиям:
-
-```bash
-rg -n "FieldPickerPopover" src
-rg -n "onPick|simple=|refs=|contextLabel" src/components src/pages
-```
-
-Если у `FieldPickerPopover` другой контракт — использовать фактический, а не придумывать новый.
-
-2. **Не делать открытие picker по** `[` **в этом патче, если это усложнит правку.**  
-Основной must-have:
-
-```text
-кнопка «+ Вставить плейсхолдер» → общий picker → вставка в позицию курсора
-```
-
-Открытие по `[` можно добавить только если уже есть готовый reusable-паттерн из `TemplateMarkupDialog`. Если требует отдельной логики координат/selection — вынести в backlog.
-
-3. **Preview должен использовать тот же** `renderFileName`**, что backend-контракт.**  
-Не делать отдельный «примерный» preview, который расходится с backend.  
-В preview map можно подставлять labels, но сама функция валидации/санитизации должна быть та же frontend mirror helper.
-4. **FLD-000069 не хардкодить без проверки registry.**  
-В плане написано, что это номер документа. Перед фиксом подтвердить:
+1. **Сначала подтвердить** `FLD-000069` **и** `FLD-000263` **по registry.**  
+Перед фиксом добавить read-only proof:
 
 ```sql
-SELECT fr.public_id, fr.key, fr.label, dtr.token_key, dtr.ui_label
+SELECT fr.public_id, fr.key, fr.label, fr.data_type,
+       dtr.token_key, dtr.ui_label
 FROM fields_registry fr
 LEFT JOIN document_token_registry dtr ON dtr.field_id = fr.id
-WHERE fr.public_id = 'FLD-000069';
+WHERE fr.public_id IN ('FLD-000069','FLD-000263','FLD-000314','FLD-000368');
 ```
 
-Если это действительно номер документа — оставить. Если нет — найти правильный FLD номера и использовать его.
+Нужно доказать:
 
-5. **Легенду делать только по FLD, которые реально есть в текущем шаблоне.**  
-Не выводить весь список выбранных refs. Формат:
+- `FLD-000069` — номер документа;
+- `FLD-000263` — дата платежа или другая дата, которую реально хотят в имени;
+- `FLD-000314` / `FLD-000368` — те поля, которые ожидаются в имени.
+
+2. **Не добавлять** `fileNameTemplate` **вторым SELECT, если он уже загружается ниже.**  
+Лучше перенести существующую загрузку `document_templates.file_name_template` выше, чтобы не было двух разных запросов и риска рассинхронизации.
+3. `filenameFlds` **должен включать только валидные FLD.**  
+Если в шаблоне имени есть невалидный плейсхолдер, например `{{payer_short_name}}`, он не должен попадать в `foundIds`.  
+Он должен остаться warning в `renderFileName`.
+4. **Расширение** `foundIds` **должно происходить до numbering-check.**  
+Это главный пункт. Если `FLD-000069` есть только в имени файла, numbering всё равно должен сработать.
+5. **Нельзя брать** `resolved[field:${fld}]` **только если значение непустое.**  
+Сейчас в плане:
+
+```ts
+if (direct !== undefined && direct !== '') { ... }
+```
+
+Нужно аккуратнее. Пустая строка тоже может быть валидным resolved-значением, например поле реально пустое. Лучше:
+
+```ts
+if (Object.prototype.hasOwnProperty.call(resolved, `field:${fld}`)) {
+  filenameTokenMap[fld] = resolved[`field:${fld}`] ?? '';
+  continue;
+}
+```
+
+Иначе будет непредсказуемый fallback.
+
+6. **Для номера документа использовать итоговое значение после allocator override.**  
+Если `FLD-000069` связан с `document.number`, нужно убедиться, что в `filenameTokenMap` попадает уже настоящий номер, например `2105/2`, а не пустое/preview/старое значение.
+7. **Дата в имени файла должна рендериться через тот же формат, что и field-resolver.**  
+Не добавлять отдельный новый формат даты. Если `applyFormat` без модификатора даёт текущий системный формат — использовать его. Если отдаёт ISO, тогда локальный fallback допустим, но только для имени файла и с proof.
+8. `renderFileName` **получает** `FLD-keyed map`**, но в proof нужно явно показать оба слоя.**
+
+В отчёте добавить таблицу:
 
 ```text
-FLD-000069 — Номер документа
-FLD-000313 — Заказчик ФЛ: ФИО полностью
+FLD-000314 → field:FLD-000314 → value
+FLD-000368 → field:FLD-000368 → value
+FLD-000069 → field:FLD-000069 → value
+FLD-000263 → field:FLD-000263 → value
 ```
 
-Если FLD не найден в refs:
+9. **Не удалять тестовый документ, если он нужен как proof.**  
+Лучше:
+  &nbsp;
+  - создать новый тестовый документ с новым idempotency_key;
+  - либо удалить только явно тестовый документ, если он помечен smoke/test meta.  
+  Не удалять пользовательский документ без отдельного подтверждения.
+10. **DoD дополнить проверкой скачивания.**  
+Недостаточно проверить `ai_generated_documents.file_name`. Нужно ещё проверить:
+
+&nbsp;
+
+- `document-download` отдаёт это имя в `Content-Disposition`;
+- PDF скачивается с новым именем;
+- нет `file_name_warnings`.
+
+11. **Добавить anti-regression для шаблона без** `file_name_template`**.**  
+Проверить один шаблон с `file_name_template IS NULL`: системный дефолт имени файла работает как раньше.
+12. **Файл действительно один.**  
+Подтвердить, что меняется только:
 
 ```text
-FLD-000999 — неизвестный плейсхолдер
+supabase/functions/canonical-document-generate-strict/index.ts
 ```
 
-и validation warning/error.
+`document-filename.ts`, frontend, миграции, `document-download`, `canonical-document-send` — не трогать.
 
-6. **Сохранение** `NULL` **при сбросе — правильно, но с confirm не нужно.**  
-Кнопка «Сбросить к системному дефолту» должна:
-  - сразу записать `file_name_template = null`;
-  - обновить local/original state из ответа БД;
-  - показать toast.
-7. **После save обязательно invalidate/refetch списка шаблонов.**  
-Иначе правая панель может сохранить, но список/карточка останутся со старым значением.
-8. **Не менять backend и миграции.**  
-Подтвердить в STOP:
-
-```text
-Меняется только FileNameTemplateEditor.tsx.
-renderFileName, document-filename.ts, DB schema, canonical-document-generate-strict, document-download не трогаем.
-```
-
-9. **Добавить proof по реальному сохранению.**  
-В отчёте нужен не только “кнопка работает”, а SQL/select proof:
-
-```sql
-SELECT id, file_name_template
-FROM document_templates
-WHERE id = '<template_id>';
-```
-
-10. **DoD дополнить проверкой ошибок.**
-
-Проверить 4 состояния:
-
-```text
-валидный шаблон с FLD-000069 → Save активен, сохраняет
-без FLD-000069 → Save disabled + причина
-{{payer_short_name}} → Save disabled + ошибка FLD-only
-с .pdf/.docx → Save disabled + ошибка расширения
-```
-
-11. **Исправить обрыв в списке файлов.**  
-В конце плана строка обрезана:
-
-```text
-Файлы, затронутые патчем: только src/components/ai-documents/FileNameTemplateEdi...
-```
-
-Должно быть:
-
-```text
-Файлы, затронутые патчем: только src/components/ai-documents/FileNameTemplateEditor.tsx
-```
-
-Можно отправить Lovable так:
+Готовый блок для Lovable:
 
 ```text
 План согласован, но выполни с правками:
 
-1. Перед правкой проверь фактический API FieldPickerPopover через rg, не придумывай props.
-2. Основной must-have — кнопка «+ Вставить плейсхолдер» с общим picker и вставкой в позицию курсора. Открытие по `[` делать только если можно переиспользовать готовый паттерн без усложнения; иначе backlog.
-3. FLD-000069 сначала подтвердить через fields_registry/document_token_registry как номер документа. Если это не номер — найти правильный FLD номера и использовать его.
-4. Preview использует тот же frontend mirror renderFileName/helper, что и backend-контракт. Не делать отдельную расходящуюся логику.
-5. Легенда под textarea показывает только FLD, реально найденные в текущем шаблоне.
-6. После save и reset обязательно перечитать `file_name_template` из БД и обновить original state; также invalidate/refetch списка шаблонов.
-7. Reset пишет `file_name_template=null` в БД и показывает toast.
-8. Меняется только `src/components/ai-documents/FileNameTemplateEditor.tsx`. Никаких миграций, backend, renderFileName, document-download.
-9. Verify: валидный шаблон сохраняется; без номера документа — ошибка; alias `{{payer_short_name}}` — ошибка; `.pdf/.docx` — ошибка.
-10. В proof приложить SQL/select подтверждение сохранённого `file_name_template`.
+1. Перед фиксом read-only proof по FLD-000069/263/314/368 через fields_registry + document_token_registry. Подтвердить, что FLD-000069 — номер документа.
+
+2. Не делать второй независимый SELECT file_name_template. Перенести существующую загрузку document_templates.file_name_template выше, до needsNumbering/foundIds.
+
+3. filenameFlds добавлять в foundIds только для валидных {{field:FLD-XXXXXX}}. Невалидные плейсхолдеры остаются warning в renderFileName.
+
+4. Расширить foundIds до блока needsNumbering, чтобы номер документа аллоцировался даже если FLD-000069 есть только в file_name_template.
+
+5. При построении filenameTokenMap проверять наличие ключа в resolved через hasOwnProperty, а не через direct !== ''. Пустая строка может быть валидным resolved value.
+
+6. Для FLD-000069 использовать итоговое значение после allocator override, чтобы в имени файла был реальный номер документа.
+
+7. Дату форматировать тем же способом, что field-resolver. Не вводить новый формат даты.
+
+8. В proof показать таблицу FLD → field:FLD → resolved value → filenameTokenMap value.
+
+9. Не удалять пользовательский документ. Для verify создать новый тестовый generate или удалить только явно smoke/test документ.
+
+10. Verify должен проверить не только ai_generated_documents.file_name, но и скачивание через document-download / Content-Disposition.
+
+11. Добавить anti-regression: шаблон с file_name_template IS NULL продолжает работать через системный дефолт.
+
+12. Изменяемый файл только supabase/functions/canonical-document-generate-strict/index.ts. Без миграций, frontend, document-download, canonical-document-send.
 ```
 
-После этих правок план можно выполнять.
+После этих уточнений патч можно выполнять.
 
 &nbsp;
 
-План: фикс редактора шаблона имени файла (FileNameTemplateEditor)
+План: исправить генерацию имени файла из плейсхолдеров шаблона
 
-Контекст
+## Проблема (verified в БД)
 
-- Файл: `src/components/ai-documents/FileNameTemplateEditor.tsx`.
-- Проблемы у пользователя на `/admin/ai` → Документы → Шаблоны документов:
-  1. Чипы плейсхолдеров показывают только `FLD-000069` — непонятно, что это.
-  2. Кнопка «Сохранить» не работает / диалог сохранения не подтверждает запись.
-  3. Нет общего picker'а плейсхолдеров — нужно переиспользовать существующий `FieldPickerPopover` (с группами «Заказчик / Исполнитель / Документ / …», поиском и человекочитаемыми лейблами), а не локальный жёсткий список из 6 FLD.
+Шаблон `Счет-акт: {{field:FLD-000314}} - {{field:FLD-000368}} № {{field:FLD-000069}} от {{field:FLD-000263}}` сохраняется корректно, но в `ai_generated_documents`:
 
-Что уже есть в проекте (используем как есть)
+- `file_name = "Счет-акт - № от.pdf"` (все плейсхолдеры пустые)
+- `meta.file_name_warnings = ["file_name_placeholder_unresolved:FLD-000314", "...368", "...069", "...263"]`
+- `meta.file_name_template_source = "template"` — шаблон применился, но lookup провалился на всех FLD.
 
-- `src/components/ai-documents/FieldPickerPopover.tsx` — стабильный 2-этажный picker с группировкой по категориям, поиском, virtual anchor. Уже умеет `simple` режим (без шага формат/падеж) — идеально для filename, где нужен только `field:FLD-XXXXXX`.
-- `src/utils/templateAutoSuggest.ts → loadRegistryRefs()` — отдаёт массив `RegistryFieldRef { field_public_id, token_key, ui_label, category, data_type }` из `document_token_registry`. Это канон проекта и единственный источник лейблов плейсхолдеров.
+## Root cause
 
-PATCH-1: переписать FileNameTemplateEditor.tsx
+В `canonical-document-generate-strict/index.ts` карта `resolved` для DOCX-рендера keyed по `raw_inside` (строки вида `field:FLD-000069`, `field:FLD-000114:case=gen`).  
+А `renderFileName` ожидает map keyed по чистому `FLD-XXXXXX` (см. `_shared/document-filename.ts` строки 114–115: `resolved[fld]` где `fld = "FLD-000069"`).  
+→ Любой lookup → undefined → warning + пустая строка.
 
-A. Загрузка справочника
+Дополнительно: FLD, использованные **только** в `file_name_template` (и отсутствующие в DOCX), не попадают в `foundIds`, и для `FLD-000069`/`FLD-000070`:
 
-- При маунте вызывать `loadRegistryRefs()` и держать `refs: RegistryFieldRef[]` в state.
-- Удалить локальный массив `FIELD_CHIPS` и `PREVIEW_TOKENS` как «магические» 6 полей.
+- `needsNumbering` не сработает → номер/дата не аллоцируются;
+- даже если есть в `order.meta.document_data.fields` — для номера это критично, потому что номер выдаётся аллокатором.
 
-B. UI выбора плейсхолдера (вместо текущих 6 чипов)
+## Фикс (один файл, чистый PATCH)
 
-- Кнопка «+ Вставить плейсхолдер» (variant outline, иконка `SquareBrackets`/`Braces` из lucide).
-- По клику открывается `FieldPickerPopover` с:
-  - `simple={true}` (нам не нужны format/case — filename использует «как есть»);
-  - `refs={refs}`;
-  - `contextLabel="Имя файла: {templateName}"`;
-  - якорь — координаты кнопки (тот же приём, что в `TemplateMarkupDialog`: считать `getBoundingClientRect()` кнопки).
-- `onPick({ fld })` → вставить `{{field:FLD-XXXXXX}}` в textarea в позиции курсора (через `selectionStart`/`selectionEnd` ref на Textarea), а не просто конкатенировать в конец.
-- Дополнительный «горячий триггер»: при наборе символа `[` в textarea — открывать picker в позиции курсора (по аналогии с TemplateMarkupDialog/TemplateVisualEditor). Опционально, делаем сразу.
+### supabase/functions/canonical-document-generate-strict/index.ts
 
-C. Превью с человекочитаемыми токенами
+1. **Сразу после загрузки шаблона** прочитать `document_templates.file_name_template` (перенести существующий select выше — до блока `needsNumbering`). Это даёт `fileNameTemplate` и `filenameFlds = extractFilenamePlaceholders(...)` → Set FLD-ID.
+2. **Расширить `foundIds**`: для каждого валидного `FLD-XXXXXX` из `filenameFlds` сделать `foundIds.add(fld)`. Это автоматически:
+  - триггерит `needsNumbering`, если в имени файла участвует `FLD-000069` или `FLD-000070`;
+  - заставит резолвер посчитать `baseValueByFld[fld]` для FLD из имени.
+3. **Построить FLD-keyed map для renderFileName** после общего резолва (`resolved`/`baseValueByFld` уже посчитаны):
+  ```ts
+   const filenameTokenMap: Record<string, string> = {};
+   for (const fld of filenameFlds) {
+     // 1) если в DOCX есть точный токен `field:FLD-XXX` без модификаторов — берём готовое из resolved
+     const direct = resolved[`field:${fld}`];
+     if (direct !== undefined && direct !== '') { filenameTokenMap[fld] = direct; continue; }
+     // 2) иначе — базовое значение из docFields через fmtVal + applyFormat по data_type
+     const reg: any = regMap.get(fld);
+     const dt = ((reg?.data_type as string) || '').toLowerCase();
+     const entry = baseEntryByFld[fld];
+     const fmt = applyFormat(entry?.value, dt, orderCurrency, null); // без модификаторов
+     filenameTokenMap[fld] = fmt.value ?? baseValueByFld[fld] ?? '';
+   }
+  ```
+   Важно: для date-полей (FLD-000263, FLD-000070) `applyFormat` без модификатора должен вернуть отформатированную DD.MM.YYYY (это поведение уже стандартно в текущем `fmtVal`/`applyFormat` для DOCX). Если в текущей реализации без формата возвращается ISO — добавить локальный `formatDateForFileName(value)` для FLD типа `date`, чтобы в имени не было `2026-05-21` с дефисами (последующая санитизация уже превратит `:` в `-`, но ISO-даты допустимы; точную форму подтвердим тестом).
+4. **Передать новый map в renderFileName**:
+  ```ts
+   const r = renderFileName(fileNameTemplate, { resolvedTokens: filenameTokenMap });
+  ```
+5. **Verify**:
+  - удалить тестовый документ → перегенерировать → `file_name = "Счет-акт: <ФИО> - <ЮрЛицо> № 2105-X от 21.05.2026.pdf"`;
+  - `meta.file_name_warnings = []`;
+  - `meta.file_name_template_source = "template"`.
 
-- Сборка `previewTokens: Record<string, string>` динамически:
-  - `FLD-000069` → `PREVIEW-0001` (хардкод как пример номера, т.к. это всегда документ-номер).
-  - Для всех остальных FLD из `refs` — подставляем `«${ui_label}»` (например, `«Заказчик: ФИО кратко»`). Это даёт корректное визуальное представление, что встанет в имя файла, без необходимости знать конкретное значение.
-- `renderFileName(template, previewTokens)` остаётся, валидация синтаксиса/наличия FLD-000069 остаётся.
+## Что НЕ меняется
 
-D. Под textarea — компактная подсказка-легенда
+- `_shared/document-filename.ts` — контракт (FLD-keyed map) остаётся, фиксим вызывающую сторону.
+- Frontend (`FileNameTemplateEditor`) — без изменений.
+- Migration не требуется.
+- `document-download` / `canonical-document-send` — без изменений (читают `file_name` из БД).
+- Поведение для шаблонов с `file_name_template IS NULL` (5 из 6 production-шаблонов) не меняется — системный дефолт.
 
-- Для каждого FLD, реально встретившегося в текущем шаблоне, рендерим строку: `FLD-000069 — Номер документа (обязателен)`, лейбл берём из `refs` (`ui_label`), для 069 — фиксированная подпись «Номер документа (обязателен)».
-- Это решает «непонятно что значит» прямо в контексте текущего шаблона.
+## DoD
 
-E. Починка кнопки «Сохранить»
-Текущая логика блокирует Save в нескольких неочевидных случаях; распутываем:
-
-1. `disabled={!canSave || saving || template === original}` — оставить, но добавить понятный hint:
-  - Если `canSave === false`, под кнопкой жирно подписать первую причину из списка (нет 069 / есть расширение / синтаксис invalid / пусто).
-2. Гарантировать, что после успешного `update` мы:
-  - обновляем `original` строго к нормализованному значению (`template.trim()`), которое лежит в БД (а не к сырому `template`);
-  - повторно вычитываем поле `file_name_template` из БД сразу после update (`.select("file_name_template").single()`), чтобы UI отображал реальный persisted state и кнопка корректно дезактивировалась.
-3. Логируем ошибку в консоль (`console.error("[file_name_template] save failed", error)`) + показываем `toast.error` с реальным `error.message`. Это снимет «молчаливый» отказ, если он есть.
-4. На случай, если пользователь видит «не сохраняется» из-за placeholder-эффекта (HTML-атрибут `placeholder` в Textarea показывает пример и его легко перепутать с реальным значением): убрать длинный пример из `placeholder` Textarea, заменить на короткий нейтральный: «Введите шаблон имени файла или нажмите „+ Вставить плейсхолдер“».
-
-F. Сохранение поведения «системный дефолт»
-
-- Кнопка «Сбросить к системному дефолту»: очищает textarea и сразу сохраняет `null` в БД (а не только локально), чтобы поведение было предсказуемым; toast «Сброшено к системному дефолту».
-
-DoD
-
-- В UI Шаблоны документов → редактор имени файла:
-  - Видна кнопка «+ Вставить плейсхолдер»; нажатие открывает общий FieldPickerPopover со всеми FLD-полями, сгруппированными по категориям, с поиском и человекочитаемыми названиями.
-  - Можно вставить плейсхолдер в позицию курсора.
-  - Под шаблоном выводится живая легенда «FLD-XXX — название», а в Preview лейблы подставляются вместо магических значений.
-  - Кнопка «Сохранить» успешно записывает `file_name_template` в `document_templates` (проверяется select после update); при любой ошибке toast показывает реальный текст ошибки.
-  - Кнопка «Сбросить к системному дефолту» записывает `NULL` в БД.
-- Никаких новых таблиц/edge functions/миграций. Логика `renderFileName`, FLD-first контракт, требование FLD-000069 — не меняем.
-- Файлы, затронутые патчем: только `src/components/ai-documents/FileNameTemplateEditor.tsx`.
+- Контрольная регенерация документа с шаблоном FLD-314/368/069/263 даёт корректное имя файла без warnings.
+- FLD, присутствующие только в `file_name_template` (не в DOCX), резолвятся; номер документа аллоцируется, даже если DOCX его не использует.
+- Существующие документы НЕ переименовываются (snapshot в БД иммутабельный).
+- proof-блок добавлен в `.lovable/proofs/patch_b_file_name_template.md` (раздел «FIX: FLD-keyed resolver»).
