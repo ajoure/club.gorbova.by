@@ -497,12 +497,14 @@ export default function Purchases() {
         onCancel={openCancelDialog}
         onResume={handleResumeSubscription}
         onDownloadReceipt={downloadSubscriptionReceipt}
+        lastPaidOrderId={selectedSubscription?.orders_v2?.id || selectedSubscription?.order_id || null}
         receiptUrl={(() => {
           const p = selectedSubscription?.orders_v2?.payments_v2?.[0] as any;
           return p?.receipt_url || p?.provider_response?.transaction?.receipt_url || null;
         })()}
         isProcessing={isProcessing}
       />
+
 
       {/* Cancel Subscription Dialog */}
       <AlertDialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
