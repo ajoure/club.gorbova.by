@@ -800,7 +800,18 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
                           <TableCell className="text-xs text-muted-foreground">
                             {(v.detected_tokens?.length ?? 0)}
                           </TableCell>
-                          <TableCell></TableCell>
+                          <TableCell onClick={(e) => e.stopPropagation()}>
+                            {!v.is_current && v.validation_status === "valid" && (!v.markup_status || v.markup_status === "marked") && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-6 px-2 text-[10px]"
+                                onClick={() => activateVersion(t, v)}
+                              >
+                                Сделать активной
+                              </Button>
+                            )}
+                          </TableCell>
                         </TableRow>
                       ))}
                     </>
