@@ -174,7 +174,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ========== Step 2c: Extract UID from order meta or column ==========
+    // ========== Step 2c: Extract UID from order meta or column (column fallback restricted to bepaid) ==========
+    // Note: collision check is deferred to Step 5 to ensure superseded classification has priority
+    // over "normal repair" when a payment with the same UID already exists on a different order.
     for (const order of ordersToRepair) {
       if (uidByOrderId.has(order.id)) continue;
       const uid = extractOrderUid(order);
