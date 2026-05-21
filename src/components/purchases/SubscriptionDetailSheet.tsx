@@ -84,8 +84,10 @@ export function SubscriptionDetailSheet({
   onResume,
   onDownloadReceipt,
   receiptUrl,
+  lastPaidOrderId,
   isProcessing,
 }: SubscriptionDetailSheetProps) {
+
   // Hooks must be called unconditionally (no early `if (!subscription) return`).
   const subId = subscription?.id ?? null;
   const productId = subscription?.products_v2?.id ?? null;
