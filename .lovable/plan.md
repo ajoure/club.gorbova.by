@@ -1,66 +1,47 @@
-дополни план: если в шаблоне все ок с токенами и он правильный, то активировать его автоматически. все версии сохранять и дать возможность возвращаться или включать или отключать какие-то версии. При этом в настройках кнопки оплаты в продукте выбранный шаблон не меняется из-за замены версии
+## План: `patch_payment_paid_at_long_placeholder_2026_05`
 
-&nbsp;
+### Цель
+Добавить плейсхолдер «Дата оплаты прописью» по аналогии с системным `FLD-000209` (`«21 мая 2026 года»`), чтобы в актах можно было выводить дату оплаты словами, а не только в формате `21.05.2026` (`FLD-000263`).
 
-План: Авто-версионирование шаблонов документов при загрузке
+### Что меняется
 
-## Контекст и диагностика
+**1. Миграция БД (новая)**
+Регистрируем новое поле в `fields_registry` и `document_token_registry`:
+- `public_id`: `FLD-000371`
+- `key` / `token_key`: `payment.paid_at_long`
+- `label` / `ui_label`: «Дата оплаты прописью»
+- `data_type`: `string`
+- `category`: `payment`
+- `example_value`: `«21» мая 2026 года`
 
-Файл `src/components/ai-documents/StrictDocumentTemplatesManager.tsx`, функция `handleUpload`:
+**2. `supabase/functions/_shared/standard-fields.ts`**
+Рядом с `FLD-000263` добавить:
+```ts
+'FLD-000371': pay?.paid_at ? ruWordsDate(pay.paid_at) : '',  // payment.paid_at_long
+```
+Используем уже существующий хелпер `ruWordsDate` (тот, что обслуживает `FLD-000209`).
 
-- Безусловно делает `INSERT into document_templates` с новым `code = tmpl_{ts}` и новым `template_path`.
-- Безусловно создаёт версию с `version_number: 1`.
-- Никакой проверки «существует ли уже шаблон с таким именем» нет.
+**3. Деплой**
+- `canonical-document-generate-strict`
+- `bepaid-webhook` (трогать не нужно — функция формирования снапшота читает из standard-fields)
 
-Результат: при повторной загрузке `.docx` с тем же именем создаётся ещё одна запись `document_templates` (как видно на скриншоте — «Счёт-акт на услуги ФЛ — Исполнитель» дублируется), а не v2 уже существующего шаблона.
+Достаточно передеплоить `canonical-document-generate-strict`.
 
-Backend (`document_template_versions`) уже поддерживает несколько версий на один `template_id` (есть `version_number`, `is_current`, `current_version_id` на шаблоне) — модель данных готова, фронт просто ей не пользуется.
+### Diagnose / контекст
+- `FLD-000263` (`payment.paid_at`) уже возвращает `dotDate(pay.paid_at)` → `21.05.2026`.
+- Системное поле `FLD-000209` уже использует `ruWordsDate(now)` → `«20 мая 2026 года»`.
+- В UI «Плейсхолдеры» новое поле появится автоматически после миграции (источник списка — `document_token_registry` + `fields_registry`).
 
-## Что нужно сделать (только фронт)
+### По второму пункту (данные о карте в тестовом 100 ₽)
+Пользователь сам отмечает: «может быть, потому что я этот тестовый платёж делаю и там нет карты — ладно». На бэке `FLD-000259..262` приходят пустыми, потому что bePaid в тестовом ручном charge не возвращает card-блок. Это **не баг** — оставляем как есть, чтобы не плодить фейковые данные. Если позже потребуется тест-фикстура, делаем это отдельной задачей.
 
-Изменить `handleUpload` в `StrictDocumentTemplatesManager.tsx` так:
+### DoD
+- В UI «Плейсхолдеры → 8. Оплата» виден `FLD-000371` с примером `«21» мая 2026 года`.
+- В шаблоне `{{field:FLD-000371}}` подставляется длинная дата оплаты.
+- На уже существующих заказах (Федорчук `ORD-TEST-MPF8PW9G`, Пилецкая) preview-rebuild снапшота показывает корректное значение.
+- `FLD-000263` продолжает работать без изменений (обратная совместимость).
 
-1. **Поиск существующего шаблона по имени**
-  - До любых INSERT: `select id, name from document_templates where deleted_at is null and lower(name) = lower(uploadName.trim())`.
-  - Сравнение по `lower(trim(name))` — устойчиво к регистру и хвостовым пробелам.
-2. **Если шаблон НЕ найден (новое имя)** — поведение как сейчас:
-  - INSERT в `document_templates` (draft, legacy NOT NULL поля как сейчас).
-  - INSERT в `document_template_versions` с `version_number = 1`, `is_current = false`, `validation_status = 'pending'`.
-  - Toast: «Создан новый шаблон, версия 1».
-3. **Если шаблон НАЙДЕН (имя совпало)** — добавляем версию:
-  - Грузим `.docx` в storage по новому уникальному `storage_path` (как сейчас, через `Date.now()`), чтобы не конфликтовать с прошлой версией и не зависеть от `upsert`.
-  - Определяем `nextVersionNumber = max(version_number) + 1` по `document_template_versions` для этого `template_id` (один доп. запрос или используем уже загруженный `versions` стейт).
-  - INSERT в `document_template_versions` с этим `template_id`, `version_number = nextVersionNumber`, `is_current = false`, `validation_status = 'pending'`.
-  - `document_templates` НЕ трогаем (имя, статус, current_version_id остаются как есть — активация версии остаётся отдельным действием, как сегодня).
-  - Toast: «Добавлена версия N к шаблону "…"». Кнопка не «активирует» автоматически — пользователь сам валидирует и активирует, чтобы не сломать продакшен случайно.
-4. **Аудит и автопроверка**
-  - `auditEvent("document_template.version_uploaded", { template_id, template_version_id, meta: { version_number, file_name, file_size_bytes, storage_path, reused_template: true|false } })`.
-  - Существующий блок «автопроверка сразу после загрузки» (`openPreview`) переиспользуем: после INSERT версии находим её по `storage_path` + `template_id` и открываем preview/валидацию, как сейчас.
-5. **UX-уточнения**
-  - Если в форме загрузки имя ровно совпало с существующим — под полем имени показать подсказку: «Будет добавлена версия N к существующему шаблону». Реактивно по `templates` стейту.
-  - Если пользователь хочет именно отдельный шаблон — он может изменить имя в форме (имя в форме редактируется, дефолт берётся из имени файла).
-
-## Что НЕ делаем (явно)
-
-- Не меняем backend, RLS, миграции, edge functions.
-- Не трогаем `document_templates.code`, `template_path`, `template_status`, `current_version_id` при добавлении версии.
-- Не делаем авто-активацию новой версии (это уже отдельный осознанный шаг через «Активировать», чтобы соблюсти canon strict-валидации).
-- Не удаляем и не архивируем старые версии.
-
-## Технические детали
-
-- Файл: `src/components/ai-documents/StrictDocumentTemplatesManager.tsx`.
-- Изменения только внутри `handleUpload` (~строки 334–446) + мелкая подсказка под `uploadName` в JSX формы загрузки.
-- Никаких новых зависимостей.
-
-## DoD
-
-1. Загрузка `.docx` с именем, совпадающим (case-insensitive, trim) с существующим шаблоном → создаётся `document_template_versions` row с `version_number = max+1`, новый `document_templates` row НЕ создаётся.
-2. Загрузка `.docx` с новым именем → поведение как раньше (новый template + version 1).
-3. Активный (`current`) шаблон остаётся прежним до явной активации новой версии.
-4. В UI под полем имени видна подсказка «Будет добавлена версия N к существующему шаблону», когда имя совпадает.
-5. Аудит-событие `document_template.version_uploaded` отправляется с корректными `template_id`, `version_number`, `reused_template`.
-6. Автоматическая strict-валидация после загрузки работает для новой версии.
-7. Дублей «Счёт-акт на услуги ФЛ — Исполнитель» больше не появляется при повторной загрузке.
-
-Proof: `.lovable/proofs/patch_template_upload_versioning_2026_05.md` (создать на этапе execute).
+### Артефакты
+- `supabase/migrations/<ts>_fld_000371_payment_paid_at_long.sql`
+- edit: `supabase/functions/_shared/standard-fields.ts`
+- proof: `.lovable/proofs/patch_payment_paid_at_long_placeholder_2026_05.md`
