@@ -1,354 +1,191 @@
-Да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. **PATCH-A и PATCH-B делать раздельными коммитами/отчётами внутри одного спринта.**  
-Причина: PATCH-A — правила доступа и безопасность `/purchases`; PATCH-B — шаблоны имени файла и миграция. Если один сломается, второй не должен быть смешан в откате.
-2. **В A.1 не писать “зеркальную копию helper” вручную с риском расхождения.**  
-Лучше:
-  &nbsp;
-  &nbsp;
-  - frontend helper: `src/lib/documents/purchaseDocumentRules.ts`;
-  - backend helper: `supabase/functions/_shared/purchase-document-rules.ts`;
-  - в proof обязательно приложить одинаковые test-cases для обоих helper’ов.  
-  Полностью общий файл между Vite и Deno может быть проблемным из-за импортов, поэтому допустима дубликация, но только с одинаковыми тестами и контрактом.
-3. `hasRealSucceededPayment` **должен исключать не только** `admin_test`**, но и любые internal/test providers.**  
-Добавить allowlist/denylist:
-  ```ts
-  real providers: bepaid / bepaid_card / bepaid_erip / provider values actually used by production
-  excluded: admin_test, admin_test_direct, manual, virtual, internal_test
-  ```
-  Сначала discovery по фактическим `payments_v2.provider`.
-4. **В A.3 backend hard-stop не должен блокировать админа в админке по умолчанию, если это существующий admin-flow.**  
-Для `/purchases` self-service — строгие guards.  
-Для админки — либо `admin_force=true`, либо отдельный admin endpoint/ветка. Важно не сломать ручную генерацию документов в карточке сделки.
-5. **В A.4 добавить проверку “existing doc + no current rules”.**  
-Уже указано частично, но зафиксировать явно: если документ был создан раньше, пользователь может скачать его всегда, даже если офер позже выключили.
-6. **PATCH-B: SOT лучше выбрать** `document_templates.file_name_template` **как default, но сразу проверить, нет ли уже version-level metadata.**  
-Если `document_template_versions.meta` уже содержит настройки шаблона, не добавлять поле в versions без необходимости.  
-Минимальный безопасный вариант: `document_templates.file_name_template`, snapshot при генерации обязателен.
-7. **В B.3 “обязателен FLD номера документа” — сначала определить точный FLD номера.**  
-Не хардкодить. В discovery найти по registry:
-  - `document.number`;
-  - либо текущий canonical token для номера документа.  
-  В proof указать конкретный `FLD-XXXXXX`.
-8. **Если номер документа создаётся только при generate, preview имени файла должен использовать preview-number.**  
-В UI preview для имени файла показывать тестовое значение, например:
-  &nbsp;
-  ```text
-  PREVIEW-0001
-  ```
-  Но в реальной генерации использовать настоящий canonical number.
-9. **В B.4 unresolved FLD в имени файла не должен silently исчезать без видимого proof.**  
-Сохранять:
-  &nbsp;
-  ```ts
-  meta.file_name_warnings[]
-  ```
-  и в admin UI/истории документа показывать предупреждение, если имя было собрано с пустыми значениями.
-10. **В B.5** `document-download` **не должен принудительно делать** `attachment` **для PDF, если сейчас PDF открывается inline.**  
-Нужно сохранить текущую UX-логику:
+1. **Сначала проверить API** `FieldPickerPopover` **по фактической сигнатуре.**  
+Не писать props наугад. Перед правкой сделать `rg` по всем использованиям:
+
+```bash
+rg -n "FieldPickerPopover" src
+rg -n "onPick|simple=|refs=|contextLabel" src/components src/pages
+```
+
+Если у `FieldPickerPopover` другой контракт — использовать фактический, а не придумывать новый.
+
+2. **Не делать открытие picker по** `[` **в этом патче, если это усложнит правку.**  
+Основной must-have:
+
+```text
+кнопка «+ Вставить плейсхолдер» → общий picker → вставка в позицию курсора
+```
+
+Открытие по `[` можно добавить только если уже есть готовый reusable-паттерн из `TemplateMarkupDialog`. Если требует отдельной логики координат/selection — вынести в backlog.
+
+3. **Preview должен использовать тот же** `renderFileName`**, что backend-контракт.**  
+Не делать отдельный «примерный» preview, который расходится с backend.  
+В preview map можно подставлять labels, но сама функция валидации/санитизации должна быть та же frontend mirror helper.
+4. **FLD-000069 не хардкодить без проверки registry.**  
+В плане написано, что это номер документа. Перед фиксом подтвердить:
+
+```sql
+SELECT fr.public_id, fr.key, fr.label, dtr.token_key, dtr.ui_label
+FROM fields_registry fr
+LEFT JOIN document_token_registry dtr ON dtr.field_id = fr.id
+WHERE fr.public_id = 'FLD-000069';
+```
+
+Если это действительно номер документа — оставить. Если нет — найти правильный FLD номера и использовать его.
+
+5. **Легенду делать только по FLD, которые реально есть в текущем шаблоне.**  
+Не выводить весь список выбранных refs. Формат:
+
+```text
+FLD-000069 — Номер документа
+FLD-000313 — Заказчик ФЛ: ФИО полностью
+```
+
+Если FLD не найден в refs:
+
+```text
+FLD-000999 — неизвестный плейсхолдер
+```
+
+и validation warning/error.
+
+6. **Сохранение** `NULL` **при сбросе — правильно, но с confirm не нужно.**  
+Кнопка «Сбросить к системному дефолту» должна:
+  - сразу записать `file_name_template = null`;
+  - обновить local/original state из ответа БД;
+  - показать toast.
+7. **После save обязательно invalidate/refetch списка шаблонов.**  
+Иначе правая панель может сохранить, но список/карточка останутся со старым значением.
+8. **Не менять backend и миграции.**  
+Подтвердить в STOP:
+
+```text
+Меняется только FileNameTemplateEditor.tsx.
+renderFileName, document-filename.ts, DB schema, canonical-document-generate-strict, document-download не трогаем.
+```
+
+9. **Добавить proof по реальному сохранению.**  
+В отчёте нужен не только “кнопка работает”, а SQL/select proof:
+
+```sql
+SELECT id, file_name_template
+FROM document_templates
+WHERE id = '<template_id>';
+```
+
+10. **DoD дополнить проверкой ошибок.**
+
+Проверить 4 состояния:
+
+```text
+валидный шаблон с FLD-000069 → Save активен, сохраняет
+без FLD-000069 → Save disabled + причина
+{{payer_short_name}} → Save disabled + ошибка FLD-only
+с .pdf/.docx → Save disabled + ошибка расширения
+```
+
+11. **Исправить обрыв в списке файлов.**  
+В конце плана строка обрезана:
+
+```text
+Файлы, затронутые патчем: только src/components/ai-documents/FileNameTemplateEdi...
+```
+
+Должно быть:
+
+```text
+Файлы, затронутые патчем: только src/components/ai-documents/FileNameTemplateEditor.tsx
+```
+
+Можно отправить Lovable так:
+
+```text
+План согласован, но выполни с правками:
+
+1. Перед правкой проверь фактический API FieldPickerPopover через rg, не придумывай props.
+2. Основной must-have — кнопка «+ Вставить плейсхолдер» с общим picker и вставкой в позицию курсора. Открытие по `[` делать только если можно переиспользовать готовый паттерн без усложнения; иначе backlog.
+3. FLD-000069 сначала подтвердить через fields_registry/document_token_registry как номер документа. Если это не номер — найти правильный FLD номера и использовать его.
+4. Preview использует тот же frontend mirror renderFileName/helper, что и backend-контракт. Не делать отдельную расходящуюся логику.
+5. Легенда под textarea показывает только FLD, реально найденные в текущем шаблоне.
+6. После save и reset обязательно перечитать `file_name_template` из БД и обновить original state; также invalidate/refetch списка шаблонов.
+7. Reset пишет `file_name_template=null` в БД и показывает toast.
+8. Меняется только `src/components/ai-documents/FileNameTemplateEditor.tsx`. Никаких миграций, backend, renderFileName, document-download.
+9. Verify: валидный шаблон сохраняется; без номера документа — ошибка; alias `{{payer_short_name}}` — ошибка; `.pdf/.docx` — ошибка.
+10. В proof приложить SQL/select подтверждение сохранённого `file_name_template`.
+```
+
+После этих правок план можно выполнять.
 
 &nbsp;
 
-- «Просмотр PDF» → `inline`;
-- «Скачать PDF» → `attachment`;
-- DOCX → `attachment`.  
-Но имя файла в обоих случаях берётся из `ai_generated_documents.file_name`.
+План: фикс редактора шаблона имени файла (FileNameTemplateEditor)
 
-11. `canonical-document-send` **не должен генерировать документ в PATCH-B.**  
-Он только использует уже сохранённое `file_name`. Генерация/идемпотентность — из PATCH-A.
-12. **Добавить проверку, что** `file_name_template` **не содержит расширение.**  
-Если админ ввёл `.pdf` или `.docx`, либо убрать, либо validation warning:
+Контекст
 
-```text
-Расширение добавляется автоматически, не указывайте .pdf/.docx в шаблоне имени.
-```
+- Файл: `src/components/ai-documents/FileNameTemplateEditor.tsx`.
+- Проблемы у пользователя на `/admin/ai` → Документы → Шаблоны документов:
+  1. Чипы плейсхолдеров показывают только `FLD-000069` — непонятно, что это.
+  2. Кнопка «Сохранить» не работает / диалог сохранения не подтверждает запись.
+  3. Нет общего picker'а плейсхолдеров — нужно переиспользовать существующий `FieldPickerPopover` (с группами «Заказчик / Исполнитель / Документ / …», поиском и человекочитаемыми лейблами), а не локальный жёсткий список из 6 FLD.
 
-13. **Не применять** `file_name_template` **к legacy** `generated_documents`**, если они не идут через canonical pipeline.**  
-Только `ai_generated_documents` / выбранная SOT-таблица canonical documents. Legacy — read-only compatibility.
-14. **В DoD PATCH-A добавить grep-proof по legacy-функциям именно внутри** `/purchases`**.**  
-Не требовать полного удаления вызовов по всему проекту, если они ещё нужны в других админских/legacy местах.
-15. **В итоговом отчёте обязательно указать, что production-шаблоны не получили автоматический** `file_name_template`**.**  
-Это важно, чтобы не было массового изменения поведения.
+Что уже есть в проекте (используем как есть)
 
-Готовый блок для Lovable:
+- `src/components/ai-documents/FieldPickerPopover.tsx` — стабильный 2-этажный picker с группировкой по категориям, поиском, virtual anchor. Уже умеет `simple` режим (без шага формат/падеж) — идеально для filename, где нужен только `field:FLD-XXXXXX`.
+- `src/utils/templateAutoSuggest.ts → loadRegistryRefs()` — отдаёт массив `RegistryFieldRef { field_public_id, token_key, ui_label, category, data_type }` из `document_token_registry`. Это канон проекта и единственный источник лейблов плейсхолдеров.
 
-```text
-Дополни план правками:
+PATCH-1: переписать FileNameTemplateEditor.tsx
 
-1. PATCH-A и PATCH-B выполнить как два независимых блока внутри одного спринта: отдельные diff-summary, proof и rollback-notes.
+A. Загрузка справочника
 
-2. Для purchaseDocumentRules frontend/backend допускается два файла, но контракт и test-cases должны быть одинаковыми. В proof приложить одинаковые тесты для UI-helper и Deno-helper.
+- При маунте вызывать `loadRegistryRefs()` и держать `refs: RegistryFieldRef[]` в state.
+- Удалить локальный массив `FIELD_CHIPS` и `PREVIEW_TOKENS` как «магические» 6 полей.
 
-3. hasRealSucceededPayment строить после discovery фактических payments_v2.provider. Исключить admin_test/admin_test_direct/manual/virtual/internal_test. Реальными считать только production-provider values, подтверждённые в БД.
+B. UI выбора плейсхолдера (вместо текущих 6 чипов)
 
-4. Backend hard-stop строго применяется к self-service /purchases. Admin generation не ломать: admin bypass только через явный admin_force=true или существующий admin-flow, с audit document.admin_force_generate.
+- Кнопка «+ Вставить плейсхолдер» (variant outline, иконка `SquareBrackets`/`Braces` из lucide).
+- По клику открывается `FieldPickerPopover` с:
+  - `simple={true}` (нам не нужны format/case — filename использует «как есть»);
+  - `refs={refs}`;
+  - `contextLabel="Имя файла: {templateName}"`;
+  - якорь — координаты кнопки (тот же приём, что в `TemplateMarkupDialog`: считать `getBoundingClientRect()` кнопки).
+- `onPick({ fld })` → вставить `{{field:FLD-XXXXXX}}` в textarea в позиции курсора (через `selectionStart`/`selectionEnd` ref на Textarea), а не просто конкатенировать в конец.
+- Дополнительный «горячий триггер»: при наборе символа `[` в textarea — открывать picker в позиции курсора (по аналогии с TemplateMarkupDialog/TemplateVisualEditor). Опционально, делаем сразу.
 
-5. Existing canonical document всегда можно скачать, даже если после генерации офер выключили или правила документа стали недоступны. Запрещено только «Сформировать новый».
+C. Превью с человекочитаемыми токенами
 
-6. По file_name_template сначала определить SOT: document_templates.file_name_template или document_template_versions. Если нет сильной причины для version-level, использовать document_templates.file_name_template как default, но snapshot обязателен.
-
-7. В discovery определить точный FLD номера документа через fields_registry/document_token_registry. Не хардкодить. Validation требует именно этот FLD номера.
+- Сборка `previewTokens: Record<string, string>` динамически:
+  - `FLD-000069` → `PREVIEW-0001` (хардкод как пример номера, т.к. это всегда документ-номер).
+  - Для всех остальных FLD из `refs` — подставляем `«${ui_label}»` (например, `«Заказчик: ФИО кратко»`). Это даёт корректное визуальное представление, что встанет в имя файла, без необходимости знать конкретное значение.
+- `renderFileName(template, previewTokens)` остаётся, валидация синтаксиса/наличия FLD-000069 остаётся.
 
-8. UI-preview имени файла использует preview-number, но generate использует настоящий canonical document_number.
+D. Под textarea — компактная подсказка-легенда
 
-9. Если FLD в имени файла не разрешился, финальное имя не должно содержать {{...}}. Значение пустое, warning сохраняется в ai_generated_documents.meta.file_name_warnings и виден в admin history.
+- Для каждого FLD, реально встретившегося в текущем шаблоне, рендерим строку: `FLD-000069 — Номер документа (обязателен)`, лейбл берём из `refs` (`ui_label`), для 069 — фиксированная подпись «Номер документа (обязателен)».
+- Это решает «непонятно что значит» прямо в контексте текущего шаблона.
 
-10. document-download должен сохранять UX:
-- Preview/Open PDF = inline;
-- Download PDF = attachment;
-- DOCX = attachment.
-Во всех случаях filename берётся из ai_generated_documents.file_name + нужное расширение.
-
-11. В file_name_template запретить ввод .pdf/.docx в конце: расширение добавляет система автоматически.
-
-12. canonical-document-send только использует сохранённое file_name для email/Telegram attachment. Не добавлять там отдельную генерацию имени.
-
-13. file_name_template применять только к canonical documents SOT. Legacy generated_documents не менять, только read-only compatibility.
-
-14. Grep-proof по legacy generate-invoice-act/send-invoice/generate-document-pdf делать именно для клиентского /purchases flow, а не требовать удаления по всему проекту.
-
-15. В финальном отчёте явно подтвердить: production-шаблоны не получили file_name_template автоматически; заполнение имени файла — только вручную админом.
+E. Починка кнопки «Сохранить»
+Текущая логика блокирует Save в нескольких неочевидных случаях; распутываем:
 
-План: два независимых PATCH в одном спринте. Отдельные proof-блоки, общий shared-helper.
-```
+1. `disabled={!canSave || saving || template === original}` — оставить, но добавить понятный hint:
+  - Если `canSave === false`, под кнопкой жирно подписать первую причину из списка (нет 069 / есть расширение / синтаксис invalid / пусто).
+2. Гарантировать, что после успешного `update` мы:
+  - обновляем `original` строго к нормализованному значению (`template.trim()`), которое лежит в БД (а не к сырому `template`);
+  - повторно вычитываем поле `file_name_template` из БД сразу после update (`.select("file_name_template").single()`), чтобы UI отображал реальный persisted state и кнопка корректно дезактивировалась.
+3. Логируем ошибку в консоль (`console.error("[file_name_template] save failed", error)`) + показываем `toast.error` с реальным `error.message`. Это снимет «молчаливый» отказ, если он есть.
+4. На случай, если пользователь видит «не сохраняется» из-за placeholder-эффекта (HTML-атрибут `placeholder` в Textarea показывает пример и его легко перепутать с реальным значением): убрать длинный пример из `placeholder` Textarea, заменить на короткий нейтральный: «Введите шаблон имени файла или нажмите „+ Вставить плейсхолдер“».
 
-```
-PATCH-A: purchases document availability rules
-PATCH-B: document file_name_template (FLD-first canon)
-```
-
----
-
-# PATCH-A. Правила доступности «Сформировать» и «Чек» в `/purchases`
-
-## A.0. Целевые правила (как должно быть)
-
-1. **«Сформировать документ»** видна ТОЛЬКО когда одновременно:
-  - есть реальный успешный bePaid-платёж (см. A.2),
-  - у купленного офера документ реально включён (см. A.3).
-2. **«Скачать чек bePaid»** видна ТОЛЬКО когда есть реальный платёж с валидным `receipt_url` (см. A.4). Заменитель/виртуальный чек НЕ генерируется.
-3. **Скачивание уже существующего canonical-документа** доступно всегда, когда `ai_generated_documents` для заказа существует (даже если правила A.1 сейчас не выполняются). «Сформировать новый» в этом случае — нельзя.
-4. Искусственный/manual-заказ без `payments_v2.succeeded`: ни «Чек», ни «Сформировать», ни «Сформировать новый».
+F. Сохранение поведения «системный дефолт»
 
-## A.1. Shared helper (общая правда UI и backend)
+- Кнопка «Сбросить к системному дефолту»: очищает textarea и сразу сохраняет `null` в БД (а не только локально), чтобы поведение было предсказуемым; toast «Сброшено к системному дефолту».
 
-Новый модуль `src/lib/documents/purchaseDocumentRules.ts` + зеркальная копия `supabase/functions/_shared/purchase-document-rules.ts` (deno-совместимая). Backend и frontend используют один и тот же контракт; запрещено иметь две разные реализации правил.
+DoD
 
-Экспортируемые pure-функции:
-
-- `getOrderOfferId(order): string | null` — резолв в порядке:
-  ```
-  order.offer_id
-    ?? order.meta?.offer_id
-    ?? order.meta?.crm_routing_snapshot?.offer_id
-    ?? order.meta?.document_data?._provenance?.offer_id
-    ?? null
-  ```
-- `resolveOfferForOrder({ order, tariffOffers })` →
-`{ offer, source: 'order_offer' | 'single_active_tariff_offer' | 'none', reason? }`.
-Fallback на активный оффер тарифа РАЗРЕШЁН ТОЛЬКО если у тарифа ровно один `is_active=true` оффер. Иначе `source='none'` + `reason='multiple_or_zero_active_offers'` → STOP.
-- `hasRealSucceededPayment(payments_v2): boolean` —
-  ```
-  payments_v2.some(p =>
-    p.status === 'succeeded'
-    && p.provider !== 'admin_test'
-    && p.provider !== 'admin_test_direct'
-  )
-  ```
-- `getValidReceiptUrl(payment): string | null` —
-  ```
-  payment.receipt_url
-    ?? payment.provider_response?.transaction?.receipt_url
-    ?? null
-  ```
-  Пустые строки/null → `null`.
-- `isOfferDocumentEnabled(offerMeta, { payerType, paymentChannel })` →
-`{ enabled: boolean, template_id: string | null, source: 'scenario' | 'defaults' | 'none', reason?: 'no_offer' | 'no_template' | 'disabled' }`.
-Правила:
-  - найден matching enabled `document_scenarios[]` с непустым `template_id` → `enabled=true`, source=`scenario`;
-  - иначе если `document_defaults.generate_act === true` И `document_defaults.template_id` непустой → `enabled=true`, source=`defaults`;
-  - если `generate_act=true`, но `template_id` пустой → `enabled=false`, `reason='no_template'` (UI покажет «Документ не настроен»);
-  - иначе `enabled=false`, `reason='disabled' | 'no_offer'`.
-- `canGenerateDocument(order, payments, offerMeta, ctx)` — композиция выше: true только если `hasRealSucceededPayment` И `isOfferDocumentEnabled.enabled`.
-
-Любая «угадайка» (heuristics по product_code/имени тарифа/строкам meta) — запрещена.
-
-## A.2. Frontend (`/purchases`)
-
-Файл `src/components/purchases/OrderListItem.tsx` (+ subscription sheet):
-
-- Удалить локальный `hasRealPayment = isPaid && payments_v2.length>0`.
-- Использовать `hasRealSucceededPayment(order.payments_v2)`.
-- Резолв офера через `getOrderOfferId` → подтянуть `tariff_offers` (уже грузится в `useTariffOffers`); если нет — `resolveOfferForOrder` пытается single-active fallback.
-- `isOfferDocumentEnabled` с `payerType` из `order.meta.payer_type` и `paymentChannel` из `derivePaymentChannel`.
-- Рендер:
-  - есть existing `primaryDoc` из `useOrderCanonicalDocuments` → показывать «Скачать документ» (и «Скачать DOCX» если mime=docx) независимо от A.1/A.3;
-  - нет документа + `canGenerate` → «Сформировать документ»;
-  - нет документа + `hasRealSucceededPayment` + offer disabled с `reason='no_template'` → строка «Документ не настроен» (без кнопки);
-  - нет документа + offer disabled по другой причине → ничего из секции документов;
-- «Чек bePaid»: показывать только если `getValidReceiptUrl(p) !== null` хотя бы для одного `p` с `hasRealSucceededPayment`. Не показывать ни для admin_test, ни при пустом url. Виртуальная квитанция (`receiptGenerator.ts`) скрыта при наличии реального чека и не подменяет его.
-
-## A.3. Backend hard-stop в `canonical-document-generate-strict`
-
-Self-service ветка (не admin):
-
-1. Загрузить `payments_v2` по `order_id`. Если `hasRealSucceededPayment === false` → `403 no_real_payment`, audit `document.generate_blocked_no_payment`.
-2. Через `getOrderOfferId` + `resolveOfferForOrder` (single-active fallback) получить offer. Если `source='none'` → `409 offer_unresolved` с reason, audit `document.generate_blocked_offer_unresolved`.
-3. `isOfferDocumentEnabled(offer.meta, { payerType, paymentChannel })`:
-  - `reason='no_template'` → `409 document_template_not_configured`;
-  - `enabled=false` иначе → `403 document_not_enabled_for_offer`;
-  - `enabled=true` → берём `template_id` и продолжаем.
-4. Admin-путь:
-  - срабатывает только при явном `admin_force === true` И вызывающий — `super_admin/admin`;
-  - guards A.3.1–A.3.3 НЕ обходятся молча: они выполняются и при провале возвращают warnings, которые сохраняются в `audit_logs` (`action='document.admin_force_generate'`, `meta={ skipped_guards: [...], offer_source, payment_status }`) и в `ai_generated_documents.meta.admin_force = { reason, skipped_guards }`;
-  - UI админки помечает такой документ бейджем «Создан вручную вне правил оффера».
-
-Удалить текущий «угадывающий» fallback на ЛЮБОЙ активный оффер тарифа — заменить на helper из A.1 (строго single-active).
-
-## A.4. Verify PATCH-A
-
-Proof: `.lovable/proofs/patch_a_purchases_rules.md`. Сценарии:
-
-1. Real succeeded + offer.generate_act+template_id → «Сформировать» работает, документ создаётся.
-2. Real succeeded + matched enabled scenario с template_id → «Сформировать» работает.
-3. Real succeeded + valid receipt_url → «Чек» виден.
-4. Real succeeded + offer без документа → видна только «Чек», «Сформировать» нет.
-5. Real succeeded + generate_act=true + template_id пустой → строка «Документ не настроен», без кнопки; backend на прямой вызов отдаёт `409 document_template_not_configured`.
-6. Order без `payments_v2.succeeded` (или только admin_test) → нет «Чек», нет «Сформировать», backend → `403 no_real_payment`.
-7. Order виртуальный, но уже есть canonical-документ → «Скачать документ» видно, «Сформировать новый» отсутствует, «Чек» отсутствует.
-8. У тарифа 2+ активных оффера, у заказа `offer_id=NULL` → backend `409 offer_unresolved`, UI показывает «Документ не настроен».
-9. Admin без `admin_force` → ведёт себя как self-service (получает 403/409). Admin с `admin_force=true` → документ создаётся, в audit зафиксированы `skipped_guards`.
-
----
-
-# PATCH-B. `file_name_template` (FLD-first canon)
-
-## B.0. Канон
-
-Имя файла документа использует **тот же синтаксис плейсхолдеров, что DOCX**: только `{{field:FLD-XXXXXX}}`. Никаких новых alias (`{{payer_short_name}}`, `{{amount}}`, `{{document_date_iso}}`, `{{order_number}}` и пр.). Все значения берутся из того же resolved token map (`orders_v2.meta.document_data.fields` / `token_manifest_snapshot`), который используется для рендера DOCX/PDF. Это сохраняет совместимость с `field-id-first-canon` (см. `.lovable/memory/architecture/documents/field-id-first-canon.md`) и не вводит второй стандарт.
-
-## B.1. Discovery (обязательный шаг перед миграцией)
-
-Proof: `.lovable/proofs/patch_b_file_name_template_discovery.md`.
-
-1. Прочитать структуру `document_templates` и `document_template_versions`, понять, версионируется ли тело шаблона per-version и где сейчас хранятся per-version настройки.
-2. Зафиксировать решение SOT:
-  - **Вариант 1 (по умолчанию):** `document_templates.file_name_template` — общий дефолт для всех версий шаблона; per-version override опционален позже.
-  - **Вариант 2:** `document_template_versions.file_name_template` — если в реальности per-version отличаются метаданные (формат даты/номера).
-3. В обоих вариантах при генерации **обязателен snapshot** в `ai_generated_documents`:
-  - `file_name` — рендеренное имя;
-  - `meta.file_name_template_snapshot` — исходная строка шаблона;
-  - `meta.file_name_template_source` — `template` | `template_version` | `system_default`;
-  - `meta.file_name_warnings[]` — unresolved плейсхолдеры.
-   Это гарантирует, что изменение шаблона в админке не переименовывает исторические документы.
-
-После discovery — миграция строго по выбранному варианту, не вслепую.
-
-## B.2. Контракт плейсхолдеров
-
-- Допустимо только: `{{field:FLD-XXXXXX}}`.
-- Значения резолвятся через тот же helper, что строит token map для DOCX (`aiDocumentSnapshotResolver` / `resolved_tokens`). Никаких параллельных alias-резолверов.
-- Дата: используется **существующий FLD даты документа** из registry. Формат даты в этом патче НЕ меняется — он определяется тем, как этот FLD рендерится в текущей pipeline. `document_date_iso` НЕ вводится.
-- Номер документа: используется существующий FLD номера документа из registry.
-- Точные `FLD-*` для номера/даты/ФИО плательщика/наименования исполнителя определяются в discovery через `fields_registry` + `document_token_registry` и фиксируются в proof.
-
-## B.3. Validation шаблона имени (UI + backend)
-
-В UI редактирования шаблона (`AdminProductsDocs` → шаблоны документов):
-
-- Текстовое поле `file_name_template` + chips-каталог доступных FLD (читается из `fields_registry`, тех же что доступны для DOCX данного шаблона).
-- Live-preview по фейковому token map.
-- **Hard validation на save:**
-  - любой `{{...}}` не матчащий `^\{\{field:FLD-[0-9]+\}\}$` → ошибка «Использовать можно только плейсхолдеры формата `{{field:FLD-XXXXXX}}`»;
-  - шаблон обязан содержать FLD номера документа (whitelist FLD-ID номера фиксируется в discovery) → иначе ошибка «Добавьте плейсхолдер номера документа, чтобы имя файла было уникальным»;
-  - запрещённые символы `/ \ : * ? " < > |` в литералах шаблона допустимы (мы их санитизируем при рендере), но в preview сразу показываем санитизированный вид.
-- Кнопка «Сбросить к системному дефолту».
-- Производственные шаблоны не получают `file_name_template` автоматически. Заполнение — только вручную админом. STOP: миграция НЕ проставляет дефолтные значения существующим строкам.
-
-## B.4. Backend `renderFileName`
-
-Новый модуль `supabase/functions/_shared/document-filename.ts` (pure, без БД):
-
-- `renderFileName(templateString, resolvedTokens, ctx)` →
-`{ name: string, warnings: string[] }`.
-- Резолв ТОЛЬКО `{{field:FLD-XXXXXX}}` через переданный resolved token map (тот же, что для DOCX/PDF).
-- Unresolved/неизвестный FLD → подставляется пустая строка + warning `file_name_placeholder_unresolved:FLD-XXXXXX`. Никогда не оставлять `{{...}}` в финальном имени.
-- Любой плейсхолдер не FLD-формата → warning `file_name_placeholder_invalid_syntax:<raw>` + пусто (на backend; UI обязан не пропускать такое).
-- **Санитизация:**
-  - запрещённые символы `/ \ : * ? " < > |` → `-` (важно: `document_number` `2105/1` → `2105-1`);
-  - control chars (`\u0000-\u001F`) → удалить;
-  - схлопнуть повторные пробелы и пробелы вокруг разделителей;
-  - trim;
-  - max length 180 символов (UTF-8 safe truncate);
-  - пустой результат → fallback на системный дефолт `«{template.name} № <doc_number_or_id> от <created_at_date>»` (тоже санитизированный).
-- Расширение (`.pdf`/`.docx`) добавляется потребителем, не из шаблона.
-
-Интеграция в `canonical-document-generate-strict`:
-
-- после успешной генерации читать `file_name_template` по выбранному SOT;
-- собрать `resolvedTokens` (тот же snapshot, что писали в `document_data.fields`);
-- сохранить `file_name` + `meta.file_name_template_snapshot` + `meta.file_name_warnings` в `ai_generated_documents`.
-
-## B.5. Применение имени везде на выдаче
-
-- `supabase/functions/document-download/index.ts`:
-  - использовать `ai_generated_documents.file_name`;
-  - расширение по `kind`: `.pdf` для PDF, `.docx` для DOCX;
-  - `Content-Disposition: attachment; filename*=UTF-8''<rfc5987-encoded(name+ext)>` + ASCII-fallback `filename="..."` (для кириллицы — без ByteString-ошибок);
-  - НЕ брать имя из storage `file_path`.
-- `supabase/functions/canonical-document-send/index.ts`:
-  - email attachment filename = `ai_generated_documents.file_name + ext` (не `document.pdf`);
-  - Telegram `sendDocument` `filename` = то же; не отдавать технический storage name.
-- Storage path остаётся техническим UUID — допускается одинаковое человекочитаемое имя для разных файлов в storage, конфликты разруливает UUID.
-
-## B.6. Verify PATCH-B
-
-Proof: `.lovable/proofs/patch_b_file_name_template.md`.
-
-- **Discovery proof:** зафиксирован SOT (templates vs versions) и точные FLD номера/даты/ФИО/исполнителя.
-- **Validation:**
-  - сохранение `file_name_template` с `{{payer_short_name}}` или `{{amount}}` → ошибка validation (UI + при прямом API);
-  - сохранение без FLD номера документа → ошибка «Добавьте плейсхолдер номера документа…»;
-  - сохранение `Счёт-акт {{field:FLD-XXX}} — {{field:FLD-YYY}} — {{field:FLD-ZZZ}}` → ok.
-- **Рендер:**
-  - `document_number='2105/1'` → в имени `2105-1`;
-  - кириллица: скачивание отдаёт файл с именем вида
-  `Счёт-акт 2105-1 — Федорчук С.В. — ЗАО АЖУР инкам.pdf`
-  без ByteString-ошибок и без `*.supabase.co` в пользовательском URL;
-  - DOCX-вариант того же документа: `... .docx`, имя совпадает с PDF до расширения;
-  - unresolved FLD → пусто в имени + warning в `meta.file_name_warnings`;
-  - пустой результат после санитизации → fallback на системный дефолт.
-- **Email/Telegram:**
-  - письмо с attachment имеет это же имя файла;
-  - Telegram `sendDocument` показывает это же имя.
-- **Snapshot:** изменение `file_name_template` после генерации НЕ переименовывает уже выданный документ (читается `meta.file_name_template_snapshot` для исторических — для регенерации, не для скачивания).
-- **Production safety:** существующие production-шаблоны имеют `file_name_template IS NULL` после миграции, ведут себя как раньше (системный дефолт) до ручного заполнения админом.
-
----
-
-## Что НЕ делается в этом спринте
-
-- Не меняется формат DOCX-плейсхолдеров и не вводится никаких alias.
-- Не меняется формат даты документа в теле (только используется существующий FLD даты).
-- Не трогается legacy `generated_documents` (только чтение).
-- Не вводятся новые edge-функции и таблицы кроме одной мини-миграции по B.1.
-- Production-шаблонам `file_name_template` не проставляется автоматически.
-
-## DoD (общий)
-
-PATCH-A:
-
-- Правила A.0 выполняются 1:1 (UI + backend), backend и UI используют один shared helper.
-- Backend возвращает осмысленные коды: `no_real_payment`, `offer_unresolved`, `document_not_enabled_for_offer`, `document_template_not_configured`.
-- Admin force-generate только при `admin_force=true` + audit с `skipped_guards`.
-- Proof по реальной выборке + все 9 сценариев из A.4.
-
-PATCH-B:
-
-- Discovery выбрал SOT (templates vs versions) и зафиксирован в proof.
-- В шаблоне имени допустим ТОЛЬКО `{{field:FLD-XXXXXX}}`; alias-плейсхолдеры запрещены validation'ом.
-- Обязателен FLD номера документа в шаблоне.
-- `document_number` с `/` санитизируется в `-`; запрещённые символы → `-`; пустой результат → fallback.
-- Имя применяется и в download, и в email, и в Telegram; кириллица работает; без ByteString и `*.supabase.co` в UI.
-- Snapshot в `ai_generated_documents.meta.file_name_template_snapshot` гарантирует, что исторические документы не переименовываются.
-- Production-шаблоны не модифицируются автоматически.
+- В UI Шаблоны документов → редактор имени файла:
+  - Видна кнопка «+ Вставить плейсхолдер»; нажатие открывает общий FieldPickerPopover со всеми FLD-полями, сгруппированными по категориям, с поиском и человекочитаемыми названиями.
+  - Можно вставить плейсхолдер в позицию курсора.
+  - Под шаблоном выводится живая легенда «FLD-XXX — название», а в Preview лейблы подставляются вместо магических значений.
+  - Кнопка «Сохранить» успешно записывает `file_name_template` в `document_templates` (проверяется select после update); при любой ошибке toast показывает реальный текст ошибки.
+  - Кнопка «Сбросить к системному дефолту» записывает `NULL` в БД.
+- Никаких новых таблиц/edge functions/миграций. Логика `renderFileName`, FLD-first контракт, требование FLD-000069 — не меняем.
+- Файлы, затронутые патчем: только `src/components/ai-documents/FileNameTemplateEditor.tsx`.
