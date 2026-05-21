@@ -174,12 +174,12 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ========== Step 2c: Extract UID from order meta itself ==========
+    // ========== Step 2c: Extract UID from order meta or column ==========
     for (const order of ordersToRepair) {
       if (uidByOrderId.has(order.id)) continue;
-      const metaUid = extractUidFromMeta(order.meta as any);
-      if (metaUid) {
-        uidByOrderId.set(order.id, { uid: metaUid.uid, created_at: order.created_at, source: metaUid.source });
+      const uid = extractOrderUid(order);
+      if (uid) {
+        uidByOrderId.set(order.id, { uid: uid.uid, created_at: order.created_at, source: uid.source });
       }
     }
 
