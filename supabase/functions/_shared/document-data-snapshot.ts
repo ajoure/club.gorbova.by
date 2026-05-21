@@ -114,11 +114,16 @@ export async function snapshotOrderDocumentData(
     let tariffRow: any = null;
     let productRow: any = null;
 
-    // Resolve offer_id with fallback to meta.offer_id (admin_test, recurring resolver paths).
+    // Resolve offer_id with fallback chain:
+    //   1) order.offer_id (canonical)
+    //   2) order.meta.offer_id (admin_test, recurring resolver)
+    //   3) tariff_pay_now_fallback — для REBILL/legacy заказов без offer_id
+    //      выбираем активный pay_now-оффер этого тарифа (не trial), чтобы
+    //      подхватить offer-level document_defaults (service_name и пр.).
     const orderMetaAny: any = order.meta || {};
     const offerIdFromMeta = typeof orderMetaAny.offer_id === 'string' ? orderMetaAny.offer_id : null;
-    const resolvedOfferId: string | null = order.offer_id || offerIdFromMeta;
-    const offerIdSource: 'order' | 'order_meta' | 'none' =
+    let resolvedOfferId: string | null = order.offer_id || offerIdFromMeta;
+    let offerIdSource: 'order' | 'order_meta' | 'tariff_pay_now_fallback' | 'none' =
       order.offer_id ? 'order' : (offerIdFromMeta ? 'order_meta' : 'none');
 
     if (resolvedOfferId) {
@@ -133,6 +138,35 @@ export async function snapshotOrderDocumentData(
       }
       offerRow = data || null;
       offerDefaults = data?.meta?.document_defaults || null;
+    }
+
+    // Fallback: ни order.offer_id, ни meta.offer_id не заданы (например, REBILL
+    // от bePaid subscription_charge или старый SUB-LINK заказ). Берём pay_now
+    // оффер тарифа с непустым document_defaults — чтобы service_name и прочие
+    // поля кнопки попадали в документы и в этом случае.
+    if (!offerRow && order.tariff_id) {
+      const { data: payNowOffers } = await supabase
+        .from('tariff_offers')
+        .select('id, tariff_id, offer_type, button_label, amount, reentry_amount, meta, is_active, created_at')
+        .eq('tariff_id', order.tariff_id)
+        .eq('is_active', true)
+        .eq('offer_type', 'pay_now')
+        .order('created_at', { ascending: false });
+      const candidates = (payNowOffers || []).filter((o: any) => o?.meta?.document_defaults);
+      const picked = candidates[0] || (payNowOffers || [])[0] || null;
+      if (picked) {
+        offerRow = picked;
+        offerDefaults = picked?.meta?.document_defaults || null;
+        resolvedOfferId = picked.id;
+        offerIdSource = 'tariff_pay_now_fallback';
+        await safeAudit(supabase, 'document_data.snapshot_offer_fallback', {
+          order_id: orderId,
+          tariff_id: order.tariff_id,
+          picked_offer_id: picked.id,
+          had_document_defaults: !!picked?.meta?.document_defaults,
+          reason: 'order_offer_id_missing',
+        });
+      }
     }
     if (order.tariff_id) {
       const { data, error } = await supabase
