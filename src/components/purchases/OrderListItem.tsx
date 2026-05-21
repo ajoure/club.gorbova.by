@@ -271,25 +271,29 @@ export function OrderListItem({ order }: OrderListItemProps) {
                     <Download className="h-4 w-4 mr-2" />
                     Скачать {primaryDoc.file_mime?.includes("wordprocessingml") ? "DOCX" : "PDF"}
                   </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    onClick={() => sendDoc(primaryDoc.id, { email: true })}
-                  >
-                    <Mail className="h-4 w-4 mr-2" />
-                    Отправить на почту
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => sendDoc(primaryDoc.id, { telegram: true })}
-                  >
-                    <Send className="h-4 w-4 mr-2" />
-                    Отправить в Telegram (PDF)
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => sendDoc(primaryDoc.id, { email: true, telegram: true })}
-                  >
-                    <Send className="h-4 w-4 mr-2" />
-                    Отправить везде
-                  </DropdownMenuItem>
+                  {!primaryDoc.file_mime?.includes("wordprocessingml") && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onClick={() => sendDoc(primaryDoc.id, { email: true })}
+                      >
+                        <Mail className="h-4 w-4 mr-2" />
+                        Отправить на почту
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => sendDoc(primaryDoc.id, { telegram: true })}
+                      >
+                        <Send className="h-4 w-4 mr-2" />
+                        Отправить в Telegram (PDF)
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => sendDoc(primaryDoc.id, { email: true, telegram: true })}
+                      >
+                        <Send className="h-4 w-4 mr-2" />
+                        Отправить везде
+                      </DropdownMenuItem>
+                    </>
+                  )}
 
                   {docs.length > 1 && (
                     <>
