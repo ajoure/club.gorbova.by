@@ -314,7 +314,6 @@ Deno.serve(async (req) => {
       .eq('user_id', userId);
     const codes = (roleRows || []).map((r: any) => r.roles?.code);
     const isAdmin = codes.includes('admin') || codes.includes('super_admin') || codes.includes('owner');
-    if (!isAdmin) return json({ error: 'forbidden' }, 403);
 
     const { data: prof } = await supabase.from('profiles').select('id').eq('user_id', userId).maybeSingle();
     if (!prof) return json({ error: 'profile_not_found' }, 400);
@@ -322,9 +321,71 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const mode: 'preview' | 'generate' = body?.mode === 'generate' ? 'generate' : 'preview';
     const orderId: string | null = body?.order_id || null;
-    const templateId: string | null = body?.template_id || null;
+    let templateId: string | null = body?.template_id || null;
     if (!orderId) return json({ error: 'order_id_required' }, 400);
-    if (!templateId) return json({ error: 'template_id_required' }, 400);
+
+    // Authorization: admin OR self-service (owner of order AND order is paid).
+    // Self-service path is used by /purchases — позволяет пользователю
+    // сформировать документ по своей оплаченной сделке.
+    if (!isAdmin) {
+      const { data: ownCheck } = await supabase
+        .from('orders_v2')
+        .select('id, profile_id, status, tariff_id, offer_id')
+        .eq('id', orderId)
+        .maybeSingle();
+      if (!ownCheck || ownCheck.profile_id !== prof.id) return json({ error: 'forbidden' }, 403);
+      if (ownCheck.status !== 'paid') return json({ error: 'order_not_paid' }, 403);
+    }
+
+    // Auto-resolve template_id from tariff_offer document_scenarios/defaults
+    // when not explicitly provided (typical self-service path from /purchases).
+    if (!templateId) {
+      const { data: ordForResolve } = await supabase
+        .from('orders_v2')
+        .select('payer_type, offer_id')
+        .eq('id', orderId)
+        .maybeSingle();
+      let offerMeta: any = null;
+      if (ordForResolve?.offer_id) {
+        const { data: off } = await supabase
+          .from('tariff_offers')
+          .select('meta')
+          .eq('id', ordForResolve.offer_id)
+          .maybeSingle();
+        offerMeta = off?.meta || null;
+      }
+      // Determine payment channel from latest succeeded payment.
+      const { data: pay } = await supabase
+        .from('payments_v2')
+        .select('*')
+        .eq('order_id', orderId)
+        .eq('status', 'succeeded')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const channel = derivePaymentChannel(pay as any);
+      const payerType = ((ordForResolve?.payer_type as PayerType) || 'individual');
+      const resolved = resolveDocumentScenario(offerMeta, channel, payerType);
+      templateId = resolved.template_id;
+      if (!templateId) {
+        // Fallback: reuse template_id from the most recent document of this order.
+        const { data: lastDoc } = await supabase
+          .from('generated_documents')
+          .select('template_id')
+          .eq('order_id', orderId)
+          .not('template_id', 'is', null)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        templateId = (lastDoc?.template_id as string) || null;
+      }
+      if (!templateId) {
+        return json({
+          error: 'template_id_required',
+          hint: 'Для этого тарифа не настроен шаблон документа (scenario/defaults). Обратитесь к администратору.',
+        }, 400);
+      }
+    }
 
     // Load template + active version (guard: must be active and not archived)
     const { data: tpl } = await supabase
