@@ -585,13 +585,17 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
             <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="auto">
-                {resolved.executor_id
-                  ? `${sourceLabelRu(resolved.source)} · ${
-                      executors.find((e) => e.id === resolved.executor_id)?.short_name
-                      || executors.find((e) => e.id === resolved.executor_id)?.full_name
+                {effectiveExecutorId
+                  ? `${usingSnapshotExecutor ? snapshotBadgeText : sourceLabelRu(resolved.source)} · ${
+                      executors.find((e) => e.id === effectiveExecutorId)?.short_name
+                      || executors.find((e) => e.id === effectiveExecutorId)?.full_name
                       || "исполнитель"
                     }`
-                  : "Автоматически (не задан в кнопке)"}
+                  : !resolvedOfferId
+                    ? "Автоматически (оффер сделки не определён)"
+                    : !offerMetaLoaded
+                      ? "Автоматически (настройки кнопки не загружены)"
+                      : "Автоматически (не задан в кнопке)"}
               </SelectItem>
               {executors.map((e) => (
                 <SelectItem key={e.id} value={e.id}>{e.short_name || e.full_name || e.id.slice(0, 8)}</SelectItem>
