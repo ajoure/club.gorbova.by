@@ -45,11 +45,19 @@ function json(status: number, body: unknown) {
 
 async function getCallerUserId(req: Request): Promise<string | null> {
   const authHeader = req.headers.get("Authorization");
-  if (!authHeader) return null;
+  if (!authHeader?.startsWith("Bearer ")) return null;
+  const token = authHeader.slice("Bearer ".length).trim();
+  if (!token) return null;
   const client = createClient(SUPABASE_URL, ANON_KEY, {
     global: { headers: { Authorization: authHeader } },
   });
-  const { data, error } = await client.auth.getUser();
+  try {
+    const { data, error } = await (client.auth as any).getClaims(token);
+    if (!error && data?.claims?.sub) return data.claims.sub as string;
+  } catch (_) {
+    // fall through to getUser
+  }
+  const { data, error } = await client.auth.getUser(token);
   if (error || !data?.user) return null;
   return data.user.id;
 }
