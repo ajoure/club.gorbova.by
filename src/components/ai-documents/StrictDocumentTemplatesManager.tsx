@@ -331,6 +331,19 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
     if (!uploadName) setUploadName(file.name.replace(/\.docx$/i, ""));
   };
 
+  // Live-подсказка в форме: совпало ли имя с существующим шаблоном (case-insensitive)
+  const matchedExistingTemplate = useMemo(() => {
+    const name = uploadName.trim().toLowerCase();
+    if (!name) return null;
+    return templates.find(t => (t.name ?? "").trim().toLowerCase() === name) ?? null;
+  }, [uploadName, templates]);
+
+  const nextVersionNumberFor = (templateId: string): number => {
+    const vers = versionsByTemplate.get(templateId) ?? [];
+    const maxN = vers.reduce((acc, v) => Math.max(acc, v.version_number ?? 0), 0);
+    return maxN + 1;
+  };
+
   const handleUpload = async () => {
     if (!uploadFile || !uploadName.trim()) {
       toast.error("Укажите имя и выберите .docx");
@@ -354,30 +367,68 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
         });
       if (upErr) throw upErr;
 
-      // 3. create or reuse template row
-      const { data: tmplIns, error: tmplErr } = await supabase
+      // 3. Найти существующий шаблон по имени (case-insensitive, trim)
+      //    Если найден — добавляем НОВУЮ ВЕРСИЮ к существующему template_id.
+      //    Если нет — создаём новый template + версию 1.
+      const trimmedName = uploadName.trim();
+      const { data: existingRows } = await supabase
         .from("document_templates")
-        .insert({
-          name: uploadName.trim(),
-          // legacy NOT NULL columns: заполняем минимально допустимыми значениями
-          code: `tmpl_${ts}`,
-          document_type: "act",
-          template_path: storagePath,
-          template_status: "draft",
-          template_scope: "act",
-          editor_mvp_enabled: false,
-          is_active: false,
-        })
-        .select("id")
-        .single();
-      if (tmplErr) throw tmplErr;
+        .select("id, name, template_status, current_version_id, created_at, description")
+        .is("deleted_at", null)
+        .ilike("name", trimmedName);
+      const existing = (existingRows ?? []).find(
+        (r: any) => (r.name ?? "").trim().toLowerCase() === trimmedName.toLowerCase(),
+      ) as any | undefined;
 
-      // 4. create version draft
-      const { error: verErr } = await supabase
+      let templateId: string;
+      let templateName: string;
+      let templateStatus: string;
+      let templateCurrentVersionId: string | null;
+      let templateCreatedAt: string;
+      let templateDescription: string | null;
+      let nextVersionNumber: number;
+      let reusedTemplate = false;
+
+      if (existing) {
+        reusedTemplate = true;
+        templateId = existing.id;
+        templateName = existing.name;
+        templateStatus = existing.template_status;
+        templateCurrentVersionId = existing.current_version_id ?? null;
+        templateCreatedAt = existing.created_at;
+        templateDescription = existing.description ?? null;
+        nextVersionNumber = nextVersionNumberFor(templateId);
+      } else {
+        const { data: tmplIns, error: tmplErr } = await supabase
+          .from("document_templates")
+          .insert({
+            name: trimmedName,
+            code: `tmpl_${ts}`,
+            document_type: "act",
+            template_path: storagePath,
+            template_status: "draft",
+            template_scope: "act",
+            editor_mvp_enabled: false,
+            is_active: false,
+          })
+          .select("id, created_at")
+          .single();
+        if (tmplErr) throw tmplErr;
+        templateId = tmplIns.id;
+        templateName = trimmedName;
+        templateStatus = "draft";
+        templateCurrentVersionId = null;
+        templateCreatedAt = (tmplIns as any).created_at ?? new Date().toISOString();
+        templateDescription = null;
+        nextVersionNumber = 1;
+      }
+
+      // 4. Создаём версию (всегда — новая запись с инкрементированным номером)
+      const { data: verIns, error: verErr } = await supabase
         .from("document_template_versions")
         .insert({
-          template_id: tmplIns.id,
-          version_number: 1,
+          template_id: templateId,
+          version_number: nextVersionNumber,
           storage_bucket: "documents",
           storage_path: storagePath,
           file_name: uploadFile.name,
@@ -389,32 +440,44 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
           tokens: detected,
           validation_status: "pending",
           validation_errors: [],
-        });
+        })
+        .select("id")
+        .single();
       if (verErr) throw verErr;
 
-      toast.success(`Шаблон загружен (${detected.length} плейсхолдеров найдено)`);
-      auditEvent("document_template.uploaded", {
-        template_id: tmplIns.id,
-        meta: {
-          file_name: uploadFile.name,
-          file_size_bytes: uploadFile.size,
-          detected_tokens_count: detected.length,
-          storage_path: storagePath,
+      if (reusedTemplate) {
+        toast.success(`Добавлена версия v${nextVersionNumber} к шаблону «${templateName}»`);
+      } else {
+        toast.success(`Создан шаблон «${templateName}» (v1, ${detected.length} плейсхолдеров)`);
+      }
+
+      auditEvent(
+        reusedTemplate ? "document_template.version_uploaded" : "document_template.uploaded",
+        {
+          template_id: templateId,
+          template_version_id: verIns?.id ?? null,
+          meta: {
+            file_name: uploadFile.name,
+            file_size_bytes: uploadFile.size,
+            detected_tokens_count: detected.length,
+            storage_path: storagePath,
+            version_number: nextVersionNumber,
+            reused_template: reusedTemplate,
+          },
         },
-      });
+      );
+
       setUploadOpen(false);
       setUploadFile(null);
       setUploadName("");
       await fetchAll();
 
-      // C5-I: автопроверка сразу после загрузки.
-      // Берём только что созданную версию по storage_path и запускаем strict validation,
-      // чтобы пользователь сразу увидел статус (valid / есть ошибки), а не «pending».
+      // C5-I: автопроверка сразу после загрузки + авто-активация при validation=valid
       try {
         const { data: freshVer } = await supabase
           .from("document_template_versions")
           .select("id, template_id, version_number, storage_bucket, storage_path, file_name, file_size_bytes, is_current, validation_status, validation_errors, validation_checked_at, markup_status, detected_tokens, token_manifest, created_at")
-          .eq("template_id", tmplIns.id)
+          .eq("template_id", templateId)
           .eq("storage_path", storagePath)
           .maybeSingle();
         if (freshVer) {
@@ -425,14 +488,42 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
             token_manifest: (freshVer as any).token_manifest ?? [],
           };
           const tplRow: TemplateRow = {
-            id: tmplIns.id,
-            name: uploadName.trim(),
-            description: null,
-            template_status: "draft",
-            current_version_id: null,
-            created_at: new Date().toISOString(),
+            id: templateId,
+            name: templateName,
+            description: templateDescription,
+            template_status: templateStatus,
+            current_version_id: templateCurrentVersionId,
+            created_at: templateCreatedAt,
           };
           await openPreview(tplRow, verRow);
+
+          // Авто-активация: если после валидации статус valid И разметка ок (или не требуется) —
+          // молча активируем. Если разметка нужна — оставляем как draft и НЕ трогаем current.
+          // Это безопасно: payment-кнопки ссылаются на template_id, версия меняется прозрачно.
+          try {
+            const { data: refreshed } = await supabase
+              .from("document_template_versions")
+              .select("id, validation_status, markup_status, is_current")
+              .eq("id", verRow.id)
+              .maybeSingle();
+            const r = refreshed as any;
+            const markupOk = !r?.markup_status || r.markup_status === "marked";
+            if (r?.validation_status === "valid" && markupOk && !r?.is_current) {
+              const { data: actData, error: actErr } = await supabase.functions.invoke(
+                "canonical-template-activate-version",
+                { body: { template_version_id: verRow.id } },
+              );
+              if (!actErr && !(actData as any)?.error) {
+                toast.success(`v${nextVersionNumber} автоматически активирована`);
+                await fetchAll();
+              } else {
+                // Не валим UI — пользователь увидит preview и сможет активировать вручную
+                console.warn("[auto-activate] skipped", actErr, actData);
+              }
+            }
+          } catch (e) {
+            console.warn("[auto-activate] non-blocking", e);
+          }
         }
       } catch (e) {
         console.warn("[c5i] auto-validate after upload failed (non-blocking)", e);
@@ -709,7 +800,18 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
                           <TableCell className="text-xs text-muted-foreground">
                             {(v.detected_tokens?.length ?? 0)}
                           </TableCell>
-                          <TableCell></TableCell>
+                          <TableCell onClick={(e) => e.stopPropagation()}>
+                            {!v.is_current && v.validation_status === "valid" && (!v.markup_status || v.markup_status === "marked") && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-6 px-2 text-[10px]"
+                                onClick={() => activateVersion(t, v)}
+                              >
+                                Сделать активной
+                              </Button>
+                            )}
+                          </TableCell>
                         </TableRow>
                       ))}
                     </>
@@ -802,6 +904,15 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
                 onChange={e => setUploadName(e.target.value)}
                 placeholder="Акт услуг — основной"
               />
+              {matchedExistingTemplate ? (
+                <div className="text-[11px] text-emerald-600 mt-1">
+                  Имя совпадает с существующим шаблоном — будет добавлена версия v{nextVersionNumberFor(matchedExistingTemplate.id)}. Настройки кнопок оплаты не изменятся.
+                </div>
+              ) : uploadName.trim() ? (
+                <div className="text-[11px] text-muted-foreground mt-1">
+                  Будет создан новый шаблон (v1).
+                </div>
+              ) : null}
             </div>
             <div>
               <Label>Файл .docx</Label>
