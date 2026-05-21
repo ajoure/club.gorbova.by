@@ -408,7 +408,7 @@ export async function snapshotOrderDocumentData(
       quantity,
       unit_price: unitPrice,
       amount,
-      amount_words: amount != null ? numberToWordsRu(amount, normCurrency) : '',
+      amount_words: amount != null ? formatAmountWithWordsByRublesAndKopecks(amount, normCurrency) : '',
       currency: normCurrency,
       currency_major: cm.major,
       currency_minor: cm.minor,
