@@ -340,18 +340,24 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ========== Step 5: Strategy 5 — UID collision (meta UID points to another order's payment) ==========
-    const collisionOrders = ordersToRepair.filter((o: any) => {
-      if (uidByOrderId.has(o.id)) return false;
-      return extractUidFromMeta(o.meta as any) !== null;
+    // ========== Step 5: Strategy 5 — UID collision ==========
+    // For any order whose extractable UID (from meta or column.provider_payment_id) is already
+    // bound to a payments_v2 row on a DIFFERENT order, mark this order as superseded.
+    // Runs AFTER Step 2c so that orders with column-fallback UIDs are also checked.
+    const collisionCandidates = ordersToRepair.filter((o: any) => {
+      const info = uidByOrderId.get(o.id);
+      if (!info) return false;
+      // Skip already-classified terminal states
+      if (info.uid === "__superseded__" || info.uid === "__no_real_payment__") return false;
+      return true;
     });
 
-    for (const order of collisionOrders) {
-      const metaUid = extractUidFromMeta(order.meta as any)!;
+    for (const order of collisionCandidates) {
+      const info = uidByOrderId.get(order.id)!;
       const { data: existP } = await supabase
         .from("payments_v2")
         .select("id, order_id")
-        .eq("provider_payment_id", metaUid.uid)
+        .eq("provider_payment_id", info.uid)
         .limit(1);
 
       if (existP && existP.length > 0 && existP[0].order_id !== order.id) {
@@ -359,7 +365,7 @@ Deno.serve(async (req) => {
           order_id: order.id,
           order_number: order.order_number,
           superseded_by_order: existP[0].order_id,
-          reason: `uid_collision_via_${metaUid.source}`,
+          reason: `uid_collision_via_${info.source}`,
         });
         uidByOrderId.set(order.id, { uid: "__superseded__", created_at: order.created_at, source: "collision" });
       }
