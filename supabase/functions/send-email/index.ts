@@ -7,6 +7,12 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+interface EmailAttachment {
+  filename: string;
+  content_base64: string;
+  mime?: string;
+}
+
 interface EmailRequest {
   to: string;
   subject: string;
@@ -14,6 +20,7 @@ interface EmailRequest {
   text?: string;
   account_id?: string; // Optional: specify which email account to use
   product_id?: string; // Optional: use email account mapped to this product
+  attachments?: EmailAttachment[]; // Optional PDF/file attachments
   // Context for logging
   context?: {
     user_id?: string;
@@ -23,6 +30,7 @@ interface EmailRequest {
     meta?: Record<string, unknown>;
   };
 }
+
 
 interface EmailAccount {
   id: string;
