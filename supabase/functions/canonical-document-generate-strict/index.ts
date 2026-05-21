@@ -1017,6 +1017,10 @@ Deno.serve(async (req) => {
         docx_storage_path: docxPath,
         docx_file_name: renderedDocxName,
         docx_mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        // PATCH-B: snapshot имени файла + источник + warnings.
+        file_name_template_snapshot: fileNameTemplate,
+        file_name_template_source: fileNameTemplateSource,
+        file_name_warnings: fileNameWarnings,
         ...gotenbergMeta,
       },
     } as any;
