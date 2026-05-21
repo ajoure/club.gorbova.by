@@ -216,8 +216,10 @@ async function sendEmailViaSMTP(params: {
   html: string;
   text?: string;
   account: EmailAccount;
+  attachments?: EmailAttachment[];
 }): Promise<{ queueId?: string; smtpHost: string; smtpPort: number }> {
   const { account } = params;
+
   
   let smtpHost = account.smtp_host;
   let smtpPort = account.smtp_port || 465;
