@@ -20,6 +20,9 @@ const corsHeaders = {
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  // PATCH: без этого браузер не отдаёт Content-Disposition JS-коду в CORS,
+  // и downloadDocumentBlob падает в fallback "document.pdf".
+  "Access-Control-Expose-Headers": "Content-Disposition",
 };
 
 function errorResponse(code: string, status: number) {
