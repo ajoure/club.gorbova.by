@@ -28,6 +28,20 @@ function extractUidFromMeta(meta: any): { uid: string; source: string } | null {
   return null;
 }
 
+/**
+ * Extract UID from order — first from meta, then fallback to column orders_v2.provider_payment_id.
+ * Column fallback restricted to provider='bepaid' (PATCH-INV20-REBILL-SUPERSEDED-2026-05).
+ */
+function extractOrderUid(order: any): { uid: string; source: string } | null {
+  const fromMeta = extractUidFromMeta(order?.meta);
+  if (fromMeta) return fromMeta;
+  const col = order?.provider_payment_id;
+  if (typeof col === "string" && col.length > 5 && order?.provider === "bepaid") {
+    return { uid: col, source: "column.provider_payment_id" };
+  }
+  return null;
+}
+
 /** Chunk array into batches */
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
