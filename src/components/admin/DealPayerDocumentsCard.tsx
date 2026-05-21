@@ -413,13 +413,23 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
     ? "Изменено вручную администратором"
     : "Определено автоматически";
   // Override бейдж показывается ТОЛЬКО при фактическом ручном изменении.
-  // Иначе — live matched scenario (или defaults / none).
+  // Иначе — live matched scenario; если live пуст, но есть backend snapshot —
+  // показываем «По снапшоту сделки» (а не вводящее в заблуждение «Источник не задан»).
+  const snapshotBadgeText = snapshotSource === "scenario"
+    ? "По снапшоту (сценарий)"
+    : snapshotSource === "defaults"
+      ? "По снапшоту (по умолчанию)"
+      : "По снапшоту сделки";
   const templateSourceBadge = templateOverride
     ? "Изменено вручную администратором"
-    : sourceLabelRu(resolved.source);
+    : usingSnapshotTemplate
+      ? snapshotBadgeText
+      : sourceLabelRu(resolved.source);
   const executorSourceBadge = executorOverride
     ? "Изменено вручную администратором"
-    : sourceLabelRu(resolved.source);
+    : usingSnapshotExecutor
+      ? snapshotBadgeText
+      : sourceLabelRu(resolved.source);
   const entitySourceBadge = payerEntityOverride
     ? "Изменено вручную администратором"
     : "По умолчанию";
