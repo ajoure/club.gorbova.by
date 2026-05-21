@@ -195,6 +195,7 @@ export function buildStandardFieldValues(ctx: StandardContext): Record<string, s
     'FLD-000261': pay?.card_last4 || '',                                                        // payment.card.last4
     'FLD-000262': pay?.card_holder || '',                                                       // payment.card.holder
     'FLD-000263': pay?.paid_at ? dotDate(pay.paid_at) : '',                                     // payment.paid_at
+    'FLD-000371': pay?.paid_at ? ruWordsDate(pay.paid_at) : '',                                 // payment.paid_at_long → «21» мая 2026 года
     // payment.amount — ТОЛЬКО число без валюты ("100,00"). Валюта рядом — FLD-000265.
     // Сумма прописью с валютой — отдельный FLD-000370 (payment.amount_words).
     'FLD-000264': pay?.amount != null ? Number(pay.amount).toFixed(2).replace('.', ',') : '',   // payment.amount → "100,00"
