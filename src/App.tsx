@@ -124,6 +124,7 @@ const AdminCommunication = lazy(() => import("./pages/admin/AdminCommunication")
 const AdminEditorial = lazy(() => import("./pages/admin/AdminEditorial"));
 const AdminIlex = lazy(() => import("./pages/admin/AdminIlex"));
 const AdminAI = lazy(() => import("./pages/admin/AdminAI"));
+const AdminDocuments = lazy(() => import("./pages/admin/AdminDocuments"));
 const AdminMarketingInsights = lazy(() => import("./pages/admin/AdminMarketingInsights"));
 const AdminPaymentDiagnostics = lazy(() => import("./pages/admin/AdminPaymentDiagnostics"));
 const AdminTelegramDiagnostics = lazy(() => import("./pages/admin/AdminTelegramDiagnostics"));
@@ -324,6 +325,7 @@ const App = () => {
               <Route path="/admin/editorial/sources" element={<Navigate to="/admin/editorial" replace />} />
               <Route path="/admin/ilex" element={<ProtectedRoute><LazyRoute><AdminIlex /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/ai" element={<ProtectedRoute><LazyRoute><AdminAI /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/documents" element={<ProtectedRoute><LazyRoute><AdminDocuments /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/marketing" element={<ProtectedRoute><LazyRoute><AdminMarketingInsights /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/kb-import" element={<ProtectedRoute><LazyRoute><AdminKbImport /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/sites" element={<ProtectedRoute><LazyRoute><AdminSiteBuilder /></LazyRoute></ProtectedRoute>} />
