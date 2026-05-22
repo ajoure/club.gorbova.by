@@ -1,116 +1,519 @@
-# да, согласен, с учетом правок:
+## План: финальный verify по bePaid receipts 2026 backfill v2
 
-1. **Добавить языковые требования**  
-В план явно вставить:
-  - план должен быть составлен на русском языке;
-  - отчет о выполненной работе должен быть составлен на русском языке;
-  - вся переписка, пояснения, proof и результаты — только на русском языке.
-2. **Уточнить, что это UI-only patch**  
-В начале плана добавить:
-  - без SQL;
-  - без миграций;
-  - без edge-функций;
-  - без изменения backend resolver;
-  - без изменения данных в карточках реквизитов;
-  - только отображение уже существующего resolved default в админском UI.
-3. **Не утверждать, что frontend-логика полностью равна backend-логике без проверки**  
-Формулировку лучше заменить на:
-  - «вычислить frontend-preview резолва карточки по умолчанию, максимально синхронный с текущей backend-логикой»;
-  - если backend использует другой порядок приоритетов — привести UI-helper к backend-логике.
-4. **Добавить read-only проверку backend resolver**  
-Перед execute проверить, где именно backend выбирает карточку:
-  - `canonical-document-generate-strict`;
-  - shared resolver requisites/document data;
-  - порядок выбора `is_default` / первый элемент.
-  Цель — не создать UI, который показывает одну карточку, а backend использует другую.
-5. **Вынести helper не только** `isEntrepreneur`**, но и** `resolveDefaultRequisitesCard`  
-Лучше сделать локально в компоненте:
-  &nbsp;
-  ```ts
-  const resolveDefaultRequisitesCard = (...) => ...
-  ```
-  Тогда один и тот же helper использовать:
-  - для текста `auto`;
-  - для возможных future badges/tooltips;
-  - без дублирования условий внутри JSX.
-6. **Уточнить сортировку “первой” карточки**  
-Сейчас в плане указано `individuals[0]` / первый ИП / первый ЮЛ. Нужно добавить:
-  - использовать уже существующий порядок массивов, полученный в компоненте;
-  - не менять сортировку в рамках этого патча;
-  - если порядок неочевиден — не добавлять новую сортировку, только зафиксировать в отчете.
-7. **Защититься от пустого/битого label**  
-В `reqLabel(resolved)` добавить fallback:
-  - если label пустой → `карточка без названия`;
-  - если не хватает ФИО/названия → использовать тип карточки + короткий id/created_at, если это уже доступно;
-  - не показывать `undefined`, `null`, пустую строку.
-8. **Проверить spelling**  
-В dry-run указано `Богинская`, а ранее была `Багинская`. Нужно привести к одному варианту, чтобы не было путаницы в proof.
-9. **Добавить проверку смены типа плательщика**  
-В Verify добавить:
-  - сменили `effectivePayerType` ФЛ → ЮЛ → ИП;
-  - текст `auto` пересчитался;
-  - выбранный override не сбросился без сохранения;
-  - кнопка «Сохранить» работает как раньше.
-10. **Добавить proof по отсутствию побочных эффектов**  
-В отчет по выполнению включить:
+## Жёсткие правила исполнения
 
-- изменен только `src/components/admin/DealPayerDocumentsCard.tsx`;
-- diff-summary;
-- скрин/описание до-после по Багинской;
-- подтверждение, что backend/SQL/edge не трогались.
+- Только read-only verify, кроме обновления proof-файла.
 
-В остальном план правильный: проблема UI-only, backend уже работает, нужно только показать админу фактическую карточку, которая будет использована в режиме `auto`.
+- Нельзя менять:
+
+  - payments_v2.amount
+
+  - payments_v2.status
+
+  - payments_v2.order_id
+
+  - subscriptions_v2
+
+  - entitlements
+
+  - access_rules
+
+- Write-scope уже выполненного backfill допускается только исторически:
+
+  - payments_v2.receipt_url
+
+  - provider_response.transaction.receipt_url
+
+  - meta.receipt_backfill_*
+
+- Новых update/delete/migration не делать.
+
+- План и отчет о выполненной работе должны быть на русском языке.
+
+- Вся переписка, пояснения, proof и результаты — только на русском языке.
+
+## Контекст
+
+Edge: `bepaid-receipts-2026-backfill-cron`
+
+Cron:
+
+- schedule: `*/5 * * * *`
+
+- schedule_id=50
+
+- active=true
+
+Scope:
+
+- provider: bePaid / bePaid subscription
+
+- status='succeeded'
+
+- paid date >= 2026-01-01
+
+- amount > 50 BYN
+
+- amount <= 50 BYN / 1 BYN исключены
+
+Предыдущий промежуточный снимок:
+
+- total=2 998
+
+- filled=313
+
+- bepaid_endpoint_not_found=650
+
+- no_uid_skipped=8
+
+- untouched=2 027
+
+Предварительный root cause 404:
+
+часть `provider_payment_id` — это локальные UUID материализации / subscription rebill / statement import, а не реальные bePaid transaction UID. Такие чеки физически не выдаются bePaid.
+
+---
+
+# Шаг 1. Cron movement proof
+
+Проверить:
+
+1. `schedule_id=50` активен.
+
+2. Сколько cron-вызовов было после последнего отчета.
+
+3. Есть ли errors в edge logs.
+
+4. Были ли:
+
+   - 5xx abort;
+
+   - timeout;
+
+   - rate-limit;
+
+   - hard abort;
+
+   - unexpected exception.
+
+В отчет добавить таблицу:
+
+| metric | value |
+
+|---|---:|
+
+| schedule_id | 50 |
+
+| active | true/false |
+
+| schedule | */5 * * * * |
+
+| runs_after_previous_report | N |
+
+| last_run_at | timestamp |
+
+| edge_errors | N |
+
+| timeout | N |
+
+| rate_limit | N |
+
+| api_5xx | N |
+
+| aborted | yes/no |
+
+| conclusion | cron completed / still running / blocked |
+
+---
+
+# Шаг 2. Финальная cohort-таблица
+
+Снять финальную cohort-таблицу по текущему scope:
+
+Scope фильтр:
+
+- provider in bePaid / bePaid subscription variants
+
+- status='succeeded'
+
+- date >= 2026-01-01
+
+- amount > 50 BYN
+
+Нужно вывести:
+
+| metric | count |
+
+|---|---:|
+
+| eligible_total | N |
+
+| with_receipt_url | N |
+
+| missing_receipt_url | N |
+
+| untouched_without_receipt_and_terminal_reason | N |
+
+| no_uid_skipped | N |
+
+| test_payment_skipped | N |
+
+| subscription_phantom_uid_skipped | N |
+
+| rebill_materialized_skipped | N |
+
+| bepaid_endpoint_not_found | N |
+
+| api_5xx | N |
+
+| timeout | N |
+
+| rate_limit | N |
+
+Критерий:
+
+- если `untouched_without_receipt_and_terminal_reason = 0` → блок можно закрывать как classified;
+
+- если `> 0` → блок не закрывать, указать точную причину:
+
+  - cron еще не дошел;
+
+  - selection bug;
+
+  - terminal reason не пишется;
+
+  - race;
+
+  - другая причина.
+
+---
+
+# Шаг 3. Финальная классификация missing
+
+Сформировать таблицу:
+
+| reason | count | business meaning | action |
+
+|---|---:|---|---|
+
+| receipt_url filled | N | чек доступен | ничего не делать |
+
+| no_uid_skipped | N | нет bePaid UID | manual_review / чек не подтянуть автоматически |
+
+| bepaid_endpoint_not_found | N | bePaid transaction не найден по UID | historical no-receipt / чек не выдается bePaid |
+
+| subscription_phantom_uid_skipped | N | не реальный transaction UID | не подтягивать чек |
+
+| rebill_materialized_skipped | N | локальная материализация, не чековая транзакция | не подтягивать чек |
+
+| test_payment_skipped | N | тестовая / не реальная оплата | исключено корректно |
+
+| api_5xx / timeout / rate_limit | N | временная ошибка API | если N>0 — нужен retry patch |
+
+---
+
+# Шаг 4. Проверка amount <= 50 BYN
+
+Проверить:
+
+- count по `amount <= 50` с batch_id / marker `bepaid_receipts_2026_backfill` должен быть 0 для нового V2 job.
+
+- Старые V1-маркеры до фильтра допускаются, но их нужно явно отделить.
+
+В отчет добавить:
+
+| check | result |
+
+|---|---:|
+
+| V2 markers on amount <= 50 | 0 / N |
+
+| V1 legacy markers on amount <= 50 | N |
+
+| 1 BYN auth/card-binding excluded | yes/no |
+
+Вывод:
+
+- 1 BYN / auth-probe / card binding должны быть исключены из V2.
+
+---
+
+# Шаг 5. Safety proof
+
+Подтвердить, что за время V2 job не менялись запрещенные сущности/поля:
+
+| object/field | changed_by_job | result |
+
+|---|---:|---|
+
+| payments_v2.amount | 0 | OK |
+
+| payments_v2.status | 0 | OK |
+
+| payments_v2.order_id | 0 | OK |
+
+| subscriptions_v2 | 0 | OK |
+
+| entitlements | 0 | OK |
+
+| access_rules | 0 | OK |
+
+Если нет отдельного audit/versioning по этим таблицам — проверить через available backup/snapshot/diff/logs и прямо указать метод проверки.
+
+---
+
+# Шаг 6. UI proof `/purchases`
+
+Проверить 2–3 реальных платежа, где receipt_url был подтянут:
+
+Для каждого:
+
+- открыть `/purchases`;
+
+- кнопка «Скачать чек» появилась;
+
+- ссылка открывается;
+
+- URL вида `merchant.bepaid.by/customer/transactions/...`.
+
+Проверить 1–2 missing/historical no-receipt:
+
+- кнопка «Скачать чек» не появляется;
+
+- это корректно, потому что receipt_url отсутствует и terminal reason объясняет почему.
+
+В отчет:
+
+| order/payment | receipt_url status | UI button | URL opens | result |
+
+|---|---|---|---|---|
+
+| sample 1 | filled | yes | yes | OK |
+
+| sample 2 | filled | yes | yes | OK |
+
+| sample 3 | filled | yes | yes | OK |
+
+| missing sample 1 | terminal missing | no | n/a | OK |
+
+---
+
+# Шаг 7. Samples
+
+Добавить в proof:
+
+## 10 successfully filled receipt_url
+
+| payment_id | order_id | provider_payment_id | receipt_url | amount | paid_at |
+
+|---|---|---|---|---:|---|
+
+## 10 missing with terminal reason
+
+| payment_id | order_id | provider_payment_id | terminal_reason | amount | business explanation |
+
+|---|---|---|---|---:|---|
+
+---
+
+# Шаг 8. Обновить proof-файл
+
+Обновить файл:
+
+`.lovable/proofs/bepaid_receipts_2026_backfill_v2_2026_05_22.md`
+
+Добавить секции:
+
+1. `Final after-cron verify`
+
+2. `Cron movement proof`
+
+3. `Final missing classification`
+
+4. `Amount <= 50 exclusion proof`
+
+5. `Safety proof`
+
+6. `UI /purchases confirmation`
+
+7. `Samples filled`
+
+8. `Samples missing`
+
+9. `Final status`
+
+---
+
+# Шаг 9. Итоговый статус
+
+Если:
+
+- `untouched_without_receipt_and_terminal_reason = 0`;
+
+- все missing имеют terminal reason;
+
+- нет новых api_5xx / timeout / rate_limit;
+
+- amount <= 50 не попали в V2;
+
+- safety proof OK;
+
+- UI `/purchases` OK;
+
+то статус:
+
+`completed/classified`
+
+Если `untouched > 0`:
+
+- блок не закрывать;
+
+- указать точную причину;
+
+- составить следующий patch в формате:
+
+  - Problem
+
+  - Cause
+
+  - Dry-run
+
+  - Execute
+
+  - STOP-guards
+
+  - DoD
 
 &nbsp;
 
-План: показывать активную карточку реквизитов плательщика в режиме «По умолчанию»
+План: бэкфилл offer_id 2026 по двум клубам
 
-## Проблема
+### Контекст и факты (по БД)
 
-В сделке Багинской (и любой сделке без ручного override) поле «Карточка реквизитов плательщика» в режиме `auto` показывает только статичную надпись «По умолчанию (карточка пользователя)». При этом сам документ корректно генерируется по заполненной карточке пользователя — то есть карточка существует, бэкенд её резолвит, но в UI её не видно. Раньше при заполненной карточке её название подставлялось прямо в селект.
+Сделки 2026 года (`deal_date ∈ [2026-01-01, 2027-01-01)`):
 
-Для соседних полей «Шаблон документа» и «Исполнитель» это уже сделано: пункт `auto` рендерит `«источник · имя сущности»`. Для карточки реквизитов — нет.
 
-## Что чиним
+| Продукт                | id                                     | Всего | Paid | Paid >50 BYN | Paid >50 без offer_id | Любого статуса без offer_id |
+| ---------------------- | -------------------------------------- | ----- | ---- | ------------ | --------------------- | --------------------------- |
+| Gorbova Club           | `11c9f1b8-0355-4753-bd74-40b42aa53616` | 1 038 | 821  | 755          | **3**                 | 176                         |
+| Бухгалтерия как бизнес | `85046734-2282-4ded-b0d3-8c66c8f5bc2b` | 153   | 126  | 124          | **0**                 | 12                          |
 
-Файл: `src/components/admin/DealPayerDocumentsCard.tsx`
 
-В блоке `Карточка реквизитов плательщика` (строки ~481–541):
+Из них для проблемных (`offer_id IS NULL` либо `offer_id` указывает на оффер без `document_scenarios`) tariff_id всегда заполнен — значит безопасно сопоставить по tariff_id.
 
-1. Вычислить **резолв «карточки по умолчанию»** для текущего `effectivePayerType` по той же логике, по которой бэкенд берёт реквизиты:
-  - `effectivePayerType === "individual"` → `individuals.find(is_default) ?? individuals[0]`
-  - `entrepreneur` → `legalEntities.filter(isEntrepreneur).find(is_default) ?? первый ИП`
-  - `legal_entity` → `legalEntities.filter(!isEntrepreneur).find(is_default) ?? первый ЮЛ`
-   (`isEntrepreneur` уже определён локально в селекте — вынести в helper наверху функции, чтобы переиспользовать в обоих местах.)
-2. В пункте `<SelectItem value="auto">` отрисовать:
-  - если карточка найдена → `«По умолчанию · ${reqLabel(resolved)}»`;
-  - если карточек этого типа у пользователя нет → `«По умолчанию (нет карточки — заполнит автоматически по профилю)»`;
-  - если у заказа нет `user_id` (guest/public-link) → текущее «По умолчанию (карточка пользователя)».
-3. `<SelectValue />` в свёрнутом виде селекта автоматически подхватит расширенный текст, и админ сразу увидит, какая именно карточка будет использоваться, без раскрытия дропдауна.
-4. Бейдж справа от заголовка («По умолчанию» / «Изменено вручную») оставляем как есть — он отражает источник (override vs auto), а конкретное имя теперь видно прямо в селекте.
+### Канонический mapping tariff_id → offer_id
 
-## Что НЕ трогаем
+Каждый из 5 тарифов имеет ровно один активный `pay_now`-оффер с настроенными `document_scenarios` (2 сценария). Это и есть «кнопка тарифа», на которую жалуется пользователь:
 
-- Логику бэкенда (`canonical-document-generate-strict`, резолверы реквизитов) — она уже работает корректно.
-- Override-флоу (`payer_entity_override`), бейджи, кнопки «Сохранить» / «Сбросить».
-- Структуру `individual_requisites` / `legal_entities_requisites` и порядок сортировки.
-- Другие поля карточки (Тип плательщика, Шаблон, Исполнитель, История).
 
-## Diagnose → Plan → Dry run → Execute → Verify
+| Продукт                | Тариф       | tariff_id                              | Канонический offer_id                  |
+| ---------------------- | ----------- | -------------------------------------- | -------------------------------------- |
+| Gorbova Club           | BUSINESS    | `7c748940-dcad-4c7c-a92e-76a2344622d3` | `bc0f7a90-df41-4a86-b2ea-2a1234d0d534` |
+| Gorbova Club           | CHAT        | `31f75673-a7ae-420a-b5ab-5906e34cbf84` | `6f306cbc-24e8-4589-b6f3-2dca9e4d0c8e` |
+| Gorbova Club           | FULL        | `b276d8a5-8e5f-4876-9f99-36f818722d6c` | `c5781abf-0376-4e1f-91dc-99773906ee77` |
+| Gorbova Club           | ИДЕОЛОГИЯ   | `b018e9be-53ce-4840-8034-e09f8e319080` | `d307b438-758c-4f1e-b7d5-fe32df7cae1c` |
+| Бухгалтерия как бизнес | Стандартный | `c5981337-242b-49e8-8c99-64ccf8fac13e` | `88c6f10d-a0c6-47f3-9d90-980b3a86fe1c` |
 
-- **Diagnose**: подтверждено по коду — `SelectItem value="auto"` для карточки реквизитов отрисовывает захардкоженную строку, в отличие от шаблона/исполнителя.
-- **Dry run**: открываем ту же сделку Багинской → в свёрнутом селекте видим «По умолчанию · Богинская Елена Петровна» (или аналогичный label из `reqLabel`).
-- **Execute**: правка одного компонента.
-- **Verify**:
-  1. Сделка с заполненной ФЛ-карточкой → в селекте видно её имя.
-  2. Сделка ИП/ЮЛ с заполненной карточкой → видно `leg_short_name` / `ent_short_name`.
-  3. Сделка без карточек у пользователя → видно подсказку «нет карточки — заполнит автоматически по профилю».
-  4. Сделка с ручным override → поведение прежнее (показывается выбранная карточка, бейдж «Изменено вручную»).
-  5. Гостевая сделка (`user_id = null`) → fallback-текст «карточка пользователя».
 
-## DoD
+Mapping зашивается в миграцию хардкодом — никаких эвристик по `is_primary`/`offer_type` в рантайме.
 
-- В режиме `auto` селект «Карточка реквизитов плательщика» показывает фактическое имя карточки, которая будет использована при генерации.
-- Если карточек нет — внятная подсказка, селект не пустой и не «висит» текстом по умолчанию.
-- Override-флоу и бейджи источника не изменились.
-- Никаких изменений в схеме БД, edge-функциях, других компонентах.
+### Скоуп бэкфилла
+
+Покрываем сразу обе подкатегории, чтобы «у всех было заполнено»:
+
+1. `offer_id IS NULL` за 2026 по обоим продуктам (188 строк: 176 + 12).
+2. `offer_id` указывает на устаревший/не настроенный оффер тарифа (например trial с 0 сценариев) при `status='paid'` за 2026 — отдельно проверяем и переписываем на канонический, только если новый оффер `is_active=true AND offer_type='pay_now'` и принадлежит тому же `tariff_id`. Сейчас таких 3 (CHAT trial `4f1163c9` × 3 paid orders по той же `tariff_id`).
+
+Итого ~191 заказ. Все оплаты (paid, >50 BYN, без offer_id = 3 шт по Gorbova Club) попадают внутрь.
+
+### Что НЕ трогаем
+
+- `status`, `paid_amount`, `final_price`, `provider`, `tariff_id`, `product_id`, `user_id` — без изменений.
+- `subscriptions_v2`, `entitlements`, `access_rules`, `payment_sessions`, `payment_links` — без изменений.
+- Документы (`ai_generated_documents`) — не создаём задним числом, только разблокируем кнопку «Сформировать» в UI.
+- Не запускаем `grant-access-for-order`.
+
+### План работ
+
+1. **Diagnose** — этот раздел (выполнен).
+2. **Dry-run миграция** — `SELECT` по тем же условиям, печатает разбивку по продукту/тарифу/статусу и список затронутых `order_id`. Кладём результат в proof `.lovable/proofs/orders_v2_offer_id_backfill_2026_clubs.md`.
+3. **Execute миграция** — `UPDATE orders_v2 SET offer_id = canonical, meta = meta || jsonb_build_object('offer_id_backfill_2026', jsonb_build_object('batch_id', ..., 'prev_offer_id', offer_id, 'reason', 'null'|'trial_offer_without_scenarios', 'applied_at', now()))` строго по списку условий выше.
+4. **Audit** — одна сводная запись `audit_logs` (actor=`system`, action=`backfill_offer_id_2026_clubs`) с `meta = { batch_id, scope, mapping, before_counts, after_counts, affected_order_ids[] }`.
+5. **Verify** — повторные запросы:
+  - Paid >50 BYN без offer_id по 2026 двум продуктам = 0.
+  - Любых без offer_id за 2026 двум продуктам = 0.
+  - Нет paid сделок 2026, где offer указывает на оффер с `document_scenarios = 0` (по канону).
+  - Spot-check сделки `#REBILL-…` Юлии Соваськовой на скриншоте: UI карточки показывает оффер и предлагает шаблон/исполнителя.
+6. **Memory** — обновить `mem://index.md` короткой ссылкой на новую memory `mem://commercial-logic/orders/offer-id-backfill-policy` (правило: «orders_v2.offer_id за исторические периоды можно проставлять только маппингом tariff_id → активный pay_now-оффер с document_scenarios; никаких эвристик»).
+7. **Отчёт** — заполнить proof фактическими `before/after` числами и `batch_id`.
+
+### DoD
+
+- 0 заказов 2026 по `{Gorbova Club, Бухгалтерия как бизнес}` без `offer_id`.
+- 0 заказов 2026 со статусом `paid` >50 BYN, где привязанный оффер не имеет `document_scenarios`.
+- Карточка сделки в `/admin/communication` и страница `/purchases` корректно показывают шаблон и исполнителя для проверенной сделки `#REBILL-351b168a-681`; кнопка «Сформировать документ» активна.
+- В `audit_logs` есть единственная сводная запись с `batch_id`, перечнем всех `order_id`, mapping и счётчиками before/after.
+- Никаких изменений в `subscriptions_v2`, `entitlements`, `access_rules`, `payments*`.
+
+### Технические детали миграции
+
+Одна миграция в две стадии (без триггеров, без новых индексов):
+
+```text
+-- STAGE 1: NULL offer_id → canonical
+UPDATE orders_v2 o
+   SET offer_id = m.canonical_offer_id,
+       meta = COALESCE(o.meta,'{}'::jsonb) || jsonb_build_object(
+         'offer_id_backfill_2026', jsonb_build_object(
+           'batch_id', '<uuid>',
+           'prev_offer_id', NULL,
+           'reason', 'offer_id_null',
+           'applied_at', now()
+         ))
+  FROM (VALUES
+    ('7c748940-...'::uuid,'bc0f7a90-...'::uuid),
+    ('31f75673-...'::uuid,'6f306cbc-...'::uuid),
+    ('b276d8a5-...'::uuid,'c5781abf-...'::uuid),
+    ('b018e9be-...'::uuid,'d307b438-...'::uuid),
+    ('c5981337-...'::uuid,'88c6f10d-...'::uuid)
+  ) m(tariff_id, canonical_offer_id)
+ WHERE o.product_id IN ('11c9f1b8-...','85046734-...')
+   AND o.deal_date >= '2026-01-01' AND o.deal_date < '2027-01-01'
+   AND o.tariff_id = m.tariff_id
+   AND o.offer_id IS NULL;
+
+-- STAGE 2: trial-offer без сценариев для paid >50
+UPDATE orders_v2 o
+   SET offer_id = m.canonical_offer_id,
+       meta = COALESCE(o.meta,'{}'::jsonb) || jsonb_build_object(
+         'offer_id_backfill_2026', jsonb_build_object(
+           'batch_id', '<uuid>',
+           'prev_offer_id', o.offer_id,
+           'reason', 'trial_offer_without_scenarios',
+           'applied_at', now()
+         ))
+  FROM tariff_offers off, (VALUES …same mapping…) m(tariff_id, canonical_offer_id)
+ WHERE o.product_id IN ('11c9f1b8-...','85046734-...')
+   AND o.deal_date >= '2026-01-01' AND o.deal_date < '2027-01-01'
+   AND o.status = 'paid' AND COALESCE(o.paid_amount, o.final_price, 0) > 50
+   AND o.offer_id = off.id
+   AND o.tariff_id = m.tariff_id
+   AND COALESCE(jsonb_array_length(off.meta->'document_scenarios'), 0) = 0
+   AND o.offer_id <> m.canonical_offer_id;
+
+-- AUDIT
+INSERT INTO audit_logs(actor_type, action, meta) VALUES
+  ('system','backfill_offer_id_2026_clubs', jsonb_build_object(
+    'batch_id','<uuid>',
+    'scope', jsonb_build_object('products', ARRAY['11c9f1b8-…','85046734-…'], 'year', 2026),
+    'mapping', '<mapping json>',
+    'before', '<dry-run counters>',
+    'after',  '<post-update counters>',
+    'affected_order_ids', ARRAY[...]
+  ));
+```
+
+### Открытые риски
+
+- Если у пользователя есть «несовпадение исторического тарифа и текущего pay_now-оффера по цене», UI документа всё равно использует **снимок** реквизитов из `document_scenarios` оффера, а не цену из заказа — поэтому коммерческая часть заказа не искажается. Принципиально риск минимален.
+- Бэкфилл идемпотентен по `WHERE offer_id IS NULL` и `<> canonical`; повторный запуск ничего не сделает.
