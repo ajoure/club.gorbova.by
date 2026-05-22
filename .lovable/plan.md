@@ -1,229 +1,180 @@
-## План принимаю. Блок bePaid receipts НЕ закрыт, продолжай в этом же loop.
+## да, согласен, с учетом правок:
 
-Подтверждаю порядок:
-
-1. Сначала диагностика 404 read-only:
-
-- взять 5 missing-with-UID из 2026-05 и 5 из 2026-01;
-
-- по каждому проверить payments_v2.provider_response, provider_payment_id, order_id, orders_v2.meta;
-
-- определить, к какому shop_id относится транзакция;
-
-- сравнить с текущими BEPAID_SHOP_ID/SECRET_KEY;
-
-- если есть мульти-shop — добавить fallback на subscription/legacy shop credentials.
-
-Важно:
-
-не спрашивай владельца о секретах, если они уже есть в Supabase secrets/env. Сначала проверь доступные env/secrets в edge runtime. Если отдельного секрета нет — тогда в отчёте явно указать, какой именно secret нужен.
-
-2. Исправить cron, чтобы он реально двигался:
-
-- 404 Record not found НЕ должен считаться 5xx-streak;
-
-- 404 должен помечать конкретную строку reason`bepaid_endpoint_not_found` / `shop_mismatch_possible` и переходить дальше;
-
-- выборка не должна снова брать уже обработанные строки с terminal reason;
-
-- добавить стабильный ORDER BY created_at ASC / paid_at ASC;
-
-- исключить уже классифицированные terminal rows из следующих запусков, если они не требуют retry;
-
-- retry оставлять только для 5xx/timeout/rate-limit.
-
-3. Если подтвердится multi-shop:
-
-- `_shared/bepaid-receipt-fetch.ts` должен пробовать credentials по порядку:
-
-  a) primary shop;
-
-  b) subscription/legacy shop;
-
-- в meta сохранить:
-
-  - receipt_backfill_endpoint;
-
-  - receipt_backfill_shop_source;
-
-  - receipt_backfill_reason;
-
-  - receipt_backfill_at.
-
-- если receipt найден через второй shop — заполнить receipt_url.
-
-4. Write-scope остаётся прежним:
-
-- можно менять только payments_v2.receipt_url;
-
-- provider_response.transaction.receipt_url;
-
-- meta.receipt_backfill_*.
-
-Нельзя менять amount/status/order_id/subscriptions/access.
-
-5. После фикса запустить 12–20 cron runs или ручной controlled batch и дать финальный verify:
-
-- eligible amount > 50;
-
-- filled before;
-
-- filled after;
-
-- remaining missing;
-
-- missing by reason:
-
-  no_uid / transaction_not_found / no_receipt_in_transaction / api_5xx / timeout / shop_mismatch / manual_review;
-
-- sample 10 filled;
-
-- sample 10 missing with reason;
-
-- confirmation amount <= 50 не попадают;
-
-- confirmation no amount/status/order/access changes.
-
-6. UI /purchases:
-
-проверить 2–3 реальных платежа, где receipt_url был подтянут, что появилась кнопка «Скачать чек».
-
-7. Proof обновить:
-
-`.lovable/proofs/bepaid_receipts_2026_backfill_v2_2026_05_22.md`
-
-добавить:
-
-- After-cron verify;
-
-- Multi-shop diagnostics;
-
-- Cron movement fix;
-
-- Final missing classification;
-
-- UI confirmation.
-
-DoD:
-
-- cron больше не топчется на одних и тех же 404;
-
-- по всем eligible платежам есть либо receipt_url, либо terminal reason;
-
-- receipt_url подтянуты для всех доступных чеков;
-
-- остаток missing объяснён бизнесово и технически;
-
-- суммы/статусы/доступы не менялись.
+1. **Переоформить заголовки строго**
+  &nbsp;
+  &nbsp;
+  - Вместо `## Отчет о диагностике` сделать:  
+  `Отчет о выполненной работе: диагностика ошибки генерации документов в /purchases`
+  - Вместо `## План фикса` сделать:  
+  `План: исправление определения payment_channel в canonical-document-generate-strict`
+2. **Шаг 1 — корректный и приоритетный**
+  - Расширение SELECT в `canonical-document-generate-strict` на `meta, card_last4, card_brand` — правильный минимальный фикс.
+  - Это действительно объясняет, почему `derivePaymentChannel()` падает в `other`.
+3. **Добавить STOP-guard перед деплоем**  
+Перед execute обязательно проверить:
+  - что `derivePaymentChannel()` реально принимает тот же объект `paymentRow`;
+  - что `card_last4` существует в `payments_v2`;
+  - что поле называется именно `card_last4`, а не лежит только в `provider_response`;
+  - что для ERIP/Apple Pay/Google Pay логика не ломается.
+4. **Уточнить** `mode='preview' / mode='generate'`  
+В плане указано `mode='preview'`, но ранее canonical-функция могла принимать `force_rebuild`, `admin_force`, `order_id`, `template_id`. Нужно добавить read-only проверку фактического контракта функции, чтобы Lovable не отправил несуществующий `mode`.
+5. **Добавить тест не только по Багинской**  
+В DoD добавить минимум:
+  - 1 заказ с card;
+  - 1 заказ с bank_transfer;
+  - 1 заказ с ERIP, если есть;
+  - 1 заказ Apple/Google Pay, если есть.
+  Иначе можно починить card, но сломать остальные каналы.
+6. **Frontend mirror — не “если нет, добавить”, а строго verify**  
+Шаг 2 правильно оставить как проверочный. Но если frontend mirror используется только для UI-доступности кнопки, он не должен становиться вторым source of truth. Backend canonical guard остается главным.
+7. **Audit после фикса**  
+В DoD добавить проверку:
+  - `document.generate_blocked_document_template_not_configured` не появляется для заказов, где `payments_v2.card_last4 IS NOT NULL`;
+  - появляется успешный audit с resolved scenario/template/source;
+  - желательно metadata: `{ payment_channel: "card", scenario_source: "offer", template_id }`.
+8. **UX-правку лучше сделать отдельным мелким UI patch**  
+Шаг 6 можно оставить в этом плане, но пометить как `UI-only follow-up внутри этого же спринта`, чтобы не смешивать critical backend fix и косметику.
+9. **Proof-файл — правильно**  
+`.lovable/proofs/document_generate_strict_payment_channel_fix_2026_05_22.md` оставить. Обязательно добавить туда:
+  - before: `payment_channel=other`, blocked `no_template`;
+  - after: `payment_channel=card`, scenario matched, template_id найден;
+  - список изменённых файлов;
+  - diff-summary.
+10. **Добавить обязательные языковые требования**  
+В план явно вставить:
 
 &nbsp;
 
-Отчет о выполнении (read-only verify)
+- план должен быть составлен на русском языке;
+- отчет о выполненной работе должен быть составлен на русском языке;
+- вся переписка, пояснения, proof и результаты — только на русском языке.
 
-Текущее состояние cron `bepaid-receipts-2026-backfill-cron` (schedule_id=50, `*/5 * * * *`, active=true). Cron HTTP-вызовы: 6 succeeded в окне 11:50–12:15 UTC. **Backfill НЕ завершен, блок закрывать рано.**
+Итог: фикс правильный, минимальный и безопасный. Главное — не ограничиться одной строкой SELECT без проверки фактического контракта функции и без регрессии по другим payment channels.
 
-### 1. Cohort (origin='bepaid' OR 'bepaid_subscription', succeeded, ≥2026-01-01, amount>50)
+&nbsp;
 
+Отчет о диагностике
 
-| метрика                                      | value             |
-| -------------------------------------------- | ----------------- |
-| eligible total                               | **2 998**         |
-| with receipt_url                             | **313** (10.4%)   |
-| missing receipt_url                          | **2 685** (89.6%) |
-| из missing: без provider_payment_id (no UID) | 40                |
-| из missing: с UID (eligible для API)         | 2 645             |
+### Симптом
 
+- Админ: «Создать документ» работает (с ошибкой в UI, но документ создаётся).
+- Клиент в /purchases: «Ошибка, попробуйте через 10 секунд» / «Edge function not working».
+- У клиентов, заполнивших новую карточку реквизитов, и у исторических сделок — одинаково.
 
-### 2. Разбивка missing по reason
+### Root cause (proof из БД + audit_logs)
 
+1. `audit_logs` за 22.05.2026 для Багинской (order `aca70f03…`, `7014f44d…`, `baf5801c…`) забит записями:
+  ```
+   document.generate_blocked_document_template_not_configured
+   meta: { offer_source: "order_offer", reason: "no_template" }
+  ```
+2. У оффера `bc0f7a90` (тариф Багинской) сценарии в `tariff_offers.meta.document_scenarios[]` СУЩЕСТВУЮТ корректно:
+  - `payer_type: individual` + `payment_channels: [card, erip, apple_pay, google_pay]` → `template_id: 7caee05d`
+  - `payer_type: legal_entity` + `payment_channels: [bank_transfer]` → `template_id: bcf5e015`
+3. Платежи в `payments_v2`: `provider='bepaid'`, `status='succeeded'`, `card_last4` заполнен (`8215`, `0714`, `6478`), но `meta.payment_method` / `meta.is_erip` / `meta.payment_channel` — все NULL (bePaid их не пишет).
+4. `derivePaymentChannel(row)` корректно возвращает `'card'` через ветку `if (row.card_last4 && row.card_last4.length > 0) return 'card'`.
+5. **НО** в `supabase/functions/canonical-document-generate-strict/index.ts:346-350` SELECT по `payments_v2` берёт только `id, status, provider, receipt_url, provider_response, created_at` — **без `meta` и без `card_last4**`.
+6. В результате `derivePaymentChannel` получает строку без `meta` и без `card_last4` → возвращает `'other'`.
+7. Сценарий `individual + other` в `document_scenarios` не существует → `resolveDocumentScenario.source='none'` → `isOfferDocumentEnabled` возвращает `no_template` → клиенту HTTP 403.
+8. Админ нажимает ту же кнопку, но через UI админки идёт `admin_force=true` → guard пропускается, `template_id` подтягивается fallback'ом из последнего `ai_generated_documents` для заказа → документ генерируется.
 
-| reason                                          | count                     |
-| ----------------------------------------------- | ------------------------- |
-| `bepaid_endpoint_not_found` (404 gateway+beyag) | 50                        |
-| без маркера (cron ещё не дошёл)                 | 2 635                     |
-| API error (5xx, timeout)                        | 0                         |
-| no UID                                          | 40 (отдельная подкогорта) |
-| skipped / manual_review                         | 0                         |
+Это полностью объясняет: «у админа работает, у клиента — нет», «у всех, кто сегодня добавил реквизиты, не работает», «исторические сделки тоже не скачиваются».
 
+### Что НЕ виновато
 
-### 3. По месяцам
-
-
-| month   | total | filled | missing |
-| ------- | ----- | ------ | ------- |
-| 2026-01 | 2 314 | 206    | 2 108   |
-| 2026-02 | 183   | 98     | 85      |
-| 2026-03 | 178   | 7      | 171     |
-| 2026-04 | 192   | 2      | 190     |
-| 2026-05 | 131   | 0      | 131     |
-
-
-`with_receipt=313` ≈ 233 пре-существующих + 80 от ручного first batch v2. **Cron-фоном после first batch fill = 0.**
-
-### 4. Подтверждения
-
-- amount ≤ 50 / amount = 1 в текущий scope не попадают (фильтр `.gt('amount', 50)` в edge function, подтверждено query — 0 строк с amount ≤ 50 имеют новый маркер `bepaid_receipts_2026_backfill`).
-- payments_v2.amount / status / order_id, subscriptions_v2, entitlements, access_rules — не менялись.
-
-### 5. Найденные проблемы
-
-**Проблема A — массовые 404 от bePaid.** Логи `bepaid-receipts-2026-backfill-cron` (12:17–12:18 UTC): и `gateway.bepaid.by/transactions/{uid}`, и `beyag.bepaid.by` возвращают 404 `Record not found` практически на каждый UID из старого Jan-cohort. Это объясняет, почему май (131) — 0 fills, апрель (192) — 2, март (178) — 7.
-
-Гипотеза: эти `provider_payment_id` относятся к **другому bePaid shop** (например, subscription-shop или legacy-shop), не к тому, чьи `BEPAID_SHOP_ID/SECRET_KEY` подгружает текущий хелпер. Часть UID в pre-2026 / новых записях успешно резолвится — значит, не credentials в целом сломаны, а конкретный shop scoping.
-
-**Проблема B — cron почти не двигается.** За 6 успешных cron runs (по 25 строк/run = max 150) маркер `bepaid_endpoint_not_found` стоит только на 50 строках. Из 2 645 eligible с UID необработанных остаётся 2 635 (cron «топчется» по тому же хвосту, либо ранний exit). Нужно дочитать функцию и устранить корень — иначе фон не сойдётся даже за сутки.
-
-### 6. Sample
-
-10 успешно подтянутых receipt_url (период 2026-01..02, amount 75–250 BYN): receipts вида `https://merchant.bepaid.by/customer/transactions/...` (живые).
-
-10 missing с UID и `reason=bepaid_endpoint_not_found` (Jan 2026, 100–250 BYN, оба endpoint = 404 Record not found).
-
-### 7. UI /purchases
-
-Хук `useOrderDocuments` и компонент `OrderDocuments` уже читают данные по orderId; кнопка «Скачать чек» в `/purchases` рендерится строго от наличия `payments_v2.receipt_url` — для 313 платежей кнопка есть, для 2 685 пока нет.
+- Карточка реквизитов плательщика заполнена корректно.
+- Шаблоны и сценарии оффера корректны.
+- RLS / auth / JWT — корректны.
+- Это НЕ Edge-функция «не работает» в смысле таймаута; функция отвечает 403 с error code, а UI показывает generic «попробуйте через 10 секунд» через `normalizeEdgeFunctionError`.
 
 ---
 
-## План закрытия блока
+## План фикса
 
-### Шаг 1 — диагностика 404 (read-only, ~1 правка)
+### Шаг 1. Расширить SELECT в canonical-document-generate-strict
 
-1. Выбрать 5 missing-with-UID из 2026-05 (где >99% 404) и 5 missing-with-UID из 2026-01.
-2. По каждому посмотреть `payments_v2.provider_response` и `orders_v2.meta` — какой именно shop/secret использовался при создании транзакции (payment_link vs subscription vs прямой checkout).
-3. Сверить `BEPAID_SHOP_ID` в secrets с тем shop_id, который реально возвращал транзакцию (если в provider_response есть).
-4. Если подтвердится мульти-shop сценарий — добавить fallback `BEPAID_SUBSCRIPTION_SHOP_ID/SECRET_KEY` в `_shared/bepaid-receipt-fetch.ts` (попытка 1: primary shop, попытка 2: subscription shop).
+Файл: `supabase/functions/canonical-document-generate-strict/index.ts`, строки 346-350.
 
-### Шаг 2 — расследовать «cron не двигается»
+Текущий SELECT:
 
-1. Прочитать текущий `bepaid-receipts-2026-backfill-cron/index.ts`: пройтись по early-exit веткам (race-guard, hard cap, abort на streak).
-2. Проверить, что выборка не возвращает каждый раз один и тот же набор (нужен `ORDER BY created_at ASC` + игнор уже маркированных или smaller-than batch exit).
-3. Если виноват «5+ подряд 5xx/4xx → abort» — 404 от bePaid не должен считаться 5xx-streak'ом. Поправить условие.
+```ts
+.select('id, status, provider, receipt_url, provider_response, created_at')
+```
 
-### Шаг 3 — повторить cron 1–2 часа
+Новый SELECT:
 
-После фиксов: дождаться 12–20 cron runs, повторить тот же verify-блок.
+```ts
+.select('id, status, provider, receipt_url, provider_response, created_at, meta, card_last4, card_brand')
+```
 
-### Шаг 4 — закрыть блок
+Это единственное минимально необходимое изменение бэкенда — после него `derivePaymentChannel` получит полную строку и вернёт `'card'`, сценарий `individual+card` смэтчится, `template_id 7caee05d` будет возвращён, и self-service генерация заработает.
 
-- Если remaining missing после фиксов <50 и все они классифицированы (no_uid + bepaid_no_receipt + endpoint_not_found_after_multi_shop) — закрываем блок, обновляем proof.
-- Если 404 системные для целой когорты — фиксируем как «historical no-receipt», добавляем backlog: «manual import чеков из bePaid merchant CSV», обновляем proof.
+### Шаг 2. Зеркальная правка в `DealPayerDocumentsCard` (админка) — проверка
 
-### Шаг 5 — обновить proof
+Прочитать `src/components/admin/DealPayerDocumentsCard.tsx` и `src/lib/documents/purchaseDocumentRules.ts` (frontend mirror) — убедиться, что они тоже подгружают `card_last4` + `meta`. Если нет — добавить.
 
-`.lovable/proofs/bepaid_receipts_2026_backfill_v2_2026_05_22.md`: добавить секции `After-cron verify`, `Multi-shop diagnostics`, `Final missing classification`, `UI confirmation`.
+### Шаг 3. Verify по реальным заказам Багинской
+
+После деплоя:
+
+1. `curl_edge_functions` POST `/canonical-document-generate-strict` с JWT клиента по order `7014f44d-3a78-46a1-9360-e956b378dae9` (Багинская, mode='preview').
+2. Ожидаемый ответ: success, `template_id=7caee05d…`, `source: 'scenario'`.
+3. Затем `mode='generate'` — должен вернуть signed URL DOCX без 403.
+4. Проверить `audit_logs`: новые записи `document.generated` (а не `*_blocked_*`).
+
+### Шаг 4. Sweep: сколько ещё клиентов задеты
+
+Read-only SQL:
+
+```sql
+SELECT count(*), count(distinct order_id_meta) 
+FROM audit_logs 
+WHERE action = 'document.generate_blocked_document_template_not_configured'
+  AND created_at >= '2026-05-01';
+```
+
+Сформировать список затронутых orders для отчёта.
+
+### Шаг 5. Backfill для исторических заказов — НЕ НУЖЕН
+
+Никаких миграций данных, апдейтов реквизитов или повторных привязок не требуется:
+
+- Реквизиты плательщика лежат в правильных таблицах и читаются корректно.
+- Сценарии офферов корректны.
+- Просто после фикса все исторические и новые заказы (где `card_last4` заполнен) сразу станут видеть «Сформировать документ» из ЛК.
+
+### Шаг 6. Улучшить UX-сообщение об ошибке (мелкое UI)
+
+В `OrderListItem.tsx` сейчас при `error: 'document_template_not_configured'` показывается «Не удалось сформировать документ». Использовать `normalizeEdgeFunctionError` с маппингом этого кода → «Для этого тарифа документ временно недоступен, обратитесь в поддержку» — чтобы клиенты в будущем не видели «попробуйте через 10 секунд».
+
+### Шаг 7. Proof
+
+Создать `.lovable/proofs/document_generate_strict_payment_channel_fix_2026_05_22.md`:
+
+- Diagnose (SQL evidence: order/offer/payment dump)
+- Patch (1 строка SELECT)
+- Dry-run (curl preview по 3 заказам Багинской)
+- Execute (deploy edge function)
+- Verify (curl generate + audit_logs check + UI check в /purchases)
+- Sweep count «затронуто ровно N заказов восстановлено».
 
 ### DoD
 
-- Корневая причина 404 названа (single-shop vs multi-shop vs UID-mismatch).
-- Cron реально обрабатывает 25 строк/run без early-exit на 404.
-- Финальная разбивка missing по reason с понятными бизнес-формулировками.
-- amount/status/order_id/subscriptions/access не менялись (re-verify).
-- Кнопка «Скачать чек» в /purchases подтверждена на 2–3 реальных кейсах.
-- Proof обновлён.
+- SELECT расширен, функция задеплоена.
+- Багинская из своего ЛК успешно жмёт «Сформировать документ» без 403.
+- В `audit_logs` после деплоя нет новых `document.generate_blocked_document_template_not_configured` для заказов с `card_last4 != null`.
+- Sweep-отчёт по затронутым заказам в proof.
+- UI-маппинг ошибок (Шаг 6) выкачен.
+
+### Что НЕ делаем (по запросу пользователя)
+
+- Не блокируем редактирование реквизитов после генерации документа — пусть меняют свободно, в чеке всё равно зафиксирована карта оплаты.
+- Не пересоздаём исторические документы.
+- Не трогаем реквизиты клиентов в БД.
 
 ### Технические детали
 
-- Файлы под правку: `supabase/functions/_shared/bepaid-receipt-fetch.ts` (мульти-shop fallback), `supabase/functions/bepaid-receipts-2026-backfill-cron/index.ts` (early-exit логика).
-- Секреты для уточнения у владельца: есть ли отдельные `BEPAID_SUBSCRIPTION_SHOP_ID/SECRET_KEY` или дополнительный shop.
-- Никаких изменений по amount/status/order_id/subscriptions_v2/entitlements/access_rules — write-scope строго `payments_v2.receipt_url` + `provider_response.transaction.receipt_url` + `meta.receipt_backfill_*`.
+- Затронутый файл бэкенда: `supabase/functions/canonical-document-generate-strict/index.ts` (1 SELECT-строка).
+- Возможные затронутые файлы UI: `src/components/purchases/OrderListItem.tsx`, `src/lib/documents/purchaseDocumentRules.ts`, `src/components/purchases/SubscriptionDocumentActions.tsx` (зеркальная проверка fields).
+- Без миграций БД, без новых таблиц/RPC, без изменения RLS.
+- Без правок canonical-document-send / document-download — там та же логика не используется.
