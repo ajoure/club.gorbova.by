@@ -259,8 +259,9 @@ Deno.serve(async (req) => {
       let accessResults = new Map<string, AccessCheckResult>();
       
       if (userIdsToCheck.length > 0) {
-        accessResults = await hasValidAccessBatch(supabase, userIdsToCheck, club.id);
-        console.log(`PATCH P0.9.5: Checked access for ${userIdsToCheck.length} users`);
+        // COMMERCIAL-ONLY (2026-05-22): kick решение основано только на коммерческом праве.
+        accessResults = await hasCommercialAccessBatch(supabase, userIdsToCheck, club.id);
+        console.log(`COMMERCIAL-ONLY: checked commercial access for ${userIdsToCheck.length} users`);
       }
 
       let kickedCount = 0;
