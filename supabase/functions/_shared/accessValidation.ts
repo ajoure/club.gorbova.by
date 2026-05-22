@@ -28,6 +28,18 @@ export interface AccessCheckResult {
 }
 
 /**
+ * SPLIT-HELPER (additive, 2026-05-22):
+ * — `hasCommercialAccess` — деньги/право доступа. Источники: subscriptions_v2, entitlements,
+ *   telegram_manual_access, billing-day protection. Должна использоваться revoke/kick/grace.
+ * — `hasTelegramProjection` — физическое присутствие в Telegram. Источники: telegram_access,
+ *   telegram_access_grants. Должна использоваться UI-индикаторами «в чате/канале» и Telegram-sync.
+ * — `hasValidAccess` (legacy) — объединение обоих. Сохранён для обратной совместимости.
+ *   Колл-сайты revoke/kick/grace мигрируются отдельным патчем ПОСЛЕ dry-run rowcount.
+ */
+export type CommercialSource = 'subscription' | 'entitlement' | 'manual_access';
+export type ProjectionSource = 'telegram_access' | 'telegram_grant';
+
+/**
  * Fetch product IDs mapped to a specific club.
  * Returns null if no clubId provided (global/unscoped check).
  */
