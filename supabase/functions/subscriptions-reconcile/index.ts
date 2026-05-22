@@ -1,5 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { hasValidAccess } from '../_shared/accessValidation.ts';
+// COMMERCIAL-ONLY (2026-05-22): hasValidAccess import удалён — не используется. Revoke решения идут через access-revoker (hasCommercialAccess).
 import { executeRevoke } from '../_shared/access-revoker.ts';
 
 const corsHeaders = {
