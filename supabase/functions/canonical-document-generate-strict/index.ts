@@ -916,6 +916,51 @@ Deno.serve(async (req) => {
     } catch (e: any) {
       return json({ error: `render_failed:${e?.message || 'unknown'}` }, 500);
     }
+
+    // ── Core props patch: перезаписываем dc:title / dc:creator / lastModifiedBy
+    // в docProps/core.xml, чтобы во вкладке браузера/в свойствах PDF не светилось
+    // унаследованное от шаблона имя ("Клиенты - январь - 01-2019" и т.п.).
+    // Считаем итоговое имя файла ДО сериализации, чтобы и DOCX, и PDF
+    // (генерируемый из этого DOCX через Gotenberg) имели одинаковый title.
+    const _filenameTokenMapEarly: Record<string, string> = {};
+    for (const fld of filenameFlds) {
+      const directKey = `field:${fld}`;
+      if (Object.prototype.hasOwnProperty.call(resolved, directKey)) {
+        _filenameTokenMapEarly[fld] = resolved[directKey] ?? '';
+        continue;
+      }
+      const reg: any = regMap.get(fld);
+      const dt = ((reg?.data_type as string) || '').toLowerCase();
+      const entry = baseEntryByFld[fld];
+      const fmtKey = (dt === 'date' || dt === 'datetime') ? 'dd.MM.yyyy' : null;
+      const fmt = applyFormat(entry?.value, dt, orderCurrency, fmtKey);
+      _filenameTokenMapEarly[fld] = fmt.value ?? baseValueByFld[fld] ?? '';
+    }
+    let _earlyFileName: string;
+    if (fileNameTemplate && fileNameTemplate.trim()) {
+      const r = renderFileName(fileNameTemplate, { resolvedTokens: _filenameTokenMapEarly });
+      _earlyFileName = r.name || buildDefaultFileName({
+        templateName: tpl.name,
+        documentNumber: allocatedNumber,
+        documentDate: allocatedDate,
+      });
+    } else {
+      _earlyFileName = buildDefaultFileName({
+        templateName: tpl.name,
+        documentNumber: allocatedNumber,
+        documentDate: allocatedDate,
+      });
+    }
+    try {
+      const { patchDocxCoreProps } = await import('../_shared/docx-core-props.ts');
+      patchDocxCoreProps(docx.getZip() as any, {
+        title: _earlyFileName,
+        creator: 'Gorbova Club',
+      });
+    } catch (e) {
+      console.warn('[strict] patchDocxCoreProps failed (non-fatal)', e);
+    }
+
     const out = docx.getZip().generate({ type: 'uint8array' });
 
     // ── C5-J: DOCX → PDF через Gotenberg ──────────────────────────────────
