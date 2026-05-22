@@ -807,7 +807,8 @@ Deno.serve(async (req) => {
       const userIds = [...new Set(membersWithProfile.map(m => profileToUserId.get(m.profile_id)).filter(Boolean))] as string[];
 
       // GUARD: re-validate access for all candidates
-      const accessValidation = userIds.length > 0 ? await hasValidAccessBatch(supabase, userIds, club_id) : new Map();
+      // COMMERCIAL-ONLY (2026-05-22)
+      const accessValidation = userIds.length > 0 ? await hasCommercialAccessBatch(supabase, userIds, club_id) : new Map();
 
       const candidatesToKick: any[] = [];
       const skippedHasAccess: any[] = [];
