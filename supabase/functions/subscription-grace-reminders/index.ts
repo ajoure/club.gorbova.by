@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { hasValidAccess } from '../_shared/accessValidation.ts';
+import { hasCommercialAccess } from '../_shared/accessValidation.ts';
 import { greetPrefix } from '../_shared/recipient-name.ts';
 
 const corsHeaders = {
