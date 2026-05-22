@@ -127,9 +127,10 @@ serve(async (req) => {
       try {
         if (item.action === "grant") {
           // ============================================================
-          // PATCH TG-REVOKE-FALSE-REGRANT: Guard 1 — hasValidAccess check
+          // COMMERCIAL-ONLY (2026-05-22): grant queue item gated on commercial right.
+          // Stale telegram_access projection не считается коммерческим доступом.
           // ============================================================
-          const accessCheck = await hasValidAccess(supabase, item.user_id, item.club_id);
+          const accessCheck = await hasCommercialAccess(supabase, item.user_id, item.club_id);
           
           if (!accessCheck.valid) {
             console.log(`[telegram-process-access-queue] SKIP item ${item.id}: no valid access for user ${item.user_id} in club ${item.club_id}`);
