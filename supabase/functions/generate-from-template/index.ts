@@ -325,6 +325,15 @@ serve(async (req) => {
         linebreaks: true,
       });
       doc.render(placeholderData);
+      try {
+        const { patchDocxCoreProps } = await import('../_shared/docx-core-props.ts');
+        patchDocxCoreProps(doc.getZip() as any, {
+          title: String(documentNumber || 'Document'),
+          creator: 'Gorbova Club',
+        });
+      } catch (e) {
+        console.warn('[generate-from-template] patchDocxCoreProps failed (non-fatal)', e);
+      }
       const buf = doc.getZip().generate({ type: 'uint8array' });
       generatedDoc = buf;
     } catch (docError: unknown) {
