@@ -65,7 +65,17 @@ function reqLabel(r: ReqRow): string {
     d.ent_short_name || d.ent_name ||
     d.grp_short_name || d.grp_full_name;
   const generic = d.short_name || d.full_name || d.name || d.fio;
-  return ind || leg || generic || `Карточка ${r.id.slice(0, 8)}`;
+  const label = (ind || leg || generic || "").toString().trim();
+  return label || `Карточка ${r.id.slice(0, 8)}`;
+}
+
+// Признак ИП внутри legal_entities_requisites (там лежат ИП и ЮЛ совместно).
+function isEntrepreneurReq(r: ReqRow): boolean {
+  const d = (r.data || {}) as any;
+  return !!(
+    d.ent_name || d.ent_unp || d.ent_short_name ||
+    d.is_entrepreneur === true || d.subject_type === "entrepreneur"
+  );
 }
 
 
