@@ -12,7 +12,7 @@
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { hasValidAccessBatch, type AccessCheckResult } from '../_shared/accessValidation.ts';
+import { hasCommercialAccessBatch, type AccessCheckResult } from '../_shared/accessValidation.ts';
 import { executeRevoke, type RevokeContext } from '../_shared/access-revoker.ts';
 import { writeLedgerEntry, type LedgerEntry } from '../_shared/fulfillment-executor.ts';
 
