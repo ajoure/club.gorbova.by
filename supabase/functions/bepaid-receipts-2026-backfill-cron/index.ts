@@ -106,14 +106,16 @@ Deno.serve(async (req) => {
       }
 
       let result;
+      let threw = false;
       try {
         result = await fetchReceiptUrl(p.provider_payment_id as string, credsResult);
       } catch (err) {
         result = { ok: false, error: String(err) };
+        threw = true;
       }
 
-      // Detect 5xx-ish failures (fetcher returns ok:false with All endpoints failed)
-      if (!result.ok) {
+      // True transport/5xx failure = exception. Abort streak only on those.
+      if (threw) {
         consecutive5xx++;
         metrics.failed++;
         if (consecutive5xx >= MAX_CONSECUTIVE_5XX) {
@@ -125,14 +127,18 @@ Deno.serve(async (req) => {
       }
       consecutive5xx = 0;
 
-      if (!result.receipt_url) {
+      // ok=false here means all endpoints returned 4xx/no transaction.
+      // Treat as "receipt not available yet" — not a hard failure.
+      if (!result.ok || !result.receipt_url) {
         const freshMeta = (p.meta as Record<string, any>) || {};
         await supabase
           .from("payments_v2")
           .update({
             meta: {
               ...freshMeta,
-              receipt_backfill_reason: "bepaid_no_receipt_url",
+              receipt_backfill_reason: result.ok
+                ? "bepaid_no_receipt_url"
+                : "bepaid_endpoint_not_found",
               receipt_backfill_batch: BATCH_ID,
               receipt_backfill_at: new Date().toISOString(),
             },
