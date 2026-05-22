@@ -213,9 +213,20 @@ function mergeMenuSettings(saved: MenuSettings): MenuSettings {
     }
   }
   
-  // Remove any duplicates that slipped through and sort
-  return removeDuplicateItems(merged).sort((a, b) => a.order - b.order);
+  // Force alphabetical sort (ru locale) for the "service" group items —
+  // overrides any legacy saved order so the sidebar is always searchable by name.
+  const sorted = merged.map(group => {
+    if (group.id !== "service") return group;
+    const items = [...group.items]
+      .sort((a, b) => a.label.localeCompare(b.label, "ru", { sensitivity: "base" }))
+      .map((item, idx) => ({ ...item, order: idx }));
+    return { ...group, items };
+  });
+  
+  // Remove any duplicates that slipped through and sort groups
+  return removeDuplicateItems(sorted).sort((a, b) => a.order - b.order);
 }
+
 
 export function useAdminMenuSettings() {
   const queryClient = useQueryClient();
