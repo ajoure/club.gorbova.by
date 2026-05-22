@@ -56,11 +56,12 @@ export async function fetchReceiptUrl(
   for (const ep of ENDPOINTS) {
     try {
       const url = ep.url(providerPaymentId);
+      // bePaid gateway rejects Content-Type on GET (no body) → 400.
+      // Send only Authorization + Accept for GET requests.
       const response = await fetch(url, {
         method: 'GET',
         headers: {
           'Authorization': auth,
-          'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
       });
