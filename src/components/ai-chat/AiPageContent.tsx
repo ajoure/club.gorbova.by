@@ -189,15 +189,17 @@ const DEFAULT_SUB: Record<Section, SubTab> = {
 interface AiPageContentProps {
   mode: "user" | "admin";
   initialSection?: Section;
+  hiddenSections?: Section[];
 }
 
-export function AiPageContent({ mode, initialSection }: AiPageContentProps) {
+export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageContentProps) {
   const rbac = useRbac();
   const isAdminUser = rbac.isAdmin || rbac.isSuperAdmin;
   
   const [inputValue, setInputValue] = useState("");
   const [activeSection, setActiveSection] = useState<Section>(initialSection ?? "ai");
   const [activeSubTab, setActiveSubTab] = useState<SubTab>(DEFAULT_SUB[initialSection ?? "ai"]);
+
   const [activeScenario, setActiveScenario] = useState<ChatScenario | null>(null);
   const [chatFiles, setChatFiles] = useState<UploadedFile[]>([]);
   const [showUploader, setShowUploader] = useState(false);
@@ -483,9 +485,13 @@ export function AiPageContent({ mode, initialSection }: AiPageContentProps) {
 
   // Filter sections and sub-tabs strictly by mode (not isAdminUser)
   const visibleSections = useMemo(
-    () => SECTIONS.filter(sec => !sec.adminOnly || mode === "admin"),
-    [mode]
+    () => SECTIONS.filter(sec =>
+      (!sec.adminOnly || mode === "admin") &&
+      !(hiddenSections ?? []).includes(sec.id)
+    ),
+    [mode, hiddenSections]
   );
+
 
   const allSubTabs = activeSection === "ai" ? AI_SUB_TABS : activeSection === "requisites" ? REQ_SUB_TABS : DOC_SUB_TABS;
   const subTabs = useMemo(

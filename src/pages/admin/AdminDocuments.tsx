@@ -2,14 +2,17 @@ import { AdminLayout } from "@/components/layout/AdminLayout";
 import { AiPageContent } from "@/components/ai-chat/AiPageContent";
 
 /**
- * /admin/documents — визуальный shortcut на секцию «Документы»
- * из /admin/ai. Никакой новой логики: переиспользует AiPageContent
- * с initialSection="documents". Старый путь /admin/ai сохранён.
+ * /admin/documents — отдельный домен «Документы».
+ * Скрываем секции Gorbova AI и Реквизиты — только документная вкладка.
  */
 export default function AdminDocuments() {
   return (
     <AdminLayout>
-      <AiPageContent mode="admin" initialSection="documents" />
+      <AiPageContent
+        mode="admin"
+        initialSection="documents"
+        hiddenSections={["ai", "requisites"]}
+      />
     </AdminLayout>
   );
 }
