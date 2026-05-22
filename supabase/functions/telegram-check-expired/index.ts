@@ -1,5 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { hasValidAccess } from '../_shared/accessValidation.ts';
+import { hasCommercialAccess } from '../_shared/accessValidation.ts';
 import { executeRevoke, type RevokeContext } from '../_shared/access-revoker.ts';
 import { writeLedgerEntry, type LedgerEntry } from '../_shared/fulfillment-executor.ts';
 
