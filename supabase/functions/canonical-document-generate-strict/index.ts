@@ -343,9 +343,13 @@ Deno.serve(async (req) => {
     const { hasRealSucceededPayment, getOrderOfferId, isOfferDocumentEnabled } =
       await import('../_shared/purchase-document-rules.ts');
 
+    // PATCH 2026-05-22: добавлены meta, card_last4, card_brand — без них
+    // derivePaymentChannel падает в 'other' для bePaid (где payment_method
+    // не записывается в meta, а канал определяется по card_last4),
+    // и сценарий individual+card не матчится → no_template для клиента.
     const { data: paymentsForOrder } = await supabase
       .from('payments_v2')
-      .select('id, status, provider, receipt_url, provider_response, created_at')
+      .select('id, status, provider, receipt_url, provider_response, created_at, meta, card_last4, card_brand')
       .eq('order_id', orderId)
       .order('created_at', { ascending: false });
     const paymentsArr = (paymentsForOrder || []) as any[];
