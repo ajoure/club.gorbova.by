@@ -124,6 +124,7 @@ const AdminCommunication = lazy(() => import("./pages/admin/AdminCommunication")
 const AdminEditorial = lazy(() => import("./pages/admin/AdminEditorial"));
 const AdminIlex = lazy(() => import("./pages/admin/AdminIlex"));
 const AdminAI = lazy(() => import("./pages/admin/AdminAI"));
+const AdminDocuments = lazy(() => import("./pages/admin/AdminDocuments"));
 const AdminMarketingInsights = lazy(() => import("./pages/admin/AdminMarketingInsights"));
 const AdminPaymentDiagnostics = lazy(() => import("./pages/admin/AdminPaymentDiagnostics"));
 const AdminTelegramDiagnostics = lazy(() => import("./pages/admin/AdminTelegramDiagnostics"));
