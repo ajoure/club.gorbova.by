@@ -440,8 +440,8 @@ Deno.serve(async (req) => {
           .maybeSingle();
 
         if (recentRevoke) {
-          // Double-check: does the user actually have valid access?
-          const accessCheck = await hasValidAccess(supabase, user_id, cid);
+          // COMMERCIAL-ONLY (2026-05-22): grant-after-recent-revoke gated by commercial right.
+          const accessCheck = await hasCommercialAccess(supabase, user_id, cid);
           
           if (!accessCheck.valid) {
             console.log(`[grant-access] BLOCKED: user ${user_id} was recently revoked in club ${cid} and has no valid access. Refusing auto-grant.`);
