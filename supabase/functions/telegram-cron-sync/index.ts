@@ -146,8 +146,9 @@ Deno.serve(async (req) => {
         .map((m: any) => m.profiles?.user_id)
         .filter((uid: string | undefined): uid is string => !!uid);
 
-      const accessMap = userIds.length > 0 
-        ? await hasValidAccessBatch(supabase, userIds, club.id)
+      // COMMERCIAL-ONLY (2026-05-22): cron-sync принимает решения на kick по коммерческому праву.
+      const accessMap = userIds.length > 0
+        ? await hasCommercialAccessBatch(supabase, userIds, club.id)
         : new Map();
 
       let checkedCount = 0;
