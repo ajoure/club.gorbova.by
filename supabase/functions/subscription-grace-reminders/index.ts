@@ -259,8 +259,8 @@ async function markAsExpiredReentry(
   subId: string,
   subMeta: Record<string, any>
 ): Promise<void> {
-  // PATCH 5C: Guard — check shared hasValidAccess before marking was_club_member
-  const accessResult = await hasValidAccess(supabase, userId);
+  // COMMERCIAL-ONLY (2026-05-22): grace expiry gated only by real commercial right.
+  const accessResult = await hasCommercialAccess(supabase, userId);
   if (accessResult.valid) {
     console.log(`[GUARD] Skip markAsExpiredReentry for ${userId}: has ${accessResult.source} until ${accessResult.endAt}`);
     await supabase.from('audit_logs').insert({
