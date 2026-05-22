@@ -85,7 +85,7 @@ Deno.serve(async (req) => {
       .is("receipt_url", null)
       .not("provider_payment_id", "is", null)
       .gte("created_at", SCOPE_FROM)
-      .order("created_at", { ascending: false })
+      .order("created_at", { ascending: true })
       .limit(limit);
 
     if (fetchErr) {
