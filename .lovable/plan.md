@@ -1,192 +1,157 @@
-## Да, согласен, с учетом правок:
+Да, согласен, с учетом правок:
 
-1. **PATCH-1 по CORS — правильно.**  
-Нужно добавить:
+1. **Права доступа должны быть такими же, как у /admin/ai.**  
+Не ставить случайно entitlements.view, если у /admin/ai используется другой permission/guard. Новый /admin/documents должен открывать **ровно тот же доступ**, что текущая вкладка «Документы» внутри «Нейросети».
+2. **initialSection="documents" — только initial-state, без побочных эффектов.**  
+В AiPageContent не менять существующую логику вкладок. Нужно только:  
+initialSection?: Section  
+и корректно инициализировать:
+3. **Проверить, что documents есть в типе Section и в DEFAULT_SUB.**  
+Если нет — не добавлять новый section, а использовать уже существующий идентификатор вкладки «Документы». Нельзя создать вторую параллельную секцию.
+4. **Новый /admin/documents должен быть только shortcut.**  
+Никакой новой логики документов, новых компонентов каталога, новых запросов, edge functions, БД — не делать.
+5. **Сортировку “Служебные” лучше задать явно массивом, а не полагаться на localeCompare.**  
+localeCompare('ru') может по-разному поставить iLex и Telegram invite audit в разных окружениях. Раз пользователь зафиксировал порядок — лучше руками прописать order: 0..14 по таблице.
+6. **LocalStorage merge проверить обязательно.**  
+Если у пользователя уже сохранено меню, новый пункт documents должен добавиться автоматически, но существующий пользовательский порядок не должен быть сброшен.  
+Если текущий merge не добавляет новые default-items — добавить минимальный add-only merge по id.
+7. **Иконку FileText проверить в iconMap.**  
+Если FileText ещё не зарегистрирована в маппинге меню — добавить туда. Если уже есть — не дублировать.
+8. **AdminLayout titles/sections добавить для точного route.**  
+Добавить:  
+"/admin/documents": "Документы"  
+и секцию такую же, как у /admin/ai, чтобы breadcrumbs/header не ломались.
+9. **DoD дополнить проверкой кастомного меню.**  
+Проверить два состояния:
+  - чистый localStorage → порядок по новой таблице;
+  - уже сохранённое меню → старый порядок сохраняется, новый пункт «Документы» добавился.
+10. **Финальный proof:**  
+В отчёте приложить:
 
-```ts
-"Access-Control-Expose-Headers": "Content-Disposition",
-```
+- список изменённых файлов;
+- скрин/описание /admin/documents;
+- proof, что /admin/ai → вкладка «Документы» работает как раньше;
+- proof, что новый пункт появился в «Служебные»;
+- подтверждение, что БД/edge/RLS не трогались.
 
-Но проверить, что этот header уходит **и в основной ответ**, и в `OPTIONS`/CORS preflight, если там отдельная ветка.
+Копируемый блок для Lovable:
 
-2. **В** `downloadDocumentBlob.ts` **после фикса проверить именно чтение header через JS.**  
-Не только `curl -I`, а proof в браузере:
+План согласован, выполнить с правками:
 
-```ts
-res.headers.get("Content-Disposition")
-```
+&nbsp;
 
-должен вернуть реальное значение, не `null`.
+1. Новый пункт /admin/documents — только визуальный shortcut на существующую секцию documents внутри AiPageContent. Не создавать новую логику документов.
 
-3. **PATCH-2 по истории — правильно.**  
-В `DealPayerDocumentsCard.tsx` добавить `file_name` в select и UI.  
-Но отображать лучше так:
+&nbsp;
 
-```text
-номер документа + file_name без расширения + дата
-```
+2. Права доступа для /admin/documents должны быть такими же, как у /admin/ai. Не использовать случайный permission entitlements.view, если он отличается от текущего guard для /admin/ai.
 
-Если `file_name` уже содержит номер, не страшно, но визуально может быть дубль:
+&nbsp;
 
-```text
-2205/2  Счет-акт ... № 2205-2 ...
-```
+3. В AiPageContent добавить только optional prop initialSection?: Section и использовать его для начального useState section/activeSubTab. Не менять логику переключения вкладок.
 
-Это допустимо для proof, но потом можно улучшить отдельным UX-патчем.
+&nbsp;
 
-4. **Не считать исправленным вопрос мусорных дефисов от кавычек.**  
-Сейчас имя:
+4. Перед правкой проверить, что section "documents" уже существует в типе Section и DEFAULT_SUB. Если идентификатор другой — использовать фактический существующий.
 
-```text
-ЗАО -АЖУР инкам-
-```
+&nbsp;
 
-Это отдельный баг sanitization в `document-filename.ts` / генерации имени.  
-В этом патче можно не трогать, если цель только:
+5. Сортировку service menu задать явно order 0..14 по указанной таблице, а не полагаться на localeCompare, чтобы iLex/Telegram не прыгали между окружениями.
 
-- перестать скачивать `document.pdf`;
-- показать `file_name` в истории.
+&nbsp;
 
-Но в отчёте нужно явно написать:
+6. Проверить merge с localStorage: у пользователей с кастомным меню новый item documents должен добавиться add-only по id, но существующий порядок не должен сброситься.
 
-```text
-Проблема document.pdf исправлена через CORS expose-header.
-Визуальная нормализация кавычек в имени файла остаётся отдельным PATCH.
-```
+&nbsp;
 
-5. **Не менять** `canonical-document-generate-strict` **в этом патче.**  
-Согласен: если `file_name` уже записан в БД, то текущий патч должен быть только:
-  - `document-download/index.ts`;
-  - `DealPayerDocumentsCard.tsx`.
-6. **DoD дополнить проверкой нового документа.**  
-Нужно проверить два варианта:
-  - скачивание уже существующего документа из истории;
-  - скачивание сразу после новой генерации.
-7. **Proof-файл добавить.**
+7. Проверить iconMap: FileText должен быть зарегистрирован. Если уже есть — не дублировать.
 
-```text
-.lovable/proofs/patch_document_download_filename_history_2026_05.md
-```
+&nbsp;
 
-В нём:
+8. Добавить /admin/documents в PAGE_TITLES/PAGE_SECTIONS с тем же section, что /admin/ai.
 
-- curl/header proof;
-- browser proof `Content-Disposition` читается;
-- скрин/описание истории с `file_name`;
-- подтверждение, что backend generation не трогали.
+&nbsp;
 
-Итоговый блок для Lovable:
+9. Не трогать БД, edge functions, RLS, документы, плейсхолдеры, шаблоны.
 
-```text
-План согласован.
+&nbsp;
 
-Выполнить двумя точечными PATCH:
+10. Verify:
 
-PATCH-1:
-- В document-download/index.ts добавить Access-Control-Expose-Headers: Content-Disposition.
-- Проверить, что header есть и в обычном ответе, и не теряется из-за CORS/preflight.
-- Verify не только curl, но и browser JS: res.headers.get("Content-Disposition") !== null.
+- чистый localStorage → пункт «Документы» есть в «Служебные», порядок соответствует таблице;
 
-PATCH-2:
-- В DealPayerDocumentsCard.tsx добавить file_name в HistoryDoc и select.
-- В истории показывать document_number + file_name без .pdf/.docx + date.
-- Для старых записей fallback: title или "Документ".
+- кастомный localStorage → старый порядок сохранён, documents добавлен;
 
-Не трогать:
-- canonical-document-generate-strict;
-- FileNameTemplateEditor;
-- document-filename.ts;
-- registry/migrations;
-- /purchases.
+- /admin/documents открывает вкладки Плейсхолдеры / Шаблоны документов / История / Исполнители;
 
-Отдельно в отчёте указать:
-- проблема document.pdf исправляется этим патчем;
-- проблема визуального имени "ЗАО -АЖУР инкам-" остаётся отдельным PATCH по sanitization кавычек.
+- /admin/ai → вкладка «Документы» работает как раньше.
 
-DoD:
-- document-download отдаёт Access-Control-Expose-Headers: Content-Disposition;
-- downloadDocumentBlob видит Content-Disposition и сохраняет файл не как document.pdf;
-- история в админ-карточке показывает file_name;
-- новая генерация и скачивание из истории оба используют корректное имя из БД.
+&nbsp;
 
-Отчёт о диагностике
-```
+Финальный отчёт: changed files, diff-summary, UI proof, confirmation no DB/edge/RLS changes.
 
-Проверил БД и код. Найдено **два независимых бага**:
+&nbsp;
 
-### Баг 1 (главный — почему скачивается «document (17).pdf»)
+## План: «Документы» в левом меню «Служебные» (визуальный shortcut)
 
-`supabase/functions/document-download/index.ts` корректно ставит `Content-Disposition: ...; filename="..."; filename*=UTF-8''...`, но **CORS-заголовки не отдают `Access-Control-Expose-Headers: Content-Disposition**`. Без этого браузер из CORS-ответа не отдаёт заголовок JS, поэтому в `downloadDocumentBlob.ts`:
+### Цель
 
-```
-const cd = res.headers.get("Content-Disposition") || "";  // → пусто
-```
+Добавить в левый сайдбар «Служебные» отдельный пункт «Документы», который открывает тот же экран, что уже работает во вкладке «Документы» внутри `/admin/ai` (Плейсхолдеры / Шаблоны документов / История / Исполнители). Старая вкладка «Документы» в «Нейросети» остаётся на месте — ничего не удаляется. Также отсортировать все пункты «Служебные» по алфавиту.
 
-падает в fallback `"document.pdf"`. Chrome добавляет суффикс `(17)` из-за дубликатов в Загрузках. Имя в БД при этом правильное — проверено:
+### Что меняем (минимальный, безопасный набор)
 
-```
-2205/2  Счет-акт - ЗАО -АЖУР инкам- № 2205-2 от 21.05.2026.pdf  (src=template)
-2105/5  Счет-акт- Прайс С. В. - ЗАО -АЖУР инкам- № 2105-5 от 21.05.2026.pdf
-```
-
-### Баг 2 (история документов в админ-карточке)
-
-`src/components/admin/DealPayerDocumentsCard.tsx`:
-
-- стр. 169: `select(... document_number)` — `file_name` не запрашивается;
-- стр. 650: рендер `{h.document_number || h.title || "Документ"}` — показывает только номер.
-
-Поэтому в списке «История (2)» видно только `2105/5  21.05.2026, 12:17:34`, а не итоговое имя файла.
-
----
-
-## План правок (только UI + CORS, генерация не трогается)
-
-### PATCH-1 — CORS expose-header в `document-download`
-
-Файл: `supabase/functions/document-download/index.ts`
-
-1. В `corsHeaders` добавить:
+1. `src/components/ai-chat/AiPageContent.tsx`
+  - Добавить опциональный проп `initialSection?: Section` (по умолчанию `"ai"`).
+  - Использовать его как начальное значение `useState<Section>(initialSection ?? "ai")` и аналогично проинициализировать `activeSubTab` из `DEFAULT_SUB[initialSection]`.
+  - Никакая логика секций/подвкладок не меняется — это чистый initial-state hint.
+2. `src/pages/admin/AdminDocuments.tsx` (новый, тонкая обёртка)
   ```
-   "Access-Control-Expose-Headers": "Content-Disposition",
+   <AdminLayout>
+     <AiPageContent mode="admin" initialSection="documents" />
+   </AdminLayout>
   ```
-2. Re-deploy `document-download`.
+   Никаких новых компонентов, никакой дублирующей логики — переиспользуем существующий рендер.
+3. `src/App.tsx`
+  - Добавить роут `/admin/documents` рядом с `/admin/ai`, lazy-импорт `AdminDocuments`. Старый `/admin/ai` остаётся.
+4. `src/components/layout/AdminLayout.tsx`
+  - В мапах `PAGE_TITLES`/`PAGE_SECTIONS` добавить `'/admin/documents': 'Документы'` (и тот же section, что у `/admin/ai`). Это нужно для хлебных крошек/заголовка — иначе страница откроется без названия.
+5. `src/hooks/useAdminMenuSettings.tsx` — секция `service` в `DEFAULT_MENU`:
+  - Добавить новый item:
+   `{ id: "documents", label: "Документы", path: "/admin/documents", icon: "FileText", permission: "entitlements.view" }`
+  - Пересортировать все items по алфавиту (ru, localeCompare) и проставить новые `order: 0..N`. Итоговый порядок:
+    ```
+    0  Документы            /admin/documents
+    1  Конструктор сайтов   /admin/sites
+    2  Интеграции           /admin/integrations/crm
+    3  Маркетинг-инсайты    /admin/marketing
+    4  Нейросеть            /admin/ai
+    5  Продукты             /admin/products-v2
+    6  Разделы платформы    /admin/sections
+    7  Редакция             /admin/editorial
+    8  Согласия             /admin/consents
+    9  Сотрудники и роли    /admin/roles
+    10 Тренинги             /admin/training-modules
+    11 Участники клуба      /admin/integrations/telegram
+    12 Эфиры                /admin/live-events
+    13 iLex                 /admin/ilex
+    14 Telegram invite audit /admin/telegram/invite-audit
+    ```
+    (Latin `iLex` и служебный `Telegram invite audit` ставим после кириллицы — стандартное поведение `localeCompare('ru')`.)
+  - `DEPRECATED_ITEM_IDS` и прочую логику не трогаем.
 
-DoD:
+### Что НЕ трогаем
 
-- `curl -i` к функции возвращает заголовок `Access-Control-Expose-Headers: Content-Disposition`.
-- В Preview скачивание из «Истории» сохраняет файл с настоящим именем (`Счет-акт - ... № 2205-2 от 21.05.2026.pdf`), а не `document.pdf`.
+- `AiPageContent` (вкладка «Документы» внутри `/admin/ai`) — остаётся как есть. Пользователь увидит её и из «Нейросети», и из нового пункта «Документы» — это один и тот же экран.
+- Бизнес-логика, edge functions, БД, RLS, права — без изменений (только новый роут, защищённый существующим `ProtectedRoute` + `AdminLayout`).
+- Иконку `FileText` уже используем для других пунктов — допустимо.
 
-### PATCH-2 — Показать имя файла в истории админ-карточки
+### DoD
 
-Файл: `src/components/admin/DealPayerDocumentsCard.tsx`
+- В левом меню «Служебные» появился пункт «Документы», открывает экран с табами Плейсхолдеры / Шаблоны документов / История / Исполнители (идентичен текущей вкладке в «Нейросети»).
+- Старый путь `/admin/ai` → вкладка «Документы» продолжает работать без регрессий.
+- Все пункты «Служебные» в дефолтной конфигурации отсортированы по алфавиту согласно таблице выше.
+- У пользователей с кастомным сохранённым меню (localStorage) старый порядок сохраняется — новый пункт `documents` подмёрджится через существующий merge-механизм в хуке (проверю в коде при имплементации; если merge не добавляет новые items, добавлю минимальный auto-add по `id`).
 
-1. Тип `HistoryDoc` (стр. 53–55) — добавить `file_name: string | null`.
-2. Запрос (стр. 169): добавить `file_name` в `select`.
-3. Рендер (стр. 650): показать рядом с номером **отрендеренное имя файла без расширения**, например:
-  ```
-   <span className="font-medium">{h.document_number || "—"}</span>
-   <span className="text-foreground/80 ml-2 truncate">
-     {(h.file_name || "").replace(/\.(pdf|docx)$/i, "") || h.title || "Документ"}
-   </span>
-   <span className="text-muted-foreground ml-2">{date}</span>
-  ```
-   Уже существующая history-вёрстка (`truncate`) сохраняется.
+### Риски
 
-DoD:
-
-- В истории видны строки вида: `2205/2  Счет-акт - ЗАО -АЖУР инкам- № 2205-2 от 21.05.2026  21.05.2026, 22:12:18`.
-- Для старых записей без `file_name` (как `2105/4` — `Шаблон. Счёт-акт на услуги ФЛ - Исполнитель.pdf`) показывается то, что есть в БД — без падений.
-
-### Что НЕ меняем
-
-- `canonical-document-generate-strict` — `file_name` уже пишется корректно (подтверждено по 2205/2).
-- `FileNameTemplateEditor`, registry, миграции, скачивание в `/purchases`.
-- Аналогичный список «История документов сделки» в `DealDocumentsPanel.tsx` — там уже есть отдельный рендер `document_number`; если нужно — поправим тем же приёмом во второй итерации, но в текущем скрине у пользователя именно админ-карточка `/admin/payments`.
-
-### Verify
-
-1. Deploy edge function → `curl -I` проверка expose-header.
-2. В Preview (`/admin/payments` → открыть сделку 2205/2) — нажать иконку скачивания в «История»: файл сохраняется как `Счет-акт - ЗАО -АЖУР инкам- № 2205-2 от 21.05.2026.pdf`.
-3. Сгенерировать новый документ — он скачивается с правильным именем сразу.
-4. В списке «История» видно полное отрендеренное имя.
+- Сохранённое в localStorage пользовательское меню может не подхватить новый item «Документы». Лечится одной строкой в merge-логике хука — добавить недостающие дефолтные items по `id`. Уточню при реализации.
