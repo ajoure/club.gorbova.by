@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { hasValidAccessBatch } from '../_shared/accessValidation.ts';
+import { hasCommercialAccessBatch } from '../_shared/accessValidation.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
