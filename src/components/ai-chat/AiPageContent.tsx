@@ -189,15 +189,17 @@ const DEFAULT_SUB: Record<Section, SubTab> = {
 interface AiPageContentProps {
   mode: "user" | "admin";
   initialSection?: Section;
+  hiddenSections?: Section[];
 }
 
-export function AiPageContent({ mode, initialSection }: AiPageContentProps) {
+export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageContentProps) {
   const rbac = useRbac();
   const isAdminUser = rbac.isAdmin || rbac.isSuperAdmin;
   
   const [inputValue, setInputValue] = useState("");
   const [activeSection, setActiveSection] = useState<Section>(initialSection ?? "ai");
   const [activeSubTab, setActiveSubTab] = useState<SubTab>(DEFAULT_SUB[initialSection ?? "ai"]);
+
   const [activeScenario, setActiveScenario] = useState<ChatScenario | null>(null);
   const [chatFiles, setChatFiles] = useState<UploadedFile[]>([]);
   const [showUploader, setShowUploader] = useState(false);
