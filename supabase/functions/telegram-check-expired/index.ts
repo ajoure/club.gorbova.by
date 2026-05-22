@@ -99,8 +99,8 @@ Deno.serve(async (req) => {
     for (const access of expiredAccess || []) {
       results.processed++;
       
-      // PATCH TG-REVOKE-FALSE-REGRANT: Use centralized hasValidAccess instead of ad-hoc checks
-      const accessCheck = await hasValidAccess(supabase, access.user_id, access.club_id);
+      // COMMERCIAL-ONLY (2026-05-22): не пропускаем revoke по stale telegram_access projection.
+      const accessCheck = await hasCommercialAccess(supabase, access.user_id, access.club_id);
       
       if (accessCheck.valid) {
         console.log(`User ${access.user_id} has valid access via ${accessCheck.source}, skipping. Reason: skipped_valid_access`);
