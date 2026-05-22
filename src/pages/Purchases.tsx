@@ -175,7 +175,7 @@ export default function Purchases() {
           orders_v2!subscriptions_v2_order_id_fkey(
             id, order_number, final_price, currency, created_at,
             offer_id, tariff_id, payer_type, status, meta,
-            payments_v2(id, status, provider, provider_payment_id, card_brand, card_last4, receipt_url, provider_response)
+            payments_v2(id, status, provider, provider_payment_id, card_brand, card_last4, receipt_url, provider_response, meta)
           )
         `)
         .eq("user_id", user.id)
