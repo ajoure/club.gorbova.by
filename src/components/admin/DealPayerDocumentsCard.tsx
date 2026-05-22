@@ -522,7 +522,13 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
           >
             <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="auto">По умолчанию (карточка пользователя)</SelectItem>
+              <SelectItem value="auto">
+                {!order?.user_id
+                  ? "По умолчанию (карточка пользователя)"
+                  : defaultRequisiteCard
+                    ? `По умолчанию · ${reqLabel(defaultRequisiteCard)}`
+                    : "По умолчанию (нет карточки — заполнит автоматически по профилю)"}
+              </SelectItem>
               {individuals.length > 0 && (
                 <>
                   <div className="px-2 pt-1 text-[10px] uppercase text-muted-foreground">Физлицо</div>
