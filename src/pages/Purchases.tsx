@@ -149,7 +149,7 @@ export default function Purchases() {
           offer_id, tariff_id, payer_type,
           products_v2(name, code),
           tariffs(name, code),
-          payments_v2(id, status, provider, provider_payment_id, card_brand, card_last4, receipt_url, provider_response)
+          payments_v2(id, status, provider, provider_payment_id, card_brand, card_last4, receipt_url, provider_response, meta)
         `)
         .eq("user_id", user.id)
         .order("created_at", { ascending: false });
