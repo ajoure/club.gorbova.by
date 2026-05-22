@@ -263,6 +263,25 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
     || snapshotExecutorId;
   const effectivePayerType: PayerType = (order?.payer_type as PayerType) || resolved.payer_type || "individual";
 
+  // Frontend-preview резолва карточки по умолчанию для отображения в режиме `auto`.
+  // Синхронен с backend (document-field-resolver-v2): is_default DESC, далее по
+  // существующему порядку массивов (load() сортирует по is_default DESC).
+  // Дополнительно фильтруем legal_entities по ИП/ЮЛ под выбранный payer_type.
+  const defaultRequisiteCard: ReqRow | null = useMemo(() => {
+    if (effectivePayerType === "individual") {
+      return individuals.find((r) => r.is_default) || individuals[0] || null;
+    }
+    if (effectivePayerType === "entrepreneur") {
+      const ips = legalEntities.filter(isEntrepreneurReq);
+      return ips.find((r) => r.is_default) || ips[0] || null;
+    }
+    if (effectivePayerType === "legal_entity") {
+      const legs = legalEntities.filter((r) => !isEntrepreneurReq(r));
+      return legs.find((r) => r.is_default) || legs[0] || null;
+    }
+    return null;
+  }, [effectivePayerType, individuals, legalEntities]);
+
   // Статус — гранулярные причины (offer/scenario/template/executor).
   const statusItems = useMemo(() => {
     const items: { kind: "ok" | "warn" | "err"; text: string }[] = [];
