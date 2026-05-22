@@ -14,7 +14,7 @@
 
 import { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { writeLedgerEntry, type LedgerEntry, type LedgerTargetType, type LedgerReasonCode, type LedgerSourceEventType, type LedgerSourceSubjectType } from './fulfillment-executor.ts';
-import { hasValidAccess } from './accessValidation.ts';
+import { hasCommercialAccess } from './accessValidation.ts';
 
 export interface RevokeContext {
   userId: string;
@@ -62,8 +62,8 @@ export async function executeRevoke(
   supabase: SupabaseClient,
   ctx: RevokeContext
 ): Promise<RevokeResult> {
-  // Check for other active access sources via authoritative tables
-  const accessCheck = await hasValidAccess(supabase, ctx.userId, ctx.clubId || undefined);
+  // COMMERCIAL-ONLY (2026-05-22): revoke skip только если есть реальное коммерческое право.
+  const accessCheck = await hasCommercialAccess(supabase, ctx.userId, ctx.clubId || undefined);
 
   if (accessCheck.valid) {
     // User has other active access → skip revoke

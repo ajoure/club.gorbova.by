@@ -1,5 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { hasValidAccess } from '../_shared/accessValidation.ts';
+import { hasCommercialAccess } from '../_shared/accessValidation.ts';
 import { executeRevoke, type RevokeContext } from '../_shared/access-revoker.ts';
 import { writeLedgerEntry, type LedgerEntry } from '../_shared/fulfillment-executor.ts';
 
@@ -245,8 +245,9 @@ Deno.serve(async (req) => {
     // PATCH: пропускаем при isAdminAction (is_manual || admin_id) или forceRevoke
     // =================================================================
     if (user_id && !forceRevoke && !isAdminAction) {
-      // PATCH 5B: Use shared hasValidAccess with grace 72h + billing-day protection
-      const accessResult = await hasValidAccess(supabase, user_id, club_id || undefined);
+      // COMMERCIAL-ONLY (2026-05-22): revoke смотрит только на коммерческое право (subs/ents/manual + billing-day).
+      // Stale telegram_access projection больше не блокирует revoke. Admin/creator guard остаётся в kick-функциях.
+      const accessResult = await hasCommercialAccess(supabase, user_id, club_id || undefined);
       
       if (accessResult.valid) {
         const accessSource = accessResult.source || 'unknown';

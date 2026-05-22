@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { hasValidAccess } from '../_shared/accessValidation.ts';
+import { hasCommercialAccess } from '../_shared/accessValidation.ts';
 import { writeLedgerEntry, type LedgerEntry } from '../_shared/fulfillment-executor.ts';
 import { greetPrefix } from '../_shared/recipient-name.ts';
 import { logAutomatedTelegramMessage } from '../_shared/log-automated-telegram.ts';
@@ -440,8 +440,8 @@ Deno.serve(async (req) => {
           .maybeSingle();
 
         if (recentRevoke) {
-          // Double-check: does the user actually have valid access?
-          const accessCheck = await hasValidAccess(supabase, user_id, cid);
+          // COMMERCIAL-ONLY (2026-05-22): grant-after-recent-revoke gated by commercial right.
+          const accessCheck = await hasCommercialAccess(supabase, user_id, cid);
           
           if (!accessCheck.valid) {
             console.log(`[grant-access] BLOCKED: user ${user_id} was recently revoked in club ${cid} and has no valid access. Refusing auto-grant.`);

@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { hasValidAccessBatch } from '../_shared/accessValidation.ts';
+import { hasCommercialAccessBatch } from '../_shared/accessValidation.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -146,8 +146,9 @@ Deno.serve(async (req) => {
         .map((m: any) => m.profiles?.user_id)
         .filter((uid: string | undefined): uid is string => !!uid);
 
-      const accessMap = userIds.length > 0 
-        ? await hasValidAccessBatch(supabase, userIds, club.id)
+      // COMMERCIAL-ONLY (2026-05-22): cron-sync принимает решения на kick по коммерческому праву.
+      const accessMap = userIds.length > 0
+        ? await hasCommercialAccessBatch(supabase, userIds, club.id)
         : new Map();
 
       let checkedCount = 0;
@@ -269,7 +270,7 @@ Deno.serve(async (req) => {
               continue;
             }
 
-            // PATCH 1: Use shared hasValidAccessBatch result instead of local function
+            // COMMERCIAL-ONLY (2026-05-22): результат из hasCommercialAccessBatch.
             const accessResult = userId ? accessMap.get(userId) : undefined;
             const hasAccess = accessResult?.valid ?? false;
 

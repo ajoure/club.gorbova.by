@@ -1,5 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { hasValidAccessBatch } from '../_shared/accessValidation.ts';
+import { hasCommercialAccessBatch } from '../_shared/accessValidation.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -703,7 +703,8 @@ Deno.serve(async (req) => {
       const profileToUserId = new Map((profileRows || []).map(p => [p.id, p.user_id]));
 
       const userIds = [...new Set((membersWithUser).map(m => profileToUserId.get(m.profile_id)).filter(Boolean))] as string[];
-      const accessValidation = userIds.length > 0 ? await hasValidAccessBatch(supabase, userIds, club_id) : new Map();
+      // COMMERCIAL-ONLY (2026-05-22)
+      const accessValidation = userIds.length > 0 ? await hasCommercialAccessBatch(supabase, userIds, club_id) : new Map();
 
       let kickedCount = 0, skippedCount = 0;
 
@@ -806,7 +807,8 @@ Deno.serve(async (req) => {
       const userIds = [...new Set(membersWithProfile.map(m => profileToUserId.get(m.profile_id)).filter(Boolean))] as string[];
 
       // GUARD: re-validate access for all candidates
-      const accessValidation = userIds.length > 0 ? await hasValidAccessBatch(supabase, userIds, club_id) : new Map();
+      // COMMERCIAL-ONLY (2026-05-22)
+      const accessValidation = userIds.length > 0 ? await hasCommercialAccessBatch(supabase, userIds, club_id) : new Map();
 
       const candidatesToKick: any[] = [];
       const skippedHasAccess: any[] = [];
