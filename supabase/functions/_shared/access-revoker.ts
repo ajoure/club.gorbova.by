@@ -14,7 +14,7 @@
 
 import { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { writeLedgerEntry, type LedgerEntry, type LedgerTargetType, type LedgerReasonCode, type LedgerSourceEventType, type LedgerSourceSubjectType } from './fulfillment-executor.ts';
-import { hasValidAccess } from './accessValidation.ts';
+import { hasCommercialAccess } from './accessValidation.ts';
 
 export interface RevokeContext {
   userId: string;
