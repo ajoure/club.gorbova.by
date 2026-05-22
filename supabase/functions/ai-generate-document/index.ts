@@ -363,6 +363,15 @@ serve(async (req) => {
         linebreaks: true,
       });
       doc.render(tokenData);
+      try {
+        const { patchDocxCoreProps } = await import("../_shared/docx-core-props.ts");
+        patchDocxCoreProps(doc.getZip() as any, {
+          title: `${template.name} — ${docNumber}`,
+          creator: "Gorbova Club",
+        });
+      } catch (e) {
+        console.warn("[ai-generate-document] patchDocxCoreProps failed (non-fatal)", e);
+      }
       generatedDoc = doc.getZip().generate({ type: "uint8array" });
     } catch (docErr: unknown) {
       const errMsg = docErr instanceof Error ? docErr.message : "Unknown render error";
