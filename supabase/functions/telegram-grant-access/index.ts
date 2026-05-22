@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { hasValidAccess } from '../_shared/accessValidation.ts';
+import { hasCommercialAccess } from '../_shared/accessValidation.ts';
 import { writeLedgerEntry, type LedgerEntry } from '../_shared/fulfillment-executor.ts';
 import { greetPrefix } from '../_shared/recipient-name.ts';
 import { logAutomatedTelegramMessage } from '../_shared/log-automated-telegram.ts';
