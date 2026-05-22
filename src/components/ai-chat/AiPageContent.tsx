@@ -485,9 +485,13 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
 
   // Filter sections and sub-tabs strictly by mode (not isAdminUser)
   const visibleSections = useMemo(
-    () => SECTIONS.filter(sec => !sec.adminOnly || mode === "admin"),
-    [mode]
+    () => SECTIONS.filter(sec =>
+      (!sec.adminOnly || mode === "admin") &&
+      !(hiddenSections ?? []).includes(sec.id)
+    ),
+    [mode, hiddenSections]
   );
+
 
   const allSubTabs = activeSection === "ai" ? AI_SUB_TABS : activeSection === "requisites" ? REQ_SUB_TABS : DOC_SUB_TABS;
   const subTabs = useMemo(
