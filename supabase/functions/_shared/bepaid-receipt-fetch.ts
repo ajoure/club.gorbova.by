@@ -22,6 +22,10 @@ const ENDPOINTS = [
     url: (uid: string) => `https://gateway.bepaid.by/transactions/${uid}`,
   },
   {
+    name: 'api',
+    url: (uid: string) => `https://api.bepaid.by/transactions/${uid}`,
+  },
+  {
     name: 'beyag',
     url: (uid: string) => `https://api.bepaid.by/beyag/transactions/${uid}`,
   },

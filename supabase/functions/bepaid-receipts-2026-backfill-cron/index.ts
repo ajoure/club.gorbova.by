@@ -1,24 +1,30 @@
 /**
- * bepaid-receipts-2026-backfill-cron
+ * bepaid-receipts-2026-backfill-cron (v3)
  *
- * Scope: successful bePaid payments since 2026-01-01 with NULL receipt_url
- * and present provider_payment_id. Pulls receipt_url from bePaid API and
- * writes ONLY receipt_url + provider_response.transaction.receipt_url +
- * meta.receipt_backfill_* markers. Never touches amount/status/order_id/
- * subscriptions/access. Runs on a cron schedule (every 5 minutes).
+ * Scope: successful bePaid payments since 2026-01-01 with NULL receipt_url,
+ * amount > 50 BYN, NOT yet attempted (meta.receipt_backfill_reason IS NULL).
+ *
+ * Pre-classification (no API call, terminal reason set, skip):
+ *   - meta.test_payment=true OR meta has test_payment_by  → test_payment_skipped
+ *   - meta has bepaid_subscription_id (sbs_*)             → subscription_phantom_uid_skipped
+ *   - meta.materialization_run=bepaid_webhook_rebill_v2   → rebill_materialized_skipped
+ *   - provider_payment_id IS NULL                          → no_uid_skipped
+ *
+ * For the rest: try bePaid GET /transactions/{uid} (gateway → api → beyag).
+ *   - success + receipt_url  → fill payments_v2.receipt_url + provider_response.transaction.receipt_url
+ *   - success + no receipt   → terminal reason 'bepaid_no_receipt_url'
+ *   - all endpoints 4xx      → terminal reason 'bepaid_endpoint_not_found'
+ *   - transport/5xx          → leave reason NULL (retry next run); abort run on 5xx streak
+ *
+ * Write-scope (strict): payments_v2.receipt_url, provider_response.transaction.receipt_url,
+ * meta.receipt_backfill_*. NEVER touches amount/status/order_id, subscriptions_v2, entitlements,
+ * access_rules.
  *
  * Guards:
- *   - batch size = 25
- *   - sleep 200ms between bePaid calls
- *   - hard cap 500 successful updates per run
- *   - abort run after 5 consecutive 5xx responses from bePaid
- *   - fill-only: never overwrites existing receipt_url
- *   - failed/canceled/refunded payments are out of scope by the SELECT filter
- *
- * Audit:
- *   action      = 'payments.receipt_url_backfilled'
- *   actor_type  = 'system'
- *   batch_id    = 'bepaid_receipts_2026_backfill'
+ *   - batch size = 50
+ *   - sleep 100ms between bePaid calls
+ *   - hard cap 1000 processed rows per run (safe within edge-runtime 150s)
+ *   - abort run after 5 consecutive transport/5xx failures
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
@@ -32,22 +38,35 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const BATCH_SIZE = 25;
-const SLEEP_MS = 200;
-const HARD_CAP_PER_RUN = 500;
+const BATCH_SIZE = 50;
+const SLEEP_MS = 100;
+const HARD_CAP_PER_RUN = 1000;
 const MAX_CONSECUTIVE_5XX = 5;
 const BATCH_ID = "bepaid_receipts_2026_backfill";
 const SCOPE_FROM = "2026-01-01T00:00:00Z";
 const SCOPE_ORIGINS = ["bepaid", "bepaid_subscription"];
 const SCOPE_STATUSES = ["succeeded"];
-// Business rule: skip auth-probes / card-binding / 1 BYN trial transactions.
-// Only real payments above 50 BYN need a fiscal receipt.
 const MIN_AMOUNT_BYN = 50;
 
+type Reason =
+  | "bepaid_no_receipt_url"
+  | "bepaid_endpoint_not_found"
+  | "test_payment_skipped"
+  | "subscription_phantom_uid_skipped"
+  | "rebill_materialized_skipped"
+  | "no_uid_skipped";
+
+function preClassify(meta: Record<string, any> | null, providerPaymentId: string | null): Reason | null {
+  const m = meta || {};
+  if (!providerPaymentId) return "no_uid_skipped";
+  if (m.test_payment === true || m.test_payment === "true" || m.test_payment_by) return "test_payment_skipped";
+  if (m.materialization_run === "bepaid_webhook_rebill_v2") return "rebill_materialized_skipped";
+  if (m.bepaid_subscription_id) return "subscription_phantom_uid_skipped";
+  return null;
+}
+
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -68,27 +87,36 @@ Deno.serve(async (req) => {
     processed: 0,
     filled: 0,
     skipped_already_has: 0,
-    no_receipt_returned: 0,
-    failed: 0,
+    pre_classified: {
+      test_payment_skipped: 0,
+      subscription_phantom_uid_skipped: 0,
+      rebill_materialized_skipped: 0,
+      no_uid_skipped: 0,
+    } as Record<string, number>,
+    bepaid_endpoint_not_found: 0,
+    bepaid_no_receipt_url: 0,
+    transport_failed: 0,
     aborted_reason: null as string | null,
     sample_filled_ids: [] as string[],
   };
 
   let consecutive5xx = 0;
 
-  outer: while (metrics.filled < HARD_CAP_PER_RUN) {
-    const remaining = HARD_CAP_PER_RUN - metrics.filled;
+  outer: while (metrics.processed < HARD_CAP_PER_RUN) {
+    const remaining = HARD_CAP_PER_RUN - metrics.processed;
     const limit = Math.min(BATCH_SIZE, remaining);
 
+    // CRITICAL: exclude rows that already have a terminal reason — otherwise
+    // the same 25 failing rows are picked up on every cron tick.
     const { data: payments, error: fetchErr } = await supabase
       .from("payments_v2")
       .select("id, provider_payment_id, receipt_url, provider_response, meta")
       .in("origin", SCOPE_ORIGINS)
       .in("status", SCOPE_STATUSES)
       .is("receipt_url", null)
-      .not("provider_payment_id", "is", null)
       .gt("amount", MIN_AMOUNT_BYN)
       .gte("created_at", SCOPE_FROM)
+      .is("meta->>receipt_backfill_reason", null)
       .order("created_at", { ascending: true })
       .limit(limit);
 
@@ -102,10 +130,21 @@ Deno.serve(async (req) => {
 
     for (const p of payments) {
       metrics.processed++;
+      if (p.receipt_url) { metrics.skipped_already_has++; continue; }
 
-      // Fill-only safety: re-check
-      if (p.receipt_url) {
-        metrics.skipped_already_has++;
+      const freshMeta = (p.meta as Record<string, any>) || {};
+      const preReason = preClassify(freshMeta, p.provider_payment_id as string | null);
+
+      if (preReason) {
+        await supabase.from("payments_v2").update({
+          meta: {
+            ...freshMeta,
+            receipt_backfill_reason: preReason,
+            receipt_backfill_batch: BATCH_ID,
+            receipt_backfill_at: new Date().toISOString(),
+          },
+        }).eq("id", p.id);
+        metrics.pre_classified[preReason] = (metrics.pre_classified[preReason] || 0) + 1;
         continue;
       }
 
@@ -118,10 +157,9 @@ Deno.serve(async (req) => {
         threw = true;
       }
 
-      // True transport/5xx failure = exception. Abort streak only on those.
       if (threw) {
         consecutive5xx++;
-        metrics.failed++;
+        metrics.transport_failed++;
         if (consecutive5xx >= MAX_CONSECUTIVE_5XX) {
           metrics.aborted_reason = "bepaid_5xx_streak";
           break outer;
@@ -131,36 +169,26 @@ Deno.serve(async (req) => {
       }
       consecutive5xx = 0;
 
-      // ok=false here means all endpoints returned 4xx/no transaction.
-      // Treat as "receipt not available yet" — not a hard failure.
       if (!result.ok || !result.receipt_url) {
-        const freshMeta = (p.meta as Record<string, any>) || {};
-        await supabase
-          .from("payments_v2")
-          .update({
-            meta: {
-              ...freshMeta,
-              receipt_backfill_reason: result.ok
-                ? "bepaid_no_receipt_url"
-                : "bepaid_endpoint_not_found",
-              receipt_backfill_batch: BATCH_ID,
-              receipt_backfill_at: new Date().toISOString(),
-            },
-          })
-          .eq("id", p.id);
-        metrics.no_receipt_returned++;
+        const reason: Reason = result.ok ? "bepaid_no_receipt_url" : "bepaid_endpoint_not_found";
+        await supabase.from("payments_v2").update({
+          meta: {
+            ...freshMeta,
+            receipt_backfill_reason: reason,
+            receipt_backfill_batch: BATCH_ID,
+            receipt_backfill_at: new Date().toISOString(),
+          },
+        }).eq("id", p.id);
+        if (reason === "bepaid_endpoint_not_found") metrics.bepaid_endpoint_not_found++;
+        else metrics.bepaid_no_receipt_url++;
         await sleep(SLEEP_MS);
         continue;
       }
 
-      const freshMeta = (p.meta as Record<string, any>) || {};
       const freshResp = (p.provider_response as Record<string, any>) || {};
       const mergedResp = {
         ...freshResp,
-        transaction: {
-          ...(freshResp.transaction || {}),
-          receipt_url: result.receipt_url,
-        },
+        transaction: { ...(freshResp.transaction || {}), receipt_url: result.receipt_url },
       };
 
       const { error: updateErr } = await supabase
@@ -177,21 +205,18 @@ Deno.serve(async (req) => {
           },
         })
         .eq("id", p.id)
-        .is("receipt_url", null); // race-guard
+        .is("receipt_url", null);
 
       if (updateErr) {
-        metrics.failed++;
+        metrics.transport_failed++;
       } else {
         metrics.filled++;
-        if (metrics.sample_filled_ids.length < 25) {
-          metrics.sample_filled_ids.push(p.id);
-        }
+        if (metrics.sample_filled_ids.length < 25) metrics.sample_filled_ids.push(p.id);
       }
 
       await sleep(SLEEP_MS);
     }
 
-    // If the batch was smaller than the limit — there are no more matching rows.
     if (payments.length < limit) break;
   }
 
@@ -204,7 +229,7 @@ Deno.serve(async (req) => {
     actor_label: BATCH_ID,
     meta: {
       batch_id: BATCH_ID,
-      scope: { from: SCOPE_FROM, origins: SCOPE_ORIGINS, statuses: SCOPE_STATUSES },
+      scope: { from: SCOPE_FROM, origins: SCOPE_ORIGINS, statuses: SCOPE_STATUSES, min_amount: MIN_AMOUNT_BYN },
       ...metrics,
       duration_ms: durationMs,
     },
@@ -216,6 +241,4 @@ Deno.serve(async (req) => {
   );
 });
 
-function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
-}
+function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
