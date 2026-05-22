@@ -65,7 +65,17 @@ function reqLabel(r: ReqRow): string {
     d.ent_short_name || d.ent_name ||
     d.grp_short_name || d.grp_full_name;
   const generic = d.short_name || d.full_name || d.name || d.fio;
-  return ind || leg || generic || `Карточка ${r.id.slice(0, 8)}`;
+  const label = (ind || leg || generic || "").toString().trim();
+  return label || `Карточка ${r.id.slice(0, 8)}`;
+}
+
+// Признак ИП внутри legal_entities_requisites (там лежат ИП и ЮЛ совместно).
+function isEntrepreneurReq(r: ReqRow): boolean {
+  const d = (r.data || {}) as any;
+  return !!(
+    d.ent_name || d.ent_unp || d.ent_short_name ||
+    d.is_entrepreneur === true || d.subject_type === "entrepreneur"
+  );
 }
 
 
@@ -252,6 +262,25 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
     || resolved.executor_id
     || snapshotExecutorId;
   const effectivePayerType: PayerType = (order?.payer_type as PayerType) || resolved.payer_type || "individual";
+
+  // Frontend-preview резолва карточки по умолчанию для отображения в режиме `auto`.
+  // Синхронен с backend (document-field-resolver-v2): is_default DESC, далее по
+  // существующему порядку массивов (load() сортирует по is_default DESC).
+  // Дополнительно фильтруем legal_entities по ИП/ЮЛ под выбранный payer_type.
+  const defaultRequisiteCard: ReqRow | null = useMemo(() => {
+    if (effectivePayerType === "individual") {
+      return individuals.find((r) => r.is_default) || individuals[0] || null;
+    }
+    if (effectivePayerType === "entrepreneur") {
+      const ips = legalEntities.filter(isEntrepreneurReq);
+      return ips.find((r) => r.is_default) || ips[0] || null;
+    }
+    if (effectivePayerType === "legal_entity") {
+      const legs = legalEntities.filter((r) => !isEntrepreneurReq(r));
+      return legs.find((r) => r.is_default) || legs[0] || null;
+    }
+    return null;
+  }, [effectivePayerType, individuals, legalEntities]);
 
   // Статус — гранулярные причины (offer/scenario/template/executor).
   const statusItems = useMemo(() => {
@@ -493,7 +522,13 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
           >
             <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="auto">По умолчанию (карточка пользователя)</SelectItem>
+              <SelectItem value="auto">
+                {!order?.user_id
+                  ? "По умолчанию (карточка пользователя)"
+                  : defaultRequisiteCard
+                    ? `По умолчанию · ${reqLabel(defaultRequisiteCard)}`
+                    : "По умолчанию (нет карточки — заполнит автоматически по профилю)"}
+              </SelectItem>
               {individuals.length > 0 && (
                 <>
                   <div className="px-2 pt-1 text-[10px] uppercase text-muted-foreground">Физлицо</div>
@@ -505,12 +540,8 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
                 </>
               )}
               {(() => {
-                const isEntrepreneur = (r: ReqRow) => {
-                  const d = (r.data || {}) as any;
-                  return !!(d.ent_name || d.ent_unp || d.ent_short_name || d.is_entrepreneur === true || d.subject_type === 'entrepreneur');
-                };
-                const ips = legalEntities.filter(isEntrepreneur);
-                const legs = legalEntities.filter((r) => !isEntrepreneur(r));
+                const ips = legalEntities.filter(isEntrepreneurReq);
+                const legs = legalEntities.filter((r) => !isEntrepreneurReq(r));
                 return (
                   <>
                     {ips.length > 0 && (
