@@ -270,7 +270,7 @@ Deno.serve(async (req) => {
               continue;
             }
 
-            // PATCH 1: Use shared hasValidAccessBatch result instead of local function
+            // COMMERCIAL-ONLY (2026-05-22): результат из hasCommercialAccessBatch.
             const accessResult = userId ? accessMap.get(userId) : undefined;
             const hasAccess = accessResult?.valid ?? false;
 
