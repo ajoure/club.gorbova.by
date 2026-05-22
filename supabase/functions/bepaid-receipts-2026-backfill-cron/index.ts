@@ -39,7 +39,7 @@ const MAX_CONSECUTIVE_5XX = 5;
 const BATCH_ID = "bepaid_receipts_2026_backfill";
 const SCOPE_FROM = "2026-01-01T00:00:00Z";
 const SCOPE_ORIGINS = ["bepaid", "bepaid_subscription"];
-const SCOPE_STATUSES = ["succeeded", "completed"];
+const SCOPE_STATUSES = ["succeeded"];
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
