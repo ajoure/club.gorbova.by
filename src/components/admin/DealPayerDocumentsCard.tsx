@@ -540,12 +540,8 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
                 </>
               )}
               {(() => {
-                const isEntrepreneur = (r: ReqRow) => {
-                  const d = (r.data || {}) as any;
-                  return !!(d.ent_name || d.ent_unp || d.ent_short_name || d.is_entrepreneur === true || d.subject_type === 'entrepreneur');
-                };
-                const ips = legalEntities.filter(isEntrepreneur);
-                const legs = legalEntities.filter((r) => !isEntrepreneur(r));
+                const ips = legalEntities.filter(isEntrepreneurReq);
+                const legs = legalEntities.filter((r) => !isEntrepreneurReq(r));
                 return (
                   <>
                     {ips.length > 0 && (
