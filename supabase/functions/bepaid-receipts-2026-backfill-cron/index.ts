@@ -40,6 +40,9 @@ const BATCH_ID = "bepaid_receipts_2026_backfill";
 const SCOPE_FROM = "2026-01-01T00:00:00Z";
 const SCOPE_ORIGINS = ["bepaid", "bepaid_subscription"];
 const SCOPE_STATUSES = ["succeeded"];
+// Business rule: skip auth-probes / card-binding / 1 BYN trial transactions.
+// Only real payments above 50 BYN need a fiscal receipt.
+const MIN_AMOUNT_BYN = 50;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
