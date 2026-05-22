@@ -703,7 +703,8 @@ Deno.serve(async (req) => {
       const profileToUserId = new Map((profileRows || []).map(p => [p.id, p.user_id]));
 
       const userIds = [...new Set((membersWithUser).map(m => profileToUserId.get(m.profile_id)).filter(Boolean))] as string[];
-      const accessValidation = userIds.length > 0 ? await hasValidAccessBatch(supabase, userIds, club_id) : new Map();
+      // COMMERCIAL-ONLY (2026-05-22)
+      const accessValidation = userIds.length > 0 ? await hasCommercialAccessBatch(supabase, userIds, club_id) : new Map();
 
       let kickedCount = 0, skippedCount = 0;
 
