@@ -216,6 +216,7 @@ const REASON_LABELS: Record<string, string> = {
   human_lineage_overridden_by_admin_canonicalize: "Ручной/admin доступ будет переопределён по правилу",
   relink_to_current_rule_same_window: "Перепривязка к актуальному правилу, срок не меняется",
   club_grant_requires_telegram_action: "Требуется выдача через Telegram",
+  conflict_unknown_lineage: "Конфликт: происхождение доступа неизвестно (ночной режим не меняет)",
 };
 
 function translateReason(code: string | null): string {
