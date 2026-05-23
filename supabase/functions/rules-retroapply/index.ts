@@ -389,7 +389,7 @@ async function processRule(
 
   let subsQuery = supabase
     .from("subscriptions_v2")
-    .select("id, user_id, product_id, tariff_id, access_end_at, status")
+    .select("id, user_id, product_id, tariff_id, access_end_at, access_start_at, created_at, status")
     .eq("product_id", sourceProductId)
     .in("status", ["active", "past_due"]);
 
@@ -415,6 +415,26 @@ async function processRule(
     const filterSet = new Set(filterUserIds);
     userIds = userIds.filter(id => filterSet.has(id));
     if (userIds.length === 0) return actions;
+  }
+
+  // Stage 5: load tariff.access_days for fallback window resolution when
+  // sub.access_end_at is empty and rule has no duration_days.
+  const tariffIdSet = new Set<string>();
+  for (const uid of userIds) {
+    const sub = userSubMap.get(uid);
+    if (sub?.tariff_id) tariffIdSet.add(sub.tariff_id);
+  }
+  const tariffAccessDaysMap = new Map<string, number>();
+  if (tariffIdSet.size > 0) {
+    const { data: tariffRows } = await supabase
+      .from("tariffs")
+      .select("id, access_days")
+      .in("id", [...tariffIdSet]);
+    (tariffRows || []).forEach((t: any) => {
+      if (t.access_days && Number(t.access_days) > 0) {
+        tariffAccessDaysMap.set(t.id, Number(t.access_days));
+      }
+    });
   }
 
   // Batch fetch profiles with full_name
