@@ -670,6 +670,78 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
               </div>
             </div>
 
+            {/* ── Stage 3: Режим reconcile ── */}
+            <div className={cn(
+              "space-y-2 p-3 rounded-lg border",
+              effectiveReconcileMode === "admin_canonicalize_all" ? "border-purple-300 bg-purple-50/40" : "border-muted bg-muted/10"
+            )}>
+              <div className="flex items-center gap-2 text-xs font-medium text-foreground">
+                <ShieldCheck className="h-3.5 w-3.5 text-purple-700" />
+                Режим применения правил
+              </div>
+              <Select
+                value={effectiveReconcileMode}
+                onValueChange={(v) => {
+                  const next = v as ReconcileMode;
+                  setReconcileMode(next);
+                  if (next === "nightly_safe") {
+                    setAllowReduce(false);
+                    setAllowRevoke(false);
+                    setAllowManualOverride(false);
+                    setAdminAcknowledge(false);
+                  }
+                }}
+                disabled={!isSuperAdmin}
+              >
+                <SelectTrigger className="h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="nightly_safe">Безопасный ночной режим</SelectItem>
+                  <SelectItem value="admin_canonicalize_all" disabled={!isSuperAdmin}>
+                    Полная админская канонизация {!isSuperAdmin && "(только для супер-админа)"}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              {effectiveReconcileMode === "nightly_safe" && (
+                <p className="text-[10px] text-muted-foreground">
+                  Не трогает ручные/admin доступы. Только безопасные изменения по системной lineage.
+                </p>
+              )}
+              {effectiveReconcileMode === "admin_canonicalize_all" && (
+                <div className="space-y-2 pt-1">
+                  <p className="text-[10px] text-purple-700">
+                    Полная канонизация: ручные/admin доступы можно привести к правилам. Любые destructive действия требуют отдельных подтверждений и не запускаются в Stage 3.
+                  </p>
+                  <div className="space-y-1.5 pl-1">
+                    <div className="flex items-start gap-2">
+                      <Checkbox id="allow-reduce" checked={allowReduce} onCheckedChange={(v) => setAllowReduce(!!v)} />
+                      <Label htmlFor="allow-reduce" className="text-[11px] cursor-pointer">
+                        Разрешить сокращение сроков (reducible_by_rule)
+                      </Label>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <Checkbox id="allow-revoke" checked={allowRevoke} onCheckedChange={(v) => setAllowRevoke(!!v)} />
+                      <Label htmlFor="allow-revoke" className="text-[11px] cursor-pointer text-muted-foreground">
+                        Разрешить снятие лишних доступов <Badge variant="outline" className="text-[8px] ml-1">в Stage 3 заблокировано</Badge>
+                      </Label>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <Checkbox id="allow-manual" checked={allowManualOverride} onCheckedChange={(v) => setAllowManualOverride(!!v)} />
+                      <Label htmlFor="allow-manual" className="text-[11px] cursor-pointer">
+                        Разрешить перезапись ручных/admin доступов (canonicalize)
+                      </Label>
+                    </div>
+                    <div className="flex items-start gap-2 pt-1 border-t border-purple-200">
+                      <Checkbox id="admin-ack" checked={adminAcknowledge} onCheckedChange={(v) => setAdminAcknowledge(!!v)} />
+                      <Label htmlFor="admin-ack" className="text-[11px] cursor-pointer font-medium">
+                        Я понимаю, что доступы будут приведены к текущим правилам
+                      </Label>
+                    </div>
+                  </div>
+                </div>
+              )}
+
             {/* ── Context block BEFORE preview ── */}
             {!result && (
               <div className="p-3 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/10 text-xs text-muted-foreground space-y-1">
