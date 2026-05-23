@@ -974,35 +974,60 @@ async function executeActions(
         created++;
         created_action_ids.push(action.action_id);
       }
-    } else if (action.category === "aligned_update_needed" || action.category === "reducible_by_rule") {
+    } else if (
+      action.category === "aligned_update_needed"
+      || action.category === "reducible_by_rule"
+      || action.category === "relink_source_rule"
+      || action.category === "replace_system_or_manual_lineage"
+    ) {
       // Update existing entitlement — with meta MERGE
       const { data: ent } = await supabase
         .from("entitlements")
-        .select("id, meta")
+        .select("id, meta, expires_at")
         .eq("user_id", action.user_id)
         .eq("product_id", action.target_product_id)
         .eq("status", "active")
         .limit(1)
         .maybeSingle();
 
-      if (ent && action.planned_expires_at) {
+      if (ent) {
         const oldMeta = (ent.meta && typeof ent.meta === "object" && !Array.isArray(ent.meta))
           ? ent.meta as Record<string, unknown>
           : {};
-        const mergedMeta = {
+        const previousSourceRuleId = oldMeta.source_rule_id || null;
+        const mergedMeta: Record<string, unknown> = {
           ...oldMeta,
           source_rule_id: action.rule_id,
           retroapply_updated: true,
           batch_id: batchId,
+          stage3_category: action.category,
+          stage3_reconcile_mode: opts.reconcileMode,
         };
+        if (previousSourceRuleId && previousSourceRuleId !== action.rule_id) {
+          mergedMeta.previous_source_rule_id = previousSourceRuleId;
+          mergedMeta.relink_reason = "stage3_relink_or_canonicalize";
+        }
+        if (action.category === "replace_system_or_manual_lineage") {
+          mergedMeta.previous_lineage_source_type = oldMeta.source_type || null;
+          mergedMeta.previous_lineage_granted_by = oldMeta.granted_by || null;
+          mergedMeta.canonicalized_by_admin = true;
+          mergedMeta.canonicalized_by_user_id = opts.callerUserId;
+          mergedMeta.canonicalized_at = new Date().toISOString();
+          mergedMeta.source_type = "retroapply";
+        }
+
+        // relink_source_rule: метаданные only, expires_at не меняем (он уже совпадает)
+        const updatePayload: Record<string, unknown> = {
+          updated_at: new Date().toISOString(),
+          meta: mergedMeta,
+        };
+        if (action.category !== "relink_source_rule" && action.planned_expires_at) {
+          updatePayload.expires_at = action.planned_expires_at;
+        }
 
         const { error: updateErr } = await supabase
           .from("entitlements")
-          .update({
-            expires_at: action.planned_expires_at,
-            updated_at: new Date().toISOString(),
-            meta: mergedMeta,
-          })
+          .update(updatePayload)
           .eq("id", ent.id);
 
         if (updateErr) {
