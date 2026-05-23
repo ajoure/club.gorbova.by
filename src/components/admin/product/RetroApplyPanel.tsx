@@ -73,6 +73,9 @@ interface UserAction {
   skip_reason: string | null;
   lineage_will_be_overridden?: boolean;
   current_lineage?: "manual_admin" | "system" | "none" | null;
+  /** Stage 5: откуда взят срок */
+  window_resolved_from?: "rule_duration" | "source_access_end_at" | "tariff_access_days" | null;
+  window_anchor_source?: "sub_access_end_at" | "sub_access_start_at" | "sub_created_at" | "rule_duration_now" | null;
 }
 
 interface RetroApplyResult {
