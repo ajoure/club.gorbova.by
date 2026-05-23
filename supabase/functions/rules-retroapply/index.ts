@@ -268,6 +268,15 @@ function jsonResp(data: any, status = 200) {
   });
 }
 
+function emptySummary() {
+  return {
+    total: 0, missing_access: 0, aligned_update_needed: 0, reducible_by_rule: 0,
+    requires_manual_review: 0, conflict_existing: 0, already_satisfied: 0,
+    condition_not_met: 0, no_source_window: 0,
+    relink_source_rule: 0, replace_system_or_manual_lineage: 0, telegram_action_required: 0,
+  };
+}
+
 // ═══════ RESOLVE RULES ═══════
 
 async function resolveRules(
