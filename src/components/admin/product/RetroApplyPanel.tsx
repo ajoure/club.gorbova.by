@@ -364,6 +364,8 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
 
   const runRetroApply = async (mode: "preview" | "execute", opts?: {
     allowReduceAccess?: boolean;
+    allowRevokeOrExpire?: boolean;
+    allowManualOverride?: boolean;
     selectedActionIds?: string[];
     applyCategories?: string[];
   }) => {
