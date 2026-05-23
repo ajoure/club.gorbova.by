@@ -507,12 +507,17 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
     });
   };
 
-  const handleExecuteWithReductions = () => {
+  const handleExecuteWithReductions = async () => {
     setConfirmExecute(false);
-    runRetroApply("execute", {
+    // Stage 5: preflight — повторно дёрнуть preview, чтобы убедиться, что состояние
+    // и количество reducible не изменились между предпросмотром и применением.
+    if (!(await preflightOk())) return;
+    await runRetroApply("execute", {
       allowReduceAccess: true,
       applyCategories: ["missing_access", "aligned_update_needed", "reducible_by_rule"],
     });
+    // Stage 5: переключаем фильтр, чтобы видно было, что reducible уехали.
+    setActiveFilter("changed");
   };
 
   /** Stage 3: preflight — re-run preview before execute; abort if summary totals changed */
