@@ -332,6 +332,9 @@ Deno.serve(async (req) => {
         sample_condition_not_met: sampleConditionNotMet,
         module_list_mapped_matches: moduleListMappedMatches,
         elapsed_ms: elapsedMs,
+        stage4_extra_access_counts: extraAccessCounts,
+        stage4_extra_access_error: extraAccessError,
+        stage4_destructive_executed: false,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     );
