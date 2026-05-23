@@ -242,6 +242,8 @@ const CATEGORY_CONFIG: Record<string, {
 const REASON_LABELS: Record<string, string> = {
   prior_purchase_not_found: "Предыдущая покупка не найдена",
   no_access_end_at_and_no_duration_days: "Нет даты окончания и не задан фиксированный срок",
+  no_access_end_at_no_duration_no_tariff_anchor: "Нет окончания подписки, фиксированного срока правила и access_days тарифа",
+  planned_window_already_in_past: "Расчётный срок уже в прошлом — не продлеваем автоматически",
   existing_entitlement_from_different_source: "Существующий доступ от другого источника",
   safe_recalculate_expires_extended: "Срок будет выровнен по правилу",
   safe_recalculate_expires_missing: "Текущий срок отсутствует, будет рассчитан заново",
