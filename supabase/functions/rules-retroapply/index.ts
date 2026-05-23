@@ -569,31 +569,43 @@ async function processRule(
         const existingList = existingListMap.get(userId) || [];
         const existing = existingList.length === 1 ? existingList[0] : null;
 
-        let plannedExpiry: string | null = null;
-        if (rule.duration_days) {
-          plannedExpiry = new Date(Date.now() + rule.duration_days * 86400000).toISOString();
-        } else if (sub.access_end_at) {
-          plannedExpiry = sub.access_end_at;
-        }
+        // Stage 5: трёхуровневый резолвер окна (rule_duration → access_end_at → tariff.access_days)
+        const win = resolveWindow(sub);
+        const plannedExpiry = win.plannedIso;
+        const windowExtras = {
+          window_resolved_from: win.window_resolved_from,
+          window_anchor_source: win.window_anchor_source,
+        };
 
         if (hasPriorPurchase) {
           const conditionMet = await checkRetroCondition(supabase, conditions, userId, targetProdId);
           if (!conditionMet) {
-            actions.push(makeAction(userId, targetProdId, "condition_not_met", plannedExpiry, null, sub, "prior_purchase_not_found"));
+            actions.push(makeAction(userId, targetProdId, "condition_not_met", plannedExpiry, null, sub, "prior_purchase_not_found", windowExtras));
             continue;
           }
         }
 
-        if (!plannedExpiry && !rule.duration_days) {
-          actions.push(makeAction(userId, targetProdId, "no_source_window", null, null, sub, "no_access_end_at_and_no_duration_days"));
+        if (!plannedExpiry) {
+          // Все три источника пусты — нечего применять.
+          actions.push(makeAction(userId, targetProdId, "no_source_window", null, null, sub,
+            "no_access_end_at_no_duration_no_tariff_anchor", windowExtras));
+          continue;
+        }
+
+        // Stage 5: если получившийся plannedExpiry уже в прошлом — это валидный сигнал,
+        // что источник окна устарел. Не создаём/не продлеваем доступ автоматически.
+        const plannedMs = new Date(plannedExpiry).getTime();
+        if (Number.isFinite(plannedMs) && plannedMs < Date.now()) {
+          actions.push(makeAction(userId, targetProdId, "expired_source_window", plannedExpiry,
+            existing?.expires_at ?? null, sub, "planned_window_already_in_past", windowExtras));
           continue;
         }
 
         if (existingList.length === 0) {
-          actions.push(makeAction(userId, targetProdId, "missing_access", plannedExpiry, null, sub, null));
+          actions.push(makeAction(userId, targetProdId, "missing_access", plannedExpiry, null, sub, null, windowExtras));
         } else if (existingList.length > 1) {
           actions.push(makeAction(userId, targetProdId, "conflict_existing", plannedExpiry,
-            existingList[0].expires_at, sub, "conflict_multiple_entitlements"));
+            existingList[0].expires_at, sub, "conflict_multiple_entitlements", windowExtras));
         } else {
           // Exactly 1 active entitlement — classify
           const ent = existing!;
