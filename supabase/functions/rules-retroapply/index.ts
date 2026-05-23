@@ -664,14 +664,22 @@ const NEVER_EXECUTE_CATEGORIES = new Set([
   "conflict_existing",
   "no_source_window",
   "condition_not_met",
+  "telegram_action_required", // Stage 3: preview-only — execute через telegram-grant-access
 ]);
 
 interface ExecuteOptions {
   recalculateExisting: boolean;
   allowReduceAccess: boolean;
+  /** Stage 3 destructive — для soft-expire/revoke (not implemented in this stage's execute) */
+  allowRevokeOrExpire: boolean;
+  /** Stage 3 — позволяет execute по replace_system_or_manual_lineage */
+  allowManualOverride: boolean;
+  /** Stage 3 — режим reconcile */
+  reconcileMode: ReconcileMode;
   selectedActionIds: string[];
   applyCategories: string[];
   forceExecute: boolean;
+  callerUserId: string | null;
 }
 
 async function executeActions(
@@ -752,6 +760,22 @@ async function executeActions(
       if (hasSelection) return selectedSet.has(action.action_id);
       if (hasCategories) return categorySet.has("missing_access");
       return true;
+    }
+
+    // Stage 3: relink_source_rule — metadata-only update, безопасно при явном выборе/категории
+    if (action.category === "relink_source_rule") {
+      if (hasSelection && selectedSet.has(action.action_id)) return true;
+      if (hasCategories && categorySet.has("relink_source_rule")) return true;
+      return false;
+    }
+
+    // Stage 3: replace_system_or_manual_lineage — только в admin_canonicalize_all + allowManualOverride
+    if (action.category === "replace_system_or_manual_lineage") {
+      if (opts.reconcileMode !== "admin_canonicalize_all") return false;
+      if (!opts.allowManualOverride) return false;
+      if (hasSelection && selectedSet.has(action.action_id)) return true;
+      if (hasCategories && categorySet.has("replace_system_or_manual_lineage")) return true;
+      return false;
     }
 
     return false;
