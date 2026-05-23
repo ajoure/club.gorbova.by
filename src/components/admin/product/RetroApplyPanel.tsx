@@ -33,11 +33,14 @@ import {
 import {
   RefreshCw, Eye, Play, AlertTriangle, CheckCircle2, XCircle,
   MinusCircle, HelpCircle, ChevronDown, ChevronRight, ShieldAlert,
-  ArrowDownCircle,
+  ArrowDownCircle, Link2, ShieldCheck, Send,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { AccessRule } from "@/hooks/useAccessRules";
+import { useSuperAdmin } from "@/hooks/useSuperAdmin";
+
+type ReconcileMode = "nightly_safe" | "admin_canonicalize_all";
 
 // ═══════ TYPES ═══════
 
@@ -68,6 +71,8 @@ interface UserAction {
   current_expires_at: string | null;
   source_subscription_id: string | null;
   skip_reason: string | null;
+  lineage_will_be_overridden?: boolean;
+  current_lineage?: "manual_admin" | "system" | "none" | null;
 }
 
 interface RetroApplyResult {
@@ -90,7 +95,11 @@ interface RetroApplyResult {
     already_satisfied: number;
     condition_not_met: number;
     no_source_window: number;
+    relink_source_rule?: number;
+    replace_system_or_manual_lineage?: number;
+    telegram_action_required?: number;
   };
+  reconcile_mode?: ReconcileMode;
   executed?: {
     targeted: number;
     created: number;
@@ -168,6 +177,25 @@ const CATEGORY_CONFIG: Record<string, {
     color: "text-red-700 bg-red-50 border-red-200",
     icon: AlertTriangle,
   },
+  // Stage 3 categories
+  relink_source_rule: {
+    label: "Перепривязка к правилу",
+    description: "Срок совпадает, изменится только привязка к актуальному правилу",
+    color: "text-sky-700 bg-sky-50 border-sky-200",
+    icon: Link2,
+  },
+  replace_system_or_manual_lineage: {
+    label: "Канонизация ручного доступа",
+    description: "Ручной/admin доступ будет приведён к правилу (только админский режим)",
+    color: "text-purple-700 bg-purple-50 border-purple-200",
+    icon: ShieldCheck,
+  },
+  telegram_action_required: {
+    label: "Требует Telegram",
+    description: "Действие требует выдачи через Telegram (preview-only)",
+    color: "text-cyan-700 bg-cyan-50 border-cyan-200",
+    icon: Send,
+  },
 };
 
 /** Russian translations for skip_reason / stop_reason codes */
@@ -180,11 +208,15 @@ const REASON_LABELS: Record<string, string> = {
   safe_recalculate_available_but_disabled: "Срок можно безопасно обновить, но пересчёт сроков сейчас выключен",
   reducible_by_canonical_rule: "Срок будет сокращён до канонического по правилу",
   requires_manual_decision: "Требует решения администратора",
-  conflict_manual_source: "Конфликт: доступ выдан вручную",
+  conflict_manual_source: "Конфликт: доступ выдан вручную (ночной режим не меняет)",
   conflict_multiple_entitlements: "Конфликт: несколько активных доступов",
   conflict_would_reduce_access: "Конфликт: обновление сократит срок доступа",
   conflict_no_planned_expiry: "Конфликт: невозможно вычислить новый срок",
   conflict_different_rule_source: "Конфликт: доступ выдан по другому правилу",
+  human_lineage_overridden_by_admin_canonicalize: "Ручной/admin доступ будет переопределён по правилу",
+  relink_to_current_rule_same_window: "Перепривязка к актуальному правилу, срок не меняется",
+  club_grant_requires_telegram_action: "Требуется выдача через Telegram",
+  conflict_unknown_lineage: "Конфликт: происхождение доступа неизвестно (ночной режим не меняет)",
 };
 
 function translateReason(code: string | null): string {
@@ -211,9 +243,10 @@ function translateStopReason(raw: string): string {
 // Categories that support row selection for execute
 const SELECTABLE_CATEGORIES = new Set([
   "missing_access", "aligned_update_needed", "reducible_by_rule", "requires_manual_review",
+  "relink_source_rule", "replace_system_or_manual_lineage",
 ]);
 
-type FilterKey = "all" | "changed" | "missing_access" | "aligned_update_needed" | "reducible_by_rule" | "requires_manual_review" | "conflict_existing" | "already_satisfied" | "condition_not_met" | "no_source_window";
+type FilterKey = "all" | "changed" | "missing_access" | "aligned_update_needed" | "reducible_by_rule" | "requires_manual_review" | "conflict_existing" | "already_satisfied" | "condition_not_met" | "no_source_window" | "relink_source_rule" | "replace_system_or_manual_lineage" | "telegram_action_required";
 
 type ScopeMode = "rule" | "product" | "tariff";
 
@@ -261,6 +294,7 @@ function isActionableCategory(cat: string): boolean {
 // ═══════ COMPONENT ═══════
 
 export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelProps) {
+  const { data: isSuperAdmin = false } = useSuperAdmin();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [scopeMode, setScopeMode] = useState<ScopeMode>("product");
   const [selectedRuleId, setSelectedRuleId] = useState<string>("");
@@ -274,6 +308,18 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // Stage 3: dual-mode reconcile
+  const [reconcileMode, setReconcileMode] = useState<ReconcileMode>("nightly_safe");
+  const [allowReduce, setAllowReduce] = useState(false);
+  const [allowRevoke, setAllowRevoke] = useState(false);
+  const [allowManualOverride, setAllowManualOverride] = useState(false);
+  const [adminAcknowledge, setAdminAcknowledge] = useState(false);
+
+  // Force back to nightly_safe if non-super_admin somehow toggles
+  const effectiveReconcileMode: ReconcileMode = (isSuperAdmin && reconcileMode === "admin_canonicalize_all")
+    ? "admin_canonicalize_all"
+    : "nightly_safe";
 
   const activeRules = useMemo(() =>
     rules.filter(r => r.is_active && ["product_access", "club"].includes(r.grant_target_type)),
@@ -292,11 +338,14 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
 
   const buildBody = (mode: "preview" | "execute", opts?: {
     allowReduceAccess?: boolean;
+    allowRevokeOrExpire?: boolean;
+    allowManualOverride?: boolean;
     selectedActionIds?: string[];
     applyCategories?: string[];
   }) => {
     const body: Record<string, unknown> = {
       mode,
+      reconcile_mode: effectiveReconcileMode,
       recalculate_existing: recalculateExisting,
     };
     if (scopeMode === "rule" && selectedRuleId) {
@@ -307,6 +356,8 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
       body.source_product_id = productId;
     }
     if (opts?.allowReduceAccess) body.allow_reduce_access = true;
+    if (opts?.allowRevokeOrExpire) body.allow_revoke_or_expire_access = true;
+    if (opts?.allowManualOverride) body.allow_manual_override = true;
     if (opts?.selectedActionIds?.length) body.selected_action_ids = opts.selectedActionIds;
     if (opts?.applyCategories?.length) body.apply_categories = opts.applyCategories;
     return body;
@@ -314,6 +365,8 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
 
   const runRetroApply = async (mode: "preview" | "execute", opts?: {
     allowReduceAccess?: boolean;
+    allowRevokeOrExpire?: boolean;
+    allowManualOverride?: boolean;
     selectedActionIds?: string[];
     applyCategories?: string[];
   }) => {
@@ -399,16 +452,43 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
     });
   };
 
-  const handleExecuteSelected = () => {
+  /** Stage 3: preflight — re-run preview before execute; abort if summary totals changed */
+  const preflightOk = async (): Promise<boolean> => {
+    if (!result?.summary) return true;
+    try {
+      const { data, error } = await supabase.functions.invoke("rules-retroapply", {
+        body: buildBody("preview"),
+      });
+      if (error || !data) return true; // не блокируем при сетевой ошибке preflight
+      const fresh = data as RetroApplyResult;
+      const before = result.summary;
+      const after = fresh.summary;
+      const changed = (Object.keys(before) as Array<keyof typeof before>).some(k => (before as any)[k] !== (after as any)[k]);
+      if (changed) {
+        setResult(fresh);
+        toast.error("Состояние изменилось между предпросмотром и применением. Просмотрите свежий предпросмотр и повторите.");
+        return false;
+      }
+      return true;
+    } catch {
+      return true;
+    }
+  };
+
+  const handleExecuteSelected = async () => {
     setConfirmExecute(false);
+    if (!(await preflightOk())) return;
     const ids = [...selectedIds];
-    // Check if any selected are reducible
-    const hasReducible = result?.actions?.some(
-      a => selectedIds.has(a.action_id) && a.category === "reducible_by_rule"
-    );
+    const selectedActions = result?.actions?.filter(a => selectedIds.has(a.action_id)) || [];
+    const hasReducible = selectedActions.some(a => a.category === "reducible_by_rule");
+    const hasReplace = selectedActions.some(a => a.category === "replace_system_or_manual_lineage");
+    // Admin mode: honor user toggles; replace requires both allow_manual_override + acknowledge
+    const allowManual = effectiveReconcileMode === "admin_canonicalize_all" && allowManualOverride && adminAcknowledge && hasReplace;
+    const allowReduceFlag = hasReducible && (effectiveReconcileMode === "nightly_safe" ? true : allowReduce);
     runRetroApply("execute", {
       selectedActionIds: ids,
-      allowReduceAccess: !!hasReducible,
+      allowReduceAccess: allowReduceFlag,
+      allowManualOverride: allowManual,
     });
   };
 
@@ -619,6 +699,81 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                 </div>
               </div>
             </div>
+
+            {/* ── Stage 3: Режим reconcile ── */}
+            <div className={cn(
+              "space-y-2 p-3 rounded-lg border",
+              effectiveReconcileMode === "admin_canonicalize_all" ? "border-purple-300 bg-purple-50/40" : "border-muted bg-muted/10"
+            )}>
+              <div className="flex items-center gap-2 text-xs font-medium text-foreground">
+                <ShieldCheck className="h-3.5 w-3.5 text-purple-700" />
+                Режим применения правил
+              </div>
+              <Select
+                value={effectiveReconcileMode}
+                onValueChange={(v) => {
+                  const next = v as ReconcileMode;
+                  setReconcileMode(next);
+                  if (next === "nightly_safe") {
+                    setAllowReduce(false);
+                    setAllowRevoke(false);
+                    setAllowManualOverride(false);
+                    setAdminAcknowledge(false);
+                  }
+                }}
+                disabled={!isSuperAdmin}
+              >
+                <SelectTrigger className="h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="nightly_safe">Безопасный ночной режим</SelectItem>
+                  <SelectItem value="admin_canonicalize_all" disabled={!isSuperAdmin}>
+                    Полная админская канонизация {!isSuperAdmin && "(только для супер-админа)"}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              {effectiveReconcileMode === "nightly_safe" && (
+                <p className="text-[10px] text-muted-foreground">
+                  Не трогает ручные/admin доступы. Только безопасные изменения по системной lineage.
+                </p>
+              )}
+              {effectiveReconcileMode === "admin_canonicalize_all" && (
+                <div className="space-y-2 pt-1">
+                  <p className="text-[10px] text-purple-700">
+                    Полная канонизация: ручные/admin доступы можно привести к правилам. Любые destructive действия требуют отдельных подтверждений и не запускаются в Stage 3.
+                  </p>
+                  <div className="space-y-1.5 pl-1">
+                    <div className="flex items-start gap-2">
+                      <Checkbox id="allow-reduce" checked={allowReduce} onCheckedChange={(v) => setAllowReduce(!!v)} />
+                      <Label htmlFor="allow-reduce" className="text-[11px] cursor-pointer">
+                        Разрешить сокращение сроков (reducible_by_rule)
+                      </Label>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <Checkbox id="allow-revoke" checked={allowRevoke} onCheckedChange={(v) => setAllowRevoke(!!v)} />
+                      <Label htmlFor="allow-revoke" className="text-[11px] cursor-pointer text-muted-foreground">
+                        Разрешить снятие лишних доступов <Badge variant="outline" className="text-[8px] ml-1">в Stage 3 заблокировано</Badge>
+                      </Label>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <Checkbox id="allow-manual" checked={allowManualOverride} onCheckedChange={(v) => setAllowManualOverride(!!v)} />
+                      <Label htmlFor="allow-manual" className="text-[11px] cursor-pointer">
+                        Разрешить перезапись ручных/admin доступов (canonicalize)
+                      </Label>
+                    </div>
+                    <div className="flex items-start gap-2 pt-1 border-t border-purple-200">
+                      <Checkbox id="admin-ack" checked={adminAcknowledge} onCheckedChange={(v) => setAdminAcknowledge(!!v)} />
+                      <Label htmlFor="admin-ack" className="text-[11px] cursor-pointer font-medium">
+                        Я понимаю, что доступы будут приведены к текущим правилам
+                      </Label>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+
 
             {/* ── Context block BEFORE preview ── */}
             {!result && (

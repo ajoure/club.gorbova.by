@@ -35,8 +35,12 @@ import { checkPriorPurchase } from "../_shared/check-prior-purchase.ts";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
+type ReconcileMode = "nightly_safe" | "admin_canonicalize_all";
+
 interface RetroApplyRequest {
   mode: "preview" | "execute";
+  /** Stage 3: режим reconcile — nightly_safe (ночной осторожный) или admin_canonicalize_all (полная админская канонизация) */
+  reconcile_mode?: ReconcileMode;
   rule_ids?: string[];
   source_product_id?: string;
   source_tariff_id?: string;
@@ -44,6 +48,9 @@ interface RetroApplyRequest {
   recalculate_existing?: boolean;
   force_execute?: boolean;
   allow_reduce_access?: boolean;
+  /** Stage 3 destructive flags — only honored in admin_canonicalize_all + super_admin */
+  allow_revoke_or_expire_access?: boolean;
+  allow_manual_override?: boolean;
   selected_action_ids?: string[];
   apply_categories?: string[];
   /** Optional: limit processing to specific user UUIDs (prevents full-scan timeouts) */
@@ -73,6 +80,10 @@ interface UserAction {
   current_expires_at: string | null;
   source_subscription_id: string | null;
   skip_reason: string | null;
+  /** Stage 3: маркер того, что admin_canonicalize_all переопределит ручную/admin lineage */
+  lineage_will_be_overridden?: boolean;
+  /** Stage 3: текущая lineage записи для UI */
+  current_lineage?: "manual_admin" | "system" | "none" | null;
 }
 
 Deno.serve(async (req) => {
@@ -87,6 +98,11 @@ Deno.serve(async (req) => {
       recalculate_existing, allow_reduce_access, selected_action_ids, apply_categories,
       user_ids, target_product_ids,
     } = body;
+    const reconcileMode: ReconcileMode = body.reconcile_mode === "admin_canonicalize_all"
+      ? "admin_canonicalize_all"
+      : "nightly_safe";
+    const allowRevokeOrExpire = !!body.allow_revoke_or_expire_access;
+    const allowManualOverride = !!body.allow_manual_override;
 
     if (!mode || !["preview", "execute"].includes(mode)) {
       return jsonResp({ error: "mode must be 'preview' or 'execute'" }, 400);
@@ -98,11 +114,36 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
+    // Stage 3: super_admin gate for admin_canonicalize_all mode (in BOTH preview and execute)
+    let callerUserId: string | null = null;
+    if (reconcileMode === "admin_canonicalize_all") {
+      const authHeader = req.headers.get("Authorization") || "";
+      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+      if (!token) {
+        return jsonResp({ error: "admin_canonicalize_all_requires_auth" }, 401);
+      }
+      const userClient = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_ANON_KEY") || "", {
+        global: { headers: { Authorization: `Bearer ${token}` } },
+      });
+      const { data: userData, error: userErr } = await userClient.auth.getUser();
+      if (userErr || !userData?.user?.id) {
+        return jsonResp({ error: "admin_canonicalize_all_invalid_jwt" }, 401);
+      }
+      callerUserId = userData.user.id;
+      const { data: isSuper, error: roleErr } = await supabase.rpc("has_role_v2", {
+        _user_id: callerUserId,
+        _role_code: "super_admin",
+      });
+      if (roleErr || !isSuper) {
+        return jsonResp({ error: "admin_canonicalize_all_requires_super_admin" }, 403);
+      }
+    }
+
     // 1. Resolve rules
     const rules = await resolveRules(supabase, { rule_ids, source_product_id, source_tariff_id, changed_since });
 
     if (rules.length === 0) {
-      return jsonResp({ mode, rules_found: 0, actions: [], summary: { total: 0 } });
+      return jsonResp({ mode, reconcile_mode: reconcileMode, rules_found: 0, actions: [], summary: emptySummary() });
     }
 
     // Resolve source product/tariff names for UI
@@ -130,7 +171,9 @@ Deno.serve(async (req) => {
         _sourceProductName: rule.product_id ? sourceProductNameMap.get(rule.product_id) || null : null,
         _sourceTariffName: rule.tariff_id ? sourceTariffNameMap.get(rule.tariff_id) || null : null,
       };
-      const actions = await processRule(supabase, ruleEnriched, !!recalculate_existing, user_ids, target_product_ids);
+      const actions = await processRule(
+        supabase, ruleEnriched, !!recalculate_existing, user_ids, target_product_ids, reconcileMode,
+      );
       allActions.push(...actions);
     }
 
@@ -145,6 +188,10 @@ Deno.serve(async (req) => {
       already_satisfied: allActions.filter(a => a.category === "already_satisfied").length,
       condition_not_met: allActions.filter(a => a.category === "condition_not_met").length,
       no_source_window: allActions.filter(a => a.category === "no_source_window").length,
+      // Stage 3 new categories
+      relink_source_rule: allActions.filter(a => a.category === "relink_source_rule").length,
+      replace_system_or_manual_lineage: allActions.filter(a => a.category === "replace_system_or_manual_lineage").length,
+      telegram_action_required: allActions.filter(a => a.category === "telegram_action_required").length,
     };
 
     // 4. STOP-guards for execute mode
@@ -177,19 +224,25 @@ Deno.serve(async (req) => {
     }
 
     // 5. Execute if requested
-    let executed = { created: 0, updated: 0, skipped: 0 };
+    let executed: any = { created: 0, updated: 0, skipped: 0 };
     if (mode === "execute") {
       executed = await executeActions(supabase, allActions, rules, {
         recalculateExisting: !!recalculate_existing,
         allowReduceAccess: !!allow_reduce_access,
+        allowRevokeOrExpire,
+        allowManualOverride,
+        reconcileMode,
         selectedActionIds: selected_action_ids || [],
         applyCategories: apply_categories || [],
         forceExecute: !!body.force_execute,
+        callerUserId,
       });
     }
 
     return jsonResp({
       mode,
+      reconcile_mode: reconcileMode,
+      caller_user_id: callerUserId,
       rules_found: rules.length,
       rules: rules.map((r: any) => ({
         id: r.id,
@@ -213,6 +266,15 @@ function jsonResp(data: any, status = 200) {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
+}
+
+function emptySummary() {
+  return {
+    total: 0, missing_access: 0, aligned_update_needed: 0, reducible_by_rule: 0,
+    requires_manual_review: 0, conflict_existing: 0, already_satisfied: 0,
+    condition_not_met: 0, no_source_window: 0,
+    relink_source_rule: 0, replace_system_or_manual_lineage: 0, telegram_action_required: 0,
+  };
 }
 
 // ═══════ RESOLVE RULES ═══════
@@ -254,6 +316,7 @@ async function processRule(
   recalculateExisting: boolean,
   filterUserIds?: string[],
   filterTargetProductIds?: string[],
+  reconcileMode: ReconcileMode = "nightly_safe",
 ): Promise<UserAction[]> {
   const actions: UserAction[] = [];
   const conditions = rule.conditions || {};
@@ -345,6 +408,7 @@ async function processRule(
     currentExpiry: string | null,
     sub: any,
     skipReason: string | null,
+    extras?: { lineage_will_be_overridden?: boolean; current_lineage?: "manual_admin" | "system" | "none" | null },
   ): UserAction => {
     const profile = profileMap.get(userId);
     return {
@@ -366,8 +430,10 @@ async function processRule(
       category,
       planned_expires_at: plannedExpiry,
       current_expires_at: currentExpiry,
-      source_subscription_id: sub.id,
+      source_subscription_id: sub?.id || null,
       skip_reason: skipReason,
+      lineage_will_be_overridden: extras?.lineage_will_be_overridden || false,
+      current_lineage: extras?.current_lineage ?? null,
     };
   };
 
@@ -439,57 +505,129 @@ async function processRule(
           }
 
           const entMeta = ent.meta || {};
-          const metaBatchId = entMeta.batch_id || "";
-          const metaRetro = entMeta.retroapply || entMeta.retroapply_updated;
-          const metaSourceType = (entMeta.source_type || "").toLowerCase();
-          const isSourceSafe = !!metaRetro || metaBatchId.startsWith("BACKFILL") || metaBatchId.startsWith("RETROAPPLY")
-            || metaSourceType === "fulfillment" || metaSourceType === "retroapply" || metaSourceType === "batch"
-            || (entMeta.source_rule_id && !metaSourceType);
+          const metaBatchId = String(entMeta.batch_id || "");
+          const metaRetro = entMeta.retroapply || entMeta.retroapply_updated || entMeta.retroapply_reactivated;
+          const metaSourceType = String(entMeta.source_type || "").toLowerCase();
+          const metaGrantedBy = String(entMeta.granted_by || "").toLowerCase();
+
+          // Lineage detection — manual/admin vs system
+          const isManualLineage =
+            metaSourceType === "manual" || metaSourceType === "admin" || metaSourceType === "cohort_repair"
+            || metaSourceType === "admin_edit" || metaSourceType.startsWith("manual_")
+            || metaGrantedBy.includes("manual") || metaGrantedBy.includes("admin")
+            || !!entMeta.manual_access_edit_last_at || !!entMeta.actor_user_id
+            || !!entMeta.granted_by_admin;
+          const isSystemLineage = !isManualLineage && (
+            !!metaRetro
+            || metaSourceType === "rule_engine" || metaSourceType === "retroapply"
+            || metaSourceType === "fulfillment" || metaSourceType === "batch"
+            || metaGrantedBy.startsWith("rule_engine") || metaGrantedBy === "primary_order_fulfillment"
+            || metaBatchId.startsWith("BACKFILL") || metaBatchId.startsWith("RETROAPPLY")
+            || !!entMeta.source_rule_id
+          );
+          const currentLineage: "manual_admin" | "system" | "none" =
+            isManualLineage ? "manual_admin" : (isSystemLineage ? "system" : "none");
 
           const entSourceRuleId = entMeta.source_rule_id || null;
           const isRuleLineageSafe = !entSourceRuleId || entSourceRuleId === rule.id;
 
-          if (!isSourceSafe) {
-            actions.push(makeAction(userId, targetProdId, "conflict_existing", plannedExpiry, ent.expires_at, sub, "conflict_manual_source"));
+          // ─── Manual/admin lineage handling ───
+          if (isManualLineage) {
+            if (reconcileMode === "nightly_safe") {
+              // Nightly: НЕ трогаем manual/admin записи
+              actions.push(makeAction(userId, targetProdId, "conflict_existing", plannedExpiry, ent.expires_at, sub,
+                "conflict_manual_source", { current_lineage: "manual_admin" }));
+              continue;
+            }
+            // admin_canonicalize_all: возможно переопределить ручную lineage по правилу
+            actions.push(makeAction(userId, targetProdId, "replace_system_or_manual_lineage", plannedExpiry, ent.expires_at, sub,
+              "human_lineage_overridden_by_admin_canonicalize",
+              { lineage_will_be_overridden: true, current_lineage: "manual_admin" }));
             continue;
           }
 
-          if (!isRuleLineageSafe) {
-            actions.push(makeAction(userId, targetProdId, "conflict_existing", plannedExpiry, ent.expires_at, sub, "conflict_different_rule_source"));
+          // ─── Unknown lineage (нет ни manual, ни system маркеров) ───
+          // В nightly_safe такие записи НЕ трогаем — нет уверенности в их природе.
+          // В admin_canonicalize_all админ явно берёт ответственность → разрешаем канонизацию.
+          if (!isSystemLineage && !isManualLineage) {
+            if (reconcileMode === "nightly_safe") {
+              actions.push(makeAction(userId, targetProdId, "conflict_existing", plannedExpiry, ent.expires_at, sub,
+                "conflict_unknown_lineage", { current_lineage: "none" }));
+              continue;
+            }
+            // admin_canonicalize_all: трактуем как replace (lineage будет проштампована)
+            actions.push(makeAction(userId, targetProdId, "replace_system_or_manual_lineage", plannedExpiry, ent.expires_at, sub,
+              "human_lineage_overridden_by_admin_canonicalize",
+              { lineage_will_be_overridden: true, current_lineage: "none" }));
             continue;
+          }
+
+
+          // ─── System lineage with different rule ───
+          if (!isRuleLineageSafe) {
+            // Дата та же — это просто перепривязка к актуальному правилу
+            if (currentEnd && plannedEnd && Math.abs(currentEnd - plannedEnd) < 60000) {
+              actions.push(makeAction(userId, targetProdId, "relink_source_rule", plannedExpiry, ent.expires_at, sub,
+                "relink_to_current_rule_same_window", { current_lineage: "system" }));
+              continue;
+            }
+            // Иначе — будет relink + extend/reduce; в обоих режимах это безопасно (system lineage)
+            // Падаем дальше в стандартную extend/reduce ветку
           }
 
           if (currentEnd && plannedEnd < currentEnd) {
-            actions.push(makeAction(userId, targetProdId, "reducible_by_rule", plannedExpiry, ent.expires_at, sub, "reducible_by_canonical_rule"));
+            actions.push(makeAction(userId, targetProdId, "reducible_by_rule", plannedExpiry, ent.expires_at, sub,
+              "reducible_by_canonical_rule", { current_lineage: currentLineage }));
             continue;
           }
 
           if (!currentEnd) {
             if (recalculateExisting) {
-              actions.push(makeAction(userId, targetProdId, "aligned_update_needed", plannedExpiry, null, sub, "safe_recalculate_expires_missing"));
+              actions.push(makeAction(userId, targetProdId, "aligned_update_needed", plannedExpiry, null, sub,
+                "safe_recalculate_expires_missing", { current_lineage: currentLineage }));
             } else {
-              actions.push(makeAction(userId, targetProdId, "aligned_update_needed", plannedExpiry, null, sub, "safe_recalculate_available_but_disabled"));
+              actions.push(makeAction(userId, targetProdId, "aligned_update_needed", plannedExpiry, null, sub,
+                "safe_recalculate_available_but_disabled", { current_lineage: currentLineage }));
             }
             continue;
           }
 
           if (plannedEnd > currentEnd) {
             if (recalculateExisting) {
-              actions.push(makeAction(userId, targetProdId, "aligned_update_needed", plannedExpiry, ent.expires_at, sub, "safe_recalculate_expires_extended"));
+              actions.push(makeAction(userId, targetProdId, "aligned_update_needed", plannedExpiry, ent.expires_at, sub,
+                "safe_recalculate_expires_extended", { current_lineage: currentLineage }));
             } else {
-              actions.push(makeAction(userId, targetProdId, "aligned_update_needed", plannedExpiry, ent.expires_at, sub, "safe_recalculate_available_but_disabled"));
+              actions.push(makeAction(userId, targetProdId, "aligned_update_needed", plannedExpiry, ent.expires_at, sub,
+                "safe_recalculate_available_but_disabled", { current_lineage: currentLineage }));
             }
             continue;
           }
 
-          actions.push(makeAction(userId, targetProdId, "already_satisfied", plannedExpiry, ent.expires_at, sub, null));
+          actions.push(makeAction(userId, targetProdId, "already_satisfied", plannedExpiry, ent.expires_at, sub,
+            null, { current_lineage: currentLineage }));
         }
       }
     }
   }
 
   if (rule.grant_target_type === "club") {
-    console.log(`Club rule ${rule.id} skipped in retroapply v1 — club grants require telegram integration`);
+    // Stage 3: club preview = telegram_action_required (read-only, no Telegram API)
+    // Для каждого user с активной source-подпиской выпускаем preview-action.
+    // Execute по club по-прежнему НЕ выполняется в этом engine.
+    for (const targetClubId of targetProductIds) {
+      for (const userId of userIds) {
+        const sub = userSubMap.get(userId);
+        if (!sub) continue;
+        let plannedExpiry: string | null = null;
+        if (rule.duration_days) {
+          plannedExpiry = new Date(Date.now() + rule.duration_days * 86400000).toISOString();
+        } else if (sub.access_end_at) {
+          plannedExpiry = sub.access_end_at;
+        }
+        actions.push(makeAction(userId, targetClubId, "telegram_action_required", plannedExpiry, null, sub,
+          "club_grant_requires_telegram_action", { current_lineage: null }));
+      }
+    }
   }
 
   return actions;
@@ -543,14 +681,22 @@ const NEVER_EXECUTE_CATEGORIES = new Set([
   "conflict_existing",
   "no_source_window",
   "condition_not_met",
+  "telegram_action_required", // Stage 3: preview-only — execute через telegram-grant-access
 ]);
 
 interface ExecuteOptions {
   recalculateExisting: boolean;
   allowReduceAccess: boolean;
+  /** Stage 3 destructive — для soft-expire/revoke (not implemented in this stage's execute) */
+  allowRevokeOrExpire: boolean;
+  /** Stage 3 — позволяет execute по replace_system_or_manual_lineage */
+  allowManualOverride: boolean;
+  /** Stage 3 — режим reconcile */
+  reconcileMode: ReconcileMode;
   selectedActionIds: string[];
   applyCategories: string[];
   forceExecute: boolean;
+  callerUserId: string | null;
 }
 
 async function executeActions(
@@ -631,6 +777,22 @@ async function executeActions(
       if (hasSelection) return selectedSet.has(action.action_id);
       if (hasCategories) return categorySet.has("missing_access");
       return true;
+    }
+
+    // Stage 3: relink_source_rule — metadata-only update, безопасно при явном выборе/категории
+    if (action.category === "relink_source_rule") {
+      if (hasSelection && selectedSet.has(action.action_id)) return true;
+      if (hasCategories && categorySet.has("relink_source_rule")) return true;
+      return false;
+    }
+
+    // Stage 3: replace_system_or_manual_lineage — только в admin_canonicalize_all + allowManualOverride
+    if (action.category === "replace_system_or_manual_lineage") {
+      if (opts.reconcileMode !== "admin_canonicalize_all") return false;
+      if (!opts.allowManualOverride) return false;
+      if (hasSelection && selectedSet.has(action.action_id)) return true;
+      if (hasCategories && categorySet.has("replace_system_or_manual_lineage")) return true;
+      return false;
     }
 
     return false;
@@ -829,35 +991,60 @@ async function executeActions(
         created++;
         created_action_ids.push(action.action_id);
       }
-    } else if (action.category === "aligned_update_needed" || action.category === "reducible_by_rule") {
+    } else if (
+      action.category === "aligned_update_needed"
+      || action.category === "reducible_by_rule"
+      || action.category === "relink_source_rule"
+      || action.category === "replace_system_or_manual_lineage"
+    ) {
       // Update existing entitlement — with meta MERGE
       const { data: ent } = await supabase
         .from("entitlements")
-        .select("id, meta")
+        .select("id, meta, expires_at")
         .eq("user_id", action.user_id)
         .eq("product_id", action.target_product_id)
         .eq("status", "active")
         .limit(1)
         .maybeSingle();
 
-      if (ent && action.planned_expires_at) {
+      if (ent) {
         const oldMeta = (ent.meta && typeof ent.meta === "object" && !Array.isArray(ent.meta))
           ? ent.meta as Record<string, unknown>
           : {};
-        const mergedMeta = {
+        const previousSourceRuleId = oldMeta.source_rule_id || null;
+        const mergedMeta: Record<string, unknown> = {
           ...oldMeta,
           source_rule_id: action.rule_id,
           retroapply_updated: true,
           batch_id: batchId,
+          stage3_category: action.category,
+          stage3_reconcile_mode: opts.reconcileMode,
         };
+        if (previousSourceRuleId && previousSourceRuleId !== action.rule_id) {
+          mergedMeta.previous_source_rule_id = previousSourceRuleId;
+          mergedMeta.relink_reason = "stage3_relink_or_canonicalize";
+        }
+        if (action.category === "replace_system_or_manual_lineage") {
+          mergedMeta.previous_lineage_source_type = oldMeta.source_type || null;
+          mergedMeta.previous_lineage_granted_by = oldMeta.granted_by || null;
+          mergedMeta.canonicalized_by_admin = true;
+          mergedMeta.canonicalized_by_user_id = opts.callerUserId;
+          mergedMeta.canonicalized_at = new Date().toISOString();
+          mergedMeta.source_type = "retroapply";
+        }
+
+        // relink_source_rule: метаданные only, expires_at не меняем (он уже совпадает)
+        const updatePayload: Record<string, unknown> = {
+          updated_at: new Date().toISOString(),
+          meta: mergedMeta,
+        };
+        if (action.category !== "relink_source_rule" && action.planned_expires_at) {
+          updatePayload.expires_at = action.planned_expires_at;
+        }
 
         const { error: updateErr } = await supabase
           .from("entitlements")
-          .update({
-            expires_at: action.planned_expires_at,
-            updated_at: new Date().toISOString(),
-            meta: mergedMeta,
-          })
+          .update(updatePayload)
           .eq("id", ent.id);
 
         if (updateErr) {
@@ -880,10 +1067,12 @@ async function executeActions(
 
   await supabase.from("audit_logs").insert({
     action: "rules_retroapply.executed",
-    actor_type: "system",
-    actor_label: "rules-retroapply",
+    actor_type: opts.callerUserId ? "user" : "system",
+    actor_id: opts.callerUserId,
+    actor_label: opts.callerUserId ? "rules-retroapply (admin)" : "rules-retroapply",
     meta: {
       batch_id: batchId,
+      reconcile_mode: opts.reconcileMode,
       rule_ids: rules.map((r: any) => r.id),
       targeted,
       created,
@@ -898,6 +1087,8 @@ async function executeActions(
       execute_options: {
         recalculate_existing: opts.recalculateExisting,
         allow_reduce_access: opts.allowReduceAccess,
+        allow_revoke_or_expire: opts.allowRevokeOrExpire,
+        allow_manual_override: opts.allowManualOverride,
         selected_count: opts.selectedActionIds.length,
         apply_categories: opts.applyCategories,
       },
