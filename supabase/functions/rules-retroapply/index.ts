@@ -31,6 +31,14 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 import { checkPriorPurchase } from "../_shared/check-prior-purchase.ts";
+import {
+  classifyEntitlement,
+  canExecuteDestructive,
+  type EntitlementSnapshot,
+  type PaidWindow,
+  type RuleCoverage,
+  type ExtraAccessClassification,
+} from "../_shared/extra-access-classifier.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -177,6 +185,16 @@ Deno.serve(async (req) => {
       allActions.push(...actions);
     }
 
+    // Stage 4: extra-access detector (per-user scan, additive pass).
+    // Scans active entitlements on target products that were touched by the rules
+    // above; if no rule covers user×product AND no paid window justifies the
+    // current expiry → classify as extra-access. Read-only here; execute is
+    // gated by allow_revoke_or_expire_access + selection.
+    const extraActions = await detectExtraAccessActions(
+      supabase, rules, allActions, reconcileMode, user_ids,
+    );
+    allActions.push(...extraActions);
+
     // 3. Summary
     const summary = {
       total: allActions.length,
@@ -192,6 +210,11 @@ Deno.serve(async (req) => {
       relink_source_rule: allActions.filter(a => a.category === "relink_source_rule").length,
       replace_system_or_manual_lineage: allActions.filter(a => a.category === "replace_system_or_manual_lineage").length,
       telegram_action_required: allActions.filter(a => a.category === "telegram_action_required").length,
+      // Stage 4 extra-access categories
+      soft_expire_extra_access: allActions.filter(a => a.category === "soft_expire_extra_access").length,
+      revoke_extra_access: allActions.filter(a => a.category === "revoke_extra_access").length,
+      manual_review_ambiguous_source: allActions.filter(a => a.category === "manual_review_ambiguous_source").length,
+      manual_review_paid_access_exists: allActions.filter(a => a.category === "manual_review_paid_access_exists").length,
     };
 
     // 4. STOP-guards for execute mode
@@ -274,6 +297,8 @@ function emptySummary() {
     requires_manual_review: 0, conflict_existing: 0, already_satisfied: 0,
     condition_not_met: 0, no_source_window: 0,
     relink_source_rule: 0, replace_system_or_manual_lineage: 0, telegram_action_required: 0,
+    soft_expire_extra_access: 0, revoke_extra_access: 0,
+    manual_review_ambiguous_source: 0, manual_review_paid_access_exists: 0,
   };
 }
 
@@ -633,7 +658,201 @@ async function processRule(
   return actions;
 }
 
+// ═══════ STAGE 4 — EXTRA-ACCESS DETECTOR ═══════
+
+/**
+ * Stage 4 — per-user scan of active entitlements on target products.
+ *
+ * For each (user_id, target_product_id) seen in `existingActions`:
+ *   1. Fetch all active entitlements for that product/user.
+ *   2. Determine if any active rule covers user×product (from the input rule set
+ *      AND any other active product_access rule for that target product).
+ *   3. Fetch paid window: orders_v2.status='paid' and active subscriptions_v2
+ *      where the user has direct purchase of the target product OR a parent
+ *      that grants it (we use direct purchase as the safe proxy here; bonus
+ *      windows from foreign rules are out of scope for this pass).
+ *   4. Classify via shared classifier.
+ *
+ * Returns synthetic UserAction objects with `action_id = "extra:{ent_id}"`.
+ * The execute loop honors NEVER_EXECUTE for manual_review_* and gates
+ * soft_expire/revoke on the destructive flags + lineage protection.
+ */
+async function detectExtraAccessActions(
+  supabase: any,
+  rules: any[],
+  existingActions: UserAction[],
+  reconcileMode: ReconcileMode,
+  filterUserIds?: string[],
+): Promise<UserAction[]> {
+  const out: UserAction[] = [];
+
+  // 1. Build user×product index from existing actions (rule-driven scope).
+  type Key = string;
+  const k = (u: string, p: string): Key => `${u}::${p}`;
+  const seen = new Map<Key, UserAction>();
+  for (const a of existingActions) {
+    if (a.rule_target_type !== "product_access") continue;
+    if (!a.user_id || !a.target_product_id) continue;
+    const key = k(a.user_id, a.target_product_id);
+    if (!seen.has(key)) seen.set(key, a);
+  }
+  if (seen.size === 0) return out;
+
+  const allUserIds = [...new Set([...seen.values()].map(a => a.user_id))];
+  const userIds = filterUserIds?.length
+    ? allUserIds.filter(u => filterUserIds.includes(u))
+    : allUserIds;
+  const targetProductIds = [...new Set([...seen.values()].map(a => a.target_product_id))];
+  if (!userIds.length || !targetProductIds.length) return out;
+
+  // 2. Fetch active entitlements for all (user, target_product) pairs.
+  type EntRow = {
+    id: string; user_id: string; product_id: string;
+    expires_at: string | null; status: string; meta: any;
+  };
+  const ents: EntRow[] = [];
+  for (let i = 0; i < userIds.length; i += 100) {
+    const batch = userIds.slice(i, i + 100);
+    const { data } = await supabase
+      .from("entitlements")
+      .select("id, user_id, product_id, expires_at, status, meta")
+      .in("user_id", batch)
+      .in("product_id", targetProductIds)
+      .eq("status", "active");
+    (data || []).forEach((e: EntRow) => ents.push(e));
+  }
+  if (!ents.length) return out;
+
+  // 3. Build rule-coverage index: which (user, product) pairs are covered
+  //    by ANY action in the rule-driven pass with category != condition_not_met / no_source_window.
+  //    These are entitlements that the rule engine WOULD have granted/extended/satisfied.
+  const coveredByRule = new Set<Key>();
+  const coveringRuleId = new Map<Key, string>();
+  const COVERING_CATEGORIES = new Set([
+    "missing_access", "aligned_update_needed", "already_satisfied",
+    "reducible_by_rule", "relink_source_rule", "replace_system_or_manual_lineage",
+  ]);
+  for (const a of existingActions) {
+    if (a.rule_target_type !== "product_access") continue;
+    if (!COVERING_CATEGORIES.has(a.category)) continue;
+    const key = k(a.user_id, a.target_product_id);
+    coveredByRule.add(key);
+    if (!coveringRuleId.has(key)) coveringRuleId.set(key, a.rule_id);
+  }
+
+  // 4. Paid windows: orders_v2.status='paid' direct purchases of the target product.
+  //    SOT: orders_v2 (one-time + paid recurring); we use max(meta.access_end_at, paid_at + access_days)
+  //    as available; here we simply take orders.meta.access_end_at when present, fallback to created_at.
+  const paidByKey = new Map<Key, PaidWindow[]>();
+  const { data: ordersRaw } = await supabase
+    .from("orders_v2")
+    .select("id, user_id, product_id, status, paid_at, meta, created_at")
+    .eq("status", "paid")
+    .in("user_id", userIds)
+    .in("product_id", targetProductIds);
+  for (const o of (ordersRaw || []) as any[]) {
+    if (!o.user_id || !o.product_id) continue;
+    const key = k(o.user_id, o.product_id);
+    const list = paidByKey.get(key) || [];
+    let endMs: number | null = null;
+    const accessEnd = o.meta?.access_end_at || o.meta?.access_ends_at;
+    if (accessEnd) endMs = new Date(accessEnd).getTime();
+    else if (o.paid_at) endMs = new Date(o.paid_at).getTime();
+    list.push({ end_ms: endMs, source: "order", source_id: o.id });
+    paidByKey.set(key, list);
+  }
+  const { data: subsRaw } = await supabase
+    .from("subscriptions_v2")
+    .select("id, user_id, product_id, access_end_at, status")
+    .in("status", ["active", "past_due"])
+    .in("user_id", userIds)
+    .in("product_id", targetProductIds);
+  for (const s of (subsRaw || []) as any[]) {
+    if (!s.user_id || !s.product_id) continue;
+    const key = k(s.user_id, s.product_id);
+    const list = paidByKey.get(key) || [];
+    list.push({
+      end_ms: s.access_end_at ? new Date(s.access_end_at).getTime() : null,
+      source: "subscription", source_id: s.id,
+    });
+    paidByKey.set(key, list);
+  }
+
+  // 5. Product info for labels.
+  const prodInfo = new Map<string, { code: string; name: string }>();
+  {
+    const { data } = await supabase
+      .from("products_v2")
+      .select("id, code, name")
+      .in("id", targetProductIds);
+    (data || []).forEach((p: any) => prodInfo.set(p.id, { code: p.code || "", name: p.name || "" }));
+  }
+
+  // 6. Profiles (display).
+  const profileMap = new Map<string, { id: string; email: string; full_name: string | null }>();
+  for (let i = 0; i < userIds.length; i += 50) {
+    const batch = userIds.slice(i, i + 50);
+    const { data } = await supabase
+      .from("profiles")
+      .select("id, user_id, email, full_name")
+      .in("user_id", batch);
+    (data || []).forEach((p: any) => profileMap.set(p.user_id, {
+      id: p.id, email: p.email || "", full_name: p.full_name || null,
+    }));
+  }
+
+  const nowMs = Date.now();
+
+  // 7. Classify each entitlement.
+  for (const e of ents) {
+    const key = k(e.user_id, e.product_id);
+    const isCovered = coveredByRule.has(key);
+    const coverage: RuleCoverage = {
+      covered: isCovered,
+      rule_id: isCovered ? (coveringRuleId.get(key) || null) : null,
+      rule_end_ms: null,
+    };
+    const paid = paidByKey.get(key) || [];
+    const snap: EntitlementSnapshot = {
+      id: e.id, user_id: e.user_id, product_id: e.product_id,
+      expires_at: e.expires_at, status: e.status, meta: e.meta || null,
+    };
+    const c: ExtraAccessClassification = classifyEntitlement(snap, coverage, paid, nowMs);
+    if (c.category === "already_correct") continue; // not surfaced
+
+    const profile = profileMap.get(e.user_id);
+    const pinfo = prodInfo.get(e.product_id) || { code: "", name: "" };
+    out.push({
+      action_id: `extra:${e.id}`,
+      user_id: e.user_id,
+      profile_id: profile?.id || null,
+      email: profile?.email || "",
+      full_name: profile?.full_name || null,
+      rule_id: coverage.rule_id || "",
+      rule_target_type: "product_access",
+      rule_target_label: pinfo.name || null,
+      rule_source_product_name: null,
+      rule_source_tariff_name: null,
+      rule_duration_mode: "extra_access_scan",
+      rule_duration_days: null,
+      target_product_id: e.product_id,
+      target_product_code: pinfo.code,
+      target_product_name: pinfo.name,
+      category: c.category,
+      planned_expires_at: null,
+      current_expires_at: e.expires_at,
+      source_subscription_id: null,
+      skip_reason: c.reason,
+      current_lineage: c.lineage,
+      lineage_will_be_overridden: c.human_lineage_protected && reconcileMode === "admin_canonicalize_all",
+    });
+  }
+
+  return out;
+}
+
 // ═══════ CONDITION CHECK ═══════
+
 
 async function checkRetroCondition(
   supabase: any,
@@ -682,6 +901,16 @@ const NEVER_EXECUTE_CATEGORIES = new Set([
   "no_source_window",
   "condition_not_met",
   "telegram_action_required", // Stage 3: preview-only — execute через telegram-grant-access
+  // Stage 4: extra-access preview-only review categories
+  "manual_review_ambiguous_source",
+  "manual_review_paid_access_exists",
+]);
+
+// Stage 4: destructive categories (soft_expire / revoke) — execute only when
+// allowRevokeOrExpire + explicit selection + lineage gate is satisfied.
+const EXTRA_ACCESS_DESTRUCTIVE = new Set([
+  "soft_expire_extra_access",
+  "revoke_extra_access",
 ]);
 
 interface ExecuteOptions {
@@ -795,6 +1024,20 @@ async function executeActions(
       return false;
     }
 
+    // Stage 4: destructive extra-access execute path
+    if (EXTRA_ACCESS_DESTRUCTIVE.has(action.category)) {
+      const isHumanLineage = action.current_lineage === "manual_admin" || action.current_lineage === "none";
+      if (!opts.allowRevokeOrExpire) return false;
+      if (isHumanLineage) {
+        if (opts.reconcileMode !== "admin_canonicalize_all") return false;
+        if (!opts.allowManualOverride) return false;
+      }
+      // ALWAYS require explicit selection or category opt-in
+      if (hasSelection && selectedSet.has(action.action_id)) return true;
+      if (hasCategories && categorySet.has(action.category)) return true;
+      return false;
+    }
+
     return false;
   }
 
@@ -803,6 +1046,7 @@ async function executeActions(
       not_selected++;
       continue;
     }
+
 
     targeted++;
 
@@ -1059,11 +1303,83 @@ async function executeActions(
         skipped_conflict++;
         skipped_action_ids.push(action.action_id);
       }
+    } else if (EXTRA_ACCESS_DESTRUCTIVE.has(action.category)) {
+      // Stage 4: soft_expire / revoke. action_id pattern is "extra:{ent_id}".
+      const entId = action.action_id.startsWith("extra:")
+        ? action.action_id.substring("extra:".length)
+        : null;
+      if (!entId) {
+        skipped_error++;
+        errors.push({ action_id: action.action_id, error: "extra_action_id_malformed" });
+        continue;
+      }
+      const { data: ent } = await supabase
+        .from("entitlements")
+        .select("id, status, expires_at, meta")
+        .eq("id", entId)
+        .maybeSingle();
+      if (!ent) {
+        skipped_idempotent++;
+        skipped_action_ids.push(action.action_id);
+        continue;
+      }
+      if (ent.status !== "active") {
+        skipped_idempotent++;
+        skipped_action_ids.push(action.action_id);
+        continue;
+      }
+      const oldMeta = (ent.meta && typeof ent.meta === "object" && !Array.isArray(ent.meta))
+        ? ent.meta as Record<string, unknown>
+        : {};
+      const isSoftExpire = action.category === "soft_expire_extra_access";
+      const newStatus = isSoftExpire ? "expired" : "revoked";
+      const metaPatch: Record<string, unknown> = {
+        ...oldMeta,
+        stage4_extra_access_action: action.category,
+        stage4_reconcile_mode: opts.reconcileMode,
+        stage4_batch_id: batchId,
+        stage4_reason: action.skip_reason,
+        stage4_actor_user_id: opts.callerUserId,
+        stage4_applied_at: new Date().toISOString(),
+        stage4_previous_status: ent.status,
+        stage4_previous_expires_at: ent.expires_at,
+        stage4_previous_lineage: action.current_lineage,
+      };
+      if (isSoftExpire) {
+        metaPatch.expired_by_canonicalize = true;
+      } else {
+        metaPatch.revoked_by_canonicalize = true;
+      }
+      const updatePayload: Record<string, unknown> = {
+        status: newStatus,
+        updated_at: new Date().toISOString(),
+        meta: metaPatch,
+      };
+      if (isSoftExpire) {
+        // Soft-expire: clamp expires_at to now (or keep past value if already past).
+        const now = new Date().toISOString();
+        updatePayload.expires_at = ent.expires_at && new Date(ent.expires_at).getTime() < Date.now()
+          ? ent.expires_at
+          : now;
+      }
+      const { error: destrErr } = await supabase
+        .from("entitlements")
+        .update(updatePayload)
+        .eq("id", entId)
+        .eq("status", "active"); // optimistic lock
+      if (destrErr) {
+        skipped_error++;
+        errors.push({ action_id: action.action_id, error: destrErr.message });
+      } else {
+        updated++;
+        updated_action_ids.push(action.action_id);
+      }
     } else {
       skipped_conflict++;
       skipped_action_ids.push(action.action_id);
     }
   }
+
 
   await supabase.from("audit_logs").insert({
     action: "rules_retroapply.executed",

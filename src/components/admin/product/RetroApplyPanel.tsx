@@ -33,7 +33,7 @@ import {
 import {
   RefreshCw, Eye, Play, AlertTriangle, CheckCircle2, XCircle,
   MinusCircle, HelpCircle, ChevronDown, ChevronRight, ShieldAlert,
-  ArrowDownCircle, Link2, ShieldCheck, Send,
+  ArrowDownCircle, Link2, ShieldCheck, Send, Trash2, Clock,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -98,6 +98,10 @@ interface RetroApplyResult {
     relink_source_rule?: number;
     replace_system_or_manual_lineage?: number;
     telegram_action_required?: number;
+    soft_expire_extra_access?: number;
+    revoke_extra_access?: number;
+    manual_review_ambiguous_source?: number;
+    manual_review_paid_access_exists?: number;
   };
   reconcile_mode?: ReconcileMode;
   executed?: {
@@ -196,6 +200,31 @@ const CATEGORY_CONFIG: Record<string, {
     color: "text-cyan-700 bg-cyan-50 border-cyan-200",
     icon: Send,
   },
+  // Stage 4: extra-access detector categories
+  soft_expire_extra_access: {
+    label: "Будет снят (истёк/без источника)",
+    description: "Лишний доступ без правила и без оплаты — будет помечен как expired",
+    color: "text-rose-700 bg-rose-50 border-rose-200",
+    icon: Clock,
+  },
+  revoke_extra_access: {
+    label: "Будет отозван (zombie)",
+    description: "Активный доступ в будущем без правила и без оплаты — будет revoked",
+    color: "text-red-800 bg-red-100 border-red-300",
+    icon: Trash2,
+  },
+  manual_review_ambiguous_source: {
+    label: "Неоднозначный источник",
+    description: "Оплаченное окно короче текущего срока — требует решения",
+    color: "text-yellow-700 bg-yellow-50 border-yellow-200",
+    icon: HelpCircle,
+  },
+  manual_review_paid_access_exists: {
+    label: "Покрыто оплатой",
+    description: "Доступ покрыт оплаченным окном — не трогать",
+    color: "text-blue-700 bg-blue-50 border-blue-200",
+    icon: ShieldCheck,
+  },
 };
 
 /** Russian translations for skip_reason / stop_reason codes */
@@ -244,9 +273,11 @@ function translateStopReason(raw: string): string {
 const SELECTABLE_CATEGORIES = new Set([
   "missing_access", "aligned_update_needed", "reducible_by_rule", "requires_manual_review",
   "relink_source_rule", "replace_system_or_manual_lineage",
+  // Stage 4 destructive — only selectable when admin mode + allowRevoke + ack are on
+  "soft_expire_extra_access", "revoke_extra_access",
 ]);
 
-type FilterKey = "all" | "changed" | "missing_access" | "aligned_update_needed" | "reducible_by_rule" | "requires_manual_review" | "conflict_existing" | "already_satisfied" | "condition_not_met" | "no_source_window" | "relink_source_rule" | "replace_system_or_manual_lineage" | "telegram_action_required";
+type FilterKey = "all" | "changed" | "missing_access" | "aligned_update_needed" | "reducible_by_rule" | "requires_manual_review" | "conflict_existing" | "already_satisfied" | "condition_not_met" | "no_source_window" | "relink_source_rule" | "replace_system_or_manual_lineage" | "telegram_action_required" | "soft_expire_extra_access" | "revoke_extra_access" | "manual_review_ambiguous_source" | "manual_review_paid_access_exists";
 
 type ScopeMode = "rule" | "product" | "tariff";
 
@@ -482,13 +513,29 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
     const selectedActions = result?.actions?.filter(a => selectedIds.has(a.action_id)) || [];
     const hasReducible = selectedActions.some(a => a.category === "reducible_by_rule");
     const hasReplace = selectedActions.some(a => a.category === "replace_system_or_manual_lineage");
+    const hasDestructive = selectedActions.some(a =>
+      a.category === "soft_expire_extra_access" || a.category === "revoke_extra_access");
+    const hasHumanLineageDestructive = selectedActions.some(a =>
+      (a.category === "soft_expire_extra_access" || a.category === "revoke_extra_access") &&
+      (a.current_lineage === "manual_admin" || a.current_lineage === "none"));
     // Admin mode: honor user toggles; replace requires both allow_manual_override + acknowledge
-    const allowManual = effectiveReconcileMode === "admin_canonicalize_all" && allowManualOverride && adminAcknowledge && hasReplace;
+    const allowManual = effectiveReconcileMode === "admin_canonicalize_all" && allowManualOverride && adminAcknowledge && (hasReplace || hasHumanLineageDestructive);
     const allowReduceFlag = hasReducible && (effectiveReconcileMode === "nightly_safe" ? true : allowReduce);
+    // Stage 4: destructive flag — requires explicit allowRevoke + ack
+    const allowRevokeFlag = hasDestructive && allowRevoke && adminAcknowledge;
+    if (hasDestructive && !allowRevokeFlag) {
+      toast.error("Для снятия лишних доступов включите «Разрешить снятие лишних доступов» и подтверждение.");
+      return;
+    }
+    if (hasHumanLineageDestructive && !allowManual) {
+      toast.error("Снятие ручных/admin доступов требует режима админской канонизации, allow_manual_override и подтверждения.");
+      return;
+    }
     runRetroApply("execute", {
       selectedActionIds: ids,
       allowReduceAccess: allowReduceFlag,
       allowManualOverride: allowManual,
+      allowRevokeOrExpire: allowRevokeFlag,
     });
   };
 
@@ -504,6 +551,11 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
 
   const reducibleCount = result?.summary?.reducible_by_rule ?? 0;
   const manualReviewCount = result?.summary?.requires_manual_review ?? 0;
+
+  // Stage 4 destructive summary
+  const softExpireCount = result?.summary?.soft_expire_extra_access ?? 0;
+  const revokeExtraCount = result?.summary?.revoke_extra_access ?? 0;
+  const destructiveTotal = reducibleCount + softExpireCount + revokeExtraCount;
 
   const canExecuteSafe = result && !result.error && safeCount > 0 && !isExecuted;
   const canExecuteWithReductions = result && !result.error && reducibleCount > 0 && !isExecuted;
@@ -752,8 +804,8 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                     </div>
                     <div className="flex items-start gap-2">
                       <Checkbox id="allow-revoke" checked={allowRevoke} onCheckedChange={(v) => setAllowRevoke(!!v)} />
-                      <Label htmlFor="allow-revoke" className="text-[11px] cursor-pointer text-muted-foreground">
-                        Разрешить снятие лишних доступов <Badge variant="outline" className="text-[8px] ml-1">в Stage 3 заблокировано</Badge>
+                      <Label htmlFor="allow-revoke" className="text-[11px] cursor-pointer">
+                        Разрешить снятие лишних доступов (soft-expire / revoke)
                       </Label>
                     </div>
                     <div className="flex items-start gap-2">
@@ -950,6 +1002,36 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                         <li>Записей без определяемого срока: {result!.summary.no_source_window}</li>
                       )}
                     </ul>
+                  </div>
+                )}
+
+                {/* Stage 4 — Destructive summary */}
+                {destructiveTotal > 0 && !isExecuted && (
+                  <div className="p-3 rounded-lg border-2 border-rose-300 bg-rose-50/40 space-y-2">
+                    <div className="flex items-center gap-2 text-rose-700 font-medium text-xs">
+                      <AlertTriangle className="h-4 w-4" />
+                      Destructive-сводка (сокращения / снятия)
+                      <Badge variant="outline" className="text-[9px] ml-1 border-rose-400 text-rose-700">
+                        требует явных флагов и выбора строк
+                      </Badge>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-xs">
+                      <div className="text-center p-2 rounded bg-orange-100/60 border border-orange-200">
+                        <div className="text-lg font-bold text-orange-700">{reducibleCount}</div>
+                        <div className="text-[10px] text-orange-700">Сокращение сроков</div>
+                      </div>
+                      <div className="text-center p-2 rounded bg-rose-100/60 border border-rose-200">
+                        <div className="text-lg font-bold text-rose-700">{softExpireCount}</div>
+                        <div className="text-[10px] text-rose-700">Soft-expire лишних</div>
+                      </div>
+                      <div className="text-center p-2 rounded bg-red-100/60 border border-red-300">
+                        <div className="text-lg font-bold text-red-800">{revokeExtraCount}</div>
+                        <div className="text-[10px] text-red-800">Revoke zombie-доступов</div>
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-rose-700">
+                      Эти действия выполняются ТОЛЬКО через «Применить выбранные» при включённых флагах в режиме админской канонизации. Nightly не запускает их автоматически.
+                    </p>
                   </div>
                 )}
 

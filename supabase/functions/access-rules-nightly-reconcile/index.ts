@@ -208,6 +208,63 @@ Deno.serve(async (req) => {
       buckets.conflict_multiple +
       buckets.failed;
 
+    // ── Stage 4: extra-access classifier alignment (preview-only) ──
+    // Calls rules-retroapply in nightly_safe + preview mode for the same cohort,
+    // collects extra-access category counts, and writes them into the audit summary.
+    // No mutations performed by this call. Nightly NEVER executes destructive actions.
+    let extraAccessCounts: Record<string, number> = {};
+    let extraAccessError: string | null = null;
+    try {
+      const distinctProductIds = [...new Set(subscriptions.map((s) => s.product_id).filter(Boolean))];
+      const distinctTariffIds = [...new Set(subscriptions.map((s) => s.tariff_id).filter(Boolean))];
+
+      const previewBody: Record<string, unknown> = {
+        mode: 'preview',
+        reconcile_mode: 'nightly_safe',
+      };
+      // Prefer narrowest scope: explicit filters > product-wide.
+      if (body.tariff_ids?.length && distinctTariffIds.length === 1) {
+        previewBody.source_tariff_id = distinctTariffIds[0];
+      } else if (body.product_ids?.length && distinctProductIds.length === 1) {
+        previewBody.source_product_id = distinctProductIds[0];
+      } else if (distinctTariffIds.length === 1) {
+        previewBody.source_tariff_id = distinctTariffIds[0];
+      } else if (distinctProductIds.length === 1) {
+        previewBody.source_product_id = distinctProductIds[0];
+      } else {
+        // Multi-product cohort: rely on changed_since=now-30d as broad scope marker.
+        previewBody.changed_since = new Date(Date.now() - 30 * 86400000).toISOString();
+      }
+      if (body.user_ids?.length) previewBody.user_ids = body.user_ids;
+
+      const previewResp = await fetch(`${SUPABASE_URL}/functions/v1/rules-retroapply`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${SERVICE_KEY}`,
+          'apikey': SERVICE_KEY,
+        },
+        body: JSON.stringify(previewBody),
+      });
+      if (previewResp.ok) {
+        const previewData = await previewResp.json();
+        const s = previewData?.summary || {};
+        extraAccessCounts = {
+          soft_expire_extra_access: s.soft_expire_extra_access || 0,
+          revoke_extra_access: s.revoke_extra_access || 0,
+          manual_review_ambiguous_source: s.manual_review_ambiguous_source || 0,
+          manual_review_paid_access_exists: s.manual_review_paid_access_exists || 0,
+          relink_source_rule: s.relink_source_rule || 0,
+          replace_system_or_manual_lineage: s.replace_system_or_manual_lineage || 0,
+          telegram_action_required: s.telegram_action_required || 0,
+        };
+      } else {
+        extraAccessError = `preview_http_${previewResp.status}`;
+      }
+    } catch (e) {
+      extraAccessError = e instanceof Error ? e.message : String(e);
+    }
+
     // Mandatory audit summary — observable for every run, dry_run or execute.
     try {
       await supabase.from('audit_logs').insert({
@@ -242,6 +299,10 @@ Deno.serve(async (req) => {
           failed: buckets.failed,
           module_list_mapped_matches: moduleListMappedMatches,
           elapsed_ms: elapsedMs,
+          // Stage 4: extra-access preview counts (no execution — preview-only)
+          stage4_extra_access_counts: extraAccessCounts,
+          stage4_extra_access_error: extraAccessError,
+          stage4_destructive_executed: false,
         },
       });
     } catch (auditErr) {
@@ -271,6 +332,9 @@ Deno.serve(async (req) => {
         sample_condition_not_met: sampleConditionNotMet,
         module_list_mapped_matches: moduleListMappedMatches,
         elapsed_ms: elapsedMs,
+        stage4_extra_access_counts: extraAccessCounts,
+        stage4_extra_access_error: extraAccessError,
+        stage4_destructive_executed: false,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     );
