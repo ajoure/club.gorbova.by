@@ -98,6 +98,11 @@ Deno.serve(async (req) => {
       recalculate_existing, allow_reduce_access, selected_action_ids, apply_categories,
       user_ids, target_product_ids,
     } = body;
+    const reconcileMode: ReconcileMode = body.reconcile_mode === "admin_canonicalize_all"
+      ? "admin_canonicalize_all"
+      : "nightly_safe";
+    const allowRevokeOrExpire = !!body.allow_revoke_or_expire_access;
+    const allowManualOverride = !!body.allow_manual_override;
 
     if (!mode || !["preview", "execute"].includes(mode)) {
       return jsonResp({ error: "mode must be 'preview' or 'execute'" }, 400);
@@ -109,11 +114,36 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
+    // Stage 3: super_admin gate for admin_canonicalize_all mode (in BOTH preview and execute)
+    let callerUserId: string | null = null;
+    if (reconcileMode === "admin_canonicalize_all") {
+      const authHeader = req.headers.get("Authorization") || "";
+      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+      if (!token) {
+        return jsonResp({ error: "admin_canonicalize_all_requires_auth" }, 401);
+      }
+      const userClient = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_ANON_KEY") || "", {
+        global: { headers: { Authorization: `Bearer ${token}` } },
+      });
+      const { data: userData, error: userErr } = await userClient.auth.getUser();
+      if (userErr || !userData?.user?.id) {
+        return jsonResp({ error: "admin_canonicalize_all_invalid_jwt" }, 401);
+      }
+      callerUserId = userData.user.id;
+      const { data: isSuper, error: roleErr } = await supabase.rpc("has_role_v2", {
+        _user_id: callerUserId,
+        _role_code: "super_admin",
+      });
+      if (roleErr || !isSuper) {
+        return jsonResp({ error: "admin_canonicalize_all_requires_super_admin" }, 403);
+      }
+    }
+
     // 1. Resolve rules
     const rules = await resolveRules(supabase, { rule_ids, source_product_id, source_tariff_id, changed_since });
 
     if (rules.length === 0) {
-      return jsonResp({ mode, rules_found: 0, actions: [], summary: { total: 0 } });
+      return jsonResp({ mode, reconcile_mode: reconcileMode, rules_found: 0, actions: [], summary: emptySummary() });
     }
 
     // Resolve source product/tariff names for UI
@@ -141,7 +171,9 @@ Deno.serve(async (req) => {
         _sourceProductName: rule.product_id ? sourceProductNameMap.get(rule.product_id) || null : null,
         _sourceTariffName: rule.tariff_id ? sourceTariffNameMap.get(rule.tariff_id) || null : null,
       };
-      const actions = await processRule(supabase, ruleEnriched, !!recalculate_existing, user_ids, target_product_ids);
+      const actions = await processRule(
+        supabase, ruleEnriched, !!recalculate_existing, user_ids, target_product_ids, reconcileMode,
+      );
       allActions.push(...actions);
     }
 
@@ -156,6 +188,10 @@ Deno.serve(async (req) => {
       already_satisfied: allActions.filter(a => a.category === "already_satisfied").length,
       condition_not_met: allActions.filter(a => a.category === "condition_not_met").length,
       no_source_window: allActions.filter(a => a.category === "no_source_window").length,
+      // Stage 3 new categories
+      relink_source_rule: allActions.filter(a => a.category === "relink_source_rule").length,
+      replace_system_or_manual_lineage: allActions.filter(a => a.category === "replace_system_or_manual_lineage").length,
+      telegram_action_required: allActions.filter(a => a.category === "telegram_action_required").length,
     };
 
     // 4. STOP-guards for execute mode
@@ -188,19 +224,25 @@ Deno.serve(async (req) => {
     }
 
     // 5. Execute if requested
-    let executed = { created: 0, updated: 0, skipped: 0 };
+    let executed: any = { created: 0, updated: 0, skipped: 0 };
     if (mode === "execute") {
       executed = await executeActions(supabase, allActions, rules, {
         recalculateExisting: !!recalculate_existing,
         allowReduceAccess: !!allow_reduce_access,
+        allowRevokeOrExpire,
+        allowManualOverride,
+        reconcileMode,
         selectedActionIds: selected_action_ids || [],
         applyCategories: apply_categories || [],
         forceExecute: !!body.force_execute,
+        callerUserId,
       });
     }
 
     return jsonResp({
       mode,
+      reconcile_mode: reconcileMode,
+      caller_user_id: callerUserId,
       rules_found: rules.length,
       rules: rules.map((r: any) => ({
         id: r.id,
