@@ -1370,6 +1370,17 @@ async function executeActions(
           mergedMeta.canonicalized_at = new Date().toISOString();
           mergedMeta.source_type = "retroapply";
         }
+        if (action.category === "reducible_by_rule") {
+          // Stage 5: сохранить предыдущий срок и причину сокращения для аудита/UI.
+          mergedMeta.previous_expires_at = ent.expires_at || null;
+          mergedMeta.reduction_reason = "stage5_reducible_by_canonical_rule";
+          mergedMeta.reduced_at = new Date().toISOString();
+          mergedMeta.reduced_by_user_id = opts.callerUserId;
+        }
+        if (action.window_resolved_from) {
+          mergedMeta.window_resolved_from = action.window_resolved_from;
+          mergedMeta.window_anchor_source = action.window_anchor_source || null;
+        }
 
         // relink_source_rule: метаданные only, expires_at не меняем (он уже совпадает)
         const updatePayload: Record<string, unknown> = {
