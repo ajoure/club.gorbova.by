@@ -449,16 +449,43 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
     });
   };
 
-  const handleExecuteSelected = () => {
+  /** Stage 3: preflight — re-run preview before execute; abort if summary totals changed */
+  const preflightOk = async (): Promise<boolean> => {
+    if (!result?.summary) return true;
+    try {
+      const { data, error } = await supabase.functions.invoke("rules-retroapply", {
+        body: buildBody("preview"),
+      });
+      if (error || !data) return true; // не блокируем при сетевой ошибке preflight
+      const fresh = data as RetroApplyResult;
+      const before = result.summary;
+      const after = fresh.summary;
+      const changed = (Object.keys(before) as Array<keyof typeof before>).some(k => (before as any)[k] !== (after as any)[k]);
+      if (changed) {
+        setResult(fresh);
+        toast.error("Состояние изменилось между предпросмотром и применением. Просмотрите свежий предпросмотр и повторите.");
+        return false;
+      }
+      return true;
+    } catch {
+      return true;
+    }
+  };
+
+  const handleExecuteSelected = async () => {
     setConfirmExecute(false);
+    if (!(await preflightOk())) return;
     const ids = [...selectedIds];
-    // Check if any selected are reducible
-    const hasReducible = result?.actions?.some(
-      a => selectedIds.has(a.action_id) && a.category === "reducible_by_rule"
-    );
+    const selectedActions = result?.actions?.filter(a => selectedIds.has(a.action_id)) || [];
+    const hasReducible = selectedActions.some(a => a.category === "reducible_by_rule");
+    const hasReplace = selectedActions.some(a => a.category === "replace_system_or_manual_lineage");
+    // Admin mode: honor user toggles; replace requires both allow_manual_override + acknowledge
+    const allowManual = effectiveReconcileMode === "admin_canonicalize_all" && allowManualOverride && adminAcknowledge && hasReplace;
+    const allowReduceFlag = hasReducible && (effectiveReconcileMode === "nightly_safe" ? true : allowReduce);
     runRetroApply("execute", {
       selectedActionIds: ids,
-      allowReduceAccess: !!hasReducible,
+      allowReduceAccess: allowReduceFlag,
+      allowManualOverride: allowManual,
     });
   };
 
