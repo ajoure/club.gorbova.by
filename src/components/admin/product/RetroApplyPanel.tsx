@@ -242,9 +242,10 @@ function translateStopReason(raw: string): string {
 // Categories that support row selection for execute
 const SELECTABLE_CATEGORIES = new Set([
   "missing_access", "aligned_update_needed", "reducible_by_rule", "requires_manual_review",
+  "relink_source_rule", "replace_system_or_manual_lineage",
 ]);
 
-type FilterKey = "all" | "changed" | "missing_access" | "aligned_update_needed" | "reducible_by_rule" | "requires_manual_review" | "conflict_existing" | "already_satisfied" | "condition_not_met" | "no_source_window";
+type FilterKey = "all" | "changed" | "missing_access" | "aligned_update_needed" | "reducible_by_rule" | "requires_manual_review" | "conflict_existing" | "already_satisfied" | "condition_not_met" | "no_source_window" | "relink_source_rule" | "replace_system_or_manual_lineage" | "telegram_action_required";
 
 type ScopeMode = "rule" | "product" | "tariff";
 
