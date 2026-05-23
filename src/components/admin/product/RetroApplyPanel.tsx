@@ -95,7 +95,11 @@ interface RetroApplyResult {
     already_satisfied: number;
     condition_not_met: number;
     no_source_window: number;
+    relink_source_rule?: number;
+    replace_system_or_manual_lineage?: number;
+    telegram_action_required?: number;
   };
+  reconcile_mode?: ReconcileMode;
   executed?: {
     targeted: number;
     created: number;
