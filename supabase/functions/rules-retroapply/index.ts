@@ -299,10 +299,11 @@ function emptySummary() {
   return {
     total: 0, missing_access: 0, aligned_update_needed: 0, reducible_by_rule: 0,
     requires_manual_review: 0, conflict_existing: 0, already_satisfied: 0,
-    condition_not_met: 0, no_source_window: 0,
+    condition_not_met: 0, no_source_window: 0, expired_source_window: 0,
     relink_source_rule: 0, replace_system_or_manual_lineage: 0, telegram_action_required: 0,
     soft_expire_extra_access: 0, revoke_extra_access: 0,
     manual_review_ambiguous_source: 0, manual_review_paid_access_exists: 0,
+    window_fallback_applied: 0,
   };
 }
 
