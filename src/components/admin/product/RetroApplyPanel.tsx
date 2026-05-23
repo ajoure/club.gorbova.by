@@ -1005,6 +1005,36 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                   </div>
                 )}
 
+                {/* Stage 4 — Destructive summary */}
+                {destructiveTotal > 0 && !isExecuted && (
+                  <div className="p-3 rounded-lg border-2 border-rose-300 bg-rose-50/40 space-y-2">
+                    <div className="flex items-center gap-2 text-rose-700 font-medium text-xs">
+                      <AlertTriangle className="h-4 w-4" />
+                      Destructive-сводка (сокращения / снятия)
+                      <Badge variant="outline" className="text-[9px] ml-1 border-rose-400 text-rose-700">
+                        требует явных флагов и выбора строк
+                      </Badge>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-xs">
+                      <div className="text-center p-2 rounded bg-orange-100/60 border border-orange-200">
+                        <div className="text-lg font-bold text-orange-700">{reducibleCount}</div>
+                        <div className="text-[10px] text-orange-700">Сокращение сроков</div>
+                      </div>
+                      <div className="text-center p-2 rounded bg-rose-100/60 border border-rose-200">
+                        <div className="text-lg font-bold text-rose-700">{softExpireCount}</div>
+                        <div className="text-[10px] text-rose-700">Soft-expire лишних</div>
+                      </div>
+                      <div className="text-center p-2 rounded bg-red-100/60 border border-red-300">
+                        <div className="text-lg font-bold text-red-800">{revokeExtraCount}</div>
+                        <div className="text-[10px] text-red-800">Revoke zombie-доступов</div>
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-rose-700">
+                      Эти действия выполняются ТОЛЬКО через «Применить выбранные» при включённых флагах в режиме админской канонизации. Nightly не запускает их автоматически.
+                    </p>
+                  </div>
+                )}
+
                 {/* ── Execute action buttons ── */}
                 {!isExecuted && (
                   <div className="flex gap-2 flex-wrap">
