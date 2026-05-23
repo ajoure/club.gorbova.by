@@ -210,6 +210,10 @@ Deno.serve(async (req) => {
       already_satisfied: allActions.filter(a => a.category === "already_satisfied").length,
       condition_not_met: allActions.filter(a => a.category === "condition_not_met").length,
       no_source_window: allActions.filter(a => a.category === "no_source_window").length,
+      // Stage 5: окно не вычислено даже с fallback — пользователь должен решить
+      expired_source_window: allActions.filter(a => a.category === "expired_source_window").length,
+      // Stage 5: сколько действий было «спасено» fallback'ом по tariff.access_days
+      window_fallback_applied: allActions.filter(a => a.window_resolved_from === "tariff_access_days").length,
       // Stage 3 new categories
       relink_source_rule: allActions.filter(a => a.category === "relink_source_rule").length,
       replace_system_or_manual_lineage: allActions.filter(a => a.category === "replace_system_or_manual_lineage").length,
