@@ -200,6 +200,31 @@ const CATEGORY_CONFIG: Record<string, {
     color: "text-cyan-700 bg-cyan-50 border-cyan-200",
     icon: Send,
   },
+  // Stage 4: extra-access detector categories
+  soft_expire_extra_access: {
+    label: "Будет снят (истёк/без источника)",
+    description: "Лишний доступ без правила и без оплаты — будет помечен как expired",
+    color: "text-rose-700 bg-rose-50 border-rose-200",
+    icon: Clock,
+  },
+  revoke_extra_access: {
+    label: "Будет отозван (zombie)",
+    description: "Активный доступ в будущем без правила и без оплаты — будет revoked",
+    color: "text-red-800 bg-red-100 border-red-300",
+    icon: Trash2,
+  },
+  manual_review_ambiguous_source: {
+    label: "Неоднозначный источник",
+    description: "Оплаченное окно короче текущего срока — требует решения",
+    color: "text-yellow-700 bg-yellow-50 border-yellow-200",
+    icon: HelpCircle,
+  },
+  manual_review_paid_access_exists: {
+    label: "Покрыто оплатой",
+    description: "Доступ покрыт оплаченным окном — не трогать",
+    color: "text-blue-700 bg-blue-50 border-blue-200",
+    icon: ShieldCheck,
+  },
 };
 
 /** Russian translations for skip_reason / stop_reason codes */
