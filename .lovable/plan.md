@@ -1,294 +1,348 @@
-Да, согласен, с учетом правок:
+Да, правильно. Нужно не дробить на 50 approve. Формат: **один патч → dry-run → execute safe/destructive по выбранным флагам → автотесты → скрины/доказательства → итоговый отчёт**.
 
-1. Цель патча уточнить:
+Отправь ему так:
 
-&nbsp;
-
-Нужно чинить не разовый кейс и не просто окно RetroApplyPanel, а единый канонический механизм reconcile-доступов:
+Стоп. Не дробим Stage 4 на бесконечные отдельные approve.
 
 &nbsp;
 
-- ручная кнопка в UI / MOCK / retroapply;
-
-- ночная функция access-rules-nightly-reconcile;
-
-- grant-access-for-order после оплаты.
+Нужно сделать один полноценный патч:
 
 &nbsp;
 
-Все три должны использовать один общий engine:
-
-supabase/functions/_shared/product-access-grants.ts
+PATCH-RETROAPPLY-STAGE-4 — full canonical reconcile engine + tested UI flow
 
 &nbsp;
 
-2. Убрать формулировку “ночная функция по умолчанию без удаления/сокращения”.
+Формат работы:
+
+1. Code patch.
+
+2. Tests.
+
+3. Dry-run/preview.
+
+4. Execute в безопасных режимах.
+
+5. Execute destructive только если включены explicit admin-флаги в UI.
+
+6. Verify.
+
+7. Proof со скринами/логами/CSV.
 
 &nbsp;
 
-Ночная функция должна уметь:
+Не останавливаться после каждого микрошагa, если:
 
-- находить недоданные доступы;
+- действие покрыто планом;
 
-- реактивировать системные expired-доступы;
+- есть dry-run;
 
-- продлевать;
+- есть guards;
 
-- сокращать;
+- есть rollback/stop;
 
-- soft-expire лишние системные доступы;
-
-- не трогать manual/admin.
+- scope в рамках PATCH-RETROAPPLY-STAGE-4.
 
 &nbsp;
 
-Но опасные действия должны быть под флагами:
-
-allowReduceAccess
-
-allowRevokeOrExpireAccess
-
-allowTelegramActions
+Что нужно сделать:
 
 &nbsp;
 
-3. UI-кнопка должна быть не просто preview, а полноценный безопасный repair-инструмент:
+1. Реализовать общий `_shared/reconcile-engine.ts`.
+
+2. Перевести `rules-retroapply` и `access-rules-nightly-reconcile` на этот engine.
+
+3. В UI RetroApplyPanel сделать полноценный режим:
+
+   - nightly_safe preview;
+
+   - admin_canonicalize_all preview;
+
+   - add/extend/reactivate/relink;
+
+   - reduce;
+
+   - soft-expire/revoke лишних;
+
+   - manual/admin override;
+
+   - telegram_action_required preview.
+
+4. В UI должны быть явные чекбоксы:
+
+   - разрешить сокращение сроков;
+
+   - разрешить снятие лишних доступов;
+
+   - разрешить перезапись manual/admin;
+
+   - подтверждаю применение по текущим правилам.
+
+5. Execute должен работать из UI по batch_id/selected_action_ids.
+
+6. Nightly по умолчанию safe:
+
+   - не сокращает;
+
+   - не revoke;
+
+   - manual/admin не трогает;
+
+   - только add/extend/reactivate/relink safe.
+
+7. Admin UI mode может менять любые доступы, включая manual/admin, если super_admin включил флаги.
 
 &nbsp;
 
-В UI:
+Обязательные тесты:
 
-- preview;
+- Deno/unit tests по engine;
 
-- execute;
+- nightly_safe vs admin_canonicalize_all;
 
-- batch_id;
+- manual/admin lineage;
 
-- summary;
+- reduce disabled/enabled;
 
-- список ошибок;
+- revoke disabled/enabled;
 
-- повторная проверка после execute;
+- paid source window не удаляется;
 
-- кнопка “исправить безопасные”;
+- telegram_action_required не вызывает Telegram;
 
-- отдельно destructive checkbox для сокращения/снятия лишних системных доступов.
+- regression user `3328ff3b…`;
 
-&nbsp;
-
-4. Ошибка source_rule_id_conflict должна исчезнуть как технический blocker.
+- UI smoke: preview → execute → repeat preview = 0 safe actions.
 
 &nbsp;
 
-Правильная логика:
+Нужны доказательства:
 
-если expired entitlement системного происхождения и новый rule даёт тот же target_product_id, то:
+- скрины UI preview;
 
-- reactivate / relink / replace;
+- скрины destructive summary;
 
-- не падать технической ошибкой;
+- скрины execute result;
 
-- manual/admin lineage не трогать.
+- CSV action log;
 
-&nbsp;
+- audit_logs batch summary;
 
-5. Club/Telegram не silent skip.
-
-&nbsp;
-
-Если club rule найден:
-
-- в preview показывать отдельную категорию `telegram_action_required`;
-
-- в execute product-access не делать прямой Telegram API;
-
-- Telegram grant/revoke только через canonical queue отдельным controlled step.
+- proof по режимам симуляции.
 
 &nbsp;
 
-6. Ночная сверка должна писать полный audit:
+Разрешаю в рамках одного патча:
+
+- выполнить dry-run;
+
+- выполнить safe execute;
+
+- выполнить admin destructive execute только по явно выбранным тестовым/подтверждённым строкам через UI-флаги;
+
+- затем сделать verify.
 
 &nbsp;
 
-- сколько найдено;
+Запрещено:
 
-- сколько создано;
+- физический DELETE entitlements;
 
-- сколько продлено;
+- прямой Telegram API;
 
-- сколько реактивировано;
+- Telegram queue insert в этом патче;
 
-- сколько сокращено;
+- менять orders_v2;
 
-- сколько soft-expired;
+- менять subscriptions_v2;
 
-- сколько manual_review;
+- менять access_rules;
 
-- batch_id;
-
-- error list.
+- provider API.
 
 &nbsp;
 
-7. Добавить обязательный regression по пользователю:
+Главное:
+
+не спрашивать approve после каждого подшага.
+
+Остановиться только если:
+
+- тесты падают;
+
+- dry-run показывает неожиданный массовый revoke/reduce;
+
+- затрагиваются orders/subscriptions/access_rules;
+
+- есть риск удаления paid active access;
+
+- UI execute расходится с preview.
 
 &nbsp;
 
-`3328ff3b-10ad-4295-aac9-51ef0419767e`
+Финальный артефакт:
+
+.lovable/proofs/retroapply_stage_4_full_canonical_reconcile_execute_2026_[05.md](http://05.md)
 
 &nbsp;
 
-Ожидаемый результат:
+CSV:
 
-- 3 старые ошибки `source_rule_id_conflict` больше не technical error;
-
-- каждая строка классифицируется как:
-
-  - reactivate_system_lineage;
-
-  - replace_system_lineage;
-
-  - manual_review_manual_lineage.
+./mnt/documents/retroapply_stage_4_full_canonical_reconcile_execute_2026_05.csv
 
 &nbsp;
 
-8. Добавить финальный DoD:
+В финальном отчёте показать:
+
+- что сделано;
+
+- какие тесты прошли;
+
+- какие скрины приложены;
+
+- сколько доступов добавлено/продлено/реактивировано/сокращено/истекло;
+
+- какие строки остались manual_review;
+
+- что nightly и UI используют один engine;
+
+- что повторный preview после execute показывает корректное состояние.
+
+Смысл: **один нормальный рабочий патч**, а не серия согласований. Dry-run нужен, но он должен быть частью одного цикла: проверил → применил → доказал.
 
 &nbsp;
 
-После execute:
+План: PATCH-RETROAPPLY-STAGE-4 — full canonical reconcile completion
 
-- повторный preview показывает 0 safe actions;
+## 0. Контекст
 
-- остаются только manual_review / telegram_action_required;
+Stage 1–3 закрыли точечные баги, dual-mode engine и super_admin guard. Stage 4 добавляет недостающую половину канонизации — **детектор лишних доступов**, переключает `access-rules-nightly-reconcile` на тот же engine, что и UI RetroApply, и доводит UI до полной destructive-готовности (без автоматического запуска destructive в этом патче).
 
-- ночная функция на той же когорте не создаёт новых расхождений;
+Никакого destructive execute в Stage 4 — только код + dry-run + proof. Destructive прогон будет отдельным approve после ревью proof.
 
-- grant-access-for-order и retroapply дают одинаковый результат по одному и тому же набору rules.
+## 1. Бэкенд `rules-retroapply/index.ts` — extra-access detector
 
-&nbsp;
+Добавить новый этап анализа «по пользователю», параллельный текущему «по правилу».
 
-9. Не делать “разовый фикс данных” вместо исправления механизма.
+Алгоритм для каждой пары (user_id, product_id) с активным entitlement:
 
-&nbsp;
+1. Собрать все активные `access_rules`, чьё `target_product_id = product_id` и которые могли бы покрывать пользователя (через условия купленных тарифов).
+2. Для каждого rule вызвать существующий `evalUserAgainstRule` (prior-purchase, source window и т. д.).
+3. Если **ни одно** правило не даёт права И нет независимого paid/subscription window, покрывающего текущий entitlement.expires_at → entitlement классифицируется как лишний.
 
-Задача — исправить саму функцию выдачи/перевыдачи/сверки доступов, чтобы дальше через UI и nightly можно было приводить всё в порядок автоматически.
+Новые категории действий:
 
-&nbsp;
+- `already_correct` — entitlement подтверждён хотя бы одним rule/source window;
+- `soft_expire_extra_access` — система выдала, но право утрачено: установить `expires_at = now()` + `meta.expired_by_canonicalize`;
+- `revoke_extra_access` — system-lineage и явно «зомби» (нет любого источника, expires_at в будущем без обоснования): `status=revoked` + `meta.revoked_by_canonicalize`;
+- `manual_review_ambiguous_source` — есть paid/subscription, но окно меньше текущего expires_at (потенциальный reduce, классифицируется как `reducible_by_rule` оставляем — здесь только если источник вообще неразборчив);
+- `manual_review_paid_access_exists` — paid window покрывает доступ, rule не покрывает → не трогать, пометить.
 
-10. Execute после исправления кода разрешён только по safe actions:
+Lineage rules:
 
-&nbsp;
+- nightly_safe: extra-access manual/admin/unknown → `conflict_existing` (как было) + `manual_review_*`;
+- admin_canonicalize_all + `allow_manual_override=true` + `allow_revoke_or_expire_access=true` → разрешён soft_expire/revoke для manual/admin;
+- system-lineage + `allow_revoke_or_expire_access=true` → soft_expire/revoke в обоих режимах при явном selection/category.
 
-- add;
+Запреты в коде:
 
-- extend;
+- physical `DELETE FROM entitlements` запрещён;
+- Telegram API/queue insert — запрещены;
+- `orders_v2`/`subscriptions_v2`/`access_rules` — read-only.
 
-- reactivate system lineage;
+## 2. `access-rules-nightly-reconcile/index.ts` — переключение на единый engine
 
-- relink/replace system lineage.
+Превратить функцию в thin wrapper над `rules-retroapply`:
 
-&nbsp;
+- внутренний вызов engine с фиксированной конфигурацией:
+  - `reconcile_mode = 'nightly_safe'`,
+  - `allow_reduce_access = false`,
+  - `allow_revoke_or_expire_access = false`,
+  - `allow_manual_override = false`,
+  - `apply_categories = ['missing_access', 'relink_source_rule']` (extend/reactivate уже внутри missing/relink),
+  - destructive категории → preview-only, попадают в audit summary, но не исполняются;
+- audit summary пишется в `audit_logs` с разбивкой по всем категориям (включая `soft_expire_extra_access`, `revoke_extra_access`, `telegram_action_required` — как наблюдаемые, но не применённые);
+- classification обязана 1-в-1 совпадать с UI preview на той же когорте.
 
-Сокращение и снятие лишних доступов — только отдельным checkbox/flag и только для system-generated entitlements.
+Чтобы избежать дублирования кода — выделить core engine из `rules-retroapply` в `_shared/reconcile-engine.ts` (минимально: экспорт preview+execute с явной конфигурацией), и оба caller'а (UI edge и nightly) импортируют его.
 
-Коротко: план правильный по направлению, но его нужно ужесточить: **чинить не один RetroApplyPanel, а общий reconcile-engine**, чтобы UI-кнопка и nightly job реально сами приводили доступы в порядок.
+## 3. UI `RetroApplyPanel.tsx`
 
-&nbsp;
+Добавить:
 
-План:
+- блок «Лишние доступы» в category-chips: `soft_expire_extra_access`, `revoke_extra_access`, `manual_review_ambiguous_source`, `manual_review_paid_access_exists`;
+- отдельный **Destructive summary** под основной сводкой: счётчики reduce / soft-expire / revoke + предупреждающий badge;
+- чекбокс «Разрешить снятие лишних доступов» → `allow_revoke_or_expire_access` (доступен только в admin_canonicalize_all);
+- чекбокс «Разрешить сокращение сроков» (уже есть `allow_reduce_access` — оставить);
+- чекбокс «Разрешить перезапись ручных/admin доступов» (уже есть `allow_manual_override`);
+- кнопка execute активна только если выбран конкретный `batch_id` (preview run) ИЛИ конкретные `selected_action_ids`;
+- **preflight re-preview** (уже реализован в Stage 3) — расширить на новые категории; если изменилась destructive-сводка → STOP с явным toast;
+- никаких изменений в Telegram-execute path.
 
-1. **Проблема**
-  - В окне «Применение правил к историческим данным» сейчас появляются «неразрешимые записи» и ошибки `source_rule_id_conflict`.
-  - Текущая кнопка ретро-применения работает не как единый канонический движок: часть логики дублирует `_shared/product-access-grants.ts`, а не использует его напрямую.
-  - Из-за этого историческое применение расходится с `grant-access-for-order` и ночной сверкой: конфликтные expired-доступы не реактивируются, `club`-правила вообще пропускаются, сокращение сроков есть только частично, а удаление лишних доступов отсутствует.
-2. **Диагностика**
-  - Найден существующий canonical helper: `supabase/functions/_shared/product-access-grants.ts`.
-  - Его уже используют:
-    - `grant-access-for-order` — каноническая выдача после оплаты;
-    - `access-rules-nightly-reconcile` — ночная сверка;
-    - заявлено, что должен использовать `rules-retroapply`, но фактически `rules-retroapply` содержит собственную классификацию и собственный execute path.
-  - По audit видно последние запуски `rules_retroapply.executed`: `targeted=3`, `skipped_error=3`, `reactivation_candidates_found=3` — это совпадает со скриншотом.
-  - По конкретному пользователю со скриншота `3328ff3b-10ad-4295-aac9-51ef0419767e` три expired entitlement имеют `source_rule_id`, который отличается от текущего активного правила. Поэтому старая логика пытается реактивировать expired entitlement и останавливается на `source_rule_id_conflict`.
-  - Также найдено: `rules-retroapply` логирует `Club rule ... skipped in retroapply v1 — club grants require telegram integration`, то есть club/Telegram-доступы в этом инструменте сейчас не применяются.
-  - RLS/права не являются корневой причиной: edge functions работают через service role, проблема в бизнес-логике reconcile.
-3. **Предлагаемое решение**
-  - Перевести `rules-retroapply` с собственной устаревшей логики на общий helper `_shared/product-access-grants.ts`, чтобы ручное применение правил, ночная сверка и выдача после оплаты считали доступы одинаково.
-  - В helper добавить управляемый reconciliation-режим:
-    - `dryRun=true` — только предпросмотр;
-    - `allowReduceAccess=true` — разрешить уменьшать `expires_at` до канонического срока;
-    - новый флаг `allowRevokeOrExpireAccess=true` — разрешить убирать/истекать лишние rule-generated доступы, если активное правило больше не даёт права.
-  - Ошибку `source_rule_id_conflict` исправить не «силовым переписыванием», а правильной классификацией:
-    - если entitlement expired и новый rule должен выдать тот же `target_product_id`, можно безопасно реактивировать/перепривязать только если lineage системный (`rule_engine`, `retroapply`, `source_rule_id`, `BACKFILL/RETROAPPLY`) и нет manual/admin признаков;
-    - manual/admin доступы не трогать автоматически.
-  - Для лишних доступов использовать не физическое удаление, а безопасное изменение статуса/срока:
-    - rule-generated active entitlement, для которого больше нет права по текущим правилам, переводить в expired/revoked-совместимый статус или ставить `expires_at=now()` согласно существующему статусному контракту после проверки фактических используемых статусов;
-    - писать причину в `meta` и `access_grant_ledger`/`audit_logs`.
-  - UI «Применение правил к историческим данным» расширить под полный reconcile:
-    - показать категории: добавить, продлить, сократить, реактивировать, истечь/убрать лишний, конфликт/manual review, уже корректно;
-    - добавить явную опцию «Разрешить сокращение и снятие лишних системных доступов»;
-    - оставить STOP-guards и предпросмотр обязательными перед execute.
-4. **Изменяемые компоненты**
-  - Edge functions:
-    - `supabase/functions/rules-retroapply/index.ts` — заменить устаревшую локальную классификацию на общий reconcile engine;
-    - `supabase/functions/_shared/product-access-grants.ts` — добавить режимы reduce/revoke и корректную обработку expired system lineage с другим `source_rule_id`;
-    - возможно `supabase/functions/access-rules-nightly-reconcile/index.ts` — только если нужно передать новые флаги в dry-run/execute, по умолчанию без удаления/сокращения.
-  - UI:
-    - `src/components/admin/product/RetroApplyPanel.tsx` — новые категории, тексты, подтверждение опасного режима.
-  - Документация/proof:
-    - `.lovable/plan.md`;
-    - новый proof-файл с dry-run, execute и verify.
-  - База:
-    - на первом этапе новых таблиц не создавать;
-    - миграция понадобится только если фактическая схема/индексы/ограничения не позволяют безопасно логировать revoke/expire в существующий `access_grant_ledger`.
-5. **Что не будет изменено**
-  - Не менять `orders_v2` как источник транзакций.
-  - Не менять `subscriptions_v2` как источник recurring-доступов.
-  - Не менять правила `access_rules` без отдельного подтверждения.
-  - Не делать физический массовый `DELETE` entitlement-строк.
-  - Не трогать ручные/admin доступы автоматически.
-  - Не создавать второй механизм выдачи доступов.
-6. **Dry-run**
-  - Запустить `rules-retroapply` в preview/dry-run по текущему продукту/кохорте.
-  - Проверить отдельно проблемного пользователя `3328ff3b-10ad-4295-aac9-51ef0419767e`:
-    - три текущие ошибки должны перейти из `source_rule_id_conflict` в безопасную категорию `reactivate/replace/system_lineage` или в понятный manual-review, если lineage окажется ручным.
-  - Получить сводку по категориям:
-    - сколько будет добавлено;
-    - сколько продлено;
-    - сколько сокращено;
-    - сколько будет истечено/убрано как лишнее;
-    - сколько manual conflict.
-  - STOP, если:
-    - есть manual/admin доступы в автоматическом изменении;
-    - количество revoke/expire неожиданно большое;
-    - есть target_product_id без активного правила, но с действующей оплаченной подпиской;
-    - итоговая выборка отличается от preview после повторного dry-run.
-7. **Execute**
-  - Сначала исправить код и задеплоить изменённые backend functions.
-  - Выполнить безопасный preview.
-  - Execute делать только после подтверждённого preview:
-    - сначала добавить/продлить/реактивировать;
-    - затем отдельным режимом разрешить сокращение/истечение лишних системных доступов.
-  - Все действия писать в audit/ledger с batch_id.
-8. **STOP-guards**
-  - Не выполнять автоматическое снятие доступа, если entitlement имеет `source_type='manual'`, `source_type='admin'`, `granted_by` содержит `manual/admin`, или есть `manual_access_edit_*` без явного allow.
-  - Не трогать entitlement, если есть несколько active entitlements на один `(user_id, product_id)` — manual review.
-  - Не снижать сроки без отдельного флага `allow_reduce_access`.
-  - Не истекать доступ без отдельного флага `allow_revoke_or_expire_access`.
-  - Не менять подписки/заказы при reconcile вторичных доступов.
-  - Не выполнять batch, если dry-run содержит неожиданные product/tariff/rule UUID вне выбранного scope.
-9. **DoD**
-  - Ошибки `source_rule_id_conflict` в текущем сценарии больше не появляются как технические ошибки execute.
-  - Предпросмотр показывает все типы изменений: создать, продлить, сократить, реактивировать, истечь лишний, конфликт.
-  - Execute может как увеличивать, так и уменьшать сроки при явном разрешении.
-  - Лишние системные доступы снимаются безопасно, ручные не трогаются.
-  - `rules-retroapply`, `access-rules-nightly-reconcile` и `grant-access-for-order` используют один источник логики для product_access.
-  - Повторный preview после execute показывает 0 неожиданных изменений, кроме manual-review.
-  - В `audit_logs` и/или `access_grant_ledger` есть сводная запись batch.
-10. **Риски и зависимости**
-  - Автоматическое снятие доступов — high-risk операция; поэтому будет реализовано через dry-run + отдельный destructive-флаг + soft-expire/revoke, не через физический delete.
-  - `club`/Telegram-доступы требуют отдельной осторожной интеграции с `telegram-grant-access`/`telegram-revoke-access`; в рамках первого исправления можно отразить их в preview и не делать silent skip, но массовый Telegram revoke лучше выполнять отдельным подтверждаемым этапом.
-  - Ночные job сейчас по умолчанию не сокращают и не снимают доступы; включать это автоматически без отдельного подтверждения не буду.
-11. **Требуется дополнительная информация**
-  - Перед execute я проверю фактические статусы `entitlements.status`, чтобы выбрать безопасный способ «удаления» лишнего доступа: `expired` или существующий revoked/canceled-эквивалент.
-  - Если нужно, чтобы Telegram-клубы тоже автоматически удаляли людей из чатов, это лучше вынести во второй PATCH после proof по product_access.
+## 4. Telegram
+
+- `telegram_action_required` уже preview-only — оставить как есть;
+- никаких queue-insert и Telegram API вызовов в Stage 4;
+- UI продолжает показывать категорию явным chip-ом с пояснением «обрабатывается отдельным потоком».
+
+## 5. Tests (Deno)
+
+Добавить `supabase/functions/rules-retroapply/extra_access_test.ts` с фикстурами:
+
+1. system entitlement без покрытия rule + без paid → admin mode `soft_expire_extra_access`; nightly → `manual_review`/preview-only;
+2. manual lineage без права → nightly: `conflict_existing`/`manual_review`; admin+`allow_manual_override`+`allow_revoke_or_expire_access`: `soft_expire`/`revoke`;
+3. paid order покрывает window → ни в каком режиме не soft-expire (`manual_review_paid_access_exists`);
+4. `allow_revoke_or_expire_access=false` → execute по destructive категории = no-op;
+5. `allow_reduce_access=false` → reduce не выполняется;
+6. nightly wrapper vs UI preview на одной фикстуре → identical category counts;
+7. club rule → `telegram_action_required`, нет insert в `telegram_access_queue`.
+
+## 6. Dry-run (read-only после code patch)
+
+Прогнать engine на трёх срезах:
+
+- Cohort B (Gorbova Club BUSINESS, `tariff_id=7c748940-...`) — `nightly_safe` и `admin_canonicalize_all`;
+- regression user `3328ff3b-10ad-4295-aac9-51ef0419767e` — обе модели, ожидаем `total=0`;
+- когорта с известными manual markers (CB20 + `cohort_repair`) — доказать различие nightly vs admin.
+
+Зафиксировать totals по всем категориям, выделить destructive-кандидатов отдельным списком.
+
+## 7. Артефакты
+
+- `.lovable/proofs/retroapply_stage_4_full_canonical_reconcile_dryrun_2026_05.md` — отчёт со всеми срезами, lineage-разбивка, регрессии;
+- `/mnt/documents/retroapply_stage_4_full_canonical_reconcile_dryrun_2026_05.csv` — полный action log dry-run.
+
+## 8. Запреты (жёстко)
+
+- physical DELETE entitlements;
+- Telegram API / `telegram_access_queue` insert;
+- любые изменения `orders_v2` / `subscriptions_v2` / `access_rules`;
+- destructive execute в Stage 4 — **запрещён**, только preview;
+- автоматическое снятие manual/admin в nightly — запрещено.
+
+## 9. DoD
+
+- extra-access detector реализован и покрыт unit-тестами;
+- `access-rules-nightly-reconcile` использует общий engine из `_shared/reconcile-engine.ts`;
+- UI и nightly дают идентичную классификацию на одной фикстуре (тест #6);
+- admin_canonicalize_all способен soft-expire/revoke лишние доступы при явных трёх флагах + super_admin;
+- nightly остаётся safe (нулевые destructive executes);
+- `telegram_action_required` виден в UI, без execute;
+- все новые Deno tests зелёные;
+- dry-run на трёх когортах покрывает категории add/extend/reactivate/relink/reduce/soft-expire/revoke/manual-review/telegram;
+- destructive execute не запускался;
+- proof + CSV созданы.
+
+## 10. Технические детали реализации
+
+Файлы:
+
+- **new** `supabase/functions/_shared/reconcile-engine.ts` — общий core (preview + execute с DI: supabase client, конфиг, actor);
+- **edit** `supabase/functions/rules-retroapply/index.ts` — HTTP-обёртка + super_admin guard + extra-access этап через core;
+- **edit** `supabase/functions/access-rules-nightly-reconcile/index.ts` — переключение на core с nightly-safe конфигом + audit summary;
+- **new** `supabase/functions/rules-retroapply/extra_access_test.ts` — Deno tests;
+- **edit** `src/components/admin/product/RetroApplyPanel.tsx` — новые категории, destructive summary, preflight-расширение.
+
+После approve этого плана: код-патч → deploy edge functions (`rules-retroapply`, `access-rules-nightly-reconcile`) → tests → dry-run → proof. Только после ревью proof обсуждать отдельный destructive approve.
