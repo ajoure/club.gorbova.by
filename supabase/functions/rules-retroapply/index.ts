@@ -462,7 +462,12 @@ async function processRule(
     currentExpiry: string | null,
     sub: any,
     skipReason: string | null,
-    extras?: { lineage_will_be_overridden?: boolean; current_lineage?: "manual_admin" | "system" | "none" | null },
+    extras?: {
+      lineage_will_be_overridden?: boolean;
+      current_lineage?: "manual_admin" | "system" | "none" | null;
+      window_resolved_from?: UserAction["window_resolved_from"];
+      window_anchor_source?: UserAction["window_anchor_source"];
+    },
   ): UserAction => {
     const profile = profileMap.get(userId);
     return {
@@ -488,7 +493,54 @@ async function processRule(
       skip_reason: skipReason,
       lineage_will_be_overridden: extras?.lineage_will_be_overridden || false,
       current_lineage: extras?.current_lineage ?? null,
+      window_resolved_from: extras?.window_resolved_from ?? null,
+      window_anchor_source: extras?.window_anchor_source ?? null,
     };
+  };
+
+  /**
+   * Stage 5: трёхуровневый резолвер окна:
+   *   1) rule.duration_days  → planned = now + N дней, anchor=rule_duration_now
+   *   2) sub.access_end_at   → planned = sub.access_end_at, anchor=sub_access_end_at
+   *   3) tariff.access_days  → planned = anchor + access_days,
+   *      anchor ∈ {sub.access_start_at, sub.created_at}.
+   *      Never use now() as anchor for this fallback — это могло бы
+   *      искусственно продлить доступ.
+   */
+  const resolveWindow = (sub: any): {
+    plannedIso: string | null;
+    window_resolved_from: UserAction["window_resolved_from"];
+    window_anchor_source: UserAction["window_anchor_source"];
+  } => {
+    if (rule.duration_days) {
+      return {
+        plannedIso: new Date(Date.now() + rule.duration_days * 86400000).toISOString(),
+        window_resolved_from: "rule_duration",
+        window_anchor_source: "rule_duration_now",
+      };
+    }
+    if (sub?.access_end_at) {
+      return {
+        plannedIso: sub.access_end_at,
+        window_resolved_from: "source_access_end_at",
+        window_anchor_source: "sub_access_end_at",
+      };
+    }
+    const accessDays = sub?.tariff_id ? tariffAccessDaysMap.get(sub.tariff_id) : undefined;
+    if (accessDays && accessDays > 0) {
+      const anchorIso = sub.access_start_at || sub.created_at || null;
+      if (anchorIso) {
+        const anchorMs = new Date(anchorIso).getTime();
+        if (Number.isFinite(anchorMs) && anchorMs > 0) {
+          return {
+            plannedIso: new Date(anchorMs + accessDays * 86400000).toISOString(),
+            window_resolved_from: "tariff_access_days",
+            window_anchor_source: sub.access_start_at ? "sub_access_start_at" : "sub_created_at",
+          };
+        }
+      }
+    }
+    return { plannedIso: null, window_resolved_from: null, window_anchor_source: null };
   };
 
   if (rule.grant_target_type === "product_access") {
