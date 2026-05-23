@@ -182,9 +182,15 @@ const CATEGORY_CONFIG: Record<string, {
   },
   no_source_window: {
     label: "Нельзя определить срок",
-    description: "Нельзя рассчитать срок автоматически",
+    description: "Ни правило, ни подписка, ни тариф не дают окно — нужна ручная проверка",
     color: "text-red-700 bg-red-50 border-red-200",
     icon: AlertTriangle,
+  },
+  expired_source_window: {
+    label: "Срок уже в прошлом",
+    description: "Расчётный срок уже истёк — автоматически не создаём/не продлеваем",
+    color: "text-rose-700 bg-rose-50 border-rose-200",
+    icon: Clock,
   },
   // Stage 3 categories
   relink_source_rule: {
