@@ -33,7 +33,7 @@ import {
 import {
   RefreshCw, Eye, Play, AlertTriangle, CheckCircle2, XCircle,
   MinusCircle, HelpCircle, ChevronDown, ChevronRight, ShieldAlert,
-  ArrowDownCircle, Link2, ShieldCheck, Send,
+  ArrowDownCircle, Link2, ShieldCheck, Send, Trash2, Clock,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
