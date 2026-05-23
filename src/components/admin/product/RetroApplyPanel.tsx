@@ -290,7 +290,7 @@ const SELECTABLE_CATEGORIES = new Set([
   "soft_expire_extra_access", "revoke_extra_access",
 ]);
 
-type FilterKey = "all" | "changed" | "missing_access" | "aligned_update_needed" | "reducible_by_rule" | "requires_manual_review" | "conflict_existing" | "already_satisfied" | "condition_not_met" | "no_source_window" | "relink_source_rule" | "replace_system_or_manual_lineage" | "telegram_action_required" | "soft_expire_extra_access" | "revoke_extra_access" | "manual_review_ambiguous_source" | "manual_review_paid_access_exists";
+type FilterKey = "all" | "changed" | "missing_access" | "aligned_update_needed" | "reducible_by_rule" | "requires_manual_review" | "conflict_existing" | "already_satisfied" | "condition_not_met" | "no_source_window" | "expired_source_window" | "relink_source_rule" | "replace_system_or_manual_lineage" | "telegram_action_required" | "soft_expire_extra_access" | "revoke_extra_access" | "manual_review_ambiguous_source" | "manual_review_paid_access_exists";
 
 type ScopeMode = "rule" | "product" | "tariff";
 
