@@ -993,6 +993,7 @@ const NEVER_EXECUTE_CATEGORIES = new Set([
   "conflict_existing",
   "no_source_window",
   "condition_not_met",
+  "expired_source_window", // Stage 5: окно уже в прошлом — не создаём/не продлеваем автоматически
   "telegram_action_required", // Stage 3: preview-only — execute через telegram-grant-access
   // Stage 4: extra-access preview-only review categories
   "manual_review_ambiguous_source",
