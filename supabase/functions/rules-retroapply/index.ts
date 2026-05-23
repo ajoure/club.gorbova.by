@@ -185,6 +185,16 @@ Deno.serve(async (req) => {
       allActions.push(...actions);
     }
 
+    // Stage 4: extra-access detector (per-user scan, additive pass).
+    // Scans active entitlements on target products that were touched by the rules
+    // above; if no rule covers user×product AND no paid window justifies the
+    // current expiry → classify as extra-access. Read-only here; execute is
+    // gated by allow_revoke_or_expire_access + selection.
+    const extraActions = await detectExtraAccessActions(
+      supabase, rules, allActions, reconcileMode, user_ids,
+    );
+    allActions.push(...extraActions);
+
     // 3. Summary
     const summary = {
       total: allActions.length,
@@ -200,6 +210,11 @@ Deno.serve(async (req) => {
       relink_source_rule: allActions.filter(a => a.category === "relink_source_rule").length,
       replace_system_or_manual_lineage: allActions.filter(a => a.category === "replace_system_or_manual_lineage").length,
       telegram_action_required: allActions.filter(a => a.category === "telegram_action_required").length,
+      // Stage 4 extra-access categories
+      soft_expire_extra_access: allActions.filter(a => a.category === "soft_expire_extra_access").length,
+      revoke_extra_access: allActions.filter(a => a.category === "revoke_extra_access").length,
+      manual_review_ambiguous_source: allActions.filter(a => a.category === "manual_review_ambiguous_source").length,
+      manual_review_paid_access_exists: allActions.filter(a => a.category === "manual_review_paid_access_exists").length,
     };
 
     // 4. STOP-guards for execute mode
