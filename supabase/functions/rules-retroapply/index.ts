@@ -35,8 +35,12 @@ import { checkPriorPurchase } from "../_shared/check-prior-purchase.ts";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
+type ReconcileMode = "nightly_safe" | "admin_canonicalize_all";
+
 interface RetroApplyRequest {
   mode: "preview" | "execute";
+  /** Stage 3: режим reconcile — nightly_safe (ночной осторожный) или admin_canonicalize_all (полная админская канонизация) */
+  reconcile_mode?: ReconcileMode;
   rule_ids?: string[];
   source_product_id?: string;
   source_tariff_id?: string;
@@ -44,6 +48,9 @@ interface RetroApplyRequest {
   recalculate_existing?: boolean;
   force_execute?: boolean;
   allow_reduce_access?: boolean;
+  /** Stage 3 destructive flags — only honored in admin_canonicalize_all + super_admin */
+  allow_revoke_or_expire_access?: boolean;
+  allow_manual_override?: boolean;
   selected_action_ids?: string[];
   apply_categories?: string[];
   /** Optional: limit processing to specific user UUIDs (prevents full-scan timeouts) */
@@ -73,6 +80,10 @@ interface UserAction {
   current_expires_at: string | null;
   source_subscription_id: string | null;
   skip_reason: string | null;
+  /** Stage 3: маркер того, что admin_canonicalize_all переопределит ручную/admin lineage */
+  lineage_will_be_overridden?: boolean;
+  /** Stage 3: текущая lineage записи для UI */
+  current_lineage?: "manual_admin" | "system" | "none" | null;
 }
 
 Deno.serve(async (req) => {
