@@ -900,9 +900,19 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                     </p>
                     {result!.executed!.errors && result!.executed!.errors.length > 0 && (
                       <div className="text-[10px] text-red-600 mt-1">
-                        {result!.executed!.errors.map((e: any, i: number) => (
-                          <p key={i}>❌ {e.action_id}: {e.error}</p>
-                        ))}
+                        {result!.executed!.errors.map((e: any, i: number) => {
+                          const raw = String(e.error || "");
+                          let human = raw;
+                          if (raw.startsWith("manual_lineage_protected")) {
+                            human = "Доступ выдан вручную и привязан к другому правилу — оставлен без изменений, требует решения администратора.";
+                          } else if (raw.startsWith("unsafe_status_for_reactivation")) {
+                            const st = raw.split(":")[1]?.trim() || "";
+                            human = `Статус доступа (${st}) не позволяет автоматическую реактивацию.`;
+                          } else if (raw.startsWith("source_rule_id_conflict")) {
+                            human = "Конфликт привязки к правилу — обновите страницу и повторите предпросмотр.";
+                          }
+                          return <p key={i}>❌ {human}</p>;
+                        })}
                       </div>
                     )}
                     <p className="text-[10px] text-muted-foreground italic">
