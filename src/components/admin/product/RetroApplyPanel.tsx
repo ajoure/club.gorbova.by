@@ -741,6 +741,9 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                   </div>
                 </div>
               )}
+            </div>
+
+
 
             {/* ── Context block BEFORE preview ── */}
             {!result && (
