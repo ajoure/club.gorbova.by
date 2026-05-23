@@ -546,6 +546,23 @@ async function processRule(
             continue;
           }
 
+          // ─── Unknown lineage (нет ни manual, ни system маркеров) ───
+          // В nightly_safe такие записи НЕ трогаем — нет уверенности в их природе.
+          // В admin_canonicalize_all админ явно берёт ответственность → разрешаем канонизацию.
+          if (!isSystemLineage && !isManualLineage) {
+            if (reconcileMode === "nightly_safe") {
+              actions.push(makeAction(userId, targetProdId, "conflict_existing", plannedExpiry, ent.expires_at, sub,
+                "conflict_unknown_lineage", { current_lineage: "none" }));
+              continue;
+            }
+            // admin_canonicalize_all: трактуем как replace (lineage будет проштампована)
+            actions.push(makeAction(userId, targetProdId, "replace_system_or_manual_lineage", plannedExpiry, ent.expires_at, sub,
+              "human_lineage_overridden_by_admin_canonicalize",
+              { lineage_will_be_overridden: true, current_lineage: "none" }));
+            continue;
+          }
+
+
           // ─── System lineage with different rule ───
           if (!isRuleLineageSafe) {
             // Дата та же — это просто перепривязка к актуальному правилу
