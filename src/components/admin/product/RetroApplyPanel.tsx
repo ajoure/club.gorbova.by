@@ -436,9 +436,28 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
       }
 
       if (res.error || res.stop_reasons?.length) {
-        // Don't toast — show inline
+        // Stage 5: surface errors as toast (inline block остаётся, но teхнически
+        // пользователю важно явное сообщение — иначе кажется, что «ничего не работает»)
+        if (mode === "execute") {
+          const detail = res.stop_reasons?.length
+            ? res.stop_reasons.map(translateStopReason).join(" · ")
+            : (res.error || "неизвестная ошибка");
+          toast.error(`Не удалось применить: ${detail}`);
+        }
       } else if (mode === "execute") {
-        toast.success(`Фактически изменено: создано ${res.executed?.created || 0}, обновлено ${res.executed?.updated || 0}`);
+        const ex = res.executed;
+        const created = ex?.created || 0;
+        const updated = ex?.updated || 0;
+        const reactivated = ex?.reactivated || 0;
+        const skippedIdem = ex?.skipped_idempotent || 0;
+        const errCount = ex?.errors?.length || 0;
+        if (created === 0 && updated === 0 && reactivated === 0 && skippedIdem > 0) {
+          toast.success(`Все записи уже соответствуют правилам (${skippedIdem} idempotent skip)`);
+        } else if (created === 0 && updated === 0 && reactivated === 0) {
+          toast.warning(`Изменений не выполнено. Проверьте предпросмотр и фильтры.`);
+        } else {
+          toast.success(`Изменено: создано ${created}, обновлено ${updated}${reactivated ? `, реактивировано ${reactivated}` : ""}${errCount ? `, ошибок ${errCount}` : ""}`);
+        }
         // Auto-refresh preview after execute to show actual state
         autoRefreshPreview();
       }
