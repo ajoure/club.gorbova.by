@@ -293,6 +293,7 @@ function isActionableCategory(cat: string): boolean {
 // ═══════ COMPONENT ═══════
 
 export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelProps) {
+  const { data: isSuperAdmin = false } = useSuperAdmin();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [scopeMode, setScopeMode] = useState<ScopeMode>("product");
   const [selectedRuleId, setSelectedRuleId] = useState<string>("");
@@ -306,6 +307,18 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // Stage 3: dual-mode reconcile
+  const [reconcileMode, setReconcileMode] = useState<ReconcileMode>("nightly_safe");
+  const [allowReduce, setAllowReduce] = useState(false);
+  const [allowRevoke, setAllowRevoke] = useState(false);
+  const [allowManualOverride, setAllowManualOverride] = useState(false);
+  const [adminAcknowledge, setAdminAcknowledge] = useState(false);
+
+  // Force back to nightly_safe if non-super_admin somehow toggles
+  const effectiveReconcileMode: ReconcileMode = (isSuperAdmin && reconcileMode === "admin_canonicalize_all")
+    ? "admin_canonicalize_all"
+    : "nightly_safe";
 
   const activeRules = useMemo(() =>
     rules.filter(r => r.is_active && ["product_access", "club"].includes(r.grant_target_type)),
@@ -324,11 +337,14 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
 
   const buildBody = (mode: "preview" | "execute", opts?: {
     allowReduceAccess?: boolean;
+    allowRevokeOrExpire?: boolean;
+    allowManualOverride?: boolean;
     selectedActionIds?: string[];
     applyCategories?: string[];
   }) => {
     const body: Record<string, unknown> = {
       mode,
+      reconcile_mode: effectiveReconcileMode,
       recalculate_existing: recalculateExisting,
     };
     if (scopeMode === "rule" && selectedRuleId) {
@@ -339,6 +355,8 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
       body.source_product_id = productId;
     }
     if (opts?.allowReduceAccess) body.allow_reduce_access = true;
+    if (opts?.allowRevokeOrExpire) body.allow_revoke_or_expire_access = true;
+    if (opts?.allowManualOverride) body.allow_manual_override = true;
     if (opts?.selectedActionIds?.length) body.selected_action_ids = opts.selectedActionIds;
     if (opts?.applyCategories?.length) body.apply_categories = opts.applyCategories;
     return body;
