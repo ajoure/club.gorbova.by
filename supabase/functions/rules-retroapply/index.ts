@@ -1303,11 +1303,83 @@ async function executeActions(
         skipped_conflict++;
         skipped_action_ids.push(action.action_id);
       }
+    } else if (EXTRA_ACCESS_DESTRUCTIVE.has(action.category)) {
+      // Stage 4: soft_expire / revoke. action_id pattern is "extra:{ent_id}".
+      const entId = action.action_id.startsWith("extra:")
+        ? action.action_id.substring("extra:".length)
+        : null;
+      if (!entId) {
+        skipped_error++;
+        errors.push({ action_id: action.action_id, error: "extra_action_id_malformed" });
+        continue;
+      }
+      const { data: ent } = await supabase
+        .from("entitlements")
+        .select("id, status, expires_at, meta")
+        .eq("id", entId)
+        .maybeSingle();
+      if (!ent) {
+        skipped_idempotent++;
+        skipped_action_ids.push(action.action_id);
+        continue;
+      }
+      if (ent.status !== "active") {
+        skipped_idempotent++;
+        skipped_action_ids.push(action.action_id);
+        continue;
+      }
+      const oldMeta = (ent.meta && typeof ent.meta === "object" && !Array.isArray(ent.meta))
+        ? ent.meta as Record<string, unknown>
+        : {};
+      const isSoftExpire = action.category === "soft_expire_extra_access";
+      const newStatus = isSoftExpire ? "expired" : "revoked";
+      const metaPatch: Record<string, unknown> = {
+        ...oldMeta,
+        stage4_extra_access_action: action.category,
+        stage4_reconcile_mode: opts.reconcileMode,
+        stage4_batch_id: batchId,
+        stage4_reason: action.skip_reason,
+        stage4_actor_user_id: opts.callerUserId,
+        stage4_applied_at: new Date().toISOString(),
+        stage4_previous_status: ent.status,
+        stage4_previous_expires_at: ent.expires_at,
+        stage4_previous_lineage: action.current_lineage,
+      };
+      if (isSoftExpire) {
+        metaPatch.expired_by_canonicalize = true;
+      } else {
+        metaPatch.revoked_by_canonicalize = true;
+      }
+      const updatePayload: Record<string, unknown> = {
+        status: newStatus,
+        updated_at: new Date().toISOString(),
+        meta: metaPatch,
+      };
+      if (isSoftExpire) {
+        // Soft-expire: clamp expires_at to now (or keep past value if already past).
+        const now = new Date().toISOString();
+        updatePayload.expires_at = ent.expires_at && new Date(ent.expires_at).getTime() < Date.now()
+          ? ent.expires_at
+          : now;
+      }
+      const { error: destrErr } = await supabase
+        .from("entitlements")
+        .update(updatePayload)
+        .eq("id", entId)
+        .eq("status", "active"); // optimistic lock
+      if (destrErr) {
+        skipped_error++;
+        errors.push({ action_id: action.action_id, error: destrErr.message });
+      } else {
+        updated++;
+        updated_action_ids.push(action.action_id);
+      }
     } else {
       skipped_conflict++;
       skipped_action_ids.push(action.action_id);
     }
   }
+
 
   await supabase.from("audit_logs").insert({
     action: "rules_retroapply.executed",
