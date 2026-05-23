@@ -92,6 +92,10 @@ interface UserAction {
   lineage_will_be_overridden?: boolean;
   /** Stage 3: текущая lineage записи для UI */
   current_lineage?: "manual_admin" | "system" | "none" | null;
+  /** Stage 5: откуда взят срок (rule_duration / source_access_end_at / tariff_access_days / null) */
+  window_resolved_from?: "rule_duration" | "source_access_end_at" | "tariff_access_days" | null;
+  /** Stage 5: на какую дату «привязан» расчёт (sub_access_end_at / sub_access_start_at / sub_created_at / now) */
+  window_anchor_source?: "sub_access_end_at" | "sub_access_start_at" | "sub_created_at" | "rule_duration_now" | null;
 }
 
 Deno.serve(async (req) => {
@@ -206,6 +210,10 @@ Deno.serve(async (req) => {
       already_satisfied: allActions.filter(a => a.category === "already_satisfied").length,
       condition_not_met: allActions.filter(a => a.category === "condition_not_met").length,
       no_source_window: allActions.filter(a => a.category === "no_source_window").length,
+      // Stage 5: окно не вычислено даже с fallback — пользователь должен решить
+      expired_source_window: allActions.filter(a => a.category === "expired_source_window").length,
+      // Stage 5: сколько действий было «спасено» fallback'ом по tariff.access_days
+      window_fallback_applied: allActions.filter(a => a.window_resolved_from === "tariff_access_days").length,
       // Stage 3 new categories
       relink_source_rule: allActions.filter(a => a.category === "relink_source_rule").length,
       replace_system_or_manual_lineage: allActions.filter(a => a.category === "replace_system_or_manual_lineage").length,
@@ -295,10 +303,11 @@ function emptySummary() {
   return {
     total: 0, missing_access: 0, aligned_update_needed: 0, reducible_by_rule: 0,
     requires_manual_review: 0, conflict_existing: 0, already_satisfied: 0,
-    condition_not_met: 0, no_source_window: 0,
+    condition_not_met: 0, no_source_window: 0, expired_source_window: 0,
     relink_source_rule: 0, replace_system_or_manual_lineage: 0, telegram_action_required: 0,
     soft_expire_extra_access: 0, revoke_extra_access: 0,
     manual_review_ambiguous_source: 0, manual_review_paid_access_exists: 0,
+    window_fallback_applied: 0,
   };
 }
 
@@ -380,7 +389,7 @@ async function processRule(
 
   let subsQuery = supabase
     .from("subscriptions_v2")
-    .select("id, user_id, product_id, tariff_id, access_end_at, status")
+    .select("id, user_id, product_id, tariff_id, access_end_at, access_start_at, created_at, status")
     .eq("product_id", sourceProductId)
     .in("status", ["active", "past_due"]);
 
@@ -408,6 +417,26 @@ async function processRule(
     if (userIds.length === 0) return actions;
   }
 
+  // Stage 5: load tariff.access_days for fallback window resolution when
+  // sub.access_end_at is empty and rule has no duration_days.
+  const tariffIdSet = new Set<string>();
+  for (const uid of userIds) {
+    const sub = userSubMap.get(uid);
+    if (sub?.tariff_id) tariffIdSet.add(sub.tariff_id);
+  }
+  const tariffAccessDaysMap = new Map<string, number>();
+  if (tariffIdSet.size > 0) {
+    const { data: tariffRows } = await supabase
+      .from("tariffs")
+      .select("id, access_days")
+      .in("id", [...tariffIdSet]);
+    (tariffRows || []).forEach((t: any) => {
+      if (t.access_days && Number(t.access_days) > 0) {
+        tariffAccessDaysMap.set(t.id, Number(t.access_days));
+      }
+    });
+  }
+
   // Batch fetch profiles with full_name
   const profileMap = new Map<string, { id: string; email: string; full_name: string | null }>();
   for (let i = 0; i < userIds.length; i += 50) {
@@ -433,7 +462,12 @@ async function processRule(
     currentExpiry: string | null,
     sub: any,
     skipReason: string | null,
-    extras?: { lineage_will_be_overridden?: boolean; current_lineage?: "manual_admin" | "system" | "none" | null },
+    extras?: {
+      lineage_will_be_overridden?: boolean;
+      current_lineage?: "manual_admin" | "system" | "none" | null;
+      window_resolved_from?: UserAction["window_resolved_from"];
+      window_anchor_source?: UserAction["window_anchor_source"];
+    },
   ): UserAction => {
     const profile = profileMap.get(userId);
     return {
@@ -459,7 +493,54 @@ async function processRule(
       skip_reason: skipReason,
       lineage_will_be_overridden: extras?.lineage_will_be_overridden || false,
       current_lineage: extras?.current_lineage ?? null,
+      window_resolved_from: extras?.window_resolved_from ?? null,
+      window_anchor_source: extras?.window_anchor_source ?? null,
     };
+  };
+
+  /**
+   * Stage 5: трёхуровневый резолвер окна:
+   *   1) rule.duration_days  → planned = now + N дней, anchor=rule_duration_now
+   *   2) sub.access_end_at   → planned = sub.access_end_at, anchor=sub_access_end_at
+   *   3) tariff.access_days  → planned = anchor + access_days,
+   *      anchor ∈ {sub.access_start_at, sub.created_at}.
+   *      Never use now() as anchor for this fallback — это могло бы
+   *      искусственно продлить доступ.
+   */
+  const resolveWindow = (sub: any): {
+    plannedIso: string | null;
+    window_resolved_from: UserAction["window_resolved_from"];
+    window_anchor_source: UserAction["window_anchor_source"];
+  } => {
+    if (rule.duration_days) {
+      return {
+        plannedIso: new Date(Date.now() + rule.duration_days * 86400000).toISOString(),
+        window_resolved_from: "rule_duration",
+        window_anchor_source: "rule_duration_now",
+      };
+    }
+    if (sub?.access_end_at) {
+      return {
+        plannedIso: sub.access_end_at,
+        window_resolved_from: "source_access_end_at",
+        window_anchor_source: "sub_access_end_at",
+      };
+    }
+    const accessDays = sub?.tariff_id ? tariffAccessDaysMap.get(sub.tariff_id) : undefined;
+    if (accessDays && accessDays > 0) {
+      const anchorIso = sub.access_start_at || sub.created_at || null;
+      if (anchorIso) {
+        const anchorMs = new Date(anchorIso).getTime();
+        if (Number.isFinite(anchorMs) && anchorMs > 0) {
+          return {
+            plannedIso: new Date(anchorMs + accessDays * 86400000).toISOString(),
+            window_resolved_from: "tariff_access_days",
+            window_anchor_source: sub.access_start_at ? "sub_access_start_at" : "sub_created_at",
+          };
+        }
+      }
+    }
+    return { plannedIso: null, window_resolved_from: null, window_anchor_source: null };
   };
 
   if (rule.grant_target_type === "product_access") {
@@ -488,31 +569,43 @@ async function processRule(
         const existingList = existingListMap.get(userId) || [];
         const existing = existingList.length === 1 ? existingList[0] : null;
 
-        let plannedExpiry: string | null = null;
-        if (rule.duration_days) {
-          plannedExpiry = new Date(Date.now() + rule.duration_days * 86400000).toISOString();
-        } else if (sub.access_end_at) {
-          plannedExpiry = sub.access_end_at;
-        }
+        // Stage 5: трёхуровневый резолвер окна (rule_duration → access_end_at → tariff.access_days)
+        const win = resolveWindow(sub);
+        const plannedExpiry = win.plannedIso;
+        const windowExtras = {
+          window_resolved_from: win.window_resolved_from,
+          window_anchor_source: win.window_anchor_source,
+        };
 
         if (hasPriorPurchase) {
           const conditionMet = await checkRetroCondition(supabase, conditions, userId, targetProdId);
           if (!conditionMet) {
-            actions.push(makeAction(userId, targetProdId, "condition_not_met", plannedExpiry, null, sub, "prior_purchase_not_found"));
+            actions.push(makeAction(userId, targetProdId, "condition_not_met", plannedExpiry, null, sub, "prior_purchase_not_found", windowExtras));
             continue;
           }
         }
 
-        if (!plannedExpiry && !rule.duration_days) {
-          actions.push(makeAction(userId, targetProdId, "no_source_window", null, null, sub, "no_access_end_at_and_no_duration_days"));
+        if (!plannedExpiry) {
+          // Все три источника пусты — нечего применять.
+          actions.push(makeAction(userId, targetProdId, "no_source_window", null, null, sub,
+            "no_access_end_at_no_duration_no_tariff_anchor", windowExtras));
+          continue;
+        }
+
+        // Stage 5: если получившийся plannedExpiry уже в прошлом — это валидный сигнал,
+        // что источник окна устарел. Не создаём/не продлеваем доступ автоматически.
+        const plannedMs = new Date(plannedExpiry).getTime();
+        if (Number.isFinite(plannedMs) && plannedMs < Date.now()) {
+          actions.push(makeAction(userId, targetProdId, "expired_source_window", plannedExpiry,
+            existing?.expires_at ?? null, sub, "planned_window_already_in_past", windowExtras));
           continue;
         }
 
         if (existingList.length === 0) {
-          actions.push(makeAction(userId, targetProdId, "missing_access", plannedExpiry, null, sub, null));
+          actions.push(makeAction(userId, targetProdId, "missing_access", plannedExpiry, null, sub, null, windowExtras));
         } else if (existingList.length > 1) {
           actions.push(makeAction(userId, targetProdId, "conflict_existing", plannedExpiry,
-            existingList[0].expires_at, sub, "conflict_multiple_entitlements"));
+            existingList[0].expires_at, sub, "conflict_multiple_entitlements", windowExtras));
         } else {
           // Exactly 1 active entitlement — classify
           const ent = existing!;
@@ -900,6 +993,7 @@ const NEVER_EXECUTE_CATEGORIES = new Set([
   "conflict_existing",
   "no_source_window",
   "condition_not_met",
+  "expired_source_window", // Stage 5: окно уже в прошлом — не создаём/не продлеваем автоматически
   "telegram_action_required", // Stage 3: preview-only — execute через telegram-grant-access
   // Stage 4: extra-access preview-only review categories
   "manual_review_ambiguous_source",
@@ -1219,6 +1313,8 @@ async function executeActions(
           batch_id: batchId,
           business_subscription_id: action.source_subscription_id,
           retroapply: true,
+          window_resolved_from: action.window_resolved_from || null,
+          window_anchor_source: action.window_anchor_source || null,
         },
       };
       if (profileId) insertPayload.profile_id = profileId;
@@ -1275,6 +1371,17 @@ async function executeActions(
           mergedMeta.canonicalized_by_user_id = opts.callerUserId;
           mergedMeta.canonicalized_at = new Date().toISOString();
           mergedMeta.source_type = "retroapply";
+        }
+        if (action.category === "reducible_by_rule") {
+          // Stage 5: сохранить предыдущий срок и причину сокращения для аудита/UI.
+          mergedMeta.previous_expires_at = ent.expires_at || null;
+          mergedMeta.reduction_reason = "stage5_reducible_by_canonical_rule";
+          mergedMeta.reduced_at = new Date().toISOString();
+          mergedMeta.reduced_by_user_id = opts.callerUserId;
+        }
+        if (action.window_resolved_from) {
+          mergedMeta.window_resolved_from = action.window_resolved_from;
+          mergedMeta.window_anchor_source = action.window_anchor_source || null;
         }
 
         // relink_source_rule: метаданные only, expires_at не меняем (он уже совпадает)
@@ -1400,6 +1507,9 @@ async function executeActions(
       skipped_error,
       not_selected,
       total_actions: actions.length,
+      // Stage 5: сколько action'ов получили окно через tariff.access_days fallback
+      window_fallback_applied: actions.filter(a => a.window_resolved_from === "tariff_access_days").length,
+      expired_source_window_count: actions.filter(a => a.category === "expired_source_window").length,
       execute_options: {
         recalculate_existing: opts.recalculateExisting,
         allow_reduce_access: opts.allowReduceAccess,

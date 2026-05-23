@@ -73,6 +73,9 @@ interface UserAction {
   skip_reason: string | null;
   lineage_will_be_overridden?: boolean;
   current_lineage?: "manual_admin" | "system" | "none" | null;
+  /** Stage 5: откуда взят срок */
+  window_resolved_from?: "rule_duration" | "source_access_end_at" | "tariff_access_days" | null;
+  window_anchor_source?: "sub_access_end_at" | "sub_access_start_at" | "sub_created_at" | "rule_duration_now" | null;
 }
 
 interface RetroApplyResult {
@@ -95,6 +98,8 @@ interface RetroApplyResult {
     already_satisfied: number;
     condition_not_met: number;
     no_source_window: number;
+    expired_source_window?: number;
+    window_fallback_applied?: number;
     relink_source_rule?: number;
     replace_system_or_manual_lineage?: number;
     telegram_action_required?: number;
@@ -177,9 +182,15 @@ const CATEGORY_CONFIG: Record<string, {
   },
   no_source_window: {
     label: "Нельзя определить срок",
-    description: "Нельзя рассчитать срок автоматически",
+    description: "Ни правило, ни подписка, ни тариф не дают окно — нужна ручная проверка",
     color: "text-red-700 bg-red-50 border-red-200",
     icon: AlertTriangle,
+  },
+  expired_source_window: {
+    label: "Срок уже в прошлом",
+    description: "Расчётный срок уже истёк — автоматически не создаём/не продлеваем",
+    color: "text-rose-700 bg-rose-50 border-rose-200",
+    icon: Clock,
   },
   // Stage 3 categories
   relink_source_rule: {
@@ -231,6 +242,8 @@ const CATEGORY_CONFIG: Record<string, {
 const REASON_LABELS: Record<string, string> = {
   prior_purchase_not_found: "Предыдущая покупка не найдена",
   no_access_end_at_and_no_duration_days: "Нет даты окончания и не задан фиксированный срок",
+  no_access_end_at_no_duration_no_tariff_anchor: "Нет окончания подписки, фиксированного срока правила и access_days тарифа",
+  planned_window_already_in_past: "Расчётный срок уже в прошлом — не продлеваем автоматически",
   existing_entitlement_from_different_source: "Существующий доступ от другого источника",
   safe_recalculate_expires_extended: "Срок будет выровнен по правилу",
   safe_recalculate_expires_missing: "Текущий срок отсутствует, будет рассчитан заново",
@@ -277,7 +290,7 @@ const SELECTABLE_CATEGORIES = new Set([
   "soft_expire_extra_access", "revoke_extra_access",
 ]);
 
-type FilterKey = "all" | "changed" | "missing_access" | "aligned_update_needed" | "reducible_by_rule" | "requires_manual_review" | "conflict_existing" | "already_satisfied" | "condition_not_met" | "no_source_window" | "relink_source_rule" | "replace_system_or_manual_lineage" | "telegram_action_required" | "soft_expire_extra_access" | "revoke_extra_access" | "manual_review_ambiguous_source" | "manual_review_paid_access_exists";
+type FilterKey = "all" | "changed" | "missing_access" | "aligned_update_needed" | "reducible_by_rule" | "requires_manual_review" | "conflict_existing" | "already_satisfied" | "condition_not_met" | "no_source_window" | "expired_source_window" | "relink_source_rule" | "replace_system_or_manual_lineage" | "telegram_action_required" | "soft_expire_extra_access" | "revoke_extra_access" | "manual_review_ambiguous_source" | "manual_review_paid_access_exists";
 
 type ScopeMode = "rule" | "product" | "tariff";
 
@@ -423,9 +436,28 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
       }
 
       if (res.error || res.stop_reasons?.length) {
-        // Don't toast — show inline
+        // Stage 5: surface errors as toast (inline block остаётся, но teхнически
+        // пользователю важно явное сообщение — иначе кажется, что «ничего не работает»)
+        if (mode === "execute") {
+          const detail = res.stop_reasons?.length
+            ? res.stop_reasons.map(translateStopReason).join(" · ")
+            : (res.error || "неизвестная ошибка");
+          toast.error(`Не удалось применить: ${detail}`);
+        }
       } else if (mode === "execute") {
-        toast.success(`Фактически изменено: создано ${res.executed?.created || 0}, обновлено ${res.executed?.updated || 0}`);
+        const ex = res.executed;
+        const created = ex?.created || 0;
+        const updated = ex?.updated || 0;
+        const reactivated = ex?.reactivated || 0;
+        const skippedIdem = ex?.skipped_idempotent || 0;
+        const errCount = ex?.errors?.length || 0;
+        if (created === 0 && updated === 0 && reactivated === 0 && skippedIdem > 0) {
+          toast.success(`Все записи уже соответствуют правилам (${skippedIdem} idempotent skip)`);
+        } else if (created === 0 && updated === 0 && reactivated === 0) {
+          toast.warning(`Изменений не выполнено. Проверьте предпросмотр и фильтры.`);
+        } else {
+          toast.success(`Изменено: создано ${created}, обновлено ${updated}${reactivated ? `, реактивировано ${reactivated}` : ""}${errCount ? `, ошибок ${errCount}` : ""}`);
+        }
         // Auto-refresh preview after execute to show actual state
         autoRefreshPreview();
       }
@@ -475,12 +507,17 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
     });
   };
 
-  const handleExecuteWithReductions = () => {
+  const handleExecuteWithReductions = async () => {
     setConfirmExecute(false);
-    runRetroApply("execute", {
+    // Stage 5: preflight — повторно дёрнуть preview, чтобы убедиться, что состояние
+    // и количество reducible не изменились между предпросмотром и применением.
+    if (!(await preflightOk())) return;
+    await runRetroApply("execute", {
       allowReduceAccess: true,
       applyCategories: ["missing_access", "aligned_update_needed", "reducible_by_rule"],
     });
+    // Stage 5: переключаем фильтр, чтобы видно было, что reducible уехали.
+    setActiveFilter("changed");
   };
 
   /** Stage 3: preflight — re-run preview before execute; abort if summary totals changed */
