@@ -1050,10 +1050,12 @@ async function executeActions(
 
   await supabase.from("audit_logs").insert({
     action: "rules_retroapply.executed",
-    actor_type: "system",
-    actor_label: "rules-retroapply",
+    actor_type: opts.callerUserId ? "user" : "system",
+    actor_id: opts.callerUserId,
+    actor_label: opts.callerUserId ? "rules-retroapply (admin)" : "rules-retroapply",
     meta: {
       batch_id: batchId,
+      reconcile_mode: opts.reconcileMode,
       rule_ids: rules.map((r: any) => r.id),
       targeted,
       created,
@@ -1068,6 +1070,8 @@ async function executeActions(
       execute_options: {
         recalculate_existing: opts.recalculateExisting,
         allow_reduce_access: opts.allowReduceAccess,
+        allow_revoke_or_expire: opts.allowRevokeOrExpire,
+        allow_manual_override: opts.allowManualOverride,
         selected_count: opts.selectedActionIds.length,
         apply_categories: opts.applyCategories,
       },
