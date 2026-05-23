@@ -177,6 +177,25 @@ const CATEGORY_CONFIG: Record<string, {
     color: "text-red-700 bg-red-50 border-red-200",
     icon: AlertTriangle,
   },
+  // Stage 3 categories
+  relink_source_rule: {
+    label: "Перепривязка к правилу",
+    description: "Срок совпадает, изменится только привязка к актуальному правилу",
+    color: "text-sky-700 bg-sky-50 border-sky-200",
+    icon: Link2,
+  },
+  replace_system_or_manual_lineage: {
+    label: "Канонизация ручного доступа",
+    description: "Ручной/admin доступ будет приведён к правилу (только админский режим)",
+    color: "text-purple-700 bg-purple-50 border-purple-200",
+    icon: ShieldCheck,
+  },
+  telegram_action_required: {
+    label: "Требует Telegram",
+    description: "Действие требует выдачи через Telegram (preview-only)",
+    color: "text-cyan-700 bg-cyan-50 border-cyan-200",
+    icon: Send,
+  },
 };
 
 /** Russian translations for skip_reason / stop_reason codes */
@@ -189,11 +208,14 @@ const REASON_LABELS: Record<string, string> = {
   safe_recalculate_available_but_disabled: "Срок можно безопасно обновить, но пересчёт сроков сейчас выключен",
   reducible_by_canonical_rule: "Срок будет сокращён до канонического по правилу",
   requires_manual_decision: "Требует решения администратора",
-  conflict_manual_source: "Конфликт: доступ выдан вручную",
+  conflict_manual_source: "Конфликт: доступ выдан вручную (ночной режим не меняет)",
   conflict_multiple_entitlements: "Конфликт: несколько активных доступов",
   conflict_would_reduce_access: "Конфликт: обновление сократит срок доступа",
   conflict_no_planned_expiry: "Конфликт: невозможно вычислить новый срок",
   conflict_different_rule_source: "Конфликт: доступ выдан по другому правилу",
+  human_lineage_overridden_by_admin_canonicalize: "Ручной/admin доступ будет переопределён по правилу",
+  relink_to_current_rule_same_window: "Перепривязка к актуальному правилу, срок не меняется",
+  club_grant_requires_telegram_action: "Требуется выдача через Telegram",
 };
 
 function translateReason(code: string | null): string {
