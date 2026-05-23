@@ -783,8 +783,8 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                     </div>
                     <div className="flex items-start gap-2">
                       <Checkbox id="allow-revoke" checked={allowRevoke} onCheckedChange={(v) => setAllowRevoke(!!v)} />
-                      <Label htmlFor="allow-revoke" className="text-[11px] cursor-pointer text-muted-foreground">
-                        Разрешить снятие лишних доступов <Badge variant="outline" className="text-[8px] ml-1">в Stage 3 заблокировано</Badge>
+                      <Label htmlFor="allow-revoke" className="text-[11px] cursor-pointer">
+                        Разрешить снятие лишних доступов (soft-expire / revoke)
                       </Label>
                     </div>
                     <div className="flex items-start gap-2">
