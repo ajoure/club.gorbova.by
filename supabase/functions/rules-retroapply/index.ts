@@ -675,14 +675,35 @@ async function executeActions(
             ? existing.meta as Record<string, unknown>
             : {};
 
-          // source_rule_id conflict check: if exists and differs from current rule, skip
+          // Lineage check: only manual/admin lineage is protected from auto-relink.
+          // System-generated lineage (rule_engine / retroapply / fulfillment / batch) is safe to relink
+          // to the currently active rule. previous_source_rule_id is recorded in meta for audit.
+          const oldSourceType = String(oldMeta.source_type || "").toLowerCase();
+          const oldGrantedBy = String(oldMeta.granted_by || "").toLowerCase();
+          const oldBatchId = String(oldMeta.batch_id || "");
+          const isManualLineage = oldSourceType === "manual" || oldSourceType === "admin"
+            || oldGrantedBy.includes("manual") || oldGrantedBy.includes("admin")
+            || !!oldMeta.manual_access_edit_last_at;
+          const isSystemLineage = !isManualLineage && (
+            !!oldMeta.retroapply || !!oldMeta.retroapply_updated || !!oldMeta.retroapply_reactivated
+            || oldSourceType === "rule_engine" || oldSourceType === "retroapply"
+            || oldSourceType === "fulfillment" || oldSourceType === "batch"
+            || oldGrantedBy.startsWith("rule_engine") || oldGrantedBy === "primary_order_fulfillment"
+            || oldBatchId.startsWith("BACKFILL") || oldBatchId.startsWith("RETROAPPLY")
+            || !!oldMeta.source_rule_id
+          );
+
           if (oldMeta.source_rule_id && oldMeta.source_rule_id !== action.rule_id) {
-            skipped_error++;
-            errors.push({
-              action_id: action.action_id,
-              error: `source_rule_id_conflict: existing=${oldMeta.source_rule_id}, current=${action.rule_id}`,
-            });
-            continue;
+            if (!isSystemLineage || isManualLineage) {
+              // Manual lineage with foreign source_rule_id → skip (manual review)
+              skipped_error++;
+              errors.push({
+                action_id: action.action_id,
+                error: `manual_lineage_protected: existing rule ${oldMeta.source_rule_id} kept (manual entitlement)`,
+              });
+              continue;
+            }
+            // System lineage: safe relink — proceed with reactivation, log previous rule
           }
 
           // Build strictly add-only patch — never overwrite existing keys
@@ -694,7 +715,15 @@ async function executeActions(
             previous_expires_at: existing.expires_at,
             batch_id: batchId,
           };
-          if (!oldMeta.source_rule_id) retroapplyPatch.source_rule_id = action.rule_id;
+          // Relink: always set source_rule_id to current rule; preserve previous_source_rule_id for audit
+          if (oldMeta.source_rule_id && oldMeta.source_rule_id !== action.rule_id) {
+            retroapplyPatch.source_rule_id = action.rule_id;
+            retroapplyPatch.previous_source_rule_id = oldMeta.source_rule_id;
+            retroapplyPatch.relinked_at = new Date().toISOString();
+            retroapplyPatch.relink_reason = "system_lineage_safe_relink";
+          } else if (!oldMeta.source_rule_id) {
+            retroapplyPatch.source_rule_id = action.rule_id;
+          }
           if (!oldMeta.source_window_rule) retroapplyPatch.source_window_rule = sourceWindowRule;
           if (!oldMeta.business_subscription_id && action.source_subscription_id) {
             retroapplyPatch.business_subscription_id = action.source_subscription_id;
