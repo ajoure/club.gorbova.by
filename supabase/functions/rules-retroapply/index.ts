@@ -505,57 +505,112 @@ async function processRule(
           }
 
           const entMeta = ent.meta || {};
-          const metaBatchId = entMeta.batch_id || "";
-          const metaRetro = entMeta.retroapply || entMeta.retroapply_updated;
-          const metaSourceType = (entMeta.source_type || "").toLowerCase();
-          const isSourceSafe = !!metaRetro || metaBatchId.startsWith("BACKFILL") || metaBatchId.startsWith("RETROAPPLY")
-            || metaSourceType === "fulfillment" || metaSourceType === "retroapply" || metaSourceType === "batch"
-            || (entMeta.source_rule_id && !metaSourceType);
+          const metaBatchId = String(entMeta.batch_id || "");
+          const metaRetro = entMeta.retroapply || entMeta.retroapply_updated || entMeta.retroapply_reactivated;
+          const metaSourceType = String(entMeta.source_type || "").toLowerCase();
+          const metaGrantedBy = String(entMeta.granted_by || "").toLowerCase();
+
+          // Lineage detection — manual/admin vs system
+          const isManualLineage =
+            metaSourceType === "manual" || metaSourceType === "admin" || metaSourceType === "cohort_repair"
+            || metaSourceType === "admin_edit" || metaSourceType.startsWith("manual_")
+            || metaGrantedBy.includes("manual") || metaGrantedBy.includes("admin")
+            || !!entMeta.manual_access_edit_last_at || !!entMeta.actor_user_id
+            || !!entMeta.granted_by_admin;
+          const isSystemLineage = !isManualLineage && (
+            !!metaRetro
+            || metaSourceType === "rule_engine" || metaSourceType === "retroapply"
+            || metaSourceType === "fulfillment" || metaSourceType === "batch"
+            || metaGrantedBy.startsWith("rule_engine") || metaGrantedBy === "primary_order_fulfillment"
+            || metaBatchId.startsWith("BACKFILL") || metaBatchId.startsWith("RETROAPPLY")
+            || !!entMeta.source_rule_id
+          );
+          const currentLineage: "manual_admin" | "system" | "none" =
+            isManualLineage ? "manual_admin" : (isSystemLineage ? "system" : "none");
 
           const entSourceRuleId = entMeta.source_rule_id || null;
           const isRuleLineageSafe = !entSourceRuleId || entSourceRuleId === rule.id;
 
-          if (!isSourceSafe) {
-            actions.push(makeAction(userId, targetProdId, "conflict_existing", plannedExpiry, ent.expires_at, sub, "conflict_manual_source"));
+          // ─── Manual/admin lineage handling ───
+          if (isManualLineage) {
+            if (reconcileMode === "nightly_safe") {
+              // Nightly: НЕ трогаем manual/admin записи
+              actions.push(makeAction(userId, targetProdId, "conflict_existing", plannedExpiry, ent.expires_at, sub,
+                "conflict_manual_source", { current_lineage: "manual_admin" }));
+              continue;
+            }
+            // admin_canonicalize_all: возможно переопределить ручную lineage по правилу
+            actions.push(makeAction(userId, targetProdId, "replace_system_or_manual_lineage", plannedExpiry, ent.expires_at, sub,
+              "human_lineage_overridden_by_admin_canonicalize",
+              { lineage_will_be_overridden: true, current_lineage: "manual_admin" }));
             continue;
           }
 
+          // ─── System lineage with different rule ───
           if (!isRuleLineageSafe) {
-            actions.push(makeAction(userId, targetProdId, "conflict_existing", plannedExpiry, ent.expires_at, sub, "conflict_different_rule_source"));
-            continue;
+            // Дата та же — это просто перепривязка к актуальному правилу
+            if (currentEnd && plannedEnd && Math.abs(currentEnd - plannedEnd) < 60000) {
+              actions.push(makeAction(userId, targetProdId, "relink_source_rule", plannedExpiry, ent.expires_at, sub,
+                "relink_to_current_rule_same_window", { current_lineage: "system" }));
+              continue;
+            }
+            // Иначе — будет relink + extend/reduce; в обоих режимах это безопасно (system lineage)
+            // Падаем дальше в стандартную extend/reduce ветку
           }
 
           if (currentEnd && plannedEnd < currentEnd) {
-            actions.push(makeAction(userId, targetProdId, "reducible_by_rule", plannedExpiry, ent.expires_at, sub, "reducible_by_canonical_rule"));
+            actions.push(makeAction(userId, targetProdId, "reducible_by_rule", plannedExpiry, ent.expires_at, sub,
+              "reducible_by_canonical_rule", { current_lineage: currentLineage }));
             continue;
           }
 
           if (!currentEnd) {
             if (recalculateExisting) {
-              actions.push(makeAction(userId, targetProdId, "aligned_update_needed", plannedExpiry, null, sub, "safe_recalculate_expires_missing"));
+              actions.push(makeAction(userId, targetProdId, "aligned_update_needed", plannedExpiry, null, sub,
+                "safe_recalculate_expires_missing", { current_lineage: currentLineage }));
             } else {
-              actions.push(makeAction(userId, targetProdId, "aligned_update_needed", plannedExpiry, null, sub, "safe_recalculate_available_but_disabled"));
+              actions.push(makeAction(userId, targetProdId, "aligned_update_needed", plannedExpiry, null, sub,
+                "safe_recalculate_available_but_disabled", { current_lineage: currentLineage }));
             }
             continue;
           }
 
           if (plannedEnd > currentEnd) {
             if (recalculateExisting) {
-              actions.push(makeAction(userId, targetProdId, "aligned_update_needed", plannedExpiry, ent.expires_at, sub, "safe_recalculate_expires_extended"));
+              actions.push(makeAction(userId, targetProdId, "aligned_update_needed", plannedExpiry, ent.expires_at, sub,
+                "safe_recalculate_expires_extended", { current_lineage: currentLineage }));
             } else {
-              actions.push(makeAction(userId, targetProdId, "aligned_update_needed", plannedExpiry, ent.expires_at, sub, "safe_recalculate_available_but_disabled"));
+              actions.push(makeAction(userId, targetProdId, "aligned_update_needed", plannedExpiry, ent.expires_at, sub,
+                "safe_recalculate_available_but_disabled", { current_lineage: currentLineage }));
             }
             continue;
           }
 
-          actions.push(makeAction(userId, targetProdId, "already_satisfied", plannedExpiry, ent.expires_at, sub, null));
+          actions.push(makeAction(userId, targetProdId, "already_satisfied", plannedExpiry, ent.expires_at, sub,
+            null, { current_lineage: currentLineage }));
         }
       }
     }
   }
 
   if (rule.grant_target_type === "club") {
-    console.log(`Club rule ${rule.id} skipped in retroapply v1 — club grants require telegram integration`);
+    // Stage 3: club preview = telegram_action_required (read-only, no Telegram API)
+    // Для каждого user с активной source-подпиской выпускаем preview-action.
+    // Execute по club по-прежнему НЕ выполняется в этом engine.
+    for (const targetClubId of targetProductIds) {
+      for (const userId of userIds) {
+        const sub = userSubMap.get(userId);
+        if (!sub) continue;
+        let plannedExpiry: string | null = null;
+        if (rule.duration_days) {
+          plannedExpiry = new Date(Date.now() + rule.duration_days * 86400000).toISOString();
+        } else if (sub.access_end_at) {
+          plannedExpiry = sub.access_end_at;
+        }
+        actions.push(makeAction(userId, targetClubId, "telegram_action_required", plannedExpiry, null, sub,
+          "club_grant_requires_telegram_action", { current_lineage: null }));
+      }
+    }
   }
 
   return actions;
