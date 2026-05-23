@@ -1507,6 +1507,9 @@ async function executeActions(
       skipped_error,
       not_selected,
       total_actions: actions.length,
+      // Stage 5: сколько action'ов получили окно через tariff.access_days fallback
+      window_fallback_applied: actions.filter(a => a.window_resolved_from === "tariff_access_days").length,
+      expired_source_window_count: actions.filter(a => a.category === "expired_source_window").length,
       execute_options: {
         recalculate_existing: opts.recalculateExisting,
         allow_reduce_access: opts.allowReduceAccess,
