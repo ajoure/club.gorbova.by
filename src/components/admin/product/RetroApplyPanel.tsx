@@ -98,6 +98,10 @@ interface RetroApplyResult {
     relink_source_rule?: number;
     replace_system_or_manual_lineage?: number;
     telegram_action_required?: number;
+    soft_expire_extra_access?: number;
+    revoke_extra_access?: number;
+    manual_review_ambiguous_source?: number;
+    manual_review_paid_access_exists?: number;
   };
   reconcile_mode?: ReconcileMode;
   executed?: {
