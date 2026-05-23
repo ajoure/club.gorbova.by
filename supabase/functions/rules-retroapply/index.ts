@@ -1313,6 +1313,8 @@ async function executeActions(
           batch_id: batchId,
           business_subscription_id: action.source_subscription_id,
           retroapply: true,
+          window_resolved_from: action.window_resolved_from || null,
+          window_anchor_source: action.window_anchor_source || null,
         },
       };
       if (profileId) insertPayload.profile_id = profileId;
