@@ -1024,6 +1024,20 @@ async function executeActions(
       return false;
     }
 
+    // Stage 4: destructive extra-access execute path
+    if (EXTRA_ACCESS_DESTRUCTIVE.has(action.category)) {
+      const isHumanLineage = action.current_lineage === "manual_admin" || action.current_lineage === "none";
+      if (!opts.allowRevokeOrExpire) return false;
+      if (isHumanLineage) {
+        if (opts.reconcileMode !== "admin_canonicalize_all") return false;
+        if (!opts.allowManualOverride) return false;
+      }
+      // ALWAYS require explicit selection or category opt-in
+      if (hasSelection && selectedSet.has(action.action_id)) return true;
+      if (hasCategories && categorySet.has(action.category)) return true;
+      return false;
+    }
+
     return false;
   }
 
@@ -1032,6 +1046,7 @@ async function executeActions(
       not_selected++;
       continue;
     }
+
 
     targeted++;
 
