@@ -901,6 +901,16 @@ const NEVER_EXECUTE_CATEGORIES = new Set([
   "no_source_window",
   "condition_not_met",
   "telegram_action_required", // Stage 3: preview-only — execute через telegram-grant-access
+  // Stage 4: extra-access preview-only review categories
+  "manual_review_ambiguous_source",
+  "manual_review_paid_access_exists",
+]);
+
+// Stage 4: destructive categories (soft_expire / revoke) — execute only when
+// allowRevokeOrExpire + explicit selection + lineage gate is satisfied.
+const EXTRA_ACCESS_DESTRUCTIVE = new Set([
+  "soft_expire_extra_access",
+  "revoke_extra_access",
 ]);
 
 interface ExecuteOptions {
