@@ -33,11 +33,14 @@ import {
 import {
   RefreshCw, Eye, Play, AlertTriangle, CheckCircle2, XCircle,
   MinusCircle, HelpCircle, ChevronDown, ChevronRight, ShieldAlert,
-  ArrowDownCircle,
+  ArrowDownCircle, Link2, ShieldCheck, Send,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { AccessRule } from "@/hooks/useAccessRules";
+import { useSuperAdmin } from "@/hooks/useSuperAdmin";
+
+type ReconcileMode = "nightly_safe" | "admin_canonicalize_all";
 
 // ═══════ TYPES ═══════
 
