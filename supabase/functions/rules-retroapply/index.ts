@@ -92,6 +92,10 @@ interface UserAction {
   lineage_will_be_overridden?: boolean;
   /** Stage 3: текущая lineage записи для UI */
   current_lineage?: "manual_admin" | "system" | "none" | null;
+  /** Stage 5: откуда взят срок (rule_duration / source_access_end_at / tariff_access_days / null) */
+  window_resolved_from?: "rule_duration" | "source_access_end_at" | "tariff_access_days" | null;
+  /** Stage 5: на какую дату «привязан» расчёт (sub_access_end_at / sub_access_start_at / sub_created_at / now) */
+  window_anchor_source?: "sub_access_end_at" | "sub_access_start_at" | "sub_created_at" | "rule_duration_now" | null;
 }
 
 Deno.serve(async (req) => {
