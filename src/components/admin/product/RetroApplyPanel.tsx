@@ -71,6 +71,8 @@ interface UserAction {
   current_expires_at: string | null;
   source_subscription_id: string | null;
   skip_reason: string | null;
+  lineage_will_be_overridden?: boolean;
+  current_lineage?: "manual_admin" | "system" | "none" | null;
 }
 
 interface RetroApplyResult {
