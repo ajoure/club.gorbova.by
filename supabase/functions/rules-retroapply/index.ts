@@ -408,6 +408,7 @@ async function processRule(
     currentExpiry: string | null,
     sub: any,
     skipReason: string | null,
+    extras?: { lineage_will_be_overridden?: boolean; current_lineage?: "manual_admin" | "system" | "none" | null },
   ): UserAction => {
     const profile = profileMap.get(userId);
     return {
@@ -429,8 +430,10 @@ async function processRule(
       category,
       planned_expires_at: plannedExpiry,
       current_expires_at: currentExpiry,
-      source_subscription_id: sub.id,
+      source_subscription_id: sub?.id || null,
       skip_reason: skipReason,
+      lineage_will_be_overridden: extras?.lineage_will_be_overridden || false,
+      current_lineage: extras?.current_lineage ?? null,
     };
   };
 
