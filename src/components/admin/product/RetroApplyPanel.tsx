@@ -513,13 +513,29 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
     const selectedActions = result?.actions?.filter(a => selectedIds.has(a.action_id)) || [];
     const hasReducible = selectedActions.some(a => a.category === "reducible_by_rule");
     const hasReplace = selectedActions.some(a => a.category === "replace_system_or_manual_lineage");
+    const hasDestructive = selectedActions.some(a =>
+      a.category === "soft_expire_extra_access" || a.category === "revoke_extra_access");
+    const hasHumanLineageDestructive = selectedActions.some(a =>
+      (a.category === "soft_expire_extra_access" || a.category === "revoke_extra_access") &&
+      (a.current_lineage === "manual_admin" || a.current_lineage === "none"));
     // Admin mode: honor user toggles; replace requires both allow_manual_override + acknowledge
-    const allowManual = effectiveReconcileMode === "admin_canonicalize_all" && allowManualOverride && adminAcknowledge && hasReplace;
+    const allowManual = effectiveReconcileMode === "admin_canonicalize_all" && allowManualOverride && adminAcknowledge && (hasReplace || hasHumanLineageDestructive);
     const allowReduceFlag = hasReducible && (effectiveReconcileMode === "nightly_safe" ? true : allowReduce);
+    // Stage 4: destructive flag — requires explicit allowRevoke + ack
+    const allowRevokeFlag = hasDestructive && allowRevoke && adminAcknowledge;
+    if (hasDestructive && !allowRevokeFlag) {
+      toast.error("Для снятия лишних доступов включите «Разрешить снятие лишних доступов» и подтверждение.");
+      return;
+    }
+    if (hasHumanLineageDestructive && !allowManual) {
+      toast.error("Снятие ручных/admin доступов требует режима админской канонизации, allow_manual_override и подтверждения.");
+      return;
+    }
     runRetroApply("execute", {
       selectedActionIds: ids,
       allowReduceAccess: allowReduceFlag,
       allowManualOverride: allowManual,
+      allowRevokeOrExpire: allowRevokeFlag,
     });
   };
 
@@ -535,6 +551,11 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
 
   const reducibleCount = result?.summary?.reducible_by_rule ?? 0;
   const manualReviewCount = result?.summary?.requires_manual_review ?? 0;
+
+  // Stage 4 destructive summary
+  const softExpireCount = result?.summary?.soft_expire_extra_access ?? 0;
+  const revokeExtraCount = result?.summary?.revoke_extra_access ?? 0;
+  const destructiveTotal = reducibleCount + softExpireCount + revokeExtraCount;
 
   const canExecuteSafe = result && !result.error && safeCount > 0 && !isExecuted;
   const canExecuteWithReductions = result && !result.error && reducibleCount > 0 && !isExecuted;
