@@ -1,363 +1,185 @@
+&nbsp;
+
 да, согласен, с учетом правок:
 
-1. План правильный: теперь причина уже конкретная — RPC падает из-за `app_role_v2`, а не из-за отсутствия admin в guard.
+1. План правильный: автосписание bePaid нельзя считать “сломавшимся” из-за удаления/отзыва локального доступа.
 
 &nbsp;
 
-2. В Execute не делать blind CREATE OR REPLACE, пока не скопирован полный текущий functiondef.
-
-Нужно сохранить расчетную часть 1:1:
-
-- сначала `pg_get_functiondef`;
-
-- затем заменить только guard;
-
-- формулы не переписывать вручную.
+2. В карточке контакта нужно разделить 2 независимые вещи:
 
 &nbsp;
 
-3. В proof обязательно добавить:
+- provider_subscriptions = живая платежная подписка bePaid;
 
-- было: ошибка `type "app_role_v2" does not exist`;
-
-- стало: HTTP 200 под [7500084@gmail.com](mailto:7500084@gmail.com);
-
-- `pg_get_functiondef` больше не содержит `app_role_v2`.
+- subscriptions_v2 / entitlements = локальные доступы на платформе.
 
 &nbsp;
 
-4. Проверить не только май 2026, но и текущий выбранный диапазон UI.
-
-Если UI передает другие `p_from/p_to`, verify должен использовать именно payload из Network.
+Удаление доступа, сделки или локальной подписки не должно переводить bePaid-подписку в “ремонт”.
 
 &nbsp;
 
-5. Audit-запись не должна ломать миграцию.
+3. `isHealthyProviderSub` должен смотреть только на provider-состояние:
 
-Если insert в audit_logs невозможен из миграции из-за RLS/actor constraints — не останавливать фикс RPC, но зафиксировать это в proof и сделать audit через доступный system path.
-
-&nbsp;
-
-6. Frontend пока не менять.
-
-Но если после backend HTTP 200 UI всё равно показывает нули — сразу зафиксировать как отдельный frontend bug:
-
-`PaymentsStatsPanel silently masks RPC data/error`.
-
-Итоговая команда:
-
-План принимаю с правками.
+state IN ('active','trial','pending')
 
 &nbsp;
 
-Разрешаю выполнить PATCH-PAYMENTS-STATS-RPC-GUARD-FIX-2026-05.
+Без проверки:
+
+- subscriptions_v2.status;
+
+- subscriptions_v2.access_end_at;
+
+- entitlements;
+
+- orders_v2.
 
 &nbsp;
 
-Scope:
+4. Блок “Технические записи провайдера / ремонт” показывать только при доказанном provider-dead:
 
-- исправить только guard в существующем `public.admin_get_payments_stats_v1(timestamptz,timestamptz,text)`;
+- provider_snapshot.state IN canceled/expired/terminated/finished/failed;
 
-- убрать невалидный `::app_role_v2`;
+- last_pull.http_status = 404;
 
-- разрешить `super_admin OR admin OR service_role`;
-
-- сохранить все формулы статистики 1:1;
-
-- не создавать новую RPC и не создавать overload.
+- inv22_provider_dead_local_active = true.
 
 &nbsp;
 
-Перед execute:
-
-- подтвердить ровно один overload;
-
-- сохранить полный `pg_get_functiondef`;
-
-- проверить `has_role_v2` signature;
-
-- проверить, что ошибка под [7500084@gmail.com](mailto:7500084@gmail.com) именно `type "app_role_v2" does not exist`.
+5. Кнопка “Ремонт” не должна появляться из-за локально удалённого доступа.
 
 &nbsp;
 
-Execute:
-
-- `CREATE OR REPLACE FUNCTION` только с заменой guard;
-
-- `REVOKE EXECUTE FROM PUBLIC, anon`;
-
-- `GRANT EXECUTE TO authenticated, service_role`;
-
-- audit/log proof.
+6. Перед правкой обязательно проверить, что нет второго места в UI, где provider_subscriptions повторно фильтруются через subscriptions_v2/access_end_at.
 
 &nbsp;
 
-Verify:
+7. `admin-repair-zombie-provider-subs` не менять и не удалять.
 
-- functiondef не содержит `app_role_v2`;
-
-- RPC под [7500084@gmail.com](mailto:7500084@gmail.com) возвращает HTTP 200 и ненулевой JSON;
-
-- admin тоже HTTP 200;
-
-- non-admin получает 42501;
-
-- anon не имеет доступа;
-
-- UI `/admin/payments` показывает реальные суммы;
-
-- таблица платежей не изменилась;
-
-- формулы не изменены.
+Меняется только условие, когда карточка контакта предлагает этот repair.
 
 &nbsp;
 
-Запрещено:
-
-- новые функции/overloads;
-
-- изменение платежных данных;
-
-- изменение ролей;
-
-- изменение формул;
-
-- anon access;
-
-- frontend patch без отдельного подтверждения, кроме диагностики.
+8. После фикса проверить 3 сценария:
 
 &nbsp;
 
-Proof:
+A. bePaid active + доступ удалён:
 
-.lovable/proofs/payments_stats_rpc_diagnose_2026_[05.md](http://05.md)
+- подписка остаётся в обычном блоке “Подписки”;
+
+- кнопки “Ремонт” нет.
 
 &nbsp;
 
-План:
+B. bePaid реально canceled/404:
 
-## 1. Проблема
+- подписка попадает в “Технические записи”;
 
-В реальном UI под пользователем `7500084@gmail.com` карточки статистики платежей показывают нули. Это подтверждается скрином и network-снимком.
+- repair доступен.
 
-Ключевой факт: текущий RPC-вызов под вашим JWT падает не из-за отсутствия роли `admin`, а с ошибкой:
+&nbsp;
 
-```json
-{"code":"42704","message":"type \"app_role_v2\" does not exist"}
+C. Повторная выдача доступа:
+
+- не требуется ремонтировать bePaid;
+
+- provider-subscription не исчезает из карточки.
+
+&nbsp;
+
+9. В proof добавить:
+
+- before/after скрин карточки контакта;
+
+- SQL по provider_subscriptions/subscriptions_v2;
+
+- подтверждение, что write-path не тронут:
+
+  grant-access-for-order, bepaid-webhook, subscriptions_v2, entitlements, orders_v2, payments_v2 — без изменений.
+
+Итог: чинить точечно **только UI-классификацию provider-подписки в карточке контакта**. Автосписание bePaid должно жить независимо от локальных доступов.
+
+## Discovery
+
+**Где живёт баг (карточка контакта в админке):**
+`src/components/admin/ContactDetailSheet.tsx` строки 2108–2351 — секция «Подписки» / «Технические записи провайдера».
+
+Загружает `provider_subscriptions` join `subscriptions_v2` (строки 739–765, query `contact-provider-subscriptions`) и фильтрует через локальный хелпер `isHealthyProviderSub` (2116–2122):
+
+```text
+healthy = subscriptions_v2 EXISTS
+       AND subscriptions_v2.status = 'active'
+       AND subscriptions_v2.access_end_at >= now()
 ```
 
-Значит предыдущая теория «super_admin видит, admin не видит» для вашей реальности неверна. Сейчас ломается сам guard RPC из-за несуществующего enum/type cast:
+**Почему это даёт описанное поведение:**
+
+- При удалении/отзыве доступа админ-флоу переводит `subscriptions_v2.status` в `expired/canceled/superseded` ИЛИ обнуляет `access_end_at`.
+- bePaid-подписка в `provider_subscriptions` остаётся **жива** (`state='active'`, real auto-renewal в bePaid тоже жива), но UI перестаёт считать её healthy → она перетекает в карточку «Технические записи провайдера — требуют ремонта» с кнопкой **«Ремонт»**.
+- Кнопка зовёт `admin-repair-zombie-provider-subs` (`supabase/functions/admin-repair-zombie-provider-subs/index.ts`), который при `provider_state='active'` идёт в bePaid `/v2/subscriptions/{id}/cancel` → **реально отменяет автосписание у провайдера**. После этого подписка действительно мёртвая и в карточке уже не появится.
+
+**Эталон (как должно быть) — вкладка «Профиль»:** `src/pages/settings/PaymentMethods.tsx` строки 194–218 показывает все `provider_subscriptions` пользователя по `state IN ('active','trial')` **без** оглядки на `subscriptions_v2.status/access_end_at`. Никакого «зомби-режима» там нет.
+
+**Чего трогать НЕЛЬЗЯ (контракты сохранить 1:1):**
+
+- `grant-access-for-order`, `bepaid-webhook`, `subscription-charge`, любые write-path по доступам и подпискам.
+- `subscriptions_v2`, `entitlements`, `orders_v2`, `payments_v2` — никаких миграций данных и схемы.
+- Логика «настоящих зомби»: когда **сам провайдер мёртв** (bePaid вернул canceled/expired/terminated/404) — карточка ремонта должна оставаться (это INV-22 кейс).
+- Cron `bepaid-subscription-audit-cron`, INV-22 detector — без изменений.
+- Edge функция `admin-repair-zombie-provider-subs` — НЕ удаляем (используется и из INV-22 списка `/admin/payments/bepaid-subscriptions`), только перестаём звать из карточки контакта на основе локальных доступов.
+
+## План правки (минимальный, только UI карточки контакта)
+
+Файл: `src/components/admin/ContactDetailSheet.tsx`
+
+1. Переопределить `isHealthyProviderSub` (≈ строки 2116–2124) так, чтобы здоровье считалось **только по самой provider-подписке**, независимо от локальных доступов:
+  ```text
+   healthy = provider_subscriptions.state IN ('active','trial','pending')
+  ```
+   Никаких проверок `subscriptions_v2.status` и `access_end_at`.
+2. Карточку «Технические записи провайдера — требуют ремонта» (2301–2348) оставить, но триггер сузить до **реальной зомби-сигнатуры провайдера**, согласованной с `admin-repair-zombie-provider-subs`:
+  ```text
+   zombie = state='active' AND provider='bepaid'
+            AND (meta.provider_snapshot.state IN ('canceled','expired','terminated','finished','failed')
+                 OR meta.last_pull.http_status = 404
+                 OR meta.inv22_provider_dead_local_active = true)
+  ```
+   То есть карточка ремонта появляется ТОЛЬКО когда провайдер реально мёртв (это уже отмечено INV-22-резолюцией в `meta`). Локальный `subscriptions_v2.status`/`access_end_at` из условия удаляется полностью.
+3. Текст подсказки в зомби-карточке переписать: убрать формулировку «привязанная локальная подписка истекла/отменена», заменить на «bePaid сообщил, что подписка отменена/недоступна на стороне провайдера».
+4. Display-блок «Подписки» (2127–2300) рендерит provider-подписку как живую вне зависимости от состояния доступов. Поле `accessEnd` (2151–2154) оставляем как есть — оно уже умеет fallback на `meta.provider_snapshot.active_to`, так что при отсутствии sv2/доступа дата следующего цикла всё равно отображается.
+5. Auto-sync эффект (строки 832–848) — оставить как есть; он только подтягивает свежий снапшот из bePaid и не выполняет destructive действий.
+
+**Что НЕ меняется:**
+
+- Сам компонент `repairZombieMutation` и edge `admin-repair-zombie-provider-subs` — без правок.
+- Список INV-22 на `/admin/payments/bepaid-subscriptions` — без правок (там своя логика).
+- Никаких изменений в БД, RPC, миграциях, cron, write-path.
+
+## Dry run (что проверить перед/после фикса в режиме чтения)
+
+SQL (read-only) на контакте, у которого «отвалилось»:
 
 ```sql
-'super_admin'::app_role_v2
+select ps.id, ps.state, ps.provider_subscription_id,
+       sv2.status as sv2_status, sv2.access_end_at,
+       ps.meta->'provider_snapshot'->>'state' as provider_state,
+       ps.meta->'last_pull'->>'http_status' as last_http,
+       ps.meta->>'inv22_provider_dead_local_active' as inv22_flag
+from provider_subscriptions ps
+left join subscriptions_v2 sv2 on sv2.id = ps.subscription_v2_id
+where ps.user_id = '<uid>'
+order by ps.created_at desc;
 ```
 
-Из-за ошибки RPC React Query не получает данные, а карточки отображают дефолтные нули.
+Ожидание: `ps.state='active'`, `provider_state='active'`/null, `inv22_flag` отсутствует — после фикса такая запись попадает в healthy-блок, а не в зомби.
 
-## 2. Диагностика — уже подтвержденные факты
+## DoD
 
-### UI / Network
-
-- Route: `/admin/payments`.
-- Дата: `2026-05-01 — 2026-05-31`.
-- В таблице видно `194 из 194`, сумма строки `Σ 44 060,00 BYN`, то есть данные платежей в UI есть.
-- Карточки статистики сверху показывают `0,00` и `0 шт`.
-- Network request:
-  - `POST /rest/v1/rpc/admin_get_payments_stats_v1`
-  - Status: `400`
-  - Body: `type "app_role_v2" does not exist`
-  - JWT email: `7500084@gmail.com`.
-
-### Code/RPC source
-
-Миграция `20260523093059_5b459f41-1c3d-4154-bb0c-e7c2568d21bf.sql` содержит:
-
-```sql
-IF auth.role() <> 'service_role'
-   AND NOT public.has_role_v2(auth.uid(), 'super_admin'::app_role_v2) THEN
-```
-
-Это и есть фактическая причина текущего падения.
-
-### Frontend call
-
-`src/hooks/usePaymentsServerStats.ts` вызывает:
-
-```ts
-supabase.rpc('admin_get_payments_stats_v1', {
-  p_from,
-  p_to,
-  p_provider: 'bepaid',
-})
-```
-
-`src/components/admin/payments/PaymentsStatsPanel.tsx` при отсутствии `serverStats` показывает нули.
-
-## 3. Предлагаемое решение
-
-Сделать PATCH в два безопасных уровня.
-
-### Уровень A — исправить реальную поломку RPC
-
-В миграции `CREATE OR REPLACE FUNCTION public.admin_get_payments_stats_v1(...)`:
-
-- сохранить текущую сигнатуру:
-  ```sql
-  (p_from timestamptz, p_to timestamptz, p_provider text DEFAULT 'bepaid') RETURNS jsonb
-  ```
-- сохранить `STABLE SECURITY DEFINER` и `SET search_path TO 'public'`;
-- сохранить тело расчетов 1:1;
-- заменить невалидный cast:
-  ```sql
-  'super_admin'::app_role_v2
-  ```
-  на строковый вызов, совместимый с фактическим `has_role_v2`:
-  ```sql
-  public.has_role_v2(auth.uid(), 'super_admin')
-  ```
-
-### Уровень B — права для всех администраторов
-
-После того как RPC перестанет падать под `super_admin`, расширить guard до:
-
-```sql
-IF auth.role() <> 'service_role'
-   AND NOT (
-     public.has_role_v2(auth.uid(), 'super_admin')
-     OR public.has_role_v2(auth.uid(), 'admin')
-   ) THEN
-  RAISE EXCEPTION 'forbidden: admin role required'
-    USING ERRCODE = '42501';
-END IF;
-```
-
-Это чинит не только текущего `super_admin`, но и обычных `admin`, не открывая RPC для `anon` или не-админов.
-
-## 4. Изменяемые компоненты
-
-### Database/RPC
-
-- `public.admin_get_payments_stats_v1(timestamptz, timestamptz, text)` — только guard, без изменения формул.
-- Grants:
-  - `REVOKE EXECUTE ... FROM PUBLIC, anon;`
-  - `GRANT EXECUTE ... TO authenticated, service_role;`
-
-### Proof
-
-Обновить/создать:
-
-- `.lovable/proofs/payments_stats_rpc_diagnose_2026_05.md`
-
-Если файла в репозитории реально нет, создать его заново с текущими фактами, а не ссылаться на несуществующий proof.
-
-### UI code
-
-Frontend не менять, если после RPC-fix карточки начинают получать данные.
-Если UI всё равно показывает нули при успешном RPC, тогда отдельным минимальным frontend-патчем добавить явное состояние ошибки в `PaymentsStatsPanel`, чтобы ошибка RPC не маскировалась под нулевые суммы.
-
-## 5. Что не будет изменено
-
-- Формулы статистики.
-- Фильтры `p_from`, `p_to`, `p_provider`.
-- Таблицы `payments_v2`, `orders_v2`, `subscriptions_v2`.
-- Роли пользователей.
-- Платежные данные.
-- Edge functions.
-- Новые RPC не создаются.
-- Доступ `anon` не добавляется.
-
-## 6. Dry-run / симуляция до выполнения
-
-Перед миграцией выполнить read-only проверки:
-
-1. Проверить, что существует ровно один overload:
-  ```sql
-   SELECT n.nspname, p.proname, pg_get_function_arguments(p.oid), pg_get_function_result(p.oid)
-   FROM pg_proc p
-   JOIN pg_namespace n ON n.oid = p.pronamespace
-   WHERE n.nspname = 'public'
-     AND p.proname = 'admin_get_payments_stats_v1';
-  ```
-2. Проверить фактическую сигнатуру `has_role_v2`, чтобы не угадывать типы:
-  ```sql
-   SELECT pg_get_function_arguments(p.oid), pg_get_function_result(p.oid)
-   FROM pg_proc p
-   JOIN pg_namespace n ON n.oid = p.pronamespace
-   WHERE n.nspname = 'public'
-     AND p.proname = 'has_role_v2';
-  ```
-3. Симулировать новый guard без изменения данных:
-  ```sql
-   SELECT
-     public.has_role_v2('<ваш_user_id>'::uuid, 'super_admin') AS is_super_admin,
-     public.has_role_v2('<ваш_user_id>'::uuid, 'admin') AS is_admin;
-  ```
-4. Сравнить ожидаемые агрегаты напрямую по `payments_v2` за май 2026 с тем, что должен вернуть RPC после фикса.
-
-## 7. Execute
-
-Выполнить одну миграцию:
-
-- `CREATE OR REPLACE FUNCTION public.admin_get_payments_stats_v1(...)` с исправленным guard `super_admin OR admin` без `::app_role_v2`.
-- `REVOKE EXECUTE FROM PUBLIC, anon`.
-- `GRANT EXECUTE TO authenticated, service_role`.
-- Audit-запись в `audit_logs`:
-  - action: `payments_stats_rpc_guard_fixed`
-  - meta: причина `app_role_v2 cast removed`, guard `admin|super_admin`, формулы не менялись.
-
-## 8. Verify после выполнения
-
-### Backend proof
-
-1. `pg_get_functiondef` больше не содержит `app_role_v2`.
-2. Guard содержит `has_role_v2(auth.uid(), 'super_admin') OR has_role_v2(auth.uid(), 'admin')`.
-3. `anon` не имеет EXECUTE.
-4. `authenticated` имеет EXECUTE.
-5. REST RPC под вашим JWT (`7500084@gmail.com`) возвращает HTTP 200 и ненулевой JSON за `2026-05-01 — 2026-05-31`.
-6. Если есть доступный обычный `admin` без `super_admin`, REST RPC под ним тоже возвращает HTTP 200.
-7. Не-админ получает `42501`.
-
-### UI proof со скринами
-
-1. Открыть preview `/admin/payments`.
-2. Авторизоваться через `Login as Developer`, пароль `123456`, если preview попросит.
-3. Под текущей сессией открыть платежи за май 2026.
-4. Сделать скрин до/после или после-fix:
-  - карточки статистики показывают реальные суммы;
-  - таблица всё еще показывает `194 из 194`;
-  - сумма карточек согласуется с backend RPC/direct aggregate.
-5. Проверить клик по карточке-фильтру: статистика не ломает фильтрацию таблицы.
-
-## 9. STOP-guards
-
-Остановиться без миграции, если:
-
-- найдено больше одного overload `admin_get_payments_stats_v1`;
-- `has_role_v2` принимает не `text`/совместимый string role code;
-- direct aggregate по `payments_v2` за май 2026 не совпадает с ожидаемой логикой текущей функции;
-- миграция требует изменения формул или платежных таблиц;
-- после миграции `anon` получает EXECUTE;
-- UI после backend HTTP 200 всё еще показывает нули — тогда не делать второй blind-fix, а диагностировать frontend отдельно.
-
-## 10. DoD
-
-Задача считается закрытой только если:
-
-- текущий `super_admin` больше не получает `type "app_role_v2" does not exist`;
-- карточки статистики на `/admin/payments` показывают реальные суммы, а не нули;
-- `admin` и `super_admin` имеют доступ к статистике;
-- `anon` и не-админы заблокированы;
-- формулы статистики не изменены;
-- proof содержит:
-  - реальную ошибку из network;
-  - before/after guard;
-  - backend SQL/REST verify;
-  - UI screenshots;
-  - audit id/time;
-  - вывод, что исправлена фактическая причина, а не только гипотеза про admin-role.
-
-## 11. Риски и зависимости
-
-- Главный риск — снова сделать blind-fix на роли, не устранив runtime error. Поэтому первым DoD является отсутствие `app_role_v2` в functiondef и HTTP 200 под вашим JWT.
-- UI может дополнительно маскировать ошибки как нули; если это подтвердится после backend-fix, будет отдельный frontend-patch на явное состояние ошибки.
-- Скриншоты являются UI-proof, но финальное подтверждение должно включать backend-proof, потому что UI сам по себе не доказывает корректность прав и формул.
+- В карточке контакта удаление/отзыв доступа или удаление сделки **не** переводит bePaid-подписку в «технические записи / ремонт». Подписка продолжает отображаться как живая, с next_charge и суммой, как во вкладке «Профиль».
+- Карточка «требуют ремонта» появляется только когда провайдер реально мёртв (canceled/expired/terminated/404 в `meta.provider_snapshot` или INV-22 флаг).
+- Повторная выдача доступа не требует никаких действий с подпиской — она и не исчезала.
+- Edge `admin-repair-zombie-provider-subs`, `bepaid-webhook`, `grant-access-for-order`, БД-схема и RLS — без изменений.
+- Proof: `.lovable/proofs/contact_provider_sub_visibility_fix_2026_05.md` с before/after скриншотом карточки и фрагментом SQL по подопытному контакту.

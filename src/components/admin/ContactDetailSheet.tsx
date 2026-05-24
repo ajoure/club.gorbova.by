@@ -2112,16 +2112,33 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                   технический desync-сигнал, а не пользовательский статус. */}
               {(() => {
                 const allProviderSubs = contactProviderSubscriptions || [];
-                const nowMs = Date.now();
+                // FIX 2026-05: provider-subscription health НЕ зависит от локальных
+                // subscriptions_v2/access_end_at/доступов. Удаление сделки или отзыв доступа
+                // не должны переводить живое bePaid-автосписание в "ремонт".
+                // Зомби = провайдер реально мёртв (canceled/expired/terminated/404 в snapshot
+                // или INV-22 флаг). См. .lovable/plan.md + admin-repair-zombie-provider-subs.
+                const LIVE_PROVIDER_STATES = new Set(['active', 'trial', 'pending']);
+                const DEAD_PROVIDER_SNAPSHOT_STATES = new Set([
+                  'canceled', 'cancelled', 'expired', 'terminated', 'finished', 'failed',
+                ]);
+                const isProviderDead = (sub: any): boolean => {
+                  const meta = (sub?.meta || {}) as Record<string, any>;
+                  const snapshotState = String(meta?.provider_snapshot?.state ?? '').toLowerCase();
+                  if (snapshotState && DEAD_PROVIDER_SNAPSHOT_STATES.has(snapshotState)) return true;
+                  const lastHttp = Number(meta?.last_pull?.http_status ?? 0);
+                  if (lastHttp === 404) return true;
+                  if (meta?.inv22_provider_dead_local_active === true) return true;
+                  return false;
+                };
                 const isHealthyProviderSub = (sub: any) => {
-                  const sv2 = sub?.subscriptions_v2;
-                  if (!sv2) return false;
-                  if (sv2.status !== 'active') return false;
-                  if (sv2.access_end_at && new Date(sv2.access_end_at).getTime() < nowMs) return false;
+                  if (!LIVE_PROVIDER_STATES.has(sub?.state)) return false;
+                  if (isProviderDead(sub)) return false;
                   return true;
                 };
                 const healthyProviderSubs = allProviderSubs.filter(isHealthyProviderSub);
-                const zombieProviderSubs = allProviderSubs.filter((s: any) => !isHealthyProviderSub(s));
+                const zombieProviderSubs = allProviderSubs.filter(
+                  (s: any) => s?.provider === 'bepaid' && s?.state === 'active' && isProviderDead(s),
+                );
                 return (
                   <>
                     {contact.user_id && healthyProviderSubs.length > 0 && (
@@ -2308,10 +2325,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                   </CardHeader>
                   <CardContent>
                     <p className="text-[11px] text-muted-foreground leading-snug">
-                      У контакта есть {zombieProviderSubs.length} запись(ей) в provider_subscriptions со статусом active,
-                      но привязанная локальная подписка истекла, отменена или отсутствует.
-                      Это не активная подписка пользователя — следующее списание показываться не должно.
-                      Запись будет закрыта в рамках REPAIR-BEPAID-ACCESS-2026-05.
+                      bePaid сообщил, что {zombieProviderSubs.length} запись(ей) подписки отменены
+                      или недоступны на стороне провайдера (canceled / expired / terminated / 404).
+                      Автосписание у провайдера не пройдёт. Запись можно закрыть локально —
+                      это не влияет на доступы и сделки контакта.
                     </p>
                     <ul className="mt-2 space-y-1 text-[11px] font-mono text-muted-foreground">
                       {zombieProviderSubs.map((s: any) => (
