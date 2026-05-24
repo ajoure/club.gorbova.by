@@ -795,42 +795,48 @@ async function detectExtraAccessActions(
 ): Promise<UserAction[]> {
   const out: UserAction[] = [];
 
-  // 1. Build user×product index from existing actions (rule-driven scope).
+  // 1. Build target-product scope from rules and coverage from rule-driven actions.
   type Key = string;
   const k = (u: string, p: string): Key => `${u}::${p}`;
-  const seen = new Map<Key, UserAction>();
+  const targetProductIds = [...new Set(rules.flatMap((r: any) => {
+    if (r.grant_target_type !== "product_access") return [];
+    const c = r.conditions || {};
+    if (Array.isArray(c.target_product_ids)) return c.target_product_ids.filter((id: any) => typeof id === "string" && id);
+    return r.target_ref ? [r.target_ref] : [];
+  }))];
+  if (!targetProductIds.length) return out;
+
+  const coveredActions = new Map<Key, UserAction>();
   for (const a of existingActions) {
     if (a.rule_target_type !== "product_access") continue;
     if (!a.user_id || !a.target_product_id) continue;
     const key = k(a.user_id, a.target_product_id);
-    if (!seen.has(key)) seen.set(key, a);
+    if (!coveredActions.has(key)) coveredActions.set(key, a);
   }
-  if (seen.size === 0) return out;
-
-  const allUserIds = [...new Set([...seen.values()].map(a => a.user_id))];
-  const userIds = filterUserIds?.length
-    ? allUserIds.filter(u => filterUserIds.includes(u))
-    : allUserIds;
-  const targetProductIds = [...new Set([...seen.values()].map(a => a.target_product_id))];
-  if (!userIds.length || !targetProductIds.length) return out;
 
   // 2. Fetch active entitlements for all (user, target_product) pairs.
   type EntRow = {
     id: string; user_id: string; product_id: string;
     expires_at: string | null; status: string; meta: any;
   };
-  const ents: EntRow[] = [];
-  for (let i = 0; i < userIds.length; i += 100) {
-    const batch = userIds.slice(i, i + 100);
-    const { data } = await supabase
+  let entQ = supabase
       .from("entitlements")
       .select("id, user_id, product_id, expires_at, status, meta")
-      .in("user_id", batch)
       .in("product_id", targetProductIds)
       .eq("status", "active");
-    (data || []).forEach((e: EntRow) => ents.push(e));
+  if (filterUserIds?.length) entQ = entQ.in("user_id", filterUserIds);
+
+  const ents: EntRow[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await entQ.range(from, from + 999);
+    if (error) throw new Error(`Failed to fetch target entitlements: ${error.message}`);
+    const rows = (data || []) as EntRow[];
+    rows.forEach((e) => ents.push(e));
+    if (rows.length < 1000) break;
   }
   if (!ents.length) return out;
+  const userIds = [...new Set(ents.map(e => e.user_id).filter(Boolean))];
+  if (!userIds.length) return out;
 
   // 3. Build rule-coverage index: which (user, product) pairs are covered
   //    by ANY action in the rule-driven pass with category != condition_not_met / no_source_window.
