@@ -1057,14 +1057,14 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                   </div>
                 )}
 
-                {/* Stage 4 — Destructive summary */}
+                {/* Risky changes summary */}
                 {destructiveTotal > 0 && !isExecuted && (
                   <div className="p-3 rounded-lg border-2 border-rose-300 bg-rose-50/40 space-y-2">
                     <div className="flex items-center gap-2 text-rose-700 font-medium text-xs">
                       <AlertTriangle className="h-4 w-4" />
-                      Destructive-сводка (сокращения / снятия)
+                      Сводка изменений, требующих подтверждения
                       <Badge variant="outline" className="text-[9px] ml-1 border-rose-400 text-rose-700">
-                        требует явных флагов и выбора строк
+                        требуется выбор строк
                       </Badge>
                     </div>
                     <div className="grid grid-cols-3 gap-2 text-xs">
@@ -1078,11 +1078,11 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                       </div>
                       <div className="text-center p-2 rounded bg-red-100/60 border border-red-300">
                         <div className="text-lg font-bold text-red-800">{revokeExtraCount}</div>
-                        <div className="text-[10px] text-red-800">Revoke zombie-доступов</div>
+                        <div className="text-[10px] text-red-800">Отзыв лишних доступов</div>
                       </div>
                     </div>
                     <p className="text-[10px] text-rose-700">
-                      Эти действия выполняются ТОЛЬКО через «Применить выбранные» при включённых флагах в режиме админской канонизации. Nightly не запускает их автоматически.
+                      Эти действия выполняются только через «Применить выбранные» после предпросмотра. Ночная проверка не запускает их автоматически.
                     </p>
                   </div>
                 )}
