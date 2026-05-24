@@ -202,7 +202,7 @@ const CATEGORY_CONFIG: Record<string, {
   },
   replace_system_or_manual_lineage: {
     label: "Канонизация ручного доступа",
-    description: "Ручной/admin доступ будет приведён к правилу (только админский режим)",
+    description: "Ручной доступ будет приведён к правилу",
     color: "text-purple-700 bg-purple-50 border-purple-200",
     icon: ShieldCheck,
   },
@@ -256,7 +256,7 @@ const REASON_LABELS: Record<string, string> = {
   conflict_would_reduce_access: "Конфликт: обновление сократит срок доступа",
   conflict_no_planned_expiry: "Конфликт: невозможно вычислить новый срок",
   conflict_different_rule_source: "Конфликт: доступ выдан по другому правилу",
-  human_lineage_overridden_by_admin_canonicalize: "Ручной/admin доступ будет переопределён по правилу",
+  human_lineage_overridden_by_admin_canonicalize: "Ручной доступ будет приведён к правилу",
   relink_to_current_rule_same_window: "Перепривязка к актуальному правилу, срок не меняется",
   club_grant_requires_telegram_action: "Требуется выдача через Telegram",
   conflict_unknown_lineage: "Конфликт: происхождение доступа неизвестно (ночной режим не меняет)",
@@ -462,7 +462,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
         const skippedIdem = ex?.skipped_idempotent || 0;
         const errCount = ex?.errors?.length || 0;
         if (created === 0 && updated === 0 && reactivated === 0 && skippedIdem > 0) {
-          toast.success(`Все записи уже соответствуют правилам (${skippedIdem} idempotent skip)`);
+          toast.success(`Все записи уже соответствуют правилам. Уже было без изменений: ${skippedIdem}`);
         } else if (created === 0 && updated === 0 && reactivated === 0) {
           toast.warning(`Изменений не выполнено. Проверьте предпросмотр и фильтры.`);
         } else {
