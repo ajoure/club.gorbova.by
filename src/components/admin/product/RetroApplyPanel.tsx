@@ -243,7 +243,7 @@ const CATEGORY_CONFIG: Record<string, {
 const REASON_LABELS: Record<string, string> = {
   prior_purchase_not_found: "Предыдущая покупка не найдена",
   no_access_end_at_and_no_duration_days: "Нет даты окончания и не задан фиксированный срок",
-  no_access_end_at_no_duration_no_tariff_anchor: "Нет окончания подписки, фиксированного срока правила и access_days тарифа",
+  no_access_end_at_no_duration_no_tariff_anchor: "Нет окончания подписки, фиксированного срока правила и срока доступа в тарифе",
   planned_window_already_in_past: "Расчётный срок уже в прошлом — не продлеваем автоматически",
   existing_entitlement_from_different_source: "Существующий доступ от другого источника",
   safe_recalculate_expires_extended: "Срок будет выровнен по правилу",
@@ -1169,7 +1169,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                     <div className="grid grid-cols-3 gap-2 text-xs mt-1">
                       <div className="text-center">
                         <div className="text-sm font-semibold text-muted-foreground">{result!.executed!.skipped_idempotent || 0}</div>
-                        <div className="text-muted-foreground text-[10px]">Пропущено (идемпотентно)</div>
+                        <div className="text-muted-foreground text-[10px]">Уже было без изменений</div>
                       </div>
                       <div className="text-center">
                         <div className="text-sm font-semibold text-orange-600">{result!.executed!.skipped_conflict || 0}</div>
@@ -1183,8 +1183,8 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                     <p className="text-[10px] text-muted-foreground">
                       Запущено к обработке: {result!.executed!.targeted || 0}.
                       Фактически изменено: {(result!.executed!.created || 0) + (result!.executed!.reactivated || 0) + (result!.executed!.updated || 0)}.
-                      {(result!.executed!.reactivated || 0) > 0 && ` Реактивировано expired → active: ${result!.executed!.reactivated}.`}
-                      {(result!.executed!.reactivation_candidates_found || 0) > 0 && ` Найдено expired записей: ${result!.executed!.reactivation_candidates_found}.`}
+                      {(result!.executed!.reactivated || 0) > 0 && ` Вернули из истёкших в активные: ${result!.executed!.reactivated}.`}
+                      {(result!.executed!.reactivation_candidates_found || 0) > 0 && ` Найдено истёкших записей: ${result!.executed!.reactivation_candidates_found}.`}
                       {(result!.executed!.skipped_idempotent || 0) > 0 && ` Уже существовало: ${result!.executed!.skipped_idempotent}.`}
                     </p>
                     {result!.executed!.errors && result!.executed!.errors.length > 0 && (
