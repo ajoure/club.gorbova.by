@@ -1074,7 +1074,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                       </div>
                       <div className="text-center p-2 rounded bg-rose-100/60 border border-rose-200">
                         <div className="text-lg font-bold text-rose-700">{softExpireCount}</div>
-                        <div className="text-[10px] text-rose-700">Soft-expire лишних</div>
+                        <div className="text-[10px] text-rose-700">Закрытие уже истёкших лишних доступов</div>
                       </div>
                       <div className="text-center p-2 rounded bg-red-100/60 border border-red-300">
                         <div className="text-lg font-bold text-red-800">{revokeExtraCount}</div>
