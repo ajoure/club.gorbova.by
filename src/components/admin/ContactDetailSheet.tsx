@@ -2325,10 +2325,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                   </CardHeader>
                   <CardContent>
                     <p className="text-[11px] text-muted-foreground leading-snug">
-                      У контакта есть {zombieProviderSubs.length} запись(ей) в provider_subscriptions со статусом active,
-                      но привязанная локальная подписка истекла, отменена или отсутствует.
-                      Это не активная подписка пользователя — следующее списание показываться не должно.
-                      Запись будет закрыта в рамках REPAIR-BEPAID-ACCESS-2026-05.
+                      bePaid сообщил, что {zombieProviderSubs.length} запись(ей) подписки отменены
+                      или недоступны на стороне провайдера (canceled / expired / terminated / 404).
+                      Автосписание у провайдера не пройдёт. Запись можно закрыть локально —
+                      это не влияет на доступы и сделки контакта.
                     </p>
                     <ul className="mt-2 space-y-1 text-[11px] font-mono text-muted-foreground">
                       {zombieProviderSubs.map((s: any) => (
