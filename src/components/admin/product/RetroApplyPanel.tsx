@@ -431,7 +431,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
       });
 
       if (error) {
-        toast.error("Ошибка: " + (error.message || "Неизвестная ошибка"));
+        toast.error("Ошибка: " + translateBackendError(error.message));
         return;
       }
 
@@ -451,7 +451,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
         if (mode === "execute") {
           const detail = res.stop_reasons?.length
             ? res.stop_reasons.map(translateStopReason).join(" · ")
-            : (res.error || "неизвестная ошибка");
+            : translateBackendError(res.error);
           toast.error(`Не удалось применить: ${detail}`);
         }
       } else if (mode === "execute") {
@@ -472,7 +472,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
         autoRefreshPreview();
       }
     } catch (err) {
-      toast.error("Ошибка вызова");
+      toast.error(translateBackendError(err instanceof Error ? err.message : String(err)));
       console.error(err);
     } finally {
       setIsLoading(false);
