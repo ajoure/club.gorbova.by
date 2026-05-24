@@ -31,6 +31,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 import { checkPriorPurchase } from "../_shared/check-prior-purchase.ts";
+import { buildPriorPurchaseCache } from "../_shared/product-access-grants.ts";
 import {
   classifyEntitlement,
   canExecuteDestructive,
@@ -453,6 +454,21 @@ async function processRule(
   }
 
   const durationMode = rule.duration_days ? "fixed_days" : "from_source";
+  const priorPurchaseProductIds = (() => {
+    const ids = new Set<string>();
+    if (conditions?.condition_type !== "prior_purchase") return [] as string[];
+    const reqList: string[] = Array.isArray(conditions.required_product_ids)
+      ? conditions.required_product_ids
+      : conditions.required_product_id ? [conditions.required_product_id] : [];
+    reqList.forEach((id) => { if (typeof id === "string" && id) ids.add(id); });
+    if ((conditions.match_mode || "any") === "per_product") {
+      targetProductIds.forEach((id) => ids.add(id));
+    }
+    return [...ids];
+  })();
+  const priorPurchaseCache = priorPurchaseProductIds.length > 0
+    ? await buildPriorPurchaseCache(supabase, userIds, priorPurchaseProductIds)
+    : undefined;
 
   const makeAction = (
     userId: string,
@@ -578,7 +594,7 @@ async function processRule(
         };
 
         if (hasPriorPurchase) {
-          const conditionMet = await checkRetroCondition(supabase, conditions, userId, targetProdId);
+          const conditionMet = await checkRetroCondition(supabase, conditions, userId, targetProdId, priorPurchaseCache as any);
           if (!conditionMet) {
             actions.push(makeAction(userId, targetProdId, "condition_not_met", plannedExpiry, null, sub, "prior_purchase_not_found", windowExtras));
             continue;
@@ -779,40 +795,49 @@ async function detectExtraAccessActions(
 ): Promise<UserAction[]> {
   const out: UserAction[] = [];
 
-  // 1. Build user×product index from existing actions (rule-driven scope).
+  // 1. Build target-product scope from rules and coverage from rule-driven actions.
   type Key = string;
   const k = (u: string, p: string): Key => `${u}::${p}`;
-  const seen = new Map<Key, UserAction>();
+  const targetProductIds = [...new Set(rules.flatMap((r: any) => {
+    if (r.grant_target_type !== "product_access") return [];
+    const c = r.conditions || {};
+    if (Array.isArray(c.target_product_ids)) return c.target_product_ids.filter((id: any) => typeof id === "string" && id);
+    return r.target_ref ? [r.target_ref] : [];
+  }))];
+  if (!targetProductIds.length) return out;
+
+  const coveredActions = new Map<Key, UserAction>();
   for (const a of existingActions) {
     if (a.rule_target_type !== "product_access") continue;
     if (!a.user_id || !a.target_product_id) continue;
     const key = k(a.user_id, a.target_product_id);
-    if (!seen.has(key)) seen.set(key, a);
+    if (!coveredActions.has(key)) coveredActions.set(key, a);
   }
-  if (seen.size === 0) return out;
-
-  const allUserIds = [...new Set([...seen.values()].map(a => a.user_id))];
+  const cohortUserIds = [...new Set(existingActions.map(a => a.user_id).filter(Boolean))];
   const userIds = filterUserIds?.length
-    ? allUserIds.filter(u => filterUserIds.includes(u))
-    : allUserIds;
-  const targetProductIds = [...new Set([...seen.values()].map(a => a.target_product_id))];
-  if (!userIds.length || !targetProductIds.length) return out;
+    ? cohortUserIds.filter(u => filterUserIds.includes(u))
+    : cohortUserIds;
+  if (!userIds.length) return out;
 
   // 2. Fetch active entitlements for all (user, target_product) pairs.
   type EntRow = {
     id: string; user_id: string; product_id: string;
     expires_at: string | null; status: string; meta: any;
   };
-  const ents: EntRow[] = [];
-  for (let i = 0; i < userIds.length; i += 100) {
-    const batch = userIds.slice(i, i + 100);
-    const { data } = await supabase
+  let entQ = supabase
       .from("entitlements")
       .select("id, user_id, product_id, expires_at, status, meta")
-      .in("user_id", batch)
+      .in("user_id", userIds)
       .in("product_id", targetProductIds)
       .eq("status", "active");
-    (data || []).forEach((e: EntRow) => ents.push(e));
+
+  const ents: EntRow[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await entQ.range(from, from + 999);
+    if (error) throw new Error(`Failed to fetch target entitlements: ${error.message}`);
+    const rows = (data || []) as EntRow[];
+    rows.forEach((e) => ents.push(e));
+    if (rows.length < 1000) break;
   }
   if (!ents.length) return out;
 
@@ -952,6 +977,7 @@ async function checkRetroCondition(
   conditions: any,
   userId: string,
   targetProductId: string,
+  priorPurchaseCache?: Map<string, Map<string, unknown>>,
 ): Promise<boolean> {
   if (!conditions || conditions.condition_type !== "prior_purchase") return true;
 
@@ -967,6 +993,13 @@ async function checkRetroCondition(
     : null;
 
   if (!productToCheck) return true;
+
+  const cached = priorPurchaseCache?.get(userId);
+  if (cached) {
+    if (matchMode === "per_product") return cached.has(targetProductId);
+    if (matchMode === "all") return requiredProductIds.every((id) => cached.has(id));
+    return requiredProductIds.length === 0 || requiredProductIds.some((id) => cached.has(id));
+  }
 
   if (matchMode === "per_product") {
     // Use canonical shared resolver (direct match + module_list_mapped fallback)

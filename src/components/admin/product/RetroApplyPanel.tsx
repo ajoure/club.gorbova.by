@@ -39,6 +39,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { AccessRule } from "@/hooks/useAccessRules";
 import { useSuperAdmin } from "@/hooks/useSuperAdmin";
+import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 
 type ReconcileMode = "nightly_safe" | "admin_canonicalize_all";
 
@@ -201,7 +202,7 @@ const CATEGORY_CONFIG: Record<string, {
   },
   replace_system_or_manual_lineage: {
     label: "Канонизация ручного доступа",
-    description: "Ручной/admin доступ будет приведён к правилу (только админский режим)",
+    description: "Ручной доступ будет приведён к правилу",
     color: "text-purple-700 bg-purple-50 border-purple-200",
     icon: ShieldCheck,
   },
@@ -219,8 +220,8 @@ const CATEGORY_CONFIG: Record<string, {
     icon: Clock,
   },
   revoke_extra_access: {
-    label: "Будет отозван (zombie)",
-    description: "Активный доступ в будущем без правила и без оплаты — будет revoked",
+    label: "Будет отозван лишний доступ",
+    description: "Активный доступ в будущем без правила и без оплаты будет отозван",
     color: "text-red-800 bg-red-100 border-red-300",
     icon: Trash2,
   },
@@ -242,7 +243,7 @@ const CATEGORY_CONFIG: Record<string, {
 const REASON_LABELS: Record<string, string> = {
   prior_purchase_not_found: "Предыдущая покупка не найдена",
   no_access_end_at_and_no_duration_days: "Нет даты окончания и не задан фиксированный срок",
-  no_access_end_at_no_duration_no_tariff_anchor: "Нет окончания подписки, фиксированного срока правила и access_days тарифа",
+  no_access_end_at_no_duration_no_tariff_anchor: "Нет окончания подписки, фиксированного срока правила и срока доступа в тарифе",
   planned_window_already_in_past: "Расчётный срок уже в прошлом — не продлеваем автоматически",
   existing_entitlement_from_different_source: "Существующий доступ от другого источника",
   safe_recalculate_expires_extended: "Срок будет выровнен по правилу",
@@ -255,7 +256,7 @@ const REASON_LABELS: Record<string, string> = {
   conflict_would_reduce_access: "Конфликт: обновление сократит срок доступа",
   conflict_no_planned_expiry: "Конфликт: невозможно вычислить новый срок",
   conflict_different_rule_source: "Конфликт: доступ выдан по другому правилу",
-  human_lineage_overridden_by_admin_canonicalize: "Ручной/admin доступ будет переопределён по правилу",
+  human_lineage_overridden_by_admin_canonicalize: "Ручной доступ будет приведён к правилу",
   relink_to_current_rule_same_window: "Перепривязка к актуальному правилу, срок не меняется",
   club_grant_requires_telegram_action: "Требуется выдача через Telegram",
   conflict_unknown_lineage: "Конфликт: происхождение доступа неизвестно (ночной режим не меняет)",
@@ -263,7 +264,16 @@ const REASON_LABELS: Record<string, string> = {
 
 function translateReason(code: string | null): string {
   if (!code) return "";
-  return REASON_LABELS[code] || code;
+  return REASON_LABELS[code] || "Причина не распознана. Нужна проверка администратором.";
+}
+
+function translateBackendError(raw: string | null | undefined): string {
+  if (!raw) return "Неизвестная ошибка.";
+  if (raw.includes("admin_canonicalize_all_requires_auth")) return "Для полной ручной сверки нужно войти под аккаунтом супер-администратора.";
+  if (raw.includes("admin_canonicalize_all_requires_super_admin")) return "Полная ручная сверка доступна только супер-администратору.";
+  if (raw.includes("context canceled") || raw.includes("timeout")) return "Проверка заняла слишком много времени. Сузьте область до тарифа или конкретного правила и повторите.";
+  if (raw.includes("stop_guard_triggered")) return "Применение остановлено защитой. Проверьте предпросмотр и выберите конкретные записи.";
+  return normalizeEdgeFunctionError(raw);
 }
 
 function translateStopReason(raw: string): string {
@@ -328,7 +338,9 @@ function ruleBasisLabel(a: UserAction): string {
 }
 
 function isChangedCategory(cat: string): boolean {
-  return cat === "missing_access" || cat === "aligned_update_needed";
+  return cat === "missing_access" || cat === "aligned_update_needed" || cat === "reducible_by_rule"
+    || cat === "relink_source_rule" || cat === "replace_system_or_manual_lineage"
+    || cat === "soft_expire_extra_access" || cat === "revoke_extra_access";
 }
 
 function isActionableCategory(cat: string): boolean {
@@ -421,7 +433,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
       });
 
       if (error) {
-        toast.error("Ошибка: " + (error.message || "Неизвестная ошибка"));
+        toast.error("Ошибка: " + translateBackendError(error.message));
         return;
       }
 
@@ -441,7 +453,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
         if (mode === "execute") {
           const detail = res.stop_reasons?.length
             ? res.stop_reasons.map(translateStopReason).join(" · ")
-            : (res.error || "неизвестная ошибка");
+            : translateBackendError(res.error);
           toast.error(`Не удалось применить: ${detail}`);
         }
       } else if (mode === "execute") {
@@ -452,7 +464,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
         const skippedIdem = ex?.skipped_idempotent || 0;
         const errCount = ex?.errors?.length || 0;
         if (created === 0 && updated === 0 && reactivated === 0 && skippedIdem > 0) {
-          toast.success(`Все записи уже соответствуют правилам (${skippedIdem} idempotent skip)`);
+          toast.success(`Все записи уже соответствуют правилам. Уже было без изменений: ${skippedIdem}`);
         } else if (created === 0 && updated === 0 && reactivated === 0) {
           toast.warning(`Изменений не выполнено. Проверьте предпросмотр и фильтры.`);
         } else {
@@ -462,7 +474,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
         autoRefreshPreview();
       }
     } catch (err) {
-      toast.error("Ошибка вызова");
+      toast.error(translateBackendError(err instanceof Error ? err.message : String(err)));
       console.error(err);
     } finally {
       setIsLoading(false);
@@ -565,7 +577,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
       return;
     }
     if (hasHumanLineageDestructive && !allowManual) {
-      toast.error("Снятие ручных/admin доступов требует режима админской канонизации, allow_manual_override и подтверждения.");
+      toast.error("Снятие ручных доступов требует режима полной ручной сверки и подтверждения.");
       return;
     }
     runRetroApply("execute", {
@@ -583,7 +595,12 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
 
   const safeCount = useMemo(() => {
     if (!result?.summary) return 0;
-    return result.summary.missing_access + result.summary.aligned_update_needed;
+    return result.summary.missing_access + result.summary.aligned_update_needed
+      + (result.summary.reducible_by_rule || 0)
+      + (result.summary.relink_source_rule || 0)
+      + (result.summary.replace_system_or_manual_lineage || 0)
+      + (result.summary.soft_expire_extra_access || 0)
+      + (result.summary.revoke_extra_access || 0);
   }, [result]);
 
   const reducibleCount = result?.summary?.reducible_by_rule ?? 0;
@@ -808,6 +825,11 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                     setAllowRevoke(false);
                     setAllowManualOverride(false);
                     setAdminAcknowledge(false);
+                  } else {
+                    setAllowReduce(true);
+                    setAllowRevoke(true);
+                    setAllowManualOverride(true);
+                    setAdminAcknowledge(true);
                   }
                 }}
                 disabled={!isSuperAdmin}
@@ -818,37 +840,37 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                 <SelectContent>
                   <SelectItem value="nightly_safe">Безопасный ночной режим</SelectItem>
                   <SelectItem value="admin_canonicalize_all" disabled={!isSuperAdmin}>
-                    Полная админская канонизация {!isSuperAdmin && "(только для супер-админа)"}
+                    Полная ручная сверка {!isSuperAdmin && "(только для супер-админа)"}
                   </SelectItem>
                 </SelectContent>
               </Select>
               {effectiveReconcileMode === "nightly_safe" && (
                 <p className="text-[10px] text-muted-foreground">
-                  Не трогает ручные/admin доступы. Только безопасные изменения по системной lineage.
+                  Не меняет доступы, выданные вручную. Выполняет только безопасные системные изменения.
                 </p>
               )}
               {effectiveReconcileMode === "admin_canonicalize_all" && (
                 <div className="space-y-2 pt-1">
                   <p className="text-[10px] text-purple-700">
-                    Полная канонизация: ручные/admin доступы можно привести к правилам. Любые destructive действия требуют отдельных подтверждений и не запускаются в Stage 3.
+                    Полная ручная сверка: супер-администратор может привести доступы к текущим правилам после предпросмотра.
                   </p>
                   <div className="space-y-1.5 pl-1">
                     <div className="flex items-start gap-2">
                       <Checkbox id="allow-reduce" checked={allowReduce} onCheckedChange={(v) => setAllowReduce(!!v)} />
                       <Label htmlFor="allow-reduce" className="text-[11px] cursor-pointer">
-                        Разрешить сокращение сроков (reducible_by_rule)
+                        Разрешить сокращение сроков до срока по правилу
                       </Label>
                     </div>
                     <div className="flex items-start gap-2">
                       <Checkbox id="allow-revoke" checked={allowRevoke} onCheckedChange={(v) => setAllowRevoke(!!v)} />
                       <Label htmlFor="allow-revoke" className="text-[11px] cursor-pointer">
-                        Разрешить снятие лишних доступов (soft-expire / revoke)
+                        Разрешить снятие лишних доступов без правила и оплаты
                       </Label>
                     </div>
                     <div className="flex items-start gap-2">
                       <Checkbox id="allow-manual" checked={allowManualOverride} onCheckedChange={(v) => setAllowManualOverride(!!v)} />
                       <Label htmlFor="allow-manual" className="text-[11px] cursor-pointer">
-                        Разрешить перезапись ручных/admin доступов (canonicalize)
+                        Разрешить приведение ручных доступов к текущим правилам
                       </Label>
                     </div>
                     <div className="flex items-start gap-2 pt-1 border-t border-purple-200">
@@ -983,7 +1005,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                     >
                       <Play className="h-3.5 w-3.5 mb-0.5" />
                       <span className="text-lg font-bold">{changedCount}</span>
-                      <span className="text-[9px] leading-tight">Безопасные</span>
+                      <span className="text-[9px] leading-tight">Изменения</span>
                     </button>
                   )}
 
@@ -1042,14 +1064,14 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                   </div>
                 )}
 
-                {/* Stage 4 — Destructive summary */}
+                {/* Risky changes summary */}
                 {destructiveTotal > 0 && !isExecuted && (
                   <div className="p-3 rounded-lg border-2 border-rose-300 bg-rose-50/40 space-y-2">
                     <div className="flex items-center gap-2 text-rose-700 font-medium text-xs">
                       <AlertTriangle className="h-4 w-4" />
-                      Destructive-сводка (сокращения / снятия)
+                      Сводка изменений, требующих подтверждения
                       <Badge variant="outline" className="text-[9px] ml-1 border-rose-400 text-rose-700">
-                        требует явных флагов и выбора строк
+                        требуется выбор строк
                       </Badge>
                     </div>
                     <div className="grid grid-cols-3 gap-2 text-xs">
@@ -1059,15 +1081,15 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                       </div>
                       <div className="text-center p-2 rounded bg-rose-100/60 border border-rose-200">
                         <div className="text-lg font-bold text-rose-700">{softExpireCount}</div>
-                        <div className="text-[10px] text-rose-700">Soft-expire лишних</div>
+                        <div className="text-[10px] text-rose-700">Закрытие уже истёкших лишних доступов</div>
                       </div>
                       <div className="text-center p-2 rounded bg-red-100/60 border border-red-300">
                         <div className="text-lg font-bold text-red-800">{revokeExtraCount}</div>
-                        <div className="text-[10px] text-red-800">Revoke zombie-доступов</div>
+                        <div className="text-[10px] text-red-800">Отзыв лишних доступов</div>
                       </div>
                     </div>
                     <p className="text-[10px] text-rose-700">
-                      Эти действия выполняются ТОЛЬКО через «Применить выбранные» при включённых флагах в режиме админской канонизации. Nightly не запускает их автоматически.
+                      Эти действия выполняются только через «Применить выбранные» после предпросмотра. Ночная проверка не запускает их автоматически.
                     </p>
                   </div>
                 )}
@@ -1154,7 +1176,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                     <div className="grid grid-cols-3 gap-2 text-xs mt-1">
                       <div className="text-center">
                         <div className="text-sm font-semibold text-muted-foreground">{result!.executed!.skipped_idempotent || 0}</div>
-                        <div className="text-muted-foreground text-[10px]">Пропущено (идемпотентно)</div>
+                        <div className="text-muted-foreground text-[10px]">Уже было без изменений</div>
                       </div>
                       <div className="text-center">
                         <div className="text-sm font-semibold text-orange-600">{result!.executed!.skipped_conflict || 0}</div>
@@ -1168,8 +1190,8 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                     <p className="text-[10px] text-muted-foreground">
                       Запущено к обработке: {result!.executed!.targeted || 0}.
                       Фактически изменено: {(result!.executed!.created || 0) + (result!.executed!.reactivated || 0) + (result!.executed!.updated || 0)}.
-                      {(result!.executed!.reactivated || 0) > 0 && ` Реактивировано expired → active: ${result!.executed!.reactivated}.`}
-                      {(result!.executed!.reactivation_candidates_found || 0) > 0 && ` Найдено expired записей: ${result!.executed!.reactivation_candidates_found}.`}
+                      {(result!.executed!.reactivated || 0) > 0 && ` Вернули из истёкших в активные: ${result!.executed!.reactivated}.`}
+                      {(result!.executed!.reactivation_candidates_found || 0) > 0 && ` Найдено истёкших записей: ${result!.executed!.reactivation_candidates_found}.`}
                       {(result!.executed!.skipped_idempotent || 0) > 0 && ` Уже существовало: ${result!.executed!.skipped_idempotent}.`}
                     </p>
                     {result!.executed!.errors && result!.executed!.errors.length > 0 && (
@@ -1232,7 +1254,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                       <span className="text-[10px] text-muted-foreground">
                         {activeFilter !== "all" && (
                           <Badge variant="outline" className="text-[9px] mr-2">
-                            {activeFilter === "changed" ? "Безопасные" : (CATEGORY_CONFIG[activeFilter]?.label || activeFilter)}
+                            {activeFilter === "changed" ? "Изменения" : (CATEGORY_CONFIG[activeFilter]?.label || activeFilter)}
                           </Badge>
                         )}
                         Показано {Math.min(visibleCount, filteredActions.length)} из {filteredActions.length}
@@ -1292,7 +1314,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
 
                 {filteredActions.length === 0 && result!.actions.length > 0 && (
                   <div className="text-center text-xs text-muted-foreground py-4">
-                    Нет записей в категории «{activeFilter === "changed" ? "Безопасные" : (CATEGORY_CONFIG[activeFilter]?.label || activeFilter)}»
+                    Нет записей в категории «{activeFilter === "changed" ? "Изменения" : (CATEGORY_CONFIG[activeFilter]?.label || activeFilter)}»
                   </div>
                 )}
               </div>
