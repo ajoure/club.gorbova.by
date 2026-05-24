@@ -338,7 +338,9 @@ function ruleBasisLabel(a: UserAction): string {
 }
 
 function isChangedCategory(cat: string): boolean {
-  return cat === "missing_access" || cat === "aligned_update_needed";
+  return cat === "missing_access" || cat === "aligned_update_needed" || cat === "reducible_by_rule"
+    || cat === "relink_source_rule" || cat === "replace_system_or_manual_lineage"
+    || cat === "soft_expire_extra_access" || cat === "revoke_extra_access";
 }
 
 function isActionableCategory(cat: string): boolean {
@@ -593,7 +595,12 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
 
   const safeCount = useMemo(() => {
     if (!result?.summary) return 0;
-    return result.summary.missing_access + result.summary.aligned_update_needed;
+    return result.summary.missing_access + result.summary.aligned_update_needed
+      + (result.summary.reducible_by_rule || 0)
+      + (result.summary.relink_source_rule || 0)
+      + (result.summary.replace_system_or_manual_lineage || 0)
+      + (result.summary.soft_expire_extra_access || 0)
+      + (result.summary.revoke_extra_access || 0);
   }, [result]);
 
   const reducibleCount = result?.summary?.reducible_by_rule ?? 0;
