@@ -269,8 +269,8 @@ function translateReason(code: string | null): string {
 
 function translateBackendError(raw: string | null | undefined): string {
   if (!raw) return "Неизвестная ошибка.";
-  if (raw.includes("admin_canonicalize_all_requires_auth")) return "Для ручной канонизации нужно войти под аккаунтом супер-администратора.";
-  if (raw.includes("admin_canonicalize_all_requires_super_admin")) return "Ручная канонизация доступна только супер-администратору.";
+  if (raw.includes("admin_canonicalize_all_requires_auth")) return "Для полной ручной сверки нужно войти под аккаунтом супер-администратора.";
+  if (raw.includes("admin_canonicalize_all_requires_super_admin")) return "Полная ручная сверка доступна только супер-администратору.";
   if (raw.includes("context canceled") || raw.includes("timeout")) return "Проверка заняла слишком много времени. Сузьте область до тарифа или конкретного правила и повторите.";
   if (raw.includes("stop_guard_triggered")) return "Применение остановлено защитой. Проверьте предпросмотр и выберите конкретные записи.";
   return normalizeEdgeFunctionError(raw);
@@ -833,7 +833,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                 <SelectContent>
                   <SelectItem value="nightly_safe">Безопасный ночной режим</SelectItem>
                   <SelectItem value="admin_canonicalize_all" disabled={!isSuperAdmin}>
-                    Полная админская канонизация {!isSuperAdmin && "(только для супер-админа)"}
+                    Полная ручная сверка {!isSuperAdmin && "(только для супер-админа)"}
                   </SelectItem>
                 </SelectContent>
               </Select>
