@@ -1,204 +1,363 @@
-Да, согласен.
+да, согласен, с учетом правок:
 
-План правильный: это уже **не новый код**, а финальная проверка и применение через готовый UI/API-механизм.
-
-Отправь:
-
-План PATCH-RETROAPPLY-STAGE-6-VERIFY-AND-APPLY принимаю.
+1. План правильный: теперь причина уже конкретная — RPC падает из-за `app_role_v2`, а не из-за отсутствия admin в guard.
 
 &nbsp;
 
-Важно:
+2. В Execute не делать blind CREATE OR REPLACE, пока не скопирован полный текущий functiondef.
 
-это не новый архитектурный патч и не новый discovery. Это финальный verify/apply по уже задеплоенному Stage 5/6 коду.
+Нужно сохранить расчетную часть 1:1:
 
-&nbsp;
+- сначала `pg_get_functiondef`;
 
-Разрешаю выполнить:
+- затем заменить только guard;
 
-&nbsp;
-
-1. Diagnose:
-
-- проверить payload/флаги;
-
-- проверить audit_logs, не был ли execute уже выполнен.
+- формулы не переписывать вручную.
 
 &nbsp;
 
-2. Preview cohort B / Gorbova Club BUSINESS:
+3. В proof обязательно добавить:
 
-- получить counts по категориям;
+- было: ошибка `type "app_role_v2" does not exist`;
 
-- отдельно показать reducible_by_rule;
+- стало: HTTP 200 под [7500084@gmail.com](mailto:7500084@gmail.com);
 
-- отдельно показать no_source_window;
-
-- показать window_fallback_applied.
+- `pg_get_functiondef` больше не содержит `app_role_v2`.
 
 &nbsp;
 
-3. Если reducible_by_rule > 0:
+4. Проверить не только май 2026, но и текущий выбранный диапазон UI.
 
-разрешаю execute только по:
-
-apply_categories=["reducible_by_rule"]
-
-allow_reduce_access=true
-
-reconcile_mode="admin_canonicalize_all"
+Если UI передает другие `p_from/p_to`, verify должен использовать именно payload из Network.
 
 &nbsp;
 
-Все остальные destructive/manual/Telegram флаги должны быть false.
+5. Audit-запись не должна ломать миграцию.
+
+Если insert в audit_logs невозможен из миграции из-за RLS/actor constraints — не останавливать фикс RPC, но зафиксировать это в proof и сделать audit через доступный system path.
 
 &nbsp;
 
-4. После execute:
+6. Frontend пока не менять.
 
-- repeat preview;
+Но если после backend HTTP 200 UI всё равно показывает нули — сразу зафиксировать как отдельный frontend bug:
 
-- reducible_by_rule должен стать 0;
+`PaymentsStatsPanel silently masks RPC data/error`.
 
-- проверить changed rows;
+Итоговая команда:
 
-- проверить previous_expires_at / reduction_reason / batch_id;
-
-- проверить audit_logs.
+План принимаю с правками.
 
 &nbsp;
 
-5. Если reducible_by_rule уже 0:
-
-- найти предыдущий batch/audit, который это закрыл;
-
-- показать доказательство.
+Разрешаю выполнить PATCH-PAYMENTS-STATS-RPC-GUARD-FIX-2026-05.
 
 &nbsp;
 
-6. no_source_window:
+Scope:
 
-- должно стать 0 после window fallback;
+- исправить только guard в существующем `public.admin_get_payments_stats_v1(timestamptz,timestamptz,text)`;
 
-- если осталось >0 — объяснить построчно.
+- убрать невалидный `::app_role_v2`;
+
+- разрешить `super_admin OR admin OR service_role`;
+
+- сохранить все формулы статистики 1:1;
+
+- не создавать новую RPC и не создавать overload.
+
+&nbsp;
+
+Перед execute:
+
+- подтвердить ровно один overload;
+
+- сохранить полный `pg_get_functiondef`;
+
+- проверить `has_role_v2` signature;
+
+- проверить, что ошибка под [7500084@gmail.com](mailto:7500084@gmail.com) именно `type "app_role_v2" does not exist`.
+
+&nbsp;
+
+Execute:
+
+- `CREATE OR REPLACE FUNCTION` только с заменой guard;
+
+- `REVOKE EXECUTE FROM PUBLIC, anon`;
+
+- `GRANT EXECUTE TO authenticated, service_role`;
+
+- audit/log proof.
+
+&nbsp;
+
+Verify:
+
+- functiondef не содержит `app_role_v2`;
+
+- RPC под [7500084@gmail.com](mailto:7500084@gmail.com) возвращает HTTP 200 и ненулевой JSON;
+
+- admin тоже HTTP 200;
+
+- non-admin получает 42501;
+
+- anon не имеет доступа;
+
+- UI `/admin/payments` показывает реальные суммы;
+
+- таблица платежей не изменилась;
+
+- формулы не изменены.
 
 &nbsp;
 
 Запрещено:
 
-- soft-expire;
+- новые функции/overloads;
 
-- revoke;
+- изменение платежных данных;
 
-- manual override;
+- изменение ролей;
 
-- Telegram;
+- изменение формул;
 
-- physical DELETE;
+- anon access;
 
-- ручной SQL DML;
-
-- изменения orders_v2/subscriptions_v2/access_rules.
+- frontend patch без отдельного подтверждения, кроме диагностики.
 
 &nbsp;
 
-Proof обновить:
+Proof:
 
-.lovable/proofs/retroapply_stage_6_mobile_apply_and_extra_detector_2026_[05.md](http://05.md)
-
-&nbsp;
-
-В proof обязательно добавить таблицу:
-
-category | before | after | action
+.lovable/proofs/payments_stats_rpc_diagnose_2026_[05.md](http://05.md)
 
 &nbsp;
 
-После выполнения дать короткий итог:
+План:
 
-- сколько было reducible;
+## 1. Проблема
 
-- сколько применено;
+В реальном UI под пользователем `7500084@gmail.com` карточки статистики платежей показывают нули. Это подтверждается скрином и network-снимком.
 
-- сколько стало;
+Ключевой факт: текущий RPC-вызов под вашим JWT падает не из-за отсутствия роли `admin`, а с ошибкой:
 
-- что с no_source_window;
+```json
+{"code":"42704","message":"type \"app_role_v2\" does not exist"}
+```
 
-- какие audit/batch_id.
+Значит предыдущая теория «super_admin видит, admin не видит» для вашей реальности неверна. Сейчас ломается сам guard RPC из-за несуществующего enum/type cast:
 
-Коротко: **approve на финальный verify/apply**. Только сокращение сроков по reducible_by_rule, без revoke/soft-expire/manual/Telegram.
+```sql
+'super_admin'::app_role_v2
+```
 
-&nbsp;
+Из-за ошибки RPC React Query не получает данные, а карточки отображают дефолтные нули.
 
-## План: PATCH-RETROAPPLY-STAGE-6-VERIFY-AND-APPLY
+## 2. Диагностика — уже подтвержденные факты
 
-### Цель
+### UI / Network
 
-Закрыть Stage 5/6 фактическими проверками: подтвердить, что `reducible_by_rule=22` и `no_source_window=7` либо реально приведены к канону через execute, либо уже исправлены ранее. Обновить proof итоговой таблицей `before/after/action`.
+- Route: `/admin/payments`.
+- Дата: `2026-05-01 — 2026-05-31`.
+- В таблице видно `194 из 194`, сумма строки `Σ 44 060,00 BYN`, то есть данные платежей в UI есть.
+- Карточки статистики сверху показывают `0,00` и `0 шт`.
+- Network request:
+  - `POST /rest/v1/rpc/admin_get_payments_stats_v1`
+  - Status: `400`
+  - Body: `type "app_role_v2" does not exist`
+  - JWT email: `7500084@gmail.com`.
 
-### Scope (что трогаем / что НЕ трогаем)
+### Code/RPC source
 
-- **Трогаем:** edge function `rules-retroapply` (только вызовы preview/execute через `supabase--curl_edge_functions`), `audit_logs` (чтение), `entitlements` (только через canonical write-path функции, без ручного DML), proof-файл `.lovable/proofs/retroapply_stage_6_mobile_apply_and_extra_detector_2026_05.md`.
-- **НЕ трогаем:** `orders_v2`, `subscriptions_v2`, `access_rules`, никакого SQL DML; запрещены `soft-expire`, `revoke`, `manual_override`, Telegram-действия, physical DELETE.
+Миграция `20260523093059_5b459f41-1c3d-4154-bb0c-e7c2568d21bf.sql` содержит:
 
-### Этапы
+```sql
+IF auth.role() <> 'service_role'
+   AND NOT public.has_role_v2(auth.uid(), 'super_admin'::app_role_v2) THEN
+```
 
-**Diagnose (read-only):**
+Это и есть фактическая причина текущего падения.
 
-1. Прочитать текущий `rules-retroapply/index.ts`, чтобы убедиться, что флаги payload корректны: `apply_categories=["reducible_by_rule"]`, `allow_reduce_access=true`, `reconcile_mode=admin_canonicalize_all`, отдельные флаги для revoke/soft-expire/manual/Telegram = false.
-2. Прочитать недавние `audit_logs` за 2026-05-23/24 по action `rules_retroapply.executed` и `rules_retroapply.preview` для cohort B / BUSINESS (`tariff_id=7c748940-dcad-4c7c-a92e-76a2344622d3`) — выяснить, был ли уже выполнен destructive execute по 22 строкам.
+### Frontend call
 
-**Step A — Preview (cohort B / BUSINESS, product-wide):**
-Через `supabase--curl_edge_functions POST /rules-retroapply`:
+`src/hooks/usePaymentsServerStats.ts` вызывает:
 
-- `mode=preview`, `reconcile_mode=admin_canonicalize_all`, `source_product_id=11c9f1b8-0355-4753-bd74-40b42aa53616` (а также отдельно `source_tariff_id=7c748940…`).
-- Извлечь summary: `reducible_by_rule`, `no_source_window`, `already_satisfied`, `condition_not_met`, `conflict_existing`, `soft_expire_extra_access`, `revoke_extra_access`, `window_fallback_applied`, разбивка `window_resolved_from`.
+```ts
+supabase.rpc('admin_get_payments_stats_v1', {
+  p_from,
+  p_to,
+  p_provider: 'bepaid',
+})
+```
 
-**Step B — Execute (только если `reducible_by_rule > 0`):**
+`src/components/admin/payments/PaymentsStatsPanel.tsx` при отсутствии `serverStats` показывает нули.
 
-- `mode=execute`, `apply_categories=["reducible_by_rule"]`, `allow_reduce_access=true`, остальные destructive флаги = false, `reconcile_mode=admin_canonicalize_all`, super_admin JWT.
-- Зафиксировать `targeted/updated/skipped/errors`, `batch_id`, `audit_log_id`.
+## 3. Предлагаемое решение
 
-**Step C — Post-verify:**
+Сделать PATCH в два безопасных уровня.
 
-- Повторный preview с теми же параметрами: ожидаем `reducible_by_rule=0`.
-- Для каждой из 22 затронутых строк прочитать `entitlements.meta` и подтвердить `previous_expires_at`, `reduction_reason="stage5_reducible_by_canonical_rule"`, `reduced_at`, `reduced_by_user_id`.
-- Прочитать `audit_logs` запись об execute.
-- Если `no_source_window` всё ещё > 0 — объяснить остаток (нет ни `rule.duration_days`, ни `sub.access_end_at`, ни `tariff.access_days`).
+### Уровень A — исправить реальную поломку RPC
 
-**Step D — Если `reducible_by_rule=0` уже на Step A:**
+В миграции `CREATE OR REPLACE FUNCTION public.admin_get_payments_stats_v1(...)`:
 
-- Найти в `audit_logs` предыдущий execute, который их закрыл (batch_id, timestamp, actor, count).
-- Подтвердить через выборку `entitlements`, что у них есть `meta.reduction_reason` и `previous_expires_at`.
+- сохранить текущую сигнатуру:
+  ```sql
+  (p_from timestamptz, p_to timestamptz, p_provider text DEFAULT 'bepaid') RETURNS jsonb
+  ```
+- сохранить `STABLE SECURITY DEFINER` и `SET search_path TO 'public'`;
+- сохранить тело расчетов 1:1;
+- заменить невалидный cast:
+  ```sql
+  'super_admin'::app_role_v2
+  ```
+  на строковый вызов, совместимый с фактическим `has_role_v2`:
+  ```sql
+  public.has_role_v2(auth.uid(), 'super_admin')
+  ```
 
-**Step E — Обновить proof:**
+### Уровень B — права для всех администраторов
 
-- Дописать секцию `## Stage 6 Verify & Apply` в `.lovable/proofs/retroapply_stage_6_mobile_apply_and_extra_detector_2026_05.md` с итоговой таблицей:
+После того как RPC перестанет падать под `super_admin`, расширить guard до:
 
-  | category                    | before | after                  | action                           |
-  | --------------------------- | ------ | ---------------------- | -------------------------------- |
-  | reducible_by_rule           | N      | 0                      | execute / уже исправлено batch X |
-  | no_source_window            | 7      | 0 (или K + объяснение) | window fallback                  |
-  | already_satisfied           | …      | …                      | —                                |
-  | condition_not_met           | …      | …                      | —                                |
-  | conflict_existing           | …      | …                      | —                                |
-  | extras (soft_expire+revoke) | …      | …                      | none                             |
-  | window_fallback_applied     | —      | M                      | fallback (tariff.access_days)    |
+```sql
+IF auth.role() <> 'service_role'
+   AND NOT (
+     public.has_role_v2(auth.uid(), 'super_admin')
+     OR public.has_role_v2(auth.uid(), 'admin')
+   ) THEN
+  RAISE EXCEPTION 'forbidden: admin role required'
+    USING ERRCODE = '42501';
+END IF;
+```
 
-- Приложить ссылки на `batch_id` и `audit_logs.id`.
+Это чинит не только текущего `super_admin`, но и обычных `admin`, не открывая RPC для `anon` или не-админов.
 
-### DoD
+## 4. Изменяемые компоненты
 
-- Preview cohort B / BUSINESS показан с полной разбивкой counts + `window_fallback_applied`.
-- По `reducible_by_rule` либо выполнен execute и показан targeted/updated/skipped/errors + post-verify=0, либо доказано предыдущее закрытие с batch/audit/timestamp.
-- 22 строки имеют новый `expires_at` и `previous_expires_at` в meta (выборка показана).
-- `no_source_window`: 0 либо остаток объяснён построчно.
-- Destructive действия (revoke / soft-expire / manual override / Telegram) НЕ запускались — подтверждено payload-ом и audit.
-- Никаких изменений в `orders_v2` / `subscriptions_v2` / `access_rules` / ручного DML.
-- Proof обновлён, содержит итоговую таблицу `before/after/action`.
+### Database/RPC
 
-### Технические детали
+- `public.admin_get_payments_stats_v1(timestamptz, timestamptz, text)` — только guard, без изменения формул.
+- Grants:
+  - `REVOKE EXECUTE ... FROM PUBLIC, anon;`
+  - `GRANT EXECUTE ... TO authenticated, service_role;`
 
-- Все вызовы — через `supabase--curl_edge_functions` с super_admin JWT (для `admin_canonicalize_all`).
-- Чтение audit/entitlements — через `supabase--read_query`.
-- Никаких миграций, никаких изменений в edge function коде (Stage 5/6 код уже задеплоен) — только verify + apply через API.
+### Proof
+
+Обновить/создать:
+
+- `.lovable/proofs/payments_stats_rpc_diagnose_2026_05.md`
+
+Если файла в репозитории реально нет, создать его заново с текущими фактами, а не ссылаться на несуществующий proof.
+
+### UI code
+
+Frontend не менять, если после RPC-fix карточки начинают получать данные.
+Если UI всё равно показывает нули при успешном RPC, тогда отдельным минимальным frontend-патчем добавить явное состояние ошибки в `PaymentsStatsPanel`, чтобы ошибка RPC не маскировалась под нулевые суммы.
+
+## 5. Что не будет изменено
+
+- Формулы статистики.
+- Фильтры `p_from`, `p_to`, `p_provider`.
+- Таблицы `payments_v2`, `orders_v2`, `subscriptions_v2`.
+- Роли пользователей.
+- Платежные данные.
+- Edge functions.
+- Новые RPC не создаются.
+- Доступ `anon` не добавляется.
+
+## 6. Dry-run / симуляция до выполнения
+
+Перед миграцией выполнить read-only проверки:
+
+1. Проверить, что существует ровно один overload:
+  ```sql
+   SELECT n.nspname, p.proname, pg_get_function_arguments(p.oid), pg_get_function_result(p.oid)
+   FROM pg_proc p
+   JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'public'
+     AND p.proname = 'admin_get_payments_stats_v1';
+  ```
+2. Проверить фактическую сигнатуру `has_role_v2`, чтобы не угадывать типы:
+  ```sql
+   SELECT pg_get_function_arguments(p.oid), pg_get_function_result(p.oid)
+   FROM pg_proc p
+   JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'public'
+     AND p.proname = 'has_role_v2';
+  ```
+3. Симулировать новый guard без изменения данных:
+  ```sql
+   SELECT
+     public.has_role_v2('<ваш_user_id>'::uuid, 'super_admin') AS is_super_admin,
+     public.has_role_v2('<ваш_user_id>'::uuid, 'admin') AS is_admin;
+  ```
+4. Сравнить ожидаемые агрегаты напрямую по `payments_v2` за май 2026 с тем, что должен вернуть RPC после фикса.
+
+## 7. Execute
+
+Выполнить одну миграцию:
+
+- `CREATE OR REPLACE FUNCTION public.admin_get_payments_stats_v1(...)` с исправленным guard `super_admin OR admin` без `::app_role_v2`.
+- `REVOKE EXECUTE FROM PUBLIC, anon`.
+- `GRANT EXECUTE TO authenticated, service_role`.
+- Audit-запись в `audit_logs`:
+  - action: `payments_stats_rpc_guard_fixed`
+  - meta: причина `app_role_v2 cast removed`, guard `admin|super_admin`, формулы не менялись.
+
+## 8. Verify после выполнения
+
+### Backend proof
+
+1. `pg_get_functiondef` больше не содержит `app_role_v2`.
+2. Guard содержит `has_role_v2(auth.uid(), 'super_admin') OR has_role_v2(auth.uid(), 'admin')`.
+3. `anon` не имеет EXECUTE.
+4. `authenticated` имеет EXECUTE.
+5. REST RPC под вашим JWT (`7500084@gmail.com`) возвращает HTTP 200 и ненулевой JSON за `2026-05-01 — 2026-05-31`.
+6. Если есть доступный обычный `admin` без `super_admin`, REST RPC под ним тоже возвращает HTTP 200.
+7. Не-админ получает `42501`.
+
+### UI proof со скринами
+
+1. Открыть preview `/admin/payments`.
+2. Авторизоваться через `Login as Developer`, пароль `123456`, если preview попросит.
+3. Под текущей сессией открыть платежи за май 2026.
+4. Сделать скрин до/после или после-fix:
+  - карточки статистики показывают реальные суммы;
+  - таблица всё еще показывает `194 из 194`;
+  - сумма карточек согласуется с backend RPC/direct aggregate.
+5. Проверить клик по карточке-фильтру: статистика не ломает фильтрацию таблицы.
+
+## 9. STOP-guards
+
+Остановиться без миграции, если:
+
+- найдено больше одного overload `admin_get_payments_stats_v1`;
+- `has_role_v2` принимает не `text`/совместимый string role code;
+- direct aggregate по `payments_v2` за май 2026 не совпадает с ожидаемой логикой текущей функции;
+- миграция требует изменения формул или платежных таблиц;
+- после миграции `anon` получает EXECUTE;
+- UI после backend HTTP 200 всё еще показывает нули — тогда не делать второй blind-fix, а диагностировать frontend отдельно.
+
+## 10. DoD
+
+Задача считается закрытой только если:
+
+- текущий `super_admin` больше не получает `type "app_role_v2" does not exist`;
+- карточки статистики на `/admin/payments` показывают реальные суммы, а не нули;
+- `admin` и `super_admin` имеют доступ к статистике;
+- `anon` и не-админы заблокированы;
+- формулы статистики не изменены;
+- proof содержит:
+  - реальную ошибку из network;
+  - before/after guard;
+  - backend SQL/REST verify;
+  - UI screenshots;
+  - audit id/time;
+  - вывод, что исправлена фактическая причина, а не только гипотеза про admin-role.
+
+## 11. Риски и зависимости
+
+- Главный риск — снова сделать blind-fix на роли, не устранив runtime error. Поэтому первым DoD является отсутствие `app_role_v2` в functiondef и HTTP 200 под вашим JWT.
+- UI может дополнительно маскировать ошибки как нули; если это подтвердится после backend-fix, будет отдельный frontend-patch на явное состояние ошибки.
+- Скриншоты являются UI-proof, но финальное подтверждение должно включать backend-proof, потому что UI сам по себе не доказывает корректность прав и формул.
