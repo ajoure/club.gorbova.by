@@ -31,6 +31,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 import { checkPriorPurchase } from "../_shared/check-prior-purchase.ts";
+import { buildPriorPurchaseCache } from "../_shared/product-access-grants.ts";
 import {
   classifyEntitlement,
   canExecuteDestructive,
@@ -952,6 +953,7 @@ async function checkRetroCondition(
   conditions: any,
   userId: string,
   targetProductId: string,
+  priorPurchaseCache?: Map<string, Map<string, unknown>>,
 ): Promise<boolean> {
   if (!conditions || conditions.condition_type !== "prior_purchase") return true;
 
@@ -967,6 +969,13 @@ async function checkRetroCondition(
     : null;
 
   if (!productToCheck) return true;
+
+  const cached = priorPurchaseCache?.get(userId);
+  if (cached) {
+    if (matchMode === "per_product") return cached.has(targetProductId);
+    if (matchMode === "all") return requiredProductIds.every((id) => cached.has(id));
+    return requiredProductIds.length === 0 || requiredProductIds.some((id) => cached.has(id));
+  }
 
   if (matchMode === "per_product") {
     // Use canonical shared resolver (direct match + module_list_mapped fallback)
