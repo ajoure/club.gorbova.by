@@ -39,6 +39,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { AccessRule } from "@/hooks/useAccessRules";
 import { useSuperAdmin } from "@/hooks/useSuperAdmin";
+import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 
 type ReconcileMode = "nightly_safe" | "admin_canonicalize_all";
 
@@ -263,7 +264,16 @@ const REASON_LABELS: Record<string, string> = {
 
 function translateReason(code: string | null): string {
   if (!code) return "";
-  return REASON_LABELS[code] || code;
+  return REASON_LABELS[code] || "Причина не распознана. Нужна проверка администратором.";
+}
+
+function translateBackendError(raw: string | null | undefined): string {
+  if (!raw) return "Неизвестная ошибка.";
+  if (raw.includes("admin_canonicalize_all_requires_auth")) return "Для ручной канонизации нужно войти под аккаунтом супер-администратора.";
+  if (raw.includes("admin_canonicalize_all_requires_super_admin")) return "Ручная канонизация доступна только супер-администратору.";
+  if (raw.includes("context canceled") || raw.includes("timeout")) return "Проверка заняла слишком много времени. Сузьте область до тарифа или конкретного правила и повторите.";
+  if (raw.includes("stop_guard_triggered")) return "Применение остановлено защитой. Проверьте предпросмотр и выберите конкретные записи.";
+  return normalizeEdgeFunctionError(raw);
 }
 
 function translateStopReason(raw: string): string {
