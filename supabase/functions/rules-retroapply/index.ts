@@ -454,6 +454,21 @@ async function processRule(
   }
 
   const durationMode = rule.duration_days ? "fixed_days" : "from_source";
+  const priorPurchaseProductIds = (() => {
+    const ids = new Set<string>();
+    if (conditions?.condition_type !== "prior_purchase") return [] as string[];
+    const reqList: string[] = Array.isArray(conditions.required_product_ids)
+      ? conditions.required_product_ids
+      : conditions.required_product_id ? [conditions.required_product_id] : [];
+    reqList.forEach((id) => { if (typeof id === "string" && id) ids.add(id); });
+    if ((conditions.match_mode || "any") === "per_product") {
+      targetProductIds.forEach((id) => ids.add(id));
+    }
+    return [...ids];
+  })();
+  const priorPurchaseCache = priorPurchaseProductIds.length > 0
+    ? await buildPriorPurchaseCache(supabase, userIds, priorPurchaseProductIds)
+    : undefined;
 
   const makeAction = (
     userId: string,
@@ -579,7 +594,7 @@ async function processRule(
         };
 
         if (hasPriorPurchase) {
-          const conditionMet = await checkRetroCondition(supabase, conditions, userId, targetProdId);
+          const conditionMet = await checkRetroCondition(supabase, conditions, userId, targetProdId, priorPurchaseCache as any);
           if (!conditionMet) {
             actions.push(makeAction(userId, targetProdId, "condition_not_met", plannedExpiry, null, sub, "prior_purchase_not_found", windowExtras));
             continue;
