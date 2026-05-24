@@ -1005,7 +1005,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                     >
                       <Play className="h-3.5 w-3.5 mb-0.5" />
                       <span className="text-lg font-bold">{changedCount}</span>
-                      <span className="text-[9px] leading-tight">Безопасные</span>
+                      <span className="text-[9px] leading-tight">Изменения</span>
                     </button>
                   )}
 
@@ -1254,7 +1254,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                       <span className="text-[10px] text-muted-foreground">
                         {activeFilter !== "all" && (
                           <Badge variant="outline" className="text-[9px] mr-2">
-                            {activeFilter === "changed" ? "Безопасные" : (CATEGORY_CONFIG[activeFilter]?.label || activeFilter)}
+                            {activeFilter === "changed" ? "Изменения" : (CATEGORY_CONFIG[activeFilter]?.label || activeFilter)}
                           </Badge>
                         )}
                         Показано {Math.min(visibleCount, filteredActions.length)} из {filteredActions.length}
@@ -1314,7 +1314,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
 
                 {filteredActions.length === 0 && result!.actions.length > 0 && (
                   <div className="text-center text-xs text-muted-foreground py-4">
-                    Нет записей в категории «{activeFilter === "changed" ? "Безопасные" : (CATEGORY_CONFIG[activeFilter]?.label || activeFilter)}»
+                    Нет записей в категории «{activeFilter === "changed" ? "Изменения" : (CATEGORY_CONFIG[activeFilter]?.label || activeFilter)}»
                   </div>
                 )}
               </div>
