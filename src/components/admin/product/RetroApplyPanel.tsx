@@ -818,6 +818,11 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                     setAllowRevoke(false);
                     setAllowManualOverride(false);
                     setAdminAcknowledge(false);
+                  } else {
+                    setAllowReduce(true);
+                    setAllowRevoke(true);
+                    setAllowManualOverride(true);
+                    setAdminAcknowledge(true);
                   }
                 }}
                 disabled={!isSuperAdmin}
@@ -834,31 +839,31 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
               </Select>
               {effectiveReconcileMode === "nightly_safe" && (
                 <p className="text-[10px] text-muted-foreground">
-                  Не трогает ручные/admin доступы. Только безопасные изменения по системной lineage.
+                  Не меняет доступы, выданные вручную. Выполняет только безопасные системные изменения.
                 </p>
               )}
               {effectiveReconcileMode === "admin_canonicalize_all" && (
                 <div className="space-y-2 pt-1">
                   <p className="text-[10px] text-purple-700">
-                    Полная канонизация: ручные/admin доступы можно привести к правилам. Любые destructive действия требуют отдельных подтверждений и не запускаются в Stage 3.
+                    Полная ручная сверка: супер-администратор может привести доступы к текущим правилам после предпросмотра.
                   </p>
                   <div className="space-y-1.5 pl-1">
                     <div className="flex items-start gap-2">
                       <Checkbox id="allow-reduce" checked={allowReduce} onCheckedChange={(v) => setAllowReduce(!!v)} />
                       <Label htmlFor="allow-reduce" className="text-[11px] cursor-pointer">
-                        Разрешить сокращение сроков (reducible_by_rule)
+                        Разрешить сокращение сроков до срока по правилу
                       </Label>
                     </div>
                     <div className="flex items-start gap-2">
                       <Checkbox id="allow-revoke" checked={allowRevoke} onCheckedChange={(v) => setAllowRevoke(!!v)} />
                       <Label htmlFor="allow-revoke" className="text-[11px] cursor-pointer">
-                        Разрешить снятие лишних доступов (soft-expire / revoke)
+                        Разрешить снятие лишних доступов без правила и оплаты
                       </Label>
                     </div>
                     <div className="flex items-start gap-2">
                       <Checkbox id="allow-manual" checked={allowManualOverride} onCheckedChange={(v) => setAllowManualOverride(!!v)} />
                       <Label htmlFor="allow-manual" className="text-[11px] cursor-pointer">
-                        Разрешить перезапись ручных/admin доступов (canonicalize)
+                        Разрешить приведение ручных доступов к текущим правилам
                       </Label>
                     </div>
                     <div className="flex items-start gap-2 pt-1 border-t border-purple-200">
