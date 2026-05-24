@@ -220,8 +220,8 @@ const CATEGORY_CONFIG: Record<string, {
     icon: Clock,
   },
   revoke_extra_access: {
-    label: "Будет отозван (zombie)",
-    description: "Активный доступ в будущем без правила и без оплаты — будет revoked",
+    label: "Будет отозван лишний доступ",
+    description: "Активный доступ в будущем без правила и без оплаты будет отозван",
     color: "text-red-800 bg-red-100 border-red-300",
     icon: Trash2,
   },
@@ -575,7 +575,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
       return;
     }
     if (hasHumanLineageDestructive && !allowManual) {
-      toast.error("Снятие ручных/admin доступов требует режима админской канонизации, allow_manual_override и подтверждения.");
+      toast.error("Снятие ручных доступов требует режима полной ручной сверки и подтверждения.");
       return;
     }
     runRetroApply("execute", {
