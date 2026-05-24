@@ -813,6 +813,11 @@ async function detectExtraAccessActions(
     const key = k(a.user_id, a.target_product_id);
     if (!coveredActions.has(key)) coveredActions.set(key, a);
   }
+  const cohortUserIds = [...new Set(existingActions.map(a => a.user_id).filter(Boolean))];
+  const userIds = filterUserIds?.length
+    ? cohortUserIds.filter(u => filterUserIds.includes(u))
+    : cohortUserIds;
+  if (!userIds.length) return out;
 
   // 2. Fetch active entitlements for all (user, target_product) pairs.
   type EntRow = {
@@ -822,9 +827,9 @@ async function detectExtraAccessActions(
   let entQ = supabase
       .from("entitlements")
       .select("id, user_id, product_id, expires_at, status, meta")
+      .in("user_id", userIds)
       .in("product_id", targetProductIds)
       .eq("status", "active");
-  if (filterUserIds?.length) entQ = entQ.in("user_id", filterUserIds);
 
   const ents: EntRow[] = [];
   for (let from = 0; ; from += 1000) {
@@ -835,8 +840,6 @@ async function detectExtraAccessActions(
     if (rows.length < 1000) break;
   }
   if (!ents.length) return out;
-  const userIds = [...new Set(ents.map(e => e.user_id).filter(Boolean))];
-  if (!userIds.length) return out;
 
   // 3. Build rule-coverage index: which (user, product) pairs are covered
   //    by ANY action in the rule-driven pass with category != condition_not_met / no_source_window.
