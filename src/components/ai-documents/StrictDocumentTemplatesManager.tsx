@@ -451,7 +451,9 @@ export function StrictDocumentTemplatesManager({
             template_scope: "act",
             editor_mvp_enabled: false,
             is_active: false,
+            ...(categoryFilter ? { category: categoryFilter } : {}),
           })
+
           .select("id, created_at")
           .single();
         if (tmplErr) throw tmplErr;
