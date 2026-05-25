@@ -441,7 +441,7 @@ export function PlaceholdersCatalogTab() {
           </div>
         </div>
 
-        <div className="grid gap-2 sm:grid-cols-12">
+        <div className="grid gap-2 sm:grid-cols-12 min-w-0 max-w-full">
           <div className="relative sm:col-span-5">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
