@@ -24,7 +24,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import Docxtemplater from 'npm:docxtemplater@3.47.1';
 import PizZip from 'npm:pizzip@3.1.6';
-import { inflectRu, type RuCase } from '../_shared/ru-inflection.ts';
+import { inflectRu, normalizeMasculinePosition, expandOrgFormToLong, type RuCase } from '../_shared/ru-inflection.ts';
 import { loadGotenbergConfig, convertDocxToPdf, GotenbergError } from '../_shared/gotenberg.ts';
 import { B97_FLD_TO_TOKEN_KEY, buildTypedB97FieldValues } from '../_shared/typed-fld-mapping.ts';
 import { snapshotOrderDocumentData } from '../_shared/document-data-snapshot.ts';
@@ -783,12 +783,25 @@ Deno.serve(async (req) => {
       let outVal = fmt.value;
       let fmtApplied = fmt.applied;
 
-      // format=long для полей формы собственности (*.leg.org_form):
-      // раскрывает короткую форму через ORG_FORM_SHORT_TO_FULL.
-      if (t.format === 'long' && /\.leg\.org_form$/.test(regKey)) {
-        const { expandOrgFormToLong } = await import('../_shared/ru-inflection.ts');
-        outVal = expandOrgFormToLong(outVal);
-        fmtApplied = true;
+      // format=long разрешён ТОЛЬКО для *.leg.org_form. Для всех остальных
+      // полей (особенно short_name) этот модификатор игнорируется, чтобы
+      // «Краткое название» никогда не превращалось в «Закрытое акционерное
+      // общество «АЖУР инкам»».
+      if (t.format === 'long') {
+        if (/\.leg\.org_form$/.test(regKey)) {
+          outVal = expandOrgFormToLong(outVal);
+          fmtApplied = true;
+        }
+        // На *.leg.short_name и любых других FLD format=long — no-op.
+      }
+
+      // Должность руководителя — ВСЕГДА нормализуется в мужской род,
+      // даже без case-модификатора (FLD-000339 без case → «Управляющий»).
+      const isDirectorPosition = /\.director_position$/.test(regKey)
+        || regKey === 'customer.director_position'
+        || regKey === 'executor.director_position';
+      if (isDirectorPosition && outVal) {
+        outVal = normalizeMasculinePosition(outVal);
       }
 
       let caseApplied = false;
@@ -797,13 +810,8 @@ Deno.serve(async (req) => {
         const allowText = TEXT_DT.has(dt) || dt === '' || dt === 'enum';
         const wordsApplied = fmtApplied && t.format === 'words';
         if (allowText || wordsApplied) {
-          // Должность руководителя — всегда мужской род, независимо от пола
-          // ФИО в той же строке (если вдруг встретится). Это правило
-          // распространяется на customer.leg.director_position и
-          // executor.leg.director_position (+ legacy *.director_position).
-          const isDirectorPosition = /\.director_position$/.test(regKey)
-            || regKey === 'customer.director_position'
-            || regKey === 'executor.director_position';
+          // Pipeline для должности: normalizeMasculinePosition (выше) →
+          // inflectRu(case, forceGender='m'). Женская форма не выводится.
           const inf = isDirectorPosition
             ? inflectRu(outVal, t.case_modifier as RuCase, { forceGender: 'm' })
             : inflectRu(outVal, t.case_modifier as RuCase);

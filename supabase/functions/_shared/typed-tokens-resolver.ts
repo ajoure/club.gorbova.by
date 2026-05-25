@@ -21,7 +21,11 @@
 
 // deno-lint-ignore-file no-explicit-any
 import { formatStructuredAddress } from "./address-format.ts";
-import { ORG_FORM_SHORT_TO_FULL } from "./ru-inflection.ts";
+import {
+  ORG_FORM_SHORT_TO_FULL,
+  ORG_FORM_FULL_TO_SHORT,
+  normalizeMasculinePosition,
+} from "./ru-inflection.ts";
 
 const ADDR_PARTS = [
   "street", "house", "building", "apartment",
@@ -31,6 +35,10 @@ const ADDR_PARTS = [
 
 // Известные формы собственности — для очистки имени от ведущего токена формы.
 const ORG_FORM_SHORTS = new Set(Object.keys(ORG_FORM_SHORT_TO_FULL));
+// Полные формы (lowercase), отсортированные от длинных к коротким для greedy-match.
+const ORG_FORM_FULLS_SORTED = Object.keys(ORG_FORM_FULL_TO_SHORT).sort(
+  (a, b) => b.length - a.length,
+);
 
 /**
  * Извлекает 3 канонических компонента ЮЛ из имеющихся полей.
@@ -54,22 +62,48 @@ export function canonicalizeLegalEntity(
   let orgForm = (rawOrgForm ?? "").toString().trim();
   let nameRaw = (rawName ?? "").toString().trim();
 
-  // Если orgForm пуст — пробуем выделить из nameRaw или из rawFullName.
+  // source — то, откуда будем извлекать orgForm/name, если они не заданы явно.
   const source = nameRaw || (rawFullName ?? "").toString().trim();
+  let strippedSource = source;
+
+  // 1) Если orgForm пуст — пробуем выделить КОРОТКУЮ форму из первого слова.
   if (!orgForm && source) {
-    const head = source.split(/\s+/)[0]?.toUpperCase() ?? "";
-    if (ORG_FORM_SHORTS.has(head)) orgForm = head;
+    const head = source.split(/\s+/)[0]?.replace(/[«»"'„‟"']/g, "").toUpperCase() ?? "";
+    if (ORG_FORM_SHORTS.has(head)) {
+      orgForm = head;
+    }
   }
 
-  // Из source убираем ведущую форму (если совпала с orgForm) и кавычки.
-  let nameClean = nameRaw;
-  if (!nameClean && source) nameClean = source;
+  // 2) Если всё ещё пуст — пробуем распознать ПОЛНУЮ форму
+  //    («Закрытое акционерное общество ...» → ЗАО).
+  if (!orgForm && source) {
+    const sourceLc = source.toLowerCase();
+    for (const fullLc of ORG_FORM_FULLS_SORTED) {
+      if (sourceLc.startsWith(fullLc + " ") || sourceLc === fullLc) {
+        orgForm = ORG_FORM_FULL_TO_SHORT[fullLc];
+        // Отрезаем полную форму из source, чтобы дальше остался только name.
+        strippedSource = source.slice(fullLc.length).trim();
+        break;
+      }
+    }
+  }
+
+  // 3) nameClean: если есть явный rawName — берём его; иначе из (возможно
+  //    обрезанного) source. И снимаем ведущую короткую форму, если она
+  //    дублирует orgForm.
+  // Если мы обрезали полную форму из source, и source брался из nameRaw,
+  // то и nameClean должен идти от strippedSource (без полной формы).
+  let nameClean = strippedSource && strippedSource !== source ? strippedSource : (nameRaw || strippedSource);
   if (nameClean && orgForm) {
-    const re = new RegExp(`^${orgForm}\\s+`, "i");
-    nameClean = nameClean.replace(re, "");
+    const reShort = new RegExp(`^${orgForm}\\s+`, "i");
+    nameClean = nameClean.replace(reShort, "");
+    const fullLc = ORG_FORM_SHORT_TO_FULL[orgForm.toUpperCase()];
+    if (fullLc) {
+      const reFull = new RegExp(`^${fullLc}\\s+`, "i");
+      nameClean = nameClean.replace(reFull, "");
+    }
   }
   nameClean = stripQuotes(nameClean).trim();
-  // Иногда внутри ещё одни кавычки (вложенные)
   nameClean = stripQuotes(nameClean).trim();
 
   // ИП — без кавычек; ЮЛ — в «…».
@@ -199,7 +233,7 @@ function fillLegCustomer(map: Record<string, string>, ld: any) {
   map["customer.leg.name"] = canon.name;
   map["customer.leg.short_name"] = canon.short_name;
   map["customer.leg.unp"] = isLeg ? (ld?.leg_unp || "") : "";
-  map["customer.leg.director_position"] = isLeg ? (ld?.leg_director_position || "") : "";
+  map["customer.leg.director_position"] = isLeg ? normalizeMasculinePosition(ld?.leg_director_position || "") : "";
   map["customer.leg.director_full_name"] = dirFull;
   map["customer.leg.director_short_name"] = isLeg ? fullNameToInitials(dirFull) : "";
   map["customer.leg.acts_on_basis"] = isLeg ? (ld?.leg_acts_on_basis || "") : "";
@@ -241,7 +275,7 @@ function fillEntCustomer(map: Record<string, string>, ld: any) {
   const overrideDirFull = (ld?.ent_director_full_name || "").toString().trim();
   const overrideDirShort = (ld?.ent_director_short_name || "").toString().trim();
   const overrideActs = (ld?.ent_acts_on_basis_override || "").toString().trim();
-  map["customer.ent.director_position"] = isEnt ? (overrideDirPos || "Индивидуальный предприниматель") : "";
+  map["customer.ent.director_position"] = isEnt ? normalizeMasculinePosition(overrideDirPos || "Индивидуальный предприниматель") : "";
   map["customer.ent.director_full_name"] = isEnt ? (overrideDirFull || defaultDirFull) : "";
   map["customer.ent.director_short_name"] = isEnt ? (overrideDirShort || defaultDirShort) : "";
   map["customer.ent.director_acts_on_basis"] = isEnt ? (overrideActs || ld?.ent_acts_on_basis || "Свидетельства о государственной регистрации") : "";
@@ -281,7 +315,7 @@ function fillLegExecutor(map: Record<string, string>, ex: any) {
   map["executor.leg.name"] = canon.name;
   map["executor.leg.short_name"] = canon.short_name;
   map["executor.leg.unp"] = isLeg ? (ex?.unp || "") : "";
-  map["executor.leg.director_position"] = isLeg ? (ex?.director_position || "") : "";
+  map["executor.leg.director_position"] = isLeg ? normalizeMasculinePosition(ex?.director_position || "") : "";
   map["executor.leg.director_full_name"] = dirFull;
   map["executor.leg.director_short_name"] = isLeg ? (ex?.director_short_name || fullNameToInitials(dirFull)) : "";
   map["executor.leg.acts_on_basis"] = isLeg ? (ex?.acts_on_basis || "") : "";
@@ -307,7 +341,7 @@ function fillExecutorSigner(map: Record<string, string>, ex: any) {
   // executor.signer.* — на текущий момент derive из director_*; точечный override —
   // через input.overrides.
   const dirFull = ex?.director_full_name || "";
-  map["executor.signer.position"] = ex?.director_position || "";
+  map["executor.signer.position"] = normalizeMasculinePosition(ex?.director_position || "");
   map["executor.signer.full_name"] = dirFull;
   map["executor.signer.initials"] = ex?.director_short_name || fullNameToInitials(dirFull);
   map["executor.signer.basis"] = ex?.acts_on_basis || "";
