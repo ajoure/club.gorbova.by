@@ -99,7 +99,7 @@ export const FieldChipNode = Node.create({
         default: null,
         parseHTML: (el) => {
           const v = (el as HTMLElement).getAttribute("data-format");
-          return v === "words" || v === "text" ? v : null;
+          return v === "words" || v === "text" || v === "long" ? v : null;
         },
         renderHTML: (attrs) => (attrs.format ? { "data-format": attrs.format } : {}),
       },
