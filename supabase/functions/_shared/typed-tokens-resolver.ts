@@ -264,9 +264,8 @@ function fillEntCustomer(map: Record<string, string>, ld: any) {
 
 
 function fillLegExecutor(map: Record<string, string>, ex: any) {
-  // B-97 scope: executor.leg.* — 23 токена, БЕЗ org_form.
-  // `executor.leg.org_form` отложен (нет SOT в `executors`) — пустой branch удалён,
-  // чтобы не маскировать postponed-статус «зарезолвленным пустым значением».
+  // executor.leg.* — 24 токена с org_form. Если в `executors` нет явного
+  // org_form — пытаемся выделить из full_name (canonicalizeLegalEntity).
   const isLeg = !ex?.subject_type || ex?.subject_type === "legal_entity";
   const struct = isLeg ? (ex?.legal_address_structured || null) : null;
   const addrFull = isLeg
@@ -274,8 +273,13 @@ function fillLegExecutor(map: Record<string, string>, ex: any) {
     : "";
   const dirFull = isLeg ? (ex?.director_full_name || "") : "";
 
-  map["executor.leg.name"] = isLeg ? (ex?.full_name || "") : "";
-  map["executor.leg.short_name"] = isLeg ? (ex?.short_name || ex?.full_name || "") : "";
+  const canon = isLeg
+    ? canonicalizeLegalEntity(ex?.org_form, ex?.name, ex?.short_name || ex?.full_name)
+    : { org_form: "", name: "", short_name: "", full_name: "" };
+
+  map["executor.leg.org_form"] = canon.org_form;
+  map["executor.leg.name"] = canon.name;
+  map["executor.leg.short_name"] = canon.short_name;
   map["executor.leg.unp"] = isLeg ? (ex?.unp || "") : "";
   map["executor.leg.director_position"] = isLeg ? (ex?.director_position || "") : "";
   map["executor.leg.director_full_name"] = dirFull;
