@@ -719,6 +719,8 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
                   onFetch={aiChat.fetchScenarios}
                   onSelect={handleScenarioSelect}
                   disabled={aiChat.isLoading}
+                  access={aiAccess}
+                  onLockedClick={(_s, msg) => toast.error(msg)}
                 />
                 <Button
                   type="button"
