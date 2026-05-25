@@ -301,7 +301,7 @@ export function FileNameTemplateEditor({ templateId, templateName }: Props) {
         <p className="text-[11px] text-emerald-600">✓ Шаблон валиден</p>
       )}
 
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" onClick={save} disabled={!canSave}>
           {saving ? "Сохранение…" : "Сохранить"}
         </Button>
@@ -309,7 +309,7 @@ export function FileNameTemplateEditor({ templateId, templateName }: Props) {
           Сбросить к системному дефолту
         </Button>
         {!isValid && template.trim().length > 0 && (
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-[11px] text-muted-foreground basis-full">
             Сохранение недоступно — исправьте ошибки выше
           </span>
         )}
