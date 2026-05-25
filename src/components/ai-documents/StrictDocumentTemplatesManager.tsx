@@ -918,7 +918,7 @@ export function StrictDocumentTemplatesManager({
                                 {v.is_current && (
                                   <Badge variant="default" className="text-[9px] px-1.5 py-0 h-4">current</Badge>
                                 )}
-                                {canActivate && (
+                                {!readOnly && canActivate && (
                                   <Button
                                     type="button"
                                     size="sm"
