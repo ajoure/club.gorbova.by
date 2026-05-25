@@ -90,13 +90,14 @@ export async function normalizeEdgeFunctionErrorAsync(
 }
 
 async function readResponseLikeBody(ctx: any): Promise<unknown | undefined> {
-  const response = typeof ctx.clone === "function" ? ctx.clone() : ctx;
   try {
-    if (typeof response.json === "function") return await response.json();
+    const jsonResponse = typeof ctx.clone === "function" ? ctx.clone() : ctx;
+    if (typeof jsonResponse.json === "function") return await jsonResponse.json();
   } catch {
-    // JSON failed — fall through to text on the same cloned response when possible.
+    // JSON failed — fall through to text on a fresh clone when possible.
   }
   try {
+    const response = typeof ctx.clone === "function" ? ctx.clone() : ctx;
     if (typeof response.text === "function") return await response.text();
   } catch {
     // Body may already be consumed; sync normalizer will handle the generic wrapper.
