@@ -509,7 +509,15 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
   );
 
 
-  const allSubTabs = activeSection === "ai" ? AI_SUB_TABS : activeSection === "requisites" ? REQ_SUB_TABS : DOC_SUB_TABS;
+  const subTabsForSection = (s: Section): SubMenuItem[] => {
+    switch (s) {
+      case "ai": return AI_SUB_TABS;
+      case "requisites": return REQ_SUB_TABS;
+      case "doc-packages": return PACKAGE_SUB_TABS;
+      default: return DOC_SUB_TABS;
+    }
+  };
+  const allSubTabs = subTabsForSection(activeSection);
   const subTabs = useMemo(
     () => allSubTabs.filter(tab => !tab.adminOnly || mode === "admin"),
     [allSubTabs, mode]
@@ -520,7 +528,8 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
     if (!visibleSections.some(s => s.id === activeSection)) {
       const fallback = visibleSections[0]?.id ?? "ai";
       // Find a visible subtab for the fallback section
-      const fallbackAllSubs = fallback === "ai" ? AI_SUB_TABS : fallback === "requisites" ? REQ_SUB_TABS : DOC_SUB_TABS;
+      const fallbackAllSubs = subTabsForSection(fallback);
+
       const fallbackVisibleSubs = fallbackAllSubs.filter(t => !t.adminOnly || mode === "admin");
       const defaultSub = DEFAULT_SUB[fallback];
       const safeSub = fallbackVisibleSubs.some(t => t.id === defaultSub)
