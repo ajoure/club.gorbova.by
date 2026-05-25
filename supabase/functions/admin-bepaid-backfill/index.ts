@@ -484,14 +484,8 @@ Deno.serve(async (req) => {
 
           if (dryRun) continue;
 
-          const key = `${cand.user_id}|${cand.product_id ?? ""}`;
-          let latestPayment = userProductToLatestPayment.get(key);
-          let lookupMode = "latest_payment_user_product";
-
-          if (!latestPayment) {
-            latestPayment = userToLatestPayment.get(cand.user_id);
-            lookupMode = "latest_payment_user_fallback";
-          }
+          const latestPayment = userToLatestPayment.get(cand.user_id);
+          const lookupMode = latestPayment ? "latest_payment_user" : "no_payment";
 
           const currency = (latestPayment?.currency || "BYN") as string;
           const norm = normalizeAmountCents(
