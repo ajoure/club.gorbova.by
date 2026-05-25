@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import type { UnsupportedFileInfo } from "@/types/files";
+import { normalizeEdgeFunctionErrorAsync } from "@/utils/normalizeEdgeFunctionError";
 
 export interface ChatMessage {
   id: string;
@@ -195,16 +196,16 @@ export function useAiChat() {
       });
 
       if (error) {
-        const errMsg = typeof error === "object" && "message" in error ? error.message : String(error);
+        const errMsg = await normalizeEdgeFunctionErrorAsync(error, data);
         
-        if (errMsg.includes("429") || errMsg.includes("Слишком много")) {
+        if (errMsg.includes("Слишком много")) {
           toast({ title: "Слишком много запросов", description: "Попробуйте позже", variant: "destructive" });
-        } else if (errMsg.includes("402") || errMsg.includes("Исчерпан")) {
+        } else if (errMsg.includes("Лимит AI") || errMsg.includes("Исчерпан")) {
           toast({ title: "Лимит AI исчерпан", description: "Обратитесь к администратору", variant: "destructive" });
         } else {
-          toast({ title: "Ошибка AI", description: "Попробуйте ещё раз через несколько секунд", variant: "destructive" });
+          toast({ title: "Ошибка AI", description: errMsg, variant: "destructive" });
         }
-        throw error;
+        throw new Error(errMsg);
       }
 
       if (data?.conversation_id) {
@@ -235,10 +236,11 @@ export function useAiChat() {
       setMessages(prev => [...prev, assistantMsg]);
     } catch (err) {
       console.error("Chat error:", err);
+      const message = err instanceof Error ? err.message : "Произошла ошибка при обработке запроса. Попробуйте ещё раз.";
       setMessages(prev => [...prev, {
         id: crypto.randomUUID(),
         role: "assistant",
-        content: "Произошла ошибка при обработке запроса. Попробуйте ещё раз.",
+        content: message,
         timestamp: new Date(),
       }]);
     } finally {

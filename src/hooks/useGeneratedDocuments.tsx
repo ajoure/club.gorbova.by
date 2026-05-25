@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { normalizeEdgeFunctionErrorAsync } from "@/utils/normalizeEdgeFunctionError";
 
 export interface GeneratedDocument {
   id: string;
@@ -212,7 +213,7 @@ export function useResendDocument() {
           mode: "generate",
         },
       });
-      if (error) throw error;
+      if (error) throw new Error(await normalizeEdgeFunctionErrorAsync(error, data));
       return data;
     },
     onSuccess: () => {
@@ -253,7 +254,7 @@ export function useRegenerateDocument() {
           mode: "generate",
         },
       });
-      if (error) throw error;
+      if (error) throw new Error(await normalizeEdgeFunctionErrorAsync(error, data));
       return data;
     },
     onSuccess: () => {

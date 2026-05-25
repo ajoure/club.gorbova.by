@@ -32,7 +32,7 @@ import { Loader2, FileText, Download, Eye, Sparkles, RefreshCw, AlertCircle, Fil
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { normalizeEdgeFunctionError, normalizeEdgeFunctionErrorAsync } from "@/utils/normalizeEdgeFunctionError";
 import { useHasRoleV2 } from "@/hooks/useHasRoleV2";
 import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
 
@@ -351,7 +351,7 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
       if ((data as any)?.error) throw new Error((data as any).error);
       setPreview(data as PreviewResult);
     } catch (e: any) {
-      toast.error(`Preview: ${normalizeEdgeFunctionError(e, e?.context?.body ?? null)}`);
+      toast.error(`Preview: ${await normalizeEdgeFunctionErrorAsync(e)}`);
     } finally {
       setPreviewLoading(false);
     }
@@ -374,7 +374,7 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
       }
       await fetchAll();
     } catch (e: any) {
-      toast.error(`Создание PDF: ${normalizeEdgeFunctionError(e, e?.context?.body ?? null)}`);
+      toast.error(`Создание PDF: ${await normalizeEdgeFunctionErrorAsync(e)}`);
     } finally {
       setGenerating(false);
     }
@@ -433,7 +433,7 @@ export function DealDocumentsPanel({ orderId }: { orderId: string }) {
       setExecutorTestResult({ found, resolved, empty });
       toast.success(`Executor FLDs: ${found.length} в шаблоне, ${resolved.length} заполнено, ${empty.length} пусто`);
     } catch (e: any) {
-      toast.error(`Тест исполнителя: ${normalizeEdgeFunctionError(e, e?.context?.body ?? null)}`);
+      toast.error(`Тест исполнителя: ${await normalizeEdgeFunctionErrorAsync(e)}`);
     } finally {
       setTestingExecutor(false);
     }

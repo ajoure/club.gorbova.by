@@ -139,6 +139,9 @@ function inflectMaleNameSoft(word: string, c: RuCase): string | null {
   // -й (Сергей, Николай, Алексей)
   const lc = word.toLowerCase();
   if (!/й$/.test(lc)) return null;
+  // Адъективные должности на -щий/-ший/-чий (например, «Управляющий»)
+  // нельзя склонять как имена на -й: иначе получается «Управляющия».
+  if (isShchijAdj(lc)) return null;
   const stem = word.slice(0, -1);
   switch (c) {
     case 'nominative': return word;
@@ -284,8 +287,8 @@ function inflectOneToken(
   if ((r = inflectPatronymicM(raw, c))) return { out: r, rule: 'patronymic_m', ok: 'inflected' };
   if ((r = inflectMaleSurnameOvEv(raw, c))) return { out: r, rule: 'surname_m_ov', ok: 'inflected' };
   if ((r = inflectMaleAdjSurname(raw, c))) return { out: r, rule: 'surname_m_adj', ok: 'inflected' };
-  if ((r = inflectMaleNameSoft(raw, c))) return { out: r, rule: 'name_m_soft', ok: 'inflected' };
   if ((r = inflectMaleAdjNoun(raw, c))) return { out: r, rule: 'adj_noun_m_shchij', ok: 'inflected' };
+  if ((r = inflectMaleNameSoft(raw, c))) return { out: r, rule: 'name_m_soft', ok: 'inflected' };
   if ((r = inflectAdjMHard(raw, c))) return { out: r, rule: 'adj_m_hard', ok: 'inflected' };
   if ((r = inflectMaleSoftNoun(raw, c))) return { out: r, rule: 'noun_m_soft', ok: 'inflected' };
 
