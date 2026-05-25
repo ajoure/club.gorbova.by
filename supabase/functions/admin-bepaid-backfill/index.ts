@@ -428,6 +428,7 @@ Deno.serve(async (req) => {
                     api_scan_mode: apiScanMode,
                     api_truncated: apiTruncated,
                     source_subscription_v2_id: cand.subscription_v2_id,
+                    product_id: cand.product_id,
                   },
                 },
                 { onConflict: "provider,provider_subscription_id" },
