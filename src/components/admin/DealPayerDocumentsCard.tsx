@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/select";
 import { Loader2, UserCog, CreditCard, RefreshCw, AlertCircle, CheckCircle2, FileDown, FilePlus2 } from "lucide-react";
 import { toast } from "sonner";
-import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { normalizeEdgeFunctionErrorAsync } from "@/utils/normalizeEdgeFunctionError";
 import { useHasRoleV2 } from "@/hooks/useHasRoleV2";
 import { derivePaymentChannel, CHANNEL_LABELS_RU, type PaymentChannel } from "@/utils/derivePaymentChannel";
 import { resolveDocumentScenario, sourceLabelRu, type PayerType as ResolverPayerType } from "@/utils/resolveDocumentScenario";
@@ -358,7 +358,7 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
       toast.success("Изменения сохранены");
       await load();
     } catch (e: any) {
-      toast.error(`Сохранение: ${normalizeEdgeFunctionError(e, e?.context?.body ?? null)}`);
+      toast.error(`Сохранение: ${await normalizeEdgeFunctionErrorAsync(e)}`);
     } finally {
       setSaving(false);
     }
@@ -384,7 +384,7 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
       toast.success("Ручные изменения сброшены");
       await load();
     } catch (e: any) {
-      toast.error(`Сброс: ${normalizeEdgeFunctionError(e, e?.context?.body ?? null)}`);
+      toast.error(`Сброс: ${await normalizeEdgeFunctionErrorAsync(e)}`);
     } finally {
       setSaving(false);
     }
@@ -410,7 +410,7 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
       if (r.ok === false) toast.error(r.message);
       await load();
     } catch (e: any) {
-      toast.error(`Создание документа: ${normalizeEdgeFunctionError(e, e?.context?.body ?? null)}`);
+      toast.error(`Создание документа: ${await normalizeEdgeFunctionErrorAsync(e)}`);
     } finally {
       setGenerating(false);
     }
