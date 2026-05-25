@@ -77,6 +77,87 @@ export function limitsForKey(key: 'chat' | 'balance_analysis' | '107NK' | 'defau
   return LIMITS[key];
 }
 
+// ============================================================================
+// UI projection: единственный read-only вычислитель статуса для frontend.
+// Используется edge function `ai-access-status`. Никакой собственной логики
+// в самом edge — он только зовёт этот helper.
+// ============================================================================
+
+export interface AiAccessStatusUi {
+  tier: 'full' | 'zg_only' | 'none';
+  allowed_modes: { chat: boolean; prompt: boolean };
+  allowed_scenarios: Array<{
+    code: string;
+    allowed: boolean;
+    denial_reason?: string;
+  }>;
+  quota_by_mode: {
+    chat: { daily: { used: number; limit: number; remaining: number }; monthly: { used: number; limit: number; remaining: number } };
+    balance_analysis: { daily: { used: number; limit: number; remaining: number }; monthly: { used: number; limit: number; remaining: number } };
+    '107NK': { daily: { used: number; limit: number; remaining: number }; monthly: { used: number; limit: number; remaining: number } };
+  };
+  cta_target: { business_url: string; club_url: string };
+  denial_reasons: Record<string, string>;
+}
+
+const CTA_TARGET = {
+  business_url: '/buhgalteria-kak-biznes',
+  club_url: '/gorbova-club',
+};
+
+const DENIAL_HUMAN: Record<string, string> = {
+  chat_not_in_tier: 'Свободный чат недоступен на вашем тарифе. Откройте Business или Gorbova Club.',
+  balance_analysis_not_in_tier: 'Сценарий «Анализ баланса» недоступен на вашем тарифе.',
+  '107NK_not_in_tier': 'Сценарий «Ответ на запрос МНС» недоступен на вашем тарифе. Откройте Business или Gorbova Club.',
+  scenario_requires_full_tier: 'Этот сценарий доступен в тарифах Business / Gorbova Club.',
+  no_access: 'AI-помощник недоступен на вашем тарифе.',
+};
+
+function quotaSlot(used: number, limit: number) {
+  return { used, limit, remaining: Math.max(0, limit - used) };
+}
+
+export async function resolveAiAccessStatus(
+  supabase: any,
+  userId: string,
+  knownScenarioCodes: string[],
+): Promise<AiAccessStatusUi> {
+  const access = await resolveAiAccess(supabase, userId);
+  const chatCheck = isModeAllowed(access, 'chat');
+  const scenarios = knownScenarioCodes.map((code) => {
+    const check = isModeAllowed(access, 'prompt', code);
+    return { code, allowed: check.allowed, denial_reason: check.allowed ? undefined : check.reason };
+  });
+
+  const [chatUsed, baUsed, nkUsed] = await Promise.all([
+    countUserMessages(supabase, userId, { ai_mode: 'chat' }),
+    countUserMessages(supabase, userId, { scenario_code: 'balance_analysis' }),
+    countUserMessages(supabase, userId, { scenario_code: '107NK' }),
+  ]);
+
+  return {
+    tier: access.tier,
+    allowed_modes: { chat: chatCheck.allowed, prompt: scenarios.some(s => s.allowed) },
+    allowed_scenarios: scenarios,
+    quota_by_mode: {
+      chat: {
+        daily: quotaSlot(chatUsed.daily, LIMITS.chat.daily),
+        monthly: quotaSlot(chatUsed.monthly, LIMITS.chat.monthly),
+      },
+      balance_analysis: {
+        daily: quotaSlot(baUsed.daily, LIMITS.balance_analysis.daily),
+        monthly: quotaSlot(baUsed.monthly, LIMITS.balance_analysis.monthly),
+      },
+      '107NK': {
+        daily: quotaSlot(nkUsed.daily, LIMITS['107NK'].daily),
+        monthly: quotaSlot(nkUsed.monthly, LIMITS['107NK'].monthly),
+      },
+    },
+    cta_target: CTA_TARGET,
+    denial_reasons: DENIAL_HUMAN,
+  };
+}
+
 export async function countUserMessages(
   supabase: any,
   userId: string,
