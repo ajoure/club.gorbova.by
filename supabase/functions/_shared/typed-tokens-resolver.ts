@@ -85,12 +85,13 @@ export function canonicalizeLegalEntity(
   // 2) Если всё ещё пуст — пробуем распознать ПОЛНУЮ форму
   //    («Закрытое акционерное общество ...» → ЗАО).
   if (!orgForm && source) {
-    const sourceLc = source.toLowerCase();
+    const sourceLc = source.toLowerCase().replace(/\s+/g, " ").trim();
     for (const fullLc of ORG_FORM_FULLS_SORTED) {
       if (sourceLc.startsWith(fullLc + " ") || sourceLc === fullLc) {
         orgForm = ORG_FORM_FULL_TO_SHORT[fullLc];
         // Отрезаем полную форму из source, чтобы дальше остался только name.
-        strippedSource = source.slice(fullLc.length).trim();
+        const fullFormPattern = fullLc.replace(/\s+/g, "\\s+");
+        strippedSource = source.replace(new RegExp(`^${fullFormPattern}\\s*`, "i"), "").trim();
         break;
       }
     }
