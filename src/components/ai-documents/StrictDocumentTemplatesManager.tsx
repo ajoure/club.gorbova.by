@@ -265,6 +265,7 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
 
   const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null);
   const [activeVersionId, setActiveVersionId] = useState<string | null>(null);
+  const [openTemplates, setOpenTemplates] = useState<Set<string>>(new Set());
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewText, setPreviewText] = useState<string>("");
   const [previewTokens, setPreviewTokens] = useState<string[]>([]);
