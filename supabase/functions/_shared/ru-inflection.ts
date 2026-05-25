@@ -412,19 +412,104 @@ export const ORG_FORM_SHORT_TO_FULL: Record<string, string> = {
   'ИП':   'Индивидуальный предприниматель',
   'УП':   'Унитарное предприятие',
   'ЧУП':  'Частное унитарное предприятие',
+  'ПУП':  'Производственное унитарное предприятие',
   'РУП':  'Республиканское унитарное предприятие',
   'ГУП':  'Государственное унитарное предприятие',
   'ФГУП': 'Федеральное государственное унитарное предприятие',
   'МУП':  'Муниципальное унитарное предприятие',
+  'ГП':   'Государственное предприятие',
+  'КП':   'Коммунальное предприятие',
   'ТДО':  'Товарищество с дополнительной ответственностью',
   'ТОО':  'Товарищество с ограниченной ответственностью',
+  'СООО': 'Совместное общество с ограниченной ответственностью',
+  'ИООО': 'Иностранное общество с ограниченной ответственностью',
+  'ИЧУП': 'Иностранное частное унитарное предприятие',
   'СП':   'Совместное предприятие',
 };
+
+// Reverse map (full lowercase → short). Используется canonicalizeLegalEntity
+// для распознавания полной формы собственности в начале сырого имени.
+export const ORG_FORM_FULL_TO_SHORT: Record<string, string> = Object.entries(
+  ORG_FORM_SHORT_TO_FULL,
+).reduce((acc, [short, full]) => {
+  acc[full.toLowerCase()] = short;
+  return acc;
+}, {} as Record<string, string>);
 
 export function expandOrgFormToLong(short: string | null | undefined): string {
   if (!short) return '';
   const key = String(short).trim().toUpperCase();
   return ORG_FORM_SHORT_TO_FULL[key] ?? String(short).trim();
+}
+
+// ===========================================================================
+// normalizeMasculinePosition — приводит должность к мужскому роду ВСЕГДА,
+// независимо от наличия case-модификатора. Применяется ДО inflectRu.
+// Pipeline: raw → normalizeMasculinePosition → inflectRu(..., {forceGender:'m'}).
+// Женская форма должности в документах не выводится.
+// ===========================================================================
+const FEM_TO_MASC_POSITION: Record<string, string> = {
+  'управляющая':            'управляющий',
+  'генеральная директриса': 'генеральный директор',
+  'генеральная директорша': 'генеральный директор',
+  'директриса':             'директор',
+  'директорша':             'директор',
+  'заместительница':        'заместитель',
+  'руководительница':       'руководитель',
+  'исполнительница':        'исполнитель',
+  'учредительница':         'учредитель',
+  'основательница':         'основатель',
+  'владелица':              'владелец',
+  'собственница':           'собственник',
+  'продавщица':             'продавец',
+  'покупательница':         'покупатель',
+  'представительница':      'представитель',
+  'специалистка':           'специалист',
+  'юристка':                'юрист',
+  'юрисконсультка':         'юрисконсульт',
+  'консультантка':          'консультант',
+  'бухгалтерша':            'бухгалтер',
+  'администраторша':        'администратор',
+  'менеджерша':             'менеджер',
+  'координаторша':          'координатор',
+  'кураторша':              'куратор',
+  'начальница':             'начальник',
+  'индивидуальная предпринимательница': 'индивидуальный предприниматель',
+  'предпринимательница':    'предприниматель',
+  'секретарша':             'секретарь',
+  'председательница':       'председатель',
+};
+
+function preserveFirstCase(orig: string, repl: string): string {
+  if (!orig) return repl;
+  const first = orig.charAt(0);
+  if (first === first.toUpperCase() && first !== first.toLowerCase()) {
+    return repl.charAt(0).toUpperCase() + repl.slice(1);
+  }
+  return repl;
+}
+
+export function normalizeMasculinePosition(input: string | null | undefined): string {
+  if (!input) return '';
+  const trimmed = String(input).trim();
+  if (!trimmed) return '';
+  const lc = trimmed.toLowerCase();
+
+  // 1) Точное / префиксное совпадение (длинные ключи первыми).
+  const keys = Object.keys(FEM_TO_MASC_POSITION).sort((a, b) => b.length - a.length);
+  for (const k of keys) {
+    if (lc === k) return preserveFirstCase(trimmed, FEM_TO_MASC_POSITION[k]);
+    if (lc.startsWith(k + ' ')) {
+      return preserveFirstCase(trimmed, FEM_TO_MASC_POSITION[k]) + trimmed.slice(k.length);
+    }
+  }
+  // 2) Замена внутри строки (на случай составных форм).
+  let out = trimmed;
+  for (const k of keys) {
+    const re = new RegExp(`\\b${k}\\b`, 'giu');
+    out = out.replace(re, (m) => preserveFirstCase(m, FEM_TO_MASC_POSITION[k]));
+  }
+  return out;
 }
 
 // ===========================================================================
