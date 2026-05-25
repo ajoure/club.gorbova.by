@@ -394,8 +394,11 @@ export function DealPayerDocumentsCard({ orderId }: { orderId: string }) {
     if (!order || !effectiveTemplateId) return;
     setGenerating(true);
     try {
+      // Admin context: explicit admin_force=true to bypass self-service guards
+      // (no_real_payment / offer_unresolved / document_template_not_configured / document_not_enabled_for_offer).
+      // Сервер пишет audit `document.admin_force_generate` со списком skipped_guards.
       const { data, error } = await supabase.functions.invoke("canonical-document-generate-strict", {
-        body: { mode: "generate", order_id: order.id, template_id: effectiveTemplateId },
+        body: { mode: "generate", order_id: order.id, template_id: effectiveTemplateId, admin_force: true },
       });
       if (error) throw error;
       if ((data as any)?.error) throw new Error((data as any).error);
