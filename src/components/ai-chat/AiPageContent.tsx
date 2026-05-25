@@ -234,6 +234,9 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
 
   // Chat
   const aiChat = useAiChat();
+  const { data: aiAccess } = useAiAccess();
+  const chatAllowed = aiAccess ? aiAccess.allowed_modes.chat : true;
+  const chatQuota = aiAccess?.quota_by_mode.chat.daily;
 
   // Scroll listener — track if user is near bottom
   useEffect(() => {
