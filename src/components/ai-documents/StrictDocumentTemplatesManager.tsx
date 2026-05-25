@@ -277,6 +277,13 @@ export interface StrictDocumentTemplatesManagerProps {
   subtitle?: React.ReactNode;
   /** Текст empty-state. По умолчанию — «Нет шаблонов. Загрузите первый .docx.». */
   emptyText?: string;
+  /**
+   * Read-only режим: скрывает все мутационные действия
+   * (upload .docx, удаление, активация, разметка, FileNameTemplateEditor).
+   * Не влияет на query/load/validation — чисто UI-фильтр.
+   * Используется в /document-generation → Документы → Идеология.
+   */
+  readOnly?: boolean;
 }
 
 export function StrictDocumentTemplatesManager({
@@ -285,6 +292,7 @@ export function StrictDocumentTemplatesManager({
   title,
   subtitle,
   emptyText,
+  readOnly = false,
 }: StrictDocumentTemplatesManagerProps = {}) {
 
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
