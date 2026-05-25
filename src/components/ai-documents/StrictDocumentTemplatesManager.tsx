@@ -310,14 +310,39 @@ export function StrictDocumentTemplatesManager({
   const [markupTemplateName, setMarkupTemplateName] = useState<string>("");
   const fetchAll = async () => {
     setLoading(true);
+    let tplQuery = supabase
+      .from("document_templates")
+      .select("id, name, description, template_status, current_version_id, created_at, category")
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false });
+    if (categoryFilter) {
+      tplQuery = tplQuery.eq("category", categoryFilter);
+    }
     const [{ data: t }, { data: v }, { data: f }] = await Promise.all([
-      supabase
-        .from("document_templates")
-        .select("id, name, description, template_status, current_version_id, created_at")
-        .is("deleted_at", null)
-        .order("created_at", { ascending: false }),
+      tplQuery,
       supabase
         .from("document_template_versions")
+        .select("id, template_id, version_number, storage_bucket, storage_path, file_name, file_size_bytes, is_current, validation_status, validation_errors, validation_checked_at, markup_status, detected_tokens, token_manifest, created_at")
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("fields_registry")
+        .select("public_id")
+        .not("public_id", "is", null)
+        .is("archived_at", null),
+    ]);
+    setTemplates((t ?? []) as TemplateRow[]);
+    setVersions(((v ?? []) as any[]).map(row => ({
+      ...row,
+      validation_errors: row.validation_errors ?? [],
+      detected_tokens: row.detected_tokens ?? [],
+      token_manifest: row.token_manifest ?? [],
+    })) as VersionRow[]);
+    setKnownPublicIds(new Set((f ?? []).map((x: any) => x.public_id).filter(Boolean)));
+    setLoading(false);
+  };
+
+  useEffect(() => { fetchAll(); }, [categoryFilter]);
+
         .select("id, template_id, version_number, storage_bucket, storage_path, file_name, file_size_bytes, is_current, validation_status, validation_errors, validation_checked_at, markup_status, detected_tokens, token_manifest, created_at")
         .order("created_at", { ascending: false }),
       supabase
