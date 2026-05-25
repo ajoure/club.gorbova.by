@@ -1,4 +1,13 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import {
+  resolveAiAccess,
+  isModeAllowed,
+  countUserMessages,
+  limitsForKey,
+  truncateHistory,
+  classifyOffTopic,
+  HARD_USER_MESSAGE_CHARS,
+} from '../_shared/ai-access.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -11,6 +20,21 @@ const ALLOWED_MIME_PREFIXES = ['application/pdf', 'application/msword', 'applica
 const MAX_FILES = 5;
 const MAX_TOTAL_BYTES = 10 * 1024 * 1024;
 const MAX_TEXT_CHARS = 100000;
+
+const MODEL_CHAT = 'google/gemini-2.5-flash';
+const MODEL_PROMPT = 'google/gemini-2.5-pro';
+
+async function writeAccessAudit(supabase: any, userId: string, action: string, details: Record<string, any>) {
+  try {
+    await supabase.from('audit_logs').insert({
+      actor_id: userId,
+      action,
+      entity_type: 'ai_chat',
+      details,
+    });
+  } catch (_e) { /* non-fatal */ }
+}
+
 
 const WEB_SYSTEM_PROMPT = `Ты — gorbova AI, профессиональный бизнес-ассистент для предпринимателей.
 Отвечай на русском языке. Будь полезным, точным и структурированным.
