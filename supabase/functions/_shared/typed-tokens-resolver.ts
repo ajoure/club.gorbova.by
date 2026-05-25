@@ -62,22 +62,41 @@ export function canonicalizeLegalEntity(
   let orgForm = (rawOrgForm ?? "").toString().trim();
   let nameRaw = (rawName ?? "").toString().trim();
 
-  // Если orgForm пуст — пробуем выделить из nameRaw или из rawFullName.
+  // source — то, откуда будем извлекать orgForm/name, если они не заданы явно.
   const source = nameRaw || (rawFullName ?? "").toString().trim();
+  let strippedSource = source;
+
+  // 1) Если orgForm пуст — пробуем выделить КОРОТКУЮ форму из первого слова.
   if (!orgForm && source) {
-    const head = source.split(/\s+/)[0]?.toUpperCase() ?? "";
-    if (ORG_FORM_SHORTS.has(head)) orgForm = head;
+    const head = source.split(/\s+/)[0]?.replace(/[«»"'„‟"']/g, "").toUpperCase() ?? "";
+    if (ORG_FORM_SHORTS.has(head)) {
+      orgForm = head;
+    }
   }
 
-  // Из source убираем ведущую форму (если совпала с orgForm) и кавычки.
-  let nameClean = nameRaw;
-  if (!nameClean && source) nameClean = source;
+  // 2) Если всё ещё пуст — пробуем распознать ПОЛНУЮ форму
+  //    («Закрытое акционерное общество ...» → ЗАО).
+  if (!orgForm && source) {
+    const sourceLc = source.toLowerCase();
+    for (const fullLc of ORG_FORM_FULLS_SORTED) {
+      if (sourceLc.startsWith(fullLc + " ") || sourceLc === fullLc) {
+        orgForm = ORG_FORM_FULL_TO_SHORT[fullLc];
+        // Отрезаем полную форму из source, чтобы дальше остался только name.
+        strippedSource = source.slice(fullLc.length).trim();
+        break;
+      }
+    }
+  }
+
+  // 3) nameClean: если есть явный rawName — берём его; иначе из (возможно
+  //    обрезанного) source. И снимаем ведущую короткую форму, если она
+  //    дублирует orgForm.
+  let nameClean = nameRaw || strippedSource;
   if (nameClean && orgForm) {
     const re = new RegExp(`^${orgForm}\\s+`, "i");
     nameClean = nameClean.replace(re, "");
   }
   nameClean = stripQuotes(nameClean).trim();
-  // Иногда внутри ещё одни кавычки (вложенные)
   nameClean = stripQuotes(nameClean).trim();
 
   // ИП — без кавычек; ЮЛ — в «…».
