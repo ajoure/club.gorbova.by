@@ -1,9 +1,9 @@
 /**
- * EntityTableView — full-width table of entities with search and filter pills.
+ * EntityTableView — каноническая таблица юрлиц/ИП с DnD-колонками, ресайзом
+ * и настройкой видимости (как в /admin/forms и /admin/live-events).
  *
- * Replaces EntityListScreen (card layout).
- * Shows all entities (billing + document, active + archived) in one table.
- * Archive action only for purpose=document && status=active.
+ * Бизнес-логика не меняется: поиск, фильтры, архив, bulk-обновление реестра,
+ * клик-по-строке открывает sheet — всё как было.
  */
 
 import { useState, useMemo, useCallback } from "react";
@@ -38,6 +38,23 @@ import {
   Loader2,
   RefreshCw,
 } from "lucide-react";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  horizontalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import {
+  SortableResizableTableHead,
+  ResizableTableHead,
+} from "@/components/admin/table/SortableResizableTableHead";
+import { ColumnSettings, type ColumnConfig } from "@/components/admin/ColumnSettings";
+import { useEntitiesColumns, ENTITIES_LOCKED_KEYS } from "@/hooks/useEntitiesColumns";
 import {
   getEntityShortName,
   getEntityTypeBadge,
@@ -82,22 +99,31 @@ export function EntityTableView({
   const [dryRunResult, setDryRunResult] = useState<BulkDryRunResult | null>(null);
   const [bulkResult, setBulkResult] = useState<BulkRefreshResult | null>(null);
 
+  const {
+    columns,
+    setColumns,
+    visibleColumns,
+    handleColumnResize,
+    handleDragEnd,
+    resetColumns,
+  } = useEntitiesColumns();
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  );
+
   const filtered = useMemo(() => {
     let list = allEntities;
 
-    // Filter by type/status
     if (filter === "legal") list = list.filter((e) => e.client_type === "legal_entity");
     if (filter === "entrepreneur") list = list.filter((e) => e.client_type === "entrepreneur");
     if (filter === "active") list = list.filter((e) => e.status === "active");
     if (filter === "archived") list = list.filter((e) => e.status === "archived");
 
-    // Search by short name
     if (search.trim()) {
       const q = search.toLowerCase().trim();
       list = list.filter((e) => getEntityShortName(e).toLowerCase().includes(q));
     }
 
-    // Sort: active first, then alphabetically by short name
     return [...list].sort((a, b) => {
       if (a.status !== b.status) return a.status === "active" ? -1 : 1;
       return getEntityShortName(a).localeCompare(getEntityShortName(b), "ru");
@@ -126,12 +152,117 @@ export function EntityTableView({
     );
   }
 
+  // ============ Рендер ячеек по col.key (паттерн FormsHubTable) ============
+  const renderCell = (col: ColumnConfig, entity: ClientLegalDetails) => {
+    const canArchive = entity.purpose === "document" && entity.status === "active";
+    switch (col.key) {
+      case "name":
+        return (
+          <TableCell key={col.key} style={{ width: col.width }} className="font-medium">
+            <span className="truncate block">{getEntityShortName(entity)}</span>
+          </TableCell>
+        );
+      case "type":
+        return (
+          <TableCell key={col.key} style={{ width: col.width }}>
+            <Badge variant="outline" className="text-xs">
+              {getEntityTypeBadge(entity)}
+            </Badge>
+          </TableCell>
+        );
+      case "unp":
+        return (
+          <TableCell key={col.key} style={{ width: col.width }} className="text-muted-foreground text-sm font-mono">
+            {getEntityUnp(entity) || "—"}
+          </TableCell>
+        );
+      case "status":
+        return (
+          <TableCell key={col.key} style={{ width: col.width }}>
+            {entity.status === "archived" ? (
+              <Badge variant="secondary" className="text-xs bg-muted text-muted-foreground">
+                Архив
+              </Badge>
+            ) : (
+              <Badge variant="secondary" className="text-xs bg-emerald-500/10 text-emerald-600 border-emerald-500/20">
+                Активный
+              </Badge>
+            )}
+          </TableCell>
+        );
+      case "actions":
+        return (
+          <TableCell key={col.key} style={{ width: col.width }} className="text-right">
+            <div className="flex items-center justify-end gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-xs"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onView(entity);
+                }}
+              >
+                <Pencil className="h-3 w-3 mr-1" />
+                Открыть
+              </Button>
+              {canArchive && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-xs text-muted-foreground hover:text-destructive"
+                  disabled={isArchiving}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onArchive(entity.id);
+                  }}
+                >
+                  {isArchiving ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Archive className="h-3 w-3" />
+                  )}
+                </Button>
+              )}
+            </div>
+          </TableCell>
+        );
+      default:
+        return null;
+    }
+  };
+
+  const renderHead = (col: ColumnConfig) => {
+    if (ENTITIES_LOCKED_KEYS.has(col.key)) {
+      return (
+        <ResizableTableHead key={col.key} column={col} onResize={handleColumnResize}>
+          <span className="text-xs text-muted-foreground">{col.label}</span>
+        </ResizableTableHead>
+      );
+    }
+    return (
+      <SortableResizableTableHead
+        key={col.key}
+        id={col.key}
+        column={col}
+        onResize={handleColumnResize}
+      >
+        {col.label}
+      </SortableResizableTableHead>
+    );
+  };
+
+  // Только нелокированные колонки попадают в DnD-контекст
+  const sortableIds = visibleColumns
+    .filter((c) => !ENTITIES_LOCKED_KEYS.has(c.key))
+    .map((c) => c.key);
+
   return (
     <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <h2 className="text-lg font-semibold">Юрлица / ИП</h2>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {isAdmin && allEntities.length > 0 && (
             <Button onClick={handleBulkDryRun} variant="outline" size="sm" disabled={isBulkRunning}>
               {isBulkRunning ? (
@@ -143,6 +274,21 @@ export function EntityTableView({
                 ? `${bulkProgress.current}/${bulkProgress.total}`
                 : "Обновить реестр"}
             </Button>
+          )}
+          {allEntities.length > 0 && (
+            <ColumnSettings
+              columns={columns.filter((c) => !ENTITIES_LOCKED_KEYS.has(c.key))}
+              onChange={(updated) => {
+                setColumns((prev) => {
+                  const locked = prev.filter((c) => ENTITIES_LOCKED_KEYS.has(c.key));
+                  return [
+                    ...updated.map((c, i) => ({ ...c, order: i })),
+                    ...locked.map((c, i) => ({ ...c, order: updated.length + i })),
+                  ];
+                });
+              }}
+              onReset={resetColumns}
+            />
           )}
           <Button onClick={onCreateNew} size="sm">
             <Plus className="h-4 w-4 mr-1" />
@@ -253,97 +399,56 @@ export function EntityTableView({
         </GlassCard>
       )}
 
-      {/* Table */}
+      {/* Canonical table */}
       {allEntities.length > 0 && (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Название</TableHead>
-              <TableHead className="w-[60px]">Тип</TableHead>
-              <TableHead className="w-[120px]">УНП</TableHead>
-              <TableHead className="w-[100px]">Статус</TableHead>
-              <TableHead className="w-[140px] text-right">Действия</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
-                  Ничего не найдено
-                </TableCell>
-              </TableRow>
-            ) : (
-              filtered.map((entity) => {
-                const canArchive =
-                  entity.purpose === "document" && entity.status === "active";
-                return (
-                  <TableRow
-                    key={entity.id}
-                    className="cursor-pointer"
-                    onClick={() => onView(entity)}
-                  >
-                    <TableCell className="font-medium">
-                      {getEntityShortName(entity)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="text-xs">
-                        {getEntityTypeBadge(entity)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground text-sm font-mono">
-                      {getEntityUnp(entity) || "—"}
-                    </TableCell>
-                    <TableCell>
-                      {entity.status === "archived" ? (
-                        <Badge variant="secondary" className="text-xs bg-muted text-muted-foreground">
-                          Архив
-                        </Badge>
-                      ) : (
-                        <Badge variant="secondary" className="text-xs bg-emerald-500/10 text-emerald-600 border-emerald-500/20">
-                          Активный
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-xs"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onView(entity);
-                          }}
-                        >
-                          <Pencil className="h-3 w-3 mr-1" />
-                          Открыть
-                        </Button>
-                        {canArchive && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-xs text-muted-foreground hover:text-destructive"
-                            disabled={isArchiving}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onArchive(entity.id);
-                            }}
-                          >
-                            {isArchiving ? (
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                            ) : (
-                              <Archive className="h-3 w-3" />
-                            )}
-                          </Button>
-                        )}
-                      </div>
-                    </TableCell>
+        <GlassCard className="p-0 overflow-hidden">
+          <div
+            data-table-scroll-x="true"
+            className="table-scroll-x relative"
+          >
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              <Table
+                wrapperClassName="contents"
+                style={{ tableLayout: "fixed", width: "max-content", minWidth: "100%" }}
+              >
+                <colgroup>
+                  {visibleColumns.map((col) => (
+                    <col key={col.key} style={{ width: `${col.width}px` }} />
+                  ))}
+                </colgroup>
+                <TableHeader>
+                  <TableRow>
+                    <SortableContext items={sortableIds} strategy={horizontalListSortingStrategy}>
+                      {visibleColumns.map(renderHead)}
+                    </SortableContext>
                   </TableRow>
-                );
-              })
-            )}
-          </TableBody>
-        </Table>
+                </TableHeader>
+                <TableBody>
+                  {filtered.length === 0 ? (
+                    <TableRow>
+                      <TableCell
+                        colSpan={visibleColumns.length}
+                        className="text-center text-muted-foreground py-8"
+                      >
+                        Ничего не найдено
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    filtered.map((entity) => (
+                      <TableRow
+                        key={entity.id}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => onView(entity)}
+                      >
+                        {visibleColumns.map((col) => renderCell(col, entity))}
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </DndContext>
+          </div>
+        </GlassCard>
       )}
 
       {/* Count */}
