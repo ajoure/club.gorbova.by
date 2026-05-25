@@ -247,9 +247,9 @@ export function DocumentPackageIdeologyView() {
                           className="mt-0.5"
                         />
                         <div className="min-w-0 flex-1">
-                          <div className="text-xs font-medium truncate">{e.short_name ?? "—"}</div>
+                          <div className="text-xs font-medium truncate">{entityDisplayName(e)}</div>
                           <div className="text-[10px] text-muted-foreground truncate">
-                            {e.unp ? `УНП ${e.unp}` : "без УНП"}
+                            {entityUnp(e) ? `УНП ${entityUnp(e)}` : "без УНП"}
                           </div>
                         </div>
                       </label>
