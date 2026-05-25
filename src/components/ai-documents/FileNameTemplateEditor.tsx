@@ -218,7 +218,8 @@ export function FileNameTemplateEditor({ templateId, templateName }: Props) {
   }
 
   return (
-    <div className="space-y-3 border-t pt-3 mt-3">
+    <div className="space-y-3 border-t pt-3 mt-3 min-w-0 max-w-full">
+
       <div>
         <Label className="text-xs">Имя файла при скачивании ({templateName})</Label>
         <p className="text-[11px] text-muted-foreground mt-0.5">
@@ -300,7 +301,7 @@ export function FileNameTemplateEditor({ templateId, templateName }: Props) {
         <p className="text-[11px] text-emerald-600">✓ Шаблон валиден</p>
       )}
 
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" onClick={save} disabled={!canSave}>
           {saving ? "Сохранение…" : "Сохранить"}
         </Button>
@@ -308,7 +309,7 @@ export function FileNameTemplateEditor({ templateId, templateName }: Props) {
           Сбросить к системному дефолту
         </Button>
         {!isValid && template.trim().length > 0 && (
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-[11px] text-muted-foreground basis-full">
             Сохранение недоступно — исправьте ошибки выше
           </span>
         )}

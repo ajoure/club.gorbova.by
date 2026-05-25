@@ -891,7 +891,7 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
 
 
         {/* Preview pane */}
-        <div className="border rounded-lg p-3">
+        <div className="border rounded-lg p-3 min-w-0 max-w-full overflow-hidden">
           {!activeVersion ? (
             <div className="text-sm text-muted-foreground text-center py-10">
               Выберите версию шаблона для preview и валидации.
@@ -901,23 +901,23 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
           ) : (
-            <div className="space-y-3">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <div className="text-sm font-medium">{activeTemplate?.name}</div>
-                  <div className="text-[11px] text-muted-foreground">
+            <div className="space-y-3 min-w-0">
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 min-w-0">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium break-words">{activeTemplate?.name}</div>
+                  <div className="text-[11px] text-muted-foreground break-all">
                     v{activeVersion.version_number} · {activeVersion.file_name} ·{" "}
                     {((activeVersion.file_size_bytes ?? 0) / 1024).toFixed(1)} KB
                   </div>
                 </div>
-                <div className="flex flex-col items-end gap-0.5">
+                <div className="flex flex-col sm:items-end gap-0.5 sm:shrink-0">
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-7 text-xs"
+                    className="h-7 text-xs w-full sm:w-auto whitespace-normal sm:whitespace-nowrap text-left sm:text-center"
                     onClick={() => openMarkup(activeTemplate!, activeVersion)}
                   >
-                    <Pencil className="h-3 w-3 mr-1" /> Проверка и исправление плейсхолдеров
+                    <Pencil className="h-3 w-3 mr-1 shrink-0" /> Проверка и исправление плейсхолдеров
                   </Button>
                   <span className="text-[10px] text-muted-foreground">
                     Открывайте, только если в шаблоне есть ошибки
@@ -1070,19 +1070,19 @@ function ValidationSummary({
 }) {
   const isValid = validation.status === "valid";
   return (
-    <div className={`border rounded p-3 ${isValid ? "border-emerald-400/40 bg-emerald-500/5" : "border-destructive/40 bg-destructive/5"}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-2 text-sm">
+    <div className={`border rounded p-3 min-w-0 ${isValid ? "border-emerald-400/40 bg-emerald-500/5" : "border-destructive/40 bg-destructive/5"}`}>
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 sm:gap-3 min-w-0">
+        <div className="flex items-start gap-2 text-sm min-w-0 flex-1">
           {isValid
-            ? <CheckCircle2 className="h-4 w-4 text-emerald-600 mt-0.5" />
-            : <AlertTriangle className="h-4 w-4 text-destructive mt-0.5" />}
-          <div className="flex flex-col">
-            <span className="font-medium">
+            ? <CheckCircle2 className="h-4 w-4 text-emerald-600 mt-0.5 shrink-0" />
+            : <AlertTriangle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />}
+          <div className="flex flex-col min-w-0">
+            <span className="font-medium break-words">
               {isValid
                 ? "Шаблон проверен — можно активировать"
                 : `Найдено ошибок: ${validation.errors.length}`}
             </span>
-            <span className="text-xs text-muted-foreground">
+            <span className="text-xs text-muted-foreground break-words">
               FLD-полей: {validation.recognized.length}
               {validation.raw_tokens.length !== validation.recognized.length
                 ? ` · всего плейсхолдеров: ${validation.raw_tokens.length}`
@@ -1090,9 +1090,9 @@ function ValidationSummary({
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:shrink-0 w-full sm:w-auto">
           {isValid && onCopyPlaceholders && (
-            <Button size="sm" variant="outline" className="h-8" onClick={onCopyPlaceholders}>
+            <Button size="sm" variant="outline" className="h-8 w-full sm:w-auto" onClick={onCopyPlaceholders}>
               Скопировать плейсхолдеры
             </Button>
           )}
@@ -1101,8 +1101,9 @@ function ValidationSummary({
             variant={isValid && !alreadyCurrent ? "default" : "outline"}
             disabled={!isValid || alreadyCurrent}
             onClick={onActivate}
+            className="w-full sm:w-auto"
           >
-            <Sparkles className="h-3.5 w-3.5 mr-1" />
+            <Sparkles className="h-3.5 w-3.5 mr-1 shrink-0" />
             {alreadyCurrent ? "Уже активен" : "Активировать шаблон"}
           </Button>
         </div>
