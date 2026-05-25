@@ -247,9 +247,59 @@ Deno.serve(async (req) => {
       metadata.prompt_title_snapshot = prompt.title;
       metadata.launcher_title_snapshot = prompt.launcher_title;
       metadata.scenario_type = prompt.type;
+      metadata.scenario_code = prompt.code || null;
+    }
+
+    // 6.1 Access check (entitlements-based). Default-deny при ошибке.
+    const scenarioCode = promptData?.code || null;
+    const access = await resolveAiAccess(serviceClient, user.id);
+    metadata.access_tier = access.tier;
+    const accessCheck = isModeAllowed(access, mode, scenarioCode);
+    if (!accessCheck.allowed) {
+      metadata.routing_reason = 'access_denied';
+      metadata.denial_reason = accessCheck.reason;
+      await writeAccessAudit(serviceClient, user.id, 'ai_chat.access_denied', {
+        mode, scenario_code: scenarioCode, reason: accessCheck.reason, access_tier: access.tier,
+      });
+      return new Response(JSON.stringify({
+        error: 'Эта функция AI недоступна на вашем тарифе.',
+        code: 'access_denied_for_mode',
+        denial_reason: accessCheck.reason,
+        cta: { business_url: '/buhgalteria-kak-biznes', club_url: '/gorbova-club' },
+      }), {
+        status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // 6.2 Quota check (по нормализованным ai_mode / scenario_code)
+    const limitKey: 'chat' | 'balance_analysis' | '107NK' | 'default_prompt' =
+      mode === 'chat'
+        ? 'chat'
+        : (scenarioCode === 'balance_analysis' ? 'balance_analysis'
+          : scenarioCode === '107NK' ? '107NK' : 'default_prompt');
+    const limits = limitsForKey(limitKey);
+    const used = await countUserMessages(serviceClient, user.id, mode === 'chat'
+      ? { ai_mode: 'chat' }
+      : { scenario_code: scenarioCode || undefined });
+    metadata.quota_limit = limits;
+    metadata.quota_used = used;
+    if (used.daily >= limits.daily || used.monthly >= limits.monthly) {
+      metadata.routing_reason = 'quota_denied';
+      metadata.denial_reason = used.daily >= limits.daily ? 'daily_limit_reached' : 'monthly_limit_reached';
+      await writeAccessAudit(serviceClient, user.id, 'ai_chat.quota_denied', {
+        mode, scenario_code: scenarioCode, limit_key: limitKey, used, limits,
+      });
+      return new Response(JSON.stringify({
+        error: `Достигнут лимит сообщений (${used.daily >= limits.daily ? `${limits.daily} в день` : `${limits.monthly} в месяц`}). Попробуйте позже.`,
+        code: 'rate_limited_for_mode',
+        limits, used,
+      }), {
+        status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
     // 7. Unsupported files guard (BEFORE quality gate)
+
     const unsupportedFiles = body.unsupported_files;
     const hasUsableText = stripNonContentMarkers(processedFileContents).length > 0;
     const allFilesUnsupported =
