@@ -3,19 +3,21 @@ import { AiPageContent } from "@/components/ai-chat/AiPageContent";
 
 /**
  * /document-generation — пользовательский домен «Генерация документов».
- * Содержит только секцию «Реквизиты» (Юрлица/ИП + Физлица).
- * Логика, хуки и таблицы реквизитов не меняются — переиспользуется AiPageContent.
+ * Содержит секцию «Документы» (пакеты документов, начиная с «Идеология»)
+ * и секцию «Реквизиты» (Юрлица/ИП + Физлица).
+ * Админская секция Gorbova AI и старая плоская «Документы» скрыты.
  */
 const DocumentGeneration = () => {
   return (
     <DashboardLayout>
       <AiPageContent
         mode="user"
-        initialSection="requisites"
+        initialSection="doc-packages"
         hiddenSections={["ai", "documents"]}
       />
     </DashboardLayout>
   );
 };
+
 
 export default DocumentGeneration;
