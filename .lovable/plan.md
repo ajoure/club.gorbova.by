@@ -1,185 +1,237 @@
-## да, согласен, с учетом правок:
+# План: Пакет «Идеология» как анкета пользователя, шаблоны — только у админа
 
-1. **Заголовок привести к обязательному формату**
-  &nbsp;
-  Сейчас указано `## План: ...`. Нужно:
-  `План: Вкладка «Документы» → подвкладка «Идеология» на /document-generation`
-2. **Добавить обязательный блок языка для Lovable**
-  &nbsp;
-  В начало плана добавить:
-  План должен быть составлен на русском языке.  
-  Отчет о выполненной работе должен быть составлен на русском языке.  
-  Вся переписка, пояснения, diff-summary, proof и результаты должны быть только на русском языке.
-3. **Явно зафиксировать UI-only / reuse-only scope**
-  &nbsp;
-  Добавить:
-  Это frontend-only patch. Новые таблицы, RPC, edge-functions, RLS, Supabase-типы, новый pipeline генерации, новый token registry, новый template picker и новый компонент списка шаблонов не создаются. Используется существующий `StrictDocumentTemplatesManager` с параметрами фильтрации.
-4. **Не смешивать** `documents` **и** `doc-packages` **семантически**
-  &nbsp;
-  Добавить пояснение:
-  - `documents` — существующая админская секция управления шаблонами/плейсхолдерами/историей/исполнителями.
-  - `doc-packages` — новая пользовательская секция пакетов документов внутри `/document-generation`.
-  - Названия не должны конфликтовать в `SECTIONS`, `DEFAULT_SUB`, `hiddenSections`, analytics/state.
-5. `categoryFilter` **нельзя использовать как произвольную строку без константы**
-  &nbsp;
-  Добавить константу:
-  ```ts
-  const DOCUMENT_PACKAGE_CATEGORIES = {
-    ideology: "ideology",
-  } as const;
-  ```
-  И использовать её в `AiPageContent`, чтобы не плодить строковые литералы.
-6. **Загрузка шаблонов: проверить текущий query chain**
-  &nbsp;
-  Перед правкой добавить read-only discovery:
-  - где именно формируется query к `document_templates`;
-  - есть ли сортировка;
-  - есть ли join/загрузка versions отдельным запросом;
-  - где insert нового шаблона;
-  - где создаётся новая версия;
-  - есть ли `category` только у `document_templates` или также у версий.
-7. **Уточнить поведение** `/admin/documents`
-  &nbsp;
-  В DoD пункт 3 сейчас противоречивый:
-  загруженный через «Идеология» не светится в `/admin/documents`, пока admin не снимет фильтр
-  Но выше сказано, что `/admin/documents` фильтр не передаёт и отображает все шаблоны как прежде. Значит шаблон с `category='ideology'` **должен отображаться в** `/admin/documents → Шаблоны документов`, потому что админка плоская и без фильтра.
-  Исправить DoD:
-  Загруженный через `/document-generation → Документы → Идеология` `.docx` получает `category='ideology'`, отображается в пакете «Идеология» и также виден в `/admin/documents → Шаблоны документов`, так как админка пока остаётся общим плоским списком всех шаблонов.
-8. `embedded` **должен скрывать только лишнюю оболочку, но не ломать действия**
-  &nbsp;
-  Уточнить:
-  - `embedded=true` может менять заголовок/отступы/карточную оболочку;
-  - не должен отключать upload, preview, validation, `FileNameTemplateEditor`, activation/delete actions;
-  - если какие-то admin-only действия внутри менеджера завязаны на роль, они остаются под текущими RBAC-guard.
-9. **Права доступа на пользовательскую загрузку шаблонов проверить отдельно**
-  &nbsp;
-  В плане сейчас предполагается, что пользователь сможет загрузить `.docx` через `/document-generation`. Нужно добавить discovery/guard:
-  - проверить, разрешены ли эти операции обычному user;
-  - если upload/insert шаблонов сейчас admin-only — не расширять права в рамках этого патча;
-  - в таком случае для user показывать read-only список или стандартный permission-state, а загрузку оставить админам.
-  Это критично: UI-only patch не должен менять RLS/edge/RBAC.
-10. **Insert** `category=categoryFilter` **применять только к template, не к version, если version не имеет category**
+> **Язык артефактов (обязательно):**
+> - План должен быть составлен на русском языке.
+> - Отчёт о выполненной работе должен быть составлен на русском языке.
+> - Вся переписка, пояснения, diff-summary, proof и результаты должны быть только на русском языке.
 
-Добавить:
+> **Жёсткая граница фазы 1 (frontend-only / read-only):**
+> Фаза 1 НЕ генерирует документы, НЕ пишет в БД, НЕ создаёт batch, НЕ вызывает edge-functions и НЕ меняет RLS / RPC / types / storage policies / migrations. Это только пользовательская анкета (localStorage) + read-only отображение состава пакета по уже существующим активным шаблонам категории `ideology`.
 
-При создании нового шаблона category записывается только в `document_templates.category`, если именно эта таблица является SoT категории. Не добавлять category в versions/storage/meta без discovery.
+---
 
-11. **Добавить fallback при пустой категории**
+## 0. Идеология разделения ролей
 
-Если `categoryFilter="ideology"` вернул 0 строк, empty-state должен быть понятным:
+```
+Админ (/admin/documents → Шаблоны документов)
+   └── Загружает .docx, маркирует, активирует версии
+       (присвоение category='ideology' — фаза 2, см. ниже)
 
-В пакете «Идеология» пока нет шаблонов документов.
+Пользователь (/document-generation)
+   ├── «Реквизиты» → вносит юрлица / физлица
+   └── «Документы» → «Идеология»
+        ├── Состав пакета (read-only): активные валидные шаблоны категории ideology
+        └── Анкета: выбор юрлиц/физлиц/ролей (localStorage, без БД)
+             └── Кнопка «Сформировать пакет» — disabled, фаза 2
+```
 
-Но не создавать отдельный empty-state компонент, если можно передать `title/subtitle` или использовать существующий.
+---
 
-12. **Расширение** `SubTab` **сделать без поломки существующих секций**
+## 1. Discovery (обязательный read-only этап ДО любых правок)
 
-Добавить проверку:
+Перед любыми UI/код-правками выполнить полный read-only Discovery всего, что уже создано по генерации документов. Цель — **не создавать заново то, что уже есть**, а понять текущий фактический контур и переиспользовать его.
 
-- `DEFAULT_SUB["doc-packages"] = "pkg-ideology"` добавляется без изменения default для `ai`, `documents`, `requisites`;
-- при смене `activeSection` должен корректно сбрасываться/подбираться `activeSubTab`;
-- `hiddenSections` не должен оставлять активной скрытую секцию.
+### 1.1. Инвентаризация БД
+- Таблицы шаблонов: `document_templates`, `document_template_versions`, `document_token_registry`.
+- Таблицы сгенерированных документов: `ai_generated_documents`, legacy `generated_documents`.
+- Таблицы batch/session: `ai_document_generation_batches`, `document_generation_sessions`.
+- Таблицы snapshot/history/audit: где хранятся `placeholder_data_snapshot`, `source_trace`, `warnings_snapshot`, `template_version_id`, `idempotency_key`.
+- Проверить: есть ли поле `category` в `document_templates` фактически в Supabase schema и в `src/integrations/supabase/types.ts`.
+- Проверить статусы шаблонов/версий: как определяется `active`/`current`/`valid`/`archived`.
 
-13. **STOP-guards**
+### 1.2. Инвентаризация storage
+- Бакеты: `documents-templates` (где лежат .docx шаблоны + размеченные версии), `documents` (где лежат сгенерированные акты/счета/PDF/пакеты).
+- Пути: канонический префикс `documents/canonical/{profile_id}/...` (из roadmap).
+- Политики RLS на бакетах: public/private, кто пишет (service_role), кто читает.
 
-Добавить:
+### 1.3. Инвентаризация edge-functions
+- `canonical-document-generate-strict` — текущий канонический рендер.
+- `canonical-template-apply-markup`, `canonical-template-audit`.
+- `ai-generate-document-package` (см. `useAiDocumentPackageGeneration`) — уже существующая batch-генерация пакетов.
+- Legacy: `ai-generate-document`, `generate-from-template`, `generate-invoice-act`, `generate-document-pdf`, `document-auto-generate`.
 
-- STOP, если для `categoryFilter` требуется миграция БД или изменение Supabase types.
-- STOP, если обычный user не имеет прав на upload/insert, а задача требует сделать загрузку доступной без изменения RBAC.
-- STOP, если `StrictDocumentTemplatesManager` невозможно безопасно embedded-переиспользовать без разделения бизнес-логики.
-- STOP, если правка требует менять edge-functions/validator/storage policies.
-- STOP, если `/admin/documents` начинает показывать только `ideology` вместо всех шаблонов.
+### 1.4. Инвентаризация frontend
+- Хуки: `useAiEntities`, `useAiPersons`, `useDocumentPackages`, `useDocumentPackageItems`, `useLastPackageBatch`, `useAiDocumentPackageGeneration`.
+- Компоненты: `StrictDocumentTemplatesManager`, `EntityTableView`, `PersonsTableView`, `PlaceholdersCatalogTab`, `AiPageContent`, `TemplateMarkupDialog`, `FileNameTemplateEditor`.
+- Reusable multiselect/combobox: проверить наличие в `src/components/ui/` (`Command`, `Popover`, готовые multi-select).
 
-14. **DoD дополнить проверкой обратной совместимости**
+### 1.5. Инвентаризация legacy «Нейросеть → Документы»
+- Какие таблицы/UI/edge-functions/файлы использовались год назад.
+- Есть ли legacy aliases, старые токены, старые шаблоны в production.
+- Можно ли безопасно подключить их к новому `/document-generation` через compatibility layer.
 
-Добавить:
+### 1.6. Анализ контура сгенерированных документов
+Отдельно подтвердить, где сейчас хранятся уже сгенерированные акты/счета/PDF/документы из legacy `/ai`, чтобы определить **единый канонический контур** для пакета «Идеология». Проверить:
+- Есть ли уже async-flow со статусами `pending / processing / completed / failed`.
+- Есть ли retry, idempotency_key, audit log, signed URL, zip generation.
+- Как избежать повторной генерации одного и того же пакета.
 
-- `/admin/documents → Шаблоны документов` без `categoryFilter` показывает все категории.
-- Создание/валидация/активация/удаление шаблона в админке работает как раньше.
-- `/document-generation → Реквизиты` остались доступными соседней вкладкой.
-- `/document-generation` по умолчанию открывает `Документы → Идеология`.
-- При пустом списке `ideology` нет ошибки, показывается корректный empty-state.
+### 1.7. Формат отчёта Discovery (обязательно ДО кода)
+Краткий read-only отчёт:
+- **Reuse:** что используем из существующего.
+- **Add-only:** что нужно добавить (минимально).
+- **Do not touch:** что не трогаем.
+- **Storage decision:** где будут храниться сгенерированные документы пакета (с указанием существующего бакета/пути).
+- **Generation decision:** какая существующая edge-function / pipeline будет использована.
+- **Open gaps:** что переносится в фазу 2.
 
-15. **Финальный отчет должен содержать proof**
+**Правило reuse-first:** все существующие функции генерации, хранения, snapshot, history, storage и download должны быть переиспользованы. Новые таблицы, edge-functions, RPC, storage buckets и компоненты создаются только если Discovery докажет, что существующего механизма нет или он объективно не подходит.
 
-Добавить в DoD отчета:
+---
 
-- список изменённых файлов;
-- diff-summary;
-- подтверждение, что БД/RLS/RPC/edge-functions/types не менялись;
-- скрин `/document-generation → Документы → Идеология`;
-- скрин `/document-generation → Реквизиты`;
-- скрин `/admin/documents → Шаблоны документов`, где общий список не сломан;
-- proof, что загруженный/созданный через пакет шаблон получает `category='ideology'`, если права позволяют upload.
+## 2. STOP-guards (фаза 1 немедленно прекращается, если)
 
-Главная правка: **админка без фильтра должна видеть все шаблоны, включая** `ideology`, иначе это уже изменение поведения `/admin/documents`, которого план сам запрещает.
+- Для анкеты требуется писать в БД.
+- `document_templates.category` отсутствует в types/schema.
+- Обычный user не имеет прав читать список шаблонов, а исправление требует RLS-миграции.
+- `StrictDocumentTemplatesManager` невозможно перевести в `readOnly` без риска сломать `/admin/documents`.
+- Для выбора юрлиц/физлиц требуется менять `useAiEntities` / `useAiPersons`.
+- План начинает затрагивать edge-functions, generation pipeline, storage policies, RLS или миграции.
+- Реализация предлагает новую таблицу / новый bucket / новую edge-function для хранения сгенерированных документов без доказанного Discovery, что существующий контур актов/счетов/PDF и `ai_generated_documents` не подходит.
 
-&nbsp;
+---
 
-План: вкладка «Документы» → подвкладка «Идеология» на /document-generation
+## 3. Изменения UI (фаза 1)
 
-### Цель
+### 3.1. `src/components/ai-chat/AiPageContent.tsx`
+- В рендере подвкладки `pkg-ideology` **НЕ показываем** `StrictDocumentTemplatesManager` напрямую как редактор.
+- Рендерим новый компонент `<DocumentPackageIdeologyView />`.
+- Подвкладка «Идеология» остаётся; иконка/градиенты без изменений.
+- Секция `doc-packages` остаётся видимой и для user, и для admin (для админа это «как видит пользователь»).
 
-На странице `/document-generation` слева от вкладки «Реквизиты» добавить новую секцию верхнего уровня **«Документы»**. Внутри — подвкладки-пакеты документов; первый пакет — **«Идеология»**. Содержимое каждого пакета — список шаблонов в том же визуальном стиле, что уже реализован в `StrictDocumentTemplatesManager` (раскрывающийся список из `/admin/documents → Шаблоны документов`). Никаких новых компонентов списка не создаём — только переиспользуем существующий с фильтром по категории.
+### 3.2. Новый файл `src/components/ai-documents/DocumentPackageIdeologyView.tsx`
 
-### Что меняется (только фронт)
+Структура (канон UI: `GlassCard`, как в остальных вкладках):
 
-**1. `src/components/ai-documents/StrictDocumentTemplatesManager.tsx**`
+**Блок A. «Состав пакета» (read-only):**
+- Использует `<StrictDocumentTemplatesManager embedded readOnly categoryFilter="ideology" title="Состав пакета «Идеология»" />`.
+- Показывает только то, что **реально готово к генерации**: `document_templates.category = 'ideology'` И не архивный И есть current/active version И версия валидна (`validation_status = 'valid'`, если поле существует).
+- Если валидных активных версий нет — empty-state «В пакете «Идеология» пока нет готовых шаблонов. Администратор добавит их позже.» + кнопка «Сформировать пакет» disabled с warning.
 
-- Расширить props:
-  ```ts
-  { embedded?: boolean; categoryFilter?: string | null; title?: string; subtitle?: string }
-  ```
-- В `loadTemplates()` добавить `.eq("category", categoryFilter)` только если `categoryFilter` задан. Поведение без пропса — без изменений (обратная совместимость для `/admin/documents`).
-- При загрузке нового `.docx` через эту обёртку — проставлять `category = categoryFilter` в insert (если задан), чтобы новые шаблоны сразу попадали в пакет.
-- Опционально подменять заголовок «Шаблоны документов» на `title` (для «Идеология»).
+**Блок B. «Анкета» (frontend-only, localStorage):**
+- Мультивыбор «Юрлица / ИП» — данные из `useAiEntities().allEntities`. UI: переиспользовать существующий `Command + Popover` (если есть в `src/components/ui/`); иначе — простой список с чекбоксами внутри `ScrollArea`. **Новый универсальный table-picker НЕ создавать.**
+- Мультивыбор «Физлица» — данные из `useAiPersons().allPersons`, аналогично.
+- Роли сторон (минимум: «Исполнитель», «Заказчик») — Select из уже выбранных entities/persons. Роли — **временные frontend answers**; каноническая модель ролей пакета будет утверждена во фазе 2 вместе с `document_package_questionnaires` и rule layer.
+- Кнопка «Сохранить анкету» — пишет **только в localStorage**.
 
-**2. `src/components/ai-chat/AiPageContent.tsx**`
+**Блок C. «Сформировать пакет»:**
+- Кнопка всегда **disabled** в фазе 1.
+- Tooltip/подпись: «Генерация пакета будет подключена во второй фазе».
+- Никаких вызовов `canonical-document-generate-strict`.
+- Никаких batch-записей.
+- Никаких zip/download действий.
 
-- Добавить новую секцию в `Section` тип и в `SECTIONS`:
-  ```ts
-  { id: "doc-packages", label: "Документы", icon: FileStack }
-  ```
-  Порядок в `SECTIONS`: `ai`, `documents`, `doc-packages`, `requisites`. На `/document-generation` секции `ai` и `documents` уже скрыты через `hiddenSections`, поэтому пользователь увидит слева от «Реквизиты» именно «Документы» (это `doc-packages`).
-- Добавить новый массив подвкладок-пакетов `PACKAGE_SUB_TABS`:
-  ```ts
-  [{ id: "pkg-ideology", label: "Идеология", icon: FileText, … }]
-  ```
-- Расширить `SubTab` типом `"pkg-ideology"` и `DEFAULT_SUB["doc-packages"] = "pkg-ideology"`.
-- В рендере при `activeSection === "doc-packages" && activeSubTab === "pkg-ideology"` отрисовать:
-  ```tsx
-  <StrictDocumentTemplatesManager
-    embedded
-    categoryFilter="ideology"
-    title="Пакет «Идеология»"
-  />
-  ```
+### 3.3. `StrictDocumentTemplatesManager.tsx` — добавить prop `readOnly?: boolean`
 
-**3. `src/pages/DocumentGeneration.tsx**`
+При `readOnly = true`:
+- Скрыты все мутационные действия: «Загрузить .docx», «Загрузить новую версию», «Удалить», «Активировать», «Разметить», `FileNameTemplateEditor`.
+- Карточка шаблона: только название, бейджи (active / current vN / valid), без actions.
+- Клики по версии могут открывать preview, **только если** существующий preview безопасно read-only (не выполняет admin-only действий). Иначе — preview скрыт полностью.
+- `readOnly` **не меняет** query/load/validation state — это чисто UI-фильтр.
+- Поведение без `readOnly` (в `/admin/documents`) — **не меняется ни в одной точке**.
 
-- Сменить `initialSection` с `"requisites"` на `"doc-packages"`, оставить `hiddenSections={["ai","documents"]}`. «Реквизиты» остаются доступными как соседняя вкладка справа.
+---
 
-### Что НЕ трогаем
+## 4. localStorage контракт анкеты
 
-- БД (`document_templates.category` уже есть как `text`, миграции не нужны).
-- Edge functions, RLS, типы Supabase.
-- `/admin/documents` (старая секция «Документы» с подвкладками Плейсхолдеры/Шаблоны/История/Исполнители) — работает как раньше, потому что `categoryFilter` там не передаётся.
-- `ColumnSettings`, таблицы реквизитов, бизнес-логику генерации, snapshot, audit.
+**Ключ (стабильный, scoped):**
+```
+document_package_questionnaire_ideology_v1
+```
 
-### Diagnose → Dry run
+**Структура (ID-driven, без display labels):**
+```ts
+{
+  version: 1,
+  updatedAt: string, // ISO
+  selectedEntityIds: string[],    // UUID из client_legal_details
+  selectedPersonIds: string[],    // UUID из legal_details_persons
+  roles: {
+    executorId?: string,          // UUID
+    customerId?: string,          // UUID
+    // ...при необходимости
+  }
+}
+```
 
-- `loadTemplates` сейчас читает все строки `document_templates`. С фильтром `.eq('category','ideology')` на текущей БД вернёт 0 строк → пустое состояние (`empty-state` уже отрисовывается компонентом). Это и есть «подготовленная почва»: загруженные через эту вкладку `.docx` лягут с `category='ideology'` и сразу появятся в списке.
-- Активация/валидация/удаление шаблонов остаются на текущих edge functions — никаких изменений контракта.
+**Guards при чтении:**
+- Битый JSON → сброс (silent reset, без toast).
+- Структура versioned: если `version` не совпадает — сброс.
+- ID, которых уже нет в `useAiEntities().allEntities` / `useAiPersons().allPersons`, **игнорируются** при восстановлении (UI не падает).
+- Display name всегда вычисляется заново из текущих данных.
 
-### DoD
+---
 
-1. На `/document-generation` слева от «Реквизиты» видна вкладка **«Документы»** с подвкладкой **«Идеология»**.
-2. Содержимое подвкладки — тот же визуальный список с раскрытием и `FileNameTemplateEditor`, что и в `/admin/documents → Шаблоны документов`.
-3. Загруженный через эту подвкладку `.docx` появляется только в «Идеология» (category=ideology) и не светится в `/admin/documents`, пока admin не снимет фильтр (поведение ожидаемое: пакет = категория).
-4. `/admin/documents` отображает все шаблоны как прежде.
-5. Мобильная вёрстка не ломается (используются уже починенные ранее `flex-col sm:flex-row`, `min-w-0`, `table-scroll-x`).
-6. Никаких новых таблиц/RPC/edge functions/типов.
+## 5. Что НЕ трогаем в фазе 1
 
-### Открытый вопрос (по умолчанию решаю «нет», если не возражаете)
+- БД: `document_templates`, `ai_document_generation_batches`, `document_template_versions`, `ai_generated_documents`, RLS, RPC, миграции.
+- Edge-functions, storage policies, бакеты, generation pipeline.
+- Supabase types (`src/integrations/supabase/types.ts`).
+- `useAiEntities`, `useAiPersons` — API не меняем.
+- Раздел «Реквизиты» — уже в каноне.
+- Админская маркировка `category='ideology'` через UI — **фаза 2**. В фазе 1 пакет читает уже существующие шаблоны с `category='ideology'`, если они есть. Механизм присвоения категории через админский UI не реализуется в этой фазе и остаётся backlog/фаза 2.
 
-Делать ли `/admin/documents → Шаблоны документов` тоже разрезанным на пакеты-вкладки сейчас? По вашему сообщению — нет, только «подготовить почву» в пользовательской `/document-generation`. Админка остаётся плоской.
+---
+
+## 6. Фаза 2 (после утверждения, отдельным планом)
+
+1. UI выбора категории пакета при загрузке/редактировании шаблона в админке (`category ∈ {ideology, ...}`).
+2. Таблица `document_package_questionnaires` (profile_id, package_code, answers jsonb, roles jsonb) + RLS — для серверного хранения анкеты.
+3. Подключение существующего `ai-generate-document-package` (если Discovery подтвердит совместимость) — batch-генерация всех активных шаблонов пакета по анкете + zip-архив. Хранение сгенерированных файлов — **в том же каноническом контуре**, где хранятся акты/счета/PDF (`ai_generated_documents` + бакет `documents`), через расширение metadata (`context_type='package_ideology'`, `package_code`).
+4. Подключение кнопки «Сформировать пакет» в `DocumentPackageIdeologyView`.
+5. Не создавать отдельный bucket/таблицу только для «Идеологии».
+
+---
+
+## 7. DoD фазы 1
+
+### 7.1. Discovery
+- [ ] Подтверждено, где хранятся .docx шаблоны (бакет + путь).
+- [ ] Подтверждено, где хранятся сгенерированные документы (бакет + путь + таблица).
+- [ ] Подтверждено, можно ли использовать существующий контур актов/счетов/PDF для будущей генерации пакета.
+- [ ] Подтверждено, какие старые документы из домена `/ai` существуют.
+- [ ] Подтверждено, что новая реализация не дублирует уже созданные таблицы/edge-functions/storage.
+- [ ] Предоставлен список найденных файлов frontend/backend.
+- [ ] Предоставлен список найденных таблиц/RPC/edge-functions/storage buckets.
+- [ ] Предоставлен рекомендуемый путь reuse-first.
+
+### 7.2. UI пользователя
+- [ ] На `/document-generation → Документы → Идеология` НЕТ кнопки «Загрузить .docx» и никаких мутационных действий.
+- [ ] Виден read-only список активных валидных шаблонов категории `ideology` (или корректный empty-state).
+- [ ] Видна анкета (мультивыбор юрлиц/физлиц + роли).
+- [ ] Сохранение в localStorage работает, ключ `document_package_questionnaire_ideology_v1`.
+- [ ] Кнопка «Сформировать пакет» disabled с понятным tooltip.
+
+### 7.3. Админская обратная совместимость
+- [ ] `/admin/documents → Шаблоны документов`: upload, markup, activation, delete работают как раньше.
+- [ ] `readOnly` prop никак не влияет на админский режим без `readOnly`.
+- [ ] Шаблоны без `category` или с другой `category` не попадают в пакет «Идеология».
+- [ ] Если шаблонов `ideology` нет — корректный empty-state.
+
+### 7.4. localStorage
+- [ ] Выбранные юрлица/физлица/роли сохраняются после refresh.
+- [ ] При очистке localStorage анкета сбрасывается.
+- [ ] При удалённой/архивной записи в сохранённых answers UI не падает.
+
+### 7.5. Канон
+- [ ] `GlassCard`, единый стиль таблиц, иконки `FileStack`/`FileText` как сейчас.
+- [ ] Нет изменений в БД, RLS, edge-functions, типах, storage, миграциях.
+
+---
+
+## 8. Финальный отчёт (proof, обязательно)
+
+В отчёт о выполненной работе включить (на русском):
+- Список изменённых файлов.
+- Diff-summary по каждому файлу.
+- Явное подтверждение, что БД / RLS / RPC / edge-functions / types / storage / миграции не менялись.
+- Скриншот `/document-generation → Документы → Идеология` (с шаблонами).
+- Скриншот empty-state при отсутствии шаблонов `ideology`.
+- Скриншот анкеты с выбранными юрлицами/физлицами.
+- Proof localStorage (DevTools → Application → Local Storage → ключ `document_package_questionnaire_ideology_v1` с JSON).
+- Regression proof `/admin/documents → Шаблоны документов` (upload/markup/activation работают).
+- Отдельный блок Discovery-отчёта (см. §1.7).
+
+---
+
+**Главное:** фаза 1 — это **только UI + localStorage + read-only package composition + Discovery-отчёт**. Не создавать batch, не писать в `ai_document_generation_batches`, не расширять права, не подключать генерацию, не плодить новый контур хранения до отдельного плана фазы 2.

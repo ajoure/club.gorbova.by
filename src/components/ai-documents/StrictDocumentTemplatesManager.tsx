@@ -277,6 +277,13 @@ export interface StrictDocumentTemplatesManagerProps {
   subtitle?: React.ReactNode;
   /** Текст empty-state. По умолчанию — «Нет шаблонов. Загрузите первый .docx.». */
   emptyText?: string;
+  /**
+   * Read-only режим: скрывает все мутационные действия
+   * (upload .docx, удаление, активация, разметка, FileNameTemplateEditor).
+   * Не влияет на query/load/validation — чисто UI-фильтр.
+   * Используется в /document-generation → Документы → Идеология.
+   */
+  readOnly?: boolean;
 }
 
 export function StrictDocumentTemplatesManager({
@@ -285,6 +292,7 @@ export function StrictDocumentTemplatesManager({
   title,
   subtitle,
   emptyText,
+  readOnly = false,
 }: StrictDocumentTemplatesManagerProps = {}) {
 
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
@@ -779,12 +787,14 @@ export function StrictDocumentTemplatesManager({
             )}
           </p>
         </div>
-        <Button onClick={() => setUploadOpen(true)} size="sm">
-          <Upload className="h-4 w-4 mr-1" /> Загрузить .docx
-        </Button>
+        {!readOnly && (
+          <Button onClick={() => setUploadOpen(true)} size="sm">
+            <Upload className="h-4 w-4 mr-1" /> Загрузить .docx
+          </Button>
+        )}
       </div>
 
-      <div className="grid lg:grid-cols-2 gap-4">
+      <div className={readOnly ? "" : "grid lg:grid-cols-2 gap-4"}>
         {/* Templates list — accordion style (canonical, matches ContactDealsTab) */}
         <div className="min-w-0 space-y-2">
           {loading ? (
@@ -844,26 +854,28 @@ export function StrictDocumentTemplatesManager({
                           >
                             {t.template_status}
                           </Badge>
-                          <span
-                            role="button"
-                            tabIndex={0}
-                            aria-label="Удалить шаблон"
-                            className="inline-flex h-7 w-7 items-center justify-center rounded-md hover:bg-destructive/10 cursor-pointer"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              setDeleteId(t.id);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
+                          {!readOnly && (
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              aria-label="Удалить шаблон"
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-md hover:bg-destructive/10 cursor-pointer"
+                              onClick={(e) => {
                                 e.preventDefault();
                                 e.stopPropagation();
                                 setDeleteId(t.id);
-                              }
-                            }}
-                          >
-                            <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                          </span>
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setDeleteId(t.id);
+                                }
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                            </span>
+                          )}
                           <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${isOpen ? "" : "-rotate-90"}`} />
                         </div>
                       </button>
@@ -906,7 +918,7 @@ export function StrictDocumentTemplatesManager({
                                 {v.is_current && (
                                   <Badge variant="default" className="text-[9px] px-1.5 py-0 h-4">current</Badge>
                                 )}
-                                {canActivate && (
+                                {!readOnly && canActivate && (
                                   <Button
                                     type="button"
                                     size="sm"
@@ -935,7 +947,8 @@ export function StrictDocumentTemplatesManager({
         </div>
 
 
-        {/* Preview pane */}
+        {/* Preview pane — скрыт в readOnly (контент только для админа) */}
+        {!readOnly && (
         <div className="border rounded-lg p-3 min-w-0 max-w-full overflow-hidden">
           {!activeVersion ? (
             <div className="text-sm text-muted-foreground text-center py-10">
@@ -1006,6 +1019,7 @@ export function StrictDocumentTemplatesManager({
             </div>
           )}
         </div>
+        )}
       </div>
 
       {/* Upload dialog */}
