@@ -218,7 +218,8 @@ export function FileNameTemplateEditor({ templateId, templateName }: Props) {
   }
 
   return (
-    <div className="space-y-3 border-t pt-3 mt-3">
+    <div className="space-y-3 border-t pt-3 mt-3 min-w-0 max-w-full">
+
       <div>
         <Label className="text-xs">Имя файла при скачивании ({templateName})</Label>
         <p className="text-[11px] text-muted-foreground mt-0.5">
