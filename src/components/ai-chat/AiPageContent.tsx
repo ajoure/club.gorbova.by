@@ -23,6 +23,8 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useRbac } from "@/hooks/useRbac";
 import { useAiChat, type ChatScenario } from "@/hooks/useAiChat";
+import { useAiAccess } from "@/hooks/useAiAccess";
+import { toast } from "sonner";
 import { useAiUserPrompts, type AiUserPrompt } from "@/hooks/useAiUserPrompts";
 import { ChatMessageBubble } from "@/components/ai-chat/ChatMessage";
 import { ChatScenarioLauncher } from "@/components/ai-chat/ChatScenarioLauncher";
