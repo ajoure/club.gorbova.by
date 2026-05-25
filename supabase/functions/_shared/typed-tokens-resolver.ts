@@ -191,9 +191,13 @@ function fillLegCustomer(map: Record<string, string>, ld: any) {
     : "";
   const dirFull = isLeg ? (ld?.leg_director_name || "") : "";
 
-  map["customer.leg.org_form"] = isLeg ? (ld?.leg_org_form || "") : "";
-  map["customer.leg.name"] = isLeg ? (ld?.leg_name || "") : "";
-  map["customer.leg.short_name"] = isLeg ? (ld?.leg_short_name || ld?.leg_name || "") : "";
+  const canon = isLeg
+    ? canonicalizeLegalEntity(ld?.leg_org_form, ld?.leg_name, ld?.leg_short_name || ld?.leg_full_name)
+    : { org_form: "", name: "", short_name: "", full_name: "" };
+
+  map["customer.leg.org_form"] = canon.org_form;
+  map["customer.leg.name"] = canon.name;
+  map["customer.leg.short_name"] = canon.short_name;
   map["customer.leg.unp"] = isLeg ? (ld?.leg_unp || "") : "";
   map["customer.leg.director_position"] = isLeg ? (ld?.leg_director_position || "") : "";
   map["customer.leg.director_full_name"] = dirFull;
