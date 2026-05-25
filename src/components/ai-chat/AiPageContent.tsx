@@ -697,6 +697,21 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
           )}
 
           <div className="border-t border-border/50 p-2 sm:p-4 bg-background/50 shrink-0 min-w-0">
+            {/* Access banner (приоритет — chat запрещён) */}
+            {aiAccess && !chatAllowed && (
+              <div className="mb-3 rounded-lg border border-amber-400/40 bg-amber-50 dark:bg-amber-950/20 px-3 py-2 text-xs flex items-center justify-between gap-2">
+                <span className="text-amber-800 dark:text-amber-200">
+                  {aiAccess.denial_reasons.chat_not_in_tier}
+                </span>
+                <a
+                  href={aiAccess.cta_target.business_url}
+                  className="shrink-0 underline font-medium text-amber-900 dark:text-amber-100"
+                >
+                  Открыть Business
+                </a>
+              </div>
+            )}
+
             {/* Compact file uploader */}
             {(showUploader || chatFiles.length > 0) && (
               <div className="mb-3">
@@ -731,7 +746,7 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
                     "h-9 w-9 mx-auto",
                     (showUploader || chatFiles.length > 0) && "text-primary bg-primary/10"
                   )}
-                  disabled={aiChat.isLoading}
+                  disabled={aiChat.isLoading || !chatAllowed}
                 >
                   <Paperclip className="h-4 w-4" />
                 </Button>
@@ -740,22 +755,27 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleKeyPress}
-                placeholder="Напиши свой вопрос..."
+                placeholder={chatAllowed ? "Напиши свой вопрос..." : "Свободный чат недоступен на вашем тарифе. Используйте доступные сценарии."}
                 className="flex-1 min-w-0 min-h-[44px] max-h-[120px] resize-none text-base sm:text-sm"
-                disabled={aiChat.isLoading}
+                disabled={aiChat.isLoading || !chatAllowed}
               />
               <Button
                 onClick={handleSendMessage}
-                disabled={!(inputValue.trim() || chatFiles.length > 0) || aiChat.isLoading}
+                disabled={!(inputValue.trim() || chatFiles.length > 0) || aiChat.isLoading || !chatAllowed}
                 size="icon"
                 className="h-11 w-11 shrink-0 self-end"
               >
                 <Send className="h-4 w-4" />
               </Button>
             </div>
-            <p className="hidden sm:block text-xs text-muted-foreground mt-2 text-center">
-              Нажми Enter для отправки, Shift+Enter для новой строки
-            </p>
+            <div className="hidden sm:flex text-xs text-muted-foreground mt-2 items-center justify-center gap-3">
+              <span>Нажми Enter для отправки, Shift+Enter для новой строки</span>
+              {chatAllowed && chatQuota && (
+                <span className="text-muted-foreground/80">
+                  · Остаток чата сегодня: <b className="text-foreground">{chatQuota.remaining}</b> / {chatQuota.limit}
+                </span>
+              )}
+            </div>
           </div>
         </GlassCard>
       )}
