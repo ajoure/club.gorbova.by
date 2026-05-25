@@ -66,6 +66,44 @@ export function normalizeEdgeFunctionError(
   return message;
 }
 
+export async function normalizeEdgeFunctionErrorAsync(
+  error: unknown,
+  fallback?: unknown,
+): Promise<string> {
+  if (fallback !== undefined && fallback !== null) {
+    return normalizeEdgeFunctionError(error, fallback);
+  }
+
+  const cached = (error as any)?.__edgeFunctionParsedBody;
+  if (cached !== undefined) return normalizeEdgeFunctionError(error, cached);
+
+  const ctx = (error as any)?.context;
+  if (ctx && typeof ctx === "object") {
+    const parsed = await readResponseLikeBody(ctx);
+    if (parsed !== undefined) {
+      try { (error as any).__edgeFunctionParsedBody = parsed; } catch { /* noop */ }
+      return normalizeEdgeFunctionError(error, parsed);
+    }
+  }
+
+  return normalizeEdgeFunctionError(error);
+}
+
+async function readResponseLikeBody(ctx: any): Promise<unknown | undefined> {
+  const response = typeof ctx.clone === "function" ? ctx.clone() : ctx;
+  try {
+    if (typeof response.json === "function") return await response.json();
+  } catch {
+    // JSON failed — fall through to text on the same cloned response when possible.
+  }
+  try {
+    if (typeof response.text === "function") return await response.text();
+  } catch {
+    // Body may already be consumed; sync normalizer will handle the generic wrapper.
+  }
+  return undefined;
+}
+
 /** Extract a human-readable string from a body/object. */
 function extractMeaningful(body: unknown): string | null {
   if (!body) return null;
@@ -120,6 +158,17 @@ function mapKnown(raw: string): string | null {
   if (s.includes('pdf_conversion_failed')) {
     return 'Не удалось сконвертировать документ в PDF';
   }
+
+  if (s.includes('исчерпан лимит ai') || s.includes('ai limit') || s.includes('402')) {
+    return 'Лимит AI исчерпан. Обратитесь к администратору.';
+  }
+  if (s.includes('слишком много запросов') || s.includes('429')) {
+    return 'Слишком много запросов. Попробуйте позже.';
+  }
+  if (s.includes('no_real_payment')) return 'У заказа нет подтверждённой оплаты.';
+  if (s.includes('offer_unresolved')) return 'Не удалось определить оффер заказа для документа.';
+  if (s.includes('document_template_not_configured')) return 'Для этого сценария не настроен шаблон документа.';
+  if (s.includes('document_not_enabled_for_offer')) return 'Документы не включены для этого сценария оплаты.';
 
   if (s.includes('resume_blocked_no_payment_method')) {
     return 'Нужно заново привязать карту или оформить новую подписку.';
