@@ -28,6 +28,19 @@ import { toast } from "sonner";
 import { StrictDocumentTemplatesManager } from "./StrictDocumentTemplatesManager";
 import { useAiEntities } from "@/hooks/useAiEntities";
 import { useAiPersons } from "@/hooks/useAiPersons";
+import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
+
+function entityDisplayName(e: ClientLegalDetails): string {
+  if (e.client_type === "legal_entity") return e.leg_name ?? "Юрлицо без названия";
+  if (e.client_type === "individual_entrepreneur") return e.ent_name ?? "ИП без названия";
+  return e.ind_full_name ?? "Физлицо без имени";
+}
+
+function entityUnp(e: ClientLegalDetails): string | null {
+  if (e.client_type === "legal_entity") return e.leg_unp ?? null;
+  if (e.client_type === "individual_entrepreneur") return e.ent_unp ?? null;
+  return null;
+}
 
 const STORAGE_KEY = "document_package_questionnaire_ideology_v1";
 const STORAGE_VERSION = 1;
