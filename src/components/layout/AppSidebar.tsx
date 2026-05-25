@@ -23,7 +23,7 @@ import {
   CollapsibleContent, 
   CollapsibleTrigger 
 } from "@/components/ui/collapsible";
-import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen, User, Shield, ChevronUp, LifeBuoy, Activity, Wallet, Cpu, GraduationCap, Archive, FileText, Radio, Lock } from "lucide-react";
+import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen, User, Shield, ChevronUp, LifeBuoy, Activity, Wallet, Cpu, GraduationCap, Archive, FileText, FileSignature, Radio, Lock } from "lucide-react";
 import { useUnreadTicketsCount } from "@/hooks/useTickets";
 
 // Static menu structure - modules are shown inside page tabs, not in sidebar dropdown
@@ -62,6 +62,11 @@ const mainMenuItems: MainMenuItem[] = [{
   title: "Нейросеть",
   url: "/ai",
   icon: Cpu
+}, {
+  key: "document_generation",
+  title: "Генерация документов",
+  url: "/document-generation",
+  icon: FileSignature
 }, {
   key: "live",
   title: "Эфиры",

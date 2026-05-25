@@ -2,8 +2,8 @@ import { AdminLayout } from "@/components/layout/AdminLayout";
 import { AiPageContent } from "@/components/ai-chat/AiPageContent";
 
 /**
- * /admin/documents — отдельный домен «Документы».
- * Скрываем секции Gorbova AI и Реквизиты — только документная вкладка.
+ * /admin/documents — админский домен «Документы» + «Реквизиты».
+ * Скрываем только Gorbova AI (он живёт на /admin/ai).
  */
 export default function AdminDocuments() {
   return (
@@ -11,7 +11,7 @@ export default function AdminDocuments() {
       <AiPageContent
         mode="admin"
         initialSection="documents"
-        hiddenSections={["ai", "requisites"]}
+        hiddenSections={["ai"]}
       />
     </AdminLayout>
   );
