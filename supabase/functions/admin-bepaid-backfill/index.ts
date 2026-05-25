@@ -524,6 +524,7 @@ Deno.serve(async (req) => {
                   amount_source: norm.source,
                   amount_raw: norm.raw,
                   pm_lookup_mode: "pm_user_first_active",
+                  product_id: cand.product_id,
                 },
               },
               { onConflict: "provider,provider_subscription_id" },
