@@ -412,7 +412,6 @@ Deno.serve(async (req) => {
                   subscription_v2_id: cand.subscription_v2_id,
                   user_id: cand.user_id,
                   profile_id: cand.profile_id,
-                  product_id: cand.product_id,
                   state: normalizedState,
                   amount_cents: amountCents,
                   currency: planCurrency,
@@ -429,6 +428,7 @@ Deno.serve(async (req) => {
                     api_scan_mode: apiScanMode,
                     api_truncated: apiTruncated,
                     source_subscription_v2_id: cand.subscription_v2_id,
+                    product_id: cand.product_id,
                   },
                 },
                 { onConflict: "provider,provider_subscription_id" },
@@ -451,7 +451,7 @@ Deno.serve(async (req) => {
 
       const { data: latestPayments, error: lpErr } = await supabase
         .from("payments_v2")
-        .select("id, user_id, product_id, amount, currency, paid_at, created_at, is_recurring, status, provider")
+        .select("id, user_id, amount, currency, paid_at, created_at, is_recurring, status, provider")
         .eq("provider", "bepaid")
         .eq("status", "succeeded")
         .eq("is_recurring", true)
@@ -463,14 +463,10 @@ Deno.serve(async (req) => {
         errors.push(`Latest payments query failed: ${lpErr.message}`);
       }
 
-      const userProductToLatestPayment = new Map<string, any>();
       const userToLatestPayment = new Map<string, any>();
 
       for (const p of latestPayments || []) {
         if (!userToLatestPayment.has(p.user_id)) userToLatestPayment.set(p.user_id, p);
-
-        const key = `${p.user_id}|${p.product_id ?? ""}`;
-        if (!userProductToLatestPayment.has(key)) userProductToLatestPayment.set(key, p);
       }
 
       const BATCH_SIZE = 50;
@@ -488,14 +484,8 @@ Deno.serve(async (req) => {
 
           if (dryRun) continue;
 
-          const key = `${cand.user_id}|${cand.product_id ?? ""}`;
-          let latestPayment = userProductToLatestPayment.get(key);
-          let lookupMode = "latest_payment_user_product";
-
-          if (!latestPayment) {
-            latestPayment = userToLatestPayment.get(cand.user_id);
-            lookupMode = "latest_payment_user_fallback";
-          }
+          const latestPayment = userToLatestPayment.get(cand.user_id);
+          const lookupMode = latestPayment ? "latest_payment_user" : "no_payment";
 
           const currency = (latestPayment?.currency || "BYN") as string;
           const norm = normalizeAmountCents(
@@ -518,7 +508,6 @@ Deno.serve(async (req) => {
                 subscription_v2_id: cand.subscription_v2_id,
                 user_id: cand.user_id,
                 profile_id: cand.profile_id,
-                product_id: cand.product_id,
                 state: providerState,
                 amount_cents: norm.cents,
                 currency,
@@ -535,6 +524,7 @@ Deno.serve(async (req) => {
                   amount_source: norm.source,
                   amount_raw: norm.raw,
                   pm_lookup_mode: "pm_user_first_active",
+                  product_id: cand.product_id,
                 },
               },
               { onConflict: "provider,provider_subscription_id" },
