@@ -72,6 +72,7 @@ const Support = lazy(() => import("./pages/Support"));
 const SupportTicket = lazy(() => import("./pages/SupportTicket"));
 const Money = lazy(() => import("./pages/Money"));
 const AI = lazy(() => import("./pages/AI"));
+const DocumentGeneration = lazy(() => import("./pages/DocumentGeneration"));
 const Knowledge = lazy(() => import("./pages/Knowledge"));
 const LiveEvents = lazy(() => import("./pages/LiveEvents"));
 const BusinessTraining = lazy(() => import("./pages/BusinessTraining"));
@@ -214,6 +215,7 @@ const App = () => {
               <Route path="/dashboard" element={<ProtectedRoute><LazyRoute><SectionGuard sectionCode="dashboard"><Dashboard /></SectionGuard></LazyRoute></ProtectedRoute>} />
               <Route path="/money" element={<ProtectedRoute><LazyRoute><SectionGuard sectionCode="money"><Money /></SectionGuard></LazyRoute></ProtectedRoute>} />
               <Route path="/ai" element={<ProtectedRoute><LazyRoute><SectionGuard sectionCode="ai"><AI /></SectionGuard></LazyRoute></ProtectedRoute>} />
+              <Route path="/document-generation" element={<ProtectedRoute><LazyRoute><SectionGuard sectionCode="document_generation"><DocumentGeneration /></SectionGuard></LazyRoute></ProtectedRoute>} />
               <Route path="/knowledge" element={<ProtectedRoute><LazyRoute><SectionGuard sectionCode="knowledge"><Knowledge /></SectionGuard></LazyRoute></ProtectedRoute>} />
               <Route path="/purchases" element={<ProtectedRoute><LazyRoute><Purchases /></LazyRoute></ProtectedRoute>} />
               <Route path="/accountant" element={<ProtectedRoute><LazyRoute><Accountant /></LazyRoute></ProtectedRoute>} />
