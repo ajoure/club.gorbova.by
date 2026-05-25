@@ -508,7 +508,6 @@ Deno.serve(async (req) => {
                 subscription_v2_id: cand.subscription_v2_id,
                 user_id: cand.user_id,
                 profile_id: cand.profile_id,
-                product_id: cand.product_id,
                 state: providerState,
                 amount_cents: norm.cents,
                 currency,
