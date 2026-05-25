@@ -15,7 +15,7 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
-import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { normalizeEdgeFunctionError, normalizeEdgeFunctionErrorAsync } from "@/utils/normalizeEdgeFunctionError";
 import { useOrderCanonicalDocuments, type CanonicalDocument } from "@/hooks/useOrderCanonicalDocuments";
 import {
   hasRealSucceededPayment,
@@ -118,7 +118,7 @@ export function OrderListItem({ order }: OrderListItemProps) {
         "canonical-document-generate-strict",
         { body: { order_id: order.id, mode: "generate" } },
       );
-      if (error) throw new Error(normalizeEdgeFunctionError(error, data));
+      if (error) throw new Error(await normalizeEdgeFunctionErrorAsync(error, data));
       if (data?.error) throw new Error(normalizeEdgeFunctionError(null, data));
       toast.success("Документ сформирован");
       await refetch();
