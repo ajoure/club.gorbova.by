@@ -1019,6 +1019,7 @@ export function StrictDocumentTemplatesManager({
             </div>
           )}
         </div>
+        )}
       </div>
 
       {/* Upload dialog */}
