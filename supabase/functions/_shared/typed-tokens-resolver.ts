@@ -315,7 +315,7 @@ function fillLegExecutor(map: Record<string, string>, ex: any) {
   map["executor.leg.name"] = canon.name;
   map["executor.leg.short_name"] = canon.short_name;
   map["executor.leg.unp"] = isLeg ? (ex?.unp || "") : "";
-  map["executor.leg.director_position"] = isLeg ? (ex?.director_position || "") : "";
+  map["executor.leg.director_position"] = isLeg ? normalizeMasculinePosition(ex?.director_position || "") : "";
   map["executor.leg.director_full_name"] = dirFull;
   map["executor.leg.director_short_name"] = isLeg ? (ex?.director_short_name || fullNameToInitials(dirFull)) : "";
   map["executor.leg.acts_on_basis"] = isLeg ? (ex?.acts_on_basis || "") : "";
