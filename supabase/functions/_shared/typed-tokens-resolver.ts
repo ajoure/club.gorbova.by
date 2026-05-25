@@ -21,12 +21,77 @@
 
 // deno-lint-ignore-file no-explicit-any
 import { formatStructuredAddress } from "./address-format.ts";
+import { ORG_FORM_SHORT_TO_FULL } from "./ru-inflection.ts";
 
 const ADDR_PARTS = [
   "street", "house", "building", "apartment",
   "city", "district", "city_district", "region",
   "postal_code", "country",
 ];
+
+// Известные формы собственности — для очистки имени от ведущего токена формы.
+const ORG_FORM_SHORTS = new Set(Object.keys(ORG_FORM_SHORT_TO_FULL));
+
+/**
+ * Извлекает 3 канонических компонента ЮЛ из имеющихся полей.
+ * Источник: явный org_form имеет приоритет; иначе пытаемся выделить из full_name.
+ * Имя всегда чистое (без формы и без любых кавычек).
+ *
+ * Примеры:
+ *   ("ЗАО", "АЖУР инкам", null)               → { org_form:"ЗАО", name:"АЖУР инкам", short:'ЗАО «АЖУР инкам»' }
+ *   (null, 'ООО "Ромашка"', null)             → { org_form:"ООО", name:"Ромашка",    short:'ООО «Ромашка»' }
+ *   (null, null, 'ООО «Ромашка»')             → { org_form:"ООО", name:"Ромашка",    short:'ООО «Ромашка»' }
+ *   ("ИП", "Горбова Е. А.", null)             → { org_form:"ИП",  name:"Горбова Е. А.", short:'ИП Горбова Е. А.' }
+ */
+export function canonicalizeLegalEntity(
+  rawOrgForm: string | null | undefined,
+  rawName: string | null | undefined,
+  rawFullName?: string | null | undefined,
+): { org_form: string; name: string; short_name: string; full_name: string } {
+  const stripQuotes = (s: string) =>
+    s.replace(/^[«"'„‟"']+|[»"'""']+$/g, "").trim();
+
+  let orgForm = (rawOrgForm ?? "").toString().trim();
+  let nameRaw = (rawName ?? "").toString().trim();
+
+  // Если orgForm пуст — пробуем выделить из nameRaw или из rawFullName.
+  const source = nameRaw || (rawFullName ?? "").toString().trim();
+  if (!orgForm && source) {
+    const head = source.split(/\s+/)[0]?.toUpperCase() ?? "";
+    if (ORG_FORM_SHORTS.has(head)) orgForm = head;
+  }
+
+  // Из source убираем ведущую форму (если совпала с orgForm) и кавычки.
+  let nameClean = nameRaw;
+  if (!nameClean && source) nameClean = source;
+  if (nameClean && orgForm) {
+    const re = new RegExp(`^${orgForm}\\s+`, "i");
+    nameClean = nameClean.replace(re, "");
+  }
+  nameClean = stripQuotes(nameClean).trim();
+  // Иногда внутри ещё одни кавычки (вложенные)
+  nameClean = stripQuotes(nameClean).trim();
+
+  // ИП — без кавычек; ЮЛ — в «…».
+  const orgUp = orgForm.toUpperCase();
+  let short = "";
+  let full = "";
+  if (nameClean) {
+    if (orgUp === "ИП") {
+      short = orgForm ? `${orgForm} ${nameClean}` : nameClean;
+      full = `${ORG_FORM_SHORT_TO_FULL["ИП"]} ${nameClean}`;
+    } else if (orgForm) {
+      short = `${orgForm} «${nameClean}»`;
+      full = `${ORG_FORM_SHORT_TO_FULL[orgUp] ?? orgForm} «${nameClean}»`;
+    } else {
+      short = `«${nameClean}»`;
+      full = `«${nameClean}»`;
+    }
+  }
+
+  return { org_form: orgForm, name: nameClean, short_name: short, full_name: full };
+}
+
 
 function fullNameToInitials(fullName?: string | null): string {
   if (!fullName) return "";
