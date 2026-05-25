@@ -19,7 +19,7 @@ export type FieldCase =
   | "instrumental"
   | "prepositional";
 
-export type FieldFormat = "words" | "text";
+export type FieldFormat = "words" | "text" | "long";
 
 export const FIELD_CASE_SHORT: Record<FieldCase, string> = {
   nominative: "И",
@@ -42,6 +42,7 @@ export const FIELD_CASE_LABEL: Record<FieldCase, string> = {
 export const FIELD_FORMAT_LABEL: Record<FieldFormat, string> = {
   words: "прописью",
   text: "текстом",
+  long: "прописью",
 };
 
 export interface FieldChipAttrs {
@@ -98,7 +99,7 @@ export const FieldChipNode = Node.create({
         default: null,
         parseHTML: (el) => {
           const v = (el as HTMLElement).getAttribute("data-format");
-          return v === "words" || v === "text" ? v : null;
+          return v === "words" || v === "text" || v === "long" ? v : null;
         },
         renderHTML: (attrs) => (attrs.format ? { "data-format": attrs.format } : {}),
       },

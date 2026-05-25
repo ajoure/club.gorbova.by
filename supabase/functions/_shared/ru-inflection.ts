@@ -342,20 +342,27 @@ function tokenize(s: string): Span[] {
   return out;
 }
 
-export function inflectRu(input: string, c: RuCase): InflectionResult {
+export function inflectRu(input: string, c: RuCase, opts?: { forceGender?: 'm' | 'f' }): InflectionResult {
   if (c === 'nominative' || !input || typeof input !== 'string') {
     return { value: input, applied: c === 'nominative' };
   }
   const spans = tokenize(input.trim());
   if (spans.length === 0) return { value: input, applied: false, reason: 'empty' };
 
-  // Первый проход — определить hint по женским маркерам
+  // Первый проход — определить hint по женским маркерам.
+  // forceGender (используется для должности руководителя) полностью отключает
+  // auto-detection: должность всегда склоняется по мужской парадигме, независимо
+  // от пола ФИО в той же строке.
   let hint: Hint = null;
-  for (const sp of spans) {
-    if (sp.kind !== 'word') continue;
-    const lc = sp.text.toLowerCase();
-    if (/(овна|евна|ична|инична)$/.test(lc)) { hint = 'f'; break; }
-    if (/(ова|ева|ёва|ина|ына|ская|цкая)$/.test(lc)) { hint = 'f'; break; }
+  if (opts?.forceGender) {
+    hint = opts.forceGender;
+  } else {
+    for (const sp of spans) {
+      if (sp.kind !== 'word') continue;
+      const lc = sp.text.toLowerCase();
+      if (/(овна|евна|ична|инична)$/.test(lc)) { hint = 'f'; break; }
+      if (/(ова|ева|ёва|ина|ына|ская|цкая)$/.test(lc)) { hint = 'f'; break; }
+    }
   }
 
   const per: Array<{ in: string; out: string; rule: string }> = [];
@@ -366,13 +373,13 @@ export function inflectRu(input: string, c: RuCase): InflectionResult {
   for (const sp of spans) {
     if (sp.kind === 'sep') { result.push(sp.text); continue; }
     if (sp.kind === 'quoted' || sp.kind === 'paren') {
-      // Кавычки и скобки — не склоняем содержимое
       result.push(sp.text);
       per.push({ in: sp.text, out: sp.text, rule: 'kept_inside_brackets' });
       continue;
     }
     const r = inflectOneToken(sp.text, c, hint);
-    if (r.femHint) hint = r.femHint;
+    // forceGender='m' — игнорируем femHint, чтобы должность не «съезжала» в ж.р.
+    if (r.femHint && !opts?.forceGender) hint = r.femHint;
     result.push(r.out);
     per.push({ in: sp.text, out: r.out, rule: r.rule });
     if (r.ok === 'inflected') inflectedAny = true;
@@ -388,6 +395,36 @@ export function inflectRu(input: string, c: RuCase): InflectionResult {
     };
   }
   return { value: result.join(''), applied: true, per_token: per };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Канонический словарь форм собственности short ↔ long.
+// Используется FLD-резолвером для модификатора `format=long` на поле
+// `*.leg.org_form` и для склейки `*.leg.short_name = ${org_form} «${name}»`.
+// ───────────────────────────────────────────────────────────────────────────
+export const ORG_FORM_SHORT_TO_FULL: Record<string, string> = {
+  'ООО':  'Общество с ограниченной ответственностью',
+  'ОДО':  'Общество с дополнительной ответственностью',
+  'ЗАО':  'Закрытое акционерное общество',
+  'ОАО':  'Открытое акционерное общество',
+  'АО':   'Акционерное общество',
+  'ПАО':  'Публичное акционерное общество',
+  'ИП':   'Индивидуальный предприниматель',
+  'УП':   'Унитарное предприятие',
+  'ЧУП':  'Частное унитарное предприятие',
+  'РУП':  'Республиканское унитарное предприятие',
+  'ГУП':  'Государственное унитарное предприятие',
+  'ФГУП': 'Федеральное государственное унитарное предприятие',
+  'МУП':  'Муниципальное унитарное предприятие',
+  'ТДО':  'Товарищество с дополнительной ответственностью',
+  'ТОО':  'Товарищество с ограниченной ответственностью',
+  'СП':   'Совместное предприятие',
+};
+
+export function expandOrgFormToLong(short: string | null | undefined): string {
+  if (!short) return '';
+  const key = String(short).trim().toUpperCase();
+  return ORG_FORM_SHORT_TO_FULL[key] ?? String(short).trim();
 }
 
 // ===========================================================================

@@ -227,9 +227,13 @@ const ALLOWED_CASES = new Set([
 //   - 'words' / 'text' — legacy (number/money/boolean/date words/text variants)
 //   - date format aliases: 'short', 'dd.MM.yyyy', 'long_ru', 'words_ru'
 //     (applied only to data_type ∈ {date, datetime}; otherwise warning).
+//   - 'long' — раскрывает короткую форму собственности (ООО → Общество с
+//     ограниченной ответственностью). Применяется только к токенам
+//     `*.leg.org_form`; на других полях возвращает значение без изменений.
 const ALLOWED_FORMATS = new Set([
   'words', 'text',
   'short', 'dd.MM.yyyy', 'long_ru', 'words_ru',
+  'long',
 ]);
 // Format/case modifier values may include letters, digits, underscore and dot
 // (the dot is required for `format=dd.MM.yyyy`).
@@ -773,16 +777,36 @@ Deno.serve(async (req) => {
       const entry = baseEntryByFld[t.field_public_id];
       const reg: any = regMap.get(t.field_public_id);
       const dt = ((reg?.data_type as string) || '').toLowerCase();
+      const regKey: string = ((reg?.key as string) || '').toLowerCase();
       const rawValue = entry?.value;
       const fmt = applyFormat(rawValue, dt, orderCurrency, t.format);
       let outVal = fmt.value;
+      let fmtApplied = fmt.applied;
+
+      // format=long для полей формы собственности (*.leg.org_form):
+      // раскрывает короткую форму через ORG_FORM_SHORT_TO_FULL.
+      if (t.format === 'long' && /\.leg\.org_form$/.test(regKey)) {
+        const { expandOrgFormToLong } = await import('../_shared/ru-inflection.ts');
+        outVal = expandOrgFormToLong(outVal);
+        fmtApplied = true;
+      }
+
       let caseApplied = false;
       let caseReason: string | null = null;
       if (t.case_modifier) {
         const allowText = TEXT_DT.has(dt) || dt === '' || dt === 'enum';
-        const wordsApplied = fmt.applied && t.format === 'words';
+        const wordsApplied = fmtApplied && t.format === 'words';
         if (allowText || wordsApplied) {
-          const inf = inflectRu(outVal, t.case_modifier as RuCase);
+          // Должность руководителя — всегда мужской род, независимо от пола
+          // ФИО в той же строке (если вдруг встретится). Это правило
+          // распространяется на customer.leg.director_position и
+          // executor.leg.director_position (+ legacy *.director_position).
+          const isDirectorPosition = /\.director_position$/.test(regKey)
+            || regKey === 'customer.director_position'
+            || regKey === 'executor.director_position';
+          const inf = isDirectorPosition
+            ? inflectRu(outVal, t.case_modifier as RuCase, { forceGender: 'm' })
+            : inflectRu(outVal, t.case_modifier as RuCase);
           if (inf.applied) { outVal = inf.value; caseApplied = true; }
           else { caseReason = inf.reason || 'inflection_unsafe'; }
         } else {
@@ -790,7 +814,7 @@ Deno.serve(async (req) => {
         }
       }
       resolved[t.raw_inside] = outVal;
-      appliedFormatByPlaceholder[t.raw_inside] = fmt.applied;
+      appliedFormatByPlaceholder[t.raw_inside] = fmtApplied;
       appliedCaseByPlaceholder[t.raw_inside] = caseApplied;
       caseReasonByPlaceholder[t.raw_inside] = caseReason;
     }
