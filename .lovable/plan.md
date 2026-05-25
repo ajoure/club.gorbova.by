@@ -1,185 +1,317 @@
-&nbsp;
-
 да, согласен, с учетом правок:
 
-1. План правильный: автосписание bePaid нельзя считать “сломавшимся” из-за удаления/отзыва локального доступа.
+1. План в целом правильный, но INV-20 нельзя чинить blind UPDATE двух payments_v2, пока не доказано, что эти payment действительно являются rebill charge, а не initial payment исходного заказа.
 
 &nbsp;
 
-2. В карточке контакта нужно разделить 2 независимые вещи:
+Перед re-attach обязательно проверить по каждому payment:
+
+- provider_payment_id совпадает с orders_v2.provider_payment_id rebill-order;
+
+- payment.paid_at соответствует [rebill-order.deal](http://rebill-order.deal)_date/paid_at;
+
+- payment.meta.bepaid_subscription_id / parent_uid / recurring markers указывают на тот же provider_subscription;
+
+- исходный order после переноса не останется без своего initial payment;
+
+- нет refund-row, parent_payment_id или refund linkage, который сломается от re-attach.
 
 &nbsp;
 
-- provider_subscriptions = живая платежная подписка bePaid;
+2. Если исходный order после переноса останется без payment, не ставить сразу meta.inv20_legacy_noise.
 
-- subscriptions_v2 / entitlements = локальные доступы на платформе.
+Сначала доказать:
 
-&nbsp;
+- это действительно synthetic/import/legacy order;
 
-Удаление доступа, сделки или локальной подписки не должно переводить bePaid-подписку в “ремонт”.
+- нет реального initial payment;
 
-&nbsp;
+- нет active entitlement/subscription, завязанного на этот order как paid source.
 
-3. `isHealthyProviderSub` должен смотреть только на provider-состояние:
-
-state IN ('active','trial','pending')
+Только после этого можно помечать как legacy_noise.
 
 &nbsp;
 
-Без проверки:
+3. Корневой fix webhook должен быть сделан не просто “если order_is_rebill”.
 
-- subscriptions_v2.status;
+Нужны guards:
 
-- subscriptions_v2.access_end_at;
+- [rebillOrder.id](http://rebillOrder.id) существует;
 
-- entitlements;
+- payment найден по тому же provider_payment_id;
 
-- orders_v2.
+- payment.order_id != [rebillOrder.id](http://rebillOrder.id);
 
-&nbsp;
+- текущий payment.order_id является parent/initial order той же subscription/user/product;
 
-4. Блок “Технические записи провайдера / ремонт” показывать только при доказанном provider-dead:
+- нет уже другого payment на rebillOrder;
 
-- provider_snapshot.state IN canceled/expired/terminated/finished/failed;
+- transaction не refund;
 
-- last_pull.http_status = 404;
+- provider_payment_id уникален;
 
-- inv22_provider_dead_local_active = true.
-
-&nbsp;
-
-5. Кнопка “Ремонт” не должна появляться из-за локально удалённого доступа.
+- запись audit до/после.
 
 &nbsp;
 
-6. Перед правкой обязательно проверить, что нет второго места в UI, где provider_subscriptions повторно фильтруются через subscriptions_v2/access_end_at.
+4. INV-19B через admin-bepaid-backfill — сначала dry-run.
+
+Execute только если:
+
+- подписка active;
+
+- auto_renew=true;
+
+- billing_type=provider_managed;
+
+- payment_method bePaid активен;
+
+- нет existing provider_subscriptions;
+
+- backfill не создаст дубль по provider_subscription_id / subscription_v2_id.
 
 &nbsp;
 
-7. `admin-repair-zombie-provider-subs` не менять и не удалять.
+5. INV-SITE-1 можно чинить миграцией, но idempotently:
 
-Меняется только условие, когда карточка контакта предлагает этот repair.
+- обновлять только страницу `969210bb`;
 
-&nbsp;
+- только блок `type='form'`;
 
-8. После фикса проверить 3 сценария:
+- только если `version` отсутствует;
 
-&nbsp;
-
-A. bePaid active + доступ удалён:
-
-- подписка остаётся в обычном блоке “Подписки”;
-
-- кнопки “Ремонт” нет.
+- не менять content/id/type.
 
 &nbsp;
 
-B. bePaid реально canceled/404:
+6. Добавить regression proof:
 
-- подписка попадает в “Технические записи”;
+после webhook-fix повторный rebill должен:
 
-- repair доступен.
+- создать/найти REBILL-order;
+
+- привязать payments_v2 к REBILL-order;
+
+- не оставлять INV-20;
+
+- не трогать initial order payment;
+
+- не вызывать grant-access-for-order повторно по старому order.
 
 &nbsp;
 
-C. Повторная выдача доступа:
+7. Не делать всё как “миграции и потом посмотрим”.
 
-- не требуется ремонтировать bePaid;
+Нужно выполнить:
 
-- provider-subscription не исчезает из карточки.
+- preflight таблицу по 3 инвариантам;
+
+- execute;
+
+- post-verify;
+
+- только потом nightly-system-health.
+
+Итоговая команда:
+
+План принимаю с правками.
 
 &nbsp;
 
-9. В proof добавить:
+Разрешаю PATCH-NIGHTLY-2026-05-25-FIX.
 
-- before/after скрин карточки контакта;
+&nbsp;
 
-- SQL по provider_subscriptions/subscriptions_v2;
+Scope:
 
-- подтверждение, что write-path не тронут:
+1. INV-SITE-1:
 
-  grant-access-for-order, bepaid-webhook, subscriptions_v2, entitlements, orders_v2, payments_v2 — без изменений.
+- idempotent update `site_pages.blocks`;
 
-Итог: чинить точечно **только UI-классификацию provider-подписки в карточке контакта**. Автосписание bePaid должно жить независимо от локальных доступов.
+- добавить `version:1` только form-блоку страницы `969210bb`;
 
-## Discovery
+- content/type/id не менять.
 
-**Где живёт баг (карточка контакта в админке):**
-`src/components/admin/ContactDetailSheet.tsx` строки 2108–2351 — секция «Подписки» / «Технические записи провайдера».
+&nbsp;
 
-Загружает `provider_subscriptions` join `subscriptions_v2` (строки 739–765, query `contact-provider-subscriptions`) и фильтрует через локальный хелпер `isHealthyProviderSub` (2116–2122):
+2. INV-19B:
 
-```text
-healthy = subscriptions_v2 EXISTS
-       AND subscriptions_v2.status = 'active'
-       AND subscriptions_v2.access_end_at >= now()
+- сначала `admin-bepaid-backfill` dry-run по одной подписке `a25168db`;
+
+- execute только если dry-run показывает ровно 1 candidate и 0 дублей;
+
+- audit `bepaid_backfill_provider_sub`.
+
+&nbsp;
+
+3. INV-20:
+
+- preflight по двум парам payment↔rebill-order;
+
+- re-attach только если доказано, что payment является rebill charge именно этого order;
+
+- audit `inv20_repair_reattach_rebill_payment`;
+
+- не помечать исходные orders как legacy_noise без отдельного доказательства.
+
+&nbsp;
+
+4. Root fix `bepaid-webhook`:
+
+- добавить guard re-attach payment to rebill-order;
+
+- только для non-refund rebill transaction;
+
+- только если payment provider_payment_id = rebillOrder provider_payment_id;
+
+- если rebillOrder уже имеет payment — skip/idempotent;
+
+- audit `bepaid.webhook.payment_reattached_to_rebill_order`.
+
+&nbsp;
+
+Запрещено:
+
+- менять subscriptions_v2 вручную;
+
+- менять entitlements;
+
+- менять grants/access;
+
+- менять RLS/cron/schema;
+
+- удалять provider_subscriptions;
+
+- трогать INV-22 logic;
+
+- менять ContactDetailSheet.
+
+&nbsp;
+
+Verify:
+
+- INV-20 actionable = 0;
+
+- INV-19B = 0;
+
+- INV-SITE-1 = 0;
+
+- `/nightly-payments-invariants` OK;
+
+- `/nightly-system-health` 8/8 OK;
+
+- proof со SQL before/after и audit ids.
+
+&nbsp;
+
+Proof:
+
+.lovable/proofs/nightly_2026_05_25_[fix.md](http://fix.md)
+
+Ключевое: **INV-20 чинить только после доказательства, что эти payments — именно rebill-платежи, иначе можно снова разорвать initial orders.**
+
+&nbsp;
+
+# План: ночная проверка 25.05.2026 — 3 ошибки, корневые причины и исправления
+
+## Diagnose (что нашёл)
+
+### 1. INV-20: 2 оплаченных заказа без `payments_v2` (`ecd989f1`, `c82ad679`)
+
+Это **rebill-заказы** (`meta.source='bepaid_rebill'`, `provider='bepaid'`, `provider_payment_id` заполнен), но `payments_v2` для их `provider_payment_id` **существует** и привязан к ДРУГОМУ (исходному) заказу:
+
+```
+orders_v2 ecd989f1 (rebill, 19.05)  →  payments_v2 c5c7dcd0  →  order_id=ea774d6c (исходный чекаут от 19.04)
+orders_v2 c82ad679 (rebill, 18.05)  →  payments_v2 e1238eac  →  order_id=c11a518d (исходный чекаут от 17.02)
 ```
 
-**Почему это даёт описанное поведение:**
+`subscriptions_v2` (`de75db3a`, `161a0644`) и их `provider_subscriptions` (`sbs_812f...`, `sbs_85af...`) живы и `active`.
 
-- При удалении/отзыве доступа админ-флоу переводит `subscriptions_v2.status` в `expired/canceled/superseded` ИЛИ обнуляет `access_end_at`.
-- bePaid-подписка в `provider_subscriptions` остаётся **жива** (`state='active'`, real auto-renewal в bePaid тоже жива), но UI перестаёт считать её healthy → она перетекает в карточку «Технические записи провайдера — требуют ремонта» с кнопкой **«Ремонт»**.
-- Кнопка зовёт `admin-repair-zombie-provider-subs` (`supabase/functions/admin-repair-zombie-provider-subs/index.ts`), который при `provider_state='active'` идёт в bePaid `/v2/subscriptions/{id}/cancel` → **реально отменяет автосписание у провайдера**. После этого подписка действительно мёртвая и в карточке уже не появится.
+**Корневая причина:** `bepaid-webhook` при rebill-событии создаёт новую запись в `orders_v2` (правильно — это новый цикл), но `payments_v2` уже была вставлена ранее с `order_id` = исходного чекаут-заказа, и при rebill она **не переаттачивается** на новый rebill-order. Получается «дубль-orphan»: оплата висит на старом заказе, новый rebill-order остаётся без `payments_v2` → INV-20 ругается.
 
-**Эталон (как должно быть) — вкладка «Профиль»:** `src/pages/settings/PaymentMethods.tsx` строки 194–218 показывает все `provider_subscriptions` пользователя по `state IN ('active','trial')` **без** оглядки на `subscriptions_v2.status/access_end_at`. Никакого «зомби-режима» там нет.
+### 2. INV-19B: 1 авторекурринг без `provider_subscriptions`
 
-**Чего трогать НЕЛЬЗЯ (контракты сохранить 1:1):**
+Подписка `a25168db-a289-431a-8869-5fca9486ca62` (user `1409fd0e...`, product `11c9f1b8` = Клуб, tariff `7c748940`): `status=active`, `auto_renew=true`, `billing_type=provider_managed`, у пользователя есть активный `payment_methods.provider=bepaid` — но в `provider_subscriptions` нет ни одной строки с этим `subscription_v2_id`.
 
-- `grant-access-for-order`, `bepaid-webhook`, `subscription-charge`, любые write-path по доступам и подпискам.
-- `subscriptions_v2`, `entitlements`, `orders_v2`, `payments_v2` — никаких миграций данных и схемы.
-- Логика «настоящих зомби»: когда **сам провайдер мёртв** (bePaid вернул canceled/expired/terminated/404) — карточка ремонта должна оставаться (это INV-22 кейс).
-- Cron `bepaid-subscription-audit-cron`, INV-22 detector — без изменений.
-- Edge функция `admin-repair-zombie-provider-subs` — НЕ удаляем (используется и из INV-22 списка `/admin/payments/bepaid-subscriptions`), только перестаём звать из карточки контакта на основе локальных доступов.
+**Корневая причина:** подписка была создана (вероятно через ручное действие/импорт/повторное оформление 29.04) без вызова канонического write-path `grant-access-for-order → bepaid → pre-create provider_subscriptions`. Это ровно тот сценарий, для которого существует `admin-bepaid-backfill`.
 
-## План правки (минимальный, только UI карточки контакта)
+### 3. INV-SITE-1: 1 невалидная опубликованная страница (`969210bb`, `form-proof`)
 
-Файл: `src/components/admin/ContactDetailSheet.tsx`
+Страница опубликована, блок имеет `id` + `type='form'`, но **отсутствует поле `version**` (инвариант ожидает `id` + `type` + `version`).
 
-1. Переопределить `isHealthyProviderSub` (≈ строки 2116–2124) так, чтобы здоровье считалось **только по самой provider-подписке**, независимо от локальных доступов:
-  ```text
-   healthy = provider_subscriptions.state IN ('active','trial','pending')
-  ```
-   Никаких проверок `subscriptions_v2.status` и `access_end_at`.
-2. Карточку «Технические записи провайдера — требуют ремонта» (2301–2348) оставить, но триггер сузить до **реальной зомби-сигнатуры провайдера**, согласованной с `admin-repair-zombie-provider-subs`:
-  ```text
-   zombie = state='active' AND provider='bepaid'
-            AND (meta.provider_snapshot.state IN ('canceled','expired','terminated','finished','failed')
-                 OR meta.last_pull.http_status = 404
-                 OR meta.inv22_provider_dead_local_active = true)
-  ```
-   То есть карточка ремонта появляется ТОЛЬКО когда провайдер реально мёртв (это уже отмечено INV-22-резолюцией в `meta`). Локальный `subscriptions_v2.status`/`access_end_at` из условия удаляется полностью.
-3. Текст подсказки в зомби-карточке переписать: убрать формулировку «привязанная локальная подписка истекла/отменена», заменить на «bePaid сообщил, что подписка отменена/недоступна на стороне провайдера».
-4. Display-блок «Подписки» (2127–2300) рендерит provider-подписку как живую вне зависимости от состояния доступов. Поле `accessEnd` (2151–2154) оставляем как есть — оно уже умеет fallback на `meta.provider_snapshot.active_to`, так что при отсутствии sv2/доступа дата следующего цикла всё равно отображается.
-5. Auto-sync эффект (строки 832–848) — оставить как есть; он только подтягивает свежий снапшот из bePaid и не выполняет destructive действий.
+**Корневая причина:** страница (proof-форма) была опубликована до того, как блок-схема стала требовать `version`. Это служебная тест-форма, не продакшен-лендинг.
 
-**Что НЕ меняется:**
+---
 
-- Сам компонент `repairZombieMutation` и edge `admin-repair-zombie-provider-subs` — без правок.
-- Список INV-22 на `/admin/payments/bepaid-subscriptions` — без правок (там своя логика).
-- Никаких изменений в БД, RPC, миграциях, cron, write-path.
+## Plan (что делаем)
 
-## Dry run (что проверить перед/после фикса в режиме чтения)
+### Шаг 1. INV-SITE-1 — добавить `version: 1` к блоку form-proof
 
-SQL (read-only) на контакте, у которого «отвалилось»:
+Через `supabase--migration` обновить `site_pages.blocks` для `id='969210bb-00fc-4fce-b248-624d344e881e'`, проставив `version: 1` единственному блоку. Не трогаем content/type/id.
 
-```sql
-select ps.id, ps.state, ps.provider_subscription_id,
-       sv2.status as sv2_status, sv2.access_end_at,
-       ps.meta->'provider_snapshot'->>'state' as provider_state,
-       ps.meta->'last_pull'->>'http_status' as last_http,
-       ps.meta->>'inv22_provider_dead_local_active' as inv22_flag
-from provider_subscriptions ps
-left join subscriptions_v2 sv2 on sv2.id = ps.subscription_v2_id
-where ps.user_id = '<uid>'
-order by ps.created_at desc;
+### Шаг 2. INV-19B — backfill одной подписки
+
+Вызвать существующую edge `admin-bepaid-backfill` (mode=execute) **точечно для user_id=`1409fd0e-23fb-44fb-a6af-11778a53a94f**` (либо subscription_id=`a25168db-...`), чтобы создалась запись `provider_subscriptions`. Никаких новых функций.
+
+Если у функции нет точечного режима — сначала dry-run по всему списку (на момент проверки в БД только 1 кандидат), затем execute.
+
+### Шаг 3. INV-20 — точечный re-attach двух payments_v2 на rebill-orders
+
+Через `supabase--migration` (UPDATE требует миграции) переаттачить:
+
+```
+payments_v2 c5c7dcd0  →  order_id = ecd989f1
+payments_v2 e1238eac  →  order_id = c82ad679
 ```
 
-Ожидание: `ps.state='active'`, `provider_state='active'`/null, `inv22_flag` отсутствует — после фикса такая запись попадает в healthy-блок, а не в зомби.
+с записью аудита в `audit_logs` (`action='inv20_repair_reattach_rebill_payment'`, актор=system, meta = до/после).
 
-## DoD
+Исходные orders (`ea774d6c`, `c11a518d`) — это первый платёж по подписке, у них тоже когда-то был свой `payments_v2` (по другому `provider_payment_id` исходного чекаута). После re-attach исходные orders могут остаться без `payments_v2` → проверить и при необходимости найти исходный платёж первого цикла (по `meta.checkout_token`/`tracking_id`/дате) и оставить его привязанным.
 
-- В карточке контакта удаление/отзыв доступа или удаление сделки **не** переводит bePaid-подписку в «технические записи / ремонт». Подписка продолжает отображаться как живая, с next_charge и суммой, как во вкладке «Профиль».
-- Карточка «требуют ремонта» появляется только когда провайдер реально мёртв (canceled/expired/terminated/404 в `meta.provider_snapshot` или INV-22 флаг).
-- Повторная выдача доступа не требует никаких действий с подпиской — она и не исчезала.
-- Edge `admin-repair-zombie-provider-subs`, `bepaid-webhook`, `grant-access-for-order`, БД-схема и RLS — без изменений.
-- Proof: `.lovable/proofs/contact_provider_sub_visibility_fix_2026_05.md` с before/after скриншотом карточки и фрагментом SQL по подопытному контакту.
+**Если исходный платёж первого цикла не находится** — это уже legacy-noise (синтетический импорт), помечаем `orders_v2.meta.inv20_legacy_noise=true`, чтобы RPC `inv20_paid_orders_actionable` его исключила (как уже делает для synthetic).
+
+### Шаг 4. Корневой fix `bepaid-webhook` (rebill payment binding)
+
+В `supabase/functions/bepaid-webhook/index.ts` найти ветку обработки rebill-транзакции. Сейчас она:
+
+1. ищет существующую `payments_v2` по `provider_payment_id` → находит запись от первичного UPSERT с `order_id` = первичный заказ;
+2. создаёт новый `orders_v2` под rebill;
+3. не обновляет `payments_v2.order_id`.
+
+**Изменение:** при обработке rebill после создания/нахождения нового rebill-order:
+
+```ts
+if (payment.order_id !== rebillOrder.id && order_is_rebill) {
+  await supabase.from('payments_v2').update({ order_id: rebillOrder.id })
+    .eq('id', payment.id);
+  await writeAudit('bepaid.webhook.payment_reattached_to_rebill_order', ...);
+}
+```
+
+Альтернатива (если архитектурно чище): rebill-обработчик создаёт **новую** `payments_v2` с `reference_payment_id` старой, привязанной к rebill-order. Но это меняет write-path → выберем минимально-инвазивный re-attach.
+
+DoD-проверка: после фикса повторно запустить `nightly-payments-invariants` → INV-20 actionable = 0.
+
+### Шаг 5. Verify (DoD)
+
+1. `supabase--read_query`: `payments_v2` по двум rebill-orders → строки найдены.
+2. `supabase--read_query`: подписка `a25168db` → в `provider_subscriptions` есть запись.
+3. `supabase--read_query`: страница `969210bb` → блок имеет `version: 1`, инвариант пройдён.
+4. `supabase--curl_edge_functions` POST `/nightly-payments-invariants` и `/nightly-system-health` → все 8 OK.
+5. Скриншот `/admin/system-health` после прогона.
+
+---
+
+## Что НЕ трогаем
+
+- `subscriptions_v2`, `provider_subscriptions`, `orders_v2` (кроме `meta.inv20_legacy_noise` при необходимости).
+- Канонический write-path `grant-access-for-order`.
+- RLS, cron, schema, INV-22 логика, ContactDetailSheet (наш предыдущий патч).
+- Содержимое страницы `form-proof` — только добавление `version`.
+
+## Технические детали (для тех, кто читает код)
+
+- Файлы под изменение: `supabase/functions/bepaid-webhook/index.ts` (Шаг 4), миграции (Шаги 1 и 3).
+- `inv20_paid_orders_actionable` RPC оставляем как есть — после re-attach actionable_count = 0 естественным образом.
+- Audit: `audit_logs` table, `action ∈ {inv20_repair_reattach_rebill_payment, sitepage_block_version_backfill, bepaid_backfill_provider_sub}`.
+- Proof: `.lovable/proofs/nightly_2026_05_25_fix.md` со SQL до/после, скриншотом `/admin/system-health` = 8/8 OK.
