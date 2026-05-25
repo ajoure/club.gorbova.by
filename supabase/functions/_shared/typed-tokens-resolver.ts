@@ -91,10 +91,17 @@ export function canonicalizeLegalEntity(
   // 3) nameClean: если есть явный rawName — берём его; иначе из (возможно
   //    обрезанного) source. И снимаем ведущую короткую форму, если она
   //    дублирует orgForm.
-  let nameClean = nameRaw || strippedSource;
+  // Если мы обрезали полную форму из source, и source брался из nameRaw,
+  // то и nameClean должен идти от strippedSource (без полной формы).
+  let nameClean = strippedSource && strippedSource !== source ? strippedSource : (nameRaw || strippedSource);
   if (nameClean && orgForm) {
-    const re = new RegExp(`^${orgForm}\\s+`, "i");
-    nameClean = nameClean.replace(re, "");
+    const reShort = new RegExp(`^${orgForm}\\s+`, "i");
+    nameClean = nameClean.replace(reShort, "");
+    const fullLc = ORG_FORM_SHORT_TO_FULL[orgForm.toUpperCase()];
+    if (fullLc) {
+      const reFull = new RegExp(`^${fullLc}\\s+`, "i");
+      nameClean = nameClean.replace(reFull, "");
+    }
   }
   nameClean = stripQuotes(nameClean).trim();
   nameClean = stripQuotes(nameClean).trim();
