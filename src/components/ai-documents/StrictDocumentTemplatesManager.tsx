@@ -794,7 +794,7 @@ export function StrictDocumentTemplatesManager({
         )}
       </div>
 
-      <div className="grid lg:grid-cols-2 gap-4">
+      <div className={readOnly ? "" : "grid lg:grid-cols-2 gap-4"}>
         {/* Templates list — accordion style (canonical, matches ContactDealsTab) */}
         <div className="min-w-0 space-y-2">
           {loading ? (
