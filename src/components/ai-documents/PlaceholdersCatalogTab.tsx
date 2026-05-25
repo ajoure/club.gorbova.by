@@ -484,9 +484,9 @@ export function PlaceholdersCatalogTab() {
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>
         ) : (
-          <div className="border rounded-lg overflow-hidden">
-            <div className="max-h-[70vh] overflow-y-auto">
-              <Table>
+          <div className="border rounded-lg overflow-hidden max-w-full">
+            <div className="max-h-[70vh] overflow-auto">
+              <Table className="min-w-[1100px]">
                 <TableHeader className="sticky top-0 bg-background z-10 shadow-[0_1px_0_0_hsl(var(--border))]">
                   <TableRow>
                     <TableHead className="w-8"></TableHead>
