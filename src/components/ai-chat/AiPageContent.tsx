@@ -889,16 +889,10 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
         </div>
       )}
 
-      {/* Document packages — переиспользуем StrictDocumentTemplatesManager с фильтром по category */}
+      {/* Document packages → Идеология: пользовательская анкета + read-only состав пакета */}
       {activeSubTab === "pkg-ideology" && (
         <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
-          <StrictDocumentTemplatesManager
-            embedded
-            categoryFilter="ideology"
-            title="Пакет «Идеология»"
-            subtitle={<>Шаблоны документов пакета «Идеология». Допустим только формат <code>{`{{field:FLD-XXXXXX}}`}</code>.</>}
-            emptyText="В пакете «Идеология» пока нет шаблонов. Загрузите первый .docx."
-          />
+          <DocumentPackageIdeologyView />
         </div>
       )}
 
