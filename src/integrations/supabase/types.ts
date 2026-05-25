@@ -15287,6 +15287,7 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      get_ai_access: { Args: never; Returns: Json }
       get_bepaid_statement_stats: {
         Args: { from_date: string; to_date: string }
         Returns: Json

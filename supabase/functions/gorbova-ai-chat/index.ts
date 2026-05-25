@@ -1,4 +1,13 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import {
+  resolveAiAccess,
+  isModeAllowed,
+  countUserMessages,
+  limitsForKey,
+  truncateHistory,
+  classifyOffTopic,
+  HARD_USER_MESSAGE_CHARS,
+} from '../_shared/ai-access.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -11,6 +20,21 @@ const ALLOWED_MIME_PREFIXES = ['application/pdf', 'application/msword', 'applica
 const MAX_FILES = 5;
 const MAX_TOTAL_BYTES = 10 * 1024 * 1024;
 const MAX_TEXT_CHARS = 100000;
+
+const MODEL_CHAT = 'google/gemini-2.5-flash';
+const MODEL_PROMPT = 'google/gemini-2.5-pro';
+
+async function writeAccessAudit(supabase: any, userId: string, action: string, details: Record<string, any>) {
+  try {
+    await supabase.from('audit_logs').insert({
+      actor_id: userId,
+      action,
+      entity_type: 'ai_chat',
+      details,
+    });
+  } catch (_e) { /* non-fatal */ }
+}
+
 
 const WEB_SYSTEM_PROMPT = `Ты — gorbova AI, профессиональный бизнес-ассистент для предпринимателей.
 Отвечай на русском языке. Будь полезным, точным и структурированным.
@@ -173,6 +197,19 @@ Deno.serve(async (req) => {
     const startTime = Date.now();
     const hasImages = !!(images && images.length > 0);
     metadata.images_present = hasImages;
+    metadata.ai_mode = mode === 'prompt' ? 'prompt' : 'chat';
+
+    // 4.1 Hard cap на длину одного user-message
+    const lastUserContent = messages?.[messages.length - 1]?.content || '';
+    if (lastUserContent.length > HARD_USER_MESSAGE_CHARS) {
+      const hasAttachment = !!fileContents || (fileNames && fileNames.length > 0) || hasImages;
+      const errMsg = (lastUserContent.length >= 20_000 || hasAttachment)
+        ? 'Сократите ввод или загрузите файл отдельным вложением (предел 50 000 символов на сообщение).'
+        : 'Сократите запрос (предел 50 000 символов на сообщение).';
+      return new Response(JSON.stringify({ error: errMsg, code: 'message_too_long' }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     // 5. Truncate fileContents
     let processedFileContents = fileContents || '';
@@ -183,6 +220,7 @@ Deno.serve(async (req) => {
       processedFileContents = processedFileContents.substring(0, MAX_TEXT_CHARS);
       metadata.file_truncated = true;
     }
+
 
     // 6. Load prompt if prompt_id provided
     const serviceClient = createClient(supabaseUrl, supabaseServiceKey);
@@ -209,9 +247,59 @@ Deno.serve(async (req) => {
       metadata.prompt_title_snapshot = prompt.title;
       metadata.launcher_title_snapshot = prompt.launcher_title;
       metadata.scenario_type = prompt.type;
+      metadata.scenario_code = prompt.code || null;
+    }
+
+    // 6.1 Access check (entitlements-based). Default-deny при ошибке.
+    const scenarioCode = promptData?.code || null;
+    const access = await resolveAiAccess(serviceClient, user.id);
+    metadata.access_tier = access.tier;
+    const accessCheck = isModeAllowed(access, mode, scenarioCode);
+    if (!accessCheck.allowed) {
+      metadata.routing_reason = 'access_denied';
+      metadata.denial_reason = accessCheck.reason;
+      await writeAccessAudit(serviceClient, user.id, 'ai_chat.access_denied', {
+        mode, scenario_code: scenarioCode, reason: accessCheck.reason, access_tier: access.tier,
+      });
+      return new Response(JSON.stringify({
+        error: 'Эта функция AI недоступна на вашем тарифе.',
+        code: 'access_denied_for_mode',
+        denial_reason: accessCheck.reason,
+        cta: { business_url: '/buhgalteria-kak-biznes', club_url: '/gorbova-club' },
+      }), {
+        status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // 6.2 Quota check (по нормализованным ai_mode / scenario_code)
+    const limitKey: 'chat' | 'balance_analysis' | '107NK' | 'default_prompt' =
+      mode === 'chat'
+        ? 'chat'
+        : (scenarioCode === 'balance_analysis' ? 'balance_analysis'
+          : scenarioCode === '107NK' ? '107NK' : 'default_prompt');
+    const limits = limitsForKey(limitKey);
+    const used = await countUserMessages(serviceClient, user.id, mode === 'chat'
+      ? { ai_mode: 'chat' }
+      : { scenario_code: scenarioCode || undefined });
+    metadata.quota_limit = limits;
+    metadata.quota_used = used;
+    if (used.daily >= limits.daily || used.monthly >= limits.monthly) {
+      metadata.routing_reason = 'quota_denied';
+      metadata.denial_reason = used.daily >= limits.daily ? 'daily_limit_reached' : 'monthly_limit_reached';
+      await writeAccessAudit(serviceClient, user.id, 'ai_chat.quota_denied', {
+        mode, scenario_code: scenarioCode, limit_key: limitKey, used, limits,
+      });
+      return new Response(JSON.stringify({
+        error: `Достигнут лимит сообщений (${used.daily >= limits.daily ? `${limits.daily} в день` : `${limits.monthly} в месяц`}). Попробуйте позже.`,
+        code: 'rate_limited_for_mode',
+        limits, used,
+      }), {
+        status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
     // 7. Unsupported files guard (BEFORE quality gate)
+
     const unsupportedFiles = body.unsupported_files;
     const hasUsableText = stripNonContentMarkers(processedFileContents).length > 0;
     const allFilesUnsupported =
@@ -393,19 +481,58 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 10. Build messages for AI
-    const aiMessages: any[] = [{ role: 'system', content: systemPrompt }];
+    // 10. Build messages for AI (с усечением истории + off-topic для chat)
+    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+    if (!LOVABLE_API_KEY) {
+      return new Response(JSON.stringify({ error: 'AI сервис не настроен' }), {
+        status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
-    if (processedFileContents) {
-      const fileContextMsg = `--- СОДЕРЖИМОЕ ЗАГРУЖЕННЫХ ФАЙЛОВ ---\n${processedFileContents}\n--- КОНЕЦ ФАЙЛОВ ---`;
+    // 10.1 Truncation
+    const dialog = messages.filter(m => m.role === 'user' || m.role === 'assistant');
+    const fileContextMsg = processedFileContents
+      ? `--- СОДЕРЖИМОЕ ЗАГРУЖЕННЫХ ФАЙЛОВ ---\n${processedFileContents}\n--- КОНЕЦ ФАЙЛОВ ---`
+      : null;
+    const trunc = truncateHistory(dialog, systemPrompt, fileContextMsg);
+    metadata.truncated = trunc.truncated;
+    metadata.dropped_messages_count = trunc.dropped_messages_count;
+    metadata.dropped_chars = trunc.dropped_chars;
+    metadata.context_messages_count = trunc.context_messages_count;
+    metadata.context_chars = trunc.context_chars;
+
+    // 10.2 Off-topic — ТОЛЬКО для свободного чата
+    if (mode === 'chat' && !hasImages && !fileContextMsg) {
+      const topicResult = await classifyOffTopic(LOVABLE_API_KEY, lastUserContent);
+      metadata.topic_check = topicResult;
+      if (!topicResult.on_topic) {
+        metadata.routing_reason = 'offtopic_blocked';
+        metadata.model_used = 'shortcut_template';
+        const convId = conversation_id || crypto.randomUUID();
+        const reply = 'Я помогаю по вопросам бизнеса, налогов и бухгалтерии РБ. Для общих и бытовых вопросов воспользуйтесь, пожалуйста, другим сервисом.';
+
+        await serviceClient.from('ai_chat_messages').insert({
+          conversation_id: convId, user_id: user.id, role: 'user', content: lastUserContent,
+          metadata: { ai_mode: 'chat' },
+        });
+        await serviceClient.from('ai_chat_messages').insert({
+          conversation_id: convId, user_id: user.id, role: 'assistant', content: reply,
+          metadata: { ...metadata, processing_time_ms: Date.now() - startTime },
+        });
+
+        return new Response(JSON.stringify({ content: reply, conversation_id: convId, metadata }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    const aiMessages: any[] = [{ role: 'system', content: systemPrompt }];
+    if (fileContextMsg) {
       aiMessages.push({ role: 'user', content: fileContextMsg });
       metadata.file_names = fileNames || [];
     }
-
-    for (const msg of messages) {
-      if (msg.role === 'user' || msg.role === 'assistant') {
-        aiMessages.push({ role: msg.role, content: msg.content });
-      }
+    for (const msg of trunc.messages) {
+      aiMessages.push({ role: msg.role, content: msg.content });
     }
 
     if (hasImages) {
@@ -424,13 +551,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 11. Call Lovable AI Gateway
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      return new Response(JSON.stringify({ error: 'AI сервис не настроен' }), {
-        status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    // 11. Call Lovable AI Gateway — модель по режиму
+    const chosenModel = mode === 'chat' ? MODEL_CHAT : MODEL_PROMPT;
+    metadata.model_used = chosenModel;
+    metadata.routing_reason = mode === 'chat' ? 'free_chat_flash' : 'scenario_pro';
 
     const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
@@ -439,11 +563,12 @@ Deno.serve(async (req) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-pro',
+        model: chosenModel,
         messages: aiMessages,
         stream: false,
       }),
     });
+
 
     if (!aiResponse.ok) {
       const status = aiResponse.status;
@@ -478,9 +603,14 @@ Deno.serve(async (req) => {
         user_id: user.id,
         role: 'user',
         content: lastUserMsg.content,
-        metadata: fileNames ? { file_names: fileNames } : null,
+        metadata: {
+          ai_mode: metadata.ai_mode,
+          scenario_code: metadata.scenario_code || null,
+          ...(fileNames ? { file_names: fileNames } : {}),
+        },
       });
     }
+
 
     await serviceClient.from('ai_chat_messages').insert({
       conversation_id: convId,
