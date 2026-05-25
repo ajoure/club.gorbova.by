@@ -171,7 +171,10 @@ export function DocumentPackageIdeologyView() {
     const opts: { id: string; label: string; kind: "entity" | "person" }[] = [];
     for (const id of filteredState.selectedEntityIds) {
       const e = aiEntities.allEntities.find((x) => x.id === id);
-      if (e) opts.push({ id, label: `${e.short_name ?? "—"}${e.unp ? ` · УНП ${e.unp}` : ""}`, kind: "entity" });
+      if (e) {
+        const unp = entityUnp(e);
+        opts.push({ id, label: `${entityDisplayName(e)}${unp ? ` · УНП ${unp}` : ""}`, kind: "entity" });
+      }
     }
     for (const id of filteredState.selectedPersonIds) {
       const p = aiPersons.allPersons.find((x) => x.id === id);
