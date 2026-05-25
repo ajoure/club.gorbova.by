@@ -259,7 +259,34 @@ interface VersionRow {
 
 // ───────────── component ─────────────
 
-export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?: boolean } = {}) {
+/**
+ * Канонические категории-пакеты для шаблонов документов.
+ * Используется как `categoryFilter` в обёртке /document-generation → Документы.
+ */
+export const DOCUMENT_PACKAGE_CATEGORIES = {
+  ideology: "ideology",
+} as const;
+
+export interface StrictDocumentTemplatesManagerProps {
+  embedded?: boolean;
+  /** Фильтр по document_templates.category. Если задан — список и upload скоупятся к этой категории. */
+  categoryFilter?: string | null;
+  /** Заголовок панели. По умолчанию — «Шаблоны документов». */
+  title?: string;
+  /** Подзаголовок панели. По умолчанию — strict-описание. */
+  subtitle?: React.ReactNode;
+  /** Текст empty-state. По умолчанию — «Нет шаблонов. Загрузите первый .docx.». */
+  emptyText?: string;
+}
+
+export function StrictDocumentTemplatesManager({
+  embedded = false,
+  categoryFilter = null,
+  title,
+  subtitle,
+  emptyText,
+}: StrictDocumentTemplatesManagerProps = {}) {
+
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
   const [versions, setVersions] = useState<VersionRow[]>([]);
   const [loading, setLoading] = useState(true);
