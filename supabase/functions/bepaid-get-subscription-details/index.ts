@@ -109,12 +109,22 @@ Deno.serve(async (req) => {
         actor_label: 'bepaid-get-subscription-details',
         meta: { subscription_id, status: response.status, error: text.substring(0, 500) },
       });
-      return new Response(JSON.stringify({ 
-        error: 'Failed to fetch subscription from bePaid',
-        status: response.status,
-        details: text,
+      // PATCH: return HTTP 200 with structured signal so supabase.functions.invoke
+      // does not throw and crash the UI. 404 → not_found, 5xx → fallback.
+      const notFound = response.status === 404;
+      const isFallbackable = response.status >= 500;
+      return new Response(JSON.stringify({
+        ok: false,
+        error: notFound
+          ? 'Subscription not found in bePaid'
+          : 'Failed to fetch subscription from bePaid',
+        not_found: notFound,
+        fallback: isFallbackable,
+        upstream_status: response.status,
+        details: text.substring(0, 500),
+        subscription_id,
       }), {
-        status: response.status,
+        status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
