@@ -12,6 +12,7 @@ import { PersonRecordSheet } from "@/components/ai-requisites/PersonRecordSheet"
 // CanonicalTemplateVersionsPanel / AliasesTab оставлены как dead-code до cleanup-коммита.
 import { PlaceholdersCatalogTab } from "@/components/ai-documents/PlaceholdersCatalogTab";
 import { StrictDocumentTemplatesManager } from "@/components/ai-documents/StrictDocumentTemplatesManager";
+import { DocumentPackageIdeologyView } from "@/components/ai-documents/DocumentPackageIdeologyView";
 import type { PersonRow } from "@/hooks/useAiPersons";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { cn } from "@/lib/utils";
