@@ -1,317 +1,187 @@
-да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-1. План в целом правильный, но INV-20 нельзя чинить blind UPDATE двух payments_v2, пока не доказано, что эти payment действительно являются rebill charge, а не initial payment исходного заказа.
+1. **Заголовок плана привести к обязательному формату**  
+Сейчас указано `## План (v2): ...`. Нужно строго:  
+`План: Генерация документов — отдельный домен для Реквизитов v2`
+2. **Уточнить, что это UI/navigation refactor, а не новый document generation pipeline**  
+Добавить в начало:
+  &nbsp;
+  Этот план переносит существующий UI реквизитов в отдельный пользовательский раздел и админский домен документов. Новый генератор, новые токены, новые таблицы реквизитов, новые RPC и новые edge-functions не создаются.
+  Это важно, потому что master-plan запрещает параллельные generator pipeline, token picker и локальные списки токенов.  
+3. `app_sections.sort_order=5` **конфликтует с** `live=5`  
+В плане написано: `sort_order=5` ставит между `ai(4)` и `live(5)`. Так не получится, если `live` уже `5`.  
+Исправить:
+  - либо `sort_order=4.5`, если поле допускает numeric;
+  - либо безопаснее: `sort_order=45`, если используется integer-шкала;
+  - либо выбрать следующий свободный порядок после read-only проверки существующих `app_sections`.
+4. **Миграция** `app_sections` **должна быть add-only, но с update-safe поведением**  
+`ON CONFLICT DO NOTHING` безопасен, но если строка уже есть с неправильным `label/route/icon`, она не исправится. Лучше:
+  &nbsp;
+  ```sql
+  ON CONFLICT (code) DO UPDATE
+  SET
+    label = EXCLUDED.label,
+    icon = EXCLUDED.icon,
+    route = EXCLUDED.route,
+    short_description = EXCLUDED.short_description,
+    features_json = EXCLUDED.features_json,
+    cta_label = EXCLUDED.cta_label,
+    updated_at = now()
+  ```
+  Но **не менять автоматически** `is_public`, `is_active`, `sort_order`, если админ уже мог их настроить вручную. Это соответствует принципу safe migration и не ломает production-настройки.  
+5. **Перед миграцией добавить read-only discovery**  
+В план добавить шаг:
+  - проверить существующие `app_sections` по `code`, `route`, `sort_order`;
+  - проверить, как `AppSidebar` реально фильтрует пункты через `useSectionAccess`;
+  - проверить тип поля `sort_order`;
+  - проверить, есть ли уже lazy import-паттерн для новых страниц в `App.tsx`.
+6. `user_menu_sections` **нельзя просто “НЕ трогаем” без проверки**  
+Формулировку заменить на:
+  &nbsp;
+  `user_menu_sections` не изменяем на execute-этапе, если read-only discovery подтвердит, что клиентский sidebar действительно рендерится из `mainMenuItems` и доступ управляется через `app_sections/useSectionAccess`. Если обнаружится, что `user_menu_sections` влияет на меню/доступы, вынести отдельным mini-patch после discovery.
+7. `AdminDocuments.tsx` **— проверить UX верхнеуровневых секций**  
+Текущий план верно отмечает риск, но нужно сделать это обязательным пунктом, а не “техническим нюансом”:
+  - если `visibleSections.length > 1`, верхний переключатель секций обязан отображаться;
+  - если `visibleSections.length === 1`, можно скрывать;
+  - активная секция должна корректно fallback’иться, если `initialSection` скрыта.
+8. `AdminAI.tsx` **пункт сформулирован противоречиво**  
+Сейчас написано: “без изменений”, но далее — “добавим `requisites`”.  
+Исправить:
+  &nbsp;
+  `src/pages/admin/AdminAI.tsx` — точечная правка пропсов: добавить `requisites` в `hiddenSections`. Бизнес-логику не менять.
+9. **Добавить audit/proof для миграции**  
+Если в проекте принято требовать proof по системным изменениям, добавить:
+  - SQL proof: строка `app_sections.code='document_generation'` существует;
+  - UI proof: строка видна в `/admin/sections`;
+  - audit proof, если текущая архитектура `/admin/sections` пишет изменения в `audit_logs`.
+10. **Добавить STOP-guards**  
+В план включить:
 
-&nbsp;
+- STOP, если `AiPageContent` не поддерживает `requisites` как самостоятельную секцию;
+- STOP, если `/admin/documents` технически завязан только на `documents` и ломается при двух секциях;
+- STOP, если `SectionGuard` не принимает новый `sectionCode` без дополнительной регистрации;
+- STOP, если миграция требует изменения RLS/section_access не заявленного в плане;
+- STOP, если перенос реквизитов требует изменений в `client_legal_details` / `legal_details_persons`.
 
-Перед re-attach обязательно проверить по каждому payment:
+11. **DoD расширить проверкой отсутствия дублей**  
+Добавить:
 
-- provider_payment_id совпадает с orders_v2.provider_payment_id rebill-order;
+- `/ai → Реквизиты` больше недоступны пользователю;
+- `/admin/ai → Реквизиты` не отображаются;
+- `/admin/documents → Реквизиты` отображаются один раз;
+- `/settings/legal-details` и `/settings/user-requisites` не изменились;
+- CRUD реквизитов работает с теми же таблицами и хуками, без создания новых сущностей.
 
-- payment.paid_at соответствует [rebill-order.deal](http://rebill-order.deal)_date/paid_at;
+12. **Финальный отчет от Lovable должен быть строго на русском языке**  
+В план добавить обязательный блок:
 
-- payment.meta.bepaid_subscription_id / parent_uid / recurring markers указывают на тот же provider_subscription;
+План должен быть составлен на русском языке.  
+Отчет о выполненной работе должен быть составлен на русском языке.  
+Вся переписка, пояснения, diff-summary, proof и результаты должны быть только на русском языке.
 
-- исходный order после переноса не останется без своего initial payment;
-
-- нет refund-row, parent_payment_id или refund linkage, который сломается от re-attach.
-
-&nbsp;
-
-2. Если исходный order после переноса останется без payment, не ставить сразу meta.inv20_legacy_noise.
-
-Сначала доказать:
-
-- это действительно synthetic/import/legacy order;
-
-- нет реального initial payment;
-
-- нет active entitlement/subscription, завязанного на этот order как paid source.
-
-Только после этого можно помечать как legacy_noise.
-
-&nbsp;
-
-3. Корневой fix webhook должен быть сделан не просто “если order_is_rebill”.
-
-Нужны guards:
-
-- [rebillOrder.id](http://rebillOrder.id) существует;
-
-- payment найден по тому же provider_payment_id;
-
-- payment.order_id != [rebillOrder.id](http://rebillOrder.id);
-
-- текущий payment.order_id является parent/initial order той же subscription/user/product;
-
-- нет уже другого payment на rebillOrder;
-
-- transaction не refund;
-
-- provider_payment_id уникален;
-
-- запись audit до/после.
-
-&nbsp;
-
-4. INV-19B через admin-bepaid-backfill — сначала dry-run.
-
-Execute только если:
-
-- подписка active;
-
-- auto_renew=true;
-
-- billing_type=provider_managed;
-
-- payment_method bePaid активен;
-
-- нет existing provider_subscriptions;
-
-- backfill не создаст дубль по provider_subscription_id / subscription_v2_id.
-
-&nbsp;
-
-5. INV-SITE-1 можно чинить миграцией, но idempotently:
-
-- обновлять только страницу `969210bb`;
-
-- только блок `type='form'`;
-
-- только если `version` отсутствует;
-
-- не менять content/id/type.
-
-&nbsp;
-
-6. Добавить regression proof:
-
-после webhook-fix повторный rebill должен:
-
-- создать/найти REBILL-order;
-
-- привязать payments_v2 к REBILL-order;
-
-- не оставлять INV-20;
-
-- не трогать initial order payment;
-
-- не вызывать grant-access-for-order повторно по старому order.
+Это обязательное правило для планов/отчетов проекта.  
 
 &nbsp;
 
-7. Не делать всё как “миграции и потом посмотрим”.
-
-Нужно выполнить:
-
-- preflight таблицу по 3 инвариантам;
-
-- execute;
-
-- post-verify;
-
-- только потом nightly-system-health.
-
-Итоговая команда:
-
-План принимаю с правками.
-
-&nbsp;
-
-Разрешаю PATCH-NIGHTLY-2026-05-25-FIX.
-
-&nbsp;
-
-Scope:
-
-1. INV-SITE-1:
-
-- idempotent update `site_pages.blocks`;
-
-- добавить `version:1` только form-блоку страницы `969210bb`;
-
-- content/type/id не менять.
-
-&nbsp;
-
-2. INV-19B:
-
-- сначала `admin-bepaid-backfill` dry-run по одной подписке `a25168db`;
-
-- execute только если dry-run показывает ровно 1 candidate и 0 дублей;
-
-- audit `bepaid_backfill_provider_sub`.
-
-&nbsp;
-
-3. INV-20:
-
-- preflight по двум парам payment↔rebill-order;
-
-- re-attach только если доказано, что payment является rebill charge именно этого order;
-
-- audit `inv20_repair_reattach_rebill_payment`;
-
-- не помечать исходные orders как legacy_noise без отдельного доказательства.
-
-&nbsp;
-
-4. Root fix `bepaid-webhook`:
-
-- добавить guard re-attach payment to rebill-order;
-
-- только для non-refund rebill transaction;
-
-- только если payment provider_payment_id = rebillOrder provider_payment_id;
-
-- если rebillOrder уже имеет payment — skip/idempotent;
-
-- audit `bepaid.webhook.payment_reattached_to_rebill_order`.
-
-&nbsp;
-
-Запрещено:
-
-- менять subscriptions_v2 вручную;
-
-- менять entitlements;
-
-- менять grants/access;
-
-- менять RLS/cron/schema;
-
-- удалять provider_subscriptions;
-
-- трогать INV-22 logic;
-
-- менять ContactDetailSheet.
-
-&nbsp;
-
-Verify:
-
-- INV-20 actionable = 0;
-
-- INV-19B = 0;
-
-- INV-SITE-1 = 0;
-
-- `/nightly-payments-invariants` OK;
-
-- `/nightly-system-health` 8/8 OK;
-
-- proof со SQL before/after и audit ids.
-
-&nbsp;
-
-Proof:
-
-.lovable/proofs/nightly_2026_05_25_[fix.md](http://fix.md)
-
-Ключевое: **INV-20 чинить только после доказательства, что эти payments — именно rebill-платежи, иначе можно снова разорвать initial orders.**
-
-&nbsp;
-
-# План: ночная проверка 25.05.2026 — 3 ошибки, корневые причины и исправления
-
-## Diagnose (что нашёл)
-
-### 1. INV-20: 2 оплаченных заказа без `payments_v2` (`ecd989f1`, `c82ad679`)
-
-Это **rebill-заказы** (`meta.source='bepaid_rebill'`, `provider='bepaid'`, `provider_payment_id` заполнен), но `payments_v2` для их `provider_payment_id` **существует** и привязан к ДРУГОМУ (исходному) заказу:
-
-```
-orders_v2 ecd989f1 (rebill, 19.05)  →  payments_v2 c5c7dcd0  →  order_id=ea774d6c (исходный чекаут от 19.04)
-orders_v2 c82ad679 (rebill, 18.05)  →  payments_v2 e1238eac  →  order_id=c11a518d (исходный чекаут от 17.02)
-```
-
-`subscriptions_v2` (`de75db3a`, `161a0644`) и их `provider_subscriptions` (`sbs_812f...`, `sbs_85af...`) живы и `active`.
-
-**Корневая причина:** `bepaid-webhook` при rebill-событии создаёт новую запись в `orders_v2` (правильно — это новый цикл), но `payments_v2` уже была вставлена ранее с `order_id` = исходного чекаут-заказа, и при rebill она **не переаттачивается** на новый rebill-order. Получается «дубль-orphan»: оплата висит на старом заказе, новый rebill-order остаётся без `payments_v2` → INV-20 ругается.
-
-### 2. INV-19B: 1 авторекурринг без `provider_subscriptions`
-
-Подписка `a25168db-a289-431a-8869-5fca9486ca62` (user `1409fd0e...`, product `11c9f1b8` = Клуб, tariff `7c748940`): `status=active`, `auto_renew=true`, `billing_type=provider_managed`, у пользователя есть активный `payment_methods.provider=bepaid` — но в `provider_subscriptions` нет ни одной строки с этим `subscription_v2_id`.
-
-**Корневая причина:** подписка была создана (вероятно через ручное действие/импорт/повторное оформление 29.04) без вызова канонического write-path `grant-access-for-order → bepaid → pre-create provider_subscriptions`. Это ровно тот сценарий, для которого существует `admin-bepaid-backfill`.
-
-### 3. INV-SITE-1: 1 невалидная опубликованная страница (`969210bb`, `form-proof`)
-
-Страница опубликована, блок имеет `id` + `type='form'`, но **отсутствует поле `version**` (инвариант ожидает `id` + `type` + `version`).
-
-**Корневая причина:** страница (proof-форма) была опубликована до того, как блок-схема стала требовать `version`. Это служебная тест-форма, не продакшен-лендинг.
-
----
-
-## Plan (что делаем)
-
-### Шаг 1. INV-SITE-1 — добавить `version: 1` к блоку form-proof
-
-Через `supabase--migration` обновить `site_pages.blocks` для `id='969210bb-00fc-4fce-b248-624d344e881e'`, проставив `version: 1` единственному блоку. Не трогаем content/type/id.
-
-### Шаг 2. INV-19B — backfill одной подписки
-
-Вызвать существующую edge `admin-bepaid-backfill` (mode=execute) **точечно для user_id=`1409fd0e-23fb-44fb-a6af-11778a53a94f**` (либо subscription_id=`a25168db-...`), чтобы создалась запись `provider_subscriptions`. Никаких новых функций.
-
-Если у функции нет точечного режима — сначала dry-run по всему списку (на момент проверки в БД только 1 кандидат), затем execute.
-
-### Шаг 3. INV-20 — точечный re-attach двух payments_v2 на rebill-orders
-
-Через `supabase--migration` (UPDATE требует миграции) переаттачить:
-
-```
-payments_v2 c5c7dcd0  →  order_id = ecd989f1
-payments_v2 e1238eac  →  order_id = c82ad679
-```
-
-с записью аудита в `audit_logs` (`action='inv20_repair_reattach_rebill_payment'`, актор=system, meta = до/после).
-
-Исходные orders (`ea774d6c`, `c11a518d`) — это первый платёж по подписке, у них тоже когда-то был свой `payments_v2` (по другому `provider_payment_id` исходного чекаута). После re-attach исходные orders могут остаться без `payments_v2` → проверить и при необходимости найти исходный платёж первого цикла (по `meta.checkout_token`/`tracking_id`/дате) и оставить его привязанным.
-
-**Если исходный платёж первого цикла не находится** — это уже legacy-noise (синтетический импорт), помечаем `orders_v2.meta.inv20_legacy_noise=true`, чтобы RPC `inv20_paid_orders_actionable` его исключила (как уже делает для synthetic).
-
-### Шаг 4. Корневой fix `bepaid-webhook` (rebill payment binding)
-
-В `supabase/functions/bepaid-webhook/index.ts` найти ветку обработки rebill-транзакции. Сейчас она:
-
-1. ищет существующую `payments_v2` по `provider_payment_id` → находит запись от первичного UPSERT с `order_id` = первичный заказ;
-2. создаёт новый `orders_v2` под rebill;
-3. не обновляет `payments_v2.order_id`.
-
-**Изменение:** при обработке rebill после создания/нахождения нового rebill-order:
-
-```ts
-if (payment.order_id !== rebillOrder.id && order_is_rebill) {
-  await supabase.from('payments_v2').update({ order_id: rebillOrder.id })
-    .eq('id', payment.id);
-  await writeAudit('bepaid.webhook.payment_reattached_to_rebill_order', ...);
-}
-```
-
-Альтернатива (если архитектурно чище): rebill-обработчик создаёт **новую** `payments_v2` с `reference_payment_id` старой, привязанной к rebill-order. Но это меняет write-path → выберем минимально-инвазивный re-attach.
-
-DoD-проверка: после фикса повторно запустить `nightly-payments-invariants` → INV-20 actionable = 0.
-
-### Шаг 5. Verify (DoD)
-
-1. `supabase--read_query`: `payments_v2` по двум rebill-orders → строки найдены.
-2. `supabase--read_query`: подписка `a25168db` → в `provider_subscriptions` есть запись.
-3. `supabase--read_query`: страница `969210bb` → блок имеет `version: 1`, инвариант пройдён.
-4. `supabase--curl_edge_functions` POST `/nightly-payments-invariants` и `/nightly-system-health` → все 8 OK.
-5. Скриншот `/admin/system-health` после прогона.
-
----
-
-## Что НЕ трогаем
-
-- `subscriptions_v2`, `provider_subscriptions`, `orders_v2` (кроме `meta.inv20_legacy_noise` при необходимости).
-- Канонический write-path `grant-access-for-order`.
-- RLS, cron, schema, INV-22 логика, ContactDetailSheet (наш предыдущий патч).
-- Содержимое страницы `form-proof` — только добавление `version`.
-
-## Технические детали (для тех, кто читает код)
-
-- Файлы под изменение: `supabase/functions/bepaid-webhook/index.ts` (Шаг 4), миграции (Шаги 1 и 3).
-- `inv20_paid_orders_actionable` RPC оставляем как есть — после re-attach actionable_count = 0 естественным образом.
-- Audit: `audit_logs` table, `action ∈ {inv20_repair_reattach_rebill_payment, sitepage_block_version_backfill, bepaid_backfill_provider_sub}`.
-- Proof: `.lovable/proofs/nightly_2026_05_25_fix.md` со SQL до/после, скриншотом `/admin/system-health` = 8/8 OK.
+План (v2): «Генерация документов» — отдельный домен для Реквизитов
+
+### Скоуп изменений
+
+1. **Пользовательский UI** (`/ai`) — оставить только `Gorbova AI`. Вкладку `Реквизиты` (Юрлица/ИП + Физлица) перенести в новый top-level пункт меню `Генерация документов` (`/document-generation`).
+2. **Админский UI** — `/admin/ai` оставить как есть (Gorbova AI: Чат, История анализа, Туториалы, Промпты). Вкладку `Реквизиты` дополнительно добавить в существующий админский домен `/admin/documents` (рядом с Плейсхолдерами, Шаблонами, Историей, Исполнителями).
+3. **Раздел в `/admin/sections**` — завести новый `app_sections.code = 'document_generation'`, чтобы админ мог управлять видимостью раздела для клиентов (как у `ai`/`knowledge`).
+
+### Файловые правки
+
+#### Frontend (точечно, без правки бизнес-логики)
+
+1. `**src/pages/AI.tsx**` — добавить проп:
+  ```tsx
+   <AiPageContent mode="user" hiddenSections={["requisites"]} />
+  ```
+   На `/ai` остаётся только секция `ai` (Gorbova AI). Админ-секция `documents` уже скрыта guard'ом `adminOnly` внутри `AiPageContent` для пользователя — ничего не меняется.
+2. **Новый `src/pages/DocumentGeneration.tsx**` — обёртка для пользовательского домена:
+  ```tsx
+   <DashboardLayout>
+     <AiPageContent mode="user" initialSection="requisites" hiddenSections={["ai", "documents"]} />
+   </DashboardLayout>
+  ```
+   Рендерит `requisites` напрямую с табами `Юрлица / ИП` и `Физлица`.
+3. `**src/pages/admin/AdminDocuments.tsx**` — расширить видимость, **убрав** `requisites` из скрытых:
+  ```tsx
+   <AiPageContent mode="admin" initialSection="documents" hiddenSections={["ai"]} />
+  ```
+   Теперь на `/admin/documents` админ увидит верхнеуровневые секции `Документы` и `Реквизиты` рядом, а внутри `Реквизитов` — табы `Юрлица / ИП` и `Физлица`. Gorbova AI и его подвкладки остаются исключительно на `/admin/ai`.
+4. `**src/pages/admin/AdminAI.tsx**` — без изменений (там уже `hiddenSections={["documents"]}`; добавим `requisites`, чтобы Реквизиты не дублировались на `/admin/ai`):
+  ```tsx
+   <AiPageContent mode="admin" hiddenSections={["documents", "requisites"]} />
+  ```
+5. `**src/App.tsx**` — добавить роут пользователя:
+  ```tsx
+   <Route path="/document-generation"
+     element={<ProtectedRoute><LazyRoute>
+       <SectionGuard sectionCode="document_generation">
+         <DocumentGeneration />
+       </SectionGuard>
+     </LazyRoute></ProtectedRoute>}
+   />
+  ```
+   `SectionGuard` обязателен — иначе админ не сможет управлять видимостью раздела через `/admin/sections`.
+6. `**src/components/layout/AppSidebar.tsx**` — добавить новый `MainMenuItem` сразу после `ai`:
+  ```ts
+   { key: "document_generation", title: "Генерация документов",
+     url: "/document-generation", icon: FileSignature }
+  ```
+   Иконка `FileSignature` из `lucide-react` (документ с подписью — семантически точная, визуально отличается от `FileText` в профиль-меню и от `Cpu` нейросети). Резолв ключа в section code добавим:
+   (фактически достаточно того, что `key` совпадает с `app_sections.code`).
+7. `**src/components/layout/DashboardBreadcrumbs.tsx**` — добавить запись `"/document-generation": "Генерация документов"`.
+8. **Опциональная мелочь в `AiPageContent.tsx**` — при `initialSection`, попавшем в `hiddenSections`, должен срабатывать fallback на первую видимую секцию. Сверяем существующий guard; если его нет — добавляем мини-правку (без изменения логики секций), чтобы в `/admin/ai` с `hiddenSections=["documents","requisites"]` точно подсвечивался `ai`, а на `/document-generation` — `requisites`.
+
+#### Backend (миграции)
+
+9. **Миграция: добавить раздел `document_generation` в `app_sections**`:
+  ```sql
+   INSERT INTO public.app_sections
+     (code, label, icon, route, is_public, sort_order, is_active, short_description, features_json, cta_label)
+   VALUES
+     ('document_generation', 'Генерация документов', 'FileSignature',
+      '/document-generation', false, 5, true,
+      'Реквизиты ЮЛ/ИП и физлиц для генерации документов',
+      '["Юрлица и ИП", "Физлица", "Подстановка в шаблоны документов"]'::jsonb,
+      'Получить доступ')
+   ON CONFLICT (code) DO NOTHING;
+  ```
+   Это автоматически:
+  - покажет раздел в `/admin/sections` со всеми toggle'ами публичности и `section_access` правилами;
+  - подключит `SectionGuard` на роуте `/document-generation` — пользователи без доступа получат стандартный экран «Раздел недоступен», как у `/ai` и `/knowledge`.
+   `sort_order=5` ставит его между `ai`(4) и `live`(5) — при необходимости подгоним.
+10. `**user_menu_sections**` — НЕ трогаем (там тоже есть запись `ai` со sort_order=4, но пункт меню рендерится статически из `AppSidebar.tsx`; синхронизация не требуется для рендера сайдбара).
+
+### Что НЕ трогаем
+
+- `AiPageContent.tsx` — бизнес-логика, хуки, реестры, табы внутри `requisites`/`documents`/`ai`. Только пропы и (если необходимо) fallback `initialSection`.
+- `useAiEntities`, `useAiPersons`, `EntityTableView/Sheet`, `PersonsTableView/Sheet`, `client_legal_details`, `legal_details_persons`, RLS, RPC, edge-functions, document_templates, plейсхолдеры.
+- `/settings/legal-details` и `/settings/user-requisites` (это отдельный профильный раздел) — без изменений.
+- `/admin/ai` GorbowAI — без изменений.
+
+### DoD
+
+- **Пользователь** (`/ai`): виден только таб `Gorbova AI`. В сайдбаре между `Нейросеть` и `Эфиры` появился пункт `Генерация документов` с иконкой `FileSignature`. Клик открывает `/document-generation` с табами `Юрлица / ИП` и `Физлица` — CRUD работает идентично прежнему `/ai → Реквизиты`.
+- **Админ** (`/admin/ai`): остался полный Gorbova AI (Чат, История анализа, Туториалы, Промпты). На `/admin/documents` появилась дополнительная верхнеуровневая вкладка `Реквизиты` с теми же двумя табами.
+- `**/admin/sections**`: появилась строка `document_generation` / `Генерация документов` / `/document-generation` с управляемыми publish/гранулярными правилами доступа (как у `ai`, `knowledge`).
+- Хлебная крошка на `/document-generation` показывает «Генерация документов».
+- При выключении видимости раздела в `/admin/sections` пользователь без доступа получает стандартный экран «Раздел недоступен», и пункт сайдбара уважает `useSectionAccess` (он у `AppSidebar` уже есть для всех `mainMenuItems`).
+
+### Verify
+
+- Скрин `/ai` (user) — только Gorbova AI.
+- Скрин `/document-generation` (user) — Юрлица/ИП + Физлица, открыть существующее юрлицо.
+- Скрин `/admin/ai` (admin) — Gorbova AI без Реквизитов и без Документов.
+- Скрин `/admin/documents` (admin) — Документы + Реквизиты как два верхнеуровневых таба.
+- Скрин `/admin/sections` — новая строка `document_generation`.
+
+### Технические нюансы / риски
+
+- Сейчас на `/admin/documents` верхнеуровневый таб-переключатель секций может быть скрыт, если рассчитан на «одну видимую секцию» — нужно убедиться, что при двух видимых секциях (`documents` + `requisites`) переключатель рендерится. Если рендерится только один — добавить условие `visibleSections.length > 1 ? render : hide` (мелкая UI-правка внутри AiPageContent, без изменения логики).
+- Иконка `FileSignature` присутствует в `lucide-react@latest`. Если по версии её нет — заменить на `FileText` / `ScrollText` (выберем при имплементации, сверившись с импортами `lucide-react`).
+- `app_sections.code` уникален — миграция идемпотентна (`ON CONFLICT DO NOTHING`).
