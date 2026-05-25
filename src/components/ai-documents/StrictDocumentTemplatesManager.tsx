@@ -767,12 +767,16 @@ export function StrictDocumentTemplatesManager({
         <div>
           <h2 className="text-lg font-semibold flex items-center gap-2">
             <FileText className="h-5 w-5 text-orange-500" />
-            Шаблоны документов
+            {title ?? "Шаблоны документов"}
           </h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Strict ID-first.&nbsp;
-            Допустим только формат <code>{`{{field:FLD-XXXXXX}}`}</code>.
-            Активация заблокирована, пока validation_status ≠ valid.
+            {subtitle ?? (
+              <>
+                Strict ID-first.&nbsp;
+                Допустим только формат <code>{`{{field:FLD-XXXXXX}}`}</code>.
+                Активация заблокирована, пока validation_status ≠ valid.
+              </>
+            )}
           </p>
         </div>
         <Button onClick={() => setUploadOpen(true)} size="sm">
@@ -789,8 +793,9 @@ export function StrictDocumentTemplatesManager({
             </div>
           ) : templates.length === 0 ? (
             <div className="text-center py-10 text-sm text-muted-foreground border rounded-lg">
-              Нет шаблонов. Загрузите первый .docx.
+              {emptyText ?? "Нет шаблонов. Загрузите первый .docx."}
             </div>
+
           ) : (
             templates.map(t => {
               const tplVers = versionsByTemplate.get(t.id) ?? [];
