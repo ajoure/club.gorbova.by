@@ -227,9 +227,13 @@ const ALLOWED_CASES = new Set([
 //   - 'words' / 'text' — legacy (number/money/boolean/date words/text variants)
 //   - date format aliases: 'short', 'dd.MM.yyyy', 'long_ru', 'words_ru'
 //     (applied only to data_type ∈ {date, datetime}; otherwise warning).
+//   - 'long' — раскрывает короткую форму собственности (ООО → Общество с
+//     ограниченной ответственностью). Применяется только к токенам
+//     `*.leg.org_form`; на других полях возвращает значение без изменений.
 const ALLOWED_FORMATS = new Set([
   'words', 'text',
   'short', 'dd.MM.yyyy', 'long_ru', 'words_ru',
+  'long',
 ]);
 // Format/case modifier values may include letters, digits, underscore and dot
 // (the dot is required for `format=dd.MM.yyyy`).
