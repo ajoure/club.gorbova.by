@@ -233,7 +233,7 @@ function fillLegCustomer(map: Record<string, string>, ld: any) {
   map["customer.leg.name"] = canon.name;
   map["customer.leg.short_name"] = canon.short_name;
   map["customer.leg.unp"] = isLeg ? (ld?.leg_unp || "") : "";
-  map["customer.leg.director_position"] = isLeg ? (ld?.leg_director_position || "") : "";
+  map["customer.leg.director_position"] = isLeg ? normalizeMasculinePosition(ld?.leg_director_position || "") : "";
   map["customer.leg.director_full_name"] = dirFull;
   map["customer.leg.director_short_name"] = isLeg ? fullNameToInitials(dirFull) : "";
   map["customer.leg.acts_on_basis"] = isLeg ? (ld?.leg_acts_on_basis || "") : "";
