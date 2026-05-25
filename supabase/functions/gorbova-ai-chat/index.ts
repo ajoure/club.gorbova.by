@@ -481,19 +481,58 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 10. Build messages for AI
-    const aiMessages: any[] = [{ role: 'system', content: systemPrompt }];
+    // 10. Build messages for AI (с усечением истории + off-topic для chat)
+    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+    if (!LOVABLE_API_KEY) {
+      return new Response(JSON.stringify({ error: 'AI сервис не настроен' }), {
+        status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
-    if (processedFileContents) {
-      const fileContextMsg = `--- СОДЕРЖИМОЕ ЗАГРУЖЕННЫХ ФАЙЛОВ ---\n${processedFileContents}\n--- КОНЕЦ ФАЙЛОВ ---`;
+    // 10.1 Truncation
+    const dialog = messages.filter(m => m.role === 'user' || m.role === 'assistant');
+    const fileContextMsg = processedFileContents
+      ? `--- СОДЕРЖИМОЕ ЗАГРУЖЕННЫХ ФАЙЛОВ ---\n${processedFileContents}\n--- КОНЕЦ ФАЙЛОВ ---`
+      : null;
+    const trunc = truncateHistory(dialog, systemPrompt, fileContextMsg);
+    metadata.truncated = trunc.truncated;
+    metadata.dropped_messages_count = trunc.dropped_messages_count;
+    metadata.dropped_chars = trunc.dropped_chars;
+    metadata.context_messages_count = trunc.context_messages_count;
+    metadata.context_chars = trunc.context_chars;
+
+    // 10.2 Off-topic — ТОЛЬКО для свободного чата
+    if (mode === 'chat' && !hasImages && !fileContextMsg) {
+      const topicResult = await classifyOffTopic(LOVABLE_API_KEY, lastUserContent);
+      metadata.topic_check = topicResult;
+      if (!topicResult.on_topic) {
+        metadata.routing_reason = 'offtopic_blocked';
+        metadata.model_used = 'shortcut_template';
+        const convId = conversation_id || crypto.randomUUID();
+        const reply = 'Я помогаю по вопросам бизнеса, налогов и бухгалтерии РБ. Для общих и бытовых вопросов воспользуйтесь, пожалуйста, другим сервисом.';
+
+        await serviceClient.from('ai_chat_messages').insert({
+          conversation_id: convId, user_id: user.id, role: 'user', content: lastUserContent,
+          metadata: { ai_mode: 'chat' },
+        });
+        await serviceClient.from('ai_chat_messages').insert({
+          conversation_id: convId, user_id: user.id, role: 'assistant', content: reply,
+          metadata: { ...metadata, processing_time_ms: Date.now() - startTime },
+        });
+
+        return new Response(JSON.stringify({ content: reply, conversation_id: convId, metadata }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    const aiMessages: any[] = [{ role: 'system', content: systemPrompt }];
+    if (fileContextMsg) {
       aiMessages.push({ role: 'user', content: fileContextMsg });
       metadata.file_names = fileNames || [];
     }
-
-    for (const msg of messages) {
-      if (msg.role === 'user' || msg.role === 'assistant') {
-        aiMessages.push({ role: msg.role, content: msg.content });
-      }
+    for (const msg of trunc.messages) {
+      aiMessages.push({ role: msg.role, content: msg.content });
     }
 
     if (hasImages) {
@@ -512,13 +551,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 11. Call Lovable AI Gateway
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      return new Response(JSON.stringify({ error: 'AI сервис не настроен' }), {
-        status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    // 11. Call Lovable AI Gateway — модель по режиму
+    const chosenModel = mode === 'chat' ? MODEL_CHAT : MODEL_PROMPT;
+    metadata.model_used = chosenModel;
+    metadata.routing_reason = mode === 'chat' ? 'free_chat_flash' : 'scenario_pro';
 
     const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
@@ -527,11 +563,12 @@ Deno.serve(async (req) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-pro',
+        model: chosenModel,
         messages: aiMessages,
         stream: false,
       }),
     });
+
 
     if (!aiResponse.ok) {
       const status = aiResponse.status;
