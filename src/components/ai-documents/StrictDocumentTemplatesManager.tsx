@@ -854,26 +854,28 @@ export function StrictDocumentTemplatesManager({
                           >
                             {t.template_status}
                           </Badge>
-                          <span
-                            role="button"
-                            tabIndex={0}
-                            aria-label="Удалить шаблон"
-                            className="inline-flex h-7 w-7 items-center justify-center rounded-md hover:bg-destructive/10 cursor-pointer"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              setDeleteId(t.id);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
+                          {!readOnly && (
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              aria-label="Удалить шаблон"
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-md hover:bg-destructive/10 cursor-pointer"
+                              onClick={(e) => {
                                 e.preventDefault();
                                 e.stopPropagation();
                                 setDeleteId(t.id);
-                              }
-                            }}
-                          >
-                            <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                          </span>
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setDeleteId(t.id);
+                                }
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                            </span>
+                          )}
                           <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${isOpen ? "" : "-rotate-90"}`} />
                         </div>
                       </button>
