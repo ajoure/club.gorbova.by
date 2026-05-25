@@ -235,7 +235,9 @@ interface TemplateRow {
   template_status: string;
   current_version_id: string | null;
   created_at: string;
+  category: string | null;
 }
+
 
 interface VersionRow {
   id: string;
@@ -257,7 +259,34 @@ interface VersionRow {
 
 // ───────────── component ─────────────
 
-export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?: boolean } = {}) {
+/**
+ * Канонические категории-пакеты для шаблонов документов.
+ * Используется как `categoryFilter` в обёртке /document-generation → Документы.
+ */
+export const DOCUMENT_PACKAGE_CATEGORIES = {
+  ideology: "ideology",
+} as const;
+
+export interface StrictDocumentTemplatesManagerProps {
+  embedded?: boolean;
+  /** Фильтр по document_templates.category. Если задан — список и upload скоупятся к этой категории. */
+  categoryFilter?: string | null;
+  /** Заголовок панели. По умолчанию — «Шаблоны документов». */
+  title?: string;
+  /** Подзаголовок панели. По умолчанию — strict-описание. */
+  subtitle?: React.ReactNode;
+  /** Текст empty-state. По умолчанию — «Нет шаблонов. Загрузите первый .docx.». */
+  emptyText?: string;
+}
+
+export function StrictDocumentTemplatesManager({
+  embedded = false,
+  categoryFilter = null,
+  title,
+  subtitle,
+  emptyText,
+}: StrictDocumentTemplatesManagerProps = {}) {
+
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
   const [versions, setVersions] = useState<VersionRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -281,12 +310,16 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
   const [markupTemplateName, setMarkupTemplateName] = useState<string>("");
   const fetchAll = async () => {
     setLoading(true);
+    let tplQuery = supabase
+      .from("document_templates")
+      .select("id, name, description, template_status, current_version_id, created_at, category")
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false });
+    if (categoryFilter) {
+      tplQuery = tplQuery.eq("category", categoryFilter);
+    }
     const [{ data: t }, { data: v }, { data: f }] = await Promise.all([
-      supabase
-        .from("document_templates")
-        .select("id, name, description, template_status, current_version_id, created_at")
-        .is("deleted_at", null)
-        .order("created_at", { ascending: false }),
+      tplQuery,
       supabase
         .from("document_template_versions")
         .select("id, template_id, version_number, storage_bucket, storage_path, file_name, file_size_bytes, is_current, validation_status, validation_errors, validation_checked_at, markup_status, detected_tokens, token_manifest, created_at")
@@ -308,7 +341,10 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
     setLoading(false);
   };
 
-  useEffect(() => { fetchAll(); }, []);
+  useEffect(() => { fetchAll(); }, [categoryFilter]);
+
+
+
 
   const versionsByTemplate = useMemo(() => {
     const m = new Map<string, VersionRow[]>();
@@ -415,7 +451,9 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
             template_scope: "act",
             editor_mvp_enabled: false,
             is_active: false,
+            ...(categoryFilter ? { category: categoryFilter } : {}),
           })
+
           .select("id, created_at")
           .single();
         if (tmplErr) throw tmplErr;
@@ -499,7 +537,9 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
             template_status: templateStatus,
             current_version_id: templateCurrentVersionId,
             created_at: templateCreatedAt,
+            category: categoryFilter ?? (existing as any)?.category ?? null,
           };
+
           await openPreview(tplRow, verRow);
 
           // Авто-активация: если после валидации статус valid И разметка ок (или не требуется) —
@@ -727,12 +767,16 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
         <div>
           <h2 className="text-lg font-semibold flex items-center gap-2">
             <FileText className="h-5 w-5 text-orange-500" />
-            Шаблоны документов
+            {title ?? "Шаблоны документов"}
           </h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Strict ID-first.&nbsp;
-            Допустим только формат <code>{`{{field:FLD-XXXXXX}}`}</code>.
-            Активация заблокирована, пока validation_status ≠ valid.
+            {subtitle ?? (
+              <>
+                Strict ID-first.&nbsp;
+                Допустим только формат <code>{`{{field:FLD-XXXXXX}}`}</code>.
+                Активация заблокирована, пока validation_status ≠ valid.
+              </>
+            )}
           </p>
         </div>
         <Button onClick={() => setUploadOpen(true)} size="sm">
@@ -749,8 +793,9 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
             </div>
           ) : templates.length === 0 ? (
             <div className="text-center py-10 text-sm text-muted-foreground border rounded-lg">
-              Нет шаблонов. Загрузите первый .docx.
+              {emptyText ?? "Нет шаблонов. Загрузите первый .docx."}
             </div>
+
           ) : (
             templates.map(t => {
               const tplVers = versionsByTemplate.get(t.id) ?? [];

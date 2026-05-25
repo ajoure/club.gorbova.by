@@ -1,251 +1,185 @@
-да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-1. **Добавить обязательный блок языка для Lovable**
+1. **Заголовок привести к обязательному формату**
+  &nbsp;
+  Сейчас указано `## План: ...`. Нужно:
+  `План: Вкладка «Документы» → подвкладка «Идеология» на /document-generation`
+2. **Добавить обязательный блок языка для Lovable**
   &nbsp;
   В начало плана добавить:
   План должен быть составлен на русском языке.  
   Отчет о выполненной работе должен быть составлен на русском языке.  
   Вся переписка, пояснения, diff-summary, proof и результаты должны быть только на русском языке.
-2. **Явно зафиксировать UI-only scope**
-  &nbsp;
-  Добавить в начало:
-  Это UI-only patch. Не создаём новые таблицы, RPC, edge-functions, миграции, RLS-политики, document generation pipeline, token registry, новые сущности реквизитов или новые бизнес-правила. Меняется только презентационный слой двух существующих таблиц реквизитов.
-  Это соответствует принципам add-only, переиспользования существующих решений и запрету на параллельные механизмы.  
-3. **Перед созданием новых хуков добавить read-only discovery**
-  &nbsp;
-  Добавить обязательный шаг:
-  - проверить фактические API `useFormsColumns.ts`, `useLiveEventsColumns.ts`;
-  - проверить тип `ColumnConfig`, если он уже общий;
-  - проверить, есть ли общий reusable hook/pattern, чтобы не копировать логику полностью;
-  - проверить, какие props реально принимает `ColumnSettings`;
-  - проверить, какие props реально принимает `SortableResizableTableHead`;
-  - проверить, есть ли уже общий `ResizableTableHead`;
-  - проверить, как `FormsHubTable` реализует `colgroup`, `SortableContext`, `DndContext`, `sensors`, `closestCenter`.
-4. **Не плодить дублирующую column-hook логику без необходимости**
-  &nbsp;
-  Сейчас план предлагает два новых хука по образцу существующих. Это допустимо, но нужно добавить:
-  Если в проекте уже есть общий helper/hook для column settings, использовать его. Если его нет — новые хуки допускаются, но структура должна быть максимально идентична существующему канону и без отдельной альтернативной реализации DnD/resize/localStorage.
-5. **Уточнить типы колонок и служебные признаки**
-  &nbsp;
-  В новых хуках добавить явные признаки:
-  - `draggable: false` для `actions`;
-  - `resizable: false` для `actions`;
-  - `hideable: false` для `actions`;
-  - минимальная ширина для каждой колонки, если такой параметр поддерживается каноническим типом;
-  - `actions` всегда последняя и всегда видимая.
-6. **Правку** `ColumnSettings.tsx` **сделать не через hardcode одного нового ключа, а через общий признак**
-  &nbsp;
-  Вместо расширения:
-  ```ts
-  column.key === "checkbox" || column.key === "actions"
-  ```
-  лучше:
-  ```ts
-  if (column.hideable === false || column.key === "checkbox") return null;
-  ```
-  Если текущий тип колонок не поддерживает `hideable`, допустим временный вариант с `actions`, но тогда добавить комментарий/TODO на унификацию. Иначе при следующей служебной колонке снова появится локальный hardcode.
-7. **DnD должен учитывать только draggable-колонки**
+3. **Явно зафиксировать UI-only / reuse-only scope**
   &nbsp;
   Добавить:
-  - `SortableContext.items` должен получать только колонки, которые можно таскать;
-  - `actions` не должна попадать в DnD items;
-  - при `handleDragEnd` нельзя позволять перенести `actions` в середину;
-  - после любого reorder `actions` остаётся последней.
-8. **ColumnSettings не должен позволять скрыть все рабочие колонки**
+  Это frontend-only patch. Новые таблицы, RPC, edge-functions, RLS, Supabase-типы, новый pipeline генерации, новый token registry, новый template picker и новый компонент списка шаблонов не создаются. Используется существующий `StrictDocumentTemplatesManager` с параметрами фильтрации.
+4. **Не смешивать** `documents` **и** `doc-packages` **семантически**
   &nbsp;
-  Добавить guard:
-  - минимум одна неслужебная колонка должна оставаться видимой;
-  - `actions` не считается рабочей колонкой для этого guard.
-9. **LocalStorage migration/fallback**
+  Добавить пояснение:
+  - `documents` — существующая админская секция управления шаблонами/плейсхолдерами/историей/исполнителями.
+  - `doc-packages` — новая пользовательская секция пакетов документов внутри `/document-generation`.
+  - Названия не должны конфликтовать в `SECTIONS`, `DEFAULT_SUB`, `hiddenSections`, analytics/state.
+5. `categoryFilter` **нельзя использовать как произвольную строку без константы**
   &nbsp;
-  Добавить:
-  - если в `localStorage` лежит битый JSON — сброс к default;
-  - если после будущих изменений появился новый column key — он должен добавиться из default;
-  - если старый key исчез — он игнорируется;
-  - reset возвращает полный default порядок/ширины/видимость.
-10. **Cross-instance sync указать как обязательный**
-
-Раз в контексте указан канон с `window` event, добавить в DoD:
-
-- изменение колонок в одной вкладке/инстансе обновляет вторую таблицу того же типа после события синхронизации;
-- `entities` и `persons` используют разные storage keys и не конфликтуют.
-
-11. **Мобильный horizontal scroll не должен ломать DnD/resize**
-
-Добавить:
-
-- на мобильной ширине DnD заголовков либо работает корректно внутри горизонтального скролла, либо не мешает скроллу;
-- resize-handle не перекрывает сортировку/клик;
-- таблица не растягивает всю страницу, скролл только внутри `.table-scroll-x`.
-
-12. **Сохранить клики по строке и action-кнопки**
-
-В план добавить:
-
-- action-кнопки в строке должны иметь `e.stopPropagation()`;
-- клик по `Открыть`, `Архив`, `Обновить` не должен дополнительно срабатывать как клик по строке;
-- row click продолжает открывать sheet как раньше.
-
-13. **Для** `PersonsTableView` **добавить колонку действий, если она есть сейчас**
-
-В плане для физлиц перечислены только:
-
-- `name`
-- `document`
-- `phone`
-- `email`
-- `status`
-
-Нужно проверить текущий UI. Если сейчас у физлиц есть действия в строке, должна быть колонка `actions` по тем же правилам, иначе можно потерять кнопки. Если действий нет и всё открывается только кликом по строке — оставить без `actions`, но явно подтвердить в discovery.
-
-14. **Сохранить текущие пустые/ошибочные состояния**
+  Добавить константу:
+  ```ts
+  const DOCUMENT_PACKAGE_CATEGORIES = {
+    ideology: "ideology",
+  } as const;
+  ```
+  И использовать её в `AiPageContent`, чтобы не плодить строковые литералы.
+6. **Загрузка шаблонов: проверить текущий query chain**
+  &nbsp;
+  Перед правкой добавить read-only discovery:
+  - где именно формируется query к `document_templates`;
+  - есть ли сортировка;
+  - есть ли join/загрузка versions отдельным запросом;
+  - где insert нового шаблона;
+  - где создаётся новая версия;
+  - есть ли `category` только у `document_templates` или также у версий.
+7. **Уточнить поведение** `/admin/documents`
+  &nbsp;
+  В DoD пункт 3 сейчас противоречивый:
+  загруженный через «Идеология» не светится в `/admin/documents`, пока admin не снимет фильтр
+  Но выше сказано, что `/admin/documents` фильтр не передаёт и отображает все шаблоны как прежде. Значит шаблон с `category='ideology'` **должен отображаться в** `/admin/documents → Шаблоны документов`, потому что админка плоская и без фильтра.
+  Исправить DoD:
+  Загруженный через `/document-generation → Документы → Идеология` `.docx` получает `category='ideology'`, отображается в пакете «Идеология» и также виден в `/admin/documents → Шаблоны документов`, так как админка пока остаётся общим плоским списком всех шаблонов.
+8. `embedded` **должен скрывать только лишнюю оболочку, но не ломать действия**
+  &nbsp;
+  Уточнить:
+  - `embedded=true` может менять заголовок/отступы/карточную оболочку;
+  - не должен отключать upload, preview, validation, `FileNameTemplateEditor`, activation/delete actions;
+  - если какие-то admin-only действия внутри менеджера завязаны на роль, они остаются под текущими RBAC-guard.
+9. **Права доступа на пользовательскую загрузку шаблонов проверить отдельно**
+  &nbsp;
+  В плане сейчас предполагается, что пользователь сможет загрузить `.docx` через `/document-generation`. Нужно добавить discovery/guard:
+  - проверить, разрешены ли эти операции обычному user;
+  - если upload/insert шаблонов сейчас admin-only — не расширять права в рамках этого патча;
+  - в таком случае для user показывать read-only список или стандартный permission-state, а загрузку оставить админам.
+  Это критично: UI-only patch не должен менять RLS/edge/RBAC.
+10. **Insert** `category=categoryFilter` **применять только к template, не к version, если version не имеет category**
 
 Добавить:
 
-- loading-state не меняется;
-- error-state не меняется;
-- empty-state не меняется;
-- skeleton/loader, если есть, сохраняется.
+При создании нового шаблона category записывается только в `document_templates.category`, если именно эта таблица является SoT категории. Не добавлять category в versions/storage/meta без discovery.
 
-15. **Добавить STOP-guards**
+11. **Добавить fallback при пустой категории**
 
-Включить:
+Если `categoryFilter="ideology"` вернул 0 строк, empty-state должен быть понятным:
 
-- STOP, если для внедрения канонической таблицы требуется менять `useAiEntities` / `useAiPersons`;
-- STOP, если потребуется менять структуру данных `client_legal_details` / `legal_details_persons`;
-- STOP, если `ColumnSettings` окажется несовместимым без изменения существующих таблиц `/admin/forms`, `/admin/payments`, `/admin/contacts`, `/admin/live-events`;
-- STOP, если resize/DnD требует изменения глобальных table-компонентов с риском регрессии;
-- STOP, если правка затрагивает БД, RLS, RPC, edge-functions.
+В пакете «Идеология» пока нет шаблонов документов.
 
-16. **DoD дополнить regression-проверкой существующих канонических таблиц**
+Но не создавать отдельный empty-state компонент, если можно передать `title/subtitle` или использовать существующий.
 
-После изменения `ColumnSettings.tsx` обязательно проверить:
+12. **Расширение** `SubTab` **сделать без поломки существующих секций**
 
-- `/admin/forms` — колонки открываются, DnD/visibility/reset работают;
-- `/admin/payments → автопродления` — не сломались колонки;
-- `/admin/contacts` — если использует этот компонент, не сломалась настройка колонок;
-- `/admin/live-events` — не сломалась настройка колонок.
+Добавить проверку:
 
-17. **Verify дополнить конкретными viewport**
+- `DEFAULT_SUB["doc-packages"] = "pkg-ideology"` добавляется без изменения default для `ai`, `documents`, `requisites`;
+- при смене `activeSection` должен корректно сбрасываться/подбираться `activeSubTab`;
+- `hiddenSections` не должен оставлять активной скрытую секцию.
+
+13. **STOP-guards**
 
 Добавить:
 
-- desktop 1440px;
-- tablet 768px;
-- mobile 390px / 414px / 480px;
-- на mobile нет горизонтального скролла всей страницы, только скролл внутри таблицы.
+- STOP, если для `categoryFilter` требуется миграция БД или изменение Supabase types.
+- STOP, если обычный user не имеет прав на upload/insert, а задача требует сделать загрузку доступной без изменения RBAC.
+- STOP, если `StrictDocumentTemplatesManager` невозможно безопасно embedded-переиспользовать без разделения бизнес-логики.
+- STOP, если правка требует менять edge-functions/validator/storage policies.
+- STOP, если `/admin/documents` начинает показывать только `ideology` вместо всех шаблонов.
 
-18. **Финальный отчет должен содержать diff-summary и proof**
+14. **DoD дополнить проверкой обратной совместимости**
+
+Добавить:
+
+- `/admin/documents → Шаблоны документов` без `categoryFilter` показывает все категории.
+- Создание/валидация/активация/удаление шаблона в админке работает как раньше.
+- `/document-generation → Реквизиты` остались доступными соседней вкладкой.
+- `/document-generation` по умолчанию открывает `Документы → Идеология`.
+- При пустом списке `ideology` нет ошибки, показывается корректный empty-state.
+
+15. **Финальный отчет должен содержать proof**
 
 Добавить в DoD отчета:
 
-- список измененных файлов;
-- подтверждение, что БД/RLS/RPC/edge-functions не изменялись;
-- localStorage keys;
-- скрины `/document-generation` для ЮЛ/ИП и Физлиц;
-- скрины `/admin/documents` для ЮЛ/ИП и Физлиц;
-- regression proof по `ColumnSettings` в уже существующих таблицах.
+- список изменённых файлов;
+- diff-summary;
+- подтверждение, что БД/RLS/RPC/edge-functions/types не менялись;
+- скрин `/document-generation → Документы → Идеология`;
+- скрин `/document-generation → Реквизиты`;
+- скрин `/admin/documents → Шаблоны документов`, где общий список не сломан;
+- proof, что загруженный/созданный через пакет шаблон получает `category='ideology'`, если права позволяют upload.
 
-В остальном план корректный: он переиспользует существующий UI-канон, не меняет бизнес-логику и не создает новый домен данных.
+Главная правка: **админка без фильтра должна видеть все шаблоны, включая** `ideology`, иначе это уже изменение поведения `/admin/documents`, которого план сам запрещает.
 
 &nbsp;
 
-План: каноническая таблица реквизитов (ЮЛ/ИП и Физлица)
+План: вкладка «Документы» → подвкладка «Идеология» на /document-generation
 
-## Контекст
+### Цель
 
-Сейчас в `/document-generation` → «Реквизиты» две собственные таблицы:
+На странице `/document-generation` слева от вкладки «Реквизиты» добавить новую секцию верхнего уровня **«Документы»**. Внутри — подвкладки-пакеты документов; первый пакет — **«Идеология»**. Содержимое каждого пакета — список шаблонов в том же визуальном стиле, что уже реализован в `StrictDocumentTemplatesManager` (раскрывающийся список из `/admin/documents → Шаблоны документов`). Никаких новых компонентов списка не создаём — только переиспользуем существующий с фильтром по категории.
 
-- `src/components/ai-requisites/EntityTableView.tsx` — Юрлица / ИП
-- `src/components/ai-requisites/PersonsTableView.tsx` — Физлица
+### Что меняется (только фронт)
 
-Они используют обычный `<Table>` без DnD-колонок, без resize, без настройки видимости. В остальном проекте уже есть каноническая реализация (используется в `/admin/forms`, `/admin/payments` → автопродления, `/admin/contacts`, `/admin/live-events`):
+**1. `src/components/ai-documents/StrictDocumentTemplatesManager.tsx**`
 
-- `src/components/admin/ColumnSettings.tsx` — popover «Колонки» с DnD-списком и toggle видимости
-- `src/components/admin/table/SortableResizableTableHead.tsx` — заголовки с горизонтальным DnD и ручкой ресайза
-- `src/hooks/useFormsColumns.ts` / `useLiveEventsColumns.ts` — паттерн хука: `columns / sortedColumns / visibleColumns / handleColumnResize / handleDragEnd` + `localStorage` + cross-instance sync через `window` event
-- `src/components/admin/forms/FormsHubTable.tsx` — эталонная сборка (colgroup, `SortableContext` + `horizontalListSortingStrategy`, рендер ячеек по `col.key`)
+- Расширить props:
+  ```ts
+  { embedded?: boolean; categoryFilter?: string | null; title?: string; subtitle?: string }
+  ```
+- В `loadTemplates()` добавить `.eq("category", categoryFilter)` только если `categoryFilter` задан. Поведение без пропса — без изменений (обратная совместимость для `/admin/documents`).
+- При загрузке нового `.docx` через эту обёртку — проставлять `category = categoryFilter` в insert (если задан), чтобы новые шаблоны сразу попадали в пакет.
+- Опционально подменять заголовок «Шаблоны документов» на `title` (для «Идеология»).
 
-Задача — переиспользовать ровно этот канон для двух таблиц реквизитов, **ничего не меняя в бизнес-логике, хуках данных, диалогах редактирования, фильтрах, поиске, архиве, bulk-обновлении реестра, RLS и БД**.
+**2. `src/components/ai-chat/AiPageContent.tsx**`
 
-## Что меняется (только UI/презентация)
+- Добавить новую секцию в `Section` тип и в `SECTIONS`:
+  ```ts
+  { id: "doc-packages", label: "Документы", icon: FileStack }
+  ```
+  Порядок в `SECTIONS`: `ai`, `documents`, `doc-packages`, `requisites`. На `/document-generation` секции `ai` и `documents` уже скрыты через `hiddenSections`, поэтому пользователь увидит слева от «Реквизиты» именно «Документы» (это `doc-packages`).
+- Добавить новый массив подвкладок-пакетов `PACKAGE_SUB_TABS`:
+  ```ts
+  [{ id: "pkg-ideology", label: "Идеология", icon: FileText, … }]
+  ```
+- Расширить `SubTab` типом `"pkg-ideology"` и `DEFAULT_SUB["doc-packages"] = "pkg-ideology"`.
+- В рендере при `activeSection === "doc-packages" && activeSubTab === "pkg-ideology"` отрисовать:
+  ```tsx
+  <StrictDocumentTemplatesManager
+    embedded
+    categoryFilter="ideology"
+    title="Пакет «Идеология»"
+  />
+  ```
 
-### 1. Новый хук колонок ЮЛ/ИП
+**3. `src/pages/DocumentGeneration.tsx**`
 
-Файл: `src/hooks/useEntitiesColumns.ts` (новый)
+- Сменить `initialSection` с `"requisites"` на `"doc-packages"`, оставить `hiddenSections={["ai","documents"]}`. «Реквизиты» остаются доступными как соседняя вкладка справа.
 
-- По образцу `useFormsColumns.ts`: `ENTITIES_DEFAULT_COLUMNS`, `STORAGE_KEY = "ai_entities_columns_v1"`, `SYNC_EVENT`.
-- Колонки по умолчанию (порядок и ширины — те же, что сейчас):
-  - `name` — «Название», 320
-  - `type` — «Тип», 80 (бейдж ЮЛ/ИП)
-  - `unp` — «УНП», 140 (моно)
-  - `status` — «Статус», 120 (Активный / Архив)
-  - `actions` — «Действия», 160 (Открыть + Архив, не таскается/не ресайзится — как `checkbox` в Forms)
-- Возвращает `columns / sortedColumns / visibleColumns / handleColumnResize / handleDragEnd` + `setColumns` для сброса.
+### Что НЕ трогаем
 
-### 2. Новый хук колонок Физлиц
+- БД (`document_templates.category` уже есть как `text`, миграции не нужны).
+- Edge functions, RLS, типы Supabase.
+- `/admin/documents` (старая секция «Документы» с подвкладками Плейсхолдеры/Шаблоны/История/Исполнители) — работает как раньше, потому что `categoryFilter` там не передаётся.
+- `ColumnSettings`, таблицы реквизитов, бизнес-логику генерации, snapshot, audit.
 
-Файл: `src/hooks/usePersonsColumns.ts` (новый)
+### Diagnose → Dry run
 
-- `STORAGE_KEY = "ai_persons_columns_v1"`.
-- Колонки:
-  - `name` — «ФИО», 280
-  - `document` — «Документ», 200 (моно)
-  - `phone` — «Телефон», 160
-  - `email` — «Email», 220
-  - `status` — «Статус», 120
+- `loadTemplates` сейчас читает все строки `document_templates`. С фильтром `.eq('category','ideology')` на текущей БД вернёт 0 строк → пустое состояние (`empty-state` уже отрисовывается компонентом). Это и есть «подготовленная почва»: загруженные через эту вкладку `.docx` лягут с `category='ideology'` и сразу появятся в списке.
+- Активация/валидация/удаление шаблонов остаются на текущих edge functions — никаких изменений контракта.
 
-### 3. EntityTableView → каноническая разметка
+### DoD
 
-Файл: `src/components/ai-requisites/EntityTableView.tsx` (редактируется)
+1. На `/document-generation` слева от «Реквизиты» видна вкладка **«Документы»** с подвкладкой **«Идеология»**.
+2. Содержимое подвкладки — тот же визуальный список с раскрытием и `FileNameTemplateEditor`, что и в `/admin/documents → Шаблоны документов`.
+3. Загруженный через эту подвкладку `.docx` появляется только в «Идеология» (category=ideology) и не светится в `/admin/documents`, пока admin не снимет фильтр (поведение ожидаемое: пакет = категория).
+4. `/admin/documents` отображает все шаблоны как прежде.
+5. Мобильная вёрстка не ломается (используются уже починенные ранее `flex-col sm:flex-row`, `min-w-0`, `table-scroll-x`).
+6. Никаких новых таблиц/RPC/edge functions/типов.
 
-- Сохраняем целиком: пропсы, поиск, пилюли-фильтры, диалог bulk dry-run, RBAC-кнопка «Обновить реестр», empty-state, счётчик «Показано N из M», логику клика по строке и архива.
-- В шапке рядом с «Обновить реестр»/«Добавить» добавляется `<ColumnSettings columns onChange onReset>`.
-- Тело таблицы переписывается на паттерн `FormsHubTable`:
-  - `<div className="table-scroll-x ..."><DndContext><Table style={{ tableLayout: 'fixed', width: 'max-content', minWidth: '100%' }}>`
-  - `<colgroup>` по `visibleColumns`
-  - заголовки: `SortableResizableTableHead` для всех колонок, кроме `actions` → `ResizableTableHead` без DnD
-  - ячейки рендерятся в `renderCell(col, entity)` по `col.key`, используются те же `getEntityShortName / getEntityTypeBadge / getEntityUnp` и те же бейджи статусов
-- Никаких изменений в `useAiEntities`, `EntityRecordSheet`, бизнес-правилах архивации.
+### Открытый вопрос (по умолчанию решаю «нет», если не возражаете)
 
-### 4. PersonsTableView → каноническая разметка
-
-Файл: `src/components/ai-requisites/PersonsTableView.tsx` (редактируется)
-
-- Аналогично: сохраняем поиск, пилюли, empty-state, счётчик, клик-открытие; добавляем `ColumnSettings`, DnD-заголовки и ресайз через `usePersonsColumns`.
-- Ячейки используют существующие `getPersonDisplayName / getPersonDocumentSummary`.
-
-### 5. Мобильная безопасность
-
-- Контейнер таблицы получает `table-scroll-x` (уже используется в проекте) → горизонтальный скролл на узких экранах без поломок.
-- Тулбар (поиск + пилюли + «Колонки» + «Добавить») остаётся `flex-wrap`, как сейчас.
-
-## Технические детали
-
-- Колонка `actions` исключается из DnD/видимости (по аналогии с `checkbox` в Forms): `SortableItem` уже умеет это через ключ; используем тот же приём — фильтруем `key === "actions"` в `ColumnSettings` (минимальная правка ниже).
-- Минимальная правка в `src/components/admin/ColumnSettings.tsx`: расширить условие `if (column.key === "checkbox") return null;` до `if (column.key === "checkbox" || column.key === "actions") return null;`. Это не ломает существующие таблицы (там нет колонки `actions`).
-- Никаких миграций БД, edge functions, RPC, RLS, типов из `supabase/types` не трогаем.
-- Никаких изменений в `AiPageContent`, `DocumentGeneration.tsx`, `AdminDocuments.tsx`, sidebar, роутинге.
-
-## Файлы
-
-Новые:
-
-- `src/hooks/useEntitiesColumns.ts`
-- `src/hooks/usePersonsColumns.ts`
-
-Редактируются:
-
-- `src/components/ai-requisites/EntityTableView.tsx` — только разметка таблицы и шапки
-- `src/components/ai-requisites/PersonsTableView.tsx` — только разметка таблицы и шапки
-- `src/components/admin/ColumnSettings.tsx` — добавить `actions` в список служебных ключей
-
-## DoD
-
-- В `/document-generation` (user) и `/admin/documents` (admin) на обеих вкладках реквизитов:
-  - Виден тулбар-кнопка «Колонки» (popover с DnD + чекбоксами + «Сброс»), визуально идентичная `/admin/forms` и `/admin/payments → автопродления`.
-  - Колонки можно перетаскивать в шапке (горизонтальный DnD) и ресайзить за правую границу.
-  - Состояние сохраняется в `localStorage` (`ai_entities_columns_v1`, `ai_persons_columns_v1`) и переживает перезагрузку.
-  - На мобильной ширине (≤480 px) таблица скроллится горизонтально, тулбар переносится по строкам.
-- Поиск, фильтры-пилюли, открытие записи кликом, архивация, bulk-обновление реестра, empty-state, счётчик «Показано N из M» работают как раньше.
-- Никаких изменений в данных, edge functions, RLS, типах БД.
+Делать ли `/admin/documents → Шаблоны документов` тоже разрезанным на пакеты-вкладки сейчас? По вашему сообщению — нет, только «подготовить почву» в пользовательской `/document-generation`. Админка остаётся плоской.

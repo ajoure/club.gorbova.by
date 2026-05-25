@@ -54,16 +54,18 @@ const LazyExecutorsContent = lazy(() =>
 
 /* ─── Конфигурация секций и подменю ─── */
 
-type Section = "ai" | "documents" | "requisites";
+type Section = "ai" | "documents" | "doc-packages" | "requisites";
 // Sprint 11 C1: legacy ids ("generate", "canonical-acts", "aliases") оставлены в типе,
 // чтобы старые ссылки не падали; рендер их игнорирует — guard сбросит на DEFAULT_SUB.
-type SubTab = "chat" | "analysis-history" | "tutorials" | "prompts" | "generate" | "history" | "templates" | "executors" | "entities" | "persons" | "canonical-acts" | "aliases" | "placeholders";
+type SubTab = "chat" | "analysis-history" | "tutorials" | "prompts" | "generate" | "history" | "templates" | "executors" | "entities" | "persons" | "canonical-acts" | "aliases" | "placeholders" | "pkg-ideology";
 
 const SECTIONS: { id: Section; label: string; icon: React.ComponentType<{ className?: string }>; adminOnly?: boolean }[] = [
   { id: "ai", label: "Gorbova AI", icon: Bot },
   { id: "documents", label: "Документы", icon: FileText, adminOnly: true },
+  { id: "doc-packages", label: "Документы", icon: FileStack },
   { id: "requisites", label: "Реквизиты", icon: Building2 },
 ];
+
 
 interface SubMenuItem {
   id: SubTab;
@@ -180,11 +182,25 @@ const REQ_SUB_TABS: SubMenuItem[] = [
   },
 ];
 
+const PACKAGE_SUB_TABS: SubMenuItem[] = [
+  {
+    id: "pkg-ideology",
+    label: "Идеология",
+    icon: FileText,
+    gradient: "from-orange-500/10 to-amber-500/8",
+    activeGradient: "from-orange-500/20 to-amber-500/15",
+    borderColor: "border-orange-400/20",
+    iconColor: "text-orange-500",
+  },
+];
+
 const DEFAULT_SUB: Record<Section, SubTab> = {
   ai: "chat",
   documents: "placeholders",
+  "doc-packages": "pkg-ideology",
   requisites: "entities",
 };
+
 
 interface AiPageContentProps {
   mode: "user" | "admin";
@@ -493,7 +509,15 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
   );
 
 
-  const allSubTabs = activeSection === "ai" ? AI_SUB_TABS : activeSection === "requisites" ? REQ_SUB_TABS : DOC_SUB_TABS;
+  const subTabsForSection = (s: Section): SubMenuItem[] => {
+    switch (s) {
+      case "ai": return AI_SUB_TABS;
+      case "requisites": return REQ_SUB_TABS;
+      case "doc-packages": return PACKAGE_SUB_TABS;
+      default: return DOC_SUB_TABS;
+    }
+  };
+  const allSubTabs = subTabsForSection(activeSection);
   const subTabs = useMemo(
     () => allSubTabs.filter(tab => !tab.adminOnly || mode === "admin"),
     [allSubTabs, mode]
@@ -504,7 +528,8 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
     if (!visibleSections.some(s => s.id === activeSection)) {
       const fallback = visibleSections[0]?.id ?? "ai";
       // Find a visible subtab for the fallback section
-      const fallbackAllSubs = fallback === "ai" ? AI_SUB_TABS : fallback === "requisites" ? REQ_SUB_TABS : DOC_SUB_TABS;
+      const fallbackAllSubs = subTabsForSection(fallback);
+
       const fallbackVisibleSubs = fallbackAllSubs.filter(t => !t.adminOnly || mode === "admin");
       const defaultSub = DEFAULT_SUB[fallback];
       const safeSub = fallbackVisibleSubs.some(t => t.id === defaultSub)
@@ -862,6 +887,20 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
           </Suspense>
         </div>
       )}
+
+      {/* Document packages — переиспользуем StrictDocumentTemplatesManager с фильтром по category */}
+      {activeSubTab === "pkg-ideology" && (
+        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
+          <StrictDocumentTemplatesManager
+            embedded
+            categoryFilter="ideology"
+            title="Пакет «Идеология»"
+            subtitle={<>Шаблоны документов пакета «Идеология». Допустим только формат <code>{`{{field:FLD-XXXXXX}}`}</code>.</>}
+            emptyText="В пакете «Идеология» пока нет шаблонов. Загрузите первый .docx."
+          />
+        </div>
+      )}
+
 
       {/* Entities */}
       {activeSubTab === "entities" && (
