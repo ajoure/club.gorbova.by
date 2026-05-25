@@ -39,6 +39,7 @@ export interface ChatScenario {
   input_hint: string | null;
   icon: string | null;
   launcher_order: number;
+  code?: string | null;
 }
 
 export interface ScenarioContext {
