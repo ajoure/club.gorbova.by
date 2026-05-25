@@ -24,10 +24,13 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
+  Collapsible, CollapsibleContent, CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Loader2, Upload, FileText, Trash2, CheckCircle2, AlertTriangle, Sparkles, Pencil } from "lucide-react";
+import { Loader2, Upload, FileText, Trash2, CheckCircle2, AlertTriangle, Sparkles, Pencil, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 import mammoth from "mammoth";
 import { extractDocxPlaceholders } from "@/utils/extractDocxPlaceholders";
