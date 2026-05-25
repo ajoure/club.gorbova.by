@@ -451,7 +451,7 @@ Deno.serve(async (req) => {
 
       const { data: latestPayments, error: lpErr } = await supabase
         .from("payments_v2")
-        .select("id, user_id, product_id, amount, currency, paid_at, created_at, is_recurring, status, provider")
+        .select("id, user_id, amount, currency, paid_at, created_at, is_recurring, status, provider")
         .eq("provider", "bepaid")
         .eq("status", "succeeded")
         .eq("is_recurring", true)
@@ -463,14 +463,10 @@ Deno.serve(async (req) => {
         errors.push(`Latest payments query failed: ${lpErr.message}`);
       }
 
-      const userProductToLatestPayment = new Map<string, any>();
       const userToLatestPayment = new Map<string, any>();
 
       for (const p of latestPayments || []) {
         if (!userToLatestPayment.has(p.user_id)) userToLatestPayment.set(p.user_id, p);
-
-        const key = `${p.user_id}|${p.product_id ?? ""}`;
-        if (!userProductToLatestPayment.has(key)) userProductToLatestPayment.set(key, p);
       }
 
       const BATCH_SIZE = 50;
