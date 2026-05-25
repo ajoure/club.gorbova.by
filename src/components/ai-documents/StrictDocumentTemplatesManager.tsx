@@ -501,7 +501,9 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
             template_status: templateStatus,
             current_version_id: templateCurrentVersionId,
             created_at: templateCreatedAt,
+            category: categoryFilter ?? (existing as any)?.category ?? null,
           };
+
           await openPreview(tplRow, verRow);
 
           // Авто-активация: если после валидации статус valid И разметка ок (или не требуется) —
