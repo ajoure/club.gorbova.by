@@ -603,9 +603,14 @@ Deno.serve(async (req) => {
         user_id: user.id,
         role: 'user',
         content: lastUserMsg.content,
-        metadata: fileNames ? { file_names: fileNames } : null,
+        metadata: {
+          ai_mode: metadata.ai_mode,
+          scenario_code: metadata.scenario_code || null,
+          ...(fileNames ? { file_names: fileNames } : {}),
+        },
       });
     }
+
 
     await serviceClient.from('ai_chat_messages').insert({
       conversation_id: convId,
