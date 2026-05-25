@@ -58,8 +58,15 @@ export function canonicalizeLegalEntity(
 ): { org_form: string; name: string; short_name: string; full_name: string } {
   const stripQuotes = (s: string) =>
     s.replace(/^[«"'„‟"']+|[»"'""']+$/g, "").trim();
+  const normalizeOrgForm = (s: string) => {
+    const collapsed = s.replace(/\s+/g, " ").trim();
+    if (!collapsed) return "";
+    const upper = collapsed.toUpperCase();
+    if (ORG_FORM_SHORTS.has(upper)) return upper;
+    return ORG_FORM_FULL_TO_SHORT[collapsed.toLowerCase()] ?? collapsed;
+  };
 
-  let orgForm = (rawOrgForm ?? "").toString().trim();
+  let orgForm = normalizeOrgForm((rawOrgForm ?? "").toString());
   let nameRaw = (rawName ?? "").toString().trim();
 
   // source — то, откуда будем извлекать orgForm/name, если они не заданы явно.
@@ -69,8 +76,9 @@ export function canonicalizeLegalEntity(
   // 1) Если orgForm пуст — пробуем выделить КОРОТКУЮ форму из первого слова.
   if (!orgForm && source) {
     const head = source.split(/\s+/)[0]?.replace(/[«»"'„‟"']/g, "").toUpperCase() ?? "";
-    if (ORG_FORM_SHORTS.has(head)) {
-      orgForm = head;
+    const normalizedHead = normalizeOrgForm(head);
+    if (ORG_FORM_SHORTS.has(normalizedHead)) {
+      orgForm = normalizedHead;
     }
   }
 
