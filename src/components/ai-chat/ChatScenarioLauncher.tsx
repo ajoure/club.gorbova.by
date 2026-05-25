@@ -51,9 +51,10 @@ export function ChatScenarioLauncher({
         <DropdownMenuSeparator />
         <TooltipProvider>
           {scenarios.map((scenario) => {
+            const code = scenario.code ?? null;
             // Если access ещё не загружен — считаем доступным (не блокируем UX до резолва).
-            const allowed = access ? isScenarioAllowed(access, scenario.code) : true;
-            const denialMsg = scenarioDenialMessage(access, scenario.code);
+            const allowed = access && code ? isScenarioAllowed(access, code) : true;
+            const denialMsg = scenarioDenialMessage(access, code);
             const item = (
               <DropdownMenuItem
                 key={scenario.id}
@@ -91,10 +92,3 @@ export function ChatScenarioLauncher({
     </DropdownMenu>
   );
 }
-
-(scenario: ChatScenario) => {
-  if (scenario) {/* keep eslint happy */}
-};
-
-// scenario param annotation
-export type { ChatScenario };
