@@ -546,6 +546,12 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
   const openPreview = async (tpl: TemplateRow, ver: VersionRow) => {
     setActiveTemplateId(tpl.id);
     setActiveVersionId(ver.id);
+    setOpenTemplates(prev => {
+      if (prev.has(tpl.id)) return prev;
+      const next = new Set(prev);
+      next.add(tpl.id);
+      return next;
+    });
     setPreviewLoading(true);
     setPreviewText("");
     setPreviewTokens([]);
