@@ -197,6 +197,19 @@ Deno.serve(async (req) => {
     const startTime = Date.now();
     const hasImages = !!(images && images.length > 0);
     metadata.images_present = hasImages;
+    metadata.ai_mode = mode === 'prompt' ? 'prompt' : 'chat';
+
+    // 4.1 Hard cap на длину одного user-message
+    const lastUserContent = messages?.[messages.length - 1]?.content || '';
+    if (lastUserContent.length > HARD_USER_MESSAGE_CHARS) {
+      const hasAttachment = !!fileContents || (fileNames && fileNames.length > 0) || hasImages;
+      const errMsg = (lastUserContent.length >= 20_000 || hasAttachment)
+        ? 'Сократите ввод или загрузите файл отдельным вложением (предел 50 000 символов на сообщение).'
+        : 'Сократите запрос (предел 50 000 символов на сообщение).';
+      return new Response(JSON.stringify({ error: errMsg, code: 'message_too_long' }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     // 5. Truncate fileContents
     let processedFileContents = fileContents || '';
@@ -207,6 +220,7 @@ Deno.serve(async (req) => {
       processedFileContents = processedFileContents.substring(0, MAX_TEXT_CHARS);
       metadata.file_truncated = true;
     }
+
 
     // 6. Load prompt if prompt_id provided
     const serviceClient = createClient(supabaseUrl, supabaseServiceKey);
