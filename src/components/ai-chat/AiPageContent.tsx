@@ -182,11 +182,25 @@ const REQ_SUB_TABS: SubMenuItem[] = [
   },
 ];
 
+const PACKAGE_SUB_TABS: SubMenuItem[] = [
+  {
+    id: "pkg-ideology",
+    label: "Идеология",
+    icon: FileText,
+    gradient: "from-orange-500/10 to-amber-500/8",
+    activeGradient: "from-orange-500/20 to-amber-500/15",
+    borderColor: "border-orange-400/20",
+    iconColor: "text-orange-500",
+  },
+];
+
 const DEFAULT_SUB: Record<Section, SubTab> = {
   ai: "chat",
   documents: "placeholders",
+  "doc-packages": "pkg-ideology",
   requisites: "entities",
 };
+
 
 interface AiPageContentProps {
   mode: "user" | "admin";
