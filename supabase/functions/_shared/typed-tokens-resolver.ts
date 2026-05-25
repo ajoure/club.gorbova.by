@@ -275,7 +275,7 @@ function fillEntCustomer(map: Record<string, string>, ld: any) {
   const overrideDirFull = (ld?.ent_director_full_name || "").toString().trim();
   const overrideDirShort = (ld?.ent_director_short_name || "").toString().trim();
   const overrideActs = (ld?.ent_acts_on_basis_override || "").toString().trim();
-  map["customer.ent.director_position"] = isEnt ? (overrideDirPos || "Индивидуальный предприниматель") : "";
+  map["customer.ent.director_position"] = isEnt ? normalizeMasculinePosition(overrideDirPos || "Индивидуальный предприниматель") : "";
   map["customer.ent.director_full_name"] = isEnt ? (overrideDirFull || defaultDirFull) : "";
   map["customer.ent.director_short_name"] = isEnt ? (overrideDirShort || defaultDirShort) : "";
   map["customer.ent.director_acts_on_basis"] = isEnt ? (overrideActs || ld?.ent_acts_on_basis || "Свидетельства о государственной регистрации") : "";
