@@ -341,7 +341,7 @@ function fillExecutorSigner(map: Record<string, string>, ex: any) {
   // executor.signer.* — на текущий момент derive из director_*; точечный override —
   // через input.overrides.
   const dirFull = ex?.director_full_name || "";
-  map["executor.signer.position"] = ex?.director_position || "";
+  map["executor.signer.position"] = normalizeMasculinePosition(ex?.director_position || "");
   map["executor.signer.full_name"] = dirFull;
   map["executor.signer.initials"] = ex?.director_short_name || fullNameToInitials(dirFull);
   map["executor.signer.basis"] = ex?.acts_on_basis || "";
