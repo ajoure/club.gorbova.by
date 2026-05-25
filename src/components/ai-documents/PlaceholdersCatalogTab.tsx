@@ -441,7 +441,7 @@ export function PlaceholdersCatalogTab() {
           </div>
         </div>
 
-        <div className="grid gap-2 sm:grid-cols-12">
+        <div className="grid gap-2 sm:grid-cols-12 min-w-0 max-w-full">
           <div className="relative sm:col-span-5">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
@@ -484,9 +484,9 @@ export function PlaceholdersCatalogTab() {
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>
         ) : (
-          <div className="border rounded-lg overflow-hidden">
-            <div className="max-h-[70vh] overflow-y-auto">
-              <Table>
+          <div className="border rounded-lg overflow-hidden max-w-full">
+            <div className="max-h-[70vh] overflow-auto">
+              <Table className="min-w-[1100px]">
                 <TableHeader className="sticky top-0 bg-background z-10 shadow-[0_1px_0_0_hsl(var(--border))]">
                   <TableRow>
                     <TableHead className="w-8"></TableHead>

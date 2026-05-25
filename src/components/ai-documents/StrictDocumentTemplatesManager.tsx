@@ -24,10 +24,13 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
+  Collapsible, CollapsibleContent, CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Loader2, Upload, FileText, Trash2, CheckCircle2, AlertTriangle, Sparkles, Pencil } from "lucide-react";
+import { Loader2, Upload, FileText, Trash2, CheckCircle2, AlertTriangle, Sparkles, Pencil, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 import mammoth from "mammoth";
 import { extractDocxPlaceholders } from "@/utils/extractDocxPlaceholders";
@@ -262,6 +265,7 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
 
   const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null);
   const [activeVersionId, setActiveVersionId] = useState<string | null>(null);
+  const [openTemplates, setOpenTemplates] = useState<Set<string>>(new Set());
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewText, setPreviewText] = useState<string>("");
   const [previewTokens, setPreviewTokens] = useState<string[]>([]);
@@ -542,6 +546,12 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
   const openPreview = async (tpl: TemplateRow, ver: VersionRow) => {
     setActiveTemplateId(tpl.id);
     setActiveVersionId(ver.id);
+    setOpenTemplates(prev => {
+      if (prev.has(tpl.id)) return prev;
+      const next = new Set(prev);
+      next.add(tpl.id);
+      return next;
+    });
     setPreviewLoading(true);
     setPreviewText("");
     setPreviewTokens([]);
@@ -731,97 +741,154 @@ export function StrictDocumentTemplatesManager({ embedded = false }: { embedded?
       </div>
 
       <div className="grid lg:grid-cols-2 gap-4">
-        {/* Templates list */}
-        <div className="border rounded-lg overflow-hidden">
+        {/* Templates list — accordion style (canonical, matches ContactDealsTab) */}
+        <div className="min-w-0 space-y-2">
           {loading ? (
-            <div className="flex justify-center py-10">
+            <div className="flex justify-center py-10 border rounded-lg">
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
           ) : templates.length === 0 ? (
-            <div className="text-center py-10 text-sm text-muted-foreground">
+            <div className="text-center py-10 text-sm text-muted-foreground border rounded-lg">
               Нет шаблонов. Загрузите первый .docx.
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Шаблон</TableHead>
-                  <TableHead className="w-[110px]">Статус</TableHead>
-                  <TableHead className="w-[80px]">Версии</TableHead>
-                  <TableHead className="w-[40px]"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {templates.map(t => {
-                  const tplVers = versionsByTemplate.get(t.id) ?? [];
-                  const cur = tplVers.find(v => v.is_current);
-                  return (
-                    <>
-                      <TableRow
-                        key={t.id}
-                        className={activeTemplateId === t.id ? "bg-muted/50" : ""}
+            templates.map(t => {
+              const tplVers = versionsByTemplate.get(t.id) ?? [];
+              const cur = tplVers.find(v => v.is_current);
+              const isOpen = openTemplates.has(t.id);
+              const isActiveTpl = activeTemplateId === t.id;
+              return (
+                <Collapsible
+                  key={t.id}
+                  open={isOpen}
+                  onOpenChange={(open) => {
+                    setOpenTemplates(prev => {
+                      const next = new Set(prev);
+                      if (open) next.add(t.id); else next.delete(t.id);
+                      return next;
+                    });
+                  }}
+                >
+                  <div className={`bg-card border border-border/60 border-l-4 border-l-indigo-300 rounded-lg shadow-sm overflow-hidden ${isActiveTpl ? "ring-1 ring-indigo-300" : ""}`}>
+                    <CollapsibleTrigger asChild>
+                      <button
+                        type="button"
+                        className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-accent/30 transition-colors text-left group min-w-0"
                       >
-                        <TableCell>
-                          <div className="font-medium text-sm">{t.name}</div>
+                        <div className="w-7 h-7 rounded-md bg-indigo-50 flex items-center justify-center shrink-0">
+                          <FileText className="w-3.5 h-3.5 text-indigo-500" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium truncate">{t.name}</div>
                           {t.description && (
-                            <div className="text-[11px] text-muted-foreground">{t.description}</div>
+                            <div className="text-[11px] text-muted-foreground truncate">{t.description}</div>
                           )}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={t.template_status === "active" ? "default" : "secondary"} className="text-[10px]">
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
+                          <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4">
+                            {tplVers.length} верс.
+                          </Badge>
+                          {cur && (
+                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 bg-green-50 text-green-700 border-green-200">
+                              current v{cur.version_number}
+                            </Badge>
+                          )}
+                          <Badge
+                            variant={t.template_status === "active" ? "default" : "secondary"}
+                            className="text-[10px] px-1.5 py-0 h-4"
+                          >
                             {t.template_status}
                           </Badge>
-                        </TableCell>
-                        <TableCell className="text-xs">{tplVers.length}</TableCell>
-                        <TableCell>
-                          <Button size="icon" variant="ghost" className="h-7 w-7"
-                            onClick={() => setDeleteId(t.id)}>
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            aria-label="Удалить шаблон"
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-md hover:bg-destructive/10 cursor-pointer"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setDeleteId(t.id);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setDeleteId(t.id);
+                              }
+                            }}
+                          >
                             <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                      {tplVers.map(v => (
-                        <TableRow
-                          key={v.id}
-                          className={activeVersionId === v.id ? "bg-muted/40" : "cursor-pointer hover:bg-muted/20"}
-                          onClick={() => openPreview(t, v)}
-                        >
-                          <TableCell className="pl-8 text-xs">
-                            v{v.version_number} · {v.file_name}
-                            <div className="text-[10px] text-muted-foreground">
-                              {format(new Date(v.created_at), "dd.MM.yyyy HH:mm", { locale: ru })}
+                          </span>
+                          <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${isOpen ? "" : "-rotate-90"}`} />
+                        </div>
+                      </button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <div className="space-y-1 px-2 pb-2">
+                        {tplVers.length === 0 ? (
+                          <div className="text-xs text-muted-foreground px-2.5 py-2">
+                            Нет версий
+                          </div>
+                        ) : tplVers.map(v => {
+                          const isActiveVer = activeVersionId === v.id;
+                          const canActivate = !v.is_current
+                            && v.validation_status === "valid"
+                            && (!v.markup_status || v.markup_status === "marked");
+                          return (
+                            <div
+                              key={v.id}
+                              className={`flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2.5 px-2.5 py-2 rounded-md cursor-pointer hover:bg-accent/40 transition-colors ${isActiveVer ? "bg-muted/60" : ""}`}
+                              onClick={() => openPreview(t, v)}
+                            >
+                              <div className="flex items-start sm:items-center gap-2.5 min-w-0 sm:flex-1">
+                                <div className="w-6 h-6 rounded-md bg-muted flex items-center justify-center shrink-0">
+                                  <FileText className="w-3 h-3 text-muted-foreground" />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="text-xs truncate">
+                                    <span className="font-medium">v{v.version_number}</span>
+                                    <span className="text-muted-foreground"> · {v.file_name}</span>
+                                  </div>
+                                  <div className="text-[10px] text-muted-foreground">
+                                    {format(new Date(v.created_at), "dd.MM.yyyy HH:mm", { locale: ru })}
+                                    {" · "}
+                                    токенов: {v.detected_tokens?.length ?? 0}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap sm:justify-end">
+                                <ValidationBadge status={v.validation_status} />
+                                {v.is_current && (
+                                  <Badge variant="default" className="text-[9px] px-1.5 py-0 h-4">current</Badge>
+                                )}
+                                {canActivate && (
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-6 px-2 text-[10px]"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      activateVersion(t, v);
+                                    }}
+                                  >
+                                    Сделать активной
+                                  </Button>
+                                )}
+                              </div>
                             </div>
-                          </TableCell>
-                          <TableCell>
-                            <ValidationBadge status={v.validation_status} />
-                            {v.is_current && (
-                              <Badge variant="default" className="ml-1 text-[9px]">current</Badge>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-xs text-muted-foreground">
-                            {(v.detected_tokens?.length ?? 0)}
-                          </TableCell>
-                          <TableCell onClick={(e) => e.stopPropagation()}>
-                            {!v.is_current && v.validation_status === "valid" && (!v.markup_status || v.markup_status === "marked") && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-6 px-2 text-[10px]"
-                                onClick={() => activateVersion(t, v)}
-                              >
-                                Сделать активной
-                              </Button>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </>
-                  );
-                })}
-              </TableBody>
-            </Table>
+                          );
+                        })}
+                      </div>
+                    </CollapsibleContent>
+                  </div>
+                </Collapsible>
+              );
+            })
           )}
         </div>
+
 
         {/* Preview pane */}
         <div className="border rounded-lg p-3">
