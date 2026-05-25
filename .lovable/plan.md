@@ -1,259 +1,155 @@
 да, согласен, с учетом правок:
 
-1. Убрать из плана новый **RPC** `get_ai_access` как источник логики доступа.  
-Доступ и квоты должны резолвиться через **общий shared helper / service-layer** на backend, чтобы не дублировать бизнес-логику между UI и edge. Для UI дать **тонкий read-only endpoint / existing edge helper response**, который возвращает уже вычисленный результат: `access + quota + cta`. Не тащить access-логику в SQL/RPC.
-2. `resolveAiAccess(userId)` оформить не как ad-hoc helper “по месту”, а как **единый shared resolver** для всех AI-входов:
+1. Не дублировать access-конфиг между backend и frontend “синхронными TS-копиями”. Это снова создаст второй SoT. В этом PATCH источник истины должен остаться один:
   &nbsp;
   &nbsp;
-  - web `/ai`
-  - `gorbova-ai-chat`
-  - будущие AI entrypoints  
-  Один SoT для доступа, без второй реализации в фронте.
-3. В матрице доступа зафиксировать **canonical scenario codes** и использовать их везде одинаково.  
-Не смешивать `107NK`, `"107-НК"`, `"107NK"` и display-label.  
-В коде должен быть один canonical key, UI-лейбл отдельно.
-4. В контроль доступа добавить явный **fallback “deny by default”**:
-  - если продукт / entitlement / access group не распознан,
-  - если resolver не смог однозначно определить доступ,
-  - если access SOT не найден,  
-  то режим запрещается, а не открывается “на всякий случай”.
-5. В лимитах явно разделить **chat** и **prompt/scenario** на уровне технического ключа в metadata.  
-Счётчик должен идти не по “примерной интерпретации сообщения”, а по нормализованным полям вроде:
-  - `metadata.ai_mode = "chat" | "prompt"`
-  - `metadata.scenario_code = "balance_analysis" | "107nk" | ...`  
-  Без этого подсчёт быстро станет хрупким.
-6. Подсчёт лимитов делать только на **пользовательские входящие сообщения**, но исключить:
-  - системные записи,
-  - deny/access/quota события,
-  - служебные UI ping/status calls,  
-  чтобы quota не сжигалась техничкой.
-7. Для **off-topic** добавить обязательный safe-guard:
-  - если классификатор недоступен / дал ошибку / таймаут,
-  - не блокировать запрос как off-topic автоматически,
-  - а пускать обычный `chat` на `flash`.  
-  Иначе дешёвый классификатор станет SPOF и будет ломать чат.
-8. В off-topic плане явно указать, что классификатор должен быть **максимально консервативным**:
-  - блокировать только явно бытовые / медицинские / развлекательные запросы;
-  - при сомнении считать запрос **on-topic**.  
-  Это критично, чтобы не резать бухгалтерские и пограничные бизнес-вопросы.
-9. Логи отказов **не писать в** `ai_chat_messages` **как** `role='system'`, если эти записи попадают в историю чата или могут повлиять на UI/контекст.  
-Предпочтительно:
-  - `audit_logs` для отказов/квот/маршрутизации,
-  - а в `ai_chat_messages` писать только реальные сообщения диалога.  
-  Иначе загрязним историю и сломаем UX/аналитику диалога.
-10. В observability отдельно фиксировать не только `model_used`, но и **reason of routing**:
+  - `_shared/ai-access.ts` на backend;
+  - UI получает уже **готовый вычисленный результат** через `ai-access-status`.  
+  Frontend не должен сам решать, какой продукт что открывает.
+2. `ai-access-status` должен возвращать не только `access`, но и сразу:
+  - `tier/access_tier`,
+  - `allowed_modes`,
+  - `allowed_scenarios`,
+  - `cta_target`,
+  - `quota_by_mode` / `remaining_today` / `remaining_month`,
+  - понятные `denial_reasons`.  
+  Иначе UI снова начнёт домысливать бизнес-логику у себя.
+3. В плане явно зафиксировать, что `ai-access-status` — **read-only edge projection** поверх backend resolver, без собственной бизнес-логики, без прямых “если product_id = …” внутри самого endpoint.
+4. Удаление `get_ai_access()` делать только если подтверждено, что:
+  - нигде больше не осталось вызовов RPC;
+  - нет зависимостей в UI/SQL/других edge functions;
+  - есть явный cleanup-пруф.  
+  Иначе сначала перевести UI на `ai-access-status`, потом удалить RPC отдельным шагом в этом же PATCH.
+5. В frontend gating на `/ai` не ограничиваться только disabled-state. Нужен явный guard и для initial state:
+  - если `chat` запрещён, `/ai` не должен открываться в chat по умолчанию;
+  - для `Закрой год` default entrypoint должен быть `balance_analysis`;
+  - если активная вкладка/сценарий недоступны, UI должен автоматически переключаться на доступный fallback, а не показывать сломанный экран.
+6. Для `ChatScenarioLauncher` не просто скрывать карточки. Разделить сценарии на:
+  - активные,
+  - недоступные, но видимые с CTA,
+  - полностью скрытые.  
+  И зафиксировать, какой вариант нужен именно для `107NK` и прочих prompt-сценариев у пользователя `Закрой год`. По твоему описанию сейчас нужен именно **visible disabled + CTA**, а не hide.
+7. Бейдж лимита в UI должен быть привязан к **текущему выбранному режиму**, но:
+  - для пользователя без chat-доступа не показывать misleading “остаток чата”;
+  - для `Закрой год` при активном `balance_analysis` показывать остаток именно по этому сценарию;
+  - если AI полностью недоступен, лимит не показывать вообще.
+8. В observability не считать `estimated tokens`, если фактически метрика сейчас строится по `charCount × rate`. Назвать это честно:
+  - `estimated cost`,
+  - `context_chars`,
+  - `messages`.  
+  Не подменять оценку токенов приблизительной арифметикой без явного указания, что это estimate.
+9. Источник для counters в admin нужно зафиксировать точнее:
+  - `off_topic_blocked` — из `ai_chat_messages.metadata.routing_reason` или отдельного metadata-флага;
+  - `access_denied_for_mode` и `quota_denied` — из `audit_logs`.  
+  Не оставлять это расплывчатым, иначе метрики будут собраны из разных критериев.
+10. Legacy-safe правило нужно усилить:
+  - старые строки без `metadata.ai_mode` и `model_used` не только показывать как `legacy_unknown`, но и **не включать в breakdown-проценты**, если это искажает текущую статистику;
+  - отдельно показать их count как `legacy`.  
+  Иначе новые графики будут шумными.
+11. В verify-кейсах для сценариев с `200/402` нужно явно разделить:
+  - `200` — полноценный успешный ответ;
+  - `402` — дошли до gateway, но упёрлись в биллинг/лимит провайдера.  
+  Для proof маршрутизации `model_used` достаточно `metadata`/edge log даже при `402`, но это надо так и записать в плане, чтобы потом не было спора, что именно считается acceptable proof.
+12. Для кейса off-topic добавить обязательный proof, что:
+  - не было вызова **основной** модели маршрута;
+  - classifier fallback-open не сломал запрос при ошибке классификатора.  
+  Нужен хотя бы один негативный и один fallback-safe сценарий.
+13. В “Что НЕ меняется” добавить:
+  - существующий формат истории чата и UI rendering сообщений;
+  - chat scenarios catalog / launcher structure не пересобираются, меняется только gating.
+14. В порядке выполнения добавить явный шаг перед Execute:
+  - `grep`/code search по `get_ai_access`;
+  - перевод всех вызовов на `ai-access-status`;
+  - только потом DROP FUNCTION.  
+  Это обязательный STOP-guard.
+15. DoD дополнить:
+  - `/ai` не открывается в недоступный режим по умолчанию;
+  - прямой переход/restore state в недоступный режим корректно сбрасывается на разрешённый fallback;
+  - после удаления RPC в проекте не осталось runtime-обращений к `get_ai_access()`.
 
 &nbsp;
 
-- `routing_reason = "free_chat_flash" | "scenario_pro" | "offtopic_blocked" | "access_denied" | "quota_denied"`  
-Иначе потом нельзя будет доказуемо проверить, почему был выбран именно этот путь.
-
-11. Усечение истории уточнить:
-
-- сначала отрезать по **count**,
-- потом по **char cap**,
-- system prompt и scenario context никогда не выкидывать,
-- при нехватке места сначала удалять самые старые user/assistant сообщения.  
-Этот порядок нужно явно зафиксировать, иначе реализация может отличаться от ожиданий.
-
-12. В UI `/ai` не ограничиваться только hide/disable свободного чата.  
-Нужно явно определить поведение для всех трёх состояний:
-
-- **доступен chat**
-- **chat недоступен, но доступен хотя бы один scenario**
-- **AI полностью недоступен**  
-Для каждого состояния нужен свой экран/CTA, без “пустых” зон интерфейса.
-
-13. Для продукта **«Закрой год»** зафиксировать, что карточка `balance_analysis` — это единственный активный entrypoint, а попытка открыть chat или `107NK` напрямую через URL / фронтовый state / edge body всё равно должна упираться в backend deny. Не доверять только UI-скрытию.
-14. В разделе “Что НЕ меняется” добавить ещё одно явное ограничение:
-
-- **никаких новых таблиц, миграций и новой AI access/tariff schema** в этом PATCH.  
-Сейчас план местами это подразумевает, но лучше зафиксировать жёстко.
-
-15. В DoD добавить verify по историческим данным:
-
-- старые чаты без новых `metadata.ai_mode / scenario_code / model_used` не должны ломать UI и аналитические блоки;
-- отсутствие новых metadata в legacy-строках должно обрабатываться безопасно.  
-Без этого легко сломать историю.
-
-16. В Diagnose-фазе отдельно потребовать:
-
-- точное доказательство, **какие existing product/access entities** дают `Закрой год`,
-- какие дают `Business / Gorbova Club / AI-group`,
-- и какой current route/catalog URL использовать для CTA.  
-Без этого Execute начинать нельзя.
-
-В остальном направление правильное: **flash для свободного чата, pro для брендированных сценариев, deny по текущим entitlements, без новой тарифной подсистемы**.
+В остальном направление правильное: вынести UI на `ai-access-status`, не плодить тарифную подсистему, завершить gating и доказать всё через финальный verify.
 
 &nbsp;
 
-План: оптимизация стоимости Gorbova AI (PATCH v2 — без новой тарифной подсистемы)
+План: PATCH v2.1 — frontend access UI, admin observability и финальный verify с доказательствами
 
-## Принципы (с учётом правок)
+## Scope
 
-- НЕ создаём новую сущность `ai_chat_rate_limits` и не изобретаем «тарифы для AI».
-- SOT доступа к AI-режимам — существующие `products` / `entitlements` / `access_rules`, через `access-resolver.ts`.
-- Сначала **проверка доступа** к режиму, потом **глобальные лимиты по режимам**, потом **off-topic** (только для свободного чата), потом вызов модели.
+Закрываем хвосты PATCH v2: frontend для /ai (gating по продуктам), admin-observability, и финальный verify с пруфами по 6 пунктам ревью. Дополнительно — архитектурное решение по `get_ai_access()`.
 
-## Матрица доступа к режимам AI (фиксируем в плане)
+## 0. Архитектурное решение по `get_ai_access()` RPC
+
+Зафиксировать: RPC — это **тонкая read-only projection** поверх единственного backend SOT (`_shared/ai-access.ts`).
+
+- Перевести RPC в режим «только агрегирует данные», без правил. Все решения (mapping product→modes, лимиты, классификация) остаются только в `_shared/ai-access.ts`.
+- RPC возвращает сырые факты для UI: набор активных entitlements (по product_id), счётчики использования за день/месяц по mode из `ai_chat_messages.metadata`.
+- Маппинг product_id → разрешённые modes и числовые лимиты делает frontend через тот же shared конфиг (вынести в `src/lib/ai-access-config.ts`, импортируется как edge-функцией, так и UI через дублирующую TS-копию констант — единственный источник правок, оба файла синхронны).
+- Альтернатива (выбираем эту): полностью убрать RPC `get_ai_access()`, заменить на тонкий read-only edge `ai-access-status` который зовёт shared `resolveAiAccess()` и возвращает JSON для UI. Это устраняет двойной контур.
+
+**Решение:** удалить `get_ai_access()`, ввести edge `ai-access-status` (GET, JWT). UI зовёт его через `useAiAccess`.
+
+## 1. Frontend: gating на /ai
+
+Файлы: `src/hooks/useAiAccess.ts` (новый), `src/pages/AI.tsx`, `src/components/ai-chat/AiPageContent.tsx`, `src/components/ai-chat/ChatScenarioLauncher.tsx`, `src/components/ai-chat/ChatComposer.tsx` (или эквивалент).
+
+Поведение по тирам:
+
+- **Закрой год** (только `balance_analysis`):
+  - Свободный чат — input disabled, плашка «Свободный чат недоступен на вашем тарифе» + CTA «Открыть Business / Club».
+  - В лаунчере сценариев показывать только `balance_analysis` активным; `107NK` и прочие prompt-сценарии — disabled с тултипом и CTA.
+- **Club / Business / AI-группа**: все режимы активны.
+- В шапке/футере чата: бейдж «Осталось сегодня: X / Y» по текущему доступному режиму (chat если активен, иначе prompt).
+- При 403 от edge — toast «Недоступно на вашем тарифе» + CTA.
+- При 429 — toast «Лимит исчерпан, попробуйте завтра» + ссылка на тарифы.
+
+## 2. Admin observability
+
+Файлы: `src/pages/admin/AdminAI.tsx` (или соответствующий tab), новый компонент `AiUsageBreakdown.tsx`.
+
+Метрики (за 7/30 дней, фильтр по mode):
+
+- Top-20 users by messages + estimated tokens.
+- Breakdown: `mode` × `model_used` (count, % truncated).
+- Counters: `off_topic_blocked`, `access_denied_for_mode`, `quota_denied`, `rate_limited`.
+- Источник: `ai_chat_messages.metadata` + `audit_logs` по action префиксу `ai_chat_*`.
+
+## 3. Legacy-safe для старых строк
+
+Все агрегаты используют `COALESCE(metadata->>'model_used', 'legacy_unknown')` и `COALESCE(metadata->>'ai_mode', 'legacy_unknown')`. Старые сообщения без metadata показываются как `legacy_unknown` и **не** учитываются в quota count (quota считается только по строкам со свежими метаданными от текущей версии edge).
+
+## 4. Final verify с пруфами
+
+Каждый сценарий = один edge-call + чтение `ai_chat_messages` / `audit_logs`. Все пруфы прикладываются в отчёте.
 
 
-| Продукт у пользователя                    | mode='chat' (свободный) | scenario=balance_analysis | scenario=107NK                     |
-| ----------------------------------------- | ----------------------- | ------------------------- | ---------------------------------- |
-| Закрой год                                | ❌ запрещён              | ✅ доступен                | ❌ запрещён                         |
-| Бизнес / Gorbova Club / AI-группа доступа | ✅ доступен              | ✅ доступен                | ✅ доступен                         |
-| Нет ни одного из выше                     | ❌                       | ❌                         | ❌ → CTA на Business / Gorbova Club |
+| #   | Сценарий                                | Proof                                                                           |
+| --- | --------------------------------------- | ------------------------------------------------------------------------------- |
+| 1   | Закрой год user → POST chat             | 403, `audit_logs.action=ai_chat_denied_access_for_mode`                         |
+| 2   | Закрой год user → POST balance_analysis | 200/402, `metadata.model_used=google/gemini-2.5-pro`, `metadata.ai_mode=prompt` |
+| 3   | Club user → POST chat                   | 200/402, `metadata.model_used=google/gemini-2.5-flash`, `metadata.ai_mode=chat` |
+| 4   | Club user → POST prompt (107NK)         | 200/402, `metadata.model_used=google/gemini-2.5-pro`                            |
+| 5   | Off-topic в chat                        | `metadata.off_topic_blocked=true`, нет вызова pro-модели                        |
+| 6   | 51-е сообщение chat за сутки            | 429, `audit_logs.action=ai_chat_quota_denied`, quota не списана                 |
+| 7   | Диалог >20 сообщений / >80k chars       | `metadata.truncated=true`, `dropped_messages_count>0`, system prompt сохранён   |
+| 8   | User-message >50k chars                 | 400 с текстом «Сократите запрос», ничего не записано в `ai_chat_messages`       |
+| 9   | UI Закрой год                           | Screenshot: chat disabled, balance_analysis активен, 107NK disabled             |
+| 10  | UI Club                                 | Screenshot: всё активно, бейдж лимита виден                                     |
 
 
-Реализация: новый shared helper `resolveAiAccess(userId) → { chat: bool, balance_analysis: bool, "107NK": bool, reason }`, читает существующие entitlements/access groups (точные `product_id`/group resolution подтвердим на этапе Diagnose). Никаких новых таблиц.
+## 5. Order
 
-## Маршрутизация моделей
+Diagnose (подтвердить product_id для Закрой год / Club / Business в проде) → Dry-run (edge-curl по сценариям 1–8 на тестовых аккаунтах) → Execute (удалить RPC, добавить edge `ai-access-status`, frontend gating, admin breakdown) → Verify (10 сценариев с приложением пруфов).
 
-- `mode='chat'` (свободный) → `**google/gemini-2.5-flash**` (≈10× дешевле pro). Доступен только тем, у кого есть chat-доступ.
-- `mode='prompt'` (`balance_analysis`, `107NK`, прочие брендированные) → `**google/gemini-2.5-pro**` (без изменений). Качество критично.
-- Карта `prompt_id → model` пока не нужна; модель выбирается по `mode`. Гибкая мапа — в backlog.
+## DoD
 
-## Контроль доступа (порядок проверок в `gorbova-ai-chat`)
+- RPC `get_ai_access()` удалён; единственный access SOT — `_shared/ai-access.ts`, UI читает через edge `ai-access-status`.
+- /ai корректно gating'ует chat/balance_analysis/107NK по тирам с CTA.
+- Admin показывает breakdown по mode/model_used + denied/truncated counters.
+- Все 10 пруфов приложены в отчёте (логи edge / строки `ai_chat_messages.metadata` / скриншоты UI).
+- Legacy-сообщения без metadata не ломают UI/quota/analytics.
 
-1. **Auth** — JWT обязателен (как сейчас).
-2. **Access**: `resolveAiAccess(userId)`. Если запрошенный `mode`/`prompt_id` запрещён → **HTTP 403** с кодом `access_denied_for_mode` и payload `{cta: "business" | "club", message}`. НЕ 429.
-3. **Лимиты по режиму** (см. ниже). Если превышен → **HTTP 429** с кодом `rate_limited_for_mode`.
-4. **Длина входа** (см. ниже). Превышен → **HTTP 400** с одним из двух текстов.
-5. **Off-topic фильтр** — только для `mode='chat'`. Для `mode='prompt'` не запускается вообще.
-6. Вызов модели.
+## Подтверждаю, что не менялись
 
-## Глобальные лимиты по режимам (НЕ по тарифам)
-
-Единица — **количество пользовательских сообщений** (`ai_chat_messages.role='user'`), а не токены/диалоги/запросы.
-
-- `mode='chat'`: **50 сообщений/день**, **500 сообщений/месяц** на пользователя.
-- `scenario='balance_analysis'`: **20 сообщений/день**, **200 сообщений/месяц**.
-- `scenario='107NK'`: **20 сообщений/день**, **200 сообщений/месяц**.
-- Прочие брендированные сценарии (если появятся) — наследуют лимит `prompt`-режима: 20/день, 200/месяц.
-
-Подсчёт — `SELECT count(*) FROM ai_chat_messages WHERE user_id=? AND role='user' AND created_at >= ?` с фильтром по `metadata.scenario_type` / `metadata.mode`. Без новой таблицы.
-
-Числа зашиваются в edge function как константы; менять их — миграция кода, не данных. Это сознательно (нет матрицы тарифов).
-
-## Off-topic фильтр (мягкий, только для свободного чата)
-
-- Запускается **только если** `mode='chat'` И прошёл access-check.
-- Классификатор: `google/gemini-2.5-flash-lite`, system prompt по бизнес/налоговой/бухгалтерской тематике РБ.
-- При `on_topic=false` → готовый шаблонный ответ «Я помогаю по бизнесу/налогам/бухгалтерии РБ. Для общих вопросов воспользуйтесь другим сервисом», БЕЗ вызова основной модели.
-- Для `mode='prompt'` фильтр НЕ запускается ни при каких условиях (защита брендированных сценариев от ложных срабатываний).
-- Логируем решение в `metadata.topic_check = {on_topic, reason, classifier_model}`.
-
-## Усечение истории
-
-- Сохраняем в БД всё как сейчас.
-- Перед отправкой в модель собираем контекст:
-  - всегда: system prompt + активный `prompt_id` контекст (если `mode='prompt'`);
-  - последние **20 сообщений** диалога;
-  - hard cap общего объёма **80 000 символов** (если превышено — отбрасываем самые старые сообщения, кроме system и активного prompt-контекста).
-- В `metadata` пишем:
-  - `truncated: bool`
-  - `dropped_messages_count: number`
-  - `dropped_chars: number`
-  - `context_messages_count`, `context_chars`
-  - `model_used`, `mode`
-
-## Hard cap на длину одного user-message
-
-- Лимит: **50 000 символов**.
-- Двухуровневый текст ошибки:
-  - если входной текст < 20 000 символов и нет вложения → «Сократите запрос».
-  - если входной текст ≥ 20 000 символов **или** есть `fileContents` → «Сократите ввод или загрузите файл отдельным вложением».
-
-## UI на `/ai` (развилка по доступу)
-
-Перед рендерингом запрашиваем `resolveAiAccess` через новый RPC `get_ai_access` (только чтение существующих access-таблиц, без новых SOT).
-
-- Если `chat=true`: показать поле ввода свободного чата + остаток лимита («Осталось сегодня: X / 50»).
-- Если `chat=false`, но какой-то `prompt` доступен: поле свободного чата скрыто/disabled с плашкой «Свободный чат доступен в тарифе Business / Gorbova Club» + CTA.
-- Если ни один режим недоступен: большая плашка «AI-помощник доступен в Business / Gorbova Club» + CTA на соответствующие продукты.
-
-Карточки сценариев (для каждого продукта):
-
-- **Закрой год**:
-  - «Анализ баланса» — активна.
-  - «107-НК» — disabled, плашка «Доступно в Business / Gorbova Club» + CTA.
-  - Свободный чат — disabled (см. выше).
-- **Business / Gorbova Club**:
-  - Все карточки активны.
-- Формулировка «Без лимита» НЕ используется (лимиты есть глобальные).
-
-## Observability / Admin
-
-В `AdminAI` блок «AI usage» добавить разрезы за 7/30 дней:
-
-- топ-N пользователей по `count(messages)` с разбивкой `mode=chat` vs `mode=prompt`;
-- breakdown по `model_used` (количество вызовов и оценочная стоимость через charCount × ставка модели);
-- `off_topic_blocked_count` (за период);
-- `denied_by_access_count` (за период, по коду `access_denied_for_mode`);
-- `denied_by_quota_count` (за период, по коду `rate_limited_for_mode`);
-- средняя длина context_chars, % `truncated=true`.
-
-Источник — `ai_chat_messages.metadata` + новый компактный лог `ai_chat_denials` ИЛИ запись отказов прямо в `ai_chat_messages` с `role='system'` и `metadata.denial_reason`. Финальный выбор — на Dry-run этапе (предпочтительно второе, без новой таблицы).
-
-## Что НЕ меняется
-
-- `fields_registry`, `document_token_registry`, DOCX-шаблоны;
-- RLS, RPC документов, cron/jobs документов;
-- `client.ts`, `types.ts`;
-- **canonical-модель products / entitlements / access_rules / access groups** — не пересобирается;
-- существующие product access rules не перепридумываются;
-- **новая отдельная AI-тарифная подсистема не создаётся** (никакой `ai_chat_rate_limits`);
-- TG-бот и его `ai_rate_limits`;
-- модель и промпт `balance_analysis`/`107NK`;
-- схема `ai_chat_messages` (используем `metadata` jsonb как есть).
-
-## Открытые вопросы (Diagnose-фаза, нужны до Execute)
-
-1. Какие именно **product_id / access group** соответствуют:
-  - «Закрой год» → даёт только `balance_analysis`;
-  - «Бизнес», «Gorbova Club», «AI-группа доступа» → дают chat + все scenarios.
-   Подтвердим запросом по `products` + существующим access-структурам.
-2. Куда логировать отказы (`denied_by_access`, `denied_by_quota`) — в `ai_chat_messages` с `role='system'` или в отдельный `ai_chat_denials`? Решение принимаем без новых таблиц по умолчанию.
-3. CTA-ссылки на «Business» и «Gorbova Club» — нужны конкретные slugs/URL продуктов.
-
-## DoD (verify-кейсы)
-
-Каждый кейс — proof скрином UI + edge-логом + `metadata`:
-
-1. Пользователь с продуктом «Закрой год»:
-  - видит только карточку «Анализ баланса» активной;
-  - свободный чат скрыт/disabled с CTA;
-  - «107-НК» disabled с CTA;
-  - попытка вызвать `mode='chat'` напрямую через edge → **403 `access_denied_for_mode**`, БЕЗ вызова модели;
-  - попытка `prompt_id=107NK` → **403**, БЕЗ вызова модели.
-2. Пользователь Business / Gorbova Club:
-  - доступны chat + balance_analysis + 107NK;
-  - chat идёт на `gemini-2.5-flash` (`metadata.model_used`);
-  - balance_analysis идёт на `gemini-2.5-pro`.
-3. Свободный чат, off-topic запрос («как лечить простуду»):
-  - классификатор → `on_topic=false`;
-  - шаблонный ответ;
-  - в edge-логах **нет** вызова `gemini-2.5-pro`/`flash` для основного промпта.
-4. Брендированный сценарий с «бухгалтерским по краю темы» вопросом:
-  - off-topic фильтр НЕ запускается (mode='prompt');
-  - сценарий отрабатывает на pro.
-5. Превышение `mode='chat'` 50/день:
-  - 51-е сообщение → **429 `rate_limited_for_mode**` + toast с пояснением.
-6. Длинный диалог (>20 сообщений / >80k символов):
-  - `metadata.truncated=true`, `dropped_messages_count>0`, `dropped_chars>0`;
-  - system prompt и активный prompt-контекст сохранены.
-7. user-message >50 000 символов без файла → «Сократите запрос».
-8. user-message >50 000 символов + fileContents → «Сократите ввод или загрузите файл отдельным вложением».
-9. Подтверждение, что не менялись: fields_registry; document_token_registry; DOCX-шаблоны; RLS; RPC документов; cron/jobs; client.ts; types.ts; canonical-модель products/entitlements/access groups; никакой новой AI-тарифной таблицы.
-
-## Порядок выполнения
-
-1. **Diagnose / confirm access SOT** — запросом по `products`/`entitlements`/`access_rules` зафиксировать конкретные id для «Закрой год» и «Business / Gorbova Club / AI-группа доступа». Зафиксировать в плане перед кодом.
-2. **Dry-run**:
-  - разработка `resolveAiAccess` (только чтение существующих access);
-  - правки `gorbova-ai-chat` (порядок проверок, модель по режиму, лимиты, off-topic только для chat, усечение, hard cap);
-  - правки UI на `/ai` (карточки/disabled-плашки/остаток);
-  - `deno check`, локальные unit-тесты на access matrix и truncation;
-  - смоук edge через `curl_edge_functions` под двух тестовых пользователей.
-3. **Execute** — deploy `gorbova-ai-chat` + фронтенд правки. Никаких миграций БД.
-4. **Verify** — пройти 9 кейсов DoD, приложить proof.
+- `fields_registry`; `document_token_registry`; DOCX-шаблоны; RLS; RPC (кроме удаления `get_ai_access`); cron/jobs; `client.ts`; `types.ts`; схема БД (миграция — только DROP FUNCTION); канонические access_rules; products/entitlements/tariffs; `balance_analysis`/`107NK` системные промпты и модели; существующий `ai_rate_limits` для TG-бота; схема `ai_chat_messages`.
