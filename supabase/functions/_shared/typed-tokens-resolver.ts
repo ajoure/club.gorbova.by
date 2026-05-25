@@ -107,7 +107,8 @@ export function canonicalizeLegalEntity(
     nameClean = nameClean.replace(reShort, "");
     const fullLc = ORG_FORM_SHORT_TO_FULL[orgForm.toUpperCase()];
     if (fullLc) {
-      const reFull = new RegExp(`^${fullLc}\\s+`, "i");
+      const fullFormPattern = fullLc.replace(/\s+/g, "\\s+");
+      const reFull = new RegExp(`^${fullFormPattern}\\s+`, "i");
       nameClean = nameClean.replace(reFull, "");
     }
   }
