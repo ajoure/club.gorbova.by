@@ -21,7 +21,11 @@
 
 // deno-lint-ignore-file no-explicit-any
 import { formatStructuredAddress } from "./address-format.ts";
-import { ORG_FORM_SHORT_TO_FULL } from "./ru-inflection.ts";
+import {
+  ORG_FORM_SHORT_TO_FULL,
+  ORG_FORM_FULL_TO_SHORT,
+  normalizeMasculinePosition,
+} from "./ru-inflection.ts";
 
 const ADDR_PARTS = [
   "street", "house", "building", "apartment",
@@ -31,6 +35,10 @@ const ADDR_PARTS = [
 
 // Известные формы собственности — для очистки имени от ведущего токена формы.
 const ORG_FORM_SHORTS = new Set(Object.keys(ORG_FORM_SHORT_TO_FULL));
+// Полные формы (lowercase), отсортированные от длинных к коротким для greedy-match.
+const ORG_FORM_FULLS_SORTED = Object.keys(ORG_FORM_FULL_TO_SHORT).sort(
+  (a, b) => b.length - a.length,
+);
 
 /**
  * Извлекает 3 канонических компонента ЮЛ из имеющихся полей.
