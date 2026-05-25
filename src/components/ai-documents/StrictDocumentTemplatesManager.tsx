@@ -947,7 +947,8 @@ export function StrictDocumentTemplatesManager({
         </div>
 
 
-        {/* Preview pane */}
+        {/* Preview pane — скрыт в readOnly (контент только для админа) */}
+        {!readOnly && (
         <div className="border rounded-lg p-3 min-w-0 max-w-full overflow-hidden">
           {!activeVersion ? (
             <div className="text-sm text-muted-foreground text-center py-10">
