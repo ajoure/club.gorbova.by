@@ -32,13 +32,13 @@ import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 
 function entityDisplayName(e: ClientLegalDetails): string {
   if (e.client_type === "legal_entity") return e.leg_name ?? "Юрлицо без названия";
-  if (e.client_type === "individual_entrepreneur") return e.ent_name ?? "ИП без названия";
+  if (e.client_type === "entrepreneur") return e.ent_name ?? "ИП без названия";
   return e.ind_full_name ?? "Физлицо без имени";
 }
 
 function entityUnp(e: ClientLegalDetails): string | null {
   if (e.client_type === "legal_entity") return e.leg_unp ?? null;
-  if (e.client_type === "individual_entrepreneur") return e.ent_unp ?? null;
+  if (e.client_type === "entrepreneur") return e.ent_unp ?? null;
   return null;
 }
 
