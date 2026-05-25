@@ -787,9 +787,11 @@ export function StrictDocumentTemplatesManager({
             )}
           </p>
         </div>
-        <Button onClick={() => setUploadOpen(true)} size="sm">
-          <Upload className="h-4 w-4 mr-1" /> Загрузить .docx
-        </Button>
+        {!readOnly && (
+          <Button onClick={() => setUploadOpen(true)} size="sm">
+            <Upload className="h-4 w-4 mr-1" /> Загрузить .docx
+          </Button>
+        )}
       </div>
 
       <div className="grid lg:grid-cols-2 gap-4">
