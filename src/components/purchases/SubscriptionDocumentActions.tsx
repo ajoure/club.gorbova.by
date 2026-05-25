@@ -23,7 +23,7 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { downloadDocumentBlob } from "@/utils/downloadDocumentBlob";
-import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
+import { normalizeEdgeFunctionError, normalizeEdgeFunctionErrorAsync } from "@/utils/normalizeEdgeFunctionError";
 import { useOrderCanonicalDocuments } from "@/hooks/useOrderCanonicalDocuments";
 
 interface Props {
@@ -52,7 +52,7 @@ export function SubscriptionDocumentActions({ orderId, className }: Props) {
         "canonical-document-generate-strict",
         { body: { order_id: orderId, mode: "generate" } },
       );
-      if (error) throw new Error(normalizeEdgeFunctionError(error, data));
+      if (error) throw new Error(await normalizeEdgeFunctionErrorAsync(error, data));
       if (data?.error) throw new Error(normalizeEdgeFunctionError(null, data));
       toast.success("Документ сформирован");
       await refetch();
