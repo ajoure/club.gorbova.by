@@ -235,7 +235,9 @@ interface TemplateRow {
   template_status: string;
   current_version_id: string | null;
   created_at: string;
+  category: string | null;
 }
+
 
 interface VersionRow {
   id: string;
