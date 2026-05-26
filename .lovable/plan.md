@@ -1,206 +1,304 @@
-План v2: фантомные recurring-признаки на one-time продуктах + восстановление Gorbova Club у `elizaveta.andreeva.15@yandex.by`
+да, согласен, с учетом правок:
 
-> Терминология: **это не «удаление подписок» и не «отмена доступов».** Это **очистка фантомных recurring-признаков** (`auto_renew`, `next_charge_at`, `meta.recurring_snapshot/recurring_amount/recurring_currency`) у подписок на one-time продуктах, у которых SOT (`tariff_offers.meta.recurring.is_recurring`) = NULL/false. `status`, `access_start_at`, `access_end_at`, `tariff_id`, `product_id`, `order_id`, `billing_type`, `entitlements`, `access_rules`, telegram-доступы — **НЕ меняются**.
+1. План правильный: сначала discovery, без cleanup и без отмены bePaid.
 
----
+&nbsp;
 
-## 1. Diagnose (read-only, уже выполнено)
+2. Важно: в этом discovery нельзя выводить “64 подписки надо отменить” или “64 надо оставить”.
 
-Контакт `692f22b7-…`, Елизавета Андреева. Видимая «странная» карточка — это **две разные подписки**:
+Нужно только классифицировать, что это:
 
-### A. Карточка «ЗАКРОЙ ГОД — Стандартный» (sub `b2c8d37a-…`)
-- product=`73c29914` (ЗАКРОЙ ГОД), tariff=`56c35e86` (Стандартный)
-- `status=active`, `auto_renew=true`, `billing_type=mit`, `next_charge_at=2026-05-31 23:59`
-- `meta.recurring_snapshot.is_recurring=true`, `recurring_amount=230 BYN`
-- SOT по `tariff_offers` для ЗАКРОЙ ГОД/Стандартный (offer `53f05940`, active pay_now): `amount=900`, `meta.recurring=NULL` → **продукт one-time, не recurring** → нарушение `Product Type SOT`, `Auto-Renewals Cohort SOT`, `Recurring Snapshot Resolver SOT`.
+- legacy_recurring_real;
 
-### B. Реальная Gorbova Club / BUSINESS (sub `b1676866-…`)
-- product=`11c9f1b8` (Gorbova Club), tariff=`7c748940` (BUSINESS)
-- `status=canceled`, `auto_renew=false`, `billing_type=provider_managed`
-- `meta.bepaid_cancel_source=user_card_change` (06.05.26 16:01), `resumed_at=06.05.26 16:07`, `resumed_by_user=true`
-- bePaid sub `sbs_e600f8c4f50d1a56` — нужно явно проверить статус у провайдера (см. §6).
-- entitlement Gorbova Club (`412be761…`) активен до 05.06.26; в meta `source=user_resume`, `tariff_name=BUSINESS`, **нет** `source_rule_id`/`business_subscription_id` → UI рисует «доступ по продукту» без бейджа.
+- subscription_product_mismatch;
 
-## 2. Масштаб фантомных recurring-признаков (one-time продукты)
+- ui_join_wrong;
 
-`status ∈ {active, past_due, trial}` и (`auto_renew=true` OR `next_charge_at IS NOT NULL` OR `meta.recurring_snapshot.is_recurring=true`):
+- entitlement_product_mismatch;
 
-| Продукт | Тариф | Всего | auto_renew | next_charge_at | snap.is_recurring |
-|---|---|---|---|---|---|
-| ЗАКРОЙ ГОД | Стандартный | 77 | 68 | 76 | 74 |
-| Подоходный налог ИП | стандарт | 10 | 0 | 10 | 1 |
-| Платная консультация | Срочная консультация | 2 | 0 | 2 | 1 |
-| Платная консультация | Помощь при проверке | 1 | 0 | 1 | 1 |
+- phantom_no_provider;
 
-Итого — **90 фантомных строк** на 4 one-time продуктах.
+- manual_review.
 
----
+&nbsp;
 
-# Трек 1. Cleanup фантомных recurring-признаков (массово)
+3. Добавить обязательную проверку по суммам:
 
-Треки 1 и 2 **выполняются отдельно**. Сначала — Трек 1 целиком, затем отдельным решением — Трек 2 по Елизавете.
+- 55 BYN → должно маппиться на Gorbova Club / CHAT;
 
-## 1.1 Что меняем / что НЕ меняем
+- 250 BYN → должно маппиться на Gorbova Club / BUSINESS;
 
-Меняем только в `subscriptions_v2`:
-- `auto_renew → false`
-- `next_charge_at → NULL`
-- `meta.recurring_snapshot` → удалить
-- `meta.recurring_amount`, `meta.recurring_currency` → удалить
-- `meta.phantom_recurring_cleanup` = `{ at, reason, source_patch, backup_table, backup_row_id }`
-- `payment_token` — **в первом execute НЕ трогаем** (см. §1.4). Отдельный второй проход с guard, только если останутся фантомные локальные MIT-токены без `payment_methods`/`card_profile_links`.
+- 230/250/900 BYN по ЗАКРОЙ ГОД не считать автоматически правильным без tariff_offer/order evidence.
 
-НЕ трогаем: `status`, `access_start_at`, `access_end_at`, `tariff_id`, `product_id`, `order_id`, `billing_type`, `entitlements`, `access_rules`, `telegram_access_queue`, `provider_subscriptions`, bePaid.
+&nbsp;
 
-## 1.2 Выборка (включая обязательные STOP-guards)
+4. По Ирине Гайдук отдельно доказать:
 
-Кандидат проходит cleanup, только если ВСЕ условия выполнены:
+- provider amount = 55 BYN;
 
-1. Продукт **НЕ** в `recurring_products`:
-   ```
-   recurring_products = SELECT DISTINCT t.product_id
-     FROM tariff_offers o JOIN tariffs t ON t.id=o.tariff_id
-     WHERE o.is_active AND o.offer_type='pay_now'
-       AND (o.meta->'recurring'->>'is_recurring')::bool = true
-   ```
-2. `status ∈ {active, past_due, trial}`.
-3. Есть хотя бы один phantom-флаг: `auto_renew=true` OR `next_charge_at IS NOT NULL` OR `(meta->'recurring_snapshot'->>'is_recurring')::bool = true`.
-4. **STOP-guard A (provider_subscriptions):** нет ни одной записи в `provider_subscriptions` для этой `subscription_v2_id` со `state ∈ {active, pending, trial}`. Если есть — `manual_review`, не трогаем.
-5. **STOP-guard B (provider link in meta):** `meta->>'bepaid_subscription_id' IS NULL` и `meta->>'provider_subscription_id' IS NULL`. Иначе — `manual_review`.
-6. **STOP-guard C (billing_type):** `billing_type = 'mit'` (или NULL). Если `billing_type='provider_managed'` среди 90 — STOP, отдельный manual_review-список.
-7. **STOP-guard D (идемпотентность):** `meta->'phantom_recurring_cleanup' IS NULL`.
+- последние orders/payments = Gorbova Club / CHAT;
 
-Любая строка, отсеянная guard-ом A/B/C, попадает в отдельный отчёт `phantom_recurring_v1.manual_review` и **не** меняется этим патчем.
+- какая конкретно subscriptions_v2.product_id/tariff_id стоит сейчас;
 
-## 1.3 Backup & Rollback (обязательно перед UPDATE)
+- какой entitlement.product_id стоит сейчас;
 
-Создаём backup-таблицу (миграция, не data):
-```
-phantom_recurring_cleanup_backup_2026_05 (
-  id uuid primary key default gen_random_uuid(),
-  subscription_id uuid not null,
-  before_auto_renew boolean,
-  before_next_charge_at timestamptz,
-  before_payment_token text,
-  before_meta jsonb not null,    -- полный meta до правки
-  after_meta_diff jsonb,         -- что именно убрали
-  cleaned_at timestamptz default now(),
-  source_patch text default 'phantom_recurring_v1'
-)
-```
-- Перед UPDATE для каждой целевой строки делаем INSERT в backup.
-- В `meta.phantom_recurring_cleanup.backup_row_id` пишем id backup-строки.
-- Дополнительно сохраняем sweep-snapshot (все 90 строк целиком) в `audit_logs` action `phantom_recurring_v1.preflight_snapshot` (через canonical evidence-relay/audit write-path).
+- откуда UI берёт “ЗАКРОЙ ГОД”.
 
-Rollback SQL (готовим заранее, кладём в proof):
-```sql
-UPDATE subscriptions_v2 s
-SET auto_renew     = b.before_auto_renew,
-    next_charge_at = b.before_next_charge_at,
-    payment_token  = COALESCE(b.before_payment_token, s.payment_token),
-    meta           = b.before_meta
-FROM phantom_recurring_cleanup_backup_2026_05 b
-WHERE b.subscription_id = s.id
-  AND b.source_patch = 'phantom_recurring_v1';
-```
-Rollback тоже идемпотентный (можно гонять повторно).
+Это контрольный кейс на B или C, а не на D/E.
 
-## 1.4 Payment token policy
+&nbsp;
 
-`payment_token` в первом execute **не очищаем**. Причины:
-- Часть локальных токенов до сих пор может быть связана с активной картой через `payment_methods` / `card_profile_links` и использоваться для платных продуктов клиента в других местах.
-- Безопасный путь: сначала отдельный read-only диагноз — для каждой строки из 90 пометить:
-  - `phantom_only` — `payment_token` ни в одной активной `payment_methods`/`card_profile_links` не используется И нет live `provider_subscriptions`;
-  - `shared` — токен/карта живут в других местах → не трогаем.
-- Только `phantom_only` могут пойти во второй проход с обнулением `payment_token`. Этот второй проход — отдельный patch, не в этом плане.
+5. По Ольге Дещене отдельно доказать:
 
-## 1.5 Порядок исполнения (Trek 1)
+- provider subscription живой или нет;
 
-1. **Diagnose:** SELECT по §1.2, выгрузка в `audit_logs` (`phantom_recurring_v1.preflight`, `snapshot.total_rows=90` per Discovery Evidence Canon).
-2. **Manual-review split:** отдельный отчёт `phantom_recurring_v1.manual_review` со строками, отсеянными guards A/B/C (ожидаем 0, но обязательно проверить).
-3. **Migration:** создать `phantom_recurring_cleanup_backup_2026_05` + индекс по `subscription_id`.
-4. **Dry-run:** на одной строке `b2c8d37a` показать diff `before/after` и работу rollback.
-5. **Execute:** одной транзакцией — для каждой целевой строки: INSERT в backup → UPDATE в `subscriptions_v2`. Идемпотентно через guard D.
-6. **Audit:** `phantom_recurring_v1.executed` с количеством, перечнем id, ссылкой на backup-table.
+- почему карточка доступа пишет “не продлевается”;
 
-## 1.6 Verify (Trek 1)
+- есть ли active provider_subscriptions, связанный с её BUSINESS;
 
-- SELECT из §1.2 = **0 строк**.
-- Nightly invariant `inv_phantom_recurring_v1` (новый): `count(*) FROM § = 0`. Добавить в существующий nightly health-check.
-- Спот-чек `b2c8d37a`:
-  - карточка «Подписки» в `ContactDetailSheet` больше **не** показывает «Следующее списание» и не помечается как auto-renew;
-  - карточка/строка доступа до 31.05.26 **остаётся** (entitlement `757976ea` не тронут);
-- Спот-чек: ни одна `subscriptions_v2` с продуктом из `recurring_products` (Gorbova Club, Бизнес-курсы, и т. п.) не изменена — diff по списку id из backup-table пуст для recurring-продуктов.
-- В `audit_logs` присутствует `phantom_recurring_v1.executed` со счётчиком, равным количеству строк в backup-table.
+- есть ли active subscriptions_v2 с auto_renew=true;
 
-## 1.7 Definition of Done (Trek 1)
+- есть ли [entitlement.business](http://entitlement.business)_subscription_id.
 
-- Backup-table создана и заполнена ровно по количеству изменённых строк.
-- Rollback SQL приложен к proof и валидирован на dry-run.
-- Verify §1.6 пройден полностью.
-- Никаких изменений в Track 2 артефактах (entitlement Gorbova Club, sub `b1676866`, bePaid) этим патчем не сделано.
+Не делать вывод “provider dead” без доказательства.
 
----
+&nbsp;
 
-# Трек 2. Восстановление видимости Gorbova Club / BUSINESS у Елизаветы
+6. По Елизавете отдельно разделить:
 
-**Не смешиваем с Trek 1.** Запускается отдельным сообщением после Verify Trek 1.
+- что реально phantom_no_provider;
 
-## 2.1 Read-only eligibility (обязательно перед любым действием)
+- что может быть legacy_recurring_real;
 
-До любого resume / правки meta — собрать чистый snapshot:
+- что связано с ошибкой product mapping.
 
-1. **Card state:** есть ли у Елизаветы активная карта в `payment_methods` (status='active', provider_token IS NOT NULL). По скриншоту VISA 7414 — да, но подтвердить из БД.
-2. **Provider state (живой запрос):** дернуть `bepaid-get-subscription-details` (admin-only) по `sbs_e600f8c4f50d1a56`. Ожидаем: 404 или canceled/terminated. Зафиксировать ответ в proof.
-3. **Local state:** `subscriptions_v2.b1676866.status=canceled, auto_renew=false`. Подтвердить.
-4. **Split-brain risk:** убедиться, что для product=Gorbova Club + tariff=BUSINESS + user=Елизавета нет другой active/past_due `subscriptions_v2`, кроме `b1676866`. Если есть — STOP, manual_review.
-5. **Canonical check-resume:** вызвать `subscription-actions action=check-resume` по `b1676866`. Ожидаемый результат при provider dead: `resume_available=false, reason='provider_dead'`.
+Не смешивать с решением 2a/2b/2c/2d.
 
-Эти 5 пунктов идут в proof как «Track 2 — read-only eligibility».
+&nbsp;
 
-## 2.2 Варианты решения (выбирает пользователь после §2.1)
+7. Добавить поиск системного источника ошибки:
 
-- **2a) Косметика без resume.** Дополнить `entitlements.412be761.meta` полями `business_subscription_id=b1676866` и/или подходящим `source_rule_id`, чтобы UI показал бейдж «через BUSINESS». Подписка `b1676866` остаётся canceled. Автопродления **нет**.
-- **2b) Canonical resume.** Вызвать `subscription-actions action=resume` по `b1676866`. По правилу `Resume 3-Level Eligibility SOT`, если provider dead, backend вернёт `resume_blocked_provider_dead`, в UI появится CTA «Оформить новую подписку». **Никаких ручных INSERT** в `subscriptions_v2`/`provider_subscriptions`. Если внезапно provider жив — будет полноценный resume с audit `subscription.resumed`.
-- **2c) Явное завершение без действий.** Оставить как есть; доступ дожить до 05.06.26 через entitlement; 06.06 — стандартный nightly reconcile закроет visibility. Без UI-изменений.
-- **2d) UX-honest (по умолчанию рекомендуется):** не пытаться resume, а явно показать в UI Елизаветы: «Подписка завершена; доступ активен до 05.06.26; для продолжения — оформить новую подписку Gorbova Club / BUSINESS». Реализуется как UI-flag в карточке без правок данных: либо через бейдж на entitlement, либо через рендер canceled-sub `b1676866` отдельным «historical» блоком с deeplink на оформление нового. Никаких изменений в `subscriptions_v2`/`bePaid`. Самый честный вариант при `provider_dead` + есть активная карта.
+- последние патчи/миграции, которые могли переписать product_id/tariff_id;
 
-Запреты по обоим вариантам:
-- НЕ создаём руками `subscriptions_v2` или `provider_subscriptions` (Canonical Write Path, Provider-Linked Extend Priority).
-- НЕ ставим `auto_renew=true` на canceled-запись.
-- НЕ вызываем bePaid `/subscriptions` за клиента без явного его подтверждения через canonical resume/checkout.
+- batch_id / audit_logs / [meta.repair](http://meta.repair)_batch / meta.source;
 
-## 2.3 Definition of Done (Trek 2)
+- совпадения по `phantom_recurring_cleanup`, `split_brain_repair`, `rebill_materialization`, `access_cleanup`.
 
-- В proof зафиксирован read-only snapshot §2.1 (card, provider, local, split-brain, check-resume).
-- Зафиксирован выбранный вариант 2a/2b/2c/2d и его audit.
-- Доступ Елизаветы к Gorbova Club не уменьшен (минимум до 05.06.26).
-- Никаких изменений в данных подписок других пользователей.
+Нужно понять, это UI join bug или реально данные были переписаны.
 
----
+&nbsp;
 
-## 3. Proof (структура отчёта)
+8. Добавить анти-дубли:
 
-Отчёт оформляется двумя разделами, **раздельно**:
+если у одного provider_subscription есть больше одной subscriptions_v2 или у одной subscriptions_v2 больше одного provider_subscriptions — категория F manual_review_split_brain.
 
-### Track 1 — executed
-- `phantom_recurring_v1.preflight` snapshot (90 rows).
-- `phantom_recurring_v1.manual_review` (ожидаемо 0; иначе — отдельный список).
-- Миграция backup-table.
-- Dry-run diff для `b2c8d37a`.
-- `phantom_recurring_v1.executed` с count и id-list.
-- Verify §1.6: SQL-чек = 0, nightly invariant добавлен, спот-чек `b2c8d37a`, проверка нетронутых recurring-продуктов.
-- Готовый rollback SQL.
+&nbsp;
 
-### Track 2 — decision only / executed separately
-- Read-only eligibility snapshot Елизаветы §2.1 (card, provider 404/canceled, local state, split-brain check, check-resume output).
-- Выбранный вариант 2a/2b/2c/2d + причина.
-- Если что-то сделано — отдельный audit-event и diff.
+9. В CSV добавить поля:
 
----
+- ui_product_name_rendered;
 
-## 4. Что подтвердить перед Execute
+- ui_tariff_name_rendered;
 
-1. Согласие на Trek 1 c **backup-table + STOP-guards A/B/C/D + payment_token не трогаем в первом execute**.
-2. Согласие, что Trek 2 запускается **отдельно** после Verify Trek 1 и начинается с read-only eligibility, без предвыбранного варианта.
-3. По умолчанию по Trek 2 предлагается **2d** (UX-honest) — если читать «provider dead, карта жива, доступ до 05.06.26», это самый честный вариант для клиента; 2b как альтернатива, если хочется именно canonical resume-аудит.
+- ui_source_guess;
+
+- provider_amount_match_offer_ids;
+
+- last_order_product_name;
+
+- sub_product_name;
+
+- entitlement_product_name;
+
+- suspected_repair_batch.
+
+&nbsp;
+
+10. В proof отдельно дать итог:
+
+- сколько случаев можно чинить только UI;
+
+- сколько случаев требуют relink subscriptions_v2;
+
+- сколько случаев требуют correction entitlement;
+
+- сколько случаев являются реальными legacy recurring;
+
+- сколько случаев являются phantom без provider;
+
+- сколько manual_review/split-brain.
+
+Итоговая команда:
+
+План PATCH-SUBSCRIPTION-PRODUCT-MAPPING-DISCOVERY-2026-05 принимаю.
+
+&nbsp;
+
+Запускать только read-only discovery.
+
+&nbsp;
+
+Запрещено:
+
+- cleanup eligible-25;
+
+- отмена bePaid;
+
+- SQL UPDATE/INSERT/DELETE;
+
+- правка UI;
+
+- provider API;
+
+- изменение subscriptions/entitlements/orders/payments.
+
+&nbsp;
+
+Обязательно разобрать 3 контрольных кейса:
+
+- Ирина Гайдук — почему 55 BYN / Gorbova Club CHAT отображается как ЗАКРОЙ ГОД.
+
+- Ольга Дещеня — почему BUSINESS-сделки есть, а доступ “не продлевается”.
+
+- Елизавета Андреева — что phantom, что legacy, что mapping.
+
+&nbsp;
+
+Главный результат:
+
+не исправлять сейчас, а разделить будущие repair-треки:
+
+1. UI join fix;
+
+2. subscriptions_v2 product/tariff relink;
+
+3. entitlement product/tariff correction;
+
+4. phantom cleanup без provider;
+
+5. legacy recurring decision;
+
+6. manual_review split-brain.
+
+&nbsp;
+
+Proof:
+
+.lovable/proofs/subscription_product_mapping_discovery_2026_[05.md](http://05.md)
+
+&nbsp;
+
+CSV:
+
+/mnt/documents/subscription_product_mapping_discovery_2026_05.csv
+
+# План: PATCH-SUBSCRIPTION-PRODUCT-MAPPING-DISCOVERY-2026-05
+
+## Статус предыдущего плана
+
+STOP. Trek 1 (phantom_recurring_v1 cleanup, в т.ч. eligible-25) **замораживается полностью** до закрытия этого discovery. Никаких UPDATE/INSERT/DELETE/cancel/provider-вызовов. Backup-таблица не создаётся, миграция не подаётся.
+
+Trek 2 (Елизавета 2a/2b/2c/2d) тоже ставится на паузу — её кейс входит в контрольные этого discovery.
+
+## Цель
+
+Read-only. Найти и классифицировать все случаи, где живая bePaid `provider_subscriptions` фактически относится к одному продукту/тарифу (по сумме / orders / payments), а локальная `subscriptions_v2` / `entitlements` / UI `ContactDetailSheet` показывают другой продукт/тариф/доступ.
+
+Никаких изменений данных. Только сбор фактов, классификация, разделение «UI bug / linkage bug / entitlement bug / legacy recurring real / phantom без provider / manual_review».
+
+## Запреты (жёсткие)
+
+- Не вызывать bePaid API (никаких `bepaid-get-subscription-details`, `subscription-actions cancel/resume`, и т.п.).
+- Не выполнять SQL `UPDATE/INSERT/DELETE` ни в одной таблице.
+- Не трогать `subscriptions_v2`, `entitlements`, `access_rules`, `orders_v2`, `payments_v2`, `provider_subscriptions`, `telegram_access_queue`, `payment_methods`.
+- Не выполнять Trek 1 cleanup (даже eligible-25).
+- Не менять UI-код, edge functions, миграции.
+- Не отменять, не «чинить» и не «гасить» ни одну живую bePaid-подписку.
+
+## Scope (что разбираем)
+
+Все строки из `provider_subscriptions` с `provider='bepaid'` и `state IN ('active','trial','past_due','pending')`. Для каждой — полный срез по 6 слоям ниже.
+
+Обязательные контрольные кейсы (всегда в выборке, отдельной секцией в proof):
+
+- Ирина Гайдук — `irina.borodzko@tut.by`
+- Ольга Дещеня — `strekhao@yandex.ru`
+- Елизавета Андреева — `elizaveta.andreeva.15@yandex.by`
+
+## 6 слоёв на каждую provider_subscription
+
+### 1. provider_subscriptions
+
+`id, provider, provider_subscription_id, state, amount, currency, next_charge_at, last_charge_at, card_last4, subscription_v2_id, user_id, profile_id, meta.tracking_id`.
+
+### 2. subscriptions_v2 (по `subscription_v2_id`)
+
+`id, user_id, product_id, tariff_id, status, auto_renew, billing_type, access_start_at, access_end_at, order_id, cancel_at, meta` (выделить `meta.recurring_snapshot`, `meta.tracking_id`, `meta.bepaid_subscription_id`, `meta.model`).
+
+### 3. orders_v2 + payments_v2
+
+Все `orders_v2` пользователя по этой подписке (через `order_id` и через `payments_v2.provider_payment_id` linked к provider subscription / parent_subscription_id):
+`order.id, order_number, product_id, tariff_id, offer_id, final_price, status, deal_date, paid_at, meta.payment_flow, meta.tracking_id`.
+`payments_v2: id, order_id, amount, currency, status, provider, provider_payment_id, paid_at, meta.parent_subscription_id`.
+
+Сравнить:
+
+- `provider_subscriptions.amount` ↔ последние успешные `payments_v2.amount` ↔ `orders_v2.final_price`.
+- `orders_v2.product_id/tariff_id` ↔ `subscriptions_v2.product_id/tariff_id`.
+
+### 4. tariff_offers (резолв «правильного» продукта/тарифа по сумме)
+
+Найти `tariff_offers` где `meta.recurring.is_recurring=true` и `amount == provider_subscriptions.amount` (с учётом валюты). Сопоставить с `product_id/tariff_id` из payments. Записать `expected_product_id`, `expected_tariff_id`, `expected_offer_id`.
+
+### 5. entitlements
+
+Все entitlements пользователя по затронутым продуктам: `id, user_id, product_id, status, source, source_order_id, access_end_at, meta.tariff_id, meta.business_subscription_id, meta.source_rule_id, meta.scope`.
+
+Сравнить: `entitlement.product_id` ↔ `orders.product_id` ↔ `subscriptions_v2.product_id` ↔ `expected_product_id`.
+
+### 6. UI source (read-only код-обзор, без правок)
+
+Открыть `src/components/.../ContactDetailSheet*.tsx` и связанные хуки. Зафиксировать:
+
+- Откуда подтягивается **название** продукта/тарифа в блоке «Подписки» (join на `subscriptions_v2` или `entitlements` или `orders_v2`?).
+- Откуда подтягивается флаг «Автопродление включено / не продлевается» (`subscriptions_v2.auto_renew`? `provider_subscriptions.state`? `entitlements.meta`?).
+- Где может произойти подмена `product_name` из-за неправильного join (например, join `entitlements → products` вместо `subscriptions_v2 → tariff → product`).
+
+Результат — карта «UI поле → источник данных» в proof.
+
+## Классификация (для каждой найденной аномалии)
+
+- **A. `ui_join_wrong**` — provider+sub+orders+entitlement согласованы, но UI рендерит чужое имя продукта/тарифа или чужой auto-renew. Чинится только во фронте.
+- **B. `subscription_product_mismatch**` — provider живой, payments/orders указывают на продукт X, а `subscriptions_v2.product_id/tariff_id` = продукт Y. (Гипотеза по Ирине.)
+- **C. `entitlement_product_mismatch**` — orders/payments/sub правильные, но `entitlements` выдан не на тот продукт / не тот tariff_id в meta. (Гипотеза по «не продлевается» у Ольги, если entitlement привязан к другой sub.)
+- **D. `legacy_recurring_real**` — продукт сейчас one-time по SOT (`tariff_offers.meta.recurring.is_recurring=false`), но bePaid subscription реально живая и ранее продавалась как recurring. **Не трогать.** Требует отдельного бизнес-решения (обновлять SOT / останавливать через support / оставлять).
+- **E. `phantom_no_provider**` — `subscriptions_v2` recurring без живой `provider_subscriptions`. Только эта категория является кандидатом на будущий cleanup (но и он — отдельным патчем после approve).
+- **F. `manual_review**` — несколько одновременных аномалий, конфликтующие данные, split-brain, дубли provider_subscription.
+
+## Контрольные кейсы — обязательный ответ в DoD
+
+1. **Ирина Гайдук** (`irina.borodzko@tut.by`): почему 55 BYN / Gorbova Club CHAT в сделках отображается как «ЗАКРОЙ ГОД» в блоках Подписки и Доступы. Указать конкретный source: подмена в `subscriptions_v2.product_id`, или подмена в `entitlements.product_id`, или UI join. Категория A/B/C.
+2. **Ольга Дещеня** (`strekhao@yandex.ru`): почему BUSINESS-сделки идут и списания живые, а доступ «не продлевается». Указать, какое поле даёт «не продлевается» (`subscriptions_v2.auto_renew=false`? отсутствует sub? entitlement без `business_subscription_id`?). Категория A/B/C.
+3. **Елизавета Андреева** (`elizaveta.andreeva.15@yandex.by`): для каждой её recurring-строки — категория (E phantom vs D legacy vs B mismatch). Без действий.
+
+## Артефакты (только файлы, без миграций)
+
+- `.lovable/proofs/subscription_product_mapping_discovery_2026_05.md` — нарратив: методология, SQL-выборки, карта «UI поле → источник», 3 контрольных кейса с разбором по 6 слоям, агрегированная таблица категорий A–F с количествами, итоговое разделение «что чинить в UI / что в subscriptions_v2 / что в entitlements / что реально phantom / что D legacy / что manual_review».
+- `/mnt/documents/subscription_product_mapping_discovery_2026_05.csv` — построчно: `user_email, provider_subscription_id, provider_state, provider_amount, sub_v2_id, sub_product_id, sub_tariff_id, sub_auto_renew, last_payment_order_id, order_product_id, order_tariff_id, order_amount, expected_product_id_by_amount, entitlement_product_id, entitlement_tariff_id_meta, category(A|B|C|D|E|F), notes`.
+
+## DoD
+
+1. Все три контрольных кейса разобраны и классифицированы с конкретным root cause (поле + источник).
+2. CSV сформирован по всем active/past_due/pending/trial provider_subscriptions bePaid.
+3. Proof содержит карту «UI поле → источник данных» для блока «Подписки» и «Доступы» в `ContactDetailSheet`.
+4. Явно разделены 4 будущих repair-трека (UI fix / subscriptions_v2 linkage fix / entitlements fix / phantom cleanup) — **без execute**.
+5. Подтверждено в proof: ни одна bePaid-подписка не отменена, ни одна строка БД не изменена, Trek 1 cleanup не запускался.
+6. Repair-plan по каждой категории — отдельным следующим патчем после approve этого discovery.
+
+## Что НЕ входит
+
+- Любой execute / repair / cleanup.
+- Изменение SOT по recurring (`tariff_offers.meta.recurring.is_recurring`).
+- Изменение UI-кода (только чтение и описание источников).
+- bePaid API вызовы.
+- Решение по Елизавете 2a/2b/2c/2d — переносится в следующий патч после classification.
