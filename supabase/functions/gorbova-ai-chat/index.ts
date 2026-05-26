@@ -345,7 +345,45 @@ Deno.serve(async (req) => {
       });
     }
 
+    // 6.3 PATCH v2.2 — per-minute rate-limit (антифлуд) для mode='chat'
+    if (mode === 'chat') {
+      const lastMin = await countChatMessagesLastMinute(serviceClient, user.id);
+      metadata.chat_msgs_last_minute = lastMin;
+      if (lastMin >= PER_MINUTE_RATE_CHAT) {
+        await writeAccessAudit(serviceClient, user.id, 'ai_chat.rate_limit_per_minute', {
+          mode, count_last_60s: lastMin, limit: PER_MINUTE_RATE_CHAT,
+        });
+        return new Response(JSON.stringify({
+          error: 'Подождите минуту перед следующим вопросом.',
+          code: 'rate_limit_per_minute',
+          limit_per_minute: PER_MINUTE_RATE_CHAT,
+        }), {
+          status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    // 6.4 PATCH v2.2 — daily chars budget для mode='chat' (защита от outlier-юзеров)
+    if (mode === 'chat') {
+      const usedChars = await sumChatContextCharsToday(serviceClient, user.id);
+      metadata.daily_chars_used = usedChars;
+      metadata.daily_chars_limit = DAILY_CHARS_BUDGET_CHAT;
+      if (usedChars >= DAILY_CHARS_BUDGET_CHAT) {
+        await writeAccessAudit(serviceClient, user.id, 'ai_chat.quota_denied_chars', {
+          mode, used_chars: usedChars, limit_chars: DAILY_CHARS_BUDGET_CHAT,
+        });
+        return new Response(JSON.stringify({
+          error: 'На сегодня объём чата исчерпан. Используйте брендированные сценарии или вернитесь завтра.',
+          code: 'quota_denied_chars',
+          used_chars: usedChars, limit_chars: DAILY_CHARS_BUDGET_CHAT,
+        }), {
+          status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
     // 7. Unsupported files guard (BEFORE quality gate)
+
 
     const unsupportedFiles = body.unsupported_files;
     const hasUsableText = stripNonContentMarkers(processedFileContents).length > 0;
