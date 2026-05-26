@@ -1,191 +1,167 @@
 /**
- * DocumentPackageIdeologyView — пользовательский вид пакета «Идеология».
+ * DocumentPackageIdeologyView — Sprint 1: persisted package session.
  *
- * Фаза 1 (frontend-only):
- *   • Блок A. Состав пакета — read-only список активных шаблонов категории
- *     `ideology`, отображается через <StrictDocumentTemplatesManager readOnly>.
- *   • Блок B. Анкета — мультивыбор юрлиц/физлиц + роли (Исполнитель/Заказчик).
- *     Сохраняется ТОЛЬКО в localStorage по ключу
- *     `document_package_questionnaire_ideology_v1` (ID-driven, без display labels).
- *   • Блок C. Сформировать пакет — кнопка всегда disabled, генерация подключается
- *     во второй фазе.
+ * Replaces localStorage with backend `document_package_sessions` +
+ * `document_package_session_participants`. Single legal entity per session,
+ * physical persons get explicit package roles from
+ * `document_package_role_catalog`.
  *
- * Не пишет в БД, не вызывает edge-functions, не создаёт batch-записи.
+ * STOP:
+ *   • не меняем fields_registry / billing resolver /
+ *     canonical-document-generate-strict.
+ *   • не подключаем генерацию пакета (Sprint 2).
  */
 import { useEffect, useMemo, useState } from "react";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { FileText, Building2, Users, Save, Sparkles, Info } from "lucide-react";
-import { toast } from "sonner";
+import { FileText, Building2, Users, Save, Sparkles, Info, Lock, AlertCircle, CheckCircle2 } from "lucide-react";
 import { StrictDocumentTemplatesManager } from "./StrictDocumentTemplatesManager";
 import { useAiEntities } from "@/hooks/useAiEntities";
 import { useAiPersons } from "@/hooks/useAiPersons";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
+import {
+  useDocumentPackageSession,
+  type PersonAssignment,
+  type PackageSessionDisplayStatus,
+} from "@/hooks/useDocumentPackageSession";
+
+const LEGACY_LS_KEY = "document_package_questionnaire_ideology_v1";
 
 function entityDisplayName(e: ClientLegalDetails): string {
   if (e.client_type === "legal_entity") return e.leg_name ?? "Юрлицо без названия";
   if (e.client_type === "entrepreneur") return e.ent_name ?? "ИП без названия";
   return e.ind_full_name ?? "Физлицо без имени";
 }
-
 function entityUnp(e: ClientLegalDetails): string | null {
   if (e.client_type === "legal_entity") return e.leg_unp ?? null;
   if (e.client_type === "entrepreneur") return e.ent_unp ?? null;
   return null;
 }
 
-const STORAGE_KEY = "document_package_questionnaire_ideology_v1";
-const STORAGE_VERSION = 1;
-
-interface QuestionnaireState {
-  version: number;
-  updatedAt: string;
+interface LegacyDraft {
   selectedEntityIds: string[];
   selectedPersonIds: string[];
-  roles: {
-    executorId?: string;
-    customerId?: string;
-  };
 }
 
-const EMPTY_STATE: QuestionnaireState = {
-  version: STORAGE_VERSION,
-  updatedAt: new Date(0).toISOString(),
-  selectedEntityIds: [],
-  selectedPersonIds: [],
-  roles: {},
-};
-
-function loadFromStorage(): QuestionnaireState {
+function readLegacyDraft(): LegacyDraft | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return EMPTY_STATE;
+    const raw = localStorage.getItem(LEGACY_LS_KEY);
+    if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || parsed.version !== STORAGE_VERSION) {
-      return EMPTY_STATE;
-    }
     return {
-      version: STORAGE_VERSION,
-      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date(0).toISOString(),
-      selectedEntityIds: Array.isArray(parsed.selectedEntityIds)
-        ? parsed.selectedEntityIds.filter((x: unknown) => typeof x === "string")
-        : [],
-      selectedPersonIds: Array.isArray(parsed.selectedPersonIds)
-        ? parsed.selectedPersonIds.filter((x: unknown) => typeof x === "string")
-        : [],
-      roles: {
-        executorId: typeof parsed?.roles?.executorId === "string" ? parsed.roles.executorId : undefined,
-        customerId: typeof parsed?.roles?.customerId === "string" ? parsed.roles.customerId : undefined,
-      },
+      selectedEntityIds: Array.isArray(parsed?.selectedEntityIds)
+        ? parsed.selectedEntityIds.filter((x: unknown) => typeof x === "string") : [],
+      selectedPersonIds: Array.isArray(parsed?.selectedPersonIds)
+        ? parsed.selectedPersonIds.filter((x: unknown) => typeof x === "string") : [],
     };
   } catch {
-    return EMPTY_STATE;
+    return null;
   }
 }
+
+const STATUS_META: Record<PackageSessionDisplayStatus, { label: string; className: string; icon: React.ComponentType<{ className?: string }>; }> = {
+  not_saved:     { label: "Не сохранено",      className: "text-muted-foreground border-muted",                            icon: Info },
+  requires_fill: { label: "Требует заполнения", className: "text-amber-700 border-amber-300 bg-amber-50 dark:bg-amber-950/30", icon: AlertCircle },
+  saved:         { label: "Сохранено",          className: "text-emerald-700 border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30", icon: CheckCircle2 },
+  locked:        { label: "Закреплено",         className: "text-indigo-700 border-indigo-300 bg-indigo-50 dark:bg-indigo-950/30",     icon: Lock },
+};
 
 export function DocumentPackageIdeologyView() {
   const aiEntities = useAiEntities();
   const aiPersons = useAiPersons();
+  const pkg = useDocumentPackageSession("ideology");
 
-  const [state, setState] = useState<QuestionnaireState>(EMPTY_STATE);
+  // Local UI state (mirrors backend on hydration)
+  const [legalEntityId, setLegalEntityId] = useState<string | null>(null);
+  // person_id -> role_key
+  const [personRoles, setPersonRoles] = useState<Record<string, string | undefined>>({});
   const [hydrated, setHydrated] = useState(false);
 
-  // Hydrate из localStorage один раз
+  // Hydrate from session/participants (or legacy LS draft if no session yet)
   useEffect(() => {
-    setState(loadFromStorage());
-    setHydrated(true);
-  }, []);
+    if (pkg.isLoading) return;
+    if (hydrated) return;
 
-  // Игнорируем ID, которых уже нет в данных
-  const validEntityIds = useMemo(
-    () => new Set(aiEntities.allEntities.map((e) => e.id)),
-    [aiEntities.allEntities],
-  );
-  const validPersonIds = useMemo(
-    () => new Set(aiPersons.allPersons.map((p) => p.id)),
-    [aiPersons.allPersons],
-  );
-
-  const filteredState = useMemo<QuestionnaireState>(() => ({
-    ...state,
-    selectedEntityIds: state.selectedEntityIds.filter((id) => validEntityIds.has(id)),
-    selectedPersonIds: state.selectedPersonIds.filter((id) => validPersonIds.has(id)),
-    roles: {
-      executorId: state.roles.executorId && (validEntityIds.has(state.roles.executorId) || validPersonIds.has(state.roles.executorId))
-        ? state.roles.executorId : undefined,
-      customerId: state.roles.customerId && (validEntityIds.has(state.roles.customerId) || validPersonIds.has(state.roles.customerId))
-        ? state.roles.customerId : undefined,
-    },
-  }), [state, validEntityIds, validPersonIds]);
-
-  const toggleEntity = (id: string) => {
-    setState((prev) => ({
-      ...prev,
-      selectedEntityIds: prev.selectedEntityIds.includes(id)
-        ? prev.selectedEntityIds.filter((x) => x !== id)
-        : [...prev.selectedEntityIds, id],
-    }));
-  };
-
-  const togglePerson = (id: string) => {
-    setState((prev) => ({
-      ...prev,
-      selectedPersonIds: prev.selectedPersonIds.includes(id)
-        ? prev.selectedPersonIds.filter((x) => x !== id)
-        : [...prev.selectedPersonIds, id],
-    }));
-  };
-
-  const setRole = (role: "executorId" | "customerId", id: string | undefined) => {
-    setState((prev) => ({
-      ...prev,
-      roles: { ...prev.roles, [role]: id },
-    }));
-  };
-
-  const handleSave = () => {
-    const payload: QuestionnaireState = {
-      ...filteredState,
-      version: STORAGE_VERSION,
-      updatedAt: new Date().toISOString(),
-    };
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-      setState(payload);
-      toast.success("Анкета сохранена локально");
-    } catch (e: any) {
-      toast.error(`Не удалось сохранить: ${e?.message ?? e}`);
-    }
-  };
-
-  // Опции для ролей — только из уже выбранных
-  const roleOptions = useMemo(() => {
-    const opts: { id: string; label: string; kind: "entity" | "person" }[] = [];
-    for (const id of filteredState.selectedEntityIds) {
-      const e = aiEntities.allEntities.find((x) => x.id === id);
-      if (e) {
-        const unp = entityUnp(e);
-        opts.push({ id, label: `${entityDisplayName(e)}${unp ? ` · УНП ${unp}` : ""}`, kind: "entity" });
+    if (pkg.session) {
+      setLegalEntityId(pkg.session.selected_legal_entity_id ?? null);
+      const map: Record<string, string> = {};
+      for (const p of pkg.participants) {
+        if (p.entity_type === "person" && p.person_id) {
+          map[p.person_id] = p.role_key;
+        }
+      }
+      setPersonRoles(map);
+    } else {
+      // Legacy LS draft as one-time read fallback (will be wiped on first save).
+      const legacy = readLegacyDraft();
+      if (legacy) {
+        if (legacy.selectedEntityIds.length > 0) {
+          setLegalEntityId(legacy.selectedEntityIds[0]); // single-select migration
+        }
+        // No roles in legacy draft → leave personRoles empty; user must reassign.
       }
     }
-    for (const id of filteredState.selectedPersonIds) {
-      const p = aiPersons.allPersons.find((x) => x.id === id);
-      if (p) opts.push({ id, label: p.full_name ?? "—", kind: "person" });
-    }
-    return opts;
-  }, [filteredState, aiEntities.allEntities, aiPersons.allPersons]);
+    setHydrated(true);
+  }, [pkg.isLoading, pkg.session, pkg.participants, hydrated]);
 
-  const hasSelection =
-    filteredState.selectedEntityIds.length > 0 ||
-    filteredState.selectedPersonIds.length > 0;
+  const legalEntities = useMemo(
+    () => aiEntities.allEntities.filter((e) => e.client_type === "legal_entity" || e.client_type === "entrepreneur"),
+    [aiEntities.allEntities],
+  );
+  const persons = aiPersons.allPersons;
+
+  // Available roles for persons (exclude package_company — это юрлицо)
+  const personRoleOptions = useMemo(
+    () => pkg.roleCatalog.filter((r) =>
+      r.allowed_entity_types.includes("person") && r.role_key !== "package_company"
+    ),
+    [pkg.roleCatalog],
+  );
+
+  const requiredRolesStatus = useMemo(() => {
+    return pkg.roleCatalog
+      .filter((r) => r.required)
+      .map((r) => {
+        if (r.role_key === "package_company") {
+          return { role: r, satisfied: !!legalEntityId };
+        }
+        const count = Object.values(personRoles).filter((rk) => rk === r.role_key).length;
+        const min = r.min_count ?? 1;
+        return { role: r, satisfied: count >= min };
+      });
+  }, [pkg.roleCatalog, legalEntityId, personRoles]);
+
+  const allRequiredSatisfied = requiredRolesStatus.every((x) => x.satisfied);
+  const isLocked = pkg.isLocked;
+
+  const handleSave = async () => {
+    const assignments: PersonAssignment[] = Object.entries(personRoles)
+      .filter(([, role]) => !!role)
+      .map(([person_id, role_key]) => {
+        const def = pkg.roleCatalog.find((r) => r.role_key === role_key);
+        return {
+          person_id,
+          role_key: role_key!,
+          role_catalog_id: def?.id ?? null,
+        };
+      });
+    try {
+      await pkg.save({
+        selectedLegalEntityId: legalEntityId,
+        personAssignments: assignments,
+      });
+    } catch { /* toast handled in hook */ }
+  };
+
+  const statusMeta = STATUS_META[pkg.displayStatus];
+  const StatusIcon = statusMeta.icon;
 
   return (
     <div className="space-y-4">
@@ -196,107 +172,118 @@ export function DocumentPackageIdeologyView() {
           readOnly
           categoryFilter="ideology"
           title="Состав пакета «Идеология»"
-          subtitle={
-            <>Шаблоны документов, входящие в пакет. Список наполняется администратором.</>
-          }
+          subtitle={<>Шаблоны документов, входящие в пакет. Список наполняется администратором.</>}
           emptyText="В пакете «Идеология» пока нет готовых шаблонов. Администратор добавит их позже."
         />
       </GlassCard>
 
       {/* Блок B. Анкета */}
       <GlassCard className="p-4">
-        <div className="flex items-center gap-2 mb-3">
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
           <FileText className="h-5 w-5 text-indigo-500" />
           <h2 className="text-lg font-semibold">Анкета пакета</h2>
-          <Badge variant="outline" className="text-[10px]">локально</Badge>
+          <Badge variant="outline" className={`text-[10px] gap-1 ${statusMeta.className}`}>
+            <StatusIcon className="h-3 w-3" />
+            {statusMeta.label}
+          </Badge>
         </div>
         <p className="text-xs text-muted-foreground mb-4">
-          Выберите юрлица / физлица из ваших реквизитов и назначьте роли сторон.
-          Ответы сохраняются только в этом браузере.
+          Выберите одно юрлицо/ИП пакета и назначьте физлицам роли. Данные сохраняются в вашем кабинете.
+          {isLocked && " Юрлицо закреплено и не может быть изменено."}
         </p>
 
         <div className="grid md:grid-cols-2 gap-4">
-          {/* Юрлица */}
+          {/* Юрлицо — single-select */}
           <div className="border rounded-lg p-3">
             <div className="flex items-center gap-2 mb-2">
               <Building2 className="h-4 w-4 text-indigo-500" />
-              <span className="text-sm font-medium">Юрлица / ИП</span>
-              <Badge variant="secondary" className="text-[10px]">
-                выбрано: {filteredState.selectedEntityIds.length}
-              </Badge>
+              <span className="text-sm font-medium">Юрлицо / ИП пакета</span>
+              <Badge variant="secondary" className="text-[10px]">одно</Badge>
             </div>
             {aiEntities.isLoading ? (
               <div className="text-xs text-muted-foreground py-4 text-center">Загрузка…</div>
-            ) : aiEntities.allEntities.length === 0 ? (
+            ) : legalEntities.length === 0 ? (
               <div className="text-xs text-muted-foreground py-4 text-center">
-                Нет юрлиц. Добавьте их во вкладке «Реквизиты».
+                Нет юрлиц/ИП. Добавьте их во вкладке «Реквизиты».
               </div>
             ) : (
-              <ScrollArea className="h-48 pr-2">
-                <div className="space-y-1">
-                  {aiEntities.allEntities.map((e) => {
-                    const checked = filteredState.selectedEntityIds.includes(e.id);
+              <Select
+                value={legalEntityId ?? ""}
+                onValueChange={(v) => !isLocked && setLegalEntityId(v || null)}
+                disabled={isLocked}
+              >
+                <SelectTrigger className="h-9 text-xs">
+                  <SelectValue placeholder="Выберите юрлицо или ИП" />
+                </SelectTrigger>
+                <SelectContent>
+                  {legalEntities.map((e) => {
+                    const unp = entityUnp(e);
                     return (
-                      <label
-                        key={e.id}
-                        className="flex items-start gap-2 px-2 py-1.5 rounded hover:bg-accent/40 cursor-pointer"
-                      >
-                        <Checkbox
-                          checked={checked}
-                          onCheckedChange={() => toggleEntity(e.id)}
-                          className="mt-0.5"
-                        />
-                        <div className="min-w-0 flex-1">
-                          <div className="text-xs font-medium truncate">{entityDisplayName(e)}</div>
-                          <div className="text-[10px] text-muted-foreground truncate">
-                            {entityUnp(e) ? `УНП ${entityUnp(e)}` : "без УНП"}
-                          </div>
-                        </div>
-                      </label>
+                      <SelectItem key={e.id} value={e.id} className="text-xs">
+                        {entityDisplayName(e)}{unp ? ` · УНП ${unp}` : ""}
+                      </SelectItem>
                     );
                   })}
-                </div>
-              </ScrollArea>
+                </SelectContent>
+              </Select>
+            )}
+            {isLocked && (
+              <div className="mt-2 flex items-center gap-1 text-[11px] text-indigo-700">
+                <Lock className="h-3 w-3" /> Закреплено для этого пакета.
+              </div>
             )}
           </div>
 
-          {/* Физлица */}
+          {/* Физлица + роли */}
           <div className="border rounded-lg p-3">
             <div className="flex items-center gap-2 mb-2">
               <Users className="h-4 w-4 text-teal-500" />
-              <span className="text-sm font-medium">Физлица</span>
+              <span className="text-sm font-medium">Физлица и их роли</span>
               <Badge variant="secondary" className="text-[10px]">
-                выбрано: {filteredState.selectedPersonIds.length}
+                назначено: {Object.values(personRoles).filter(Boolean).length}
               </Badge>
             </div>
             {aiPersons.isLoading ? (
               <div className="text-xs text-muted-foreground py-4 text-center">Загрузка…</div>
-            ) : aiPersons.allPersons.length === 0 ? (
+            ) : persons.length === 0 ? (
               <div className="text-xs text-muted-foreground py-4 text-center">
                 Нет физлиц. Добавьте их во вкладке «Реквизиты».
               </div>
             ) : (
-              <ScrollArea className="h-48 pr-2">
-                <div className="space-y-1">
-                  {aiPersons.allPersons.map((p) => {
-                    const checked = filteredState.selectedPersonIds.includes(p.id);
+              <ScrollArea className="h-56 pr-2">
+                <div className="space-y-1.5">
+                  {persons.map((p) => {
+                    const currentRole = personRoles[p.id] ?? "";
                     return (
-                      <label
-                        key={p.id}
-                        className="flex items-start gap-2 px-2 py-1.5 rounded hover:bg-accent/40 cursor-pointer"
-                      >
-                        <Checkbox
-                          checked={checked}
-                          onCheckedChange={() => togglePerson(p.id)}
-                          className="mt-0.5"
-                        />
+                      <div key={p.id} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-accent/30">
                         <div className="min-w-0 flex-1">
                           <div className="text-xs font-medium truncate">{p.full_name ?? "—"}</div>
                           <div className="text-[10px] text-muted-foreground truncate">
                             {p.is_active ? "активен" : "архив"}
                           </div>
                         </div>
-                      </label>
+                        <Select
+                          value={currentRole}
+                          onValueChange={(v) => setPersonRoles((prev) => {
+                            const next = { ...prev };
+                            if (!v || v === "__none__") delete next[p.id];
+                            else next[p.id] = v;
+                            return next;
+                          })}
+                        >
+                          <SelectTrigger className="h-7 text-[11px] w-[180px]">
+                            <SelectValue placeholder="Без роли" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__" className="text-[11px]">— без роли —</SelectItem>
+                            {personRoleOptions.map((r) => (
+                              <SelectItem key={r.id} value={r.role_key} className="text-[11px]">
+                                {r.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
                     );
                   })}
                 </div>
@@ -305,62 +292,43 @@ export function DocumentPackageIdeologyView() {
           </div>
         </div>
 
-        {/* Роли */}
-        <div className="mt-4 grid md:grid-cols-2 gap-4">
-          <div>
-            <Label className="text-xs">Исполнитель</Label>
-            <Select
-              value={filteredState.roles.executorId ?? ""}
-              onValueChange={(v) => setRole("executorId", v || undefined)}
-              disabled={roleOptions.length === 0}
-            >
-              <SelectTrigger className="h-9 text-xs mt-1">
-                <SelectValue placeholder={roleOptions.length === 0 ? "Сначала выберите стороны" : "Выберите исполнителя"} />
-              </SelectTrigger>
-              <SelectContent>
-                {roleOptions.map((o) => (
-                  <SelectItem key={`exec-${o.id}`} value={o.id} className="text-xs">
-                    {o.kind === "entity" ? "🏢 " : "👤 "}{o.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+        {/* Required roles checklist */}
+        {requiredRolesStatus.length > 0 && (
+          <div className="mt-4 border rounded-lg p-3 bg-muted/30">
+            <Label className="text-xs font-medium">Обязательные роли</Label>
+            <ul className="mt-2 space-y-1">
+              {requiredRolesStatus.map(({ role, satisfied }) => (
+                <li key={role.id} className="flex items-center gap-2 text-[11px]">
+                  {satisfied ? (
+                    <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                  ) : (
+                    <AlertCircle className="h-3 w-3 text-amber-600" />
+                  )}
+                  <span className={satisfied ? "text-foreground" : "text-amber-700"}>{role.label}</span>
+                </li>
+              ))}
+            </ul>
           </div>
-          <div>
-            <Label className="text-xs">Заказчик</Label>
-            <Select
-              value={filteredState.roles.customerId ?? ""}
-              onValueChange={(v) => setRole("customerId", v || undefined)}
-              disabled={roleOptions.length === 0}
-            >
-              <SelectTrigger className="h-9 text-xs mt-1">
-                <SelectValue placeholder={roleOptions.length === 0 ? "Сначала выберите стороны" : "Выберите заказчика"} />
-              </SelectTrigger>
-              <SelectContent>
-                {roleOptions.map((o) => (
-                  <SelectItem key={`cust-${o.id}`} value={o.id} className="text-xs">
-                    {o.kind === "entity" ? "🏢 " : "👤 "}{o.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
+        )}
 
-        <div className="mt-4 flex items-center justify-between gap-3">
+        <div className="mt-4 flex items-center justify-between gap-3 flex-wrap">
           <div className="text-[11px] text-muted-foreground flex items-center gap-1">
             <Info className="h-3 w-3" />
-            {hydrated && filteredState.updatedAt && new Date(filteredState.updatedAt).getTime() > 0
-              ? `Последнее сохранение: ${new Date(filteredState.updatedAt).toLocaleString("ru-RU")}`
+            {pkg.session
+              ? `Сохранено: ${new Date(pkg.session.updated_at).toLocaleString("ru-RU")}`
               : "Анкета ещё не сохранялась"}
           </div>
-          <Button size="sm" onClick={handleSave} disabled={!hydrated}>
-            <Save className="h-4 w-4 mr-1" /> Сохранить анкету
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={!hydrated || pkg.isSaving || pkg.isLoading}
+          >
+            <Save className="h-4 w-4 mr-1" /> {pkg.isSaving ? "Сохранение…" : "Сохранить анкету"}
           </Button>
         </div>
       </GlassCard>
 
-      {/* Блок C. Сформировать пакет (всегда disabled в фазе 1) */}
+      {/* Блок C. Сформировать пакет (всегда disabled — Sprint 2) */}
       <GlassCard className="p-4">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="min-w-0">
@@ -369,7 +337,9 @@ export function DocumentPackageIdeologyView() {
               Сформировать пакет
             </h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Генерация пакета будет подключена во второй фазе.
+              {allRequiredSatisfied
+                ? "Анкета заполнена. Генерация пакета будет подключена в Sprint 2."
+                : "Сначала заполните обязательные роли. Генерация подключается в Sprint 2."}
             </p>
           </div>
           <TooltipProvider>
@@ -382,16 +352,11 @@ export function DocumentPackageIdeologyView() {
                 </span>
               </TooltipTrigger>
               <TooltipContent>
-                Генерация пакета будет подключена во второй фазе.
+                Генерация пакета подключается в Sprint 2.
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
         </div>
-        {!hasSelection && (
-          <div className="mt-2 text-[11px] text-muted-foreground">
-            Заполните анкету: выберите хотя бы одно юрлицо или физлицо.
-          </div>
-        )}
       </GlassCard>
     </div>
   );
