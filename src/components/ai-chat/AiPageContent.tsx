@@ -388,26 +388,13 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
     };
   };
 
-  // Chat handlers
+  // Chat handlers — PATCH v2.2: свободный чат без файлов, только текст.
   const handleSendMessage = async () => {
-    if (!inputValue.trim() && chatFiles.length === 0) return;
+    if (!inputValue.trim()) return;
     userSentMessageRef.current = true;
-
-    let fileOpts: { fileContents?: string; fileNames?: string[]; images?: Array<{ base64: string; filename: string; mimeType: string }>; unsupportedFiles?: Array<{ name: string; reason: string; extension?: string }> } | undefined;
-    if (chatFiles.length > 0) {
-      fileOpts = await prepareFilesPayload(chatFiles);
-    }
-
-    const text = inputValue.trim()
-      ? inputValue
-      : `Анализ файлов: ${chatFiles.map((f) => f.file.name).join(", ")}`;
-
     const promptId = aiChat.activeScenarioContext?.prompt_id;
-    await aiChat.sendMessage(text, { ...fileOpts, promptId });
+    await aiChat.sendMessage(inputValue, { promptId });
     setInputValue("");
-    setChatFiles([]);
-    setShowUploader(false);
-    setIsDragOverChat(false);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
