@@ -388,26 +388,13 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
     };
   };
 
-  // Chat handlers
+  // Chat handlers — PATCH v2.2: свободный чат без файлов, только текст.
   const handleSendMessage = async () => {
-    if (!inputValue.trim() && chatFiles.length === 0) return;
+    if (!inputValue.trim()) return;
     userSentMessageRef.current = true;
-
-    let fileOpts: { fileContents?: string; fileNames?: string[]; images?: Array<{ base64: string; filename: string; mimeType: string }>; unsupportedFiles?: Array<{ name: string; reason: string; extension?: string }> } | undefined;
-    if (chatFiles.length > 0) {
-      fileOpts = await prepareFilesPayload(chatFiles);
-    }
-
-    const text = inputValue.trim()
-      ? inputValue
-      : `Анализ файлов: ${chatFiles.map((f) => f.file.name).join(", ")}`;
-
     const promptId = aiChat.activeScenarioContext?.prompt_id;
-    await aiChat.sendMessage(text, { ...fileOpts, promptId });
+    await aiChat.sendMessage(inputValue, { promptId });
     setInputValue("");
-    setChatFiles([]);
-    setShowUploader(false);
-    setIsDragOverChat(false);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -712,19 +699,9 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
               </div>
             )}
 
-            {/* Compact file uploader */}
-            {(showUploader || chatFiles.length > 0) && (
-              <div className="mb-3">
-                <FileDropZone
-                  compact
-                  maxSizeMB={20}
-                  maxFiles={5}
-                  files={chatFiles}
-                  onFilesChange={setChatFiles}
-                  disabled={aiChat.isLoading}
-                />
-              </div>
-            )}
+            {/* PATCH v2.2 — upload убран из свободного чата. Загрузка файлов
+                разрешена только внутри сценариев balance_analysis и 107NK
+                (handleScenarioSelect → activeScenario → handleScenarioSubmit). */}
 
             <div className="flex gap-1.5 sm:gap-2 min-w-0 items-end">
               <div className="flex flex-col gap-1 shrink-0">
@@ -737,19 +714,6 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
                   access={aiAccess}
                   onLockedClick={(_s, msg) => toast.error(msg)}
                 />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setShowUploader((v) => !v)}
-                  className={cn(
-                    "h-9 w-9 mx-auto",
-                    (showUploader || chatFiles.length > 0) && "text-primary bg-primary/10"
-                  )}
-                  disabled={aiChat.isLoading || !chatAllowed}
-                >
-                  <Paperclip className="h-4 w-4" />
-                </Button>
               </div>
               <Textarea
                 value={inputValue}
@@ -761,7 +725,7 @@ export function AiPageContent({ mode, initialSection, hiddenSections }: AiPageCo
               />
               <Button
                 onClick={handleSendMessage}
-                disabled={!(inputValue.trim() || chatFiles.length > 0) || aiChat.isLoading || !chatAllowed}
+                disabled={!inputValue.trim() || aiChat.isLoading || !chatAllowed}
                 size="icon"
                 className="h-11 w-11 shrink-0 self-end"
               >

@@ -20,9 +20,14 @@ export const LIMITS = {
   default_prompt: { daily: 20, monthly: 200 },
 } as const;
 
-export const HARD_USER_MESSAGE_CHARS = 50_000;
-export const CONTEXT_MAX_MESSAGES = 20;
-export const CONTEXT_MAX_CHARS = 80_000;
+// PATCH v2.2 (2026-05-26): жёсткие ограничения объёма для удешевления
+export const HARD_USER_MESSAGE_CHARS = 15_000;        // было 50_000
+export const CONTEXT_MAX_MESSAGES = 10;                // было 20
+export const CONTEXT_MAX_CHARS = 30_000;               // было 80_000
+export const DAILY_CHARS_BUDGET_CHAT = 200_000;        // новый: per-user суточный объёмный лимит для mode='chat'
+export const PER_MINUTE_RATE_CHAT = 3;                 // новый: антифлуд 3 msg/min
+export const FILE_CONTEXT_MAX_CHARS = 8_000;           // новый: обрезка fileContents в передаваемом контексте
+export const ALLOWED_UPLOAD_SCENARIOS = ['balance_analysis', '107NK'];  // upload разрешён только здесь
 
 export interface AiAccess {
   tier: 'full' | 'zg_only' | 'none';
@@ -225,7 +230,46 @@ export function truncateHistory(
   };
 }
 
-const OFFTOPIC_SYSTEM = `Ты — классификатор тематики запросов. Тема: бизнес, налоги, бухгалтерия, право в РБ/РФ, ИП/ООО/ЗАО, документы, отчётность, фриланс, маркетплейсы. Если запрос про эти темы (даже косвенно) — on_topic=true. Если запрос явно про быт/медицину/развлечения/общие энциклопедические факты — on_topic=false. ПРИ СОМНЕНИИ — on_topic=true. Ответь строго JSON: {"on_topic": true|false, "reason": "..."}.`;
+// ============================================================================
+// PATCH v2.2 helpers: daily chars budget + per-minute antiflood
+// ============================================================================
+
+/** Сумма metadata.context_chars за сегодня по assistant-сообщениям юзера в mode='chat'. */
+export async function sumChatContextCharsToday(supabase: any, userId: string): Promise<number> {
+  const minskNow = new Date();
+  const dayStart = new Date(minskNow); dayStart.setUTCHours(21, 0, 0, 0);
+  if (dayStart > minskNow) dayStart.setUTCDate(dayStart.getUTCDate() - 1);
+
+  const { data } = await supabase
+    .from('ai_chat_messages')
+    .select('metadata')
+    .eq('user_id', userId)
+    .eq('role', 'assistant')
+    .gte('created_at', dayStart.toISOString())
+    .eq('metadata->>ai_mode', 'chat');
+
+  const rows = (data || []) as Array<{ metadata: any }>;
+  return rows.reduce((s, r) => s + (parseInt(r.metadata?.context_chars, 10) || 0), 0);
+}
+
+/** Количество user-сообщений юзера в mode='chat' за последние 60 секунд (для антифлуда). */
+export async function countChatMessagesLastMinute(supabase: any, userId: string): Promise<number> {
+  const sinceIso = new Date(Date.now() - 60_000).toISOString();
+  const { count } = await supabase
+    .from('ai_chat_messages')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('role', 'user')
+    .eq('metadata->>ai_mode', 'chat')
+    .gte('created_at', sinceIso);
+  return count || 0;
+}
+
+const OFFTOPIC_SYSTEM = `Ты — строгий классификатор тематики запросов для бизнес-AI для предпринимателей РБ/РФ.
+ON_TOPIC (on_topic=true): налоги, бухгалтерия, отчётность, ЕНВД/УСН/ОСН, НДС, подоходный, страховые взносы, МНС/ФНС, проверки, штрафы, кадры/ТК, договоры, акты, счета, ПУД, ИП, ООО, ЗАО, регистрация/ликвидация бизнеса, маркетплейсы, ВЭД, валютный контроль, банки/расчётные счета для бизнеса, эквайринг, ЭДО, ЭЦП, СББОЛ, Закрой год, 107-НК, бухгалтерское ПО.
+OFF_TOPIC (on_topic=false): бытовые вопросы, медицина/здоровье/диета, путешествия, рецепты, погода, спорт, развлечения, фильмы/музыка, политика, общие энциклопедические факты (история, география, наука), программирование/IT (если не про бизнес-софт), личные отношения, психология, образование детей, домашние животные, ремонт квартиры, переводы текстов, помощь с домашкой/эссе, рерайт/копирайт общих текстов.
+ПРАВИЛО: При явной не-бизнес теме → on_topic=false. При сомнении (запрос неоднозначный, может относиться к ИП) → on_topic=true.
+Ответь строго JSON: {"on_topic": true|false, "reason": "..."}.`;
 
 export async function classifyOffTopic(apiKey: string, userText: string): Promise<{ on_topic: boolean; reason: string; classifier_model: string; error?: string }> {
   const model = 'google/gemini-2.5-flash-lite';

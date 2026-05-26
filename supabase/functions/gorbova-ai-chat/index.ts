@@ -7,6 +7,12 @@ import {
   truncateHistory,
   classifyOffTopic,
   HARD_USER_MESSAGE_CHARS,
+  DAILY_CHARS_BUDGET_CHAT,
+  PER_MINUTE_RATE_CHAT,
+  FILE_CONTEXT_MAX_CHARS,
+  ALLOWED_UPLOAD_SCENARIOS,
+  sumChatContextCharsToday,
+  countChatMessagesLastMinute,
 } from '../_shared/ai-access.ts';
 
 const corsHeaders = {
@@ -21,7 +27,8 @@ const MAX_FILES = 5;
 const MAX_TOTAL_BYTES = 10 * 1024 * 1024;
 const MAX_TEXT_CHARS = 100000;
 
-const MODEL_CHAT = 'google/gemini-2.5-flash';
+// PATCH v2.2 (2026-05-26): cost optimization
+const MODEL_CHAT = 'google/gemini-2.5-flash-lite';   // было gemini-2.5-flash
 const MODEL_PROMPT = 'google/gemini-2.5-pro';
 
 async function writeAccessAudit(supabase: any, userId: string, action: string, details: Record<string, any>) {
@@ -155,7 +162,28 @@ Deno.serve(async (req) => {
       });
     }
 
-    // 3. File guards
+    // 2.1 PATCH v2.2 Этап 0 — Upload guard. Загрузка файлов разрешена ТОЛЬКО в
+    // сценариях balance_analysis и 107NK (для тех, кому они доступны по тарифу).
+    // В свободном чате и в любых других сценариях upload запрещён.
+    const hasAnyAttachment = !!(body.fileContents || (body.fileNames && body.fileNames.length > 0)
+      || (body.images && body.images.length > 0) || (body.unsupported_files && body.unsupported_files.length > 0));
+    if (hasAnyAttachment) {
+      // mode='chat' → запрещено всегда
+      // mode='prompt' → разрешено только если сценарий в whitelist
+      // (scenarioCode определим позже после загрузки prompt; пока используем raw prompt_id отсутствие)
+      // Поскольку whitelist по code (не id), сначала допустим, потом проверим ниже после загрузки prompt.
+      if (mode !== 'prompt') {
+        // быстро отрезаем chat
+        return new Response(JSON.stringify({
+          error: 'Загрузка файлов доступна только в специальных сценариях: Анализ баланса и 107-НК.',
+          code: 'upload_not_allowed_for_mode',
+        }), {
+          status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    // 3. File guards (запускаются только если upload guard выше не отрезал)
     if (fileNames && fileNames.length > MAX_FILES) {
       return new Response(JSON.stringify({ error: `Максимум ${MAX_FILES} файлов` }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -199,13 +227,13 @@ Deno.serve(async (req) => {
     metadata.images_present = hasImages;
     metadata.ai_mode = mode === 'prompt' ? 'prompt' : 'chat';
 
-    // 4.1 Hard cap на длину одного user-message
+    // 4.1 Hard cap на длину одного user-message (PATCH v2.2: 15_000)
     const lastUserContent = messages?.[messages.length - 1]?.content || '';
     if (lastUserContent.length > HARD_USER_MESSAGE_CHARS) {
       const hasAttachment = !!fileContents || (fileNames && fileNames.length > 0) || hasImages;
-      const errMsg = (lastUserContent.length >= 20_000 || hasAttachment)
-        ? 'Сократите ввод или загрузите файл отдельным вложением (предел 50 000 символов на сообщение).'
-        : 'Сократите запрос (предел 50 000 символов на сообщение).';
+      const errMsg = hasAttachment
+        ? `Сократите ввод или загрузите файл отдельным вложением (предел ${HARD_USER_MESSAGE_CHARS.toLocaleString('ru-RU')} символов на сообщение).`
+        : `Сократите запрос (предел ${HARD_USER_MESSAGE_CHARS.toLocaleString('ru-RU')} символов на сообщение).`;
       return new Response(JSON.stringify({ error: errMsg, code: 'message_too_long' }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -248,6 +276,24 @@ Deno.serve(async (req) => {
       metadata.launcher_title_snapshot = prompt.launcher_title;
       metadata.scenario_type = prompt.type;
       metadata.scenario_code = prompt.code || null;
+    }
+
+    // 6.0 PATCH v2.2 — second-stage upload guard для prompt-режима:
+    // Загрузка файлов в prompt разрешена ТОЛЬКО для сценариев из whitelist
+    // (balance_analysis, 107NK). Любой другой сценарий с attachment → 403.
+    if (hasAnyAttachment && mode === 'prompt') {
+      const sceneCode = promptData?.code || '';
+      if (!ALLOWED_UPLOAD_SCENARIOS.includes(sceneCode)) {
+        await writeAccessAudit(serviceClient, user.id, 'ai_chat.upload_not_allowed_for_mode', {
+          mode, scenario_code: sceneCode || null, prompt_id: prompt_id || null,
+        });
+        return new Response(JSON.stringify({
+          error: 'Загрузка файлов доступна только в специальных сценариях: Анализ баланса и 107-НК.',
+          code: 'upload_not_allowed_for_mode',
+        }), {
+          status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
     }
 
     // 6.1 Access check (entitlements-based). Default-deny при ошибке.
@@ -298,7 +344,45 @@ Deno.serve(async (req) => {
       });
     }
 
+    // 6.3 PATCH v2.2 — per-minute rate-limit (антифлуд) для mode='chat'
+    if (mode === 'chat') {
+      const lastMin = await countChatMessagesLastMinute(serviceClient, user.id);
+      metadata.chat_msgs_last_minute = lastMin;
+      if (lastMin >= PER_MINUTE_RATE_CHAT) {
+        await writeAccessAudit(serviceClient, user.id, 'ai_chat.rate_limit_per_minute', {
+          mode, count_last_60s: lastMin, limit: PER_MINUTE_RATE_CHAT,
+        });
+        return new Response(JSON.stringify({
+          error: 'Подождите минуту перед следующим вопросом.',
+          code: 'rate_limit_per_minute',
+          limit_per_minute: PER_MINUTE_RATE_CHAT,
+        }), {
+          status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    // 6.4 PATCH v2.2 — daily chars budget для mode='chat' (защита от outlier-юзеров)
+    if (mode === 'chat') {
+      const usedChars = await sumChatContextCharsToday(serviceClient, user.id);
+      metadata.daily_chars_used = usedChars;
+      metadata.daily_chars_limit = DAILY_CHARS_BUDGET_CHAT;
+      if (usedChars >= DAILY_CHARS_BUDGET_CHAT) {
+        await writeAccessAudit(serviceClient, user.id, 'ai_chat.quota_denied_chars', {
+          mode, used_chars: usedChars, limit_chars: DAILY_CHARS_BUDGET_CHAT,
+        });
+        return new Response(JSON.stringify({
+          error: 'На сегодня объём чата исчерпан. Используйте брендированные сценарии или вернитесь завтра.',
+          code: 'quota_denied_chars',
+          used_chars: usedChars, limit_chars: DAILY_CHARS_BUDGET_CHAT,
+        }), {
+          status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
     // 7. Unsupported files guard (BEFORE quality gate)
+
 
     const unsupportedFiles = body.unsupported_files;
     const hasUsableText = stripNonContentMarkers(processedFileContents).length > 0;
@@ -491,8 +575,16 @@ Deno.serve(async (req) => {
 
     // 10.1 Truncation
     const dialog = messages.filter(m => m.role === 'user' || m.role === 'assistant');
-    const fileContextMsg = processedFileContents
-      ? `--- СОДЕРЖИМОЕ ЗАГРУЖЕННЫХ ФАЙЛОВ ---\n${processedFileContents}\n--- КОНЕЦ ФАЙЛОВ ---`
+    // PATCH v2.2 — обрезаем fileContents в передаваемом контексте до FILE_CONTEXT_MAX_CHARS
+    // (полный текст уже хранится в БД; модели передаём только укороченный фрагмент).
+    let fileContextForModel = processedFileContents;
+    if (fileContextForModel && fileContextForModel.length > FILE_CONTEXT_MAX_CHARS) {
+      fileContextForModel = fileContextForModel.substring(0, FILE_CONTEXT_MAX_CHARS);
+      metadata.file_context_truncated_for_model = true;
+      metadata.file_context_chars_sent = FILE_CONTEXT_MAX_CHARS;
+    }
+    const fileContextMsg = fileContextForModel
+      ? `--- СОДЕРЖИМОЕ ЗАГРУЖЕННЫХ ФАЙЛОВ ---\n${fileContextForModel}\n--- КОНЕЦ ФАЙЛОВ ---`
       : null;
     const trunc = truncateHistory(dialog, systemPrompt, fileContextMsg);
     metadata.truncated = trunc.truncated;
@@ -554,7 +646,7 @@ Deno.serve(async (req) => {
     // 11. Call Lovable AI Gateway — модель по режиму
     const chosenModel = mode === 'chat' ? MODEL_CHAT : MODEL_PROMPT;
     metadata.model_used = chosenModel;
-    metadata.routing_reason = mode === 'chat' ? 'free_chat_flash' : 'scenario_pro';
+    metadata.routing_reason = mode === 'chat' ? 'free_chat_flash_lite' : 'scenario_pro';
 
     const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
