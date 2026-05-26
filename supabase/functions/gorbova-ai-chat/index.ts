@@ -279,6 +279,24 @@ Deno.serve(async (req) => {
       metadata.scenario_code = prompt.code || null;
     }
 
+    // 6.0 PATCH v2.2 — second-stage upload guard для prompt-режима:
+    // Загрузка файлов в prompt разрешена ТОЛЬКО для сценариев из whitelist
+    // (balance_analysis, 107NK). Любой другой сценарий с attachment → 403.
+    if (hasAnyAttachment && mode === 'prompt') {
+      const sceneCode = promptData?.code || '';
+      if (!ALLOWED_UPLOAD_SCENARIOS.includes(sceneCode)) {
+        await writeAccessAudit(serviceClient, user.id, 'ai_chat.upload_not_allowed_for_mode', {
+          mode, scenario_code: sceneCode || null, prompt_id: prompt_id || null,
+        });
+        return new Response(JSON.stringify({
+          error: 'Загрузка файлов доступна только в специальных сценариях: Анализ баланса и 107-НК.',
+          code: 'upload_not_allowed_for_mode',
+        }), {
+          status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
     // 6.1 Access check (entitlements-based). Default-deny при ошибке.
     const scenarioCode = promptData?.code || null;
     const access = await resolveAiAccess(serviceClient, user.id);
