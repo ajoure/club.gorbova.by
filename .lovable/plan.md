@@ -1,157 +1,224 @@
-# План: PATCH-R4-SYNTHETIC-PROVIDER-SUB-CLEANUP-2026-05
+да, согласен, с учетом правок:
 
-## Контекст и принятие discovery
+1. **Свободный чат переключаем на gemini-2.5-flash-lite.**  
+Для текущей задачи удешевления это правильнее, чем оставлять flash.  
+Качество критично только в брендированных сценариях, а они и так остаются на pro.
+2. **Суточный budget по объёму ставим 200 000 chars на пользователя для mode='chat'.**  
+Не 300 000.  
+Сейчас у вас проблема именно с outlier-пользователями, и 300k слишком мягкий порог.
+3. **Hard cap на одно сообщение ставим 15 000 chars.**  
+Не 20 000.  
+Для свободного чата этого более чем достаточно. Всё, что длиннее, уже надо уводить в специальные сценарии.
+4. **Per-minute rate limit для mode='chat' ставим 3 сообщения / минута.**  
+Не 5/мин.  
+Это лучше режет копипасту длинных кусков и серийные прогоны.
+5. **Дополнительно добавить в план жёсткое правило по загрузке файлов:**
+  - **полностью отключить загрузку документов/файлов для свободного чата**;
+  - **разрешить загрузку файлов только внутри специальных сценариев**:
+    - balance_analysis
+    - 107NK
+  - во всех остальных режимах upload/paperclip/fileContents запрещены.
+6. **Матрица загрузки файлов должна быть такой:**  
 
-Отчёт discovery принят. Ключевой вывод:
+  - **Закрой год** → доступен только balance_analysis, и **только там** можно загружать файл;
+  - **Business / Gorbova Club** → chat доступен, но **без загрузки файлов**;  
+  загрузка файлов разрешена только в balance_analysis и 107NK;
+  - если сценарий недоступен по продукту, то и upload в нём недоступен.
+7. **Это нужно закрепить и в UI, и в backend:**
+  - в UI скрыть/disable paperclip и file uploader вне balance_analysis и 107NK;
+  - в backend добавить guard: если пришёл fileContents или attachment вне разрешённых сценариев → отказ без вызова модели.
+8. **Код отказа для запрещённой загрузки** лучше сделать отдельным и понятным:
+  - 403 upload_not_allowed_for_mode если режим не допускает загрузку;
+  - сообщение:  
+  **«Загрузка файлов доступна только в специальных сценариях: Анализ баланса и 107-НК.»**
+9. **В план добавь отдельный этап:**
+  - Этап 0. Отключение upload в свободном чате
+  - это должно быть раньше, чем model-switch, потому что загрузка длинных документов сейчас сама по себе раздувает input-cost.
+10. **Итоговые ответы на 4 открытых вопроса для вставки в план:**
 
-Проблема не в UI и не в реальных bePaid-подписках, а в **synthetic `provider_subscriptions`**, созданных backfill-скриптом `token_direct_charge` 2026-05-25.
+&nbsp;
 
-- **183 OK_real_linked** (real `sbs_*`) — НЕ трогать, bePaid API НЕ вызывать.
-- **64 E_phantom_no_provider** — synthetic `internal:%` по ЗАКРОЙ ГОД (one-time продукт).
-- **9 F_split_brain_synth_over_real** — synthetic `internal:%` поверх пользователей, у которых уже есть реальный активный bePaid `sbs_*`.
-- **Scope R4 = 73 synthetic wrappers**.
+- **Q1:** переключаем chat на gemini-2.5-flash-lite
+- **Q2:** daily char budget = **200 000**
+- **Q3:** hard cap one message = **15 000**
+- **Q4:** per-minute rate limit = **3/min**
 
-Старая идея "Trek 1 cleanup 90 строк" отменяется. Новый cleanup строго synthetic-only:
-`provider_subscription_id LIKE 'internal:%' AND meta.synthetic = true`.
+11. **Дополнить DoD ещё тремя кейсами:**
 
-## Цель
+- в chat paperclip отсутствует или disabled;
+- попытка отправить fileContents в chat даёт отказ без вызова модели;
+- в balance_analysis и 107NK загрузка работает только у тех, кому сценарий разрешён по access matrix.
 
-Убрать только синтетические `provider_subscriptions`, созданные backfill 2026-05-25, чтобы они не отображались как реальные bePaid-автосписания и не путали привязку продукт/тариф/доступ.
+Если хочешь, я сейчас соберу тебе уже **готовую финальную версию этого плана целиком для вставки в Lovable**.
 
-## Scope (ровно 73 строки)
+&nbsp;
 
-```text
-WHERE provider = 'bepaid'
-  AND provider_subscription_id LIKE 'internal:%'
-  AND (meta->>'synthetic')::boolean = true
-  AND (meta->>'source' = 'token_direct_charge'
-       OR (meta->>'batch') LIKE '%2026-05-25%'
-       OR created_at::date = '2026-05-25')
-```
+# План: Аудит расходов AI после PATCH v2.1 и второй виток удешевления
 
-Разбивка:
-- 64 × E_phantom_no_provider (нет реального `sbs_*` у юзера на этот продукт).
-- 9 × F_split_brain_synth_over_real (есть реальный active `sbs_*` рядом).
+## Что показал аудит за последние 24 часа
 
-## Запрещено
+Запрос к `ai_chat_messages.metadata` (только реальные assistant-ответы):
 
-- Не трогать `provider_subscriptions` с `sbs_*` (реальные bePaid).
-- Не вызывать bePaid API (cancel/list/get) — 0 внешних вызовов.
-- Не менять `entitlements` (никаких access_end_at/status/meta).
-- Не менять `orders_v2` / `payments_v2`.
-- Не менять `access_rules`.
-- Не менять `access_end_at` / `status` реальных `subscriptions_v2`.
-- Не удалять историю без backup.
 
-## Preflight (read-only, до execute)
+| модель                               | mode   | сообщений | юзеров | сумма context_chars | avg context |
+| ------------------------------------ | ------ | --------- | ------ | ------------------- | ----------- |
+| `google/gemini-2.5-flash`            | chat   | **274**   | 36     | **9.72M**           | **35 485**  |
+| `shortcut_template` (off-topic блок) | chat   | 53        | 20     | 1.30M               | 24 526      |
+| `legacy_unknown`                     | chat   | 1         | 1      | —                   | —           |
+| `google/gemini-2.5-pro`              | prompt | **0**     | 0      | —                   | —           |
 
-1. Подтвердить ровно **73** synthetic-строки по фильтру выше.
-2. Подтвердить **0** строк с `sbs_*` в scope (anti-join guard).
-3. Подтвердить, что у всех 73 одновременно `internal:%` И `meta.synthetic=true`.
-4. Разделить когорты: 64 phantom_no_provider vs 9 split_brain_synth_over_real (по наличию параллельного real `sbs_*` у того же `user_id` + `product_id`).
-5. Для 9 split-brain — подтвердить, что реальный active `sbs_*` существует и НЕ попадёт в обновление.
-6. Контрольные кейсы:
-   - **Ирина Гайдук** (`irina.borodzko@tut.by`) — synthetic ЗАКРОЙ ГОД должен пропасть из "Подписки"; реальные CHAT сделки/платежи не затронуты.
-   - **Ольга Дещеня** (`strekhao@yandex.ru`) — real BUSINESS остаётся; "не продлевается" не должно возникать после cleanup.
-   - **Елизавета Андреева** (`elizaveta.andreeva.15@yandex.by`) — synthetic active-state исчезает; локальный доступ до 05.06.2026 НЕ уменьшается.
 
-Если хотя бы одна цифра расходится (не 73 / есть `sbs_*` в scope / нет `meta.synthetic=true`) — STOP, manual_review.
+Сравнение по дням:
 
-## Execute (порядок строго)
 
-### Шаг 1. Backup snapshot
+| день  | модель                        | сообщений | context_chars |
+| ----- | ----------------------------- | --------- | ------------- |
+| 26-05 | gemini-2.5-flash              | **250**   | **8.73M**     |
+| 26-05 | shortcut_template (off-topic) | 46        | 1.18M         |
+| 25-05 | gemini-2.5-flash              | 24        | 0.99M         |
+| 25-05 | shortcut_template             | 7         | 0.12M         |
+| 23-05 | legacy (pro, до патча)        | 49        | —             |
+| 22-05 | legacy (pro, до патча)        | 187       | —             |
 
-Создать таблицу `provider_subscriptions_synthetic_cleanup_backup_2026_05` с полным before-JSON по 73 строкам:
 
-```sql
-CREATE TABLE public.provider_subscriptions_synthetic_cleanup_backup_2026_05 AS
-SELECT ps.*, to_jsonb(ps.*) AS before_json, now() AS backed_up_at
-FROM public.provider_subscriptions ps
-WHERE <scope filter>;
-```
+Топ-5 пользователей за 24 ч (по объёму контекста):
 
-Подтвердить `count = 73`.
 
-### Шаг 2. Soft-clean `provider_subscriptions` (предпочтительно)
+| user_id (head) | msgs | сумма ctx | max ctx | avg ctx | truncated |
+| -------------- | ---- | --------- | ------- | ------- | --------- |
+| c944d13f       | 48   | 2 024 598 | 78 944  | 42 179  | 32        |
+| 17516f27       | 27   | 1 303 805 | 75 860  | 48 289  | 17        |
+| 7c53b6af       | 36   | 1 231 781 | 67 538  | 34 216  | 22        |
+| 2b352bdf       | 26   | 1 032 208 | 52 700  | 39 700  | **26**    |
+| 267cae5c       | 23   | 965 496   | 61 301  | 41 978  | 13        |
 
-Если enum `provider_subscription_state` допускает — перевести в `canceled` (или ближайший terminal), пометить `meta.synthetic_cleanup`. DELETE — только если soft-clean невозможен и FK позволяют; и только после backup, и только для `internal:% + synthetic=true`.
 
-```sql
-UPDATE public.provider_subscriptions
-SET state = 'canceled',
-    meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object(
-      'synthetic_cleanup', jsonb_build_object(
-        'patch', 'PATCH-R4-SYNTHETIC-PROVIDER-SUB-CLEANUP-2026-05',
-        'executed_at', now(),
-        'backup_table', 'provider_subscriptions_synthetic_cleanup_backup_2026_05',
-        'cohort', <'phantom_no_provider'|'split_brain_synth_over_real'>
-      ))
-WHERE <scope filter>;
-```
+Прочие AI edge-функции (`mns-response-generator`, `ai-import-analyzer`, `analyze-task-priority`, `generate-affirmation`, `generate-point-b-summary`, `telegram-daily-summary`, `telegram-learn-style`) уже сидят на `gemini-3-flash-preview`. **Они не виновники.**
 
-### Шаг 3. Очистка фантомных recurring-флагов в `subscriptions_v2` (точечно)
+## Корневая диагностика — почему $20 после патча
 
-ТОЛЬКО для связанных `subscriptions_v2`, у которых:
-- `auto_renew=true` пришло из synthetic provider_sub;
-- НЕТ параллельного real `sbs_*` provider_subscription;
-- продукт — one-time по SOT (`tariff_offers.meta.recurring.is_recurring` IS NULL/false).
+1. **Маршрутизация работает.** Все 274 чат-ответа ушли на `gemini-2.5-flash`, ни одного на `gemini-2.5-pro`. Это подтверждается `metadata.model_used`.
+2. **Off-topic фильтр работает, но слабо** — отсекает только 19 % (53/327). 81 % долетает до flash.
+3. **Главная проблема — взрывной рост трафика и объём контекста.**
+  - Сообщений в день: 24 (25-05) → **250 (26-05)**, ×10. Юзеры поняли, что чат стал «доступным».
+  - Средний контекст: **35 485 chars/сообщение** (≈ 9k токенов на input). На flash это всё ещё дорого при таком объёме.
+  - Суммарно за сутки: **9.72M символов** контекста (≈ 2.4M входных токенов). Это и есть основной счёт.
+4. **Hard cap 50k chars/сообщение слишком мягкий.** Топ-юзеры регулярно упираются в cap: у топ-1 truncated=32/48, у топ-4 truncated=26/26 (каждое сообщение режется по лимиту 80k).
+5. **Лимит 50/день per user не пробивается формально**, но позволяет одному юзеру за сутки прокачать 2M chars контекста — патч экономит на модели, но не на объёме.
 
-```sql
-UPDATE public.subscriptions_v2 sv
-SET auto_renew = false,
-    next_charge_at = NULL,
-    meta = (COALESCE(meta, '{}'::jsonb) - 'recurring_snapshot' - 'recurring_amount')
-           || jsonb_build_object(
-             'synthetic_provider_cleanup_ref', 'PATCH-R4-2026-05',
-             'prev_auto_renew', true,
-             'prev_next_charge_at', next_charge_at
-           )
-WHERE sv.id IN (<subset из backup, прошедший все 3 условия>);
-```
-
-`access_end_at`, `status`, `entitlements` НЕ меняются. `payment_token` НЕ трогаем в этом patch.
-
-### Шаг 4. Split-brain (9 строк)
-
-Действия идентичны Шагам 2–3, но строго на synthetic-строке. Реальный `sbs_*` `provider_subscription` остаётся нетронутым; его `subscriptions_v2` не обновляется (там auto_renew законный).
-
-## Audit
-
-Записи в `audit_logs`:
-- `provider_subscriptions.synthetic_cleanup.preflight` — counts (73 / 64 / 9), 0 real `sbs_*` в scope.
-- `provider_subscriptions.synthetic_cleanup.executed` — counts, `backup_table`, `no_real_bepaid_touched=true`, `bepaid_api_calls=0`.
-- `subscriptions_v2.recurring_flags_cleanup` — список затронутых `subscription_id`, prev/new значения.
-
-## Post-verify
-
-1. `SELECT count(*) FROM provider_subscriptions WHERE provider_subscription_id LIKE 'internal:%' AND (meta->>'synthetic')::bool = true AND state NOT IN ('canceled','synthetic_removed')` → **0**.
-2. `SELECT count(*) FROM provider_subscriptions WHERE provider_subscription_id LIKE 'sbs_%' AND state IN ('active','trial','past_due','pending')` → **unchanged (183)**.
-3. Ирина: ЗАКРОЙ ГОД исчез из "Подписки"; CHAT сделки/платежи на месте.
-4. Ольга: BUSINESS real subscription активна; нет "не продлевается" из-за synthetic.
-5. Елизавета: synthetic active-state исчез; доступ до 05.06.2026 сохранён.
-6. Trek 1 cleanup по 90 строкам — не запускался.
-7. bePaid API calls во время патча = **0** (проверить логи edge functions).
-8. `nightly-system-health` / `nightly-payments-invariants` после cleanup — synthetic `internal:%` больше не отображается как live provider.
-
-## Rollback
-
-Из `provider_subscriptions_synthetic_cleanup_backup_2026_05.before_json` восстановить state/meta по `id`. Для `subscriptions_v2` — восстановить `auto_renew`, `next_charge_at`, `meta.recurring_snapshot` из `meta.prev_*` полей.
-
-## Артефакты
-
-- Proof: `.lovable/proofs/synthetic_provider_sub_cleanup_2026_05.md` — preflight counts, executed counts, backup table name, control cases before/after, audit IDs.
-- CSV: `/mnt/documents/synthetic_provider_sub_cleanup_2026_05.csv` — 73 строки: `provider_sub_id`, `user_id`, `product_id`, `tariff_id`, `cohort`, `subscription_v2_id`, `before_state`, `after_state`, `subv2_auto_renew_cleaned`.
-
-## Trek 2 (Елизавета 2a/2b/2c/2d)
-
-Остаётся отдельным патчем после R4. Предварительно — 2d (provider dead → UI показывает честное состояние, доступ до 05.06.2026, без автопродления, CTA "оформить новую подписку"). 2b — только если canonical resume-eligibility (local + card + provider) пройдёт целиком.
+Итог: PATCH v2.1 защитил **routing** и **доступ**, но не защитил **объём токенов на пользователя**. Это и есть причина «стало хуже» — потому что выросло количество активных юзеров и длина их вводов.
 
 ## DoD
 
-- Preflight 73 / 64 / 9 / 0 real в scope — подтверждено.
-- Backup table создана, count=73.
-- Soft-clean выполнен; DELETE не использовался (или применён только при невозможности soft-clean и оформлен в audit).
-- Recurring-флаги subv2 очищены только у строк без real `sbs_*` на one-time продукте.
-- 8 post-verify пунктов пройдены.
-- Proof + CSV приложены.
-- bePaid API calls = 0; entitlements/orders/access_rules/access_end_at не менялись.
+1. Средний `context_chars` на сообщение < 12 000 (сейчас 35 485).
+2. Суммарный `context_chars` за сутки < 2.5M (сейчас 9.7M, цель −75 %).
+3. `model_used` для chat — `**gemini-2.5-flash-lite**` (≈ 3× дешевле flash) у не-премиум-юзеров.
+4. Off-topic / нерелевантные блокируются ≥ 35 % от чат-трафика.
+5. Топ-юзер не может прокачать > 300 000 chars контекста в сутки (защита от outlier).
+6. Все цифры подтверждены proof из `ai_chat_messages.metadata` через 24 часа после патча.
+
+## Этапы
+
+### Этап 1. Снизить cap и truncation
+
+В `_shared/ai-access.ts` (без новых таблиц):
+
+- `CONTEXT_MAX_MESSAGES`: 20 → **10**.
+- `CONTEXT_MAX_CHARS`: 80 000 → **30 000**.
+- `USER_MESSAGE_HARD_CAP`: 50 000 → **15 000** (с двухуровневым текстом — оставляем).
+- Системный prompt всегда сохраняется (как сейчас).
+
+Эффект: средний контекст должен упасть с 35k до 10–12k символов.
+
+### Этап 2. Сменить модель свободного чата на flash-lite
+
+`gorbova-ai-chat/index.ts`:
+
+```ts
+const MODEL_CHAT = 'google/gemini-2.5-flash-lite';   // было gemini-2.5-flash
+const MODEL_PROMPT = 'google/gemini-2.5-pro';         // не трогаем
+```
+
+Сценарии (`balance_analysis`, `107NK`) остаются на `gemini-2.5-pro` — quality matters.
+
+Эффект: −60–70 % стоимости на чат-ответ.
+
+### Этап 3. Жёсткий per-user объёмный лимит (token-budget guard)
+
+Без новой таблицы — поверх существующих `ai_chat_messages.metadata`:
+
+- В `_shared/ai-access.ts` `resolveAiAccessStatus`: новый счётчик `daily_chars_used` = `SUM(metadata->>'context_chars')` за сегодня.
+- Cap: **300 000 chars в сутки на юзера** для `mode='chat'`.
+- Превышение → 429 с текстом «На сегодня объём чата исчерпан. Используйте брендированные сценарии или вернитесь завтра».
+- Логировать `quota_denied_chars` в `audit_logs` (как сейчас другие denials).
+
+Эффект: ловим outlier-юзеров вроде топ-1 (2M chars/день).
+
+### Этап 4. Ужесточить off-topic классификатор
+
+Сейчас отсекает 19 %. Цель 35 %+.
+
+- В `_shared/ai-access.ts` `classifyOffTopic` — расширить позитивные критерии «налоги/бухгалтерия/документы/закрой год/УСН/ИП» и обрезать общий чат (про погоду, про код, про политику, про рецепты). Усилить prompt классификатора.
+- Сохраняем правило: классификатор **только для `mode='chat'**`, никогда для брендированных сценариев.
+
+### Этап 5. Per-minute rate-limit (антифлуд)
+
+В `gorbova-ai-chat/index.ts` поверх `ai_chat_messages`:
+
+- Максимум **5 сообщений/минута на юзера** в `mode='chat'`.
+- Превышение → 429 с текстом «Подождите минуту перед следующим вопросом».
+- Логировать `rate_limit_per_minute` в `audit_logs`.
+
+Эффект: гасит «копипасту длинных документов кусками».
+
+### Этап 6. Сжатие истории (history pruning)
+
+Сейчас контекст = system + последние 10 сообщений (после Этапа 1). Дополнительно:
+
+- Если суммарная длина > `CONTEXT_MAX_CHARS`, обрезать **старейшие** сообщения целиком (а не середину), сохраняя последний user-message полностью.
+- Файлы (`fileContents`) — обрезать до 8 000 chars в передаваемом контексте (полный текст уже хранится в БД).
+
+### Этап 7. Verify (через 24 часа после rollout)
+
+Тот же запрос, что в аудите:
+
+```sql
+SELECT model, mode, COUNT(*), SUM(context_chars), AVG(context_chars)
+FROM ai_chat_messages ... WHERE created_at > now() - interval '24 hours'
+GROUP BY 1,2;
+```
+
+Сравнить с baseline (этим планом). Закрыть PATCH, если выполнены все 6 пунктов DoD.
+
+Также `audit_logs` proof:
+
+- `ai_chat_denied_off_topic` count ≥ 35 % от чат-сообщений.
+- `ai_chat_quota_denied_chars` появляется для outlier-юзеров.
+- `ai_chat_rate_limit_per_minute` появляется при флуде.
+
+## Что НЕ меняем
+
+- Архитектура доступа (`_shared/ai-access.ts` остаётся SOT, никаких новых таблиц, никаких новых RPC).
+- Маршрутизация брендированных сценариев (`balance_analysis`, `107NK`) — на `gemini-2.5-pro`.
+- Access matrix (Закрой год → только balance_analysis; Club/Business → всё) — не трогаем.
+- `ai_chat_messages` schema (только `metadata` jsonb расширяется).
+- `fields_registry`, `document_token_registry`, DOCX-шаблоны, RLS, RPC документов, cron, `client.ts`, `types.ts`.
+- bePaid, Telegram, orders/payments — не касается.
+- Прочие AI edge-функции (`mns-response-generator`, `ai-*-generator`, `telegram-*`) — уже на flash-preview, не трогаем.
+
+## Открытые вопросы перед execute
+
+1. **Flash vs Flash-lite для чата.** Lite ~3× дешевле, но хуже на нюансах. Согласовать: переключаем на lite или оставляем flash + давим объёмом?
+2. **Per-user суточный budget**: 300 000 chars — устраивает или 200 000 / 500 000?
+3. **Hard cap на одно сообщение**: 15 000 chars — допустимо или 20 000? Сейчас 50 000, типичный документ-распечатка ≈ 10–15k.
+4. **Per-minute rate-limit**: 5/мин разумно или 3/мин?
+
+Без ответов на эти 4 — execute не запускаю.
+
+## Технические детали (для агента)
+
+- Файлы под правку: `supabase/functions/_shared/ai-access.ts`, `supabase/functions/gorbova-ai-chat/index.ts`. Других правок не требуется.
+- Никаких миграций (вся логика в edge), никаких изменений UI на этом этапе (UI читает `ai-access-status` и сам подтянет новые цифры).
+- Артефакт: `.lovable/proofs/gorbova_ai_cost_audit_and_patch_v2_2_2026_05_26.md` с before/after таблицами.
+
+## Порядок: Diagnose (done) → Answer 4 questions → Dry-run → Execute → Verify через 24ч.
