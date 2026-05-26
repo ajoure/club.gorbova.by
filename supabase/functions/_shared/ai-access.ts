@@ -20,9 +20,14 @@ export const LIMITS = {
   default_prompt: { daily: 20, monthly: 200 },
 } as const;
 
-export const HARD_USER_MESSAGE_CHARS = 50_000;
-export const CONTEXT_MAX_MESSAGES = 20;
-export const CONTEXT_MAX_CHARS = 80_000;
+// PATCH v2.2 (2026-05-26): жёсткие ограничения объёма для удешевления
+export const HARD_USER_MESSAGE_CHARS = 15_000;        // было 50_000
+export const CONTEXT_MAX_MESSAGES = 10;                // было 20
+export const CONTEXT_MAX_CHARS = 30_000;               // было 80_000
+export const DAILY_CHARS_BUDGET_CHAT = 200_000;        // новый: per-user суточный объёмный лимит для mode='chat'
+export const PER_MINUTE_RATE_CHAT = 3;                 // новый: антифлуд 3 msg/min
+export const FILE_CONTEXT_MAX_CHARS = 8_000;           // новый: обрезка fileContents в передаваемом контексте
+export const ALLOWED_UPLOAD_SCENARIOS = ['balance_analysis', '107NK'];  // upload разрешён только здесь
 
 export interface AiAccess {
   tier: 'full' | 'zg_only' | 'none';
