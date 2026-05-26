@@ -208,3 +208,63 @@ Sprint 1 **не вносит изменений** в `fields_registry` и `docum
 - ✅ Этап B (discovery + конфликт-матрица + role catalog) — выполнено.
 - 🟡 Этап C (миграция + UI refactor) — миграция отправляется отдельным шагом; UI клиентской анкеты на backend-session переводится после approve миграции.
 
+
+---
+
+## Migration verify (2026-05-26, post-approve)
+
+1. **Таблицы созданы** ✅
+   `document_package_sessions`, `document_package_session_participants`, `document_package_role_catalog` — присутствуют в `public`.
+
+2. **Пакет `ideology` создан один раз** ✅
+   `document_package_templates` где `code='ideology' AND is_system=true` → 1 строка (id `06068dcf-6943-425c-aa6b-8bfaa550cfd2`). Дублей нет.
+
+3. **11 ролей созданы один раз** ✅
+   `document_package_role_catalog` для ideology → 11 ролей (package_company, company_head, ideology_responsible, document_signer, document_preparer, control_person, ideology_active_member, ideology_participant, notified_person, report_participant, external_specialist). Unique-индекс `(package_template_id, role_key)` гарантирует отсутствие дублей.
+
+4. **RLS проверен** ✅
+   - `document_package_sessions`: 5 policy — `sessions_select_own`, `sessions_insert_own`, `sessions_update_own_unlocked`, `sessions_delete_own_draft`, `sessions_admin_all`. Scoped по `profile_id IN (SELECT id FROM profiles WHERE user_id = auth.uid())`.
+   - `document_package_session_participants`: 5 policy — `participants_*_own` через JOIN на parent session, plus `participants_admin_all`. Чужие реквизиты вставить нельзя — INSERT WITH CHECK дополнительно проверяет, что `legal_entity_id`/`person_id` принадлежат тому же profile_id.
+   - `document_package_role_catalog`: `role_catalog_select_authenticated` (only `is_active = true`) + `role_catalog_admin_all`. Read-only для пользователей.
+   - `relrowsecurity = true` на всех трёх таблицах.
+
+5. **GRANT проверен** ✅ (из текста миграции `20260526210730_...sql`)
+   - role_catalog: `GRANT SELECT … TO authenticated`, `GRANT ALL … TO service_role`. Anon — нет.
+   - sessions: `GRANT SELECT, INSERT, UPDATE, DELETE … TO authenticated`, `GRANT ALL … TO service_role`. Anon — нет.
+   - session_participants: то же. Anon — нет.
+   - `admin_unlock_package_session(uuid,text)`: `GRANT EXECUTE … TO authenticated` (доступ ограничен внутри RPC через `has_role_v2`).
+
+6. **Не изменены** ✅
+   - `fields_registry` — не тронут, миграция не содержит `ALTER TABLE fields_registry` или INSERT в него.
+   - billing resolver — не тронут.
+   - edge function `canonical-document-generate-strict` — signature и тело не менялись в этом sprint.
+
+7. **Seed-идемпотентность** ✅
+   - Template ideology: `INSERT … ON CONFLICT (code) DO NOTHING` (для system-packages) + проверка по `is_system=true`.
+   - Roles: `INSERT … ON CONFLICT (package_template_id, role_key) DO NOTHING`. Повторный прогон миграции — 0 новых строк.
+
+## UI rollout (Sprint 1 frontend)
+
+- **Новый hook**: `src/hooks/useDocumentPackageSession.ts`
+  - Резолвит template по `code='ideology' AND is_system=true`.
+  - Грузит role_catalog (read-only) и единственную session `(profile_id, package_template_id)`.
+  - `save({ selectedLegalEntityId, personAssignments })`: upsert session + delete-then-insert participants. Guard: при `legal_entity_locked_at != null` смена юрлица бросает ошибку.
+  - После успешного save: `localStorage.removeItem("document_package_questionnaire_ideology_v1")`.
+  - Display status: `not_saved | saved | locked | requires_fill`.
+
+- **DocumentPackageIdeologyView**:
+  - Бейдж «локально» удалён.
+  - Юрлицо/ИП — single-select, читается из `client_legal_details` (legal_entity/entrepreneur).
+  - Физлица — выбор `role_key` из `document_package_role_catalog` (исключая `package_company`).
+  - Состояние читается из backend session; legacy `localStorage` используется только как one-time read-fallback при отсутствии session (только entity_id мигрируется, роли — нет).
+  - Чек-лист обязательных ролей (`required=true`) с визуальной индикацией.
+  - Бейдж статуса с цветом и иконкой.
+  - Кнопка «Сформировать пакет» осталась disabled с понятной причиной (Sprint 2).
+
+## STOP (выполнено)
+
+- ❌ Не менял `fields_registry`.
+- ❌ Не менял billing resolver.
+- ❌ Не менял `canonical-document-generate-strict` signature.
+- ❌ Не трогал payments / orders / subscriptions / entitlements / access.
+- ❌ Не подключал генерацию пакета.
