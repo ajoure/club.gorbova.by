@@ -576,8 +576,16 @@ Deno.serve(async (req) => {
 
     // 10.1 Truncation
     const dialog = messages.filter(m => m.role === 'user' || m.role === 'assistant');
-    const fileContextMsg = processedFileContents
-      ? `--- СОДЕРЖИМОЕ ЗАГРУЖЕННЫХ ФАЙЛОВ ---\n${processedFileContents}\n--- КОНЕЦ ФАЙЛОВ ---`
+    // PATCH v2.2 — обрезаем fileContents в передаваемом контексте до FILE_CONTEXT_MAX_CHARS
+    // (полный текст уже хранится в БД; модели передаём только укороченный фрагмент).
+    let fileContextForModel = processedFileContents;
+    if (fileContextForModel && fileContextForModel.length > FILE_CONTEXT_MAX_CHARS) {
+      fileContextForModel = fileContextForModel.substring(0, FILE_CONTEXT_MAX_CHARS);
+      metadata.file_context_truncated_for_model = true;
+      metadata.file_context_chars_sent = FILE_CONTEXT_MAX_CHARS;
+    }
+    const fileContextMsg = fileContextForModel
+      ? `--- СОДЕРЖИМОЕ ЗАГРУЖЕННЫХ ФАЙЛОВ ---\n${fileContextForModel}\n--- КОНЕЦ ФАЙЛОВ ---`
       : null;
     const trunc = truncateHistory(dialog, systemPrompt, fileContextMsg);
     metadata.truncated = trunc.truncated;
