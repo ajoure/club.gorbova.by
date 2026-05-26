@@ -3272,6 +3272,251 @@ export type Database = {
         }
         Relationships: []
       }
+      document_package_role_catalog: {
+        Row: {
+          allowed_entity_types: string[]
+          created_at: string
+          created_by: string | null
+          description: string | null
+          id: string
+          is_active: boolean
+          label: string
+          max_count: number | null
+          metadata: Json
+          min_count: number | null
+          package_template_id: string
+          required: boolean
+          role_key: string
+          sort_order: number
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          allowed_entity_types: string[]
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          label: string
+          max_count?: number | null
+          metadata?: Json
+          min_count?: number | null
+          package_template_id: string
+          required?: boolean
+          role_key: string
+          sort_order?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          allowed_entity_types?: string[]
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          label?: string
+          max_count?: number | null
+          metadata?: Json
+          min_count?: number | null
+          package_template_id?: string
+          required?: boolean
+          role_key?: string
+          sort_order?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_package_role_catalog_package_template_id_fkey"
+            columns: ["package_template_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      document_package_session_participants: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          entity_type: string
+          id: string
+          is_primary: boolean
+          is_required: boolean
+          legal_entity_id: string | null
+          metadata: Json
+          package_session_id: string
+          person_id: string | null
+          role_catalog_id: string | null
+          role_key: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          entity_type: string
+          id?: string
+          is_primary?: boolean
+          is_required?: boolean
+          legal_entity_id?: string | null
+          metadata?: Json
+          package_session_id: string
+          person_id?: string | null
+          role_catalog_id?: string | null
+          role_key: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          entity_type?: string
+          id?: string
+          is_primary?: boolean
+          is_required?: boolean
+          legal_entity_id?: string | null
+          metadata?: Json
+          package_session_id?: string
+          person_id?: string | null
+          role_catalog_id?: string | null
+          role_key?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_package_session_participants_legal_entity_id_fkey"
+            columns: ["legal_entity_id"]
+            isOneToOne: false
+            referencedRelation: "client_legal_details"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_package_session_participants_package_session_id_fkey"
+            columns: ["package_session_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_package_session_participants_person_id_fkey"
+            columns: ["person_id"]
+            isOneToOne: false
+            referencedRelation: "legal_details_persons"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_package_session_participants_role_catalog_id_fkey"
+            columns: ["role_catalog_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_role_catalog"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      document_package_sessions: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          entitlement_id: string | null
+          first_generated_document_id: string | null
+          first_generation_batch_id: string | null
+          id: string
+          legal_entity_locked_at: string | null
+          legal_entity_locked_by_event: string | null
+          metadata: Json
+          order_id: string | null
+          package_template_id: string
+          product_id: string | null
+          profile_id: string
+          public_id: string | null
+          selected_legal_entity_id: string | null
+          status: string
+          tariff_id: string | null
+          unlock_reason: string | null
+          unlocked_at: string | null
+          unlocked_by: string | null
+          updated_at: string
+          updated_by: string | null
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          entitlement_id?: string | null
+          first_generated_document_id?: string | null
+          first_generation_batch_id?: string | null
+          id?: string
+          legal_entity_locked_at?: string | null
+          legal_entity_locked_by_event?: string | null
+          metadata?: Json
+          order_id?: string | null
+          package_template_id: string
+          product_id?: string | null
+          profile_id: string
+          public_id?: string | null
+          selected_legal_entity_id?: string | null
+          status?: string
+          tariff_id?: string | null
+          unlock_reason?: string | null
+          unlocked_at?: string | null
+          unlocked_by?: string | null
+          updated_at?: string
+          updated_by?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          entitlement_id?: string | null
+          first_generated_document_id?: string | null
+          first_generation_batch_id?: string | null
+          id?: string
+          legal_entity_locked_at?: string | null
+          legal_entity_locked_by_event?: string | null
+          metadata?: Json
+          order_id?: string | null
+          package_template_id?: string
+          product_id?: string | null
+          profile_id?: string
+          public_id?: string | null
+          selected_legal_entity_id?: string | null
+          status?: string
+          tariff_id?: string | null
+          unlock_reason?: string | null
+          unlocked_at?: string | null
+          unlocked_by?: string | null
+          updated_at?: string
+          updated_by?: string | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_package_sessions_package_template_id_fkey"
+            columns: ["package_template_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_templates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_package_sessions_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_package_sessions_selected_legal_entity_id_fkey"
+            columns: ["selected_legal_entity_id"]
+            isOneToOne: false
+            referencedRelation: "client_legal_details"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       document_package_template_items: {
         Row: {
           created_at: string
@@ -3319,33 +3564,39 @@ export type Database = {
       }
       document_package_templates: {
         Row: {
+          code: string | null
           created_at: string
           created_by: string | null
           description: string | null
           id: string
           is_active: boolean
+          is_system: boolean
           name: string
-          profile_id: string
+          profile_id: string | null
           updated_at: string
         }
         Insert: {
+          code?: string | null
           created_at?: string
           created_by?: string | null
           description?: string | null
           id?: string
           is_active?: boolean
+          is_system?: boolean
           name: string
-          profile_id: string
+          profile_id?: string | null
           updated_at?: string
         }
         Update: {
+          code?: string | null
           created_at?: string
           created_by?: string | null
           description?: string | null
           id?: string
           is_active?: boolean
+          is_system?: boolean
           name?: string
-          profile_id?: string
+          profile_id?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -14996,6 +15247,10 @@ export type Database = {
           unlinked_payments_v2_count: number
           unlinked_queue_count: number
         }[]
+      }
+      admin_unlock_package_session: {
+        Args: { p_reason: string; p_session_id: string }
+        Returns: string
       }
       align_billing_dates: {
         Args: { p_batch_size?: number }
