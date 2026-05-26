@@ -124,6 +124,7 @@ const AI_SUB_TABS: SubMenuItem[] = [
 
 // Sprint 11 C1: оставлены только strict-вкладки. Legacy (canonical-acts, aliases,
 // generate=AiDocumentsGenerateView, history=AiDocumentsHistoryView) убраны из меню.
+// Sprint 12 (nav cleanup): пакеты документов теперь подвкладка внутри «Документы».
 const DOC_SUB_TABS: SubMenuItem[] = [
   {
     id: "placeholders",
@@ -145,6 +146,15 @@ const DOC_SUB_TABS: SubMenuItem[] = [
     iconColor: "text-orange-500",
   },
   {
+    id: "pkg-ideology",
+    label: "Пакеты документов",
+    icon: FileText,
+    gradient: "from-emerald-500/10 to-teal-500/8",
+    activeGradient: "from-emerald-500/20 to-teal-500/15",
+    borderColor: "border-emerald-400/20",
+    iconColor: "text-emerald-500",
+  },
+  {
     id: "history",
     label: "История",
     icon: Clock,
@@ -163,6 +173,7 @@ const DOC_SUB_TABS: SubMenuItem[] = [
     iconColor: "text-violet-500",
   },
 ];
+
 
 const REQ_SUB_TABS: SubMenuItem[] = [
   {

@@ -1,11 +1,18 @@
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { AiPageContent } from "@/components/ai-chat/AiPageContent";
 
+/**
+ * /ai — пользовательский домен «Нейросеть»: только Gorbova AI.
+ * Документы и пакеты документов живут в /document-generation.
+ * Реквизиты — в /settings/requisites и /document-generation.
+ */
 const AI = () => {
   return (
     <DashboardLayout>
-      {/* На /ai остаётся только Gorbova AI. Реквизиты переехали в /document-generation. */}
-      <AiPageContent mode="user" hiddenSections={["requisites"]} />
+      <AiPageContent
+        mode="user"
+        hiddenSections={["requisites", "doc-packages", "documents"]}
+      />
     </DashboardLayout>
   );
 };
