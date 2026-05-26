@@ -1,155 +1,206 @@
-да, согласен, с учетом правок:
+План v2: фантомные recurring-признаки на one-time продуктах + восстановление Gorbova Club у `elizaveta.andreeva.15@yandex.by`
 
-1. Не дублировать access-конфиг между backend и frontend “синхронными TS-копиями”. Это снова создаст второй SoT. В этом PATCH источник истины должен остаться один:
-  &nbsp;
-  &nbsp;
-  - `_shared/ai-access.ts` на backend;
-  - UI получает уже **готовый вычисленный результат** через `ai-access-status`.  
-  Frontend не должен сам решать, какой продукт что открывает.
-2. `ai-access-status` должен возвращать не только `access`, но и сразу:
-  - `tier/access_tier`,
-  - `allowed_modes`,
-  - `allowed_scenarios`,
-  - `cta_target`,
-  - `quota_by_mode` / `remaining_today` / `remaining_month`,
-  - понятные `denial_reasons`.  
-  Иначе UI снова начнёт домысливать бизнес-логику у себя.
-3. В плане явно зафиксировать, что `ai-access-status` — **read-only edge projection** поверх backend resolver, без собственной бизнес-логики, без прямых “если product_id = …” внутри самого endpoint.
-4. Удаление `get_ai_access()` делать только если подтверждено, что:
-  - нигде больше не осталось вызовов RPC;
-  - нет зависимостей в UI/SQL/других edge functions;
-  - есть явный cleanup-пруф.  
-  Иначе сначала перевести UI на `ai-access-status`, потом удалить RPC отдельным шагом в этом же PATCH.
-5. В frontend gating на `/ai` не ограничиваться только disabled-state. Нужен явный guard и для initial state:
-  - если `chat` запрещён, `/ai` не должен открываться в chat по умолчанию;
-  - для `Закрой год` default entrypoint должен быть `balance_analysis`;
-  - если активная вкладка/сценарий недоступны, UI должен автоматически переключаться на доступный fallback, а не показывать сломанный экран.
-6. Для `ChatScenarioLauncher` не просто скрывать карточки. Разделить сценарии на:
-  - активные,
-  - недоступные, но видимые с CTA,
-  - полностью скрытые.  
-  И зафиксировать, какой вариант нужен именно для `107NK` и прочих prompt-сценариев у пользователя `Закрой год`. По твоему описанию сейчас нужен именно **visible disabled + CTA**, а не hide.
-7. Бейдж лимита в UI должен быть привязан к **текущему выбранному режиму**, но:
-  - для пользователя без chat-доступа не показывать misleading “остаток чата”;
-  - для `Закрой год` при активном `balance_analysis` показывать остаток именно по этому сценарию;
-  - если AI полностью недоступен, лимит не показывать вообще.
-8. В observability не считать `estimated tokens`, если фактически метрика сейчас строится по `charCount × rate`. Назвать это честно:
-  - `estimated cost`,
-  - `context_chars`,
-  - `messages`.  
-  Не подменять оценку токенов приблизительной арифметикой без явного указания, что это estimate.
-9. Источник для counters в admin нужно зафиксировать точнее:
-  - `off_topic_blocked` — из `ai_chat_messages.metadata.routing_reason` или отдельного metadata-флага;
-  - `access_denied_for_mode` и `quota_denied` — из `audit_logs`.  
-  Не оставлять это расплывчатым, иначе метрики будут собраны из разных критериев.
-10. Legacy-safe правило нужно усилить:
-  - старые строки без `metadata.ai_mode` и `model_used` не только показывать как `legacy_unknown`, но и **не включать в breakdown-проценты**, если это искажает текущую статистику;
-  - отдельно показать их count как `legacy`.  
-  Иначе новые графики будут шумными.
-11. В verify-кейсах для сценариев с `200/402` нужно явно разделить:
-  - `200` — полноценный успешный ответ;
-  - `402` — дошли до gateway, но упёрлись в биллинг/лимит провайдера.  
-  Для proof маршрутизации `model_used` достаточно `metadata`/edge log даже при `402`, но это надо так и записать в плане, чтобы потом не было спора, что именно считается acceptable proof.
-12. Для кейса off-topic добавить обязательный proof, что:
-  - не было вызова **основной** модели маршрута;
-  - classifier fallback-open не сломал запрос при ошибке классификатора.  
-  Нужен хотя бы один негативный и один fallback-safe сценарий.
-13. В “Что НЕ меняется” добавить:
-  - существующий формат истории чата и UI rendering сообщений;
-  - chat scenarios catalog / launcher structure не пересобираются, меняется только gating.
-14. В порядке выполнения добавить явный шаг перед Execute:
-  - `grep`/code search по `get_ai_access`;
-  - перевод всех вызовов на `ai-access-status`;
-  - только потом DROP FUNCTION.  
-  Это обязательный STOP-guard.
-15. DoD дополнить:
-  - `/ai` не открывается в недоступный режим по умолчанию;
-  - прямой переход/restore state в недоступный режим корректно сбрасывается на разрешённый fallback;
-  - после удаления RPC в проекте не осталось runtime-обращений к `get_ai_access()`.
+> Терминология: **это не «удаление подписок» и не «отмена доступов».** Это **очистка фантомных recurring-признаков** (`auto_renew`, `next_charge_at`, `meta.recurring_snapshot/recurring_amount/recurring_currency`) у подписок на one-time продуктах, у которых SOT (`tariff_offers.meta.recurring.is_recurring`) = NULL/false. `status`, `access_start_at`, `access_end_at`, `tariff_id`, `product_id`, `order_id`, `billing_type`, `entitlements`, `access_rules`, telegram-доступы — **НЕ меняются**.
 
-&nbsp;
+---
 
-В остальном направление правильное: вынести UI на `ai-access-status`, не плодить тарифную подсистему, завершить gating и доказать всё через финальный verify.
+## 1. Diagnose (read-only, уже выполнено)
 
-&nbsp;
+Контакт `692f22b7-…`, Елизавета Андреева. Видимая «странная» карточка — это **две разные подписки**:
 
-План: PATCH v2.1 — frontend access UI, admin observability и финальный verify с доказательствами
+### A. Карточка «ЗАКРОЙ ГОД — Стандартный» (sub `b2c8d37a-…`)
+- product=`73c29914` (ЗАКРОЙ ГОД), tariff=`56c35e86` (Стандартный)
+- `status=active`, `auto_renew=true`, `billing_type=mit`, `next_charge_at=2026-05-31 23:59`
+- `meta.recurring_snapshot.is_recurring=true`, `recurring_amount=230 BYN`
+- SOT по `tariff_offers` для ЗАКРОЙ ГОД/Стандартный (offer `53f05940`, active pay_now): `amount=900`, `meta.recurring=NULL` → **продукт one-time, не recurring** → нарушение `Product Type SOT`, `Auto-Renewals Cohort SOT`, `Recurring Snapshot Resolver SOT`.
 
-## Scope
+### B. Реальная Gorbova Club / BUSINESS (sub `b1676866-…`)
+- product=`11c9f1b8` (Gorbova Club), tariff=`7c748940` (BUSINESS)
+- `status=canceled`, `auto_renew=false`, `billing_type=provider_managed`
+- `meta.bepaid_cancel_source=user_card_change` (06.05.26 16:01), `resumed_at=06.05.26 16:07`, `resumed_by_user=true`
+- bePaid sub `sbs_e600f8c4f50d1a56` — нужно явно проверить статус у провайдера (см. §6).
+- entitlement Gorbova Club (`412be761…`) активен до 05.06.26; в meta `source=user_resume`, `tariff_name=BUSINESS`, **нет** `source_rule_id`/`business_subscription_id` → UI рисует «доступ по продукту» без бейджа.
 
-Закрываем хвосты PATCH v2: frontend для /ai (gating по продуктам), admin-observability, и финальный verify с пруфами по 6 пунктам ревью. Дополнительно — архитектурное решение по `get_ai_access()`.
+## 2. Масштаб фантомных recurring-признаков (one-time продукты)
 
-## 0. Архитектурное решение по `get_ai_access()` RPC
+`status ∈ {active, past_due, trial}` и (`auto_renew=true` OR `next_charge_at IS NOT NULL` OR `meta.recurring_snapshot.is_recurring=true`):
 
-Зафиксировать: RPC — это **тонкая read-only projection** поверх единственного backend SOT (`_shared/ai-access.ts`).
+| Продукт | Тариф | Всего | auto_renew | next_charge_at | snap.is_recurring |
+|---|---|---|---|---|---|
+| ЗАКРОЙ ГОД | Стандартный | 77 | 68 | 76 | 74 |
+| Подоходный налог ИП | стандарт | 10 | 0 | 10 | 1 |
+| Платная консультация | Срочная консультация | 2 | 0 | 2 | 1 |
+| Платная консультация | Помощь при проверке | 1 | 0 | 1 | 1 |
 
-- Перевести RPC в режим «только агрегирует данные», без правил. Все решения (mapping product→modes, лимиты, классификация) остаются только в `_shared/ai-access.ts`.
-- RPC возвращает сырые факты для UI: набор активных entitlements (по product_id), счётчики использования за день/месяц по mode из `ai_chat_messages.metadata`.
-- Маппинг product_id → разрешённые modes и числовые лимиты делает frontend через тот же shared конфиг (вынести в `src/lib/ai-access-config.ts`, импортируется как edge-функцией, так и UI через дублирующую TS-копию констант — единственный источник правок, оба файла синхронны).
-- Альтернатива (выбираем эту): полностью убрать RPC `get_ai_access()`, заменить на тонкий read-only edge `ai-access-status` который зовёт shared `resolveAiAccess()` и возвращает JSON для UI. Это устраняет двойной контур.
+Итого — **90 фантомных строк** на 4 one-time продуктах.
 
-**Решение:** удалить `get_ai_access()`, ввести edge `ai-access-status` (GET, JWT). UI зовёт его через `useAiAccess`.
+---
 
-## 1. Frontend: gating на /ai
+# Трек 1. Cleanup фантомных recurring-признаков (массово)
 
-Файлы: `src/hooks/useAiAccess.ts` (новый), `src/pages/AI.tsx`, `src/components/ai-chat/AiPageContent.tsx`, `src/components/ai-chat/ChatScenarioLauncher.tsx`, `src/components/ai-chat/ChatComposer.tsx` (или эквивалент).
+Треки 1 и 2 **выполняются отдельно**. Сначала — Трек 1 целиком, затем отдельным решением — Трек 2 по Елизавете.
 
-Поведение по тирам:
+## 1.1 Что меняем / что НЕ меняем
 
-- **Закрой год** (только `balance_analysis`):
-  - Свободный чат — input disabled, плашка «Свободный чат недоступен на вашем тарифе» + CTA «Открыть Business / Club».
-  - В лаунчере сценариев показывать только `balance_analysis` активным; `107NK` и прочие prompt-сценарии — disabled с тултипом и CTA.
-- **Club / Business / AI-группа**: все режимы активны.
-- В шапке/футере чата: бейдж «Осталось сегодня: X / Y» по текущему доступному режиму (chat если активен, иначе prompt).
-- При 403 от edge — toast «Недоступно на вашем тарифе» + CTA.
-- При 429 — toast «Лимит исчерпан, попробуйте завтра» + ссылка на тарифы.
+Меняем только в `subscriptions_v2`:
+- `auto_renew → false`
+- `next_charge_at → NULL`
+- `meta.recurring_snapshot` → удалить
+- `meta.recurring_amount`, `meta.recurring_currency` → удалить
+- `meta.phantom_recurring_cleanup` = `{ at, reason, source_patch, backup_table, backup_row_id }`
+- `payment_token` — **в первом execute НЕ трогаем** (см. §1.4). Отдельный второй проход с guard, только если останутся фантомные локальные MIT-токены без `payment_methods`/`card_profile_links`.
 
-## 2. Admin observability
+НЕ трогаем: `status`, `access_start_at`, `access_end_at`, `tariff_id`, `product_id`, `order_id`, `billing_type`, `entitlements`, `access_rules`, `telegram_access_queue`, `provider_subscriptions`, bePaid.
 
-Файлы: `src/pages/admin/AdminAI.tsx` (или соответствующий tab), новый компонент `AiUsageBreakdown.tsx`.
+## 1.2 Выборка (включая обязательные STOP-guards)
 
-Метрики (за 7/30 дней, фильтр по mode):
+Кандидат проходит cleanup, только если ВСЕ условия выполнены:
 
-- Top-20 users by messages + estimated tokens.
-- Breakdown: `mode` × `model_used` (count, % truncated).
-- Counters: `off_topic_blocked`, `access_denied_for_mode`, `quota_denied`, `rate_limited`.
-- Источник: `ai_chat_messages.metadata` + `audit_logs` по action префиксу `ai_chat_*`.
+1. Продукт **НЕ** в `recurring_products`:
+   ```
+   recurring_products = SELECT DISTINCT t.product_id
+     FROM tariff_offers o JOIN tariffs t ON t.id=o.tariff_id
+     WHERE o.is_active AND o.offer_type='pay_now'
+       AND (o.meta->'recurring'->>'is_recurring')::bool = true
+   ```
+2. `status ∈ {active, past_due, trial}`.
+3. Есть хотя бы один phantom-флаг: `auto_renew=true` OR `next_charge_at IS NOT NULL` OR `(meta->'recurring_snapshot'->>'is_recurring')::bool = true`.
+4. **STOP-guard A (provider_subscriptions):** нет ни одной записи в `provider_subscriptions` для этой `subscription_v2_id` со `state ∈ {active, pending, trial}`. Если есть — `manual_review`, не трогаем.
+5. **STOP-guard B (provider link in meta):** `meta->>'bepaid_subscription_id' IS NULL` и `meta->>'provider_subscription_id' IS NULL`. Иначе — `manual_review`.
+6. **STOP-guard C (billing_type):** `billing_type = 'mit'` (или NULL). Если `billing_type='provider_managed'` среди 90 — STOP, отдельный manual_review-список.
+7. **STOP-guard D (идемпотентность):** `meta->'phantom_recurring_cleanup' IS NULL`.
 
-## 3. Legacy-safe для старых строк
+Любая строка, отсеянная guard-ом A/B/C, попадает в отдельный отчёт `phantom_recurring_v1.manual_review` и **не** меняется этим патчем.
 
-Все агрегаты используют `COALESCE(metadata->>'model_used', 'legacy_unknown')` и `COALESCE(metadata->>'ai_mode', 'legacy_unknown')`. Старые сообщения без metadata показываются как `legacy_unknown` и **не** учитываются в quota count (quota считается только по строкам со свежими метаданными от текущей версии edge).
+## 1.3 Backup & Rollback (обязательно перед UPDATE)
 
-## 4. Final verify с пруфами
+Создаём backup-таблицу (миграция, не data):
+```
+phantom_recurring_cleanup_backup_2026_05 (
+  id uuid primary key default gen_random_uuid(),
+  subscription_id uuid not null,
+  before_auto_renew boolean,
+  before_next_charge_at timestamptz,
+  before_payment_token text,
+  before_meta jsonb not null,    -- полный meta до правки
+  after_meta_diff jsonb,         -- что именно убрали
+  cleaned_at timestamptz default now(),
+  source_patch text default 'phantom_recurring_v1'
+)
+```
+- Перед UPDATE для каждой целевой строки делаем INSERT в backup.
+- В `meta.phantom_recurring_cleanup.backup_row_id` пишем id backup-строки.
+- Дополнительно сохраняем sweep-snapshot (все 90 строк целиком) в `audit_logs` action `phantom_recurring_v1.preflight_snapshot` (через canonical evidence-relay/audit write-path).
 
-Каждый сценарий = один edge-call + чтение `ai_chat_messages` / `audit_logs`. Все пруфы прикладываются в отчёте.
+Rollback SQL (готовим заранее, кладём в proof):
+```sql
+UPDATE subscriptions_v2 s
+SET auto_renew     = b.before_auto_renew,
+    next_charge_at = b.before_next_charge_at,
+    payment_token  = COALESCE(b.before_payment_token, s.payment_token),
+    meta           = b.before_meta
+FROM phantom_recurring_cleanup_backup_2026_05 b
+WHERE b.subscription_id = s.id
+  AND b.source_patch = 'phantom_recurring_v1';
+```
+Rollback тоже идемпотентный (можно гонять повторно).
 
+## 1.4 Payment token policy
 
-| #   | Сценарий                                | Proof                                                                           |
-| --- | --------------------------------------- | ------------------------------------------------------------------------------- |
-| 1   | Закрой год user → POST chat             | 403, `audit_logs.action=ai_chat_denied_access_for_mode`                         |
-| 2   | Закрой год user → POST balance_analysis | 200/402, `metadata.model_used=google/gemini-2.5-pro`, `metadata.ai_mode=prompt` |
-| 3   | Club user → POST chat                   | 200/402, `metadata.model_used=google/gemini-2.5-flash`, `metadata.ai_mode=chat` |
-| 4   | Club user → POST prompt (107NK)         | 200/402, `metadata.model_used=google/gemini-2.5-pro`                            |
-| 5   | Off-topic в chat                        | `metadata.off_topic_blocked=true`, нет вызова pro-модели                        |
-| 6   | 51-е сообщение chat за сутки            | 429, `audit_logs.action=ai_chat_quota_denied`, quota не списана                 |
-| 7   | Диалог >20 сообщений / >80k chars       | `metadata.truncated=true`, `dropped_messages_count>0`, system prompt сохранён   |
-| 8   | User-message >50k chars                 | 400 с текстом «Сократите запрос», ничего не записано в `ai_chat_messages`       |
-| 9   | UI Закрой год                           | Screenshot: chat disabled, balance_analysis активен, 107NK disabled             |
-| 10  | UI Club                                 | Screenshot: всё активно, бейдж лимита виден                                     |
+`payment_token` в первом execute **не очищаем**. Причины:
+- Часть локальных токенов до сих пор может быть связана с активной картой через `payment_methods` / `card_profile_links` и использоваться для платных продуктов клиента в других местах.
+- Безопасный путь: сначала отдельный read-only диагноз — для каждой строки из 90 пометить:
+  - `phantom_only` — `payment_token` ни в одной активной `payment_methods`/`card_profile_links` не используется И нет live `provider_subscriptions`;
+  - `shared` — токен/карта живут в других местах → не трогаем.
+- Только `phantom_only` могут пойти во второй проход с обнулением `payment_token`. Этот второй проход — отдельный patch, не в этом плане.
 
+## 1.5 Порядок исполнения (Trek 1)
 
-## 5. Order
+1. **Diagnose:** SELECT по §1.2, выгрузка в `audit_logs` (`phantom_recurring_v1.preflight`, `snapshot.total_rows=90` per Discovery Evidence Canon).
+2. **Manual-review split:** отдельный отчёт `phantom_recurring_v1.manual_review` со строками, отсеянными guards A/B/C (ожидаем 0, но обязательно проверить).
+3. **Migration:** создать `phantom_recurring_cleanup_backup_2026_05` + индекс по `subscription_id`.
+4. **Dry-run:** на одной строке `b2c8d37a` показать diff `before/after` и работу rollback.
+5. **Execute:** одной транзакцией — для каждой целевой строки: INSERT в backup → UPDATE в `subscriptions_v2`. Идемпотентно через guard D.
+6. **Audit:** `phantom_recurring_v1.executed` с количеством, перечнем id, ссылкой на backup-table.
 
-Diagnose (подтвердить product_id для Закрой год / Club / Business в проде) → Dry-run (edge-curl по сценариям 1–8 на тестовых аккаунтах) → Execute (удалить RPC, добавить edge `ai-access-status`, frontend gating, admin breakdown) → Verify (10 сценариев с приложением пруфов).
+## 1.6 Verify (Trek 1)
 
-## DoD
+- SELECT из §1.2 = **0 строк**.
+- Nightly invariant `inv_phantom_recurring_v1` (новый): `count(*) FROM § = 0`. Добавить в существующий nightly health-check.
+- Спот-чек `b2c8d37a`:
+  - карточка «Подписки» в `ContactDetailSheet` больше **не** показывает «Следующее списание» и не помечается как auto-renew;
+  - карточка/строка доступа до 31.05.26 **остаётся** (entitlement `757976ea` не тронут);
+- Спот-чек: ни одна `subscriptions_v2` с продуктом из `recurring_products` (Gorbova Club, Бизнес-курсы, и т. п.) не изменена — diff по списку id из backup-table пуст для recurring-продуктов.
+- В `audit_logs` присутствует `phantom_recurring_v1.executed` со счётчиком, равным количеству строк в backup-table.
 
-- RPC `get_ai_access()` удалён; единственный access SOT — `_shared/ai-access.ts`, UI читает через edge `ai-access-status`.
-- /ai корректно gating'ует chat/balance_analysis/107NK по тирам с CTA.
-- Admin показывает breakdown по mode/model_used + denied/truncated counters.
-- Все 10 пруфов приложены в отчёте (логи edge / строки `ai_chat_messages.metadata` / скриншоты UI).
-- Legacy-сообщения без metadata не ломают UI/quota/analytics.
+## 1.7 Definition of Done (Trek 1)
 
-## Подтверждаю, что не менялись
+- Backup-table создана и заполнена ровно по количеству изменённых строк.
+- Rollback SQL приложен к proof и валидирован на dry-run.
+- Verify §1.6 пройден полностью.
+- Никаких изменений в Track 2 артефактах (entitlement Gorbova Club, sub `b1676866`, bePaid) этим патчем не сделано.
 
-- `fields_registry`; `document_token_registry`; DOCX-шаблоны; RLS; RPC (кроме удаления `get_ai_access`); cron/jobs; `client.ts`; `types.ts`; схема БД (миграция — только DROP FUNCTION); канонические access_rules; products/entitlements/tariffs; `balance_analysis`/`107NK` системные промпты и модели; существующий `ai_rate_limits` для TG-бота; схема `ai_chat_messages`.
+---
+
+# Трек 2. Восстановление видимости Gorbova Club / BUSINESS у Елизаветы
+
+**Не смешиваем с Trek 1.** Запускается отдельным сообщением после Verify Trek 1.
+
+## 2.1 Read-only eligibility (обязательно перед любым действием)
+
+До любого resume / правки meta — собрать чистый snapshot:
+
+1. **Card state:** есть ли у Елизаветы активная карта в `payment_methods` (status='active', provider_token IS NOT NULL). По скриншоту VISA 7414 — да, но подтвердить из БД.
+2. **Provider state (живой запрос):** дернуть `bepaid-get-subscription-details` (admin-only) по `sbs_e600f8c4f50d1a56`. Ожидаем: 404 или canceled/terminated. Зафиксировать ответ в proof.
+3. **Local state:** `subscriptions_v2.b1676866.status=canceled, auto_renew=false`. Подтвердить.
+4. **Split-brain risk:** убедиться, что для product=Gorbova Club + tariff=BUSINESS + user=Елизавета нет другой active/past_due `subscriptions_v2`, кроме `b1676866`. Если есть — STOP, manual_review.
+5. **Canonical check-resume:** вызвать `subscription-actions action=check-resume` по `b1676866`. Ожидаемый результат при provider dead: `resume_available=false, reason='provider_dead'`.
+
+Эти 5 пунктов идут в proof как «Track 2 — read-only eligibility».
+
+## 2.2 Варианты решения (выбирает пользователь после §2.1)
+
+- **2a) Косметика без resume.** Дополнить `entitlements.412be761.meta` полями `business_subscription_id=b1676866` и/или подходящим `source_rule_id`, чтобы UI показал бейдж «через BUSINESS». Подписка `b1676866` остаётся canceled. Автопродления **нет**.
+- **2b) Canonical resume.** Вызвать `subscription-actions action=resume` по `b1676866`. По правилу `Resume 3-Level Eligibility SOT`, если provider dead, backend вернёт `resume_blocked_provider_dead`, в UI появится CTA «Оформить новую подписку». **Никаких ручных INSERT** в `subscriptions_v2`/`provider_subscriptions`. Если внезапно provider жив — будет полноценный resume с audit `subscription.resumed`.
+- **2c) Явное завершение без действий.** Оставить как есть; доступ дожить до 05.06.26 через entitlement; 06.06 — стандартный nightly reconcile закроет visibility. Без UI-изменений.
+- **2d) UX-honest (по умолчанию рекомендуется):** не пытаться resume, а явно показать в UI Елизаветы: «Подписка завершена; доступ активен до 05.06.26; для продолжения — оформить новую подписку Gorbova Club / BUSINESS». Реализуется как UI-flag в карточке без правок данных: либо через бейдж на entitlement, либо через рендер canceled-sub `b1676866` отдельным «historical» блоком с deeplink на оформление нового. Никаких изменений в `subscriptions_v2`/`bePaid`. Самый честный вариант при `provider_dead` + есть активная карта.
+
+Запреты по обоим вариантам:
+- НЕ создаём руками `subscriptions_v2` или `provider_subscriptions` (Canonical Write Path, Provider-Linked Extend Priority).
+- НЕ ставим `auto_renew=true` на canceled-запись.
+- НЕ вызываем bePaid `/subscriptions` за клиента без явного его подтверждения через canonical resume/checkout.
+
+## 2.3 Definition of Done (Trek 2)
+
+- В proof зафиксирован read-only snapshot §2.1 (card, provider, local, split-brain, check-resume).
+- Зафиксирован выбранный вариант 2a/2b/2c/2d и его audit.
+- Доступ Елизаветы к Gorbova Club не уменьшен (минимум до 05.06.26).
+- Никаких изменений в данных подписок других пользователей.
+
+---
+
+## 3. Proof (структура отчёта)
+
+Отчёт оформляется двумя разделами, **раздельно**:
+
+### Track 1 — executed
+- `phantom_recurring_v1.preflight` snapshot (90 rows).
+- `phantom_recurring_v1.manual_review` (ожидаемо 0; иначе — отдельный список).
+- Миграция backup-table.
+- Dry-run diff для `b2c8d37a`.
+- `phantom_recurring_v1.executed` с count и id-list.
+- Verify §1.6: SQL-чек = 0, nightly invariant добавлен, спот-чек `b2c8d37a`, проверка нетронутых recurring-продуктов.
+- Готовый rollback SQL.
+
+### Track 2 — decision only / executed separately
+- Read-only eligibility snapshot Елизаветы §2.1 (card, provider 404/canceled, local state, split-brain check, check-resume output).
+- Выбранный вариант 2a/2b/2c/2d + причина.
+- Если что-то сделано — отдельный audit-event и diff.
+
+---
+
+## 4. Что подтвердить перед Execute
+
+1. Согласие на Trek 1 c **backup-table + STOP-guards A/B/C/D + payment_token не трогаем в первом execute**.
+2. Согласие, что Trek 2 запускается **отдельно** после Verify Trek 1 и начинается с read-only eligibility, без предвыбранного варианта.
+3. По умолчанию по Trek 2 предлагается **2d** (UX-honest) — если читать «provider dead, карта жива, доступ до 05.06.26», это самый честный вариант для клиента; 2b как альтернатива, если хочется именно canonical resume-аудит.
