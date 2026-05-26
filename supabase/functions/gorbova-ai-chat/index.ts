@@ -646,7 +646,7 @@ Deno.serve(async (req) => {
     // 11. Call Lovable AI Gateway — модель по режиму
     const chosenModel = mode === 'chat' ? MODEL_CHAT : MODEL_PROMPT;
     metadata.model_used = chosenModel;
-    metadata.routing_reason = mode === 'chat' ? 'free_chat_flash' : 'scenario_pro';
+    metadata.routing_reason = mode === 'chat' ? 'free_chat_flash_lite' : 'scenario_pro';
 
     const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
