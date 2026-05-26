@@ -184,7 +184,6 @@ Deno.serve(async (req) => {
     }
 
     // 3. File guards (запускаются только если upload guard выше не отрезал)
-    const { fileContents, images, fileNames, conversation_id } = body;
     if (fileNames && fileNames.length > MAX_FILES) {
       return new Response(JSON.stringify({ error: `Максимум ${MAX_FILES} файлов` }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
