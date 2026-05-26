@@ -10241,6 +10241,84 @@ export type Database = {
           },
         ]
       }
+      provider_subscriptions_synthetic_cleanup_backup_2026_05: {
+        Row: {
+          amount_cents: number | null
+          backed_up_at: string | null
+          before_json: Json | null
+          card_brand: string | null
+          card_last4: string | null
+          card_token: string | null
+          cohort: string | null
+          created_at: string | null
+          currency: string | null
+          id: string | null
+          interval_days: number | null
+          last_charge_at: string | null
+          meta: Json | null
+          next_charge_at: string | null
+          order_id: string | null
+          profile_id: string | null
+          provider: string | null
+          provider_subscription_id: string | null
+          raw_data: Json | null
+          state: string | null
+          subscription_v2_id: string | null
+          updated_at: string | null
+          user_id: string | null
+        }
+        Insert: {
+          amount_cents?: number | null
+          backed_up_at?: string | null
+          before_json?: Json | null
+          card_brand?: string | null
+          card_last4?: string | null
+          card_token?: string | null
+          cohort?: string | null
+          created_at?: string | null
+          currency?: string | null
+          id?: string | null
+          interval_days?: number | null
+          last_charge_at?: string | null
+          meta?: Json | null
+          next_charge_at?: string | null
+          order_id?: string | null
+          profile_id?: string | null
+          provider?: string | null
+          provider_subscription_id?: string | null
+          raw_data?: Json | null
+          state?: string | null
+          subscription_v2_id?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          amount_cents?: number | null
+          backed_up_at?: string | null
+          before_json?: Json | null
+          card_brand?: string | null
+          card_last4?: string | null
+          card_token?: string | null
+          cohort?: string | null
+          created_at?: string | null
+          currency?: string | null
+          id?: string | null
+          interval_days?: number | null
+          last_charge_at?: string | null
+          meta?: Json | null
+          next_charge_at?: string | null
+          order_id?: string | null
+          profile_id?: string | null
+          provider?: string | null
+          provider_subscription_id?: string | null
+          raw_data?: Json | null
+          state?: string | null
+          subscription_v2_id?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       provider_webhook_orphans: {
         Row: {
           created_at: string

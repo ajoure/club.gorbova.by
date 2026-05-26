@@ -1,304 +1,157 @@
-да, согласен, с учетом правок:
+# План: PATCH-R4-SYNTHETIC-PROVIDER-SUB-CLEANUP-2026-05
 
-1. План правильный: сначала discovery, без cleanup и без отмены bePaid.
+## Контекст и принятие discovery
 
-&nbsp;
+Отчёт discovery принят. Ключевой вывод:
 
-2. Важно: в этом discovery нельзя выводить “64 подписки надо отменить” или “64 надо оставить”.
+Проблема не в UI и не в реальных bePaid-подписках, а в **synthetic `provider_subscriptions`**, созданных backfill-скриптом `token_direct_charge` 2026-05-25.
 
-Нужно только классифицировать, что это:
+- **183 OK_real_linked** (real `sbs_*`) — НЕ трогать, bePaid API НЕ вызывать.
+- **64 E_phantom_no_provider** — synthetic `internal:%` по ЗАКРОЙ ГОД (one-time продукт).
+- **9 F_split_brain_synth_over_real** — synthetic `internal:%` поверх пользователей, у которых уже есть реальный активный bePaid `sbs_*`.
+- **Scope R4 = 73 synthetic wrappers**.
 
-- legacy_recurring_real;
-
-- subscription_product_mismatch;
-
-- ui_join_wrong;
-
-- entitlement_product_mismatch;
-
-- phantom_no_provider;
-
-- manual_review.
-
-&nbsp;
-
-3. Добавить обязательную проверку по суммам:
-
-- 55 BYN → должно маппиться на Gorbova Club / CHAT;
-
-- 250 BYN → должно маппиться на Gorbova Club / BUSINESS;
-
-- 230/250/900 BYN по ЗАКРОЙ ГОД не считать автоматически правильным без tariff_offer/order evidence.
-
-&nbsp;
-
-4. По Ирине Гайдук отдельно доказать:
-
-- provider amount = 55 BYN;
-
-- последние orders/payments = Gorbova Club / CHAT;
-
-- какая конкретно subscriptions_v2.product_id/tariff_id стоит сейчас;
-
-- какой entitlement.product_id стоит сейчас;
-
-- откуда UI берёт “ЗАКРОЙ ГОД”.
-
-Это контрольный кейс на B или C, а не на D/E.
-
-&nbsp;
-
-5. По Ольге Дещене отдельно доказать:
-
-- provider subscription живой или нет;
-
-- почему карточка доступа пишет “не продлевается”;
-
-- есть ли active provider_subscriptions, связанный с её BUSINESS;
-
-- есть ли active subscriptions_v2 с auto_renew=true;
-
-- есть ли [entitlement.business](http://entitlement.business)_subscription_id.
-
-Не делать вывод “provider dead” без доказательства.
-
-&nbsp;
-
-6. По Елизавете отдельно разделить:
-
-- что реально phantom_no_provider;
-
-- что может быть legacy_recurring_real;
-
-- что связано с ошибкой product mapping.
-
-Не смешивать с решением 2a/2b/2c/2d.
-
-&nbsp;
-
-7. Добавить поиск системного источника ошибки:
-
-- последние патчи/миграции, которые могли переписать product_id/tariff_id;
-
-- batch_id / audit_logs / [meta.repair](http://meta.repair)_batch / meta.source;
-
-- совпадения по `phantom_recurring_cleanup`, `split_brain_repair`, `rebill_materialization`, `access_cleanup`.
-
-Нужно понять, это UI join bug или реально данные были переписаны.
-
-&nbsp;
-
-8. Добавить анти-дубли:
-
-если у одного provider_subscription есть больше одной subscriptions_v2 или у одной subscriptions_v2 больше одного provider_subscriptions — категория F manual_review_split_brain.
-
-&nbsp;
-
-9. В CSV добавить поля:
-
-- ui_product_name_rendered;
-
-- ui_tariff_name_rendered;
-
-- ui_source_guess;
-
-- provider_amount_match_offer_ids;
-
-- last_order_product_name;
-
-- sub_product_name;
-
-- entitlement_product_name;
-
-- suspected_repair_batch.
-
-&nbsp;
-
-10. В proof отдельно дать итог:
-
-- сколько случаев можно чинить только UI;
-
-- сколько случаев требуют relink subscriptions_v2;
-
-- сколько случаев требуют correction entitlement;
-
-- сколько случаев являются реальными legacy recurring;
-
-- сколько случаев являются phantom без provider;
-
-- сколько manual_review/split-brain.
-
-Итоговая команда:
-
-План PATCH-SUBSCRIPTION-PRODUCT-MAPPING-DISCOVERY-2026-05 принимаю.
-
-&nbsp;
-
-Запускать только read-only discovery.
-
-&nbsp;
-
-Запрещено:
-
-- cleanup eligible-25;
-
-- отмена bePaid;
-
-- SQL UPDATE/INSERT/DELETE;
-
-- правка UI;
-
-- provider API;
-
-- изменение subscriptions/entitlements/orders/payments.
-
-&nbsp;
-
-Обязательно разобрать 3 контрольных кейса:
-
-- Ирина Гайдук — почему 55 BYN / Gorbova Club CHAT отображается как ЗАКРОЙ ГОД.
-
-- Ольга Дещеня — почему BUSINESS-сделки есть, а доступ “не продлевается”.
-
-- Елизавета Андреева — что phantom, что legacy, что mapping.
-
-&nbsp;
-
-Главный результат:
-
-не исправлять сейчас, а разделить будущие repair-треки:
-
-1. UI join fix;
-
-2. subscriptions_v2 product/tariff relink;
-
-3. entitlement product/tariff correction;
-
-4. phantom cleanup без provider;
-
-5. legacy recurring decision;
-
-6. manual_review split-brain.
-
-&nbsp;
-
-Proof:
-
-.lovable/proofs/subscription_product_mapping_discovery_2026_[05.md](http://05.md)
-
-&nbsp;
-
-CSV:
-
-/mnt/documents/subscription_product_mapping_discovery_2026_05.csv
-
-# План: PATCH-SUBSCRIPTION-PRODUCT-MAPPING-DISCOVERY-2026-05
-
-## Статус предыдущего плана
-
-STOP. Trek 1 (phantom_recurring_v1 cleanup, в т.ч. eligible-25) **замораживается полностью** до закрытия этого discovery. Никаких UPDATE/INSERT/DELETE/cancel/provider-вызовов. Backup-таблица не создаётся, миграция не подаётся.
-
-Trek 2 (Елизавета 2a/2b/2c/2d) тоже ставится на паузу — её кейс входит в контрольные этого discovery.
+Старая идея "Trek 1 cleanup 90 строк" отменяется. Новый cleanup строго synthetic-only:
+`provider_subscription_id LIKE 'internal:%' AND meta.synthetic = true`.
 
 ## Цель
 
-Read-only. Найти и классифицировать все случаи, где живая bePaid `provider_subscriptions` фактически относится к одному продукту/тарифу (по сумме / orders / payments), а локальная `subscriptions_v2` / `entitlements` / UI `ContactDetailSheet` показывают другой продукт/тариф/доступ.
+Убрать только синтетические `provider_subscriptions`, созданные backfill 2026-05-25, чтобы они не отображались как реальные bePaid-автосписания и не путали привязку продукт/тариф/доступ.
 
-Никаких изменений данных. Только сбор фактов, классификация, разделение «UI bug / linkage bug / entitlement bug / legacy recurring real / phantom без provider / manual_review».
+## Scope (ровно 73 строки)
 
-## Запреты (жёсткие)
+```text
+WHERE provider = 'bepaid'
+  AND provider_subscription_id LIKE 'internal:%'
+  AND (meta->>'synthetic')::boolean = true
+  AND (meta->>'source' = 'token_direct_charge'
+       OR (meta->>'batch') LIKE '%2026-05-25%'
+       OR created_at::date = '2026-05-25')
+```
 
-- Не вызывать bePaid API (никаких `bepaid-get-subscription-details`, `subscription-actions cancel/resume`, и т.п.).
-- Не выполнять SQL `UPDATE/INSERT/DELETE` ни в одной таблице.
-- Не трогать `subscriptions_v2`, `entitlements`, `access_rules`, `orders_v2`, `payments_v2`, `provider_subscriptions`, `telegram_access_queue`, `payment_methods`.
-- Не выполнять Trek 1 cleanup (даже eligible-25).
-- Не менять UI-код, edge functions, миграции.
-- Не отменять, не «чинить» и не «гасить» ни одну живую bePaid-подписку.
+Разбивка:
+- 64 × E_phantom_no_provider (нет реального `sbs_*` у юзера на этот продукт).
+- 9 × F_split_brain_synth_over_real (есть реальный active `sbs_*` рядом).
 
-## Scope (что разбираем)
+## Запрещено
 
-Все строки из `provider_subscriptions` с `provider='bepaid'` и `state IN ('active','trial','past_due','pending')`. Для каждой — полный срез по 6 слоям ниже.
+- Не трогать `provider_subscriptions` с `sbs_*` (реальные bePaid).
+- Не вызывать bePaid API (cancel/list/get) — 0 внешних вызовов.
+- Не менять `entitlements` (никаких access_end_at/status/meta).
+- Не менять `orders_v2` / `payments_v2`.
+- Не менять `access_rules`.
+- Не менять `access_end_at` / `status` реальных `subscriptions_v2`.
+- Не удалять историю без backup.
 
-Обязательные контрольные кейсы (всегда в выборке, отдельной секцией в proof):
+## Preflight (read-only, до execute)
 
-- Ирина Гайдук — `irina.borodzko@tut.by`
-- Ольга Дещеня — `strekhao@yandex.ru`
-- Елизавета Андреева — `elizaveta.andreeva.15@yandex.by`
+1. Подтвердить ровно **73** synthetic-строки по фильтру выше.
+2. Подтвердить **0** строк с `sbs_*` в scope (anti-join guard).
+3. Подтвердить, что у всех 73 одновременно `internal:%` И `meta.synthetic=true`.
+4. Разделить когорты: 64 phantom_no_provider vs 9 split_brain_synth_over_real (по наличию параллельного real `sbs_*` у того же `user_id` + `product_id`).
+5. Для 9 split-brain — подтвердить, что реальный active `sbs_*` существует и НЕ попадёт в обновление.
+6. Контрольные кейсы:
+   - **Ирина Гайдук** (`irina.borodzko@tut.by`) — synthetic ЗАКРОЙ ГОД должен пропасть из "Подписки"; реальные CHAT сделки/платежи не затронуты.
+   - **Ольга Дещеня** (`strekhao@yandex.ru`) — real BUSINESS остаётся; "не продлевается" не должно возникать после cleanup.
+   - **Елизавета Андреева** (`elizaveta.andreeva.15@yandex.by`) — synthetic active-state исчезает; локальный доступ до 05.06.2026 НЕ уменьшается.
 
-## 6 слоёв на каждую provider_subscription
+Если хотя бы одна цифра расходится (не 73 / есть `sbs_*` в scope / нет `meta.synthetic=true`) — STOP, manual_review.
 
-### 1. provider_subscriptions
+## Execute (порядок строго)
 
-`id, provider, provider_subscription_id, state, amount, currency, next_charge_at, last_charge_at, card_last4, subscription_v2_id, user_id, profile_id, meta.tracking_id`.
+### Шаг 1. Backup snapshot
 
-### 2. subscriptions_v2 (по `subscription_v2_id`)
+Создать таблицу `provider_subscriptions_synthetic_cleanup_backup_2026_05` с полным before-JSON по 73 строкам:
 
-`id, user_id, product_id, tariff_id, status, auto_renew, billing_type, access_start_at, access_end_at, order_id, cancel_at, meta` (выделить `meta.recurring_snapshot`, `meta.tracking_id`, `meta.bepaid_subscription_id`, `meta.model`).
+```sql
+CREATE TABLE public.provider_subscriptions_synthetic_cleanup_backup_2026_05 AS
+SELECT ps.*, to_jsonb(ps.*) AS before_json, now() AS backed_up_at
+FROM public.provider_subscriptions ps
+WHERE <scope filter>;
+```
 
-### 3. orders_v2 + payments_v2
+Подтвердить `count = 73`.
 
-Все `orders_v2` пользователя по этой подписке (через `order_id` и через `payments_v2.provider_payment_id` linked к provider subscription / parent_subscription_id):
-`order.id, order_number, product_id, tariff_id, offer_id, final_price, status, deal_date, paid_at, meta.payment_flow, meta.tracking_id`.
-`payments_v2: id, order_id, amount, currency, status, provider, provider_payment_id, paid_at, meta.parent_subscription_id`.
+### Шаг 2. Soft-clean `provider_subscriptions` (предпочтительно)
 
-Сравнить:
+Если enum `provider_subscription_state` допускает — перевести в `canceled` (или ближайший terminal), пометить `meta.synthetic_cleanup`. DELETE — только если soft-clean невозможен и FK позволяют; и только после backup, и только для `internal:% + synthetic=true`.
 
-- `provider_subscriptions.amount` ↔ последние успешные `payments_v2.amount` ↔ `orders_v2.final_price`.
-- `orders_v2.product_id/tariff_id` ↔ `subscriptions_v2.product_id/tariff_id`.
+```sql
+UPDATE public.provider_subscriptions
+SET state = 'canceled',
+    meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object(
+      'synthetic_cleanup', jsonb_build_object(
+        'patch', 'PATCH-R4-SYNTHETIC-PROVIDER-SUB-CLEANUP-2026-05',
+        'executed_at', now(),
+        'backup_table', 'provider_subscriptions_synthetic_cleanup_backup_2026_05',
+        'cohort', <'phantom_no_provider'|'split_brain_synth_over_real'>
+      ))
+WHERE <scope filter>;
+```
 
-### 4. tariff_offers (резолв «правильного» продукта/тарифа по сумме)
+### Шаг 3. Очистка фантомных recurring-флагов в `subscriptions_v2` (точечно)
 
-Найти `tariff_offers` где `meta.recurring.is_recurring=true` и `amount == provider_subscriptions.amount` (с учётом валюты). Сопоставить с `product_id/tariff_id` из payments. Записать `expected_product_id`, `expected_tariff_id`, `expected_offer_id`.
+ТОЛЬКО для связанных `subscriptions_v2`, у которых:
+- `auto_renew=true` пришло из synthetic provider_sub;
+- НЕТ параллельного real `sbs_*` provider_subscription;
+- продукт — one-time по SOT (`tariff_offers.meta.recurring.is_recurring` IS NULL/false).
 
-### 5. entitlements
+```sql
+UPDATE public.subscriptions_v2 sv
+SET auto_renew = false,
+    next_charge_at = NULL,
+    meta = (COALESCE(meta, '{}'::jsonb) - 'recurring_snapshot' - 'recurring_amount')
+           || jsonb_build_object(
+             'synthetic_provider_cleanup_ref', 'PATCH-R4-2026-05',
+             'prev_auto_renew', true,
+             'prev_next_charge_at', next_charge_at
+           )
+WHERE sv.id IN (<subset из backup, прошедший все 3 условия>);
+```
 
-Все entitlements пользователя по затронутым продуктам: `id, user_id, product_id, status, source, source_order_id, access_end_at, meta.tariff_id, meta.business_subscription_id, meta.source_rule_id, meta.scope`.
+`access_end_at`, `status`, `entitlements` НЕ меняются. `payment_token` НЕ трогаем в этом patch.
 
-Сравнить: `entitlement.product_id` ↔ `orders.product_id` ↔ `subscriptions_v2.product_id` ↔ `expected_product_id`.
+### Шаг 4. Split-brain (9 строк)
 
-### 6. UI source (read-only код-обзор, без правок)
+Действия идентичны Шагам 2–3, но строго на synthetic-строке. Реальный `sbs_*` `provider_subscription` остаётся нетронутым; его `subscriptions_v2` не обновляется (там auto_renew законный).
 
-Открыть `src/components/.../ContactDetailSheet*.tsx` и связанные хуки. Зафиксировать:
+## Audit
 
-- Откуда подтягивается **название** продукта/тарифа в блоке «Подписки» (join на `subscriptions_v2` или `entitlements` или `orders_v2`?).
-- Откуда подтягивается флаг «Автопродление включено / не продлевается» (`subscriptions_v2.auto_renew`? `provider_subscriptions.state`? `entitlements.meta`?).
-- Где может произойти подмена `product_name` из-за неправильного join (например, join `entitlements → products` вместо `subscriptions_v2 → tariff → product`).
+Записи в `audit_logs`:
+- `provider_subscriptions.synthetic_cleanup.preflight` — counts (73 / 64 / 9), 0 real `sbs_*` в scope.
+- `provider_subscriptions.synthetic_cleanup.executed` — counts, `backup_table`, `no_real_bepaid_touched=true`, `bepaid_api_calls=0`.
+- `subscriptions_v2.recurring_flags_cleanup` — список затронутых `subscription_id`, prev/new значения.
 
-Результат — карта «UI поле → источник данных» в proof.
+## Post-verify
 
-## Классификация (для каждой найденной аномалии)
+1. `SELECT count(*) FROM provider_subscriptions WHERE provider_subscription_id LIKE 'internal:%' AND (meta->>'synthetic')::bool = true AND state NOT IN ('canceled','synthetic_removed')` → **0**.
+2. `SELECT count(*) FROM provider_subscriptions WHERE provider_subscription_id LIKE 'sbs_%' AND state IN ('active','trial','past_due','pending')` → **unchanged (183)**.
+3. Ирина: ЗАКРОЙ ГОД исчез из "Подписки"; CHAT сделки/платежи на месте.
+4. Ольга: BUSINESS real subscription активна; нет "не продлевается" из-за synthetic.
+5. Елизавета: synthetic active-state исчез; доступ до 05.06.2026 сохранён.
+6. Trek 1 cleanup по 90 строкам — не запускался.
+7. bePaid API calls во время патча = **0** (проверить логи edge functions).
+8. `nightly-system-health` / `nightly-payments-invariants` после cleanup — synthetic `internal:%` больше не отображается как live provider.
 
-- **A. `ui_join_wrong**` — provider+sub+orders+entitlement согласованы, но UI рендерит чужое имя продукта/тарифа или чужой auto-renew. Чинится только во фронте.
-- **B. `subscription_product_mismatch**` — provider живой, payments/orders указывают на продукт X, а `subscriptions_v2.product_id/tariff_id` = продукт Y. (Гипотеза по Ирине.)
-- **C. `entitlement_product_mismatch**` — orders/payments/sub правильные, но `entitlements` выдан не на тот продукт / не тот tariff_id в meta. (Гипотеза по «не продлевается» у Ольги, если entitlement привязан к другой sub.)
-- **D. `legacy_recurring_real**` — продукт сейчас one-time по SOT (`tariff_offers.meta.recurring.is_recurring=false`), но bePaid subscription реально живая и ранее продавалась как recurring. **Не трогать.** Требует отдельного бизнес-решения (обновлять SOT / останавливать через support / оставлять).
-- **E. `phantom_no_provider**` — `subscriptions_v2` recurring без живой `provider_subscriptions`. Только эта категория является кандидатом на будущий cleanup (но и он — отдельным патчем после approve).
-- **F. `manual_review**` — несколько одновременных аномалий, конфликтующие данные, split-brain, дубли provider_subscription.
+## Rollback
 
-## Контрольные кейсы — обязательный ответ в DoD
+Из `provider_subscriptions_synthetic_cleanup_backup_2026_05.before_json` восстановить state/meta по `id`. Для `subscriptions_v2` — восстановить `auto_renew`, `next_charge_at`, `meta.recurring_snapshot` из `meta.prev_*` полей.
 
-1. **Ирина Гайдук** (`irina.borodzko@tut.by`): почему 55 BYN / Gorbova Club CHAT в сделках отображается как «ЗАКРОЙ ГОД» в блоках Подписки и Доступы. Указать конкретный source: подмена в `subscriptions_v2.product_id`, или подмена в `entitlements.product_id`, или UI join. Категория A/B/C.
-2. **Ольга Дещеня** (`strekhao@yandex.ru`): почему BUSINESS-сделки идут и списания живые, а доступ «не продлевается». Указать, какое поле даёт «не продлевается» (`subscriptions_v2.auto_renew=false`? отсутствует sub? entitlement без `business_subscription_id`?). Категория A/B/C.
-3. **Елизавета Андреева** (`elizaveta.andreeva.15@yandex.by`): для каждой её recurring-строки — категория (E phantom vs D legacy vs B mismatch). Без действий.
+## Артефакты
 
-## Артефакты (только файлы, без миграций)
+- Proof: `.lovable/proofs/synthetic_provider_sub_cleanup_2026_05.md` — preflight counts, executed counts, backup table name, control cases before/after, audit IDs.
+- CSV: `/mnt/documents/synthetic_provider_sub_cleanup_2026_05.csv` — 73 строки: `provider_sub_id`, `user_id`, `product_id`, `tariff_id`, `cohort`, `subscription_v2_id`, `before_state`, `after_state`, `subv2_auto_renew_cleaned`.
 
-- `.lovable/proofs/subscription_product_mapping_discovery_2026_05.md` — нарратив: методология, SQL-выборки, карта «UI поле → источник», 3 контрольных кейса с разбором по 6 слоям, агрегированная таблица категорий A–F с количествами, итоговое разделение «что чинить в UI / что в subscriptions_v2 / что в entitlements / что реально phantom / что D legacy / что manual_review».
-- `/mnt/documents/subscription_product_mapping_discovery_2026_05.csv` — построчно: `user_email, provider_subscription_id, provider_state, provider_amount, sub_v2_id, sub_product_id, sub_tariff_id, sub_auto_renew, last_payment_order_id, order_product_id, order_tariff_id, order_amount, expected_product_id_by_amount, entitlement_product_id, entitlement_tariff_id_meta, category(A|B|C|D|E|F), notes`.
+## Trek 2 (Елизавета 2a/2b/2c/2d)
+
+Остаётся отдельным патчем после R4. Предварительно — 2d (provider dead → UI показывает честное состояние, доступ до 05.06.2026, без автопродления, CTA "оформить новую подписку"). 2b — только если canonical resume-eligibility (local + card + provider) пройдёт целиком.
 
 ## DoD
 
-1. Все три контрольных кейса разобраны и классифицированы с конкретным root cause (поле + источник).
-2. CSV сформирован по всем active/past_due/pending/trial provider_subscriptions bePaid.
-3. Proof содержит карту «UI поле → источник данных» для блока «Подписки» и «Доступы» в `ContactDetailSheet`.
-4. Явно разделены 4 будущих repair-трека (UI fix / subscriptions_v2 linkage fix / entitlements fix / phantom cleanup) — **без execute**.
-5. Подтверждено в proof: ни одна bePaid-подписка не отменена, ни одна строка БД не изменена, Trek 1 cleanup не запускался.
-6. Repair-plan по каждой категории — отдельным следующим патчем после approve этого discovery.
-
-## Что НЕ входит
-
-- Любой execute / repair / cleanup.
-- Изменение SOT по recurring (`tariff_offers.meta.recurring.is_recurring`).
-- Изменение UI-кода (только чтение и описание источников).
-- bePaid API вызовы.
-- Решение по Елизавете 2a/2b/2c/2d — переносится в следующий патч после classification.
+- Preflight 73 / 64 / 9 / 0 real в scope — подтверждено.
+- Backup table создана, count=73.
+- Soft-clean выполнен; DELETE не использовался (или применён только при невозможности soft-clean и оформлен в audit).
+- Recurring-флаги subv2 очищены только у строк без real `sbs_*` на one-time продукте.
+- 8 post-verify пунктов пройдены.
+- Proof + CSV приложены.
+- bePaid API calls = 0; entitlements/orders/access_rules/access_end_at не менялись.
