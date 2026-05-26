@@ -7,6 +7,12 @@ import {
   truncateHistory,
   classifyOffTopic,
   HARD_USER_MESSAGE_CHARS,
+  DAILY_CHARS_BUDGET_CHAT,
+  PER_MINUTE_RATE_CHAT,
+  FILE_CONTEXT_MAX_CHARS,
+  ALLOWED_UPLOAD_SCENARIOS,
+  sumChatContextCharsToday,
+  countChatMessagesLastMinute,
 } from '../_shared/ai-access.ts';
 
 const corsHeaders = {
@@ -21,7 +27,8 @@ const MAX_FILES = 5;
 const MAX_TOTAL_BYTES = 10 * 1024 * 1024;
 const MAX_TEXT_CHARS = 100000;
 
-const MODEL_CHAT = 'google/gemini-2.5-flash';
+// PATCH v2.2 (2026-05-26): cost optimization
+const MODEL_CHAT = 'google/gemini-2.5-flash-lite';   // было gemini-2.5-flash
 const MODEL_PROMPT = 'google/gemini-2.5-pro';
 
 async function writeAccessAudit(supabase: any, userId: string, action: string, details: Record<string, any>) {
