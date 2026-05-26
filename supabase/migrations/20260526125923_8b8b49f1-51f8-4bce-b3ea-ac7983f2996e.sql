@@ -1,0 +1,1 @@
+ALTER TABLE public.provider_subscriptions_synthetic_cleanup_backup_2026_05 ENABLE ROW LEVEL SECURITY;
