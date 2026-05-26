@@ -1,224 +1,201 @@
 да, согласен, с учетом правок:
 
-1. **Свободный чат переключаем на gemini-2.5-flash-lite.**  
-Для текущей задачи удешевления это правильнее, чем оставлять flash.  
-Качество критично только в брендированных сценариях, а они и так остаются на pro.
-2. **Суточный budget по объёму ставим 200 000 chars на пользователя для mode='chat'.**  
-Не 300 000.  
-Сейчас у вас проблема именно с outlier-пользователями, и 300k слишком мягкий порог.
-3. **Hard cap на одно сообщение ставим 15 000 chars.**  
-Не 20 000.  
-Для свободного чата этого более чем достаточно. Всё, что длиннее, уже надо уводить в специальные сценарии.
-4. **Per-minute rate limit для mode='chat' ставим 3 сообщения / минута.**  
-Не 5/мин.  
-Это лучше режет копипасту длинных кусков и серийные прогоны.
-5. **Дополнительно добавить в план жёсткое правило по загрузке файлов:**
-  - **полностью отключить загрузку документов/файлов для свободного чата**;
-  - **разрешить загрузку файлов только внутри специальных сценариев**:
-    - balance_analysis
-    - 107NK
-  - во всех остальных режимах upload/paperclip/fileContents запрещены.
-6. **Матрица загрузки файлов должна быть такой:**  
+1. **Добавить явное требование по языку**
+  &nbsp;
+  В начало плана вставить:
+2. **Уточнить STOP-guard про localStorage**
+  &nbsp;
+  Сейчас написано: «остановиться и НЕ предлагать implementation plan, если localStorage SOT».  
+  Нужно точнее:
+3. **Добавить проверку ownership не только через** `profile_id`**, но и через фактический user/access path**
+  &nbsp;
+  В Этап 1 добавить:
+4. **Добавить проверку “одно юрлицо на один оплаченный пакет”**
+  &nbsp;
+  В Этап 3 или 4 добавить отдельный блок:
+5. **Добавить проверку lock/unlock модели**
+  &nbsp;
+  В Этап 4 добавить:
+6. **Расширить Этап 5 по placeholder registry**
+  &nbsp;
+  Добавить проверку массивов/ролей:
+7. **Добавить проверку template requirements**
+  &nbsp;
+  В Этап 6/7 добавить:
+8. **Уточнить, что package-role ≠ company-role**
+  &nbsp;
+  В Этап 2 добавить:
+9. **Добавить проверку генерации “один документ / весь пакет”**
+  &nbsp;
+  В Этап 6 добавить:
+10. **Добавить проверку доступа клиента к шаблонам**
 
-  - **Закрой год** → доступен только balance_analysis, и **только там** можно загружать файл;
-  - **Business / Gorbova Club** → chat доступен, но **без загрузки файлов**;  
-  загрузка файлов разрешена только в balance_analysis и 107NK;
-  - если сценарий недоступен по продукту, то и upload в нём недоступен.
-7. **Это нужно закрепить и в UI, и в backend:**
-  - в UI скрыть/disable paperclip и file uploader вне balance_analysis и 107NK;
-  - в backend добавить guard: если пришёл fileContents или attachment вне разрешённых сценариев → отказ без вызова модели.
-8. **Код отказа для запрещённой загрузки** лучше сделать отдельным и понятным:
-  - 403 upload_not_allowed_for_mode если режим не допускает загрузку;
-  - сообщение:  
-  **«Загрузка файлов доступна только в специальных сценариях: Анализ баланса и 107-НК.»**
-9. **В план добавь отдельный этап:**
-  - Этап 0. Отключение upload в свободном чате
-  - это должно быть раньше, чем model-switch, потому что загрузка длинных документов сейчас сама по себе раздувает input-cost.
-10. **Итоговые ответы на 4 открытых вопроса для вставки в план:**
+В Этап 3 добавить:
+
+```md
+Проверить, может ли клиент видеть только шаблоны тех пакетов, к которым у него есть entitlement/access.
+Проверить, нет ли возможности открыть package_template_id напрямую через URL без доступа.
+```
+
+11. **Добавить проверку RLS не только таблиц реквизитов, но и package tables**
+
+В метод `supabase--read_query` добавить:
+
+```md
+Проверить RLS policies и GRANTs для:
+- document_package_templates;
+- document_package_template_items;
+- ai_document_generation_batches;
+- ai_generated_documents;
+- client_legal_details;
+- legal_details_persons;
+- legal_details_entity_person_links.
+```
+
+12. **Добавить проверку “локально” на скринах**
+
+В Этап 4 добавить:
+
+```md
+Найти точный компонент, который показывает бейдж «локально».
+Зафиксировать:
+- файл;
+- state management;
+- localStorage key, если есть;
+- какие данные теряются при смене браузера;
+- влияет ли localStorage на генерацию или только на UI preview.
+```
+
+13. **Добавить итоговую архитектурную схему в proof**
+
+В артефакт добавить секцию:
+
+```md
+17. Proposed data flow diagram
+
+В ней описать цепочку:
+entitlement/order → package_template → package_session → selected_legal_entity_id → package_participants/roles → token resolver → generated_documents snapshot.
+```
+
+14. **Уточнить DoD**
+
+В DoD добавить:
+
+```md
+- Отдельно указано: можно ли Sprint 1 сделать без новых таблиц или новые таблицы неизбежны.
+- Если новые таблицы нужны — перечислены минимальные сущности, но без SQL.
+- Есть recommendation: reuse existing vs create new, с аргументацией.
+- Есть список файлов/таблиц, которые точно нельзя трогать в Sprint 1.
+```
+
+15. **Финальный статус discovery**
+
+В формат отчета добавить:
+
+```md
+Финальный статус должен быть одним из:
+- discovery completed, Sprint 1 can be planned;
+- discovery completed, blockers found;
+- discovery incomplete, missing access/data.
+```
+
+В остальном план корректный: это именно discovery, а не реализация. Главное — не останавливать сам discovery из-за localStorage, а зафиксировать это как production-blocker и основание для Sprint 1.
 
 &nbsp;
 
-- **Q1:** переключаем chat на gemini-2.5-flash-lite
-- **Q2:** daily char budget = **200 000**
-- **Q3:** hard cap one message = **15 000**
-- **Q4:** per-minute rate limit = **3/min**
+План: Discovery модуля пакетов документов, реквизитов, ролей и placeholder registry
 
-11. **Дополнить DoD ещё тремя кейсами:**
+## Режим работы
 
-- в chat paperclip отсутствует или disabled;
-- попытка отправить fileContents в chat даёт отказ без вызова модели;
-- в balance_analysis и 107NK загрузка работает только у тех, кому сценарий разрешён по access matrix.
+Строго read-only discovery. Без миграций, без изменений RLS, без правок edge functions, без UI-правок, без создания новых таблиц. Все связи анализируются только через UUID. Результат — один proof-документ + рекомендация по следующему sprint (без его исполнения).
 
-Если хочешь, я сейчас соберу тебе уже **готовую финальную версию этого плана целиком для вставки в Lovable**.
+## Цель
 
-&nbsp;
+Зафиксировать текущее состояние слоёв «реквизиты → пакет → роли → шаблоны → генерация → snapshot» в проекте и ответить на 15 вопросов из задания, чтобы определить минимальный sprint для перевода пакета «Идеология» с локальной анкеты на persisted package session.
 
-# План: Аудит расходов AI после PATCH v2.1 и второй виток удешевления
+## Этапы discovery
 
-## Что показал аудит за последние 24 часа
+### Этап 1 — Реквизиты (юрлица/ИП и физлица)
 
-Запрос к `ai_chat_messages.metadata` (только реальные assistant-ответы):
+- Таблицы: `client_legal_details` (purpose=document, client_type ∈ legal_entity/entrepreneur), `legal_details_persons`, link-слой `legal_details_entity_person_links`.
+- Хуки: `useAiEntities`, `useAiPersons`, `useEntityPersonLinks`, `useLegalDetails`, `useRequisitesV2`.
+- UI: `src/components/ai-requisites/*`, `src/components/legal-details/*`, `src/pages/settings/UserRequisites.tsx`.
+- Проверить: поля, ownership (`profile_id`), RLS-изоляцию (`has_table_privilege` + policy text), наличие default/primary, archived/active.
 
+### Этап 2 — Связь физлицо ↔ юрлицо
 
-| модель                               | mode   | сообщений | юзеров | сумма context_chars | avg context |
-| ------------------------------------ | ------ | --------- | ------ | ------------------- | ----------- |
-| `google/gemini-2.5-flash`            | chat   | **274**   | 36     | **9.72M**           | **35 485**  |
-| `shortcut_template` (off-topic блок) | chat   | 53        | 20     | 1.30M               | 24 526      |
-| `legacy_unknown`                     | chat   | 1         | 1      | —                   | —           |
-| `google/gemini-2.5-pro`              | prompt | **0**     | 0      | —                   | —           |
+- Изучить `legal_details_entity_person_links`: какие роли уже моделируются (директор, подписант и т.п.), хранится ли позиция/полномочия, есть ли UI для назначения.
+- Зафиксировать: достаточно ли link-слоя для package-roles или нужен отдельный слой package-participant-role (без создания).
 
+### Этап 3 — Пакеты документов и шаблоны
 
-Сравнение по дням:
+- Таблицы: `document_package_templates`, `document_package_template_items`, `document_templates`, `ai_document_generation_batches`.
+- Хук: `useDocumentPackages`, `useAiDocumentPackageGeneration`, `useCorporatePackageGeneration`.
+- Найти пакет «Идеология»: где хранится, какие шаблоны привязаны, как ordering/required.
+- Доступ клиента к пакету: проверить связь `product_id` / `tariff_id` / `entitlements` / `access_rules` → package_template; есть ли явная привязка или пакет открыт всем.
 
+### Этап 4 — Текущая «Анкета пакета» (blocker check)
 
-| день  | модель                        | сообщений | context_chars |
-| ----- | ----------------------------- | --------- | ------------- |
-| 26-05 | gemini-2.5-flash              | **250**   | **8.73M**     |
-| 26-05 | shortcut_template (off-topic) | 46        | 1.18M         |
-| 25-05 | gemini-2.5-flash              | 24        | 0.99M         |
-| 25-05 | shortcut_template             | 7         | 0.12M         |
-| 23-05 | legacy (pro, до патча)        | 49        | —             |
-| 22-05 | legacy (pro, до патча)        | 187       | —             |
+- Найти компонент с бейджем «локально», определить storage (localStorage vs backend).
+- Проверить: есть ли таблица package_session / draft, сохраняются ли selected_legal_entity_id и participants/roles, есть ли FK на `client_legal_details` / `legal_details_persons`.
+- Зафиксировать как blocker, если SOT = localStorage.
 
+### Этап 5 — Token / placeholder registry
 
-Топ-5 пользователей за 24 ч (по объёму контекста):
+- Таблицы: `fields_registry` (по `useLegalDetailsFields`), token catalog, RPC для резолва.
+- Проверить существующие contexts (documents, messages, payment, order, contact, executor) и возможность расширения до `documents:package` без новых таблиц.
+- Duplicate guard: exact key, system token, fuzzy label.
+- Зафиксировать formats: `{{cf.legal_details.FLD-XXXXXX}}` уже canonical (см. memory `document-file-name-template-fld-first`).
 
+### Этап 6 — Generation pipeline и snapshot
 
-| user_id (head) | msgs | сумма ctx | max ctx | avg ctx | truncated |
-| -------------- | ---- | --------- | ------- | ------- | --------- |
-| c944d13f       | 48   | 2 024 598 | 78 944  | 42 179  | 32        |
-| 17516f27       | 27   | 1 303 805 | 75 860  | 48 289  | 17        |
-| 7c53b6af       | 36   | 1 231 781 | 67 538  | 34 216  | 22        |
-| 2b352bdf       | 26   | 1 032 208 | 52 700  | 39 700  | **26**    |
-| 267cae5c       | 23   | 965 496   | 61 301  | 41 978  | 13        |
+- Edge functions: `canonical-document-generate-strict`, любые legacy generator-ы (через `supabase/functions.registry.txt`).
+- Таблицы snapshot: `ai_generated_documents`, `ai_document_generation_batches.meta`.
+- Проверить, как pipeline получает контекст (token context resolver), может ли принять package_session_id.
 
+### Этап 7 — Админский UI
 
-Прочие AI edge-функции (`mns-response-generator`, `ai-import-analyzer`, `analyze-task-priority`, `generate-affirmation`, `generate-point-b-summary`, `telegram-daily-summary`, `telegram-learn-style`) уже сидят на `gemini-3-flash-preview`. **Они не виновники.**
+- `src/pages/admin/AdminDocuments.tsx`, `AdminProductsDocs.tsx`, package builder UI: создание пакета, добавление шаблонов, настройка ролей, preview required fields.
 
-## Корневая диагностика — почему $20 после патча
+### Этап 8 — Клиентский UI
 
-1. **Маршрутизация работает.** Все 274 чат-ответа ушли на `gemini-2.5-flash`, ни одного на `gemini-2.5-pro`. Это подтверждается `metadata.model_used`.
-2. **Off-topic фильтр работает, но слабо** — отсекает только 19 % (53/327). 81 % долетает до flash.
-3. **Главная проблема — взрывной рост трафика и объём контекста.**
-  - Сообщений в день: 24 (25-05) → **250 (26-05)**, ×10. Юзеры поняли, что чат стал «доступным».
-  - Средний контекст: **35 485 chars/сообщение** (≈ 9k токенов на input). На flash это всё ещё дорого при таком объёме.
-  - Суммарно за сутки: **9.72M символов** контекста (≈ 2.4M входных токенов). Это и есть основной счёт.
-4. **Hard cap 50k chars/сообщение слишком мягкий.** Топ-юзеры регулярно упираются в cap: у топ-1 truncated=32/48, у топ-4 truncated=26/26 (каждое сообщение режется по лимиту 80k).
-5. **Лимит 50/день per user не пробивается формально**, но позволяет одному юзеру за сутки прокачать 2M chars контекста — патч экономит на модели, но не на объёме.
+- `src/pages/DocumentGeneration.tsx` → `AiPageContent` (mode=user, section=doc-packages).
+- Текущий маршрут «открыть пакет → анкета → генерация», точки касания localStorage.
 
-Итог: PATCH v2.1 защитил **routing** и **доступ**, но не защитил **объём токенов на пользователя**. Это и есть причина «стало хуже» — потому что выросло количество активных юзеров и длина их вводов.
+## Метод
+
+1. `code--view` ключевых файлов (hooks, AiPageContent, package UI, edge functions registry).
+2. `supabase--read_query` для:
+  - перечисления RLS policies на таблицах из этапов 1–4,
+  - `has_table_privilege` для anon/authenticated/service_role,
+  - выборки пакета «Идеология» (`document_package_templates` + items),
+  - проверки существования таблиц `package_session*`, `package_role*`, `package_participant*`.
+3. `rg` поиск: `localStorage`, `package_session`, `selected_legal_entity`, `ideology`, `participant_role`.
+4. Все находки складываем в один proof.
+
+## Артефакт
+
+`.lovable/proofs/package_documents_ideology_discovery_2026_05.md` с 16 секциями строго по ТЗ (Current UI → Recommended implementation plan) и ответами на 15 вопросов.
+
+## Отчёт
+
+Формат: `Отчет о выполненной работе: discovery модуля пакетов документов, реквизитов, ролей и placeholder registry`, на русском, 14 пунктов из ТЗ.
+
+## STOP-guards
+
+Остановиться и НЕ предлагать implementation plan, если выполняется любое из условий §9 ТЗ (неизвестен access path, localStorage SOT, нет token registry, нет RLS-изоляции, требуется новая таблица без отдельного согласования).
+
+## Что НЕ делаем
+
+- Никаких миграций, edge function deploys, изменений config.toml.
+- Никаких новых таблиц/placeholder-ов.
+- Не трогаем `payments_v2`, `orders_v2`, `subscriptions_v2`, `entitlements`, `access_rules`, document scenarios, allocate_document_number, Contact Center, морфологию.
+- Не предлагаем хранить связи по названию/УНП/email/slug.
 
 ## DoD
 
-1. Средний `context_chars` на сообщение < 12 000 (сейчас 35 485).
-2. Суммарный `context_chars` за сутки < 2.5M (сейчас 9.7M, цель −75 %).
-3. `model_used` для chat — `**gemini-2.5-flash-lite**` (≈ 3× дешевле flash) у не-премиум-юзеров.
-4. Off-topic / нерелевантные блокируются ≥ 35 % от чат-трафика.
-5. Топ-юзер не может прокачать > 300 000 chars контекста в сутки (защита от outlier).
-6. Все цифры подтверждены proof из `ai_chat_messages.metadata` через 24 часа после патча.
-
-## Этапы
-
-### Этап 1. Снизить cap и truncation
-
-В `_shared/ai-access.ts` (без новых таблиц):
-
-- `CONTEXT_MAX_MESSAGES`: 20 → **10**.
-- `CONTEXT_MAX_CHARS`: 80 000 → **30 000**.
-- `USER_MESSAGE_HARD_CAP`: 50 000 → **15 000** (с двухуровневым текстом — оставляем).
-- Системный prompt всегда сохраняется (как сейчас).
-
-Эффект: средний контекст должен упасть с 35k до 10–12k символов.
-
-### Этап 2. Сменить модель свободного чата на flash-lite
-
-`gorbova-ai-chat/index.ts`:
-
-```ts
-const MODEL_CHAT = 'google/gemini-2.5-flash-lite';   // было gemini-2.5-flash
-const MODEL_PROMPT = 'google/gemini-2.5-pro';         // не трогаем
-```
-
-Сценарии (`balance_analysis`, `107NK`) остаются на `gemini-2.5-pro` — quality matters.
-
-Эффект: −60–70 % стоимости на чат-ответ.
-
-### Этап 3. Жёсткий per-user объёмный лимит (token-budget guard)
-
-Без новой таблицы — поверх существующих `ai_chat_messages.metadata`:
-
-- В `_shared/ai-access.ts` `resolveAiAccessStatus`: новый счётчик `daily_chars_used` = `SUM(metadata->>'context_chars')` за сегодня.
-- Cap: **300 000 chars в сутки на юзера** для `mode='chat'`.
-- Превышение → 429 с текстом «На сегодня объём чата исчерпан. Используйте брендированные сценарии или вернитесь завтра».
-- Логировать `quota_denied_chars` в `audit_logs` (как сейчас другие denials).
-
-Эффект: ловим outlier-юзеров вроде топ-1 (2M chars/день).
-
-### Этап 4. Ужесточить off-topic классификатор
-
-Сейчас отсекает 19 %. Цель 35 %+.
-
-- В `_shared/ai-access.ts` `classifyOffTopic` — расширить позитивные критерии «налоги/бухгалтерия/документы/закрой год/УСН/ИП» и обрезать общий чат (про погоду, про код, про политику, про рецепты). Усилить prompt классификатора.
-- Сохраняем правило: классификатор **только для `mode='chat'**`, никогда для брендированных сценариев.
-
-### Этап 5. Per-minute rate-limit (антифлуд)
-
-В `gorbova-ai-chat/index.ts` поверх `ai_chat_messages`:
-
-- Максимум **5 сообщений/минута на юзера** в `mode='chat'`.
-- Превышение → 429 с текстом «Подождите минуту перед следующим вопросом».
-- Логировать `rate_limit_per_minute` в `audit_logs`.
-
-Эффект: гасит «копипасту длинных документов кусками».
-
-### Этап 6. Сжатие истории (history pruning)
-
-Сейчас контекст = system + последние 10 сообщений (после Этапа 1). Дополнительно:
-
-- Если суммарная длина > `CONTEXT_MAX_CHARS`, обрезать **старейшие** сообщения целиком (а не середину), сохраняя последний user-message полностью.
-- Файлы (`fileContents`) — обрезать до 8 000 chars в передаваемом контексте (полный текст уже хранится в БД).
-
-### Этап 7. Verify (через 24 часа после rollout)
-
-Тот же запрос, что в аудите:
-
-```sql
-SELECT model, mode, COUNT(*), SUM(context_chars), AVG(context_chars)
-FROM ai_chat_messages ... WHERE created_at > now() - interval '24 hours'
-GROUP BY 1,2;
-```
-
-Сравнить с baseline (этим планом). Закрыть PATCH, если выполнены все 6 пунктов DoD.
-
-Также `audit_logs` proof:
-
-- `ai_chat_denied_off_topic` count ≥ 35 % от чат-сообщений.
-- `ai_chat_quota_denied_chars` появляется для outlier-юзеров.
-- `ai_chat_rate_limit_per_minute` появляется при флуде.
-
-## Что НЕ меняем
-
-- Архитектура доступа (`_shared/ai-access.ts` остаётся SOT, никаких новых таблиц, никаких новых RPC).
-- Маршрутизация брендированных сценариев (`balance_analysis`, `107NK`) — на `gemini-2.5-pro`.
-- Access matrix (Закрой год → только balance_analysis; Club/Business → всё) — не трогаем.
-- `ai_chat_messages` schema (только `metadata` jsonb расширяется).
-- `fields_registry`, `document_token_registry`, DOCX-шаблоны, RLS, RPC документов, cron, `client.ts`, `types.ts`.
-- bePaid, Telegram, orders/payments — не касается.
-- Прочие AI edge-функции (`mns-response-generator`, `ai-*-generator`, `telegram-*`) — уже на flash-preview, не трогаем.
-
-## Открытые вопросы перед execute
-
-1. **Flash vs Flash-lite для чата.** Lite ~3× дешевле, но хуже на нюансах. Согласовать: переключаем на lite или оставляем flash + давим объёмом?
-2. **Per-user суточный budget**: 300 000 chars — устраивает или 200 000 / 500 000?
-3. **Hard cap на одно сообщение**: 15 000 chars — допустимо или 20 000? Сейчас 50 000, типичный документ-распечатка ≈ 10–15k.
-4. **Per-minute rate-limit**: 5/мин разумно или 3/мин?
-
-Без ответов на эти 4 — execute не запускаю.
-
-## Технические детали (для агента)
-
-- Файлы под правку: `supabase/functions/_shared/ai-access.ts`, `supabase/functions/gorbova-ai-chat/index.ts`. Других правок не требуется.
-- Никаких миграций (вся логика в edge), никаких изменений UI на этом этапе (UI читает `ai-access-status` и сам подтянет новые цифры).
-- Артефакт: `.lovable/proofs/gorbova_ai_cost_audit_and_patch_v2_2_2026_05_26.md` с before/after таблицами.
-
-## Порядок: Diagnose (done) → Answer 4 questions → Dry-run → Execute → Verify через 24ч.
+- Proof создан, все 16 секций заполнены.
+- 15 вопросов имеют явные ответы (или помечены как gap с указанием места проверки).
+- Перечислены blocker-ы (особенно localStorage анкеты).
+- Описан минимальный Sprint 1 (persisted package setup) — только описание, без кода.
+- Отчёт на русском в требуемом формате.
