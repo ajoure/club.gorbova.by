@@ -162,7 +162,29 @@ Deno.serve(async (req) => {
       });
     }
 
-    // 3. File guards
+    // 2.1 PATCH v2.2 Этап 0 — Upload guard. Загрузка файлов разрешена ТОЛЬКО в
+    // сценариях balance_analysis и 107NK (для тех, кому они доступны по тарифу).
+    // В свободном чате и в любых других сценариях upload запрещён.
+    const hasAnyAttachment = !!(body.fileContents || (body.fileNames && body.fileNames.length > 0)
+      || (body.images && body.images.length > 0) || (body.unsupported_files && body.unsupported_files.length > 0));
+    if (hasAnyAttachment) {
+      // mode='chat' → запрещено всегда
+      // mode='prompt' → разрешено только если сценарий в whitelist
+      // (scenarioCode определим позже после загрузки prompt; пока используем raw prompt_id отсутствие)
+      // Поскольку whitelist по code (не id), сначала допустим, потом проверим ниже после загрузки prompt.
+      if (mode !== 'prompt') {
+        // быстро отрезаем chat
+        return new Response(JSON.stringify({
+          error: 'Загрузка файлов доступна только в специальных сценариях: Анализ баланса и 107-НК.',
+          code: 'upload_not_allowed_for_mode',
+        }), {
+          status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    // 3. File guards (запускаются только если upload guard выше не отрезал)
+    const { fileContents, images, fileNames, conversation_id } = body;
     if (fileNames && fileNames.length > MAX_FILES) {
       return new Response(JSON.stringify({ error: `Максимум ${MAX_FILES} файлов` }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -206,13 +228,13 @@ Deno.serve(async (req) => {
     metadata.images_present = hasImages;
     metadata.ai_mode = mode === 'prompt' ? 'prompt' : 'chat';
 
-    // 4.1 Hard cap на длину одного user-message
+    // 4.1 Hard cap на длину одного user-message (PATCH v2.2: 15_000)
     const lastUserContent = messages?.[messages.length - 1]?.content || '';
     if (lastUserContent.length > HARD_USER_MESSAGE_CHARS) {
       const hasAttachment = !!fileContents || (fileNames && fileNames.length > 0) || hasImages;
-      const errMsg = (lastUserContent.length >= 20_000 || hasAttachment)
-        ? 'Сократите ввод или загрузите файл отдельным вложением (предел 50 000 символов на сообщение).'
-        : 'Сократите запрос (предел 50 000 символов на сообщение).';
+      const errMsg = hasAttachment
+        ? `Сократите ввод или загрузите файл отдельным вложением (предел ${HARD_USER_MESSAGE_CHARS.toLocaleString('ru-RU')} символов на сообщение).`
+        : `Сократите запрос (предел ${HARD_USER_MESSAGE_CHARS.toLocaleString('ru-RU')} символов на сообщение).`;
       return new Response(JSON.stringify({ error: errMsg, code: 'message_too_long' }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
