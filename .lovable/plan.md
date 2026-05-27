@@ -1,3 +1,10 @@
+# Package Documents — Sprint Status
+
+- **Sprint 3A:** `completed with clarifications` — см. `.lovable/proofs/package_documents_sprint3a_closure_clarifications_2026_05.md`
+- **Sprint 3B:** `plan_required_before_execution` — см. `.lovable/proofs/package_documents_sprint3b_implementation_plan_2026_05.md`. Все 5 корректировок ревьюера учтены: company-role fallback запрещён, rollback = soft-disable, `resolvePackageTokens` — отдельный модуль, покрытие первого приказа — checklist перед execution, `plan_year` только из session metadata. **Никаких** INSERT/migration/edge/UI изменений не производилось.
+
+---
+
 # да, согласен, с учетом правок:
 
 1. **Главное: план стал правильным по логике**
