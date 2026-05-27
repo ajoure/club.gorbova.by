@@ -253,8 +253,11 @@ Sprint 3B execution plan переписывается **после** одобр�
 - Billing/customer/executor resolver не затрагивается.
 - Sprint 3B execution v2 не стартует без отдельного approve.
 
-## 11. Статусы
+## 11. Статусы (обновлено 2026-05-27)
 
 - Sprint 3B execution plan v1 — **отозван** (`superseded_by_sprint_3a1`).
-- Sprint 3A.1 — `planned, awaiting approval to run read-only discovery`.
-- Sprint 3B execution v2 — `blocked until Sprint 3A.1 closure approved`.
+- Sprint 3A.1 — **`completed: minimal new alias/wrapper tokens required, source fields reused`**.
+  - Proof: `.lovable/proofs/package_documents_sprint3a1_corrective_discovery_2026_05.md`.
+  - Ключевые факты: 0 person FLD в registry; падежи реализованы через render-модификатор `|case=`; FLD-000069/070 (document.number/date) — generic; city FLD есть для всех типов юрлица (FLD-000039/047/031); meeting.report_year (FLD-000082) — кандидат на «год плана» (Опция R) vs новый `package.context.plan_year` (Опция N); выбран **Вариант B** (alias-wrapper через `document_token_aliases`).
+  - Реальный объём новых FLD: 1 гарантированно (`legal_details_persons.full_name`) + до 1 опционально (`package.context.plan_year`). Прежний драфт v1 предлагал 5.
+- Sprint 3B execution v2 — `blocked: awaiting approval to draft v2 based on 3A.1 manifest`. См. §8 proof-документа.
