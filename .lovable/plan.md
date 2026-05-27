@@ -1,4 +1,14 @@
-# да, согласен, с учетом правок:
+# План: пакеты документов — roadmap после Sprint 3A
+
+**Текущий статус:** Sprint 3A завершён (read-only manifest approve).
+**Proof:** `.lovable/proofs/package_documents_sprint3a_generic_token_manifest_2026_05.md`.
+
+Sprint 3B = **registry/resolver implementation plan** (не сразу skeleton — сначала отдельный proof перед любым INSERT).
+
+---
+
+# Архив правок к плану Sprint 3A (для истории)
+
 
 1. **Уточнить главную формулировку Sprint 3A**
   &nbsp;
